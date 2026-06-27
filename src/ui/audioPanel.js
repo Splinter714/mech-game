@@ -6,30 +6,33 @@ import { Audio } from '../audio/index.js';
 
 // [paramKey, label, min, max, step]
 const GROUPS = [
-  ['Master', [
+  ['Master + levels (mixer)', [
     ['master', 'Master', 0, 1, 0.01],
     ['music', 'Music level', 0, 0.6, 0.01],
     ['tempo', 'Tempo (BPM)', 60, 240, 1],
-  ]],
-  ['Drums', [
-    ['drumLevel', 'All drums', 0, 1.5, 0.01],
+    ['drumLevel', 'Drums (all)', 0, 1.5, 0.01],
     ['kickLevel', 'Kick level', 0, 2, 0.05],
+    ['snareLevel', 'Snare level', 0, 2, 0.05],
+    ['hatLevel', 'Hat level', 0, 2, 0.05],
+    ['crashLevel', 'Crash level', 0, 2, 0.05],
+    ['guitarLevel', 'Guitar level', 0, 0.4, 0.005],
+    ['chugLevel', 'Chug level', 0, 1, 0.05],
+    ['leadLevel', 'Lead level', 0, 0.6, 0.01],
+    ['bassLevel', 'Bass level', 0, 1.2, 0.01],
+  ]],
+  ['Drums (sound)', [
     ['kickPitch', 'Kick pitch (Hz)', 60, 320, 5],
     ['kickDecay', 'Kick decay', 0.04, 0.4, 0.01],
     ['kickClick', 'Kick click', 0, 0.2, 0.005],
-    ['snareLevel', 'Snare level', 0, 2, 0.05],
     ['snareTone', 'Snare bright (Hz)', 600, 4000, 50],
     ['snareSnap', 'Snare snap (Hz)', 150, 1200, 10],
     ['snareDecay', 'Snare decay', 0.05, 0.5, 0.01],
-    ['hatLevel', 'Hat level', 0, 2, 0.05],
     ['hatFreq', 'Hat bright (Hz)', 3000, 12000, 100],
     ['hatDecay', 'Hat decay', 0.01, 0.6, 0.005],
-    ['crashLevel', 'Crash level', 0, 2, 0.05],
     ['crashBright', 'Crash bright (Hz)', 2000, 10000, 100],
     ['crashDecay', 'Crash decay', 0.2, 3, 0.05],
   ]],
   ['Rhythm guitar (the chug)', [
-    ['guitarLevel', 'Level (volume)', 0, 0.4, 0.005],
     ['guitarDrive', 'Drive (amount)', 1, 40, 1],
     ['guitarSat', 'Saturation', 50, 600, 5],
     ['guitarClip', 'Hard clip', 1, 15, 0.5],
@@ -42,17 +45,14 @@ const GROUPS = [
     ['guitarHigh', 'High bite', 0, 2, 0.05],
     ['guitarSquare', 'Square grit', 0, 2, 0.05],
     ['chugLength', 'Chug length', 0.03, 0.2, 0.005],
-    ['chugLevel', 'Chug level', 0, 1, 0.05],
     ['pickLevel', 'Pick attack', 0, 0.2, 0.005],
   ]],
   ['Lead (scream / tremolo)', [
-    ['leadLevel', 'Level (volume)', 0, 0.6, 0.01],
     ['leadDrive', 'Drive (amount)', 1, 30, 1],
     ['leadTone', 'Tone (Hz)', 800, 7000, 50],
     ['leadOctave', 'Pitch', 0.25, 2, 0.25],
   ]],
-  ['Bass (low foundation + overtones)', [
-    ['bassLevel', 'Level', 0, 1.2, 0.01],
+  ['Bass (low foundation)', [
     ['bassDrive', 'Drive (amount)', 0, 12, 0.5],
     ['bassGrit', 'Grit (distortion)', 1, 200, 1],
     ['bassTone', 'Tone (Hz)', 200, 3000, 20],
