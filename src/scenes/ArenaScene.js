@@ -48,8 +48,9 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Player state.
     this.px = 0; this.py = 0;
-    this.angle = -Math.PI / 2;     // facing up
+    this.angle = -Math.PI / 2;     // legs facing up
     this.turretAngle = -Math.PI / 2;
+    this.vx = 0; this.vy = 0;      // world-space velocity (twin-stick movement)
     this.speed = 0;
     this.stepMs = 0; this.hullFrame = 0;
     this.playerView = this._makeMechView('playerMech', this.px, this.py, this.angle);
@@ -95,25 +96,27 @@ export default class ArenaScene extends Phaser.Scene {
     const legF = this.mech.legFactor();
     const intent = this.controls.read();
 
-    // ── Tank locomotion with weight inertia ──
-    const targetSpeed = intent.throttle * mv.maxSpeed * legF;
-    this.speed = approach(this.speed, targetSpeed, mv.accel * dt);
-    this.angle += intent.turn * mv.turnRate * dt * (0.4 + 0.6 * legF);
-    this.px += Math.cos(this.angle) * this.speed * dt;
-    this.py += Math.sin(this.angle) * this.speed * dt;
+    // ── Twin-stick locomotion ── the left stick / WASD is a world-space move vector;
+    // the mech accelerates toward it (weight inertia) and strafes freely. ──
+    const maxSp = mv.maxSpeed * legF;
+    this.vx = approach(this.vx, intent.move.x * maxSp, mv.accel * dt);
+    this.vy = approach(this.vy, intent.move.y * maxSp, mv.accel * dt);
+    this.px += this.vx * dt;
+    this.py += this.vy * dt;
+    this.speed = Math.hypot(this.vx, this.vy);
 
-    // ── Turret: slew toward aim, clamped to the arc; aim past the arc turns the mech ──
+    // Legs turn to face the direction of travel (so the walk reads), at the chassis turn
+    // rate — heavier mechs pivot their stance more slowly.
+    if (this.speed > 5) {
+      const moveAng = Math.atan2(this.vy, this.vx);
+      this.angle = Phaser.Math.Angle.RotateTo(this.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
+    }
+
+    // ── Turret: aim freely, full 360° (no torso-twist arc), slewing toward the aim. ──
     const aim = intent.aim.mode === 'stick'
       ? intent.aim.angle
       : Math.atan2(intent.aim.y - this.py, intent.aim.x - this.px);
-    const raw = Phaser.Math.Angle.Wrap(aim - this.angle);
-    const clamped = Phaser.Math.Clamp(raw, -mv.turretArc, mv.turretArc);
-    const target = this.angle + clamped;
-    this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, target, mv.turretSlew * dt);
-    if (Math.abs(raw) > mv.turretArc) {
-      const over = Math.abs(raw) - mv.turretArc;
-      this.angle += Math.sign(raw) * Math.min(mv.turnRate * dt * 0.7, over);
-    }
+    this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * dt);
 
     // ── Stompy stepped gait ──
     let bob = 0;

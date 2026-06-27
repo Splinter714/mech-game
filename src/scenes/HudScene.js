@@ -21,7 +21,7 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setOrigin(0, 0);
 
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
-    this.add.text(16, 36, 'WASD: drive  ·  mouse: aim  ·  LMB/RMB/Q/E: weapons 1-4  ·  pad: sticks + LT/RT/LB/RB  ·  G: garage',
+    this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E: weapons  ·  pad: LT/RT/LB/RB+L3/R3  ·  G: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
 
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
