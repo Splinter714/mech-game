@@ -83,6 +83,40 @@ export const WEAPONS = {
     ammoMax: null, ammoRegen: 0, slots: 2, cycleTime: 1300,
     delivery: { hit: 'contact', pattern: 'single' },
   }),
+
+  // ── Energy variants (#20): same category, very different cadence/feel ──
+  pulseLaser: w({   // rapid, forgiving, light per-hit
+    id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
+    damage: 5, range: { min: 0, opt: 150, max: 260 },
+    ammoMax: 24, ammoRegen: 3.2, slots: 1, cycleTime: 180,
+    delivery: { hit: 'hitscan', pattern: 'single' },
+  }),
+  beamLaser: w({    // hold for a near-continuous beam; drains fast
+    id: 'beamLaser', name: 'Beam Laser', category: 'energy',
+    damage: 2, range: { min: 0, opt: 200, max: 340 },
+    ammoMax: 100, ammoRegen: 16, slots: 2, cycleTime: 0,
+    delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 18 },
+  }),
+  railLance: w({    // slow, long-range, heavy single hit
+    id: 'railLance', name: 'Rail Lance', category: 'energy',
+    damage: 34, range: { min: 120, opt: 400, max: 640 },
+    ammoMax: 3, ammoRegen: 0.4, slots: 2, cycleTime: 2200,
+    delivery: { hit: 'hitscan', pattern: 'single' },
+  }),
+
+  // ── Sustained-cone + incendiary (#21, #22) ──
+  flamethrower: w({ // short-range spray of slow flame; chews up anything close
+    id: 'flamethrower', name: 'Flamethrower', category: 'energy',
+    damage: 2, range: { min: 0, opt: 55, max: 100 },
+    ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 100,
+    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 3, spreadAngle: 24, velocity: 165, kind: 'flame', splash: 6 },
+  }),
+  napalm: w({       // lobbed canister that bursts into a burning ground patch
+    id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
+    damage: 6, range: { min: 50, opt: 170, max: 280 },
+    ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 230, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
+  }),
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS);

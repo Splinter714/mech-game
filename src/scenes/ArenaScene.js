@@ -68,6 +68,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
     this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
     this.projectiles = [];
+    this.firePatches = [];                // burning ground (napalm)
     this.scene.launch('HudScene');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
   }
@@ -167,8 +168,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('abilityCooldowns', this.abilityCd);
     this.registry.set('shieldActive', this.time.now < this.shieldUntil);
 
-    // ── Projectiles in flight ──
+    // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
+    this._updateFirePatches();
 
     // Bubble shield bubble, drawn over the player while active.
     if (this.time.now < this.shieldUntil) {
@@ -260,6 +262,7 @@ export default class ArenaScene extends Phaser.Scene {
   // The kind tag drives a projectile/impact's look: energy → plasma blob, missile →
   // trailed rocket, anything else → ballistic slug.
   _kind(weapon) {
+    if (weapon.delivery.kind) return weapon.delivery.kind;   // explicit override (flame, fire)
     if (weapon.category === 'energy') return 'plasma';
     if (weapon.category === 'missile') return 'missile';
     return 'slug';
@@ -306,7 +309,7 @@ export default class ArenaScene extends Phaser.Scene {
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
       damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
-      dist: 0, maxDist, arc: d.path === 'arcing', trail: [],
+      dist: 0, maxDist, arc: d.path === 'arcing', trail: [], ground: d.groundFire || null,
       homing: d.guidance === 'homing', turn: 3.4,   // guided missiles steer toward a target
     });
   }
@@ -330,6 +333,7 @@ export default class ArenaScene extends Phaser.Scene {
           this._damageDummyAt(p.x, p.y, dmg, p.color);
         }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
+        if (p.ground) this.firePatches.push({ x: p.x, y: p.y, r: p.ground.radius, dps: p.ground.dps, until: this.time.now + p.ground.duration * 1000, nextTick: this.time.now + 500 });
         continue;
       }
       this._drawProjectile(p);
@@ -354,10 +358,40 @@ export default class ArenaScene extends Phaser.Scene {
       const bx = p.x - Math.cos(p.angle) * 7, by = dy - Math.sin(p.angle) * 7;
       g.lineStyle(3, 0xffb347, 0.5).lineBetween(bx, by, p.x - Math.cos(p.angle) * 14, dy - Math.sin(p.angle) * 14);
       g.fillStyle(p.color, 1).fillCircle(p.x, dy, 2.4);
+    } else if (p.kind === 'flame') {
+      const f = 0.7 + 0.3 * Math.sin(p.dist * 0.4);   // flicker
+      g.fillStyle(0xff7a18, 0.4 * f).fillCircle(p.x, dy, 6);
+      g.fillStyle(0xffd56b, 0.9 * f).fillCircle(p.x, dy, 2.6);
+    } else if (p.kind === 'fire') { // napalm canister, lobbed
+      g.fillStyle(0x3a2a1c, 1).fillCircle(p.x, dy, 3.2);
+      g.fillStyle(0xff7a18, 0.9).fillCircle(p.x, dy, 1.6);
     } else { // slug: a short bright tracer
       const tx = p.x - Math.cos(p.angle) * 9, ty = dy - Math.sin(p.angle) * 9;
       g.lineStyle(2, p.color, 0.9).lineBetween(tx, ty, p.x, dy);
     }
+  }
+
+  // Burning ground patches (napalm): tick damage to mechs standing in them, with a
+  // flickering flame visual, until they burn out.
+  _updateFirePatches() {
+    const now = this.time.now;
+    for (const fp of this.firePatches) {
+      if (now >= fp.nextTick) {
+        fp.nextTick += 500;
+        if (!this.dummy.isDestroyed() && Math.hypot(this.dx - fp.x, this.dy - fp.y) < fp.r) {
+          this._damageDummyAt(this.dx, this.dy, Math.max(1, Math.round(fp.dps * 0.5)), 0xff7a18);
+        }
+      }
+      // flames
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + now * 0.004;
+        const rr = fp.r * (0.4 + 0.4 * Math.abs(Math.sin(now * 0.01 + i)));
+        this.projFx.fillStyle(i % 2 ? 0xff7a18 : 0xffd56b, 0.45)
+          .fillCircle(fp.x + Math.cos(a) * rr, fp.y + Math.sin(a) * rr, 5);
+      }
+      if (now >= fp.until) fp.dead = true;
+    }
+    if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
   }
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
