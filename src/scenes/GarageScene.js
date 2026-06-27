@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { buildMechTextures, reskinMech } from '../art/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
 import { MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
@@ -62,8 +63,11 @@ export default class GarageScene extends Phaser.Scene {
     this.dollW = Math.round(this.W * 0.66) - 20;
     this.dollH = this.H - this.dollY - 64;
 
+    buildMechTextures(this, 'garageMech', this.mech);
+
     this._buildHeader();
     this._buildCatalog();
+    this._buildPreview();
     this.doll = this.add.container(0, 0);
     this.footer = this.add.container(0, 0);
     this.refresh();
@@ -125,6 +129,21 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(x + 12, y + 2, '— equipment —', { fontFamily: 'monospace', fontSize: '11px', color: UI.dim });
     y += 20;
     for (const id of EQUIPMENT_IDS) row(id, 'equip');
+  }
+
+  // A live, top-down render of the actual mech (hull + turret) in the open space below
+  // the doll, so you see weapons appear/vanish on the real model as you build. The
+  // sprites reference fixed texture keys; onChange re-skins those textures in place.
+  _buildPreview() {
+    const px = Math.round(this.dollX + this.dollW * 0.5);
+    const py = this.H - 176;
+    this.previewPanel = this.add.rectangle(px, py, 220, 220, 0x10151c)
+      .setStrokeStyle(1, UI.panelEdge);
+    this.add.text(px, py - 100, 'LIVE PREVIEW', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    }).setOrigin(0.5, 0);
+    this.previewHull = this.add.sprite(px, py + 10, 'garageMech_hull_0').setScale(0.7);
+    this.previewTurret = this.add.sprite(px, py + 10, 'garageMech_turret').setScale(0.7);
   }
 
   // Where a location's card sits (top-left + size). Height grows with slot capacity so
@@ -265,6 +284,7 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   onChange() {
+    reskinMech(this, 'garageMech', this.mech);
     saveAllMechs(this.allMechs);
     this.refresh();
   }
