@@ -4,7 +4,9 @@ import { buildMechTextures, reskinMech, mechLayout, ART_SCALE } from '../art/ind
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
+import { CATEGORIES } from '../data/categories.js';
 import { hexToPixel, range, axialKey, HEX_SIZE } from '../data/hexgrid.js';
+import { Controls } from '../input/Controls.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -54,10 +56,9 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.cameras.main.startFollow(this.playerView, true, 0.12, 0.12);
 
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,G');
+    this.controls = new Controls(this);
+    this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.input.keyboard.on('keydown-G', () => this.toGarage());
-    this.input.keyboard.on('keydown-SPACE', () => this.fire());
-    this.input.on('pointerdown', () => this.fire());
 
     this.fx = this.add.graphics();
     this.scene.launch('HudScene');
@@ -92,20 +93,19 @@ export default class ArenaScene extends Phaser.Scene {
     const dt = Math.min(0.05, delta / 1000);
     const mv = this.mech.movement;
     const legF = this.mech.legFactor();
+    const intent = this.controls.read();
 
     // ── Tank locomotion with weight inertia ──
-    const k = this.keys;
-    const throttle = (k.W.isDown || k.UP.isDown ? 1 : 0) - (k.S.isDown || k.DOWN.isDown ? 1 : 0);
-    const turn = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
-    const targetSpeed = throttle * mv.maxSpeed * legF;
+    const targetSpeed = intent.throttle * mv.maxSpeed * legF;
     this.speed = approach(this.speed, targetSpeed, mv.accel * dt);
-    this.angle += turn * mv.turnRate * dt * (0.4 + 0.6 * legF);
+    this.angle += intent.turn * mv.turnRate * dt * (0.4 + 0.6 * legF);
     this.px += Math.cos(this.angle) * this.speed * dt;
     this.py += Math.sin(this.angle) * this.speed * dt;
 
     // ── Turret: slew toward aim, clamped to the arc; aim past the arc turns the mech ──
-    const p = this.input.activePointer;
-    const aim = Math.atan2(p.worldY - this.py, p.worldX - this.px);
+    const aim = intent.aim.mode === 'stick'
+      ? intent.aim.angle
+      : Math.atan2(intent.aim.y - this.py, intent.aim.x - this.px);
     const raw = Phaser.Math.Angle.Wrap(aim - this.angle);
     const clamped = Phaser.Math.Clamp(raw, -mv.turretArc, mv.turretArc);
     const target = this.angle + clamped;
@@ -131,38 +131,57 @@ export default class ArenaScene extends Phaser.Scene {
     this.playerView.turret.rotation = this.turretAngle + Math.PI / 2;
     this.playerView.setPosition(this.px, this.py - bob);
 
+    // ── Per-slot firing ── each skill slot (body location) has its own button; a held
+    // button auto-fires that location's weapon at its own cadence, gated by ammo. ──
+    for (const w of this.mech.weapons()) {
+      let cd = (this.fireCooldowns[w.location] ?? 0) - delta;
+      if (intent.fire[w.location] && cd <= 0 && w.ready) {
+        this.fireWeapon(w);
+        cd = this._fireInterval(w.weapon);
+      }
+      this.fireCooldowns[w.location] = Math.max(0, cd);
+    }
+
     // ── Ammo regen ── every magazine tops back up over time.
     this.mech.regenAmmo(dt);
   }
 
-  // Fire every online weapon as one volley toward the aim. Draws tracers; if the aim
-  // point lands on the dummy, the nearest dummy part takes the summed damage (and the
-  // dummy is re-skinned so a destroyed part becomes a stump).
-  fire() {
+  // Milliseconds between shots for a weapon: stream weapons use their fire rate, the
+  // rest use their cycle time (with a small floor so nothing fires every frame).
+  _fireInterval(weapon) {
+    if (weapon.delivery.pattern === 'stream' && weapon.delivery.fireRate > 0) {
+      return 1000 / weapon.delivery.fireRate;
+    }
+    return Math.max(120, weapon.cycleTime);
+  }
+
+  // Fire one weapon along the current turret facing. Draws a category-coloured tracer;
+  // if the firing ray passes through the dummy, its nearest part takes this weapon's
+  // damage and the dummy is re-skinned so a destroyed part becomes a stump.
+  fireWeapon(w) {
     if (!this.scene.isActive() || this.dummy.isDestroyed()) return;
-    // Only weapons that are online AND have a round chambered fire; each spends one.
-    const ready = this.mech.readyWeapons();
-    if (ready.length === 0) return;
+    this.mech.consumeAmmo(w.location, w.index, 1);
 
-    const aimX = this.input.activePointer.worldX;
-    const aimY = this.input.activePointer.worldY;
-    const muzzleX = this.px + Math.cos(this.turretAngle) * 18;
-    const muzzleY = this.py + Math.sin(this.turretAngle) * 18;
+    const dirX = Math.cos(this.turretAngle), dirY = Math.sin(this.turretAngle);
+    const muzzleX = this.px + dirX * 18, muzzleY = this.py + dirY * 18;
+    const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
 
-    let damage = 0;
-    for (const w of ready) { damage += w.weapon.damage; this.mech.consumeAmmo(w.location, w.index, 1); }
+    // Project the dummy onto the firing ray: forward distance `t`, perpendicular miss.
+    const ex = this.dx - muzzleX, ey = this.dy - muzzleY;
+    const t = ex * dirX + ey * dirY;
+    const perp = Math.abs(ex * dirY - ey * dirX);
+    const hit = t > 0 && t < 900 && perp < 44;
 
-    // Tracer.
-    this.fx.clear();
-    this.fx.lineStyle(2, 0x9fe8ff, 0.9).beginPath();
-    this.fx.moveTo(muzzleX, muzzleY); this.fx.lineTo(aimX, aimY); this.fx.strokePath();
+    const endX = hit ? muzzleX + dirX * t : muzzleX + dirX * 600;
+    const endY = hit ? muzzleY + dirY * t : muzzleY + dirY * 600;
+    this.fx.lineStyle(2, color, 0.9).beginPath();
+    this.fx.moveTo(muzzleX, muzzleY); this.fx.lineTo(endX, endY); this.fx.strokePath();
     this.time.delayedCall(70, () => this.fx.clear());
+    if (!hit) return;
 
-    // Did the aim land on the dummy?
+    // Nearest dummy part to the impact point.
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
-    const lx = aimX - this.dx, ly = aimY - this.dy;
-    if (Math.hypot(lx, ly) > 64) return; // missed the dummy
-
+    const lx = endX - this.dx, ly = endY - this.dy;
     const lay = mechLayout(this.dummy);
     let best = null, bestD = Infinity;
     for (const loc of DAMAGEABLE) {
@@ -170,9 +189,9 @@ export default class ArenaScene extends Phaser.Scene {
       const d = Math.hypot(lx - a.x * dispUnit, ly - a.y * dispUnit);
       if (d < bestD) { bestD = d; best = loc; }
     }
-    const res = this.dummy.applyDamage(best, damage);
+    const res = this.dummy.applyDamage(best, w.weapon.damage);
     reskinMech(this, 'dummyMech', this.dummy, { theme: 'enemy' });
-    this._floatText(this.dx + lx, this.dy + ly, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
+    this._floatText(this.dx + lx, this.dy + ly, `${w.weapon.damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
     if (this.dummy.isDestroyed()) {
       this.dummyView.setAlpha(0.5);
       this._floatText(this.dx, this.dy - 30, 'DESTROYED', '#e2533a');

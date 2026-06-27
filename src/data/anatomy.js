@@ -14,8 +14,10 @@ export const LOCATIONS = [
   'leftArm', 'rightArm', 'leftLeg', 'rightLeg',
 ];
 
-// Display metadata + which locations can mount weapons/equipment. `internal` parts
-// (the cockpit) are never mount points; the engine core lives in the centre torso.
+// Display metadata + which locations are skill slots (can mount a weapon or ability).
+// Each mountable location is ONE skill slot bound to a fixed fire button, so the six
+// upper-body locations are the hardpoints; the legs are mobility only and the cockpit
+// is an internal critical, neither of which mounts anything.
 export const LOCATION_INFO = {
   head:        { label: 'Head',         short: 'H',  mountable: true,  internal: false },
   cockpit:     { label: 'Cockpit',      short: 'C',  mountable: false, internal: true  },
@@ -24,9 +26,12 @@ export const LOCATION_INFO = {
   rightTorso:  { label: 'Right Torso',  short: 'RT', mountable: true,  internal: false },
   leftArm:     { label: 'Left Arm',     short: 'LA', mountable: true,  internal: false },
   rightArm:    { label: 'Right Arm',    short: 'RA', mountable: true,  internal: false },
-  leftLeg:     { label: 'Left Leg',     short: 'LL', mountable: true,  internal: false },
-  rightLeg:    { label: 'Right Leg',    short: 'RL', mountable: true,  internal: false },
+  leftLeg:     { label: 'Left Leg',     short: 'LL', mountable: false, internal: false },
+  rightLeg:    { label: 'Right Leg',    short: 'RL', mountable: false, internal: false },
 };
+
+// The arms — the only locations a melee weapon can mount in.
+export const MELEE_LOCATIONS = ['leftArm', 'rightArm'];
 
 // Destroying one of these single locations is an instant kill.
 export const LETHAL_LOCATIONS = ['head', 'cockpit', 'centerTorso'];

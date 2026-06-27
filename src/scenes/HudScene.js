@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
+import { SKILL_BINDS } from '../input/Controls.js';
 
 // Screen-fixed overlay for the arena: controls hint, a live weapons/ammo readout, a
 // compact per-part health column for the player, and the dummy's status. Runs as its
@@ -20,7 +21,7 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setOrigin(0, 0);
 
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
-    this.add.text(16, 36, 'WASD / arrows: drive  ·  mouse: aim  ·  click / space: fire  ·  G: garage',
+    this.add.text(16, 36, 'WASD: drive  ·  mouse: aim  ·  LMB/RMB/Q/E: weapons 1-4  ·  pad: sticks + LT/RT/LB/RB  ·  G: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
 
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
@@ -44,14 +45,16 @@ export default class HudScene extends Phaser.Scene {
     const dummy = this.registry.get('dummyMech');
     if (!mech) return;
 
-    // Weapons / ammo: name + magazine (∞ for melee), dimmed when offline, red when dry.
+    // Weapons / ammo: each weapon's fire bind + name + magazine (∞ for melee). Offline
+    // weapons (their location wrecked) show a marker.
     const lines = mech.weapons().map((w) => {
+      const bind = (SKILL_BINDS[w.location]?.key ?? '?').padEnd(5);
       const name = w.weapon.name.padEnd(12);
       const ammo = w.ammo == null ? '  ∞' : `${String(Math.floor(w.ammo)).padStart(2)}/${w.weapon.ammoMax}`;
-      if (!w.online) return `[####] ${name} ----`;
-      return `${LOCATION_INFO[w.location].short.padEnd(2)}  ${name} ${ammo}`;
+      if (!w.online) return `${bind} ${name} OFFLINE`;
+      return `${bind} ${name} ${ammo}`;
     });
-    this.weaponsText.setText(lines.length ? lines.join('\n') : '(none)');
+    this.weaponsText.setText(lines.length ? lines.join('\n') : '(no weapons)');
 
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;
