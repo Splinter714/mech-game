@@ -59,6 +59,16 @@ export class AudioEngine {
     this._nextStepTime = 0;
     this._lastStepSound = 0;   // throttles rapid footfalls
     this.track = 'metal';      // active soundtrack: 'metal' (default) | 'synthwave'
+    // Live-tunable music parameters (driven by the in-game audio panel; see setParam).
+    // These are the defaults baked into the build — the panel's "copy settings" prints a
+    // params object you can paste back here.
+    this.params = {
+      master: 0.9, music: 0.30, tempo: 184, drumLevel: 1.0,
+      guitarLevel: 0.12, guitarDrive: 24, guitarSat: 400, guitarClip: 9, guitarFold: 2.1,
+      guitarTone: 8200, guitarLowCut: 75,
+      bassLevel: 0.5, bassDrive: 3, bassTone: 1300,
+    };
+    this._fx = {};             // live node references the panel tweaks
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -71,31 +81,58 @@ export class AudioEngine {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -10; comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
     this.master.connect(comp).connect(ctx.destination);
+    const P = this.params;
     this.sfx = ctx.createGain(); this.sfx.gain.value = 0.85; this.sfx.connect(this.master);
-    this.music = ctx.createGain(); this.music.gain.value = 0.30; this.music.connect(this.master);
-    // Distorted-guitar chain for the metal track, built like a real distortion pedal +
-    // cab so the sawtooth voices actually SATURATE instead of staying clean/bloopy:
-    //   voices → guitar bus → preGain (slam it hot) → waveshaper (heavy curve, 4× oversample)
-    //          → highpass (kill sub mud) → lowpass (speaker-cab roll-off) → postGain (tame).
+    this.music = ctx.createGain(); this.music.gain.value = P.music; this.music.connect(this.master);
+    this.drums = ctx.createGain(); this.drums.gain.value = P.drumLevel; this.drums.connect(this.music);
+    // Distorted-guitar chain for the metal track, built like a real distortion pedal + cab so
+    // the sawtooth voices actually SATURATE: voices → guitar bus → preGain (drive) → soft
+    // saturate → hard-clip (fizz) → wave-fold (gnarly overtones) → highpass (low cut) →
+    // lowpass (cab tone) → postGain (level). All these stages are live-tunable via setParam.
+    const fx = this._fx;
     this.guitar = ctx.createGain(); this.guitar.gain.value = 1.0;
-    const pre = ctx.createGain(); pre.gain.value = 24;          // slam it WAY into the clip
-    const sat = ctx.createWaveShaper(); sat.curve = distortionCurve(400); sat.oversample = '4x';   // soft saturate
-    const fizz = ctx.createWaveShaper(); fizz.curve = hardClipCurve(9); fizz.oversample = '4x';    // hard-clip = harsh fizz
-    const fold = ctx.createWaveShaper(); fold.curve = foldbackCurve(2.1); fold.oversample = '4x';  // wave-fold = gnarly metallic overtones
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 75; // keep the low gallop body (distorted = fizzy, not clean)
-    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 8200; cab.Q.value = 1.2; // let the buzz through
-    const post = ctx.createGain(); post.gain.value = 0.12;      // make-up: keep the harsh guitar present
-    this.guitar.connect(pre).connect(sat).connect(fizz).connect(fold).connect(hp).connect(cab).connect(post).connect(this.music);
+    fx.pre = ctx.createGain(); fx.pre.gain.value = P.guitarDrive;
+    fx.sat = ctx.createWaveShaper(); fx.sat.curve = distortionCurve(P.guitarSat); fx.sat.oversample = '4x';
+    fx.fizz = ctx.createWaveShaper(); fx.fizz.curve = hardClipCurve(P.guitarClip); fx.fizz.oversample = '4x';
+    fx.fold = ctx.createWaveShaper(); fx.fold.curve = foldbackCurve(P.guitarFold); fx.fold.oversample = '4x';
+    fx.hp = ctx.createBiquadFilter(); fx.hp.type = 'highpass'; fx.hp.frequency.value = P.guitarLowCut;
+    fx.cab = ctx.createBiquadFilter(); fx.cab.type = 'lowpass'; fx.cab.frequency.value = P.guitarTone; fx.cab.Q.value = 1.2;
+    fx.post = ctx.createGain(); fx.post.gain.value = P.guitarLevel;
+    this.guitar.connect(fx.pre).connect(fx.sat).connect(fx.fizz).connect(fx.fold).connect(fx.hp).connect(fx.cab).connect(fx.post).connect(this.music);
 
-    // Parallel LOW-FOUNDATION path (the riff's tonal body): the harsh chain above strips the
-    // fundamental, so a lightly-overdriven, low-passed layer of the same notes is blended back
-    // in underneath — restores the "bass" tone the heavy distortion eats.
+    // Parallel LOW-FOUNDATION path (the riff's tonal body): a lightly-overdriven, low-passed
+    // layer of the same notes blended under the harsh chain — restores the "bass" tone the
+    // heavy distortion eats.
     this.bass = ctx.createGain(); this.bass.gain.value = 1.0;
-    const bdrive = ctx.createGain(); bdrive.gain.value = 3;
-    const bshape = ctx.createWaveShaper(); bshape.curve = distortionCurve(28); bshape.oversample = '2x';
-    const blp = ctx.createBiquadFilter(); blp.type = 'lowpass'; blp.frequency.value = 1300;
-    const bpost = ctx.createGain(); bpost.gain.value = 0.5;
-    this.bass.connect(bdrive).connect(bshape).connect(blp).connect(bpost).connect(this.music);
+    fx.bdrive = ctx.createGain(); fx.bdrive.gain.value = P.bassDrive;
+    fx.bshape = ctx.createWaveShaper(); fx.bshape.curve = distortionCurve(28); fx.bshape.oversample = '2x';
+    fx.blp = ctx.createBiquadFilter(); fx.blp.type = 'lowpass'; fx.blp.frequency.value = P.bassTone;
+    fx.bpost = ctx.createGain(); fx.bpost.gain.value = P.bassLevel;
+    this.bass.connect(fx.bdrive).connect(fx.bshape).connect(fx.blp).connect(fx.bpost).connect(this.music);
+  }
+
+  // Live-update a music parameter from the in-game panel; also persists into this.params so
+  // "copy settings" can dump a paste-ready defaults block.
+  setParam(k, v) {
+    this.params[k] = v;
+    const fx = this._fx;
+    if (!this.ctx) return;
+    switch (k) {
+      case 'master': if (!this.muted) this.master.gain.value = v; break;
+      case 'music': this.music.gain.value = v; break;
+      case 'drumLevel': this.drums.gain.value = v; break;
+      case 'guitarDrive': fx.pre.gain.value = v; break;
+      case 'guitarSat': fx.sat.curve = distortionCurve(v); break;
+      case 'guitarClip': fx.fizz.curve = hardClipCurve(v); break;
+      case 'guitarFold': fx.fold.curve = foldbackCurve(v); break;
+      case 'guitarLowCut': fx.hp.frequency.value = v; break;
+      case 'guitarTone': fx.cab.frequency.value = v; break;
+      case 'guitarLevel': fx.post.gain.value = v; break;
+      case 'bassDrive': fx.bdrive.gain.value = v; break;
+      case 'bassTone': fx.blp.frequency.value = v; break;
+      case 'bassLevel': fx.bpost.gain.value = v; break;
+      default: break;   // tempo is read live by _schedule
+    }
   }
 
   // The riff's tonal low foundation (root + sub octave), lightly driven + low-passed.
@@ -113,7 +150,7 @@ export class AudioEngine {
 
   setMuted(m) {
     this.muted = m;
-    if (this.master) this.master.gain.value = m ? 0 : 0.9;
+    if (this.master) this.master.gain.value = m ? 0 : this.params.master;
     return m;
   }
   toggleMute() { return this.setMuted(!this.muted); }
@@ -296,7 +333,7 @@ export class AudioEngine {
 
   _schedule() {
     if (!this.ctx || this.ctx.state !== 'running' || this.muted) return;
-    const tempo = this.track === 'synthwave' ? 104 : 184;
+    const tempo = this.track === 'synthwave' ? 104 : this.params.tempo;
     const stepDur = 60 / tempo / 4;   // sixteenth note
     const now = this.ctx.currentTime;
     if (this._nextStepTime < now) this._nextStepTime = now + 0.06;
@@ -380,25 +417,25 @@ export class AudioEngine {
   }
 
   _kick(at) {
-    this.tone(this.music, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
+    this.tone(this.drums, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
   }
   _kickMetal(at) {
-    this.tone(this.music, { type: 'sine', freq: 155, freqEnd: 42, dur: 0.12, gain: 0.26, attack: 0.001 }, at);
-    this.noise(this.music, { dur: 0.02, gain: 0.06, type: 'highpass', freq: 3200 }, at);   // beater click
+    this.tone(this.drums, { type: 'sine', freq: 155, freqEnd: 42, dur: 0.12, gain: 0.26, attack: 0.001 }, at);
+    this.noise(this.drums, { dur: 0.02, gain: 0.06, type: 'highpass', freq: 3200 }, at);   // beater click
   }
   _snare(at) {
-    this.noise(this.music, { dur: 0.16, gain: 0.12, type: 'highpass', freq: 1400 }, at);
-    this.tone(this.music, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
+    this.noise(this.drums, { dur: 0.16, gain: 0.12, type: 'highpass', freq: 1400 }, at);
+    this.tone(this.drums, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
   }
   _snareMetal(at) {
-    this.noise(this.music, { dur: 0.18, gain: 0.17, type: 'highpass', freq: 1800 }, at);
-    this.noise(this.music, { dur: 0.08, gain: 0.08, type: 'bandpass', freq: 420, q: 1 }, at);
-    this.tone(this.music, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 }, at);
+    this.noise(this.drums, { dur: 0.18, gain: 0.17, type: 'highpass', freq: 1800 }, at);
+    this.noise(this.drums, { dur: 0.08, gain: 0.08, type: 'bandpass', freq: 420, q: 1 }, at);
+    this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 }, at);
   }
   _crash(at) {
-    this.noise(this.music, { dur: 0.6, gain: 0.1, type: 'highpass', freq: 5200 }, at);
+    this.noise(this.drums, { dur: 0.6, gain: 0.1, type: 'highpass', freq: 5200 }, at);
   }
   _hat(at, gain) {
-    this.noise(this.music, { dur: 0.04, gain, type: 'highpass', freq: 7000 }, at);
+    this.noise(this.drums, { dur: 0.04, gain, type: 'highpass', freq: 7000 }, at);
   }
 }

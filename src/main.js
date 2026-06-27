@@ -3,6 +3,7 @@ import BootScene from './scenes/BootScene.js';
 import GarageScene from './scenes/GarageScene.js';
 import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
+import { mountAudioPanel } from './ui/audioPanel.js';
 
 // `?canvas` forces Phaser's Canvas renderer. Headless browsers (the smoke test)
 // often lack WebGL framebuffers, and the game logic we verify there is
@@ -62,3 +63,6 @@ window.visualViewport?.addEventListener('resize', applySize);
 if (window.ResizeObserver && gameEl) new ResizeObserver(applySize).observe(gameEl);
 
 if (import.meta.env.DEV) window.__game = game;
+
+// In-game music tuning panel (toggle with `P`).
+mountAudioPanel();
