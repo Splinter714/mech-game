@@ -256,6 +256,13 @@ function drawDecor(sg, mech, lay, T) {
       const mx = hd.x + (d.side ?? -1) * hd.w * 0.18;
       rectC(sg, mx, hd.y - hd.h * 1.3, Math.max(0.8, hd.w * 0.07), hd.h * 1.8, T.rim);
       glowDot(sg, mx, hd.y - hd.h * 2.1, 1.1, NEON.energy);
+    } else if (d.kind === 'vane') {              // swept-back skirmisher fin (light)
+      const st = lay[d.side < 0 ? 'leftTorso' : 'rightTorso'];
+      const ox = st.x + d.side * st.w * 0.4, fy = st.y + st.h * 0.08;
+      const tipX = ox + d.side * st.w * 1.25, tipY = fy + st.h * 0.55;
+      poly(sg, [[ox, fy - st.h * 0.34], [tipX, tipY], [ox, fy + st.h * 0.16]], T.outline);
+      poly(sg, [[ox, fy - st.h * 0.3], [tipX - d.side * 0.5, tipY - 0.4], [ox, fy + st.h * 0.12]], T.faceDk);
+      poly(sg, [[ox, fy - st.h * 0.3], [ox + d.side * st.w * 0.55, fy - st.h * 0.08], [ox, fy - st.h * 0.02]], T.rim, 0.5);
     } else if (d.kind === 'stack') {             // rear exhaust pair with embers
       const st = lay[d.side < 0 ? 'leftTorso' : 'rightTorso'];
       const cx = st.x, cy = st.y + st.h * 0.5;
