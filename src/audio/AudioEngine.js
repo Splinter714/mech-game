@@ -86,6 +86,29 @@ export class AudioEngine {
     const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 8200; cab.Q.value = 1.2; // let the buzz through
     const post = ctx.createGain(); post.gain.value = 0.12;      // make-up: keep the harsh guitar present
     this.guitar.connect(pre).connect(sat).connect(fizz).connect(fold).connect(hp).connect(cab).connect(post).connect(this.music);
+
+    // Parallel LOW-FOUNDATION path (the riff's tonal body): the harsh chain above strips the
+    // fundamental, so a lightly-overdriven, low-passed layer of the same notes is blended back
+    // in underneath — restores the "bass" tone the heavy distortion eats.
+    this.bass = ctx.createGain(); this.bass.gain.value = 1.0;
+    const bdrive = ctx.createGain(); bdrive.gain.value = 3;
+    const bshape = ctx.createWaveShaper(); bshape.curve = distortionCurve(28); bshape.oversample = '2x';
+    const blp = ctx.createBiquadFilter(); blp.type = 'lowpass'; blp.frequency.value = 1300;
+    const bpost = ctx.createGain(); bpost.gain.value = 0.5;
+    this.bass.connect(bdrive).connect(bshape).connect(blp).connect(bpost).connect(this.music);
+  }
+
+  // The riff's tonal low foundation (root + sub octave), lightly driven + low-passed.
+  _bass(freq, at, dur, gain = 0.6) {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(gain, at + 0.004);
+    g.gain.setValueAtTime(gain, at + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    g.connect(this.bass);
+    const v = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
+    v(freq); v(freq * 0.5, 'square');                // root + sub octave for body
   }
 
   setMuted(m) {
@@ -302,6 +325,7 @@ export class AudioEngine {
 
     if (gallop) {
       this._gtr(riff[step], at, 0.065, 0.55, true);                 // tight palm-muted chug (no overlap = no smear)
+      this._bass(riff[step], at, 0.085, 0.6);                       // tonal low foundation under the fizz
       this.noise(this.music, { dur: 0.018, gain: 0.05, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
     if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.28, 0.06, false); // scream
