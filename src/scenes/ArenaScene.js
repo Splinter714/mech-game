@@ -206,6 +206,17 @@ export default class ArenaScene extends Phaser.Scene {
     }
   }
 
+  // Damage multiplier vs. distance: full out to `opt`, falling to ~0.3 at `max` and a
+  // touch beyond; below `min` (an arming distance, e.g. missiles) it's reduced too.
+  _rangeFactor(range, dist) {
+    if (!range) return 1;
+    const { min = 0, opt = 0, max = 0 } = range;
+    if (min > 0 && dist < min) return 0.4 + 0.6 * (dist / min);
+    if (dist <= opt || max <= opt) return 1;
+    const t = Math.min(1.2, (dist - opt) / (max - opt));
+    return Math.max(0.2, 1 - 0.7 * t);
+  }
+
   // The kind tag drives a projectile/impact's look: energy → plasma blob, missile →
   // trailed rocket, anything else → ballistic slug.
   _kind(weapon) {
@@ -231,7 +242,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.fx.lineStyle(5, color, 0.25).lineBetween(muzzleX, muzzleY, endX, endY);
     this.fx.lineStyle(1.6, 0xffffff, 0.9).lineBetween(muzzleX, muzzleY, endX, endY);
     this.time.delayedCall(80, () => this.fx.clear());
-    if (hit) { this._damageDummyAt(endX, endY, w.weapon.damage, color); this._impactFx(endX, endY, color, 'beam', 0); }
+    if (hit) {
+      const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
+      this._damageDummyAt(endX, endY, dmg, color);
+      this._impactFx(endX, endY, color, 'beam', 0);
+    }
   }
 
   _spawnProjectile(w, x, y, angle) {
@@ -250,7 +265,7 @@ export default class ArenaScene extends Phaser.Scene {
       x, y, angle, speed,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
-      damage: w.weapon.damage, splash: d.splash || 0,
+      damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
       dist: 0, maxDist, arc: d.path === 'arcing', trail: [],
       homing: d.guidance === 'homing', turn: 3.4,   // guided missiles steer toward a target
     });
@@ -270,7 +285,10 @@ export default class ArenaScene extends Phaser.Scene {
       const landed = p.dist >= p.maxDist;
       if (toDummy < HIT_RADIUS || landed) {
         p.dead = true;
-        if (toDummy < HIT_RADIUS + p.splash) this._damageDummyAt(p.x, p.y, p.damage, p.color);
+        if (toDummy < HIT_RADIUS + p.splash) {
+          const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
+          this._damageDummyAt(p.x, p.y, dmg, p.color);
+        }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
         continue;
       }
