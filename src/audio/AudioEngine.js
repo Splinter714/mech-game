@@ -55,11 +55,20 @@ const leadFreq = (deg) => {
   const d = deg - 1, oct = Math.floor(d / 7);
   return LEAD_SCALE[((d % 7) + 7) % 7] * Math.pow(2, oct);
 };
-// 1 5 3 4 3 2 3 4 5 1 — syncopated (notes pushed off the downbeats), last note (1) held 8.
-const LEAD_MELODY = [
-  [1, 1, 3], [5, 4, 2], [3, 6, 2], [4, 9, 3], [3, 12, 2],
-  [2, 14, 2], [3, 17, 3], [4, 20, 2], [5, 22, 2], [1, 24, 8],
-];
+// Build the lead line from a DEGREE list + an x/o RHYTHM grid (1 char per sixteenth-step,
+// 32 steps = the 2-bar loop): `x` = a note onset, `o` = hold/rest. Each x takes the next
+// degree and the note sustains until the following x (so trailing o's = a held note).
+function buildMelody(degrees, grid) {
+  const onsets = [];
+  for (let i = 0; i < grid.length; i++) if (grid[i] === 'x' || grid[i] === 'X') onsets.push(i);
+  return onsets.map((start, k) => {
+    const end = k + 1 < onsets.length ? onsets[k + 1] : grid.length;
+    return [degrees[k % degrees.length], start, end - start];
+  });
+}
+const LEAD_DEGREES = [1, 5, 3, 4, 3, 2, 3, 4, 5, 1];
+const LEAD_RHYTHM  = 'xooxooxoxooxooxoxooxooxoxooooooo';   // x = onset, o = hold/rest
+const LEAD_MELODY = buildMelody(LEAD_DEGREES, LEAD_RHYTHM);
 
 export class AudioEngine {
   constructor() {
