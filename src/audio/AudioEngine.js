@@ -65,12 +65,13 @@ export class AudioEngine {
     // params object you can paste back here.
     this.params = {
       // master + drums
-      master: 1, music: 0.35, tempo: 120,
-      drumLevel: 1.5, kickLevel: 1.4, snareLevel: 1.45, hatLevel: 1.7,
+      master: 1, music: 0.6, tempo: 120,
+      drumLevel: 1.5, kickLevel: 1, snareLevel: 2, hatLevel: 1.1,
       // per-drum SOUND shaping
-      kickPitch: 155, kickDecay: 0.12, kickClick: 0.06,
-      snareTone: 1800, snareSnap: 420, snareDecay: 0.18,
-      hatFreq: 7000, hatDecay: 0.04, crashDecay: 0.6,
+      kickPitch: 120, kickDecay: 0.4, kickClick: 0.09,
+      snareTone: 600, snareSnap: 1200, snareDecay: 0.25,
+      hatFreq: 7100, hatDecay: 0.13,
+      crashLevel: 1, crashBright: 5200, crashDecay: 0.9,
       // rhythm-guitar TONE (the distortion pedal + cab)
       guitarLevel: 0.17, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
       guitarTone: 9000, guitarLowCut: 400,
@@ -472,7 +473,8 @@ export class AudioEngine {
     this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 * s }, at);    // tone body
   }
   _crash(at) {
-    this.noise(this.drums, { dur: this.params.crashDecay, gain: 0.1 * this.params.hatLevel, type: 'highpass', freq: 5200 }, at);
+    const P = this.params;
+    this.noise(this.drums, { dur: P.crashDecay, gain: 0.1 * P.crashLevel, type: 'highpass', freq: P.crashBright }, at);
   }
   _hat(at, gain) {
     this.noise(this.drums, { dur: this.params.hatDecay, gain, type: 'highpass', freq: this.params.hatFreq }, at);
