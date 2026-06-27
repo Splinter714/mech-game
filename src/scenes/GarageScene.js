@@ -55,7 +55,8 @@ export default class GarageScene extends Phaser.Scene {
 
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
-    this.selected = 'rightArm';
+    this.selected = null;   // last-touched location (for a subtle highlight)
+    this.armed = null;      // catalog item id picked up, waiting to be placed
 
     // Doll region: the left ~56% of the screen, below the header, above the footer.
     this.dollX = 20;
@@ -73,6 +74,7 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
+    this.input.keyboard.on('keydown-ESC', () => this.arm(null));
   }
 
   txt(x, y, s, opts = {}) {
@@ -99,8 +101,20 @@ export default class GarageScene extends Phaser.Scene {
 
   _buildHeader() {
     this.txt(20, 16, 'MECH LAB', { fontSize: '20px', color: UI.accent });
-    this.txt(120, 22, 'select a part · click a catalog item to mount · click a chip to remove', { fontSize: '11px', color: UI.dim });
+    this.hintText = this.txt(120, 22, '', { fontSize: '11px', color: UI.dim });
     this.button(this.W - 150, 20, 130, 34, '▶ DEPLOY  (D)', () => this.deploy(), UI.sel);
+    this._updateHint();
+  }
+
+  _updateHint() {
+    if (!this.hintText) return;
+    if (this.armed) {
+      this.hintText.setText(`placing ${getItem(this.armed).name} — click a body section · Esc to cancel`)
+        .setColor(UI.sel);
+    } else {
+      this.hintText.setText('click a catalog item, then a body section to mount it · click a chip to remove')
+        .setColor(UI.dim);
+    }
   }
 
   _buildCatalog() {
@@ -109,26 +123,35 @@ export default class GarageScene extends Phaser.Scene {
     this.panel(x, 70, w, this.H - 134);
     this.txt(x + 12, 80, 'CATALOG', { fontSize: '14px', color: UI.accent });
 
+    this.catalogRows = {};
     let y = 106;
-    const row = (id, kind) => {
+    const row = (id) => {
       const item = getItem(id);
       const r = this.add.rectangle(x + 8, y, w - 16, 30, UI.btn).setOrigin(0, 0)
         .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      const catColor = kind === 'weapon' ? CATEGORIES[item.category].color : 0x7bd17b;
+      const catColor = isWeapon(id) ? CATEGORIES[item.category].color : 0x7bd17b;
       this.add.rectangle(x + 16, y + 15, 10, 10, catColor).setOrigin(0.5);
       this.add.text(x + 28, y + 6, item.name, { fontFamily: 'monospace', fontSize: '13px', color: UI.text });
       this.add.text(x + w - 20, y + 8, `${item.slots} slot${item.slots > 1 ? 's' : ''}`, {
         fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
       }).setOrigin(1, 0);
-      r.on('pointerover', () => r.setFillStyle(UI.btnHover));
-      r.on('pointerout', () => r.setFillStyle(UI.btn));
-      r.on('pointerdown', () => this.tryMount(id));
+      r.on('pointerover', () => { if (this.armed !== id) r.setFillStyle(UI.btnHover); });
+      r.on('pointerout', () => { if (this.armed !== id) r.setFillStyle(UI.btn); });
+      r.on('pointerdown', () => this.arm(id));
+      this.catalogRows[id] = r;
       y += 34;
     };
-    for (const id of WEAPON_IDS) row(id, 'weapon');
-    this.add.text(x + 12, y + 2, '— equipment —', { fontFamily: 'monospace', fontSize: '11px', color: UI.dim });
-    y += 20;
-    for (const id of EQUIPMENT_IDS) row(id, 'equip');
+    for (const id of [...WEAPON_IDS, ...EQUIPMENT_IDS]) row(id);
+    this._updateCatalogHighlight();
+  }
+
+  // Highlight the armed catalog row (the piece waiting to be placed).
+  _updateCatalogHighlight() {
+    if (!this.catalogRows) return;
+    for (const [id, r] of Object.entries(this.catalogRows)) {
+      const on = id === this.armed;
+      r.setFillStyle(on ? UI.cardSel : UI.btn).setStrokeStyle(on ? 2 : 1, on ? 0xefc14a : UI.panelEdge);
+    }
   }
 
   // A live, top-down render of the actual mech (hull + turret) in the open space below
@@ -172,10 +195,16 @@ export default class GarageScene extends Phaser.Scene {
     const isSel = loc === this.selected;
     const used = this.mech.usedSlots(loc), cap = this.mech.slotCapacity(loc);
 
-    const bg = this.add.rectangle(rect.x, rect.y, rect.w, rect.h, isSel ? UI.cardSel : UI.card)
+    // When a piece is armed, every card reads as a drop target.
+    const isTarget = this.armed && loc === this.selected;
+    const bg = this.add.rectangle(rect.x, rect.y, rect.w, rect.h, (isSel || isTarget) ? UI.cardSel : UI.card)
       .setOrigin(0, 0).setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge)
       .setInteractive({ useHandCursor: true });
-    bg.on('pointerdown', () => { this.selected = loc; this.refresh(); });
+    if (this.armed) {
+      bg.on('pointerover', () => bg.setStrokeStyle(2, 0x7bd17b));
+      bg.on('pointerout', () => bg.setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge));
+    }
+    bg.on('pointerdown', () => this.placeOn(loc));
     this.doll.add(bg);
 
     // Header: location code (full label doesn't fit a 100px card) + slot usage.
@@ -220,7 +249,7 @@ export default class GarageScene extends Phaser.Scene {
         .setOrigin(0, 0).setStrokeStyle(1, UI.slotEdge).setInteractive({ useHandCursor: true });
       empty.on('pointerover', () => empty.setFillStyle(0x16202a));
       empty.on('pointerout', () => empty.setFillStyle(UI.slotEmpty));
-      empty.on('pointerdown', () => { this.selected = loc; this.refresh(); });
+      empty.on('pointerdown', () => this.placeOn(loc));
       this.doll.add(empty);
       this.doll.add(this.add.text(cellX + cellW / 2, y + 2 + (CELL_H - 4) / 2, '+', {
         fontFamily: 'monospace', fontSize: '13px', color: UI.dim,
@@ -271,10 +300,21 @@ export default class GarageScene extends Phaser.Scene {
     }).setOrigin(1, 0));
   }
 
-  tryMount(itemId) {
-    if (!this.selected) return this.toast('select a body part first');
-    const res = this.mech.mount(this.selected, itemId);
-    if (!res.ok) return this.toast(res.reason);
+  // Pick up (or drop) a catalog piece. Clicking the armed item again clears it.
+  arm(itemId) {
+    this.armed = this.armed === itemId ? null : itemId;
+    this._updateCatalogHighlight();
+    this._updateHint();
+    this.refresh();
+  }
+
+  // Place the armed piece into a body section. Stays armed so you can mount several of
+  // the same in a row; a failed mount (no room) just toasts why.
+  placeOn(loc) {
+    this.selected = loc;
+    if (!this.armed) return this.refresh();
+    const res = this.mech.mount(loc, this.armed);
+    if (!res.ok) { this.refresh(); return this.toast(res.reason); }
     this.onChange();
   }
 
