@@ -27,6 +27,8 @@ export default class HudScene extends Phaser.Scene {
     this.assistText = this.add.text(this.W / 2, 28, '', { fontFamily: 'monospace', fontSize: '14px', color: C.accent }).setOrigin(0.5, 0);
     // Debug AI state (#28), bottom-right above the input-mode tag.
     this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
+    this.add.text(16, this.H - 134, 'debug:  [ ] AI move/fire  ·  R reset enemies  ·  N new enemy  ·  d-pad ↑↓←→',
+      { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
 
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
     this.add.text(16, 62, 'WEAPONS', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -47,7 +49,6 @@ export default class HudScene extends Phaser.Scene {
 
   update() {
     const mech = this.registry.get('playerMech');
-    const dummy = this.registry.get('dummyMech');
     if (!mech) return;
 
     this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
@@ -90,10 +91,10 @@ export default class HudScene extends Phaser.Scene {
       this.partTexts[loc].setText(`${LOCATION_INFO[loc].short.padEnd(2)} ${String(hp).padStart(3)}/${max}`).setColor(col);
     }
 
-    if (dummy) {
-      const downed = LOCATIONS.filter((l) => l !== 'cockpit' && dummy.isPartDestroyed(l)).map((l) => LOCATION_INFO[l].short);
-      const status = dummy.isDestroyed() ? 'DUMMY: DESTROYED' : `DUMMY  parts down: ${downed.length ? downed.join(' ') : 'none'}`;
-      this.dummyText.setText(status).setColor(dummy.isDestroyed() ? C.bad : C.dim);
+    const total = this.registry.get('enemyCount') || 0;
+    const alive = this.registry.get('enemiesAlive') ?? total;
+    if (total) {
+      this.dummyText.setText(`ENEMIES ${alive}/${total}`).setColor(alive ? C.dim : C.bad);
     }
   }
 }

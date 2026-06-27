@@ -61,7 +61,9 @@ try {
   const arena = await page.evaluate(() => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
-    const ex0 = a.dx, ey0 = a.dy;   // enemy spawn (known clear line of sight from origin)
+    const e0 = a.enemies[0];        // the first (and at boot, only) enemy
+    const em = e0.mech;
+    const ex0 = e0.x, ey0 = e0.y;   // enemy spawn (known clear line of sight from origin)
 
     // Tank locomotion: holding throttle should drive the mech forward (up = -y).
     const y0 = a.py;
@@ -78,18 +80,20 @@ try {
     a.controls.keys.D.isDown = false;
     const collisionHolds = !everInWall && !a._blocked(a.px, a.py);
     // Reset both mechs to their spawn (clear LOS) for the deterministic firing tests.
+    // Disable aim-assist so shots go straight along the (manually set) turret facing.
     a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
-    a.dx = ex0; a.dy = ey0; a.evx = 0; a.evy = 0;
+    e0.x = ex0; e0.y = ey0; e0.vx = 0; e0.vy = 0;
+    a.assistOn = false; a.assistTarget = null;
 
-    // Per-part damage loop: point the turret at the dummy and fire each ready weapon;
+    // Per-part damage loop: point the turret at the enemy and fire each ready weapon;
     // its centre torso (nearest part to the ray) must lose health, and over-damage
-    // must destroy it.
-    a.turretAngle = Math.atan2(a.dy - a.py, a.dx - a.px);
-    a.aimX = a.dx; a.aimY = a.dy;   // weapons converge on the aim point
+    // must destroy it. Weapons fire along turretAngle at the reticle distance (#40).
+    a.turretAngle = Math.atan2(e0.y - a.py, e0.x - a.px);
+    a.aimX = e0.x; a.aimY = e0.y;
 
     // Projectile travel: fire ONLY a travelling round (the slug, not the hitscan laser)
-    // at the pristine dummy and let it fly — it must cross the gap and deal damage.
-    const totalHp = () => Object.values(a.dummy.parts).reduce((s, p) => s + p.armor + p.structure, 0);
+    // at the pristine enemy and let it fly — it must cross the gap and deal damage.
+    const totalHp = () => Object.values(em.parts).reduce((s, p) => s + p.armor + p.structure, 0);
     const slug = a.mech.weapons().find((w) => w.weapon.delivery.hit === 'projectile');
     let projHit = false;
     if (slug) {
@@ -102,24 +106,40 @@ try {
     }
 
     // Then fire everything and confirm overall damage + destruction.
-    a.aimX = a.dx; a.aimY = a.dy;   // re-aim (the steps above advance the sim)
-    const ctBefore = a.dummy.partHealthFraction('centerTorso');
+    a.aimX = e0.x; a.aimY = e0.y;   // re-aim (the steps above advance the sim)
+    const ctBefore = em.partHealthFraction('centerTorso');
     for (const w of a.mech.readyWeapons()) a.fireWeapon(w);
     for (let i = 0; i < 30; i++) a._updateProjectiles(0.016);
-    const ctAfter = a.dummy.partHealthFraction('centerTorso');
+    const ctAfter = em.partHealthFraction('centerTorso');
 
-    a.dummy.applyDamage('centerTorso', 999);
-    const dummyDead = a.dummy.isDestroyed();
+    em.applyDamage('centerTorso', 999);
+    const dummyDead = em.isDestroyed();
+
+    // #39: spawn an extra enemy, confirm the arena tracks N and can damage the new one,
+    // then reset restores every enemy to full health in place.
+    const sumHp = (m) => Object.values(m.parts).reduce((s, p) => s + p.armor + p.structure, 0);
+    a._spawnEnemyDebug();
+    const spawnedExtra = a.enemies.length >= 2;
+    const e1 = a.enemies[a.enemies.length - 1];
+    const e1Hp0 = sumHp(e1.mech);
+    a._damageEnemyAt(e1, e1.x, e1.y, 30, 0xffffff);
+    const extraDamaged = sumHp(e1.mech) < e1Hp0;
+    a._resetEnemies();
+    // em was just killed (centre-torso overkill above); reset must bring it back to life.
+    const resetWorked = !em.isDestroyed();
 
     return {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
-      dummyTex: g.textures.exists('dummyMech_turret'),
+      dummyTex: g.textures.exists('enemy0_turret'),
       onlineWeapons: a.mech.onlineWeapons().length,
       projHit,
       collisionHolds,
       ctDamaged: ctAfter < ctBefore,
       dummyDead,
+      spawnedExtra,
+      extraDamaged,
+      resetWorked,
     };
   });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -138,6 +158,9 @@ try {
   if (!arena.collisionHolds) fail('the mech drove through a wall or off the arena disc');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');
   if (!arena.ctDamaged) fail('firing at the dummy did not damage its centre torso');
+  if (!arena.spawnedExtra) fail('#39 spawn-enemy did not add a second enemy');
+  if (!arena.extraDamaged) fail('#39 the newly spawned enemy could not be damaged');
+  if (!arena.resetWorked) fail('#39 reset-enemies did not restore a destroyed enemy');
   if (!arena.dummyDead) fail('dummy did not register destruction on centre-torso kill');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');

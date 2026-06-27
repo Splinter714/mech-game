@@ -12,8 +12,9 @@ import { Audio } from '../audio/index.js';
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
 // within a limited arc and PUSHES the chassis to turn when you aim past it; the gait is
-// a stompy stepped walk. A stationary target dummy proves the per-part damage loop.
-// Single-file for Milestone 1 — splits into arena/ mixins as combat grows.
+// a stompy stepped walk. A list of mobile enemies (start: one Raider) drives the combat
+// loop — they move, aim, shoot back, and take per-part damage; debug controls spawn/reset
+// them. Single-file for Milestone 1 — splits into arena/ mixins as combat grows.
 const ARENA_MECH_SCALE = 0.34;
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 // Aim-assist tuning (#31) — a default, always-on aid. ASSIST_STRENGTH is the max fraction
@@ -45,18 +46,13 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
-    // Enemy mech — armed, mobile, shoots back.
-    this.dummy = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['srm'] } });
-    this.dummy.repairAll();
-    this.registry.set('dummyMech', this.dummy);
-    buildMechTextures(this, 'dummyMech', this.dummy, { theme: 'enemy' });
+    // Enemies — armed, mobile, shoot back. Start with one Raider; the debug controls
+    // (#39) can reset them or spawn more. Each is a self-contained object with its own
+    // mech, textures, view, and per-mech AI state, so the arena handles N enemies.
+    this.enemies = [];
+    this._enemySeq = 0;
     const dp = hexToPixel(DUMMY_HEX.q, DUMMY_HEX.r);
-    this.dummyAngle = Math.PI / 2;       // legs facing
-    this.dummyTurret = Math.PI / 2;      // turret facing
-    this.evx = 0; this.evy = 0;          // enemy velocity
-    this.enemyFireCd = {};
-    this.dummyView = this._makeMechView('dummyMech', dp.x, dp.y, this.dummyAngle);
-    this.dx = dp.x; this.dy = dp.y;
+    this._spawnEnemy(dp.x, dp.y);
 
     // Player state.
     this.px = 0; this.py = 0;
@@ -90,6 +86,8 @@ export default class ArenaScene extends Phaser.Scene {
     });
     this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._toggleAi('move'));
     this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
+    this.input.keyboard.on('keydown-R', () => this._resetEnemies());   // #39
+    this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
 
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
     this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
@@ -170,6 +168,8 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.padEdges.pressed(PAD.SELECT) || this.padEdges.pressed(PAD.B)) this.toGarage();
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._toggleAi('move');
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._toggleAi('fire');
+    if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._resetEnemies();     // #39
+    if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._spawnEnemyDebug(); // #39
 
     // ── Aim-assist (#31): a default, always-on aid. When the enemy sits near the
     // reticle, flag it as the tracked target so weapons settle their shots onto it and
@@ -215,7 +215,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('shieldActive', this.time.now < this.shieldUntil);
 
     // ── Enemy AI ──
-    this._updateEnemy(dt, delta);
+    this._updateEnemies(dt, delta);
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
@@ -238,17 +238,66 @@ export default class ArenaScene extends Phaser.Scene {
   _updateAimAssist() {
     this.assistTarget = null;
     this.registry.set('assistOn', this.assistOn);
-    if (!this.assistOn || this.dummy.isDestroyed()) return;
-    const dx = this.dx - this.px, dy = this.dy - this.py;
-    const dist = Math.hypot(dx, dy);
-    const toAng = Math.atan2(dy, dx);
+    if (!this.assistOn) return;
+    const e = this._nearestEnemy(this.px, this.py, ASSIST_RANGE);
+    if (!e) return;
+    const toAng = Math.atan2(e.y - this.py, e.x - this.px);
     const off = Math.abs(Phaser.Math.Angle.Wrap(toAng - this.turretAngle));
-    if (off < ASSIST_CONE && dist < ASSIST_RANGE) {
+    if (off < ASSIST_CONE) {
       // Tighter aim (smaller angular error) = stronger pull, for a "settle then fire" feel.
       const strength = ASSIST_STRENGTH * (1 - off / ASSIST_CONE);
-      this.assistTarget = { x: this.dx, y: this.dy, strength, tight: off < ASSIST_CONE * 0.4 };
-      this._drawTrackCue(this.dx, this.dy, this.assistTarget.tight);
+      this.assistTarget = { x: e.x, y: e.y, strength, tight: off < ASSIST_CONE * 0.4 };
+      this._drawTrackCue(e.x, e.y, this.assistTarget.tight);
     }
+  }
+
+  // The closest living enemy to a point, within `maxDist` (default: any). Used for
+  // aim-assist, homing, hitscan target selection, and burning-ground ticks.
+  _nearestEnemy(x, y, maxDist = Infinity) {
+    let best = null, bd = maxDist;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  // ── Enemy lifecycle (#39 debug controls) ──────────────────────────────────────────
+  // Build a fresh enemy with its own textures + view + AI state and track it.
+  _spawnEnemy(x, y) {
+    const key = `enemy${this._enemySeq++}`;
+    const mech = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['srm'] } });
+    mech.repairAll();
+    buildMechTextures(this, key, mech, { theme: 'enemy' });
+    const angle = Math.PI / 2;
+    const view = this._makeMechView(key, x, y, angle);
+    const e = { key, mech, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: {}, strafeDir: 1, spawnX: x, spawnY: y };
+    this.enemies.push(e);
+    this.registry.set('dummyMech', this.enemies[0].mech);
+    return e;
+  }
+
+  // Drop an extra enemy onto a clear, in-bounds spot away from the player.
+  _spawnEnemyDebug() {
+    const spots = range({ q: 0, r: 0 }, this.worldRadius - 1)
+      .map((h) => hexToPixel(h.q, h.r))
+      .filter((p) => !this._blocked(p.x, p.y) && Math.hypot(p.x - this.px, p.y - this.py) > 160);
+    const p = spots.length ? spots[Math.floor(Math.random() * spots.length)] : { x: 0, y: -200 };
+    this._spawnEnemy(p.x, p.y);
+    this._floatText(p.x, p.y - 34, 'ENEMY +1', '#efc14a');
+  }
+
+  // Restore every enemy to full health at its spawn point (in place, no re-deploy).
+  _resetEnemies() {
+    for (const e of this.enemies) {
+      e.mech.repairAll();
+      e.x = e.spawnX; e.y = e.spawnY; e.vx = 0; e.vy = 0;
+      e.angle = Math.PI / 2; e.turret = Math.PI / 2; e.fireCd = {};
+      e.view.setAlpha(1).setPosition(e.x, e.y);
+      reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+    }
+    this._floatText(this.px, this.py - 40, 'ENEMIES RESET', '#5ec8e0');
   }
 
   // Ambient tracked-target indicator (#27, folds the old lock UI into aim-assist): corner
@@ -275,7 +324,7 @@ export default class ArenaScene extends Phaser.Scene {
     if (which === 'move') this.enemyMove = !this.enemyMove;
     else this.enemyFire = !this.enemyFire;
     const label = which === 'move' ? `AI MOVE ${this.enemyMove ? 'ON' : 'OFF'}` : `AI FIRE ${this.enemyFire ? 'ON' : 'OFF'}`;
-    this._floatText(this.dx, this.dy - 34, label, '#efc14a');
+    this._floatText(this.px, this.py - 40, label, '#efc14a');
   }
 
   _activateAbility(ab, dir) {
@@ -411,11 +460,17 @@ export default class ArenaScene extends Phaser.Scene {
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
 
-    // Project the dummy onto the firing ray: forward distance `t`, perpendicular miss.
-    const ex = this.dx - muzzleX, ey = this.dy - muzzleY;
-    const t = ex * dirX + ey * dirY;
-    const perp = Math.abs(ex * dirY - ey * dirX);
-    let hit = !this.dummy.isDestroyed() && t > 0 && t < reach && perp < 44;
+    // Project each living enemy onto the firing ray (forward `t`, perpendicular miss) and
+    // take the nearest one actually struck.
+    let target = null, t = 0;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const ex = e.x - muzzleX, ey = e.y - muzzleY;
+      const tt = ex * dirX + ey * dirY;
+      const perp = Math.abs(ex * dirY - ey * dirX);
+      if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
+    }
+    let hit = !!target;
     let endDist = hit ? t : Math.min(reach, 600);
     // Cover: a wall between muzzle and target stops the beam short.
     const wallT = this._wallDistance(muzzleX, muzzleY, angle, endDist);
@@ -429,7 +484,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.time.delayedCall(80, () => this.fx.clear());
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      this._damageDummyAt(endX, endY, dmg, color);
+      this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0);
     } else if (blocked) {
       this._impactFx(endX, endY, color, 'beam', 0);
@@ -440,7 +495,9 @@ export default class ArenaScene extends Phaser.Scene {
     const d = w.weapon.delivery;
     const speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
-    const tgt = owner === 'player' ? { x: this.dx, y: this.dy } : { x: this.px, y: this.py };
+    let tgt;
+    if (owner === 'player') { const e = this._nearestEnemy(x, y); tgt = e ? { x: e.x, y: e.y } : { x, y }; }
+    else tgt = { x: this.px, y: this.py };
     let maxDist = maxRange;
     if (d.path === 'arcing') {
       // Lob toward the target if it's roughly in front, else to optimal range.
@@ -465,11 +522,13 @@ export default class ArenaScene extends Phaser.Scene {
   _updateProjectiles(dt) {
     this.projFx.clear();
     for (const p of this.projectiles) {
-      // Resolve this round's target: player rounds hit the enemy, enemy rounds the player.
+      // Resolve this round's target: enemy rounds chase the player; player rounds chase
+      // (and damage) the nearest living enemy, re-evaluated each frame so homing retargets.
       const enemyShot = p.owner === 'enemy';
-      const targetGone = enemyShot ? this.mech.isDestroyed() : this.dummy.isDestroyed();
-      const tx = enemyShot ? this.px : this.dx;
-      const ty = enemyShot ? this.py : this.dy;
+      const hitEnemy = enemyShot ? null : this._nearestEnemy(p.x, p.y);
+      const targetGone = enemyShot ? this.mech.isDestroyed() : !hitEnemy;
+      const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
+      const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
 
       // Guided missiles steer toward the target, capped by their turn rate.
       if (p.homing && !targetGone) {
@@ -490,7 +549,8 @@ export default class ArenaScene extends Phaser.Scene {
         p.dead = true;
         if (toTarget < HIT_RADIUS + p.splash) {
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          if (enemyShot) this._damagePlayerAt(dmg); else this._damageDummyAt(p.x, p.y, dmg, p.color);
+          if (enemyShot) this._damagePlayerAt(dmg);
+          else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
         }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
         if (p.ground) this.firePatches.push({ x: p.x, y: p.y, r: p.ground.radius, dps: p.ground.dps, until: this.time.now + p.ground.duration * 1000, nextTick: this.time.now + 500 });
@@ -538,8 +598,10 @@ export default class ArenaScene extends Phaser.Scene {
     for (const fp of this.firePatches) {
       if (now >= fp.nextTick) {
         fp.nextTick += 500;
-        if (!this.dummy.isDestroyed() && Math.hypot(this.dx - fp.x, this.dy - fp.y) < fp.r) {
-          this._damageDummyAt(this.dx, this.dy, Math.max(1, Math.round(fp.dps * 0.5)), 0xff7a18);
+        for (const e of this.enemies) {
+          if (!e.mech.isDestroyed() && Math.hypot(e.x - fp.x, e.y - fp.y) < fp.r) {
+            this._damageEnemyAt(e, e.x, e.y, Math.max(1, Math.round(fp.dps * 0.5)), 0xff7a18);
+          }
         }
       }
       // flames
@@ -554,13 +616,20 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
   }
 
-  // ── Enemy AI ── maintain a range band, face the player, fire with LOS. ──
-  _updateEnemy(dt, delta) {
+  // ── Enemy AI ── each enemy maintains a range band, faces the player, fires with LOS. ──
+  _updateEnemies(dt, delta) {
     this.registry.set('aiMove', this.enemyMove);
     this.registry.set('aiFire', this.enemyFire);
-    if (this.dummy.isDestroyed()) { this.dummyView.setAlpha(0.5); return; }
-    const mv = this.dummy.movement;
-    const dxp = this.px - this.dx, dyp = this.py - this.dy;
+    for (const e of this.enemies) this._updateEnemy(e, dt, delta);
+    const alive = this.enemies.filter((e) => !e.mech.isDestroyed()).length;
+    this.registry.set('enemyCount', this.enemies.length);
+    this.registry.set('enemiesAlive', alive);
+  }
+
+  _updateEnemy(e, dt, delta) {
+    if (e.mech.isDestroyed()) { e.view.setAlpha(0.5); return; }
+    const mv = e.mech.movement;
+    const dxp = this.px - e.x, dyp = this.py - e.y;
     const dist = Math.hypot(dxp, dyp) || 1;
     const ux = dxp / dist, uy = dyp / dist;
 
@@ -569,41 +638,41 @@ export default class ArenaScene extends Phaser.Scene {
       let mx = 0, my = 0;
       if (dist > 260) { mx = ux; my = uy; }
       else if (dist < 150) { mx = -ux; my = -uy; }
-      else { this._strafeDir = this._strafeDir || 1; mx = -uy * this._strafeDir; my = ux * this._strafeDir; if (Math.random() < 0.01) this._strafeDir *= -1; }
+      else { mx = -uy * e.strafeDir; my = ux * e.strafeDir; if (Math.random() < 0.01) e.strafeDir *= -1; }
 
       const spd = mv.maxSpeed * 0.8;
-      this.evx = approach(this.evx, mx * spd, mv.accel * dt);
-      this.evy = approach(this.evy, my * spd, mv.accel * dt);
-      let ndx = this.dx + this.evx * dt, ndy = this.dy + this.evy * dt;
-      if (this._blocked(ndx, ndy)) { if (!this._blocked(this.dx + this.evx * dt, this.dy)) { ndy = this.dy; this.evy = 0; } else if (!this._blocked(this.dx, this.dy + this.evy * dt)) { ndx = this.dx; this.evx = 0; } else { ndx = this.dx; ndy = this.dy; this.evx = this.evy = 0; } }
-      this.dx = ndx; this.dy = ndy;
+      e.vx = approach(e.vx, mx * spd, mv.accel * dt);
+      e.vy = approach(e.vy, my * spd, mv.accel * dt);
+      let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
+      if (this._blocked(nx, ny)) { if (!this._blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; } else if (!this._blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; } else { nx = e.x; ny = e.y; e.vx = e.vy = 0; } }
+      e.x = nx; e.y = ny;
     } else {
-      this.evx = approach(this.evx, 0, mv.accel * dt); this.evy = approach(this.evy, 0, mv.accel * dt);
+      e.vx = approach(e.vx, 0, mv.accel * dt); e.vy = approach(e.vy, 0, mv.accel * dt);
     }
 
     // Aim turret + face travel (turret still tracks even when stationary, for testing).
-    this.dummyTurret = Phaser.Math.Angle.RotateTo(this.dummyTurret, Math.atan2(dyp, dxp), mv.turretSlew * dt);
-    if (Math.hypot(this.evx, this.evy) > 5) this.dummyAngle = Phaser.Math.Angle.RotateTo(this.dummyAngle, Math.atan2(this.evy, this.evx), mv.turnRate * dt);
+    e.turret = Phaser.Math.Angle.RotateTo(e.turret, Math.atan2(dyp, dxp), mv.turretSlew * dt);
+    if (Math.hypot(e.vx, e.vy) > 5) e.angle = Phaser.Math.Angle.RotateTo(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate * dt);
 
     // Fire ready weapons at the player when in range with line of sight (gated by #28).
-    if (this.enemyFire) for (const w of this.dummy.readyWeapons()) {
-      let cd = (this.enemyFireCd[w.location] ?? 0) - delta;
+    if (this.enemyFire) for (const w of e.mech.readyWeapons()) {
+      let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
-      const los = this._wallDistance(this.dx, this.dy, Math.atan2(dyp, dxp), dist) === Infinity;
+      const los = this._wallDistance(e.x, e.y, Math.atan2(dyp, dxp), dist) === Infinity;
       if (cd <= 0 && inRange && los) {
-        this.dummy.consumeAmmo(w.location, w.index, 1);
+        e.mech.consumeAmmo(w.location, w.index, 1);
         const aimErr = (Math.random() - 0.5) * 0.12;
-        const mx2 = this.dx + Math.cos(this.dummyTurret) * 16, my2 = this.dy + Math.sin(this.dummyTurret) * 16;
+        const mx2 = e.x + Math.cos(e.turret) * 16, my2 = e.y + Math.sin(e.turret) * 16;
         this._spawnProjectile(w, mx2, my2, Math.atan2(dyp, dxp) + aimErr, 'enemy');
         cd = this._fireInterval(w.weapon);
       }
-      this.enemyFireCd[w.location] = Math.max(0, cd);
+      e.fireCd[w.location] = Math.max(0, cd);
     }
-    this.dummy.regenAmmo(dt);
+    e.mech.regenAmmo(dt);
 
-    this.dummyView.setPosition(this.dx, this.dy);
-    this.dummyView.hull.rotation = this.dummyAngle + Math.PI / 2;
-    this.dummyView.turret.rotation = this.dummyTurret + Math.PI / 2;
+    e.view.setPosition(e.x, e.y);
+    e.view.hull.rotation = e.angle + Math.PI / 2;
+    e.view.turret.rotation = e.turret + Math.PI / 2;
   }
 
   // Enemy round hits the player: damage a (torso-weighted) random part through the shield.
@@ -650,25 +719,25 @@ export default class ArenaScene extends Phaser.Scene {
     }
   }
 
-  // Apply `damage` to the dummy's part nearest the world point (x, y).
-  _damageDummyAt(x, y, damage, color) {
-    if (this.dummy.isDestroyed()) return;
+  // Apply `damage` to enemy `e`'s part nearest the world point (x, y).
+  _damageEnemyAt(e, x, y, damage, color) {
+    if (e.mech.isDestroyed()) return;
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
-    const lx = x - this.dx, ly = y - this.dy;
-    const lay = mechLayout(this.dummy);
+    const lx = x - e.x, ly = y - e.y;
+    const lay = mechLayout(e.mech);
     let best = null, bestD = Infinity;
     for (const loc of DAMAGEABLE) {
       const a = lay[loc];
       const d = Math.hypot(lx - a.x * dispUnit, ly - a.y * dispUnit);
       if (d < bestD) { bestD = d; best = loc; }
     }
-    const res = this.dummy.applyDamage(best, damage);
-    reskinMech(this, 'dummyMech', this.dummy, { theme: 'enemy' });
+    const res = e.mech.applyDamage(best, damage);
+    reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     this._floatText(x, y, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
-    if (this.dummy.isDestroyed()) {
-      this.dummyView.setAlpha(0.5);
-      this._floatText(this.dx, this.dy - 30, 'DESTROYED', '#e2533a');
+    if (e.mech.isDestroyed()) {
+      e.view.setAlpha(0.5);
+      this._floatText(e.x, e.y - 30, 'DESTROYED', '#e2533a');
       Audio.explosion(1.15);                   // catastrophic kill
     }
   }
