@@ -27,7 +27,7 @@ export default class HudScene extends Phaser.Scene {
     this.assistText = this.add.text(this.W / 2, 28, '', { fontFamily: 'monospace', fontSize: '14px', color: C.accent }).setOrigin(0.5, 0);
     // Debug AI state (#28), bottom-right above the input-mode tag.
     this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
-    this.add.text(16, this.H - 134, 'debug:  [ ] AI move/fire  ·  R reset enemies  ·  N new enemy  ·  d-pad ↑↓←→',
+    this.add.text(16, this.H - 134, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
       { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
 
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.

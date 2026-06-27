@@ -166,10 +166,10 @@ export default class ArenaScene extends Phaser.Scene {
     // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #31 assist). ──
     if (this.padEdges.pressed(PAD.R3)) this._toggleAssist();
     if (this.padEdges.pressed(PAD.SELECT) || this.padEdges.pressed(PAD.B)) this.toGarage();
-    if (this.padEdges.pressed(PAD.DPAD_UP)) this._toggleAi('move');
-    if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._toggleAi('fire');
-    if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._resetEnemies();     // #39
-    if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._spawnEnemyDebug(); // #39
+    if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
+    if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
+    if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
+    if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
 
     // ── Aim-assist (#31): a default, always-on aid. When the enemy sits near the
     // reticle, flag it as the tracked target so weapons settle their shots onto it and
