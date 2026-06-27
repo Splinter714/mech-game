@@ -10,6 +10,16 @@
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// A WaveShaper transfer curve for guitar-style distortion (higher `k` = more crunch).
+function distortionCurve(k) {
+  const n = 1024, curve = new Float32Array(n), deg = Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -23,6 +33,7 @@ export class AudioEngine {
     this._step = 0;
     this._nextStepTime = 0;
     this._lastStepSound = 0;   // throttles rapid footfalls
+    this.track = 'metal';      // active soundtrack: 'metal' (default) | 'synthwave'
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -37,6 +48,12 @@ export class AudioEngine {
     this.master.connect(comp).connect(ctx.destination);
     this.sfx = ctx.createGain(); this.sfx.gain.value = 0.85; this.sfx.connect(this.master);
     this.music = ctx.createGain(); this.music.gain.value = 0.30; this.music.connect(this.master);
+    // Distorted-guitar chain for the metal track: voices sum into `guitar`, get crunched
+    // by a waveshaper, tone-shaped, then mixed into the music bus.
+    this.guitar = ctx.createGain(); this.guitar.gain.value = 0.42;
+    const shaper = ctx.createWaveShaper(); shaper.curve = distortionCurve(58); shaper.oversample = '2x';
+    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 3000;
+    this.guitar.connect(shaper).connect(tone).connect(this.music);
   }
 
   setMuted(m) {
@@ -197,12 +214,16 @@ export class AudioEngine {
     this.noise(this.sfx, { dur: 0.08, gain: 0.14, type: 'highpass', freq: 2200 });
   }
 
-  // ── Music (#38): looping synthwave ─────────────────────────────────────────────────
-  // A 32-step (two-bar) loop over a minor i–VI–III–VII progression: a driving bass, an
-  // offbeat arpeggio, and a four-on-the-floor-ish drum kit. Scheduled on a 25ms lookahead
-  // clock so timing is sample-accurate regardless of frame rate. No-ops until the context
-  // is running, so it "starts" the moment Phaser unlocks audio on first input.
-  startMusic() {
+  // ── Music (#38) ─────────────────────────────────────────────────────────────────────
+  // Two interchangeable 32-step (two-bar) loops on a 25ms lookahead clock (sample-accurate
+  // regardless of frame rate). The active one is `this.track`:
+  //   'metal'     (default) — aggressive thrash: galloping distorted power chords in E, a
+  //                screaming lead, and a double-bass kit at ~184 BPM.
+  //   'synthwave' (kept)    — the original driving synth in A-minor at ~104 BPM.
+  // Both no-op until the context is running, so they "start" the moment Phaser unlocks
+  // audio on first input. setTrack() swaps between them live.
+  startMusic(track) {
+    if (track) this.track = track;
     if (this._musicOn) return;
     this._musicOn = true;
     this._step = 0;
@@ -216,9 +237,11 @@ export class AudioEngine {
     this._musicTimer = null;
   }
 
+  setTrack(name) { this.track = name; this._step = 0; }
+
   _schedule() {
     if (!this.ctx || this.ctx.state !== 'running' || this.muted) return;
-    const tempo = 104;
+    const tempo = this.track === 'synthwave' ? 104 : 184;
     const stepDur = 60 / tempo / 4;   // sixteenth note
     const now = this.ctx.currentTime;
     if (this._nextStepTime < now) this._nextStepTime = now + 0.06;
@@ -230,38 +253,84 @@ export class AudioEngine {
   }
 
   _playStep(step, at) {
+    if (this.track === 'synthwave') this._stepSynthwave(step, at);
+    else this._stepMetal(step, at);
+  }
+
+  // Aggressive thrash: a galloping E-phrygian riff of distorted power chords (root+5th+8ve
+  // through the guitar chain), a screaming high lead at phrase starts + a climbing tremolo,
+  // and a hard double-bass kit.
+  _stepMetal(step, at) {
+    const E = 82.41, F = 87.31, G = 98.0, A = 110.0, B = 123.47, C = 130.81;
+    // 32-step root line: mostly chugging E with a G–F turnaround and an A–B–C climb.
+    const riff = [E, E, E, E, E, E, E, E, E, E, E, E, G, G, F, F,
+                  E, E, E, E, E, E, E, E, E, E, E, E, A, A, B, C];
+    const local = step % 16;
+    const gallop = local % 4 !== 1;                  // hits on 0,2,3 of each beat (gallop)
+
+    if (gallop) this._gtr(riff[step], at, 0.075, 0.4, true);        // palm-muted chug
+    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.5, 0.08, false); // scream
+    if (step >= 28) this._gtr(riff[step] * 2, at, 0.085, 0.13, false);              // climb tremolo
+
+    if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
+    if (local === 4 || local === 12) this._snareMetal(at);          // backbeat
+    this._hat(at, local % 2 === 0 ? 0.04 : 0.02);
+    if (step === 0) this._crash(at);
+  }
+
+  // The original synthwave loop (kept as a selectable track).
+  _stepSynthwave(step, at) {
     const m = this.music;
-    // A minor scale frequencies (two octaves of the chord roots we need).
     const N = { A2: 110.0, C3: 130.8, E3: 164.8, F2: 87.3, G2: 98.0, A3: 220.0, C4: 261.6, E4: 329.6, F3: 174.6, G3: 196.0 };
-    // Which chord this half-bar is on (i Am, VI F, III C, VII G).
     const bar = Math.floor(step / 8);                 // 0..3
     const roots = [N.A2, N.F2, N.C3, N.G2];
     const arps = [[N.A3, N.C4, N.E4], [N.F3, N.A3, N.C4], [N.C4, N.E4, N.G3], [N.G3, N.C4, N.E4]];
     const root = roots[bar];
     const arp = arps[bar];
 
-    // Bass: root on the beat + a syncopated octave pulse (steps 0,3,6 of each beat group).
     if (step % 4 === 0) this.tone(m, { type: 'sawtooth', freq: root, freqEnd: root, dur: 0.26, gain: 0.16, attack: 0.006 }, at);
     if (step % 8 === 6) this.tone(m, { type: 'square', freq: root * 2, dur: 0.12, gain: 0.07 }, at);
-
-    // Arp: an offbeat plucky lead climbing the chord.
     if (step % 2 === 1) {
       const note = arp[(step >> 1) % arp.length] * 2;
       this.tone(m, { type: 'triangle', freq: note, dur: 0.18, gain: 0.06, attack: 0.003 }, at);
     }
-
-    // Drums.
-    if (step % 4 === 0) this._kick(at);                       // four on the floor
-    if (step === 8 || step === 24) this._snare(at);           // backbeat
+    if (step % 4 === 0) this._kick(at);
+    if (step === 8 || step === 24) this._snare(at);
     if (step % 2 === 0) this._hat(at, step % 4 === 2 ? 0.05 : 0.03);
+  }
+
+  // A distorted power chord (root + fifth + octave, slightly detuned for width) into the
+  // guitar/waveshaper chain. `chord:false` plays a single note (lead/tremolo).
+  _gtr(freq, at, dur, gain = 0.4, chord = true) {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(gain, at + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    g.connect(this.guitar);
+    const voice = (f) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
+    voice(freq * 0.997); voice(freq * 1.003);        // detuned root pair
+    if (chord) { voice(freq * 1.5); voice(freq * 2); } // fifth + octave
   }
 
   _kick(at) {
     this.tone(this.music, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
   }
+  _kickMetal(at) {
+    this.tone(this.music, { type: 'sine', freq: 155, freqEnd: 42, dur: 0.12, gain: 0.26, attack: 0.001 }, at);
+    this.noise(this.music, { dur: 0.02, gain: 0.06, type: 'highpass', freq: 3200 }, at);   // beater click
+  }
   _snare(at) {
     this.noise(this.music, { dur: 0.16, gain: 0.12, type: 'highpass', freq: 1400 }, at);
     this.tone(this.music, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
+  }
+  _snareMetal(at) {
+    this.noise(this.music, { dur: 0.18, gain: 0.17, type: 'highpass', freq: 1800 }, at);
+    this.noise(this.music, { dur: 0.08, gain: 0.08, type: 'bandpass', freq: 420, q: 1 }, at);
+    this.tone(this.music, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 }, at);
+  }
+  _crash(at) {
+    this.noise(this.music, { dur: 0.6, gain: 0.1, type: 'highpass', freq: 5200 }, at);
   }
   _hat(at, gain) {
     this.noise(this.music, { dur: 0.04, gain, type: 'highpass', freq: 7000 }, at);

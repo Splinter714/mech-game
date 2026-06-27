@@ -16,6 +16,7 @@ function mockContext() {
   const ctx = {
     state: 'running', currentTime: 1.0, sampleRate: 48000, destination: node(),
     createGain: () => ({ gain: param(), connect: (d) => d }),
+    createWaveShaper: () => ({ curve: null, oversample: 'none', connect: (d) => d }),
     createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d }),
     createDynamicsCompressor: () => ({ threshold: param(), ratio: param(), attack: param(), release: param(), connect: (d) => d }),
     createOscillator: () => { oscillators++; return { type: '', frequency: param(), connect: (d) => d, start() {}, stop() {} }; },
@@ -54,10 +55,13 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
-  it('schedules every step of the music loop without throwing', () => {
-    const before = ctx._counts().oscillators;
-    for (let step = 0; step < 32; step++) eng._playStep(step, 2.0 + step * 0.1);
-    expect(ctx._counts().oscillators).toBeGreaterThan(before);
+  it('schedules every step of BOTH music tracks without throwing', () => {
+    for (const track of ['metal', 'synthwave']) {
+      eng.setTrack(track);
+      const before = ctx._counts().oscillators;
+      for (let step = 0; step < 32; step++) eng._playStep(step, 2.0 + step * 0.1);
+      expect(ctx._counts().oscillators).toBeGreaterThan(before);
+    }
   });
 
   it('mutes and unmutes via the master gain', () => {
