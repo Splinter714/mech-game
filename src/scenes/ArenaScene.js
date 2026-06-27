@@ -63,6 +63,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.abilityCd = {};       // ability location → ms until it can fire again
     this.shieldUntil = 0;      // timestamp the bubble shield is active until
+    this.lockProgress = 0;     // target-lock acquisition 0..1
+    this.lockTarget = null;    // 'dummy' once locked
+    this.lockBonus = 1.3;
     this.input.keyboard.on('keydown-G', () => this.toGarage());
 
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
@@ -169,11 +172,14 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Abilities ── each ability slot fires on its button (R3/L3) off cooldown. ──
     const dashDir = Math.hypot(intent.move.x, intent.move.y) > 0.1
       ? Math.atan2(intent.move.y, intent.move.x) : this.turretAngle;
+    let lockAb = null;
     for (const ab of this.mech.abilities()) {
+      if (ab.equip.ability === 'lock') { lockAb = ab; continue; }   // held action, below
       let cd = (this.abilityCd[ab.location] ?? 0) - delta;
       if (intent.fire[ab.location] && cd <= 0) { this._activateAbility(ab, dashDir); cd = ab.equip.cooldown * 1000; }
       this.abilityCd[ab.location] = Math.max(0, cd);
     }
+    this._updateLock(lockAb, intent, dt);
     this.registry.set('abilityCooldowns', this.abilityCd);
     this.registry.set('shieldActive', this.time.now < this.shieldUntil);
 
@@ -189,6 +195,28 @@ export default class ArenaScene extends Phaser.Scene {
 
     // ── Ammo regen ── every magazine tops back up over time.
     this.mech.regenAmmo(dt);
+  }
+
+  // Target Lock: hold the head ability button with the enemy in the aim cone to build a
+  // lock; locked homing missiles track harder and hit for a bonus. Draws a reticle.
+  _updateLock(lockAb, intent, dt) {
+    if (!lockAb || this.dummy.isDestroyed()) { this.lockProgress = 0; this.lockTarget = null; this.registry.set('lockState', null); return; }
+    this.lockBonus = lockAb.equip.bonus;
+    const toAng = Math.atan2(this.dy - this.py, this.dx - this.px);
+    const inCone = Math.abs(Phaser.Math.Angle.Wrap(toAng - this.turretAngle)) < lockAb.equip.cone
+      && Math.hypot(this.dx - this.px, this.dy - this.py) < 560;
+    if (intent.fire[lockAb.location] && inCone) {
+      this.lockProgress = Math.min(1, this.lockProgress + dt / lockAb.equip.lockTime);
+      if (this.lockProgress >= 1) this.lockTarget = 'dummy';
+    } else {
+      this.lockProgress = Math.max(0, this.lockProgress - dt * 2);
+      if (this.lockProgress === 0) this.lockTarget = null;
+    }
+    if (this.lockProgress > 0) {
+      const col = this.lockTarget ? 0xe2533a : 0xefc14a;
+      this.projFx.lineStyle(2, col, 0.9).strokeCircle(this.dx, this.dy, 30 - this.lockProgress * 6);
+    }
+    this.registry.set('lockState', this.lockTarget ? 'LOCKED' : `LOCK ${Math.round(this.lockProgress * 100)}%`);
   }
 
   _activateAbility(ab, dir) {
@@ -341,13 +369,15 @@ export default class ArenaScene extends Phaser.Scene {
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
       maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
     }
+    const homing = d.guidance === 'homing';
+    const locked = homing && this.lockTarget;   // a lock buffs guided missiles
     this.projectiles.push({
       x, y, angle, speed,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
-      damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
+      damage: w.weapon.damage * (locked ? this.lockBonus : 1), splash: d.splash || 0, range: w.weapon.range,
       dist: 0, maxDist, arc: d.path === 'arcing', trail: [], ground: d.groundFire || null,
-      homing: d.guidance === 'homing', turn: 3.4,   // guided missiles steer toward a target
+      homing, turn: locked ? 5.2 : 3.4,   // guided missiles steer toward a target, harder when locked
     });
   }
 
