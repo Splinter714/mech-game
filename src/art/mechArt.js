@@ -159,6 +159,9 @@ const DEFAULT_SHAPE = {
   head: 1, torso: 1, sideTorso: 1,
   armW: 1, armH: 1, armSpread: 1,
   legW: 1, legH: 1, legSpread: 1, legDrop: 1,
+  // Positional offsets (fraction of bodyLen, -y = forward) that rearrange the layout, not
+  // just its thickness: a scout's head/arms ride forward, a bruiser's sit back/low.
+  headDy: 0, armDy: 0,
 };
 const shapeOf = (mech) => ({ ...DEFAULT_SHAPE, ...(mech.chassis.art.shape || {}) });
 
@@ -172,13 +175,13 @@ export function mechLayout(mech) {
   const sh = shapeOf(mech);
   const shoulder = W * 0.42 * sh.armSpread;   // side-torso x; arms sit just outboard
   return {
-    head:        { x: 0,                       y: -L * 0.42,           w: W * 0.34 * sh.head,      h: L * 0.22 * sh.head },
-    cockpit:     { x: 0,                       y: -L * 0.46,           w: W * 0.18 * sh.head,      h: L * 0.10 * sh.head },
+    head:        { x: 0,                       y: -L * 0.42 + L * sh.headDy, w: W * 0.34 * sh.head,      h: L * 0.22 * sh.head },
+    cockpit:     { x: 0,                       y: -L * 0.46 + L * sh.headDy, w: W * 0.18 * sh.head,      h: L * 0.10 * sh.head },
     centerTorso: { x: 0,                       y: -L * 0.05,           w: W * 0.50 * sh.torso,     h: L * 0.44 },
     leftTorso:   { x: -shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
     rightTorso:  { x:  shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
-    leftArm:     { x: -W * 0.72 * sh.armSpread, y: -L * 0.08,          w: W * 0.22 * sh.armW,      h: L * 0.46 * sh.armH },
-    rightArm:    { x:  W * 0.72 * sh.armSpread, y: -L * 0.08,          w: W * 0.22 * sh.armW,      h: L * 0.46 * sh.armH },
+    leftArm:     { x: -W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
+    rightArm:    { x:  W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
     leftLeg:     { x: -W * 0.17 * sh.legSpread, y:  L * 0.24 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.42 * sh.legH },
     rightLeg:    { x:  W * 0.17 * sh.legSpread, y:  L * 0.24 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.42 * sh.legH },
   };
@@ -236,6 +239,32 @@ function drawWeapon(sg, T, catId, bx, frontY, s) {
   glowDot(sg, bx, frontY - L, 2.6 * s, n);
 }
 
+// Per-chassis structural decor (`art.decor`) — non-functional silhouette elements that
+// change the LAYOUT, not just the proportions: a bruiser's shoulder pauldrons, a scout's
+// sensor mast, rear exhaust stacks. Data-driven so a new chassis ornament is one entry.
+function drawDecor(sg, mech, lay, T) {
+  const a = mech.chassis.art;
+  for (const d of a.decor || []) {
+    if (d.kind === 'pauldron') {                 // big angular shoulder block (heavy)
+      const st = lay[d.side < 0 ? 'leftTorso' : 'rightTorso'];
+      const w = st.w * 1.15, h = st.h * 0.52;
+      const cx = st.x + d.side * st.w * 0.28, cy = st.y - st.h * 0.36;
+      plate(sg, T, cx, cy, w, h, { fill: T.faceDk, chamfer: Math.min(w, h) * 0.34, seam: false });
+      rectC(sg, cx, cy, w * 0.5, h * 0.18, T.recess);
+    } else if (d.kind === 'mast') {              // tall sensor antenna + glowing tip (light)
+      const hd = lay.head;
+      const mx = hd.x + (d.side ?? -1) * hd.w * 0.18;
+      rectC(sg, mx, hd.y - hd.h * 1.3, Math.max(0.8, hd.w * 0.07), hd.h * 1.8, T.rim);
+      glowDot(sg, mx, hd.y - hd.h * 2.1, 1.1, NEON.energy);
+    } else if (d.kind === 'stack') {             // rear exhaust pair with embers
+      const st = lay[d.side < 0 ? 'leftTorso' : 'rightTorso'];
+      const cx = st.x, cy = st.y + st.h * 0.5;
+      rectC(sg, cx, cy, st.w * 0.4, st.h * 0.22, T.deep);
+      glowBar(sg, cx, cy + st.h * 0.06, st.w * 0.22, st.h * 0.06, { halo: 0xc8801a, core: 0xff7a18, hot: 0xffd56b });
+    }
+  }
+}
+
 // Torsos + arms + head + weapons. Drawn facing up; weapons point forward (-y).
 function drawTurret(sg, mech, T) {
   const lay = mechLayout(mech);
@@ -283,6 +312,9 @@ function drawTurret(sg, mech, T) {
     if (mech.isPartDestroyed('cockpit')) rectC(sg, cp.x, cp.y, cp.w, cp.h, T.char);
     else glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
   }
+
+  // Structural decor (shoulder pauldrons / mast / exhausts) under the weapons.
+  drawDecor(sg, mech, lay, T);
 
   // Weapon hardware: one shape per mounted weapon, spread across the part, by category.
   for (const loc of MOUNT_LOCATIONS) {
