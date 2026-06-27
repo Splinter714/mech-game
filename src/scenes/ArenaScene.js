@@ -7,6 +7,7 @@ import { LOCATIONS } from '../data/anatomy.js';
 import { CATEGORIES } from '../data/categories.js';
 import { hexToPixel, pixelToHex, range, axialKey, distance, HEX_SIZE } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
+import { Audio } from '../audio/index.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -83,6 +84,10 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-G', () => this.toGarage());
     this.input.keyboard.on('keydown-T', () => this._toggleAssist());
+    this.input.keyboard.on('keydown-M', () => {
+      const muted = Audio.toggleMute();
+      this._floatText(this.px, this.py - 30, muted ? 'MUTED' : 'SOUND ON', '#7c8794');
+    });
     this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._toggleAi('move'));
     this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
 
@@ -178,7 +183,7 @@ export default class ArenaScene extends Phaser.Scene {
       if (this.stepMs >= mv.stepInterval) {
         this.stepMs -= mv.stepInterval;
         this.hullFrame = (this.hullFrame + 1) % 4;
-        if (this.hullFrame % 2 === 0) this.cameras.main.shake(70, 0.0016 * (mv.stepBob / 2));
+        if (this.hullFrame % 2 === 0) { this.cameras.main.shake(70, 0.0016 * (mv.stepBob / 2)); Audio.footstep(this.hullFrame === 0 ? 0 : 1); }
       }
       bob = Math.abs(Math.sin((this.stepMs / mv.stepInterval) * Math.PI)) * mv.stepBob;
     }
@@ -275,6 +280,7 @@ export default class ArenaScene extends Phaser.Scene {
 
   _activateAbility(ab, dir) {
     const e = ab.equip;
+    Audio.ability(e.ability);
     if (e.ability === 'dash') {
       this.vx += Math.cos(dir) * e.impulse;
       this.vy += Math.sin(dir) * e.impulse;
@@ -345,6 +351,7 @@ export default class ArenaScene extends Phaser.Scene {
   fireWeapon(w) {
     if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
+    Audio.fire(w.weapon);
     const d = w.weapon.delivery;
     const m = this._muzzle(w.location);
 
@@ -607,9 +614,11 @@ export default class ArenaScene extends Phaser.Scene {
     if (res.shielded) { this._floatText(this.px, this.py - 24, 'shielded', '#5ec8e0'); return; }
     reskinMech(this, 'playerMech', this.mech);
     this._floatText(this.px, this.py - 20, `-${dmg}`, '#e2533a');
+    if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (this.mech.isDestroyed() && !this._playerDead) {
       this._playerDead = true;
       this._floatText(this.px, this.py - 36, 'MECH DOWN', '#e2533a');
+      Audio.explosion(1.2);
       this.time.delayedCall(1600, () => this.toGarage());
     }
   }
@@ -617,6 +626,7 @@ export default class ArenaScene extends Phaser.Scene {
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
   // burst (ballistic spark, missile/splash explosion, plasma splatter, laser scorch).
   _impactFx(x, y, color, kind, splash) {
+    Audio.impact(kind);
     const burst = (r0, r1, col, alpha, dur, stroke) => {
       const c = stroke
         ? this.add.circle(x, y, r0).setStrokeStyle(2, col, alpha)
@@ -655,9 +665,11 @@ export default class ArenaScene extends Phaser.Scene {
     const res = this.dummy.applyDamage(best, damage);
     reskinMech(this, 'dummyMech', this.dummy, { theme: 'enemy' });
     this._floatText(x, y, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
+    if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (this.dummy.isDestroyed()) {
       this.dummyView.setAlpha(0.5);
       this._floatText(this.dx, this.dy - 30, 'DESTROYED', '#e2533a');
+      Audio.explosion(1.15);                   // catastrophic kill
     }
   }
 
