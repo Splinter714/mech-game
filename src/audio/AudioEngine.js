@@ -53,11 +53,11 @@ export class AudioEngine {
     //   voices → guitar bus → preGain (slam it hot) → waveshaper (heavy curve, 4× oversample)
     //          → highpass (kill sub mud) → lowpass (speaker-cab roll-off) → postGain (tame).
     this.guitar = ctx.createGain(); this.guitar.gain.value = 1.0;
-    const pre = ctx.createGain(); pre.gain.value = 11;          // drive into the curve's clip
-    const shaper = ctx.createWaveShaper(); shaper.curve = distortionCurve(220); shaper.oversample = '4x';
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
-    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 3300; cab.Q.value = 0.7;
-    const post = ctx.createGain(); post.gain.value = 0.14;      // make-up: rein the crunch back in
+    const pre = ctx.createGain(); pre.gain.value = 22;          // slam it WAY into the clip (high gain)
+    const shaper = ctx.createWaveShaper(); shaper.curve = distortionCurve(400); shaper.oversample = '4x';
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 110;  // tighten low end
+    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 4400; cab.Q.value = 0.9; // let the buzz cut
+    const post = ctx.createGain(); post.gain.value = 0.12;      // make-up: rein the crunch back in
     this.guitar.connect(pre).connect(shaper).connect(hp).connect(cab).connect(post).connect(this.music);
   }
 
@@ -274,11 +274,11 @@ export class AudioEngine {
     const gallop = local % 4 !== 1;                  // hits on 0,2,3 of each beat (gallop)
 
     if (gallop) {
-      this._gtr(riff[step], at, 0.11, 0.5, true);                   // palm-muted chug
-      this.noise(this.music, { dur: 0.02, gain: 0.045, type: 'bandpass', freq: 2400, q: 0.7 }, at); // pick attack "chk"
+      this._gtr(riff[step], at, 0.065, 0.55, true);                 // tight palm-muted chug (no overlap = no smear)
+      this.noise(this.music, { dur: 0.018, gain: 0.05, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
-    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.55, 0.06, false); // scream
-    if (step >= 28) this._gtr(riff[step] * 2, at, 0.1, 0.1, false);                  // climb tremolo
+    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.28, 0.06, false); // scream
+    if (step >= 28) this._gtr(riff[step] * 2, at, 0.07, 0.1, false);                 // climb tremolo
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
     if (local === 4 || local === 12) this._snareMetal(at);          // backbeat
@@ -315,9 +315,9 @@ export class AudioEngine {
     const ctx = this.ctx;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(gain, at + 0.004);     // pick attack
-    g.gain.setValueAtTime(gain, at + dur * 0.55);              // hold the chug body
-    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);     // release
+    g.gain.exponentialRampToValueAtTime(gain, at + 0.003);     // near-instant pick attack
+    g.gain.setValueAtTime(gain, at + dur * 0.7);               // hold the chug body
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);     // fast release (damped palm mute)
     g.connect(this.guitar);
     const voice = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
     voice(freq * 0.992); voice(freq * 1.008);        // detuned root pair (thickness)
