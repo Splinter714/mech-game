@@ -7,7 +7,6 @@ export const HEAVY_CONFIG = {
   weightClass: 'heavy',
   baseArmor: 96,
   baseStructure: 52,
-  slots: { head: 1, centerTorso: 4, leftTorso: 4, rightTorso: 4, leftArm: 4, rightArm: 4, leftLeg: 2, rightLeg: 2 },
   art: { bodyLen: 46, bodyWid: 38, accent: 0xe2533a },
   movement: {
     accel: 280, maxSpeed: 90, turnRate: 1.3,

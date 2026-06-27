@@ -59,17 +59,17 @@ try {
 
     // Tank locomotion: holding throttle should drive the mech forward (up = -y).
     const y0 = a.py;
-    a.keys.W.isDown = true;
+    a.controls.keys.W.isDown = true;
     for (let i = 0; i < 8; i++) a.update(0, 16);
-    a.keys.W.isDown = false;
+    a.controls.keys.W.isDown = false;
     const droveForward = a.py < y0 - 0.5;
 
-    // Per-part damage loop: aim at the dummy centre and fire — its centre torso (the
-    // nearest part to the aim) must lose health, and over-damage must destroy it.
-    a.input.activePointer.worldX = a.dx;
-    a.input.activePointer.worldY = a.dy;
+    // Per-part damage loop: point the turret at the dummy and fire each ready weapon;
+    // its centre torso (nearest part to the ray) must lose health, and over-damage
+    // must destroy it.
+    a.turretAngle = Math.atan2(a.dy - a.py, a.dx - a.px);
     const ctBefore = a.dummy.partHealthFraction('centerTorso');
-    a.fire();
+    for (const w of a.mech.readyWeapons()) a.fireWeapon(w);
     const ctAfter = a.dummy.partHealthFraction('centerTorso');
 
     a.dummy.applyDamage('centerTorso', 999);

@@ -8,6 +8,7 @@ import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { CATEGORIES } from '../data/categories.js';
 import { MECH_DEPLOYED } from '../data/events.js';
+import { SKILL_BINDS } from '../input/Controls.js';
 
 // The mech lab. A paper-doll of the chassis: each body location is a card laid out in
 // a humanoid arrangement, and its slots are rendered *on the part* as a stack of cells.
@@ -27,17 +28,16 @@ const CELL_H = 24;
 const HEADER_H = 24;
 const CARD_PAD = 6;
 
-// Humanoid placement of each location within the doll region, as fractions of its
-// width/height (these are card *centres*; cards grow downward by slot count).
+// Humanoid placement of each skill-slot location within the doll region, as fractions
+// of its width/height (these are card *centres*). Six slots: head up top, the arm/torso
+// row across the middle. Legs aren't skill slots, so they don't appear here.
 const DOLL_POS = {
-  head:        { fx: 0.50, fy: 0.02 },
-  leftArm:     { fx: 0.10, fy: 0.22 },
-  leftTorso:   { fx: 0.30, fy: 0.22 },
-  centerTorso: { fx: 0.50, fy: 0.22 },
-  rightTorso:  { fx: 0.70, fy: 0.22 },
-  rightArm:    { fx: 0.90, fy: 0.22 },
-  leftLeg:     { fx: 0.40, fy: 0.54 },
-  rightLeg:    { fx: 0.60, fy: 0.54 },
+  head:        { fx: 0.50, fy: 0.06 },
+  leftArm:     { fx: 0.10, fy: 0.40 },
+  leftTorso:   { fx: 0.30, fy: 0.40 },
+  centerTorso: { fx: 0.50, fy: 0.40 },
+  rightTorso:  { fx: 0.70, fy: 0.40 },
+  rightArm:    { fx: 0.90, fy: 0.40 },
 };
 
 export default class GarageScene extends Phaser.Scene {
@@ -132,7 +132,8 @@ export default class GarageScene extends Phaser.Scene {
       const catColor = isWeapon(id) ? CATEGORIES[item.category].color : 0x7bd17b;
       this.add.rectangle(x + 16, y + 15, 10, 10, catColor).setOrigin(0.5);
       this.add.text(x + 28, y + 6, item.name, { fontFamily: 'monospace', fontSize: '13px', color: UI.text });
-      this.add.text(x + w - 20, y + 8, `${item.slots} slot${item.slots > 1 ? 's' : ''}`, {
+      const tag = isWeapon(id) ? (item.category === 'melee' ? 'melee · arms' : item.category) : 'ability';
+      this.add.text(x + w - 20, y + 8, tag, {
         fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
       }).setOrigin(1, 0);
       r.on('pointerover', () => { if (this.armed !== id) r.setFillStyle(UI.btnHover); });
@@ -180,11 +181,11 @@ export default class GarageScene extends Phaser.Scene {
     return { x: Math.round(cx - CARD_W / 2), y: Math.round(top), w: CARD_W, h };
   }
 
-  // Rebuild the whole doll: one card per mountable location, slots drawn in place.
+  // Rebuild the whole doll: one card per skill-slot location, each showing its fire
+  // bind and the single item mounted there.
   refresh() {
     this.doll.removeAll(true);
     this.footer.removeAll(true);
-
     for (const loc of MOUNT_LOCATIONS) this._drawCard(loc);
     this._drawConnectors();
     this._drawFooter();
@@ -193,9 +194,8 @@ export default class GarageScene extends Phaser.Scene {
   _drawCard(loc) {
     const rect = this.cardRect(loc);
     const isSel = loc === this.selected;
-    const used = this.mech.usedSlots(loc), cap = this.mech.slotCapacity(loc);
+    const id = this.mech.mounts[loc][0];   // one skill per slot
 
-    // When a piece is armed, every card reads as a drop target.
     const isTarget = this.armed && loc === this.selected;
     const bg = this.add.rectangle(rect.x, rect.y, rect.w, rect.h, (isSel || isTarget) ? UI.cardSel : UI.card)
       .setOrigin(0, 0).setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge)
@@ -207,57 +207,50 @@ export default class GarageScene extends Phaser.Scene {
     bg.on('pointerdown', () => this.placeOn(loc));
     this.doll.add(bg);
 
-    // Header: location code (full label doesn't fit a 100px card) + slot usage.
+    // Header: location code on the left, the fire bind (pad / keyboard) on the right.
     this.doll.add(this.add.text(rect.x + 8, rect.y + 6, LOCATION_INFO[loc].short, {
       fontFamily: 'monospace', fontSize: '13px', color: isSel ? UI.sel : UI.text,
     }));
-    this.doll.add(this.add.text(rect.x + rect.w - 8, rect.y + 6, `${used}/${cap}`, {
-      fontFamily: 'monospace', fontSize: '12px', color: used > 0 ? UI.accent : UI.dim,
+    const bind = SKILL_BINDS[loc];
+    this.doll.add(this.add.text(rect.x + rect.w - 8, rect.y + 7, `${bind.pad}·${bind.key}`, {
+      fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
     }).setOrigin(1, 0));
 
-    // Slot cells. Walk the mounted items; each occupies `slots` consecutive cells and
-    // renders as one chip. Remaining cells are empty "+" mount targets.
+    // The single skill cell: the mounted item as a chip, or an empty "+" drop target.
     const cellX = rect.x + CARD_PAD;
     const cellW = rect.w - CARD_PAD * 2;
-    const cellTop = rect.y + HEADER_H;
-    let cell = 0;
-    this.mech.mounts[loc].forEach((id, index) => {
+    const cellY = rect.y + HEADER_H;
+    if (id) {
       const item = getItem(id);
-      const span = Math.max(1, item.slots);
-      const y = cellTop + cell * CELL_H;
-      const h = span * CELL_H - 4;
+      const h = CELL_H - 4;
       const color = isWeapon(id) ? CATEGORIES[item.category].color : 0x7bd17b;
-      const chip = this.add.rectangle(cellX, y + 2, cellW, h, 0x1f2730)
+      const chip = this.add.rectangle(cellX, cellY + 2, cellW, h, 0x1f2730)
         .setOrigin(0, 0).setStrokeStyle(1, color).setInteractive({ useHandCursor: true });
       chip.on('pointerover', () => chip.setFillStyle(0x29333f));
       chip.on('pointerout', () => chip.setFillStyle(0x1f2730));
-      chip.on('pointerdown', () => this.unmount(loc, index));
+      chip.on('pointerdown', () => this.unmount(loc, 0));
       this.doll.add(chip);
-      this.doll.add(this.add.rectangle(cellX + 8, y + 2 + h / 2, 8, 8, color).setOrigin(0.5));
-      this.doll.add(this.add.text(cellX + 18, y + 2 + h / 2, item.name, {
+      this.doll.add(this.add.rectangle(cellX + 8, cellY + 2 + h / 2, 8, 8, color).setOrigin(0.5));
+      this.doll.add(this.add.text(cellX + 18, cellY + 2 + h / 2, item.name, {
         fontFamily: 'monospace', fontSize: '11px', color: UI.text,
       }).setOrigin(0, 0.5));
-      this.doll.add(this.add.text(cellX + cellW - 6, y + 2 + h / 2, '✕', {
+      this.doll.add(this.add.text(cellX + cellW - 6, cellY + 2 + h / 2, '✕', {
         fontFamily: 'monospace', fontSize: '11px', color: UI.bad,
       }).setOrigin(1, 0.5));
-      cell += span;
-    });
-
-    for (; cell < cap; cell++) {
-      const y = cellTop + cell * CELL_H;
-      const empty = this.add.rectangle(cellX, y + 2, cellW, CELL_H - 4, UI.slotEmpty)
+    } else {
+      const empty = this.add.rectangle(cellX, cellY + 2, cellW, CELL_H - 4, UI.slotEmpty)
         .setOrigin(0, 0).setStrokeStyle(1, UI.slotEdge).setInteractive({ useHandCursor: true });
       empty.on('pointerover', () => empty.setFillStyle(0x16202a));
       empty.on('pointerout', () => empty.setFillStyle(UI.slotEmpty));
       empty.on('pointerdown', () => this.placeOn(loc));
       this.doll.add(empty);
-      this.doll.add(this.add.text(cellX + cellW / 2, y + 2 + (CELL_H - 4) / 2, '+', {
+      this.doll.add(this.add.text(cellX + cellW / 2, cellY + 2 + (CELL_H - 4) / 2, '+', {
         fontFamily: 'monospace', fontSize: '13px', color: UI.dim,
       }).setOrigin(0.5));
     }
   }
 
-  // Faint lines tying the limbs to the center torso so the doll reads as one body.
+  // Faint lines tying the limbs/head to the center torso so the doll reads as one body.
   _drawConnectors() {
     const g = this.add.graphics();
     g.lineStyle(2, 0x222b35, 1);
@@ -269,10 +262,6 @@ export default class GarageScene extends Phaser.Scene {
     for (const [arm, torso] of [['leftArm', 'leftTorso'], ['rightArm', 'rightTorso']]) {
       const a = this._cardCenter(arm), t = this._cardCenter(torso);
       g.lineBetween(t.x, t.y, a.x, a.y);
-    }
-    for (const loc of ['leftLeg', 'rightLeg']) {
-      const p = this._cardCenter(loc);
-      g.lineBetween(c.x, c.y, p.x, p.y);
     }
     this.doll.add(g);
     this.doll.sendToBack(g);
@@ -290,10 +279,10 @@ export default class GarageScene extends Phaser.Scene {
     this.footer.add(this.txt(34, y + 6, `${this.mech.name}  ·  ${this.mech.chassis.name} (${this.mech.weightClass})`, {
       fontSize: '13px', color: UI.accent,
     }));
-    let used = 0, cap = 0;
-    for (const loc of MOUNT_LOCATIONS) { used += this.mech.usedSlots(loc); cap += this.mech.slotCapacity(loc); }
-    this.footer.add(this.txt(34, y + 24, `slots ${used}/${cap} used`, {
-      fontSize: '12px', color: UI.dim,
+    let filled = 0;
+    for (const loc of MOUNT_LOCATIONS) filled += this.mech.usedSlots(loc);
+    this.footer.add(this.txt(34, y + 24, `skills ${filled}/${MOUNT_LOCATIONS.length}  ·  one per slot, melee in arms`, {
+      fontSize: '12px', color: filled >= MOUNT_LOCATIONS.length ? UI.sel : UI.dim,
     }));
     this.footer.add(this.txt(Math.round(this.W * 0.66) - 36, y + 14, v.ok ? '✓ valid build' : `✗ ${v.errors[0]}`, {
       color: v.ok ? UI.good : UI.bad,

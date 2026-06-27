@@ -25,7 +25,6 @@ export function makeChassis(cfg) {
     const info = LOCATION_INFO[id];
     const f = FACTORS[id];
     locations[id] = {
-      slots: info.mountable ? (cfg.slots[id] ?? 0) : 0,
       maxArmor: info.internal ? 0 : Math.round(cfg.baseArmor * f),
       maxStructure: Math.max(1, Math.round(cfg.baseStructure * f)),
     };

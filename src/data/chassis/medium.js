@@ -6,7 +6,6 @@ export const MEDIUM_CONFIG = {
   weightClass: 'medium',
   baseArmor: 64,
   baseStructure: 36,
-  slots: { head: 1, centerTorso: 3, leftTorso: 3, rightTorso: 3, leftArm: 3, rightArm: 3, leftLeg: 2, rightLeg: 2 },
   art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },
   movement: {
     accel: 420, maxSpeed: 130, turnRate: 1.9,

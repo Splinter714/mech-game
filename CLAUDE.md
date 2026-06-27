@@ -26,18 +26,22 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   (+ Hud overlay during Arena).
 - **`src/data/`** — pure logic, no Phaser, fully unit-tested:
   - `Mech.js` — the generic model: per-location armor/structure, `applyDamage`, the
-    kill rule, mounting, heat/weapon queries. Configured entirely by data.
+    kill rule, mounting, per-weapon ammo (self-regenerating magazines), weapon queries.
+    Configured entirely by data. No heat (removed); ammo is the only firing constraint.
   - `anatomy.js` — the 8 body locations + the kill rule (`mechDestroyed`): head OR
-    cockpit OR centerTorso destroyed, OR both legs.
+    cockpit OR centerTorso destroyed, OR both legs. The **six skill slots** are the
+    mountable upper-body locations (`MOUNT_LOCATIONS`); legs aren't mount points.
   - `chassis/` — weight classes (light/medium/heavy). `index.js` expands a short
     config (`light.js` etc.) into per-location stats + movement tuning. **Add a chassis
     = a new config + one registry entry.**
-  - `categories.js` + `weapons.js` — the two-axis weapon model: a Category (ammo/heat
-    economy) plus a composable `delivery` profile (hitscan/projectile, velocity,
-    straight/arcing, guidance, single/spread/stream). **Add a weapon = one entry in
+  - `categories.js` + `weapons.js` — the two-axis weapon model: a Category (economy)
+    plus a composable `delivery` profile (hitscan/projectile, velocity, straight/arcing,
+    guidance, single/spread/stream). Each weapon has its own `ammoMax`/`ammoRegen`
+    magazine (`ammoMax: null` = unlimited, for melee). **Add a weapon = one entry in
     `WEAPONS`.**
-  - `equipment.js`, `items.js` (unified lookup), `loadout.js` (slot-capacity
-    validation; tonnage was removed — slots are the only build constraint).
+  - `equipment.js` (currently empty — abilities go here later), `items.js` (unified
+    lookup), `loadout.js` (the build model: **six skill slots, one item per location**,
+    melee only in arms; no tonnage, no multi-slot capacity).
   - `hexgrid.js` — **the only file that knows hexes exist.** Axial coords; pure
     `neighbors/distance/hexToPixel/pixelToHex/range/ring`. The mech moves with free
     physics on top, so collision/LOS are not hex algorithms.
@@ -47,10 +51,16 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   for HiDPI). `mechArt.js` draws a mech as a **hull** (legs, walk frames) + **turret**
   (torso/arms/head/weapons) from the live Mech, so destroyed parts become stumps and
   weapons vanish. `hexArt.js`, `iconArt.js`. `index.js` is the build registry.
-- **`src/scenes/`** — `GarageScene` (mech lab: click a part, mount from the catalog,
-  validate, deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia;
-  turret slews within `turretArc` and pushes the chassis when you aim past it; stompy
-  stepped gait; per-part damage on a target dummy). `HudScene` is the arena overlay.
+- **`src/input/Controls.js`** — input abstraction: keyboard+mouse and a gamepad both
+  feed one per-frame *intent* (throttle/turn, aim, and a held flag per skill slot). Each
+  of the six slots is bound to a fixed button (`SKILL_BINDS`): RA→RT/RMB, LA→LT/LMB,
+  RT→RB/E, LT→LB/Q, CT→L3/Space, head→R3/F. Left stick/WASD drives, right stick/mouse aims.
+- **`src/scenes/`** — `GarageScene` (mech lab: a six-slot paper-doll; click a catalog
+  item then a body section to mount it, each slot shows its fire bind, live mech preview,
+  deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia; turret slews
+  within `turretArc` and pushes the chassis when you aim past it; stompy stepped gait;
+  **per-slot firing** — each weapon fires on its own button, gated by ammo; per-part
+  damage on a target dummy). `HudScene` is the arena overlay (weapons/ammo + health).
 
 ## Conventions
 
