@@ -40,7 +40,7 @@ export default class ArenaScene extends Phaser.Scene {
     // Target dummy.
     this.dummy = new Mech({ chassisId: 'light', name: 'Target' });
     this.registry.set('dummyMech', this.dummy);
-    buildMechTextures(this, 'dummyMech', this.dummy);
+    buildMechTextures(this, 'dummyMech', this.dummy, { theme: 'enemy' });
     const dp = hexToPixel(DUMMY_HEX.q, DUMMY_HEX.r);
     this.dummyAngle = Math.PI / 2; // facing "down" toward the player spawn
     this.dummyView = this._makeMechView('dummyMech', dp.x, dp.y, this.dummyAngle);
@@ -194,7 +194,7 @@ export default class ArenaScene extends Phaser.Scene {
       if (d < bestD) { bestD = d; best = loc; }
     }
     const res = this.dummy.applyDamage(best, w.weapon.damage);
-    reskinMech(this, 'dummyMech', this.dummy);
+    reskinMech(this, 'dummyMech', this.dummy, { theme: 'enemy' });
     this._floatText(this.dx + lx, this.dy + ly, `${w.weapon.damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
     if (this.dummy.isDestroyed()) {
       this.dummyView.setAlpha(0.5);
