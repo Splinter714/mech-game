@@ -151,22 +151,36 @@ function stump(sg, T, cx, cy, w, h) {
   sg.fillStyle(0xd6601e, 0.5); sg.fillCircle(CENTER + cx, CENTER + cy, m * 0.06);
 }
 
+// Per-chassis SHAPE — proportion/stance multipliers on the baseline layout so each weight
+// class reads as a structurally different build (not one shape scaled), #24. All default
+// to 1 (the medium baseline); a chassis overrides via `art.shape`. `armSpread` widens BOTH
+// the shoulders (side torsos) and the arms; `legSpread`/`legDrop` set the stance.
+const DEFAULT_SHAPE = {
+  head: 1, torso: 1, sideTorso: 1,
+  armW: 1, armH: 1, armSpread: 1,
+  legW: 1, legH: 1, legSpread: 1, legDrop: 1,
+};
+const shapeOf = (mech) => ({ ...DEFAULT_SHAPE, ...(mech.chassis.art.shape || {}) });
+
 // Per-location anchors + box sizes in mech-local design coords (origin = centre, -y =
 // forward). Scenes also read this to place per-part hit-areas + damage labels, so the
-// keys and rough boxes are stable. Derived from chassis body dims so a heavy reads bulky.
+// keys and rough boxes are stable. Derived from chassis body dims AND its shape so a light
+// reads spindly and a heavy reads broad/blocky.
 export function mechLayout(mech) {
   const a = mech.chassis.art;
   const L = a.bodyLen, W = a.bodyWid;
+  const sh = shapeOf(mech);
+  const shoulder = W * 0.42 * sh.armSpread;   // side-torso x; arms sit just outboard
   return {
-    head:        { x: 0,         y: -L * 0.42, w: W * 0.34, h: L * 0.22 },
-    cockpit:     { x: 0,         y: -L * 0.46, w: W * 0.18, h: L * 0.10 },
-    centerTorso: { x: 0,         y: -L * 0.05, w: W * 0.50, h: L * 0.44 },
-    leftTorso:   { x: -W * 0.42, y: -L * 0.03, w: W * 0.30, h: L * 0.38 },
-    rightTorso:  { x:  W * 0.42, y: -L * 0.03, w: W * 0.30, h: L * 0.38 },
-    leftArm:     { x: -W * 0.72, y: -L * 0.08, w: W * 0.22, h: L * 0.46 },
-    rightArm:    { x:  W * 0.72, y: -L * 0.08, w: W * 0.22, h: L * 0.46 },
-    leftLeg:     { x: -W * 0.17, y:  L * 0.24, w: W * 0.24, h: L * 0.42 },
-    rightLeg:    { x:  W * 0.17, y:  L * 0.24, w: W * 0.24, h: L * 0.42 },
+    head:        { x: 0,                       y: -L * 0.42,           w: W * 0.34 * sh.head,      h: L * 0.22 * sh.head },
+    cockpit:     { x: 0,                       y: -L * 0.46,           w: W * 0.18 * sh.head,      h: L * 0.10 * sh.head },
+    centerTorso: { x: 0,                       y: -L * 0.05,           w: W * 0.50 * sh.torso,     h: L * 0.44 },
+    leftTorso:   { x: -shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
+    rightTorso:  { x:  shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
+    leftArm:     { x: -W * 0.72 * sh.armSpread, y: -L * 0.08,          w: W * 0.22 * sh.armW,      h: L * 0.46 * sh.armH },
+    rightArm:    { x:  W * 0.72 * sh.armSpread, y: -L * 0.08,          w: W * 0.22 * sh.armW,      h: L * 0.46 * sh.armH },
+    leftLeg:     { x: -W * 0.17 * sh.legSpread, y:  L * 0.24 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.42 * sh.legH },
+    rightLeg:    { x:  W * 0.17 * sh.legSpread, y:  L * 0.24 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.42 * sh.legH },
   };
 }
 
@@ -312,8 +326,9 @@ function drawHull(sg, mech, frame, T) {
   }
 
   // Hip skirts over the inner-top of each leg (read as "legs tuck under the body").
+  const legSpread = a.shape?.legSpread ?? 1;
   for (const dx of [-1, 1]) {
-    const sx = dx * a.bodyWid * 0.24;
+    const sx = dx * a.bodyWid * 0.24 * legSpread;
     if (T.bubbly) {
       ellipseC(sg, sx, a.bodyLen * 0.18, a.bodyWid * 0.34, a.bodyLen * 0.18, T.outline);
       ellipseC(sg, sx, a.bodyLen * 0.18, a.bodyWid * 0.3, a.bodyLen * 0.15, T.faceMid);
