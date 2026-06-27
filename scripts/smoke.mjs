@@ -68,8 +68,27 @@ try {
     // its centre torso (nearest part to the ray) must lose health, and over-damage
     // must destroy it.
     a.turretAngle = Math.atan2(a.dy - a.py, a.dx - a.px);
+    a.aimX = a.dx; a.aimY = a.dy;   // weapons converge on the aim point
+
+    // Projectile travel: fire ONLY a travelling round (the slug, not the hitscan laser)
+    // at the pristine dummy and let it fly — it must cross the gap and deal damage.
+    const totalHp = () => Object.values(a.dummy.parts).reduce((s, p) => s + p.armor + p.structure, 0);
+    const slug = a.mech.weapons().find((w) => w.weapon.delivery.hit === 'projectile');
+    let projHit = false;
+    if (slug) {
+      const hp0 = totalHp();
+      a.projectiles.length = 0;
+      a.fireWeapon(slug);
+      const spawned = a.projectiles.length > 0;
+      for (let i = 0; i < 60 && a.projectiles.length; i++) a._updateProjectiles(0.016);
+      projHit = spawned && totalHp() < hp0;
+    }
+
+    // Then fire everything and confirm overall damage + destruction.
+    a.aimX = a.dx; a.aimY = a.dy;   // re-aim (the steps above advance the sim)
     const ctBefore = a.dummy.partHealthFraction('centerTorso');
     for (const w of a.mech.readyWeapons()) a.fireWeapon(w);
+    for (let i = 0; i < 30; i++) a._updateProjectiles(0.016);
     const ctAfter = a.dummy.partHealthFraction('centerTorso');
 
     a.dummy.applyDamage('centerTorso', 999);
@@ -80,6 +99,7 @@ try {
       hullTex: g.textures.exists('playerMech_hull_0'),
       dummyTex: g.textures.exists('dummyMech_turret'),
       onlineWeapons: a.mech.onlineWeapons().length,
+      projHit,
       ctDamaged: ctAfter < ctBefore,
       dummyDead,
     };
@@ -95,6 +115,7 @@ try {
   if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
+  if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');
   if (!arena.ctDamaged) fail('firing at the dummy did not damage its centre torso');
   if (!arena.dummyDead) fail('dummy did not register destruction on centre-torso kill');

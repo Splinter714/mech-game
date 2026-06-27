@@ -14,6 +14,7 @@ import { Controls } from '../input/Controls.js';
 // a stompy stepped walk. A stationary target dummy proves the per-part damage loop.
 // Single-file for Milestone 1 — splits into arena/ mixins as combat grows.
 const ARENA_MECH_SCALE = 0.34;
+const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 const DUMMY_HEX = { q: 3, r: -1 };
 const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit'); // cockpit is hit via the head
 
@@ -50,6 +51,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.px = 0; this.py = 0;
     this.angle = -Math.PI / 2;     // legs facing up
     this.turretAngle = -Math.PI / 2;
+    this.aimX = 0; this.aimY = -200;   // world aim point weapons converge on
     this.vx = 0; this.vy = 0;      // world-space velocity (twin-stick movement)
     this.speed = 0;
     this.stepMs = 0; this.hullFrame = 0;
@@ -61,7 +63,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.input.keyboard.on('keydown-G', () => this.toGarage());
 
-    this.fx = this.add.graphics();
+    this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
+    this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
+    this.projectiles = [];
     this.scene.launch('HudScene');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
   }
@@ -113,9 +117,13 @@ export default class ArenaScene extends Phaser.Scene {
     }
 
     // ── Turret: aim freely, full 360° (no torso-twist arc), slewing toward the aim. ──
-    const aim = intent.aim.mode === 'pointer'
-      ? Math.atan2(intent.aim.y - this.py, intent.aim.x - this.px)
-      : intent.aim.angle;
+    if (intent.aim.mode === 'pointer') {
+      this.aimX = intent.aim.x; this.aimY = intent.aim.y;
+    } else {
+      this.aimX = this.px + Math.cos(intent.aim.angle) * 800;
+      this.aimY = this.py + Math.sin(intent.aim.angle) * 800;
+    }
+    const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
     this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * dt);
     this.registry.set('inputMode', intent.mode);
 
@@ -146,6 +154,9 @@ export default class ArenaScene extends Phaser.Scene {
       this.fireCooldowns[w.location] = Math.max(0, cd);
     }
 
+    // ── Projectiles in flight ──
+    this._updateProjectiles(dt);
+
     // ── Ammo regen ── every magazine tops back up over time.
     this.mech.regenAmmo(dt);
   }
@@ -174,34 +185,129 @@ export default class ArenaScene extends Phaser.Scene {
     };
   }
 
-  // Fire one weapon along the current turret facing. Draws a category-coloured tracer;
-  // if the firing ray passes through the dummy, its nearest part takes this weapon's
-  // damage and the dummy is re-skinned so a destroyed part becomes a stump.
+  // Fire one weapon. Hitscan/contact resolve instantly (a beam); projectile weapons
+  // spawn travelling rounds that respect velocity, arc, and spread.
   fireWeapon(w) {
-    if (!this.scene.isActive() || this.dummy.isDestroyed()) return;
+    if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
-
-    const dirX = Math.cos(this.turretAngle), dirY = Math.sin(this.turretAngle);
+    const d = w.weapon.delivery;
     const m = this._muzzle(w.location);
-    const muzzleX = m.x, muzzleY = m.y;
+
+    // Each weapon converges from its own muzzle onto the shared aim point.
+    const baseAngle = Math.atan2(this.aimY - m.y, this.aimX - m.x);
+    if (d.hit === 'hitscan' || d.hit === 'contact') { this._fireHitscan(w, m.x, m.y, baseAngle); return; }
+
+    // Projectile: one shot, or a fan of `spreadCount` for spread weapons.
+    const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
+    const spreadRad = ((d.spreadAngle || (n > 1 ? 16 : 0)) * Math.PI) / 180;
+    for (let i = 0; i < n; i++) {
+      const off = n > 1 ? ((i - (n - 1) / 2) / (n - 1)) * spreadRad : 0;
+      this._spawnProjectile(w, m.x, m.y, baseAngle + off);
+    }
+  }
+
+  // The kind tag drives a projectile/impact's look: energy → plasma blob, missile →
+  // trailed rocket, anything else → ballistic slug.
+  _kind(weapon) {
+    if (weapon.category === 'energy') return 'plasma';
+    if (weapon.category === 'missile') return 'missile';
+    return 'slug';
+  }
+
+  _fireHitscan(w, muzzleX, muzzleY, angle) {
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
+    const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
 
     // Project the dummy onto the firing ray: forward distance `t`, perpendicular miss.
     const ex = this.dx - muzzleX, ey = this.dy - muzzleY;
     const t = ex * dirX + ey * dirY;
     const perp = Math.abs(ex * dirY - ey * dirX);
-    const hit = t > 0 && t < 900 && perp < 44;
+    const hit = !this.dummy.isDestroyed() && t > 0 && t < reach && perp < 44;
+    const endX = hit ? muzzleX + dirX * t : muzzleX + dirX * Math.min(reach, 600);
+    const endY = hit ? muzzleY + dirY * t : muzzleY + dirY * Math.min(reach, 600);
 
-    const endX = hit ? muzzleX + dirX * t : muzzleX + dirX * 600;
-    const endY = hit ? muzzleY + dirY * t : muzzleY + dirY * 600;
-    this.fx.lineStyle(2, color, 0.9).beginPath();
-    this.fx.moveTo(muzzleX, muzzleY); this.fx.lineTo(endX, endY); this.fx.strokePath();
-    this.time.delayedCall(70, () => this.fx.clear());
-    if (!hit) return;
+    // Laser-y beam: bright core over a soft glow, quick fade.
+    this.fx.lineStyle(5, color, 0.25).lineBetween(muzzleX, muzzleY, endX, endY);
+    this.fx.lineStyle(1.6, 0xffffff, 0.9).lineBetween(muzzleX, muzzleY, endX, endY);
+    this.time.delayedCall(80, () => this.fx.clear());
+    if (hit) { this._damageDummyAt(endX, endY, w.weapon.damage, color); this._impactFx(endX, endY, color, 'beam', 0); }
+  }
 
-    // Nearest dummy part to the impact point.
+  _spawnProjectile(w, x, y, angle) {
+    const d = w.weapon.delivery;
+    const speed = d.velocity || 480;
+    const maxRange = (w.weapon.range?.max ?? 400) + 40;
+    let maxDist = maxRange;
+    if (d.path === 'arcing') {
+      // Lob toward the dummy if it's roughly in front, else to optimal range.
+      const ex = this.dx - x, ey = this.dy - y;
+      const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
+      const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
+      maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
+    }
+    this.projectiles.push({
+      x, y, angle, speed,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
+      damage: w.weapon.damage, splash: d.splash || 0,
+      dist: 0, maxDist, arc: d.path === 'arcing', trail: [],
+    });
+  }
+
+  _updateProjectiles(dt) {
+    this.projFx.clear();
+    for (const p of this.projectiles) {
+      p.x += p.vx * dt; p.y += p.vy * dt; p.dist += p.speed * dt;
+      const toDummy = this.dummy.isDestroyed() ? Infinity : Math.hypot(p.x - this.dx, p.y - this.dy);
+      const landed = p.dist >= p.maxDist;
+      if (toDummy < HIT_RADIUS || landed) {
+        p.dead = true;
+        if (toDummy < HIT_RADIUS + p.splash) this._damageDummyAt(p.x, p.y, p.damage, p.color);
+        this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
+        continue;
+      }
+      this._drawProjectile(p);
+    }
+    if (this.projectiles.some((p) => p.dead)) this.projectiles = this.projectiles.filter((p) => !p.dead);
+  }
+
+  _drawProjectile(p) {
+    const g = this.projFx;
+    // Arcing rounds fake height: a ground shadow plus a lofted body.
+    let lift = 0;
+    if (p.arc) {
+      lift = Math.sin((p.dist / p.maxDist) * Math.PI) * Math.min(28, p.maxDist * 0.12);
+      g.fillStyle(0x000000, 0.25).fillEllipse(p.x, p.y, 7, 3);
+    }
+    const dy = p.y - lift;
+    if (p.kind === 'plasma') {
+      g.fillStyle(p.color, 0.30).fillCircle(p.x, dy, 7);
+      g.fillStyle(p.color, 0.9).fillCircle(p.x, dy, 3.4);
+      g.fillStyle(0xffffff, 0.9).fillCircle(p.x, dy, 1.4);
+    } else if (p.kind === 'missile') {
+      const bx = p.x - Math.cos(p.angle) * 7, by = dy - Math.sin(p.angle) * 7;
+      g.lineStyle(3, 0xffb347, 0.5).lineBetween(bx, by, p.x - Math.cos(p.angle) * 14, dy - Math.sin(p.angle) * 14);
+      g.fillStyle(p.color, 1).fillCircle(p.x, dy, 2.4);
+    } else { // slug: a short bright tracer
+      const tx = p.x - Math.cos(p.angle) * 9, ty = dy - Math.sin(p.angle) * 9;
+      g.lineStyle(2, p.color, 0.9).lineBetween(tx, ty, p.x, dy);
+    }
+  }
+
+  // A short-lived impact flash (richer per-ordnance visuals are a follow-up).
+  _impactFx(x, y, color, kind, splash) {
+    const r = Math.max(7, splash);
+    this.fx.lineStyle(2, color, 0.8).strokeCircle(x, y, r * 0.6);
+    this.fx.fillStyle(0xffffff, 0.6).fillCircle(x, y, 2.5);
+    this.time.delayedCall(90, () => this.fx.clear());
+  }
+
+  // Apply `damage` to the dummy's part nearest the world point (x, y).
+  _damageDummyAt(x, y, damage, color) {
+    if (this.dummy.isDestroyed()) return;
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
-    const lx = endX - this.dx, ly = endY - this.dy;
+    const lx = x - this.dx, ly = y - this.dy;
     const lay = mechLayout(this.dummy);
     let best = null, bestD = Infinity;
     for (const loc of DAMAGEABLE) {
@@ -209,9 +315,9 @@ export default class ArenaScene extends Phaser.Scene {
       const d = Math.hypot(lx - a.x * dispUnit, ly - a.y * dispUnit);
       if (d < bestD) { bestD = d; best = loc; }
     }
-    const res = this.dummy.applyDamage(best, w.weapon.damage);
+    const res = this.dummy.applyDamage(best, damage);
     reskinMech(this, 'dummyMech', this.dummy, { theme: 'enemy' });
-    this._floatText(this.dx + lx, this.dy + ly, `${w.weapon.damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
+    this._floatText(x, y, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
     if (this.dummy.isDestroyed()) {
       this.dummyView.setAlpha(0.5);
       this._floatText(this.dx, this.dy - 30, 'DESTROYED', '#e2533a');
