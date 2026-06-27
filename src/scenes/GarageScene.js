@@ -1,16 +1,17 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech, itemFxKey } from '../art/index.js';
+import { buildMechTextures, reskinMech } from '../art/index.js';
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
-import { MOUNT_LOCATIONS, ABILITY_SLOTS } from '../data/anatomy.js';
+import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { CATEGORIES } from '../data/categories.js';
 import { MECH_DEPLOYED } from '../data/events.js';
-import { SKILL_BINDS, PadEdges, PAD } from '../input/Controls.js';
+import { PadEdges, PAD } from '../input/Controls.js';
+import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 
 // The mech lab. The build is exactly five skill slots, so the body is shown as a row of
 // five square "skill button" tiles (#26) — one per slot — each showing the mounted item's
@@ -25,11 +26,8 @@ const UI = {
   ability: 0x7bd17b,
 };
 
-// Left-to-right tile order, mirroring the mech's body so the row reads like a chassis:
-// left arm · left torso · centre torso · right torso · right arm.
-const TILE_ORDER = ['leftArm', 'leftTorso', 'centerTorso', 'rightTorso', 'rightArm'];
-const TILE_MAX = 150;
-const TILE_GAP = 14;
+// The skill-tile row (order, layout, drawing) is shared with the arena HUD via
+// ../ui/skillTiles.js, so the two read identically. TILE_ORDER comes from there.
 
 // Each slot's controller button, so pressing a slot's own bind quick-mounts the highlighted
 // catalog item straight into it (#30). Mirrors SKILL_BINDS' pad labels: RT/LT triggers,
@@ -58,11 +56,14 @@ export default class GarageScene extends Phaser.Scene {
     this.selected = null;   // last-touched location (for a subtle highlight)
     this.armed = null;      // catalog item id picked up, waiting to be placed
 
-    // Doll region: the left ~56% of the screen, below the header, above the footer.
+    // Doll region: the left ~66% of the screen, below the header, above the footer. The
+    // skill tiles sit in a row along the BOTTOM (just above the footer); the live preview
+    // fills the space above them.
     this.dollX = 20;
     this.dollY = 70;
     this.dollW = Math.round(this.W * 0.66) - 20;
-    this.dollH = this.H - this.dollY - 64;
+    this._rowBottom = this.H - 56 - 12;            // tile-row bottom edge (above the footer)
+    this.tileTop = this._tileRow()[0].y;           // tile-row top, for placing the preview
 
     buildMechTextures(this, 'garageMech', this.mech);
 
@@ -98,12 +99,6 @@ export default class GarageScene extends Phaser.Scene {
     this.padActive = mode === 'pad';
     this._updateCatalogHighlight();
     this.refresh();
-  }
-
-  // The bind shown on a tile, for the current input mode (controller OR keyboard, #26).
-  _bindLabel(loc) {
-    const b = SKILL_BINDS[loc];
-    return this.inputMode === 'pad' ? b.pad : b.key;
   }
 
   // Controller (#30): the LEFT STICK moves the focus (d-pad is left free for other uses),
@@ -281,78 +276,46 @@ export default class GarageScene extends Phaser.Scene {
   // sprites reference fixed texture keys; onChange re-skins those textures in place.
   _buildPreview() {
     const px = Math.round(this.dollX + this.dollW * 0.5);
-    const py = this.H - 176;
-    this.previewPanel = this.add.rectangle(px, py, 220, 220, 0x10151c)
+    const py = Math.round((this.dollY + this.tileTop) / 2) + 8;   // centred above the tiles
+    this.previewPanel = this.add.rectangle(px, py, 230, 230, 0x10151c)
       .setStrokeStyle(1, UI.panelEdge);
-    this.add.text(px, py - 100, 'LIVE PREVIEW', {
+    this.add.text(px, py - 104, 'LIVE PREVIEW', {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
     }).setOrigin(0.5, 0);
-    this.previewHull = this.add.sprite(px, py + 10, 'garageMech_hull_0').setScale(0.7);
-    this.previewTurret = this.add.sprite(px, py + 10, 'garageMech_turret').setScale(0.7);
+    this.previewHull = this.add.sprite(px, py + 14, 'garageMech_hull_0').setScale(0.75);
+    this.previewTurret = this.add.sprite(px, py + 14, 'garageMech_turret').setScale(0.75);
   }
 
-  // The square tile for a slot (top-left + size). Five tiles share a centred row across
-  // the top of the doll region, sized to fit the width (capped at TILE_MAX).
-  tileRect(loc) {
-    const n = TILE_ORDER.length;
-    const size = Math.min(TILE_MAX, Math.floor((this.dollW - TILE_GAP * (n - 1)) / n));
-    const totalW = size * n + TILE_GAP * (n - 1);
-    const x0 = Math.round(this.dollX + (this.dollW - totalW) / 2);
-    const i = TILE_ORDER.indexOf(loc);
-    return { x: x0 + i * (size + TILE_GAP), y: this.dollY + 10, w: size, h: size };
+  // The shared skill-tile row, along the bottom of the doll region (above the footer).
+  _tileRow() {
+    return tileRow(this.dollX, this.dollW, { bottom: this._rowBottom, maxSize: 132 });
   }
 
-  // Rebuild the doll: a row of five square skill tiles, each showing its fire bind and
-  // the mounted item's icon (or an empty state).
+  // Rebuild the doll: the shared skill-tile row, each tile click-to-mount / click-to-clear.
   refresh() {
     this.doll.removeAll(true);
     this.footer.removeAll(true);
-    for (const loc of TILE_ORDER) this._drawTile(loc);
+    for (const rect of this._tileRow()) this._drawTile(rect);
     this._drawFooter();
   }
 
-  _drawTile(loc) {
-    const rect = this.tileRect(loc);
-    const cx = rect.x + rect.w / 2;
-    // Highlight the tile when it's the (mouse) selection, or the controller focus is on it.
-    const isSel = loc === this.selected && (this.focusZone === 'tiles' || !this.padActive);
+  _drawTile(rect) {
+    const loc = rect.loc;
     const id = this.mech.mounts[loc][0];   // one skill per slot
-    const isAbility = ABILITY_SLOTS.includes(loc);
+    // Highlight when it's the (mouse) selection, or the controller focus is on it.
+    const selected = loc === this.selected && (this.focusZone === 'tiles' || !this.padActive);
+    const refs = drawSkillTile(this, this.doll, rect, {
+      loc, itemId: id, mode: this.inputMode, selected,
+      subtitle: id ? getItem(id).name : '', subtitleColor: TILE_UI.text,
+    });
 
-    const bg = this.add.rectangle(rect.x, rect.y, rect.w, rect.h, isSel ? UI.cardSel : UI.card)
-      .setOrigin(0, 0).setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge)
-      .setInteractive({ useHandCursor: true });
+    const bg = refs.bg.setInteractive({ useHandCursor: true });
     if (this.armed) {
       bg.on('pointerover', () => bg.setStrokeStyle(2, UI.ability));
-      bg.on('pointerout', () => bg.setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge));
+      bg.on('pointerout', () => bg.setStrokeStyle(selected ? 2 : 1, selected ? 0xefc14a : UI.panelEdge));
     }
     // Armed → mount here (replacing). Filled & unarmed → clear. Empty & unarmed → select.
     bg.on('pointerdown', () => (this.armed ? this.placeOn(loc) : id ? this.unmount(loc, 0) : this.placeOn(loc)));
-    this.doll.add(bg);
-
-    // The CONTROL BIND is the prominent label (#26) — mode-aware, big, centred at the top.
-    // Parts aren't named any more; the bind is how you read the tile.
-    this.doll.add(this.add.text(cx, rect.y + 7, this._bindLabel(loc), {
-      fontFamily: 'monospace', fontSize: '17px', color: isSel ? UI.sel : UI.accent,
-    }).setOrigin(0.5, 0));
-
-    const iconY = rect.y + rect.h * 0.53;
-    if (id) {
-      const item = getItem(id);
-      // The item's actual visual-effect art (shared with the in-arena projectile/beam).
-      this.doll.add(this.add.image(cx, iconY, itemFxKey(id)).setDisplaySize(rect.w * 0.5, rect.w * 0.5));
-      this.doll.add(this.add.text(cx, rect.y + rect.h - 26, item.name, {
-        fontFamily: 'monospace', fontSize: '10px', color: UI.dim, align: 'center',
-        wordWrap: { width: rect.w - 8 },
-      }).setOrigin(0.5, 0));
-    } else {
-      this.doll.add(this.add.text(cx, iconY, '+', {
-        fontFamily: 'monospace', fontSize: '26px', color: UI.slotEdge,
-      }).setOrigin(0.5));
-      this.doll.add(this.add.text(cx, rect.y + rect.h - 16, isAbility ? 'ability' : 'weapon', {
-        fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
-      }).setOrigin(0.5));
-    }
   }
 
   _drawFooter() {

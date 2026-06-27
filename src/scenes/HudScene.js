@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
-import { SKILL_BINDS } from '../input/Controls.js';
+import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 
-// Screen-fixed overlay for the arena: controls hint, a live weapons/ammo readout, a
-// compact per-part health column for the player, and the dummy's status. Runs as its
-// own scene (like the garage) so it lays out in logical screen space without fighting
-// the arena's follow camera. Text objects are created once and updated in place.
+// Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
+// garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
+// cooldown) read right on its button. A compact per-part integrity column sits top-left.
+// Runs as its own scene so it lays out in logical screen space without fighting the arena's
+// follow camera; tiles are built once and updated in place each frame.
 const C = { text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a' };
 
 export default class HudScene extends Phaser.Scene {
@@ -23,28 +24,32 @@ export default class HudScene extends Phaser.Scene {
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
     this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  T/R3: aim-assist  ·  M: mute  ·  G/B: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
-    this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
-    this.assistText = this.add.text(this.W / 2, 28, '', { fontFamily: 'monospace', fontSize: '14px', color: C.accent }).setOrigin(0.5, 0);
-    // Debug AI state (#28), bottom-right above the input-mode tag.
-    this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
-    this.add.text(16, this.H - 134, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
+    this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
       { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
 
-    // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
-    this.add.text(16, 62, 'WEAPONS', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
-    this.weaponsText = this.add.text(16, 80, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text, lineSpacing: 3 });
-    this.abilityText = this.add.text(16, 168, '', { fontFamily: 'monospace', fontSize: '12px', color: C.accent, lineSpacing: 3 });
+    this.assistText = this.add.text(this.W / 2, 28, '', { fontFamily: 'monospace', fontSize: '14px', color: C.accent }).setOrigin(0.5, 0);
+    this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
+    this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
+    this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
 
-    // Per-part health column (player).
+    // Per-part integrity column (player), top-left under the hints.
+    this.add.text(16, 80, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.partTexts = {};
-    let y = this.H - 110;
+    let y = 98;
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;
       this.partTexts[loc] = this.add.text(16, y, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text });
       y += 14;
     }
 
-    this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
+    // Skill bar — the shared garage tiles, centred along the bottom of the screen.
+    this.skillBar = this.add.container(0, 0);
+    this.skillRefs = {};
+    const mech = this.registry.get('playerMech');
+    for (const r of tileRow(this.W * 0.12, this.W * 0.76, { bottom: this.H - 10, maxSize: 92 })) {
+      const id = mech?.mounts[r.loc]?.[0] ?? null;
+      this.skillRefs[r.loc] = drawSkillTile(this, this.skillBar, r, { loc: r.loc, itemId: id });
+    }
   }
 
   update() {
@@ -54,32 +59,37 @@ export default class HudScene extends Phaser.Scene {
     this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
     const assistOn = this.registry.get('assistOn') !== false;
     this.assistText.setText(`AIM-ASSIST ${assistOn ? 'ON' : 'OFF'}`).setColor(assistOn ? C.accent : C.dim);
-    // Only show the AI-debug line when something is toggled off (otherwise stay quiet).
     const aiMove = this.registry.get('aiMove') !== false;
     const aiFire = this.registry.get('aiFire') !== false;
     this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
 
-    // Weapons / ammo: each weapon's fire bind + name + magazine (∞ for melee). Offline
-    // weapons (their location wrecked) show a marker.
-    const lines = mech.weapons().map((w) => {
-      const bind = (SKILL_BINDS[w.location]?.key ?? '?').padEnd(5);
-      const name = w.weapon.name.padEnd(12);
-      const ammo = w.ammo == null ? '  ∞' : `${String(Math.floor(w.ammo)).padStart(2)}/${w.weapon.ammoMax}`;
-      if (!w.online) return `${bind} ${name} OFFLINE`;
-      return `${bind} ${name} ${ammo}`;
-    });
-    this.weaponsText.setText(lines.length ? lines.join('\n') : '(no weapons)');
-
-    // Abilities: bind + name + cooldown state.
+    // Skill tiles: live ammo on each weapon, cooldown on each ability (#).
+    const mode = this.registry.get('inputMode') === 'pad' ? 'pad' : 'kbm';
+    const weapons = mech.weapons();
+    const abilities = mech.abilities();
     const cds = this.registry.get('abilityCooldowns') || {};
-    const abilityLines = mech.abilities().map((ab) => {
-      const bind = (SKILL_BINDS[ab.location]?.key ?? '?').padEnd(5);
-      const cd = cds[ab.location] || 0;
-      const state = cd > 0 ? `${(cd / 1000).toFixed(1)}s` : 'READY';
-      return `${bind} ${ab.equip.name.padEnd(12)} ${state}`;
-    });
-    if (this.registry.get('shieldActive')) abilityLines.push('      SHIELD UP');
-    this.abilityText.setText(abilityLines.length ? 'ABILITIES\n' + abilityLines.join('\n') : '');
+    const shieldActive = this.registry.get('shieldActive');
+    for (const loc of TILE_ORDER) {
+      const id = mech.mounts[loc][0] ?? null;
+      const opts = { loc, itemId: id, mode };
+      const w = weapons.find((x) => x.location === loc);
+      const ab = abilities.find((x) => x.location === loc);
+      if (w) {
+        opts.iconAlpha = w.online ? 1 : 0.3;
+        if (!w.online) { opts.subtitle = 'OFFLINE'; opts.subtitleColor = C.bad; }
+        else if (w.ammo == null) { opts.subtitle = '∞'; opts.subtitleColor = C.dim; }
+        else {
+          opts.subtitle = `${Math.floor(w.ammo)}/${w.weapon.ammoMax}`;
+          opts.subtitleColor = w.ready ? C.good : C.warn;
+          opts.ammoFrac = w.ammo / w.weapon.ammoMax;
+        }
+      } else if (ab) {
+        const cd = cds[loc] || 0;
+        if (loc === 'centerTorso' && shieldActive) { opts.subtitle = 'ACTIVE'; opts.subtitleColor = C.accent; }
+        else { opts.subtitle = cd > 0 ? `${(cd / 1000).toFixed(1)}s` : 'READY'; opts.subtitleColor = cd > 0 ? C.warn : C.good; }
+      }
+      updateSkillTile(this.skillRefs[loc], opts);
+    }
 
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;
