@@ -36,9 +36,10 @@ function hardClipCurve(drive) {
 // back on itself (`amount` = how many folds), generating wild, slightly inharmonic upper
 // overtones: the gnarly metallic harshness on top of the clip.
 function foldbackCurve(amount) {
+  const a = Math.max(1, amount);                        // a=1 is identity (passthrough); <1 would silence
   const n = 1024, curve = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    const t = (((i * 2) / n - 1) * amount + 1) % 4;     // triangle-fold into [-1,1]
+    const t = (((i * 2) / n - 1) * a + 1) % 4;          // triangle-fold into [-1,1]
     const u = (t + 4) % 4;
     curve[i] = (u < 2 ? u : 4 - u) - 1;
   }
@@ -151,6 +152,7 @@ export class AudioEngine {
   // The riff's tonal low foundation: root + sub-octave + tunable FIFTH / octave overtones,
   // lightly driven + low-passed. The fifth/octave mixes let the bass carry overtones too.
   _bass(freq, at, dur, gain = 0.6) {
+    if (gain <= 0) return;                          // silent — skip
     const ctx = this.ctx, P = this.params;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
@@ -197,8 +199,9 @@ export class AudioEngine {
   // ── Synth voices ── each schedules itself at `at` (default: now) and frees on stop. ──
 
   // A pitched oscillator with a fast attack + exponential decay; optional pitch glide.
+  // (gain <= 0 is skipped — exponential ramps can't target 0, and a silent voice is a no-op.)
   tone(bus, { type = 'sine', freq = 440, freqEnd, dur = 0.15, gain = 0.4, attack = 0.004 }, at) {
-    if (!this.ctx) return;
+    if (!this.ctx || gain <= 0) return;
     const t = at ?? this._now();
     const o = this.ctx.createOscillator();
     o.type = type;
@@ -213,8 +216,9 @@ export class AudioEngine {
   }
 
   // Filtered noise burst — the workhorse for gun cracks, whooshes, impacts, drums.
+  // (gain <= 0 is skipped — exponential ramps can't target 0.)
   noise(bus, { dur = 0.2, gain = 0.4, type = 'lowpass', freq = 1200, freqEnd, q = 0.8, attack = 0.002 }, at) {
-    if (!this.ctx) return;
+    if (!this.ctx || gain <= 0) return;
     const t = at ?? this._now();
     const src = this.ctx.createBufferSource(); src.buffer = this._noise();
     const f = this.ctx.createBiquadFilter(); f.type = type;
@@ -424,6 +428,7 @@ export class AudioEngine {
   // a short sustained body + quick release, so it reads as a palm-muted CHUG, not a blip.
   // `chord:false` plays a single note (lead/tremolo).
   _gtr(freq, at, dur, gain = 0.5, chord = true) {
+    if (gain <= 0) return;                          // silent (level slider at 0) — skip
     const ctx = this.ctx, P = this.params;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
