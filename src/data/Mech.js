@@ -5,9 +5,10 @@
 // (Mech.test.js); the arena/garage drive the model and render it.
 
 import { getChassis } from './chassis/index.js';
-import { LOCATIONS, MOUNT_LOCATIONS, partDestroyed, mechDestroyed } from './anatomy.js';
+import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, partDestroyed, mechDestroyed } from './anatomy.js';
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
+import { getEquipment } from './equipment.js';
 import * as loadout from './loadout.js';
 
 export class Mech {
@@ -141,6 +142,17 @@ export class Mech {
 
   onlineWeapons() { return this.weapons().filter((w) => w.online); }
   readyWeapons() { return this.weapons().filter((w) => w.ready); }
+
+  // Activated abilities mounted in the ability slots (head / centre torso), each with
+  // its bound location so the arena can map a button press to it.
+  abilities() {
+    const out = [];
+    for (const loc of ABILITY_SLOTS) {
+      const id = this.mounts[loc][0];
+      if (id && !isWeapon(id)) out.push({ location: loc, id, equip: getEquipment(id) });
+    }
+    return out;
+  }
 
   // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons).
   consumeAmmo(loc, index, n = 1) {

@@ -61,6 +61,8 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.controls = new Controls(this);
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
+    this.abilityCd = {};       // ability location → ms until it can fire again
+    this.shieldUntil = 0;      // timestamp the bubble shield is active until
     this.input.keyboard.on('keydown-G', () => this.toGarage());
 
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
@@ -154,11 +156,49 @@ export default class ArenaScene extends Phaser.Scene {
       this.fireCooldowns[w.location] = Math.max(0, cd);
     }
 
+    // ── Abilities ── each ability slot fires on its button (R3/L3) off cooldown. ──
+    const dashDir = Math.hypot(intent.move.x, intent.move.y) > 0.1
+      ? Math.atan2(intent.move.y, intent.move.x) : this.turretAngle;
+    for (const ab of this.mech.abilities()) {
+      let cd = (this.abilityCd[ab.location] ?? 0) - delta;
+      if (intent.fire[ab.location] && cd <= 0) { this._activateAbility(ab, dashDir); cd = ab.equip.cooldown * 1000; }
+      this.abilityCd[ab.location] = Math.max(0, cd);
+    }
+    this.registry.set('abilityCooldowns', this.abilityCd);
+    this.registry.set('shieldActive', this.time.now < this.shieldUntil);
+
     // ── Projectiles in flight ──
     this._updateProjectiles(dt);
 
+    // Bubble shield bubble, drawn over the player while active.
+    if (this.time.now < this.shieldUntil) {
+      this.projFx.lineStyle(2, 0x5ec8e0, 0.7).strokeCircle(this.px, this.py, 34);
+      this.projFx.fillStyle(0x5ec8e0, 0.10).fillCircle(this.px, this.py, 34);
+    }
+
     // ── Ammo regen ── every magazine tops back up over time.
     this.mech.regenAmmo(dt);
+  }
+
+  _activateAbility(ab, dir) {
+    const e = ab.equip;
+    if (e.ability === 'dash') {
+      this.vx += Math.cos(dir) * e.impulse;
+      this.vy += Math.sin(dir) * e.impulse;
+      // thruster puff at the mech, opposite the dash
+      this.fx.fillStyle(0xffd56b, 0.8).fillCircle(this.px - Math.cos(dir) * 16, this.py - Math.sin(dir) * 16, 6);
+      this.time.delayedCall(90, () => this.fx.clear());
+    } else if (e.ability === 'shield') {
+      this.shieldUntil = this.time.now + e.duration * 1000;
+      this._floatText(this.px, this.py - 30, 'SHIELD', '#5ec8e0');
+    }
+  }
+
+  // Incoming damage to the player (used once enemies fire) — fully absorbed while the
+  // bubble shield is up.
+  damagePlayer(locationId, amount) {
+    if (this.time.now < this.shieldUntil) return { applied: 0, shielded: true };
+    return this.mech.applyDamage(locationId, amount);
   }
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the

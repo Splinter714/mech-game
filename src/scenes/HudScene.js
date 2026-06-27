@@ -28,6 +28,7 @@ export default class HudScene extends Phaser.Scene {
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
     this.add.text(16, 62, 'WEAPONS', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.weaponsText = this.add.text(16, 80, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text, lineSpacing: 3 });
+    this.abilityText = this.add.text(16, 168, '', { fontFamily: 'monospace', fontSize: '12px', color: C.accent, lineSpacing: 3 });
 
     // Per-part health column (player).
     this.partTexts = {};
@@ -58,6 +59,17 @@ export default class HudScene extends Phaser.Scene {
       return `${bind} ${name} ${ammo}`;
     });
     this.weaponsText.setText(lines.length ? lines.join('\n') : '(no weapons)');
+
+    // Abilities: bind + name + cooldown state.
+    const cds = this.registry.get('abilityCooldowns') || {};
+    const abilityLines = mech.abilities().map((ab) => {
+      const bind = (SKILL_BINDS[ab.location]?.key ?? '?').padEnd(5);
+      const cd = cds[ab.location] || 0;
+      const state = cd > 0 ? `${(cd / 1000).toFixed(1)}s` : 'READY';
+      return `${bind} ${ab.equip.name.padEnd(12)} ${state}`;
+    });
+    if (this.registry.get('shieldActive')) abilityLines.push('      SHIELD UP');
+    this.abilityText.setText(abilityLines.length ? 'ABILITIES\n' + abilityLines.join('\n') : '');
 
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;

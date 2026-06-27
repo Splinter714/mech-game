@@ -1,10 +1,17 @@
-// Non-weapon equipment. Intentionally empty for now: heat sinks and ammo bins are gone
-// (there's no heat system, and ammo lives on each weapon as a self-regenerating
-// magazine), and thrusters/jammer were unimplemented. The exports stay so the item
-// lookup, loadout validator, and Mech model keep treating "equipment" uniformly — add
-// an entry here (with a real in-game effect) when one is actually needed.
+// Non-weapon equipment = abilities. Each is an activated item that mounts in an ability
+// slot (head / centre torso) and fires on that slot's button (R3 / L3) with a cooldown.
+// `ability` names the effect the arena implements; `cooldown` is in seconds.
 
-export const EQUIPMENT = {};
+export const EQUIPMENT = {
+  jumpJet: {
+    id: 'jumpJet', name: 'Jump Jet', type: 'ability', ability: 'dash',
+    cooldown: 2.2, impulse: 460,           // burst of speed in the move/aim direction
+  },
+  bubbleShield: {
+    id: 'bubbleShield', name: 'Bubble Shield', type: 'ability', ability: 'shield',
+    cooldown: 9, duration: 3,              // seconds of incoming-damage absorption
+  },
+};
 
 export const EQUIPMENT_IDS = Object.keys(EQUIPMENT);
 
