@@ -38,7 +38,7 @@ try {
     sc.arm('autocannon');
     sc.placeOn('rightArm');
     const weaponMount = mech.mounts.rightArm.includes('autocannon');
-    // ...and the head is an ability slot now, so it rejects a weapon.
+    // ...and the head is not a skill slot at all (#31), so it rejects a weapon.
     const headRejectsWeapon = !mech.mount('head', 'mediumLaser').ok;
     const dollBuilt = sc.doll.list.length > 0;
     return {
@@ -129,7 +129,7 @@ try {
   if (errors.length) fail('runtime errors:\n' + errors.join('\n'));
   if (garage.chassis !== 'medium') fail(`expected medium chassis, got ${garage.chassis}`);
   if (!garage.weaponMount) fail('mounting a weapon into a weapon slot did not take');
-  if (!garage.headRejectsWeapon) fail('the head (ability slot) wrongly accepted a weapon');
+  if (!garage.headRejectsWeapon) fail('the head (not a skill slot) wrongly accepted a weapon');
   if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');
   if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');

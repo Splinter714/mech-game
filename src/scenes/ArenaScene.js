@@ -6,7 +6,7 @@ import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
 import { CATEGORIES } from '../data/categories.js';
 import { hexToPixel, pixelToHex, range, axialKey, distance, HEX_SIZE } from '../data/hexgrid.js';
-import { Controls } from '../input/Controls.js';
+import { Controls, PadEdges, PAD } from '../input/Controls.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -15,6 +15,12 @@ import { Controls } from '../input/Controls.js';
 // Single-file for Milestone 1 — splits into arena/ mixins as combat grows.
 const ARENA_MECH_SCALE = 0.34;
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
+// Aim-assist tuning (#31) — a default, always-on aid. ASSIST_STRENGTH is the max fraction
+// the firing solution is pulled from the reticle toward the enemy; the pull scales up as
+// the aim tightens within ASSIST_CONE, out to ASSIST_RANGE. Bump STRENGTH for more help.
+const ASSIST_STRENGTH = 0.55;
+const ASSIST_CONE = 0.35;         // radians of half-angle the enemy must be within
+const ASSIST_RANGE = 620;         // px the enemy must be within
 const DUMMY_HEX = { q: 3, r: -1 };
 const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit'); // cockpit is hit via the head
 
@@ -64,13 +70,21 @@ export default class ArenaScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.playerView, true, 0.12, 0.12);
 
     this.controls = new Controls(this);
+    this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.abilityCd = {};       // ability location → ms until it can fire again
     this.shieldUntil = 0;      // timestamp the bubble shield is active until
-    this.lockProgress = 0;     // target-lock acquisition 0..1
-    this.lockTarget = null;    // 'dummy' once locked
-    this.lockBonus = 1.3;
+    this.assistOn = true;      // aim-assist: a default, always-on targeting aid (#31)
+    this.assistTarget = null;  // enemy the shots are being nudged toward this frame
+
+    // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
+    this.enemyMove = true;
+    this.enemyFire = true;
+
     this.input.keyboard.on('keydown-G', () => this.toGarage());
+    this.input.keyboard.on('keydown-T', () => this._toggleAssist());
+    this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._toggleAi('move'));
+    this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
 
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
     this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
@@ -146,6 +160,17 @@ export default class ArenaScene extends Phaser.Scene {
     this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * dt);
     this.registry.set('inputMode', intent.mode);
 
+    // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #31 assist). ──
+    if (this.padEdges.pressed(PAD.R3)) this._toggleAssist();
+    if (this.padEdges.pressed(PAD.SELECT) || this.padEdges.pressed(PAD.B)) this.toGarage();
+    if (this.padEdges.pressed(PAD.DPAD_UP)) this._toggleAi('move');
+    if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._toggleAi('fire');
+
+    // ── Aim-assist (#31): a default, always-on aid. When the enemy sits near the
+    // reticle, flag it as the tracked target so weapons settle their shots onto it and
+    // an ambient cue is drawn. Subtle by design; strength tuned in fireWeapon. ──
+    this._updateAimAssist();
+
     // ── Stompy stepped gait ──
     let bob = 0;
     if (Math.abs(this.speed) > 5 && legF > 0) {
@@ -173,17 +198,14 @@ export default class ArenaScene extends Phaser.Scene {
       this.fireCooldowns[w.location] = Math.max(0, cd);
     }
 
-    // ── Abilities ── each ability slot fires on its button (R3/L3) off cooldown. ──
+    // ── Abilities ── the centre-torso ability fires on its button (L3 / Space) off cd. ──
     const dashDir = Math.hypot(intent.move.x, intent.move.y) > 0.1
       ? Math.atan2(intent.move.y, intent.move.x) : this.turretAngle;
-    let lockAb = null;
     for (const ab of this.mech.abilities()) {
-      if (ab.equip.ability === 'lock') { lockAb = ab; continue; }   // held action, below
       let cd = (this.abilityCd[ab.location] ?? 0) - delta;
       if (intent.fire[ab.location] && cd <= 0) { this._activateAbility(ab, dashDir); cd = ab.equip.cooldown * 1000; }
       this.abilityCd[ab.location] = Math.max(0, cd);
     }
-    this._updateLock(lockAb, intent, dt);
     this.registry.set('abilityCooldowns', this.abilityCd);
     this.registry.set('shieldActive', this.time.now < this.shieldUntil);
 
@@ -204,26 +226,51 @@ export default class ArenaScene extends Phaser.Scene {
     this.mech.regenAmmo(dt);
   }
 
-  // Target Lock: hold the head ability button with the enemy in the aim cone to build a
-  // lock; locked homing missiles track harder and hit for a bonus. Draws a reticle.
-  _updateLock(lockAb, intent, dt) {
-    if (!lockAb || this.dummy.isDestroyed()) { this.lockProgress = 0; this.lockTarget = null; this.registry.set('lockState', null); return; }
-    this.lockBonus = lockAb.equip.bonus;
-    const toAng = Math.atan2(this.dy - this.py, this.dx - this.px);
-    const inCone = Math.abs(Phaser.Math.Angle.Wrap(toAng - this.turretAngle)) < lockAb.equip.cone
-      && Math.hypot(this.dx - this.px, this.dy - this.py) < 560;
-    if (intent.fire[lockAb.location] && inCone) {
-      this.lockProgress = Math.min(1, this.lockProgress + dt / lockAb.equip.lockTime);
-      if (this.lockProgress >= 1) this.lockTarget = 'dummy';
-    } else {
-      this.lockProgress = Math.max(0, this.lockProgress - dt * 2);
-      if (this.lockProgress === 0) this.lockTarget = null;
+  // Aim-assist (#31): when assist is on and the enemy sits within a cone of where the
+  // reticle points (and in range), mark it the tracked target. `fireWeapon` then pulls
+  // each shot's convergence toward it; `_drawTrackCue` shows the ambient indicator. This
+  // is a baseline mechanic — no equipped item, no manual hold-to-lock.
+  _updateAimAssist() {
+    this.assistTarget = null;
+    this.registry.set('assistOn', this.assistOn);
+    if (!this.assistOn || this.dummy.isDestroyed()) return;
+    const dx = this.dx - this.px, dy = this.dy - this.py;
+    const dist = Math.hypot(dx, dy);
+    const toAng = Math.atan2(dy, dx);
+    const off = Math.abs(Phaser.Math.Angle.Wrap(toAng - this.turretAngle));
+    if (off < ASSIST_CONE && dist < ASSIST_RANGE) {
+      // Tighter aim (smaller angular error) = stronger pull, for a "settle then fire" feel.
+      const strength = ASSIST_STRENGTH * (1 - off / ASSIST_CONE);
+      this.assistTarget = { x: this.dx, y: this.dy, strength, tight: off < ASSIST_CONE * 0.4 };
+      this._drawTrackCue(this.dx, this.dy, this.assistTarget.tight);
     }
-    if (this.lockProgress > 0) {
-      const col = this.lockTarget ? 0xe2533a : 0xefc14a;
-      this.projFx.lineStyle(2, col, 0.9).strokeCircle(this.dx, this.dy, 30 - this.lockProgress * 6);
+  }
+
+  // Ambient tracked-target indicator (#27, folds the old lock UI into aim-assist): corner
+  // brackets that snap tighter and brighten as the aim settles onto the enemy.
+  _drawTrackCue(x, y, tight) {
+    const col = tight ? 0xe2533a : 0xefc14a;
+    const r = tight ? 22 : 28;          // brackets close in as the aim tightens
+    const len = 8;
+    const g = this.projFx.lineStyle(2, col, tight ? 1 : 0.8);
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const cx = x + sx * r, cy = y + sy * r;
+      g.lineBetween(cx, cy, cx - sx * len, cy);
+      g.lineBetween(cx, cy, cx, cy - sy * len);
     }
-    this.registry.set('lockState', this.lockTarget ? 'LOCKED' : `LOCK ${Math.round(this.lockProgress * 100)}%`);
+  }
+
+  _toggleAssist() {
+    this.assistOn = !this.assistOn;
+    this._floatText(this.px, this.py - 30, this.assistOn ? 'ASSIST ON' : 'ASSIST OFF', this.assistOn ? '#5ec8e0' : '#7c8794');
+  }
+
+  // Debug (#28): flip enemy movement or firing on/off and toast the new state.
+  _toggleAi(which) {
+    if (which === 'move') this.enemyMove = !this.enemyMove;
+    else this.enemyFire = !this.enemyFire;
+    const label = which === 'move' ? `AI MOVE ${this.enemyMove ? 'ON' : 'OFF'}` : `AI FIRE ${this.enemyFire ? 'ON' : 'OFF'}`;
+    this._floatText(this.dx, this.dy - 34, label, '#efc14a');
   }
 
   _activateAbility(ab, dir) {
@@ -301,8 +348,17 @@ export default class ArenaScene extends Phaser.Scene {
     const d = w.weapon.delivery;
     const m = this._muzzle(w.location);
 
-    // Each weapon converges from its own muzzle onto the shared aim point.
-    const baseAngle = Math.atan2(this.aimY - m.y, this.aimX - m.x);
+    // Aim-assist: pull the convergence point from the reticle toward the tracked enemy,
+    // so a settled aim lands cleanly without a perfect manual bead. Melee/contact ignore it.
+    let aimX = this.aimX, aimY = this.aimY;
+    if (this.assistTarget && d.hit !== 'contact') {
+      const s = this.assistTarget.strength;
+      aimX = Phaser.Math.Linear(aimX, this.assistTarget.x, s);
+      aimY = Phaser.Math.Linear(aimY, this.assistTarget.y, s);
+    }
+
+    // Each weapon converges from its own muzzle onto the (assisted) aim point.
+    const baseAngle = Math.atan2(aimY - m.y, aimX - m.x);
     if (d.hit === 'hitscan' || d.hit === 'contact') { this._fireHitscan(w, m.x, m.y, baseAngle); return; }
 
     // Projectile: one shot, or a fan of `spreadCount` for spread weapons.
@@ -377,15 +433,16 @@ export default class ArenaScene extends Phaser.Scene {
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
       maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
     }
+    // Homing is intrinsic to guided weapons now (#31): they track their target on their
+    // own when fired, no equipped lock needed.
     const homing = d.guidance === 'homing';
-    const locked = owner === 'player' && homing && this.lockTarget;   // a lock buffs guided missiles
     this.projectiles.push({
       x, y, angle, speed, owner,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
-      damage: w.weapon.damage * (locked ? this.lockBonus : 1), splash: d.splash || 0, range: w.weapon.range,
+      damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
       dist: 0, maxDist, arc: d.path === 'arcing', trail: [], ground: d.groundFire || null,
-      homing, turn: locked ? 5.2 : 3.4,   // guided missiles steer toward a target, harder when locked
+      homing, turn: 4.0,                 // guided missiles steer toward their target
     });
   }
 
@@ -483,31 +540,37 @@ export default class ArenaScene extends Phaser.Scene {
 
   // ── Enemy AI ── maintain a range band, face the player, fire with LOS. ──
   _updateEnemy(dt, delta) {
+    this.registry.set('aiMove', this.enemyMove);
+    this.registry.set('aiFire', this.enemyFire);
     if (this.dummy.isDestroyed()) { this.dummyView.setAlpha(0.5); return; }
     const mv = this.dummy.movement;
     const dxp = this.px - this.dx, dyp = this.py - this.dy;
     const dist = Math.hypot(dxp, dyp) || 1;
     const ux = dxp / dist, uy = dyp / dist;
 
-    // Desired movement: close if far, back off if close, else strafe.
-    let mx = 0, my = 0;
-    if (dist > 260) { mx = ux; my = uy; }
-    else if (dist < 150) { mx = -ux; my = -uy; }
-    else { this._strafeDir = this._strafeDir || 1; mx = -uy * this._strafeDir; my = ux * this._strafeDir; if (Math.random() < 0.01) this._strafeDir *= -1; }
+    // Movement (gated by the #28 debug toggle): close if far, back off if close, else strafe.
+    if (this.enemyMove) {
+      let mx = 0, my = 0;
+      if (dist > 260) { mx = ux; my = uy; }
+      else if (dist < 150) { mx = -ux; my = -uy; }
+      else { this._strafeDir = this._strafeDir || 1; mx = -uy * this._strafeDir; my = ux * this._strafeDir; if (Math.random() < 0.01) this._strafeDir *= -1; }
 
-    const spd = mv.maxSpeed * 0.8;
-    this.evx = approach(this.evx, mx * spd, mv.accel * dt);
-    this.evy = approach(this.evy, my * spd, mv.accel * dt);
-    let ndx = this.dx + this.evx * dt, ndy = this.dy + this.evy * dt;
-    if (this._blocked(ndx, ndy)) { if (!this._blocked(this.dx + this.evx * dt, this.dy)) { ndy = this.dy; this.evy = 0; } else if (!this._blocked(this.dx, this.dy + this.evy * dt)) { ndx = this.dx; this.evx = 0; } else { ndx = this.dx; ndy = this.dy; this.evx = this.evy = 0; } }
-    this.dx = ndx; this.dy = ndy;
+      const spd = mv.maxSpeed * 0.8;
+      this.evx = approach(this.evx, mx * spd, mv.accel * dt);
+      this.evy = approach(this.evy, my * spd, mv.accel * dt);
+      let ndx = this.dx + this.evx * dt, ndy = this.dy + this.evy * dt;
+      if (this._blocked(ndx, ndy)) { if (!this._blocked(this.dx + this.evx * dt, this.dy)) { ndy = this.dy; this.evy = 0; } else if (!this._blocked(this.dx, this.dy + this.evy * dt)) { ndx = this.dx; this.evx = 0; } else { ndx = this.dx; ndy = this.dy; this.evx = this.evy = 0; } }
+      this.dx = ndx; this.dy = ndy;
+    } else {
+      this.evx = approach(this.evx, 0, mv.accel * dt); this.evy = approach(this.evy, 0, mv.accel * dt);
+    }
 
-    // Aim turret + face travel.
+    // Aim turret + face travel (turret still tracks even when stationary, for testing).
     this.dummyTurret = Phaser.Math.Angle.RotateTo(this.dummyTurret, Math.atan2(dyp, dxp), mv.turretSlew * dt);
     if (Math.hypot(this.evx, this.evy) > 5) this.dummyAngle = Phaser.Math.Angle.RotateTo(this.dummyAngle, Math.atan2(this.evy, this.evx), mv.turnRate * dt);
 
-    // Fire ready weapons at the player when in range with line of sight.
-    for (const w of this.dummy.readyWeapons()) {
+    // Fire ready weapons at the player when in range with line of sight (gated by #28).
+    if (this.enemyFire) for (const w of this.dummy.readyWeapons()) {
       let cd = (this.enemyFireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
       const los = this._wallDistance(this.dx, this.dy, Math.atan2(dyp, dxp), dist) === Infinity;

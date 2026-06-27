@@ -20,7 +20,7 @@ export const LOCATIONS = [
 // Each mountable location is ONE skill slot bound to a fixed fire button; the six
 // upper-body locations are the hardpoints, and the cockpit is an internal critical.
 export const LOCATION_INFO = {
-  head:        { label: 'Head',         short: 'H',  mountable: true,  internal: false },
+  head:        { label: 'Head',         short: 'H',  mountable: false, internal: false },
   cockpit:     { label: 'Cockpit',      short: 'C',  mountable: false, internal: true  },
   centerTorso: { label: 'Center Torso', short: 'CT', mountable: true,  internal: false },
   leftTorso:   { label: 'Left Torso',   short: 'LT', mountable: true,  internal: false },
@@ -33,10 +33,11 @@ export const LOCATION_INFO = {
 export const MELEE_LOCATIONS = ['leftArm', 'rightArm'];
 
 // Skill slots split by what they accept: the four arm/side-torso slots hold weapons
-// (bound to triggers/bumpers); the head and centre torso hold abilities (bound to the
-// stick clicks R3/L3) — a lock-on and an equipment ability, not guns.
+// (bound to triggers/bumpers); the centre torso holds the one ability (bound to L3 /
+// Space). The head is NOT a skill slot — it's a targetable location only (its R3 slot
+// was freed when target-lock became a default aim-assist mechanic, #31).
 export const WEAPON_SLOTS = ['leftArm', 'rightArm', 'leftTorso', 'rightTorso'];
-export const ABILITY_SLOTS = ['centerTorso', 'head'];
+export const ABILITY_SLOTS = ['centerTorso'];
 
 // Destroying one of these single locations is an instant kill.
 export const LETHAL_LOCATIONS = ['head', 'cockpit', 'centerTorso'];

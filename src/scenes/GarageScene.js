@@ -10,7 +10,7 @@ import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { CATEGORIES } from '../data/categories.js';
 import { MECH_DEPLOYED } from '../data/events.js';
-import { SKILL_BINDS } from '../input/Controls.js';
+import { SKILL_BINDS, PadEdges, PAD } from '../input/Controls.js';
 
 // The mech lab. A paper-doll of the chassis: each body location is a card laid out in
 // a humanoid arrangement, and its slots are rendered *on the part* as a stack of cells.
@@ -31,10 +31,10 @@ const HEADER_H = 24;
 const CARD_PAD = 6;
 
 // Humanoid placement of each skill-slot location within the doll region, as fractions
-// of its width/height (these are card *centres*). Six slots: head up top, the arm/torso
-// row across the middle. Legs aren't skill slots, so they don't appear here.
+// of its width/height (these are card *centres*). Five slots: the arm/torso row across
+// the middle. The head isn't a skill slot any more (#31) and legs never were, so neither
+// appears here.
 const DOLL_POS = {
-  head:        { fx: 0.50, fy: 0.06 },
   leftArm:     { fx: 0.10, fy: 0.40 },
   leftTorso:   { fx: 0.30, fy: 0.40 },
   centerTorso: { fx: 0.50, fy: 0.40 },
@@ -77,6 +77,13 @@ export default class GarageScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
     this.input.keyboard.on('keydown-ESC', () => this.arm(null));
+
+    // Controller deploy (#29): Start / A drops you into the arena, no keyboard needed.
+    this.padEdges = new PadEdges(this);
+  }
+
+  update() {
+    if (this.padEdges.pressed(PAD.START) || this.padEdges.pressed(PAD.A)) this.deploy();
   }
 
   txt(x, y, s, opts = {}) {
@@ -273,7 +280,7 @@ export default class GarageScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.lineStyle(2, 0x222b35, 1);
     const c = this._cardCenter('centerTorso');
-    for (const loc of ['head', 'leftTorso', 'rightTorso']) {
+    for (const loc of ['leftTorso', 'rightTorso']) {
       const p = this._cardCenter(loc);
       g.lineBetween(c.x, c.y, p.x, p.y);
     }

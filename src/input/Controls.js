@@ -10,23 +10,50 @@ import Phaser from 'phaser';
 // torso-twist arc). Skill slots are body locations, each on a fixed button (SKILL_BINDS):
 //   right arm    RT / right-mouse        left arm     LT / left-mouse
 //   right torso  RB / E                  left torso   LB / Q
-//   centre torso L3 / Space              head         R3 / F
+//   centre torso L3 / Space (the one ability slot)
+// R3 is no longer a fire bind — the head stopped being a skill slot (#31); R3 now
+// toggles aim-assist (handled via PadEdges, not the per-frame fire intent).
 
 const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
-// Standard-gamepad button indices for the stick clicks (Phaser has no named L3/R3).
-const PAD_L3 = 10, PAD_R3 = 11;
+
+// Standard-gamepad button indices Phaser doesn't name (sticks, d-pad, menu buttons).
+export const PAD = {
+  L3: 10, R3: 11,
+  DPAD_UP: 12, DPAD_DOWN: 13, DPAD_LEFT: 14, DPAD_RIGHT: 15,
+  SELECT: 8, START: 9, A: 0, B: 1,
+};
+const PAD_L3 = PAD.L3;
 
 // location → { key (keyboard/mouse label), pad (controller label) }. Order here is the
-// display order used by the garage/HUD.
+// display order used by the garage/HUD. Five skill slots: four weapons + one ability.
 export const SKILL_BINDS = {
   rightArm:    { key: 'RMB',   pad: 'RT' },
   leftArm:     { key: 'LMB',   pad: 'LT' },
   rightTorso:  { key: 'E',     pad: 'RB' },
   leftTorso:   { key: 'Q',     pad: 'LB' },
   centerTorso: { key: 'Space', pad: 'L3' },
-  head:        { key: 'F',     pad: 'R3' },
 };
+
+// Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
+// true only on the frame the button goes down. Used for one-shot actions (toggles, scene
+// transitions) where the held-flag fire intent isn't appropriate. One instance per scene
+// that needs button edges; each button index should be polled at most once per frame.
+export class PadEdges {
+  constructor(scene) { this.scene = scene; this.prev = {}; }
+  pad() {
+    const gp = this.scene.input.gamepad;
+    const p = gp && gp.total ? gp.getPad(0) : null;
+    return p && p.connected ? p : null;
+  }
+  pressed(i) {
+    const p = this.pad();
+    const down = !!(p && p.buttons[i] && p.buttons[i].pressed);
+    const was = this.prev[i] || false;
+    this.prev[i] = down;
+    return down && !was;
+  }
+}
 
 export class Controls {
   constructor(scene) {
@@ -107,7 +134,6 @@ export class Controls {
         rightTorso:  pad.R1,
         leftTorso:   pad.L1,
         centerTorso: btn(PAD_L3),
-        head:        btn(PAD_R3),
       };
     } else {
       fire = {
@@ -116,7 +142,6 @@ export class Controls {
         rightTorso:  k.E.isDown,
         leftTorso:   k.Q.isDown,
         centerTorso: k.SPACE.isDown,
-        head:        k.F.isDown,
       };
     }
 

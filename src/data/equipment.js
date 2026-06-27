@@ -1,6 +1,9 @@
-// Non-weapon equipment = abilities. Each is an activated item that mounts in an ability
-// slot (head / centre torso) and fires on that slot's button (R3 / L3) with a cooldown.
+// Non-weapon equipment = abilities. Each is an activated item that mounts in the ability
+// slot (centre torso) and fires on that slot's button (L3 / Space) with a cooldown.
 // `ability` names the effect the arena implements; `cooldown` is in seconds.
+//
+// (Target Lock was removed in #31: lock-on is now a default aim-assist mechanic and
+// homing weapons track on their own, so it's no longer an equipped item.)
 
 export const EQUIPMENT = {
   jumpJet: {
@@ -10,10 +13,6 @@ export const EQUIPMENT = {
   bubbleShield: {
     id: 'bubbleShield', name: 'Bubble Shield', type: 'ability', ability: 'shield',
     cooldown: 9, duration: 3,              // seconds of incoming-damage absorption
-  },
-  targetLock: {
-    id: 'targetLock', name: 'Target Lock', type: 'ability', ability: 'lock',
-    lockTime: 0.6, cone: 0.5, bonus: 1.3,  // held to acquire; locked missiles hit harder + track better
   },
 };
 

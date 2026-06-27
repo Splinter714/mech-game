@@ -21,10 +21,12 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setOrigin(0, 0);
 
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
-    this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E: weapons  ·  pad: LT/RT/LB/RB+L3/R3  ·  G: garage',
+    this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  T/R3: aim-assist  ·  G/B: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
-    this.lockText = this.add.text(this.W / 2, 28, '', { fontFamily: 'monospace', fontSize: '14px', color: C.bad }).setOrigin(0.5, 0);
+    this.assistText = this.add.text(this.W / 2, 28, '', { fontFamily: 'monospace', fontSize: '14px', color: C.accent }).setOrigin(0.5, 0);
+    // Debug AI state (#28), bottom-right above the input-mode tag.
+    this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
 
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
     this.add.text(16, 62, 'WEAPONS', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -49,8 +51,12 @@ export default class HudScene extends Phaser.Scene {
     if (!mech) return;
 
     this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
-    const lock = this.registry.get('lockState');
-    this.lockText.setText(lock || '').setColor(lock === 'LOCKED' ? C.bad : C.warn);
+    const assistOn = this.registry.get('assistOn') !== false;
+    this.assistText.setText(`AIM-ASSIST ${assistOn ? 'ON' : 'OFF'}`).setColor(assistOn ? C.accent : C.dim);
+    // Only show the AI-debug line when something is toggled off (otherwise stay quiet).
+    const aiMove = this.registry.get('aiMove') !== false;
+    const aiFire = this.registry.get('aiFire') !== false;
+    this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
 
     // Weapons / ammo: each weapon's fire bind + name + magazine (∞ for melee). Offline
     // weapons (their location wrecked) show a marker.
