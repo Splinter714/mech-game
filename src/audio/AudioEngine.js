@@ -46,6 +46,21 @@ function foldbackCurve(amount) {
   return curve;
 }
 
+// ── Lead melody, in scale-degree notation over the track's key (E phrygian) ──────────────
+// Degrees: 1=E 2=F 3=G 4=A 5=B 6=C 7=D 8=E(8ve up), 9..= keep climbing. The lead line is a
+// list of [degree, startStep, durationSteps] over the 32-sixteenth-step loop (2 bars). Edit
+// LEAD_MELODY to change the tune; the Lead "Pitch" knob shifts the whole thing by octave.
+const LEAD_SCALE = [329.63, 349.23, 392.0, 440.0, 493.88, 523.25, 587.33]; // E phrygian degrees 1-7 (E4..D5)
+const leadFreq = (deg) => {
+  const d = deg - 1, oct = Math.floor(d / 7);
+  return LEAD_SCALE[((d % 7) + 7) % 7] * Math.pow(2, oct);
+};
+// 1 5 3 4 3 2 3 4 5 1 — syncopated (notes pushed off the downbeats), last note (1) held 8.
+const LEAD_MELODY = [
+  [1, 1, 3], [5, 4, 2], [3, 6, 2], [4, 9, 3], [3, 12, 2],
+  [2, 14, 2], [3, 17, 3], [4, 20, 2], [5, 22, 2], [1, 24, 8],
+];
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -422,8 +437,11 @@ export class AudioEngine {
       this._bass(riff[step], at, P.chugLength + 0.02, 0.6);         // tonal low foundation under the fizz
       this.noise(this.drums, { dur: 0.018, gain: P.pickLevel, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
-    if (step === 0 || step === 16) this._lead(riff[step] * 4 * P.leadOctave, at, 0.28);  // scream
-    if (step >= 28) this._lead(riff[step] * 2 * P.leadOctave, at, 0.08);                 // climb tremolo
+    // Lead melody (scale-degree notation, see LEAD_MELODY): play any note starting this step.
+    const sd = 60 / P.tempo / 4;
+    for (const [deg, atStep, dur] of LEAD_MELODY) {
+      if (atStep === step) this._lead(leadFreq(deg) * P.leadOctave, at, dur * sd);
+    }
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
     if (local === 4 || local === 12) this._snareMetal(at);          // backbeat
