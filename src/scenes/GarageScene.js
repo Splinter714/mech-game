@@ -67,12 +67,58 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-D', () => this.deploy());
     this.input.keyboard.on('keydown-ESC', () => this.arm(null));
 
-    // Controller deploy (#29): Start / A drops you into the arena, no keyboard needed.
+    // Controller support (#29 deploy + #30 full navigation). A focus cursor moves between
+    // the catalog list and the five skill tiles; focus visuals only appear once a pad
+    // button is used (`padActive`), so mouse/keyboard users see no cursor.
     this.padEdges = new PadEdges(this);
+    this.padActive = false;
+    this.focusZone = 'catalog';   // 'catalog' | 'tiles'
+    this.focusRow = 0;            // index into catalogIds
+    this.focusTile = 0;           // index into TILE_ORDER
   }
 
+  // Controller navigation (#30): d-pad moves the focus, A selects/equips, B removes/cancels,
+  // bumpers cycle chassis, Start deploys. No-ops entirely without a connected pad, so the
+  // mouse/keyboard flow is untouched.
   update() {
-    if (this.padEdges.pressed(PAD.START) || this.padEdges.pressed(PAD.A)) this.deploy();
+    const e = this.padEdges;
+    if (!e.pad()) return;
+
+    if (e.pressed(PAD.START)) { this.deploy(); return; }
+    if (e.pressed(PAD.RB)) { this.padActive = true; this.cycleChassis(+1); return; }
+    if (e.pressed(PAD.LB)) { this.padActive = true; this.cycleChassis(-1); return; }
+
+    const up = e.pressed(PAD.DPAD_UP), down = e.pressed(PAD.DPAD_DOWN);
+    const left = e.pressed(PAD.DPAD_LEFT), right = e.pressed(PAD.DPAD_RIGHT);
+    const a = e.pressed(PAD.A), b = e.pressed(PAD.B);
+    if (!(up || down || left || right || a || b)) return;
+    this.padActive = true;
+
+    // Move the focus.
+    if (this.focusZone === 'tiles') {
+      if (left) this.focusTile = (this.focusTile + TILE_ORDER.length - 1) % TILE_ORDER.length;
+      else if (right) { if (this.focusTile === TILE_ORDER.length - 1) this.focusZone = 'catalog'; else this.focusTile++; }
+      else if (down) this.focusZone = 'catalog';
+    } else {
+      if (up) this.focusRow = Math.max(0, this.focusRow - 1);
+      else if (down) this.focusRow = Math.min(this.catalogIds.length - 1, this.focusRow + 1);
+      else if (left || right) this.focusZone = 'tiles';
+    }
+
+    // Act. arm/placeOn/unmount each refresh; for pure movement we refresh below.
+    if (a) {
+      if (this.focusZone === 'catalog') this.arm(this.catalogIds[this.focusRow]);
+      else this.placeOn(TILE_ORDER[this.focusTile]);
+      return;
+    }
+    if (b) {
+      if (this.focusZone === 'tiles') this.unmount(TILE_ORDER[this.focusTile], 0);
+      else this.arm(null);
+      return;
+    }
+    if (this.focusZone === 'tiles') this.selected = TILE_ORDER[this.focusTile];
+    this._updateCatalogHighlight();
+    this.refresh();
   }
 
   txt(x, y, s, opts = {}) {
@@ -107,9 +153,10 @@ export default class GarageScene extends Phaser.Scene {
 
   // Swap to the next chassis, carrying the loadout over (all chassis share the six skill
   // slots, so mounts stay valid).
-  cycleChassis() {
+  cycleChassis(dir = 1) {
     const i = CHASSIS_IDS.indexOf(this.mech.chassisId);
-    const next = CHASSIS_IDS[(i + 1) % CHASSIS_IDS.length];
+    const n = CHASSIS_IDS.length;
+    const next = CHASSIS_IDS[(i + dir + n) % n];
     const data = this.mech.toJSON();
     data.chassisId = next;
     this.mech = new Mech(data);
@@ -155,16 +202,24 @@ export default class GarageScene extends Phaser.Scene {
       this.catalogRows[id] = r;
       y += 34;
     };
-    for (const id of [...WEAPON_IDS, ...EQUIPMENT_IDS]) row(id);
+    this.catalogIds = [...WEAPON_IDS, ...EQUIPMENT_IDS];
+    for (const id of this.catalogIds) row(id);
     this._updateCatalogHighlight();
+    this.add.text(x + 8, this.H - 60, 'pad:  d-pad move · A equip · B clear\n      LB/RB chassis · Start deploy', {
+      fontFamily: 'monospace', fontSize: '10px', color: UI.dim, lineSpacing: 2,
+    });
   }
 
-  // Highlight the armed catalog row (the piece waiting to be placed).
+  // Highlight the armed catalog row (gold) and, under controller focus, the focused row
+  // (accent outline).
   _updateCatalogHighlight() {
     if (!this.catalogRows) return;
+    const focusedId = (this.padActive && this.focusZone === 'catalog') ? this.catalogIds[this.focusRow] : null;
     for (const [id, r] of Object.entries(this.catalogRows)) {
-      const on = id === this.armed;
-      r.setFillStyle(on ? UI.cardSel : UI.btn).setStrokeStyle(on ? 2 : 1, on ? 0xefc14a : UI.panelEdge);
+      const armed = id === this.armed;
+      const focused = id === focusedId;
+      r.setFillStyle(armed ? UI.cardSel : focused ? UI.btnHover : UI.btn)
+        .setStrokeStyle(armed || focused ? 2 : 1, armed ? 0xefc14a : focused ? 0x5ec8e0 : UI.panelEdge);
     }
   }
 
