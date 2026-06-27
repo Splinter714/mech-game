@@ -252,12 +252,19 @@ export default class ArenaScene extends Phaser.Scene {
       kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
       damage: w.weapon.damage, splash: d.splash || 0,
       dist: 0, maxDist, arc: d.path === 'arcing', trail: [],
+      homing: d.guidance === 'homing', turn: 3.4,   // guided missiles steer toward a target
     });
   }
 
   _updateProjectiles(dt) {
     this.projFx.clear();
     for (const p of this.projectiles) {
+      // Guided missiles steer toward the target, capped by their turn rate.
+      if (p.homing && !this.dummy.isDestroyed()) {
+        const desired = Math.atan2(this.dy - p.y, this.dx - p.x);
+        p.angle = Phaser.Math.Angle.RotateTo(p.angle, desired, p.turn * dt);
+        p.vx = Math.cos(p.angle) * p.speed; p.vy = Math.sin(p.angle) * p.speed;
+      }
       p.x += p.vx * dt; p.y += p.vy * dt; p.dist += p.speed * dt;
       const toDummy = this.dummy.isDestroyed() ? Infinity : Math.hypot(p.x - this.dx, p.y - this.dy);
       const landed = p.dist >= p.maxDist;
