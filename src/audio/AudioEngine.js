@@ -58,17 +58,24 @@ const leadFreq = (deg) => {
 // Build the lead line from a DEGREE list + an x/o RHYTHM grid (1 char per sixteenth-step,
 // 32 steps = the 2-bar loop): `x` = a note onset, `o` = hold/rest. Each x takes the next
 // degree and the note sustains until the following x (so trailing o's = a held note).
-function buildMelody(degrees, grid) {
+function buildMelody(degrees, grid, len = 32) {
+  let g = grid; while (g.length < len) g += grid;        // tile a short grid to fill the loop
+  g = g.slice(0, len);
   const onsets = [];
-  for (let i = 0; i < grid.length; i++) if (grid[i] === 'x' || grid[i] === 'X') onsets.push(i);
+  for (let i = 0; i < g.length; i++) if (g[i] === 'x' || g[i] === 'X') onsets.push(i);
   return onsets.map((start, k) => {
-    const end = k + 1 < onsets.length ? onsets[k + 1] : grid.length;
+    const end = k + 1 < onsets.length ? onsets[k + 1] : g.length;
     return [degrees[k % degrees.length], start, end - start];
   });
 }
+// Lead 1 (full 2-bar phrase).
 const LEAD_DEGREES = [1, 5, 3, 4, 3, 2, 3, 4, 5, 1];
 const LEAD_RHYTHM  = 'xooxooxoxooxooxoxooxooxoxooooooo';   // x = onset, o = hold/rest
 const LEAD_MELODY = buildMelody(LEAD_DEGREES, LEAD_RHYTHM);
+// Lead 2 (1-bar pattern, repeats each bar).
+const LEAD2_DEGREES = [1, 8, 1, 7, 1, 5, 6, 5, 4, 5];
+const LEAD2_RHYTHM  = 'xxoxxoxxoxxoxoxo';
+const LEAD2_MELODY = buildMelody(LEAD2_DEGREES, LEAD2_RHYTHM);
 
 export class AudioEngine {
   constructor() {
@@ -102,8 +109,9 @@ export class AudioEngine {
       // rhythm-guitar VOICING (which overtones make up each power chord)
       guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 0.95, guitarHigh: 0.55, guitarSquare: 0,
       chugLength: 0.1, chugLevel: 1, pickLevel: 0.01,
-      // LEAD — the infrequent scream + tremolo, now its OWN instrument/chain
+      // LEAD 1 + LEAD 2 — two separate melodic lead instruments (own chains)
       leadLevel: 0.15, leadDrive: 8, leadTone: 3500, leadOctave: 1,
+      lead2Level: 0.15, lead2Drive: 6, lead2Tone: 4500, lead2Octave: 1,
       // bass / low foundation (+ its own overtones)
       bassLevel: 0.45, bassDrive: 12, bassGrit: 200, bassTone: 3000,
       bassSub: 0.45, bassFifth: 0, bassOctave: 1.5,
@@ -158,6 +166,14 @@ export class AudioEngine {
     fx.llp = ctx.createBiquadFilter(); fx.llp.type = 'lowpass'; fx.llp.frequency.value = P.leadTone;
     fx.lpost = ctx.createGain(); fx.lpost.gain.value = P.leadLevel;
     this.leadBus.connect(fx.lpre).connect(fx.lsat).connect(fx.llp).connect(fx.lpost).connect(this.music);
+
+    // LEAD 2 — a second lead instrument with its own chain (square-wave timbre, see _stepMetal).
+    this.lead2Bus = ctx.createGain(); this.lead2Bus.gain.value = 1.0;
+    fx.l2pre = ctx.createGain(); fx.l2pre.gain.value = P.lead2Drive;
+    fx.l2sat = ctx.createWaveShaper(); fx.l2sat.curve = distortionCurve(120); fx.l2sat.oversample = '4x';
+    fx.l2lp = ctx.createBiquadFilter(); fx.l2lp.type = 'lowpass'; fx.l2lp.frequency.value = P.lead2Tone;
+    fx.l2post = ctx.createGain(); fx.l2post.gain.value = P.lead2Level;
+    this.lead2Bus.connect(fx.l2pre).connect(fx.l2sat).connect(fx.l2lp).connect(fx.l2post).connect(this.music);
   }
 
   // Live-update a music parameter from the in-game panel; also persists into this.params so
@@ -184,6 +200,9 @@ export class AudioEngine {
       case 'leadDrive': fx.lpre.gain.value = v; break;
       case 'leadTone': fx.llp.frequency.value = v; break;
       case 'leadLevel': fx.lpost.gain.value = v; break;
+      case 'lead2Drive': fx.l2pre.gain.value = v; break;
+      case 'lead2Tone': fx.l2lp.frequency.value = v; break;
+      case 'lead2Level': fx.l2post.gain.value = v; break;
       default: break;   // tempo + voicing/level params are read live at note time
     }
   }
@@ -212,8 +231,9 @@ export class AudioEngine {
     v(freq * 2, P.bassOctave);        // octave overtone
   }
 
-  // The LEAD instrument (scream / climbing tremolo) through its own distortion chain.
-  _lead(freq, at, dur, gain = 0.5) {
+  // A lead melody note into the given lead bus (detuned pair for thickness). `type` picks the
+  // waveform so the two lead instruments can have distinct timbres.
+  _leadNote(bus, freq, at, dur, type = 'sawtooth', gain = 0.5) {
     if (gain <= 0) return;
     const ctx = this.ctx;
     const g = ctx.createGain();
@@ -221,9 +241,9 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(gain, at + 0.006);
     g.gain.setValueAtTime(gain, at + dur * 0.6);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-    g.connect(this.leadBus);
-    const v = (f) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
-    v(freq * 0.997); v(freq * 1.003);   // detuned pair for thickness
+    g.connect(bus);
+    const v = (f) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
+    v(freq * 0.997); v(freq * 1.003);
   }
 
   setMuted(m) {
@@ -446,10 +466,14 @@ export class AudioEngine {
       this._bass(riff[step], at, P.chugLength + 0.02, 0.6);         // tonal low foundation under the fizz
       this.noise(this.drums, { dur: 0.018, gain: P.pickLevel, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
-    // Lead melody (scale-degree notation, see LEAD_MELODY): play any note starting this step.
+    // Lead melodies (scale-degree notation): play any note starting this step. Two leads,
+    // each with its own bus + timbre (lead 1 saw, lead 2 square).
     const sd = 60 / P.tempo / 4;
     for (const [deg, atStep, dur] of LEAD_MELODY) {
-      if (atStep === step) this._lead(leadFreq(deg) * P.leadOctave, at, dur * sd);
+      if (atStep === step) this._leadNote(this.leadBus, leadFreq(deg) * P.leadOctave, at, dur * sd, 'sawtooth');
+    }
+    for (const [deg, atStep, dur] of LEAD2_MELODY) {
+      if (atStep === step) this._leadNote(this.lead2Bus, leadFreq(deg) * P.lead2Octave, at, dur * sd, 'square');
     }
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths

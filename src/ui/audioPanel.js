@@ -17,7 +17,8 @@ const GROUPS = [
     ['crashLevel', 'Crash level', 0, 2, 0.05],
     ['guitarLevel', 'Guitar level', 0, 0.4, 0.005],
     ['chugLevel', 'Chug level', 0, 1, 0.05],
-    ['leadLevel', 'Lead level', 0, 0.6, 0.01],
+    ['leadLevel', 'Lead 1 level', 0, 0.6, 0.01],
+    ['lead2Level', 'Lead 2 level', 0, 0.6, 0.01],
     ['bassLevel', 'Bass level', 0, 1.2, 0.01],
   ]],
   ['Drums (sound)', [
@@ -47,10 +48,15 @@ const GROUPS = [
     ['chugLength', 'Chug length', 0.03, 0.2, 0.005],
     ['pickLevel', 'Pick attack', 0, 0.2, 0.005],
   ]],
-  ['Lead (scream / tremolo)', [
+  ['Lead 1 (saw)', [
     ['leadDrive', 'Drive (amount)', 1, 30, 1],
     ['leadTone', 'Tone (Hz)', 800, 7000, 50],
     ['leadOctave', 'Pitch', 0.25, 2, 0.25],
+  ]],
+  ['Lead 2 (square)', [
+    ['lead2Drive', 'Drive (amount)', 1, 30, 1],
+    ['lead2Tone', 'Tone (Hz)', 800, 7000, 50],
+    ['lead2Octave', 'Pitch', 0.25, 2, 0.25],
   ]],
   ['Bass (low foundation)', [
     ['bassDrive', 'Drive (amount)', 0, 12, 0.5],
