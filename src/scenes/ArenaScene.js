@@ -348,16 +348,25 @@ export default class ArenaScene extends Phaser.Scene {
     const d = w.weapon.delivery;
     const m = this._muzzle(w.location);
 
-    // Aim-assist: pull the convergence point from the reticle toward the tracked enemy,
-    // so a settled aim lands cleanly without a perfect manual bead. Melee/contact ignore it.
-    let aimX = this.aimX, aimY = this.aimY;
+    // Shots follow the actual turret facing (#40), not the raw stick/mouse aim. The
+    // turret slews toward the aim at a limited rate, so whipping the aim around has a
+    // real cost — the torso must come around before rounds land where you point. The
+    // firing point sits along turretAngle at the reticle's distance, keeping convergence
+    // range correct.
+    const aimDist = Math.hypot(this.aimX - this.px, this.aimY - this.py) || 1;
+    let aimX = this.px + Math.cos(this.turretAngle) * aimDist;
+    let aimY = this.py + Math.sin(this.turretAngle) * aimDist;
+
+    // Aim-assist pulls the firing point toward the tracked enemy — but only once the
+    // turret has settled onto it (assistTarget is keyed off turretAngle, so a lagging
+    // turret has no target yet). Melee/contact ignore assist.
     if (this.assistTarget && d.hit !== 'contact') {
       const s = this.assistTarget.strength;
       aimX = Phaser.Math.Linear(aimX, this.assistTarget.x, s);
       aimY = Phaser.Math.Linear(aimY, this.assistTarget.y, s);
     }
 
-    // Each weapon converges from its own muzzle onto the (assisted) aim point.
+    // Each weapon converges from its own muzzle onto the (assisted) firing point.
     const baseAngle = Math.atan2(aimY - m.y, aimX - m.x);
     if (d.hit === 'hitscan' || d.hit === 'contact') { this._fireHitscan(w, m.x, m.y, baseAngle); return; }
 
