@@ -360,12 +360,30 @@ export default class ArenaScene extends Phaser.Scene {
     }
   }
 
-  // A short-lived impact flash (richer per-ordnance visuals are a follow-up).
+  // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
+  // burst (ballistic spark, missile/splash explosion, plasma splatter, laser scorch).
   _impactFx(x, y, color, kind, splash) {
-    const r = Math.max(7, splash);
-    this.fx.lineStyle(2, color, 0.8).strokeCircle(x, y, r * 0.6);
-    this.fx.fillStyle(0xffffff, 0.6).fillCircle(x, y, 2.5);
-    this.time.delayedCall(90, () => this.fx.clear());
+    const burst = (r0, r1, col, alpha, dur, stroke) => {
+      const c = stroke
+        ? this.add.circle(x, y, r0).setStrokeStyle(2, col, alpha)
+        : this.add.circle(x, y, r0, col, alpha);
+      this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => c.destroy() });
+    };
+    burst(3, 9, 0xffffff, 0.9, 120, false); // core flash, every hit
+
+    if (kind === 'missile' || splash > 0) {
+      const r = Math.max(10, splash);
+      burst(r * 0.4, r * 1.6, 0xff7a18, 0.4, 260, false);  // fireball
+      burst(r * 0.5, r * 1.9, 0xffd56b, 0.9, 300, true);   // shock ring
+    } else if (kind === 'plasma') {
+      burst(4, 18, color, 0.6, 240, false);                // splatter blob
+      burst(3, 14, color, 0.9, 220, true);
+    } else if (kind === 'beam') {
+      burst(2, 7, color, 0.9, 110, false);                 // scorch flash
+    } else {                                                // ballistic spark
+      burst(2, 9, color, 0.85, 130, false);
+      burst(1.5, 7, 0xffffff, 0.7, 100, true);
+    }
   }
 
   // Apply `damage` to the dummy's part nearest the world point (x, y).
