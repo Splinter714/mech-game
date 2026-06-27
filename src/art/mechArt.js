@@ -1,6 +1,5 @@
-// Procedural top-down mech art — "gritty cyberpunk": dark weathered angular steel lit
-// by neon. A mech is drawn as two stacked sprites so the turret can aim independently
-// of the legs (tank feel):
+// Procedural top-down mech art. A mech is drawn as two stacked sprites so the turret
+// can aim independently of the legs (tank feel):
 //   <key>_hull_0..3 — legs (feet) + pelvis + skirts. 4-frame stompy walk cycle; this
 //                     sprite rotates to face the movement direction.
 //   <key>_turret    — side/center torsos + arms + head + weapon hardware. Rotates to
@@ -10,9 +9,10 @@
 // occlusion is what sells the top-down read. Parts are drawn from the live Mech: a
 // destroyed location becomes a charred stump and its weapons vanish.
 //
-// Colour language:
-//   steel  — most of the body: dark gunmetal with a top highlight rim, a mid face, a
-//            lower shadow, and an ambient-occlusion seam where a part tucks under.
+// Two visual THEMES distinguish the factions:
+//   player — "gritty cyberpunk": dark weathered ANGULAR gunmetal plates (hard chamfers).
+//   enemy  — "sleek": light/white ROUNDED panels.
+// Both share the glow language, which is theme-independent:
 //   purple — the mech's OWN power: reactor spine, cockpit optic, leg thrusters.
 //   neon   — each weapon glows its CATEGORY colour (energy cyan, ballistic amber,
 //            missile pink, melee white, support green), so loadout reads at a glance.
@@ -27,14 +27,23 @@ export { ART_SCALE };
 export const DESIGN = 64;              // design-grid canvas size (square)
 const CENTER = DESIGN / 2;
 
-// Dark weathered-steel palette (light from "above" → top rim catches it).
-const STEEL = {
-  outline: 0x0b0e14, deep: 0x1b212b, ao: 0x10131a,
-  lower: 0x252c38, faceDk: 0x2a323e, faceMid: 0x2e3543, face: 0x3a4250,
-  rim: 0x4b5666, rimHi: 0x566273,
-  joint: 0x181d27, grime: 0x0e1219, rust: 0x6e4636,
-  char: 0x17120f,
+// Faction palettes. `rounded` swaps the plate primitive (chamfered ↔ rounded). Tones run
+// outline (edge) → deep/ao (shadow) → faceDk/faceMid/face (panels) → rim/rimHi (light).
+const THEMES = {
+  player: {
+    rounded: false,
+    outline: 0x0b0e14, deep: 0x1b212b, ao: 0x10131a, recess: 0x14181f, housing: 0x14181f,
+    lower: 0x252c38, faceDk: 0x2a323e, faceMid: 0x2e3543, face: 0x3a4250,
+    rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
+  },
+  enemy: {
+    rounded: true,
+    outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
+    lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
+    rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
+  },
 };
+const themeFor = (opts) => THEMES[opts?.theme] ?? THEMES.player;
 
 // The mech's own power glow (not a weapon).
 const REACTOR = { halo: 0x7a2ed6, core: 0xb15cff, hot: 0xecd6ff, edge: 0x8a4ad6 };
@@ -61,6 +70,12 @@ function rectC(sg, cx, cy, w, h, fill, alpha = 1) {
   sg.fillStyle(fill, alpha);
   sg.fillRect(CENTER + cx - w / 2, CENTER + cy - h / 2, w, h);
 }
+// Centred rounded rect (via the raw super-sampled graphics).
+function roundC(sg, cx, cy, w, h, fill, r, alpha = 1) {
+  sg.fillStyle(fill, alpha);
+  const k = ART_SCALE, rr = Math.min(r, w / 2, h / 2);
+  sg.raw.fillRoundedRect((CENTER + cx - w / 2) * k, (CENTER + cy - h / 2) * k, w * k, h * k, rr * k);
+}
 // Centred filled ellipse (used for soft glow pools).
 function ellipseC(sg, cx, cy, w, h, fill, alpha = 1) {
   sg.fillStyle(fill, alpha);
@@ -73,15 +88,26 @@ function chamfer(cx, cy, w, h, c) {
           [x1 - c, y1], [x0 + c, y1], [x0, y1 - c], [x0, y0 + c]];
 }
 
-// A shaded angular armour plate: dark outline, mid face, a top highlight rim catching
-// overhead light, a lower ambient-occlusion shadow, and an optional panel seam.
-function plate(sg, cx, cy, w, h, opts = {}) {
-  const c = opts.chamfer ?? Math.min(w, h) * 0.22;
-  poly(sg, chamfer(cx, cy, w + 1.2, h + 1.2, c + 0.4), STEEL.outline);
-  poly(sg, chamfer(cx, cy, w, h, c), opts.fill ?? STEEL.face);
-  rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * c, h * 0.15, opts.rim ?? STEEL.rim);
-  rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * c, h * 0.13, STEEL.ao, 0.5);
-  if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), STEEL.grime, 0.7);
+// A shaded armour plate: dark outline, mid face, a top highlight rim catching overhead
+// light, a lower ambient-occlusion shadow, and an optional panel seam. Angular for the
+// player theme, rounded for the enemy theme.
+function plate(sg, T, cx, cy, w, h, opts = {}) {
+  const fill = opts.fill ?? T.face;
+  let inset;
+  if (T.rounded) {
+    const r = Math.min(w, h) * 0.34;
+    roundC(sg, cx, cy, w + 1.2, h + 1.2, T.outline, r + 0.4);
+    roundC(sg, cx, cy, w, h, fill, r);
+    inset = Math.min(w, h) * 0.16;
+  } else {
+    const c = opts.chamfer ?? Math.min(w, h) * 0.22;
+    poly(sg, chamfer(cx, cy, w + 1.2, h + 1.2, c + 0.4), T.outline);
+    poly(sg, chamfer(cx, cy, w, h, c), fill);
+    inset = c;
+  }
+  rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
+  rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
+  if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7);
 }
 
 // Layered point-glow: wide faint halo → tighter halo → bright core → hot centre.
@@ -98,12 +124,18 @@ function glowBar(sg, cx, cy, w, h, n) {
   rectC(sg, cx, cy, w * 0.36, h * 0.7, n.hot, 1);
 }
 
-// A destroyed location: a charred angular lump with faint embers.
-function stump(sg, cx, cy, w, h) {
-  poly(sg, chamfer(cx, cy, w * 0.62, h * 0.5, Math.min(w, h) * 0.14), STEEL.outline);
-  poly(sg, chamfer(cx, cy, w * 0.56, h * 0.44, Math.min(w, h) * 0.14), STEEL.char);
-  sg.fillStyle(0x7a2a12, 0.6); sg.fillCircle(CENTER + cx, CENTER + cy, Math.min(w, h) * 0.12);
-  sg.fillStyle(0xd6601e, 0.5); sg.fillCircle(CENTER + cx, CENTER + cy, Math.min(w, h) * 0.06);
+// A destroyed location: a charred lump with faint embers.
+function stump(sg, T, cx, cy, w, h) {
+  const m = Math.min(w, h);
+  if (T.rounded) {
+    roundC(sg, cx, cy, w * 0.62, h * 0.5, T.outline, m * 0.18);
+    roundC(sg, cx, cy, w * 0.56, h * 0.44, T.char, m * 0.16);
+  } else {
+    poly(sg, chamfer(cx, cy, w * 0.62, h * 0.5, m * 0.14), T.outline);
+    poly(sg, chamfer(cx, cy, w * 0.56, h * 0.44, m * 0.14), T.char);
+  }
+  sg.fillStyle(0x7a2a12, 0.6); sg.fillCircle(CENTER + cx, CENTER + cy, m * 0.12);
+  sg.fillStyle(0xd6601e, 0.5); sg.fillCircle(CENTER + cx, CENTER + cy, m * 0.06);
 }
 
 // Per-location anchors + box sizes in mech-local design coords (origin = centre, -y =
@@ -127,15 +159,17 @@ export function mechLayout(mech) {
 
 // ── Weapon hardware. Each category gets a distinct silhouette so the loadout reads
 //    from the sprite, all pointing forward (-y) from `frontY`, glowing its neon colour.
-function drawWeapon(sg, catId, bx, frontY, s) {
+function drawWeapon(sg, T, catId, bx, frontY, s) {
   const n = neonFor(catId);
   const cap = frontY + CENTER - 2;            // keep the muzzle inside the canvas
+  const barrel = (cx, cy, w, h) => T.rounded
+    ? roundC(sg, cx, cy, w, h, T.faceDk, Math.min(w, h) * 0.45)
+    : rectC(sg, cx, cy, w, h, T.faceDk);
 
   if (catId === 'missile') {
-    const w = 5.4 * s, h = Math.min(6.5 * s, cap);
-    const cy = frontY - h / 2;
-    poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), STEEL.outline);
-    poly(sg, chamfer(bx, cy, w, h, 1), STEEL.faceDk);
+    const w = 5.4 * s, h = Math.min(6.5 * s, cap), cy = frontY - h / 2;
+    if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.6);
+    else { poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), T.outline); poly(sg, chamfer(bx, cy, w, h, 1), T.faceDk); }
     for (const dx of [-1, 1]) for (const dy of [0, 1]) {           // 2×2 launch cells
       const cxx = bx + dx * w * 0.22, cyy = frontY - h * (0.28 + dy * 0.32);
       rectC(sg, cxx, cyy, w * 0.26, h * 0.18, n.halo, 0.5);
@@ -145,78 +179,76 @@ function drawWeapon(sg, catId, bx, frontY, s) {
   }
   if (catId === 'melee') {
     const L = Math.min(11 * s, cap), w = 3 * s;
-    poly(sg, [[bx - w / 2, frontY], [bx + w / 2, frontY], [bx, frontY - L]], STEEL.faceMid);
+    poly(sg, [[bx - w / 2, frontY], [bx + w / 2, frontY], [bx, frontY - L]], T.faceMid);
     poly(sg, [[bx - w * 0.18, frontY], [bx + w * 0.18, frontY], [bx, frontY - L]], n.core, 0.9);
     glowDot(sg, bx, frontY - L, 1.4 * s, n);
     return;
   }
   if (catId === 'ballistic') {
     const L = Math.min(10 * s, cap), w = 1.9 * s, off = 1.5 * s;
-    rectC(sg, bx, frontY - L * 0.5 + 1, (w + off) * 2.1, 2.4 * s, STEEL.deep);   // muzzle housing
+    rectC(sg, bx, frontY - L * 0.5 + 1, (w + off) * 2.1, 2.4 * s, T.deep);     // muzzle housing
     for (const dx of [-1, 1]) {
-      rectC(sg, bx + dx * off, frontY - L / 2, w + 1, L, STEEL.outline);
-      rectC(sg, bx + dx * off, frontY - L / 2, w, L, STEEL.faceDk);
+      barrel(bx + dx * off, frontY - L / 2, w, L);
       glowDot(sg, bx + dx * off, frontY - L + 0.5, 1.5 * s, n);
     }
     return;
   }
   if (catId === 'support') {
     const L = Math.min(7 * s, cap);
-    rectC(sg, bx, frontY - L * 0.4, 2 * s, L * 0.8, STEEL.faceDk);
+    barrel(bx, frontY - L * 0.4, 2 * s, L * 0.8);
     glowDot(sg, bx, frontY - L, 2.6 * s, n);
     return;
   }
   // energy (default): slim barrel + a big glowing emitter lens.
   const L = Math.min(11 * s, cap), w = 2.2 * s;
-  rectC(sg, bx, frontY - L / 2, w + 1, L, STEEL.outline);
-  rectC(sg, bx, frontY - L / 2, w, L, STEEL.faceDk);
+  barrel(bx, frontY - L / 2, w, L);
   rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7);          // edge light
   glowDot(sg, bx, frontY - L, 2.6 * s, n);
 }
 
 // Torsos + arms + head + weapons. Drawn facing up; weapons point forward (-y).
-function drawTurret(sg, mech) {
+function drawTurret(sg, mech, T) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
 
   // Side torsos behind the centre, each with a recessed vent.
   for (const loc of ['leftTorso', 'rightTorso']) {
     const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
-    plate(sg, p.x, p.y, p.w, p.h, { fill: STEEL.face });
-    rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, STEEL.deep);
+    if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
+    plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
+    rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   }
 
-  // Arms (the weapon mounts) — chunkier dark plates.
+  // Arms (the weapon mounts) — chunkier plates.
   for (const loc of ['leftArm', 'rightArm']) {
     const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
-    plate(sg, p.x, p.y, p.w, p.h, { fill: STEEL.faceMid });
+    if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
+    plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   }
 
   // Center torso: armour slab → core inset → dark reactor housing → purple reactor.
   const ct = lay.centerTorso;
   if (mech.isPartDestroyed('centerTorso')) {
-    stump(sg, ct.x, ct.y, ct.w, ct.h);
+    stump(sg, T, ct.x, ct.y, ct.w, ct.h);
   } else {
-    plate(sg, ct.x, ct.y, ct.w, ct.h, { fill: STEEL.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
-    poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), STEEL.faceMid);
-    rectC(sg, ct.x, ct.y, ct.w * 0.04, ct.h * 0.62, STEEL.grime, 0.5);                 // centre seam
-    rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, 0x14181f);                          // reactor housing
-    glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                         // reactor spine
-    glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);           // vent
-    glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);           // vent
+    plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
+    if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * 0.2);
+    else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
+    rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);                          // reactor housing
+    glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                           // reactor spine
+    glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
+    glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
   }
 
   // Head + cockpit optic + antenna.
   const hd = lay.head;
   if (mech.isPartDestroyed('head')) {
-    stump(sg, hd.x, hd.y, hd.w, hd.h);
+    stump(sg, T, hd.x, hd.y, hd.w, hd.h);
   } else {
-    plate(sg, hd.x, hd.y, hd.w, hd.h, { fill: STEEL.faceMid, seam: false });
-    rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, STEEL.rimHi); // antenna
+    plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
+    rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, T.rimHi); // antenna
     const cp = lay.cockpit;
-    if (mech.isPartDestroyed('cockpit')) rectC(sg, cp.x, cp.y, cp.w, cp.h, STEEL.char);
+    if (mech.isPartDestroyed('cockpit')) rectC(sg, cp.x, cp.y, cp.w, cp.h, T.char);
     else glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
   }
 
@@ -230,14 +262,14 @@ function drawTurret(sg, mech) {
     weaponIds.forEach((id, i) => {
       const wpn = getWeapon(id);
       const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-      drawWeapon(sg, wpn?.category ?? 'energy', bx, front, s);
+      drawWeapon(sg, T, wpn?.category ?? 'energy', bx, front, s);
     });
   }
 }
 
 // Legs (feet) + pelvis + skirts. `frame` 0..3 is the stompy walk cycle; the legs
 // alternate forward/back. Body bob is applied in the scene, not here.
-function drawHull(sg, mech, frame) {
+function drawHull(sg, mech, frame, T) {
   const lay = mechLayout(mech);
   const a = mech.chassis.art;
   const s = a.bodyLen / 38;
@@ -246,42 +278,44 @@ function drawHull(sg, mech, frame) {
   const rDir = frame === 1 ? 1 : frame === 3 ? -1 : 0;
 
   // Pelvis block ties the legs together (sits under the torso).
-  plate(sg, 0, a.bodyLen * 0.18, a.bodyWid * 0.5, a.bodyLen * 0.18, { fill: STEEL.deep, seam: false });
+  plate(sg, T, 0, a.bodyLen * 0.18, a.bodyWid * 0.5, a.bodyLen * 0.18, { fill: T.deep, seam: false });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
     const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
+    if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
     const fy = p.y + dir * shift;
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
     ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
-    plate(sg, p.x, fy, p.w, p.h, { fill: STEEL.lower, rim: STEEL.rim, seam: false });
-    rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, STEEL.faceMid);        // toe cap (forward)
-    rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, STEEL.joint);           // ankle actuator
-    rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, STEEL.grime, 0.7);
+    plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.rim, seam: false });
+    rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);            // toe cap (forward)
+    rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, T.joint);               // ankle actuator
+    rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, T.grime, 0.7);
   }
 
   // Hip skirts over the inner-top of each leg (read as "legs tuck under the body").
   for (const dx of [-1, 1]) {
     const sx = dx * a.bodyWid * 0.24;
     poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.1], [sx + a.bodyWid * 0.16, a.bodyLen * 0.1],
-              [sx + a.bodyWid * 0.13, a.bodyLen * 0.26], [sx - a.bodyWid * 0.19, a.bodyLen * 0.26]], STEEL.outline);
+              [sx + a.bodyWid * 0.13, a.bodyLen * 0.26], [sx - a.bodyWid * 0.19, a.bodyLen * 0.26]], T.outline);
     poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.1], [sx + a.bodyWid * 0.15, a.bodyLen * 0.1],
-              [sx + a.bodyWid * 0.12, a.bodyLen * 0.25], [sx - a.bodyWid * 0.18, a.bodyLen * 0.25]], STEEL.faceMid);
-    rectC(sg, sx - a.bodyWid * 0.015, a.bodyLen * 0.12, a.bodyWid * 0.26, Math.max(0.8, 0.6 * s), STEEL.rim);
+              [sx + a.bodyWid * 0.12, a.bodyLen * 0.25], [sx - a.bodyWid * 0.18, a.bodyLen * 0.25]], T.faceMid);
+    rectC(sg, sx - a.bodyWid * 0.015, a.bodyLen * 0.12, a.bodyWid * 0.26, Math.max(0.8, 0.6 * s), T.rim);
   }
 }
 
-// Build (or re-skin in place) all textures for one mech under `key`.
-export function buildMechTextures(scene, key, mech) {
+// Build (or re-skin in place) all textures for one mech under `key`. `opts.theme`
+// ('player' | 'enemy') picks the faction palette/shape.
+export function buildMechTextures(scene, key, mech, opts) {
+  const T = themeFor(opts);
   for (let f = 0; f < 4; f++) {
     gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawHull(scaledGraphics(g), mech, f));
+      (g) => drawHull(scaledGraphics(g), mech, f, T));
   }
   gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-    (g) => drawTurret(scaledGraphics(g), mech));
+    (g) => drawTurret(scaledGraphics(g), mech, T));
 }
 
 // Re-draw after damage so destroyed parts become stumps / weapons vanish.
-export function reskinMech(scene, key, mech) {
-  buildMechTextures(scene, key, mech);
+export function reskinMech(scene, key, mech, opts) {
+  buildMechTextures(scene, key, mech, opts);
 }
