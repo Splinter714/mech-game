@@ -175,15 +175,15 @@ export function mechLayout(mech) {
   const sh = shapeOf(mech);
   const shoulder = W * 0.42 * sh.armSpread;   // side-torso x; arms sit just outboard
   return {
-    head:        { x: 0,                       y: -L * 0.42 + L * sh.headDy, w: W * 0.34 * sh.head,      h: L * 0.22 * sh.head },
-    cockpit:     { x: 0,                       y: -L * 0.46 + L * sh.headDy, w: W * 0.18 * sh.head,      h: L * 0.10 * sh.head },
+    head:        { x: 0,                       y: -L * 0.24 + L * sh.headDy, w: W * 0.34 * sh.head,      h: L * 0.22 * sh.head },
+    cockpit:     { x: 0,                       y: -L * 0.27 + L * sh.headDy, w: W * 0.18 * sh.head,      h: L * 0.10 * sh.head },
     centerTorso: { x: 0,                       y: -L * 0.05,           w: W * 0.50 * sh.torso,     h: L * 0.44 },
     leftTorso:   { x: -shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
     rightTorso:  { x:  shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
     leftArm:     { x: -W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
     rightArm:    { x:  W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
-    leftLeg:     { x: -W * 0.17 * sh.legSpread, y:  L * 0.24 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.42 * sh.legH },
-    rightLeg:    { x:  W * 0.17 * sh.legSpread, y:  L * 0.24 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.42 * sh.legH },
+    leftLeg:     { x: -W * 0.17 * sh.legSpread, y:  L * 0.15 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.32 * sh.legH },
+    rightLeg:    { x:  W * 0.17 * sh.legSpread, y:  L * 0.15 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.32 * sh.legH },
   };
 }
 
@@ -344,12 +344,13 @@ function drawHull(sg, mech, frame, T) {
   const lay = mechLayout(mech);
   const a = mech.chassis.art;
   const s = a.bodyLen / 38;
-  const shift = a.bodyLen * 0.12;
+  const shift = a.bodyLen * 0.09;     // stride: legs swing less so feet don't jut out far
   const lDir = frame === 1 ? -1 : frame === 3 ? 1 : 0;
   const rDir = frame === 1 ? 1 : frame === 3 ? -1 : 0;
 
-  // Pelvis block ties the legs together (sits under the torso).
-  plate(sg, T, 0, a.bodyLen * 0.18, a.bodyWid * 0.5, a.bodyLen * 0.18, { fill: T.deep, seam: false });
+  // Pelvis block ties the legs together (sits under the torso, tucked up so it's mostly
+  // occluded from the top-down view).
+  plate(sg, T, 0, a.bodyLen * 0.10, a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
     const p = lay[loc];   // legs are animation-only now — never destroyed
@@ -369,16 +370,16 @@ function drawHull(sg, mech, frame, T) {
   for (const dx of [-1, 1]) {
     const sx = dx * a.bodyWid * 0.24 * legSpread;
     if (T.bubbly) {
-      ellipseC(sg, sx, a.bodyLen * 0.18, a.bodyWid * 0.34, a.bodyLen * 0.18, T.outline);
-      ellipseC(sg, sx, a.bodyLen * 0.18, a.bodyWid * 0.3, a.bodyLen * 0.15, T.faceMid);
-      ellipseC(sg, sx - a.bodyWid * 0.05, a.bodyLen * 0.13, a.bodyWid * 0.12, a.bodyLen * 0.05, T.rim, 0.9);
+      ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.34, a.bodyLen * 0.13, T.outline);
+      ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.3, a.bodyLen * 0.11, T.faceMid);
+      ellipseC(sg, sx - a.bodyWid * 0.05, a.bodyLen * 0.08, a.bodyWid * 0.12, a.bodyLen * 0.04, T.rim, 0.9);
       continue;
     }
-    poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.1], [sx + a.bodyWid * 0.16, a.bodyLen * 0.1],
-              [sx + a.bodyWid * 0.13, a.bodyLen * 0.26], [sx - a.bodyWid * 0.19, a.bodyLen * 0.26]], T.outline);
-    poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.1], [sx + a.bodyWid * 0.15, a.bodyLen * 0.1],
-              [sx + a.bodyWid * 0.12, a.bodyLen * 0.25], [sx - a.bodyWid * 0.18, a.bodyLen * 0.25]], T.faceMid);
-    rectC(sg, sx - a.bodyWid * 0.015, a.bodyLen * 0.12, a.bodyWid * 0.26, Math.max(0.8, 0.6 * s), T.rim);
+    poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.06], [sx + a.bodyWid * 0.16, a.bodyLen * 0.06],
+              [sx + a.bodyWid * 0.13, a.bodyLen * 0.17], [sx - a.bodyWid * 0.19, a.bodyLen * 0.17]], T.outline);
+    poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.06], [sx + a.bodyWid * 0.15, a.bodyLen * 0.06],
+              [sx + a.bodyWid * 0.12, a.bodyLen * 0.16], [sx - a.bodyWid * 0.18, a.bodyLen * 0.16]], T.faceMid);
+    rectC(sg, sx - a.bodyWid * 0.015, a.bodyLen * 0.08, a.bodyWid * 0.26, Math.max(0.8, 0.6 * s), T.rim);
   }
 }
 

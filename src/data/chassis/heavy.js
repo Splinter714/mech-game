@@ -12,7 +12,7 @@ export const HEAVY_CONFIG = {
   // a narrow planted stance, with rear exhaust stacks — the immovable object.
   art: {
     bodyLen: 46, bodyWid: 38, accent: 0xe2533a,
-    shape: { head: 1.08, torso: 1.18, sideTorso: 1.2, armW: 1.32, armH: 0.8, armSpread: 0.88, legW: 1.45, legH: 0.8, legSpread: 0.86, legDrop: 0.95, headDy: 0.1, armDy: 0.07 },
+    shape: { head: 1.08, torso: 1.18, sideTorso: 1.2, armW: 1.32, armH: 0.8, armSpread: 0.88, legW: 1.45, legH: 0.8, legSpread: 0.86, legDrop: 0.95, headDy: 0.04, armDy: 0.07 },
     decor: [{ kind: 'pauldron', side: -1 }, { kind: 'pauldron', side: 1 }, { kind: 'stack', side: -1 }, { kind: 'stack', side: 1 }],
   },
   movement: {
