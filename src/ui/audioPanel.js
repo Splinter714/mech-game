@@ -6,14 +6,25 @@ import { Audio } from '../audio/index.js';
 
 // [paramKey, label, min, max, step]
 const GROUPS = [
-  ['Master + drums', [
+  ['Master', [
     ['master', 'Master', 0, 1, 0.01],
     ['music', 'Music level', 0, 0.6, 0.01],
     ['tempo', 'Tempo (BPM)', 120, 240, 1],
-    ['drumLevel', 'Drums (all)', 0, 1.5, 0.01],
-    ['kickLevel', 'Kick', 0, 2, 0.05],
-    ['snareLevel', 'Snare', 0, 2, 0.05],
-    ['hatLevel', 'Hats / crash', 0, 2, 0.05],
+  ]],
+  ['Drums', [
+    ['drumLevel', 'All drums', 0, 1.5, 0.01],
+    ['kickLevel', 'Kick level', 0, 2, 0.05],
+    ['kickPitch', 'Kick pitch (Hz)', 60, 320, 5],
+    ['kickDecay', 'Kick decay', 0.04, 0.4, 0.01],
+    ['kickClick', 'Kick click', 0, 0.2, 0.005],
+    ['snareLevel', 'Snare level', 0, 2, 0.05],
+    ['snareTone', 'Snare bright (Hz)', 600, 4000, 50],
+    ['snareSnap', 'Snare snap (Hz)', 150, 1200, 10],
+    ['snareDecay', 'Snare decay', 0.05, 0.5, 0.01],
+    ['hatLevel', 'Hat / crash level', 0, 2, 0.05],
+    ['hatFreq', 'Hat bright (Hz)', 3000, 12000, 100],
+    ['hatDecay', 'Hat decay', 0.01, 0.15, 0.005],
+    ['crashDecay', 'Crash decay', 0.2, 1.5, 0.05],
   ]],
   ['Guitar tone (distortion)', [
     ['guitarLevel', 'Level (volume)', 0, 0.4, 0.005],
@@ -56,7 +67,7 @@ export function mountAudioPanel() {
   const open = () => {
     el = document.createElement('div');
     el.style.cssText = [
-      'position:fixed', 'top:10px', 'right:10px', 'width:322px', 'max-height:94vh', 'overflow:auto',
+      'position:fixed', 'top:10px', 'right:10px', 'width:336px', 'max-height:94vh', 'overflow:auto',
       'background:rgba(13,16,20,0.94)', 'border:1px solid #2a333f', 'border-radius:8px', 'padding:10px 12px',
       'font-family:monospace', 'font-size:11px', 'color:#c8d2dd', 'z-index:99999', 'box-shadow:0 6px 24px rgba(0,0,0,0.5)',
     ].join(';');
@@ -88,7 +99,7 @@ export function mountAudioPanel() {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:3px 0';
         const lab = document.createElement('span');
-        lab.textContent = label; lab.style.cssText = 'flex:0 0 108px';
+        lab.textContent = label; lab.style.cssText = 'flex:0 0 116px';
         const inp = document.createElement('input');
         inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step;
         inp.value = Audio.params[key]; inp.style.cssText = 'flex:1;min-width:0';

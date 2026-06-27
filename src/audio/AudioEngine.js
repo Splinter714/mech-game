@@ -66,6 +66,10 @@ export class AudioEngine {
       // master + drums
       master: 1, music: 0.35, tempo: 120,
       drumLevel: 1.5, kickLevel: 1.4, snareLevel: 1.45, hatLevel: 1.7,
+      // per-drum SOUND shaping
+      kickPitch: 155, kickDecay: 0.12, kickClick: 0.06,
+      snareTone: 1800, snareSnap: 420, snareDecay: 0.18,
+      hatFreq: 7000, hatDecay: 0.04, crashDecay: 0.6,
       // rhythm-guitar TONE (the distortion pedal + cab)
       guitarLevel: 0.17, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
       guitarTone: 9000, guitarLowCut: 400,
@@ -448,24 +452,24 @@ export class AudioEngine {
     this.tone(this.drums, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
   }
   _kickMetal(at) {
-    const k = this.params.kickLevel;
-    this.tone(this.drums, { type: 'sine', freq: 155, freqEnd: 42, dur: 0.12, gain: 0.26 * k, attack: 0.001 }, at);
-    this.noise(this.drums, { dur: 0.02, gain: 0.06 * k, type: 'highpass', freq: 3200 }, at);   // beater click
+    const P = this.params, k = P.kickLevel;
+    this.tone(this.drums, { type: 'sine', freq: P.kickPitch, freqEnd: 42, dur: P.kickDecay, gain: 0.26 * k, attack: 0.001 }, at);
+    this.noise(this.drums, { dur: 0.02, gain: P.kickClick * k, type: 'highpass', freq: 3200 }, at);   // beater click
   }
   _snare(at) {
     this.noise(this.drums, { dur: 0.16, gain: 0.12, type: 'highpass', freq: 1400 }, at);
     this.tone(this.drums, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
   }
   _snareMetal(at) {
-    const s = this.params.snareLevel;
-    this.noise(this.drums, { dur: 0.18, gain: 0.17 * s, type: 'highpass', freq: 1800 }, at);
-    this.noise(this.drums, { dur: 0.08, gain: 0.08 * s, type: 'bandpass', freq: 420, q: 1 }, at);
-    this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 * s }, at);
+    const P = this.params, s = P.snareLevel;
+    this.noise(this.drums, { dur: P.snareDecay, gain: 0.17 * s, type: 'highpass', freq: P.snareTone }, at); // body/brightness
+    this.noise(this.drums, { dur: 0.08, gain: 0.08 * s, type: 'bandpass', freq: P.snareSnap, q: 1 }, at);   // snap/crack
+    this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 * s }, at);    // tone body
   }
   _crash(at) {
-    this.noise(this.drums, { dur: 0.6, gain: 0.1 * this.params.hatLevel, type: 'highpass', freq: 5200 }, at);
+    this.noise(this.drums, { dur: this.params.crashDecay, gain: 0.1 * this.params.hatLevel, type: 'highpass', freq: 5200 }, at);
   }
   _hat(at, gain) {
-    this.noise(this.drums, { dur: 0.04, gain, type: 'highpass', freq: 7000 }, at);
+    this.noise(this.drums, { dur: this.params.hatDecay, gain, type: 'highpass', freq: this.params.hatFreq }, at);
   }
 }
