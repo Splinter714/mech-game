@@ -183,7 +183,7 @@ export default class ArenaScene extends Phaser.Scene {
       if (this.stepMs >= mv.stepInterval) {
         this.stepMs -= mv.stepInterval;
         this.hullFrame = (this.hullFrame + 1) % 4;
-        if (this.hullFrame % 2 === 0) { this.cameras.main.shake(70, 0.0016 * (mv.stepBob / 2)); Audio.footstep(this.hullFrame === 0 ? 0 : 1); }
+        if (this.hullFrame % 2 === 0) { this._footImpactFx(this.hullFrame === 0 ? 0 : 1, mv.stepBob); Audio.footstep(this.hullFrame === 0 ? 0 : 1); }
       }
       bob = Math.abs(Math.sin((this.stepMs / mv.stepInterval) * Math.PI)) * mv.stepBob;
     }
@@ -745,6 +745,41 @@ export default class ArenaScene extends Phaser.Scene {
   _floatText(x, y, s, color) {
     const t = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '14px', color }).setOrigin(0.5);
     this.tweens.add({ targets: t, y: y - 26, alpha: 0, duration: 700, onComplete: () => t.destroy() });
+  }
+
+  // Footfall impact (#37): convey weight with a LOCAL effect at the planted foot instead
+  // of a full-screen camera shake — an expanding ground shock ring, a few dust puffs
+  // kicking outward, and a quick squash-and-recover of the mech body. `power` (the
+  // chassis stepBob) scales it, so a heavy lands harder than a light.
+  _footImpactFx(foot, power) {
+    const p = Math.max(2, power);
+    const x = this.px + (foot ? 11 : -11);
+    const y = this.py + 16;                       // roughly at the feet, below the torso
+
+    const ring = this.add.circle(x, y, 3).setStrokeStyle(2, 0x8a93a0, 0.55);
+    this.tweens.add({ targets: ring, scale: 1.6 + p * 0.5, alpha: 0, duration: 300, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
+
+    for (let i = 0; i < 4; i++) {
+      const ang = -Math.PI / 2 + (Math.random() - 0.5) * 2.6;   // fan up-and-out from the foot
+      const dust = this.add.circle(x, y, 1.5 + Math.random() * 2, 0x6b7280, 0.45);
+      this.tweens.add({
+        targets: dust, x: x + Math.cos(ang) * (8 + p * 2 + Math.random() * 8),
+        y: y + Math.sin(ang) * (5 + Math.random() * 5), alpha: 0, scale: 0.3,
+        duration: 320 + Math.random() * 140, ease: 'Quad.easeOut', onComplete: () => dust.destroy(),
+      });
+    }
+
+    // Squash the body briefly (heavier stomp = deeper). Guard against stacking tweens so a
+    // fast gait doesn't leave the container mis-scaled.
+    const v = this.playerView;
+    if (!v._stomping) {
+      v._stomping = true;
+      const sq = Math.min(0.12, 0.04 + p * 0.012);
+      this.tweens.add({
+        targets: v, scaleX: 1 + sq * 0.6, scaleY: 1 - sq, duration: 70, yoyo: true, ease: 'Quad.easeOut',
+        onComplete: () => { v.setScale(1); v._stomping = false; },
+      });
+    }
   }
 
   toGarage() {
