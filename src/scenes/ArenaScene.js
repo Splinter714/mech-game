@@ -5,7 +5,7 @@ import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
 import { CATEGORIES } from '../data/categories.js';
-import { hexToPixel, range, axialKey, HEX_SIZE } from '../data/hexgrid.js';
+import { hexToPixel, pixelToHex, range, axialKey, distance, HEX_SIZE } from '../data/hexgrid.js';
 import { Controls } from '../input/Controls.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
@@ -73,10 +73,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
   }
 
-  // Lay out a disc of hex tiles; a scattered few become walls (cover). Visual only for
-  // now — collision is a later, physics-based step.
+  // Lay out a disc of hex tiles; a scattered few become walls that block movement and
+  // shots (cover). The wall set + disc radius are kept for collision/LOS queries.
   _buildWorld() {
-    const walls = new Set(['1,1', '2,-3', '-2,2', '-3,0', '4,-2', '0,3', '-1,-2', '3,2']);
+    this.worldRadius = 6;
+    this.walls = new Set(['1,1', '2,-3', '-2,2', '-3,0', '4,-2', '0,3', '-1,-2', '3,2']);
+    const walls = this.walls;
     for (const h of range({ q: 0, r: 0 }, 6)) {
       const { x, y } = hexToPixel(h.q, h.r);
       const key = axialKey(h.q, h.r);
@@ -108,8 +110,15 @@ export default class ArenaScene extends Phaser.Scene {
     const maxSp = mv.maxSpeed * legF;
     this.vx = approach(this.vx, intent.move.x * maxSp, mv.accel * dt);
     this.vy = approach(this.vy, intent.move.y * maxSp, mv.accel * dt);
-    this.px += this.vx * dt;
-    this.py += this.vy * dt;
+    // Move with wall/boundary collision, sliding along blocked axes.
+    const ox = this.px, oy = this.py;
+    let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
+    if (this._blocked(nx, ny)) {
+      if (!this._blocked(ox, ny)) { nx = ox; this.vx = 0; }
+      else if (!this._blocked(nx, oy)) { ny = oy; this.vy = 0; }
+      else { nx = ox; ny = oy; this.vx = 0; this.vy = 0; }
+    }
+    this.px = nx; this.py = ny;
     this.speed = Math.hypot(this.vx, this.vy);
 
     // Legs turn to face the direction of travel (so the walk reads), at the chassis turn
@@ -212,6 +221,28 @@ export default class ArenaScene extends Phaser.Scene {
     return Math.max(120, weapon.cycleTime);
   }
 
+  // Is a world point inside a wall hex? (cover / projectile blocker)
+  _isWall(x, y) {
+    const h = pixelToHex(x, y);
+    return this.walls.has(axialKey(h.q, h.r));
+  }
+
+  // Is a world point impassable for the mech — a wall, or outside the arena disc?
+  _blocked(x, y) {
+    const h = pixelToHex(x, y);
+    return this.walls.has(axialKey(h.q, h.r)) || distance({ q: 0, r: 0 }, h) > this.worldRadius;
+  }
+
+  // Distance from a muzzle along an angle to the first wall, or Infinity if clear within
+  // `maxT`. Used so beams/shots are blocked by cover.
+  _wallDistance(x0, y0, angle, maxT) {
+    const cx = Math.cos(angle), cy = Math.sin(angle);
+    for (let t = 8; t < maxT; t += 8) {
+      if (this._isWall(x0 + cx * t, y0 + cy * t)) return t;
+    }
+    return Infinity;
+  }
+
   // World position of a weapon's muzzle: its body-location offset (front edge of the
   // part, in design coords where -y is forward) rotated by the turret facing. So a
   // left-arm shot leaves the left arm, a right-torso shot the right torso, etc.
@@ -277,9 +308,13 @@ export default class ArenaScene extends Phaser.Scene {
     const ex = this.dx - muzzleX, ey = this.dy - muzzleY;
     const t = ex * dirX + ey * dirY;
     const perp = Math.abs(ex * dirY - ey * dirX);
-    const hit = !this.dummy.isDestroyed() && t > 0 && t < reach && perp < 44;
-    const endX = hit ? muzzleX + dirX * t : muzzleX + dirX * Math.min(reach, 600);
-    const endY = hit ? muzzleY + dirY * t : muzzleY + dirY * Math.min(reach, 600);
+    let hit = !this.dummy.isDestroyed() && t > 0 && t < reach && perp < 44;
+    let endDist = hit ? t : Math.min(reach, 600);
+    // Cover: a wall between muzzle and target stops the beam short.
+    const wallT = this._wallDistance(muzzleX, muzzleY, angle, endDist);
+    const blocked = wallT < endDist;
+    if (blocked) { endDist = wallT; hit = false; }
+    const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
     // Laser-y beam: bright core over a soft glow, quick fade.
     this.fx.lineStyle(5, color, 0.25).lineBetween(muzzleX, muzzleY, endX, endY);
@@ -288,6 +323,8 @@ export default class ArenaScene extends Phaser.Scene {
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       this._damageDummyAt(endX, endY, dmg, color);
+      this._impactFx(endX, endY, color, 'beam', 0);
+    } else if (blocked) {
       this._impactFx(endX, endY, color, 'beam', 0);
     }
   }
@@ -324,6 +361,12 @@ export default class ArenaScene extends Phaser.Scene {
         p.vx = Math.cos(p.angle) * p.speed; p.vy = Math.sin(p.angle) * p.speed;
       }
       p.x += p.vx * dt; p.y += p.vy * dt; p.dist += p.speed * dt;
+      // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
+      if (!p.arc && this._isWall(p.x, p.y)) {
+        p.dead = true;
+        this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
+        continue;
+      }
       const toDummy = this.dummy.isDestroyed() ? Infinity : Math.hypot(p.x - this.dx, p.y - this.dy);
       const landed = p.dist >= p.maxDist;
       if (toDummy < HIT_RADIUS || landed) {

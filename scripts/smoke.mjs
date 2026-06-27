@@ -69,6 +69,15 @@ try {
     a.controls.keys.W.isDown = false;
     const droveForward = a.py < y0 - 0.5;
 
+    // Collision: shoving into the world for a long time must never end up inside a wall
+    // hex or outside the arena disc.
+    a.controls.keys.D.isDown = true;
+    let everInWall = false;
+    for (let i = 0; i < 300; i++) { a.update(0, 16); if (a._isWall(a.px, a.py)) everInWall = true; }
+    a.controls.keys.D.isDown = false;
+    const collisionHolds = !everInWall && !a._blocked(a.px, a.py);
+    a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;   // back to spawn for the firing tests
+
     // Per-part damage loop: point the turret at the dummy and fire each ready weapon;
     // its centre torso (nearest part to the ray) must lose health, and over-damage
     // must destroy it.
@@ -105,6 +114,7 @@ try {
       dummyTex: g.textures.exists('dummyMech_turret'),
       onlineWeapons: a.mech.onlineWeapons().length,
       projHit,
+      collisionHolds,
       ctDamaged: ctAfter < ctBefore,
       dummyDead,
     };
@@ -122,6 +132,7 @@ try {
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
+  if (!arena.collisionHolds) fail('the mech drove through a wall or off the arena disc');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');
   if (!arena.ctDamaged) fail('firing at the dummy did not damage its centre torso');
   if (!arena.dummyDead) fail('dummy did not register destruction on centre-torso kill');
