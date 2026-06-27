@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { buildMechTextures, reskinMech } from '../art/index.js';
+import { Mech } from '../data/Mech.js';
+import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
 import { MOUNT_LOCATIONS, LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
@@ -102,8 +104,23 @@ export default class GarageScene extends Phaser.Scene {
   _buildHeader() {
     this.txt(20, 16, 'MECH LAB', { fontSize: '20px', color: UI.accent });
     this.hintText = this.txt(120, 22, '', { fontSize: '11px', color: UI.dim });
+    this.button(this.W - 300, 20, 130, 34, '⟳ CHASSIS', () => this.cycleChassis(), UI.accent);
     this.button(this.W - 150, 20, 130, 34, '▶ DEPLOY  (D)', () => this.deploy(), UI.sel);
     this._updateHint();
+  }
+
+  // Swap to the next chassis, carrying the loadout over (all chassis share the six skill
+  // slots, so mounts stay valid).
+  cycleChassis() {
+    const i = CHASSIS_IDS.indexOf(this.mech.chassisId);
+    const next = CHASSIS_IDS[(i + 1) % CHASSIS_IDS.length];
+    const data = this.mech.toJSON();
+    data.chassisId = next;
+    this.mech = new Mech(data);
+    this.allMechs[ACTIVE_MECH_KEY] = this.mech;
+    buildMechTextures(this, 'garageMech', this.mech);
+    saveAllMechs(this.allMechs);
+    this.refresh();
   }
 
   _updateHint() {

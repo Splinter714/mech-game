@@ -5,8 +5,10 @@
 
 import { LOCATIONS, LOCATION_INFO } from '../anatomy.js';
 import { LIGHT_CONFIG } from './light.js';
+import { STRIKER_CONFIG } from './striker.js';
 import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
+import { ASSAULT_CONFIG } from './assault.js';
 
 // Relative bulk of each location, used to distribute armor + structure from the
 // chassis' center-torso baseline. The cockpit is internal (no armor), tiny structure.
@@ -53,7 +55,7 @@ export function makeChassis(cfg) {
 
 // Built registry: weight-class id → full chassis def.
 export const CHASSIS = Object.fromEntries(
-  [LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG].map((cfg) => [cfg.id, makeChassis(cfg)]),
+  [LIGHT_CONFIG, STRIKER_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG, ASSAULT_CONFIG].map((cfg) => [cfg.id, makeChassis(cfg)]),
 );
 
 export const CHASSIS_IDS = Object.keys(CHASSIS);

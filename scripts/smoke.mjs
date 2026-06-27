@@ -61,6 +61,7 @@ try {
   const arena = await page.evaluate(() => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
+    const ex0 = a.dx, ey0 = a.dy;   // enemy spawn (known clear line of sight from origin)
 
     // Tank locomotion: holding throttle should drive the mech forward (up = -y).
     const y0 = a.py;
@@ -76,7 +77,9 @@ try {
     for (let i = 0; i < 300; i++) { a.update(0, 16); if (a._isWall(a.px, a.py)) everInWall = true; }
     a.controls.keys.D.isDown = false;
     const collisionHolds = !everInWall && !a._blocked(a.px, a.py);
-    a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;   // back to spawn for the firing tests
+    // Reset both mechs to their spawn (clear LOS) for the deterministic firing tests.
+    a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+    a.dx = ex0; a.dy = ey0; a.evx = 0; a.evy = 0;
 
     // Per-part damage loop: point the turret at the dummy and fire each ready weapon;
     // its centre torso (nearest part to the ray) must lose health, and over-damage
