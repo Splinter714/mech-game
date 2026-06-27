@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech } from '../art/index.js';
+import { buildMechTextures, reskinMech, itemFxKey } from '../art/index.js';
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
-import { MOUNT_LOCATIONS, LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
+import { MOUNT_LOCATIONS, ABILITY_SLOTS } from '../data/anatomy.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -30,6 +30,15 @@ const UI = {
 const TILE_ORDER = ['leftArm', 'leftTorso', 'centerTorso', 'rightTorso', 'rightArm'];
 const TILE_MAX = 150;
 const TILE_GAP = 14;
+
+// Each slot's controller button, so pressing a slot's own bind quick-mounts the highlighted
+// catalog item straight into it (#30). Mirrors SKILL_BINDS' pad labels: RT/LT triggers,
+// RB/LB bumpers, L3.
+const SLOT_BUTTON = {
+  leftArm: PAD.LT, rightArm: PAD.RT,
+  leftTorso: PAD.LB, rightTorso: PAD.RB,
+  centerTorso: PAD.L3,
+};
 
 export default class GarageScene extends Phaser.Scene {
   constructor() {
@@ -71,41 +80,72 @@ export default class GarageScene extends Phaser.Scene {
     // the catalog list and the five skill tiles; focus visuals only appear once a pad
     // button is used (`padActive`), so mouse/keyboard users see no cursor.
     this.padEdges = new PadEdges(this);
-    this.padActive = false;
+    this.inputMode = 'kbm';       // which scheme the tile bind labels reflect (#26)
+    this.padActive = false;       // pad in use → show the focus cursor
     this.focusZone = 'catalog';   // 'catalog' | 'tiles'
     this.focusRow = 0;            // index into catalogIds
     this.focusTile = 0;           // index into TILE_ORDER
+    // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
+    this.input.on('pointermove', () => this._setInputMode('kbm'));
+    this.input.on('pointerdown', () => this._setInputMode('kbm'));
+    this.input.keyboard.on('keydown', () => this._setInputMode('kbm'));
   }
 
-  // Controller navigation (#30): d-pad moves the focus, A selects/equips, B removes/cancels,
-  // bumpers cycle chassis, Start deploys. No-ops entirely without a connected pad, so the
-  // mouse/keyboard flow is untouched.
+  // Switch the displayed control scheme (and focus-cursor visibility), redrawing once.
+  _setInputMode(mode) {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    this.padActive = mode === 'pad';
+    this._updateCatalogHighlight();
+    this.refresh();
+  }
+
+  // The bind shown on a tile, for the current input mode (controller OR keyboard, #26).
+  _bindLabel(loc) {
+    const b = SKILL_BINDS[loc];
+    return this.inputMode === 'pad' ? b.pad : b.key;
+  }
+
+  // Controller (#30): the LEFT STICK moves the focus (d-pad is left free for other uses),
+  // A equips, B clears/cancels, X/Y cycle chassis, Start deploys. Plus quick-mount — a
+  // slot's own bind button (RT/LT/RB/LB/L3) drops the highlighted catalog item into that
+  // slot (or clears it). No-ops without a connected pad, so mouse/keyboard is untouched.
   update() {
     const e = this.padEdges;
-    if (!e.pad()) return;
+    const pad = e.pad();
+    if (!pad) return;
 
     if (e.pressed(PAD.START)) { this.deploy(); return; }
-    if (e.pressed(PAD.RB)) { this.padActive = true; this.cycleChassis(+1); return; }
-    if (e.pressed(PAD.LB)) { this.padActive = true; this.cycleChassis(-1); return; }
+    if (e.pressed(PAD.Y)) { this._setInputMode('pad'); this.cycleChassis(+1); return; }
+    if (e.pressed(PAD.X)) { this._setInputMode('pad'); this.cycleChassis(-1); return; }
 
-    const up = e.pressed(PAD.DPAD_UP), down = e.pressed(PAD.DPAD_DOWN);
-    const left = e.pressed(PAD.DPAD_LEFT), right = e.pressed(PAD.DPAD_RIGHT);
-    const a = e.pressed(PAD.A), b = e.pressed(PAD.B);
-    if (!(up || down || left || right || a || b)) return;
-    this.padActive = true;
-
-    // Move the focus.
-    if (this.focusZone === 'tiles') {
-      if (left) this.focusTile = (this.focusTile + TILE_ORDER.length - 1) % TILE_ORDER.length;
-      else if (right) { if (this.focusTile === TILE_ORDER.length - 1) this.focusZone = 'catalog'; else this.focusTile++; }
-      else if (down) this.focusZone = 'catalog';
-    } else {
-      if (up) this.focusRow = Math.max(0, this.focusRow - 1);
-      else if (down) this.focusRow = Math.min(this.catalogIds.length - 1, this.focusRow + 1);
-      else if (left || right) this.focusZone = 'tiles';
+    // Quick-mount: a slot's bind button sends the highlighted item straight into it.
+    for (const loc of TILE_ORDER) {
+      if (e.pressed(SLOT_BUTTON[loc])) {
+        this._setInputMode('pad');
+        const item = this.armed || (this.focusZone === 'catalog' ? this.catalogIds[this.focusRow] : null);
+        if (item) this._mountInto(loc, item); else this.unmount(loc, 0);
+        return;
+      }
     }
 
-    // Act. arm/placeOn/unmount each refresh; for pure movement we refresh below.
+    const step = this._stickStep(pad.leftStick);
+    const a = e.pressed(PAD.A), b = e.pressed(PAD.B);
+    if (!step && !a && !b) return;
+    this._setInputMode('pad');
+
+    if (step === 'left' || step === 'right' || step === 'up' || step === 'down') {
+      if (this.focusZone === 'tiles') {
+        if (step === 'left') this.focusTile = (this.focusTile + TILE_ORDER.length - 1) % TILE_ORDER.length;
+        else if (step === 'right') { if (this.focusTile === TILE_ORDER.length - 1) this.focusZone = 'catalog'; else this.focusTile++; }
+        else if (step === 'down') this.focusZone = 'catalog';
+      } else {
+        if (step === 'up') this.focusRow = Math.max(0, this.focusRow - 1);
+        else if (step === 'down') this.focusRow = Math.min(this.catalogIds.length - 1, this.focusRow + 1);
+        else if (step === 'left' || step === 'right') this.focusZone = 'tiles';
+      }
+    }
+
     if (a) {
       if (this.focusZone === 'catalog') this.arm(this.catalogIds[this.focusRow]);
       else this.placeOn(TILE_ORDER[this.focusTile]);
@@ -119,6 +159,19 @@ export default class GarageScene extends Phaser.Scene {
     if (this.focusZone === 'tiles') this.selected = TILE_ORDER[this.focusTile];
     this._updateCatalogHighlight();
     this.refresh();
+  }
+
+  // Discrete steps from an analog stick: one per flick, with a slow auto-repeat when held;
+  // returns 'up'|'down'|'left'|'right'|null.
+  _stickStep(stick) {
+    if (!stick || stick.length() < 0.55) { this._stickDir = null; return null; }
+    const dir = Math.abs(stick.x) > Math.abs(stick.y)
+      ? (stick.x > 0 ? 'right' : 'left')
+      : (stick.y > 0 ? 'down' : 'up');
+    const now = this.time.now;
+    if (this._stickDir !== dir) { this._stickDir = dir; this._stickNext = now + 360; return dir; }
+    if (now >= this._stickNext) { this._stickNext = now + 150; return dir; }
+    return null;
   }
 
   txt(x, y, s, opts = {}) {
@@ -205,7 +258,7 @@ export default class GarageScene extends Phaser.Scene {
     this.catalogIds = [...WEAPON_IDS, ...EQUIPMENT_IDS];
     for (const id of this.catalogIds) row(id);
     this._updateCatalogHighlight();
-    this.add.text(x + 8, this.H - 60, 'pad:  d-pad move · A equip · B clear\n      LB/RB chassis · Start deploy', {
+    this.add.text(x + 8, this.H - 74, 'pad:  L-stick move · A equip · B clear\n      RT/LT/RB/LB/L3 → mount in that slot\n      X/Y chassis · Start deploy', {
       fontFamily: 'monospace', fontSize: '10px', color: UI.dim, lineSpacing: 2,
     });
   }
@@ -261,7 +314,8 @@ export default class GarageScene extends Phaser.Scene {
   _drawTile(loc) {
     const rect = this.tileRect(loc);
     const cx = rect.x + rect.w / 2;
-    const isSel = loc === this.selected;
+    // Highlight the tile when it's the (mouse) selection, or the controller focus is on it.
+    const isSel = loc === this.selected && (this.focusZone === 'tiles' || !this.padActive);
     const id = this.mech.mounts[loc][0];   // one skill per slot
     const isAbility = ABILITY_SLOTS.includes(loc);
 
@@ -276,42 +330,26 @@ export default class GarageScene extends Phaser.Scene {
     bg.on('pointerdown', () => (this.armed ? this.placeOn(loc) : id ? this.unmount(loc, 0) : this.placeOn(loc)));
     this.doll.add(bg);
 
-    // Header: slot code (left) + fire bind (right).
-    this.doll.add(this.add.text(rect.x + 8, rect.y + 6, LOCATION_INFO[loc].short, {
-      fontFamily: 'monospace', fontSize: '13px', color: isSel ? UI.sel : UI.text,
-    }));
-    const bind = SKILL_BINDS[loc];
-    this.doll.add(this.add.text(rect.x + rect.w - 8, rect.y + 7, `${bind.pad}·${bind.key}`, {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
-    }).setOrigin(1, 0));
+    // The CONTROL BIND is the prominent label (#26) — mode-aware, big, centred at the top.
+    // Parts aren't named any more; the bind is how you read the tile.
+    this.doll.add(this.add.text(cx, rect.y + 7, this._bindLabel(loc), {
+      fontFamily: 'monospace', fontSize: '17px', color: isSel ? UI.sel : UI.accent,
+    }).setOrigin(0.5, 0));
 
-    const iconY = rect.y + rect.h * 0.46;
+    const iconY = rect.y + rect.h * 0.53;
     if (id) {
       const item = getItem(id);
-      const weapon = isWeapon(id);
-      const color = weapon ? CATEGORIES[item.category].color : UI.ability;
-      if (weapon) {
-        // The procedural category icon (same art language as the catalog), scaled to fit.
-        const icon = this.add.image(cx, iconY, `icon_${item.category}`).setDisplaySize(rect.w * 0.42, rect.w * 0.42);
-        this.doll.add(icon);
-      } else {
-        // Abilities have no weapon glyph: draw a small diamond emblem in ability green.
-        const d = rect.w * 0.17;
-        this.doll.add(this.add.rectangle(cx, iconY, d, d, 0x152018).setStrokeStyle(2, color).setAngle(45));
-        this.doll.add(this.add.rectangle(cx, iconY, d * 0.45, d * 0.45, color).setAngle(45));
-      }
-      this.doll.add(this.add.text(cx, rect.y + rect.h - 24, item.name, {
-        fontFamily: 'monospace', fontSize: '11px', color: UI.text, align: 'center',
-        wordWrap: { width: rect.w - 10 },
+      // The item's actual visual-effect art (shared with the in-arena projectile/beam).
+      this.doll.add(this.add.image(cx, iconY, itemFxKey(id)).setDisplaySize(rect.w * 0.5, rect.w * 0.5));
+      this.doll.add(this.add.text(cx, rect.y + rect.h - 26, item.name, {
+        fontFamily: 'monospace', fontSize: '10px', color: UI.dim, align: 'center',
+        wordWrap: { width: rect.w - 8 },
       }).setOrigin(0.5, 0));
-      this.doll.add(this.add.text(cx, rect.y + rect.h - 10, weapon ? (item.category === 'melee' ? 'melee' : item.category) : 'ability', {
-        fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
-      }).setOrigin(0.5));
     } else {
       this.doll.add(this.add.text(cx, iconY, '+', {
-        fontFamily: 'monospace', fontSize: '28px', color: UI.slotEdge,
+        fontFamily: 'monospace', fontSize: '26px', color: UI.slotEdge,
       }).setOrigin(0.5));
-      this.doll.add(this.add.text(cx, rect.y + rect.h - 16, isAbility ? 'ability slot' : 'weapon slot', {
+      this.doll.add(this.add.text(cx, rect.y + rect.h - 16, isAbility ? 'ability' : 'weapon', {
         fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
       }).setOrigin(0.5));
     }
@@ -342,21 +380,27 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
   }
 
-  // Place the armed piece into a tile, replacing whatever was there. Stays armed so you
-  // can mount several in a row; an invalid mount (e.g. melee outside an arm) is rejected
-  // with a toast and the displaced item restored.
-  placeOn(loc) {
+  // Mount `itemId` into `loc`, replacing whatever was there. An invalid mount (e.g. melee
+  // outside an arm) is rejected with a toast and the displaced item restored.
+  _mountInto(loc, itemId) {
+    if (!itemId) return;
     this.selected = loc;
-    if (!this.armed) return this.refresh();
     const prev = this.mech.usedSlots(loc) >= 1 ? this.mech.mounts[loc][0] : null;
     if (prev) this.mech.unmount(loc, 0);
-    const res = this.mech.mount(loc, this.armed);
+    const res = this.mech.mount(loc, itemId);
     if (!res.ok) {
       if (prev) this.mech.mount(loc, prev);   // restore the displaced item
       this.refresh();
       return this.toast(res.reason);
     }
     this.onChange();
+  }
+
+  // Place the armed piece into a tile (stays armed so you can mount several in a row).
+  placeOn(loc) {
+    this.selected = loc;
+    if (!this.armed) return this.refresh();
+    this._mountInto(loc, this.armed);
   }
 
   unmount(loc, index) {

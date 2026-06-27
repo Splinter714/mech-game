@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { Mech } from '../data/Mech.js';
-import { buildMechTextures, reskinMech, mechLayout, ART_SCALE } from '../art/index.js';
+import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, projectileKind } from '../art/index.js';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
@@ -446,15 +446,6 @@ export default class ArenaScene extends Phaser.Scene {
     return Math.max(0.2, 1 - 0.7 * t);
   }
 
-  // The kind tag drives a projectile/impact's look: energy → plasma blob, missile →
-  // trailed rocket, anything else → ballistic slug.
-  _kind(weapon) {
-    if (weapon.delivery.kind) return weapon.delivery.kind;   // explicit override (flame, fire)
-    if (weapon.category === 'energy') return 'plasma';
-    if (weapon.category === 'missile') return 'missile';
-    return 'slug';
-  }
-
   _fireHitscan(w, muzzleX, muzzleY, angle) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
@@ -478,9 +469,8 @@ export default class ArenaScene extends Phaser.Scene {
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
-    // Laser-y beam: bright core over a soft glow, quick fade.
-    this.fx.lineStyle(5, color, 0.25).lineBetween(muzzleX, muzzleY, endX, endY);
-    this.fx.lineStyle(1.6, 0xffffff, 0.9).lineBetween(muzzleX, muzzleY, endX, endY);
+    // Laser-y beam (shared art so the garage icon matches), quick fade.
+    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1);
     this.time.delayedCall(80, () => this.fx.clear());
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
@@ -512,7 +502,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.projectiles.push({
       x, y, angle, speed, owner,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
+      kind: projectileKind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
       damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
       dist: 0, maxDist, arc: d.path === 'arcing', trail: [], ground: d.groundFire || null,
       homing, turn: 4.0,                 // guided missiles steer toward their target
@@ -569,26 +559,9 @@ export default class ArenaScene extends Phaser.Scene {
       lift = Math.sin((p.dist / p.maxDist) * Math.PI) * Math.min(28, p.maxDist * 0.12);
       g.fillStyle(0x000000, 0.25).fillEllipse(p.x, p.y, 7, 3);
     }
-    const dy = p.y - lift;
-    if (p.kind === 'plasma') {
-      g.fillStyle(p.color, 0.30).fillCircle(p.x, dy, 7);
-      g.fillStyle(p.color, 0.9).fillCircle(p.x, dy, 3.4);
-      g.fillStyle(0xffffff, 0.9).fillCircle(p.x, dy, 1.4);
-    } else if (p.kind === 'missile') {
-      const bx = p.x - Math.cos(p.angle) * 7, by = dy - Math.sin(p.angle) * 7;
-      g.lineStyle(3, 0xffb347, 0.5).lineBetween(bx, by, p.x - Math.cos(p.angle) * 14, dy - Math.sin(p.angle) * 14);
-      g.fillStyle(p.color, 1).fillCircle(p.x, dy, 2.4);
-    } else if (p.kind === 'flame') {
-      const f = 0.7 + 0.3 * Math.sin(p.dist * 0.4);   // flicker
-      g.fillStyle(0xff7a18, 0.4 * f).fillCircle(p.x, dy, 6);
-      g.fillStyle(0xffd56b, 0.9 * f).fillCircle(p.x, dy, 2.6);
-    } else if (p.kind === 'fire') { // napalm canister, lobbed
-      g.fillStyle(0x3a2a1c, 1).fillCircle(p.x, dy, 3.2);
-      g.fillStyle(0xff7a18, 0.9).fillCircle(p.x, dy, 1.6);
-    } else { // slug: a short bright tracer
-      const tx = p.x - Math.cos(p.angle) * 9, ty = dy - Math.sin(p.angle) * 9;
-      g.lineStyle(2, p.color, 0.9).lineBetween(tx, ty, p.x, dy);
-    }
+    // The round body itself is shared art (so the garage icon matches); `p.dist` drives
+    // the flame flicker.
+    drawProjectileBody(g, p.x, p.y - lift, p.angle, p.kind, p.color, 1, p.dist);
   }
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a
