@@ -14,7 +14,10 @@
 //   splash    blast radius in px (plasma/explosive)
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, heat, ammoPerTon
-// (null = no ammo), slots, tonnage, cycleTime (ms between trigger pulls).
+// (null = no ammo), slots, cycleTime (ms between trigger pulls).
+//
+// Display names are generic sci-fi, deliberately *not* franchise jargon; the ids stay
+// stable so saved builds keep resolving.
 
 const DELIVERY_DEFAULTS = {
   hit: 'projectile', velocity: 500, path: 'straight', guidance: null,
@@ -27,51 +30,51 @@ function w(def) {
 
 export const WEAPONS = {
   mediumLaser: w({
-    id: 'mediumLaser', name: 'Medium Laser', category: 'energy',
+    id: 'mediumLaser', name: 'Pulse Beam', category: 'energy',
     damage: 12, range: { min: 0, opt: 180, max: 320 }, heat: 8,
-    ammoPerTon: null, slots: 1, tonnage: 2, cycleTime: 900,
+    ammoPerTon: null, slots: 1, cycleTime: 900,
     delivery: { hit: 'hitscan', pattern: 'single' },
   }),
   plasmaCannon: w({
-    id: 'plasmaCannon', name: 'Plasma Cannon', category: 'energy',
+    id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
     damage: 18, range: { min: 0, opt: 160, max: 300 }, heat: 16,
-    ammoPerTon: null, slots: 2, tonnage: 5, cycleTime: 1600,
+    ammoPerTon: null, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 260, pattern: 'single', splash: 40 },
   }),
   autocannon: w({
-    id: 'autocannon', name: 'Autocannon', category: 'ballistic',
+    id: 'autocannon', name: 'Slug Driver', category: 'ballistic',
     damage: 16, range: { min: 0, opt: 200, max: 360 }, heat: 3,
-    ammoPerTon: 20, slots: 2, tonnage: 7, cycleTime: 1100,
+    ammoPerTon: 20, slots: 2, cycleTime: 1100,
     delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'single' },
   }),
   machineGun: w({
-    id: 'machineGun', name: 'Machine Gun', category: 'ballistic',
+    id: 'machineGun', name: 'Repeater', category: 'ballistic',
     damage: 2, range: { min: 0, opt: 80, max: 140 }, heat: 0,
-    ammoPerTon: 200, slots: 1, tonnage: 0.5, cycleTime: 0,
+    ammoPerTon: 200, slots: 1, cycleTime: 0,
     delivery: { hit: 'projectile', path: 'straight', velocity: 520, pattern: 'stream', fireRate: 12 },
   }),
   shotgun: w({
-    id: 'shotgun', name: 'Flak Shotgun', category: 'ballistic',
+    id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
     damage: 3, range: { min: 0, opt: 90, max: 160 }, heat: 2,
-    ammoPerTon: 30, slots: 2, tonnage: 5, cycleTime: 1200,
+    ammoPerTon: 30, slots: 2, cycleTime: 1200,
     delivery: { hit: 'projectile', path: 'straight', velocity: 480, pattern: 'spread', spreadCount: 8, spreadAngle: 24 },
   }),
   lrm: w({
-    id: 'lrm', name: 'LRM Rack', category: 'missile',
+    id: 'lrm', name: 'Seeker Rack', category: 'missile',
     damage: 4, range: { min: 80, opt: 300, max: 500 }, heat: 5,
-    ammoPerTon: 16, slots: 2, tonnage: 5, cycleTime: 1400,
+    ammoPerTon: 16, slots: 2, cycleTime: 1400,
     delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, velocity: 300 },
   }),
   srm: w({
-    id: 'srm', name: 'SRM Pack', category: 'missile',
+    id: 'srm', name: 'Rocket Pod', category: 'missile',
     damage: 5, range: { min: 0, opt: 140, max: 240 }, heat: 4,
-    ammoPerTon: 20, slots: 1, tonnage: 3, cycleTime: 1100,
+    ammoPerTon: 20, slots: 1, cycleTime: 1100,
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 4, velocity: 340, spreadAngle: 14 },
   }),
   hatchet: w({
-    id: 'hatchet', name: 'Hatchet', category: 'melee',
+    id: 'hatchet', name: 'Cleaver', category: 'melee',
     damage: 22, range: { min: 0, opt: 0, max: 32 }, heat: 0,
-    ammoPerTon: null, slots: 2, tonnage: 5, cycleTime: 1300,
+    ammoPerTon: null, slots: 2, cycleTime: 1300,
     delivery: { hit: 'contact', pattern: 'single' },
   }),
 };

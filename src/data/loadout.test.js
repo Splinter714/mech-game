@@ -1,23 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import { getChassis } from './chassis/index.js';
-import { validateLoadout, canMount, freeTonnage } from './loadout.js';
+import { validateLoadout, canMount, freeSlots, usedSlots } from './loadout.js';
 
 const light = getChassis('light');
 
 describe('loadout validation', () => {
-  it('accepts a within-budget build and reports free tonnage', () => {
-    const mounts = { leftArm: ['mediumLaser'], rightArm: ['srm'] }; // 2t + 3t
+  it('accepts a within-capacity build and reports per-location slot usage', () => {
+    const mounts = { leftArm: ['mediumLaser'], rightArm: ['srm'] }; // 1 + 1 slots
     const v = validateLoadout(light, mounts);
     expect(v.ok).toBe(true);
-    expect(v.usedTonnage).toBe(5);
-    expect(v.freeTonnage).toBe(light.maxTonnage - 5);
+    expect(v.slotUsage.leftArm).toEqual({ used: 1, cap: 2 });
+    expect(usedSlots(mounts, 'leftArm')).toBe(1);
   });
 
-  it('rejects an over-tonnage build', () => {
-    const mounts = { centerTorso: ['autocannon', 'autocannon', 'autocannon', 'autocannon', 'autocannon', 'autocannon'] }; // 42t > 35t
+  it('rejects a build that overfills a location\'s slots', () => {
+    // Light arm = 2 slots; three autocannons (2 slots each) = 6 > 2.
+    const mounts = { leftArm: ['autocannon', 'autocannon', 'autocannon'] };
     const v = validateLoadout(light, mounts);
     expect(v.ok).toBe(false);
-    expect(v.errors.some((e) => e.includes('tonnage'))).toBe(true);
+    expect(v.errors.some((e) => e.includes('leftArm'))).toBe(true);
   });
 });
 
@@ -29,16 +30,12 @@ describe('canMount constraints', () => {
     expect(res.reason).toMatch(/slot/);
   });
 
-  it('blocks a mount that would exceed the tonnage budget', () => {
-    // Five autocannons = 35t = the full light budget.
-    const mounts = {
-      leftTorso: ['autocannon'], rightTorso: ['autocannon'],
-      leftArm: ['autocannon'], rightArm: ['autocannon'], centerTorso: ['autocannon'],
-    };
-    expect(freeTonnage(light, mounts)).toBe(0);
-    const res = canMount(light, mounts, 'head', 'mediumLaser');
+  it('reports remaining free slots and blocks an over-capacity mount', () => {
+    const mounts = { rightArm: ['autocannon'] }; // 2-slot item fills the 2-slot arm
+    expect(freeSlots(light, mounts, 'rightArm')).toBe(0);
+    const res = canMount(light, mounts, 'rightArm', 'machineGun');
     expect(res.ok).toBe(false);
-    expect(res.reason).toMatch(/tonnage/);
+    expect(res.reason).toMatch(/slot/);
   });
 
   it('blocks mounting into a non-mount location (the cockpit)', () => {

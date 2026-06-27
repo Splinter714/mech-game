@@ -95,8 +95,6 @@ export class Mech {
   usedSlots(loc) { return loadout.usedSlots(this.mounts, loc); }
   slotCapacity(loc) { return loadout.slotCapacity(this._chassis, loc); }
   freeSlots(loc) { return loadout.freeSlots(this._chassis, this.mounts, loc); }
-  totalTonnage() { return loadout.totalTonnage(this.mounts); }
-  freeTonnage() { return loadout.freeTonnage(this._chassis, this.mounts); }
   validate() { return loadout.validateLoadout(this._chassis, this.mounts); }
 
   // ── Weapons & heat ────────────────────────────────────────────────────────

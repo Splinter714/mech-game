@@ -4,7 +4,6 @@ export const LIGHT_CONFIG = {
   id: 'light',
   name: 'Scout',
   weightClass: 'light',
-  maxTonnage: 35,
   baseArmor: 40,       // center-torso armor baseline; other parts scale from it
   baseStructure: 24,
   slots: { head: 1, centerTorso: 2, leftTorso: 2, rightTorso: 2, leftArm: 2, rightArm: 2, leftLeg: 2, rightLeg: 2 },

@@ -34,11 +34,14 @@ try {
     const mech = g.registry.get('allMechs').mech1;
     sc.selected = 'head';
     sc.tryMount('mediumLaser'); // head has 1 free slot on the medium chassis
+    // The garage is a paper-doll of slot cards now (no rendered mech sprite); assert the
+    // doll rebuilt with the new mount instead of a sprite texture.
+    const headCard = sc.doll.list.length > 0;
     return {
       chassis: mech.chassisId,
       headMounted: mech.mounts.head.includes('mediumLaser'),
-      turretTex: g.textures.exists('garageMech_turret'),
-      tonnageOk: mech.validate().ok,
+      dollBuilt: headCard,
+      buildValid: mech.validate().ok,
     };
   });
   await page.screenshot({ path: '/tmp/mech-garage.png' });
@@ -88,8 +91,8 @@ try {
   if (errors.length) fail('runtime errors:\n' + errors.join('\n'));
   if (garage.chassis !== 'medium') fail(`expected medium chassis, got ${garage.chassis}`);
   if (!garage.headMounted) fail('mounting a weapon into the head did not take');
-  if (!garage.turretTex) fail('garageMech turret texture missing');
-  if (!garage.tonnageOk) fail('default build is over budget');
+  if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');
+  if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');

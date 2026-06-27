@@ -5,7 +5,6 @@ export const HEAVY_CONFIG = {
   id: 'heavy',
   name: 'Bulwark',
   weightClass: 'heavy',
-  maxTonnage: 75,
   baseArmor: 96,
   baseStructure: 52,
   slots: { head: 1, centerTorso: 4, leftTorso: 4, rightTorso: 4, leftArm: 4, rightArm: 4, leftLeg: 2, rightLeg: 2 },
