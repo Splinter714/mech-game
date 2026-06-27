@@ -1,16 +1,25 @@
-// Procedural top-down mech art. A mech is drawn as two stacked sprites so the turret
-// can aim independently of the legs (tank feel):
-//   <key>_hull_0..3 — the legs + hips. 4-frame walk cycle for the stompy gait; this
+// Procedural top-down mech art — "gritty cyberpunk": dark weathered angular steel lit
+// by neon. A mech is drawn as two stacked sprites so the turret can aim independently
+// of the legs (tank feel):
+//   <key>_hull_0..3 — legs (feet) + pelvis + skirts. 4-frame stompy walk cycle; this
 //                     sprite rotates to face the movement direction.
-//   <key>_turret    — center/side torsos + arms + head + weapon barrels. Rotates to
+//   <key>_turret    — side/center torsos + arms + head + weapon hardware. Rotates to
 //                     face the aim (within the chassis' turret arc).
-// Both are drawn pointing "up" (north / -y) and centered, so the scene rotates each
-// around its centre. Parts are drawn from the live Mech: a destroyed location becomes
-// a charred stump and its weapons vanish, which is how partial destruction reads.
+// Both are drawn pointing "up" (north / -y) and centred. Because the turret is stacked
+// ON TOP of the hull, the torso naturally occludes the leg tops — that overhead
+// occlusion is what sells the top-down read. Parts are drawn from the live Mech: a
+// destroyed location becomes a charred stump and its weapons vanish.
+//
+// Colour language:
+//   steel  — most of the body: dark gunmetal with a top highlight rim, a mid face, a
+//            lower shadow, and an ambient-occlusion seam where a part tucks under.
+//   purple — the mech's OWN power: reactor spine, cockpit optic, leg thrusters.
+//   neon   — each weapon glows its CATEGORY colour (energy cyan, ballistic amber,
+//            missile pink, melee white, support green), so loadout reads at a glance.
 
 import { gen, scaledGraphics, ART_SCALE } from './_frames.js';
 import { CATEGORIES } from '../data/categories.js';
-import { LOCATIONS, MOUNT_LOCATIONS } from '../data/anatomy.js';
+import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 
@@ -18,26 +27,95 @@ export { ART_SCALE };
 export const DESIGN = 64;              // design-grid canvas size (square)
 const CENTER = DESIGN / 2;
 
-const COL = {
-  outline: 0x161a20,
-  hipDark: 0x2c323d,
-  leg: 0x424c5c, legOut: 0x222932,
-  torso: 0x515c6d, torsoPlate: 0x6b7688,
-  arm: 0x47515f,
-  head: 0x768296,
-  char: 0x231d1b,
-  cockpit: 0xf2c14e,
+// Dark weathered-steel palette (light from "above" → top rim catches it).
+const STEEL = {
+  outline: 0x0b0e14, deep: 0x1b212b, ao: 0x10131a,
+  lower: 0x252c38, faceDk: 0x2a323e, faceMid: 0x2e3543, face: 0x3a4250,
+  rim: 0x4b5666, rimHi: 0x566273,
+  joint: 0x181d27, grime: 0x0e1219, rust: 0x6e4636,
+  char: 0x17120f,
 };
 
+// The mech's own power glow (not a weapon).
+const REACTOR = { halo: 0x7a2ed6, core: 0xb15cff, hot: 0xecd6ff, edge: 0x8a4ad6 };
+
+// Per weapon-category glow ramps {halo, core, hot, edge}. Cores mirror CATEGORIES.color.
+const NEON = {
+  energy:    { halo: 0x1390c8, core: 0x38d9ff, hot: 0xe6fbff, edge: 0x7fe6ff },
+  ballistic: { halo: 0xc8801a, core: 0xffb24a, hot: 0xffe6b0, edge: 0xffcf85 },
+  missile:   { halo: 0xc81f72, core: 0xff4fa3, hot: 0xffd0e6, edge: 0xff8cc2 },
+  melee:     { halo: 0x9aa0ad, core: 0xcfd6e0, hot: 0xffffff, edge: 0xf2f4f7 },
+  support:   { halo: 0x1f9c54, core: 0x6dff9e, hot: 0xd6ffe6, edge: 0xa6ffc6 },
+};
+const neonFor = (catId) => NEON[catId] ?? NEON.melee;
+
+// ── Low-level draw helpers (all in mech-local design coords: origin = centre, -y up).
+
+// Filled polygon from [x,y] pairs.
+function poly(sg, pts, fill, alpha = 1) {
+  sg.fillStyle(fill, alpha);
+  sg.fillPoints(pts.map(([x, y]) => ({ x: CENTER + x, y: CENTER + y })), true);
+}
+// Centred filled rect.
+function rectC(sg, cx, cy, w, h, fill, alpha = 1) {
+  sg.fillStyle(fill, alpha);
+  sg.fillRect(CENTER + cx - w / 2, CENTER + cy - h / 2, w, h);
+}
+// Centred filled ellipse (used for soft glow pools).
+function ellipseC(sg, cx, cy, w, h, fill, alpha = 1) {
+  sg.fillStyle(fill, alpha);
+  sg.fillEllipse(CENTER + cx, CENTER + cy, w, h);
+}
+// Octagon (chamfered rect) point list — the angular plate primitive.
+function chamfer(cx, cy, w, h, c) {
+  const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2;
+  return [[x0 + c, y0], [x1 - c, y0], [x1, y0 + c], [x1, y1 - c],
+          [x1 - c, y1], [x0 + c, y1], [x0, y1 - c], [x0, y0 + c]];
+}
+
+// A shaded angular armour plate: dark outline, mid face, a top highlight rim catching
+// overhead light, a lower ambient-occlusion shadow, and an optional panel seam.
+function plate(sg, cx, cy, w, h, opts = {}) {
+  const c = opts.chamfer ?? Math.min(w, h) * 0.22;
+  poly(sg, chamfer(cx, cy, w + 1.2, h + 1.2, c + 0.4), STEEL.outline);
+  poly(sg, chamfer(cx, cy, w, h, c), opts.fill ?? STEEL.face);
+  rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * c, h * 0.15, opts.rim ?? STEEL.rim);
+  rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * c, h * 0.13, STEEL.ao, 0.5);
+  if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), STEEL.grime, 0.7);
+}
+
+// Layered point-glow: wide faint halo → tighter halo → bright core → hot centre.
+function glowDot(sg, cx, cy, r, n) {
+  sg.fillStyle(n.halo, 0.22); sg.fillCircle(CENTER + cx, CENTER + cy, r * 2.2);
+  sg.fillStyle(n.halo, 0.5);  sg.fillCircle(CENTER + cx, CENTER + cy, r * 1.35);
+  sg.fillStyle(n.core, 1);    sg.fillCircle(CENTER + cx, CENTER + cy, r);
+  sg.fillStyle(n.hot, 1);     sg.fillCircle(CENTER + cx, CENTER + cy, r * 0.42);
+}
+// Emissive bar (reactor spine / vent slits): halo spill → core → hot streak.
+function glowBar(sg, cx, cy, w, h, n) {
+  rectC(sg, cx, cy, w * 1.9 + 1.4, h * 1.5 + 1.4, n.halo, 0.38);
+  rectC(sg, cx, cy, w, h, n.core, 1);
+  rectC(sg, cx, cy, w * 0.36, h * 0.7, n.hot, 1);
+}
+
+// A destroyed location: a charred angular lump with faint embers.
+function stump(sg, cx, cy, w, h) {
+  poly(sg, chamfer(cx, cy, w * 0.62, h * 0.5, Math.min(w, h) * 0.14), STEEL.outline);
+  poly(sg, chamfer(cx, cy, w * 0.56, h * 0.44, Math.min(w, h) * 0.14), STEEL.char);
+  sg.fillStyle(0x7a2a12, 0.6); sg.fillCircle(CENTER + cx, CENTER + cy, Math.min(w, h) * 0.12);
+  sg.fillStyle(0xd6601e, 0.5); sg.fillCircle(CENTER + cx, CENTER + cy, Math.min(w, h) * 0.06);
+}
+
 // Per-location anchors + box sizes in mech-local design coords (origin = centre, -y =
-// forward). Derived from the chassis' body dimensions so a heavy reads bulkier.
+// forward). Scenes also read this to place per-part hit-areas + damage labels, so the
+// keys and rough boxes are stable. Derived from chassis body dims so a heavy reads bulky.
 export function mechLayout(mech) {
   const a = mech.chassis.art;
   const L = a.bodyLen, W = a.bodyWid;
   return {
-    head:        { x: 0,        y: -L * 0.42, w: W * 0.34, h: L * 0.22 },
-    cockpit:     { x: 0,        y: -L * 0.46, w: W * 0.18, h: L * 0.10 },
-    centerTorso: { x: 0,        y: -L * 0.05, w: W * 0.50, h: L * 0.44 },
+    head:        { x: 0,         y: -L * 0.42, w: W * 0.34, h: L * 0.22 },
+    cockpit:     { x: 0,         y: -L * 0.46, w: W * 0.18, h: L * 0.10 },
+    centerTorso: { x: 0,         y: -L * 0.05, w: W * 0.50, h: L * 0.44 },
     leftTorso:   { x: -W * 0.42, y: -L * 0.03, w: W * 0.30, h: L * 0.38 },
     rightTorso:  { x:  W * 0.42, y: -L * 0.03, w: W * 0.30, h: L * 0.38 },
     leftArm:     { x: -W * 0.72, y: -L * 0.08, w: W * 0.22, h: L * 0.46 },
@@ -47,99 +125,149 @@ export function mechLayout(mech) {
   };
 }
 
-// Draw a centred box (design coords) with a dark outline ring behind it.
-function box(sg, cx, cy, w, h, fill, outline = COL.outline) {
-  sg.fillStyle(outline, 1);
-  sg.fillRect(CENTER + cx - w / 2 - 1, CENTER + cy - h / 2 - 1, w + 2, h + 2);
-  sg.fillStyle(fill, 1);
-  sg.fillRect(CENTER + cx - w / 2, CENTER + cy - h / 2, w, h);
-}
+// ── Weapon hardware. Each category gets a distinct silhouette so the loadout reads
+//    from the sprite, all pointing forward (-y) from `frontY`, glowing its neon colour.
+function drawWeapon(sg, catId, bx, frontY, s) {
+  const n = neonFor(catId);
+  const cap = frontY + CENTER - 2;            // keep the muzzle inside the canvas
 
-// A destroyed part: a small charred stump where the box used to be.
-function stump(sg, cx, cy, w, h) {
-  box(sg, cx, cy, w * 0.6, h * 0.55, COL.char);
-}
-
-// Legs + hips. `frame` 0..3 is the walk cycle; legs alternate forward/back so the mech
-// looks like it's stomping. The body bob is applied in the scene, not here.
-function drawHull(sg, mech, frame) {
-  const lay = mechLayout(mech);
-  const a = mech.chassis.art;
-  const shift = a.bodyLen * 0.12;
-  // frame: 0 neutral, 1 left-fwd/right-back, 2 neutral, 3 left-back/right-fwd
-  const lDir = frame === 1 ? -1 : frame === 3 ? 1 : 0;
-  const rDir = frame === 1 ? 1 : frame === 3 ? -1 : 0;
-
-  // Hip block ties the legs together.
-  box(sg, 0, a.bodyLen * 0.2, a.bodyWid * 0.5, a.bodyLen * 0.2, COL.hipDark);
-
-  for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
-    const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
-    box(sg, p.x, p.y + dir * shift, p.w, p.h, COL.leg, COL.legOut);
-    // foot pad at the toe (forward end)
-    box(sg, p.x, p.y + dir * shift - p.h * 0.42, p.w * 1.1, p.h * 0.16, COL.legOut);
+  if (catId === 'missile') {
+    const w = 5.4 * s, h = Math.min(6.5 * s, cap);
+    const cy = frontY - h / 2;
+    poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), STEEL.outline);
+    poly(sg, chamfer(bx, cy, w, h, 1), STEEL.faceDk);
+    for (const dx of [-1, 1]) for (const dy of [0, 1]) {           // 2×2 launch cells
+      const cxx = bx + dx * w * 0.22, cyy = frontY - h * (0.28 + dy * 0.32);
+      rectC(sg, cxx, cyy, w * 0.26, h * 0.18, n.halo, 0.5);
+      rectC(sg, cxx, cyy, w * 0.18, h * 0.12, n.core, 1);
+    }
+    return;
   }
+  if (catId === 'melee') {
+    const L = Math.min(11 * s, cap), w = 3 * s;
+    poly(sg, [[bx - w / 2, frontY], [bx + w / 2, frontY], [bx, frontY - L]], STEEL.faceMid);
+    poly(sg, [[bx - w * 0.18, frontY], [bx + w * 0.18, frontY], [bx, frontY - L]], n.core, 0.9);
+    glowDot(sg, bx, frontY - L, 1.4 * s, n);
+    return;
+  }
+  if (catId === 'ballistic') {
+    const L = Math.min(10 * s, cap), w = 1.9 * s, off = 1.5 * s;
+    rectC(sg, bx, frontY - L * 0.5 + 1, (w + off) * 2.1, 2.4 * s, STEEL.deep);   // muzzle housing
+    for (const dx of [-1, 1]) {
+      rectC(sg, bx + dx * off, frontY - L / 2, w + 1, L, STEEL.outline);
+      rectC(sg, bx + dx * off, frontY - L / 2, w, L, STEEL.faceDk);
+      glowDot(sg, bx + dx * off, frontY - L + 0.5, 1.5 * s, n);
+    }
+    return;
+  }
+  if (catId === 'support') {
+    const L = Math.min(7 * s, cap);
+    rectC(sg, bx, frontY - L * 0.4, 2 * s, L * 0.8, STEEL.faceDk);
+    glowDot(sg, bx, frontY - L, 2.6 * s, n);
+    return;
+  }
+  // energy (default): slim barrel + a big glowing emitter lens.
+  const L = Math.min(11 * s, cap), w = 2.2 * s;
+  rectC(sg, bx, frontY - L / 2, w + 1, L, STEEL.outline);
+  rectC(sg, bx, frontY - L / 2, w, L, STEEL.faceDk);
+  rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7);          // edge light
+  glowDot(sg, bx, frontY - L, 2.6 * s, n);
 }
 
-// Torsos + head + arms + weapon barrels. Drawn facing up; weapons point forward (-y).
+// Torsos + arms + head + weapons. Drawn facing up; weapons point forward (-y).
 function drawTurret(sg, mech) {
   const lay = mechLayout(mech);
-  const accent = mech.chassis.art.accent;
+  const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
 
-  // Side torsos behind the centre.
+  // Side torsos behind the centre, each with a recessed vent.
   for (const loc of ['leftTorso', 'rightTorso']) {
     const p = lay[loc];
     if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
-    box(sg, p.x, p.y, p.w, p.h, COL.torso);
+    plate(sg, p.x, p.y, p.w, p.h, { fill: STEEL.face });
+    rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, STEEL.deep);
   }
 
-  // Arms (with weapons).
+  // Arms (the weapon mounts) — chunkier dark plates.
   for (const loc of ['leftArm', 'rightArm']) {
     const p = lay[loc];
     if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
-    box(sg, p.x, p.y, p.w, p.h, COL.arm);
+    plate(sg, p.x, p.y, p.w, p.h, { fill: STEEL.faceMid });
   }
 
-  // Center torso + an accent stripe.
+  // Center torso: armour slab → core inset → dark reactor housing → purple reactor.
   const ct = lay.centerTorso;
   if (mech.isPartDestroyed('centerTorso')) {
     stump(sg, ct.x, ct.y, ct.w, ct.h);
   } else {
-    box(sg, ct.x, ct.y, ct.w, ct.h, COL.torso);
-    box(sg, ct.x, ct.y, ct.w * 0.5, ct.h * 0.7, COL.torsoPlate);
-    sg.fillStyle(accent, 1);
-    sg.fillRect(CENTER + ct.x - ct.w * 0.06, CENTER + ct.y - ct.h * 0.32, ct.w * 0.12, ct.h * 0.64);
+    plate(sg, ct.x, ct.y, ct.w, ct.h, { fill: STEEL.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
+    poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), STEEL.faceMid);
+    rectC(sg, ct.x, ct.y, ct.w * 0.04, ct.h * 0.62, STEEL.grime, 0.5);                 // centre seam
+    rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, 0x14181f);                          // reactor housing
+    glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                         // reactor spine
+    glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);           // vent
+    glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);           // vent
   }
 
-  // Head + cockpit canopy.
+  // Head + cockpit optic + antenna.
   const hd = lay.head;
   if (mech.isPartDestroyed('head')) {
     stump(sg, hd.x, hd.y, hd.w, hd.h);
   } else {
-    box(sg, hd.x, hd.y, hd.w, hd.h, COL.head);
+    plate(sg, hd.x, hd.y, hd.w, hd.h, { fill: STEEL.faceMid, seam: false });
+    rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, STEEL.rimHi); // antenna
     const cp = lay.cockpit;
-    box(sg, cp.x, cp.y, cp.w, cp.h, mech.isPartDestroyed('cockpit') ? COL.char : COL.cockpit);
+    if (mech.isPartDestroyed('cockpit')) rectC(sg, cp.x, cp.y, cp.w, cp.h, STEEL.char);
+    else glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
   }
 
-  // Weapon barrels: one stub per mounted weapon, spread across the part, colour-coded
-  // by category, pointing forward. Destroyed parts have already been skipped.
+  // Weapon hardware: one shape per mounted weapon, spread across the part, by category.
   for (const loc of MOUNT_LOCATIONS) {
     if (mech.isPartDestroyed(loc)) continue;
     const p = lay[loc];
     const weaponIds = mech.mounts[loc].filter(isWeapon);
+    const n = weaponIds.length;
+    const front = p.y - p.h / 2;
     weaponIds.forEach((id, i) => {
       const wpn = getWeapon(id);
-      const color = CATEGORIES[wpn.category]?.color ?? 0xaaaaaa;
-      const n = weaponIds.length;
       const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-      const len = mech.chassis.art.bodyLen * 0.34;
-      const front = p.y - p.h / 2;
-      sg.fillStyle(COL.outline, 1);
-      sg.fillRect(CENTER + bx - 2.2, CENTER + front - len, 4.4, len);
-      sg.fillStyle(color, 1);
-      sg.fillRect(CENTER + bx - 1.4, CENTER + front - len, 2.8, len);
+      drawWeapon(sg, wpn?.category ?? 'energy', bx, front, s);
     });
+  }
+}
+
+// Legs (feet) + pelvis + skirts. `frame` 0..3 is the stompy walk cycle; the legs
+// alternate forward/back. Body bob is applied in the scene, not here.
+function drawHull(sg, mech, frame) {
+  const lay = mechLayout(mech);
+  const a = mech.chassis.art;
+  const s = a.bodyLen / 38;
+  const shift = a.bodyLen * 0.12;
+  const lDir = frame === 1 ? -1 : frame === 3 ? 1 : 0;
+  const rDir = frame === 1 ? 1 : frame === 3 ? -1 : 0;
+
+  // Pelvis block ties the legs together (sits under the torso).
+  plate(sg, 0, a.bodyLen * 0.18, a.bodyWid * 0.5, a.bodyLen * 0.18, { fill: STEEL.deep, seam: false });
+
+  for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
+    const p = lay[loc];
+    if (mech.isPartDestroyed(loc)) { stump(sg, p.x, p.y, p.w, p.h); continue; }
+    const fy = p.y + dir * shift;
+    ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
+    ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
+    plate(sg, p.x, fy, p.w, p.h, { fill: STEEL.lower, rim: STEEL.rim, seam: false });
+    rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, STEEL.faceMid);        // toe cap (forward)
+    rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, STEEL.joint);           // ankle actuator
+    rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, STEEL.grime, 0.7);
+  }
+
+  // Hip skirts over the inner-top of each leg (read as "legs tuck under the body").
+  for (const dx of [-1, 1]) {
+    const sx = dx * a.bodyWid * 0.24;
+    poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.1], [sx + a.bodyWid * 0.16, a.bodyLen * 0.1],
+              [sx + a.bodyWid * 0.13, a.bodyLen * 0.26], [sx - a.bodyWid * 0.19, a.bodyLen * 0.26]], STEEL.outline);
+    poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.1], [sx + a.bodyWid * 0.15, a.bodyLen * 0.1],
+              [sx + a.bodyWid * 0.12, a.bodyLen * 0.25], [sx - a.bodyWid * 0.18, a.bodyLen * 0.25]], STEEL.faceMid);
+    rectC(sg, sx - a.bodyWid * 0.015, a.bodyLen * 0.12, a.bodyWid * 0.26, Math.max(0.8, 0.6 * s), STEEL.rim);
   }
 }
 

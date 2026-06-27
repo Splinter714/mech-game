@@ -3,12 +3,14 @@
 // plasma and laser are both `energy` but behave nothing alike. A category decides the
 // shared economy: does it burn ammo? run hot? what hardpoint colour represents it?
 
+// `color` is the category's neon hue — drives both the catalog icons and the glow on
+// mounted weapons (the mech art layers a halo/hot ramp around this core).
 export const CATEGORIES = {
-  ballistic: { id: 'ballistic', label: 'Ballistic', usesAmmo: true,  color: 0xc9b27a },
-  missile:   { id: 'missile',   label: 'Missile',   usesAmmo: true,  color: 0xd06a52 },
-  energy:    { id: 'energy',    label: 'Energy',    usesAmmo: false, color: 0x5ec8e0 },
-  melee:     { id: 'melee',     label: 'Melee',     usesAmmo: false, color: 0xa0a4ab },
-  support:   { id: 'support',   label: 'Support',   usesAmmo: false, color: 0x7bd17b },
+  ballistic: { id: 'ballistic', label: 'Ballistic', usesAmmo: true,  color: 0xffb24a },
+  missile:   { id: 'missile',   label: 'Missile',   usesAmmo: true,  color: 0xff4fa3 },
+  energy:    { id: 'energy',    label: 'Energy',    usesAmmo: false, color: 0x38d9ff },
+  melee:     { id: 'melee',     label: 'Melee',     usesAmmo: false, color: 0xcfd6e0 },
+  support:   { id: 'support',   label: 'Support',   usesAmmo: false, color: 0x6dff9e },
 };
 
 export const CATEGORY_IDS = Object.keys(CATEGORIES);
