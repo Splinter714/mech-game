@@ -165,8 +165,8 @@ export function mechLayout(mech) {
     rightTorso:  { x:  W * 0.42, y: -L * 0.03, w: W * 0.30, h: L * 0.38 },
     leftArm:     { x: -W * 0.72, y: -L * 0.08, w: W * 0.22, h: L * 0.46 },
     rightArm:    { x:  W * 0.72, y: -L * 0.08, w: W * 0.22, h: L * 0.46 },
-    leftLeg:     { x: -W * 0.26, y:  L * 0.34, w: W * 0.28, h: L * 0.52 },
-    rightLeg:    { x:  W * 0.26, y:  L * 0.34, w: W * 0.28, h: L * 0.52 },
+    leftLeg:     { x: -W * 0.17, y:  L * 0.24, w: W * 0.24, h: L * 0.42 },
+    rightLeg:    { x:  W * 0.17, y:  L * 0.24, w: W * 0.24, h: L * 0.42 },
   };
 }
 
