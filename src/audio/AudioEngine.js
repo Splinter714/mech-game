@@ -66,18 +66,20 @@ export class AudioEngine {
     this.params = {
       // master + drums
       master: 1, music: 0.6, tempo: 120,
-      drumLevel: 1.5, kickLevel: 1, snareLevel: 2, hatLevel: 1.1,
+      drumLevel: 1.09, kickLevel: 1, snareLevel: 2, hatLevel: 2,
       // per-drum SOUND shaping
       kickPitch: 120, kickDecay: 0.4, kickClick: 0.09,
-      snareTone: 600, snareSnap: 1200, snareDecay: 0.25,
-      hatFreq: 7100, hatDecay: 0.13,
-      crashLevel: 1, crashBright: 5200, crashDecay: 0.9,
+      snareTone: 1000, snareSnap: 1200, snareDecay: 0.25,
+      hatFreq: 7500, hatDecay: 0.4,
+      crashLevel: 1.5, crashBright: 4000, crashDecay: 1,
       // rhythm-guitar TONE (the distortion pedal + cab)
       guitarLevel: 0.17, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
       guitarTone: 9000, guitarLowCut: 400,
       // rhythm-guitar VOICING (which overtones make up each power chord)
       guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 0.95, guitarHigh: 0.55, guitarSquare: 0,
-      chugLength: 0.1, chugLevel: 1, pickLevel: 0.01, leadLevel: 0.05,
+      chugLength: 0.1, chugLevel: 1, pickLevel: 0.01,
+      // LEAD — the infrequent scream + tremolo, now its OWN instrument/chain
+      leadLevel: 0.15, leadDrive: 8, leadTone: 3500, leadOctave: 1,
       // bass / low foundation (+ its own overtones)
       bassLevel: 0.45, bassDrive: 12, bassGrit: 200, bassTone: 3000,
       bassSub: 0.45, bassFifth: 0, bassOctave: 1.5,
@@ -123,6 +125,15 @@ export class AudioEngine {
     fx.blp = ctx.createBiquadFilter(); fx.blp.type = 'lowpass'; fx.blp.frequency.value = P.bassTone;
     fx.bpost = ctx.createGain(); fx.bpost.gain.value = P.bassLevel;
     this.bass.connect(fx.bdrive).connect(fx.bshape).connect(fx.blp).connect(fx.bpost).connect(this.music);
+
+    // LEAD instrument: the infrequent scream + tremolo gets its OWN distortion chain so it
+    // can be shaped independently of the rhythm guitar.
+    this.leadBus = ctx.createGain(); this.leadBus.gain.value = 1.0;
+    fx.lpre = ctx.createGain(); fx.lpre.gain.value = P.leadDrive;
+    fx.lsat = ctx.createWaveShaper(); fx.lsat.curve = distortionCurve(150); fx.lsat.oversample = '4x';
+    fx.llp = ctx.createBiquadFilter(); fx.llp.type = 'lowpass'; fx.llp.frequency.value = P.leadTone;
+    fx.lpost = ctx.createGain(); fx.lpost.gain.value = P.leadLevel;
+    this.leadBus.connect(fx.lpre).connect(fx.lsat).connect(fx.llp).connect(fx.lpost).connect(this.music);
   }
 
   // Live-update a music parameter from the in-game panel; also persists into this.params so
@@ -146,6 +157,9 @@ export class AudioEngine {
       case 'bassGrit': fx.bshape.curve = distortionCurve(v); break;
       case 'bassTone': fx.blp.frequency.value = v; break;
       case 'bassLevel': fx.bpost.gain.value = v; break;
+      case 'leadDrive': fx.lpre.gain.value = v; break;
+      case 'leadTone': fx.llp.frequency.value = v; break;
+      case 'leadLevel': fx.lpost.gain.value = v; break;
       default: break;   // tempo + voicing/level params are read live at note time
     }
   }
@@ -172,6 +186,20 @@ export class AudioEngine {
     v(freq * 0.5, P.bassSub, 'square'); // sub octave for body
     v(freq * 1.5, P.bassFifth);       // the FIFTH overtone
     v(freq * 2, P.bassOctave);        // octave overtone
+  }
+
+  // The LEAD instrument (scream / climbing tremolo) through its own distortion chain.
+  _lead(freq, at, dur, gain = 0.5) {
+    if (gain <= 0) return;
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(gain, at + 0.006);
+    g.gain.setValueAtTime(gain, at + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    g.connect(this.leadBus);
+    const v = (f) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
+    v(freq * 0.997); v(freq * 1.003);   // detuned pair for thickness
   }
 
   setMuted(m) {
@@ -394,8 +422,8 @@ export class AudioEngine {
       this._bass(riff[step], at, P.chugLength + 0.02, 0.6);         // tonal low foundation under the fizz
       this.noise(this.drums, { dur: 0.018, gain: P.pickLevel, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
-    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.28, 0.06 * P.leadLevel, false); // scream
-    if (step >= 28) this._gtr(riff[step] * 2, at, 0.07, 0.1 * P.leadLevel, false);                 // climb tremolo
+    if (step === 0 || step === 16) this._lead(riff[step] * 4 * P.leadOctave, at, 0.28);  // scream
+    if (step >= 28) this._lead(riff[step] * 2 * P.leadOctave, at, 0.08);                 // climb tremolo
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
     if (local === 4 || local === 12) this._snareMetal(at);          // backbeat

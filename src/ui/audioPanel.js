@@ -9,7 +9,7 @@ const GROUPS = [
   ['Master', [
     ['master', 'Master', 0, 1, 0.01],
     ['music', 'Music level', 0, 0.6, 0.01],
-    ['tempo', 'Tempo (BPM)', 120, 240, 1],
+    ['tempo', 'Tempo (BPM)', 60, 240, 1],
   ]],
   ['Drums', [
     ['drumLevel', 'All drums', 0, 1.5, 0.01],
@@ -28,7 +28,7 @@ const GROUPS = [
     ['crashBright', 'Crash bright (Hz)', 2000, 10000, 100],
     ['crashDecay', 'Crash decay', 0.2, 3, 0.05],
   ]],
-  ['Guitar tone (distortion)', [
+  ['Rhythm guitar (the chug)', [
     ['guitarLevel', 'Level (volume)', 0, 0.4, 0.005],
     ['guitarDrive', 'Drive (amount)', 1, 40, 1],
     ['guitarSat', 'Saturation', 50, 600, 5],
@@ -36,9 +36,7 @@ const GROUPS = [
     ['guitarFold', 'Foldback', 0, 4, 0.05],
     ['guitarTone', 'Cab tone (Hz)', 1500, 9000, 50],
     ['guitarLowCut', 'Low cut (Hz)', 40, 400, 5],
-  ]],
-  ['Guitar voicing (overtones)', [
-    ['guitarFifth', '5th', 0, 2, 0.05],
+    ['guitarFifth', '5th overtone', 0, 2, 0.05],
     ['guitarFifthDetune', '5th detune', 0, 0.05, 0.001],
     ['guitarOctave', 'Octave', 0, 2, 0.05],
     ['guitarHigh', 'High bite', 0, 2, 0.05],
@@ -46,7 +44,12 @@ const GROUPS = [
     ['chugLength', 'Chug length', 0.03, 0.2, 0.005],
     ['chugLevel', 'Chug level', 0, 1, 0.05],
     ['pickLevel', 'Pick attack', 0, 0.2, 0.005],
-    ['leadLevel', 'Lead', 0, 2, 0.05],
+  ]],
+  ['Lead (scream / tremolo)', [
+    ['leadLevel', 'Level (volume)', 0, 0.6, 0.01],
+    ['leadDrive', 'Drive (amount)', 1, 30, 1],
+    ['leadTone', 'Tone (Hz)', 800, 7000, 50],
+    ['leadOctave', 'Pitch', 0.25, 2, 0.25],
   ]],
   ['Bass (low foundation + overtones)', [
     ['bassLevel', 'Level', 0, 1.2, 0.01],
