@@ -48,9 +48,17 @@ export const LETHAL_LOCATIONS = ['head', 'cockpit', 'centerTorso'];
 export const LETHAL_GROUPS = [['leftLeg', 'rightLeg']];
 
 // When a side torso is destroyed it takes the attached arm with it (the arm loses its
-// shoulder). Not yet applied in Milestone 1, but encoded here so it's a data change
-// when we turn it on.
+// shoulder). Kept for callers that want the raw link.
 export const TORSO_ARM_LINK = { leftTorso: 'leftArm', rightTorso: 'rightArm' };
+
+// Destroying a location also destroys these dependent locations (applied recursively):
+// a side torso takes its arm; the head takes the cockpit inside it. Data-driven so new
+// links are just another entry.
+export const DESTROY_CASCADE = {
+  head: ['cockpit'],
+  leftTorso: ['leftArm'],
+  rightTorso: ['rightArm'],
+};
 
 // Locations that mount weapons, for catalogs/UI that iterate mount points.
 export const MOUNT_LOCATIONS = LOCATIONS.filter((id) => LOCATION_INFO[id].mountable);

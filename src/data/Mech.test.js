@@ -61,6 +61,32 @@ describe('Mech kill rule', () => {
   });
 });
 
+describe('Mech damage propagation (cascade)', () => {
+  const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxStructure + 50);
+
+  it('destroying a side torso also destroys the attached arm', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    overkill(m, 'leftTorso');
+    expect(m.isPartDestroyed('leftTorso')).toBe(true);
+    expect(m.isPartDestroyed('leftArm')).toBe(true);
+    expect(m.isPartDestroyed('rightArm')).toBe(false);
+  });
+
+  it('a weapon in an arm goes offline when its side torso is destroyed', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('rightArm', 'autocannon');
+    expect(m.onlineWeapons()).toHaveLength(1);
+    overkill(m, 'rightTorso');
+    expect(m.onlineWeapons()).toHaveLength(0);
+  });
+
+  it('destroying the head still destroys the cockpit (via cascade)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    overkill(m, 'head');
+    expect(m.isPartDestroyed('cockpit')).toBe(true);
+  });
+});
+
 describe('Mech weapons go offline with their part', () => {
   it('a weapon in a destroyed arm is no longer online', () => {
     const m = new Mech({ chassisId: 'medium' });

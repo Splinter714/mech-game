@@ -5,7 +5,7 @@
 // (Mech.test.js); the arena/garage drive the model and render it.
 
 import { getChassis } from './chassis/index.js';
-import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, partDestroyed, mechDestroyed } from './anatomy.js';
+import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import { getEquipment } from './equipment.js';
@@ -74,8 +74,22 @@ export class Mech {
     const toStructure = amount - armorHit;
     p.structure = Math.max(0, p.structure - toStructure);
     const destroyed = p.structure <= 0 && before > 0;
-    if (destroyed && locationId === 'head') this.parts.cockpit.structure = 0;
+    if (destroyed) this._cascadeDestroy(locationId);
     return { applied: amount, destroyed, location: locationId, partDestroyedNow: p.structure <= 0 };
+  }
+
+  // Destroy the locations that depend on `loc` (a side torso takes its arm, the head
+  // takes the cockpit), recursively, zeroing their armor + structure so their mounts go
+  // offline too.
+  _cascadeDestroy(loc) {
+    for (const dep of DESTROY_CASCADE[loc] ?? []) {
+      const dp = this.parts[dep];
+      if (dp && dp.structure > 0) {
+        dp.armor = 0;
+        dp.structure = 0;
+        this._cascadeDestroy(dep);
+      }
+    }
   }
 
   isPartDestroyed(locationId) { return partDestroyed(this.parts[locationId]); }
