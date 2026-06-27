@@ -36,7 +36,8 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     economy) plus a composable `delivery` profile (hitscan/projectile, velocity,
     straight/arcing, guidance, single/spread/stream). **Add a weapon = one entry in
     `WEAPONS`.**
-  - `equipment.js`, `items.js` (unified lookup), `loadout.js` (slot/tonnage validation).
+  - `equipment.js`, `items.js` (unified lookup), `loadout.js` (slot-capacity
+    validation; tonnage was removed — slots are the only build constraint).
   - `hexgrid.js` — **the only file that knows hexes exist.** Axial coords; pure
     `neighbors/distance/hexToPixel/pixelToHex/range/ring`. The mech moves with free
     physics on top, so collision/LOS are not hex algorithms.
