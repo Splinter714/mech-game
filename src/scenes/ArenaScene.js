@@ -38,12 +38,16 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
-    // Target dummy.
-    this.dummy = new Mech({ chassisId: 'light', name: 'Target' });
+    // Enemy mech — armed, mobile, shoots back.
+    this.dummy = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['srm'] } });
+    this.dummy.repairAll();
     this.registry.set('dummyMech', this.dummy);
     buildMechTextures(this, 'dummyMech', this.dummy, { theme: 'enemy' });
     const dp = hexToPixel(DUMMY_HEX.q, DUMMY_HEX.r);
-    this.dummyAngle = Math.PI / 2; // facing "down" toward the player spawn
+    this.dummyAngle = Math.PI / 2;       // legs facing
+    this.dummyTurret = Math.PI / 2;      // turret facing
+    this.evx = 0; this.evy = 0;          // enemy velocity
+    this.enemyFireCd = {};
     this.dummyView = this._makeMechView('dummyMech', dp.x, dp.y, this.dummyAngle);
     this.dx = dp.x; this.dy = dp.y;
 
@@ -182,6 +186,9 @@ export default class ArenaScene extends Phaser.Scene {
     this._updateLock(lockAb, intent, dt);
     this.registry.set('abilityCooldowns', this.abilityCd);
     this.registry.set('shieldActive', this.time.now < this.shieldUntil);
+
+    // ── Enemy AI ──
+    this._updateEnemy(dt, delta);
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
@@ -357,22 +364,23 @@ export default class ArenaScene extends Phaser.Scene {
     }
   }
 
-  _spawnProjectile(w, x, y, angle) {
+  _spawnProjectile(w, x, y, angle, owner = 'player') {
     const d = w.weapon.delivery;
     const speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
+    const tgt = owner === 'player' ? { x: this.dx, y: this.dy } : { x: this.px, y: this.py };
     let maxDist = maxRange;
     if (d.path === 'arcing') {
-      // Lob toward the dummy if it's roughly in front, else to optimal range.
-      const ex = this.dx - x, ey = this.dy - y;
+      // Lob toward the target if it's roughly in front, else to optimal range.
+      const ex = tgt.x - x, ey = tgt.y - y;
       const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
       maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
     }
     const homing = d.guidance === 'homing';
-    const locked = homing && this.lockTarget;   // a lock buffs guided missiles
+    const locked = owner === 'player' && homing && this.lockTarget;   // a lock buffs guided missiles
     this.projectiles.push({
-      x, y, angle, speed,
+      x, y, angle, speed, owner,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       kind: this._kind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
       damage: w.weapon.damage * (locked ? this.lockBonus : 1), splash: d.splash || 0, range: w.weapon.range,
@@ -384,9 +392,15 @@ export default class ArenaScene extends Phaser.Scene {
   _updateProjectiles(dt) {
     this.projFx.clear();
     for (const p of this.projectiles) {
+      // Resolve this round's target: player rounds hit the enemy, enemy rounds the player.
+      const enemyShot = p.owner === 'enemy';
+      const targetGone = enemyShot ? this.mech.isDestroyed() : this.dummy.isDestroyed();
+      const tx = enemyShot ? this.px : this.dx;
+      const ty = enemyShot ? this.py : this.dy;
+
       // Guided missiles steer toward the target, capped by their turn rate.
-      if (p.homing && !this.dummy.isDestroyed()) {
-        const desired = Math.atan2(this.dy - p.y, this.dx - p.x);
+      if (p.homing && !targetGone) {
+        const desired = Math.atan2(ty - p.y, tx - p.x);
         p.angle = Phaser.Math.Angle.RotateTo(p.angle, desired, p.turn * dt);
         p.vx = Math.cos(p.angle) * p.speed; p.vy = Math.sin(p.angle) * p.speed;
       }
@@ -397,13 +411,13 @@ export default class ArenaScene extends Phaser.Scene {
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
         continue;
       }
-      const toDummy = this.dummy.isDestroyed() ? Infinity : Math.hypot(p.x - this.dx, p.y - this.dy);
+      const toTarget = targetGone ? Infinity : Math.hypot(p.x - tx, p.y - ty);
       const landed = p.dist >= p.maxDist;
-      if (toDummy < HIT_RADIUS || landed) {
+      if (toTarget < HIT_RADIUS || landed) {
         p.dead = true;
-        if (toDummy < HIT_RADIUS + p.splash) {
+        if (toTarget < HIT_RADIUS + p.splash) {
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          this._damageDummyAt(p.x, p.y, dmg, p.color);
+          if (enemyShot) this._damagePlayerAt(dmg); else this._damageDummyAt(p.x, p.y, dmg, p.color);
         }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
         if (p.ground) this.firePatches.push({ x: p.x, y: p.y, r: p.ground.radius, dps: p.ground.dps, until: this.time.now + p.ground.duration * 1000, nextTick: this.time.now + 500 });
@@ -465,6 +479,67 @@ export default class ArenaScene extends Phaser.Scene {
       if (now >= fp.until) fp.dead = true;
     }
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
+  }
+
+  // ── Enemy AI ── maintain a range band, face the player, fire with LOS. ──
+  _updateEnemy(dt, delta) {
+    if (this.dummy.isDestroyed()) { this.dummyView.setAlpha(0.5); return; }
+    const mv = this.dummy.movement;
+    const dxp = this.px - this.dx, dyp = this.py - this.dy;
+    const dist = Math.hypot(dxp, dyp) || 1;
+    const ux = dxp / dist, uy = dyp / dist;
+
+    // Desired movement: close if far, back off if close, else strafe.
+    let mx = 0, my = 0;
+    if (dist > 260) { mx = ux; my = uy; }
+    else if (dist < 150) { mx = -ux; my = -uy; }
+    else { this._strafeDir = this._strafeDir || 1; mx = -uy * this._strafeDir; my = ux * this._strafeDir; if (Math.random() < 0.01) this._strafeDir *= -1; }
+
+    const spd = mv.maxSpeed * 0.8;
+    this.evx = approach(this.evx, mx * spd, mv.accel * dt);
+    this.evy = approach(this.evy, my * spd, mv.accel * dt);
+    let ndx = this.dx + this.evx * dt, ndy = this.dy + this.evy * dt;
+    if (this._blocked(ndx, ndy)) { if (!this._blocked(this.dx + this.evx * dt, this.dy)) { ndy = this.dy; this.evy = 0; } else if (!this._blocked(this.dx, this.dy + this.evy * dt)) { ndx = this.dx; this.evx = 0; } else { ndx = this.dx; ndy = this.dy; this.evx = this.evy = 0; } }
+    this.dx = ndx; this.dy = ndy;
+
+    // Aim turret + face travel.
+    this.dummyTurret = Phaser.Math.Angle.RotateTo(this.dummyTurret, Math.atan2(dyp, dxp), mv.turretSlew * dt);
+    if (Math.hypot(this.evx, this.evy) > 5) this.dummyAngle = Phaser.Math.Angle.RotateTo(this.dummyAngle, Math.atan2(this.evy, this.evx), mv.turnRate * dt);
+
+    // Fire ready weapons at the player when in range with line of sight.
+    for (const w of this.dummy.readyWeapons()) {
+      let cd = (this.enemyFireCd[w.location] ?? 0) - delta;
+      const inRange = dist < (w.weapon.range.max || 300) * 1.05;
+      const los = this._wallDistance(this.dx, this.dy, Math.atan2(dyp, dxp), dist) === Infinity;
+      if (cd <= 0 && inRange && los) {
+        this.dummy.consumeAmmo(w.location, w.index, 1);
+        const aimErr = (Math.random() - 0.5) * 0.12;
+        const mx2 = this.dx + Math.cos(this.dummyTurret) * 16, my2 = this.dy + Math.sin(this.dummyTurret) * 16;
+        this._spawnProjectile(w, mx2, my2, Math.atan2(dyp, dxp) + aimErr, 'enemy');
+        cd = this._fireInterval(w.weapon);
+      }
+      this.enemyFireCd[w.location] = Math.max(0, cd);
+    }
+    this.dummy.regenAmmo(dt);
+
+    this.dummyView.setPosition(this.dx, this.dy);
+    this.dummyView.hull.rotation = this.dummyAngle + Math.PI / 2;
+    this.dummyView.turret.rotation = this.dummyTurret + Math.PI / 2;
+  }
+
+  // Enemy round hits the player: damage a (torso-weighted) random part through the shield.
+  _damagePlayerAt(dmg) {
+    const parts = ['centerTorso', 'centerTorso', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm', 'head'];
+    const loc = parts[Math.floor(Math.random() * parts.length)];
+    const res = this.damagePlayer(loc, dmg);
+    if (res.shielded) { this._floatText(this.px, this.py - 24, 'shielded', '#5ec8e0'); return; }
+    reskinMech(this, 'playerMech', this.mech);
+    this._floatText(this.px, this.py - 20, `-${dmg}`, '#e2533a');
+    if (this.mech.isDestroyed() && !this._playerDead) {
+      this._playerDead = true;
+      this._floatText(this.px, this.py - 36, 'MECH DOWN', '#e2533a');
+      this.time.delayedCall(1600, () => this.toGarage());
+    }
   }
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
