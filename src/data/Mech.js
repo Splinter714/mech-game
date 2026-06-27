@@ -6,7 +6,7 @@
 
 import { getChassis } from './chassis/index.js';
 import { LOCATIONS, MOUNT_LOCATIONS, partDestroyed, mechDestroyed } from './anatomy.js';
-import { isWeapon } from './items.js';
+import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import { getEquipment } from './equipment.js';
 import * as loadout from './loadout.js';
@@ -20,9 +20,13 @@ export class Mech {
     this._chassis = getChassis(this.chassisId);
     this.name = data.name ?? this._chassis.name;
 
-    // Mounted items per location (array of item ids).
+    // Mounted items per location (array of item ids). Unknown ids — e.g. equipment
+    // removed from the catalog since an old build was saved — are dropped so stale
+    // saves load cleanly instead of crashing the renderer.
     this.mounts = {};
-    for (const loc of LOCATIONS) this.mounts[loc] = [...(data.mounts?.[loc] ?? [])];
+    for (const loc of LOCATIONS) {
+      this.mounts[loc] = (data.mounts?.[loc] ?? []).filter((id) => getItem(id));
+    }
 
     // Per-location health: armor (outer) + structure (inner). Restored from saved
     // `damage` if present, else full from the chassis.

@@ -32,8 +32,8 @@ try {
     const g = window.__game;
     const sc = g.scene.getScene('GarageScene');
     const mech = g.registry.get('allMechs').mech1;
-    sc.selected = 'head';
-    sc.tryMount('mediumLaser'); // head has 1 free slot on the medium chassis
+    sc.arm('mediumLaser');     // pick up the piece...
+    sc.placeOn('head');        // ...then click the body section (head has 1 free slot)
     // The garage is a paper-doll of slot cards now (no rendered mech sprite); assert the
     // doll rebuilt with the new mount instead of a sprite texture.
     const headCard = sc.doll.list.length > 0;
