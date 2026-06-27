@@ -6,25 +6,43 @@ import { Audio } from '../audio/index.js';
 
 // [paramKey, label, min, max, step]
 const GROUPS = [
-  ['Master', [
+  ['Master + drums', [
     ['master', 'Master', 0, 1, 0.01],
     ['music', 'Music level', 0, 0.6, 0.01],
-    ['drumLevel', 'Drums', 0, 1.5, 0.01],
     ['tempo', 'Tempo (BPM)', 120, 240, 1],
+    ['drumLevel', 'Drums (all)', 0, 1.5, 0.01],
+    ['kickLevel', 'Kick', 0, 2, 0.05],
+    ['snareLevel', 'Snare', 0, 2, 0.05],
+    ['hatLevel', 'Hats / crash', 0, 2, 0.05],
   ]],
-  ['Rhythm guitar', [
-    ['guitarLevel', 'Level', 0, 0.4, 0.005],
-    ['guitarDrive', 'Drive', 1, 40, 1],
+  ['Guitar tone (distortion)', [
+    ['guitarLevel', 'Level (volume)', 0, 0.4, 0.005],
+    ['guitarDrive', 'Drive (amount)', 1, 40, 1],
     ['guitarSat', 'Saturation', 50, 600, 5],
     ['guitarClip', 'Hard clip', 1, 15, 0.5],
     ['guitarFold', 'Foldback', 0, 4, 0.05],
     ['guitarTone', 'Cab tone (Hz)', 1500, 9000, 50],
     ['guitarLowCut', 'Low cut (Hz)', 40, 400, 5],
   ]],
-  ['Low foundation (bass)', [
+  ['Guitar voicing (overtones)', [
+    ['guitarFifth', '5th', 0, 2, 0.05],
+    ['guitarFifthDetune', '5th detune', 0, 0.05, 0.001],
+    ['guitarOctave', 'Octave', 0, 2, 0.05],
+    ['guitarHigh', 'High bite', 0, 2, 0.05],
+    ['guitarSquare', 'Square grit', 0, 2, 0.05],
+    ['chugLength', 'Chug length', 0.03, 0.2, 0.005],
+    ['chugLevel', 'Chug level', 0, 1, 0.05],
+    ['pickLevel', 'Pick attack', 0, 0.2, 0.005],
+    ['leadLevel', 'Lead', 0, 2, 0.05],
+  ]],
+  ['Bass (low foundation + overtones)', [
     ['bassLevel', 'Level', 0, 1.2, 0.01],
-    ['bassDrive', 'Drive', 0, 12, 0.5],
+    ['bassDrive', 'Drive (amount)', 0, 12, 0.5],
+    ['bassGrit', 'Grit (distortion)', 1, 200, 1],
     ['bassTone', 'Tone (Hz)', 200, 3000, 20],
+    ['bassSub', 'Sub octave', 0, 1.5, 0.05],
+    ['bassFifth', '5th', 0, 1.5, 0.05],
+    ['bassOctave', 'Octave', 0, 1.5, 0.05],
   ]],
 ];
 
@@ -38,7 +56,7 @@ export function mountAudioPanel() {
   const open = () => {
     el = document.createElement('div');
     el.style.cssText = [
-      'position:fixed', 'top:10px', 'right:10px', 'width:300px', 'max-height:92vh', 'overflow:auto',
+      'position:fixed', 'top:10px', 'right:10px', 'width:322px', 'max-height:94vh', 'overflow:auto',
       'background:rgba(13,16,20,0.94)', 'border:1px solid #2a333f', 'border-radius:8px', 'padding:10px 12px',
       'font-family:monospace', 'font-size:11px', 'color:#c8d2dd', 'z-index:99999', 'box-shadow:0 6px 24px rgba(0,0,0,0.5)',
     ].join(';');
@@ -70,7 +88,7 @@ export function mountAudioPanel() {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:3px 0';
         const lab = document.createElement('span');
-        lab.textContent = label; lab.style.cssText = 'flex:0 0 96px';
+        lab.textContent = label; lab.style.cssText = 'flex:0 0 108px';
         const inp = document.createElement('input');
         inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step;
         inp.value = Audio.params[key]; inp.style.cssText = 'flex:1;min-width:0';

@@ -63,10 +63,18 @@ export class AudioEngine {
     // These are the defaults baked into the build — the panel's "copy settings" prints a
     // params object you can paste back here.
     this.params = {
-      master: 0.9, music: 0.30, tempo: 184, drumLevel: 1.0,
+      // master + drums
+      master: 0.9, music: 0.30, tempo: 184,
+      drumLevel: 1.0, kickLevel: 1, snareLevel: 1, hatLevel: 1,
+      // rhythm-guitar TONE (the distortion pedal + cab)
       guitarLevel: 0.12, guitarDrive: 24, guitarSat: 400, guitarClip: 9, guitarFold: 2.1,
       guitarTone: 8200, guitarLowCut: 75,
-      bassLevel: 0.5, bassDrive: 3, bassTone: 1300,
+      // rhythm-guitar VOICING (which overtones make up each power chord)
+      guitarFifth: 1, guitarFifthDetune: 0.009, guitarOctave: 1, guitarHigh: 1, guitarSquare: 1,
+      chugLength: 0.065, chugLevel: 0.55, pickLevel: 0.05, leadLevel: 1,
+      // bass / low foundation (+ its own overtones)
+      bassLevel: 0.5, bassDrive: 3, bassGrit: 28, bassTone: 1300,
+      bassSub: 0.9, bassFifth: 0, bassOctave: 0,
     };
     this._fx = {};             // live node references the panel tweaks
   }
@@ -105,7 +113,7 @@ export class AudioEngine {
     // heavy distortion eats.
     this.bass = ctx.createGain(); this.bass.gain.value = 1.0;
     fx.bdrive = ctx.createGain(); fx.bdrive.gain.value = P.bassDrive;
-    fx.bshape = ctx.createWaveShaper(); fx.bshape.curve = distortionCurve(28); fx.bshape.oversample = '2x';
+    fx.bshape = ctx.createWaveShaper(); fx.bshape.curve = distortionCurve(P.bassGrit); fx.bshape.oversample = '2x';
     fx.blp = ctx.createBiquadFilter(); fx.blp.type = 'lowpass'; fx.blp.frequency.value = P.bassTone;
     fx.bpost = ctx.createGain(); fx.bpost.gain.value = P.bassLevel;
     this.bass.connect(fx.bdrive).connect(fx.bshape).connect(fx.blp).connect(fx.bpost).connect(this.music);
@@ -129,23 +137,34 @@ export class AudioEngine {
       case 'guitarTone': fx.cab.frequency.value = v; break;
       case 'guitarLevel': fx.post.gain.value = v; break;
       case 'bassDrive': fx.bdrive.gain.value = v; break;
+      case 'bassGrit': fx.bshape.curve = distortionCurve(v); break;
       case 'bassTone': fx.blp.frequency.value = v; break;
       case 'bassLevel': fx.bpost.gain.value = v; break;
-      default: break;   // tempo is read live by _schedule
+      default: break;   // tempo + voicing/level params are read live at note time
     }
   }
 
-  // The riff's tonal low foundation (root + sub octave), lightly driven + low-passed.
+  // The riff's tonal low foundation: root + sub-octave + tunable FIFTH / octave overtones,
+  // lightly driven + low-passed. The fifth/octave mixes let the bass carry overtones too.
   _bass(freq, at, dur, gain = 0.6) {
-    const ctx = this.ctx;
+    const ctx = this.ctx, P = this.params;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(gain, at + 0.004);
     g.gain.setValueAtTime(gain, at + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(this.bass);
-    const v = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
-    v(freq); v(freq * 0.5, 'square');                // root + sub octave for body
+    const v = (f, level, type = 'sawtooth') => {
+      if (level <= 0) return;
+      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
+      if (level === 1) o.connect(g);
+      else { const vg = ctx.createGain(); vg.gain.value = level; o.connect(vg).connect(g); }
+      o.start(at); o.stop(at + dur + 0.02);
+    };
+    v(freq, 1);                       // root
+    v(freq * 0.5, P.bassSub, 'square'); // sub octave for body
+    v(freq * 1.5, P.bassFifth);       // the FIFTH overtone
+    v(freq * 2, P.bassOctave);        // octave overtone
   }
 
   setMuted(m) {
@@ -357,20 +376,21 @@ export class AudioEngine {
     // 32-step root line: mostly chugging E with a G–F turnaround and an A–B–C climb.
     const riff = [E, E, E, E, E, E, E, E, E, E, E, E, G, G, F, F,
                   E, E, E, E, E, E, E, E, E, E, E, E, A, A, B, C];
+    const P = this.params;
     const local = step % 16;
     const gallop = local % 4 !== 1;                  // hits on 0,2,3 of each beat (gallop)
 
     if (gallop) {
-      this._gtr(riff[step], at, 0.065, 0.55, true);                 // tight palm-muted chug (no overlap = no smear)
-      this._bass(riff[step], at, 0.085, 0.6);                       // tonal low foundation under the fizz
-      this.noise(this.music, { dur: 0.018, gain: 0.05, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
+      this._gtr(riff[step], at, P.chugLength, P.chugLevel, true);   // tight palm-muted chug (no overlap = no smear)
+      this._bass(riff[step], at, P.chugLength + 0.02, 0.6);         // tonal low foundation under the fizz
+      this.noise(this.drums, { dur: 0.018, gain: P.pickLevel, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
-    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.28, 0.06, false); // scream
-    if (step >= 28) this._gtr(riff[step] * 2, at, 0.07, 0.1, false);                 // climb tremolo
+    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.28, 0.06 * P.leadLevel, false); // scream
+    if (step >= 28) this._gtr(riff[step] * 2, at, 0.07, 0.1 * P.leadLevel, false);                 // climb tremolo
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
     if (local === 4 || local === 12) this._snareMetal(at);          // backbeat
-    this._hat(at, local % 2 === 0 ? 0.04 : 0.02);
+    this._hat(at, (local % 2 === 0 ? 0.04 : 0.02) * P.hatLevel);
     if (step === 0) this._crash(at);
   }
 
@@ -400,19 +420,27 @@ export class AudioEngine {
   // a short sustained body + quick release, so it reads as a palm-muted CHUG, not a blip.
   // `chord:false` plays a single note (lead/tremolo).
   _gtr(freq, at, dur, gain = 0.5, chord = true) {
-    const ctx = this.ctx;
+    const ctx = this.ctx, P = this.params;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(gain, at + 0.003);     // near-instant pick attack
     g.gain.setValueAtTime(gain, at + dur * 0.7);               // hold the chug body
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);     // fast release (damped palm mute)
     g.connect(this.guitar);
-    const voice = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
-    voice(freq * 0.992); voice(freq * 1.008);        // detuned root pair (thickness)
+    const voice = (f, level, type = 'sawtooth') => {
+      if (level <= 0) return;
+      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
+      if (level === 1) o.connect(g);
+      else { const vg = ctx.createGain(); vg.gain.value = level; o.connect(vg).connect(g); }
+      o.start(at); o.stop(at + dur + 0.02);
+    };
+    voice(freq * 0.992, 1); voice(freq * 1.008, 1);  // detuned root pair (thickness)
     if (chord) {
-      voice(freq * 1.497); voice(freq * 1.506);      // the FIFTH, detuned into a beating/clashing pair (weird overtone)
-      voice(freq * 2); voice(freq * 3); voice(freq * 4.5); // octave, 8ve+5th, and a high screaming 5th up top
-      voice(freq, 'square'); voice(freq * 1.5, 'square'); // square root + square fifth for extra grit
+      const d = P.guitarFifthDetune;
+      voice(freq * (1.5 - d), P.guitarFifth); voice(freq * (1.5 + d), P.guitarFifth); // beating fifth pair (weird overtone)
+      voice(freq * 2, P.guitarOctave);
+      voice(freq * 3, P.guitarHigh); voice(freq * 4.5, P.guitarHigh);  // 8ve+5th, high screaming 5th
+      voice(freq, P.guitarSquare, 'square'); voice(freq * 1.5, P.guitarSquare, 'square'); // square root + fifth grit
     }
   }
 
@@ -420,20 +448,22 @@ export class AudioEngine {
     this.tone(this.drums, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
   }
   _kickMetal(at) {
-    this.tone(this.drums, { type: 'sine', freq: 155, freqEnd: 42, dur: 0.12, gain: 0.26, attack: 0.001 }, at);
-    this.noise(this.drums, { dur: 0.02, gain: 0.06, type: 'highpass', freq: 3200 }, at);   // beater click
+    const k = this.params.kickLevel;
+    this.tone(this.drums, { type: 'sine', freq: 155, freqEnd: 42, dur: 0.12, gain: 0.26 * k, attack: 0.001 }, at);
+    this.noise(this.drums, { dur: 0.02, gain: 0.06 * k, type: 'highpass', freq: 3200 }, at);   // beater click
   }
   _snare(at) {
     this.noise(this.drums, { dur: 0.16, gain: 0.12, type: 'highpass', freq: 1400 }, at);
     this.tone(this.drums, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
   }
   _snareMetal(at) {
-    this.noise(this.drums, { dur: 0.18, gain: 0.17, type: 'highpass', freq: 1800 }, at);
-    this.noise(this.drums, { dur: 0.08, gain: 0.08, type: 'bandpass', freq: 420, q: 1 }, at);
-    this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 }, at);
+    const s = this.params.snareLevel;
+    this.noise(this.drums, { dur: 0.18, gain: 0.17 * s, type: 'highpass', freq: 1800 }, at);
+    this.noise(this.drums, { dur: 0.08, gain: 0.08 * s, type: 'bandpass', freq: 420, q: 1 }, at);
+    this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 * s }, at);
   }
   _crash(at) {
-    this.noise(this.drums, { dur: 0.6, gain: 0.1, type: 'highpass', freq: 5200 }, at);
+    this.noise(this.drums, { dur: 0.6, gain: 0.1 * this.params.hatLevel, type: 'highpass', freq: 5200 }, at);
   }
   _hat(at, gain) {
     this.noise(this.drums, { dur: 0.04, gain, type: 'highpass', freq: 7000 }, at);
