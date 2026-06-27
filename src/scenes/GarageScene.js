@@ -1,25 +1,44 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech, mechLayout, ART_SCALE } from '../art/index.js';
+import { buildMechTextures, reskinMech } from '../art/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
 import { MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
-import { WEAPON_IDS, getWeapon } from '../data/weapons.js';
-import { EQUIPMENT_IDS, getEquipment } from '../data/equipment.js';
+import { WEAPON_IDS } from '../data/weapons.js';
+import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { CATEGORIES } from '../data/categories.js';
 import { MECH_DEPLOYED } from '../data/events.js';
 
-// The mech lab. Top-down view of the active build with clickable body parts; a catalog
-// on the right mounts weapons/equipment into the selected part with live tonnage/slot
-// validation. "Deploy" saves and drops you into the arena. Single-file stub for
-// Milestone 1 — splits into garage/ mixins later.
+// The mech lab. A paper-doll of the chassis: each body location is a card laid out in
+// a humanoid arrangement, and its slots are rendered *on the part* as a stack of cells.
+// You select a location, click a catalog item to drop it into the next free slots, and
+// click a mounted chip to pull it back out — no separate "mounted items" list. "Deploy"
+// saves and drops you into the arena.
 const UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0',
   good: '#7bd17b', bad: '#e2533a', sel: '#efc14a',
   panel: 0x161b22, panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
+  card: 0x131820, cardSel: 0x1b2430, slotEmpty: 0x0e1218, slotEdge: 0x323c49,
 };
-const GARAGE_MECH_SCALE = 0.95;          // sprite scale; on-screen design-unit = scale × ART_SCALE
-const DISP = GARAGE_MECH_SCALE * ART_SCALE;
+
+// Card sizing (design px, pre-DPR). A card is a header + one cell per slot of capacity.
+const CARD_W = 100;
+const CELL_H = 24;
+const HEADER_H = 24;
+const CARD_PAD = 6;
+
+// Humanoid placement of each location within the doll region, as fractions of its
+// width/height (these are card *centres*; cards grow downward by slot count).
+const DOLL_POS = {
+  head:        { fx: 0.50, fy: 0.02 },
+  leftArm:     { fx: 0.10, fy: 0.22 },
+  leftTorso:   { fx: 0.30, fy: 0.22 },
+  centerTorso: { fx: 0.50, fy: 0.22 },
+  rightTorso:  { fx: 0.70, fy: 0.22 },
+  rightArm:    { fx: 0.90, fy: 0.22 },
+  leftLeg:     { fx: 0.40, fy: 0.54 },
+  rightLeg:    { fx: 0.60, fy: 0.54 },
+};
 
 export default class GarageScene extends Phaser.Scene {
   constructor() {
@@ -36,19 +55,26 @@ export default class GarageScene extends Phaser.Scene {
 
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
-    this.selected = 'rightArm';
+    this.selected = null;   // last-touched location (for a subtle highlight)
+    this.armed = null;      // catalog item id picked up, waiting to be placed
+
+    // Doll region: the left ~56% of the screen, below the header, above the footer.
+    this.dollX = 20;
+    this.dollY = 70;
+    this.dollW = Math.round(this.W * 0.66) - 20;
+    this.dollH = this.H - this.dollY - 64;
+
     buildMechTextures(this, 'garageMech', this.mech);
 
-    this.mechCx = Math.round(this.W * 0.30);
-    this.mechCy = Math.round(this.H * 0.52);
-
     this._buildHeader();
-    this._buildMechView();
     this._buildCatalog();
-    this.hud = this.add.container(0, 0);
+    this._buildPreview();
+    this.doll = this.add.container(0, 0);
+    this.footer = this.add.container(0, 0);
     this.refresh();
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
+    this.input.keyboard.on('keydown-ESC', () => this.arm(null));
   }
 
   txt(x, y, s, opts = {}) {
@@ -75,112 +101,220 @@ export default class GarageScene extends Phaser.Scene {
 
   _buildHeader() {
     this.txt(20, 16, 'MECH LAB', { fontSize: '20px', color: UI.accent });
-    this.txt(20, 42, 'click a body part, then a catalog item to mount it', { fontSize: '12px', color: UI.dim });
+    this.hintText = this.txt(120, 22, '', { fontSize: '11px', color: UI.dim });
     this.button(this.W - 150, 20, 130, 34, '▶ DEPLOY  (D)', () => this.deploy(), UI.sel);
+    this._updateHint();
   }
 
-  // The mech sprite (hull + turret) plus an interactive outline over each mountable
-  // location. Sprites persist; their textures are re-skinned on change.
-  _buildMechView() {
-    this.add.sprite(this.mechCx, this.mechCy, 'garageMech_hull_0').setScale(GARAGE_MECH_SCALE);
-    this.add.sprite(this.mechCx, this.mechCy, 'garageMech_turret').setScale(GARAGE_MECH_SCALE);
-
-    const lay = mechLayout(this.mech);
-    this.partZones = {};
-    for (const loc of MOUNT_LOCATIONS) {
-      const p = lay[loc];
-      const zx = this.mechCx + p.x * DISP;
-      const zy = this.mechCy + p.y * DISP;
-      const zone = this.add.rectangle(zx, zy, Math.max(18, p.w * DISP), Math.max(18, p.h * DISP), 0xffffff, 0.001)
-        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      zone.on('pointerdown', () => { this.selected = loc; this.refresh(); });
-      this.partZones[loc] = zone;
+  _updateHint() {
+    if (!this.hintText) return;
+    if (this.armed) {
+      this.hintText.setText(`placing ${getItem(this.armed).name} — click a body section · Esc to cancel`)
+        .setColor(UI.sel);
+    } else {
+      this.hintText.setText('click a catalog item, then a body section to mount it · click a chip to remove')
+        .setColor(UI.dim);
     }
   }
 
   _buildCatalog() {
-    const x = Math.round(this.W * 0.58);
+    const x = Math.round(this.W * 0.70);
     const w = this.W - x - 20;
-    this.catalogX = x; this.catalogW = w;
-    this.panel(x, 70, w, this.H - 230);
+    this.panel(x, 70, w, this.H - 134);
     this.txt(x + 12, 80, 'CATALOG', { fontSize: '14px', color: UI.accent });
 
+    this.catalogRows = {};
     let y = 106;
-    const row = (id, kind) => {
+    const row = (id) => {
       const item = getItem(id);
       const r = this.add.rectangle(x + 8, y, w - 16, 30, UI.btn).setOrigin(0, 0)
         .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      const catColor = kind === 'weapon' ? CATEGORIES[item.category].color : 0x7bd17b;
+      const catColor = isWeapon(id) ? CATEGORIES[item.category].color : 0x7bd17b;
       this.add.rectangle(x + 16, y + 15, 10, 10, catColor).setOrigin(0.5);
       this.add.text(x + 28, y + 6, item.name, { fontFamily: 'monospace', fontSize: '13px', color: UI.text });
-      this.add.text(x + w - 20, y + 8, `${item.slots}s ${item.tonnage}t`, {
+      this.add.text(x + w - 20, y + 8, `${item.slots} slot${item.slots > 1 ? 's' : ''}`, {
         fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
       }).setOrigin(1, 0);
-      r.on('pointerover', () => r.setFillStyle(UI.btnHover));
-      r.on('pointerout', () => r.setFillStyle(UI.btn));
-      r.on('pointerdown', () => this.tryMount(id));
+      r.on('pointerover', () => { if (this.armed !== id) r.setFillStyle(UI.btnHover); });
+      r.on('pointerout', () => { if (this.armed !== id) r.setFillStyle(UI.btn); });
+      r.on('pointerdown', () => this.arm(id));
+      this.catalogRows[id] = r;
       y += 34;
     };
-    for (const id of WEAPON_IDS) row(id, 'weapon');
-    this.add.text(x + 12, y + 2, '— equipment —', { fontFamily: 'monospace', fontSize: '11px', color: UI.dim });
-    y += 20;
-    for (const id of EQUIPMENT_IDS) row(id, 'equip');
+    for (const id of [...WEAPON_IDS, ...EQUIPMENT_IDS]) row(id);
+    this._updateCatalogHighlight();
   }
 
-  // Redraw everything that depends on mech state: part labels, selection highlight,
-  // the selected part's mount list, and the tonnage/slot readout.
+  // Highlight the armed catalog row (the piece waiting to be placed).
+  _updateCatalogHighlight() {
+    if (!this.catalogRows) return;
+    for (const [id, r] of Object.entries(this.catalogRows)) {
+      const on = id === this.armed;
+      r.setFillStyle(on ? UI.cardSel : UI.btn).setStrokeStyle(on ? 2 : 1, on ? 0xefc14a : UI.panelEdge);
+    }
+  }
+
+  // A live, top-down render of the actual mech (hull + turret) in the open space below
+  // the doll, so you see weapons appear/vanish on the real model as you build. The
+  // sprites reference fixed texture keys; onChange re-skins those textures in place.
+  _buildPreview() {
+    const px = Math.round(this.dollX + this.dollW * 0.5);
+    const py = this.H - 176;
+    this.previewPanel = this.add.rectangle(px, py, 220, 220, 0x10151c)
+      .setStrokeStyle(1, UI.panelEdge);
+    this.add.text(px, py - 100, 'LIVE PREVIEW', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    }).setOrigin(0.5, 0);
+    this.previewHull = this.add.sprite(px, py + 10, 'garageMech_hull_0').setScale(0.7);
+    this.previewTurret = this.add.sprite(px, py + 10, 'garageMech_turret').setScale(0.7);
+  }
+
+  // Where a location's card sits (top-left + size). Height grows with slot capacity so
+  // every slot has a visible cell on the body.
+  cardRect(loc) {
+    const cap = this.mech.slotCapacity(loc);
+    const h = HEADER_H + cap * CELL_H + CARD_PAD;
+    const pos = DOLL_POS[loc];
+    const cx = this.dollX + pos.fx * this.dollW;
+    const top = this.dollY + pos.fy * this.dollH;
+    return { x: Math.round(cx - CARD_W / 2), y: Math.round(top), w: CARD_W, h };
+  }
+
+  // Rebuild the whole doll: one card per mountable location, slots drawn in place.
   refresh() {
-    this.hud.removeAll(true);
-    const lay = mechLayout(this.mech);
+    this.doll.removeAll(true);
+    this.footer.removeAll(true);
 
-    for (const loc of MOUNT_LOCATIONS) {
-      const p = lay[loc];
-      const zone = this.partZones[loc];
-      const isSel = loc === this.selected;
-      zone.setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge);
-      const used = this.mech.usedSlots(loc), cap = this.mech.slotCapacity(loc);
-      const label = this.add.text(zone.x, zone.y - Math.min(zone.height / 2, 16) - 4,
-        `${LOCATION_INFO[loc].short} ${used}/${cap}`, {
-          fontFamily: 'monospace', fontSize: '11px',
-          color: isSel ? UI.sel : (used > 0 ? UI.text : UI.dim),
-        }).setOrigin(0.5);
-      this.hud.add(label);
-    }
-
-    // Tonnage / validity readout under the mech.
-    const v = this.mech.validate();
-    const ty = Math.round(this.H - 132);
-    this.hud.add(this.panel(20, ty, Math.round(this.W * 0.5) - 30, 112));
-    this.hud.add(this.txt(34, ty + 10, `${this.mech.name}  ·  ${this.mech.chassis.name} (${this.mech.weightClass})`, { fontSize: '13px', color: UI.accent }));
-    this.hud.add(this.txt(34, ty + 32, `tonnage  ${this.mech.totalTonnage()} / ${this.mech.chassis.maxTonnage} t`, {
-      color: v.usedTonnage > this.mech.chassis.maxTonnage ? UI.bad : UI.text,
-    }));
-    this.hud.add(this.txt(34, ty + 54, `free  ${this.mech.freeTonnage()} t`, { fontSize: '12px', color: UI.dim }));
-    this.hud.add(this.txt(34, ty + 78, v.ok ? '✓ valid build' : `✗ ${v.errors[0]}`, {
-      color: v.ok ? UI.good : UI.bad,
-    }));
-
-    // Mounted items in the selected part, each with an unmount button.
-    const sx = 20, sy = ty - 8;
-    const list = this.mech.mounts[this.selected];
-    this.hud.add(this.txt(Math.round(this.W * 0.5), ty + 10,
-      `${LOCATION_INFO[this.selected].label}`, { fontSize: '13px', color: UI.sel }));
-    if (list.length === 0) {
-      this.hud.add(this.txt(Math.round(this.W * 0.5), ty + 34, '(empty)', { fontSize: '12px', color: UI.dim }));
-    }
-    list.forEach((id, i) => {
-      const item = getItem(id);
-      const ry = ty + 32 + i * 22;
-      this.hud.add(this.txt(Math.round(this.W * 0.5), ry, `• ${item.name}`, { fontSize: '12px' }));
-      const btn = this.button(Math.round(this.W * 0.5) + 160, ry - 2, 22, 18, '✕', () => this.unmount(this.selected, i), UI.bad);
-      this.hud.add(btn.r); this.hud.add(btn.t);
-    });
+    for (const loc of MOUNT_LOCATIONS) this._drawCard(loc);
+    this._drawConnectors();
+    this._drawFooter();
   }
 
-  tryMount(itemId) {
-    if (!this.selected) return this.toast('select a body part first');
-    const res = this.mech.mount(this.selected, itemId);
-    if (!res.ok) return this.toast(res.reason);
+  _drawCard(loc) {
+    const rect = this.cardRect(loc);
+    const isSel = loc === this.selected;
+    const used = this.mech.usedSlots(loc), cap = this.mech.slotCapacity(loc);
+
+    // When a piece is armed, every card reads as a drop target.
+    const isTarget = this.armed && loc === this.selected;
+    const bg = this.add.rectangle(rect.x, rect.y, rect.w, rect.h, (isSel || isTarget) ? UI.cardSel : UI.card)
+      .setOrigin(0, 0).setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge)
+      .setInteractive({ useHandCursor: true });
+    if (this.armed) {
+      bg.on('pointerover', () => bg.setStrokeStyle(2, 0x7bd17b));
+      bg.on('pointerout', () => bg.setStrokeStyle(isSel ? 2 : 1, isSel ? 0xefc14a : UI.panelEdge));
+    }
+    bg.on('pointerdown', () => this.placeOn(loc));
+    this.doll.add(bg);
+
+    // Header: location code (full label doesn't fit a 100px card) + slot usage.
+    this.doll.add(this.add.text(rect.x + 8, rect.y + 6, LOCATION_INFO[loc].short, {
+      fontFamily: 'monospace', fontSize: '13px', color: isSel ? UI.sel : UI.text,
+    }));
+    this.doll.add(this.add.text(rect.x + rect.w - 8, rect.y + 6, `${used}/${cap}`, {
+      fontFamily: 'monospace', fontSize: '12px', color: used > 0 ? UI.accent : UI.dim,
+    }).setOrigin(1, 0));
+
+    // Slot cells. Walk the mounted items; each occupies `slots` consecutive cells and
+    // renders as one chip. Remaining cells are empty "+" mount targets.
+    const cellX = rect.x + CARD_PAD;
+    const cellW = rect.w - CARD_PAD * 2;
+    const cellTop = rect.y + HEADER_H;
+    let cell = 0;
+    this.mech.mounts[loc].forEach((id, index) => {
+      const item = getItem(id);
+      const span = Math.max(1, item.slots);
+      const y = cellTop + cell * CELL_H;
+      const h = span * CELL_H - 4;
+      const color = isWeapon(id) ? CATEGORIES[item.category].color : 0x7bd17b;
+      const chip = this.add.rectangle(cellX, y + 2, cellW, h, 0x1f2730)
+        .setOrigin(0, 0).setStrokeStyle(1, color).setInteractive({ useHandCursor: true });
+      chip.on('pointerover', () => chip.setFillStyle(0x29333f));
+      chip.on('pointerout', () => chip.setFillStyle(0x1f2730));
+      chip.on('pointerdown', () => this.unmount(loc, index));
+      this.doll.add(chip);
+      this.doll.add(this.add.rectangle(cellX + 8, y + 2 + h / 2, 8, 8, color).setOrigin(0.5));
+      this.doll.add(this.add.text(cellX + 18, y + 2 + h / 2, item.name, {
+        fontFamily: 'monospace', fontSize: '11px', color: UI.text,
+      }).setOrigin(0, 0.5));
+      this.doll.add(this.add.text(cellX + cellW - 6, y + 2 + h / 2, '✕', {
+        fontFamily: 'monospace', fontSize: '11px', color: UI.bad,
+      }).setOrigin(1, 0.5));
+      cell += span;
+    });
+
+    for (; cell < cap; cell++) {
+      const y = cellTop + cell * CELL_H;
+      const empty = this.add.rectangle(cellX, y + 2, cellW, CELL_H - 4, UI.slotEmpty)
+        .setOrigin(0, 0).setStrokeStyle(1, UI.slotEdge).setInteractive({ useHandCursor: true });
+      empty.on('pointerover', () => empty.setFillStyle(0x16202a));
+      empty.on('pointerout', () => empty.setFillStyle(UI.slotEmpty));
+      empty.on('pointerdown', () => this.placeOn(loc));
+      this.doll.add(empty);
+      this.doll.add(this.add.text(cellX + cellW / 2, y + 2 + (CELL_H - 4) / 2, '+', {
+        fontFamily: 'monospace', fontSize: '13px', color: UI.dim,
+      }).setOrigin(0.5));
+    }
+  }
+
+  // Faint lines tying the limbs to the center torso so the doll reads as one body.
+  _drawConnectors() {
+    const g = this.add.graphics();
+    g.lineStyle(2, 0x222b35, 1);
+    const c = this._cardCenter('centerTorso');
+    for (const loc of ['head', 'leftTorso', 'rightTorso']) {
+      const p = this._cardCenter(loc);
+      g.lineBetween(c.x, c.y, p.x, p.y);
+    }
+    for (const [arm, torso] of [['leftArm', 'leftTorso'], ['rightArm', 'rightTorso']]) {
+      const a = this._cardCenter(arm), t = this._cardCenter(torso);
+      g.lineBetween(t.x, t.y, a.x, a.y);
+    }
+    for (const loc of ['leftLeg', 'rightLeg']) {
+      const p = this._cardCenter(loc);
+      g.lineBetween(c.x, c.y, p.x, p.y);
+    }
+    this.doll.add(g);
+    this.doll.sendToBack(g);
+  }
+
+  _cardCenter(loc) {
+    const r = this.cardRect(loc);
+    return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+  }
+
+  _drawFooter() {
+    const v = this.mech.validate();
+    const y = this.H - 56;
+    this.footer.add(this.panel(20, y, Math.round(this.W * 0.66) - 20, 44));
+    this.footer.add(this.txt(34, y + 6, `${this.mech.name}  ·  ${this.mech.chassis.name} (${this.mech.weightClass})`, {
+      fontSize: '13px', color: UI.accent,
+    }));
+    let used = 0, cap = 0;
+    for (const loc of MOUNT_LOCATIONS) { used += this.mech.usedSlots(loc); cap += this.mech.slotCapacity(loc); }
+    this.footer.add(this.txt(34, y + 24, `slots ${used}/${cap} used`, {
+      fontSize: '12px', color: UI.dim,
+    }));
+    this.footer.add(this.txt(Math.round(this.W * 0.66) - 36, y + 14, v.ok ? '✓ valid build' : `✗ ${v.errors[0]}`, {
+      color: v.ok ? UI.good : UI.bad,
+    }).setOrigin(1, 0));
+  }
+
+  // Pick up (or drop) a catalog piece. Clicking the armed item again clears it.
+  arm(itemId) {
+    this.armed = this.armed === itemId ? null : itemId;
+    this._updateCatalogHighlight();
+    this._updateHint();
+    this.refresh();
+  }
+
+  // Place the armed piece into a body section. Stays armed so you can mount several of
+  // the same in a row; a failed mount (no room) just toasts why.
+  placeOn(loc) {
+    this.selected = loc;
+    if (!this.armed) return this.refresh();
+    const res = this.mech.mount(loc, this.armed);
+    if (!res.ok) { this.refresh(); return this.toast(res.reason); }
     this.onChange();
   }
 

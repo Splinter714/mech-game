@@ -1,6 +1,6 @@
-// Unified item lookup over weapons + equipment. Both kinds share `id`, `slots`, and
-// `tonnage`, so the Mech model, the loadout validator, and the garage UI can resolve
-// any mounted item by id without caring which catalog it came from.
+// Unified item lookup over weapons + equipment. Both kinds share `id` and `slots`, so
+// the Mech model, the loadout validator, and the garage UI can resolve any mounted item
+// by id without caring which catalog it came from.
 
 import { WEAPONS } from './weapons.js';
 import { EQUIPMENT } from './equipment.js';

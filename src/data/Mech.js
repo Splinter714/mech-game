@@ -6,13 +6,9 @@
 
 import { getChassis } from './chassis/index.js';
 import { LOCATIONS, MOUNT_LOCATIONS, partDestroyed, mechDestroyed } from './anatomy.js';
-import { isWeapon } from './items.js';
+import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
-import { getEquipment } from './equipment.js';
 import * as loadout from './loadout.js';
-
-const BASE_HEAT_CAP = 30;
-const BASE_DISSIPATION = 1; // baseline heat shed per second, before heat sinks
 
 export class Mech {
   constructor(data = {}) {
@@ -20,9 +16,18 @@ export class Mech {
     this._chassis = getChassis(this.chassisId);
     this.name = data.name ?? this._chassis.name;
 
-    // Mounted items per location (array of item ids).
+    // Mounted items per location (array of item ids). Unknown ids — e.g. equipment
+    // removed from the catalog since an old build was saved — are dropped so stale
+    // saves load cleanly instead of crashing the renderer.
     this.mounts = {};
-    for (const loc of LOCATIONS) this.mounts[loc] = [...(data.mounts?.[loc] ?? [])];
+    for (const loc of LOCATIONS) {
+      this.mounts[loc] = (data.mounts?.[loc] ?? []).filter((id) => getItem(id));
+    }
+
+    // Per-weapon ammo: a parallel array to mounts[loc] holding each weapon's current
+    // magazine (null = unlimited / non-weapon). Runtime combat state, so it isn't
+    // serialized — it starts full and tops back up over time (see regenAmmo).
+    this._initAmmo();
 
     // Per-location health: armor (outer) + structure (inner). Restored from saved
     // `damage` if present, else full from the chassis.
@@ -37,8 +42,18 @@ export class Mech {
         structure: saved?.structure ?? def.maxStructure,
       };
     }
+  }
 
-    this.heat = data.heat ?? 0;
+  // Magazine capacity for an item id (null = unlimited or non-weapon).
+  _ammoCap(id) {
+    const w = getWeapon(id);
+    return w && w.ammoMax != null ? w.ammoMax : null;
+  }
+
+  // (Re)build the ammo arrays so each weapon starts with a full magazine.
+  _initAmmo() {
+    this.ammo = {};
+    for (const loc of LOCATIONS) this.ammo[loc] = this.mounts[loc].map((id) => this._ammoCap(id));
   }
 
   get chassis() { return this._chassis; }
@@ -86,28 +101,38 @@ export class Mech {
 
   mount(loc, itemId) {
     const res = this.canMount(loc, itemId);
-    if (res.ok) this.mounts[loc].push(itemId);
+    if (res.ok) {
+      this.mounts[loc].push(itemId);
+      this.ammo[loc].push(this._ammoCap(itemId));
+    }
     return res;
   }
 
-  unmount(loc, index) { return this.mounts[loc].splice(index, 1)[0]; }
+  unmount(loc, index) {
+    this.ammo[loc].splice(index, 1);
+    return this.mounts[loc].splice(index, 1)[0];
+  }
 
   usedSlots(loc) { return loadout.usedSlots(this.mounts, loc); }
   slotCapacity(loc) { return loadout.slotCapacity(this._chassis, loc); }
   freeSlots(loc) { return loadout.freeSlots(this._chassis, this.mounts, loc); }
-  totalTonnage() { return loadout.totalTonnage(this.mounts); }
-  freeTonnage() { return loadout.freeTonnage(this._chassis, this.mounts); }
   validate() { return loadout.validateLoadout(this._chassis, this.mounts); }
 
-  // ── Weapons & heat ────────────────────────────────────────────────────────
-  // Every mounted weapon with its resolved stats and whether it's online (its part
-  // is intact). A weapon in a destroyed part goes offline.
+  // ── Weapons & ammo ────────────────────────────────────────────────────────
+  // Every mounted weapon with its resolved stats, whether it's online (its part is
+  // intact), its current ammo (null = unlimited), and whether it's ready to fire
+  // (online AND has a round chambered).
   weapons() {
     const out = [];
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, index) => {
         if (isWeapon(id)) {
-          out.push({ location: loc, index, id, weapon: getWeapon(id), online: !this.isPartDestroyed(loc) });
+          const online = !this.isPartDestroyed(loc);
+          const ammo = this.ammo[loc][index];
+          out.push({
+            location: loc, index, id, weapon: getWeapon(id), online, ammo,
+            ready: online && (ammo == null || ammo >= 1),
+          });
         }
       });
     }
@@ -115,30 +140,35 @@ export class Mech {
   }
 
   onlineWeapons() { return this.weapons().filter((w) => w.online); }
+  readyWeapons() { return this.weapons().filter((w) => w.ready); }
 
-  // Heat shed per second: baseline + every intact heat sink.
-  dissipation() {
-    let d = BASE_DISSIPATION;
-    for (const loc of LOCATIONS) {
-      if (this.isPartDestroyed(loc)) continue;
-      for (const id of this.mounts[loc]) {
-        const e = getEquipment(id);
-        if (e?.type === 'heatSink') d += e.dissipation;
-      }
+  // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons).
+  consumeAmmo(loc, index, n = 1) {
+    if (this.ammo[loc]?.[index] != null) {
+      this.ammo[loc][index] = Math.max(0, this.ammo[loc][index] - n);
     }
-    return d;
   }
 
-  heatCapacity() { return BASE_HEAT_CAP; }
+  // Top every magazine back up over time at the weapon's regen rate.
+  regenAmmo(dt) {
+    for (const loc of LOCATIONS) {
+      this.mounts[loc].forEach((id, i) => {
+        if (this.ammo[loc][i] == null) return;
+        const w = getWeapon(id);
+        this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt);
+      });
+    }
+  }
 
-  // Restore a mech to pristine condition (used when deploying a fresh build).
+  // Restore a mech to pristine condition (used when deploying a fresh build): full
+  // health and full magazines.
   repairAll() {
     for (const loc of LOCATIONS) {
       const p = this.parts[loc];
       p.armor = p.maxArmor;
       p.structure = p.maxStructure;
     }
-    this.heat = 0;
+    this._initAmmo();
   }
 
   toJSON() {
@@ -148,6 +178,6 @@ export class Mech {
       mounts[loc] = [...this.mounts[loc]];
       damage[loc] = { armor: this.parts[loc].armor, structure: this.parts[loc].structure };
     }
-    return { chassisId: this.chassisId, name: this.name, mounts, damage, heat: this.heat };
+    return { chassisId: this.chassisId, name: this.name, mounts, damage };
   }
 }
