@@ -1,8 +1,8 @@
-// Non-weapon equipment. Intentionally empty for now: heat sinks, ammo bins, thrusters,
-// and the old jammer were removed to keep the build screen simple while heat/ammo and
-// movement gear aren't simulated yet. The exports stay so the item lookup, loadout
-// validator, and Mech model keep treating "equipment" uniformly — add an entry here
-// (with a real in-game effect) when one is actually needed.
+// Non-weapon equipment. Intentionally empty for now: heat sinks and ammo bins are gone
+// (there's no heat system, and ammo lives on each weapon as a self-regenerating
+// magazine), and thrusters/jammer were unimplemented. The exports stay so the item
+// lookup, loadout validator, and Mech model keep treating "equipment" uniformly — add
+// an entry here (with a real in-game effect) when one is actually needed.
 
 export const EQUIPMENT = {};
 

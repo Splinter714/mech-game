@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 
-// Screen-fixed overlay for the arena: controls hint, heat gauge, a compact per-part
-// health column for the player, and the dummy's status. Runs as its own scene (like
-// the garage) so it lays out in logical screen space without fighting the arena's
-// follow camera. Text objects are created once and updated in place each frame.
+// Screen-fixed overlay for the arena: controls hint, a live weapons/ammo readout, a
+// compact per-part health column for the player, and the dummy's status. Runs as its
+// own scene (like the garage) so it lays out in logical screen space without fighting
+// the arena's follow camera. Text objects are created once and updated in place.
 const C = { text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a' };
 
 export default class HudScene extends Phaser.Scene {
@@ -23,10 +23,9 @@ export default class HudScene extends Phaser.Scene {
     this.add.text(16, 36, 'WASD / arrows: drive  ·  mouse: aim  ·  click / space: fire  ·  G: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
 
-    // Heat gauge.
-    this.add.text(16, this.H - 150, 'HEAT', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
-    this.add.rectangle(16, this.H - 132, 180, 12, 0x222b35).setOrigin(0, 0).setStrokeStyle(1, 0x2a333f);
-    this.heatFill = this.add.rectangle(17, this.H - 131, 0, 10, 0x7bd17b).setOrigin(0, 0);
+    // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
+    this.add.text(16, 62, 'WEAPONS', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
+    this.weaponsText = this.add.text(16, 80, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text, lineSpacing: 3 });
 
     // Per-part health column (player).
     this.partTexts = {};
@@ -45,9 +44,14 @@ export default class HudScene extends Phaser.Scene {
     const dummy = this.registry.get('dummyMech');
     if (!mech) return;
 
-    const heatFrac = Phaser.Math.Clamp(mech.heat / mech.heatCapacity(), 0, 1);
-    this.heatFill.width = 178 * heatFrac;
-    this.heatFill.fillColor = heatFrac > 0.85 ? 0xe2533a : heatFrac > 0.5 ? 0xefc14a : 0x7bd17b;
+    // Weapons / ammo: name + magazine (∞ for melee), dimmed when offline, red when dry.
+    const lines = mech.weapons().map((w) => {
+      const name = w.weapon.name.padEnd(12);
+      const ammo = w.ammo == null ? '  ∞' : `${String(Math.floor(w.ammo)).padStart(2)}/${w.weapon.ammoMax}`;
+      if (!w.online) return `[####] ${name} ----`;
+      return `${LOCATION_INFO[w.location].short.padEnd(2)}  ${name} ${ammo}`;
+    });
+    this.weaponsText.setText(lines.length ? lines.join('\n') : '(none)');
 
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;

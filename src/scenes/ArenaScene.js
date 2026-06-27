@@ -131,8 +131,8 @@ export default class ArenaScene extends Phaser.Scene {
     this.playerView.turret.rotation = this.turretAngle + Math.PI / 2;
     this.playerView.setPosition(this.px, this.py - bob);
 
-    // ── Heat dissipation ──
-    if (this.mech.heat > 0) this.mech.heat = Math.max(0, this.mech.heat - this.mech.dissipation() * dt);
+    // ── Ammo regen ── every magazine tops back up over time.
+    this.mech.regenAmmo(dt);
   }
 
   // Fire every online weapon as one volley toward the aim. Draws tracers; if the aim
@@ -140,17 +140,17 @@ export default class ArenaScene extends Phaser.Scene {
   // dummy is re-skinned so a destroyed part becomes a stump).
   fire() {
     if (!this.scene.isActive() || this.dummy.isDestroyed()) return;
-    const online = this.mech.onlineWeapons();
-    if (online.length === 0) return;
+    // Only weapons that are online AND have a round chambered fire; each spends one.
+    const ready = this.mech.readyWeapons();
+    if (ready.length === 0) return;
 
     const aimX = this.input.activePointer.worldX;
     const aimY = this.input.activePointer.worldY;
     const muzzleX = this.px + Math.cos(this.turretAngle) * 18;
     const muzzleY = this.py + Math.sin(this.turretAngle) * 18;
 
-    let damage = 0, heat = 0;
-    for (const w of online) { damage += w.weapon.damage; heat += w.weapon.heat; }
-    this.mech.heat = Math.min(this.mech.heatCapacity(), this.mech.heat + heat);
+    let damage = 0;
+    for (const w of ready) { damage += w.weapon.damage; this.mech.consumeAmmo(w.location, w.index, 1); }
 
     // Tracer.
     this.fx.clear();

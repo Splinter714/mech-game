@@ -72,6 +72,51 @@ describe('Mech weapons go offline with their part', () => {
   });
 });
 
+describe('Mech weapon ammo (self-regenerating magazines)', () => {
+  it('starts a mounted weapon with a full magazine', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('rightArm', 'autocannon'); // ammoMax 12
+    expect(m.weapons()[0].ammo).toBe(12);
+    expect(m.weapons()[0].ready).toBe(true);
+  });
+
+  it('firing spends ammo and an empty weapon is not ready', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
+    for (let i = 0; i < 4; i++) m.consumeAmmo('leftArm', 0, 1);
+    expect(m.weapons()[0].ammo).toBe(0);
+    expect(m.weapons()[0].ready).toBe(false);
+    expect(m.readyWeapons()).toHaveLength(0);
+  });
+
+  it('regenAmmo refills over time but never past the magazine size', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4, regen 0.5/s
+    m.consumeAmmo('leftArm', 0, 4);
+    m.regenAmmo(2); // +1.0
+    expect(m.weapons()[0].ammo).toBeCloseTo(1, 5);
+    m.regenAmmo(100); // would overshoot
+    expect(m.weapons()[0].ammo).toBe(4);
+  });
+
+  it('melee weapons have unlimited ammo and stay ready', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('rightArm', 'hatchet'); // ammoMax null
+    expect(m.weapons()[0].ammo).toBeNull();
+    m.consumeAmmo('rightArm', 0, 5); // no-op
+    expect(m.weapons()[0].ready).toBe(true);
+  });
+
+  it('repairAll tops every magazine back up', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('rightArm', 'autocannon');
+    m.consumeAmmo('rightArm', 0, 12);
+    expect(m.weapons()[0].ammo).toBe(0);
+    m.repairAll();
+    expect(m.weapons()[0].ammo).toBe(12);
+  });
+});
+
 describe('Mech serialization', () => {
   it('round-trips chassis, mounts, and battle damage', () => {
     const m = new Mech({ chassisId: 'heavy', name: 'Old Faithful' });

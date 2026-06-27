@@ -13,8 +13,14 @@
 //   fireRate  shots per second for a `stream` weapon (machine gun)
 //   splash    blast radius in px (plasma/explosive)
 //
-// shared fields: damage (per shot/pellet), range {min, opt, max}, heat, ammoPerTon
-// (null = no ammo), slots, cycleTime (ms between trigger pulls).
+// shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
+// (ms between trigger pulls).
+//
+// Ammo: every weapon carries its own self-contained magazine — there are no separate
+// ammo bins or heat sinks. `ammoMax` is the magazine size and `ammoRegen` is how many
+// rounds it refills per second (energy = battery recharge, ballistic = autoloader), so
+// ammo is the only firing constraint and it tops back up over time. `ammoMax: null`
+// means unlimited (melee).
 //
 // Display names are generic sci-fi, deliberately *not* franchise jargon; the ids stay
 // stable so saved builds keep resolving.
@@ -31,50 +37,50 @@ function w(def) {
 export const WEAPONS = {
   mediumLaser: w({
     id: 'mediumLaser', name: 'Pulse Beam', category: 'energy',
-    damage: 12, range: { min: 0, opt: 180, max: 320 }, heat: 8,
-    ammoPerTon: null, slots: 1, cycleTime: 900,
+    damage: 12, range: { min: 0, opt: 180, max: 320 },
+    ammoMax: 8, ammoRegen: 1.4, slots: 1, cycleTime: 900,
     delivery: { hit: 'hitscan', pattern: 'single' },
   }),
   plasmaCannon: w({
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
-    damage: 18, range: { min: 0, opt: 160, max: 300 }, heat: 16,
-    ammoPerTon: null, slots: 2, cycleTime: 1600,
+    damage: 18, range: { min: 0, opt: 160, max: 300 },
+    ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 260, pattern: 'single', splash: 40 },
   }),
   autocannon: w({
     id: 'autocannon', name: 'Slug Driver', category: 'ballistic',
-    damage: 16, range: { min: 0, opt: 200, max: 360 }, heat: 3,
-    ammoPerTon: 20, slots: 2, cycleTime: 1100,
+    damage: 16, range: { min: 0, opt: 200, max: 360 },
+    ammoMax: 12, ammoRegen: 1.0, slots: 2, cycleTime: 1100,
     delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'single' },
   }),
   machineGun: w({
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
-    damage: 2, range: { min: 0, opt: 80, max: 140 }, heat: 0,
-    ammoPerTon: 200, slots: 1, cycleTime: 0,
+    damage: 2, range: { min: 0, opt: 80, max: 140 },
+    ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
     delivery: { hit: 'projectile', path: 'straight', velocity: 520, pattern: 'stream', fireRate: 12 },
   }),
   shotgun: w({
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
-    damage: 3, range: { min: 0, opt: 90, max: 160 }, heat: 2,
-    ammoPerTon: 30, slots: 2, cycleTime: 1200,
+    damage: 3, range: { min: 0, opt: 90, max: 160 },
+    ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
     delivery: { hit: 'projectile', path: 'straight', velocity: 480, pattern: 'spread', spreadCount: 8, spreadAngle: 24 },
   }),
   lrm: w({
     id: 'lrm', name: 'Seeker Rack', category: 'missile',
-    damage: 4, range: { min: 80, opt: 300, max: 500 }, heat: 5,
-    ammoPerTon: 16, slots: 2, cycleTime: 1400,
+    damage: 4, range: { min: 80, opt: 300, max: 500 },
+    ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1400,
     delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, velocity: 300 },
   }),
   srm: w({
     id: 'srm', name: 'Rocket Pod', category: 'missile',
-    damage: 5, range: { min: 0, opt: 140, max: 240 }, heat: 4,
-    ammoPerTon: 20, slots: 1, cycleTime: 1100,
+    damage: 5, range: { min: 0, opt: 140, max: 240 },
+    ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 4, velocity: 340, spreadAngle: 14 },
   }),
   hatchet: w({
     id: 'hatchet', name: 'Cleaver', category: 'melee',
-    damage: 22, range: { min: 0, opt: 0, max: 32 }, heat: 0,
-    ammoPerTon: null, slots: 2, cycleTime: 1300,
+    damage: 22, range: { min: 0, opt: 0, max: 32 },
+    ammoMax: null, ammoRegen: 0, slots: 2, cycleTime: 1300,
     delivery: { hit: 'contact', pattern: 'single' },
   }),
 };

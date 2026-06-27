@@ -6,5 +6,4 @@ export const RETURN_TO_GARAGE = 'return-to-garage';
 export const MECH_DAMAGED = 'mech-damaged';     // arena: a part took damage
 export const PART_DESTROYED = 'part-destroyed';
 export const MECH_DESTROYED = 'mech-destroyed';
-export const HEAT_CHANGED = 'heat-changed';
 export const LOADOUT_CHANGED = 'loadout-changed'; // garage: a mount/unmount happened
