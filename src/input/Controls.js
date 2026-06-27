@@ -33,6 +33,13 @@ export class Controls {
     this.scene = scene;
     this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,SPACE');
     scene.input.mouse?.disableContextMenu(); // so right-click fires instead of opening a menu
+
+    // Active input scheme. We latch onto whichever device was used last: once a pad is
+    // touched we stay in 'pad' mode (ignoring the mouse, holding the last aim when the
+    // right stick is centred) until the mouse/keyboard is used again, and vice-versa.
+    this.mode = 'kbm';
+    this.aimAngle = -Math.PI / 2;  // remembered turret aim, so a centred stick holds it
+    this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
   }
 
   pad() {
@@ -42,48 +49,77 @@ export class Controls {
   }
 
   // Read the current frame's intent. `move` is a world-space vector (magnitude <= 1);
-  // `fire` is keyed by location.
+  // `fire` is keyed by location; `mode` is the active input scheme ('kbm' | 'pad').
   read() {
     const k = this.keys;
     const p = this.scene.input.activePointer;
-
-    // World-space movement: x right, y down (matches screen/world axes). W = up = -y.
-    let mx = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
-    let my = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
-
-    // Aim: default to the mouse pointer (absolute world point).
-    let aim = { mode: 'pointer', x: p.worldX, y: p.worldY };
-
-    const fire = {
-      rightArm:    p.rightButtonDown(),
-      leftArm:     p.leftButtonDown(),
-      rightTorso:  k.E.isDown,
-      leftTorso:   k.Q.isDown,
-      centerTorso: k.SPACE.isDown,
-      head:        k.F.isDown,
-    };
-
-    // Gamepad augments/overrides when one is connected and active.
     const pad = this.pad();
-    if (pad) {
-      const ls = pad.leftStick, rs = pad.rightStick;
-      if (ls.length() > STICK_DEADZONE) { mx = ls.x; my = ls.y; }
-      if (rs.length() > STICK_DEADZONE) {
-        aim = { mode: 'stick', angle: Math.atan2(rs.y, rs.x) };
-      }
-      const btn = (i) => pad.buttons[i] && pad.buttons[i].pressed;
-      fire.rightArm    = fire.rightArm    || pad.R2 > TRIGGER_THRESHOLD;
-      fire.leftArm     = fire.leftArm     || pad.L2 > TRIGGER_THRESHOLD;
-      fire.rightTorso  = fire.rightTorso  || pad.R1;
-      fire.leftTorso   = fire.leftTorso   || pad.L1;
-      fire.centerTorso = fire.centerTorso || btn(PAD_L3);
-      fire.head        = fire.head        || btn(PAD_R3);
+    const ls = pad?.leftStick, rs = pad?.rightStick;
+
+    // ── Decide which scheme is active (last device used wins) ──
+    const padMove = !!(ls && ls.length() > STICK_DEADZONE);
+    const padAim = !!(rs && rs.length() > STICK_DEADZONE);
+    const padBtn = !!(pad && pad.buttons.some((b) => b && b.pressed));
+    const padActive = padMove || padAim || padBtn;
+
+    const mouseMoved = p.x !== this._px || p.y !== this._py;
+    this._px = p.x; this._py = p.y;
+    const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'SPACE']
+      .some((key) => k[key].isDown);
+    const kbmActive = mouseMoved || p.leftButtonDown() || p.rightButtonDown() || kbDown;
+
+    if (padActive) this.mode = 'pad';
+    else if (kbmActive) this.mode = 'kbm';
+    // else: no input this frame — stay in the current mode (don't fall back to mouse).
+
+    // Effective scheme: only use the pad path if a pad is actually present (a disconnect
+    // while latched in pad mode falls back to mouse/keyboard).
+    const padMode = this.mode === 'pad' && !!pad;
+
+    // ── Movement ──
+    let move;
+    if (padMode) {
+      move = padMove ? { x: ls.x, y: ls.y } : { x: 0, y: 0 };
+    } else {
+      const mx = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
+      const my = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
+      move = { x: mx, y: my };
+    }
+    const mag = Math.hypot(move.x, move.y);
+    if (mag > 1) { move.x /= mag; move.y /= mag; }
+
+    // ── Aim ── pad: right stick (hold last angle when centred); kbm: mouse pointer. ──
+    let aim;
+    if (padMode) {
+      if (padAim) this.aimAngle = Math.atan2(rs.y, rs.x);
+      aim = { mode: 'angle', angle: this.aimAngle };
+    } else {
+      aim = { mode: 'pointer', x: p.worldX, y: p.worldY };
     }
 
-    // Clamp the move vector to unit length so diagonals aren't faster.
-    const mag = Math.hypot(mx, my);
-    if (mag > 1) { mx /= mag; my /= mag; }
+    // ── Fire ── only from the active scheme's buttons. ──
+    let fire;
+    if (padMode) {
+      const btn = (i) => pad.buttons[i] && pad.buttons[i].pressed;
+      fire = {
+        rightArm:    pad.R2 > TRIGGER_THRESHOLD,
+        leftArm:     pad.L2 > TRIGGER_THRESHOLD,
+        rightTorso:  pad.R1,
+        leftTorso:   pad.L1,
+        centerTorso: btn(PAD_L3),
+        head:        btn(PAD_R3),
+      };
+    } else {
+      fire = {
+        rightArm:    p.rightButtonDown(),
+        leftArm:     p.leftButtonDown(),
+        rightTorso:  k.E.isDown,
+        leftTorso:   k.Q.isDown,
+        centerTorso: k.SPACE.isDown,
+        head:        k.F.isDown,
+      };
+    }
 
-    return { move: { x: mx, y: my }, aim, fire };
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm' };
   }
 }

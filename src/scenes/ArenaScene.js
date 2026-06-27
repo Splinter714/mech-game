@@ -113,10 +113,11 @@ export default class ArenaScene extends Phaser.Scene {
     }
 
     // ── Turret: aim freely, full 360° (no torso-twist arc), slewing toward the aim. ──
-    const aim = intent.aim.mode === 'stick'
-      ? intent.aim.angle
-      : Math.atan2(intent.aim.y - this.py, intent.aim.x - this.px);
+    const aim = intent.aim.mode === 'pointer'
+      ? Math.atan2(intent.aim.y - this.py, intent.aim.x - this.px)
+      : intent.aim.angle;
     this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * dt);
+    this.registry.set('inputMode', intent.mode);
 
     // ── Stompy stepped gait ──
     let bob = 0;

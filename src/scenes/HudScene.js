@@ -23,6 +23,7 @@ export default class HudScene extends Phaser.Scene {
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
     this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E: weapons  ·  pad: LT/RT/LB/RB+L3/R3  ·  G: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
+    this.modeText = this.add.text(this.W - 16, 40, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 0);
 
     // Weapons / ammo readout (top-left). One line per mounted weapon, updated in place.
     this.add.text(16, 62, 'WEAPONS', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -44,6 +45,8 @@ export default class HudScene extends Phaser.Scene {
     const mech = this.registry.get('playerMech');
     const dummy = this.registry.get('dummyMech');
     if (!mech) return;
+
+    this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
 
     // Weapons / ammo: each weapon's fire bind + name + magazine (∞ for melee). Offline
     // weapons (their location wrecked) show a marker.
