@@ -18,13 +18,14 @@ describe('garage persistence', () => {
     expect(all.mech1).toBeDefined();
     expect(all.mech1.chassisId).toBe('medium');
 
-    all.mech1.mount('head', 'mediumLaser');
+    all.mech1.unmount('leftTorso', 0);
+    all.mech1.mount('leftTorso', 'mediumLaser');
     all.mech1.applyDamage('leftLeg', 7);
     const woundedArmor = all.mech1.parts.leftLeg.armor;
     saveAllMechs(all);
 
     const reloaded = loadAllMechs();
-    expect(reloaded.mech1.mounts.head).toContain('mediumLaser');
+    expect(reloaded.mech1.mounts.leftTorso).toContain('mediumLaser');
     expect(reloaded.mech1.parts.leftLeg.armor).toBe(woundedArmor);
   });
 });

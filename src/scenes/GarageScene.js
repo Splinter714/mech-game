@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { buildMechTextures, reskinMech } from '../art/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
-import { MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
+import { MOUNT_LOCATIONS, LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -244,8 +244,9 @@ export default class GarageScene extends Phaser.Scene {
       empty.on('pointerout', () => empty.setFillStyle(UI.slotEmpty));
       empty.on('pointerdown', () => this.placeOn(loc));
       this.doll.add(empty);
-      this.doll.add(this.add.text(cellX + cellW / 2, cellY + 2 + (CELL_H - 4) / 2, '+', {
-        fontFamily: 'monospace', fontSize: '13px', color: UI.dim,
+      const tag = ABILITY_SLOTS.includes(loc) ? 'ability' : '+';
+      this.doll.add(this.add.text(cellX + cellW / 2, cellY + 2 + (CELL_H - 4) / 2, tag, {
+        fontFamily: 'monospace', fontSize: tag === '+' ? '13px' : '10px', color: UI.dim,
       }).setOrigin(0.5));
     }
   }

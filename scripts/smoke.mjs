@@ -32,15 +32,20 @@ try {
     const g = window.__game;
     const sc = g.scene.getScene('GarageScene');
     const mech = g.registry.get('allMechs').mech1;
-    sc.arm('mediumLaser');     // pick up the piece...
-    sc.placeOn('head');        // ...then click the body section (head has 1 free slot)
-    // The garage is a paper-doll of slot cards now (no rendered mech sprite); assert the
-    // doll rebuilt with the new mount instead of a sprite texture.
-    const headCard = sc.doll.list.length > 0;
+    // Mount/unmount works in a weapon slot...
+    sc.selected = 'rightArm';
+    mech.unmount('rightArm', 0);
+    sc.arm('autocannon');
+    sc.placeOn('rightArm');
+    const weaponMount = mech.mounts.rightArm.includes('autocannon');
+    // ...and the head is an ability slot now, so it rejects a weapon.
+    const headRejectsWeapon = !mech.mount('head', 'mediumLaser').ok;
+    const dollBuilt = sc.doll.list.length > 0;
     return {
       chassis: mech.chassisId,
-      headMounted: mech.mounts.head.includes('mediumLaser'),
-      dollBuilt: headCard,
+      weaponMount,
+      headRejectsWeapon,
+      dollBuilt,
       buildValid: mech.validate().ok,
     };
   });
@@ -110,7 +115,8 @@ try {
 
   if (errors.length) fail('runtime errors:\n' + errors.join('\n'));
   if (garage.chassis !== 'medium') fail(`expected medium chassis, got ${garage.chassis}`);
-  if (!garage.headMounted) fail('mounting a weapon into the head did not take');
+  if (!garage.weaponMount) fail('mounting a weapon into a weapon slot did not take');
+  if (!garage.headRejectsWeapon) fail('the head (ability slot) wrongly accepted a weapon');
   if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');
   if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');

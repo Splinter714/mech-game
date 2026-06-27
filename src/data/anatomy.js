@@ -33,6 +33,12 @@ export const LOCATION_INFO = {
 // The arms — the only locations a melee weapon can mount in.
 export const MELEE_LOCATIONS = ['leftArm', 'rightArm'];
 
+// Skill slots split by what they accept: the four arm/side-torso slots hold weapons
+// (bound to triggers/bumpers); the head and centre torso hold abilities (bound to the
+// stick clicks R3/L3) — a lock-on and an equipment ability, not guns.
+export const WEAPON_SLOTS = ['leftArm', 'rightArm', 'leftTorso', 'rightTorso'];
+export const ABILITY_SLOTS = ['centerTorso', 'head'];
+
 // Destroying one of these single locations is an instant kill.
 export const LETHAL_LOCATIONS = ['head', 'cockpit', 'centerTorso'];
 

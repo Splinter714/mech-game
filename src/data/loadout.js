@@ -8,7 +8,7 @@
 // empty.
 
 import { getItem, isWeapon } from './items.js';
-import { LOCATION_INFO, MELEE_LOCATIONS } from './anatomy.js';
+import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS, ABILITY_SLOTS } from './anatomy.js';
 
 // Each mountable location is a single skill slot.
 export const SLOTS_PER_LOCATION = 1;
@@ -39,8 +39,11 @@ export function canMount(chassis, mounts, locationId, itemId) {
   if (usedSlots(mounts, locationId) >= SLOTS_PER_LOCATION) {
     return { ok: false, reason: 'slot occupied' };
   }
-  if (isMelee(itemId) && !MELEE_LOCATIONS.includes(locationId)) {
-    return { ok: false, reason: 'melee only in arms' };
+  if (isWeapon(itemId)) {
+    if (!WEAPON_SLOTS.includes(locationId)) return { ok: false, reason: 'weapons go in arms/torsos' };
+    if (isMelee(itemId) && !MELEE_LOCATIONS.includes(locationId)) return { ok: false, reason: 'melee only in arms' };
+  } else if (!ABILITY_SLOTS.includes(locationId)) {
+    return { ok: false, reason: 'abilities go in head/centre' };
   }
   return { ok: true };
 }
@@ -56,6 +59,8 @@ export function validateLoadout(chassis, mounts) {
     slotUsage[loc] = { used, cap: SLOTS_PER_LOCATION };
     if (used > SLOTS_PER_LOCATION) errors.push(`${loc} overfilled (${used})`);
     for (const id of mounts[loc] ?? []) {
+      if (isWeapon(id) && !WEAPON_SLOTS.includes(loc)) errors.push(`${id} (weapon) must be in an arm/torso`);
+      if (!isWeapon(id) && !ABILITY_SLOTS.includes(loc)) errors.push(`${id} (ability) must be in head/centre`);
       if (isMelee(id) && !MELEE_LOCATIONS.includes(loc)) errors.push(`${id} (melee) must be in an arm`);
     }
   }
