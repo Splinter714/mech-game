@@ -48,12 +48,17 @@ export class AudioEngine {
     this.master.connect(comp).connect(ctx.destination);
     this.sfx = ctx.createGain(); this.sfx.gain.value = 0.85; this.sfx.connect(this.master);
     this.music = ctx.createGain(); this.music.gain.value = 0.30; this.music.connect(this.master);
-    // Distorted-guitar chain for the metal track: voices sum into `guitar`, get crunched
-    // by a waveshaper, tone-shaped, then mixed into the music bus.
-    this.guitar = ctx.createGain(); this.guitar.gain.value = 0.42;
-    const shaper = ctx.createWaveShaper(); shaper.curve = distortionCurve(58); shaper.oversample = '2x';
-    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 3000;
-    this.guitar.connect(shaper).connect(tone).connect(this.music);
+    // Distorted-guitar chain for the metal track, built like a real distortion pedal +
+    // cab so the sawtooth voices actually SATURATE instead of staying clean/bloopy:
+    //   voices → guitar bus → preGain (slam it hot) → waveshaper (heavy curve, 4× oversample)
+    //          → highpass (kill sub mud) → lowpass (speaker-cab roll-off) → postGain (tame).
+    this.guitar = ctx.createGain(); this.guitar.gain.value = 1.0;
+    const pre = ctx.createGain(); pre.gain.value = 11;          // drive into the curve's clip
+    const shaper = ctx.createWaveShaper(); shaper.curve = distortionCurve(220); shaper.oversample = '4x';
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
+    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 3300; cab.Q.value = 0.7;
+    const post = ctx.createGain(); post.gain.value = 0.14;      // make-up: rein the crunch back in
+    this.guitar.connect(pre).connect(shaper).connect(hp).connect(cab).connect(post).connect(this.music);
   }
 
   setMuted(m) {
@@ -268,9 +273,12 @@ export class AudioEngine {
     const local = step % 16;
     const gallop = local % 4 !== 1;                  // hits on 0,2,3 of each beat (gallop)
 
-    if (gallop) this._gtr(riff[step], at, 0.075, 0.4, true);        // palm-muted chug
-    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.5, 0.08, false); // scream
-    if (step >= 28) this._gtr(riff[step] * 2, at, 0.085, 0.13, false);              // climb tremolo
+    if (gallop) {
+      this._gtr(riff[step], at, 0.11, 0.5, true);                   // palm-muted chug
+      this.noise(this.music, { dur: 0.02, gain: 0.045, type: 'bandpass', freq: 2400, q: 0.7 }, at); // pick attack "chk"
+    }
+    if (step === 0 || step === 16) this._gtr(riff[step] * 4, at, 0.55, 0.06, false); // scream
+    if (step >= 28) this._gtr(riff[step] * 2, at, 0.1, 0.1, false);                  // climb tremolo
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
     if (local === 4 || local === 12) this._snareMetal(at);          // backbeat
@@ -299,18 +307,21 @@ export class AudioEngine {
     if (step % 2 === 0) this._hat(at, step % 4 === 2 ? 0.05 : 0.03);
   }
 
-  // A distorted power chord (root + fifth + octave, slightly detuned for width) into the
-  // guitar/waveshaper chain. `chord:false` plays a single note (lead/tremolo).
-  _gtr(freq, at, dur, gain = 0.4, chord = true) {
+  // A distorted power chord (root + fifth + octave, detuned for width, with a square voice
+  // for extra grit) into the guitar/waveshaper chain. The envelope is a fast pick attack +
+  // a short sustained body + quick release, so it reads as a palm-muted CHUG, not a blip.
+  // `chord:false` plays a single note (lead/tremolo).
+  _gtr(freq, at, dur, gain = 0.5, chord = true) {
     const ctx = this.ctx;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(gain, at + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    g.gain.exponentialRampToValueAtTime(gain, at + 0.004);     // pick attack
+    g.gain.setValueAtTime(gain, at + dur * 0.55);              // hold the chug body
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);     // release
     g.connect(this.guitar);
-    const voice = (f) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
-    voice(freq * 0.997); voice(freq * 1.003);        // detuned root pair
-    if (chord) { voice(freq * 1.5); voice(freq * 2); } // fifth + octave
+    const voice = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
+    voice(freq * 0.992); voice(freq * 1.008);        // detuned root pair (thickness)
+    if (chord) { voice(freq * 1.5); voice(freq * 2); voice(freq, 'square'); } // 5th, 8ve, + square grit
   }
 
   _kick(at) {
