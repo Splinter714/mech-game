@@ -95,11 +95,10 @@ export class Mech {
   isPartDestroyed(locationId) { return partDestroyed(this.parts[locationId]); }
   isDestroyed() { return mechDestroyed(this.parts); }
 
-  // Mobility multiplier from the legs: 1 with both, 0.5 with one, 0 with none.
+  // Mobility multiplier. Legs aren't targetable any more, so mobility is always full;
+  // kept as a hook in case a future effect (immobilize, EMP) wants to scale it.
   legFactor() {
-    const l = this.isPartDestroyed('leftLeg') ? 0 : 0.5;
-    const r = this.isPartDestroyed('rightLeg') ? 0 : 0.5;
-    return l + r;
+    return 1;
   }
 
   // Fraction of a part's total health remaining (armor + structure), 0..1 — used for

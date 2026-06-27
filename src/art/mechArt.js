@@ -299,8 +299,7 @@ function drawHull(sg, mech, frame, T) {
   plate(sg, T, 0, a.bodyLen * 0.18, a.bodyWid * 0.5, a.bodyLen * 0.18, { fill: T.deep, seam: false });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
-    const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
+    const p = lay[loc];   // legs are animation-only now — never destroyed
     const fy = p.y + dir * shift;
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
     ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core

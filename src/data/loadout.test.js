@@ -40,9 +40,8 @@ describe('canMount constraints', () => {
     expect(canMount(light, {}, 'centerTorso', 'autocannon').ok).toBe(false);
   });
 
-  it('blocks mounting into a non-skill location (cockpit, legs)', () => {
+  it('blocks mounting into a non-skill location (the cockpit)', () => {
     expect(canMount(light, {}, 'cockpit', 'mediumLaser').ok).toBe(false);
-    expect(canMount(light, {}, 'leftLeg', 'mediumLaser').ok).toBe(false);
   });
 
   it('allows a normal mount into an empty arm', () => {

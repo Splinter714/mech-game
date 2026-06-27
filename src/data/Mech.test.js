@@ -43,16 +43,6 @@ describe('Mech kill rule', () => {
     expect(m.isDestroyed()).toBe(true);
   });
 
-  it('one leg is survivable, both legs is lethal', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    overkill(m, 'leftLeg');
-    expect(m.isDestroyed()).toBe(false);
-    expect(m.legFactor()).toBe(0.5);
-    overkill(m, 'rightLeg');
-    expect(m.isDestroyed()).toBe(true);
-    expect(m.legFactor()).toBe(0);
-  });
-
   it('losing both arms is NOT lethal', () => {
     const m = new Mech({ chassisId: 'medium' });
     overkill(m, 'leftArm');

@@ -16,7 +16,6 @@ const FACTORS = {
   head: 0.4, cockpit: 0.18, centerTorso: 1,
   leftTorso: 0.75, rightTorso: 0.75,
   leftArm: 0.6, rightArm: 0.6,
-  leftLeg: 0.85, rightLeg: 0.85,
 };
 
 // Expand a chassis config into a full definition with per-location slots/armor/
