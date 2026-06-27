@@ -32,6 +32,19 @@ function hardClipCurve(drive) {
   return curve;
 }
 
+// A foldback (wave-folding) transfer curve — instead of clipping flat, the signal FOLDS
+// back on itself (`amount` = how many folds), generating wild, slightly inharmonic upper
+// overtones: the gnarly metallic harshness on top of the clip.
+function foldbackCurve(amount) {
+  const n = 1024, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = (((i * 2) / n - 1) * amount + 1) % 4;     // triangle-fold into [-1,1]
+    const u = (t + 4) % 4;
+    curve[i] = (u < 2 ? u : 4 - u) - 1;
+  }
+  return curve;
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -68,10 +81,11 @@ export class AudioEngine {
     const pre = ctx.createGain(); pre.gain.value = 24;          // slam it WAY into the clip
     const sat = ctx.createWaveShaper(); sat.curve = distortionCurve(400); sat.oversample = '4x';   // soft saturate
     const fizz = ctx.createWaveShaper(); fizz.curve = hardClipCurve(9); fizz.oversample = '4x';    // hard-clip = harsh fizz
+    const fold = ctx.createWaveShaper(); fold.curve = foldbackCurve(2.1); fold.oversample = '4x';  // wave-fold = gnarly metallic overtones
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 75; // keep the low gallop body (distorted = fizzy, not clean)
-    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 7800; cab.Q.value = 1.1; // let the buzz through
-    const post = ctx.createGain(); post.gain.value = 0.1;       // make-up: rein the (now much hotter) crunch in
-    this.guitar.connect(pre).connect(sat).connect(fizz).connect(hp).connect(cab).connect(post).connect(this.music);
+    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 8200; cab.Q.value = 1.2; // let the buzz through
+    const post = ctx.createGain(); post.gain.value = 0.12;      // make-up: keep the harsh guitar present
+    this.guitar.connect(pre).connect(sat).connect(fizz).connect(fold).connect(hp).connect(cab).connect(post).connect(this.music);
   }
 
   setMuted(m) {
@@ -334,7 +348,11 @@ export class AudioEngine {
     g.connect(this.guitar);
     const voice = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
     voice(freq * 0.992); voice(freq * 1.008);        // detuned root pair (thickness)
-    if (chord) { voice(freq * 1.5); voice(freq * 2); voice(freq * 3); voice(freq * 4); voice(freq, 'square'); } // 5th, 8ve, +bite, + square grit
+    if (chord) {
+      voice(freq * 1.497); voice(freq * 1.506);      // the FIFTH, detuned into a beating/clashing pair (weird overtone)
+      voice(freq * 2); voice(freq * 3); voice(freq * 4.5); // octave, 8ve+5th, and a high screaming 5th up top
+      voice(freq, 'square'); voice(freq * 1.5, 'square'); // square root + square fifth for extra grit
+    }
   }
 
   _kick(at) {
