@@ -64,17 +64,17 @@ export class AudioEngine {
     // params object you can paste back here.
     this.params = {
       // master + drums
-      master: 0.9, music: 0.30, tempo: 184,
-      drumLevel: 1.0, kickLevel: 1, snareLevel: 1, hatLevel: 1,
+      master: 1, music: 0.35, tempo: 120,
+      drumLevel: 1.5, kickLevel: 1.4, snareLevel: 1.45, hatLevel: 1.7,
       // rhythm-guitar TONE (the distortion pedal + cab)
-      guitarLevel: 0.12, guitarDrive: 24, guitarSat: 400, guitarClip: 9, guitarFold: 2.1,
-      guitarTone: 8200, guitarLowCut: 75,
+      guitarLevel: 0.17, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
+      guitarTone: 9000, guitarLowCut: 400,
       // rhythm-guitar VOICING (which overtones make up each power chord)
-      guitarFifth: 1, guitarFifthDetune: 0.009, guitarOctave: 1, guitarHigh: 1, guitarSquare: 1,
-      chugLength: 0.065, chugLevel: 0.55, pickLevel: 0.05, leadLevel: 1,
+      guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 0.95, guitarHigh: 0.55, guitarSquare: 0,
+      chugLength: 0.1, chugLevel: 1, pickLevel: 0.01, leadLevel: 0.05,
       // bass / low foundation (+ its own overtones)
-      bassLevel: 0.5, bassDrive: 3, bassGrit: 28, bassTone: 1300,
-      bassSub: 0.9, bassFifth: 0, bassOctave: 0,
+      bassLevel: 0.45, bassDrive: 12, bassGrit: 200, bassTone: 3000,
+      bassSub: 0.45, bassFifth: 0, bassOctave: 1.5,
     };
     this._fx = {};             // live node references the panel tweaks
   }
