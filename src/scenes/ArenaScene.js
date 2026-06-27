@@ -159,6 +159,21 @@ export default class ArenaScene extends Phaser.Scene {
     return Math.max(120, weapon.cycleTime);
   }
 
+  // World position of a weapon's muzzle: its body-location offset (front edge of the
+  // part, in design coords where -y is forward) rotated by the turret facing. So a
+  // left-arm shot leaves the left arm, a right-torso shot the right torso, etc.
+  _muzzle(loc) {
+    const disp = ARENA_MECH_SCALE * ART_SCALE;
+    const part = mechLayout(this.mech)[loc];
+    const f = (-part.y + part.h / 2) * disp;  // forward, to the part's front edge
+    const r = part.x * disp;                  // right of centre
+    const a = this.turretAngle;
+    return {
+      x: this.px + f * Math.cos(a) - r * Math.sin(a),
+      y: this.py + f * Math.sin(a) + r * Math.cos(a),
+    };
+  }
+
   // Fire one weapon along the current turret facing. Draws a category-coloured tracer;
   // if the firing ray passes through the dummy, its nearest part takes this weapon's
   // damage and the dummy is re-skinned so a destroyed part becomes a stump.
@@ -167,7 +182,8 @@ export default class ArenaScene extends Phaser.Scene {
     this.mech.consumeAmmo(w.location, w.index, 1);
 
     const dirX = Math.cos(this.turretAngle), dirY = Math.sin(this.turretAngle);
-    const muzzleX = this.px + dirX * 18, muzzleY = this.py + dirY * 18;
+    const m = this._muzzle(w.location);
+    const muzzleX = m.x, muzzleY = m.y;
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
 
     // Project the dummy onto the firing ray: forward distance `t`, perpendicular miss.
