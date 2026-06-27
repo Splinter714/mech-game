@@ -20,6 +20,18 @@ function distortionCurve(k) {
   return curve;
 }
 
+// A hard-clip transfer curve — squares the wave off flat (`drive` = how hard), which
+// generates the high-order harmonics that read as harsh fizz/buzz. Cascaded after the
+// soft saturation for a much more aggressive metal tone.
+function hardClipCurve(drive) {
+  const n = 1024, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    curve[i] = Math.max(-1, Math.min(1, x * drive));
+  }
+  return curve;
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -53,12 +65,13 @@ export class AudioEngine {
     //   voices → guitar bus → preGain (slam it hot) → waveshaper (heavy curve, 4× oversample)
     //          → highpass (kill sub mud) → lowpass (speaker-cab roll-off) → postGain (tame).
     this.guitar = ctx.createGain(); this.guitar.gain.value = 1.0;
-    const pre = ctx.createGain(); pre.gain.value = 22;          // slam it WAY into the clip (high gain)
-    const shaper = ctx.createWaveShaper(); shaper.curve = distortionCurve(400); shaper.oversample = '4x';
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 110;  // tighten low end
-    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 4400; cab.Q.value = 0.9; // let the buzz cut
-    const post = ctx.createGain(); post.gain.value = 0.12;      // make-up: rein the crunch back in
-    this.guitar.connect(pre).connect(shaper).connect(hp).connect(cab).connect(post).connect(this.music);
+    const pre = ctx.createGain(); pre.gain.value = 24;          // slam it WAY into the clip
+    const sat = ctx.createWaveShaper(); sat.curve = distortionCurve(400); sat.oversample = '4x';   // soft saturate
+    const fizz = ctx.createWaveShaper(); fizz.curve = hardClipCurve(6); fizz.oversample = '4x';    // hard-clip = harsh fizz
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 180; // cut the bass-heavy lows
+    const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 7800; cab.Q.value = 1.1; // let the buzz through
+    const post = ctx.createGain(); post.gain.value = 0.085;     // make-up: rein the (now much hotter) crunch in
+    this.guitar.connect(pre).connect(sat).connect(fizz).connect(hp).connect(cab).connect(post).connect(this.music);
   }
 
   setMuted(m) {
@@ -321,7 +334,7 @@ export class AudioEngine {
     g.connect(this.guitar);
     const voice = (f, type = 'sawtooth') => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
     voice(freq * 0.992); voice(freq * 1.008);        // detuned root pair (thickness)
-    if (chord) { voice(freq * 1.5); voice(freq * 2); voice(freq, 'square'); } // 5th, 8ve, + square grit
+    if (chord) { voice(freq * 1.5); voice(freq * 2); voice(freq * 3); voice(freq, 'square'); } // 5th, 8ve, 8ve+5th bite, + square grit
   }
 
   _kick(at) {
