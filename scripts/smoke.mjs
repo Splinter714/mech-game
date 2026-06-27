@@ -41,7 +41,7 @@ try {
       chassis: mech.chassisId,
       headMounted: mech.mounts.head.includes('mediumLaser'),
       dollBuilt: headCard,
-      tonnageOk: mech.validate().ok,
+      buildValid: mech.validate().ok,
     };
   });
   await page.screenshot({ path: '/tmp/mech-garage.png' });
@@ -92,7 +92,7 @@ try {
   if (garage.chassis !== 'medium') fail(`expected medium chassis, got ${garage.chassis}`);
   if (!garage.headMounted) fail('mounting a weapon into the head did not take');
   if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');
-  if (!garage.tonnageOk) fail('default build is over budget');
+  if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');

@@ -242,8 +242,10 @@ export default class GarageScene extends Phaser.Scene {
     this.footer.add(this.txt(34, y + 6, `${this.mech.name}  ·  ${this.mech.chassis.name} (${this.mech.weightClass})`, {
       fontSize: '13px', color: UI.accent,
     }));
-    this.footer.add(this.txt(34, y + 24, `tonnage ${this.mech.totalTonnage()}/${this.mech.chassis.maxTonnage}t`, {
-      fontSize: '12px', color: v.usedTonnage > this.mech.chassis.maxTonnage ? UI.bad : UI.dim,
+    let used = 0, cap = 0;
+    for (const loc of MOUNT_LOCATIONS) { used += this.mech.usedSlots(loc); cap += this.mech.slotCapacity(loc); }
+    this.footer.add(this.txt(34, y + 24, `slots ${used}/${cap} used`, {
+      fontSize: '12px', color: UI.dim,
     }));
     this.footer.add(this.txt(Math.round(this.W * 0.66) - 36, y + 14, v.ok ? '✓ valid build' : `✗ ${v.errors[0]}`, {
       color: v.ok ? UI.good : UI.bad,

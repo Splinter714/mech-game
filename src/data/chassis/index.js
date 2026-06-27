@@ -35,7 +35,6 @@ export function makeChassis(cfg) {
     id: cfg.id,
     name: cfg.name,
     weightClass: cfg.weightClass,
-    maxTonnage: cfg.maxTonnage,
     art: cfg.art,
     locations,
     movement: {

@@ -4,7 +4,6 @@ export const MEDIUM_CONFIG = {
   id: 'medium',
   name: 'Trooper',
   weightClass: 'medium',
-  maxTonnage: 55,
   baseArmor: 64,
   baseStructure: 36,
   slots: { head: 1, centerTorso: 3, leftTorso: 3, rightTorso: 3, leftArm: 3, rightArm: 3, leftLeg: 2, rightLeg: 2 },
