@@ -37,7 +37,7 @@ const THEMES = {
     rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
   },
   enemy: {
-    rounded: true,
+    rounded: true, bubbly: true,
     outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
     lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
@@ -93,6 +93,16 @@ function chamfer(cx, cy, w, h, c) {
 // player theme, rounded for the enemy theme.
 function plate(sg, T, cx, cy, w, h, opts = {}) {
   const fill = opts.fill ?? T.face;
+  // Bubbly: each part is a glossy blob — an ellipse with a soft bottom shadow and a
+  // bright highlight spot up top so it reads like an inflated/ceramic pod.
+  if (T.bubbly) {
+    ellipseC(sg, cx, cy, w + 1.4, h + 1.4, T.outline);
+    ellipseC(sg, cx, cy, w, h, fill);
+    ellipseC(sg, cx, cy + h * 0.24, w * 0.8, h * 0.4, T.ao, 0.35);
+    ellipseC(sg, cx - w * 0.13, cy - h * 0.2, w * 0.42, h * 0.32, opts.rim ?? T.rim, 0.9);
+    ellipseC(sg, cx - w * 0.16, cy - h * 0.26, w * 0.18, h * 0.14, T.rimHi);
+    return;
+  }
   let inset;
   if (T.rounded) {
     const r = Math.min(w, h) * 0.34;
@@ -127,7 +137,10 @@ function glowBar(sg, cx, cy, w, h, n) {
 // A destroyed location: a charred lump with faint embers.
 function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
-  if (T.rounded) {
+  if (T.bubbly) {
+    ellipseC(sg, cx, cy, w * 0.62, h * 0.5, T.outline);
+    ellipseC(sg, cx, cy, w * 0.56, h * 0.44, T.char);
+  } else if (T.rounded) {
     roundC(sg, cx, cy, w * 0.62, h * 0.5, T.outline, m * 0.18);
     roundC(sg, cx, cy, w * 0.56, h * 0.44, T.char, m * 0.16);
   } else {
@@ -162,13 +175,16 @@ export function mechLayout(mech) {
 function drawWeapon(sg, T, catId, bx, frontY, s) {
   const n = neonFor(catId);
   const cap = frontY + CENTER - 2;            // keep the muzzle inside the canvas
-  const barrel = (cx, cy, w, h) => T.rounded
+  const barrel = (cx, cy, w, h) => T.bubbly
+    ? ellipseC(sg, cx, cy, w * 1.5, h, T.faceDk)
+    : T.rounded
     ? roundC(sg, cx, cy, w, h, T.faceDk, Math.min(w, h) * 0.45)
     : rectC(sg, cx, cy, w, h, T.faceDk);
 
   if (catId === 'missile') {
     const w = 5.4 * s, h = Math.min(6.5 * s, cap), cy = frontY - h / 2;
-    if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.6);
+    if (T.bubbly) ellipseC(sg, bx, cy, w * 1.1, h, T.faceDk);
+    else if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.6);
     else { poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), T.outline); poly(sg, chamfer(bx, cy, w, h, 1), T.faceDk); }
     for (const dx of [-1, 1]) for (const dy of [0, 1]) {           // 2×2 launch cells
       const cxx = bx + dx * w * 0.22, cyy = frontY - h * (0.28 + dy * 0.32);
@@ -216,7 +232,7 @@ function drawTurret(sg, mech, T) {
     const p = lay[loc];
     if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
     plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
-    rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
+    if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   }
 
   // Arms (the weapon mounts) — chunkier plates.
@@ -232,9 +248,11 @@ function drawTurret(sg, mech, T) {
     stump(sg, T, ct.x, ct.y, ct.w, ct.h);
   } else {
     plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
-    if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * 0.2);
+    if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.6, ct.h * 0.78, T.faceMid);
+    else if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * 0.2);
     else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
-    rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);                          // reactor housing
+    if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.4, ct.h * 0.7, T.housing);            // reactor housing
+    else rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);
     glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                           // reactor spine
     glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
     glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
@@ -287,14 +305,22 @@ function drawHull(sg, mech, frame, T) {
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
     ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
     plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.rim, seam: false });
-    rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);            // toe cap (forward)
-    rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, T.joint);               // ankle actuator
-    rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, T.grime, 0.7);
+    if (!T.bubbly) {
+      rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);          // toe cap (forward)
+      rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, T.joint);             // ankle actuator
+      rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, T.grime, 0.7);
+    }
   }
 
   // Hip skirts over the inner-top of each leg (read as "legs tuck under the body").
   for (const dx of [-1, 1]) {
     const sx = dx * a.bodyWid * 0.24;
+    if (T.bubbly) {
+      ellipseC(sg, sx, a.bodyLen * 0.18, a.bodyWid * 0.34, a.bodyLen * 0.18, T.outline);
+      ellipseC(sg, sx, a.bodyLen * 0.18, a.bodyWid * 0.3, a.bodyLen * 0.15, T.faceMid);
+      ellipseC(sg, sx - a.bodyWid * 0.05, a.bodyLen * 0.13, a.bodyWid * 0.12, a.bodyLen * 0.05, T.rim, 0.9);
+      continue;
+    }
     poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.1], [sx + a.bodyWid * 0.16, a.bodyLen * 0.1],
               [sx + a.bodyWid * 0.13, a.bodyLen * 0.26], [sx - a.bodyWid * 0.19, a.bodyLen * 0.26]], T.outline);
     poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.1], [sx + a.bodyWid * 0.15, a.bodyLen * 0.1],
