@@ -46,6 +46,18 @@ function foldbackCurve(amount) {
   return curve;
 }
 
+// A transparent soft-clip limiter curve for the master bus: linear below `th`, then a soft
+// knee that rounds peaks toward (but never past) ~0.93 — so a hot mix stays loud without
+// hard digital clipping (values never exceed 1.0).
+function softClipCurve() {
+  const n = 2048, c = new Float32Array(n), th = 0.7;
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1, s = Math.sign(x), a = Math.abs(x);
+    c[i] = a < th ? x : s * (th + (1 - th) * Math.tanh((a - th) / (1 - th)));
+  }
+  return c;
+}
+
 // ── Lead melody, in scale-degree notation over the track's key (E phrygian) ──────────────
 // Degrees: 1=E 2=F 3=G 4=A 5=B 6=C 7=D 8=E(8ve up), 9..= keep climbing. The lead line is a
 // list of [degree, startStep, durationSteps] over the 32-sixteenth-step loop (2 bars). Edit
@@ -97,25 +109,25 @@ export class AudioEngine {
     this.params = {
       // master + drums
       master: 1, music: 0.6, tempo: 120,
-      drumLevel: 1.09, kickLevel: 1, snareLevel: 2, hatLevel: 2,
+      drumLevel: 2, kickLevel: 2, snareLevel: 2, hatLevel: 2,
       // per-drum SOUND shaping
       kickPitch: 120, kickDecay: 0.4, kickClick: 0.09,
       snareTone: 1000, snareSnap: 1200, snareDecay: 0.25,
       hatFreq: 7500, hatDecay: 0.4,
       crashLevel: 1.5, crashBright: 4000, crashDecay: 1,
       // rhythm-guitar TONE (the distortion pedal + cab)
-      guitarLevel: 0.17, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
+      guitarLevel: 0.83, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
       guitarTone: 9000, guitarLowCut: 400,
       // rhythm-guitar VOICING (which overtones make up each power chord)
       guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 0.95, guitarHigh: 0.55, guitarSquare: 0,
-      chugLength: 0.1, chugLevel: 1, pickLevel: 0.01,
+      chugLength: 0.1, chugLevel: 0.94, pickLevel: 0.01,
       // LEAD 1 + LEAD 2 — two melodic leads, each with a full guitar-style chain + overtones
-      leadLevel: 0.15, leadDrive: 8, leadSat: 150, leadClip: 1, leadFold: 0, leadLowCut: 80, leadTone: 3500,
-      leadFifth: 0, leadOct: 0, leadPitch: 1,
-      lead2Level: 0.15, lead2Drive: 6, lead2Sat: 120, lead2Clip: 1, lead2Fold: 0, lead2LowCut: 80, lead2Tone: 4500,
+      leadLevel: 0, leadDrive: 40, leadSat: 600, leadClip: 3, leadFold: 0, leadLowCut: 400, leadTone: 5000,
+      leadFifth: 0, leadOct: 0, leadPitch: 0.5,
+      lead2Level: 0.38, lead2Drive: 40, lead2Sat: 600, lead2Clip: 8, lead2Fold: 0, lead2LowCut: 400, lead2Tone: 4200,
       lead2Fifth: 0, lead2Oct: 0, lead2Pitch: 1,
       // bass / low foundation (+ its own overtones)
-      bassLevel: 0.45, bassDrive: 12, bassGrit: 200, bassTone: 3000,
+      bassLevel: 1.02, bassDrive: 12, bassGrit: 200, bassTone: 3000,
       bassSub: 0.45, bassFifth: 0, bassOctave: 1.5,
     };
     this._fx = {};             // live node references the panel tweaks
@@ -126,11 +138,13 @@ export class AudioEngine {
   init(ctx) {
     if (this.ctx || !ctx) return;
     this.ctx = ctx;
-    this.master = ctx.createGain(); this.master.gain.value = 0.9;
-    // A gentle limiter so layered explosions/volleys don't clip.
+    this.master = ctx.createGain(); this.master.gain.value = this.params.master;
+    // Master bus: a compressor for broadband leveling, then a soft-clip limiter as the
+    // brick wall so even a hot mix can't hard-clip the output.
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -10; comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
-    this.master.connect(comp).connect(ctx.destination);
+    const limiter = ctx.createWaveShaper(); limiter.curve = softClipCurve(); limiter.oversample = 'none';
+    this.master.connect(comp).connect(limiter).connect(ctx.destination);
     const P = this.params;
     this.sfx = ctx.createGain(); this.sfx.gain.value = 0.85; this.sfx.connect(this.master);
     this.music = ctx.createGain(); this.music.gain.value = P.music; this.music.connect(this.master);
