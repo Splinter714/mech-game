@@ -63,6 +63,38 @@ function tree(sg, cx, cy, r) {
 
 const C = { cx: HEX_TEX_W / 2, cy: HEX_TEX_H / 2 };
 
+// Is (dx,dy) — offset from the hex centre — inside a pointy-top hexagon of circumradius s?
+function inHex(dx, dy, s) {
+  const hw = s * SQRT3 / 2;
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  return ax <= hw && ay <= s * (1 - ax / (2 * hw));
+}
+
+// A full canopy: trees on a jittered triangular lattice covering the whole hex, kept to
+// those whose centre sits inside the (slightly inset) hexagon, then drawn back-to-front
+// so the grove reads as a continuous tree-line out to the tile edges. Deterministic jitter
+// keeps the texture stable build-to-build.
+function buildForestTrees() {
+  const s = HEX_SIZE * 0.98;       // place out to ~the tile edge
+  const step = 13;                 // lattice spacing (~tree spacing)
+  let seed = 1337;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const trees = [];
+  for (let row = -4; row <= 4; row++) {
+    const oy = row * step * 0.86;
+    const xoff = (row & 1) ? step / 2 : 0;
+    for (let col = -4; col <= 4; col++) {
+      const dx = col * step + xoff + (rnd() - 0.5) * 5;
+      const dy = oy + (rnd() - 0.5) * 5;
+      const r = 5.5 + rnd() * 3;
+      if (inHex(dx, dy, s - r * 0.5)) trees.push([dx, dy, r]);
+    }
+  }
+  trees.sort((a, b) => a[1] - b[1]); // back (top) to front (bottom)
+  return trees;
+}
+const FOREST_TREES = buildForestTrees();
+
 // Per-terrain detail painted over the base hex.
 const DETAIL = {
   hex_grass: (sg) => {
@@ -82,16 +114,11 @@ const DETAIL = {
     sg.fillStyle(0x4a86b0, 0.4); sg.fillEllipse(C.cx + 1, C.cy + 1, 11, 2);
   },
   hex_forest: (sg) => {
-    // Shadowy forest floor showing between the canopies.
-    sg.fillStyle(0x14290f, 0.6); sg.fillEllipse(C.cx, C.cy, 26, 24);
-    // Trees painted back-to-front (top rows first) so nearer canopies overlap farther ones.
-    tree(sg, C.cx + 5, C.cy - 10, 5.5);
-    tree(sg, C.cx - 8, C.cy - 6, 6.5);
-    tree(sg, C.cx + 9, C.cy - 2, 6);
-    tree(sg, C.cx - 1, C.cy + 1, 7.5);
-    tree(sg, C.cx - 9, C.cy + 7, 5.5);
-    tree(sg, C.cx + 6, C.cy + 8, 6.5);
-    tree(sg, C.cx + 1, C.cy + 11, 4.5);
+    // Shadowy forest floor under the canopy, filling the whole hex.
+    sg.fillStyle(0x14290f, 0.7);
+    sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
+    // A grove of trees covering the entire tile, drawn back-to-front.
+    for (const [dx, dy, r] of FOREST_TREES) tree(sg, C.cx + dx, C.cy + dy, r);
   },
   hex_building: (sg) => {
     sg.fillStyle(0x2a2e34, 1); sg.fillRect(C.cx - 15, C.cy - 13, 30, 26);    // base/outline
