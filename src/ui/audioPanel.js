@@ -87,10 +87,19 @@ export function mountAudioPanel() {
   if (typeof document === 'undefined') return;
   let el = null;
 
+  // The app sets `* { touch-action: none }` (to stop the game from scrolling/zooming on
+  // touch), which also kills scrolling INSIDE the panel. Re-enable vertical pan + momentum
+  // scrolling for the panel and its contents so it can scroll when it spills off-screen.
+  const style = document.createElement('style');
+  style.textContent = '.mtuner,.mtuner *{touch-action:pan-y}.mtuner{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}';
+  document.head.appendChild(style);
+
   const open = () => {
     el = document.createElement('div');
+    el.className = 'mtuner';
     el.style.cssText = [
-      'position:fixed', 'top:10px', 'right:10px', 'width:336px', 'max-height:94vh', 'overflow:auto',
+      'position:fixed', 'top:8px', 'right:8px', 'width:336px', 'max-width:calc(100vw - 16px)',
+      'max-height:92vh', 'max-height:92dvh', 'overflow-y:auto',
       'background:rgba(13,16,20,0.94)', 'border:1px solid #2a333f', 'border-radius:8px', 'padding:10px 12px',
       'font-family:monospace', 'font-size:11px', 'color:#c8d2dd', 'z-index:99999', 'box-shadow:0 6px 24px rgba(0,0,0,0.5)',
     ].join(';');
