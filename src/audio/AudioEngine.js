@@ -109,9 +109,11 @@ export class AudioEngine {
       // rhythm-guitar VOICING (which overtones make up each power chord)
       guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 0.95, guitarHigh: 0.55, guitarSquare: 0,
       chugLength: 0.1, chugLevel: 1, pickLevel: 0.01,
-      // LEAD 1 + LEAD 2 — two separate melodic lead instruments (own chains)
-      leadLevel: 0.15, leadDrive: 8, leadTone: 3500, leadOctave: 1,
-      lead2Level: 0.15, lead2Drive: 6, lead2Tone: 4500, lead2Octave: 1,
+      // LEAD 1 + LEAD 2 — two melodic leads, each with a full guitar-style chain + overtones
+      leadLevel: 0.15, leadDrive: 8, leadSat: 150, leadClip: 1, leadFold: 0, leadLowCut: 80, leadTone: 3500,
+      leadFifth: 0, leadOct: 0, leadPitch: 1,
+      lead2Level: 0.15, lead2Drive: 6, lead2Sat: 120, lead2Clip: 1, lead2Fold: 0, lead2LowCut: 80, lead2Tone: 4500,
+      lead2Fifth: 0, lead2Oct: 0, lead2Pitch: 1,
       // bass / low foundation (+ its own overtones)
       bassLevel: 0.45, bassDrive: 12, bassGrit: 200, bassTone: 3000,
       bassSub: 0.45, bassFifth: 0, bassOctave: 1.5,
@@ -158,22 +160,27 @@ export class AudioEngine {
     fx.bpost = ctx.createGain(); fx.bpost.gain.value = P.bassLevel;
     this.bass.connect(fx.bdrive).connect(fx.bshape).connect(fx.blp).connect(fx.bpost).connect(this.music);
 
-    // LEAD instrument: the infrequent scream + tremolo gets its OWN distortion chain so it
-    // can be shaped independently of the rhythm guitar.
-    this.leadBus = ctx.createGain(); this.leadBus.gain.value = 1.0;
-    fx.lpre = ctx.createGain(); fx.lpre.gain.value = P.leadDrive;
-    fx.lsat = ctx.createWaveShaper(); fx.lsat.curve = distortionCurve(150); fx.lsat.oversample = '4x';
-    fx.llp = ctx.createBiquadFilter(); fx.llp.type = 'lowpass'; fx.llp.frequency.value = P.leadTone;
-    fx.lpost = ctx.createGain(); fx.lpost.gain.value = P.leadLevel;
-    this.leadBus.connect(fx.lpre).connect(fx.lsat).connect(fx.llp).connect(fx.lpost).connect(this.music);
+    // Two LEAD instruments, each with its own full guitar-style chain (drive → saturate →
+    // hard-clip → fold → low-cut → tone → level), so they can be shaped like the rhythm/bass.
+    this.leadBus = this._buildLeadChain('lead');
+    this.lead2Bus = this._buildLeadChain('lead2');
+  }
 
-    // LEAD 2 — a second lead instrument with its own chain (square-wave timbre, see _stepMetal).
-    this.lead2Bus = ctx.createGain(); this.lead2Bus.gain.value = 1.0;
-    fx.l2pre = ctx.createGain(); fx.l2pre.gain.value = P.lead2Drive;
-    fx.l2sat = ctx.createWaveShaper(); fx.l2sat.curve = distortionCurve(120); fx.l2sat.oversample = '4x';
-    fx.l2lp = ctx.createBiquadFilter(); fx.l2lp.type = 'lowpass'; fx.l2lp.frequency.value = P.lead2Tone;
-    fx.l2post = ctx.createGain(); fx.l2post.gain.value = P.lead2Level;
-    this.lead2Bus.connect(fx.l2pre).connect(fx.l2sat).connect(fx.l2lp).connect(fx.l2post).connect(this.music);
+  // Build a lead instrument's signal chain from its `<prefix>*` params, store the nodes on
+  // this._fx[prefix+...], and return the input bus.
+  _buildLeadChain(prefix) {
+    const ctx = this.ctx, fx = this._fx, P = this.params;
+    const bus = ctx.createGain(); bus.gain.value = 1.0;
+    fx[prefix + 'pre'] = ctx.createGain(); fx[prefix + 'pre'].gain.value = P[prefix + 'Drive'];
+    fx[prefix + 'sat'] = ctx.createWaveShaper(); fx[prefix + 'sat'].curve = distortionCurve(P[prefix + 'Sat']); fx[prefix + 'sat'].oversample = '4x';
+    fx[prefix + 'fizz'] = ctx.createWaveShaper(); fx[prefix + 'fizz'].curve = hardClipCurve(P[prefix + 'Clip']); fx[prefix + 'fizz'].oversample = '4x';
+    fx[prefix + 'fold'] = ctx.createWaveShaper(); fx[prefix + 'fold'].curve = foldbackCurve(P[prefix + 'Fold']); fx[prefix + 'fold'].oversample = '4x';
+    fx[prefix + 'hp'] = ctx.createBiquadFilter(); fx[prefix + 'hp'].type = 'highpass'; fx[prefix + 'hp'].frequency.value = P[prefix + 'LowCut'];
+    fx[prefix + 'lp'] = ctx.createBiquadFilter(); fx[prefix + 'lp'].type = 'lowpass'; fx[prefix + 'lp'].frequency.value = P[prefix + 'Tone'];
+    fx[prefix + 'post'] = ctx.createGain(); fx[prefix + 'post'].gain.value = P[prefix + 'Level'];
+    bus.connect(fx[prefix + 'pre']).connect(fx[prefix + 'sat']).connect(fx[prefix + 'fizz']).connect(fx[prefix + 'fold'])
+      .connect(fx[prefix + 'hp']).connect(fx[prefix + 'lp']).connect(fx[prefix + 'post']).connect(this.music);
+    return bus;
   }
 
   // Live-update a music parameter from the in-game panel; also persists into this.params so
@@ -182,6 +189,19 @@ export class AudioEngine {
     this.params[k] = v;
     const fx = this._fx;
     if (!this.ctx) return;
+    // Lead 1 / Lead 2 chains share one shape; route by prefix. (Fifth/Oct/Pitch are read
+    // live at note time, so they need no node update.)
+    if (k.startsWith('lead')) {
+      const p = k.startsWith('lead2') ? 'lead2' : 'lead', s = k.slice((k.startsWith('lead2') ? 5 : 4));
+      if (s === 'Drive') fx[p + 'pre'].gain.value = v;
+      else if (s === 'Sat') fx[p + 'sat'].curve = distortionCurve(v);
+      else if (s === 'Clip') fx[p + 'fizz'].curve = hardClipCurve(v);
+      else if (s === 'Fold') fx[p + 'fold'].curve = foldbackCurve(v);
+      else if (s === 'LowCut') fx[p + 'hp'].frequency.value = v;
+      else if (s === 'Tone') fx[p + 'lp'].frequency.value = v;
+      else if (s === 'Level') fx[p + 'post'].gain.value = v;
+      return;
+    }
     switch (k) {
       case 'master': if (!this.muted) this.master.gain.value = v; break;
       case 'music': this.music.gain.value = v; break;
@@ -197,12 +217,6 @@ export class AudioEngine {
       case 'bassGrit': fx.bshape.curve = distortionCurve(v); break;
       case 'bassTone': fx.blp.frequency.value = v; break;
       case 'bassLevel': fx.bpost.gain.value = v; break;
-      case 'leadDrive': fx.lpre.gain.value = v; break;
-      case 'leadTone': fx.llp.frequency.value = v; break;
-      case 'leadLevel': fx.lpost.gain.value = v; break;
-      case 'lead2Drive': fx.l2pre.gain.value = v; break;
-      case 'lead2Tone': fx.l2lp.frequency.value = v; break;
-      case 'lead2Level': fx.l2post.gain.value = v; break;
       default: break;   // tempo + voicing/level params are read live at note time
     }
   }
@@ -231,19 +245,27 @@ export class AudioEngine {
     v(freq * 2, P.bassOctave);        // octave overtone
   }
 
-  // A lead melody note into the given lead bus (detuned pair for thickness). `type` picks the
-  // waveform so the two lead instruments can have distinct timbres.
-  _leadNote(bus, freq, at, dur, type = 'sawtooth', gain = 0.5) {
+  // A lead melody note into lead `prefix`'s bus: a detuned root pair plus tunable 5th/octave
+  // overtone voices (like the bass). `type` picks the waveform so the leads differ in timbre.
+  _leadNote(prefix, freq, at, dur, type = 'sawtooth', gain = 0.5) {
     if (gain <= 0) return;
-    const ctx = this.ctx;
+    const ctx = this.ctx, P = this.params, bus = this[prefix + 'Bus'];
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
     g.gain.exponentialRampToValueAtTime(gain, at + 0.006);
     g.gain.setValueAtTime(gain, at + dur * 0.6);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(bus);
-    const v = (f) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.connect(g); o.start(at); o.stop(at + dur + 0.02); };
-    v(freq * 0.997); v(freq * 1.003);
+    const v = (f, level) => {
+      if (level <= 0) return;
+      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
+      if (level === 1) o.connect(g);
+      else { const vg = ctx.createGain(); vg.gain.value = level; o.connect(vg).connect(g); }
+      o.start(at); o.stop(at + dur + 0.02);
+    };
+    v(freq * 0.997, 1); v(freq * 1.003, 1);     // detuned root pair
+    v(freq * 1.5, P[prefix + 'Fifth']);          // 5th overtone
+    v(freq * 2, P[prefix + 'Oct']);              // octave overtone
   }
 
   setMuted(m) {
@@ -433,7 +455,7 @@ export class AudioEngine {
 
   _schedule() {
     if (!this.ctx || this.ctx.state !== 'running' || this.muted) return;
-    const tempo = this.track === 'synthwave' ? 104 : this.params.tempo;
+    const tempo = Math.max(1, this.track === 'synthwave' ? 104 : this.params.tempo);
     const stepDur = 60 / tempo / 4;   // sixteenth note
     const now = this.ctx.currentTime;
     if (this._nextStepTime < now) this._nextStepTime = now + 0.06;
@@ -468,12 +490,12 @@ export class AudioEngine {
     }
     // Lead melodies (scale-degree notation): play any note starting this step. Two leads,
     // each with its own bus + timbre (lead 1 saw, lead 2 square).
-    const sd = 60 / P.tempo / 4;
+    const sd = 60 / Math.max(1, P.tempo) / 4;
     for (const [deg, atStep, dur] of LEAD_MELODY) {
-      if (atStep === step) this._leadNote(this.leadBus, leadFreq(deg) * P.leadOctave, at, dur * sd, 'sawtooth');
+      if (atStep === step) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd, 'sawtooth');
     }
     for (const [deg, atStep, dur] of LEAD2_MELODY) {
-      if (atStep === step) this._leadNote(this.lead2Bus, leadFreq(deg) * P.lead2Octave, at, dur * sd, 'square');
+      if (atStep === step) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd, 'square');
     }
 
     if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
