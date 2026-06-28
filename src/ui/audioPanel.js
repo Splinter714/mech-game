@@ -51,10 +51,11 @@ const GROUPS = [
     ['leadSat', 'Saturation', 50, 600, 5],
     ['leadClip', 'Hard clip', 1, 15, 0.5],
     ['leadFold', 'Foldback', 0, 4, 0.05],
-    ['leadTone', 'Tone (Hz)', 800, 9000, 50],
+    ['leadTone', 'Tone (Hz)', 400, 16000, 50],
     ['leadLowCut', 'Low cut (Hz)', 40, 400, 5],
     ['leadFifth', '5th', 0, 1.5, 0.05],
     ['leadOct', 'Octave', 0, 1.5, 0.05],
+    ['leadSub', 'Sub octave', 0, 1.5, 0.05],
     ['leadPitch', 'Pitch', 0.25, 2, 0.25],
   ]],
   ['Lead 2 (square)', [
@@ -62,10 +63,11 @@ const GROUPS = [
     ['lead2Sat', 'Saturation', 50, 600, 5],
     ['lead2Clip', 'Hard clip', 1, 15, 0.5],
     ['lead2Fold', 'Foldback', 0, 4, 0.05],
-    ['lead2Tone', 'Tone (Hz)', 800, 9000, 50],
+    ['lead2Tone', 'Tone (Hz)', 400, 16000, 50],
     ['lead2LowCut', 'Low cut (Hz)', 40, 400, 5],
     ['lead2Fifth', '5th', 0, 1.5, 0.05],
     ['lead2Oct', 'Octave', 0, 1.5, 0.05],
+    ['lead2Sub', 'Sub octave', 0, 1.5, 0.05],
     ['lead2Pitch', 'Pitch', 0.25, 2, 0.25],
   ]],
   ['Bass (low foundation)', [
@@ -87,6 +89,16 @@ const TRACK_OF = {
   kickLevel: 'kick', snareLevel: 'snare', hatLevel: 'hat', crashLevel: 'crash',
   guitarLevel: 'guitar', leadLevel: 'lead', lead2Level: 'lead2', bassLevel: 'bass',
 };
+
+// Base-oscillator waveform selector per instrument group: which param it sets + the options.
+const WAVE_PARAM = {
+  'Rhythm guitar (the chug)': 'guitarWave',
+  'Lead 1 (saw)': 'leadWave',
+  'Lead 2 (square)': 'lead2Wave',
+  'Bass (low foundation)': 'bassWave',
+};
+const WAVES = ['sine', 'triangle', 'sawtooth', 'square'];
+const WAVE_ABBR = { sine: 'sin', triangle: 'tri', sawtooth: 'saw', square: 'sqr' };
 
 export function mountAudioPanel() {
   if (typeof document === 'undefined') return;
@@ -140,6 +152,38 @@ export function mountAudioPanel() {
       h.textContent = groupName;
       h.style.cssText = 'color:#7c8794;margin:10px 0 4px;text-transform:uppercase;letter-spacing:0.5px';
       el.appendChild(h);
+
+      // Waveform selector for this instrument (sets its base oscillator type live).
+      const waveKey = WAVE_PARAM[groupName];
+      if (waveKey) {
+        const wrow = document.createElement('div');
+        wrow.style.cssText = 'display:flex;align-items:center;gap:6px;margin:3px 0 6px';
+        const wlab = document.createElement('span');
+        wlab.textContent = 'Waveform'; wlab.style.cssText = 'flex:0 0 116px';
+        wrow.appendChild(wlab);
+        const wbtns = [];
+        const paintWaves = () => {
+          const cur = Audio.params[waveKey];
+          wbtns.forEach(({ b, w }) => {
+            const on = w === cur;
+            b.style.background = on ? '#5ec8e0' : '#161b22';
+            b.style.color = on ? '#0d1014' : '#7c8794';
+            b.style.border = `1px solid ${on ? '#5ec8e0' : '#2a333f'}`;
+          });
+        };
+        for (const w of WAVES) {
+          const b = document.createElement('button');
+          b.textContent = WAVE_ABBR[w];
+          b.title = w;
+          b.style.cssText = 'flex:1;padding:3px 0;border-radius:3px;cursor:pointer;font-family:monospace;font-size:10px';
+          b.onclick = () => { Audio.setParam(waveKey, w); paintWaves(); };
+          wbtns.push({ b, w });
+          wrow.appendChild(b);
+        }
+        paintWaves();
+        el.appendChild(wrow);
+      }
+
       for (const [key, label, min, max, step] of rows) {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:3px 0';
@@ -189,7 +233,8 @@ export function mountAudioPanel() {
     copy.textContent = 'copy settings';
     copy.style.cssText = 'width:100%;margin-top:12px;padding:6px;background:#161b22;color:#7bd17b;border:1px solid #2a333f;border-radius:4px;cursor:pointer;font-family:monospace';
     copy.onclick = () => {
-      const lines = Object.entries(Audio.params).map(([k, v]) => `      ${k}: ${v},`).join('\n');
+      const lines = Object.entries(Audio.params)
+        .map(([k, v]) => `      ${k}: ${typeof v === 'string' ? JSON.stringify(v) : v},`).join('\n');
       const text = `params = {\n${lines}\n    };`;
       navigator.clipboard?.writeText(text).catch(() => {});
       console.log('[MUSIC TUNER] settings:\n' + text);

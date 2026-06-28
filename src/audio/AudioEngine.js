@@ -145,19 +145,21 @@ export class AudioEngine {
       hatFreq: 7500, hatDecay: 0.32,
       crashLevel: 0.93, crashBright: 4000, crashDecay: 1,
       // rhythm-guitar TONE (the distortion pedal + cab)
-      guitarLevel: 0.38, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
-      guitarTone: 7000, guitarLowCut: 40,
+      guitarLevel: 0.38, guitarDrive: 40, guitarSat: 600, guitarClip: 12.5, guitarFold: 0,
+      guitarTone: 9000, guitarLowCut: 40,
       // rhythm-guitar VOICING (which overtones make up each power chord)
-      guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 2, guitarHigh: 0, guitarSquare: 0,
+      guitarFifth: 0.7, guitarFifthDetune: 0, guitarOctave: 2, guitarHigh: 0, guitarSquare: 0,
       chugLength: 0.1, pickLevel: 0,
       // LEAD 1 + LEAD 2 — two melodic leads, each with a full guitar-style chain + overtones
       leadLevel: 0.25, leadDrive: 40, leadSat: 600, leadClip: 1, leadFold: 4, leadLowCut: 400, leadTone: 7000,
-      leadFifth: 0, leadOct: 1, leadPitch: 1,
-      lead2Level: 0, lead2Drive: 40, lead2Sat: 600, lead2Clip: 8, lead2Fold: 0, lead2LowCut: 400, lead2Tone: 4200,
-      lead2Fifth: 0, lead2Oct: 0, lead2Pitch: 1,
+      leadFifth: 0, leadOct: 1, leadSub: 0, leadPitch: 1,
+      lead2Level: 0.3, lead2Drive: 20, lead2Sat: 475, lead2Clip: 15, lead2Fold: 0, lead2LowCut: 40, lead2Tone: 9000,
+      lead2Fifth: 0, lead2Oct: 1.35, lead2Sub: 0, lead2Pitch: 0.25,
       // bass / low foundation (+ its own overtones)
       bassLevel: 0.7, bassDrive: 12, bassGrit: 200, bassTone: 3000,
       bassSub: 0.15, bassFifth: 0, bassOctave: 0.15,
+      // base oscillator waveform per instrument: 'sine' | 'triangle' | 'sawtooth' | 'square'
+      guitarWave: 'sawtooth', bassWave: 'sawtooth', leadWave: 'sawtooth', lead2Wave: 'sine',
     };
     this._fx = {};             // live node references the panel tweaks
   }
@@ -297,7 +299,7 @@ export class AudioEngine {
     g.gain.setValueAtTime(gain, at + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(this.bass);
-    const v = (f, level, type = 'sawtooth') => {
+    const v = (f, level, type = P.bassWave) => {
       if (level <= 0) return;
       const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
       if (level === 1) o.connect(g);
@@ -305,7 +307,7 @@ export class AudioEngine {
       o.start(at); o.stop(at + dur + 0.02);
     };
     v(freq, 1);                       // root
-    v(freq * 0.5, P.bassSub, 'square'); // sub octave for body
+    v(freq * 0.5, P.bassSub, 'square'); // sub octave for body (always square for weight)
     v(freq * 1.5, P.bassFifth);       // the FIFTH overtone
     v(freq * 2, P.bassOctave);        // octave overtone
   }
@@ -329,6 +331,7 @@ export class AudioEngine {
       o.start(at); o.stop(at + dur + 0.02);
     };
     v(freq * 0.997, 1); v(freq * 1.003, 1);     // detuned root pair
+    v(freq * 0.5, P[prefix + 'Sub']);            // sub octave for body
     v(freq * 1.5, P[prefix + 'Fifth']);          // 5th overtone
     v(freq * 2, P[prefix + 'Oct']);              // octave overtone
   }
@@ -563,10 +566,10 @@ export class AudioEngine {
     // each with its own bus + timbre (lead 1 saw, lead 2 square).
     const sd = 60 / Math.max(1, P.tempo) / 4;
     for (const [deg, atStep, dur] of LEAD_MELODY) {
-      if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd, 'sawtooth');
+      if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd, P.leadWave);
     }
     for (const [deg, atStep, dur] of LEAD2_MELODY) {
-      if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd, 'square');
+      if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd, P.lead2Wave);
     }
 
     if (KICK_GRID[m] === 'x') this._kickMetal(at);
@@ -609,7 +612,7 @@ export class AudioEngine {
     g.gain.setValueAtTime(gain, at + dur * 0.7);               // hold the chug body
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);     // fast release (damped palm mute)
     g.connect(this.guitar);
-    const voice = (f, level, type = 'sawtooth') => {
+    const voice = (f, level, type = P.guitarWave) => {
       if (level <= 0) return;
       const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
       if (level === 1) o.connect(g);
