@@ -551,7 +551,7 @@ export class AudioEngine {
     while (this._nextStepTime < now + 0.12) {
       this._playStep(this._step, this._nextStepTime);
       this._nextStepTime += stepDur;
-      this._step = (this._step + 1) % (this.track === 'synthwave' ? 32 : 64);
+      this._step = (this._step + 1) % (this.track === 'synthwave' ? 32 : 384);
     }
   }
 
@@ -565,24 +565,40 @@ export class AudioEngine {
   // and a hard double-bass kit.
   _stepMetal(step, at) {
     const P = this.params;
-    const m = step % 32;                             // leads repeat their 32-step phrase
+    // 384-step / 24-bar arrangement = three 8-bar sections that layer the leads in:
+    //   section 0 (bars 1-8):   bass + guitar only
+    //   section 1 (bars 9-16):  + lead 1
+    //   section 2 (bars 17-24): + lead 1 & lead 2
+    // Within each 8-bar section the guitar+bass HARMONY is stretched 2x (each note held two
+    // steps, h) so the 4-bar progression spans 8 bars, while the chug/bass PULSE keeps its
+    // sixteenth rhythm (gallop grid tiled at step%64). Lead 1 plays bars 1-2 & 5-6 of a section;
+    // lead 2 plays all bars. Drums tile their 32-step phrase throughout.
+    const block = Math.floor(step / 128);            // which 8-bar section (0,1,2)
+    const bstep = step % 128;                        // position within the section
+    const h = bstep >> 1;                            // stretched harmony index (0..63)
+    const m = step % 32;                             // drums + lead phrase position
     const local = step % 16;
+    const lead1Bars = bstep < 32 || (bstep >= 64 && bstep < 96);   // lead 1: bars 1-2 & 5-6
+    const lead2Bars = true;                                        // lead 2: all bars 1-8
 
-    // Rhythm guitar follows its own x/o grid (GTR_RHYTHM) + per-onset note line (GUITAR_LINE).
-    if (GTR_RHYTHM[step] === 'x') {
-      this._gtr(GUITAR_LINE[step], at, P.chugLength, 0.94, true);   // tight palm-muted chug (no overlap = no smear); loudness via guitarLevel
+    // Rhythm guitar follows its own x/o grid (GTR_RHYTHM, tiled) + the stretched note line.
+    if (GTR_RHYTHM[step % 64] === 'x') {
+      this._gtr(GUITAR_LINE[h], at, P.chugLength, 0.94, true);      // tight palm-muted chug (no overlap = no smear); loudness via guitarLevel
     }
     // Bass runs its own steady, repetitive sixteenth-note pulse (every step), independent of
     // the guitar's gallop, so the low end is a constant driving foundation.
-    this._bass(BASS_LINE[step], at, P.bassLength, 0.6);
-    // Lead melodies (scale-degree notation): play any note starting this step. Two leads,
-    // each with its own bus + timbre (lead 1 saw, lead 2 square).
+    this._bass(BASS_LINE[h], at, P.bassLength, 0.6);
+    // Lead melodies: lead 1 enters in section 1 (bars 1-2 & 5-6), lead 2 in section 2 (all bars).
     const sd = 60 / Math.max(1, P.tempo) / 4;
-    for (const [deg, atStep, dur] of LEAD_MELODY) {
-      if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd * P.leadLength, P.leadWave);
+    if (lead1Bars && block >= 1) {
+      for (const [deg, atStep, dur] of LEAD_MELODY) {
+        if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd * P.leadLength, P.leadWave);
+      }
     }
-    for (const [deg, atStep, dur] of LEAD2_MELODY) {
-      if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd * P.lead2Length, P.lead2Wave);
+    if (lead2Bars && block >= 2) {
+      for (const [deg, atStep, dur] of LEAD2_MELODY) {
+        if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd * P.lead2Length, P.lead2Wave);
+      }
     }
 
     if (KICK_GRID[m] === 'x') this._kickMetal(at);
