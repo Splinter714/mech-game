@@ -3,7 +3,6 @@
 // via mechArt.buildMechTextures.
 
 import { buildHexTextures } from './hexArt.js';
-export { buildImageHexTexture } from './hexArt.js';
 import { buildIconTextures } from './iconArt.js';
 import { buildItemFxTextures } from './projectileArt.js';
 

@@ -71,27 +71,6 @@ const DETAIL = {
   },
 };
 
-// Turn a loaded source image (e.g. an AI-generated tile on a white background) into a
-// hex-shaped tile texture under `key`: draw it scaled to the tile footprint, clipped to the
-// grid hex polygon so the corners/background fall away and it tessellates cleanly (#41).
-export function buildImageHexTexture(scene, key, srcKey, inset = 0.99) {
-  const src = scene.textures.get(srcKey)?.getSourceImage();
-  if (!src) return;
-  const W = HEX_TEX_W * ART_SCALE, H = HEX_TEX_H * ART_SCALE;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  const cx = W / 2, cy = H / 2;
-  const pts = hexCorners(HEX_SIZE * inset).map((p) => ({ x: cx + p.x * ART_SCALE, y: cy + p.y * ART_SCALE }));
-  ctx.beginPath();
-  pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-  ctx.closePath();
-  ctx.clip();
-  ctx.drawImage(src, 0, 0, W, H);     // stretch the (square) source to the hex footprint
-  if (scene.textures.exists(key)) scene.textures.remove(key);
-  scene.textures.addCanvas(key, canvas);
-}
-
 export function buildHexTextures(scene) {
   const tiles = {
     hex_ground: PAL.ground, hex_groundB: PAL.groundB,
