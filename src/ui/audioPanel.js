@@ -55,6 +55,7 @@ const GROUPS = [
     ['leadFifth', '5th', 0, 1.5, 0.05],
     ['leadOct', 'Octave', 0, 1.5, 0.05],
     ['leadSub', 'Sub octave', 0, 1.5, 0.05],
+    ['leadLength', 'Note length', 0.1, 2, 0.05],
     ['leadPitch', 'Pitch', 0.25, 2, 0.25],
   ]],
   ['Lead 2 (square)', [
@@ -67,6 +68,7 @@ const GROUPS = [
     ['lead2Fifth', '5th', 0, 1.5, 0.05],
     ['lead2Oct', 'Octave', 0, 1.5, 0.05],
     ['lead2Sub', 'Sub octave', 0, 1.5, 0.05],
+    ['lead2Length', 'Note length', 0.1, 2, 0.05],
     ['lead2Pitch', 'Pitch', 0.25, 2, 0.25],
   ]],
   ['Bass (low foundation)', [

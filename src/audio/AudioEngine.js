@@ -174,10 +174,10 @@ export class AudioEngine {
       guitarFifth: 0.65, guitarFifthDetune: 0, guitarOctave: 1.1, guitarHigh: 0, guitarSquare: 0,
       chugLength: 0.08,
       // LEAD 1 + LEAD 2 — two melodic leads, each with a full guitar-style chain + overtones
-      leadLevel: 0.1, leadDrive: 40, leadSat: 600, leadClip: 1, leadFold: 4, leadLowCut: 400, leadTone: 7000,
-      leadFifth: 0, leadOct: 1, leadSub: 0, leadPitch: 1,
-      lead2Level: 0.24, lead2Drive: 20, lead2Sat: 475, lead2Clip: 15, lead2Fold: 0, lead2LowCut: 40, lead2Tone: 9000,
-      lead2Fifth: 0, lead2Oct: 1.35, lead2Sub: 0, lead2Pitch: 0.25,
+      leadLevel: 0.25, leadDrive: 40, leadSat: 600, leadClip: 1, leadFold: 0, leadLowCut: 400, leadTone: 7000,
+      leadFifth: 0, leadOct: 1, leadSub: 0, leadPitch: 1, leadLength: 1.3,
+      lead2Level: 0.5, lead2Drive: 40, lead2Sat: 600, lead2Clip: 1, lead2Fold: 0, lead2LowCut: 40, lead2Tone: 9000,
+      lead2Fifth: 0, lead2Oct: 1.35, lead2Sub: 0, lead2Pitch: 0.25, lead2Length: 1.35,
       // bass / low foundation (+ its own overtones)
       bassLevel: 0.7, bassDrive: 12, bassGrit: 200, bassTone: 2500,
       bassSub: 0.3, bassFifth: 0, bassOctave: 0, bassLength: 0.12,
@@ -317,8 +317,7 @@ export class AudioEngine {
     if (gain <= 0) return;                          // silent — skip
     const ctx = this.ctx, P = this.params;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(gain, at + 0.004);
+    g.gain.setValueAtTime(gain, at);                 // 0 ms attack — full volume instantly
     g.gain.setValueAtTime(gain, at + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(this.bass);
@@ -341,8 +340,7 @@ export class AudioEngine {
     if (gain <= 0) return;
     const ctx = this.ctx, P = this.params, bus = this[prefix + 'Bus'];
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(gain, at + 0.006);
+    g.gain.setValueAtTime(gain, at);                 // 0 ms attack — full volume instantly
     g.gain.setValueAtTime(gain, at + dur * 0.6);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(bus);
@@ -581,10 +579,10 @@ export class AudioEngine {
     // each with its own bus + timbre (lead 1 saw, lead 2 square).
     const sd = 60 / Math.max(1, P.tempo) / 4;
     for (const [deg, atStep, dur] of LEAD_MELODY) {
-      if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd, P.leadWave);
+      if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd * P.leadLength, P.leadWave);
     }
     for (const [deg, atStep, dur] of LEAD2_MELODY) {
-      if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd, P.lead2Wave);
+      if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd * P.lead2Length, P.lead2Wave);
     }
 
     if (KICK_GRID[m] === 'x') this._kickMetal(at);
@@ -622,10 +620,9 @@ export class AudioEngine {
     if (gain <= 0) return;                          // silent (level slider at 0) — skip
     const ctx = this.ctx, P = this.params;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(gain, at + 0.003);     // near-instant pick attack
-    g.gain.setValueAtTime(gain, at + dur * 0.7);               // hold the chug body
-    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);     // fast release (damped palm mute)
+    g.gain.setValueAtTime(gain, at);                          // 0 ms attack — full volume instantly
+    g.gain.setValueAtTime(gain, at + dur * 0.7);              // hold the chug body
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);    // fast release (damped palm mute)
     g.connect(this.guitar);
     const voice = (f, level, type = P.guitarWave) => {
       if (level <= 0) return;
