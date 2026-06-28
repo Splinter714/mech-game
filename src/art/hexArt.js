@@ -34,11 +34,31 @@ function drawHex(sg, fill, edge, inset = 0.9) {
   sg.fillPoints(inner, true);
 }
 
-// A top-down tree: drop shadow, canopy, sun-side highlight.
+// A top-down tree: a soft drop shadow, then a canopy built from several overlapping
+// blobs (so the silhouette reads as foliage, not a flat disc), shaded dark->light from
+// the lower-right shadow side to the upper-left sun side, with a couple of bright
+// speckles for leaf glints. Slight per-tree variation via the offset table.
+const CANOPY_BLOBS = [
+  [0, 0, 1.0], [-0.45, -0.35, 0.62], [0.5, -0.18, 0.55],
+  [0.18, 0.48, 0.58], [-0.4, 0.4, 0.46], [0.42, 0.42, 0.4],
+];
 function tree(sg, cx, cy, r) {
-  sg.fillStyle(0x132611, 1); sg.fillCircle(cx + 0.8, cy + 1.1, r);
-  sg.fillStyle(0x2f5a2c, 1); sg.fillCircle(cx, cy, r);
-  sg.fillStyle(0x437f3c, 0.9); sg.fillCircle(cx - r * 0.28, cy - r * 0.28, r * 0.5);
+  // Soft layered shadow on the ground.
+  sg.fillStyle(0x0e1d0c, 0.55); sg.fillEllipse(cx + 1.6, cy + 2.2, r * 2.1, r * 1.5);
+  // Dark base silhouette (the full canopy footprint).
+  sg.fillStyle(0x1c3a1a, 1);
+  for (const [dx, dy, s] of CANOPY_BLOBS) sg.fillCircle(cx + dx * r, cy + dy * r, r * s);
+  // Mid-tone body, pulled slightly toward the sun (upper-left).
+  sg.fillStyle(0x2f5a2c, 1);
+  for (const [dx, dy, s] of CANOPY_BLOBS) sg.fillCircle(cx + dx * r - r * 0.12, cy + dy * r - r * 0.12, r * s * 0.82);
+  // Sun-side highlight clusters.
+  sg.fillStyle(0x4c8a40, 0.95);
+  sg.fillCircle(cx - r * 0.3, cy - r * 0.3, r * 0.5);
+  sg.fillCircle(cx + r * 0.12, cy - r * 0.05, r * 0.32);
+  // Leaf glints.
+  sg.fillStyle(0x6fb058, 0.9);
+  sg.fillCircle(cx - r * 0.38, cy - r * 0.4, r * 0.16);
+  sg.fillCircle(cx + r * 0.05, cy + r * 0.18, r * 0.12);
 }
 
 const C = { cx: HEX_TEX_W / 2, cy: HEX_TEX_H / 2 };
@@ -61,7 +81,18 @@ const DETAIL = {
     sg.fillEllipse(C.cx + 5, C.cy + 7, 13, 2.3);
     sg.fillStyle(0x4a86b0, 0.4); sg.fillEllipse(C.cx + 1, C.cy + 1, 11, 2);
   },
-  hex_forest: (sg) => { tree(sg, C.cx - 9, C.cy - 4, 7); tree(sg, C.cx + 8, C.cy + 3, 8); tree(sg, C.cx - 2, C.cy + 9, 6); tree(sg, C.cx + 4, C.cy - 9, 5); },
+  hex_forest: (sg) => {
+    // Shadowy forest floor showing between the canopies.
+    sg.fillStyle(0x14290f, 0.6); sg.fillEllipse(C.cx, C.cy, 26, 24);
+    // Trees painted back-to-front (top rows first) so nearer canopies overlap farther ones.
+    tree(sg, C.cx + 5, C.cy - 10, 5.5);
+    tree(sg, C.cx - 8, C.cy - 6, 6.5);
+    tree(sg, C.cx + 9, C.cy - 2, 6);
+    tree(sg, C.cx - 1, C.cy + 1, 7.5);
+    tree(sg, C.cx - 9, C.cy + 7, 5.5);
+    tree(sg, C.cx + 6, C.cy + 8, 6.5);
+    tree(sg, C.cx + 1, C.cy + 11, 4.5);
+  },
   hex_building: (sg) => {
     sg.fillStyle(0x2a2e34, 1); sg.fillRect(C.cx - 15, C.cy - 13, 30, 26);    // base/outline
     sg.fillStyle(0x4a5159, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 22);    // roof
