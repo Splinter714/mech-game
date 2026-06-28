@@ -108,6 +108,29 @@ function buildBass(spec) {
 }
 const BASS_LINE = buildBass('11111111111111111111111111112233-66666666666666667777777777777777');
 
+// Rhythm-guitar line — a 64-step (4-bar) line defined as a degree-per-ONSET list placed on an
+// x/o rhythm grid (x = palm-muted chug, o = rest; here the o's fall on the gallop's skipped
+// sixteenth). Each onset takes the next degree and holds until the next onset. Degrees are in
+// E aeolian (1=E 2=F# 3=G 4=A 5=B 6=C 7=D), same mapping + octave as the bass roots.
+const GTR_RHYTHM = 'xoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxx';
+// 12 onsets per bar (the gallop hits 12 of every 16 sixteenths); 4 bars = 48 degrees.
+const GTR_DEGREES = [
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2,   // bar 1: E pedal, tail G-F#
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 5,   // bar 2: E pedal, tail A-B  (climbs into C)
+  6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,   // bar 3: C pedal, tail B-A
+  7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 5, 7,   // bar 4: D pedal, tail B-D
+];
+function buildGuitarLine(degrees, grid, len = 64) {
+  let g = grid; while (g.length < len) g += grid; g = g.slice(0, len);
+  const out = []; let di = 0, last = BASS_HZ.E;
+  for (let i = 0; i < len; i++) {
+    if (g[i] === 'x') { last = BASS_HZ[BASS_DEG[degrees[di]]]; di++; }
+    out.push(last);                                    // hold the onset note until the next x
+  }
+  return out;
+}
+const GUITAR_LINE = buildGuitarLine(GTR_DEGREES, GTR_RHYTHM);
+
 // Drum grids — one char per sixteenth over the 32-step (2-bar) phrase; `x` = hit, anything
 // else = rest. They repeat twice across the 64-step loop.
 const KICK_GRID  = 'xxxxoxxxxxxxoxxxxxxxoxxxxxxxoxoo';
@@ -138,26 +161,26 @@ export class AudioEngine {
     this.params = {
       // master + drums
       master: 1, music: 0.6, tempo: 120,
-      drumLevel: 2, kickLevel: 1.09, snareLevel: 1.42, hatLevel: 0.88,
+      drumLevel: 2, kickLevel: 1.37, snareLevel: 1.42, hatLevel: 0.88,
       // per-drum SOUND shaping
       kickPitch: 115, kickDecay: 0.2, kickClick: 0.095,
       snareTone: 1000, snareSnap: 1200, snareDecay: 0.3,
       hatFreq: 7500, hatDecay: 0.32,
       crashLevel: 0.93, crashBright: 4000, crashDecay: 1,
       // rhythm-guitar TONE (the distortion pedal + cab)
-      guitarLevel: 0.38, guitarDrive: 40, guitarSat: 600, guitarClip: 12.5, guitarFold: 0,
+      guitarLevel: 0.62, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 0,
       guitarTone: 9000, guitarLowCut: 40,
       // rhythm-guitar VOICING (which overtones make up each power chord)
-      guitarFifth: 0.7, guitarFifthDetune: 0, guitarOctave: 2, guitarHigh: 0, guitarSquare: 0,
-      chugLength: 0.1, pickLevel: 0,
+      guitarFifth: 0.65, guitarFifthDetune: 0, guitarOctave: 1.1, guitarHigh: 0, guitarSquare: 0,
+      chugLength: 0.08,
       // LEAD 1 + LEAD 2 — two melodic leads, each with a full guitar-style chain + overtones
-      leadLevel: 0.25, leadDrive: 40, leadSat: 600, leadClip: 1, leadFold: 4, leadLowCut: 400, leadTone: 7000,
+      leadLevel: 0.1, leadDrive: 40, leadSat: 600, leadClip: 1, leadFold: 4, leadLowCut: 400, leadTone: 7000,
       leadFifth: 0, leadOct: 1, leadSub: 0, leadPitch: 1,
-      lead2Level: 0.3, lead2Drive: 20, lead2Sat: 475, lead2Clip: 15, lead2Fold: 0, lead2LowCut: 40, lead2Tone: 9000,
+      lead2Level: 0.24, lead2Drive: 20, lead2Sat: 475, lead2Clip: 15, lead2Fold: 0, lead2LowCut: 40, lead2Tone: 9000,
       lead2Fifth: 0, lead2Oct: 1.35, lead2Sub: 0, lead2Pitch: 0.25,
       // bass / low foundation (+ its own overtones)
-      bassLevel: 0.7, bassDrive: 12, bassGrit: 200, bassTone: 3000,
-      bassSub: 0.15, bassFifth: 0, bassOctave: 0.15,
+      bassLevel: 0.7, bassDrive: 12, bassGrit: 200, bassTone: 2500,
+      bassSub: 0.3, bassFifth: 0, bassOctave: 0, bassLength: 0.12,
       // base oscillator waveform per instrument: 'sine' | 'triangle' | 'sawtooth' | 'square'
       guitarWave: 'sawtooth', bassWave: 'sawtooth', leadWave: 'sawtooth', lead2Wave: 'sine',
     };
@@ -543,25 +566,17 @@ export class AudioEngine {
   // through the guitar chain), a screaming high lead at phrase starts + a climbing tremolo,
   // and a hard double-bass kit.
   _stepMetal(step, at) {
-    const E = 82.41, F = 87.31, G = 98.0, A = 110.0, B = 123.47, C = 130.81, D = 146.83;
-    // 64-step root line (matches the bass's 4-bar pattern): an E-based first half, then power
-    // chords on C and D under the bass's octave-down C / D pedals (the new implied chords).
-    const riff = [E, E, E, E, E, E, E, E, E, E, E, E, G, G, F, F,
-                  E, E, E, E, E, E, E, E, E, E, E, E, A, A, B, C,
-                  C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
-                  D, D, D, D, D, D, D, D, D, D, D, D, D, D, D, D];
     const P = this.params;
     const m = step % 32;                             // leads repeat their 32-step phrase
     const local = step % 16;
-    const gallop = local % 4 !== 1;                  // hits on 0,2,3 of each beat (gallop)
 
-    if (gallop) {
-      this._gtr(riff[step], at, P.chugLength, 0.94, true);          // tight palm-muted chug (no overlap = no smear); loudness via guitarLevel
-      this.noise(this.drums, { dur: 0.018, gain: P.pickLevel, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
+    // Rhythm guitar follows its own x/o grid (GTR_RHYTHM) + per-onset note line (GUITAR_LINE).
+    if (GTR_RHYTHM[step] === 'x') {
+      this._gtr(GUITAR_LINE[step], at, P.chugLength, 0.94, true);   // tight palm-muted chug (no overlap = no smear); loudness via guitarLevel
     }
     // Bass runs its own steady, repetitive sixteenth-note pulse (every step), independent of
     // the guitar's gallop, so the low end is a constant driving foundation.
-    this._bass(BASS_LINE[step], at, P.chugLength + 0.02, 0.6);
+    this._bass(BASS_LINE[step], at, P.bassLength, 0.6);
     // Lead melodies (scale-degree notation): play any note starting this step. Two leads,
     // each with its own bus + timbre (lead 1 saw, lead 2 square).
     const sd = 60 / Math.max(1, P.tempo) / 4;
