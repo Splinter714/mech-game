@@ -5,7 +5,8 @@ import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
 import { CATEGORIES } from '../data/categories.js';
-import { hexToPixel, pixelToHex, range, axialKey, distance, HEX_SIZE } from '../data/hexgrid.js';
+import { hexToPixel, pixelToHex, range, axialKey, neighbors, HEX_SIZE } from '../data/hexgrid.js';
+import { getTerrain } from '../data/terrain.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
 
@@ -97,18 +98,45 @@ export default class ArenaScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
   }
 
-  // Lay out a disc of hex tiles; a scattered few become walls that block movement and
-  // shots (cover). The wall set + disc radius are kept for collision/LOS queries.
+  // Generate a natural battlefield (#41): a grass disc with a winding river, forest
+  // clusters, and a small industrial outpost. Terrain is kept in `this.terrain`
+  // (hexKey → terrain id); collision + line-of-sight read its passable/blocksLOS props.
   _buildWorld() {
     this.worldRadius = 6;
-    this.walls = new Set(['1,1', '2,-3', '-2,2', '-3,0', '4,-2', '0,3', '-1,-2', '3,2']);
-    const walls = this.walls;
-    for (const h of range({ q: 0, r: 0 }, 6)) {
-      const { x, y } = hexToPixel(h.q, h.r);
-      const key = axialKey(h.q, h.r);
-      const tex = walls.has(key) ? 'hex_wall' : ((h.q + h.r) % 2 ? 'hex_groundB' : 'hex_ground');
-      this.add.image(x, y, tex).setScale(1 / ART_SCALE);
+    const T = new Map();
+    // Base: a checkered grass field.
+    for (const h of range({ q: 0, r: 0 }, this.worldRadius)) {
+      T.set(axialKey(h.q, h.r), (h.q + h.r) % 2 ? 'grassB' : 'grass');
     }
+    // A river winding down the left-centre (water — impassable, but you can shoot over it).
+    for (const k of ['-4,0', '-4,1', '-3,1', '-3,2', '-2,2', '-2,3', '-1,3', '0,3', '1,2', '2,2']) {
+      if (T.has(k)) T.set(k, 'water');
+    }
+    // Forest clusters (a seed hex + its neighbours) — cover.
+    for (const c of [{ q: -3, r: -2 }, { q: 3, r: 1 }, { q: -1, r: -3 }]) {
+      for (const h of [c, ...neighbors(c.q, c.r)]) {
+        const k = axialKey(h.q, h.r);
+        if (T.get(k) && T.get(k).startsWith('grass')) T.set(k, 'forest');
+      }
+    }
+    // A small industrial outpost (buildings — hard cover) in the top-right.
+    for (const k of ['4,-3', '4,-2', '3,-3']) if (T.has(k)) T.set(k, 'building');
+    // Keep the spawn points on open grass.
+    T.set('0,0', 'grass');
+    T.set(axialKey(DUMMY_HEX.q, DUMMY_HEX.r), 'grass');
+
+    this.terrain = T;
+    for (const [k, id] of T) {
+      const [q, r] = k.split(',').map(Number);
+      const { x, y } = hexToPixel(q, r);
+      this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE);
+    }
+  }
+
+  // Terrain id at a world point (undefined = outside the arena disc).
+  _terrainAt(x, y) {
+    const h = pixelToHex(x, y);
+    return this.terrain.get(axialKey(h.q, h.r));
   }
 
   // A mech = hull (legs) + turret (everything else) stacked in a container so they can
@@ -358,16 +386,17 @@ export default class ArenaScene extends Phaser.Scene {
     return Math.max(120, weapon.cycleTime);
   }
 
-  // Is a world point inside a wall hex? (cover / projectile blocker)
+  // Does a world point block line-of-sight (cover / projectile blocker)? Forest + buildings
+  // do; open grass + water do not (you can shoot over a river).
   _isWall(x, y) {
-    const h = pixelToHex(x, y);
-    return this.walls.has(axialKey(h.q, h.r));
+    const t = this._terrainAt(x, y);
+    return !!t && getTerrain(t).blocksLOS;
   }
 
-  // Is a world point impassable for the mech — a wall, or outside the arena disc?
+  // Is a world point impassable for the mech — non-passable terrain, or off the arena disc?
   _blocked(x, y) {
-    const h = pixelToHex(x, y);
-    return this.walls.has(axialKey(h.q, h.r)) || distance({ q: 0, r: 0 }, h) > this.worldRadius;
+    const t = this._terrainAt(x, y);
+    return !t || !getTerrain(t).passable;
   }
 
   // Distance from a muzzle along an angle to the first wall, or Infinity if clear within
