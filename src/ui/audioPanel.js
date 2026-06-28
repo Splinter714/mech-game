@@ -97,8 +97,12 @@ export function mountAudioPanel() {
 
     const head = document.createElement('div');
     head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px';
-    head.innerHTML = '<span style="color:#5ec8e0;font-size:13px">MUSIC TUNER</span>'
-      + '<span style="color:#7c8794">[P] close</span>';
+    const title = document.createElement('span');
+    title.textContent = 'MUSIC TUNER'; title.style.cssText = 'color:#5ec8e0;font-size:13px';
+    const closeBtn = document.createElement('span');
+    closeBtn.textContent = '✕ close  [P]'; closeBtn.style.cssText = 'color:#7c8794;cursor:pointer';
+    closeBtn.onclick = close;
+    head.append(title, closeBtn);
     el.appendChild(head);
 
     // Track switch.
@@ -156,12 +160,28 @@ export function mountAudioPanel() {
   };
 
   const close = () => { el?.remove(); el = null; };
+  const toggle = () => (el ? close() : open());
+
+  // Floating toggle button (so it's discoverable without the keyboard). Sits top-right;
+  // when the panel opens it covers the button, and the panel's own ✕ / P closes it.
+  const btn = document.createElement('button');
+  btn.textContent = '♪ music';
+  btn.setAttribute('aria-label', 'Open the music tuner');
+  btn.style.cssText = [
+    'position:fixed', 'top:12px', 'right:12px', 'z-index:99998',
+    'background:rgba(13,16,20,0.92)', 'color:#5ec8e0', 'border:1px solid #2a333f', 'border-radius:6px',
+    'padding:7px 12px', 'font-family:monospace', 'font-size:12px', 'cursor:pointer', 'box-shadow:0 2px 10px rgba(0,0,0,0.45)',
+  ].join(';');
+  btn.onmouseenter = () => { btn.style.borderColor = '#5ec8e0'; };
+  btn.onmouseleave = () => { btn.style.borderColor = '#2a333f'; };
+  btn.onclick = toggle;
+  document.body.appendChild(btn);
 
   window.addEventListener('keydown', (e) => {
     if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      el ? close() : open();
+      toggle();
     }
   });
 }
