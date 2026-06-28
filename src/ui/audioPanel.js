@@ -10,13 +10,11 @@ const GROUPS = [
     ['master', 'Master', 0, 2, 0.01],
     ['music', 'Music level', 0, 2, 0.01],
     ['tempo', 'Tempo (BPM)', 60, 240, 1],
-    ['drumLevel', 'Drums (all)', 0, 2, 0.01],
     ['kickLevel', 'Kick level', 0, 2, 0.01],
     ['snareLevel', 'Snare level', 0, 2, 0.01],
     ['hatLevel', 'Hat level', 0, 2, 0.01],
     ['crashLevel', 'Crash level', 0, 2, 0.01],
-    ['guitarLevel', 'Guitar level', 0, 2, 0.01],
-    ['chugLevel', 'Chug level', 0, 2, 0.01],
+    ['guitarLevel', 'Rhythm guitar', 0, 2, 0.01],
     ['leadLevel', 'Lead 1 level', 0, 2, 0.01],
     ['lead2Level', 'Lead 2 level', 0, 2, 0.01],
     ['bassLevel', 'Bass level', 0, 2, 0.01],
@@ -83,6 +81,13 @@ const GROUPS = [
 const decimals = (step) => (step >= 1 ? 0 : step >= 0.1 ? 1 : step >= 0.01 ? 2 : 3);
 const fmt = (v, step) => Number(v).toFixed(decimals(step));
 
+// Level-slider keys that map to a mixer track, so we can hang DAW-style Solo/Mute buttons off
+// them. Solo/mute change audibility only — they never touch the slider value.
+const TRACK_OF = {
+  kickLevel: 'kick', snareLevel: 'snare', hatLevel: 'hat', crashLevel: 'crash',
+  guitarLevel: 'guitar', leadLevel: 'lead', lead2Level: 'lead2', bassLevel: 'bass',
+};
+
 export function mountAudioPanel() {
   if (typeof document === 'undefined') return;
   let el = null;
@@ -126,6 +131,10 @@ export function mountAudioPanel() {
     }
     el.appendChild(trackRow);
 
+    // Collected so toggling any Solo/Mute can repaint every track's button state.
+    const mixRefreshers = [];
+    const refreshAllMix = () => mixRefreshers.forEach((fn) => fn());
+
     for (const [groupName, rows] of GROUPS) {
       const h = document.createElement('div');
       h.textContent = groupName;
@@ -148,6 +157,30 @@ export function mountAudioPanel() {
           out.textContent = fmt(v, step);
         });
         row.append(lab, inp, out);
+        // DAW-style Solo / Mute for tracks that have a mixer level. These toggle audibility
+        // in the engine without changing the slider, so you can isolate a part while tuning.
+        const track = TRACK_OF[key];
+        if (track) {
+          const mkBtn = (txt, onColor) => {
+            const b = document.createElement('button');
+            b.textContent = txt;
+            b.style.cssText = `flex:0 0 18px;padding:2px 0;margin-left:4px;border-radius:3px;cursor:pointer;font-family:monospace;font-size:10px;font-weight:bold`;
+            const paint = (on) => {
+              b.style.background = on ? onColor : '#161b22';
+              b.style.color = on ? '#0d1014' : '#7c8794';
+              b.style.border = `1px solid ${on ? onColor : '#2a333f'}`;
+            };
+            return { b, paint };
+          };
+          const solo = mkBtn('S', '#efc14a');
+          const mute = mkBtn('M', '#e06c6c');
+          const refresh = () => { solo.paint(Audio.isSoloed(track)); mute.paint(Audio.isMuted(track)); };
+          solo.b.onclick = () => { Audio.soloTrack(track); refreshAllMix(); };
+          mute.b.onclick = () => { Audio.muteTrack(track); refreshAllMix(); };
+          refresh();
+          mixRefreshers.push(refresh);
+          row.append(solo.b, mute.b);
+        }
         el.appendChild(row);
       }
     }

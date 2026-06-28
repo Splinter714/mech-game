@@ -58,11 +58,11 @@ function softClipCurve() {
   return c;
 }
 
-// ── Lead melody, in scale-degree notation over the track's key (E phrygian) ──────────────
-// Degrees: 1=E 2=F 3=G 4=A 5=B 6=C 7=D 8=E(8ve up), 9..= keep climbing. The lead line is a
+// ── Lead melody, in scale-degree notation over the track's key (E aeolian / natural minor) ─
+// Degrees: 1=E 2=F# 3=G 4=A 5=B 6=C 7=D 8=E(8ve up), 9..= keep climbing. The lead line is a
 // list of [degree, startStep, durationSteps] over the 32-sixteenth-step loop (2 bars). Edit
 // LEAD_MELODY to change the tune; the Lead "Pitch" knob shifts the whole thing by octave.
-const LEAD_SCALE = [329.63, 349.23, 392.0, 440.0, 493.88, 523.25, 587.33]; // E phrygian degrees 1-7 (E4..D5)
+const LEAD_SCALE = [329.63, 369.99, 392.0, 440.0, 493.88, 523.25, 587.33]; // E aeolian degrees 1-7 (E4..D5)
 const leadFreq = (deg) => {
   const d = deg - 1, oct = Math.floor(d / 7);
   return LEAD_SCALE[((d % 7) + 7) % 7] * Math.pow(2, oct);
@@ -89,6 +89,30 @@ const LEAD2_DEGREES = [1, 8, 1, 7, 1, 5, 6, 5, 4, 5];
 const LEAD2_RHYTHM  = 'xxoxxoxxoxxoxoxo';
 const LEAD2_MELODY = buildMelody(LEAD2_DEGREES, LEAD2_RHYTHM);
 
+// Bass line — its own 64-step (4-bar) pattern, decoupled from the guitar riff, played on a
+// steady repetitive sixteenth-note pulse (not the guitar's gallop). Written as a
+// digit-per-sixteenth string so it reads like the line: each digit is an E-phrygian scale
+// degree (1=E 2=F# 3=G 4=A 5=B 6=C 7=D) in the bass octave, and a `-` drops everything after
+// it an octave. Here: 28 steps of E, an F–F / G–G turnaround, then an octave-down C pedal
+// and D pedal (16 steps each).
+const BASS_HZ = { E: 82.41, Fs: 92.50, G: 98.0, A: 110.0, B: 123.47, C: 130.81, D: 146.83 };
+const BASS_DEG = { '1': 'E', '2': 'Fs', '3': 'G', '4': 'A', '5': 'B', '6': 'C', '7': 'D' };
+function buildBass(spec) {
+  const out = [];
+  let oct = 1;
+  for (const ch of spec) {
+    if (ch === '-') { oct = 0.5; continue; }   // octave-down for the rest of the line
+    out.push(BASS_HZ[BASS_DEG[ch]] * oct);
+  }
+  return out;
+}
+const BASS_LINE = buildBass('11111111111111111111111111112233-66666666666666667777777777777777');
+
+// Drum grids — one char per sixteenth over the 32-step (2-bar) phrase; `x` = hit, anything
+// else = rest. They repeat twice across the 64-step loop.
+const KICK_GRID  = 'xxxxoxxxxxxxoxxxxxxxoxxxxxxxoxoo';
+const SNARE_GRID = 'ooooxoooooooxoooooooxoooooooxoxx';
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -103,32 +127,37 @@ export class AudioEngine {
     this._nextStepTime = 0;
     this._lastStepSound = 0;   // throttles rapid footfalls
     this.track = 'metal';      // active soundtrack: 'metal' (default) | 'synthwave'
+    // DAW-style mixer audibility (separate from the level params, so soloing/muting a track
+    // silences it WITHOUT touching its slider value): a per-track 0/1 multiplier from these
+    // two sets. Track ids: kick, snare, hat, crash, guitar, lead, lead2, bass.
+    this.muteSet = new Set();
+    this.soloSet = new Set();
     // Live-tunable music parameters (driven by the in-game audio panel; see setParam).
     // These are the defaults baked into the build — the panel's "copy settings" prints a
     // params object you can paste back here.
     this.params = {
       // master + drums
       master: 1, music: 0.6, tempo: 120,
-      drumLevel: 2, kickLevel: 2, snareLevel: 2, hatLevel: 2,
+      drumLevel: 2, kickLevel: 1.09, snareLevel: 1.42, hatLevel: 0.88,
       // per-drum SOUND shaping
-      kickPitch: 120, kickDecay: 0.4, kickClick: 0.09,
-      snareTone: 1000, snareSnap: 1200, snareDecay: 0.25,
-      hatFreq: 7500, hatDecay: 0.4,
-      crashLevel: 1.5, crashBright: 4000, crashDecay: 1,
+      kickPitch: 115, kickDecay: 0.2, kickClick: 0.095,
+      snareTone: 1000, snareSnap: 1200, snareDecay: 0.3,
+      hatFreq: 7500, hatDecay: 0.32,
+      crashLevel: 0.93, crashBright: 4000, crashDecay: 1,
       // rhythm-guitar TONE (the distortion pedal + cab)
-      guitarLevel: 0.83, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
-      guitarTone: 9000, guitarLowCut: 400,
+      guitarLevel: 0.38, guitarDrive: 40, guitarSat: 600, guitarClip: 1, guitarFold: 4,
+      guitarTone: 7000, guitarLowCut: 40,
       // rhythm-guitar VOICING (which overtones make up each power chord)
-      guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 0.95, guitarHigh: 0.55, guitarSquare: 0,
-      chugLength: 0.1, chugLevel: 0.94, pickLevel: 0.01,
+      guitarFifth: 0, guitarFifthDetune: 0, guitarOctave: 2, guitarHigh: 0, guitarSquare: 0,
+      chugLength: 0.1, pickLevel: 0,
       // LEAD 1 + LEAD 2 — two melodic leads, each with a full guitar-style chain + overtones
-      leadLevel: 0, leadDrive: 40, leadSat: 600, leadClip: 3, leadFold: 0, leadLowCut: 400, leadTone: 5000,
-      leadFifth: 0, leadOct: 0, leadPitch: 0.5,
-      lead2Level: 0.38, lead2Drive: 40, lead2Sat: 600, lead2Clip: 8, lead2Fold: 0, lead2LowCut: 400, lead2Tone: 4200,
+      leadLevel: 0.25, leadDrive: 40, leadSat: 600, leadClip: 1, leadFold: 4, leadLowCut: 400, leadTone: 7000,
+      leadFifth: 0, leadOct: 1, leadPitch: 1,
+      lead2Level: 0, lead2Drive: 40, lead2Sat: 600, lead2Clip: 8, lead2Fold: 0, lead2LowCut: 400, lead2Tone: 4200,
       lead2Fifth: 0, lead2Oct: 0, lead2Pitch: 1,
       // bass / low foundation (+ its own overtones)
-      bassLevel: 1.02, bassDrive: 12, bassGrit: 200, bassTone: 3000,
-      bassSub: 0.45, bassFifth: 0, bassOctave: 1.5,
+      bassLevel: 0.7, bassDrive: 12, bassGrit: 200, bassTone: 3000,
+      bassSub: 0.15, bassFifth: 0, bassOctave: 0.15,
     };
     this._fx = {};             // live node references the panel tweaks
   }
@@ -197,6 +226,28 @@ export class AudioEngine {
     return bus;
   }
 
+  // ── DAW-style solo/mute ────────────────────────────────────────────────────────────────
+  // 0/1 audibility multiplier for a track: if anything is soloed, only soloed tracks sound;
+  // otherwise everything sounds except muted tracks. Never reads/writes the level params.
+  _mix(t) {
+    if (this.soloSet.size) return this.soloSet.has(t) ? 1 : 0;
+    return this.muteSet.has(t) ? 0 : 1;
+  }
+  isMuted(t) { return this.muteSet.has(t); }
+  isSoloed(t) { return this.soloSet.has(t); }
+  muteTrack(t) { this.muteSet.has(t) ? this.muteSet.delete(t) : this.muteSet.add(t); this._applyMix(); }
+  soloTrack(t) { this.soloSet.has(t) ? this.soloSet.delete(t) : this.soloSet.add(t); this._applyMix(); }
+  // Re-push the node-based track levels (guitar/bass/leads live in gain nodes, not read at
+  // note time) so their audibility tracks the current solo/mute state. Drum tracks read the
+  // multiplier live in their note functions, so they need no node update here.
+  _applyMix() {
+    const fx = this._fx, P = this.params;
+    if (fx.post) fx.post.gain.value = P.guitarLevel * this._mix('guitar');
+    if (fx.bpost) fx.bpost.gain.value = P.bassLevel * this._mix('bass');
+    if (fx.leadpost) fx.leadpost.gain.value = P.leadLevel * this._mix('lead');
+    if (fx.lead2post) fx.lead2post.gain.value = P.lead2Level * this._mix('lead2');
+  }
+
   // Live-update a music parameter from the in-game panel; also persists into this.params so
   // "copy settings" can dump a paste-ready defaults block.
   setParam(k, v) {
@@ -213,7 +264,7 @@ export class AudioEngine {
       else if (s === 'Fold') fx[p + 'fold'].curve = foldbackCurve(v);
       else if (s === 'LowCut') fx[p + 'hp'].frequency.value = v;
       else if (s === 'Tone') fx[p + 'lp'].frequency.value = v;
-      else if (s === 'Level') fx[p + 'post'].gain.value = v;
+      else if (s === 'Level') fx[p + 'post'].gain.value = v * this._mix(p);
       return;
     }
     switch (k) {
@@ -226,11 +277,11 @@ export class AudioEngine {
       case 'guitarFold': fx.fold.curve = foldbackCurve(v); break;
       case 'guitarLowCut': fx.hp.frequency.value = v; break;
       case 'guitarTone': fx.cab.frequency.value = v; break;
-      case 'guitarLevel': fx.post.gain.value = v; break;
+      case 'guitarLevel': fx.post.gain.value = v * this._mix('guitar'); break;
       case 'bassDrive': fx.bdrive.gain.value = v; break;
       case 'bassGrit': fx.bshape.curve = distortionCurve(v); break;
       case 'bassTone': fx.blp.frequency.value = v; break;
-      case 'bassLevel': fx.bpost.gain.value = v; break;
+      case 'bassLevel': fx.bpost.gain.value = v * this._mix('bass'); break;
       default: break;   // tempo + voicing/level params are read live at note time
     }
   }
@@ -476,7 +527,7 @@ export class AudioEngine {
     while (this._nextStepTime < now + 0.12) {
       this._playStep(this._step, this._nextStepTime);
       this._nextStepTime += stepDur;
-      this._step = (this._step + 1) % 32;
+      this._step = (this._step + 1) % (this.track === 'synthwave' ? 32 : 64);
     }
   }
 
@@ -489,33 +540,39 @@ export class AudioEngine {
   // through the guitar chain), a screaming high lead at phrase starts + a climbing tremolo,
   // and a hard double-bass kit.
   _stepMetal(step, at) {
-    const E = 82.41, F = 87.31, G = 98.0, A = 110.0, B = 123.47, C = 130.81;
-    // 32-step root line: mostly chugging E with a G–F turnaround and an A–B–C climb.
+    const E = 82.41, F = 87.31, G = 98.0, A = 110.0, B = 123.47, C = 130.81, D = 146.83;
+    // 64-step root line (matches the bass's 4-bar pattern): an E-based first half, then power
+    // chords on C and D under the bass's octave-down C / D pedals (the new implied chords).
     const riff = [E, E, E, E, E, E, E, E, E, E, E, E, G, G, F, F,
-                  E, E, E, E, E, E, E, E, E, E, E, E, A, A, B, C];
+                  E, E, E, E, E, E, E, E, E, E, E, E, A, A, B, C,
+                  C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
+                  D, D, D, D, D, D, D, D, D, D, D, D, D, D, D, D];
     const P = this.params;
+    const m = step % 32;                             // leads repeat their 32-step phrase
     const local = step % 16;
     const gallop = local % 4 !== 1;                  // hits on 0,2,3 of each beat (gallop)
 
     if (gallop) {
-      this._gtr(riff[step], at, P.chugLength, P.chugLevel, true);   // tight palm-muted chug (no overlap = no smear)
-      this._bass(riff[step], at, P.chugLength + 0.02, 0.6);         // tonal low foundation under the fizz
+      this._gtr(riff[step], at, P.chugLength, 0.94, true);          // tight palm-muted chug (no overlap = no smear); loudness via guitarLevel
       this.noise(this.drums, { dur: 0.018, gain: P.pickLevel, type: 'bandpass', freq: 2600, q: 0.7 }, at); // pick attack "chk"
     }
+    // Bass runs its own steady, repetitive sixteenth-note pulse (every step), independent of
+    // the guitar's gallop, so the low end is a constant driving foundation.
+    this._bass(BASS_LINE[step], at, P.chugLength + 0.02, 0.6);
     // Lead melodies (scale-degree notation): play any note starting this step. Two leads,
     // each with its own bus + timbre (lead 1 saw, lead 2 square).
     const sd = 60 / Math.max(1, P.tempo) / 4;
     for (const [deg, atStep, dur] of LEAD_MELODY) {
-      if (atStep === step) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd, 'sawtooth');
+      if (atStep === m) this._leadNote('lead', leadFreq(deg) * P.leadPitch, at, dur * sd, 'sawtooth');
     }
     for (const [deg, atStep, dur] of LEAD2_MELODY) {
-      if (atStep === step) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd, 'square');
+      if (atStep === m) this._leadNote('lead2', leadFreq(deg) * P.lead2Pitch, at, dur * sd, 'square');
     }
 
-    if (local % 2 === 0) this._kickMetal(at);        // double-bass eighths
-    if (local === 4 || local === 12) this._snareMetal(at);          // backbeat
-    this._hat(at, (local % 2 === 0 ? 0.04 : 0.02) * P.hatLevel);
-    if (step === 0) this._crash(at);
+    if (KICK_GRID[m] === 'x') this._kickMetal(at);
+    if (SNARE_GRID[m] === 'x') this._snareMetal(at);
+    this._hat(at, (local % 2 === 0 ? 0.04 : 0.02) * P.hatLevel * this._mix('hat'));
+    if (m === 0) this._crash(at);
   }
 
   // The original synthwave loop (kept as a selectable track).
@@ -573,7 +630,7 @@ export class AudioEngine {
     this.tone(this.drums, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
   }
   _kickMetal(at) {
-    const P = this.params, k = P.kickLevel;
+    const P = this.params, k = P.kickLevel * this._mix('kick');
     this.tone(this.drums, { type: 'sine', freq: P.kickPitch, freqEnd: 42, dur: P.kickDecay, gain: 0.26 * k, attack: 0.001 }, at);
     this.noise(this.drums, { dur: 0.02, gain: P.kickClick * k, type: 'highpass', freq: 3200 }, at);   // beater click
   }
@@ -582,14 +639,14 @@ export class AudioEngine {
     this.tone(this.drums, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
   }
   _snareMetal(at) {
-    const P = this.params, s = P.snareLevel;
+    const P = this.params, s = P.snareLevel * this._mix('snare');
     this.noise(this.drums, { dur: P.snareDecay, gain: 0.17 * s, type: 'highpass', freq: P.snareTone }, at); // body/brightness
     this.noise(this.drums, { dur: 0.08, gain: 0.08 * s, type: 'bandpass', freq: P.snareSnap, q: 1 }, at);   // snap/crack
     this.tone(this.drums, { type: 'triangle', freq: 245, freqEnd: 170, dur: 0.09, gain: 0.05 * s }, at);    // tone body
   }
   _crash(at) {
     const P = this.params;
-    this.noise(this.drums, { dur: P.crashDecay, gain: 0.1 * P.crashLevel, type: 'highpass', freq: P.crashBright }, at);
+    this.noise(this.drums, { dur: P.crashDecay, gain: 0.1 * P.crashLevel * this._mix('crash'), type: 'highpass', freq: P.crashBright }, at);
   }
   _hat(at, gain) {
     this.noise(this.drums, { dur: this.params.hatDecay, gain, type: 'highpass', freq: this.params.hatFreq }, at);
