@@ -117,7 +117,13 @@ function onsetGaps(hit, len) {
 // rhythm grid (x = pick/note, o = rest). The grid IS the track's rhythmic feel — gallop, straight
 // chugs, eighth-note downpicks, whole-note doom drones, sixteenth-note tremolo, etc. Returns
 // per-step arrays { freq, hit, gap } (gap = steps until the next onset, for ringing notes).
-function buildLine(degrees, grid, root, semis) {
+// `stretch` > 1 holds each chord that many onsets longer while keeping the pulse (so a 4-bar
+// progression spans 8 bars but still chugs in sixteenths — the original gallop's slow harmony).
+function buildLine(degrees, grid, root, semis, stretch = 1) {
+  if (stretch > 1) {
+    grid = grid.repeat(stretch);
+    degrees = degrees.flatMap((d) => Array(stretch).fill(d));
+  }
   const len = grid.length;
   const freq = new Array(len), hit = new Array(len).fill(false);
   let di = 0, last = degHz(root, semis, degrees.length ? degrees[0] : 1);
@@ -132,7 +138,8 @@ function buildLine(degrees, grid, root, semis) {
 
 // A bass LINE that also supports octave drops: each char is a degree digit (an onset), `o`
 // (rest), or `-` (toggle everything after it down/back an octave — the `-` consumes no step).
-function buildBassLine(spec, root, semis) {
+function buildBassLine(spec, root, semis, stretch = 1) {
+  if (stretch > 1) spec = [...spec].flatMap((c) => (c === '-' ? [c] : Array(stretch).fill(c))).join('');
   const freq = [], hit = [];
   let oct = 1, last = degHz(root, semis, 1);
   for (const ch of spec) {
@@ -156,15 +163,15 @@ function makeDrums({ kick, snare, hat, crash = 32, ride = false }) {
 //   ring     : if true the guitar lets each chord RING to the next pick (doom drones / sustained
 //              power chords); if false it's a tight palm-muted chug of `chug` seconds.
 //   lead/lead2: [degrees, rhythm] — empty degrees leave the lead OPEN for the owner.
-function makeTrack({ id, label, root, mode, tempo, gtr, bass, drums,
+function makeTrack({ id, label, root, mode, tempo, gtr, bass, drums, stretch = 1,
                      ring = false, bassRing = false, chug = 0.08, bassLen = 0.12,
                      lead = [[], ''], lead2 = [[], ''] }) {
   const semis = MODES[mode];
   return {
     id, label, mode, tempo, semis, ring, bassRing, chug, bassLen,
     leadRoot: root * 4,                                  // leads sit two octaves above the riff
-    gtr: buildLine(gtr[0], gtr[1], root, semis),
-    bass: buildBassLine(bass, root, semis),
+    gtr: buildLine(gtr[0], gtr[1], root, semis, stretch),
+    bass: buildBassLine(bass, root, semis, stretch),
     drums: makeDrums(drums),
     leadMelody: buildMelody(lead[0], lead[1]),
     lead2Melody: buildMelody(lead2[0], lead2[1]),
@@ -189,9 +196,10 @@ const PICK_MODES = ['aeolian', 'phrygian', 'harmonicMinor'];
 const MODE_TAG = { aeolian: 'aeolian', phrygian: 'phrygian', harmonicMinor: 'harm.min' };
 
 const STYLES = [
-  // THRASH GALLOP — fast dd-dd palm-muted gallop, driving double-bass; the original, with leads.
+  // THRASH GALLOP — the original: fast dd-dd palm-muted gallop, driving double-bass, slow 8-bar
+  // harmony (stretch ×2) at 120 BPM, with the screaming leads. Restored to its first form.
   {
-    key: 'gallop', name: 'gallop', tempo: 132, chug: 0.08,
+    key: 'gallop', name: 'gallop', tempo: 120, chug: 0.08, stretch: 2,
     gtr: [[1, 1, 1, 1, 1, 1, 3, 2,  1, 1, 1, 1, 1, 1, 4, 5,
            6, 6, 6, 6, 6, 6, 5, 4,  7, 7, 7, 7, 7, 7, 5, 7], GALLOP + GALLOP],
     bass: '1111111111111111' + '1111111111112233' + '-6666666666666666' + '7777777777777777',
@@ -199,17 +207,6 @@ const STYLES = [
              hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
     lead:  [[1, 5, 3, 4, 3, 2, 3, 4, 5, 1], 'xooxooxoxooxooxoxooxooxoxooooooo'],
     lead2: [[1, 8, 1, 7, 1, 5, 6, 5, 4, 5], 'xxoxxoxxoxxoxoxo'],
-  },
-  // STOMP — heavy mid-tempo breakdown: spacious, syncopated single-note chugs with big rests (a
-  // stop-start mosh feel, NOT a busy groove), the second bar dropped an octave for menace, under a
-  // half-time backbeat (snare on beat 3) with double-kick accents. Leads open.
-  {
-    key: 'stomp', name: 'stomp', tempo: 100, chug: 0.1,
-    gtr: [[1, 1, 1, 1, 7, 1,  1, 1, 7, 1, 6, 1],
-          'xoooxoxoooxoxoxo' + 'xoooxoxoooxoxoxo'],
-    bass: '1ooo1o1ooo1o1o1o' + '-1ooo1o7ooo1o6o1o',     // bar 2 drops an octave (the `-`)
-    drums: { kick: 'xoooxoxoooxoxoxo' + 'xoooxoxoooxoxoxx', snare: 'ooooooooxoooooooooooooooxooooooo',
-             hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
   },
   // DOOM — slow + crushing: huge RINGING power chords (one per bar, sustained), a half-time kit
   // (snare on beat 3), and a droning bass. Leads open.
@@ -249,7 +246,7 @@ for (const s of STYLES) {
     const id = `${s.key}-${mode}`;
     TRACKS[id] = makeTrack({
       id, label: `${s.name} · ${MODE_TAG[mode]}`, root: STYLE_ROOT, mode, tempo: s.tempo,
-      gtr: s.gtr, bass: s.bass, drums: s.drums,
+      gtr: s.gtr, bass: s.bass, drums: s.drums, stretch: s.stretch,
       ring: s.ring, bassRing: s.bassRing, chug: s.chug, bassLen: s.bassLen,
       lead: s.lead, lead2: s.lead2,
     });
