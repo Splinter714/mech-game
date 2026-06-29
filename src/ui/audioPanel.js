@@ -133,20 +133,37 @@ export function mountAudioPanel() {
     head.append(title, closeBtn);
     el.appendChild(head);
 
-    // Track switch — one button per metal track (each its own mode/key/tempo; #43). Switching
-    // re-reads params (e.g. the track's tempo) by rebuilding the panel.
-    const trackRow = document.createElement('div');
-    trackRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px';
+    // Track switch — the tracks are (style × mode) ids like `gallop-aeolian`. Group them by style
+    // (one labelled row each) with the mode variants across, so you can A/B a style in each mode
+    // and pick the keeper. Switching re-reads params (e.g. the track's tempo) by rebuilding.
+    const groups = new Map();                       // style → [{id, mode}]
     for (const t of Audio.trackIds) {
-      const b = document.createElement('button');
-      b.textContent = Audio.trackLabel(t);
-      b.title = t;
-      const on = Audio.track === t;
-      b.style.cssText = `flex:1 1 46%;padding:4px;background:${on ? '#1b2430' : '#161b22'};color:#c8d2dd;border:1px solid ${on ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace;font-size:10px`;
-      b.onclick = () => { Audio.setTrack(t); close(); open(); };
-      trackRow.appendChild(b);
+      const dash = t.indexOf('-');
+      const style = dash < 0 ? t : t.slice(0, dash);
+      const mode = dash < 0 ? t : t.slice(dash + 1);
+      if (!groups.has(style)) groups.set(style, []);
+      groups.get(style).push({ id: t, mode });
     }
-    el.appendChild(trackRow);
+    const trackWrap = document.createElement('div');
+    trackWrap.style.cssText = 'margin-bottom:10px';
+    for (const [style, variants] of groups) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:5px;margin:3px 0';
+      const lab = document.createElement('span');
+      lab.textContent = style; lab.style.cssText = 'flex:0 0 56px;color:#7c8794';
+      row.appendChild(lab);
+      for (const { id, mode } of variants) {
+        const b = document.createElement('button');
+        b.textContent = mode === 'harmonicMinor' ? 'harm.min' : mode;
+        b.title = id;
+        const on = Audio.track === id;
+        b.style.cssText = `flex:1;padding:4px 2px;background:${on ? '#1b2430' : '#161b22'};color:${on ? '#efc14a' : '#c8d2dd'};border:1px solid ${on ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace;font-size:10px`;
+        b.onclick = () => { Audio.setTrack(id); close(); open(); };
+        row.appendChild(b);
+      }
+      trackWrap.appendChild(row);
+    }
+    el.appendChild(trackWrap);
 
     // Collected so toggling any Solo/Mute can repaint every track's button state.
     const mixRefreshers = [];

@@ -178,63 +178,82 @@ const EIGHTHS  = 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo';   // straight downpicked ei
 const TREMOLO  = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';   // every sixteenth — tremolo picking
 const WHOLES   = 'xoooooooooooooooxooooooooooooooo';   // one ringing chord per bar (doom drone)
 
-const TRACKS = {
-  // THRASH GALLOP — E aeolian, the original: fast dd-dd palm-muted gallop, driving double-bass,
-  // screaming leads kept intact.
-  metal: makeTrack({
-    id: 'metal', label: 'metal · E aeolian gallop', root: 82.41, mode: 'aeolian', tempo: 132,
+// ── Styles × modes ───────────────────────────────────────────────────────────────────────
+// A STYLE is the mode-NEUTRAL identity of a track: its rhythmic feel (guitar grid, bass grid,
+// drum kit), tempo, articulation, and any leads — all in scale-degree notation, so it can be
+// rendered in ANY mode. We then generate one track per (style × mode) over a small set of metal
+// modes, so the owner can audition every style in each mode and keep whichever fits. All styles
+// share the same root (E) so switching is a pure mode comparison.
+const STYLE_ROOT = 82.41;                                   // E2 — common key for every style
+const PICK_MODES = ['aeolian', 'phrygian', 'harmonicMinor'];
+const MODE_TAG = { aeolian: 'aeolian', phrygian: 'phrygian', harmonicMinor: 'harm.min' };
+
+const STYLES = [
+  // THRASH GALLOP — fast dd-dd palm-muted gallop, driving double-bass; the original, with leads.
+  {
+    key: 'gallop', name: 'gallop', tempo: 132, chug: 0.08,
     gtr: [[1, 1, 1, 1, 1, 1, 3, 2,  1, 1, 1, 1, 1, 1, 4, 5,
            6, 6, 6, 6, 6, 6, 5, 4,  7, 7, 7, 7, 7, 7, 5, 7], GALLOP + GALLOP],
     bass: '1111111111111111' + '1111111111112233' + '-6666666666666666' + '7777777777777777',
     drums: { kick: 'xxxxoxxxxxxxoxxxxxxxoxxxxxxxoxoo', snare: 'ooooxoooooooxoooooooxoooooooxoxx',
              hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
-    chug: 0.08,
     lead:  [[1, 5, 3, 4, 3, 2, 3, 4, 5, 1], 'xooxooxoxooxooxoxooxooxoxooooooo'],
     lead2: [[1, 8, 1, 7, 1, 5, 6, 5, 4, 5], 'xxoxxoxxoxxoxoxo'],
-  }),
-  // GROOVE — D dorian, mid-tempo: syncopated palm-muted chugs (NOT a constant gallop) locked to a
-  // bouncy bass and a backbeat kit, leaning on dorian's bright 6th (B). Leads open.
-  dorian: makeTrack({
-    id: 'dorian', label: 'dorian · D groove', root: 73.42, mode: 'dorian', tempo: 120,
+  },
+  // GROOVE — mid-tempo syncopated palm-muted chugs (NOT a constant gallop) over a bouncy bass and
+  // a backbeat kit. Leads open.
+  {
+    key: 'groove', name: 'groove', tempo: 120, chug: 0.11,
     gtr: [[1, 1, 4, 1, 6, 5, 1, 4,  1, 1, 4, 1, 6, 7, 6, 4],
           'xxoxooxxxoxooxoo' + 'xxoxooxxxoxooxoo'],
     bass: '1oo1oo1o4oo1o5o4' + '1oo1oo1o6oo5o4o5',
     drums: { kick: 'xooooxooxoooxoooxooooxooxoooxooo', snare: 'oooxoooooooxoooooooxoooooooxoooo',
              hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
-    chug: 0.11,
-  }),
-  // DOOM — E phrygian, slow + crushing: huge RINGING power chords (one per bar, sustained), a
-  // half-time kit, and a droning bass. The dark ♭2 (F) hangs in the air. Leads open.
-  phrygian: makeTrack({
-    id: 'phrygian', label: 'phrygian · E doom', root: 82.41, mode: 'phrygian', tempo: 76, ring: true, bassRing: true,
-    gtr: [[1, 2, 1, 6], WHOLES + WHOLES],            // E … ♭2(F) … E … ♭6 — four 1-bar drones
+  },
+  // DOOM — slow + crushing: huge RINGING power chords (one per bar, sustained), a half-time kit
+  // (snare on beat 3), and a droning bass. Leads open.
+  {
+    key: 'doom', name: 'doom', tempo: 76, ring: true, bassRing: true, bassLen: 0.6,
+    gtr: [[1, 2, 1, 6], WHOLES + WHOLES],            // root … 2 … root … 6 — four 1-bar drones
     bass: '1ooooooooooooooo' + '2ooooooooooooooo' + '-1ooooooooooooooo' + '6ooooooooooooooo',
     drums: { kick: 'xoooooooooooooooxooooooooooooooo', snare: 'ooooooooxoooooooooooooooxooooooo',
              hat: 'xoooooooxoooooooxoooooooxooooooo', ride: true, crash: 32 },
-    bassLen: 0.6,    // SNARE on beat 3 (steps 8 & 24) — the slow half-time backbeat
-  }),
-  // HARD ROCK — E mixolydian, up-tempo: relentless straight downpicked EIGHTH-note power chords
-  // (chug-chug-chug on the beat), four-on-the-floor double kick + backbeat, bright major 3rd. Leads open.
-  mixolydian: makeTrack({
-    id: 'mixolydian', label: 'mixolydian · E hard rock', root: 82.41, mode: 'mixolydian', tempo: 150,
+  },
+  // DRIVE — up-tempo hard rock: relentless straight downpicked EIGHTH-note power chords (chug on
+  // the beat), four-on-the-floor double kick + backbeat. Leads open.
+  {
+    key: 'drive', name: 'drive', tempo: 150, chug: 0.12,
     gtr: [[1, 1, 1, 3,  1, 1, 5, 4,  1, 1, 1, 3,  7, 7, 5, 1], EIGHTHS + EIGHTHS],
     bass: '1o1o1o1o1o1o1o1o' + '1o1o1o1o5o5o4o4o' + '1o1o1o1o1o1o1o1o' + '7o7o7o7o5o5o1o1o',
     drums: { kick: 'xoooxoooxoooxoooxoooxoooxoooxooo', snare: 'ooooxoooooooxoooooooxoooooooxooo',
              hat: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
-    chug: 0.12,
-  }),
-  // BLAST — E harmonic minor, extreme/fast: constant sixteenth-note TREMOLO picking over a blast
-  // beat (kick/snare alternating every sixteenth), riding the D# leading tone. Leads open.
-  harmonic: makeTrack({
-    id: 'harmonic', label: 'harmonic · E blast', root: 82.41, mode: 'harmonicMinor', tempo: 160,
+  },
+  // BLAST — extreme/fast: constant sixteenth-note TREMOLO picking over a blast beat (kick/snare
+  // alternating every sixteenth). Leads open.
+  {
+    key: 'blast', name: 'blast', tempo: 160, chug: 0.045,
     gtr: [[1, 1, 7, 1,  3, 1, 7, 1,  5, 5, 7, 8,  7, 6, 5, 7], TREMOLO + TREMOLO],
     bass: '1111111177771111' + '3333111155557777' + '1111111166665555' + '7777555533331111',
     drums: { kick: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', snare: 'oxoxoxoxoxoxoxoxoxoxoxoxoxoxoxox',
              hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', crash: 64 },
-    chug: 0.045,
-  }),
-};
+  },
+];
+
+// Generate every (style × mode) track. Id = `<style>-<mode>`; label = `<style> · <mode>`.
+const TRACKS = {};
+for (const s of STYLES) {
+  for (const mode of PICK_MODES) {
+    const id = `${s.key}-${mode}`;
+    TRACKS[id] = makeTrack({
+      id, label: `${s.name} · ${MODE_TAG[mode]}`, root: STYLE_ROOT, mode, tempo: s.tempo,
+      gtr: s.gtr, bass: s.bass, drums: s.drums,
+      ring: s.ring, bassRing: s.bassRing, chug: s.chug, bassLen: s.bassLen,
+      lead: s.lead, lead2: s.lead2,
+    });
+  }
+}
 const TRACK_IDS = Object.keys(TRACKS);
+const DEFAULT_TRACK = 'gallop-aeolian';
 
 export class AudioEngine {
   constructor() {
@@ -249,8 +268,8 @@ export class AudioEngine {
     this._step = 0;
     this._nextStepTime = 0;
     this._lastStepSound = 0;   // throttles rapid footfalls
-    this.track = 'metal';      // active soundtrack id (a key of TRACKS)
-    this._trackDef = TRACKS.metal;
+    this.track = DEFAULT_TRACK;   // active soundtrack id (a key of TRACKS)
+    this._trackDef = TRACKS[DEFAULT_TRACK];
     // DAW-style mixer audibility (separate from the level params, so soloing/muting a track
     // silences it WITHOUT touching its slider value): a per-track 0/1 multiplier from these
     // two sets. Track ids: kick, snare, hat, crash, guitar, lead, lead2, bass.
@@ -619,12 +638,10 @@ export class AudioEngine {
   }
 
   // ── Music (#38) ─────────────────────────────────────────────────────────────────────
-  // A looping metal arrangement on a 25ms lookahead clock (sample-accurate regardless of
-  // frame rate), driven by `this.track`:
-  //   'metal' (default) — aggressive thrash: galloping distorted power chords in E, a
-  //            screaming lead, and a double-bass kit.
-  // The loop no-ops until the context is running, so it "starts" the moment Phaser unlocks
-  // audio on first input. setTrack() swaps between tracks live.
+  // A looping metal arrangement on a 25ms lookahead clock (sample-accurate regardless of frame
+  // rate), driven by `this.track` — one of the generated (style × mode) tracks in TRACKS (default
+  // 'gallop-aeolian'). The loop no-ops until the context is running, so it "starts" the moment
+  // Phaser unlocks audio on first input. setTrack() swaps between tracks live.
   startMusic(track) {
     if (track) this.track = track;
     if (this._musicOn) return;
@@ -641,15 +658,15 @@ export class AudioEngine {
   }
 
   // Switch the active track (live). Each track carries its own tempo, so adopt it (the panel
-  // re-reads params.tempo when it rebuilds on a track switch). Unknown ids fall back to metal.
+  // re-reads params.tempo when it rebuilds on a track switch). Unknown ids fall back to default.
   setTrack(name) {
-    this._trackDef = TRACKS[name] || TRACKS.metal;
+    this._trackDef = TRACKS[name] || TRACKS[DEFAULT_TRACK];
     this.track = this._trackDef.id;
     this.params.tempo = this._trackDef.tempo;
     this._step = 0;
   }
   get trackIds() { return TRACK_IDS; }
-  trackLabel(id) { return (TRACKS[id] || TRACKS.metal).label; }
+  trackLabel(id) { return (TRACKS[id] || TRACKS[DEFAULT_TRACK]).label; }
 
   _schedule() {
     if (!this.ctx || this.ctx.state !== 'running' || this.muted) return;
