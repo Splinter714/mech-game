@@ -254,13 +254,13 @@ export function mountAudioPanel() {
   const close = () => { el?.remove(); el = null; };
   const toggle = () => (el ? close() : open());
 
-  // Floating toggle button (so it's discoverable without the keyboard). Sits top-right;
-  // when the panel opens it covers the button, and the panel's own ✕ / P closes it.
+  // Floating toggle button (so it's discoverable without the keyboard). Sits in the BOTTOM-right
+  // corner, clear of the garage's top-right DEPLOY button; the panel still opens top-right.
   const btn = document.createElement('button');
   btn.textContent = '♪ music';
   btn.setAttribute('aria-label', 'Open the music tuner');
   btn.style.cssText = [
-    'position:fixed', 'top:12px', 'right:12px', 'z-index:99998',
+    'position:fixed', 'bottom:12px', 'right:12px', 'z-index:99998',
     'background:rgba(13,16,20,0.92)', 'color:#5ec8e0', 'border:1px solid #2a333f', 'border-radius:6px',
     'padding:7px 12px', 'font-family:monospace', 'font-size:12px', 'cursor:pointer', 'box-shadow:0 2px 10px rgba(0,0,0,0.45)',
   ].join(';');

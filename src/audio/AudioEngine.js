@@ -99,98 +99,139 @@ function buildMelody(degrees, grid, len = 32) {
   });
 }
 
-// Bass line — a digit-per-sixteenth string over a 64-step (4-bar) pattern, played on a steady
-// repetitive sixteenth-note pulse (not the guitar's gallop). Each digit is a scale degree in
-// the bass octave; a `-` drops everything after it an octave. Returns an array of Hz.
-function buildBass(spec, root, semis) {
-  const out = [];
-  let oct = 1;
-  for (const ch of spec) {
-    if (ch === '-') { oct = 0.5; continue; }   // octave-down for the rest of the line
-    out.push(degHz(root, semis, +ch) * oct);
+// For a hit pattern, the gap (in steps, wrapping) from each onset to the next — so a "ringing"
+// note can sustain exactly until the next pick.
+function onsetGaps(hit, len) {
+  const onsets = [];
+  for (let i = 0; i < len; i++) if (hit[i]) onsets.push(i);
+  const gap = new Array(len).fill(0);
+  for (let k = 0; k < onsets.length; k++) {
+    const cur = onsets[k], nxt = onsets[(k + 1) % onsets.length];
+    let g = nxt - cur; if (g <= 0) g += len;            // wrap to the first onset of the next loop
+    gap[cur] = g;
   }
-  return out;
+  return gap;
 }
 
-// Rhythm-guitar line — a degree-per-ONSET list placed on an x/o rhythm grid (x = palm-muted
-// chug, o = rest, the o's falling on the gallop's skipped sixteenth). Each onset takes the
-// next degree (wrapping) and holds until the next onset. Same octave as the bass roots.
-function buildGuitarLine(degrees, grid, root, semis, len = 64) {
-  let g = grid; while (g.length < len) g += grid; g = g.slice(0, len);
-  const out = []; let di = 0, last = degHz(root, semis, 1);
+// A melodic LINE played through the guitar/bass: a degree-per-ONSET list dropped on an x/o
+// rhythm grid (x = pick/note, o = rest). The grid IS the track's rhythmic feel — gallop, straight
+// chugs, eighth-note downpicks, whole-note doom drones, sixteenth-note tremolo, etc. Returns
+// per-step arrays { freq, hit, gap } (gap = steps until the next onset, for ringing notes).
+function buildLine(degrees, grid, root, semis) {
+  const len = grid.length;
+  const freq = new Array(len), hit = new Array(len).fill(false);
+  let di = 0, last = degHz(root, semis, degrees.length ? degrees[0] : 1);
   for (let i = 0; i < len; i++) {
-    if (g[i] === 'x') { last = degHz(root, semis, degrees[di % degrees.length]); di++; }
-    out.push(last);                                    // hold the onset note until the next x
+    if (grid[i] === 'x' || grid[i] === 'X') {
+      last = degHz(root, semis, degrees[di % degrees.length]); hit[i] = true; di++;
+    }
+    freq[i] = last;                                      // non-onset steps repeat the held note
   }
-  return out;
+  return { freq, hit, gap: onsetGaps(hit, len), len };
 }
 
-// The gallop rhythm shared by all tracks (12 of every 16 sixteenths; the o's are the skips).
-const GALLOP = 'xoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxx';
-// Drum grids — one char per sixteenth over the 32-step (2-bar) phrase; `x` = hit, else rest.
-// They repeat twice across the 64-step loop.
-const DRUMS = {
-  // Driving double-bass kit with the busy fill tail.
-  driving: { kick: 'xxxxoxxxxxxxoxxxxxxxoxxxxxxxoxoo', snare: 'ooooxoooooooxoooooooxoooooooxoxx' },
-  // Heavier, more open half-time-feel kick for the slow/dark tracks.
-  heavy:   { kick: 'xooxxooxxooxxooxxooxxooxxooxxooo', snare: 'ooooxoooooooooooooooxooooooooooo' },
-};
+// A bass LINE that also supports octave drops: each char is a degree digit (an onset), `o`
+// (rest), or `-` (toggle everything after it down/back an octave — the `-` consumes no step).
+function buildBassLine(spec, root, semis) {
+  const freq = [], hit = [];
+  let oct = 1, last = degHz(root, semis, 1);
+  for (const ch of spec) {
+    if (ch === '-') { oct = oct === 1 ? 0.5 : 1; continue; }
+    if (ch === 'o') { hit.push(false); freq.push(last); continue; }
+    last = degHz(root, semis, +ch) * oct; hit.push(true); freq.push(last);
+  }
+  const len = freq.length;
+  return { freq, hit, gap: onsetGaps(hit, len), len };
+}
 
-// A track is a compact config; makeTrack() expands it into the per-step note arrays consumed by
-// _stepMetal. `lead`/`lead2` are [degrees, rhythm] pairs — pass empty degrees to leave a lead open.
-function makeTrack({ id, label, root, mode, tempo, bass, gtr, drums = 'driving', lead = [[], ''], lead2 = [[], ''] }) {
+// Drum kit per track — a 32-step (2-bar) grid per voice (`x` = hit). `ride` swaps the hat's
+// closed tick for a longer open wash; tracks pick whatever groove fits (gallop double-bass,
+// groovy backbeat, half-time doom, four-on-the-floor, blast beat).
+function makeDrums({ kick, snare, hat, crash = 32, ride = false }) {
+  return { kick, snare, hat, crash, ride };
+}
+
+// A track is a compact config; makeTrack() expands it into the per-step arrays _stepMetal reads.
+//   gtr/bass : [degrees, rhythmGrid]  — the grid is the FEEL; bass grid may use digits/o/- directly.
+//   ring     : if true the guitar lets each chord RING to the next pick (doom drones / sustained
+//              power chords); if false it's a tight palm-muted chug of `chug` seconds.
+//   lead/lead2: [degrees, rhythm] — empty degrees leave the lead OPEN for the owner.
+function makeTrack({ id, label, root, mode, tempo, gtr, bass, drums,
+                     ring = false, bassRing = false, chug = 0.08, bassLen = 0.12,
+                     lead = [[], ''], lead2 = [[], ''] }) {
   const semis = MODES[mode];
-  const d = DRUMS[drums];
   return {
-    id, label, mode, tempo, semis,
+    id, label, mode, tempo, semis, ring, bassRing, chug, bassLen,
     leadRoot: root * 4,                                  // leads sit two octaves above the riff
-    bassLine: buildBass(bass, root, semis),
-    guitarLine: buildGuitarLine(gtr, GALLOP, root, semis),
+    gtr: buildLine(gtr[0], gtr[1], root, semis),
+    bass: buildBassLine(bass, root, semis),
+    drums: makeDrums(drums),
     leadMelody: buildMelody(lead[0], lead[1]),
     lead2Melody: buildMelody(lead2[0], lead2[1]),
-    kickGrid: d.kick, snareGrid: d.snare,
   };
 }
 
+// Reusable rhythm grids (1 char = a sixteenth; a bar = 16). Each track combines a guitar grid +
+// a bass spec + a drum kit to get a DISTINCT style — not just a different scale over one gallop.
+const GALLOP   = 'xoxxxoxxxoxxxoxxxoxxxoxxxoxxxoxx';   // dd-dd thrash gallop (2 bars)
+const EIGHTHS  = 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo';   // straight downpicked eighth notes
+const TREMOLO  = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';   // every sixteenth — tremolo picking
+const WHOLES   = 'xoooooooooooooooxooooooooooooooo';   // one ringing chord per bar (doom drone)
+
 const TRACKS = {
-  // The original thrash track — E aeolian, with its full screaming leads kept intact.
+  // THRASH GALLOP — E aeolian, the original: fast dd-dd palm-muted gallop, driving double-bass,
+  // screaming leads kept intact.
   metal: makeTrack({
-    id: 'metal', label: 'metal · E aeolian', root: 82.41, mode: 'aeolian', tempo: 120,
-    bass: '11111111111111111111111111112233-66666666666666667777777777777777',
-    gtr: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2,   // bar 1: E pedal, tail G-F#
-          1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 5,   // bar 2: E pedal, tail A-B
-          6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,   // bar 3: C pedal, tail B-A
-          7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 5, 7],  // bar 4: D pedal, tail B-D
+    id: 'metal', label: 'metal · E aeolian gallop', root: 82.41, mode: 'aeolian', tempo: 132,
+    gtr: [[1, 1, 1, 1, 1, 1, 3, 2,  1, 1, 1, 1, 1, 1, 4, 5,
+           6, 6, 6, 6, 6, 6, 5, 4,  7, 7, 7, 7, 7, 7, 5, 7], GALLOP + GALLOP],
+    bass: '1111111111111111' + '1111111111112233' + '-6666666666666666' + '7777777777777777',
+    drums: { kick: 'xxxxoxxxxxxxoxxxxxxxoxxxxxxxoxoo', snare: 'ooooxoooooooxoooooooxoooooooxoxx',
+             hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
+    chug: 0.08,
     lead:  [[1, 5, 3, 4, 3, 2, 3, 4, 5, 1], 'xooxooxoxooxooxoxooxooxoxooooooo'],
     lead2: [[1, 8, 1, 7, 1, 5, 6, 5, 4, 5], 'xxoxxoxxoxxoxoxo'],
   }),
-  // Brighter minor (raised 6th leans on the B color tone) — D dorian, a touch quicker. Leads open.
+  // GROOVE — D dorian, mid-tempo: syncopated palm-muted chugs (NOT a constant gallop) locked to a
+  // bouncy bass and a backbeat kit, leaning on dorian's bright 6th (B). Leads open.
   dorian: makeTrack({
-    id: 'dorian', label: 'dorian · D dorian', root: 73.42, mode: 'dorian', tempo: 132,
-    bass: '11111111111111111111111111114466-77777777777777775555555555555555',
-    gtr: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 6,   // D pedal, tail to G + the bright 6th (B)
-          1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 7, 5],  // D pedal, tail to C-A
+    id: 'dorian', label: 'dorian · D groove', root: 73.42, mode: 'dorian', tempo: 120,
+    gtr: [[1, 1, 4, 1, 6, 5, 1, 4,  1, 1, 4, 1, 6, 7, 6, 4],
+          'xxoxooxxxoxooxoo' + 'xxoxooxxxoxooxoo'],
+    bass: '1oo1oo1o4oo1o5o4' + '1oo1oo1o6oo5o4o5',
+    drums: { kick: 'xooooxooxoooxoooxooooxooxoooxooo', snare: 'oooxoooooooxoooooooxoooooooxoooo',
+             hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
+    chug: 0.11,
   }),
-  // Dark/Spanish ♭2 — E phrygian, slow + heavy. The E↔F half-step is the whole hook. Leads open.
+  // DOOM — E phrygian, slow + crushing: huge RINGING power chords (one per bar, sustained), a
+  // half-time kit, and a droning bass. The dark ♭2 (F) hangs in the air. Leads open.
   phrygian: makeTrack({
-    id: 'phrygian', label: 'phrygian · E phrygian', root: 82.41, mode: 'phrygian', tempo: 108, drums: 'heavy',
-    bass: '11111111111111111111111111112211-33333333333333332222222222222222',
-    gtr: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1,   // E pedal stabbing the ♭2 (F)
-          1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2],  // E pedal, tail ♭3-♭2
+    id: 'phrygian', label: 'phrygian · E doom', root: 82.41, mode: 'phrygian', tempo: 76, ring: true, bassRing: true,
+    gtr: [[1, 2, 1, 6], WHOLES + WHOLES],            // E … ♭2(F) … E … ♭6 — four 1-bar drones
+    bass: '1ooooooooooooooo' + '2ooooooooooooooo' + '-1ooooooooooooooo' + '6ooooooooooooooo',
+    drums: { kick: 'xoooooooooooooooxooooooooooooooo', snare: 'ooooooooxoooooooooooooooxooooooo',
+             hat: 'xoooooooxoooooooxoooooooxooooooo', ride: true, crash: 32 },
+    bassLen: 0.6,    // SNARE on beat 3 (steps 8 & 24) — the slow half-time backbeat
   }),
-  // Brighter hard-rock gallop — E mixolydian (major 3rd + ♭7), fast and punchy. Leads open.
+  // HARD ROCK — E mixolydian, up-tempo: relentless straight downpicked EIGHTH-note power chords
+  // (chug-chug-chug on the beat), four-on-the-floor double kick + backbeat, bright major 3rd. Leads open.
   mixolydian: makeTrack({
-    id: 'mixolydian', label: 'mixolydian · E mixolydian', root: 82.41, mode: 'mixolydian', tempo: 140,
-    bass: '11111111111111111111111111113344-55555555555555551111111111111111',
-    gtr: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 5,   // E pedal, tail to the major 3rd (G#) + 5th
-          1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 7, 5],  // E pedal, tail to the ♭7 (D)
+    id: 'mixolydian', label: 'mixolydian · E hard rock', root: 82.41, mode: 'mixolydian', tempo: 150,
+    gtr: [[1, 1, 1, 3,  1, 1, 5, 4,  1, 1, 1, 3,  7, 7, 5, 1], EIGHTHS + EIGHTHS],
+    bass: '1o1o1o1o1o1o1o1o' + '1o1o1o1o5o5o4o4o' + '1o1o1o1o1o1o1o1o' + '7o7o7o7o5o5o1o1o',
+    drums: { kick: 'xoooxoooxoooxoooxoooxoooxoooxooo', snare: 'ooooxoooooooxoooooooxoooooooxooo',
+             hat: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
+    chug: 0.12,
   }),
-  // Neoclassical bite — E harmonic minor (raised 7th leading tone D#). Leads open.
+  // BLAST — E harmonic minor, extreme/fast: constant sixteenth-note TREMOLO picking over a blast
+  // beat (kick/snare alternating every sixteenth), riding the D# leading tone. Leads open.
   harmonic: makeTrack({
-    id: 'harmonic', label: 'harmonic · E harm. minor', root: 82.41, mode: 'harmonicMinor', tempo: 126, drums: 'heavy',
-    bass: '11111111111111111111111111117755-66666666666666665555555555555555',
-    gtr: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 7, 1,   // E pedal leaning on the D# leading tone
-          1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 6, 7],  // E pedal, tail ♭6-7
+    id: 'harmonic', label: 'harmonic · E blast', root: 82.41, mode: 'harmonicMinor', tempo: 160,
+    gtr: [[1, 1, 7, 1,  3, 1, 7, 1,  5, 5, 7, 8,  7, 6, 5, 7], TREMOLO + TREMOLO],
+    bass: '1111111177771111' + '3333111155557777' + '1111111166665555' + '7777555533331111',
+    drums: { kick: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', snare: 'oxoxoxoxoxoxoxoxoxoxoxoxoxoxoxox',
+             hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', crash: 64 },
+    chug: 0.045,
   }),
 };
 const TRACK_IDS = Object.keys(TRACKS);
@@ -631,48 +672,54 @@ export class AudioEngine {
   // guitar chain), optional screaming leads, and a hard double-bass kit. All note content comes
   // from the active track (this._trackDef) so every mode in TRACKS plays through this one engine.
   _stepMetal(step, at) {
-    const P = this.params, T = this._trackDef;
+    const P = this.params, T = this._trackDef, D = T.drums;
     // 384-step / 24-bar arrangement = three 8-bar sections that layer the leads in:
     //   section 0 (bars 1-8):   bass + guitar only
     //   section 1 (bars 9-16):  + lead 1
     //   section 2 (bars 17-24): + lead 1 & lead 2
-    // Within each 8-bar section the guitar+bass HARMONY is stretched 2x (each note held two
-    // steps, h) so the 4-bar progression spans 8 bars, while the chug/bass PULSE keeps its
-    // sixteenth rhythm (gallop grid tiled at step%64). Lead 1 plays bars 1-2 & 5-6 of a section;
-    // lead 2 plays all bars. Drums tile their 32-step phrase throughout.
+    // The guitar / bass / drum patterns each tile at their OWN length (step % len), so a track's
+    // rhythmic FEEL (gallop, eighths, doom drone, tremolo, blast) lives entirely in its grids.
+    // Lead 1 plays bars 1-2 & 5-6 of a section; lead 2 plays all bars (when present).
+    const sd = 60 / Math.max(1, P.tempo) / 4;        // one sixteenth, in seconds
     const block = Math.floor(step / 128);            // which 8-bar section (0,1,2)
     const bstep = step % 128;                        // position within the section
-    const h = bstep >> 1;                            // stretched harmony index (0..63)
-    const m = step % 32;                             // drums + lead phrase position
-    const local = step % 16;
+    const m = step % 32;                             // lead phrase position (32-step / 2 bars)
     const lead1Bars = bstep < 32 || (bstep >= 64 && bstep < 96);   // lead 1: bars 1-2 & 5-6
-    const lead2Bars = true;                                        // lead 2: all bars 1-8
 
-    // Rhythm guitar follows the shared gallop grid (tiled) + this track's stretched note line.
-    if (GALLOP[step % 64] === 'x') {
-      this._gtr(T.guitarLine[h], at, P.chugLength, 0.94, true);     // tight palm-muted chug (no overlap = no smear); loudness via guitarLevel
+    // Rhythm guitar: pick on each onset of this track's grid. Either a tight palm-muted chug of
+    // `chug` seconds, or — for doom/sustained tracks — a chord that RINGS to the next pick.
+    const gi = step % T.gtr.len;
+    if (T.gtr.hit[gi]) {
+      const dur = T.ring ? T.gtr.gap[gi] * sd * 0.92 : T.chug;
+      this._gtr(T.gtr.freq[gi], at, dur, 0.94, true);            // loudness via guitarLevel
     }
-    // Bass runs its own steady, repetitive sixteenth-note pulse (every step), independent of
-    // the guitar's gallop, so the low end is a constant driving foundation.
-    this._bass(T.bassLine[h], at, P.bassLength, 0.6);
+    // Bass follows its own rhythm grid (steady sixteenths, groovy syncopation, eighths, or a
+    // sustained drone) — capped so a note never overruns the next onset.
+    const bi = step % T.bass.len;
+    if (T.bass.hit[bi]) {
+      const cap = T.bass.gap[bi] * sd * 0.95;
+      this._bass(T.bass.freq[bi], at, Math.min(T.bassRing ? Infinity : P.bassLength, cap), 0.6);
+    }
     // Lead melodies: lead 1 enters in section 1 (bars 1-2 & 5-6), lead 2 in section 2 (all bars).
     // New tracks leave these empty (open for the owner), so the loops simply add nothing.
-    const sd = 60 / Math.max(1, P.tempo) / 4;
     if (lead1Bars && block >= 1) {
       for (const [deg, atStep, dur] of T.leadMelody) {
         if (atStep === m) this._leadNote('lead', degHz(T.leadRoot, T.semis, deg) * P.leadPitch, at, dur * sd * P.leadLength, P.leadWave);
       }
     }
-    if (lead2Bars && block >= 2) {
+    if (block >= 2) {
       for (const [deg, atStep, dur] of T.lead2Melody) {
         if (atStep === m) this._leadNote('lead2', degHz(T.leadRoot, T.semis, deg) * P.lead2Pitch, at, dur * sd * P.lead2Length, P.lead2Wave);
       }
     }
 
-    if (T.kickGrid[m] === 'x') this._kickMetal(at);
-    if (T.snareGrid[m] === 'x') this._snareMetal(at);
-    this._hat(at, (local % 2 === 0 ? 0.04 : 0.02) * P.hatLevel * this._mix('hat'));
-    if (m === 0) this._crash(at);
+    // Drums — each voice tiles its own grid; the hat reads its grid (open "ride" wash or closed tick).
+    if (D.kick[step % D.kick.length] === 'x') this._kickMetal(at);
+    if (D.snare[step % D.snare.length] === 'x') this._snareMetal(at);
+    if (D.hat && D.hat[step % D.hat.length] === 'x') {
+      this._hat(at, (D.ride ? 0.05 : 0.035) * P.hatLevel * this._mix('hat'), D.ride);
+    }
+    if (step % D.crash === 0) this._crash(at);
   }
 
   // A distorted power chord (root + fifth + octave, detuned for width, with a square voice
@@ -719,7 +766,10 @@ export class AudioEngine {
     const P = this.params;
     this.noise(this.drums, { dur: P.crashDecay, gain: 0.1 * P.crashLevel * this._mix('crash'), type: 'highpass', freq: P.crashBright }, at);
   }
-  _hat(at, gain) {
-    this.noise(this.drums, { dur: this.params.hatDecay, gain, type: 'highpass', freq: this.params.hatFreq }, at);
+  _hat(at, gain, ride = false) {
+    // `ride` = a longer, lower open-hat/ride wash (for slow doom grooves); else the usual closed tick.
+    const dur = ride ? this.params.hatDecay * 3 : this.params.hatDecay;
+    const freq = ride ? this.params.hatFreq * 0.7 : this.params.hatFreq;
+    this.noise(this.drums, { dur, gain, type: 'highpass', freq }, at);
   }
 }
