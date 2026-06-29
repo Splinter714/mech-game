@@ -6,7 +6,7 @@
 // headless smoke run), so callers never need to guard.
 //
 //   SFX (#32 firing · #33 impacts · #34 footfalls · #35 abilities · #36 explosions)
-//   Music (#38): a looping synthwave sequence (bass + arp + drums) on a lookahead clock.
+//   Music (#38): a looping metal arrangement (guitar + bass + leads + drums) on a lookahead clock.
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -149,7 +149,7 @@ export class AudioEngine {
     this._step = 0;
     this._nextStepTime = 0;
     this._lastStepSound = 0;   // throttles rapid footfalls
-    this.track = 'metal';      // active soundtrack: 'metal' (default) | 'synthwave'
+    this.track = 'metal';      // active soundtrack (currently only 'metal')
     // DAW-style mixer audibility (separate from the level params, so soloing/muting a track
     // silences it WITHOUT touching its slider value): a per-track 0/1 multiplier from these
     // two sets. Track ids: kick, snare, hat, crash, guitar, lead, lead2, bass.
@@ -518,13 +518,12 @@ export class AudioEngine {
   }
 
   // ── Music (#38) ─────────────────────────────────────────────────────────────────────
-  // Two interchangeable 32-step (two-bar) loops on a 25ms lookahead clock (sample-accurate
-  // regardless of frame rate). The active one is `this.track`:
-  //   'metal'     (default) — aggressive thrash: galloping distorted power chords in E, a
-  //                screaming lead, and a double-bass kit at ~184 BPM.
-  //   'synthwave' (kept)    — the original driving synth in A-minor at ~104 BPM.
-  // Both no-op until the context is running, so they "start" the moment Phaser unlocks
-  // audio on first input. setTrack() swaps between them live.
+  // A looping metal arrangement on a 25ms lookahead clock (sample-accurate regardless of
+  // frame rate), driven by `this.track`:
+  //   'metal' (default) — aggressive thrash: galloping distorted power chords in E, a
+  //            screaming lead, and a double-bass kit.
+  // The loop no-ops until the context is running, so it "starts" the moment Phaser unlocks
+  // audio on first input. setTrack() swaps between tracks live.
   startMusic(track) {
     if (track) this.track = track;
     if (this._musicOn) return;
@@ -544,20 +543,19 @@ export class AudioEngine {
 
   _schedule() {
     if (!this.ctx || this.ctx.state !== 'running' || this.muted) return;
-    const tempo = Math.max(1, this.track === 'synthwave' ? 104 : this.params.tempo);
+    const tempo = Math.max(1, this.params.tempo);
     const stepDur = 60 / tempo / 4;   // sixteenth note
     const now = this.ctx.currentTime;
     if (this._nextStepTime < now) this._nextStepTime = now + 0.06;
     while (this._nextStepTime < now + 0.12) {
       this._playStep(this._step, this._nextStepTime);
       this._nextStepTime += stepDur;
-      this._step = (this._step + 1) % (this.track === 'synthwave' ? 32 : 384);
+      this._step = (this._step + 1) % 384;
     }
   }
 
   _playStep(step, at) {
-    if (this.track === 'synthwave') this._stepSynthwave(step, at);
-    else this._stepMetal(step, at);
+    this._stepMetal(step, at);
   }
 
   // Aggressive thrash: a galloping E-phrygian riff of distorted power chords (root+5th+8ve
@@ -607,27 +605,6 @@ export class AudioEngine {
     if (m === 0) this._crash(at);
   }
 
-  // The original synthwave loop (kept as a selectable track).
-  _stepSynthwave(step, at) {
-    const m = this.music;
-    const N = { A2: 110.0, C3: 130.8, E3: 164.8, F2: 87.3, G2: 98.0, A3: 220.0, C4: 261.6, E4: 329.6, F3: 174.6, G3: 196.0 };
-    const bar = Math.floor(step / 8);                 // 0..3
-    const roots = [N.A2, N.F2, N.C3, N.G2];
-    const arps = [[N.A3, N.C4, N.E4], [N.F3, N.A3, N.C4], [N.C4, N.E4, N.G3], [N.G3, N.C4, N.E4]];
-    const root = roots[bar];
-    const arp = arps[bar];
-
-    if (step % 4 === 0) this.tone(m, { type: 'sawtooth', freq: root, freqEnd: root, dur: 0.26, gain: 0.16, attack: 0.006 }, at);
-    if (step % 8 === 6) this.tone(m, { type: 'square', freq: root * 2, dur: 0.12, gain: 0.07 }, at);
-    if (step % 2 === 1) {
-      const note = arp[(step >> 1) % arp.length] * 2;
-      this.tone(m, { type: 'triangle', freq: note, dur: 0.18, gain: 0.06, attack: 0.003 }, at);
-    }
-    if (step % 4 === 0) this._kick(at);
-    if (step === 8 || step === 24) this._snare(at);
-    if (step % 2 === 0) this._hat(at, step % 4 === 2 ? 0.05 : 0.03);
-  }
-
   // A distorted power chord (root + fifth + octave, detuned for width, with a square voice
   // for extra grit) into the guitar/waveshaper chain. The envelope is a fast pick attack +
   // a short sustained body + quick release, so it reads as a palm-muted CHUG, not a blip.
@@ -657,17 +634,10 @@ export class AudioEngine {
     }
   }
 
-  _kick(at) {
-    this.tone(this.drums, { type: 'sine', freq: 130, freqEnd: 45, dur: 0.18, gain: 0.22, attack: 0.002 }, at);
-  }
   _kickMetal(at) {
     const P = this.params, k = P.kickLevel * this._mix('kick');
     this.tone(this.drums, { type: 'sine', freq: P.kickPitch, freqEnd: 42, dur: P.kickDecay, gain: 0.26 * k, attack: 0.001 }, at);
     this.noise(this.drums, { dur: 0.02, gain: P.kickClick * k, type: 'highpass', freq: 3200 }, at);   // beater click
-  }
-  _snare(at) {
-    this.noise(this.drums, { dur: 0.16, gain: 0.12, type: 'highpass', freq: 1400 }, at);
-    this.tone(this.drums, { type: 'triangle', freq: 220, freqEnd: 160, dur: 0.1, gain: 0.05 }, at);
   }
   _snareMetal(at) {
     const P = this.params, s = P.snareLevel * this._mix('snare');

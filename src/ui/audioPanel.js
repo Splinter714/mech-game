@@ -136,7 +136,7 @@ export function mountAudioPanel() {
     // Track switch.
     const trackRow = document.createElement('div');
     trackRow.style.cssText = 'display:flex;gap:6px;margin-bottom:10px';
-    for (const t of ['metal', 'synthwave']) {
+    for (const t of ['metal']) {
       const b = document.createElement('button');
       b.textContent = t;
       b.style.cssText = `flex:1;padding:4px;background:${Audio.track === t ? '#1b2430' : '#161b22'};color:#c8d2dd;border:1px solid ${Audio.track === t ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace`;
