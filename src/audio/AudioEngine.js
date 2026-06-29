@@ -117,13 +117,7 @@ function onsetGaps(hit, len) {
 // rhythm grid (x = pick/note, o = rest). The grid IS the track's rhythmic feel — gallop, straight
 // chugs, eighth-note downpicks, whole-note doom drones, sixteenth-note tremolo, etc. Returns
 // per-step arrays { freq, hit, gap } (gap = steps until the next onset, for ringing notes).
-// `stretch` > 1 holds each chord that many onsets longer while keeping the pulse (so a 4-bar
-// progression spans 8 bars but still chugs in sixteenths — the original gallop's slow harmony).
-function buildLine(degrees, grid, root, semis, stretch = 1) {
-  if (stretch > 1) {
-    grid = grid.repeat(stretch);
-    degrees = degrees.flatMap((d) => Array(stretch).fill(d));
-  }
+function buildLine(degrees, grid, root, semis) {
   const len = grid.length;
   const freq = new Array(len), hit = new Array(len).fill(false);
   let di = 0, last = degHz(root, semis, degrees.length ? degrees[0] : 1);
@@ -138,8 +132,7 @@ function buildLine(degrees, grid, root, semis, stretch = 1) {
 
 // A bass LINE that also supports octave drops: each char is a degree digit (an onset), `o`
 // (rest), or `-` (toggle everything after it down/back an octave — the `-` consumes no step).
-function buildBassLine(spec, root, semis, stretch = 1) {
-  if (stretch > 1) spec = [...spec].flatMap((c) => (c === '-' ? [c] : Array(stretch).fill(c))).join('');
+function buildBassLine(spec, root, semis) {
   const freq = [], hit = [];
   let oct = 1, last = degHz(root, semis, 1);
   for (const ch of spec) {
@@ -169,9 +162,10 @@ function makeTrack({ id, label, root, mode, tempo, gtr, bass, drums, stretch = 1
   const semis = MODES[mode];
   return {
     id, label, mode, tempo, semis, ring, bassRing, chug, bassLen,
+    stretch,
     leadRoot: root * 4,                                  // leads sit two octaves above the riff
-    gtr: buildLine(gtr[0], gtr[1], root, semis, stretch),
-    bass: buildBassLine(bass, root, semis, stretch),
+    gtr: buildLine(gtr[0], gtr[1], root, semis),
+    bass: buildBassLine(bass, root, semis),
     drums: makeDrums(drums),
     leadMelody: buildMelody(lead[0], lead[1]),
     lead2Melody: buildMelody(lead2[0], lead2[1]),
@@ -200,8 +194,11 @@ const STYLES = [
   // harmony (stretch ×2) at 120 BPM, with the screaming leads. Restored to its first form.
   {
     key: 'gallop', name: 'gallop', tempo: 120, chug: 0.08, stretch: 2,
-    gtr: [[1, 1, 1, 1, 1, 1, 3, 2,  1, 1, 1, 1, 1, 1, 4, 5,
-           6, 6, 6, 6, 6, 6, 5, 4,  7, 7, 7, 7, 7, 7, 5, 7], GALLOP + GALLOP],
+    gtr: [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2,   // bar 1: E pedal, tail G-F#
+           1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 5,   // bar 2: E pedal, tail A-B (climbs into C)
+           6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,   // bar 3: C pedal, tail B-A
+           7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 5, 7],  // bar 4: D pedal, tail B-D
+          GALLOP + GALLOP],
     bass: '1111111111111111' + '1111111111112233' + '-6666666666666666' + '7777777777777777',
     drums: { kick: 'xxxxoxxxxxxxoxxxxxxxoxxxxxxxoxoo', snare: 'ooooxoooooooxoooooooxoooooooxoxx',
              hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
@@ -696,8 +693,11 @@ export class AudioEngine {
     //   section 2 (bars 17-24): + lead 1 & lead 2
     // The guitar / bass / drum patterns each tile at their OWN length (step % len), so a track's
     // rhythmic FEEL (gallop, eighths, doom drone, tremolo, blast) lives entirely in its grids.
+    // `stretch` slows the HARMONY without slowing the pulse: the pick still fires on every grid
+    // onset, but the note it grabs advances at 1/stretch speed (the gallop's slow 8-bar harmony).
     // Lead 1 plays bars 1-2 & 5-6 of a section; lead 2 plays all bars (when present).
     const sd = 60 / Math.max(1, P.tempo) / 4;        // one sixteenth, in seconds
+    const st = T.stretch;
     const block = Math.floor(step / 128);            // which 8-bar section (0,1,2)
     const bstep = step % 128;                        // position within the section
     const m = step % 32;                             // lead phrase position (32-step / 2 bars)
@@ -705,17 +705,19 @@ export class AudioEngine {
 
     // Rhythm guitar: pick on each onset of this track's grid. Either a tight palm-muted chug of
     // `chug` seconds, or — for doom/sustained tracks — a chord that RINGS to the next pick.
-    const gi = step % T.gtr.len;
+    const gi = step % T.gtr.len;                                 // pulse: which onset (raw)
     if (T.gtr.hit[gi]) {
+      const hi = Math.floor((step % (T.gtr.len * st)) / st);    // harmony: the (slowed) note index
       const dur = T.ring ? T.gtr.gap[gi] * sd * 0.92 : T.chug;
-      this._gtr(T.gtr.freq[gi], at, dur, 0.94, true);            // loudness via guitarLevel
+      this._gtr(T.gtr.freq[hi], at, dur, 0.94, true);           // loudness via guitarLevel
     }
     // Bass follows its own rhythm grid (steady sixteenths, groovy syncopation, eighths, or a
     // sustained drone) — capped so a note never overruns the next onset.
     const bi = step % T.bass.len;
     if (T.bass.hit[bi]) {
+      const bh = Math.floor((step % (T.bass.len * st)) / st);   // same slowed harmony for the bass
       const cap = T.bass.gap[bi] * sd * 0.95;
-      this._bass(T.bass.freq[bi], at, Math.min(T.bassRing ? Infinity : P.bassLength, cap), 0.6);
+      this._bass(T.bass.freq[bh], at, Math.min(T.bassRing ? Infinity : P.bassLength, cap), 0.6);
     }
     // Lead melodies: lead 1 enters in section 1 (bars 1-2 & 5-6), lead 2 in section 2 (all bars).
     // New tracks leave these empty (open for the owner), so the loops simply add nothing.
