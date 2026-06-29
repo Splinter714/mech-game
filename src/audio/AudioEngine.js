@@ -219,7 +219,10 @@ const STYLES = [
   {
     key: 'drive', name: 'drive', tempo: 150, chug: 0.12, modes: ['aeolian'],
     gtr: [[1, 1, 1, 3,  1, 1, 5, 4,  1, 1, 1, 3,  7, 7, 5, 1], EIGHTHS + EIGHTHS],
-    bass: '1o1o1o1o1o1o1o1o' + '1o1o1o1o5o5o4o4o' + '1o1o1o1o1o1o1o1o' + '7o7o7o7o5o5o1o1o',
+    // Bass tracks the guitar's 2-bar riff: pedals the root under the quick passing 3, then
+    // follows the structural tail moves (5-4 in bar 1, 7-7-5-1 in bar 2) so it locks instead of
+    // clashing. Two bars, tiled under the guitar's repeat.
+    bass: '1o1o1o1o1o1o5o4o' + '1o1o1o1o7o7o5o1o',
     drums: { kick: 'xoooxoooxoooxoooxoooxoooxoooxooo', snare: 'ooooxoooooooxoooooooxoooooooxooo',
              hat: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
   },
