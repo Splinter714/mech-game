@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Mech } from '../data/Mech.js';
-import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind } from '../art/index.js';
+import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, drawSlash, drawGroundFire } from '../art/index.js';
+import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
@@ -449,57 +450,40 @@ export default class ArenaScene extends Phaser.Scene {
     if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
     Audio.fire(w.weapon);
-    const d = w.weapon.delivery;
-    const m = this._muzzle(w.location);
 
-    // Shots follow the actual turret facing (#40), not the raw stick/mouse aim. The
-    // turret slews toward the aim at a limited rate, so whipping the aim around has a
-    // real cost — the torso must come around before rounds land where you point. The
-    // firing point sits along turretAngle at the reticle's distance, keeping convergence
-    // range correct.
+    // The shared delivery sim decides what one trigger pull emits (single / spread fan /
+    // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
+    // and aim so a slewing turret and aim-assist still apply per sub-shot.
+    const plan = planEmissions(w.weapon);
+    for (const s of plan.shots) {
+      const go = () => {
+        if (!this.scene.isActive()) return;
+        const m = this._muzzle(w.location);
+        const aim = this._aimPoint(w);
+        const baseAngle = Math.atan2(aim.y - m.y, aim.x - m.x) + s.angleOffset;
+        const perp = baseAngle + Math.PI / 2;
+        const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
+        if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle);
+        else this._spawnProjectile(w, ox, oy, baseAngle);
+      };
+      if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
+    }
+  }
+
+  // The convergence point a weapon aims at: along the turret facing at the reticle's
+  // distance (#40 — shots follow the slewing turret, not the raw aim), pulled toward the
+  // tracked enemy by aim-assist once the turret has settled (melee ignores assist).
+  _aimPoint(w) {
     const aimDist = Math.hypot(this.aimX - this.px, this.aimY - this.py) || 1;
-    let aimX = this.px + Math.cos(this.turretAngle) * aimDist;
-    let aimY = this.py + Math.sin(this.turretAngle) * aimDist;
-
-    // Aim-assist pulls the firing point toward the tracked enemy — but only once the
-    // turret has settled onto it (assistTarget is keyed off turretAngle, so a lagging
-    // turret has no target yet). Melee/contact ignore assist.
-    if (this.assistTarget && d.hit !== 'contact') {
+    let x = this.px + Math.cos(this.turretAngle) * aimDist;
+    let y = this.py + Math.sin(this.turretAngle) * aimDist;
+    if (this.assistTarget && w.weapon.delivery.hit !== 'contact') {
       const s = this.assistTarget.strength;
-      aimX = Phaser.Math.Linear(aimX, this.assistTarget.x, s);
-      aimY = Phaser.Math.Linear(aimY, this.assistTarget.y, s);
+      x = Phaser.Math.Linear(x, this.assistTarget.x, s);
+      y = Phaser.Math.Linear(y, this.assistTarget.y, s);
     }
-
-    // Each weapon converges from its own muzzle onto the (assisted) firing point.
-    const baseAngle = Math.atan2(aimY - m.y, aimX - m.x);
-    if (d.hit === 'contact') { this._melee(w, m.x, m.y, baseAngle); return; }
-    if (d.hit === 'hitscan') {
-      // Multi-pulse weapons (pulse laser) emit a quick burst of sub-shots per trigger.
-      if (d.burst) {
-        for (let i = 0; i < d.burst.count; i++) {
-          this.time.delayedCall(i * d.burst.interval, () => {
-            if (!this.scene.isActive()) return;
-            const mm = this._muzzle(w.location);
-            this._fireHitscan(w, mm.x, mm.y, Math.atan2(aimY - mm.y, aimX - mm.x));
-          });
-        }
-      } else this._fireHitscan(w, m.x, m.y, baseAngle);
-      return;
-    }
-
-    // Projectile: one shot, a fanned cone of `spreadCount`, or — for `cluster` weapons —
-    // a tight parallel clump that flies straight rather than spreading.
-    const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
-    const spreadRad = ((d.spreadAngle || (n > 1 ? 16 : 0)) * Math.PI) / 180;
-    for (let i = 0; i < n; i++) {
-      if (d.cluster) {
-        const perp = baseAngle + Math.PI / 2, o = (i - (n - 1) / 2) * 6;
-        this._spawnProjectile(w, m.x + Math.cos(perp) * o, m.y + Math.sin(perp) * o, baseAngle + (Math.random() - 0.5) * 0.04);
-      } else {
-        const off = n > 1 ? ((i - (n - 1) / 2) / (n - 1)) * spreadRad : 0;
-        this._spawnProjectile(w, m.x, m.y, baseAngle + off);
-      }
-    }
+    return { x, y };
   }
 
   // Melee swing: same forward-ray hit detection as a beam, but drawn as a sweeping
@@ -577,14 +561,15 @@ export default class ArenaScene extends Phaser.Scene {
 
   _spawnProjectile(w, x, y, angle, owner = 'player') {
     const d = w.weapon.delivery;
-    const speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
-    let tgt;
-    if (owner === 'player') { const e = this._nearestEnemy(x, y); tgt = e ? { x: e.x, y: e.y } : { x, y }; }
-    else tgt = { x: this.px, y: this.py };
+    // The arena's own targeting: an arcing round lobs to where its target actually is
+    // (else to optimal range); straight rounds just run out at max range. This travel
+    // budget is what the shared kinematic round flies.
     let maxDist = maxRange;
     if (d.path === 'arcing') {
-      // Lob toward the target if it's roughly in front, else to optimal range.
+      let tgt;
+      if (owner === 'player') { const e = this._nearestEnemy(x, y); tgt = e ? { x: e.x, y: e.y } : { x, y }; }
+      else tgt = { x: this.px, y: this.py };
       const ex = tgt.x - x, ey = tgt.y - y;
       const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
@@ -592,14 +577,9 @@ export default class ArenaScene extends Phaser.Scene {
     }
     // Homing is intrinsic to guided weapons now (#31): they track their target on their
     // own when fired, no equipped lock needed.
-    const homing = d.guidance === 'homing';
     this.projectiles.push({
-      x, y, angle, speed, owner,
-      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      kind: projectileKind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
-      damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
-      dist: 0, maxDist, arc: d.path === 'arcing', trail: [], ground: d.groundFire || null,
-      homing, turn: 4.0,                 // guided missiles steer toward their target
+      ...makeProjectile(w.weapon, x, y, angle, { maxDist }),
+      owner, trail: [],
     });
   }
 
@@ -614,13 +594,9 @@ export default class ArenaScene extends Phaser.Scene {
       const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
       const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
 
-      // Guided missiles steer toward the target, capped by their turn rate.
-      if (p.homing && !targetGone) {
-        const desired = Math.atan2(ty - p.y, tx - p.x);
-        p.angle = Phaser.Math.Angle.RotateTo(p.angle, desired, p.turn * dt);
-        p.vx = Math.cos(p.angle) * p.speed; p.vy = Math.sin(p.angle) * p.speed;
-      }
-      p.x += p.vx * dt; p.y += p.vy * dt; p.dist += p.speed * dt;
+      // Advance via the shared kinematics — guided rounds steer toward the live target
+      // (capped by turn rate); ballistic rounds just integrate velocity.
+      stepProjectile(p, dt, p.homing && !targetGone ? Math.atan2(ty - p.y, tx - p.x) : null);
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
       if (!p.arc && this._isWall(p.x, p.y)) {
         p.dead = true;

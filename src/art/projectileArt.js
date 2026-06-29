@@ -11,19 +11,11 @@ import { gen, ART_SCALE } from './_frames.js';
 import { CATEGORIES } from '../data/categories.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT, EQUIPMENT_IDS } from '../data/equipment.js';
+import { projectileKind } from '../data/delivery.js';
 
-// The visual KIND of a fired round (shared by the arena and the icons). Mirrors what the
-// arena used to compute inline, now centralised so there's one rule.
-export function projectileKind(weapon) {
-  const d = weapon.delivery || {};
-  if (d.kind) return d.kind;                       // explicit override (flame, fire, bullet…)
-  if (weapon.category === 'energy') return 'plasma';
-  if (weapon.category === 'missile') return 'missile';
-  // Ballistic: rapid streams/pellets are little tracer bullets; a single shot is a heavy
-  // autocannon shell.
-  if (d.pattern === 'stream' || d.pattern === 'spread') return 'bullet';
-  return 'slug';
-}
+// `projectileKind` lives in the pure delivery sim (data/delivery.js); re-exported here so
+// existing art importers keep resolving it from the art layer.
+export { projectileKind };
 
 // A travelling round's body, drawn at (x, y) heading along `angle`. `phase` drives the
 // flame flicker (the arena passes the round's distance; icons pass 0).

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind, itemFxKey } from '../art/index.js';
+import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, itemFxKey } from '../art/index.js';
+import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { CATEGORIES } from '../data/categories.js';
 
@@ -110,9 +111,9 @@ export default class WeaponLabScene extends Phaser.Scene {
     this.cards.push({
       weapon, color, container: c, panel, stage, icon, name, cat, stats, fxG,
       cd: index * 120,        // stagger first shots so they don't all fire in lockstep
-      streamPhase: 0,         // for stream weapons: on/off burst envelope
-      pulsesLeft: 0, pulseCd: 0,   // multi-pulse burst (energy pulse laser)
+      streamPhase: 0,         // stream/sustained on/off envelope
       holdBeam: false,        // sustained beam this frame (beam laser)
+      pending: [],            // scheduled sub-shots of an in-flight burst (delay countdown)
       projectiles: [], beams: [], bursts: [], slashes: [], patches: [],
     });
   }
@@ -177,81 +178,71 @@ export default class WeaponLabScene extends Phaser.Scene {
     for (const card of this.cards) this._updateCard(card, dt, delta);
   }
 
+  // Cadence only — WHEN a trigger pulls. The shared delivery sim owns what each pull
+  // emits (planEmissions) and how rounds move (makeProjectile/stepProjectile).
   _updateCard(card, dt, delta) {
     const w = card.weapon, d = w.delivery;
-    const stream = d.pattern === 'stream';
     card.holdBeam = false;
 
-    if (d.burst) {
-      // Multi-pulse: a trigger pull emits `count` rapid sub-shots, then a cooldown gap.
-      card.cd -= delta;
-      if (card.pulsesLeft > 0) {
-        card.pulseCd -= delta;
-        while (card.pulsesLeft > 0 && card.pulseCd <= 0) {
-          this._fire(card); card.pulsesLeft--; card.pulseCd += d.burst.interval;
-        }
-      } else if (card.cd <= 0) {
-        card.pulsesLeft = d.burst.count; card.pulseCd = 0;
-        card.cd += Math.max(w.cycleTime || 700, 300) + 400;
-      }
-    } else if (stream) {
-      // Stream weapons fire on fireRate with a periodic rest so bursts read distinctly.
+    if (d.sustained) {
+      // Beam laser: one continuous held beam, with a periodic rest so it reads as bursts.
       card.streamPhase += delta;
-      const firing = card.streamPhase % 2400 < 1600;
-      if (d.sustained) {
-        card.holdBeam = firing;                        // one continuous held beam
-      } else if (firing) {
-        // Only tick the timer while firing, and RESET it (don't accumulate) so the rest
-        // gap can't build a backlog that dumps a clump of rounds when firing resumes.
+      card.holdBeam = card.streamPhase % 2400 < 1600;
+    } else if (d.pattern === 'stream') {
+      // Stream weapons fire on fireRate with a periodic rest. Tick the timer only while
+      // firing and RESET it (don't accumulate) so the rest gap can't dump a clump.
+      card.streamPhase += delta;
+      if (card.streamPhase % 2400 < 1600) {
         card.cd -= delta;
         if (card.cd <= 0) { this._fire(card); card.cd = Math.max(1000 / (d.fireRate || 10), 16); }
-      } else {
-        card.cd = 0;                                    // fire the first round immediately next window
-      }
+      } else card.cd = 0;
     } else {
+      // Single / spread / burst: one trigger pull per cycle (a burst's sub-pulses are
+      // scheduled inside _fire). The gap keeps each pull legible in the preview.
       card.cd -= delta;
-      if (card.cd <= 0) { this._fire(card); card.cd += Math.max(w.cycleTime || 800, 250) + 350; }
+      if (card.cd <= 0) { this._fire(card); card.cd = Math.max(w.cycleTime || 800, 250) + (d.burst ? 400 : 350); }
     }
 
-    this._stepRounds(card, dt, delta);
+    this._advance(card, dt, delta);
     this._draw(card);
   }
 
-  // Emit this weapon's round(s) from the muzzle. Mirrors the arena's delivery rules.
+  // One trigger pull: ask the shared sim what to emit, then realise each emission from the
+  // (fixed) muzzle. Delayed sub-shots (a burst's pulses) go on the card's pending queue.
   _fire(card) {
-    const w = card.weapon, d = w.delivery, color = card.color;
-    const ax = card.muzzleX, ay = card.muzzleY;
-
-    if (d.hit === 'contact') { card.slashes.push({ t: 0, ttl: 260, color }); return; }
-    if (d.hit === 'hitscan') {
-      const len = Math.min(card.stageW, w.range.opt || 200);
-      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: 130, heavy: d.kind === 'rail' });
-      return;
-    }
-
-    const kind = projectileKind(w);
-    const homing = d.guidance === 'homing';
-    const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
-    const cone = ((d.spreadAngle || 16) * Math.PI) / 180;
-    for (let i = 0; i < n; i++) {
-      let angle = 0, oy = 0;
-      if (d.cluster) { oy = (i - (n - 1) / 2) * 5; angle = (Math.random() - 0.5) * 0.04; }  // tight parallel clump
-      else if (n > 1) angle = (i / (n - 1) - 0.5) * cone;                                    // fanned cone
-      card.projectiles.push({
-        x: ax, y: ay + oy, angle, speed: d.velocity || 480, kind, color, homing,
-        dist: 0, maxDist: card.stageW, arc: d.path === 'arcing', ground: d.groundFire || null,
-      });
+    const plan = planEmissions(card.weapon);
+    for (const s of plan.shots) {
+      if (s.delay > 0) card.pending.push({ at: s.delay, mode: plan.mode, shot: s });
+      else this._emit(card, plan.mode, s);
     }
   }
 
-  _stepRounds(card, dt, delta) {
+  _emit(card, mode, s) {
+    const ax = card.muzzleX, ay = card.muzzleY, color = card.color;
+    if (mode === 'contact') { card.slashes.push({ t: 0, ttl: 260, color }); return; }
+    if (mode === 'hitscan') {
+      const len = Math.min(card.stageW, card.weapon.range.opt || 200);
+      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: 130, heavy: card.weapon.delivery.kind === 'rail' });
+      return;
+    }
+    // Projectile: the rounds fire along +x (angle 0); apply the emission's angle + lateral.
+    const angle = s.angleOffset;
+    const perp = angle + Math.PI / 2;
+    const ox = ax + Math.cos(perp) * s.lateral, oy = ay + Math.sin(perp) * s.lateral;
+    card.projectiles.push(makeProjectile(card.weapon, ox, oy, angle, { maxDist: card.stageW }));
+  }
+
+  _advance(card, dt, delta) {
+    // Fire any due burst sub-shots.
+    if (card.pending.length) {
+      const still = [];
+      for (const e of card.pending) { e.at -= delta; if (e.at <= 0) this._emit(card, e.mode, e.shot); else still.push(e); }
+      card.pending = still;
+    }
     for (const p of card.projectiles) {
-      // Homing rounds steer back toward the muzzle's heading (straight right), so a wide
-      // launch fan curves in like seekers chasing a target down-range.
-      if (p.homing) p.angle = Phaser.Math.Angle.RotateTo(p.angle, 0, 3.0 * dt);
-      p.x += Math.cos(p.angle) * p.speed * dt;
-      p.y += Math.sin(p.angle) * p.speed * dt;
-      p.dist += p.speed * dt;
+      // Homing rounds steer toward straight-ahead (angle 0), so a wide launch fan curves
+      // in like seekers chasing a target down-range.
+      stepProjectile(p, dt, p.homing ? 0 : null);
       if (p.dist >= p.maxDist) {
         p.dead = true;
         if (p.ground) card.patches.push({ x: p.x, y: card.muzzleY, r: Math.min(p.ground.radius, 26), born: 0, ttl: p.ground.duration * 1000 });
