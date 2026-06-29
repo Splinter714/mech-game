@@ -84,16 +84,24 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     g.lineStyle(Math.max(0.5, 1.2 * s * taper), 0xffffff, 0.9); g.lineBetween(ax, ay, bx, by);
   }
 
-  // Splatter sparks: small bright flecks perpendicular to the beam.
-  const sparkCount = heavy ? 4 : 5;
+  // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
+  const sparkCount = heavy ? 5 : 6;
+  const maxDrift = (heavy ? 18 : 13) * s;
   for (let i = 0; i < sparkCount; i++) {
-    const seed = phase * 0.007 + i * 2.399;  // golden-ratio spread
-    const t = Math.sin(seed) * 0.5 + 0.5;
-    const side = Math.cos(seed * 1.3) * (heavy ? 9 : 6) * s;
-    const sx = x0 + nx * len * t + px * side;
-    const sy = y0 + ny * len * t + py * side;
-    g.fillStyle(color, 0.7); g.fillCircle(sx, sy, (heavy ? 1.8 : 1.2) * s);
-    g.fillStyle(0xffffff, 0.9); g.fillCircle(sx, sy, 0.6 * s);
+    const speed = 0.05 + i * 0.02;
+    const sign = (i % 2 === 0) ? 1 : -1;
+    const drift = (phase * speed + i * 37) % maxDrift;
+    const life = 1 - drift / maxDrift;  // 1 at spawn, 0 at edge
+    // Random beam position that re-randomises each cycle.
+    const cycle = Math.floor(phase * speed + i * 37);
+    const t = Math.abs(Math.sin(cycle * 127.3 + i * 31.7)) * 0.85 + 0.05;
+    const rMax = (heavy ? 5.5 : 4.0) * s;
+    const r = rMax * life;              // shrinks to nothing as it flies off
+    if (r < 0.5) continue;
+    const sx = x0 + nx * len * t + px * sign * drift;
+    const sy = y0 + ny * len * t + py * sign * drift;
+    g.fillStyle(color, 0.9); g.fillCircle(sx, sy, r);
+    g.fillStyle(0xffffff, 0.95); g.fillCircle(sx, sy, r * 0.45);
   }
 }
 
