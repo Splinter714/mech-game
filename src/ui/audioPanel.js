@@ -133,13 +133,16 @@ export function mountAudioPanel() {
     head.append(title, closeBtn);
     el.appendChild(head);
 
-    // Track switch.
+    // Track switch — one button per metal track (each its own mode/key/tempo; #43). Switching
+    // re-reads params (e.g. the track's tempo) by rebuilding the panel.
     const trackRow = document.createElement('div');
-    trackRow.style.cssText = 'display:flex;gap:6px;margin-bottom:10px';
-    for (const t of ['metal']) {
+    trackRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px';
+    for (const t of Audio.trackIds) {
       const b = document.createElement('button');
-      b.textContent = t;
-      b.style.cssText = `flex:1;padding:4px;background:${Audio.track === t ? '#1b2430' : '#161b22'};color:#c8d2dd;border:1px solid ${Audio.track === t ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace`;
+      b.textContent = Audio.trackLabel(t);
+      b.title = t;
+      const on = Audio.track === t;
+      b.style.cssText = `flex:1 1 46%;padding:4px;background:${on ? '#1b2430' : '#161b22'};color:#c8d2dd;border:1px solid ${on ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace;font-size:10px`;
       b.onclick = () => { Audio.setTrack(t); close(); open(); };
       trackRow.appendChild(b);
     }

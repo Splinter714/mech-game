@@ -55,11 +55,14 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
-  it('schedules every step of each music track without throwing', () => {
-    for (const track of ['metal']) {
+  it('schedules every step of every metal track without throwing', () => {
+    expect(eng.trackIds.length).toBeGreaterThan(1);        // several switchable tracks (#43)
+    for (const track of eng.trackIds) {
       eng.setTrack(track);
+      expect(eng.track).toBe(track);                       // unknown ids would fall back to metal
       const before = ctx._counts().oscillators;
-      for (let step = 0; step < 32; step++) eng._playStep(step, 2.0 + step * 0.1);
+      // Cover all 384 steps so the full 24-bar arrangement (incl. the lead-layering sections) runs.
+      for (let step = 0; step < 384; step++) eng._playStep(step, 2.0 + step * 0.1);
       expect(ctx._counts().oscillators).toBeGreaterThan(before);
     }
   });
