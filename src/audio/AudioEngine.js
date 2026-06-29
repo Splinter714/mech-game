@@ -645,6 +645,7 @@ export class AudioEngine {
   startMusic(track) {
     if (track) this.track = track;
     if (this._musicOn) return;
+    this._resume();                  // a play click is a user gesture — unlock the context
     this._musicOn = true;
     this._step = 0;
     this._nextStepTime = 0;
@@ -656,6 +657,11 @@ export class AudioEngine {
     if (this._musicTimer) clearInterval(this._musicTimer);
     this._musicTimer = null;
   }
+
+  // Is the soundtrack currently playing? (The music is OFF by default; the panel's play/pause
+  // starts/stops it.) toggleMusic() flips it and returns the new state.
+  get musicOn() { return this._musicOn; }
+  toggleMusic() { this._musicOn ? this.stopMusic() : this.startMusic(); return this._musicOn; }
 
   // Switch the active track (live). Each track carries its own tempo, so adopt it (the panel
   // re-reads params.tempo when it rebuilds on a track switch). Unknown ids fall back to default.
