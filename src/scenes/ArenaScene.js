@@ -548,7 +548,7 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Laser-y beam (shared art so the garage icon matches), quick fade. The rail lance
     // draws a heavier high-energy lance.
-    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1, w.weapon.delivery.kind === 'rail');
+    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1, w.weapon.delivery.kind === 'rail', this.time.now);
     this.time.delayedCall(80, () => this.fx.clear());
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));

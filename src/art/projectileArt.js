@@ -50,12 +50,51 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
   }
 }
 
-// A hitscan beam: a soft coloured glow under a bright white core (also what melee/contact
-// hits draw in-arena). `heavy` thickens it for the rail lance's high-energy lance.
-export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false) {
-  const glow = heavy ? 10 : 5, core = heavy ? 2.8 : 1.6;
-  g.lineStyle(glow * s, color, heavy ? 0.3 : 0.25); g.lineBetween(x0, y0, x1, y1);
-  g.lineStyle(core * s, 0xffffff, 0.95); g.lineBetween(x0, y0, x1, y1);
+// A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.
+// `phase` is a ms timestamp driving the warble (callers pass time or beam age).
+// `heavy` thickens everything for the rail lance.
+export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1) return;
+  const nx = dx / len, ny = dy / len;   // beam direction
+  const px = -ny, py = nx;              // perpendicular
+
+  const glowW = (heavy ? 14 : 9) * s;
+  const coreW = (heavy ? 5 : 3.5) * s;
+  const SEGS = heavy ? 6 : 8;
+
+  // Outer glow: wide soft layer drawn as one full line.
+  g.lineStyle(glowW, color, 0.18); g.lineBetween(x0, y0, x1, y1);
+
+  // Core: warbling segments — each slightly offset perpendicular so the beam "wobbles".
+  // Taper alpha near the ends so it doesn't cut off abruptly.
+  for (let i = 0; i < SEGS; i++) {
+    const t0 = i / SEGS, t1 = (i + 1) / SEGS;
+    const tc = (t0 + t1) / 2;
+    // Taper: full at muzzle, tapers only toward the far end.
+    const taper = Math.cos(tc * Math.PI / 2);
+    // Warp also multiplied by taper so the beam connects cleanly to muzzle and endpoint.
+    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.8 * s;
+    const warp0 = warpRaw * Math.sin(t0 * Math.PI);
+    const warp1 = warpRaw * Math.sin(t1 * Math.PI);
+    const ax = x0 + nx * len * t0 + px * warp0, ay = y0 + ny * len * t0 + py * warp0;
+    const bx = x0 + nx * len * t1 + px * warp1, by = y0 + ny * len * t1 + py * warp1;
+    g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
+    g.lineStyle(Math.max(0.5, 1.2 * s * taper), 0xffffff, 0.9); g.lineBetween(ax, ay, bx, by);
+  }
+
+  // Splatter sparks: small bright flecks perpendicular to the beam.
+  const sparkCount = heavy ? 4 : 5;
+  for (let i = 0; i < sparkCount; i++) {
+    const seed = phase * 0.007 + i * 2.399;  // golden-ratio spread
+    const t = Math.sin(seed) * 0.5 + 0.5;
+    const side = Math.cos(seed * 1.3) * (heavy ? 9 : 6) * s;
+    const sx = x0 + nx * len * t + px * side;
+    const sy = y0 + ny * len * t + py * side;
+    g.fillStyle(color, 0.7); g.fillCircle(sx, sy, (heavy ? 1.8 : 1.2) * s);
+    g.fillStyle(0xffffff, 0.9); g.fillCircle(sx, sy, 0.6 * s);
+  }
 }
 
 // A melee swing: a bright crescent that sweeps through `facing` as `t` goes 0→1, fading

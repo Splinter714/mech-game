@@ -229,7 +229,7 @@ export default class WeaponLabScene extends Phaser.Scene {
       const len = Math.min(card.stageW, card.weapon.range.opt || 200);
       // Burst weapons: each pulse expires just before the next fires so pulses are distinct flashes.
       const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
-      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, heavy: card.weapon.delivery.kind === 'rail' });
+      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: card.weapon.delivery.kind === 'rail' });
       return;
     }
     // Projectile: the rounds fire along +x (angle 0); apply the emission's angle + lateral.
@@ -259,7 +259,7 @@ export default class WeaponLabScene extends Phaser.Scene {
     if (card.projectiles.some((p) => p.dead)) card.projectiles = card.projectiles.filter((p) => !p.dead);
 
     const ms = delta;
-    for (const b of card.beams) b.ttl -= ms;
+    for (const b of card.beams) { b.ttl -= ms; b.age = (b.age ?? 0) + ms; }
     for (const b of card.bursts) b.t += ms;
     for (const s of card.slashes) s.t += ms;
     for (const fp of card.patches) fp.born += ms;
@@ -282,9 +282,9 @@ export default class WeaponLabScene extends Phaser.Scene {
     // Sustained held beam (beam laser): one steady beam while firing.
     if (card.holdBeam) {
       const len = Math.min(card.stageW, w.range.opt || 220);
-      drawBeam(g, card.muzzleX, card.muzzleY, card.muzzleX + len, card.muzzleY, card.color, 1);
+      drawBeam(g, card.muzzleX, card.muzzleY, card.muzzleX + len, card.muzzleY, card.color, 1, false, card.streamPhase);
     }
-    for (const b of card.beams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy);
+    for (const b of card.beams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age);
 
     for (const p of card.projectiles) {
       let lift = 0;
