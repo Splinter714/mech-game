@@ -37,7 +37,15 @@ const DELIVERY_DEFAULTS = {
 };
 
 function w(def) {
-  return { ...def, delivery: { ...DELIVERY_DEFAULTS, ...def.delivery } };
+  const d = { ...DELIVERY_DEFAULTS, ...def.delivery };
+  // Burst shorthand: wubOn + wubOff → interval; totalDamage / count → per-wub damage.
+  if (d.burst) {
+    if (d.burst.wubOn != null) d.burst = { ...d.burst, interval: d.burst.wubOn + d.burst.wubOff };
+  }
+  const damage = def.totalDamage != null
+    ? def.totalDamage / (d.burst?.count ?? 1)
+    : def.damage;
+  return { ...def, damage, delivery: d };
 }
 
 export const WEAPONS = {
@@ -45,9 +53,9 @@ export const WEAPONS = {
   // arcing plasma lob, and a close-range flame cone. No ammo (battery recharge). ──
   pulseLaser: w({   // every trigger pull = a rapid burst of light beam pulses
     id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
-    damage: 4, range: { min: 0, opt: 170, max: 300 },
-    ammoMax: 24, ammoRegen: 3.0, slots: 1, cycleTime: 720,
-    delivery: { hit: 'hitscan', pattern: 'single', burst: { count: 4, interval: 55 } },
+    totalDamage: 16, range: { min: 0, opt: 170, max: 300 },
+    ammoMax: 24, ammoRegen: 3.0, slots: 1, cycleTime: 3000,
+    delivery: { hit: 'hitscan', pattern: 'single', burst: { count: 5, wubOn: 25, wubOff: 50 } },
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
     id: 'beamLaser', name: 'Beam Laser', category: 'energy',

@@ -200,7 +200,12 @@ export default class WeaponLabScene extends Phaser.Scene {
       // Single / spread / burst: one trigger pull per cycle (a burst's sub-pulses are
       // scheduled inside _fire). The gap keeps each pull legible in the preview.
       card.cd -= delta;
-      if (card.cd <= 0) { this._fire(card); card.cd = Math.max(w.cycleTime || 800, 250) + (d.burst ? 400 : 350); }
+      if (card.cd <= 0) {
+        this._fire(card);
+        // cycleTime = start-to-start; subtract burst duration so the cooldown gap is correct.
+        const burstDur = d.burst ? d.burst.count * (d.burst.wubOn ?? d.burst.interval) + (d.burst.count - 1) * (d.burst.wubOff ?? 0) : 0;
+        card.cd = Math.max((w.cycleTime || 800) - burstDur, 250);
+      }
     }
 
     this._advance(card, dt, delta);
@@ -222,7 +227,9 @@ export default class WeaponLabScene extends Phaser.Scene {
     if (mode === 'contact') { card.slashes.push({ t: 0, ttl: 260, color }); return; }
     if (mode === 'hitscan') {
       const len = Math.min(card.stageW, card.weapon.range.opt || 200);
-      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: 130, heavy: card.weapon.delivery.kind === 'rail' });
+      // Burst weapons: each pulse expires just before the next fires so pulses are distinct flashes.
+      const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
+      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, heavy: card.weapon.delivery.kind === 'rail' });
       return;
     }
     // Projectile: the rounds fire along +x (angle 0); apply the emission's angle + lateral.
