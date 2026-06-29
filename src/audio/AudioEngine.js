@@ -193,7 +193,7 @@ const STYLES = [
   // THRASH GALLOP — the original: fast dd-dd palm-muted gallop, driving double-bass, slow 8-bar
   // harmony (stretch ×2) at 120 BPM, with the screaming leads. Restored to its first form.
   {
-    key: 'gallop', name: 'gallop', tempo: 120, chug: 0.08, stretch: 2,
+    key: 'gallop', name: 'gallop', tempo: 120, chug: 0.08, stretch: 2, modes: ['aeolian'],
     gtr: [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2,   // bar 1: E pedal, tail G-F#
            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 5,   // bar 2: E pedal, tail A-B (climbs into C)
            6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,   // bar 3: C pedal, tail B-A
