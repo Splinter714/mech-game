@@ -16,9 +16,12 @@ import { EQUIPMENT, EQUIPMENT_IDS } from '../data/equipment.js';
 // arena used to compute inline, now centralised so there's one rule.
 export function projectileKind(weapon) {
   const d = weapon.delivery || {};
-  if (d.kind) return d.kind;                       // explicit override (flame, fire)
+  if (d.kind) return d.kind;                       // explicit override (flame, fire, bullet…)
   if (weapon.category === 'energy') return 'plasma';
   if (weapon.category === 'missile') return 'missile';
+  // Ballistic: rapid streams/pellets are little tracer bullets; a single shot is a heavy
+  // autocannon shell.
+  if (d.pattern === 'stream' || d.pattern === 'spread') return 'bullet';
   return 'slug';
 }
 
@@ -41,17 +44,50 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
   } else if (kind === 'fire') {                    // napalm canister
     g.fillStyle(0x3a2a1c, 1); g.fillCircle(x, y, 3.2 * s);
     g.fillStyle(0xff7a18, 0.9); g.fillCircle(x, y, 1.6 * s);
-  } else {                                          // slug: a short bright tracer
-    const tx = x - ca * 9 * s, ty = y - sa * 9 * s;
-    g.lineStyle(2 * s, color, 0.9); g.lineBetween(tx, ty, x, y);
+  } else if (kind === 'bullet') {                  // machine-gun round / shotgun pellet
+    const tx = x - ca * 6 * s, ty = y - sa * 6 * s;
+    g.lineStyle(1.5 * s, color, 0.45); g.lineBetween(tx, ty, x, y);
+    g.fillStyle(0xfff0c4, 1); g.fillCircle(x, y, 1.6 * s);
+  } else {                                          // slug: a heavy autocannon shell + tracer
+    const tx = x - ca * 16 * s, ty = y - sa * 16 * s;
+    g.lineStyle(2.4 * s, color, 0.35); g.lineBetween(tx, ty, x, y);
+    g.fillStyle(0x2a2d33, 1);                       // dark shell body
+    g.fillCircle(x - ca * 2 * s, y - sa * 2 * s, 3 * s); g.fillCircle(x, y, 3.2 * s);
+    g.fillStyle(color, 0.95); g.fillCircle(x, y, 2 * s);
+    g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.6 * s, y + sa * 0.6 * s, 1 * s);
   }
 }
 
 // A hitscan beam: a soft coloured glow under a bright white core (also what melee/contact
-// hits draw in-arena).
-export function drawBeam(g, x0, y0, x1, y1, color, s = 1) {
-  g.lineStyle(5 * s, color, 0.25); g.lineBetween(x0, y0, x1, y1);
-  g.lineStyle(1.6 * s, 0xffffff, 0.9); g.lineBetween(x0, y0, x1, y1);
+// hits draw in-arena). `heavy` thickens it for the rail lance's high-energy lance.
+export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false) {
+  const glow = heavy ? 10 : 5, core = heavy ? 2.8 : 1.6;
+  g.lineStyle(glow * s, color, heavy ? 0.3 : 0.25); g.lineBetween(x0, y0, x1, y1);
+  g.lineStyle(core * s, 0xffffff, 0.95); g.lineBetween(x0, y0, x1, y1);
+}
+
+// A melee swing: a bright crescent that sweeps through `facing` as `t` goes 0→1, fading
+// as it completes. Shared so the garage icon and the arena swing read identically.
+export function drawSlash(g, x, y, facing, t, color, s = 1, reach = 30) {
+  const span = Math.PI * 0.95;
+  const a0 = facing - span / 2;
+  const lead = a0 + span * Math.min(1, t);
+  const R = reach * s;
+  g.lineStyle(3.5 * s, color, 0.75 * (1 - t));
+  g.beginPath(); g.arc(x, y, R, a0, lead, false); g.strokePath();
+  g.lineStyle(2 * s, 0xffffff, 0.9 * (1 - t));     // bright leading edge
+  g.lineBetween(x, y, x + Math.cos(lead) * R, y + Math.sin(lead) * R);
+}
+
+// A burning ground patch (napalm). `phase` is a millisecond clock driving the flicker.
+// Extracted from the arena so the lab's preview patch matches the real one exactly.
+export function drawGroundFire(g, x, y, r, phase, s = 1) {
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + phase * 0.004;
+    const rr = r * (0.4 + 0.4 * Math.abs(Math.sin(phase * 0.01 + i))) * s;
+    g.fillStyle(i % 2 ? 0xff7a18 : 0xffd56b, 0.45)
+      .fillCircle(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 5 * s);
+  }
 }
 
 // An activated ability's signature flash (mirrors the arena's _activateAbility visuals).
@@ -76,9 +112,13 @@ function drawWeaponIcon(g, weapon, S, c) {
   const color = CATEGORIES[weapon.category]?.color ?? 0xffffff;
   const d = weapon.delivery || {};
   const ang = -Math.PI / 4;
-  if (d.hit === 'hitscan' || d.hit === 'contact') {
+  if (d.hit === 'contact') {                        // melee → a slash crescent
+    drawSlash(g, c - 8 * S, c + 8 * S, ang, 0.35, color, S, 16);
+    return;
+  }
+  if (d.hit === 'hitscan') {
     const r = 9 * S;
-    drawBeam(g, c - r, c + r, c + r, c - r, color, S);
+    drawBeam(g, c - r, c + r, c + r, c - r, color, S, d.kind === 'rail');
     return;
   }
   const kind = projectileKind(weapon);

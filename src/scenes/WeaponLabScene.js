@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { drawProjectileBody, drawBeam, projectileKind, itemFxKey } from '../art/index.js';
+import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind, itemFxKey } from '../art/index.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { CATEGORIES } from '../data/categories.js';
 
@@ -111,7 +111,9 @@ export default class WeaponLabScene extends Phaser.Scene {
       weapon, color, container: c, panel, stage, icon, name, cat, stats, fxG,
       cd: index * 120,        // stagger first shots so they don't all fire in lockstep
       streamPhase: 0,         // for stream weapons: on/off burst envelope
-      projectiles: [], beams: [], bursts: [],
+      pulsesLeft: 0, pulseCd: 0,   // multi-pulse burst (energy pulse laser)
+      holdBeam: false,        // sustained beam this frame (beam laser)
+      projectiles: [], beams: [], bursts: [], slashes: [], patches: [],
     });
   }
 
@@ -178,23 +180,36 @@ export default class WeaponLabScene extends Phaser.Scene {
   _updateCard(card, dt, delta) {
     const w = card.weapon, d = w.delivery;
     const stream = d.pattern === 'stream';
+    card.holdBeam = false;
 
-    // Cadence: stream weapons fire on fireRate, with a periodic rest so bursts read
-    // distinctly; everything else fires on cycleTime.
-    card.cd -= delta;
-    if (stream) {
-      card.streamPhase += delta;
-      const cycle = card.streamPhase % 2400;           // 1.6s firing, 0.8s rest
-      if (cycle < 1600 && card.cd <= 0) {
-        this._fire(card);
-        card.cd += Math.max(1000 / (d.fireRate || 10), 16);
+    if (d.burst) {
+      // Multi-pulse: a trigger pull emits `count` rapid sub-shots, then a cooldown gap.
+      card.cd -= delta;
+      if (card.pulsesLeft > 0) {
+        card.pulseCd -= delta;
+        while (card.pulsesLeft > 0 && card.pulseCd <= 0) {
+          this._fire(card); card.pulsesLeft--; card.pulseCd += d.burst.interval;
+        }
+      } else if (card.cd <= 0) {
+        card.pulsesLeft = d.burst.count; card.pulseCd = 0;
+        card.cd += Math.max(w.cycleTime || 700, 300) + 400;
       }
-    } else if (card.cd <= 0) {
-      this._fire(card);
-      card.cd += Math.max(w.cycleTime || 800, 250) + 350;   // small gap so each shot is legible
+    } else if (stream) {
+      // Stream weapons fire on fireRate with a periodic rest so bursts read distinctly.
+      card.streamPhase += delta;
+      const firing = card.streamPhase % 2400 < 1600;
+      if (d.sustained) {
+        card.holdBeam = firing;                        // one continuous held beam
+      } else {
+        card.cd -= delta;
+        if (firing && card.cd <= 0) { this._fire(card); card.cd += Math.max(1000 / (d.fireRate || 10), 16); }
+      }
+    } else {
+      card.cd -= delta;
+      if (card.cd <= 0) { this._fire(card); card.cd += Math.max(w.cycleTime || 800, 250) + 350; }
     }
 
-    this._stepRounds(card, dt);
+    this._stepRounds(card, dt, delta);
     this._draw(card);
   }
 
@@ -203,31 +218,31 @@ export default class WeaponLabScene extends Phaser.Scene {
     const w = card.weapon, d = w.delivery, color = card.color;
     const ax = card.muzzleX, ay = card.muzzleY;
 
-    if (d.hit === 'hitscan' || d.hit === 'contact') {
-      const len = d.hit === 'contact' ? 30 : Math.min(card.stageW, w.range.opt || 200);
-      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: d.hit === 'contact' ? 200 : 130 });
+    if (d.hit === 'contact') { card.slashes.push({ t: 0, ttl: 260, color }); return; }
+    if (d.hit === 'hitscan') {
+      const len = Math.min(card.stageW, w.range.opt || 200);
+      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: 130, heavy: d.kind === 'rail' });
       return;
     }
 
     const kind = projectileKind(w);
     const homing = d.guidance === 'homing';
     const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
-    // Spread cone: use the declared angle, or a small default for count-without-angle
-    // weapons (e.g. the homing rack) so the rounds fan out before converging.
-    const cone = ((d.spreadAngle || (n > 1 ? 16 : 0)) * Math.PI) / 180;
+    const cone = ((d.spreadAngle || 16) * Math.PI) / 180;
     for (let i = 0; i < n; i++) {
-      const off = n > 1 ? (i / (n - 1) - 0.5) * cone : 0;
-      const speed = d.velocity || 480;
+      let angle = 0, oy = 0;
+      if (d.cluster) { oy = (i - (n - 1) / 2) * 5; angle = (Math.random() - 0.5) * 0.04; }  // tight parallel clump
+      else if (n > 1) angle = (i / (n - 1) - 0.5) * cone;                                    // fanned cone
       card.projectiles.push({
-        x: ax, y: ay, angle: off, speed, kind, color, homing,
-        dist: 0, maxDist: card.stageW, arc: d.path === 'arcing',
+        x: ax, y: ay + oy, angle, speed: d.velocity || 480, kind, color, homing,
+        dist: 0, maxDist: card.stageW, arc: d.path === 'arcing', ground: d.groundFire || null,
       });
     }
   }
 
-  _stepRounds(card, dt) {
+  _stepRounds(card, dt, delta) {
     for (const p of card.projectiles) {
-      // Homing rounds steer back toward the muzzle's heading (straight right), so the
+      // Homing rounds steer back toward the muzzle's heading (straight right), so a wide
       // launch fan curves in like seekers chasing a target down-range.
       if (p.homing) p.angle = Phaser.Math.Angle.RotateTo(p.angle, 0, 3.0 * dt);
       p.x += Math.cos(p.angle) * p.speed * dt;
@@ -235,24 +250,39 @@ export default class WeaponLabScene extends Phaser.Scene {
       p.dist += p.speed * dt;
       if (p.dist >= p.maxDist) {
         p.dead = true;
-        card.bursts.push({ x: p.x, y: p.y, color: p.color, t: 0, ttl: 220 });
+        if (p.ground) card.patches.push({ x: p.x, y: card.muzzleY, r: Math.min(p.ground.radius, 26), born: 0, ttl: p.ground.duration * 1000 });
+        else card.bursts.push({ x: p.x, y: p.y, color: p.color, t: 0, ttl: 220 });
       }
     }
     if (card.projectiles.some((p) => p.dead)) card.projectiles = card.projectiles.filter((p) => !p.dead);
 
-    for (const b of card.beams) b.ttl -= dt * 1000;
-    if (card.beams.some((b) => b.ttl <= 0)) card.beams = card.beams.filter((b) => b.ttl > 0);
-    for (const b of card.bursts) b.t += dt * 1000;
-    if (card.bursts.some((b) => b.t >= b.ttl)) card.bursts = card.bursts.filter((b) => b.t < b.ttl);
+    const ms = delta;
+    for (const b of card.beams) b.ttl -= ms;
+    for (const b of card.bursts) b.t += ms;
+    for (const s of card.slashes) s.t += ms;
+    for (const fp of card.patches) fp.born += ms;
+    card.beams = card.beams.filter((b) => b.ttl > 0);
+    card.bursts = card.bursts.filter((b) => b.t < b.ttl);
+    card.slashes = card.slashes.filter((s) => s.t < s.ttl);
+    card.patches = card.patches.filter((fp) => fp.born < fp.ttl);
   }
 
   _draw(card) {
     const g = card.fxG;
+    const w = card.weapon;
     g.clear();
     // Muzzle nub.
     g.fillStyle(0x3a4654, 1).fillRect(card.muzzleX - 12, card.muzzleY - 4, 12, 8);
 
-    for (const b of card.beams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1);
+    // Burning ground patches sit under everything.
+    for (const fp of card.patches) drawGroundFire(g, fp.x, fp.y, fp.r, fp.born, 1);
+
+    // Sustained held beam (beam laser): one steady beam while firing.
+    if (card.holdBeam) {
+      const len = Math.min(card.stageW, w.range.opt || 220);
+      drawBeam(g, card.muzzleX, card.muzzleY, card.muzzleX + len, card.muzzleY, card.color, 1);
+    }
+    for (const b of card.beams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy);
 
     for (const p of card.projectiles) {
       let lift = 0;
@@ -262,6 +292,9 @@ export default class WeaponLabScene extends Phaser.Scene {
       }
       drawProjectileBody(g, p.x, p.y - lift, p.angle, p.kind, p.color, 1, p.dist);
     }
+
+    // Melee swings sweep a crescent out from the muzzle.
+    for (const s of card.slashes) drawSlash(g, card.muzzleX, card.muzzleY, 0, s.t / s.ttl, s.color, 1, 34);
 
     for (const b of card.bursts) {
       const f = 1 - b.t / b.ttl;

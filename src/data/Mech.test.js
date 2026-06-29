@@ -80,7 +80,7 @@ describe('Mech damage propagation (cascade)', () => {
 describe('Mech weapons go offline with their part', () => {
   it('a weapon in a destroyed arm is no longer online', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'mediumLaser');
+    m.mount('leftArm', 'pulseLaser');
     expect(m.onlineWeapons()).toHaveLength(1);
     m.applyDamage('leftArm', m.parts.leftArm.maxArmor + m.parts.leftArm.maxStructure + 10);
     expect(m.onlineWeapons()).toHaveLength(0);

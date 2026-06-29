@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { Mech } from '../data/Mech.js';
-import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, projectileKind } from '../art/index.js';
+import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind } from '../art/index.js';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
@@ -314,7 +314,7 @@ export default class ArenaScene extends Phaser.Scene {
   // Build a fresh enemy with its own textures + view + AI state and track it.
   _spawnEnemy(x, y) {
     const key = `enemy${this._enemySeq++}`;
-    const mech = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['srm'] } });
+    const mech = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['clusterRocket'] } });
     mech.repairAll();
     buildMechTextures(this, key, mech, { theme: 'enemy' });
     const angle = Math.PI / 2;
@@ -472,15 +472,60 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Each weapon converges from its own muzzle onto the (assisted) firing point.
     const baseAngle = Math.atan2(aimY - m.y, aimX - m.x);
-    if (d.hit === 'hitscan' || d.hit === 'contact') { this._fireHitscan(w, m.x, m.y, baseAngle); return; }
+    if (d.hit === 'contact') { this._melee(w, m.x, m.y, baseAngle); return; }
+    if (d.hit === 'hitscan') {
+      // Multi-pulse weapons (pulse laser) emit a quick burst of sub-shots per trigger.
+      if (d.burst) {
+        for (let i = 0; i < d.burst.count; i++) {
+          this.time.delayedCall(i * d.burst.interval, () => {
+            if (!this.scene.isActive()) return;
+            const mm = this._muzzle(w.location);
+            this._fireHitscan(w, mm.x, mm.y, Math.atan2(aimY - mm.y, aimX - mm.x));
+          });
+        }
+      } else this._fireHitscan(w, m.x, m.y, baseAngle);
+      return;
+    }
 
-    // Projectile: one shot, or a fan of `spreadCount` for spread weapons.
+    // Projectile: one shot, a fanned cone of `spreadCount`, or — for `cluster` weapons —
+    // a tight parallel clump that flies straight rather than spreading.
     const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
     const spreadRad = ((d.spreadAngle || (n > 1 ? 16 : 0)) * Math.PI) / 180;
     for (let i = 0; i < n; i++) {
-      const off = n > 1 ? ((i - (n - 1) / 2) / (n - 1)) * spreadRad : 0;
-      this._spawnProjectile(w, m.x, m.y, baseAngle + off);
+      if (d.cluster) {
+        const perp = baseAngle + Math.PI / 2, o = (i - (n - 1) / 2) * 6;
+        this._spawnProjectile(w, m.x + Math.cos(perp) * o, m.y + Math.sin(perp) * o, baseAngle + (Math.random() - 0.5) * 0.04);
+      } else {
+        const off = n > 1 ? ((i - (n - 1) / 2) / (n - 1)) * spreadRad : 0;
+        this._spawnProjectile(w, m.x, m.y, baseAngle + off);
+      }
     }
+  }
+
+  // Melee swing: same forward-ray hit detection as a beam, but drawn as a sweeping
+  // crescent (shared drawSlash art) instead of a straight line.
+  _melee(w, mx, my, angle) {
+    const reach = w.weapon.range.max || 32;
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    let target = null, t = 0;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const ex = e.x - mx, ey = e.y - my, tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
+      if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
+    }
+    const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
+    if (target) {
+      const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
+      this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
+    }
+    // Animate the crescent across a few frames, then clear.
+    for (const tt of [0.15, 0.45, 0.8]) {
+      this.time.delayedCall(tt * 150, () => {
+        if (!this.scene.isActive()) return;
+        this.fx.clear(); drawSlash(this.fx, mx, my, angle, tt, color, 1, reach + 8);
+      });
+    }
+    this.time.delayedCall(170, () => this.fx.clear());
   }
 
   // Damage multiplier vs. distance: full out to `opt`, falling to ~0.3 at `max` and a
@@ -517,8 +562,9 @@ export default class ArenaScene extends Phaser.Scene {
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
-    // Laser-y beam (shared art so the garage icon matches), quick fade.
-    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1);
+    // Laser-y beam (shared art so the garage icon matches), quick fade. The rail lance
+    // draws a heavier high-energy lance.
+    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1, w.weapon.delivery.kind === 'rail');
     this.time.delayedCall(80, () => this.fx.clear());
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
@@ -625,13 +671,7 @@ export default class ArenaScene extends Phaser.Scene {
           }
         }
       }
-      // flames
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 + now * 0.004;
-        const rr = fp.r * (0.4 + 0.4 * Math.abs(Math.sin(now * 0.01 + i)));
-        this.projFx.fillStyle(i % 2 ? 0xff7a18 : 0xffd56b, 0.45)
-          .fillCircle(fp.x + Math.cos(a) * rr, fp.y + Math.sin(a) * rr, 5);
-      }
+      drawGroundFire(this.projFx, fp.x, fp.y, fp.r, now);   // shared flame art (matches the lab)
       if (now >= fp.until) fp.dead = true;
     }
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);

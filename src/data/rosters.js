@@ -19,8 +19,8 @@ export const ROSTERS = {
         name: 'Trooper-01',
         mounts: {
           rightArm: ['autocannon'],
-          leftArm: ['mediumLaser'],
-          leftTorso: ['srm'],
+          leftArm: ['pulseLaser'],
+          leftTorso: ['clusterRocket'],
           rightTorso: ['machineGun'],
         },
       },

@@ -10,8 +10,14 @@
 //   guidance  'dumbfire' | 'lockon' | 'homing' | null
 //   pattern   'single' | 'spread' | 'stream'
 //   spreadCount / spreadAngle   pellets/missiles per shot + cone width (deg)
-//   fireRate  shots per second for a `stream` weapon (machine gun)
+//   cluster   spread rounds fly as a tight parallel clump (no fan) — dumbfire cluster
+//   fireRate  shots per second for a `stream` weapon (machine gun / streak missiles)
+//   burst     { count, interval } — one trigger pull fires `count` rapid sub-shots
+//             `interval` ms apart (the energy pulse laser's multi-pulse)
+//   sustained a `stream` hitscan held as ONE continuous beam, not a flicker (beam laser)
 //   splash    blast radius in px (plasma/explosive)
+//   groundFire { radius, dps, duration } — leaves a burning patch on impact (napalm)
+//   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
 // (ms between trigger pulls).
@@ -35,87 +41,93 @@ function w(def) {
 }
 
 export const WEAPONS = {
-  mediumLaser: w({
-    id: 'mediumLaser', name: 'Pulse Beam', category: 'energy',
-    damage: 12, range: { min: 0, opt: 180, max: 320 },
-    ammoMax: 8, ammoRegen: 1.4, slots: 1, cycleTime: 900,
-    delivery: { hit: 'hitscan', pattern: 'single' },
+  // ── ENERGY ── five distinct feels: bursty pulses, a held beam, a sniper lance, an
+  // arcing plasma lob, and a close-range flame cone. No ammo (battery recharge). ──
+  pulseLaser: w({   // every trigger pull = a rapid burst of light beam pulses
+    id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
+    damage: 4, range: { min: 0, opt: 170, max: 300 },
+    ammoMax: 24, ammoRegen: 3.0, slots: 1, cycleTime: 720,
+    delivery: { hit: 'hitscan', pattern: 'single', burst: { count: 4, interval: 55 } },
   }),
-  plasmaCannon: w({
+  beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
+    id: 'beamLaser', name: 'Beam Laser', category: 'energy',
+    damage: 2, range: { min: 0, opt: 220, max: 360 },
+    ammoMax: 120, ammoRegen: 18, slots: 2, cycleTime: 0,
+    delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true },
+  }),
+  railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
+    id: 'railLance', name: 'Rail Lance', category: 'energy',
+    damage: 34, range: { min: 120, opt: 400, max: 640 },
+    ammoMax: 3, ammoRegen: 0.4, slots: 2, cycleTime: 2200,
+    delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
+  }),
+  plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
     damage: 18, range: { min: 0, opt: 160, max: 300 },
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 260, pattern: 'single', splash: 40 },
   }),
-  autocannon: w({
-    id: 'autocannon', name: 'Slug Driver', category: 'ballistic',
-    damage: 16, range: { min: 0, opt: 200, max: 360 },
-    ammoMax: 12, ammoRegen: 1.0, slots: 2, cycleTime: 1100,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'single' },
-  }),
-  machineGun: w({
-    id: 'machineGun', name: 'Repeater', category: 'ballistic',
-    damage: 2, range: { min: 0, opt: 80, max: 140 },
-    ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 520, pattern: 'stream', fireRate: 12 },
-  }),
-  shotgun: w({
-    id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
-    damage: 3, range: { min: 0, opt: 90, max: 160 },
-    ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 480, pattern: 'spread', spreadCount: 8, spreadAngle: 24 },
-  }),
-  lrm: w({
-    id: 'lrm', name: 'Seeker Rack', category: 'missile',
-    damage: 4, range: { min: 80, opt: 300, max: 500 },
-    ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1400,
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, velocity: 300 },
-  }),
-  srm: w({
-    id: 'srm', name: 'Rocket Pod', category: 'missile',
-    damage: 5, range: { min: 0, opt: 140, max: 240 },
-    ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
-    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 4, velocity: 340, spreadAngle: 14 },
-  }),
-  hatchet: w({
-    id: 'hatchet', name: 'Cleaver', category: 'melee',
-    damage: 22, range: { min: 0, opt: 0, max: 32 },
-    ammoMax: null, ammoRegen: 0, slots: 2, cycleTime: 1300,
-    delivery: { hit: 'contact', pattern: 'single' },
-  }),
-
-  // ── Energy variants (#20): same category, very different cadence/feel ──
-  pulseLaser: w({   // rapid, forgiving, light per-hit
-    id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
-    damage: 5, range: { min: 0, opt: 150, max: 260 },
-    ammoMax: 24, ammoRegen: 3.2, slots: 1, cycleTime: 180,
-    delivery: { hit: 'hitscan', pattern: 'single' },
-  }),
-  beamLaser: w({    // hold for a near-continuous beam; drains fast
-    id: 'beamLaser', name: 'Beam Laser', category: 'energy',
-    damage: 2, range: { min: 0, opt: 200, max: 340 },
-    ammoMax: 100, ammoRegen: 16, slots: 2, cycleTime: 0,
-    delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 18 },
-  }),
-  railLance: w({    // slow, long-range, heavy single hit
-    id: 'railLance', name: 'Rail Lance', category: 'energy',
-    damage: 34, range: { min: 120, opt: 400, max: 640 },
-    ammoMax: 3, ammoRegen: 0.4, slots: 2, cycleTime: 2200,
-    delivery: { hit: 'hitscan', pattern: 'single' },
-  }),
-
-  // ── Sustained-cone + incendiary (#21, #22) ──
   flamethrower: w({ // short-range spray of slow flame; chews up anything close
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
     damage: 2, range: { min: 0, opt: 55, max: 100 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 100,
     delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 3, spreadAngle: 24, velocity: 165, kind: 'flame', splash: 6 },
   }),
+
+  // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a
+  // tight fast pellet burst, and a lobbed incendiary that paints the ground. ──
+  autocannon: w({   // one heavy, very fast direct-fire shell — punchy single hits
+    id: 'autocannon', name: 'Autocannon', category: 'ballistic',
+    damage: 16, range: { min: 0, opt: 220, max: 380 },
+    ammoMax: 12, ammoRegen: 1.0, slots: 2, cycleTime: 1100,
+    delivery: { hit: 'projectile', path: 'straight', velocity: 760, pattern: 'single', kind: 'slug' },
+  }),
+  machineGun: w({   // sustained stream of small fast tracer rounds
+    id: 'machineGun', name: 'Repeater', category: 'ballistic',
+    damage: 2, range: { min: 0, opt: 80, max: 140 },
+    ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
+    delivery: { hit: 'projectile', path: 'straight', velocity: 640, pattern: 'stream', fireRate: 12, kind: 'bullet' },
+  }),
+  shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
+    id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
+    damage: 3, range: { min: 0, opt: 90, max: 170 },
+    ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
+    delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', spreadCount: 7, spreadAngle: 7, kind: 'bullet' },
+  }),
   napalm: w({       // lobbed canister that bursts into a burning ground patch
     id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
     damage: 6, range: { min: 50, opt: 170, max: 280 },
     ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 230, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
+  }),
+
+  // ── MISSILE ── three guidance archetypes: an all-at-once homing swarm, a rapid
+  // stream of seekers, and a tight dumbfire cluster that flies straight as a clump. ──
+  swarmRack: w({    // whole salvo launches at once, fans wide, then homes to the target
+    id: 'swarmRack', name: 'Swarm Rack', category: 'missile',
+    damage: 4, range: { min: 80, opt: 300, max: 500 },
+    ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300 },
+  }),
+  streakPod: w({    // fires seekers one-at-a-time in a rapid stream; each homes in
+    id: 'streakPod', name: 'Streak Pod', category: 'missile',
+    damage: 5, range: { min: 60, opt: 260, max: 440 },
+    ammoMax: 16, ammoRegen: 1.6, slots: 2, cycleTime: 0,
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'stream', fireRate: 6, velocity: 440 },
+  }),
+  clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
+    id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
+    damage: 5, range: { min: 0, opt: 150, max: 250 },
+    ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
+    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, velocity: 380 },
+  }),
+
+  // ── MELEE ── contact range, no ammo; a swung crescent. ──
+  hatchet: w({
+    id: 'hatchet', name: 'Cleaver', category: 'melee',
+    damage: 22, range: { min: 0, opt: 0, max: 32 },
+    ammoMax: null, ammoRegen: 0, slots: 2, cycleTime: 1300,
+    delivery: { hit: 'contact', pattern: 'single', kind: 'slash' },
   }),
 };
 
