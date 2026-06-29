@@ -90,12 +90,13 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   for (let i = 0; i < sparkCount; i++) {
     const speed = 0.05 + i * 0.02;
     const sign = (i % 2 === 0) ? 1 : -1;
-    const drift = (phase * speed + i * 37) % maxDrift;
-    const life = 1 - drift / maxDrift;  // 1 at spawn, 0 at edge
     // Random beam position that re-randomises each cycle.
     const cycle = Math.floor(phase * speed + i * 37);
     const t = Math.abs(Math.sin(cycle * 127.3 + i * 31.7));
-    const rMax = (heavy ? 5.5 : 4.0) * s;
+    const tipTaper = Math.cos(t * Math.PI / 2);  // 1 at muzzle, 0 at tip
+    const drift = (phase * speed + i * 37) % (maxDrift * tipTaper);
+    const life = 1 - drift / (maxDrift * tipTaper + 0.001);
+    const rMax = (heavy ? 5.5 : 4.0) * s * tipTaper;
     const r = rMax * life;              // shrinks to nothing as it flies off
     if (r < 0.5) continue;
     const sx = x0 + nx * len * t + px * sign * drift;
