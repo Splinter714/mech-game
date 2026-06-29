@@ -226,7 +226,7 @@ const STYLES = [
   // BLAST — extreme/fast: constant sixteenth-note TREMOLO picking over a blast beat (kick/snare
   // alternating every sixteenth). Leads open.
   {
-    key: 'blast', name: 'blast', tempo: 160, chug: 0.045, modes: ['phrygian', 'harmonicMinor'],
+    key: 'blast', name: 'blast', tempo: 140, chug: 0.045, modes: ['phrygian'],
     gtr: [[1, 1, 7, 1,  3, 1, 7, 1,  5, 5, 7, 8,  7, 6, 5, 7], TREMOLO + TREMOLO],
     bass: '1111111177771111' + '3333111155557777' + '1111111166665555' + '7777555533331111',
     drums: { kick: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', snare: 'oxoxoxoxoxoxoxoxoxoxoxoxoxoxoxox',
