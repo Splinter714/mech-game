@@ -94,7 +94,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const life = 1 - drift / maxDrift;  // 1 at spawn, 0 at edge
     // Random beam position that re-randomises each cycle.
     const cycle = Math.floor(phase * speed + i * 37);
-    const t = Math.abs(Math.sin(cycle * 127.3 + i * 31.7)) * 0.85 + 0.05;
+    const t = Math.abs(Math.sin(cycle * 127.3 + i * 31.7));
     const rMax = (heavy ? 5.5 : 4.0) * s;
     const r = rMax * life;              // shrinks to nothing as it flies off
     if (r < 0.5) continue;
