@@ -16,10 +16,9 @@ export default class BootScene extends Phaser.Scene {
       this.registry.set(registryKey, load());
     }
     buildBaseTextures(this);
-    // Procedural audio: adopt Phaser's WebAudio context and start the soundtrack. Both
-    // no-op until Phaser unlocks audio on the first user gesture.
+    // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
+    // player turns it on with the music panel's play/pause (or it stays silent).
     Audio.init(this.sound.context);
-    Audio.startMusic();
     // `?lab` boots straight into the weapon art preview (dev tool).
     const lab = new URLSearchParams(window.location.search).has('lab');
     this.scene.start(lab ? 'WeaponLabScene' : 'GarageScene');

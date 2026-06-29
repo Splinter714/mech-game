@@ -106,6 +106,14 @@ export function mountAudioPanel() {
   if (typeof document === 'undefined') return;
   let el = null;
 
+  // Stop clicks/scrolls on the overlay from passing through to the Phaser game underneath (Phaser
+  // binds pointer listeners at the window level, so events bubbling up from our DOM would reach the
+  // canvas and trigger garage buttons behind the panel). Swallow every pointer-ish event on an
+  // element; the element's own controls still work (they handle the event before it bubbles here).
+  const SWALLOW = ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'click',
+    'dblclick', 'touchstart', 'touchend', 'touchmove', 'wheel', 'contextmenu'];
+  const blockPassThrough = (node) => SWALLOW.forEach((ev) => node.addEventListener(ev, (e) => e.stopPropagation()));
+
   // The app sets `* { touch-action: none }` (to stop the game from scrolling/zooming on
   // touch), which also kills scrolling INSIDE the panel. Re-enable vertical pan + momentum
   // scrolling for the panel and its contents so it can scroll when it spills off-screen.
@@ -122,6 +130,7 @@ export function mountAudioPanel() {
       'background:rgba(13,16,20,0.94)', 'border:1px solid #2a333f', 'border-radius:8px', 'padding:10px 12px',
       'font-family:monospace', 'font-size:11px', 'color:#c8d2dd', 'z-index:99999', 'box-shadow:0 6px 24px rgba(0,0,0,0.5)',
     ].join(';');
+    blockPassThrough(el);   // clicks/scrolls inside the panel never reach the game behind it
 
     const head = document.createElement('div');
     head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px';
@@ -133,17 +142,51 @@ export function mountAudioPanel() {
     head.append(title, closeBtn);
     el.appendChild(head);
 
-    // Track switch.
-    const trackRow = document.createElement('div');
-    trackRow.style.cssText = 'display:flex;gap:6px;margin-bottom:10px';
-    for (const t of ['metal', 'synthwave']) {
-      const b = document.createElement('button');
-      b.textContent = t;
-      b.style.cssText = `flex:1;padding:4px;background:${Audio.track === t ? '#1b2430' : '#161b22'};color:#c8d2dd;border:1px solid ${Audio.track === t ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace`;
-      b.onclick = () => { Audio.setTrack(t); close(); open(); };
-      trackRow.appendChild(b);
+    // Play / pause — the soundtrack is OFF by default; this starts/stops it.
+    const playBtn = document.createElement('button');
+    const paintPlay = () => {
+      const on = Audio.musicOn;
+      playBtn.textContent = on ? '⏸  pause music' : '▶  play music';
+      playBtn.style.background = on ? '#1b2430' : '#161b22';
+      playBtn.style.color = on ? '#efc14a' : '#7bd17b';
+      playBtn.style.border = `1px solid ${on ? '#efc14a' : '#2a333f'}`;
+    };
+    playBtn.style.cssText = 'width:100%;margin-bottom:10px;padding:7px;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px';
+    playBtn.onclick = () => { Audio.toggleMusic(); paintPlay(); };
+    paintPlay();
+    el.appendChild(playBtn);
+
+    // Track switch — the tracks are (style × mode) ids like `gallop-aeolian`. Group them by style
+    // (one labelled row each) with the mode variants across, so you can A/B a style in each mode
+    // and pick the keeper. Switching re-reads params (e.g. the track's tempo) by rebuilding.
+    const groups = new Map();                       // style → [{id, mode}]
+    for (const t of Audio.trackIds) {
+      const dash = t.indexOf('-');
+      const style = dash < 0 ? t : t.slice(0, dash);
+      const mode = dash < 0 ? t : t.slice(dash + 1);
+      if (!groups.has(style)) groups.set(style, []);
+      groups.get(style).push({ id: t, mode });
     }
-    el.appendChild(trackRow);
+    const trackWrap = document.createElement('div');
+    trackWrap.style.cssText = 'margin-bottom:10px';
+    for (const [style, variants] of groups) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:5px;margin:3px 0';
+      const lab = document.createElement('span');
+      lab.textContent = style; lab.style.cssText = 'flex:0 0 56px;color:#7c8794';
+      row.appendChild(lab);
+      for (const { id, mode } of variants) {
+        const b = document.createElement('button');
+        b.textContent = mode === 'harmonicMinor' ? 'harm.min' : mode;
+        b.title = id;
+        const on = Audio.track === id;
+        b.style.cssText = `flex:1;padding:4px 2px;background:${on ? '#1b2430' : '#161b22'};color:${on ? '#efc14a' : '#c8d2dd'};border:1px solid ${on ? '#efc14a' : '#2a333f'};border-radius:4px;cursor:pointer;font-family:monospace;font-size:10px`;
+        b.onclick = () => { Audio.setTrack(id); close(); open(); };
+        row.appendChild(b);
+      }
+      trackWrap.appendChild(row);
+    }
+    el.appendChild(trackWrap);
 
     // Collected so toggling any Solo/Mute can repaint every track's button state.
     const mixRefreshers = [];
@@ -251,19 +294,21 @@ export function mountAudioPanel() {
   const close = () => { el?.remove(); el = null; };
   const toggle = () => (el ? close() : open());
 
-  // Floating toggle button (so it's discoverable without the keyboard). Sits top-right;
-  // when the panel opens it covers the button, and the panel's own ✕ / P closes it.
+  // Toggle button to open the tuner. Styled to match the app's in-game header buttons (DEPLOY,
+  // CHASSIS) — same dark fill / thin border / monospace — and sits up top, centered between the
+  // title (left) and the DEPLOY/CHASSIS cluster (right) rather than as a separate floating pill.
   const btn = document.createElement('button');
-  btn.textContent = '♪ music';
+  btn.textContent = '♪ MUSIC  [P]';
   btn.setAttribute('aria-label', 'Open the music tuner');
   btn.style.cssText = [
-    'position:fixed', 'top:12px', 'right:12px', 'z-index:99998',
-    'background:rgba(13,16,20,0.92)', 'color:#5ec8e0', 'border:1px solid #2a333f', 'border-radius:6px',
-    'padding:7px 12px', 'font-family:monospace', 'font-size:12px', 'cursor:pointer', 'box-shadow:0 2px 10px rgba(0,0,0,0.45)',
+    'position:fixed', 'top:12px', 'left:50%', 'transform:translateX(-50%)', 'z-index:99998',
+    'background:#161b22', 'color:#5ec8e0', 'border:1px solid #2a333f', 'border-radius:4px',
+    'height:34px', 'padding:0 16px', 'font-family:monospace', 'font-size:14px', 'cursor:pointer',
   ].join(';');
-  btn.onmouseenter = () => { btn.style.borderColor = '#5ec8e0'; };
-  btn.onmouseleave = () => { btn.style.borderColor = '#2a333f'; };
+  btn.onmouseenter = () => { btn.style.background = '#1b2430'; btn.style.borderColor = '#5ec8e0'; };
+  btn.onmouseleave = () => { btn.style.background = '#161b22'; btn.style.borderColor = '#2a333f'; };
   btn.onclick = toggle;
+  blockPassThrough(btn);   // opening the panel mustn't also click the game behind the button
   document.body.appendChild(btn);
 
   window.addEventListener('keydown', (e) => {
