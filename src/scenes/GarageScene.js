@@ -194,6 +194,7 @@ export default class GarageScene extends Phaser.Scene {
   _buildHeader() {
     this.txt(20, 16, 'MECH LAB', { fontSize: '20px', color: UI.accent });
     this.hintText = this.txt(120, 22, '', { fontSize: '11px', color: UI.dim });
+    this.button(this.W - 450, 20, 140, 34, '⚔ WEAPON LAB', () => this.scene.start('WeaponLabScene'), UI.text);
     this.button(this.W - 300, 20, 130, 34, '⟳ CHASSIS', () => this.cycleChassis(), UI.accent);
     this.button(this.W - 150, 20, 130, 34, '▶ DEPLOY  (D)', () => this.deploy(), UI.sel);
     this._updateHint();

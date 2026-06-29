@@ -20,6 +20,8 @@ export default class BootScene extends Phaser.Scene {
     // no-op until Phaser unlocks audio on the first user gesture.
     Audio.init(this.sound.context);
     Audio.startMusic();
-    this.scene.start('GarageScene');
+    // `?lab` boots straight into the weapon art preview (dev tool).
+    const lab = new URLSearchParams(window.location.search).has('lab');
+    this.scene.start(lab ? 'WeaponLabScene' : 'GarageScene');
   }
 }
