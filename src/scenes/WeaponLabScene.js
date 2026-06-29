@@ -200,9 +200,13 @@ export default class WeaponLabScene extends Phaser.Scene {
       const firing = card.streamPhase % 2400 < 1600;
       if (d.sustained) {
         card.holdBeam = firing;                        // one continuous held beam
-      } else {
+      } else if (firing) {
+        // Only tick the timer while firing, and RESET it (don't accumulate) so the rest
+        // gap can't build a backlog that dumps a clump of rounds when firing resumes.
         card.cd -= delta;
-        if (firing && card.cd <= 0) { this._fire(card); card.cd += Math.max(1000 / (d.fireRate || 10), 16); }
+        if (card.cd <= 0) { this._fire(card); card.cd = Math.max(1000 / (d.fireRate || 10), 16); }
+      } else {
+        card.cd = 0;                                    // fire the first round immediately next window
       }
     } else {
       card.cd -= delta;
