@@ -200,20 +200,21 @@ const STYLES = [
     lead:  [[1, 5, 3, 4, 3, 2, 3, 4, 5, 1], 'xooxooxoxooxooxoxooxooxoxooooooo'],
     lead2: [[1, 8, 1, 7, 1, 5, 6, 5, 4, 5], 'xxoxxoxxoxxoxoxo'],
   },
-  // GROOVE — mid-tempo syncopated palm-muted chugs (NOT a constant gallop) over a bouncy bass and
-  // a backbeat kit. Leads open.
+  // STOMP — heavy mid-tempo breakdown: spacious, syncopated single-note chugs with big rests (a
+  // stop-start mosh feel, NOT a busy groove), the second bar dropped an octave for menace, under a
+  // half-time backbeat (snare on beat 3) with double-kick accents. Leads open.
   {
-    key: 'groove', name: 'groove', tempo: 120, chug: 0.11,
-    gtr: [[1, 1, 4, 1, 6, 5, 1, 4,  1, 1, 4, 1, 6, 7, 6, 4],
-          'xxoxooxxxoxooxoo' + 'xxoxooxxxoxooxoo'],
-    bass: '1oo1oo1o4oo1o5o4' + '1oo1oo1o6oo5o4o5',
-    drums: { kick: 'xooooxooxoooxoooxooooxooxoooxooo', snare: 'oooxoooooooxoooooooxoooooooxoooo',
+    key: 'stomp', name: 'stomp', tempo: 100, chug: 0.1,
+    gtr: [[1, 1, 1, 1, 7, 1,  1, 1, 7, 1, 6, 1],
+          'xoooxoxoooxoxoxo' + 'xoooxoxoooxoxoxo'],
+    bass: '1ooo1o1ooo1o1o1o' + '-1ooo1o7ooo1o6o1o',     // bar 2 drops an octave (the `-`)
+    drums: { kick: 'xoooxoxoooxoxoxo' + 'xoooxoxoooxoxoxx', snare: 'ooooooooxoooooooooooooooxooooooo',
              hat: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo' },
   },
   // DOOM — slow + crushing: huge RINGING power chords (one per bar, sustained), a half-time kit
   // (snare on beat 3), and a droning bass. Leads open.
   {
-    key: 'doom', name: 'doom', tempo: 76, ring: true, bassRing: true, bassLen: 0.6,
+    key: 'doom', name: 'doom', tempo: 76, ring: true, bassRing: true, bassLen: 0.6, modes: ['phrygian'],
     gtr: [[1, 2, 1, 6], WHOLES + WHOLES],            // root … 2 … root … 6 — four 1-bar drones
     bass: '1ooooooooooooooo' + '2ooooooooooooooo' + '-1ooooooooooooooo' + '6ooooooooooooooo',
     drums: { kick: 'xoooooooooooooooxooooooooooooooo', snare: 'ooooooooxoooooooooooooooxooooooo',
@@ -222,7 +223,7 @@ const STYLES = [
   // DRIVE — up-tempo hard rock: relentless straight downpicked EIGHTH-note power chords (chug on
   // the beat), four-on-the-floor double kick + backbeat. Leads open.
   {
-    key: 'drive', name: 'drive', tempo: 150, chug: 0.12,
+    key: 'drive', name: 'drive', tempo: 150, chug: 0.12, modes: ['aeolian'],
     gtr: [[1, 1, 1, 3,  1, 1, 5, 4,  1, 1, 1, 3,  7, 7, 5, 1], EIGHTHS + EIGHTHS],
     bass: '1o1o1o1o1o1o1o1o' + '1o1o1o1o5o5o4o4o' + '1o1o1o1o1o1o1o1o' + '7o7o7o7o5o5o1o1o',
     drums: { kick: 'xoooxoooxoooxoooxoooxoooxoooxooo', snare: 'ooooxoooooooxoooooooxoooooooxooo',
@@ -231,7 +232,7 @@ const STYLES = [
   // BLAST — extreme/fast: constant sixteenth-note TREMOLO picking over a blast beat (kick/snare
   // alternating every sixteenth). Leads open.
   {
-    key: 'blast', name: 'blast', tempo: 160, chug: 0.045,
+    key: 'blast', name: 'blast', tempo: 160, chug: 0.045, modes: ['phrygian', 'harmonicMinor'],
     gtr: [[1, 1, 7, 1,  3, 1, 7, 1,  5, 5, 7, 8,  7, 6, 5, 7], TREMOLO + TREMOLO],
     bass: '1111111177771111' + '3333111155557777' + '1111111166665555' + '7777555533331111',
     drums: { kick: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', snare: 'oxoxoxoxoxoxoxoxoxoxoxoxoxoxoxox',
@@ -239,10 +240,12 @@ const STYLES = [
   },
 ];
 
-// Generate every (style × mode) track. Id = `<style>-<mode>`; label = `<style> · <mode>`.
+// Generate one track per (style × mode). A style may pin a subset of modes (e.g. a decided
+// keeper renders in just that one mode); otherwise it's auditioned across all PICK_MODES.
+// Id = `<style>-<mode>`; label = `<style> · <mode>`.
 const TRACKS = {};
 for (const s of STYLES) {
-  for (const mode of PICK_MODES) {
+  for (const mode of (s.modes || PICK_MODES)) {
     const id = `${s.key}-${mode}`;
     TRACKS[id] = makeTrack({
       id, label: `${s.name} · ${MODE_TAG[mode]}`, root: STYLE_ROOT, mode, tempo: s.tempo,
