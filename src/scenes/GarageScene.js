@@ -56,21 +56,22 @@ export default class GarageScene extends Phaser.Scene {
     this.selected = null;   // the slot currently being edited (filters the catalog)
     this.catalogIds = [...WEAPON_IDS, ...EQUIPMENT_IDS];
 
-    // Layout: skill tiles fill the LEFT region; the weapon catalog (shared WeaponCardList)
-    // fills the RIGHT column; the small live preview + chassis switch sit bottom-right under it.
+    // Layout: the weapon catalog (shared WeaponCardList) spans the FULL width across the top so
+    // each card's live preview is as wide as the Weapon Lab's; a bottom strip holds the skill
+    // tiles (left) and the small live mech preview + chassis switch (right).
     const top = TAB_BAR_H + 14;
-    this.listX = Math.round(this.W * 0.56);
-    this.previewH = 210;
+    this.bottomH = 200;                             // bottom strip height (tiles + preview)
+    this.previewW = 210;                            // right slice of the strip for the preview
     this.dollX = 20;
-    this.dollW = this.listX - 40;
-    this._rowBottom = this.H - 24;                  // tile-row bottom edge
+    this.dollW = this.W - this.previewW - 60;
+    this._rowBottom = this.H - 22;                  // tile-row bottom edge
 
     buildMechTextures(this, 'garageMech', this.mech);
 
-    // Right column: the catalog, reusing the exact Weapon Lab card list. Picking a card mounts
-    // it into the selected slot (toggles off if it's already there).
+    // Full-width catalog, reusing the exact Weapon Lab card list. Picking a card mounts it into
+    // the selected slot (toggles off if it's already there).
     this.list = new WeaponCardList(this, {
-      x: this.listX, y: top, w: this.W - this.listX - 20, h: this.H - top - this.previewH - 24,
+      x: 20, y: top, w: this.W - 40, h: this.H - top - this.bottomH - 16,
       ids: this.catalogIds, onSelect: (id) => this._pickItem(id),
     });
 
@@ -224,18 +225,18 @@ export default class GarageScene extends Phaser.Scene {
     return TILE_ORDER.find((loc) => this._eligibleIds(loc).includes(id)) ?? null;
   }
 
-  // A small live, top-down render of the actual mech (hull + turret), tucked into the
-  // bottom-right corner under the catalog, with the chassis-switch button beneath it. The
-  // sprites reference fixed texture keys; onChange re-skins those textures in place.
+  // A small live, top-down render of the actual mech (hull + turret), in the bottom strip's
+  // right slice with the chassis-switch button beneath it. The sprites reference fixed texture
+  // keys; onChange re-skins those textures in place.
   _buildPreview() {
-    const box = this.previewH - 54;                              // square preview size
-    const cx = Math.round((this.listX + this.W) / 2);            // centred in the right column
-    const cy = this.H - this.previewH + box / 2 + 4;
+    const box = this.bottomH - 56;                              // square preview size
+    const cx = this.W - this.previewW / 2 - 20;                 // centred in the right slice
+    const cy = this.H - this.bottomH + box / 2 + 6;
     this.previewPanel = this.add.rectangle(cx, cy, box, box, 0x10151c).setStrokeStyle(1, UI.panelEdge);
     const scale = (box - 30) / 230;
     this.previewHull = this.add.sprite(cx, cy + 8, 'garageMech_hull_0').setScale(scale);
     this.previewTurret = this.add.sprite(cx, cy + 8, 'garageMech_turret').setScale(scale);
-    this._chassisBtn = this.button(cx - 80, this.H - 40, 160, 28,
+    this._chassisBtn = this.button(cx - 80, this.H - 34, 160, 26,
       `⟳ ${this.mech.chassis.name}`, () => this.cycleChassis(), UI.accent);
   }
 
