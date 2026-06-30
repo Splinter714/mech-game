@@ -604,6 +604,7 @@ export default class ArenaScene extends Phaser.Scene {
 
   _spawnProjectile(w, x, y, angle, owner = 'player') {
     const d = w.weapon.delivery;
+    let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
     // Indirect-fire targeting (#31): a player round seeks the locked enemy ONLY when the lock
     // is fully charged (red) — no lock, no seek, the missile dumb-fires straight. Enemy rounds
@@ -619,11 +620,24 @@ export default class ArenaScene extends Phaser.Scene {
       const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
       maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
+      // Constant-apex lobs: hold flight time fixed so every arc peaks at the same height —
+      // a far shot therefore launches faster. The weapon's `velocity` is calibrated at its
+      // optimal range (T = opt / velocity), and that same airtime is reused at any range.
+      const opt = w.weapon.range?.opt || maxDist;
+      const flightTime = opt / speed;
+      speed = maxDist / flightTime;
     }
     // Homing rounds steer toward `seekTarget` (the lock) each frame. A player round only homes
     // when it actually has a lock; without one it dumb-fires straight. Enemy rounds keep their
     // intrinsic homing (they chase the player downrange).
     const round = makeProjectile(w.weapon, x, y, angle, { maxDist });
+    // Constant-flight-time lobs: override the round's speed with the per-shot value computed
+    // above so every arc peaks at the same height (a far shot launches faster).
+    if (d.path === 'arcing') {
+      round.speed = speed;
+      round.vx = Math.cos(angle) * speed;
+      round.vy = Math.sin(angle) * speed;
+    }
     if (owner === 'player') round.homing = round.homing && !!seekTarget;
     this.projectiles.push({ ...round, owner, trail: [], seekTarget });
   }
@@ -675,15 +689,23 @@ export default class ArenaScene extends Phaser.Scene {
 
   _drawProjectile(p) {
     const g = this.projFx;
-    // Arcing rounds fake height: a ground shadow plus a lofted body.
-    let lift = 0;
+    // Arcing rounds fake height with size alone (no vertical offset): the body grows as it
+    // lofts toward the "camera" and the ground shadow tightens beneath it, so the round
+    // stays planted on its true ground position.
+    let scale = 1;
     if (p.arc) {
-      lift = Math.sin((p.dist / p.maxDist) * Math.PI) * Math.min(28, p.maxDist * 0.12);
-      g.fillStyle(0x000000, 0.25).fillEllipse(p.x, p.y, 7, 3);
+      const t = p.dist / p.maxDist;
+      const h = 4 * t * (1 - t);                              // 0..1 parabolic height fraction
+      // Constant apex: every lob peaks at the same height regardless of range, so a near
+      // toss looks like a steep mortar pop and a far shot looks flat and skimming.
+      const bump = 0.75;                                      // peak size gain at apex
+      scale = 1 + h * bump;
+      const sw = 8 - h * 4;                                   // shadow tightens with height
+      g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
     }
     // The round body itself is shared art (so the garage icon matches); `p.dist` drives
     // the flame flicker.
-    drawProjectileBody(g, p.x, p.y - lift, p.angle, p.kind, p.color, 1, p.dist);
+    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale, p.dist);
   }
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a

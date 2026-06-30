@@ -22,9 +22,21 @@ export { projectileKind };
 export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0) {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   if (kind === 'plasma') {
-    g.fillStyle(color, 0.30); g.fillCircle(x, y, 7 * s);
-    g.fillStyle(color, 0.9); g.fillCircle(x, y, 3.4 * s);
-    g.fillStyle(0xffffff, 0.9); g.fillCircle(x, y, 1.4 * s);
+    // A lobbed glob of molten energy: a soft pulsing corona, a teardrop body trailing
+    // back along travel, a white-hot core, and a couple of shed sparks. `phase` (the
+    // round's distance) drives the flicker and the wobble of the cast-off droplets.
+    const f = 0.75 + 0.25 * Math.sin(phase * 0.5);
+    // Hot wake streaming back from the glob.
+    g.fillStyle(color, 0.18 * f); g.fillCircle(x - ca * 3.5 * s, y - sa * 3.5 * s, 3.8 * s);
+    g.fillStyle(color, 0.30 * f); g.fillCircle(x, y, 5 * s);
+    // Teardrop: round front, tapered tail (drawn as two overlapping circles).
+    g.fillStyle(color, 0.92); g.fillCircle(x, y, 2.4 * s);
+    g.fillStyle(color, 0.7); g.fillCircle(x - ca * 2 * s, y - sa * 2 * s, 1.5 * s);
+    g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.4 * s, y + sa * 0.4 * s, 1 * s);
+    // Shed droplets wobbling off to the sides.
+    const wob = Math.sin(phase * 0.7) * 1.6 * s;
+    g.fillStyle(color, 0.55 * f);
+    g.fillCircle(x - ca * 4 * s - sa * wob, y - sa * 4 * s + ca * wob, 0.8 * s);
   } else if (kind === 'missile') {
     const bx = x - ca * 7 * s, by = y - sa * 7 * s;
     g.lineStyle(3 * s, 0xffb347, 0.5); g.lineBetween(bx, by, x - ca * 14 * s, y - sa * 14 * s);
@@ -33,9 +45,19 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
     const f = 0.7 + 0.3 * Math.sin(phase * 0.4);
     g.fillStyle(0xff7a18, 0.4 * f); g.fillCircle(x, y, 6 * s);
     g.fillStyle(0xffd56b, 0.9 * f); g.fillCircle(x, y, 2.6 * s);
-  } else if (kind === 'fire') {                    // napalm canister
-    g.fillStyle(0x3a2a1c, 1); g.fillCircle(x, y, 3.2 * s);
-    g.fillStyle(0xff7a18, 0.9); g.fillCircle(x, y, 1.6 * s);
+  } else if (kind === 'fire') {                    // napalm: a dark steel canister (top-down)
+    // A round fuel drum seen from above — near-black steel body, a brushed-steel rim, a
+    // hazard ring, and a glowing fuel cap at the centre. `phase` flickers the heat.
+    const fl = 0.7 + 0.3 * Math.sin(phase * 0.5);
+    const r = 3.8 * s;
+    // Dark steel drum, read against dark ground by a subtle rim highlight rather than a
+    // bright body.
+    g.fillStyle(0x24282e, 1); g.fillCircle(x, y, r);
+    g.fillStyle(0x16181c, 1); g.fillCircle(x, y, r * 0.82);
+    g.lineStyle(0.8 * s, 0x4c545d, 0.85); g.strokeCircle(x, y, r * 0.9);
+    // Small but BRIGHT fuel cap — the only orange, kept punchy.
+    g.fillStyle(0xff8a1f, 0.95 * fl); g.fillCircle(x, y, 1.1 * s);
+    g.fillStyle(0xffe39a, 1); g.fillCircle(x, y, 0.5 * s);
   } else if (kind === 'bullet') {                  // machine-gun round / shotgun pellet
     const tx = x - ca * 6 * s, ty = y - sa * 6 * s;
     g.lineStyle(1.5 * s, color, 0.45); g.lineBetween(tx, ty, x, y);
@@ -154,14 +176,73 @@ export function drawSlash(g, x, y, facing, t, color, s = 1, reach = 30) {
   g.lineBetween(x, y, x + Math.cos(lead) * R, y + Math.sin(lead) * R);
 }
 
-// A burning ground patch (napalm). `phase` is a millisecond clock driving the flicker.
-// Extracted from the arena so the lab's preview patch matches the real one exactly.
+// A burning ground patch (napalm): a spreading pool of sticky liquid fire that coats the
+// ground (low, roiling, smooth-edged — not tall spikes) with hot pockets and lazy smoke
+// rising off it. `phase` is a millisecond clock driving the flicker. Extracted from the
+// arena so the lab's preview patch matches the real one exactly.
+function _catmull(t, p0, p1, p2, p3) {
+  const t2 = t * t, t3 = t2 * t;
+  return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+}
 export function drawGroundFire(g, x, y, r, phase, s = 1) {
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + phase * 0.004;
-    const rr = r * (0.4 + 0.4 * Math.abs(Math.sin(phase * 0.01 + i))) * s;
-    g.fillStyle(i % 2 ? 0xff7a18 : 0xffd56b, 0.45)
-      .fillCircle(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 5 * s);
+  const seed = (x * 13.1 + y * 7.7);
+  const rnd = (i) => { const v = Math.sin(seed + i * 53.17) * 43758.5; return v - Math.floor(v); };
+  const pulse = 0.5 + 0.5 * Math.sin(phase * 0.005);
+
+  // An irregular, slowly-roiling blob outline that is wavy but SMOOTH: a few jittered lobe
+  // radii define the silhouette, then a closed Catmull-Rom spline is sampled through them so
+  // the edges flow instead of faceting. Squashed for the top-down view.
+  const blob = (cx, cy, rx, key, lobes = 7, squash = 0.7, wob = 0.18) => {
+    const ctrl = [];
+    for (let k = 0; k < lobes; k++) {
+      const a = (k / lobes) * Math.PI * 2;
+      const n = rnd(key + k * 2.13);
+      const rad = rx * (0.8 + n * 0.3 + wob * Math.sin(phase * 0.006 + n * 9 + key));
+      ctrl.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad * squash });
+    }
+    const pts = [];
+    const steps = 6;
+    for (let k = 0; k < lobes; k++) {
+      const p0 = ctrl[(k - 1 + lobes) % lobes], p1 = ctrl[k];
+      const p2 = ctrl[(k + 1) % lobes], p3 = ctrl[(k + 2) % lobes];
+      for (let sp = 0; sp < steps; sp++) {
+        const t = sp / steps;
+        pts.push({ x: _catmull(t, p0.x, p1.x, p2.x, p3.x), y: _catmull(t, p0.y, p1.y, p2.y, p3.y) });
+      }
+    }
+    return pts;
+  };
+
+  // Charred scorch the napalm soaked into, and the layered liquid-fire pool.
+  g.fillStyle(0x140a06, 0.4).fillPoints(blob(x, y, r * 1.05 * s, 1, 11, 0.72, 0.1), true);
+  g.fillStyle(0x5e1d04, 0.55).fillPoints(blob(x, y, r * 0.95 * s, 2, 10, 0.7), true);
+  g.fillStyle(0xb23206, 0.45 + 0.2 * pulse).fillPoints(blob(x, y, r * 0.74 * s, 3, 10, 0.68, 0.22), true);
+  g.fillStyle(0xe85610, 0.35 + 0.2 * pulse).fillPoints(blob(x, y, r * 0.5 * s, 4, 9, 0.66, 0.26), true);
+
+  // Roiling flame globs: small ragged blobs that breathe in place, clinging to the pool.
+  const globs = 9;
+  for (let i = 0; i < globs; i++) {
+    const ang = rnd(i) * 6.28;
+    const rad = (0.2 + rnd(i + 31) * 0.7) * r * s;
+    const gx = x + Math.cos(ang) * rad;
+    const gy = y + Math.sin(ang) * rad * 0.66;
+    const phaseI = rnd(i + 7) * 6.28;
+    const breathe = 0.6 + 0.4 * Math.sin(phase * 0.009 + phaseI);
+    const rr = r * s * (0.24 + rnd(i + 5) * 0.2) * breathe;
+    g.fillStyle(0xff6a18, 0.45).fillPoints(blob(gx, gy, rr, i * 4 + 200, 7, 0.8, 0.3), true);
+    g.fillStyle(0xffb43c, 0.6).fillPoints(blob(gx, gy - rr * 0.2, rr * 0.6, i * 4 + 201, 7, 0.8, 0.34), true);
+    if (rnd(i + 11) > 0.55) g.fillStyle(0xfff0c0, 0.55).fillCircle(gx, gy - rr * 0.25, rr * 0.26);
+  }
+
+  // Lazy smoke: a few translucent grey puffs rising and drifting, fading as they climb.
+  const puffs = 4;
+  for (let i = 0; i < puffs; i++) {
+    const phaseI = rnd(i + 50) * 6.28;
+    const rise = ((phase * 0.00018 + rnd(i + 60)) % 1);
+    const sx = x + (rnd(i + 70) * 2 - 1) * r * 0.6 * s + Math.sin(phase * 0.001 + phaseI) * r * 0.3 * s;
+    const sy = y - rise * r * 2.4 * s;
+    const sr = r * s * (0.3 + rise * 0.6);
+    g.fillStyle(0x2a2622, (1 - rise) * 0.22).fillCircle(sx, sy, sr);
   }
 }
 
