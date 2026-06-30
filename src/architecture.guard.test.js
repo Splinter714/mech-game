@@ -69,6 +69,19 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
       .toMatch(/DECOR_ART\s*\[/);
     assertNoVariantBranch('art/decor/index.js');
   });
+
+  it('gameplay sfx cues (by kind/category)', () => {
+    // sfx.js holds both the dispatchers and the cue bodies (which legitimately branch on
+    // e.g. `pattern === 'stream'`), so assert the dispatch shape directly: each dispatcher
+    // routes through its registry, and nothing dispatches on a kind/category literal.
+    const code = stripComments(read('audio/sfx.js'));
+    for (const reg of ['FIRE_CUES', 'IMPACT_CUES', 'ABILITY_CUES']) {
+      expect(code, `sfx must dispatch via ${reg}[...]`).toMatch(new RegExp(`${reg}\\s*\\[`));
+    }
+    expect(code, 'sfx must not dispatch on a kind/category string literal')
+      .not.toMatch(/\b(kind|catId|category)\s*===\s*['"]/);
+    expect(code, 'sfx must not switch on a variant').not.toMatch(/\bswitch\s*\(/);
+  });
 });
 
 describe('shared plumbing never names a specific weapon', () => {

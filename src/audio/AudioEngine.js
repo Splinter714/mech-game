@@ -8,7 +8,7 @@
 //   SFX (#32 firing · #33 impacts · #34 footfalls · #35 abilities · #36 explosions)
 //   Music (#38): a looping metal arrangement (guitar + bass + leads + drums) on a lookahead clock.
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+import * as Sfx from './sfx.js';
 
 // A WaveShaper transfer curve for guitar-style distortion (higher `k` = more crunch).
 function distortionCurve(k) {
@@ -541,100 +541,40 @@ export class AudioEngine {
 
   // Weapon firing (#32) — distinct timbre per category, pitched by the weapon's weight
   // (more damage = lower/beefier), with overrides for flame/incendiary kinds.
+  // Gameplay SFX — the cues themselves live in ./sfx.js (a kind-keyed cue registry); these
+  // facade methods keep the public API + the resume/ready guards and delegate.
   fire(weapon) {
     this._resume();
     if (!this.ready || !weapon) return;
-    const d = weapon.delivery || {};
-    const cat = weapon.category;
-    const stream = d.pattern === 'stream';
-
-    if (d.kind === 'flame') { // flamethrower hiss
-      this.noise(this.sfx, { dur: 0.16, gain: 0.10, type: 'bandpass', freq: 1100, freqEnd: 600, q: 0.6 });
-      return;
-    }
-    if (cat === 'energy') { // laser zap: bright saw sweeping down + a square sub
-      const base = clamp(1000 - weapon.damage * 11, 180, 1300);
-      this.tone(this.sfx, { type: 'sawtooth', freq: base * 2.4, freqEnd: base, dur: stream ? 0.07 : 0.15, gain: 0.13, attack: 0.001 });
-      this.tone(this.sfx, { type: 'square', freq: base * 1.0, freqEnd: base * 0.6, dur: stream ? 0.06 : 0.10, gain: 0.06 });
-      return;
-    }
-    if (cat === 'ballistic') {
-      if (d.kind === 'fire') { // napalm canister thunk
-        this.tone(this.sfx, { type: 'triangle', freq: 130, freqEnd: 60, dur: 0.16, gain: 0.22 });
-        this.noise(this.sfx, { dur: 0.10, gain: 0.12, type: 'lowpass', freq: 700 });
-        return;
-      }
-      // gun crack: a sharp noise transient over a low thump (lighter+faster for streams)
-      this.noise(this.sfx, { dur: stream ? 0.045 : 0.11, gain: stream ? 0.10 : 0.26, type: 'highpass', freq: 1600, freqEnd: 700, attack: 0.0008 });
-      this.tone(this.sfx, { type: 'triangle', freq: stream ? 220 : 170, freqEnd: 55, dur: stream ? 0.05 : 0.13, gain: stream ? 0.07 : 0.20 });
-      return;
-    }
-    if (cat === 'missile') { // ignition + rising whoosh
-      this.noise(this.sfx, { dur: 0.34, gain: 0.16, type: 'bandpass', freq: 480, freqEnd: 1700, q: 0.7, attack: 0.02 });
-      this.tone(this.sfx, { type: 'sawtooth', freq: 200, freqEnd: 440, dur: 0.22, gain: 0.05 });
-      return;
-    }
-    if (cat === 'melee') { // servo wind-up (the clang lands on impact)
-      this.noise(this.sfx, { dur: 0.16, gain: 0.10, type: 'bandpass', freq: 700, freqEnd: 1500, q: 1.2 });
-    }
+    Sfx.fire(this, weapon);
   }
 
   // Weapon impact (#33) — per ordnance type. Big ordnance routes to an explosion.
   impact(kind) {
     this._resume();
     if (!this.ready) return;
-    switch (kind) {
-      case 'missile': case 'fire':
-        this.explosion(0.55); return;
-      case 'plasma': // electric sizzle + low splat
-        this.noise(this.sfx, { dur: 0.18, gain: 0.14, type: 'bandpass', freq: 2200, freqEnd: 900, q: 1.4 });
-        this.tone(this.sfx, { type: 'square', freq: 240, freqEnd: 80, dur: 0.12, gain: 0.10 }); return;
-      case 'beam': // brief scorch tick
-        this.noise(this.sfx, { dur: 0.06, gain: 0.10, type: 'highpass', freq: 2600, freqEnd: 1400 }); return;
-      case 'flame':
-        this.noise(this.sfx, { dur: 0.12, gain: 0.07, type: 'lowpass', freq: 900 }); return;
-      default: // ballistic slug: a metallic clank
-        this.noise(this.sfx, { dur: 0.05, gain: 0.18, type: 'highpass', freq: 2000, freqEnd: 800 });
-        this.tone(this.sfx, { type: 'triangle', freq: 320, freqEnd: 120, dur: 0.06, gain: 0.10 });
-    }
+    Sfx.impact(this, kind);
   }
 
-  // Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly. Throttled
-  // so a fast gait can't machine-gun the sound.
+  // Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly (throttled).
   footstep(foot = 0) {
     this._resume();
     if (!this.ready) return;
-    const t = this._now();
-    if (t - this._lastStepSound < 0.07) return;
-    this._lastStepSound = t;
-    this.tone(this.sfx, { type: 'sine', freq: foot ? 78 : 66, freqEnd: 38, dur: 0.16, gain: 0.30, attack: 0.002 });
-    this.noise(this.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
+    Sfx.footstep(this, foot);
   }
 
   // Ability (#35) — jump-jet dash vs. bubble-shield raise.
   ability(kind) {
     this._resume();
     if (!this.ready) return;
-    if (kind === 'dash') { // thruster burst: rising filtered noise + pitch lift
-      this.noise(this.sfx, { dur: 0.3, gain: 0.18, type: 'bandpass', freq: 400, freqEnd: 1800, q: 0.6, attack: 0.01 });
-      this.tone(this.sfx, { type: 'sawtooth', freq: 180, freqEnd: 520, dur: 0.26, gain: 0.07 });
-    } else if (kind === 'shield') { // shimmering power-up: two detuned bell tones
-      this.tone(this.sfx, { type: 'sine', freq: 520, freqEnd: 780, dur: 0.5, gain: 0.10, attack: 0.02 });
-      this.tone(this.sfx, { type: 'sine', freq: 523, freqEnd: 784, dur: 0.5, gain: 0.08, attack: 0.02 });
-    }
+    Sfx.ability(this, kind);
   }
 
   // Explosion (#36) — death / part break-off. `scale` 0.4..1.2 sizes the blast.
   explosion(scale = 1) {
     this._resume();
     if (!this.ready) return;
-    const s = clamp(scale, 0.3, 1.4);
-    // Sub-bass drop = the punch.
-    this.tone(this.sfx, { type: 'sine', freq: 140 * s, freqEnd: 30, dur: 0.5 * s, gain: 0.34, attack: 0.003 });
-    // Wide noise body, decaying long.
-    this.noise(this.sfx, { dur: 0.6 * s, gain: 0.28, type: 'lowpass', freq: 1400, freqEnd: 180, attack: 0.002 });
-    // High crack on top.
-    this.noise(this.sfx, { dur: 0.08, gain: 0.14, type: 'highpass', freq: 2200 });
+    Sfx.explosion(this, scale);
   }
 
   // ── Music (#38) ─────────────────────────────────────────────────────────────────────
