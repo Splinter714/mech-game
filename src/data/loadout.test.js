@@ -1,6 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { getChassis } from './chassis/index.js';
-import { validateLoadout, canMount, freeSlots, usedSlots } from './loadout.js';
+
+// The melee category currently has no live weapon in the registry (the Cleaver was
+// removed as unsatisfying), but the "melee only mounts in an arm" rule is generic
+// infrastructure that should stay covered. Inject a test-only melee item so canMount's
+// item lookup resolves it without reviving a real weapon in weapons.js.
+vi.mock('./items.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  const testMeleeItem = {
+    id: 'testMelee', name: 'Test Melee', category: 'melee', slots: 2,
+  };
+  return {
+    ...actual,
+    getItem: (id) => (id === 'testMelee' ? testMeleeItem : actual.getItem(id)),
+    isWeapon: (id) => (id === 'testMelee' ? true : actual.isWeapon(id)),
+  };
+});
+
+const { validateLoadout, canMount, freeSlots, usedSlots } = await import('./loadout.js');
 
 const light = getChassis('light');
 
@@ -31,8 +48,8 @@ describe('canMount constraints', () => {
   });
 
   it('blocks a melee weapon outside the arms, allows it in an arm', () => {
-    expect(canMount(light, {}, 'leftTorso', 'hatchet').ok).toBe(false); // side torso is a weapon slot, but melee needs an arm
-    expect(canMount(light, {}, 'leftArm', 'hatchet').ok).toBe(true);
+    expect(canMount(light, {}, 'leftTorso', 'testMelee').ok).toBe(false); // side torso is a weapon slot, but melee needs an arm
+    expect(canMount(light, {}, 'leftArm', 'testMelee').ok).toBe(true);
   });
 
   it('blocks a weapon in an ability slot (head / centre torso)', () => {

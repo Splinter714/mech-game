@@ -129,14 +129,6 @@ export const WEAPONS = {
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, velocity: 380 },
   }),
-
-  // ── MELEE ── contact range, no ammo; a swung crescent. ──
-  hatchet: w({
-    id: 'hatchet', name: 'Cleaver', category: 'melee',
-    damage: 22, range: { min: 0, opt: 0, max: 32 },
-    ammoMax: null, ammoRegen: 0, slots: 2, cycleTime: 1300,
-    delivery: { hit: 'contact', pattern: 'single', kind: 'slash' },
-  }),
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS);

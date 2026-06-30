@@ -1,5 +1,27 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Mech } from './Mech.js';
+
+// Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
+// melee category, which has no live entry in the registry anymore. Inject a test-only
+// fixture with that shape so the behavior stays covered without reviving a real weapon.
+vi.mock('./weapons.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  const WEAPONS = {
+    ...actual.WEAPONS,
+    testMelee: {
+      id: 'testMelee', name: 'Test Melee', category: 'melee',
+      damage: 22, range: { min: 0, opt: 0, max: 32 },
+      ammoMax: null, ammoRegen: 0, slots: 2, cycleTime: 1300,
+      delivery: { hit: 'contact', pattern: 'single', kind: 'slash' },
+    },
+  };
+  return {
+    ...actual,
+    WEAPONS,
+    WEAPON_IDS: Object.keys(WEAPONS),
+    getWeapon: (id) => WEAPONS[id],
+  };
+});
 
 describe('Mech damage: armor then structure', () => {
   it('depletes armor before structure, no destruction until structure hits 0', () => {
@@ -131,7 +153,7 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
 
   it('melee weapons have unlimited ammo and stay ready', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('rightArm', 'hatchet'); // ammoMax null
+    m.mount('rightArm', 'testMelee'); // ammoMax null
     expect(m.weapons()[0].ammo).toBeNull();
     m.consumeAmmo('rightArm', 0, 5); // no-op
     expect(m.weapons()[0].ready).toBe(true);

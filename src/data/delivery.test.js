@@ -38,7 +38,8 @@ describe('planEmissions', () => {
   });
 
   it('routes melee to a contact swing', () => {
-    expect(planEmissions(WEAPONS.hatchet).mode).toBe('contact');
+    const meleeFixture = { delivery: { hit: 'contact', pattern: 'single', kind: 'slash' } };
+    expect(planEmissions(meleeFixture).mode).toBe('contact');
   });
 });
 
