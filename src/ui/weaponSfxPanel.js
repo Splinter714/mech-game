@@ -32,7 +32,13 @@ export class WeaponSfxPanel {
     this.weaponId = null;
     this._lastPreviewAt = { fire: 0, trajectory: 0, impact: 0 };
 
-    this.root = scene.add.container(x, y);
+    // Both containers stay at world (0,0) — the Slider widget caches absolute world
+    // coordinates at construction time (it compares against pointer.worldX directly, not
+    // through the container transform), so every child below must be built with the
+    // region's x/y baked into its own position rather than relying on a positioned parent
+    // container to shift it visually. Only `scroller`'s Y moves (for scroll), since Y never
+    // feeds into a slider's value math, so vertical scroll doesn't have this problem.
+    this.root = scene.add.container(0, 0);
     this.scroller = scene.add.container(0, 0);
     this.root.add(this.scroller);
     this.sliders = [];
@@ -68,7 +74,6 @@ export class WeaponSfxPanel {
 
   setRegion(x, y, w, h) {
     this.region = { x, y, w, h };
-    this.root.setPosition(x, y);
     this._paintMask();
     this._build();
   }
@@ -94,33 +99,33 @@ export class WeaponSfxPanel {
     for (const s of this.sliders) s.destroy();
     this.sliders = [];
     this.scroller.removeAll(true);
-    const { w } = this.region;
+    const { x: ox, y: oy, w } = this.region;   // origin to bake into every child below
 
     if (!this.weaponId) {
-      this.scroller.add(this.scene.add.text(0, 0, 'Select a weapon\nto tune its sound.', {
+      this.scroller.add(this.scene.add.text(ox, oy, 'Select a weapon\nto tune its sound.', {
         fontFamily: 'monospace', fontSize: '12px', color: UI.dim, lineSpacing: 6,
       }));
       this._maxScroll = 0;
       return;
     }
 
-    let y = 0;
-    this.scroller.add(this.scene.add.text(0, y, this.weaponId.toUpperCase(), { fontFamily: 'monospace', fontSize: '13px', color: UI.accent }));
+    let y = oy;
+    this.scroller.add(this.scene.add.text(ox, y, this.weaponId.toUpperCase(), { fontFamily: 'monospace', fontSize: '13px', color: UI.accent }));
     y += 4;
     const bw = Math.floor((w - 8) / 3);
-    this._button(0, y + 18, bw, 22, '▶ test fire', () => this._testFire(), { color: UI.good });
-    this._button(bw + 4, y + 18, bw, 22, 'reset', () => this._reset());
-    this._button((bw + 4) * 2, y + 18, bw, 22, 'copy', () => this._copy(), { color: UI.good });
+    this._button(ox, y + 18, bw, 22, '▶ test fire', () => this._testFire(), { color: UI.good });
+    this._button(ox + bw + 4, y + 18, bw, 22, 'reset', () => this._reset());
+    this._button(ox + (bw + 4) * 2, y + 18, bw, 22, 'copy', () => this._copy(), { color: UI.good });
     y += 50;
 
     const params = Audio.getSfxParams(this.weaponId);
     for (const [stage, label] of STAGES) {
       const layers = params[stage];
       if (!layers || !layers.length) continue;
-      this.scroller.add(this.scene.add.text(0, y, label, { fontFamily: 'monospace', fontSize: '11px', color: UI.text }));
+      this.scroller.add(this.scene.add.text(ox, y, label, { fontFamily: 'monospace', fontSize: '11px', color: UI.text }));
       y += 18;
       layers.forEach((layer, li) => {
-        this.scroller.add(this.scene.add.text(6, y, `layer ${li + 1} · ${layer.kind ?? 'tone'} · ${layer.type}`, {
+        this.scroller.add(this.scene.add.text(ox + 6, y, `layer ${li + 1} · ${layer.kind ?? 'tone'} · ${layer.type}`, {
           fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
         }));
         y += 15;
@@ -128,7 +133,7 @@ export class WeaponSfxPanel {
           if (!(field in layer)) continue;
           const [min, max, step] = FIELD_SPEC[field];
           const s = new Slider(this.scene, {
-            x: 10, y, w: w - 10, labelW: 56, valueW: 44, label: FIELD_LABEL[field], min, max, step,
+            x: ox + 10, y, w: w - 10, labelW: 56, valueW: 44, label: FIELD_LABEL[field], min, max, step,
             value: layer[field],
             onChange: (v) => {
               Audio.setSfxParam(this.weaponId, stage, li, field, v);
@@ -143,7 +148,7 @@ export class WeaponSfxPanel {
       });
       y += 6;
     }
-    this._maxScroll = Math.max(0, y - this.region.h + 12);
+    this._maxScroll = Math.max(0, y - oy - this.region.h + 12);
     this._setScroll(this._scrollY);
   }
 
@@ -179,8 +184,8 @@ export class WeaponSfxPanel {
 
   _toast(msg) {
     this._toastText?.destroy();
-    const { w, h } = this.region;
-    this._toastText = this.scene.add.text(w / 2, h - 16, msg, {
+    const { x, y, w, h } = this.region;
+    this._toastText = this.scene.add.text(x + w / 2, y + h - 16, msg, {
       fontFamily: 'monospace', fontSize: '11px', color: UI.good, backgroundColor: '#161b22', padding: { x: 6, y: 3 },
     }).setOrigin(0.5).setScrollFactor(0);
     this.root.add(this._toastText);
