@@ -12,6 +12,7 @@ import { ProjectilesMixin } from './arena/projectiles.js';
 import { TargetingMixin } from './arena/targeting.js';
 import { FiringMixin } from './arena/firing.js';
 import { LocomotionMixin } from './arena/locomotion.js';
+import { DUMMY_HEX } from './arena/shared.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -20,7 +21,6 @@ import { LocomotionMixin } from './arena/locomotion.js';
 // loop — they move, aim, shoot back, and take per-part damage; debug controls spawn/reset
 // them. The scene is a thin orchestrator; behaviour lives in the arena/ mixins composed
 // onto the prototype below.
-const DUMMY_HEX = { q: 3, r: -1 };
 
 export default class ArenaScene extends Phaser.Scene {
   constructor() {
