@@ -114,7 +114,7 @@ export default class WeaponLabScene extends Phaser.Scene {
       streamPhase: 0,         // stream/sustained on/off envelope
       holdBeam: false,        // sustained beam this frame (beam laser)
       pending: [],            // scheduled sub-shots of an in-flight burst (delay countdown)
-      projectiles: [], beams: [], bursts: [], slashes: [], patches: [],
+      projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
     });
   }
 
@@ -263,7 +263,12 @@ export default class WeaponLabScene extends Phaser.Scene {
     for (const b of card.bursts) b.t += ms;
     for (const s of card.slashes) s.t += ms;
     for (const fp of card.patches) fp.born += ms;
+    // Expired beams move to dyingBeams so their sparks can finish fading out.
+    const SPARK_FADE = 300;
+    for (const b of card.beams) { if (b.ttl <= 0) card.dyingBeams.push({ ...b, fadeAge: 0, fadeTtl: SPARK_FADE }); }
     card.beams = card.beams.filter((b) => b.ttl > 0);
+    for (const b of card.dyingBeams) b.fadeAge += ms;
+    card.dyingBeams = card.dyingBeams.filter((b) => b.fadeAge < b.fadeTtl);
     card.bursts = card.bursts.filter((b) => b.t < b.ttl);
     card.slashes = card.slashes.filter((s) => s.t < s.ttl);
     card.patches = card.patches.filter((fp) => fp.born < fp.ttl);
@@ -285,6 +290,7 @@ export default class WeaponLabScene extends Phaser.Scene {
       drawBeam(g, card.muzzleX, card.muzzleY, card.muzzleX + len, card.muzzleY, card.color, 1, false, card.streamPhase);
     }
     for (const b of card.beams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age);
+    for (const b of card.dyingBeams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age + b.fadeAge, 1 - b.fadeAge / b.fadeTtl);
 
     for (const p of card.projectiles) {
       let lift = 0;

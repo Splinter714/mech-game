@@ -53,7 +53,7 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
 // A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.
 // `phase` is a ms timestamp driving the warble (callers pass time or beam age).
 // `heavy` thickens everything for the rail lance.
-export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0) {
+export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0, sparkAlpha = 1) {
   const dx = x1 - x0, dy = y1 - y0;
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len < 1) return;
@@ -64,6 +64,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const coreW = (heavy ? 4 : 2.6) * s;
   const SEGS = heavy ? 48 : 64;
 
+  if (sparkAlpha >= 1) {
   // Outer glow: tapered warbling segments matching the core wobble.
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
@@ -94,6 +95,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const bx = x0 + nx * len * t1 + px * warp1, by = y0 + ny * len * t1 + py * warp1;
     g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
   }
+  } // end sparkAlpha >= 1 block
 
   // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
   const sparkCount = heavy ? 10 : 12;
@@ -115,8 +117,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const sy = y0 + ny * len * t + py * sign * drift;
     // Fleck: a short streak perpendicular to the beam, with a bright hot center dot.
     const fx = px * r * 1.6, fy = py * r * 1.6;
-    g.lineStyle(r * 0.9, color, 1.0); g.lineBetween(sx - fx, sy - fy, sx + fx, sy + fy);
-    g.fillStyle(0xffffff, 1.0); g.fillCircle(sx, sy, r * 0.4);
+    g.lineStyle(r * 0.9, color, sparkAlpha); g.lineBetween(sx - fx, sy - fy, sx + fx, sy + fy);
+    g.fillStyle(0xffffff, sparkAlpha); g.fillCircle(sx, sy, r * 0.4);
   }
 
   // Inner sparks: same flecks but confined within the core width, like energy crackling along the beam.
