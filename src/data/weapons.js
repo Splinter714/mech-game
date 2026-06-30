@@ -79,7 +79,7 @@ export const WEAPONS = {
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
     damage: 2, range: { min: 0, opt: 55, max: 100 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 100,
-    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 3, spreadAngle: 24, velocity: 165, kind: 'flame', splash: 6 },
+    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 6, spreadAngle: 12, velocity: 165, kind: 'flame', splash: 6 },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a
