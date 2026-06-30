@@ -639,16 +639,52 @@ export default class ArenaScene extends Phaser.Scene {
           }
         }
       }
-      // flames
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 + now * 0.004;
-        const rr = fp.r * (0.4 + 0.4 * Math.abs(Math.sin(now * 0.01 + i)));
-        this.projFx.fillStyle(i % 2 ? 0xff7a18 : 0xffd56b, 0.45)
-          .fillCircle(fp.x + Math.cos(a) * rr, fp.y + Math.sin(a) * rr, 5);
-      }
+      this._drawFlames(fp, now);
       if (now >= fp.until) fp.dead = true;
     }
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
+  }
+
+  // Render one burning patch as real-looking fire (not a ring of dots): a charred base, a
+  // pulsing ember bed, and a crowd of flickering flame tongues that lick upward (-y) with
+  // a hot yellow core inside each deep-orange tongue. A per-patch seed keeps each fire's
+  // tongue layout stable frame to frame while the heights flicker on their own phases.
+  _drawFlames(fp, now) {
+    const g = this.projFx;
+    const seed = (fp.x * 13.1 + fp.y * 7.7);
+    const rnd = (i) => { const v = Math.sin(seed + i * 53.17) * 43758.5; return v - Math.floor(v); };
+    const fade = Phaser.Math.Clamp((fp.until - now) / 800, 0.25, 1);   // dim as it burns out
+
+    // Charred scorch + glowing ember bed.
+    g.fillStyle(0x1a0f0a, 0.35 * fade).fillEllipse(fp.x, fp.y + fp.r * 0.18, fp.r * 2, fp.r * 0.9);
+    const emberPulse = 0.5 + 0.5 * Math.abs(Math.sin(now * 0.006));
+    g.fillStyle(0x6e2406, 0.5 * fade).fillEllipse(fp.x, fp.y + fp.r * 0.12, fp.r * 1.5, fp.r * 0.7);
+    g.fillStyle(0xc4380a, (0.4 + 0.3 * emberPulse) * fade).fillEllipse(fp.x, fp.y + fp.r * 0.1, fp.r * 1.0, fp.r * 0.5);
+
+    // Flame tongues. Each is a tapered triangle from a base point up to a flickering tip.
+    const tongues = 11;
+    for (let i = 0; i < tongues; i++) {
+      const spread = (rnd(i) * 2 - 1) * fp.r * 0.85;            // x offset across the patch
+      const baseY = fp.y + (rnd(i + 99) * 2 - 1) * fp.r * 0.35; // anchor along the bed
+      const bx = fp.x + spread;
+      // Flicker: each tongue rises and falls on its own phase + a fast jitter.
+      const phase = rnd(i + 7) * 6.28;
+      const flick = 0.55 + 0.45 * Math.sin(now * 0.012 + phase) + 0.12 * Math.sin(now * 0.05 + phase * 2);
+      const tall = (fp.r * (0.7 + rnd(i + 3) * 0.9)) * Math.max(0.2, flick);
+      const wide = fp.r * (0.14 + rnd(i + 5) * 0.12);
+      const sway = Math.sin(now * 0.01 + phase) * wide * 0.8;    // tip leans as it licks
+      // Outer deep-orange tongue.
+      g.fillStyle(0xff5a14, 0.5 * fade).fillPoints([
+        { x: bx - wide, y: baseY }, { x: bx + wide, y: baseY }, { x: bx + sway, y: baseY - tall },
+      ], true);
+      // Inner yellow core, shorter and narrower.
+      g.fillStyle(0xffc24a, 0.7 * fade).fillPoints([
+        { x: bx - wide * 0.5, y: baseY }, { x: bx + wide * 0.5, y: baseY },
+        { x: bx + sway * 0.7, y: baseY - tall * 0.62 },
+      ], true);
+      // White-hot fleck near the base.
+      if (rnd(i + 11) > 0.6) g.fillStyle(0xfff1c4, 0.6 * fade).fillCircle(bx + sway * 0.3, baseY - tall * 0.2, wide * 0.4);
+    }
   }
 
   // ── Enemy AI ── each enemy maintains a range band, faces the player, fires with LOS. ──

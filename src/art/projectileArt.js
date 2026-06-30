@@ -50,9 +50,19 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
     const f = 0.7 + 0.3 * Math.sin(phase * 0.4);
     g.fillStyle(0xff7a18, 0.4 * f); g.fillCircle(x, y, 6 * s);
     g.fillStyle(0xffd56b, 0.9 * f); g.fillCircle(x, y, 2.6 * s);
-  } else if (kind === 'fire') {                    // napalm canister
-    g.fillStyle(0x3a2a1c, 1); g.fillCircle(x, y, 3.2 * s);
-    g.fillStyle(0xff7a18, 0.9); g.fillCircle(x, y, 1.6 * s);
+  } else if (kind === 'fire') {                    // napalm: a dark steel canister (top-down)
+    // A round fuel drum seen from above — near-black steel body, a brushed-steel rim, a
+    // hazard ring, and a glowing fuel cap at the centre. `phase` flickers the heat.
+    const fl = 0.7 + 0.3 * Math.sin(phase * 0.5);
+    const r = 3.8 * s;
+    // Dark steel drum, read against dark ground by a subtle rim highlight rather than a
+    // bright body.
+    g.fillStyle(0x24282e, 1); g.fillCircle(x, y, r);
+    g.fillStyle(0x16181c, 1); g.fillCircle(x, y, r * 0.82);
+    g.lineStyle(0.8 * s, 0x4c545d, 0.85); g.strokeCircle(x, y, r * 0.9);
+    // Small but BRIGHT fuel cap — the only orange, kept punchy.
+    g.fillStyle(0xff8a1f, 0.95 * fl); g.fillCircle(x, y, 1.1 * s);
+    g.fillStyle(0xffe39a, 1); g.fillCircle(x, y, 0.5 * s);
   } else {                                          // slug: a short bright tracer
     const tx = x - ca * 9 * s, ty = y - sa * 9 * s;
     g.lineStyle(2 * s, color, 0.9); g.lineBetween(tx, ty, x, y);
