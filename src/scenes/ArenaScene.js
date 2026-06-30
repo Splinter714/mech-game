@@ -656,15 +656,29 @@ export default class ArenaScene extends Phaser.Scene {
     const fade = Phaser.Math.Clamp((fp.until - now) / 800, 0.25, 1);   // dim as it burns out
     const pulse = 0.5 + 0.5 * Math.sin(now * 0.005);
 
-    // An irregular, slowly-roiling blob outline (not a clean ellipse): radii per vertex are
-    // jittered by a stable seed and wobble over time, then squashed for the top-down view.
-    const blob = (cx, cy, rx, key, lobes = 9, squash = 0.7, wob = 0.18) => {
-      const pts = [];
+    // An irregular, slowly-roiling blob outline that is wavy but SMOOTH: a few jittered
+    // lobe radii define the silhouette, then a closed Catmull-Rom spline is sampled through
+    // them so the edges flow instead of faceting. Squashed for the top-down view.
+    const blob = (cx, cy, rx, key, lobes = 7, squash = 0.7, wob = 0.18) => {
+      const ctrl = [];
       for (let k = 0; k < lobes; k++) {
         const a = (k / lobes) * Math.PI * 2;
         const n = rnd(key + k * 2.13);
-        const r = rx * (0.78 + n * 0.34 + wob * Math.sin(now * 0.006 + n * 9 + key));
-        pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r * squash });
+        const r = rx * (0.8 + n * 0.3 + wob * Math.sin(now * 0.006 + n * 9 + key));
+        ctrl.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r * squash });
+      }
+      const pts = [];
+      const steps = 6;                                          // samples per lobe segment
+      for (let k = 0; k < lobes; k++) {
+        const p0 = ctrl[(k - 1 + lobes) % lobes], p1 = ctrl[k];
+        const p2 = ctrl[(k + 1) % lobes], p3 = ctrl[(k + 2) % lobes];
+        for (let s = 0; s < steps; s++) {
+          const t = s / steps;
+          pts.push({
+            x: Phaser.Math.CatmullRom(t, p0.x, p1.x, p2.x, p3.x),
+            y: Phaser.Math.CatmullRom(t, p0.y, p1.y, p2.y, p3.y),
+          });
+        }
       }
       return pts;
     };
