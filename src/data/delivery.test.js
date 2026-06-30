@@ -1,0 +1,92 @@
+import { describe, it, expect } from 'vitest';
+import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind } from './delivery.js';
+import { WEAPONS } from './weapons.js';
+
+describe('planEmissions', () => {
+  it('emits a single immediate shot for a plain projectile/hitscan', () => {
+    const p = planEmissions(WEAPONS.autocannon);
+    expect(p.mode).toBe('projectile');
+    expect(p.shots).toHaveLength(1);
+    expect(p.shots[0]).toMatchObject({ delay: 0, angleOffset: 0, lateral: 0 });
+  });
+
+  it('fans a spread weapon into spreadCount angled shots, centred on the aim line', () => {
+    const p = planEmissions(WEAPONS.shotgun);
+    expect(p.shots).toHaveLength(WEAPONS.shotgun.delivery.spreadCount);
+    const angles = p.shots.map((s) => s.angleOffset);
+    expect(Math.min(...angles)).toBeLessThan(0);
+    expect(Math.max(...angles)).toBeGreaterThan(0);
+    expect(angles.reduce((a, b) => a + b, 0)).toBeCloseTo(0); // symmetric fan
+    expect(p.shots.every((s) => s.lateral === 0)).toBe(true);
+  });
+
+  it('clusters a dumbfire clump with lateral offsets and ~parallel headings (no fan)', () => {
+    const p = planEmissions(WEAPONS.clusterRocket);
+    expect(p.shots).toHaveLength(WEAPONS.clusterRocket.delivery.spreadCount);
+    expect(p.shots.some((s) => s.lateral !== 0)).toBe(true);
+    expect(p.shots.every((s) => Math.abs(s.angleOffset) < 0.05)).toBe(true); // tight, not a cone
+  });
+
+  it('schedules a multi-pulse burst as delayed sub-shots', () => {
+    const { burst } = WEAPONS.pulseLaser.delivery;
+    const p = planEmissions(WEAPONS.pulseLaser);
+    expect(p.mode).toBe('hitscan');
+    expect(p.shots).toHaveLength(burst.count);
+    expect(p.shots.map((s) => s.delay)).toEqual(
+      Array.from({ length: burst.count }, (_, i) => i * burst.interval),
+    );
+  });
+
+  it('routes melee to a contact swing', () => {
+    expect(planEmissions(WEAPONS.hatchet).mode).toBe('contact');
+  });
+});
+
+describe('projectileKind', () => {
+  it('honours an explicit kind override', () => {
+    expect(projectileKind(WEAPONS.napalm)).toBe('fire');
+    expect(projectileKind(WEAPONS.railLance)).toBe('rail');
+  });
+  it('defaults by category/pattern', () => {
+    expect(projectileKind(WEAPONS.plasmaCannon)).toBe('plasma');   // energy
+    expect(projectileKind(WEAPONS.swarmRack)).toBe('missile');     // missile
+    expect(projectileKind(WEAPONS.autocannon)).toBe('slug');       // single ballistic
+    expect(projectileKind(WEAPONS.machineGun)).toBe('bullet');     // stream ballistic
+  });
+});
+
+describe('kinematics', () => {
+  it('makeProjectile seeds velocity from speed along the firing angle', () => {
+    const p = makeProjectile(WEAPONS.autocannon, 0, 0, 0, { maxDist: 300 });
+    expect(p.vx).toBeCloseTo(WEAPONS.autocannon.delivery.velocity);
+    expect(p.vy).toBeCloseTo(0);
+    expect(p.homing).toBe(false);
+    expect(p.maxDist).toBe(300);
+  });
+
+  it('stepProjectile integrates position and distance', () => {
+    const p = makeProjectile(WEAPONS.autocannon, 0, 0, 0, { maxDist: 9999 });
+    stepProjectile(p, 0.1, null);
+    expect(p.x).toBeCloseTo(WEAPONS.autocannon.delivery.velocity * 0.1);
+    expect(p.dist).toBeCloseTo(WEAPONS.autocannon.delivery.velocity * 0.1);
+  });
+
+  it('a homing round steers toward the desired bearing, capped by turn rate', () => {
+    const p = makeProjectile(WEAPONS.swarmRack, 0, 0, 1.0, { maxDist: 9999 }); // facing +1 rad
+    stepProjectile(p, 0.1, 0);                       // want straight ahead (0)
+    expect(p.angle).toBeLessThan(1.0);               // turned toward 0
+    expect(p.angle).toBeGreaterThanOrEqual(1.0 - p.turn * 0.1 - 1e-6);
+  });
+});
+
+describe('rotateToward', () => {
+  it('snaps to target when within one step', () => {
+    expect(rotateToward(0, 0.05, 0.1)).toBeCloseTo(0.05);
+  });
+  it('takes the shortest way across the ±π seam', () => {
+    const out = rotateToward(3.0, -3.0, 0.2);        // short way is +0.2 (through π), not -6
+    const moved = Math.atan2(Math.sin(out - 3.0), Math.cos(out - 3.0));
+    expect(moved).toBeCloseTo(0.2);                  // stepped +0.2 in the short direction
+    expect(Math.abs(out)).toBeGreaterThan(3.0);      // wrapped past π to ≈ −3.08
+  });
+});

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Mech } from '../data/Mech.js';
-import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, projectileKind } from '../art/index.js';
+import { buildMechTextures, reskinMech, mechLayout, ART_SCALE, drawProjectileBody, drawBeam, drawSlash, drawGroundFire } from '../art/index.js';
+import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { LOCATIONS } from '../data/anatomy.js';
@@ -18,12 +19,19 @@ import { Audio } from '../audio/index.js';
 // them. Single-file for Milestone 1 — splits into arena/ mixins as combat grows.
 const ARENA_MECH_SCALE = 0.34;
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
-// Aim-assist tuning (#31) — a default, always-on aid. ASSIST_STRENGTH is the max fraction
-// the firing solution is pulled from the reticle toward the enemy; the pull scales up as
-// the aim tightens within ASSIST_CONE, out to ASSIST_RANGE. Bump STRENGTH for more help.
-const ASSIST_STRENGTH = 0.55;
-const ASSIST_CONE = 0.35;         // radians of half-angle the enemy must be within
+// Targeting (#31) — two separate, always-on systems:
+//  • Convergence (direct fire: lasers, autocannons): off-centre muzzles angle inward to a
+//    forward point at the locked target's range (or CONVERGE_DIST when nothing's locked), so
+//    shots land where the turret points. Purely geometric — never curves toward the enemy.
+//  • Soft-lock (indirect fire: missiles, lobs): locks the enemy nearest the aim *line*, charges
+//    amber→red over LOCK_TIME while held, and that enemy is what homing rounds seek / lobs land
+//    on. The lock is sticky (ACQUIRE cone to grab, wider RELEASE cone to drop) so it doesn't
+//    flicker. This is the only "true aim assist".
+const ACQUIRE_CONE = 0.35;        // radians half-angle to grab a new soft-lock
+const RELEASE_CONE = 0.55;        // wider half-angle before an existing lock is dropped
 const ASSIST_RANGE = 620;         // px the enemy must be within
+const LOCK_TIME = 0.6;            // seconds of holding a target in-cone to charge amber→red
+const CONVERGE_DIST = 450;        // px convergence range for direct fire when nothing is locked
 const DUMMY_HEX = { q: 3, r: -1 };
 const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit'); // cockpit is hit via the head
 
@@ -72,8 +80,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.abilityCd = {};       // ability location → ms until it can fire again
     this.shieldUntil = 0;      // timestamp the bubble shield is active until
-    this.assistOn = true;      // aim-assist: a default, always-on targeting aid (#31)
-    this.assistTarget = null;  // enemy the shots are being nudged toward this frame
+    this.assistOn = true;      // soft-lock targeting: a default, always-on aid (#31)
+    this.lockEnemy = null;     // the currently soft-locked enemy (sticky across frames)
+    this.lockProgress = 0;     // 0→1 charge while a target is held in-cone (amber→red)
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
     this.enemyMove = true;
@@ -91,8 +100,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
 
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
+    this.beamFx = this.add.graphics();   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
     this.projectiles = [];
+    this.beams = [];
+    this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
     this.scene.launch('HudScene');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
@@ -218,10 +230,9 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
     if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
 
-    // ── Aim-assist (#31): a default, always-on aid. When the enemy sits near the
-    // reticle, flag it as the tracked target so weapons settle their shots onto it and
-    // an ambient cue is drawn. Subtle by design; strength tuned in fireWeapon. ──
-    this._updateAimAssist();
+    // ── Soft-lock targeting (#31): locks the enemy nearest the aim line; indirect weapons
+    // (missiles/lobs) seek it. Direct weapons converge geometrically, no lock needed. ──
+    this._updateLock(dt);
 
     // ── Stompy stepped gait ──
     let bob = 0;
@@ -267,6 +278,10 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
     this._updateFirePatches();
+    this._updateBeams(delta);
+
+    // Soft-lock reticle, drawn after projFx is cleared above so it isn't wiped.
+    if (this.lockEnemy) this._drawLockReticle(this.lockEnemy.x, this.lockEnemy.y, this.lockProgress);
 
     // Bubble shield bubble, drawn over the player while active.
     if (this.time.now < this.shieldUntil) {
@@ -278,24 +293,42 @@ export default class ArenaScene extends Phaser.Scene {
     this.mech.regenAmmo(dt);
   }
 
-  // Aim-assist (#31): when assist is on and the enemy sits within a cone of where the
-  // reticle points (and in range), mark it the tracked target. `fireWeapon` then pulls
-  // each shot's convergence toward it; `_drawTrackCue` shows the ambient indicator. This
-  // is a baseline mechanic — no equipped item, no manual hold-to-lock.
-  _updateAimAssist() {
-    this.assistTarget = null;
+  // Soft-lock (#31): lock the enemy nearest the aim line. The lock is sticky — kept until it
+  // leaves the (wider) RELEASE cone or range, swapped only when another enemy is clearly more
+  // centred — so it doesn't flicker. While a target is held the lock charges amber→red over
+  // LOCK_TIME (`lockProgress`); it bleeds back down when nothing is locked. Indirect weapons
+  // (homing/lob) seek `lockEnemy`; `_drawLockReticle` shows the charge.
+  _updateLock(dt) {
     this.registry.set('assistOn', this.assistOn);
-    if (!this.assistOn) return;
-    const e = this._nearestEnemy(this.px, this.py, ASSIST_RANGE);
-    if (!e) return;
-    const toAng = Math.atan2(e.y - this.py, e.x - this.px);
-    const off = Math.abs(Phaser.Math.Angle.Wrap(toAng - this.turretAngle));
-    if (off < ASSIST_CONE) {
-      // Tighter aim (smaller angular error) = stronger pull, for a "settle then fire" feel.
-      const strength = ASSIST_STRENGTH * (1 - off / ASSIST_CONE);
-      this.assistTarget = { x: e.x, y: e.y, strength, tight: off < ASSIST_CONE * 0.4 };
-      this._drawTrackCue(e.x, e.y, this.assistTarget.tight);
+    if (!this.assistOn) { this.lockEnemy = null; this.lockProgress = 0; return; }
+
+    // Angular offset of an enemy from the turret line (smaller = more centred on the aim).
+    const aimOff = (e) => Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - this.py, e.x - this.px) - this.turretAngle));
+    const inRange = (e) => !e.mech.isDestroyed() && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE;
+
+    // The best fresh candidate: in range, within the ACQUIRE cone, nearest the aim line.
+    let cand = null, candOff = ACQUIRE_CONE;
+    for (const e of this.enemies) {
+      if (!inRange(e)) continue;
+      const off = aimOff(e);
+      if (off < candOff) { candOff = off; cand = e; }
     }
+
+    // Stickiness: keep the current lock while it stays in range and inside the RELEASE cone,
+    // unless a fresh candidate is meaningfully more centred (hysteresis margin).
+    const keep = this.lockEnemy && inRange(this.lockEnemy) && aimOff(this.lockEnemy) < RELEASE_CONE;
+    const prev = this.lockEnemy;
+    if (keep && (!cand || cand === this.lockEnemy || aimOff(this.lockEnemy) - candOff < 0.12)) {
+      // hold existing lock
+    } else {
+      this.lockEnemy = cand;
+    }
+
+    // Charge amber→red over time while a target is held (reset on a fresh target); bleed down
+    // when nothing is locked.
+    if (!this.lockEnemy) { this.lockProgress = Math.max(0, this.lockProgress - dt / LOCK_TIME); return; }
+    if (this.lockEnemy !== prev) this.lockProgress = 0;
+    this.lockProgress = Math.min(1, this.lockProgress + dt / LOCK_TIME);
   }
 
   // The closest living enemy to a point, within `maxDist` (default: any). Used for
@@ -314,7 +347,7 @@ export default class ArenaScene extends Phaser.Scene {
   // Build a fresh enemy with its own textures + view + AI state and track it.
   _spawnEnemy(x, y) {
     const key = `enemy${this._enemySeq++}`;
-    const mech = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['srm'] } });
+    const mech = new Mech({ chassisId: 'light', name: 'Raider', mounts: { rightArm: ['autocannon'], leftTorso: ['clusterRocket'] } });
     mech.repairAll();
     buildMechTextures(this, key, mech, { theme: 'enemy' });
     const angle = Math.PI / 2;
@@ -347,18 +380,21 @@ export default class ArenaScene extends Phaser.Scene {
     this._floatText(this.px, this.py - 40, 'ENEMIES RESET', '#5ec8e0');
   }
 
-  // Ambient tracked-target indicator (#27, folds the old lock UI into aim-assist): corner
-  // brackets that snap tighter and brighten as the aim settles onto the enemy.
-  _drawTrackCue(x, y, tight) {
-    const col = tight ? 0xe2533a : 0xefc14a;
-    const r = tight ? 22 : 28;          // brackets close in as the aim tightens
+  // Soft-lock reticle (#31): corner brackets that close in and brighten from amber→red as the
+  // lock charges over time (`p` is 0→1 lockProgress). Full charge adds a ring to read "locked"
+  // — the point indirect weapons commit their seek to. Drawn each frame on the live enemy.
+  _drawLockReticle(x, y, p) {
+    const locked = p >= 0.999;
+    const col = locked ? 0xe2533a : 0xefc14a;
+    const r = 34 - 14 * p;              // brackets draw inward as the lock charges
     const len = 8;
-    const g = this.projFx.lineStyle(2, col, tight ? 1 : 0.8);
+    const g = this.projFx.lineStyle(2, col, 0.6 + 0.4 * p);
     for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const cx = x + sx * r, cy = y + sy * r;
       g.lineBetween(cx, cy, cx - sx * len, cy);
       g.lineBetween(cx, cy, cx, cy - sy * len);
     }
+    if (locked) this.projFx.lineStyle(1.5, col, 0.9).strokeCircle(x, y, r + 4);
   }
 
   _toggleAssist() {
@@ -449,38 +485,65 @@ export default class ArenaScene extends Phaser.Scene {
     if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
     Audio.fire(w.weapon);
+
+    // The shared delivery sim decides what one trigger pull emits (single / spread fan /
+    // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
+    // and aim so a slewing turret and aim-assist still apply per sub-shot.
+    const plan = planEmissions(w.weapon);
+    for (const s of plan.shots) {
+      const go = () => {
+        if (!this.scene.isActive()) return;
+        const m = this._muzzle(w.location);
+        const baseAngle = this._fireAngle(w, m) + s.angleOffset;
+        const perp = baseAngle + Math.PI / 2;
+        const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
+        if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle);
+        else this._spawnProjectile(w, ox, oy, baseAngle);
+      };
+      if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
+    }
+  }
+
+  // The direction a weapon fires (#40, #31). Two regimes:
+  //  • Indirect (homing/lob) & melee: fire straight along the turret facing — their targeting
+  //    happens downrange (homing seek / lob lead), not by bending the launch angle.
+  //  • Direct (lasers, autocannons): converge — aim the (off-centre) muzzle at a forward point
+  //    on the turret line at the locked target's range (or CONVERGE_DIST), so shots land where
+  //    the turret points. Purely geometric; never curves toward the enemy's lateral position.
+  _fireAngle(w, m) {
     const d = w.weapon.delivery;
-    const m = this._muzzle(w.location);
+    if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') return this.turretAngle;
+    const dist = this.lockEnemy ? Math.hypot(this.lockEnemy.x - this.px, this.lockEnemy.y - this.py) : CONVERGE_DIST;
+    const cx = this.px + Math.cos(this.turretAngle) * dist;
+    const cy = this.py + Math.sin(this.turretAngle) * dist;
+    return Math.atan2(cy - m.y, cx - m.x);
+  }
 
-    // Shots follow the actual turret facing (#40), not the raw stick/mouse aim. The
-    // turret slews toward the aim at a limited rate, so whipping the aim around has a
-    // real cost — the torso must come around before rounds land where you point. The
-    // firing point sits along turretAngle at the reticle's distance, keeping convergence
-    // range correct.
-    const aimDist = Math.hypot(this.aimX - this.px, this.aimY - this.py) || 1;
-    let aimX = this.px + Math.cos(this.turretAngle) * aimDist;
-    let aimY = this.py + Math.sin(this.turretAngle) * aimDist;
-
-    // Aim-assist pulls the firing point toward the tracked enemy — but only once the
-    // turret has settled onto it (assistTarget is keyed off turretAngle, so a lagging
-    // turret has no target yet). Melee/contact ignore assist.
-    if (this.assistTarget && d.hit !== 'contact') {
-      const s = this.assistTarget.strength;
-      aimX = Phaser.Math.Linear(aimX, this.assistTarget.x, s);
-      aimY = Phaser.Math.Linear(aimY, this.assistTarget.y, s);
+  // Melee swing: same forward-ray hit detection as a beam, but drawn as a sweeping
+  // crescent (shared drawSlash art) instead of a straight line.
+  _melee(w, mx, my, angle) {
+    const reach = w.weapon.range.max || 32;
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    let target = null, t = 0;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const ex = e.x - mx, ey = e.y - my, tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
+      if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
     }
-
-    // Each weapon converges from its own muzzle onto the (assisted) firing point.
-    const baseAngle = Math.atan2(aimY - m.y, aimX - m.x);
-    if (d.hit === 'hitscan' || d.hit === 'contact') { this._fireHitscan(w, m.x, m.y, baseAngle); return; }
-
-    // Projectile: one shot, or a fan of `spreadCount` for spread weapons.
-    const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
-    const spreadRad = ((d.spreadAngle || (n > 1 ? 16 : 0)) * Math.PI) / 180;
-    for (let i = 0; i < n; i++) {
-      const off = n > 1 ? ((i - (n - 1) / 2) / (n - 1)) * spreadRad : 0;
-      this._spawnProjectile(w, m.x, m.y, baseAngle + off);
+    const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
+    if (target) {
+      const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
+      this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
     }
+    // Animate the crescent across a few frames, then clear.
+    for (const tt of [0.15, 0.45, 0.8]) {
+      this.time.delayedCall(tt * 150, () => {
+        if (!this.scene.isActive()) return;
+        this.fx.clear(); drawSlash(this.fx, mx, my, angle, tt, color, 1, reach + 8);
+      });
+    }
+    this.time.delayedCall(170, () => this.fx.clear());
   }
 
   // Damage multiplier vs. distance: full out to `opt`, falling to ~0.3 at `max` and a
@@ -517,9 +580,19 @@ export default class ArenaScene extends Phaser.Scene {
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
-    // Laser-y beam (shared art so the garage icon matches), quick fade.
-    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1);
-    this.time.delayedCall(80, () => this.fx.clear());
+    // Persistent beam so sparks can linger after it fades. A continuously-held beam
+    // (sustained/stream) keeps ONE beam object that re-pins to the muzzle each shot, so it
+    // tracks the mech as it turns/moves; single-shot beams (pulse/rail) push a fresh one.
+    const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
+    const heavy = w.weapon.delivery.kind === 'rail';
+    const continuous = w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
+    const live = continuous ? this.beams.find((b) => b.loc === w.location) : null;
+    if (live) {
+      live.x0 = muzzleX; live.y0 = muzzleY; live.x1 = endX; live.y1 = endY;
+      live.ttl = beamTtl;   // age keeps advancing → warble flows continuously
+    } else {
+      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? w.location : null });
+    }
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       this._damageEnemyAt(target, endX, endY, dmg, color);
@@ -533,12 +606,16 @@ export default class ArenaScene extends Phaser.Scene {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
-    let tgt;
-    if (owner === 'player') { const e = this._nearestEnemy(x, y); tgt = e ? { x: e.x, y: e.y } : { x, y }; }
-    else tgt = { x: this.px, y: this.py };
+    // Indirect-fire targeting (#31): a player round seeks the locked enemy ONLY when the lock
+    // is fully charged (red) — no lock, no seek, the missile dumb-fires straight. Enemy rounds
+    // chase the player.
+    const hasLock = owner === 'player' && this.lockProgress >= 1 && this.lockEnemy && !this.lockEnemy.mech.isDestroyed();
+    const seekTarget = hasLock ? this.lockEnemy : null;
+    // An arcing round lobs to where its target actually is (else to optimal range); straight
+    // rounds just run out at max range. This travel budget is what the kinematic round flies.
     let maxDist = maxRange;
     if (d.path === 'arcing') {
-      // Lob toward the target if it's roughly in front, else to optimal range.
+      const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : { x: this.px, y: this.py };
       const ex = tgt.x - x, ey = tgt.y - y;
       const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
@@ -550,37 +627,42 @@ export default class ArenaScene extends Phaser.Scene {
       const flightTime = opt / speed;
       speed = maxDist / flightTime;
     }
-    // Homing is intrinsic to guided weapons now (#31): they track their target on their
-    // own when fired, no equipped lock needed.
-    const homing = d.guidance === 'homing';
-    this.projectiles.push({
-      x, y, angle, speed, owner,
-      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      kind: projectileKind(w.weapon), color: CATEGORIES[w.weapon.category]?.color ?? 0xffffff,
-      damage: w.weapon.damage, splash: d.splash || 0, range: w.weapon.range,
-      dist: 0, maxDist, arc: d.path === 'arcing', trail: [], ground: d.groundFire || null,
-      homing, turn: 4.0,                 // guided missiles steer toward their target
-    });
+    // Homing rounds steer toward `seekTarget` (the lock) each frame. A player round only homes
+    // when it actually has a lock; without one it dumb-fires straight. Enemy rounds keep their
+    // intrinsic homing (they chase the player downrange).
+    const round = makeProjectile(w.weapon, x, y, angle, { maxDist });
+    // Constant-flight-time lobs: override the round's speed with the per-shot value computed
+    // above so every arc peaks at the same height (a far shot launches faster).
+    if (d.path === 'arcing') {
+      round.speed = speed;
+      round.vx = Math.cos(angle) * speed;
+      round.vy = Math.sin(angle) * speed;
+    }
+    if (owner === 'player') round.homing = round.homing && !!seekTarget;
+    this.projectiles.push({ ...round, owner, trail: [], seekTarget });
   }
 
   _updateProjectiles(dt) {
     this.projFx.clear();
     for (const p of this.projectiles) {
-      // Resolve this round's target: enemy rounds chase the player; player rounds chase
-      // (and damage) the nearest living enemy, re-evaluated each frame so homing retargets.
+      // Hit detection chases the nearest living enemy (enemy rounds chase the player), so a
+      // round detonates on whatever it reaches.
       const enemyShot = p.owner === 'enemy';
       const hitEnemy = enemyShot ? null : this._nearestEnemy(p.x, p.y);
       const targetGone = enemyShot ? this.mech.isDestroyed() : !hitEnemy;
       const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
       const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
 
-      // Guided missiles steer toward the target, capped by their turn rate.
-      if (p.homing && !targetGone) {
-        const desired = Math.atan2(ty - p.y, tx - p.x);
-        p.angle = Phaser.Math.Angle.RotateTo(p.angle, desired, p.turn * dt);
-        p.vx = Math.cos(p.angle) * p.speed; p.vy = Math.sin(p.angle) * p.speed;
+      // Homing steers toward the round's seek target (the lock, captured at fire). If the
+      // locked enemy dies mid-flight the round goes dumb — it does not retarget to the nearest.
+      let hx = tx, hy = ty;
+      if (p.homing && !enemyShot) {
+        if (p.seekTarget && !p.seekTarget.mech.isDestroyed()) { hx = p.seekTarget.x; hy = p.seekTarget.y; }
+        else p.homing = false;
       }
-      p.x += p.vx * dt; p.y += p.vy * dt; p.dist += p.speed * dt;
+      // Advance via the shared kinematics — guided rounds steer toward the live target
+      // (capped by turn rate); ballistic rounds just integrate velocity.
+      stepProjectile(p, dt, p.homing && !targetGone ? Math.atan2(hy - p.y, hx - p.x) : null);
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
       if (!p.arc && this._isWall(p.x, p.y)) {
         p.dead = true;
@@ -627,6 +709,19 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a
+  _updateBeams(delta) {
+    const SPARK_FADE = 300;
+    for (const b of this.beams) { b.ttl -= delta; b.age += delta; }
+    for (const b of this.beams) { if (b.ttl <= 0) this.dyingBeams.push({ ...b, fadeAge: 0, fadeTtl: SPARK_FADE }); }
+    this.beams = this.beams.filter((b) => b.ttl > 0);
+    for (const b of this.dyingBeams) b.fadeAge += delta;
+    this.dyingBeams = this.dyingBeams.filter((b) => b.fadeAge < b.fadeTtl);
+
+    this.beamFx.clear();
+    for (const b of this.beams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age);
+    for (const b of this.dyingBeams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age + b.fadeAge, 1 - b.fadeAge / b.fadeTtl);
+  }
+
   // flickering flame visual, until they burn out.
   _updateFirePatches() {
     const now = this.time.now;
@@ -639,83 +734,10 @@ export default class ArenaScene extends Phaser.Scene {
           }
         }
       }
-      this._drawFlames(fp, now);
+      drawGroundFire(this.projFx, fp.x, fp.y, fp.r, now);   // shared flame art (matches the lab)
       if (now >= fp.until) fp.dead = true;
     }
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
-  }
-
-  // Render one burning patch as sticky napalm: a spreading pool of liquid fire that coats
-  // the ground (low, rounded, roiling — not tall spikes), with hot pockets and lazy smoke
-  // drifting up off it. A per-patch seed keeps each fire's layout stable frame to frame
-  // while the globs breathe and the smoke rises on their own phases.
-  _drawFlames(fp, now) {
-    const g = this.projFx;
-    const seed = (fp.x * 13.1 + fp.y * 7.7);
-    const rnd = (i) => { const v = Math.sin(seed + i * 53.17) * 43758.5; return v - Math.floor(v); };
-    const fade = Phaser.Math.Clamp((fp.until - now) / 800, 0.25, 1);   // dim as it burns out
-    const pulse = 0.5 + 0.5 * Math.sin(now * 0.005);
-
-    // An irregular, slowly-roiling blob outline that is wavy but SMOOTH: a few jittered
-    // lobe radii define the silhouette, then a closed Catmull-Rom spline is sampled through
-    // them so the edges flow instead of faceting. Squashed for the top-down view.
-    const blob = (cx, cy, rx, key, lobes = 7, squash = 0.7, wob = 0.18) => {
-      const ctrl = [];
-      for (let k = 0; k < lobes; k++) {
-        const a = (k / lobes) * Math.PI * 2;
-        const n = rnd(key + k * 2.13);
-        const r = rx * (0.8 + n * 0.3 + wob * Math.sin(now * 0.006 + n * 9 + key));
-        ctrl.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r * squash });
-      }
-      const pts = [];
-      const steps = 6;                                          // samples per lobe segment
-      for (let k = 0; k < lobes; k++) {
-        const p0 = ctrl[(k - 1 + lobes) % lobes], p1 = ctrl[k];
-        const p2 = ctrl[(k + 1) % lobes], p3 = ctrl[(k + 2) % lobes];
-        for (let s = 0; s < steps; s++) {
-          const t = s / steps;
-          pts.push({
-            x: Phaser.Math.CatmullRom(t, p0.x, p1.x, p2.x, p3.x),
-            y: Phaser.Math.CatmullRom(t, p0.y, p1.y, p2.y, p3.y),
-          });
-        }
-      }
-      return pts;
-    };
-
-    // Charred scorch the napalm has soaked into, and the layered liquid-fire pool — each a
-    // ragged blob rather than concentric ellipses.
-    g.fillStyle(0x140a06, 0.4 * fade).fillPoints(blob(fp.x, fp.y, fp.r * 1.05, 1, 11, 0.72, 0.1), true);
-    g.fillStyle(0x5e1d04, 0.55 * fade).fillPoints(blob(fp.x, fp.y, fp.r * 0.95, 2, 10, 0.7), true);
-    g.fillStyle(0xb23206, (0.45 + 0.2 * pulse) * fade).fillPoints(blob(fp.x, fp.y, fp.r * 0.74, 3, 10, 0.68, 0.22), true);
-    g.fillStyle(0xe85610, (0.35 + 0.2 * pulse) * fade).fillPoints(blob(fp.x, fp.y, fp.r * 0.5, 4, 9, 0.66, 0.26), true);
-
-    // Roiling flame globs: small ragged blobs that breathe in place, clinging to the pool.
-    const globs = 9;
-    for (let i = 0; i < globs; i++) {
-      const ang = rnd(i) * 6.28;
-      const rad = (0.2 + rnd(i + 31) * 0.7) * fp.r;
-      const gx = fp.x + Math.cos(ang) * rad;
-      const gy = fp.y + Math.sin(ang) * rad * 0.66;            // squashed: viewed from above
-      const phase = rnd(i + 7) * 6.28;
-      const breathe = 0.6 + 0.4 * Math.sin(now * 0.009 + phase);
-      const rr = fp.r * (0.24 + rnd(i + 5) * 0.2) * breathe;
-      g.fillStyle(0xff6a18, 0.45 * fade).fillPoints(blob(gx, gy, rr, i * 4 + 200, 7, 0.8, 0.3), true);
-      g.fillStyle(0xffb43c, 0.6 * fade).fillPoints(blob(gx, gy - rr * 0.2, rr * 0.6, i * 4 + 201, 7, 0.8, 0.34), true);
-      // Occasional white-hot pocket.
-      if (rnd(i + 11) > 0.55) g.fillStyle(0xfff0c0, 0.55 * fade).fillCircle(gx, gy - rr * 0.25, rr * 0.26);
-    }
-
-    // Lazy smoke: a few translucent grey puffs rising and drifting, fading as they climb.
-    const puffs = 4;
-    for (let i = 0; i < puffs; i++) {
-      const phase = rnd(i + 50) * 6.28;
-      const rise = ((now * 0.00018 + rnd(i + 60)) % 1);         // 0..1 climb cycle
-      const sx = fp.x + (rnd(i + 70) * 2 - 1) * fp.r * 0.6 + Math.sin(now * 0.001 + phase) * fp.r * 0.3;
-      const sy = fp.y - rise * fp.r * 2.4;                      // drifts upward off the pool
-      const sr = fp.r * (0.3 + rise * 0.6);
-      g.fillStyle(0x2a2622, (1 - rise) * 0.22 * fade).fillCircle(sx, sy, sr);
-    }
   }
 
   // ── Enemy AI ── each enemy maintains a range band, faces the player, fires with LOS. ──

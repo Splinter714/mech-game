@@ -6,7 +6,7 @@ const light = getChassis('light');
 
 describe('loadout validation (six skill slots, one item each)', () => {
   it('accepts a build with one weapon per weapon slot', () => {
-    const mounts = { leftArm: ['mediumLaser'], rightArm: ['autocannon'], leftTorso: ['srm'] };
+    const mounts = { leftArm: ['pulseLaser'], rightArm: ['autocannon'], leftTorso: ['clusterRocket'] };
     const v = validateLoadout(light, mounts);
     expect(v.ok).toBe(true);
     expect(v.slotUsage.leftArm).toEqual({ used: 1, cap: 1 });
@@ -14,7 +14,7 @@ describe('loadout validation (six skill slots, one item each)', () => {
   });
 
   it('rejects a location holding more than one item', () => {
-    const mounts = { leftArm: ['mediumLaser', 'autocannon'] };
+    const mounts = { leftArm: ['pulseLaser', 'autocannon'] };
     const v = validateLoadout(light, mounts);
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => e.includes('leftArm'))).toBe(true);
@@ -25,7 +25,7 @@ describe('canMount constraints', () => {
   it('blocks mounting into an already-occupied slot', () => {
     const mounts = { rightArm: ['autocannon'] };
     expect(freeSlots(light, mounts, 'rightArm')).toBe(0);
-    const res = canMount(light, mounts, 'rightArm', 'mediumLaser');
+    const res = canMount(light, mounts, 'rightArm', 'pulseLaser');
     expect(res.ok).toBe(false);
     expect(res.reason).toMatch(/occupied/);
   });
@@ -36,12 +36,12 @@ describe('canMount constraints', () => {
   });
 
   it('blocks a weapon in an ability slot (head / centre torso)', () => {
-    expect(canMount(light, {}, 'head', 'mediumLaser').ok).toBe(false);
+    expect(canMount(light, {}, 'head', 'pulseLaser').ok).toBe(false);
     expect(canMount(light, {}, 'centerTorso', 'autocannon').ok).toBe(false);
   });
 
   it('blocks mounting into a non-skill location (the cockpit)', () => {
-    expect(canMount(light, {}, 'cockpit', 'mediumLaser').ok).toBe(false);
+    expect(canMount(light, {}, 'cockpit', 'pulseLaser').ok).toBe(false);
   });
 
   it('allows a normal mount into an empty arm', () => {
