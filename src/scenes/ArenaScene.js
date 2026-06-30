@@ -19,11 +19,13 @@ import { Audio } from '../audio/index.js';
 // them. Single-file for Milestone 1 — splits into arena/ mixins as combat grows.
 const ARENA_MECH_SCALE = 0.34;
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
-// Aim-assist tuning (#31) — a default, always-on aid. ASSIST_STRENGTH is the max fraction
-// the firing solution is pulled from the reticle toward the enemy; the pull scales up as
-// the aim tightens within ASSIST_CONE, out to ASSIST_RANGE. Bump STRENGTH for more help.
-const ASSIST_STRENGTH = 0.55;
-const ASSIST_CONE = 0.35;         // radians of half-angle the enemy must be within
+// Soft-lock targeting (#31) — a default, always-on aid. You instantly lock the enemy nearest
+// your aim *line* (not the nearest by distance), and shots get a rotational nudge toward it
+// scaled by how centred it is — capped at ASSIST_STRENGTH so it never perfectly snaps. The
+// lock is sticky (ACQUIRE cone to grab, wider RELEASE cone to drop) so it doesn't flicker.
+const ASSIST_STRENGTH = 0.55;     // max fraction a shot is rotated toward the locked enemy
+const ACQUIRE_CONE = 0.35;        // radians half-angle to grab a new soft-lock
+const RELEASE_CONE = 0.55;        // wider half-angle before an existing lock is dropped
 const ASSIST_RANGE = 620;         // px the enemy must be within
 const DUMMY_HEX = { q: 3, r: -1 };
 const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit'); // cockpit is hit via the head
@@ -73,8 +75,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.abilityCd = {};       // ability location → ms until it can fire again
     this.shieldUntil = 0;      // timestamp the bubble shield is active until
-    this.assistOn = true;      // aim-assist: a default, always-on targeting aid (#31)
-    this.assistTarget = null;  // enemy the shots are being nudged toward this frame
+    this.assistOn = true;      // soft-lock targeting: a default, always-on aid (#31)
+    this.assistTarget = null;  // firing solution this frame: { x, y, strength } toward the lock
+    this.lockEnemy = null;     // the currently soft-locked enemy (sticky across frames)
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
     this.enemyMove = true;
@@ -222,9 +225,8 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
     if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
 
-    // ── Aim-assist (#31): a default, always-on aid. When the enemy sits near the
-    // reticle, flag it as the tracked target so weapons settle their shots onto it and
-    // an ambient cue is drawn. Subtle by design; strength tuned in fireWeapon. ──
+    // ── Soft-lock targeting (#31): a default, always-on aid. Locks the enemy nearest the
+    // aim line and nudges shots toward it. ──
     this._updateAimAssist();
 
     // ── Stompy stepped gait ──
@@ -273,6 +275,9 @@ export default class ArenaScene extends Phaser.Scene {
     this._updateFirePatches();
     this._updateBeams(delta);
 
+    // Soft-lock reticle, drawn after projFx is cleared above so it isn't wiped.
+    if (this.assistTarget) this._drawLockReticle(this.lockEnemy.x, this.lockEnemy.y, this.assistTarget.centred);
+
     // Bubble shield bubble, drawn over the player while active.
     if (this.time.now < this.shieldUntil) {
       this.projFx.lineStyle(2, 0x5ec8e0, 0.7).strokeCircle(this.px, this.py, 34);
@@ -283,24 +288,44 @@ export default class ArenaScene extends Phaser.Scene {
     this.mech.regenAmmo(dt);
   }
 
-  // Aim-assist (#31): when assist is on and the enemy sits within a cone of where the
-  // reticle points (and in range), mark it the tracked target. `fireWeapon` then pulls
-  // each shot's convergence toward it; `_drawTrackCue` shows the ambient indicator. This
-  // is a baseline mechanic — no equipped item, no manual hold-to-lock.
+  // Soft-lock (#31): lock the enemy nearest the aim line, instantly. The lock is sticky — kept
+  // until it leaves the (wider) RELEASE cone or range, swapped only when another enemy is
+  // clearly more centred — so it doesn't flicker. `fireWeapon` nudges shots toward it scaled by
+  // centredness (capped, never a perfect snap), and `_drawLockReticle` shows it. Baseline
+  // mechanic — no item, no hold-to-lock.
   _updateAimAssist() {
     this.assistTarget = null;
     this.registry.set('assistOn', this.assistOn);
-    if (!this.assistOn) return;
-    const e = this._nearestEnemy(this.px, this.py, ASSIST_RANGE);
-    if (!e) return;
-    const toAng = Math.atan2(e.y - this.py, e.x - this.px);
-    const off = Math.abs(Phaser.Math.Angle.Wrap(toAng - this.turretAngle));
-    if (off < ASSIST_CONE) {
-      // Tighter aim (smaller angular error) = stronger pull, for a "settle then fire" feel.
-      const strength = ASSIST_STRENGTH * (1 - off / ASSIST_CONE);
-      this.assistTarget = { x: e.x, y: e.y, strength, tight: off < ASSIST_CONE * 0.4 };
-      this._drawTrackCue(e.x, e.y, this.assistTarget.tight);
+    if (!this.assistOn) { this.lockEnemy = null; return; }
+
+    // Angular offset of an enemy from the turret line (smaller = more centred on the aim).
+    const aimOff = (e) => Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - this.py, e.x - this.px) - this.turretAngle));
+    const inRange = (e) => !e.mech.isDestroyed() && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE;
+
+    // The best fresh candidate: in range, within the ACQUIRE cone, nearest the aim line.
+    let cand = null, candOff = ACQUIRE_CONE;
+    for (const e of this.enemies) {
+      if (!inRange(e)) continue;
+      const off = aimOff(e);
+      if (off < candOff) { candOff = off; cand = e; }
     }
+
+    // Stickiness: keep the current lock while it stays in range and inside the RELEASE cone,
+    // unless a fresh candidate is meaningfully more centred (hysteresis margin).
+    const keep = this.lockEnemy && inRange(this.lockEnemy) && aimOff(this.lockEnemy) < RELEASE_CONE;
+    if (keep && (!cand || cand === this.lockEnemy || aimOff(this.lockEnemy) - candOff < 0.12)) {
+      // hold existing lock
+    } else {
+      this.lockEnemy = cand;
+    }
+
+    if (!this.lockEnemy) return;
+
+    // Instant soft-lock: the nudge applies as soon as a target is locked, scaled only by how
+    // centred it is (no hold-to-charge). Still soft — capped at ASSIST_STRENGTH.
+    const centred = 1 - Math.min(1, aimOff(this.lockEnemy) / RELEASE_CONE);
+    const strength = ASSIST_STRENGTH * centred;
+    this.assistTarget = { x: this.lockEnemy.x, y: this.lockEnemy.y, strength, centred };
   }
 
   // The closest living enemy to a point, within `maxDist` (default: any). Used for
@@ -352,18 +377,21 @@ export default class ArenaScene extends Phaser.Scene {
     this._floatText(this.px, this.py - 40, 'ENEMIES RESET', '#5ec8e0');
   }
 
-  // Ambient tracked-target indicator (#27, folds the old lock UI into aim-assist): corner
-  // brackets that snap tighter and brighten as the aim settles onto the enemy.
-  _drawTrackCue(x, y, tight) {
-    const col = tight ? 0xe2533a : 0xefc14a;
-    const r = tight ? 22 : 28;          // brackets close in as the aim tightens
+  // Soft-lock reticle (#31): corner brackets that close in and brighten from amber→red as the
+  // enemy centres on the aim (`p` is 0→1 centredness). Dead-centre adds a ring to read "locked"
+  // — though the firing nudge stays soft. Drawn each frame on the live enemy position.
+  _drawLockReticle(x, y, p) {
+    const locked = p >= 0.95;
+    const col = locked ? 0xe2533a : 0xefc14a;
+    const r = 34 - 14 * p;              // brackets draw inward as the aim centres
     const len = 8;
-    const g = this.projFx.lineStyle(2, col, tight ? 1 : 0.8);
+    const g = this.projFx.lineStyle(2, col, 0.6 + 0.4 * p);
     for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const cx = x + sx * r, cy = y + sy * r;
       g.lineBetween(cx, cy, cx - sx * len, cy);
       g.lineBetween(cx, cy, cx, cy - sy * len);
     }
+    if (locked) this.projFx.lineStyle(1.5, col, 0.9).strokeCircle(x, y, r + 4);
   }
 
   _toggleAssist() {
