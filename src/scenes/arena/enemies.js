@@ -8,6 +8,36 @@ import { buildMechTextures, reskinMech } from '../../art/index.js';
 import { hexToPixel, range } from '../../data/hexgrid.js';
 import { approach } from './shared.js';
 
+// ── #44 tactical-AI tuning (owner: review/tune) ─────────────────────────────────────
+// These constants replace the old fixed 260/150 close/back-off bands and the p=0.01/frame
+// strafe-flip coin toss. Gathered here so the feel can be re-tuned without hunting through
+// _updateEnemy.
+const ENGAGE_BAND = 110;            // +/- range around the preferred distance treated as "strafe zone"
+const PRESSURE_MIN = 4000;          // ms between rerolls of the "pressure" bias (push closer/farther)
+const PRESSURE_MAX = 9000;
+const PRESSURE_MAG = 90;            // max distance (px) the pressure bias shifts the preferred range
+const DRIFT_PERIOD = 5500;          // ms period of the slow sine that drifts orbit radius in/out
+const DRIFT_MAG = 50;               // px amplitude of that drift
+const STRAFE_FLIP_MIN = 2500;       // ms between deliberate strafe-direction reversals
+const STRAFE_FLIP_MAX = 5500;
+const COMMIT_CHECK_MIN = 3500;      // ms between rolls of whether to break strafe with a committed
+const COMMIT_CHECK_MAX = 7000;      // advance/retreat burst
+const COMMIT_CHANCE = 0.35;         // odds a given roll actually triggers a commit
+const COMMIT_DURATION_MIN = 600;    // ms a committed advance/retreat burst lasts
+const COMMIT_DURATION_MAX = 1200;
+const DEFAULT_PREFERRED_DIST = 200; // fallback preferred range for enemies with no readable weapon
+
+// Pick a base "preferred distance" to fight at from the enemy's mounted weapons' optimum
+// range (data/weapons.js `range.opt`), so e.g. a melee/short-range loadout wants to close
+// in tighter and a long-range loadout prefers to stay back. Falls back to a flat default if
+// the mech has no weapons. Approximation, not a perfect simulation of weapon choice.
+function preferredDistFor(mech) {
+  const weapons = mech.weapons().map((w) => w.weapon).filter(Boolean);
+  if (!weapons.length) return DEFAULT_PREFERRED_DIST;
+  const sum = weapons.reduce((acc, w) => acc + (w.range?.opt ?? DEFAULT_PREFERRED_DIST), 0);
+  return sum / weapons.length;
+}
+
 export const EnemiesMixin = {
   // ── Enemy lifecycle (#39 debug controls) ──────────────────────────────────────────
   // Build a fresh enemy with its own textures + view + AI state and track it.
@@ -18,7 +48,16 @@ export const EnemiesMixin = {
     buildMechTextures(this, key, mech, { theme: 'enemy' });
     const angle = Math.PI / 2;
     const view = this._makeMechView(key, x, y, angle);
-    const e = { key, mech, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: {}, strafeDir: 1, spawnX: x, spawnY: y };
+    const e = {
+      key, mech, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: {}, strafeDir: 1, spawnX: x, spawnY: y,
+      // #44 tactical AI state — see constants above for the timers driving these.
+      basePreferredDist: preferredDistFor(mech),
+      pressureBias: 0, pressureAt: 0,
+      driftPhase: Math.random() * DRIFT_PERIOD,
+      strafeFlipAt: STRAFE_FLIP_MIN + Math.random() * (STRAFE_FLIP_MAX - STRAFE_FLIP_MIN),
+      commitCheckAt: COMMIT_CHECK_MIN + Math.random() * (COMMIT_CHECK_MAX - COMMIT_CHECK_MIN),
+      commitMode: null, commitUntil: 0,
+    };
     this.enemies.push(e);
     this.registry.set('dummyMech', this.enemies[0].mech);
     return e;
@@ -40,6 +79,11 @@ export const EnemiesMixin = {
       e.mech.repairAll();
       e.x = e.spawnX; e.y = e.spawnY; e.vx = 0; e.vy = 0;
       e.angle = Math.PI / 2; e.turret = Math.PI / 2; e.fireCd = {};
+      // #44: reset tactical-AI timers too so a reset enemy doesn't resume mid-commit.
+      e.pressureBias = 0; e.pressureAt = 0; e.driftPhase = Math.random() * DRIFT_PERIOD;
+      e.strafeFlipAt = STRAFE_FLIP_MIN + Math.random() * (STRAFE_FLIP_MAX - STRAFE_FLIP_MIN);
+      e.commitCheckAt = COMMIT_CHECK_MIN + Math.random() * (COMMIT_CHECK_MAX - COMMIT_CHECK_MIN);
+      e.commitMode = null; e.commitUntil = 0;
       e.view.setAlpha(1).setPosition(e.x, e.y);
       reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     }
@@ -71,12 +115,49 @@ export const EnemiesMixin = {
     const dist = Math.hypot(dxp, dyp) || 1;
     const ux = dxp / dist, uy = dyp / dist;
 
-    // Movement (gated by the #28 debug toggle): close if far, back off if close, else strafe.
+    // Movement (gated by the #28 debug toggle): #44 — preferred engagement distance now
+    // drifts over time (slow sine + a randomized "pressure" timer) instead of being a fixed
+    // 260/150 band, strafe direction flips on a deliberate timer instead of a per-frame coin
+    // toss, and the enemy occasionally breaks the strafe with a committed advance/retreat.
     if (this.enemyMove) {
+      // Reroll the pressure bias (push the preferred distance closer/farther) on its own timer.
+      e.pressureAt -= delta;
+      if (e.pressureAt <= 0) {
+        e.pressureBias = (Math.random() * 2 - 1) * PRESSURE_MAG;
+        e.pressureAt = PRESSURE_MIN + Math.random() * (PRESSURE_MAX - PRESSURE_MIN);
+      }
+      e.driftPhase += delta;
+      const drift = Math.sin((e.driftPhase / DRIFT_PERIOD) * Math.PI * 2) * DRIFT_MAG;
+      const preferredDist = Math.max(60, e.basePreferredDist + e.pressureBias + drift);
+
+      // Deliberate strafe-direction reversal (every few seconds, not a tiny per-frame chance).
+      e.strafeFlipAt -= delta;
+      if (e.strafeFlipAt <= 0) {
+        e.strafeDir *= -1;
+        e.strafeFlipAt = STRAFE_FLIP_MIN + Math.random() * (STRAFE_FLIP_MAX - STRAFE_FLIP_MIN);
+      }
+
+      // Periodically roll whether to break the strafe with a committed advance or retreat burst.
+      if (e.commitMode && e.commitUntil <= 0) e.commitMode = null;
+      if (!e.commitMode) {
+        e.commitCheckAt -= delta;
+        if (e.commitCheckAt <= 0) {
+          e.commitCheckAt = COMMIT_CHECK_MIN + Math.random() * (COMMIT_CHECK_MAX - COMMIT_CHECK_MIN);
+          if (Math.random() < COMMIT_CHANCE) {
+            e.commitMode = Math.random() < 0.5 ? 'advance' : 'retreat';
+            e.commitUntil = COMMIT_DURATION_MIN + Math.random() * (COMMIT_DURATION_MAX - COMMIT_DURATION_MIN);
+          }
+        }
+      } else {
+        e.commitUntil -= delta;
+      }
+
       let mx = 0, my = 0;
-      if (dist > 260) { mx = ux; my = uy; }
-      else if (dist < 150) { mx = -ux; my = -uy; }
-      else { mx = -uy * e.strafeDir; my = ux * e.strafeDir; if (Math.random() < 0.01) e.strafeDir *= -1; }
+      if (e.commitMode === 'advance') { mx = ux; my = uy; }
+      else if (e.commitMode === 'retreat') { mx = -ux; my = -uy; }
+      else if (dist > preferredDist + ENGAGE_BAND) { mx = ux; my = uy; }
+      else if (dist < preferredDist - ENGAGE_BAND) { mx = -ux; my = -uy; }
+      else { mx = -uy * e.strafeDir; my = ux * e.strafeDir; }
 
       const spd = mv.maxSpeed * 0.8;
       e.vx = approach(e.vx, mx * spd, mv.accel * dt);
