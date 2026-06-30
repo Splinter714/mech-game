@@ -103,7 +103,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const sign = (i % 2 === 0) ? 1 : -1;
     // Random beam position that re-randomises each cycle.
     const cycle = Math.floor(phase * speed + i * 37);
-    const t = Math.abs(Math.sin(cycle * 127.3 + i * 31.7));
+    const th = Math.sin(cycle * 127.3 + i * 31.7) * 43758.5453;
+    const t = th - Math.floor(th);  // uniform [0,1], no arcsine clustering
     const tipTaper = 0.25 + 0.75 * Math.cos(t * Math.PI / 2);  // 1 at muzzle, 0.25 at tip
     const drift = (phase * speed + i * 37) % (maxDrift * tipTaper);
     const life = 1 - drift / (maxDrift * tipTaper + 0.001);
@@ -124,7 +125,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const speed = 0.04 + i * 0.015;
     const sign = (i % 2 === 0) ? 1 : -1;
     const cycle = Math.floor(phase * speed + i * 53);
-    const t = Math.abs(Math.sin(cycle * 83.1 + i * 47.3));
+    const th2 = Math.sin(cycle * 83.1 + i * 47.3) * 43758.5453;
+    const t = th2 - Math.floor(th2);
     const drift = (phase * speed + i * 53) % (coreW / 2);
     const life = 1 - drift / (coreW / 2);
     const r = (heavy ? 1.4 : 1.0) * s * life;
