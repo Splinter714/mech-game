@@ -59,7 +59,7 @@ export const WEAPONS = {
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
     id: 'beamLaser', name: 'Beam Laser', category: 'energy',
-    damage: 2, range: { min: 0, opt: 220, max: 360 },
+    damage: 2, range: { min: 0, opt: 500, max: 640 },
     ammoMax: 120, ammoRegen: 18, slots: 2, cycleTime: 0,
     delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true },
   }),

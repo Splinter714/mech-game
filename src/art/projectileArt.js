@@ -62,13 +62,14 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
 
   const glowW = (heavy ? 20 : 14) * s;
   const coreW = (heavy ? 5 : 3.5) * s;
-  const SEGS = heavy ? 6 : 8;
+  const SEGS = heavy ? 12 : 16;
 
   // Outer glow: tapered warbling segments matching the core wobble.
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
-    const taper = Math.cos(tc * Math.PI / 2);
+    const taperStart = 0.7;
+    const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
     const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.8 * s;
     const warp0 = warpRaw * Math.sin(t0 * Math.PI);
     const warp1 = warpRaw * Math.sin(t1 * Math.PI);
@@ -83,7 +84,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
     // Taper: full at muzzle, tapers only toward the far end.
-    const taper = Math.cos(tc * Math.PI / 2);
+    const taperStart = 0.7;
+    const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
     // Warp also multiplied by taper so the beam connects cleanly to muzzle and endpoint.
     const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.8 * s;
     const warp0 = warpRaw * Math.sin(t0 * Math.PI);
@@ -91,7 +93,6 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const ax = x0 + nx * len * t0 + px * warp0, ay = y0 + ny * len * t0 + py * warp0;
     const bx = x0 + nx * len * t1 + px * warp1, by = y0 + ny * len * t1 + py * warp1;
     g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
-    g.lineStyle(Math.max(0.5, 1.2 * s * taper), 0xffffff, 0.9); g.lineBetween(ax, ay, bx, by);
   }
 
   // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
