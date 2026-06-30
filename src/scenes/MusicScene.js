@@ -19,6 +19,7 @@ const UI = {
 };
 const COL_GAP = 14;
 const ROW_H = 19;
+const MIN_COL_W = 250;   // a column never gets narrower than this; extra groups wrap to new rows
 
 export default class MusicScene extends Phaser.Scene {
   constructor() { super('MusicScene'); }
@@ -101,18 +102,28 @@ export default class MusicScene extends Phaser.Scene {
     this.playBtn.text.setColor(on ? '#efc14a' : '#7bd17b');
   }
 
+  // Lay the groups out as columns, but keep each at least MIN_COL_W wide: fit as many across
+  // as the screen allows, then WRAP the rest to further rows (each row drops below the tallest
+  // column above it). On a wide screen everything stays on one row; on a narrow one it spills.
   _buildColumns() {
     const top = TAB_BAR_H + 56;
-    const colW = Math.floor((this.W - 20 - (GROUPS.length - 1) * COL_GAP) / GROUPS.length) - 4;
-    let x = 14;
-    for (const [name, rows] of GROUPS) {
-      this._buildColumn(name, rows, x, top, colW);
+    const avail = this.W - 28;
+    const perRow = Math.max(1, Math.floor((avail + COL_GAP) / (MIN_COL_W + COL_GAP)));
+    const colW = Math.floor((avail - (perRow - 1) * COL_GAP) / perRow);
+    let x = 14, y = top, rowMaxH = 0;
+    GROUPS.forEach(([name, rows], i) => {
+      if (i > 0 && i % perRow === 0) { x = 14; y += rowMaxH + 16; rowMaxH = 0; }   // wrap to next row
+      const h = this._buildColumn(name, rows, x, y, colW);
+      rowMaxH = Math.max(rowMaxH, h);
       x += colW + COL_GAP;
-    }
+    });
   }
 
+  // Build one column at (x, top) of width w; returns its content height (for row wrapping).
   _buildColumn(name, rows, x, top, w) {
-    this.body.add(this.add.rectangle(x - 6, top - 8, w + 12, this.H - top - 6, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge));
+    const hasWave = !!WAVE_PARAM[name];
+    const panelH = 28 + (hasWave ? 26 : 0) + rows.length * ROW_H + 8;
+    this.body.add(this.add.rectangle(x - 6, top - 8, w + 12, panelH, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge));
     this.body.add(this.add.text(x, top, name.toUpperCase(), { fontFamily: 'monospace', fontSize: '11px', color: UI.accent }));
     let y = top + 20;
 
@@ -151,6 +162,7 @@ export default class MusicScene extends Phaser.Scene {
       }
       y += ROW_H;
     }
+    return panelH;
   }
 
   _refreshMix() { for (const fn of this.mixRefreshers) fn(); }
