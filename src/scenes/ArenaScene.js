@@ -92,8 +92,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
 
     this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
+    this.beamFx = this.add.graphics();   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
     this.projectiles = [];
+    this.beams = [];
+    this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
     this.scene.launch('HudScene');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
@@ -268,6 +271,7 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
     this._updateFirePatches();
+    this._updateBeams(delta);
 
     // Bubble shield bubble, drawn over the player while active.
     if (this.time.now < this.shieldUntil) {
@@ -546,10 +550,19 @@ export default class ArenaScene extends Phaser.Scene {
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
-    // Laser-y beam (shared art so the garage icon matches), quick fade. The rail lance
-    // draws a heavier high-energy lance.
-    drawBeam(this.fx, muzzleX, muzzleY, endX, endY, color, 1, w.weapon.delivery.kind === 'rail', this.time.now);
-    this.time.delayedCall(80, () => this.fx.clear());
+    // Persistent beam so sparks can linger after it fades. A continuously-held beam
+    // (sustained/stream) keeps ONE beam object that re-pins to the muzzle each shot, so it
+    // tracks the mech as it turns/moves; single-shot beams (pulse/rail) push a fresh one.
+    const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
+    const heavy = w.weapon.delivery.kind === 'rail';
+    const continuous = w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
+    const live = continuous ? this.beams.find((b) => b.loc === w.location) : null;
+    if (live) {
+      live.x0 = muzzleX; live.y0 = muzzleY; live.x1 = endX; live.y1 = endY;
+      live.ttl = beamTtl;   // age keeps advancing → warble flows continuously
+    } else {
+      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? w.location : null });
+    }
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       this._damageEnemyAt(target, endX, endY, dmg, color);
@@ -635,6 +648,19 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a
+  _updateBeams(delta) {
+    const SPARK_FADE = 300;
+    for (const b of this.beams) { b.ttl -= delta; b.age += delta; }
+    for (const b of this.beams) { if (b.ttl <= 0) this.dyingBeams.push({ ...b, fadeAge: 0, fadeTtl: SPARK_FADE }); }
+    this.beams = this.beams.filter((b) => b.ttl > 0);
+    for (const b of this.dyingBeams) b.fadeAge += delta;
+    this.dyingBeams = this.dyingBeams.filter((b) => b.fadeAge < b.fadeTtl);
+
+    this.beamFx.clear();
+    for (const b of this.beams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age);
+    for (const b of this.dyingBeams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age + b.fadeAge, 1 - b.fadeAge / b.fadeTtl);
+  }
+
   // flickering flame visual, until they burn out.
   _updateFirePatches() {
     const now = this.time.now;
