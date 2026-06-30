@@ -8,7 +8,8 @@ export const MEDIUM_CONFIG = {
   baseStructure: 36,
   art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },
   movement: {
-    accel: 420, maxSpeed: 130, turnRate: 1.9,
+    // #45: speeds reduced ~25% from the original 130/420 (owner: tune to taste).
+    accel: 315, maxSpeed: 98, turnRate: 1.9,
     turretSlew: 3.2, turretArcDeg: 110,
     stepInterval: 340, stepBob: 2.5,
   },

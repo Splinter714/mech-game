@@ -15,7 +15,8 @@ export const LIGHT_CONFIG = {
     decor: [{ kind: 'mast', side: -1 }, { kind: 'vane', side: -1 }, { kind: 'vane', side: 1 }],
   },
   movement: {
-    accel: 600, maxSpeed: 180, turnRate: 2.6,
+    // #45: speeds reduced ~25% from the original 180/600 (owner: tune to taste).
+    accel: 450, maxSpeed: 135, turnRate: 2.6,
     turretSlew: 4.5, turretArcDeg: 130,
     stepInterval: 260, stepBob: 1.5,
   },

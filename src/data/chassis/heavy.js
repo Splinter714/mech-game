@@ -16,7 +16,8 @@ export const HEAVY_CONFIG = {
     decor: [{ kind: 'pauldron', side: -1 }, { kind: 'pauldron', side: 1 }, { kind: 'stack', side: -1 }, { kind: 'stack', side: 1 }],
   },
   movement: {
-    accel: 280, maxSpeed: 90, turnRate: 1.3,
+    // #45: speeds reduced ~25% from the original 90/280 (owner: tune to taste).
+    accel: 210, maxSpeed: 68, turnRate: 1.3,
     turretSlew: 2.2, turretArcDeg: 95,
     stepInterval: 440, stepBob: 3.5,
   },

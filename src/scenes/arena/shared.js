@@ -19,3 +19,18 @@ export function approach(cur, target, maxStep) {
 
 // Re-exported for the combat mixin (damage maps to a body location; cockpit is hit via head).
 export const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit');
+
+// #45: mechs don't run backwards at full tilt. Scale a max-speed figure down when the
+// movement-intent vector (mx, my; needn't be normalized) has a net negative component
+// along the turret facing — i.e. the mech is backing away from where it's aimed. Pure
+// sideways/forward movement is untouched; only the backward component is penalized, via
+// a continuous lerp so strafing diagonally-back doesn't hard-clip to one multiplier.
+export const BACKWARD_SPEED_MULT = 0.55; // owner: tune — 50-60% of maxSpeed while backing up
+export function backwardSpeedScale(mx, my, turretAngle) {
+  const mag = Math.hypot(mx, my);
+  if (mag < 1e-4) return 1;
+  const facing = Math.cos(turretAngle) * (mx / mag) + Math.sin(turretAngle) * (my / mag);
+  if (facing >= 0) return 1;
+  // facing in [-1, 0]; lerp from 1 (purely sideways) to BACKWARD_SPEED_MULT (straight back).
+  return 1 + facing * (1 - BACKWARD_SPEED_MULT);
+}

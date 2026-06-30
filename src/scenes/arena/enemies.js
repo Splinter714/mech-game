@@ -6,7 +6,7 @@ import { Mech } from '../../data/Mech.js';
 import { ENEMIES } from '../../data/enemies.js';
 import { buildMechTextures, reskinMech } from '../../art/index.js';
 import { hexToPixel, range } from '../../data/hexgrid.js';
-import { approach } from './shared.js';
+import { approach, backwardSpeedScale } from './shared.js';
 
 // ── #44 tactical-AI tuning (owner: review/tune) ─────────────────────────────────────
 // These constants replace the old fixed 260/150 close/back-off bands and the p=0.01/frame
@@ -159,7 +159,9 @@ export const EnemiesMixin = {
       else if (dist < preferredDist - ENGAGE_BAND) { mx = -ux; my = -uy; }
       else { mx = -uy * e.strafeDir; my = ux * e.strafeDir; }
 
-      const spd = mv.maxSpeed * 0.8;
+      // #45: backing away from the player (relative to turret facing) is slower.
+      const backScale = backwardSpeedScale(mx, my, e.turret);
+      const spd = mv.maxSpeed * 0.8 * backScale;
       e.vx = approach(e.vx, mx * spd, mv.accel * dt);
       e.vy = approach(e.vy, my * spd, mv.accel * dt);
       let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;

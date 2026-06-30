@@ -5,7 +5,7 @@
 import Phaser from 'phaser';
 import { mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, approach } from './shared.js';
+import { ARENA_MECH_SCALE, approach, backwardSpeedScale } from './shared.js';
 
 export const LocomotionMixin = {
   // A mech = hull (legs) + turret (everything else) stacked in a container so they can
@@ -42,7 +42,9 @@ export const LocomotionMixin = {
     const mv = this.mech.movement;
     const legF = this.mech.legFactor();
 
-    const maxSp = mv.maxSpeed * legF;
+    // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
+    const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
+    const maxSp = mv.maxSpeed * legF * backScale;
     this.vx = approach(this.vx, intent.move.x * maxSp, mv.accel * dt);
     this.vy = approach(this.vy, intent.move.y * maxSp, mv.accel * dt);
     // Move with wall/boundary collision, sliding along blocked axes.
