@@ -50,33 +50,9 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
     const f = 0.7 + 0.3 * Math.sin(phase * 0.4);
     g.fillStyle(0xff7a18, 0.4 * f); g.fillCircle(x, y, 6 * s);
     g.fillStyle(0xffd56b, 0.9 * f); g.fillCircle(x, y, 2.6 * s);
-  } else if (kind === 'fire') {                    // napalm: a tumbling fuel canister
-    // The drum tumbles end over end as it lobs (`phase` = distance), trailing a ribbon of
-    // flame and shedding burning droplets.
-    const spin = phase * 0.18;
-    const cs = Math.cos(spin), ss = Math.sin(spin);
-    const half = 3.6 * s, wide = 2.2 * s;
-    // Flame ribbon streaming back along travel.
-    const fl = 0.7 + 0.3 * Math.sin(phase * 0.6);
-    g.fillStyle(0xff7a18, 0.30 * fl); g.fillCircle(x - ca * 6 * s, y - sa * 6 * s, 4 * s);
-    g.fillStyle(0xffd56b, 0.45 * fl); g.fillCircle(x - ca * 4 * s, y - sa * 4 * s, 2.4 * s);
-    // The steel drum: a stubby capsule rotated by `spin`.
-    const ex = cs * half, ey = ss * half;       // long axis
-    const px = -ss * wide, py = cs * wide;       // short axis
-    g.fillStyle(0x4a3526, 1);
-    g.fillCircle(x + ex, y + ey, wide); g.fillCircle(x - ex, y - ey, wide);
-    g.fillStyle(0x5c4332, 1);
-    g.fillPoints([
-      { x: x + ex + px, y: y + ey + py }, { x: x - ex + px, y: y - ey + py },
-      { x: x - ex - px, y: y - ey - py }, { x: x + ex - px, y: y + ey - py },
-    ], true);
-    // Bright fuel band across the middle + a hot end cap.
-    g.fillStyle(0xff7a18, 0.95); g.fillCircle(x, y, 1.5 * s);
-    g.fillStyle(0xffd56b, 1); g.fillCircle(x + ex, y + ey, 1.2 * s);
-    // A shed ember tumbling off behind.
-    const ew = Math.sin(phase * 0.5) * 2.5 * s;
-    g.fillStyle(0xff944d, 0.7 * fl);
-    g.fillCircle(x - ca * 7 * s - sa * ew, y - sa * 7 * s + ca * ew, 1 * s);
+  } else if (kind === 'fire') {                    // napalm canister
+    g.fillStyle(0x3a2a1c, 1); g.fillCircle(x, y, 3.2 * s);
+    g.fillStyle(0xff7a18, 0.9); g.fillCircle(x, y, 1.6 * s);
   } else {                                          // slug: a short bright tracer
     const tx = x - ca * 9 * s, ty = y - sa * 9 * s;
     g.lineStyle(2 * s, color, 0.9); g.lineBetween(tx, ty, x, y);
