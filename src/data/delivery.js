@@ -18,6 +18,7 @@ import { CATEGORIES } from './categories.js';
 const TURN_RATE = 4.0;            // guided-missile steering rate (rad/s)
 const CLUSTER_SPACING = 6;        // lateral px between rounds in a dumbfire cluster
 const DEFAULT_SPREAD_DEG = 16;    // fan width for a spread weapon that omits spreadAngle
+const SPREAD_JITTER_DELAY = 35;   // ms, max random emission stagger for a jittered spread (#46)
 
 // ── Per-weapon flight "personality" (#49/#50) ──────────────────────────────────────────
 // Opt-in lateral wobble layered on top of homing steering, purely cosmetic — it nudges
@@ -93,14 +94,21 @@ export function planEmissions(weapon) {
   }
   // Projectile: a single round, a fanned cone of `spreadCount`, or — for `cluster`
   // weapons — a tight parallel clump (lateral offsets, ~parallel headings, no fan).
+  // `spreadJitter` (degrees) randomizes each fan shot's angle and emission timing instead
+  // of a perfectly even, repeating fan — used by weapons that should feel chaotic shot to
+  // shot rather than reading as a clean mechanical pulse (Flamethrower, #46).
   const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
+  const jitterRad = ((d.spreadJitter || 0) * Math.PI) / 180;
   const shots = [];
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
   for (let i = 0; i < n; i++) {
     const c = n > 1 ? (i - (n - 1) / 2) : 0;       // centred index: −…0…+
     if (d.cluster) shots.push(shot({ lateral: c * CLUSTER_SPACING }));
-    else if (n > 1) shots.push(shot({ angleOffset: (c / (n - 1)) * cone }));
-    else shots.push(shot());
+    else if (n > 1) {
+      const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
+      const fireDelay = jitterRad ? Math.random() * SPREAD_JITTER_DELAY : 0;
+      shots.push(shot({ angleOffset: (c / (n - 1)) * cone + jitter, delay: fireDelay }));
+    } else shots.push(shot());
   }
   // Streak Pod (#50): a tight stream of single seekers gets a tiny alternating angular
   // stagger per trigger pull (not a fan — just enough to read as a packed cluster streak,
@@ -128,7 +136,10 @@ const streakSeq = new Map();
 // fields (owner, trail) afterward.
 export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   const d = weapon.delivery || {};
-  const speed = d.velocity || 480;
+  // A jittered-spread weapon (Flamethrower, #46) also gets a per-particle speed variance so
+  // the flame front looks ragged/chaotic rather than a uniform wall advancing in lockstep.
+  const speedJitter = d.spreadJitter ? 0.82 + Math.random() * 0.36 : 1;
+  const speed = (d.velocity || 480) * speedJitter;
   const wobble = wobbleKind(weapon);
   return {
     x, y, angle, speed,

@@ -10,6 +10,9 @@
 //   guidance  'dumbfire' | 'lockon' | 'homing' | null
 //   pattern   'single' | 'spread' | 'stream'
 //   spreadCount / spreadAngle   pellets/missiles per shot + cone width (deg)
+//   spreadJitter  degrees — randomizes each spread shot's angle (and adds a small random
+//             emission stagger) instead of an evenly-spaced, perfectly repeating fan; for
+//             weapons that should feel chaotic shot-to-shot (the flamethrower)
 //   cluster   spread rounds fly as a tight parallel clump (no fan) — dumbfire cluster
 //   fireRate  shots per second for a `stream` weapon (machine gun / streak missiles)
 //   burst     { count, interval } — one trigger pull fires `count` rapid sub-shots
@@ -79,7 +82,9 @@ export const WEAPONS = {
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
     damage: 2, range: { min: 0, opt: 55, max: 100 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 100,
-    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 6, spreadAngle: 12, velocity: 165, kind: 'flame', splash: 6 },
+    // spreadJitter (#46): randomizes each particle's angle/timing so the stream reads as a
+    // chaotic gout of fire, not a clean repeating pulse of evenly-fanned shots.
+    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 6, spreadAngle: 12, spreadJitter: 20, velocity: 165, kind: 'flame', splash: 6 },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a
