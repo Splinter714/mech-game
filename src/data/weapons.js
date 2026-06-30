@@ -92,13 +92,13 @@ export const WEAPONS = {
   }),
   machineGun: w({   // sustained stream of small fast tracer rounds
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
-    damage: 2, range: { min: 0, opt: 80, max: 140 },
+    damage: 2, range: { min: 0, opt: 180, max: 320 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
     delivery: { hit: 'projectile', path: 'straight', velocity: 900, pattern: 'stream', fireRate: 18, kind: 'bullet', scale: 0.75 },
   }),
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
-    damage: 3, range: { min: 0, opt: 90, max: 170 },
+    damage: 3, range: { min: 0, opt: 180, max: 320 },
     ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
     delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', spreadCount: 7, spreadAngle: 7, kind: 'bullet' },
   }),
@@ -125,7 +125,7 @@ export const WEAPONS = {
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
-    damage: 5, range: { min: 0, opt: 150, max: 250 },
+    damage: 5, range: { min: 0, opt: 220, max: 320 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, velocity: 380 },
   }),
