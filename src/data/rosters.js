@@ -22,6 +22,7 @@ export const ROSTERS = {
           leftArm: ['pulseLaser'],
           leftTorso: ['clusterRocket'],
           rightTorso: ['machineGun'],
+          centerTorso: ['jumpJet'],   // the ability slot — fills out a deployable default build
         },
       },
     }),

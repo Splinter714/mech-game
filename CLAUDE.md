@@ -39,7 +39,8 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     guidance, single/spread/stream). Each weapon has its own `ammoMax`/`ammoRegen`
     magazine (`ammoMax: null` = unlimited, for melee). **Add a weapon = one entry in
     `WEAPONS`.**
-  - `equipment.js` (currently empty — abilities go here later), `items.js` (unified
+  - `equipment.js` (abilities mounted in the centre-torso slot — `jumpJet`,
+    `bubbleShield`), `items.js` (unified
     lookup), `loadout.js` (the build model: **six skill slots, one item per location**,
     melee only in arms; no tonnage, no multi-slot capacity).
   - `hexgrid.js` — **the only file that knows hexes exist.** Axial coords; pure

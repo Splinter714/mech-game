@@ -7,7 +7,7 @@ import { saveAllMechs } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
-import { WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS } from '../data/anatomy.js';
+import { WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { MECH_DEPLOYED } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
@@ -300,9 +300,21 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Deploy is inert unless the build is valid (all slots filled, mounts legal) — the tab-bar
-  // Deploy button is greyed to match.
+  // Deploy button is greyed to match. Pressing Deploy on an invalid build no longer fails
+  // silently: it toasts what's wrong and focuses the first empty slot (filtering the catalog
+  // to what fits it) so the fix is one click away.
   deploy() {
-    if (!this.mech.isComplete()) return;
+    if (!this.mech.isComplete()) {
+      const empty = MOUNT_LOCATIONS.filter((loc) => this.mech.usedSlots(loc) === 0);
+      if (empty.length) {
+        const names = empty.map((loc) => LOCATION_INFO[loc].short).join(', ');
+        this.toast(`BUILD INCOMPLETE — fill ${names}`);
+        if (this.selected !== empty[0]) this._selectSlot(empty[0]);   // focus + filter to the empty slot
+      } else {
+        this.toast('BUILD INVALID — check your mounts');
+      }
+      return;
+    }
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
     this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
