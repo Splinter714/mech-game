@@ -12,65 +12,14 @@ import { CATEGORIES } from '../data/categories.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT, EQUIPMENT_IDS } from '../data/equipment.js';
 import { projectileKind } from '../data/delivery.js';
+import { drawProjectileBody } from './projectiles/index.js';
 
 // `projectileKind` lives in the pure delivery sim (data/delivery.js); re-exported here so
-// existing art importers keep resolving it from the art layer.
+// existing art importers keep resolving it from the art layer. `drawProjectileBody` now
+// lives in the per-kind registry under ./projectiles/ — re-exported so call sites (and
+// art/index.js) keep importing it from here. Add a round kind = a new file there.
 export { projectileKind };
-
-// A travelling round's body, drawn at (x, y) heading along `angle`. `phase` drives the
-// flame flicker (the arena passes the round's distance; icons pass 0).
-export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0) {
-  const ca = Math.cos(angle), sa = Math.sin(angle);
-  if (kind === 'plasma') {
-    // A lobbed glob of molten energy: a soft pulsing corona, a teardrop body trailing
-    // back along travel, a white-hot core, and a couple of shed sparks. `phase` (the
-    // round's distance) drives the flicker and the wobble of the cast-off droplets.
-    const f = 0.75 + 0.25 * Math.sin(phase * 0.5);
-    // Hot wake streaming back from the glob.
-    g.fillStyle(color, 0.18 * f); g.fillCircle(x - ca * 3.5 * s, y - sa * 3.5 * s, 3.8 * s);
-    g.fillStyle(color, 0.30 * f); g.fillCircle(x, y, 5 * s);
-    // Teardrop: round front, tapered tail (drawn as two overlapping circles).
-    g.fillStyle(color, 0.92); g.fillCircle(x, y, 2.4 * s);
-    g.fillStyle(color, 0.7); g.fillCircle(x - ca * 2 * s, y - sa * 2 * s, 1.5 * s);
-    g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.4 * s, y + sa * 0.4 * s, 1 * s);
-    // Shed droplets wobbling off to the sides.
-    const wob = Math.sin(phase * 0.7) * 1.6 * s;
-    g.fillStyle(color, 0.55 * f);
-    g.fillCircle(x - ca * 4 * s - sa * wob, y - sa * 4 * s + ca * wob, 0.8 * s);
-  } else if (kind === 'missile') {
-    const bx = x - ca * 7 * s, by = y - sa * 7 * s;
-    g.lineStyle(3 * s, 0xffb347, 0.5); g.lineBetween(bx, by, x - ca * 14 * s, y - sa * 14 * s);
-    g.fillStyle(color, 1); g.fillCircle(x, y, 2.4 * s);
-  } else if (kind === 'flame') {
-    const f = 0.7 + 0.3 * Math.sin(phase * 0.4);
-    g.fillStyle(0xff7a18, 0.4 * f); g.fillCircle(x, y, 6 * s);
-    g.fillStyle(0xffd56b, 0.9 * f); g.fillCircle(x, y, 2.6 * s);
-  } else if (kind === 'fire') {                    // napalm: a dark steel canister (top-down)
-    // A round fuel drum seen from above — near-black steel body, a brushed-steel rim, a
-    // hazard ring, and a glowing fuel cap at the centre. `phase` flickers the heat.
-    const fl = 0.7 + 0.3 * Math.sin(phase * 0.5);
-    const r = 3.8 * s;
-    // Dark steel drum, read against dark ground by a subtle rim highlight rather than a
-    // bright body.
-    g.fillStyle(0x24282e, 1); g.fillCircle(x, y, r);
-    g.fillStyle(0x16181c, 1); g.fillCircle(x, y, r * 0.82);
-    g.lineStyle(0.8 * s, 0x4c545d, 0.85); g.strokeCircle(x, y, r * 0.9);
-    // Small but BRIGHT fuel cap — the only orange, kept punchy.
-    g.fillStyle(0xff8a1f, 0.95 * fl); g.fillCircle(x, y, 1.1 * s);
-    g.fillStyle(0xffe39a, 1); g.fillCircle(x, y, 0.5 * s);
-  } else if (kind === 'bullet') {                  // machine-gun round / shotgun pellet
-    const tx = x - ca * 6 * s, ty = y - sa * 6 * s;
-    g.lineStyle(1.5 * s, color, 0.45); g.lineBetween(tx, ty, x, y);
-    g.fillStyle(0xfff0c4, 1); g.fillCircle(x, y, 1.6 * s);
-  } else {                                          // slug: a heavy autocannon shell + tracer
-    const tx = x - ca * 16 * s, ty = y - sa * 16 * s;
-    g.lineStyle(2.4 * s, color, 0.35); g.lineBetween(tx, ty, x, y);
-    g.fillStyle(0x2a2d33, 1);                       // dark shell body
-    g.fillCircle(x - ca * 2 * s, y - sa * 2 * s, 3 * s); g.fillCircle(x, y, 3.2 * s);
-    g.fillStyle(color, 0.95); g.fillCircle(x, y, 2 * s);
-    g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.6 * s, y + sa * 0.6 * s, 1 * s);
-  }
-}
+export { drawProjectileBody };
 
 // A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.
 // `phase` is a ms timestamp driving the warble (callers pass time or beam age).
