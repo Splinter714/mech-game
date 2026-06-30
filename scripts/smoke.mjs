@@ -33,20 +33,23 @@ try {
     const sc = g.scene.getScene('GarageScene');
     const mech = g.registry.get('allMechs').mech1;
     // Mount/unmount works in a weapon slot...
-    sc.selected = 'rightArm';
     mech.unmount('rightArm', 0);
-    sc.arm('autocannon');
-    sc.placeOn('rightArm');
+    sc._selectSlot('rightArm');
+    sc._pickItem('autocannon');
     const weaponMount = mech.mounts.rightArm.includes('autocannon');
     // ...and the head is not a skill slot at all (#31), so it rejects a weapon.
-    const headRejectsWeapon = !mech.mount('head', 'mediumLaser').ok;
+    const headRejectsWeapon = !mech.mount('head', 'pulseLaser').ok;
     const dollBuilt = sc.doll.list.length > 0;
+    // The default roster leaves centreTorso (the ability slot) empty; fill it with an ability
+    // via the same catalog path so the build is COMPLETE — deploy() no-ops on an incomplete mech.
+    if (!mech.mounts.centerTorso.length) { sc._selectSlot('centerTorso'); sc._pickItem('jumpJet'); }
     return {
       chassis: mech.chassisId,
       weaponMount,
       headRejectsWeapon,
       dollBuilt,
       buildValid: mech.validate().ok,
+      deployable: mech.isComplete(),
     };
   });
   await page.screenshot({ path: '/tmp/mech-garage.png' });
@@ -83,7 +86,7 @@ try {
     // Disable aim-assist so shots go straight along the (manually set) turret facing.
     a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
     e0.x = ex0; e0.y = ey0; e0.vx = 0; e0.vy = 0;
-    a.assistOn = false; a.assistTarget = null;
+    a.assistOn = false;
 
     // Per-part damage loop: point the turret at the enemy and fire each ready weapon;
     // its centre torso (nearest part to the ray) must lose health, and over-damage
@@ -105,12 +108,16 @@ try {
       projHit = spawned && totalHp() < hp0;
     }
 
-    // Then fire everything and confirm overall damage + destruction.
+    // Then fire everything and confirm per-part damage lands + destruction works.
+    // Spread/multi-weapon fire + muzzle offsets scatter hits across the enemy's body, so
+    // assert that SOME part lost health (per-part damage applied), not one fixed location.
     a.aimX = e0.x; a.aimY = e0.y;   // re-aim (the steps above advance the sim)
-    const ctBefore = em.partHealthFraction('centerTorso');
+    const partFracs = () => Object.keys(em.parts).map((k) => em.partHealthFraction(k));
+    const partsBefore = partFracs();
     for (const w of a.mech.readyWeapons()) a.fireWeapon(w);
     for (let i = 0; i < 30; i++) a._updateProjectiles(0.016);
-    const ctAfter = em.partHealthFraction('centerTorso');
+    const partsAfter = partFracs();
+    const anyPartDamaged = partsAfter.some((f, i) => f < partsBefore[i]);
 
     em.applyDamage('centerTorso', 999);
     const dummyDead = em.isDestroyed();
@@ -135,7 +142,7 @@ try {
       onlineWeapons: a.mech.onlineWeapons().length,
       projHit,
       collisionHolds,
-      ctDamaged: ctAfter < ctBefore,
+      partDamaged: anyPartDamaged,
       dummyDead,
       spawnedExtra,
       extraDamaged,
@@ -152,12 +159,13 @@ try {
   if (!garage.headRejectsWeapon) fail('the head (not a skill slot) wrongly accepted a weapon');
   if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');
   if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
+  if (!garage.deployable) fail('build is not complete (an empty skill slot blocks deploy)');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
   if (!arena.collisionHolds) fail('the mech drove through a wall or off the arena disc');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');
-  if (!arena.ctDamaged) fail('firing at the dummy did not damage its centre torso');
+  if (!arena.partDamaged) fail('firing at the dummy did not apply per-part damage');
   if (!arena.spawnedExtra) fail('#39 spawn-enemy did not add a second enemy');
   if (!arena.extraDamaged) fail('#39 the newly spawned enemy could not be damaged');
   if (!arena.resetWorked) fail('#39 reset-enemies did not restore a destroyed enemy');
