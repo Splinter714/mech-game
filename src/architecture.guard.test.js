@@ -14,13 +14,14 @@
 // the suite stays green throughout. (projectiles → Phase 1; mounts/decor → Phase 3;
 // sfx → Phase 4; arena/*.js weapon-id check → Phase 2.)
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { WEAPON_IDS } from './data/weapons.js';
 
 const SRC = dirname(fileURLToPath(import.meta.url));
 const read = (rel) => readFileSync(join(SRC, rel), 'utf8');
+const dirJsFiles = (rel) => readdirSync(join(SRC, rel)).filter((f) => f.endsWith('.js')).map((f) => `${rel}/${f}`);
 
 // Strip line + block comments so prose mentioning a variant ("falls back to `slug`") never
 // trips the dispatcher rule — only executable code counts.
@@ -57,7 +58,10 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
 });
 
 describe('shared plumbing never names a specific weapon', () => {
-  for (const rel of ['data/delivery.js', 'data/save.js', 'scenes/BootScene.js']) {
+  // The arena scene mixins are the orchestrator/engine; enemy loadouts are data
+  // (data/enemies.js), so no arena/*.js file should name a weapon id.
+  const files = ['data/delivery.js', 'data/save.js', 'scenes/BootScene.js', ...dirJsFiles('scenes/arena')];
+  for (const rel of files) {
     it(rel, () => assertNoWeaponIdLiteral(rel));
   }
 });
