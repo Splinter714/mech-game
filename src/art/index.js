@@ -9,7 +9,7 @@ import { buildItemFxTextures } from './projectileArt.js';
 export { buildMechTextures, reskinMech, mechLayout, DESIGN, ART_SCALE } from './mechArt.js';
 export { HEX_TEX_W, HEX_TEX_H } from './hexArt.js';
 // Shared projectile/beam art — used live by the arena and as still icons by the garage.
-export { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind, itemFxKey } from './projectileArt.js';
+export { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx, projectileKind, itemFxKey } from './projectileArt.js';
 
 // Build every boot-time texture (everything that doesn't depend on a specific mech
 // build). Called once from BootScene.
