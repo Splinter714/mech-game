@@ -30,7 +30,7 @@ export default class WeaponLabScene extends Phaser.Scene {
 
     this.allMechs = this.registry.get('allMechs');
     const mech = this.allMechs?.[ACTIVE_MECH_KEY];
-    const canDeploy = mech instanceof Mech ? mech.validate().ok : false;
+    const canDeploy = mech instanceof Mech ? mech.isComplete() : false;
     buildTabBar(this, { active: 'WeaponLabScene', canDeploy, onDeploy: () => this._deploy() });
 
     this.list = new WeaponCardList(this, { ...this._region(), ids: WEAPON_IDS });

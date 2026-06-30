@@ -25,7 +25,7 @@ export default class MusicScene extends Phaser.Scene {
 
     this.allMechs = this.registry.get('allMechs');
     const mech = this.allMechs?.[ACTIVE_MECH_KEY];
-    const canDeploy = mech instanceof Mech ? mech.validate().ok : false;
+    const canDeploy = mech instanceof Mech ? mech.isComplete() : false;
     buildTabBar(this, { active: 'MusicScene', canDeploy, onDeploy: () => this._deploy() });
 
     this.add.text(this.W / 2, TAB_BAR_H + (this.H - TAB_BAR_H) / 2, 'MUSIC\n\nfull-screen tuning coming here\n(press P for the current panel)', {

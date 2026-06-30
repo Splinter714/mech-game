@@ -21,6 +21,20 @@ describe('Mech damage: armor then structure', () => {
   });
 });
 
+describe('Mech build completeness (deploy gating)', () => {
+  it('isComplete only once every skill slot is filled with a legal item', () => {
+    const m = new Mech({ chassisId: 'light' });
+    expect(m.isComplete()).toBe(false);                 // empty build
+    m.mount('leftArm', 'pulseLaser');
+    m.mount('rightArm', 'pulseLaser');
+    m.mount('leftTorso', 'autocannon');
+    m.mount('rightTorso', 'autocannon');
+    expect(m.isComplete()).toBe(false);                 // centre torso still empty
+    m.mount('centerTorso', 'jumpJet');
+    expect(m.isComplete()).toBe(true);                  // all five filled
+  });
+});
+
 describe('Mech kill rule', () => {
   const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxStructure + 50);
 

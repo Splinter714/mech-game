@@ -131,6 +131,8 @@ export class Mech {
   slotCapacity(loc) { return loadout.slotCapacity(this._chassis, loc); }
   freeSlots(loc) { return loadout.freeSlots(this._chassis, this.mounts, loc); }
   validate() { return loadout.validateLoadout(this._chassis, this.mounts); }
+  // A build is deployable only when it's legal AND every skill slot is filled.
+  isComplete() { return this.validate().ok && MOUNT_LOCATIONS.every((loc) => this.usedSlots(loc) > 0); }
 
   // ── Weapons & ammo ────────────────────────────────────────────────────────
   // Every mounted weapon with its resolved stats, whether it's online (its part is
