@@ -306,7 +306,7 @@ export class WeaponCardList {
         lift = Math.sin((p.dist / p.maxDist) * Math.PI) * Math.min(22, p.maxDist * 0.12);
         g.fillStyle(0x000000, 0.25).fillEllipse(p.x, p.y, 7, 3);
       }
-      drawProjectileBody(g, p.x, p.y - lift, p.angle, p.kind, p.color, 1, p.dist);
+      drawProjectileBody(g, p.x, p.y - lift, p.angle, p.kind, p.color, p.scale || 1, p.dist);
     }
     for (const s of card.slashes) drawSlash(g, card.muzzleX, card.muzzleY, 0, s.t / s.ttl, s.color, 1, 34);
     for (const b of card.bursts) {

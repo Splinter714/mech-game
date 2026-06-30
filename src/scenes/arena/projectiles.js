@@ -70,7 +70,7 @@ export const ProjectilesMixin = {
     }
     // The round body itself is shared art (so the garage icon matches); `p.dist` drives
     // the flame flicker.
-    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale, p.dist);
+    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale * (p.scale || 1), p.dist);
   },
 
   // Persistent hitscan beams: age them, retire expired ones into a brief spark-fade, and

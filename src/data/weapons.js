@@ -94,7 +94,7 @@ export const WEAPONS = {
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
     damage: 2, range: { min: 0, opt: 80, max: 140 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 640, pattern: 'stream', fireRate: 12, kind: 'bullet' },
+    delivery: { hit: 'projectile', path: 'straight', velocity: 900, pattern: 'stream', fireRate: 18, kind: 'bullet', scale: 0.75 },
   }),
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
