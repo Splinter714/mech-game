@@ -531,7 +531,7 @@ export default class ArenaScene extends Phaser.Scene {
 
   _spawnProjectile(w, x, y, angle, owner = 'player') {
     const d = w.weapon.delivery;
-    const speed = d.velocity || 480;
+    let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
     let tgt;
     if (owner === 'player') { const e = this._nearestEnemy(x, y); tgt = e ? { x: e.x, y: e.y } : { x, y }; }
@@ -543,6 +543,12 @@ export default class ArenaScene extends Phaser.Scene {
       const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
       maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
+      // Constant-apex lobs: hold flight time fixed so every arc peaks at the same height —
+      // a far shot therefore launches faster. The weapon's `velocity` is calibrated at its
+      // optimal range (T = opt / velocity), and that same airtime is reused at any range.
+      const opt = w.weapon.range?.opt || maxDist;
+      const flightTime = opt / speed;
+      speed = maxDist / flightTime;
     }
     // Homing is intrinsic to guided weapons now (#31): they track their target on their
     // own when fired, no equipped lock needed.
@@ -606,14 +612,14 @@ export default class ArenaScene extends Phaser.Scene {
     // stays planted on its true ground position.
     let scale = 1;
     if (p.arc) {
-      const h = Math.sin((p.dist / p.maxDist) * Math.PI);     // 0..1 height fraction
-      // Apex scales with how far this lob travels: a near toss barely lifts, a long lob
-      // climbs high and comes down. `loft` (0..1) maps the round's range over a reference.
-      const loft = Phaser.Math.Clamp(p.maxDist / 700, 0.18, 1);
-      const bump = 0.25 + loft * 0.85;                        // peak size gain at apex
+      const t = p.dist / p.maxDist;
+      const h = 4 * t * (1 - t);                              // 0..1 parabolic height fraction
+      // Constant apex: every lob peaks at the same height regardless of range, so a near
+      // toss looks like a steep mortar pop and a far shot looks flat and skimming.
+      const bump = 0.75;                                      // peak size gain at apex
       scale = 1 + h * bump;
-      const sw = 8 - h * (2.5 + loft * 2.5);                  // shadow tightens with height
-      g.fillStyle(0x000000, 0.28 - h * (0.08 + loft * 0.12)).fillEllipse(p.x, p.y, sw, sw * 0.42);
+      const sw = 8 - h * 4;                                   // shadow tightens with height
+      g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
     }
     // The round body itself is shared art (so the garage icon matches); `p.dist` drives
     // the flame flicker.

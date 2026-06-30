@@ -32,16 +32,16 @@ export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0
     // round's distance) drives the flicker and the wobble of the cast-off droplets.
     const f = 0.75 + 0.25 * Math.sin(phase * 0.5);
     // Hot wake streaming back from the glob.
-    g.fillStyle(color, 0.18 * f); g.fillCircle(x - ca * 5 * s, y - sa * 5 * s, 5.5 * s);
-    g.fillStyle(color, 0.30 * f); g.fillCircle(x, y, 7.5 * s);
+    g.fillStyle(color, 0.18 * f); g.fillCircle(x - ca * 3.5 * s, y - sa * 3.5 * s, 3.8 * s);
+    g.fillStyle(color, 0.30 * f); g.fillCircle(x, y, 5 * s);
     // Teardrop: round front, tapered tail (drawn as two overlapping circles).
-    g.fillStyle(color, 0.92); g.fillCircle(x, y, 3.6 * s);
-    g.fillStyle(color, 0.7); g.fillCircle(x - ca * 3 * s, y - sa * 3 * s, 2.2 * s);
-    g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.6 * s, y + sa * 0.6 * s, 1.5 * s);
+    g.fillStyle(color, 0.92); g.fillCircle(x, y, 2.4 * s);
+    g.fillStyle(color, 0.7); g.fillCircle(x - ca * 2 * s, y - sa * 2 * s, 1.5 * s);
+    g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.4 * s, y + sa * 0.4 * s, 1 * s);
     // Shed droplets wobbling off to the sides.
-    const wob = Math.sin(phase * 0.7) * 2.2 * s;
+    const wob = Math.sin(phase * 0.7) * 1.6 * s;
     g.fillStyle(color, 0.55 * f);
-    g.fillCircle(x - ca * 6 * s - sa * wob, y - sa * 6 * s + ca * wob, 1.1 * s);
+    g.fillCircle(x - ca * 4 * s - sa * wob, y - sa * 4 * s + ca * wob, 0.8 * s);
   } else if (kind === 'missile') {
     const bx = x - ca * 7 * s, by = y - sa * 7 * s;
     g.lineStyle(3 * s, 0xffb347, 0.5); g.lineBetween(bx, by, x - ca * 14 * s, y - sa * 14 * s);

@@ -45,7 +45,7 @@ export const WEAPONS = {
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
     damage: 18, range: { min: 0, opt: 480, max: 820 },
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 460, pattern: 'single', splash: 40 },
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40 },
   }),
   autocannon: w({
     id: 'autocannon', name: 'Slug Driver', category: 'ballistic',
@@ -115,7 +115,7 @@ export const WEAPONS = {
     id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
     damage: 6, range: { min: 50, opt: 500, max: 780 },
     ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 420, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
   }),
 };
 
