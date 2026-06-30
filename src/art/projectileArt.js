@@ -60,19 +60,19 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const nx = dx / len, ny = dy / len;   // beam direction
   const px = -ny, py = nx;              // perpendicular
 
-  const glowW = (heavy ? 20 : 14) * s;
-  const coreW = (heavy ? 5 : 3.5) * s;
-  const SEGS = heavy ? 12 : 16;
+  const glowW = (heavy ? 17 : 11) * s;
+  const coreW = (heavy ? 4 : 2.6) * s;
+  const SEGS = heavy ? 48 : 64;
 
   // Outer glow: tapered warbling segments matching the core wobble.
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
-    const taperStart = 0.7;
+    const taperStart = 0.85;
     const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
-    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.8 * s;
-    const warp0 = warpRaw * Math.sin(t0 * Math.PI);
-    const warp1 = warpRaw * Math.sin(t1 * Math.PI);
+    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.3 * s;
+    const warp0 = t0 === 0 ? 0 : warpRaw;
+    const warp1 = t1 === 1 ? 0 : warpRaw;
     g.lineStyle(glowW * taper, color, 0.18);
     g.lineBetween(x0 + nx * len * t0 + px * warp0, y0 + ny * len * t0 + py * warp0,
                   x0 + nx * len * t1 + px * warp1, y0 + ny * len * t1 + py * warp1);
@@ -84,12 +84,12 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
     // Taper: full at muzzle, tapers only toward the far end.
-    const taperStart = 0.7;
+    const taperStart = 0.85;
     const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
     // Warp also multiplied by taper so the beam connects cleanly to muzzle and endpoint.
-    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.8 * s;
-    const warp0 = warpRaw * Math.sin(t0 * Math.PI);
-    const warp1 = warpRaw * Math.sin(t1 * Math.PI);
+    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.3 * s;
+    const warp0 = t0 === 0 ? 0 : warpRaw;
+    const warp1 = t1 === 1 ? 0 : warpRaw;
     const ax = x0 + nx * len * t0 + px * warp0, ay = y0 + ny * len * t0 + py * warp0;
     const bx = x0 + nx * len * t1 + px * warp1, by = y0 + ny * len * t1 + py * warp1;
     g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
@@ -107,7 +107,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const tipTaper = Math.cos(t * Math.PI / 2);  // 1 at muzzle, 0 at tip
     const drift = (phase * speed + i * 37) % (maxDrift * tipTaper);
     const life = 1 - drift / (maxDrift * tipTaper + 0.001);
-    const rMax = (heavy ? 5.5 : 4.0) * s * tipTaper;
+    const rMax = (heavy ? 4.0 : 2.8) * s * tipTaper;
     const r = rMax * life;              // shrinks to nothing as it flies off
     if (r < 0.5) continue;
     const sx = x0 + nx * len * t + px * sign * drift;
