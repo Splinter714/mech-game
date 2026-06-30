@@ -601,15 +601,19 @@ export default class ArenaScene extends Phaser.Scene {
 
   _drawProjectile(p) {
     const g = this.projFx;
-    // Arcing rounds fake height: a ground shadow plus a lofted body.
-    let lift = 0;
+    // Arcing rounds fake height with size alone (no vertical offset): the body grows as it
+    // lofts toward the "camera" and the ground shadow tightens beneath it, so the round
+    // stays planted on its true ground position.
+    let scale = 1;
     if (p.arc) {
-      lift = Math.sin((p.dist / p.maxDist) * Math.PI) * Math.min(28, p.maxDist * 0.12);
-      g.fillStyle(0x000000, 0.25).fillEllipse(p.x, p.y, 7, 3);
+      const h = Math.sin((p.dist / p.maxDist) * Math.PI);     // 0..1 height fraction
+      scale = 1 + h * 0.6;                                     // bigger when high
+      const sw = 8 - h * 3.5;
+      g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
     }
     // The round body itself is shared art (so the garage icon matches); `p.dist` drives
     // the flame flicker.
-    drawProjectileBody(g, p.x, p.y - lift, p.angle, p.kind, p.color, 1, p.dist);
+    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale, p.dist);
   }
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a
