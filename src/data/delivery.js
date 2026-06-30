@@ -32,16 +32,25 @@ const JOSTLE_SETTLE_AT = 0.65;    // fraction of flight (dist/maxDist) where jig
 const WEAVE_AMPLITUDE = 5;        // px, lateral weave (Streak Pod) — moderate, not chaotic
 const WEAVE_FREQUENCY = 6;        // rad/s, weave rate — slow enough to read as deliberate
 const STREAK_STAGGER_DEG = 2.5;   // ° angular stagger between consecutive Streak Pod shots
+const SWAY_AMPLITUDE = 12;        // px, synchronized clump-wide sway (Cluster Salvo, #51)
+const SWAY_FREQUENCY = 9;         // rad/s
 
-// Which wobble personality (if any) a weapon's rounds fly with — an explicit opt-in data
-// flag (`delivery.wobble: 'jostle' | 'weave'`), never a hardcoded weapon id, so this stays
-// shared/variant-agnostic plumbing. Homing-only by construction in practice: a dumbfire
-// weapon (e.g. clusterRocket, #51) simply never sets the flag.
+// Which wobble personality (if any) a weapon's rounds fly with. Cluster weapons always get
+// the synchronized 'sway' (#51); among homing weapons, it's an explicit opt-in data flag
+// (`delivery.wobble: 'jostle' | 'weave'`), never a hardcoded weapon id, so this stays
+// shared/variant-agnostic plumbing.
 function wobbleKind(weapon) {
   const d = weapon.delivery || {};
+  if (d.cluster) return 'sway';
   if (d.guidance !== 'homing') return null;
   return d.wobble === 'jostle' || d.wobble === 'weave' ? d.wobble : null;
 }
+
+// Set by planEmissions right before it produces a cluster volley's shots, consumed by the
+// makeProjectile() call for each of those shots moments later in the same synchronous tick
+// (cluster shots all fire with delay 0) — this is how every rocket in one clump ends up
+// sharing the exact same sway phase instead of each rolling its own (#51).
+let pendingSwayPhase = null;
 
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
 
@@ -103,8 +112,10 @@ export function planEmissions(weapon) {
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
   for (let i = 0; i < n; i++) {
     const c = n > 1 ? (i - (n - 1) / 2) : 0;       // centred index: −…0…+
-    if (d.cluster) shots.push(shot({ lateral: c * CLUSTER_SPACING }));
-    else if (n > 1) {
+    if (d.cluster) {
+      pendingSwayPhase = Math.random() * Math.PI * 2;
+      shots.push(shot({ lateral: c * CLUSTER_SPACING }));
+    } else if (n > 1) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
       const fireDelay = jitterRad ? Math.random() * SPREAD_JITTER_DELAY : 0;
       shots.push(shot({ angleOffset: (c / (n - 1)) * cone + jitter, delay: fireDelay }));
@@ -141,6 +152,11 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   const speedJitter = d.spreadJitter ? 0.82 + Math.random() * 0.36 : 1;
   const speed = (d.velocity || 480) * speedJitter;
   const wobble = wobbleKind(weapon);
+  // A cluster's sway phase is shared across the whole volley (#51); every other wobble
+  // kind rolls its own random phase so a salvo's missiles never wobble in lockstep.
+  const wobblePhase = wobble === 'sway' && pendingSwayPhase != null
+    ? pendingSwayPhase
+    : (wobble ? Math.random() * Math.PI * 2 : 0);
   return {
     x, y, angle, speed,
     vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
@@ -148,10 +164,9 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,
     homing: d.guidance === 'homing', turn: TURN_RATE,
-    // Flight-personality wobble (#49/#50) — see wobbleKind(). `wobblePhase` is each round's
-    // own random phase so a salvo's missiles never wobble in lockstep; `wobbleOffset` is the
-    // last-applied lateral nudge (kept so the trail/art can read where the round visually is).
-    wobble, wobblePhase: wobble ? Math.random() * Math.PI * 2 : 0, wobbleOffset: 0, wobbleTime: 0,
+    // Flight-personality wobble — see wobbleKind(). `wobbleOffset` is the last-applied
+    // lateral nudge (kept so the trail/art can read where the round visually is).
+    wobble, wobblePhase, wobbleOffset: 0, wobbleTime: 0,
   };
 }
 
@@ -182,6 +197,10 @@ export function stepProjectile(p, dt, desiredAngle = null) {
     } else if (p.wobble === 'weave') {
       // Smooth, deliberate sine weave at constant amplitude — no decay, no randomness.
       offset = Math.sin(p.wobbleTime * WEAVE_FREQUENCY + p.wobblePhase) * WEAVE_AMPLITUDE;
+    } else if (p.wobble === 'sway') {
+      // Every rocket in the clump shares the same phase (#51), so the whole rigid
+      // formation snakes together without any rocket drifting relative to its neighbors.
+      offset = Math.sin(p.wobbleTime * SWAY_FREQUENCY + p.wobblePhase) * SWAY_AMPLITUDE;
     }
     const perp = p.angle + Math.PI / 2;
     const dx = Math.cos(perp) * (offset - p.wobbleOffset);
