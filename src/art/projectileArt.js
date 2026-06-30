@@ -60,12 +60,22 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const nx = dx / len, ny = dy / len;   // beam direction
   const px = -ny, py = nx;              // perpendicular
 
-  const glowW = (heavy ? 14 : 9) * s;
+  const glowW = (heavy ? 20 : 14) * s;
   const coreW = (heavy ? 5 : 3.5) * s;
   const SEGS = heavy ? 6 : 8;
 
-  // Outer glow: wide soft layer drawn as one full line.
-  g.lineStyle(glowW, color, 0.18); g.lineBetween(x0, y0, x1, y1);
+  // Outer glow: tapered warbling segments matching the core wobble.
+  for (let i = 0; i < SEGS; i++) {
+    const t0 = i / SEGS, t1 = (i + 1) / SEGS;
+    const tc = (t0 + t1) / 2;
+    const taper = Math.cos(tc * Math.PI / 2);
+    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.8 * s;
+    const warp0 = warpRaw * Math.sin(t0 * Math.PI);
+    const warp1 = warpRaw * Math.sin(t1 * Math.PI);
+    g.lineStyle(glowW * taper, color, 0.18);
+    g.lineBetween(x0 + nx * len * t0 + px * warp0, y0 + ny * len * t0 + py * warp0,
+                  x0 + nx * len * t1 + px * warp1, y0 + ny * len * t1 + py * warp1);
+  }
 
   // Core: warbling segments — each slightly offset perpendicular so the beam "wobbles".
   // Taper alpha near the ends so it doesn't cut off abruptly.
