@@ -115,13 +115,15 @@ export const WEAPONS = {
     id: 'swarmRack', name: 'Swarm Rack', category: 'missile',
     damage: 4, range: { min: 80, opt: 300, max: 500 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300 },
+    // wobble: 'jostle' — chaotic random-phase jiggle that settles on final approach (#49).
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300, wobble: 'jostle' },
   }),
   streakPod: w({    // fires seekers one-at-a-time in a rapid stream; each homes in
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
     damage: 5, range: { min: 60, opt: 260, max: 440 },
     ammoMax: 16, ammoRegen: 1.6, slots: 2, cycleTime: 0,
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'stream', fireRate: 6, velocity: 440 },
+    // wobble: 'weave' — smooth deliberate sine weave, no decay (#50).
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'stream', fireRate: 6, velocity: 440, wobble: 'weave' },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',

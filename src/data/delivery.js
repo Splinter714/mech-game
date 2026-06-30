@@ -19,6 +19,49 @@ const TURN_RATE = 4.0;            // guided-missile steering rate (rad/s)
 const CLUSTER_SPACING = 6;        // lateral px between rounds in a dumbfire cluster
 const DEFAULT_SPREAD_DEG = 16;    // fan width for a spread weapon that omits spreadAngle
 
+// ── Per-weapon flight "personality" (#49/#50) ──────────────────────────────────────────
+// Opt-in lateral wobble layered on top of homing steering, purely cosmetic — it nudges
+// the round's drawn position, never its steering target. Gated on `guidance: 'homing'`
+// so dumbfire weapons (e.g. clusterRocket, #51) are never touched.
+//   jostle — Swarm Rack (#49): chaotic random-phase jiggle that calms on final approach.
+//   weave  — Streak Pod (#50): smooth deliberate sine weave, constant amplitude.
+const JOSTLE_AMPLITUDE = 10;      // px, lateral jiggle at launch (Swarm Rack)
+const JOSTLE_FREQUENCY = 16;      // rad/s, jiggle rate
+const JOSTLE_SETTLE_AT = 0.65;    // fraction of flight (dist/maxDist) where jiggle reaches zero
+const WEAVE_AMPLITUDE = 5;        // px, lateral weave (Streak Pod) — moderate, not chaotic
+const WEAVE_FREQUENCY = 6;        // rad/s, weave rate — slow enough to read as deliberate
+const STREAK_STAGGER_DEG = 2.5;   // ° angular stagger between consecutive Streak Pod shots
+
+// Which wobble personality (if any) a weapon's rounds fly with — an explicit opt-in data
+// flag (`delivery.wobble: 'jostle' | 'weave'`), never a hardcoded weapon id, so this stays
+// shared/variant-agnostic plumbing. Homing-only by construction in practice: a dumbfire
+// weapon (e.g. clusterRocket, #51) simply never sets the flag.
+function wobbleKind(weapon) {
+  const d = weapon.delivery || {};
+  if (d.guidance !== 'homing') return null;
+  return d.wobble === 'jostle' || d.wobble === 'weave' ? d.wobble : null;
+}
+
+const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
+
+// Swarm Rack (#49): all 6 missiles launch at once from the same point but fan out at
+// different angles, so the outer missiles' initial line-of-sight to the target is
+// slightly longer than the centre missile's (the fan is wide, 44°). Nudge each round's
+// speed so every missile's estimated flight time matches the centre shot's — outer/
+// longer-path missiles fly a little faster, converging on one simultaneous impact
+// instead of trickling in. `angleOffset` is the shot's fan angle (radians off the aim
+// line, as planEmissions produced it); `straightDist` is the centre-line range to the
+// target at fire time.
+export function arrivalSpeedMultiplier(weapon, angleOffset, straightDist) {
+  if (wobbleKind(weapon) !== 'jostle' || !straightDist || straightDist <= 0) return 1;
+  // Path length for a shot fired `angleOffset` off the direct line, modelled as the chord
+  // it must close back onto the target: longer for wider angles. A flat approximation
+  // (1/cos) captures "wider fan → longer path" without needing real target geometry.
+  const pathFactor = 1 / Math.max(0.4, Math.cos(angleOffset));
+  const mult = pathFactor; // faster for the longer (wider-angle) paths
+  return 1 + Math.max(-ARRIVAL_SPEED_LIMIT, Math.min(ARRIVAL_SPEED_LIMIT, mult - 1));
+}
+
 // The visual KIND of a fired round (shared by the arena, the Lab, and the garage icons).
 export function projectileKind(weapon) {
   const d = weapon.delivery || {};
@@ -59,6 +102,15 @@ export function planEmissions(weapon) {
     else if (n > 1) shots.push(shot({ angleOffset: (c / (n - 1)) * cone }));
     else shots.push(shot());
   }
+  // Streak Pod (#50): a tight stream of single seekers gets a tiny alternating angular
+  // stagger per trigger pull (not a fan — just enough to read as a packed cluster streak,
+  // not perfectly overlapping shots). Keyed per-weapon so consecutive pulls alternate sides.
+  if (n === 1 && d.pattern === 'stream' && wobbleKind(weapon) === 'weave') {
+    const seq = (streakSeq.get(weapon.id) ?? 0) + 1;
+    streakSeq.set(weapon.id, seq);
+    const stagger = ((STREAK_STAGGER_DEG * Math.PI) / 180) * (seq % 2 === 0 ? 1 : -1);
+    shots[0] = shot({ angleOffset: stagger });
+  }
   return { mode: 'projectile', shots };
 }
 
@@ -66,12 +118,18 @@ function shot({ delay = 0, angleOffset = 0, lateral = 0 } = {}) {
   return { delay, angleOffset, lateral };
 }
 
+// Tracks Streak Pod's alternating stagger across successive trigger pulls (module-level
+// is fine — the arena and the Lab each have their own card/scene lifetime and a stale
+// parity bit is cosmetically harmless).
+const streakSeq = new Map();
+
 // Build a round's kinematic state. The caller supplies `maxDist` (its own travel budget:
 // the arena's target/lob distance, the Lab's stage width) and may tack on scene-specific
 // fields (owner, trail) afterward.
 export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   const d = weapon.delivery || {};
   const speed = d.velocity || 480;
+  const wobble = wobbleKind(weapon);
   return {
     x, y, angle, speed,
     vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
@@ -79,6 +137,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,
     homing: d.guidance === 'homing', turn: TURN_RATE,
+    // Flight-personality wobble (#49/#50) — see wobbleKind(). `wobblePhase` is each round's
+    // own random phase so a salvo's missiles never wobble in lockstep; `wobbleOffset` is the
+    // last-applied lateral nudge (kept so the trail/art can read where the round visually is).
+    wobble, wobblePhase: wobble ? Math.random() * Math.PI * 2 : 0, wobbleOffset: 0, wobbleTime: 0,
   };
 }
 
@@ -94,6 +156,34 @@ export function stepProjectile(p, dt, desiredAngle = null) {
   p.x += p.vx * dt;
   p.y += p.vy * dt;
   p.dist += p.speed * dt;
+  // Cosmetic lateral wobble (#49/#50) — layered on top of the homing steering above, never
+  // fighting it: each frame we undo last frame's perpendicular nudge and apply a fresh one,
+  // so the round's true (unwobbled) path still advances cleanly toward its target and the
+  // wobble never accumulates into drift.
+  if (p.wobble) {
+    p.wobbleTime += dt;
+    const t = p.maxDist > 0 ? Math.min(1, p.dist / p.maxDist) : 0;
+    let offset = 0;
+    if (p.wobble === 'jostle') {
+      // Chaotic random-phase jiggle that settles to zero on final approach.
+      const envelope = 1 - smoothstep(0, JOSTLE_SETTLE_AT, t);
+      offset = Math.sin(p.wobbleTime * JOSTLE_FREQUENCY + p.wobblePhase) * JOSTLE_AMPLITUDE * envelope;
+    } else if (p.wobble === 'weave') {
+      // Smooth, deliberate sine weave at constant amplitude — no decay, no randomness.
+      offset = Math.sin(p.wobbleTime * WEAVE_FREQUENCY + p.wobblePhase) * WEAVE_AMPLITUDE;
+    }
+    const perp = p.angle + Math.PI / 2;
+    const dx = Math.cos(perp) * (offset - p.wobbleOffset);
+    const dy = Math.sin(perp) * (offset - p.wobbleOffset);
+    p.x += dx; p.y += dy;
+    p.wobbleOffset = offset;
+  }
+}
+
+// Smooth 0→1 ramp between edges a and b (Hermite interpolation), clamped outside the range.
+function smoothstep(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
 
 // Rotate angle `a` toward `target` by at most `maxStep`, taking the shortest way around.

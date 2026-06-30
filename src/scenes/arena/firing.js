@@ -3,7 +3,7 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
-import { planEmissions, makeProjectile } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier } from '../../data/delivery.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 
@@ -78,7 +78,7 @@ export const FiringMixin = {
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
         else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle);
-        else this._spawnProjectile(w, ox, oy, baseAngle);
+        else this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset);
       };
       if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
     }
@@ -166,7 +166,7 @@ export const FiringMixin = {
     }
   },
 
-  _spawnProjectile(w, x, y, angle, owner = 'player') {
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -203,6 +203,16 @@ export const FiringMixin = {
       round.vy = Math.sin(angle) * speed;
     }
     if (owner === 'player') round.homing = round.homing && !!seekTarget;
+    // Swarm Rack simultaneous-arrival (#49): nudge this shot's speed by how much farther
+    // its fan angle makes its initial path vs. the centre shot, so the whole salvo (fired
+    // from the same point at once) lands together instead of trickling in.
+    if (round.homing && seekTarget) {
+      const straightDist = Math.hypot(seekTarget.x - x, seekTarget.y - y);
+      const mult = arrivalSpeedMultiplier(w.weapon, angleOffset, straightDist);
+      round.speed *= mult;
+      round.vx *= mult;
+      round.vy *= mult;
+    }
     this.projectiles.push({ ...round, owner, trail: [], seekTarget });
   },
 };
