@@ -55,6 +55,20 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
       .toMatch(/PROJECTILE_ART\s*\[/);
     assertNoVariantBranch('art/projectiles/index.js');
   });
+
+  it('weapon-mount art (by category)', () => {
+    const code = stripComments(read('art/mounts/index.js'));
+    expect(code, 'drawWeaponMount must dispatch via MOUNT_ART[catId]')
+      .toMatch(/MOUNT_ART\s*\[/);
+    assertNoVariantBranch('art/mounts/index.js');
+  });
+
+  it('chassis decor art (by kind)', () => {
+    const code = stripComments(read('art/decor/index.js'));
+    expect(code, 'drawDecor must dispatch via DECOR_ART[kind]')
+      .toMatch(/DECOR_ART\s*\[/);
+    assertNoVariantBranch('art/decor/index.js');
+  });
 });
 
 describe('shared plumbing never names a specific weapon', () => {
