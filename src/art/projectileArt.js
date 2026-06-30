@@ -104,10 +104,10 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     // Random beam position that re-randomises each cycle.
     const cycle = Math.floor(phase * speed + i * 37);
     const t = Math.abs(Math.sin(cycle * 127.3 + i * 31.7));
-    const tipTaper = Math.cos(t * Math.PI / 2);  // 1 at muzzle, 0 at tip
+    const tipTaper = 0.25 + 0.75 * Math.cos(t * Math.PI / 2);  // 1 at muzzle, 0.25 at tip
     const drift = (phase * speed + i * 37) % (maxDrift * tipTaper);
     const life = 1 - drift / (maxDrift * tipTaper + 0.001);
-    const rMax = (heavy ? 4.0 : 2.8) * s * (0.4 + 0.6 * tipTaper);
+    const rMax = (heavy ? 4.0 : 2.8) * s;
     const r = rMax * life;              // shrinks to nothing as it flies off
     if (r < 0.5) continue;
     const sx = x0 + nx * len * t + px * sign * drift;
