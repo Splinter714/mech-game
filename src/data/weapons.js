@@ -14,9 +14,11 @@
 //             emission stagger) instead of an evenly-spaced, perfectly repeating fan; for
 //             weapons that should feel chaotic shot-to-shot (the flamethrower)
 //   cluster   spread rounds fly as a tight parallel clump (no fan) — dumbfire cluster
-//   fireRate  shots per second for a `stream` weapon (machine gun / streak missiles)
+//   fireRate  shots per second for a `stream` weapon (machine gun / beam laser)
 //   burst     { count, interval } — one trigger pull fires `count` rapid sub-shots
-//             `interval` ms apart (the energy pulse laser's multi-pulse)
+//             `interval` ms apart. For a hitscan, that's `count` light pulses (pulse
+//             laser); for a projectile, `count` travelling rounds (streak pod)
+//   wobble    'jostle' | 'weave' — cosmetic lateral wiggle on a homing round's flight path
 //   sustained a `stream` hitscan held as ONE continuous beam, not a flicker (beam laser)
 //   splash    blast radius in px (plasma/explosive)
 //   groundFire { radius, dps, duration } — leaves a burning patch on impact (napalm)
@@ -123,12 +125,13 @@ export const WEAPONS = {
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300, wobble: 'jostle' },
   }),
-  streakPod: w({    // fires seekers one-at-a-time in a rapid stream; each homes in
+  streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
     damage: 5, range: { min: 60, opt: 260, max: 440 },
-    ammoMax: 16, ammoRegen: 1.6, slots: 2, cycleTime: 0,
-    // wobble: 'weave' — smooth deliberate sine weave, no decay (#50).
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'stream', fireRate: 6, velocity: 440, wobble: 'weave' },
+    ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
+    // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
+    // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
+    delivery: { hit: 'projectile', guidance: 'homing', velocity: 440, wobble: 'weave', burst: { count: 6, interval: 70 } },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',

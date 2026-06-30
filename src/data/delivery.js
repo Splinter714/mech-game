@@ -3,15 +3,16 @@
 // Phaser): it owns only the parts that are identical between the two —
 //
 //   1. planEmissions(weapon)  — how one trigger pull turns into shots: a single shot, a
-//      fanned spread cone, a tight parallel cluster, or a rapid multi-pulse burst. Each
-//      emission is a descriptor (delay + angle offset + lateral offset); the scene
+//      fanned spread cone, a tight parallel cluster, a multi-pulse/multi-missile burst,
+//      or some combination (e.g. Streak Pod is a burst of staggered single shots).
+//      Each emission is a descriptor (delay + angle offset + lateral offset); the scene
 //      applies it to its own muzzle/aim at fire time.
 //   2. makeProjectile(...)    — the kinematic round object (velocity, kind, colour…).
 //   3. stepProjectile(...)    — advancing a round one frame, incl. homing steering.
 //
 // Everything that genuinely differs stays in the scenes: the arena resolves live
 // targets, walls, collision and damage; the Lab just flies rounds to the stage edge.
-// Both, however, get spread/cluster/burst/homing behaviour from exactly one place.
+// Both, however, get spread/cluster/burst/homing/wobble behaviour from exactly one place.
 
 import { CATEGORIES } from './categories.js';
 
@@ -32,7 +33,7 @@ const JOSTLE_AMPLITUDE = 5;       // px, lateral jiggle (Swarm Rack) — owner: 
 const JOSTLE_FREQUENCY = 11;      // rad/s, jiggle rate
 const WEAVE_AMPLITUDE = 5;        // px, lateral weave (Streak Pod) — moderate, not chaotic
 const WEAVE_FREQUENCY = 6;        // rad/s, weave rate — slow enough to read as deliberate
-const STREAK_STAGGER_DEG = 2.5;   // ° angular stagger between consecutive Streak Pod shots
+const STREAK_STAGGER_DEG = 0.6;   // ° angular stagger between consecutive Streak Pod sub-shots
 const SWAY_AMPLITUDE = 12;        // px, synchronized clump-wide sway (Cluster Salvo, #51)
 const SWAY_FREQUENCY = 9;         // rad/s
 
@@ -87,21 +88,24 @@ export function projectileKind(weapon) {
 
 // What one trigger pull emits. Returns { mode, shots } where mode is 'hitscan' |
 // 'contact' | 'projectile' and each shot is { delay, angleOffset, lateral }:
-//   delay        ms to wait before this sub-shot (multi-pulse burst); 0 = immediate
-//   angleOffset  radians off the aim line (spread fan, or a cluster's tiny jitter)
+//   delay        ms to wait before this sub-shot (multi-pulse/multi-missile burst); 0 = now
+//   angleOffset  radians off the aim line (spread fan, a cluster's tiny jitter, or stagger)
 //   lateral      px perpendicular to the shot (a cluster's parallel offset)
 // The caller turns each into a real shot from its current muzzle/aim.
 export function planEmissions(weapon) {
   const d = weapon.delivery || {};
   if (d.hit === 'contact') return { mode: 'contact', shots: [shot()] };
-  if (d.hit === 'hitscan') {
+  const mode = d.hit === 'hitscan' ? 'hitscan' : 'projectile';
+
+  if (mode === 'hitscan') {
     if (d.burst) {
       const shots = [];
       for (let i = 0; i < d.burst.count; i++) shots.push(shot({ delay: i * d.burst.interval }));
-      return { mode: 'hitscan', shots };
+      return { mode, shots };
     }
-    return { mode: 'hitscan', shots: [shot()] };
+    return { mode, shots: [shot()] };
   }
+
   // Projectile: a single round, a fanned cone of `spreadCount`, or — for `cluster`
   // weapons — a tight parallel clump (lateral offsets, ~parallel headings, no fan).
   // `spreadJitter` (degrees) randomizes each fan shot's angle and emission timing instead
@@ -122,26 +126,28 @@ export function planEmissions(weapon) {
       shots.push(shot({ angleOffset: (c / (n - 1)) * cone + jitter, delay: fireDelay }));
     } else shots.push(shot());
   }
-  // Streak Pod (#50): a tight stream of single seekers gets a tiny alternating angular
-  // stagger per trigger pull (not a fan — just enough to read as a packed cluster streak,
-  // not perfectly overlapping shots). Keyed per-weapon so consecutive pulls alternate sides.
-  if (n === 1 && d.pattern === 'stream' && wobbleKind(weapon) === 'weave') {
-    const seq = (streakSeq.get(weapon.id) ?? 0) + 1;
-    streakSeq.set(weapon.id, seq);
-    const stagger = ((STREAK_STAGGER_DEG * Math.PI) / 180) * (seq % 2 === 0 ? 1 : -1);
-    shots[0] = shot({ angleOffset: stagger });
+
+  // Projectile burst (Streak Pod, #50): one trigger pull unloads `burst.count` rounds in
+  // rapid succession instead of requiring the button held — replaces the single shot above
+  // with `count` delayed copies. Consecutive sub-shots alternate a tiny angular stagger (for
+  // a 'weave' wobble weapon) so the stream reads as a packed, slightly offset column rather
+  // than perfectly overlapping shots.
+  if (d.burst && n === 1) {
+    const staggerRad = (STREAK_STAGGER_DEG * Math.PI) / 180;
+    const staggered = wobbleKind(weapon) === 'weave';
+    const out = [];
+    for (let i = 0; i < d.burst.count; i++) {
+      out.push(shot({ angleOffset: staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0, delay: i * d.burst.interval }));
+    }
+    return { mode, shots: out };
   }
-  return { mode: 'projectile', shots };
+
+  return { mode, shots };
 }
 
 function shot({ delay = 0, angleOffset = 0, lateral = 0 } = {}) {
   return { delay, angleOffset, lateral };
 }
-
-// Tracks Streak Pod's alternating stagger across successive trigger pulls (module-level
-// is fine — the arena and the Lab each have their own card/scene lifetime and a stale
-// parity bit is cosmetically harmless).
-const streakSeq = new Map();
 
 // Build a round's kinematic state. The caller supplies `maxDist` (its own travel budget:
 // the arena's target/lob distance, the Lab's stage width) and may tack on scene-specific

@@ -157,6 +157,7 @@ export class WeaponCardList {
     else parts.push(`proj ${d.velocity}px/s${d.path === 'arcing' ? ' · arc' : ''}`);
     if (d.pattern === 'spread') parts.push(`spread×${d.spreadCount}`);
     else if (d.pattern === 'stream') parts.push(`stream ${d.fireRate}/s`);
+    if (d.burst) parts.push(`burst×${d.burst.count}`);
     if (d.guidance === 'homing') parts.push('homing');
     const ammo = weapon.ammoMax == null ? '∞' : `${weapon.ammoMax} (+${weapon.ammoRegen}/s)`;
     const cadence = d.pattern === 'stream' ? `${d.fireRate}/s` : `${(weapon.cycleTime / 1000).toFixed(2)}s`;
