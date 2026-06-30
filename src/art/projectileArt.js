@@ -96,7 +96,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   }
 
   // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
-  const sparkCount = heavy ? 5 : 6;
+  const sparkCount = heavy ? 10 : 12;
   const maxDrift = (heavy ? 18 : 13) * s;
   for (let i = 0; i < sparkCount; i++) {
     const speed = 0.05 + i * 0.02;
@@ -107,13 +107,33 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const tipTaper = Math.cos(t * Math.PI / 2);  // 1 at muzzle, 0 at tip
     const drift = (phase * speed + i * 37) % (maxDrift * tipTaper);
     const life = 1 - drift / (maxDrift * tipTaper + 0.001);
-    const rMax = (heavy ? 4.0 : 2.8) * s * tipTaper;
+    const rMax = (heavy ? 4.0 : 2.8) * s * (0.4 + 0.6 * tipTaper);
     const r = rMax * life;              // shrinks to nothing as it flies off
     if (r < 0.5) continue;
     const sx = x0 + nx * len * t + px * sign * drift;
     const sy = y0 + ny * len * t + py * sign * drift;
-    g.fillStyle(color, 0.9); g.fillCircle(sx, sy, r);
-    g.fillStyle(0xffffff, 0.95); g.fillCircle(sx, sy, r * 0.45);
+    // Fleck: a short streak perpendicular to the beam, with a bright hot center dot.
+    const fx = px * r * 1.6, fy = py * r * 1.6;
+    g.lineStyle(r * 0.9, color, 1.0); g.lineBetween(sx - fx, sy - fy, sx + fx, sy + fy);
+    g.fillStyle(0xffffff, 1.0); g.fillCircle(sx, sy, r * 0.4);
+  }
+
+  // Inner sparks: same flecks but confined within the core width, like energy crackling along the beam.
+  const innerCount = heavy ? 8 : 10;
+  for (let i = 0; i < innerCount; i++) {
+    const speed = 0.04 + i * 0.015;
+    const sign = (i % 2 === 0) ? 1 : -1;
+    const cycle = Math.floor(phase * speed + i * 53);
+    const t = Math.abs(Math.sin(cycle * 83.1 + i * 47.3));
+    const drift = (phase * speed + i * 53) % (coreW / 2);
+    const life = 1 - drift / (coreW / 2);
+    const r = (heavy ? 1.4 : 1.0) * s * life;
+    if (r < 0.3) continue;
+    const sx = x0 + nx * len * t + px * sign * drift;
+    const sy = y0 + ny * len * t + py * sign * drift;
+    const fx = px * r * 1.4, fy = py * r * 1.4;
+    g.lineStyle(r * 0.8, color, 1.0); g.lineBetween(sx - fx, sy - fy, sx + fx, sy + fy);
+    g.fillStyle(0xffffff, 1.0); g.fillCircle(sx, sy, r * 0.5);
   }
 }
 
