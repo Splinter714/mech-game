@@ -463,8 +463,7 @@ export default class ArenaScene extends Phaser.Scene {
       const go = () => {
         if (!this.scene.isActive()) return;
         const m = this._muzzle(w.location);
-        const aim = this._aimPoint(w);
-        const baseAngle = Math.atan2(aim.y - m.y, aim.x - m.x) + s.angleOffset;
+        const baseAngle = this._fireAngle(w, m) + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
@@ -475,19 +474,17 @@ export default class ArenaScene extends Phaser.Scene {
     }
   }
 
-  // The convergence point a weapon aims at: along the turret facing at the reticle's
-  // distance (#40 — shots follow the slewing turret, not the raw aim), pulled toward the
-  // tracked enemy by aim-assist once the turret has settled (melee ignores assist).
-  _aimPoint(w) {
-    const aimDist = Math.hypot(this.aimX - this.px, this.aimY - this.py) || 1;
-    let x = this.px + Math.cos(this.turretAngle) * aimDist;
-    let y = this.py + Math.sin(this.turretAngle) * aimDist;
+  // The direction a weapon fires: straight along the turret facing (#40 — shots follow the
+  // slewing turret exactly, parallel to where it visually points, not converging on the
+  // reticle), with an optional soft nudge toward a tracked enemy by aim-assist (melee
+  // ignores assist).
+  _fireAngle(w, m) {
+    let a = this.turretAngle;
     if (this.assistTarget && w.weapon.delivery.hit !== 'contact') {
-      const s = this.assistTarget.strength;
-      x = Phaser.Math.Linear(x, this.assistTarget.x, s);
-      y = Phaser.Math.Linear(y, this.assistTarget.y, s);
+      const toTarget = Math.atan2(this.assistTarget.y - m.y, this.assistTarget.x - m.x);
+      a = Phaser.Math.Angle.RotateTo(a, toTarget, Math.abs(Phaser.Math.Angle.Wrap(toTarget - a)) * this.assistTarget.strength);
     }
-    return { x, y };
+    return a;
   }
 
   // Melee swing: same forward-ray hit detection as a beam, but drawn as a sweeping
