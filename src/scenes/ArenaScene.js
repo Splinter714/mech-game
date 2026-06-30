@@ -645,45 +645,62 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
   }
 
-  // Render one burning patch as real-looking fire (not a ring of dots): a charred base, a
-  // pulsing ember bed, and a crowd of flickering flame tongues that lick upward (-y) with
-  // a hot yellow core inside each deep-orange tongue. A per-patch seed keeps each fire's
-  // tongue layout stable frame to frame while the heights flicker on their own phases.
+  // Render one burning patch as sticky napalm: a spreading pool of liquid fire that coats
+  // the ground (low, rounded, roiling — not tall spikes), with hot pockets and lazy smoke
+  // drifting up off it. A per-patch seed keeps each fire's layout stable frame to frame
+  // while the globs breathe and the smoke rises on their own phases.
   _drawFlames(fp, now) {
     const g = this.projFx;
     const seed = (fp.x * 13.1 + fp.y * 7.7);
     const rnd = (i) => { const v = Math.sin(seed + i * 53.17) * 43758.5; return v - Math.floor(v); };
     const fade = Phaser.Math.Clamp((fp.until - now) / 800, 0.25, 1);   // dim as it burns out
+    const pulse = 0.5 + 0.5 * Math.sin(now * 0.005);
 
-    // Charred scorch + glowing ember bed.
-    g.fillStyle(0x1a0f0a, 0.35 * fade).fillEllipse(fp.x, fp.y + fp.r * 0.18, fp.r * 2, fp.r * 0.9);
-    const emberPulse = 0.5 + 0.5 * Math.abs(Math.sin(now * 0.006));
-    g.fillStyle(0x6e2406, 0.5 * fade).fillEllipse(fp.x, fp.y + fp.r * 0.12, fp.r * 1.5, fp.r * 0.7);
-    g.fillStyle(0xc4380a, (0.4 + 0.3 * emberPulse) * fade).fillEllipse(fp.x, fp.y + fp.r * 0.1, fp.r * 1.0, fp.r * 0.5);
+    // An irregular, slowly-roiling blob outline (not a clean ellipse): radii per vertex are
+    // jittered by a stable seed and wobble over time, then squashed for the top-down view.
+    const blob = (cx, cy, rx, key, lobes = 9, squash = 0.7, wob = 0.18) => {
+      const pts = [];
+      for (let k = 0; k < lobes; k++) {
+        const a = (k / lobes) * Math.PI * 2;
+        const n = rnd(key + k * 2.13);
+        const r = rx * (0.78 + n * 0.34 + wob * Math.sin(now * 0.006 + n * 9 + key));
+        pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r * squash });
+      }
+      return pts;
+    };
 
-    // Flame tongues. Each is a tapered triangle from a base point up to a flickering tip.
-    const tongues = 11;
-    for (let i = 0; i < tongues; i++) {
-      const spread = (rnd(i) * 2 - 1) * fp.r * 0.85;            // x offset across the patch
-      const baseY = fp.y + (rnd(i + 99) * 2 - 1) * fp.r * 0.35; // anchor along the bed
-      const bx = fp.x + spread;
-      // Flicker: each tongue rises and falls on its own phase + a fast jitter.
+    // Charred scorch the napalm has soaked into, and the layered liquid-fire pool — each a
+    // ragged blob rather than concentric ellipses.
+    g.fillStyle(0x140a06, 0.4 * fade).fillPoints(blob(fp.x, fp.y, fp.r * 1.05, 1, 11, 0.72, 0.1), true);
+    g.fillStyle(0x5e1d04, 0.55 * fade).fillPoints(blob(fp.x, fp.y, fp.r * 0.95, 2, 10, 0.7), true);
+    g.fillStyle(0xb23206, (0.45 + 0.2 * pulse) * fade).fillPoints(blob(fp.x, fp.y, fp.r * 0.74, 3, 10, 0.68, 0.22), true);
+    g.fillStyle(0xe85610, (0.35 + 0.2 * pulse) * fade).fillPoints(blob(fp.x, fp.y, fp.r * 0.5, 4, 9, 0.66, 0.26), true);
+
+    // Roiling flame globs: small ragged blobs that breathe in place, clinging to the pool.
+    const globs = 9;
+    for (let i = 0; i < globs; i++) {
+      const ang = rnd(i) * 6.28;
+      const rad = (0.2 + rnd(i + 31) * 0.7) * fp.r;
+      const gx = fp.x + Math.cos(ang) * rad;
+      const gy = fp.y + Math.sin(ang) * rad * 0.66;            // squashed: viewed from above
       const phase = rnd(i + 7) * 6.28;
-      const flick = 0.55 + 0.45 * Math.sin(now * 0.012 + phase) + 0.12 * Math.sin(now * 0.05 + phase * 2);
-      const tall = (fp.r * (0.7 + rnd(i + 3) * 0.9)) * Math.max(0.2, flick);
-      const wide = fp.r * (0.14 + rnd(i + 5) * 0.12);
-      const sway = Math.sin(now * 0.01 + phase) * wide * 0.8;    // tip leans as it licks
-      // Outer deep-orange tongue.
-      g.fillStyle(0xff5a14, 0.5 * fade).fillPoints([
-        { x: bx - wide, y: baseY }, { x: bx + wide, y: baseY }, { x: bx + sway, y: baseY - tall },
-      ], true);
-      // Inner yellow core, shorter and narrower.
-      g.fillStyle(0xffc24a, 0.7 * fade).fillPoints([
-        { x: bx - wide * 0.5, y: baseY }, { x: bx + wide * 0.5, y: baseY },
-        { x: bx + sway * 0.7, y: baseY - tall * 0.62 },
-      ], true);
-      // White-hot fleck near the base.
-      if (rnd(i + 11) > 0.6) g.fillStyle(0xfff1c4, 0.6 * fade).fillCircle(bx + sway * 0.3, baseY - tall * 0.2, wide * 0.4);
+      const breathe = 0.6 + 0.4 * Math.sin(now * 0.009 + phase);
+      const rr = fp.r * (0.24 + rnd(i + 5) * 0.2) * breathe;
+      g.fillStyle(0xff6a18, 0.45 * fade).fillPoints(blob(gx, gy, rr, i * 4 + 200, 7, 0.8, 0.3), true);
+      g.fillStyle(0xffb43c, 0.6 * fade).fillPoints(blob(gx, gy - rr * 0.2, rr * 0.6, i * 4 + 201, 7, 0.8, 0.34), true);
+      // Occasional white-hot pocket.
+      if (rnd(i + 11) > 0.55) g.fillStyle(0xfff0c0, 0.55 * fade).fillCircle(gx, gy - rr * 0.25, rr * 0.26);
+    }
+
+    // Lazy smoke: a few translucent grey puffs rising and drifting, fading as they climb.
+    const puffs = 4;
+    for (let i = 0; i < puffs; i++) {
+      const phase = rnd(i + 50) * 6.28;
+      const rise = ((now * 0.00018 + rnd(i + 60)) % 1);         // 0..1 climb cycle
+      const sx = fp.x + (rnd(i + 70) * 2 - 1) * fp.r * 0.6 + Math.sin(now * 0.001 + phase) * fp.r * 0.3;
+      const sy = fp.y - rise * fp.r * 2.4;                      // drifts upward off the pool
+      const sr = fp.r * (0.3 + rise * 0.6);
+      g.fillStyle(0x2a2622, (1 - rise) * 0.22 * fade).fillCircle(sx, sy, sr);
     }
   }
 
