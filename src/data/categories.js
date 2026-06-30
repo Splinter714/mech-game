@@ -8,7 +8,7 @@
 export const CATEGORIES = {
   ballistic: { id: 'ballistic', label: 'Ballistic', usesAmmo: true,  color: 0xffb24a },
   missile:   { id: 'missile',   label: 'Missile',   usesAmmo: true,  color: 0xff4fa3 },
-  energy:    { id: 'energy',    label: 'Energy',    usesAmmo: false, color: 0x1a8fff },
+  energy:    { id: 'energy',    label: 'Energy',    usesAmmo: false, color: 0x0088ff },
   melee:     { id: 'melee',     label: 'Melee',     usesAmmo: false, color: 0xcfd6e0 },
   support:   { id: 'support',   label: 'Support',   usesAmmo: false, color: 0x6dff9e },
 };
