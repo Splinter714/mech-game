@@ -32,8 +32,10 @@ export const CombatMixin = {
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
   // burst (ballistic spark, missile/splash explosion, plasma splatter, laser scorch).
-  _impactFx(x, y, color, kind, splash) {
-    Audio.impact(kind);
+  // `weaponId` drives the SOUND (per-weapon, tunable in the Weapon Lab); `kind` drives the
+  // VISUAL burst shape below — they can differ (several weapons share a projectile `kind`).
+  _impactFx(x, y, color, kind, splash, weaponId) {
+    Audio.impact(weaponId);
     const burst = (r0, r1, col, alpha, dur, stroke) => {
       const c = stroke
         ? this.add.circle(x, y, r0).setStrokeStyle(2, col, alpha)

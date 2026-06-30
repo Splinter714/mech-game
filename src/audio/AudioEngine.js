@@ -13,6 +13,7 @@ import {
   distortionCurve, hardClipCurve, foldbackCurve, softClipCurve, degHz,
   TRACKS, TRACK_IDS, DEFAULT_TRACK,
 } from './music.js';
+import { DEFAULT_SFX, FALLBACK_SFX } from './sfxParams.js';
 
 export class AudioEngine {
   constructor() {
@@ -64,6 +65,11 @@ export class AudioEngine {
       guitarWave: 'sawtooth', bassWave: 'sawtooth', leadWave: 'sawtooth', lead2Wave: 'sine',
     };
     this._fx = {};             // live node references the panel tweaks
+    // Live-tunable per-weapon SFX (Weapon Lab sound panel). A deep copy per engine instance
+    // so tuning one game's sounds never mutates the shared defaults (or another instance's,
+    // e.g. in tests). One-shot cues read this fresh at trigger time — unlike music params,
+    // no live node graph to update, so setSfxParam is a plain data write.
+    this.sfxParams = JSON.parse(JSON.stringify(DEFAULT_SFX));
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -190,6 +196,21 @@ export class AudioEngine {
     }
   }
 
+  // Per-weapon SFX (Weapon Lab sound panel). `stage` is 'fire' | 'trajectory' | 'impact';
+  // falls back to FALLBACK_SFX for a weapon with no entry so any future weapon stays safe.
+  getSfxParams(weaponId) {
+    return this.sfxParams[weaponId] ?? FALLBACK_SFX;
+  }
+  setSfxParam(weaponId, stage, layerIndex, field, value) {
+    const w = (this.sfxParams[weaponId] ??= {});
+    const layers = (w[stage] ??= []);
+    const layer = (layers[layerIndex] ??= {});
+    layer[field] = value;
+  }
+  resetSfxParams(weaponId) {
+    this.sfxParams[weaponId] = JSON.parse(JSON.stringify(DEFAULT_SFX[weaponId] ?? FALLBACK_SFX));
+  }
+
   // The riff's tonal low foundation: root + sub-octave + tunable FIFTH / octave overtones,
   // lightly driven + low-passed. The fifth/octave mixes let the bass carry overtones too.
   _bass(freq, at, dur, gain = 0.6) {
@@ -298,21 +319,28 @@ export class AudioEngine {
 
   // ── SFX events ────────────────────────────────────────────────────────────────────
 
-  // Weapon firing (#32) — distinct timbre per category, pitched by the weapon's weight
-  // (more damage = lower/beefier), with overrides for flame/incendiary kinds.
-  // Gameplay SFX — the cues themselves live in ./sfx.js (a kind-keyed cue registry); these
-  // facade methods keep the public API + the resume/ready guards and delegate.
+  // Weapon firing (#32) — per-weapon tunable layers (Weapon Lab sound panel, see
+  // sfxParams.js). Gameplay SFX dispatch lives in ./sfx.js; these facade methods keep the
+  // public API + the resume/ready guards and delegate.
   fire(weapon) {
     this._resume();
     if (!this.ready || !weapon) return;
     Sfx.fire(this, weapon);
   }
 
-  // Weapon impact (#33) — per ordnance type. Big ordnance routes to an explosion.
-  impact(kind) {
+  // A brief in-flight flavor cue, fired a beat after launch — only weapons with a
+  // noticeable flight time have one (see sfxParams.js); a no-op otherwise.
+  trajectory(weaponId) {
+    this._resume();
+    if (!this.ready || !weaponId) return;
+    Sfx.trajectory(this, weaponId);
+  }
+
+  // Weapon impact (#33) — per weapon (falls back to a generic clank for an unknown weaponId).
+  impact(weaponId) {
     this._resume();
     if (!this.ready) return;
-    Sfx.impact(this, kind);
+    Sfx.impact(this, weaponId);
   }
 
   // Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly (throttled).

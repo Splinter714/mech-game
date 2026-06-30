@@ -3,6 +3,8 @@ import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx,
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
+import { Audio } from '../audio/index.js';
+import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 
 // Shared weapon/ability card list — the SINGLE implementation behind both the standalone
 // Weapon Lab tab and the garage catalog, so the two can't drift. It renders a scrollable
@@ -226,7 +228,16 @@ export class WeaponCardList {
     }
   }
 
+  // Sound only plays for the SELECTED card — with every weapon auto-firing on its own
+  // cadence, playing all of them at once would be noise; the selected one is what you're
+  // actually listening to (e.g. tuning in the Weapon Lab sound panel).
+  _isAudible(card) { return card.id === this.selectedId; }
+
   _fire(card) {
+    if (this._isAudible(card)) {
+      Audio.fire(card.weapon);
+      this.scene.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(card.weapon.id));
+    }
     const plan = planEmissions(card.weapon);
     for (const s of plan.shots) {
       if (s.delay > 0) card.pending.push({ at: s.delay, mode: plan.mode, shot: s });
@@ -236,11 +247,16 @@ export class WeaponCardList {
 
   _emit(card, mode, s) {
     const ax = card.muzzleX, ay = card.muzzleY, color = card.color;
-    if (mode === 'contact') { card.slashes.push({ t: 0, ttl: 260, color }); return; }
+    if (mode === 'contact') {
+      card.slashes.push({ t: 0, ttl: 260, color });
+      if (this._isAudible(card)) Audio.impact(card.weapon.id);
+      return;
+    }
     if (mode === 'hitscan') {
       const len = Math.min(card.stageW, card.weapon.range.opt || 200);
       const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
       card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: card.weapon.delivery.kind === 'rail' });
+      if (this._isAudible(card)) Audio.impact(card.weapon.id);
       return;
     }
     const angle = s.angleOffset;
@@ -259,6 +275,7 @@ export class WeaponCardList {
       stepProjectile(p, dt, p.homing ? 0 : null);
       if (p.dist >= p.maxDist) {
         p.dead = true;
+        if (this._isAudible(card)) Audio.impact(p.weaponId);
         if (p.ground) card.patches.push({ x: p.x, y: card.muzzleY, r: Math.min(p.ground.radius, 26), born: 0, ttl: p.ground.duration * 1000 });
         else card.bursts.push({ x: p.x, y: p.y, color: p.color, t: 0, ttl: 220 });
       }

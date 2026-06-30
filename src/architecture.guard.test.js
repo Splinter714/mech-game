@@ -70,14 +70,14 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
     assertNoVariantBranch('art/decor/index.js');
   });
 
-  it('gameplay sfx cues (by kind/category)', () => {
-    // sfx.js holds both the dispatchers and the cue bodies (which legitimately branch on
-    // e.g. `pattern === 'stream'`), so assert the dispatch shape directly: each dispatcher
-    // routes through its registry, and nothing dispatches on a kind/category literal.
+  it('gameplay sfx cues (by weapon id / kind)', () => {
+    // Weapon fire/trajectory/impact are now per-weapon DATA (sfxParams.js, tunable live by
+    // the Weapon Lab sound panel) played back by the generic playLayers() — assert sfx.js
+    // dispatches through that data lookup rather than branching on an archetype literal.
+    // ABILITY_CUES (dash/shield) isn't weapon data, so it keeps its own registry.
     const code = stripComments(read('audio/sfx.js'));
-    for (const reg of ['FIRE_CUES', 'IMPACT_CUES', 'ABILITY_CUES']) {
-      expect(code, `sfx must dispatch via ${reg}[...]`).toMatch(new RegExp(`${reg}\\s*\\[`));
-    }
+    expect(code, 'sfx must dispatch weapon cues via e.getSfxParams(...)').toMatch(/getSfxParams\s*\(/);
+    expect(code, 'sfx must dispatch abilities via ABILITY_CUES[...]').toMatch(/ABILITY_CUES\s*\[/);
     expect(code, 'sfx must not dispatch on a kind/category string literal')
       .not.toMatch(/\b(kind|catId|category)\s*===\s*['"]/);
     expect(code, 'sfx must not switch on a variant').not.toMatch(/\bswitch\s*\(/);

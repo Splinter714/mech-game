@@ -39,13 +39,16 @@ describe('AudioEngine (mock context)', () => {
     expect(eng.music).toBeTruthy();
   });
 
-  it('plays a firing sound for every weapon in the catalog without throwing', () => {
-    for (const id of WEAPON_IDS) eng.fire(getWeapon(id));
+  it('plays a fire, trajectory, and impact sound for every weapon without throwing', () => {
+    for (const id of WEAPON_IDS) { eng.fire(getWeapon(id)); eng.trajectory(id); eng.impact(id); }
     expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(0);
   });
 
-  it('plays each impact kind, footsteps, abilities, and explosions', () => {
-    for (const k of ['slug', 'plasma', 'missile', 'beam', 'flame', 'fire']) eng.impact(k);
+  it('falls back to a generic sound for an unknown weapon id, without throwing', () => {
+    expect(() => { eng.fire({ id: 'made-up', delivery: {} }); eng.trajectory('made-up'); eng.impact('made-up'); }).not.toThrow();
+  });
+
+  it('plays footsteps, abilities, and explosions', () => {
     eng.footstep(0);
     eng.footstep(1); // second is throttled by time, but must not throw
     eng.ability('dash');
@@ -53,6 +56,13 @@ describe('AudioEngine (mock context)', () => {
     eng.explosion(0.6);
     eng.explosion(1.2);
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
+  });
+
+  it('tunes a weapon SFX param live (Weapon Lab sound panel) without touching other weapons', () => {
+    const shotgunGainBefore = eng.getSfxParams('shotgun').fire[0].gain;
+    eng.setSfxParam('autocannon', 'fire', 0, 'gain', 0.9);
+    expect(eng.getSfxParams('autocannon').fire[0].gain).toBe(0.9);
+    expect(eng.getSfxParams('shotgun').fire[0].gain).toBe(shotgunGainBefore); // unaffected
   });
 
   it('schedules every step of every metal track without throwing', () => {

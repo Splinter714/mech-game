@@ -6,6 +6,7 @@ import { CATEGORIES } from '../../data/categories.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier } from '../../data/delivery.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
+import { TRAJECTORY_DELAY } from '../../audio/sfxParams.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -64,6 +65,9 @@ export const FiringMixin = {
     if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
     Audio.fire(w.weapon);
+    // A brief "now it's airborne" flavor cue, a beat after the fire cue — a no-op for any
+    // weapon with no trajectory layers defined (instant hitscan, short-range bullets, etc).
+    this.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(w.weapon.id));
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
@@ -160,9 +164,9 @@ export const FiringMixin = {
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       this._damageEnemyAt(target, endX, endY, dmg, color);
-      this._impactFx(endX, endY, color, 'beam', 0);
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
-      this._impactFx(endX, endY, color, 'beam', 0);
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     }
   },
 

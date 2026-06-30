@@ -168,6 +168,7 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     x, y, angle, speed,
     vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
     kind: projectileKind(weapon), color: CATEGORIES[weapon.category]?.color ?? 0xffffff,
+    weaponId: weapon.id,
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,
     homing: d.guidance === 'homing', turn: TURN_RATE,

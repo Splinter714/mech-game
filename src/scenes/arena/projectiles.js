@@ -31,7 +31,7 @@ export const ProjectilesMixin = {
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
       if (!p.arc && this._isWall(p.x, p.y)) {
         p.dead = true;
-        this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
+        this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
         continue;
       }
       const toTarget = targetGone ? Infinity : Math.hypot(p.x - tx, p.y - ty);
@@ -43,7 +43,7 @@ export const ProjectilesMixin = {
           if (enemyShot) this._damagePlayerAt(dmg);
           else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
         }
-        this._impactFx(p.x, p.y, p.color, p.kind, p.splash);
+        this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
         if (p.ground) this.firePatches.push({ x: p.x, y: p.y, r: p.ground.radius, dps: p.ground.dps, until: this.time.now + p.ground.duration * 1000, nextTick: this.time.now + 500 });
         continue;
       }
