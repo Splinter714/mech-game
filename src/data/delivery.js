@@ -20,15 +20,16 @@ const CLUSTER_SPACING = 6;        // lateral px between rounds in a dumbfire clu
 const DEFAULT_SPREAD_DEG = 16;    // fan width for a spread weapon that omits spreadAngle
 const SPREAD_JITTER_DELAY = 35;   // ms, max random emission stagger for a jittered spread (#46)
 
-// ── Per-weapon flight "personality" (#49/#50) ──────────────────────────────────────────
-// Opt-in lateral wobble layered on top of homing steering, purely cosmetic — it nudges
-// the round's drawn position, never its steering target. Gated on `guidance: 'homing'`
-// so dumbfire weapons (e.g. clusterRocket, #51) are never touched.
-//   jostle — Swarm Rack (#49): chaotic random-phase jiggle that calms on final approach.
+// ── Per-weapon flight "personality" ─────────────────────────────────────────────────────
+// Opt-in lateral wobble layered on top of homing steering (or, for a cluster clump, on top
+// of straight dumbfire flight), purely cosmetic — it nudges the round's drawn position,
+// never its steering target.
+//   jostle — Swarm Rack (#49): chaotic random-phase jiggle, constant amplitude (no settling).
 //   weave  — Streak Pod (#50): smooth deliberate sine weave, constant amplitude.
-const JOSTLE_AMPLITUDE = 10;      // px, lateral jiggle at launch (Swarm Rack)
-const JOSTLE_FREQUENCY = 16;      // rad/s, jiggle rate
-const JOSTLE_SETTLE_AT = 0.65;    // fraction of flight (dist/maxDist) where jiggle reaches zero
+//   sway   — Cluster Salvo (#51): every rocket in the clump shares ONE phase, so the whole
+//            tight formation snakes together in lockstep — never drifting apart, just alive.
+const JOSTLE_AMPLITUDE = 5;       // px, lateral jiggle (Swarm Rack) — owner: tune
+const JOSTLE_FREQUENCY = 11;      // rad/s, jiggle rate
 const WEAVE_AMPLITUDE = 5;        // px, lateral weave (Streak Pod) — moderate, not chaotic
 const WEAVE_FREQUENCY = 6;        // rad/s, weave rate — slow enough to read as deliberate
 const STREAK_STAGGER_DEG = 2.5;   // ° angular stagger between consecutive Streak Pod shots
@@ -188,12 +189,10 @@ export function stepProjectile(p, dt, desiredAngle = null) {
   // wobble never accumulates into drift.
   if (p.wobble) {
     p.wobbleTime += dt;
-    const t = p.maxDist > 0 ? Math.min(1, p.dist / p.maxDist) : 0;
     let offset = 0;
     if (p.wobble === 'jostle') {
-      // Chaotic random-phase jiggle that settles to zero on final approach.
-      const envelope = 1 - smoothstep(0, JOSTLE_SETTLE_AT, t);
-      offset = Math.sin(p.wobbleTime * JOSTLE_FREQUENCY + p.wobblePhase) * JOSTLE_AMPLITUDE * envelope;
+      // Chaotic random-phase jiggle, constant amplitude all the way to impact (no settling).
+      offset = Math.sin(p.wobbleTime * JOSTLE_FREQUENCY + p.wobblePhase) * JOSTLE_AMPLITUDE;
     } else if (p.wobble === 'weave') {
       // Smooth, deliberate sine weave at constant amplitude — no decay, no randomness.
       offset = Math.sin(p.wobbleTime * WEAVE_FREQUENCY + p.wobblePhase) * WEAVE_AMPLITUDE;
@@ -208,12 +207,6 @@ export function stepProjectile(p, dt, desiredAngle = null) {
     p.x += dx; p.y += dy;
     p.wobbleOffset = offset;
   }
-}
-
-// Smooth 0→1 ramp between edges a and b (Hermite interpolation), clamped outside the range.
-function smoothstep(a, b, x) {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
 }
 
 // Rotate angle `a` toward `target` by at most `maxStep`, taking the shortest way around.

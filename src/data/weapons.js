@@ -120,7 +120,7 @@ export const WEAPONS = {
     id: 'swarmRack', name: 'Swarm Rack', category: 'missile',
     damage: 4, range: { min: 80, opt: 300, max: 500 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
-    // wobble: 'jostle' — chaotic random-phase jiggle that settles on final approach (#49).
+    // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300, wobble: 'jostle' },
   }),
   streakPod: w({    // fires seekers one-at-a-time in a rapid stream; each homes in
