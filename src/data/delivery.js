@@ -55,7 +55,7 @@ export function planEmissions(weapon) {
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
   for (let i = 0; i < n; i++) {
     const c = n > 1 ? (i - (n - 1) / 2) : 0;       // centred index: −…0…+
-    if (d.cluster) shots.push(shot({ angleOffset: (Math.random() - 0.5) * 0.04, lateral: c * CLUSTER_SPACING }));
+    if (d.cluster) shots.push(shot({ lateral: c * CLUSTER_SPACING }));
     else if (n > 1) shots.push(shot({ angleOffset: (c / (n - 1)) * cone }));
     else shots.push(shot());
   }
