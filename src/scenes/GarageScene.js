@@ -4,7 +4,6 @@ import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
-import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -12,6 +11,7 @@ import { CATEGORIES } from '../data/categories.js';
 import { MECH_DEPLOYED } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
+import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
 
 // The mech lab. The build is exactly five skill slots, so the body is shown as a row of
 // five square "skill button" tiles (#26) — one per slot — each showing the mounted item's
@@ -67,14 +67,13 @@ export default class GarageScene extends Phaser.Scene {
 
     buildMechTextures(this, 'garageMech', this.mech);
 
-    this._buildHeader();
     this._buildCatalog();
     this._buildPreview();
     this.doll = this.add.container(0, 0);
-    this.footer = this.add.container(0, 0);
     this.refresh();
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
+    this.input.keyboard.on('keydown-C', () => this.cycleChassis());
     this.input.keyboard.on('keydown-ESC', () => this.arm(null));
 
     // Controller support (#29 deploy + #30 full navigation). A focus cursor moves between
@@ -179,25 +178,15 @@ export default class GarageScene extends Phaser.Scene {
     return this.add.rectangle(x, y, w, h, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
   }
 
-  button(x, y, w, h, label, onClick, color = UI.text) {
-    const r = this.add.rectangle(x, y, w, h, UI.btn).setOrigin(0, 0)
-      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-    const t = this.add.text(x + w / 2, y + h / 2, label, {
-      fontFamily: 'monospace', fontSize: '14px', color,
-    }).setOrigin(0.5);
-    r.on('pointerover', () => r.setFillStyle(UI.btnHover));
-    r.on('pointerout', () => r.setFillStyle(UI.btn));
-    r.on('pointerdown', onClick);
-    return { r, t };
-  }
-
+  // Build (or rebuild) the shared tab bar. Rebuilt on refresh so Deploy greys/ungreys as the
+  // build becomes valid/invalid.
   _buildHeader() {
-    this.txt(20, 16, 'MECH LAB', { fontSize: '20px', color: UI.accent });
-    this.hintText = this.txt(120, 22, '', { fontSize: '11px', color: UI.dim });
-    this.button(this.W - 450, 20, 140, 34, '⚔ WEAPON LAB', () => this.scene.start('WeaponLabScene'), UI.text);
-    this.button(this.W - 300, 20, 130, 34, '⟳ CHASSIS', () => this.cycleChassis(), UI.accent);
-    this.button(this.W - 150, 20, 130, 34, '▶ DEPLOY  (D)', () => this.deploy(), UI.sel);
-    this._updateHint();
+    this.tabBar?.layer.destroy();
+    this.tabBar = buildTabBar(this, {
+      active: 'GarageScene',
+      canDeploy: this.mech.validate().ok,
+      onDeploy: () => this.deploy(),
+    });
   }
 
   // Swap to the next chassis, carrying the loadout over (all chassis share the six skill
@@ -213,17 +202,6 @@ export default class GarageScene extends Phaser.Scene {
     buildMechTextures(this, 'garageMech', this.mech);
     saveAllMechs(this.allMechs);
     this.refresh();
-  }
-
-  _updateHint() {
-    if (!this.hintText) return;
-    if (this.armed) {
-      this.hintText.setText(`placing ${getItem(this.armed).name} — click a tile · Esc to cancel`)
-        .setColor(UI.sel);
-    } else {
-      this.hintText.setText('click a catalog item, then a tile to mount it · click a filled tile to clear it')
-        .setColor(UI.dim);
-    }
   }
 
   _buildCatalog() {
@@ -254,9 +232,6 @@ export default class GarageScene extends Phaser.Scene {
     this.catalogIds = [...WEAPON_IDS, ...EQUIPMENT_IDS];
     for (const id of this.catalogIds) row(id);
     this._updateCatalogHighlight();
-    this.add.text(x + 8, this.H - 74, 'pad:  L-stick move · A equip · B clear\n      RT/LT/RB/LB/L3 → mount in that slot\n      X/Y chassis · Start deploy', {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.dim, lineSpacing: 2,
-    });
   }
 
   // Highlight the armed catalog row (gold) and, under controller focus, the focused row
@@ -293,11 +268,11 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Rebuild the doll: the shared skill-tile row, each tile click-to-mount / click-to-clear.
+  // Also rebuilds the tab bar so Deploy reflects the current build validity.
   refresh() {
+    this._buildHeader();
     this.doll.removeAll(true);
-    this.footer.removeAll(true);
     for (const rect of this._tileRow()) this._drawTile(rect);
-    this._drawFooter();
   }
 
   _drawTile(rect) {
@@ -319,28 +294,10 @@ export default class GarageScene extends Phaser.Scene {
     bg.on('pointerdown', () => (this.armed ? this.placeOn(loc) : id ? this.unmount(loc, 0) : this.placeOn(loc)));
   }
 
-  _drawFooter() {
-    const v = this.mech.validate();
-    const y = this.H - 56;
-    this.footer.add(this.panel(20, y, Math.round(this.W * 0.66) - 20, 44));
-    this.footer.add(this.txt(34, y + 6, `${this.mech.name}  ·  ${this.mech.chassis.name} (${this.mech.weightClass})`, {
-      fontSize: '13px', color: UI.accent,
-    }));
-    let filled = 0;
-    for (const loc of MOUNT_LOCATIONS) filled += this.mech.usedSlots(loc);
-    this.footer.add(this.txt(34, y + 24, `skills ${filled}/${MOUNT_LOCATIONS.length}  ·  one per slot, melee in arms`, {
-      fontSize: '12px', color: filled >= MOUNT_LOCATIONS.length ? UI.sel : UI.dim,
-    }));
-    this.footer.add(this.txt(Math.round(this.W * 0.66) - 36, y + 14, v.ok ? '✓ valid build' : `✗ ${v.errors[0]}`, {
-      color: v.ok ? UI.good : UI.bad,
-    }).setOrigin(1, 0));
-  }
-
   // Pick up (or drop) a catalog piece. Clicking the armed item again clears it.
   arm(itemId) {
     this.armed = this.armed === itemId ? null : itemId;
     this._updateCatalogHighlight();
-    this._updateHint();
     this.refresh();
   }
 
@@ -386,7 +343,10 @@ export default class GarageScene extends Phaser.Scene {
     this.tweens.add({ targets: this._toast, alpha: 0, delay: 1100, duration: 500, onComplete: () => this._toast?.destroy() });
   }
 
+  // Deploy is inert unless the build is valid (all slots filled, mounts legal) — the tab-bar
+  // Deploy button is greyed to match.
   deploy() {
+    if (!this.mech.validate().ok) return;
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
     this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);

@@ -3,6 +3,11 @@ import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, itemFxKey } fr
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { CATEGORIES } from '../data/categories.js';
+import { Mech } from '../data/Mech.js';
+import { ACTIVE_MECH_KEY } from '../data/rosters.js';
+import { saveAllMechs } from '../data/save.js';
+import { MECH_DEPLOYED } from '../data/events.js';
+import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
 
 // ── Weapon Lab (dev/art tool) ────────────────────────────────────────────────
 // A standalone gallery for art-directing weapons and their fired rounds. One card
@@ -26,7 +31,7 @@ const UI = {
 
 const CARD_H = 96;        // card height (logical px)
 const CARD_GAP = 12;      // gap between cards
-const TOP = 56;           // y of the first card (below the title)
+const TOP = TAB_BAR_H + 12; // y of the first card (below the tab bar)
 const MARGIN = 20;        // left/right page margin
 const ICON = 30;          // garage-icon display size
 
@@ -51,11 +56,11 @@ export default class WeaponLabScene extends Phaser.Scene {
 
     WEAPON_IDS.forEach((id, i) => this._buildCard(WEAPONS[id], i));
 
-    // Pinned chrome.
-    this.add.text(MARGIN, 16, '⚔ WEAPON LAB — live shot/projectile preview', {
-      fontFamily: 'monospace', fontSize: '16px', color: UI.accent,
-    }).setOrigin(0, 0).setDepth(10);
-    this._backBtn(this.W - 130, 14, 110, 30, '‹ BACK', () => this.scene.start('GarageScene'));
+    // Shared tab bar (Mech Lab / Weapon Lab / Music + Deploy).
+    this.allMechs = this.registry.get('allMechs');
+    const mech = this.allMechs?.[ACTIVE_MECH_KEY];
+    const canDeploy = mech instanceof Mech ? mech.validate().ok : false;
+    buildTabBar(this, { active: 'WeaponLabScene', canDeploy, onDeploy: () => this._deploy() });
 
     this._scrollHint = this.add.text(this.W / 2, this.H - 8, '⌄ scroll for more', {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
@@ -76,14 +81,11 @@ export default class WeaponLabScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
   }
 
-  _backBtn(x, y, w, h, label, onClick) {
-    const r = this.add.rectangle(x, y, w, h, UI.panel).setOrigin(0, 0)
-      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true }).setDepth(10);
-    this.add.text(x + w / 2, y + h / 2, label, { fontFamily: 'monospace', fontSize: '13px', color: UI.sel })
-      .setOrigin(0.5).setDepth(11);
-    r.on('pointerover', () => r.setFillStyle(0x222b35));
-    r.on('pointerout', () => r.setFillStyle(UI.panel));
-    r.on('pointerdown', onClick);
+  _deploy() {
+    const mech = this.allMechs?.[ACTIVE_MECH_KEY];
+    if (mech) { mech.repairAll(); saveAllMechs(this.allMechs); }
+    this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
+    this.scene.start('ArenaScene');
   }
 
   // One weapon card: static art (panel, icon, label, stats) + a live firing stage.

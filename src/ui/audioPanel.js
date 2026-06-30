@@ -294,23 +294,9 @@ export function mountAudioPanel() {
   const close = () => { el?.remove(); el = null; };
   const toggle = () => (el ? close() : open());
 
-  // Toggle button to open the tuner. Styled to match the app's in-game header buttons (DEPLOY,
-  // CHASSIS) — same dark fill / thin border / monospace — and sits up top, centered between the
-  // title (left) and the DEPLOY/CHASSIS cluster (right) rather than as a separate floating pill.
-  const btn = document.createElement('button');
-  btn.textContent = '♪ MUSIC  [P]';
-  btn.setAttribute('aria-label', 'Open the music tuner');
-  btn.style.cssText = [
-    'position:fixed', 'top:12px', 'left:50%', 'transform:translateX(-50%)', 'z-index:99998',
-    'background:#161b22', 'color:#5ec8e0', 'border:1px solid #2a333f', 'border-radius:4px',
-    'height:34px', 'padding:0 16px', 'font-family:monospace', 'font-size:14px', 'cursor:pointer',
-  ].join(';');
-  btn.onmouseenter = () => { btn.style.background = '#1b2430'; btn.style.borderColor = '#5ec8e0'; };
-  btn.onmouseleave = () => { btn.style.background = '#161b22'; btn.style.borderColor = '#2a333f'; };
-  btn.onclick = toggle;
-  blockPassThrough(btn);   // opening the panel mustn't also click the game behind the button
-  document.body.appendChild(btn);
-
+  // The music tuner is reached via the in-game MUSIC tab (and the `P` key) now, so there's no
+  // floating toggle button — it used to overlap the tab bar. (Interim: the tuner is still this
+  // DOM panel until the Music tab is rebuilt in Phaser.)
   window.addEventListener('keydown', (e) => {
     if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const tag = document.activeElement?.tagName;
