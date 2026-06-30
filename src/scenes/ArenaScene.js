@@ -607,9 +607,13 @@ export default class ArenaScene extends Phaser.Scene {
     let scale = 1;
     if (p.arc) {
       const h = Math.sin((p.dist / p.maxDist) * Math.PI);     // 0..1 height fraction
-      scale = 1 + h * 0.6;                                     // bigger when high
-      const sw = 8 - h * 3.5;
-      g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
+      // Apex scales with how far this lob travels: a near toss barely lifts, a long lob
+      // climbs high and comes down. `loft` (0..1) maps the round's range over a reference.
+      const loft = Phaser.Math.Clamp(p.maxDist / 700, 0.18, 1);
+      const bump = 0.25 + loft * 0.85;                        // peak size gain at apex
+      scale = 1 + h * bump;
+      const sw = 8 - h * (2.5 + loft * 2.5);                  // shadow tightens with height
+      g.fillStyle(0x000000, 0.28 - h * (0.08 + loft * 0.12)).fillEllipse(p.x, p.y, sw, sw * 0.42);
     }
     // The round body itself is shared art (so the garage icon matches); `p.dist` drives
     // the flame flicker.
