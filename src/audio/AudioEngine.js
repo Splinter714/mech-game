@@ -13,7 +13,7 @@ import {
   distortionCurve, hardClipCurve, foldbackCurve, softClipCurve, degHz,
   TRACKS, TRACK_IDS, DEFAULT_TRACK,
 } from './music.js';
-import { DEFAULT_SFX, FALLBACK_SFX } from './sfxParams.js';
+import { DEFAULT_SFX, FALLBACK_SFX, loadSfxParams, saveSfxParams } from './sfxParams.js';
 
 export class AudioEngine {
   constructor() {
@@ -65,11 +65,12 @@ export class AudioEngine {
       guitarWave: 'sawtooth', bassWave: 'sawtooth', leadWave: 'sawtooth', lead2Wave: 'sine',
     };
     this._fx = {};             // live node references the panel tweaks
-    // Live-tunable per-weapon SFX (Weapon Lab sound panel). A deep copy per engine instance
-    // so tuning one game's sounds never mutates the shared defaults (or another instance's,
-    // e.g. in tests). One-shot cues read this fresh at trigger time — unlike music params,
+    // Live-tunable per-weapon SFX (Weapon Lab sound panel), seeded from localStorage (see
+    // sfxParams.js) so tuning survives a reload; falls back to the shipped defaults where
+    // nothing's saved. One-shot cues read this fresh at trigger time — unlike music params,
     // no live node graph to update, so setSfxParam is a plain data write.
-    this.sfxParams = JSON.parse(JSON.stringify(DEFAULT_SFX));
+    this.sfxParams = loadSfxParams();
+    this._sfxSaveTimer = null;
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -206,9 +207,17 @@ export class AudioEngine {
     const layers = (w[stage] ??= []);
     const layer = (layers[layerIndex] ??= {});
     layer[field] = value;
+    this._scheduleSfxSave();
   }
   resetSfxParams(weaponId) {
     this.sfxParams[weaponId] = JSON.parse(JSON.stringify(DEFAULT_SFX[weaponId] ?? FALLBACK_SFX));
+    this._scheduleSfxSave();
+  }
+  // Debounced so a slider drag (many setSfxParam calls a second) doesn't hammer
+  // localStorage — writes ~400ms after the last change.
+  _scheduleSfxSave() {
+    clearTimeout(this._sfxSaveTimer);
+    this._sfxSaveTimer = setTimeout(() => saveSfxParams(this.sfxParams), 400);
   }
 
   // The riff's tonal low foundation: root + sub-octave + tunable FIFTH / octave overtones,

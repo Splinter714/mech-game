@@ -109,6 +109,42 @@ export const DEFAULT_SFX = {
 // the arena and the Weapon Lab preview so the timing feels identical in both.
 export const TRAJECTORY_DELAY = 90;
 
+// localStorage persistence for the Weapon Lab sound panel's tuning, so a reload doesn't
+// lose it. Merges saved values UNDER the current defaults (field by field, layer by layer)
+// so a save from before a weapon/field was added still loads safely — anything the save
+// doesn't cover falls back to the shipped default rather than going missing.
+const STORAGE_KEY = 'mech-game-sfx-params-v1';
+
+export function loadSfxParams() {
+  let saved = {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    saved = raw ? (JSON.parse(raw) ?? {}) : {};
+  } catch {
+    saved = {};
+  }
+  const merged = {};
+  for (const weaponId of Object.keys(DEFAULT_SFX)) {
+    const def = DEFAULT_SFX[weaponId];
+    const sav = saved[weaponId] || {};
+    const entry = {};
+    for (const stage of Object.keys(def)) {
+      const savedLayers = sav[stage] || [];
+      entry[stage] = def[stage].map((layer, i) => ({ ...layer, ...savedLayers[i] }));
+    }
+    merged[weaponId] = entry;
+  }
+  return merged;
+}
+
+export function saveSfxParams(params) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+  } catch {
+    // localStorage blocked/unavailable — tuning still works this session.
+  }
+}
+
 // Fallback for a weapon id with no entry above (keeps the panel/engine safe for any future
 // weapon added without sound design yet) — the old default ballistic crack + slug clank.
 export const FALLBACK_SFX = {
