@@ -113,6 +113,22 @@ export function planEmissions(weapon) {
   // shot rather than reading as a clean mechanical pulse (Flamethrower, #46).
   const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
   const jitterRad = ((d.spreadJitter || 0) * Math.PI) / 180;
+
+  // A continuous stream that also sprays a random handful of particles per cadence tick
+  // (Flamethrower): each tick launches `sprayCount.min`-`sprayCount.max` independently
+  // jittered rounds at once instead of exactly one, for a denser/wider gout — without
+  // changing the ammo cost per tick (ammo is spent once per fireWeapon() call, not per
+  // shot), so hold-to-fire sustain is unaffected by how many particles pop out.
+  if (d.sprayCount) {
+    const { min, max } = d.sprayCount;
+    const count = min + Math.floor(Math.random() * (max - min + 1));
+    const sprayShots = [];
+    for (let i = 0; i < count; i++) {
+      sprayShots.push(shot({ angleOffset: jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0 }));
+    }
+    return { mode, shots: sprayShots };
+  }
+
   const shots = [];
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
   for (let i = 0; i < n; i++) {
@@ -124,6 +140,12 @@ export function planEmissions(weapon) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
       const fireDelay = jitterRad ? Math.random() * SPREAD_JITTER_DELAY : 0;
       shots.push(shot({ angleOffset: (c / (n - 1)) * cone + jitter, delay: fireDelay }));
+    } else if (jitterRad) {
+      // A single continuously-streamed shot (Flamethrower, #46) still gets the same
+      // per-shot angle jitter a multi-pellet spread would use — each rapid-fire particle
+      // lands at its own random angle, so the held stream reads as a chaotic gout rather
+      // than a laser-straight repeating line.
+      shots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad }));
     } else shots.push(shot());
   }
 

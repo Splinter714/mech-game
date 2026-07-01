@@ -41,6 +41,28 @@ describe('planEmissions', () => {
     const meleeFixture = { delivery: { hit: 'contact', pattern: 'single', kind: 'slash' } };
     expect(planEmissions(meleeFixture).mode).toBe('contact');
   });
+
+  it('sprays a random handful of simultaneous shots per stream tick (Flamethrower)', () => {
+    const { min, max } = WEAPONS.flamethrower.delivery.sprayCount;
+    const counts = new Set();
+    for (let i = 0; i < 50; i++) {
+      const p = planEmissions(WEAPONS.flamethrower);
+      expect(p.mode).toBe('projectile');
+      expect(p.shots.length).toBeGreaterThanOrEqual(min);
+      expect(p.shots.length).toBeLessThanOrEqual(max);
+      expect(p.shots.every((s) => s.delay === 0)).toBe(true); // simultaneous, not staggered
+      counts.add(p.shots.length);
+    }
+    expect(counts.size).toBeGreaterThan(1); // actually varies, not a fixed count
+  });
+
+  it('jitters each sprayed shot\'s angle so a held trigger stays chaotic, not laser-straight', () => {
+    const angles = Array.from({ length: 50 }, () => planEmissions(WEAPONS.flamethrower).shots)
+      .flat().map((s) => s.angleOffset);
+    expect(angles.some((a) => a !== 0)).toBe(true);
+    expect(Math.max(...angles)).toBeGreaterThan(0);
+    expect(Math.min(...angles)).toBeLessThan(0);
+  });
 });
 
 describe('projectileKind', () => {

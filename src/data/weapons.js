@@ -15,6 +15,10 @@
 //             weapons that should feel chaotic shot-to-shot (the flamethrower)
 //   cluster   spread rounds fly as a tight parallel clump (no fan) — dumbfire cluster
 //   fireRate  shots per second for a `stream` weapon (machine gun / beam laser)
+//   sprayCount { min, max } — a `stream` weapon's cadence tick launches a random handful
+//             of jittered particles at once (min..max) instead of exactly one, for a
+//             dense/wide continuous gout without changing the ammo cost per tick (the
+//             flamethrower)
 //   burst     { count, interval } — one trigger pull fires `count` rapid sub-shots
 //             `interval` ms apart. For a hitscan, that's `count` light pulses (pulse
 //             laser); for a projectile, `count` travelling rounds (streak pod)
@@ -80,13 +84,18 @@ export const WEAPONS = {
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40 },
   }),
-  flamethrower: w({ // short-range spray of slow flame; chews up anything close
+  flamethrower: w({ // short-range gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
     damage: 2, range: { min: 0, opt: 55, max: 100 },
-    ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 100,
-    // spreadJitter (#46): randomizes each particle's angle/timing so the stream reads as a
-    // chaotic gout of fire, not a clean repeating pulse of evenly-fanned shots.
-    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 6, spreadAngle: 12, spreadJitter: 20, velocity: 165, kind: 'flame', splash: 6 },
+    ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
+    // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
+    // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
+    // fire reads as one dense, unbroken gout rather than a thin single-file tracer or a
+    // series of pulses. fireRate sits below ammoRegen (18 < 22) so holding the trigger
+    // never runs the magazine dry. spreadJitter is narrower than the original pulsed
+    // version (9° vs 20°) for a tighter cone, and still randomizes each particle's angle
+    // (and makeProjectile's speed) so the stream looks chaotic, not laser-straight.
+    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, sprayCount: { min: 2, max: 4 }, spreadJitter: 9, velocity: 165, kind: 'flame', splash: 6 },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a

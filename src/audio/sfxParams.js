@@ -67,7 +67,9 @@ export const DEFAULT_SFX = withQDefaults({
     ],
   },
   flamethrower: {
-    fire: [{ kind: 'noise', type: 'bandpass', freq: 1100, freqEnd: 600, q: 0.6, dur: 0.16, gain: 0.10, attack: 0.002 }],
+    // Shorter/quieter than the old pulsed cue (dur 0.16/gain 0.10) — this now retriggers
+    // every ~45ms as a continuous stream, so a long decay would smear into a muddy drone.
+    fire: [{ kind: 'noise', type: 'bandpass', freq: 1100, freqEnd: 600, q: 0.6, dur: 0.08, gain: 0.08, attack: 0.002 }],
     impact: [{ kind: 'noise', type: 'lowpass', freq: 900, dur: 0.12, gain: 0.07, attack: 0.002 }],
   },
 
