@@ -7,6 +7,7 @@ import { planEmissions, makeProjectile, arrivalSpeedMultiplier } from '../../dat
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
+import { scheduleFireCues } from '../../audio/fireCues.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -78,30 +79,20 @@ export const FiringMixin = {
   fireWeapon(w) {
     if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
-    // A weapon with a held/looping sound (#53 — flamethrower/beam laser) gets its sound
-    // exclusively from that loop (started/stopped by _handleFiring's edge detection), not
-    // from this per-tick one-shot cue — skip it entirely so held fire doesn't stutter.
-    const heldSfx = hasHeldSfx(w.weapon.id);
-    if (!heldSfx) {
-      Audio.fire(w.weapon);
-      // A brief "now it's airborne" flavor cue, a beat after the fire cue — a no-op for any
-      // weapon with no trajectory layers defined (instant hitscan, short-range bullets, etc).
-      this.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(w.weapon.id));
-    }
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
     // and aim so a slewing turret and aim-assist still apply per sub-shot.
     const plan = planEmissions(w.weapon);
+    // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
+    // trajectory beat) are scheduled in one shared place (audio/fireCues.js) that the Weapon
+    // Lab preview calls too, so their timing can't drift; the arena always plays (audible:
+    // true). Held/looping weapons (flamethrower/beam laser) get their sound from their loop
+    // instead — scheduleFireCues no-ops for them, as it does for the delay:0-only case.
+    scheduleFireCues(this, w.weapon, plan, true);
     for (const s of plan.shots) {
       const go = () => {
         if (!this.scene.isActive()) return;
-        // Retrigger the fire cue for sub-shots that land LATER than the trigger pull (#55) —
-        // a burst weapon's later pulses (Pulse Laser, Streak Pod) each need their own cue,
-        // since the one fire cue above only covers the delay:0 shot. Every shot that fires
-        // simultaneously at delay:0 (spread fans, cluster salvos, flamethrower spray) never
-        // reaches this branch, so it still gets exactly one cue — no stacking N at once.
-        if (!heldSfx && s.delay > 0) Audio.fire(w.weapon);
         const m = this._muzzle(w.location);
         const baseAngle = this._fireAngle(w, m) + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;

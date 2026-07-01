@@ -5,6 +5,7 @@ import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../audio/sfxParams.js';
+import { scheduleFireCues } from '../audio/fireCues.js';
 
 // Shared weapon/ability card list — the SINGLE implementation behind both the standalone
 // Weapon Lab tab and the garage catalog, so the two can't drift. It renders a scrollable
@@ -249,13 +250,13 @@ export class WeaponCardList {
   }
 
   _fire(card) {
-    // A held-sound weapon's audio comes entirely from its loop (started/stopped by
-    // _setHeld above) — skip the per-tick one-shot cue so it doesn't stutter over the loop.
-    if (this._isAudible(card) && !hasHeldSfx(card.weapon.id)) {
-      Audio.fire(card.weapon);
-      this.scene.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(card.weapon.id));
-    }
     const plan = planEmissions(card.weapon);
+    // Fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, trajectory beat)
+    // go through the same shared scheduler the arena uses (audio/fireCues.js), so a burst
+    // weapon (Pulse Laser) plays one cue per pulse here just as it does in the arena. Sound
+    // only plays for the selected card, so the "audible" gate is _isAudible(card); a held/
+    // looping weapon's audio comes from its loop (_setHeld) instead — the scheduler no-ops.
+    scheduleFireCues(this.scene, card.weapon, plan, this._isAudible(card));
     for (const s of plan.shots) {
       if (s.delay > 0) card.pending.push({ at: s.delay, mode: plan.mode, shot: s });
       else this._emit(card, plan.mode, s);

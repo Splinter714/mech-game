@@ -19,6 +19,28 @@ const MIN_ATTACK = 0.003;    // s, click-safety floor
 const HELD_ATTACK_DEFAULT = 0.008; // s, fallback if a layer has no `attack` set
 const HELD_RELEASE = 0.08;   // s, gain ramp-down on stop (60-100ms window)
 
+// Optional per-layer START PITCH SWELL: a layer can carry `bend: { to, dur }` to open the
+// loop with a brief pitch bend that settles back to the held pitch (the "bwaaah…hhhwww" of a
+// beam laser spinning up) instead of a flat hum. `to` is a MULTIPLIER of the layer's base
+// `freq` — 1.5 bends up a fifth, 0.75 bends down — and `dur` is the TOTAL bend time in
+// seconds (base → to over the first half, back to base over the second). Applied to the
+// oscillator's `.frequency` for a tone layer or the biquad filter's `.frequency` for a noise
+// layer; after `dur` the frequency holds at base for the rest of the loop. Layers with no
+// `bend` field are set to a constant frequency exactly as before. Generic on purpose so the
+// flamethrower / missile-in-flight loops can adopt it later.
+function scheduleBend(freqParam, base, bend, t) {
+  const dur = bend?.dur;
+  const mult = bend?.to;
+  if (!(dur > 0) || !(mult > 0) || mult === 1) { freqParam.value = base; return; }
+  const peak = Math.max(1, base * mult);
+  const half = dur / 2;
+  // linearRampToValueAtTime is fine here (all endpoints > 0); a linear sweep reads as a
+  // smooth swell for these short durations. setValueAtTime anchors the ramp's start.
+  freqParam.setValueAtTime(base, t);
+  freqParam.linearRampToValueAtTime(peak, t + half);
+  freqParam.linearRampToValueAtTime(base, t + dur);
+}
+
 // Held/looping counterpart to playLayers() (#53 held fire sounds, #56 in-flight trajectory
 // loops): instead of a one-shot decay-to-zero voice per layer, build ONE genuinely continuous
 // source per layer — a looping AudioBufferSourceNode through a filter for a noise layer
@@ -26,6 +48,7 @@ const HELD_RELEASE = 0.08;   // s, gain ramp-down on stop (60-100ms window)
 // layer (oscillators are inherently continuous once started, so "loop" just means "never
 // schedule a stop/decay") — ramp its gain up over a short attack, and return a stop()
 // closure that ramps down + disconnects every voice. Returns null if `layers` is empty/falsy.
+// A layer may add a `bend` field (see scheduleBend) for a start pitch swell.
 export function startLoopLayers(e, bus, layers, gainScale = 1) {
   const ctx = e.ctx;
   const t = e._now();
@@ -47,12 +70,12 @@ export function startLoopLayers(e, bus, layers, gainScale = 1) {
       src.loop = true;
       filter = ctx.createBiquadFilter();
       filter.type = l.type || 'bandpass';
-      filter.frequency.value = l.freq ?? 700;
+      scheduleBend(filter.frequency, l.freq ?? 700, l.bend, t);
       filter.Q.value = l.q ?? 0.8;
       src.connect(filter).connect(g);
     } else {
       src.type = l.type || 'sawtooth';
-      src.frequency.value = l.freq ?? 320;
+      scheduleBend(src.frequency, l.freq ?? 320, l.bend, t);
       src.connect(g);
     }
     src.start(t);

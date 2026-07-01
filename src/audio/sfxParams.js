@@ -66,16 +66,32 @@ function withQDefaults(weapons) {
 export const DEFAULT_SFX = withQDefaults({
   // ── energy ──
   pulseLaser: {
-    fire: laserZapLayers({ damage: 16 / 5 }, false),
+    // Bespoke SHORT laser tick (do NOT revert to laserZapLayers). The pulse laser fires a
+    // 5-shot burst 75ms apart (weapons.js wubOn 25 + wubOff 50); the shared laserZapLayers'
+    // 0.15s/0.10s tones outlast that gap and smear the 5 flashes into one continuous buzz.
+    // Each zap here is a crisp ~0.05s "pew" (comfortably under the 75ms gap) with a fast
+    // attack, so all 5 read as distinct ticks aligned to the 5 beam flashes. Same laser
+    // timbre as laserZapLayers (sawtooth + square, descending freq→freqEnd sweep) at
+    // base≈964.8 (1000 − 3.2·11); the 2 noise layers stay gain 0, matching that helper's
+    // output. Keeps the 2-tone + 2-noise shape every weapon uses.
+    fire: [
+      { kind: 'tone', type: 'sawtooth', freq: 2316, freqEnd: 965, dur: 0.05, gain: 0.13, attack: 0.001 },
+      { kind: 'tone', type: 'square', freq: 965, freqEnd: 579, dur: 0.04, gain: 0.06, attack: 0.001 },
+      { kind: 'noise', type: 'highpass', freq: 1800, freqEnd: 900, dur: 0.045, gain: 0, attack: 0.001, q: 0.8 },
+      { kind: 'noise', type: 'bandpass', freq: 1000, freqEnd: 600, dur: 0.045, gain: 0, attack: 0.002, q: 1.0 },
+    ],
     impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
   },
   beamLaser: {
-    // Held/looping (#53) — hand-tuned via the Weapon Lab sound panel.
+    // Held/looping (#53) — hand-tuned via the Weapon Lab sound panel. The held loop opens with
+    // a START PITCH SWELL (#): each audible layer bends UP a ~fifth then settles back to its
+    // held pitch over ~340ms — the "bwaaah…hhhwww" spin-up — instead of a flat hum. `bend.to`
+    // is a multiplier of `freq`, `bend.dur` the total swell time in seconds (see sfxLayers.js).
     fire: [
-      { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.005, gain: 0.15, attack: 0 },
-      { kind: 'tone', type: 'sawtooth', freq: 20, freqEnd: 20, dur: 0.005, gain: 0.15, attack: 0 },
-      { kind: 'noise', type: 'bandpass', freq: 1395, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 4.6000000000000005 },
-      { kind: 'noise', type: 'bandpass', freq: 1490, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 4.15 },
+      { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.005, gain: 0.15, attack: 0, bend: { to: 1.5, dur: 0.34 } },
+      { kind: 'tone', type: 'sawtooth', freq: 20, freqEnd: 20, dur: 0.005, gain: 0.15, attack: 0, bend: { to: 1.5, dur: 0.34 } },
+      { kind: 'noise', type: 'bandpass', freq: 1395, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 4.6000000000000005, bend: { to: 1.3, dur: 0.34 } },
+      { kind: 'noise', type: 'bandpass', freq: 1490, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 4.15, bend: { to: 1.3, dur: 0.34 } },
     ],
     impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0, attack: 0.002, q: 0.8 }],
   },
