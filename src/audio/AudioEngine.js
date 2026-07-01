@@ -71,6 +71,10 @@ export class AudioEngine {
     // no live node graph to update, so setSfxParam is a plain data write.
     this.sfxParams = loadSfxParams();
     this._sfxSaveTimer = null;
+    // Held/looping fire sounds (#53) — one continuous source per mount location, so two
+    // simultaneous held weapons (e.g. flamethrower in one arm, beam laser in the other)
+    // don't collide. Keyed by location; value is the stop() closure Sfx.startHeld returned.
+    this._heldSounds = new Map();
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -350,6 +354,42 @@ export class AudioEngine {
     this._resume();
     if (!this.ready) return;
     Sfx.impact(this, weaponId);
+  }
+
+  // ── Held/looping fire sound (#53) ──────────────────────────────────────────────────────
+  // Start a continuous fire sound for a held weapon (flamethrower roar / beam laser hum) at
+  // mount location `location`. Guards against double-starting the same location (a stray
+  // repeated call finds one already playing there and no-ops) — callers should stopHeld()
+  // first if that location's weapon has genuinely changed. No-ops if the engine isn't ready
+  // or the weapon has no HELD_SFX entry.
+  startHeld(location, weaponId) {
+    this._resume();
+    if (!this.ready || this._heldSounds.has(location)) return;
+    const stop = Sfx.startHeld(this, weaponId);
+    if (stop) this._heldSounds.set(location, stop);
+  }
+
+  // Stop the held sound at `location`, if any (safe to call when nothing is playing there).
+  stopHeld(location) {
+    const stop = this._heldSounds.get(location);
+    if (!stop) return;
+    this._heldSounds.delete(location);
+    stop();
+  }
+
+  // Cleanup — stop every currently-held sound (e.g. on scene shutdown/transition).
+  stopAllHeld() {
+    for (const stop of this._heldSounds.values()) stop();
+    this._heldSounds.clear();
+  }
+
+  // ── Per-projectile in-flight loop (#56) ────────────────────────────────────────────────
+  // Start a continuous trajectory sound for one in-flight round; returns a stop() closure to
+  // stash on that projectile (or null if the weapon has no trajectory cue / engine not ready).
+  startTrajectoryLoop(weaponId) {
+    this._resume();
+    if (!this.ready) return null;
+    return Sfx.startTrajectory(this, weaponId) || null;
   }
 
   // Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly (throttled).

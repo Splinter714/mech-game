@@ -31,6 +31,7 @@ export const ProjectilesMixin = {
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
       if (!p.arc && this._isWall(p.x, p.y)) {
         p.dead = true;
+        p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
         continue;
       }
@@ -38,6 +39,7 @@ export const ProjectilesMixin = {
       const landed = p.dist >= p.maxDist;
       if (toTarget < HIT_RADIUS || landed) {
         p.dead = true;
+        p.stopTrajectorySfx?.();   // #56: ditto — impact/landing is the other death site
         if (toTarget < HIT_RADIUS + p.splash) {
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
           if (enemyShot) this._damagePlayerAt(dmg);

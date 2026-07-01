@@ -6,12 +6,13 @@ import { CATEGORIES } from '../../data/categories.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier } from '../../data/delivery.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { TRAJECTORY_DELAY } from '../../audio/sfxParams.js';
+import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
   // auto-fires that location's weapon at its own cadence, gated by ammo. ──
   _handleFiring(intent, delta) {
+    this._heldAudio ??= {};
     for (const w of this.mech.weapons()) {
       let cd = (this.fireCooldowns[w.location] ?? 0) - delta;
       if (intent.fire[w.location] && cd <= 0 && w.ready) {
@@ -19,6 +20,16 @@ export const FiringMixin = {
         cd = this._fireInterval(w.weapon);
       }
       this.fireCooldowns[w.location] = Math.max(0, cd);
+
+      // Held/looping fire sound (#53): a genuinely continuous weapon (flamethrower/beam
+      // laser) starts its loop on the rising edge (button just pressed, weapon has a
+      // HELD_SFX entry) and stops it on the falling edge — button released, OR the weapon
+      // ran dry / went offline while held (ammo depleted, part destroyed).
+      const held = intent.fire[w.location] && w.ready && hasHeldSfx(w.weapon.id);
+      const wasHeld = this._heldAudio[w.location];
+      if (held && !wasHeld) Audio.startHeld(w.location, w.weapon.id);
+      else if (!held && wasHeld) Audio.stopHeld(w.location);
+      this._heldAudio[w.location] = held;
     }
   },
 
@@ -64,10 +75,16 @@ export const FiringMixin = {
   fireWeapon(w) {
     if (!this.scene.isActive()) return;
     this.mech.consumeAmmo(w.location, w.index, 1);
-    Audio.fire(w.weapon);
-    // A brief "now it's airborne" flavor cue, a beat after the fire cue — a no-op for any
-    // weapon with no trajectory layers defined (instant hitscan, short-range bullets, etc).
-    this.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(w.weapon.id));
+    // A weapon with a held/looping sound (#53 — flamethrower/beam laser) gets its sound
+    // exclusively from that loop (started/stopped by _handleFiring's edge detection), not
+    // from this per-tick one-shot cue — skip it entirely so held fire doesn't stutter.
+    const heldSfx = hasHeldSfx(w.weapon.id);
+    if (!heldSfx) {
+      Audio.fire(w.weapon);
+      // A brief "now it's airborne" flavor cue, a beat after the fire cue — a no-op for any
+      // weapon with no trajectory layers defined (instant hitscan, short-range bullets, etc).
+      this.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(w.weapon.id));
+    }
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
@@ -76,13 +93,33 @@ export const FiringMixin = {
     for (const s of plan.shots) {
       const go = () => {
         if (!this.scene.isActive()) return;
+        // Retrigger the fire cue for sub-shots that land LATER than the trigger pull (#55) —
+        // a burst weapon's later pulses (Pulse Laser, Streak Pod) each need their own cue,
+        // since the one fire cue above only covers the delay:0 shot. Every shot that fires
+        // simultaneously at delay:0 (spread fans, cluster salvos, flamethrower spray) never
+        // reaches this branch, so it still gets exactly one cue — no stacking N at once.
+        if (!heldSfx && s.delay > 0) Audio.fire(w.weapon);
         const m = this._muzzle(w.location);
         const baseAngle = this._fireAngle(w, m) + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
         else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle);
-        else this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset);
+        else {
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset);
+          // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
+          // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
+          // "beat after launch" timing feel. The round is mutable and lives in
+          // this.projectiles, so it's safe to attach the stop closure to it once the timer
+          // fires; but the round may already have impacted/hit a wall by then (a very short/
+          // close shot), so guard against starting an orphaned loop on a dead round.
+          if (Audio.getSfxParams(w.weapon.id).trajectory) {
+            this.time.delayedCall(TRAJECTORY_DELAY, () => {
+              if (round.dead) return;
+              round.stopTrajectorySfx = Audio.startTrajectoryLoop(w.weapon.id);
+            });
+          }
+        }
       };
       if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
     }
@@ -217,6 +254,8 @@ export const FiringMixin = {
       round.vx *= mult;
       round.vy *= mult;
     }
-    this.projectiles.push({ ...round, owner, trail: [], seekTarget });
+    const pushed = { ...round, owner, trail: [], seekTarget };
+    this.projectiles.push(pushed);
+    return pushed;
   },
 };
