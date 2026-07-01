@@ -80,10 +80,13 @@ export const DEFAULT_SFX = withQDefaults({
     ],
   },
   machineGun: {
-    fire: gunCrackLayers(true),
+    fire: [
+      { kind: 'noise', type: 'bandpass', freq: 1300, freqEnd: 20, dur: 0.36, gain: 0.2, attack: 0, q: 0.45 },
+      { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.155, gain: 0.3, attack: 0.04 },
+    ],
     impact: [
-      { kind: 'noise', type: 'highpass', freq: 2000, freqEnd: 800, dur: 0.05, gain: 0.18, attack: 0.002 },
-      { kind: 'tone', type: 'triangle', freq: 320, freqEnd: 120, dur: 0.06, gain: 0.10, attack: 0.004 },
+      { kind: 'noise', type: 'bandpass', freq: 1275, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 0.1 },
+      { kind: 'tone', type: 'sine', freq: 610, freqEnd: 20, dur: 0.005, gain: 0.2, attack: 0 },
     ],
   },
   shotgun: {
