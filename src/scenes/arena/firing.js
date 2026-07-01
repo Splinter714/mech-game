@@ -13,6 +13,9 @@ export const FiringMixin = {
   // auto-fires that location's weapon at its own cadence, gated by ammo. ──
   _handleFiring(intent, delta) {
     this._heldAudio ??= {};
+    // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
+    // can measure our code-path cost from here to the audio node's start().
+    Audio.markTrigger();
     for (const w of this.mech.weapons()) {
       let cd = (this.fireCooldowns[w.location] ?? 0) - delta;
       if (intent.fire[w.location] && cd <= 0 && w.ready) {

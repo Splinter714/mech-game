@@ -19,6 +19,10 @@ export default class BootScene extends Phaser.Scene {
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).
     Audio.init(this.sound.context);
+    // Dev-only handle so `__audio.latencyReport()` works from the console, and
+    // `__sfxDebug = true` turns on per-shot timing logs. (Not `window.Audio` — that's the
+    // browser's built-in HTMLAudioElement constructor.)
+    if (import.meta.env.DEV) window.__audio = Audio;
     // `?lab` boots straight into the weapon art preview (dev tool).
     const lab = new URLSearchParams(window.location.search).has('lab');
     this.scene.start(lab ? 'WeaponLabScene' : 'GarageScene');

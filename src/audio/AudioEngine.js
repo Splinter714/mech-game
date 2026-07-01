@@ -282,6 +282,41 @@ export class AudioEngine {
   // Phaser usually resumes the context on input; nudge it just in case.
   _resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); }
 
+  // ── SFX latency instrumentation ─────────────────────────────────────────────────────────
+  // Answers "is the perceived fire-delay our code, or a browser/OS/hardware floor?"
+  //   baseLatencyMs   — the AudioContext's own buffering (set by latencyHint at creation;
+  //                     'interactive' minimises it, typically ~3-6ms)
+  //   outputLatencyMs — time from the context to the actual speakers: the OS audio stack +
+  //                     hardware buffer. The big one, and mostly OUT of our control — wired
+  //                     onboard audio is ~10-40ms; BLUETOOTH is 100-300ms (unfixable in JS).
+  // If (base + output) is large, THAT is the floor and no code change removes it.
+  latencyReport() {
+    if (!this.ctx) return null;
+    const base = (this.ctx.baseLatency || 0) * 1000;
+    const output = (this.ctx.outputLatency || 0) * 1000;   // Chrome/Firefox; 0 if unsupported
+    return {
+      baseLatencyMs: +base.toFixed(1),
+      outputLatencyMs: +output.toFixed(1),
+      floorMs: +(base + output).toFixed(1),   // the platform minimum, button-press aside
+      sampleRate: this.ctx.sampleRate,
+      state: this.ctx.state,
+    };
+  }
+
+  // Stamp the moment an input event decided to fire, so _logSfxTiming can measure the
+  // input-read -> audio-node-start gap (our code-path cost). Called from the fire path.
+  markTrigger() { this._triggerAt = (typeof performance !== 'undefined') ? performance.now() : 0; }
+
+  // Enable with `window.__sfxDebug = true` in the console: logs, per sound, the code-path
+  // delay since the last markTrigger() plus the platform latency floor. Off by default.
+  _logSfxTiming(label) {
+    if (typeof window === 'undefined' || !window.__sfxDebug || !this.ctx) return;
+    const code = this._triggerAt ? (performance.now() - this._triggerAt).toFixed(1) : '?';
+    const r = this.latencyReport();
+    // eslint-disable-next-line no-console
+    console.log(`[sfx ${label}] code-path ${code}ms · baseLatency ${r.baseLatencyMs}ms · outputLatency ${r.outputLatencyMs}ms · floor ≈ ${r.floorMs}ms`);
+  }
+
   // 1s cached white-noise buffer (built lazily; reused by every noise voice).
   _noise() {
     if (this._noiseBuf) return this._noiseBuf;
@@ -339,6 +374,7 @@ export class AudioEngine {
     this._resume();
     if (!this.ready || !weapon) return;
     Sfx.fire(this, weapon);
+    this._logSfxTiming('fire');
   }
 
   // A brief in-flight flavor cue, fired a beat after launch — only weapons with a
@@ -367,6 +403,7 @@ export class AudioEngine {
     if (!this.ready || this._heldSounds.has(location)) return;
     const stop = Sfx.startHeld(this, weaponId);
     if (stop) this._heldSounds.set(location, stop);
+    this._logSfxTiming('held-start');
   }
 
   // Stop the held sound at `location`, if any (safe to call when nothing is playing there).

@@ -15,7 +15,7 @@ function mockContext() {
   });
   const node = () => ({ connect: (dest) => dest, disconnect() {} });
   const ctx = {
-    state: 'running', currentTime: 1.0, sampleRate: 48000, destination: node(),
+    state: 'running', currentTime: 1.0, sampleRate: 48000, baseLatency: 0.0053, outputLatency: 0.168, destination: node(),
     createGain: () => ({ gain: param(), connect: (d) => d, disconnect() {} }),
     createWaveShaper: () => ({ curve: null, oversample: 'none', connect: (d) => d }),
     createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d, disconnect() {} }),
@@ -76,6 +76,14 @@ describe('AudioEngine (mock context)', () => {
       for (let step = 0; step < 384; step++) eng._playStep(step, 2.0 + step * 0.1);
       expect(ctx._counts().oscillators).toBeGreaterThan(before);
     }
+  });
+
+  it('latencyReport surfaces the context base + output latency as ms plus their sum (the platform floor)', () => {
+    const r = eng.latencyReport();
+    expect(r.baseLatencyMs).toBeCloseTo(5.3, 1);
+    expect(r.outputLatencyMs).toBeCloseTo(168, 0);
+    expect(r.floorMs).toBeCloseTo(173.3, 1);
+    expect(r.sampleRate).toBe(48000);
   });
 
   it('mutes and unmutes via the master gain', () => {
