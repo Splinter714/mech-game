@@ -84,9 +84,9 @@ export const WEAPONS = {
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40 },
   }),
-  flamethrower: w({ // short-range gout of flame, held as one continuous stream
+  flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
-    damage: 2, range: { min: 0, opt: 55, max: 100 },
+    damage: 2, range: { min: 0, opt: 90, max: 160 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
@@ -95,7 +95,11 @@ export const WEAPONS = {
     // never runs the magazine dry. spreadJitter is narrower than the original pulsed
     // version (9° vs 20°) for a tighter cone, and still randomizes each particle's angle
     // (and makeProjectile's speed) so the stream looks chaotic, not laser-straight.
-    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, sprayCount: { min: 2, max: 4 }, spreadJitter: 9, velocity: 165, kind: 'flame', splash: 6 },
+    // range/velocity pushed out (#52): the flame reaches further (max 160, opt 90) while
+    // velocity 230 keeps it a punchy close-mid gout — the round dies at range.max+40, so
+    // the speed is bumped in step so particles actually reach the new max before expiring
+    // instead of crawling out and fizzling short.
+    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, sprayCount: { min: 2, max: 4 }, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a
@@ -110,7 +114,10 @@ export const WEAPONS = {
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
     damage: 2, range: { min: 0, opt: 180, max: 320 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 900, pattern: 'stream', fireRate: 18, kind: 'bullet', scale: 0.75 },
+    // streams: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
+    // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
+    // `streams: 3` for a triple stream (widen streamSpacing to taste if the lanes crowd).
+    delivery: { hit: 'projectile', path: 'straight', velocity: 900, pattern: 'stream', fireRate: 18, streams: 2, streamSpacing: 5, kind: 'bullet', scale: 0.75 },
   }),
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',

@@ -18,6 +18,7 @@ import { CATEGORIES } from './categories.js';
 
 const TURN_RATE = 4.0;            // guided-missile steering rate (rad/s)
 const CLUSTER_SPACING = 6;        // lateral px between rounds in a dumbfire cluster
+const STREAM_SPACING = 5;         // default lateral px between parallel lanes of a multi-stream weapon (Repeater)
 const DEFAULT_SPREAD_DEG = 16;    // fan width for a spread weapon that omits spreadAngle
 const SPREAD_JITTER_DELAY = 35;   // ms, max random emission stagger for a jittered spread (#46)
 
@@ -27,32 +28,28 @@ const SPREAD_JITTER_DELAY = 35;   // ms, max random emission stagger for a jitte
 // never its steering target.
 //   jostle — Swarm Rack (#49): chaotic random-phase jiggle, constant amplitude (no settling).
 //   weave  — Streak Pod (#50): smooth deliberate sine weave, constant amplitude.
-//   sway   — Cluster Salvo (#51): every rocket in the clump shares ONE phase, so the whole
-//            tight formation snakes together in lockstep — never drifting apart, just alive.
+//   sway   — Cluster Salvo (#51): a modest sine undulation, but each rocket rolls its OWN
+//            random phase — the clump stays loosely together while every rocket wiggles
+//            independently within it (no lockstep, no fanning apart). Same math as 'weave';
+//            it's a distinct kind only so the amplitude can be tuned separately.
 const JOSTLE_AMPLITUDE = 5;       // px, lateral jiggle (Swarm Rack) — owner: tune
 const JOSTLE_FREQUENCY = 11;      // rad/s, jiggle rate
-const WEAVE_AMPLITUDE = 5;        // px, lateral weave (Streak Pod) — moderate, not chaotic
+const WEAVE_AMPLITUDE = 4;        // px, lateral weave (Streak Pod) — moderate, not chaotic
 const WEAVE_FREQUENCY = 6;        // rad/s, weave rate — slow enough to read as deliberate
-const STREAK_STAGGER_DEG = 0.6;   // ° angular stagger between consecutive Streak Pod sub-shots
-const SWAY_AMPLITUDE = 12;        // px, synchronized clump-wide sway (Cluster Salvo, #51)
-const SWAY_FREQUENCY = 9;         // rad/s
+const STREAK_STAGGER_DEG = 0.3;   // ° angular stagger between consecutive Streak Pod sub-shots — tight column
+const SWAY_AMPLITUDE = 5;         // px, per-rocket undulation within a cluster clump (#51) — small so the clump stays tight
+const SWAY_FREQUENCY = 7;         // rad/s
 
 // Which wobble personality (if any) a weapon's rounds fly with. Cluster weapons always get
-// the synchronized 'sway' (#51); among homing weapons, it's an explicit opt-in data flag
-// (`delivery.wobble: 'jostle' | 'weave'`), never a hardcoded weapon id, so this stays
-// shared/variant-agnostic plumbing.
+// 'sway' (#51 — a small per-rocket-independent undulation); among homing weapons, it's an
+// explicit opt-in data flag (`delivery.wobble: 'jostle' | 'weave'`), never a hardcoded
+// weapon id, so this stays shared/variant-agnostic plumbing.
 function wobbleKind(weapon) {
   const d = weapon.delivery || {};
   if (d.cluster) return 'sway';
   if (d.guidance !== 'homing') return null;
   return d.wobble === 'jostle' || d.wobble === 'weave' ? d.wobble : null;
 }
-
-// Set by planEmissions right before it produces a cluster volley's shots, consumed by the
-// makeProjectile() call for each of those shots moments later in the same synchronous tick
-// (cluster shots all fire with delay 0) — this is how every rocket in one clump ends up
-// sharing the exact same sway phase instead of each rolling its own (#51).
-let pendingSwayPhase = null;
 
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
 
@@ -129,12 +126,27 @@ export function planEmissions(weapon) {
     return { mode, shots: sprayShots };
   }
 
+  // Parallel-stream weapon (Repeater, `streams: N`): each cadence tick emits N rounds side by
+  // side in fixed lanes — a lateral offset centred on the aim line (like a cluster's parallel
+  // clump), all with angleOffset 0 so the lanes stay parallel and read as N distinct tracer
+  // streams, NOT a fanned cone. `streamSpacing` (px) tunes the lane gap. Single-stream
+  // weapons (no `streams`, or streams ≤ 1) skip this and fall through to the n = 1 case below.
+  if (d.pattern === 'stream' && d.streams > 1) {
+    const s = d.streams;
+    const spacing = d.streamSpacing || STREAM_SPACING;
+    const streamShots = [];
+    for (let i = 0; i < s; i++) {
+      const c = i - (s - 1) / 2;                    // centred lane index: −…0…+
+      streamShots.push(shot({ lateral: c * spacing }));
+    }
+    return { mode, shots: streamShots };
+  }
+
   const shots = [];
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
   for (let i = 0; i < n; i++) {
     const c = n > 1 ? (i - (n - 1) / 2) : 0;       // centred index: −…0…+
     if (d.cluster) {
-      pendingSwayPhase = Math.random() * Math.PI * 2;
       shots.push(shot({ lateral: c * CLUSTER_SPACING }));
     } else if (n > 1) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
@@ -181,11 +193,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   const speedJitter = d.spreadJitter ? 0.82 + Math.random() * 0.36 : 1;
   const speed = (d.velocity || 480) * speedJitter;
   const wobble = wobbleKind(weapon);
-  // A cluster's sway phase is shared across the whole volley (#51); every other wobble
-  // kind rolls its own random phase so a salvo's missiles never wobble in lockstep.
-  const wobblePhase = wobble === 'sway' && pendingSwayPhase != null
-    ? pendingSwayPhase
-    : (wobble ? Math.random() * Math.PI * 2 : 0);
+  // Every wobble kind — including a cluster's 'sway' (#51) — rolls its OWN random phase, so
+  // no two rounds in a salvo/clump ever undulate in lockstep. For a cluster this means each
+  // rocket wiggles independently within the (still tight) clump instead of snaking together.
+  const wobblePhase = wobble ? Math.random() * Math.PI * 2 : 0;
   return {
     x, y, angle, speed,
     vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
@@ -226,8 +237,9 @@ export function stepProjectile(p, dt, desiredAngle = null) {
       // Smooth, deliberate sine weave at constant amplitude — no decay, no randomness.
       offset = Math.sin(p.wobbleTime * WEAVE_FREQUENCY + p.wobblePhase) * WEAVE_AMPLITUDE;
     } else if (p.wobble === 'sway') {
-      // Every rocket in the clump shares the same phase (#51), so the whole rigid
-      // formation snakes together without any rocket drifting relative to its neighbors.
+      // Each rocket has its OWN random phase (#51), so within one clump every rocket
+      // undulates independently — a loose-but-together group that wiggles internally,
+      // never a rigid formation snaking in lockstep. Small amplitude keeps the clump tight.
       offset = Math.sin(p.wobbleTime * SWAY_FREQUENCY + p.wobblePhase) * SWAY_AMPLITUDE;
     }
     const perp = p.angle + Math.PI / 2;

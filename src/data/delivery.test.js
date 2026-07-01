@@ -25,6 +25,7 @@ describe('planEmissions', () => {
     expect(p.shots).toHaveLength(WEAPONS.clusterRocket.delivery.spreadCount);
     expect(p.shots.some((s) => s.lateral !== 0)).toBe(true);
     expect(p.shots.every((s) => Math.abs(s.angleOffset) < 0.05)).toBe(true); // tight, not a cone
+    expect(p.shots.every((s) => s.delay === 0)).toBe(true);                  // whole clump launches at once
   });
 
   it('schedules a multi-pulse burst as delayed sub-shots', () => {
@@ -40,6 +41,19 @@ describe('planEmissions', () => {
   it('routes melee to a contact swing', () => {
     const meleeFixture = { delivery: { hit: 'contact', pattern: 'single', kind: 'slash' } };
     expect(planEmissions(meleeFixture).mode).toBe('contact');
+  });
+
+  it('emits parallel lanes for a multi-stream weapon — offset laterally, no fan (Repeater)', () => {
+    const p = planEmissions(WEAPONS.machineGun);
+    const { streams, streamSpacing } = WEAPONS.machineGun.delivery;
+    expect(p.shots).toHaveLength(streams);
+    expect(p.shots.every((s) => s.angleOffset === 0)).toBe(true);        // parallel, not fanned
+    const laterals = p.shots.map((s) => s.lateral);
+    expect(laterals.reduce((a, b) => a + b, 0)).toBeCloseTo(0);          // straddles the aim line
+    expect(new Set(laterals).size).toBe(streams);                       // distinct lanes
+    // Adjacent lanes are exactly streamSpacing apart.
+    const sorted = [...laterals].sort((a, b) => a - b);
+    expect(sorted[1] - sorted[0]).toBeCloseTo(streamSpacing);
   });
 
   it('sprays a random handful of simultaneous shots per stream tick (Flamethrower)', () => {
@@ -99,6 +113,17 @@ describe('kinematics', () => {
     stepProjectile(p, 0.1, 0);                       // want straight ahead (0)
     expect(p.angle).toBeLessThan(1.0);               // turned toward 0
     expect(p.angle).toBeGreaterThanOrEqual(1.0 - p.turn * 0.1 - 1e-6);
+  });
+
+  it('cluster rounds each wobble on their OWN random phase — no lockstep (#51)', () => {
+    // Emit one clump, build every round, and confirm the wobble phases aren't all identical
+    // (the old bug shared ONE phase across the whole volley, so they snaked in lockstep).
+    const plan = planEmissions(WEAPONS.clusterRocket);
+    const rounds = plan.shots.map((s) =>
+      makeProjectile(WEAPONS.clusterRocket, 0, 0, s.angleOffset, { maxDist: 9999 }));
+    expect(rounds.every((p) => p.wobble === 'sway')).toBe(true);
+    const phases = rounds.map((p) => p.wobblePhase);
+    expect(new Set(phases).size).toBeGreaterThan(1); // independent phases, not one shared value
   });
 });
 
