@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { buildMechTextures } from '../art/index.js';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
-import { hexToPixel, range } from '../data/hexgrid.js';
+import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
@@ -12,7 +12,6 @@ import { ProjectilesMixin } from './arena/projectiles.js';
 import { TargetingMixin } from './arena/targeting.js';
 import { FiringMixin } from './arena/firing.js';
 import { LocomotionMixin } from './arena/locomotion.js';
-import { DUMMY_HEX } from './arena/shared.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -42,13 +41,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
-    // Enemies — armed, mobile, shoot back. Start with one Raider; the debug controls
-    // (#39) can reset them or spawn more. Each is a self-contained object with its own
-    // mech, textures, view, and per-mech AI state, so the arena handles N enemies.
+    // Enemies — armed, mobile, shoot back. Each is a self-contained object with its own mech,
+    // textures, view, and per-mech AI state, so the arena handles N enemies. The default opening
+    // squad (one of each type) is spawned below, AFTER the player + camera are set, so the
+    // enemies can be dropped just off-screen (relative to the viewport) and walk into view.
     this.enemies = [];
     this._enemySeq = 0;
-    const dp = hexToPixel(DUMMY_HEX.q, DUMMY_HEX.r);
-    this._spawnEnemy(dp.x, dp.y);
 
     // Player state.
     this.px = 0; this.py = 0;
@@ -61,6 +59,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.playerView = this._makeMechView('playerMech', this.px, this.py, this.angle);
 
     this.cameras.main.startFollow(this.playerView, true, 0.12, 0.12);
+
+    // Default opening squad (#44): one of each mech type — brawler, skirmisher, sniper, and the
+    // cover-camping bombardier — dropped OFF-SCREEN so they march into view and engage per their
+    // AI. Spawned here (after px/py + camera follow) so off-screen positions are computed right.
+    this._spawnSquad();
 
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
