@@ -25,7 +25,7 @@ import {
   DESIGN, themeFor, REACTOR, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
-import { drawDecor } from './decor/index.js';
+import { drawDecor, DECOR_ART } from './decor/index.js';
 
 // The low-level primitives + palettes live in ./mechPrims.js; the per-category weapon-mount
 // art in ./mounts/ and the per-kind chassis decor in ./decor/ (registries). This file keeps
@@ -45,6 +45,44 @@ const DEFAULT_SHAPE = {
   headDy: 0, armDy: 0,
 };
 const shapeOf = (mech) => ({ ...DEFAULT_SHAPE, ...(mech.chassis.art.shape || {}) });
+
+// Off-centre weapon mounts (arms + side torsos) are drawn into their OWN textures (not baked
+// into the static turret) so the scene can pivot each one at its joint toward the weapon-
+// convergence point (#: shots from off-centre mounts angle inward; the art now angles with
+// them). The PIVOT is the joint as a fraction of the part's height BEHIND the part centre
+// (−y is forward, so the rear is +y) — the part swings its muzzle (front) inward around it.
+// Arms are articulated limbs, so a big shoulder pivot reads naturally; side torsos are RIGID
+// shoulder armour, so they cant only SLIGHTLY (their weapons are less off-centre, so their
+// convergence angle is smaller anyway) and pivot nearer their own centre so the small rotation
+// doesn't slide the plate out from under the centre torso.
+export const ARM_LOCATIONS = ['leftArm', 'rightArm'];
+export const SIDE_TORSO_LOCATIONS = ['leftTorso', 'rightTorso'];
+// Every location that gets its own pivoting texture (drawn in this back-to-front order).
+export const PIVOT_LOCATIONS = [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS];
+const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, rightTorso: 0.30 };
+
+// Where a `${key}_<part>` sprite must sit and how it pivots, for a mech aimed along `angle`
+// at display `scale`. `ox/oy` is the joint as an origin fraction (so setOrigin makes the
+// sprite rotate around the joint); `dx/dy` is the joint's offset from the mech centre
+// (add it to the mech's screen position); `rot` is the base rotation (caller adds the
+// convergence tilt). At tilt 0 this reproduces the part's old baked-into-the-turret placement
+// exactly. Mirrors the muzzle convention in locomotion._muzzle (forward = −y, right = +x).
+export function partSpriteTransform(mech, loc, angle, scale) {
+  const p = mechLayout(mech)[loc];
+  const pivot = PART_PIVOT[loc] ?? 0.42;
+  const sx = p.x, sy = p.y + p.h * pivot;             // joint in design coords
+  const disp = scale * ART_SCALE;
+  const f = -sy * disp, r = sx * disp;                // forward / right offset (world px)
+  return {
+    ox: 0.5 + sx / DESIGN, oy: 0.5 + sy / DESIGN,
+    dx: f * Math.cos(angle) - r * Math.sin(angle),
+    dy: f * Math.sin(angle) + r * Math.cos(angle),
+    rot: angle + Math.PI / 2,
+  };
+}
+
+// Back-compat alias — the arm-only name that existing call sites import.
+export const armSpriteTransform = partSpriteTransform;
 
 // Per-location anchors + box sizes in mech-local design coords (origin = centre, -y =
 // forward). Scenes also read this to place per-part hit-areas + damage labels, so the
@@ -68,25 +106,66 @@ export function mechLayout(mech) {
   };
 }
 
-// Torsos + arms + head + weapons. Drawn facing up; weapons point forward (-y).
+// One mount location's weapon hardware: a shape per mounted weapon, spread across the part,
+// by category. Shared by the turret (torso/head mounts) and the arm textures (arm mounts).
+function drawWeaponsAt(sg, mech, lay, loc, T, s) {
+  if (mech.isPartDestroyed(loc)) return;
+  const p = lay[loc];
+  const weaponIds = mech.mounts[loc].filter(isWeapon);
+  const n = weaponIds.length;
+  const front = p.y - p.h / 2;
+  weaponIds.forEach((id, i) => {
+    const wpn = getWeapon(id);
+    const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
+    drawWeaponMount(sg, T, wpn?.category ?? 'energy', bx, front, s);
+  });
+}
+
+// One arm (the weapon mount) — chunky plate + its weapons — in its OWN texture so the scene
+// can pivot it toward convergence. Drawn at the same design coords as when it lived in the
+// turret, so a straight (tilt-0) arm renders identically. `stump` if the arm is destroyed.
+function drawArm(sg, mech, loc, T) {
+  const lay = mechLayout(mech);
+  const s = mech.chassis.art.bodyLen / 38;
+  const p = lay[loc];
+  if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
+  drawWeaponsAt(sg, mech, lay, loc, T, s);
+}
+
+// One side torso (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
+// so the scene can cant it slightly toward convergence. Drawn at the same design coords as
+// when it lived in the turret, so a straight (tilt-0) side torso renders identically. The
+// shoulder PAULDRON (heavy chassis) is drawn HERE too, so it stays glued to the side torso as
+// it cants; other decor (mast/vane/stack/spine) stays on the body. `stump` if destroyed.
+function drawSideTorso(sg, mech, loc, T) {
+  const lay = mechLayout(mech);
+  const s = mech.chassis.art.bodyLen / 38;
+  const p = lay[loc];
+  if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
+  if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
+  drawPauldronFor(sg, mech, lay, loc, T);
+  drawWeaponsAt(sg, mech, lay, loc, T, s);
+}
+
+// Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftTorso, > 0 → rightTorso),
+// so it rides on the same pivoting texture as its side torso. The other decor kinds stay on
+// the body (see drawDecor's `skip`).
+function drawPauldronFor(sg, mech, lay, loc, T) {
+  const side = loc === 'leftTorso' ? -1 : 1;
+  for (const d of mech.chassis.art.decor || []) {
+    if (d.kind === 'pauldron' && d.side === side) DECOR_ART.pauldron(sg, d, lay, T);
+  }
+}
+
+// The body: centre torso + head + spine decor + centre/head weapons. NOT the arms or side
+// torsos — those are separate pivoting textures (drawArm / drawSideTorso), drawn under this
+// body sprite so it occludes their inner edges (the top-down read). Drawn facing up; weapons
+// point forward (-y).
 function drawTurret(sg, mech, T) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
-
-  // Side torsos behind the centre, each with a recessed vent.
-  for (const loc of ['leftTorso', 'rightTorso']) {
-    const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
-    plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
-    if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
-  }
-
-  // Arms (the weapon mounts) — chunkier plates.
-  for (const loc of ['leftArm', 'rightArm']) {
-    const p = lay[loc];
-    if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); continue; }
-    plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
-  }
 
   // Center torso: armour slab → core inset → dark reactor housing → purple reactor.
   const ct = lay.centerTorso;
@@ -116,21 +195,16 @@ function drawTurret(sg, mech, T) {
     else glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
   }
 
-  // Structural decor (shoulder pauldrons / mast / exhausts) under the weapons.
-  drawDecor(sg, mech, lay, T);
+  // Structural decor (mast / vane / exhaust stacks) under the weapons. The shoulder PAULDRONS
+  // are drawn on the side-torso textures instead (so they cant with the side torso), so skip
+  // them here.
+  drawDecor(sg, mech, lay, T, { skip: ['pauldron'] });
 
-  // Weapon hardware: one shape per mounted weapon, spread across the part, by category.
+  // Weapon hardware for the centre/head mounts only — the ARM and SIDE-TORSO mounts are drawn
+  // in their own pivoting textures (drawArm / drawSideTorso), so skip them here.
   for (const loc of MOUNT_LOCATIONS) {
-    if (mech.isPartDestroyed(loc)) continue;
-    const p = lay[loc];
-    const weaponIds = mech.mounts[loc].filter(isWeapon);
-    const n = weaponIds.length;
-    const front = p.y - p.h / 2;
-    weaponIds.forEach((id, i) => {
-      const wpn = getWeapon(id);
-      const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-      drawWeaponMount(sg, T, wpn?.category ?? 'energy', bx, front, s);
-    });
+    if (PIVOT_LOCATIONS.includes(loc)) continue;
+    drawWeaponsAt(sg, mech, lay, loc, T, s);
   }
 }
 
@@ -189,6 +263,16 @@ export function buildMechTextures(scene, key, mech, opts) {
   }
   gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
     (g) => drawTurret(scaledGraphics(g), mech, T));
+  // One texture per side torso + arm — the scene pivots each toward the weapon-convergence
+  // point (side torsos subtly, arms more; see partSpriteTransform).
+  for (const loc of SIDE_TORSO_LOCATIONS) {
+    gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T));
+  }
+  for (const loc of ARM_LOCATIONS) {
+    gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+      (g) => drawArm(scaledGraphics(g), mech, loc, T));
+  }
 }
 
 // Re-draw after damage so destroyed parts become stumps / weapons vanish.

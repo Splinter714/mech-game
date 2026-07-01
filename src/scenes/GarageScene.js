@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech } from '../art/index.js';
+import { buildMechTextures, reskinMech, partSpriteTransform } from '../art/index.js';
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
@@ -180,6 +180,7 @@ export default class GarageScene extends Phaser.Scene {
     this.mech = new Mech(data);
     this.allMechs[ACTIVE_MECH_KEY] = this.mech;
     buildMechTextures(this, 'garageMech', this.mech);
+    this._positionPreviewParts();  // layout (side-torso/arm placement) changes with the chassis
     saveAllMechs(this.allMechs);
     this._chassisBtn?.t.setText(`⟳ ${this.mech.chassis.name}`);
     this.refresh();
@@ -234,10 +235,36 @@ export default class GarageScene extends Phaser.Scene {
     const cy = this.H - this.bottomH + box / 2 + 6;
     this.previewPanel = this.add.rectangle(cx, cy, box, box, 0x10151c).setStrokeStyle(1, UI.panelEdge);
     const scale = (box - 30) / 230;
+    this._previewScale = scale;
+    this._previewCx = cx; this._previewCy = cy + 8;
+    // Add in draw order back→front: hull → side torsos → arms → body, so the body occludes the
+    // side torsos' inner edges and the arms occlude the side torsos (matches the arena layering).
     this.previewHull = this.add.sprite(cx, cy + 8, 'garageMech_hull_0').setScale(scale);
+    this.previewTorL = this.add.sprite(cx, cy + 8, 'garageMech_leftTorso').setScale(scale);
+    this.previewTorR = this.add.sprite(cx, cy + 8, 'garageMech_rightTorso').setScale(scale);
+    this.previewArmL = this.add.sprite(cx, cy + 8, 'garageMech_leftArm').setScale(scale);
+    this.previewArmR = this.add.sprite(cx, cy + 8, 'garageMech_rightArm').setScale(scale);
     this.previewTurret = this.add.sprite(cx, cy + 8, 'garageMech_turret').setScale(scale);
+    this._positionPreviewParts();
     this._chassisBtn = this.button(cx - 80, this.H - 34, 160, 26,
       `⟳ ${this.mech.chassis.name}`, () => this.cycleChassis(), UI.accent);
+  }
+
+  // Place + pivot the static preview side-torso + arm sprites at their joints (tilt 0). The
+  // preview faces "up" (turret rotation 0); passing angle = -π/2 gives rot = 0 (matching the
+  // turret) and the right dx/dy. Called on build and after a chassis switch (which changes
+  // mechLayout → part placement).
+  _positionPreviewParts() {
+    const parts = [
+      [this.previewTorL, 'leftTorso'], [this.previewTorR, 'rightTorso'],
+      [this.previewArmL, 'leftArm'], [this.previewArmR, 'rightArm'],
+    ];
+    for (const [sprite, loc] of parts) {
+      const t = partSpriteTransform(this.mech, loc, -Math.PI / 2, this._previewScale);
+      sprite.setOrigin(t.ox, t.oy);
+      sprite.setPosition(this._previewCx + t.dx, this._previewCy + t.dy);
+      sprite.rotation = t.rot;
+    }
   }
 
   // The shared skill-tile row, along the bottom of the LEFT region.

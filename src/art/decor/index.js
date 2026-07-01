@@ -11,9 +11,13 @@ import { draw as stack } from './stack.js';
 
 export const DECOR_ART = { pauldron, mast, vane, stack };
 
-export function drawDecor(sg, mech, lay, T) {
+// `opts.skip` is a list of decor kinds to NOT draw here (e.g. pauldrons, which ride on the
+// pivoting side-torso textures so they cant with the side torso).
+export function drawDecor(sg, mech, lay, T, opts = {}) {
   const a = mech.chassis.art;
+  const skip = opts.skip || [];
   for (const d of a.decor || []) {
+    if (skip.includes(d.kind)) continue;
     const fn = DECOR_ART[d.kind];
     if (fn) fn(sg, d, lay, T);
   }

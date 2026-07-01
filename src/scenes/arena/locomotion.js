@@ -3,21 +3,93 @@
 // the prototype via Object.assign. The pure relocation keeps `update()` a thin orchestrator
 // that calls `_drive` then `_stepGait`.
 import Phaser from 'phaser';
-import { mechLayout, ART_SCALE } from '../../art/index.js';
+import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
+import { isWeapon } from '../../data/items.js';
+import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, approach, backwardSpeedScale } from './shared.js';
+import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
+
+// Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
+// snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
+// convergence geometry — the turret slewing, the target moving, and ESPECIALLY a soft-lock
+// engaging/dropping (which jumps the convergence distance CONVERGE_DIST↔the locked range),
+// reading as jitter/flapping. `TILT_SMOOTH_K` is the exponential rate (1/s): higher = snappier.
+// ~12 gives a weighted actuated-limb swing that settles in a couple hundred ms — not instant,
+// not sluggish, not springy.
+const TILT_SMOOTH_K = 12;
 
 export const LocomotionMixin = {
-  // A mech = hull (legs) + turret (everything else) stacked in a container so they can
-  // rotate independently around the shared centre.
+  // A mech = hull (legs) + side torsos + arms + turret-body stacked in a container so they can
+  // rotate independently around the shared centre. Layer order back→front:
+  // [hull, leftTorso, rightTorso, armL, armR, body]. The side torsos sit behind the arms and
+  // UNDER the body (centre torso + head) so the body occludes their inner edges and the arms
+  // occlude them — the top-down read at tilt 0, and what keeps an inward-canted part tucked
+  // under the body. Each off-centre part pivots at its own joint (arms at the shoulder, side
+  // torsos nearer their centre — see partSpriteTransform).
   _makeMechView(key, x, y, angle) {
     const hull = this.add.sprite(0, 0, `${key}_hull_0`).setScale(ARENA_MECH_SCALE);
+    const torL = this.add.sprite(0, 0, `${key}_leftTorso`).setScale(ARENA_MECH_SCALE);
+    const torR = this.add.sprite(0, 0, `${key}_rightTorso`).setScale(ARENA_MECH_SCALE);
+    const armL = this.add.sprite(0, 0, `${key}_leftArm`).setScale(ARENA_MECH_SCALE);
+    const armR = this.add.sprite(0, 0, `${key}_rightArm`).setScale(ARENA_MECH_SCALE);
     const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(ARENA_MECH_SCALE);
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
-    const c = this.add.container(x, y, [hull, turret]);
-    c.hull = hull; c.turret = turret;
+    const c = this.add.container(x, y, [hull, torL, torR, armL, armR, turret]);
+    c.hull = hull; c.torL = torL; c.torR = torR; c.armL = armL; c.armR = armR; c.turret = turret;
+    // Per-view smoothing state: the CURRENTLY-APPLIED convergence tilt of each pivoting part,
+    // eased toward its target each frame (see _syncTilts). Starts at the resting tilt (0) so a
+    // fresh deploy/spawn doesn't swing in from a stale angle.
+    c._tilt = { leftTorso: 0, rightTorso: 0, leftArm: 0, rightArm: 0 };
     return c;
+  },
+
+  // Ease a view's stored per-part tilts toward `targets` (loc → target tilt), then apply them
+  // via _syncPivots. Exponential smoothing at TILT_SMOOTH_K, wrapping each step so it takes the
+  // short way around the ±π seam (a lock-flip must not spin the long way). `targets` may omit a
+  // loc (treated as 0). Enemies pass all-0 targets, which the smoothing handles cleanly (stays
+  // 0, no drift). Falls back to snapping if dt is absent/NaN so the first frame can't produce NaN.
+  _syncTilts(view, mech, angle, scale, baseX, baseY, targets, dt) {
+    const a = 1 - Math.exp(-TILT_SMOOTH_K * dt);
+    const smooth = Number.isFinite(a) ? Phaser.Math.Clamp(a, 0, 1) : 1;
+    const t = view._tilt;
+    for (const loc of PIVOT_LOCATIONS) {
+      const target = targets[loc] || 0;
+      const delta = Phaser.Math.Angle.Wrap(target - t[loc]);
+      t[loc] = Phaser.Math.Angle.Wrap(t[loc] + delta * smooth);
+    }
+    this._syncPivots(view, mech, angle, scale, baseX, baseY, t);
+  },
+
+  // Place + pivot a mech view's four off-centre part sprites (side torsos + arms) toward their
+  // convergence tilt. The sprites are children of the container (local origin = centre), so
+  // callers pass baseX = baseY = 0. `tilts` maps a loc → its convergence tilt (0 = straight).
+  _syncPivots(view, mech, angle, scale, baseX, baseY, tilts) {
+    const parts = [
+      [view.torL, 'leftTorso'], [view.torR, 'rightTorso'],
+      [view.armL, 'leftArm'], [view.armR, 'rightArm'],
+    ];
+    for (const [sprite, loc] of parts) {
+      const t = partSpriteTransform(mech, loc, angle, scale);
+      sprite.setOrigin(t.ox, t.oy);
+      sprite.setPosition(baseX + t.dx, baseY + t.dy);
+      sprite.rotation = t.rot + (tilts[loc] || 0);
+    }
+  },
+
+  // Convergence tilt for one off-centre part (arm or side torso), from its own first mounted
+  // weapon: how far that weapon's fire angle deviates from the turret facing. Direct-fire
+  // weapons converge inward (a small tilt — smaller for side torsos, whose muzzles are less
+  // off-centre); indirect/melee/empty parts return 0 (straight). Mirrors firing's _fireAngle.
+  _partTilt(loc) {
+    if (this.mech.isPartDestroyed(loc)) return 0;
+    const ids = this.mech.mounts[loc].filter(isWeapon);
+    if (!ids.length) return 0;
+    const w = { weapon: getWeapon(ids[0]), location: loc };
+    const m = this._muzzle(loc);
+    const fireAngle = this._fireAngle(w, m);
+    return Phaser.Math.Angle.Wrap(fireAngle - this.turretAngle);
   },
 
   // World position of a weapon's muzzle: its body-location offset (front edge of the
@@ -95,6 +167,11 @@ export const LocomotionMixin = {
     this.playerView.hull.setTexture(`playerMech_hull_${this.hullFrame}`);
     this.playerView.hull.rotation = this.angle + Math.PI / 2;
     this.playerView.turret.rotation = this.turretAngle + Math.PI / 2;
+    // Ease each pivoting part toward its convergence tilt (smoothing kills the lock-engage snap).
+    this._syncTilts(this.playerView, this.mech, this.turretAngle, ARENA_MECH_SCALE, 0, 0, {
+      leftTorso: this._partTilt('leftTorso'), rightTorso: this._partTilt('rightTorso'),
+      leftArm: this._partTilt('leftArm'), rightArm: this._partTilt('rightArm'),
+    }, dt);
     this.playerView.setPosition(this.px, this.py - bob);
   },
 
