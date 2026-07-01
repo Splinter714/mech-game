@@ -6,6 +6,23 @@ import { stepProjectile } from '../../data/delivery.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
+// Arcing homing missiles (#57): the seeker doesn't engage until the round is past the apex
+// and descending — like a real missile leaving the tube mostly ballistic, then curving in on
+// its target during the back half of the arc. `ASCENT_END` is the fractional-flight-distance
+// (p.dist / p.maxDist) where the seeker starts blending in (0 = launch, 1 = impact); the blend
+// then ramps from 0→1 over `HOMING_BLEND_SPAN` so the turn-in reads as a smooth curve rather
+// than a snap. Both are feel/balance levers.
+const ASCENT_END = 0.4;           // fraction of flight spent mostly ballistic before homing engages
+const HOMING_BLEND_SPAN = 0.35;   // fraction of flight over which homing ramps from 0% to 100%
+const PITCH_TILT = 0.9;           // rad, max cosmetic nose-up/nose-down tilt at launch/impact
+
+// How strongly an arcing homing round should steer toward its target at flight-fraction `t`:
+// 0 during ascent, ramping smoothly up to 1 by the time it's well into its descent.
+function arcHomingBlend(t) {
+  if (t <= ASCENT_END) return 0;
+  return Math.min(1, (t - ASCENT_END) / HOMING_BLEND_SPAN);
+}
+
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
     this.projFx.clear();
@@ -26,8 +43,25 @@ export const ProjectilesMixin = {
         else p.homing = false;
       }
       // Advance via the shared kinematics — guided rounds steer toward the live target
-      // (capped by turn rate); ballistic rounds just integrate velocity.
-      stepProjectile(p, dt, p.homing && !targetGone ? Math.atan2(hy - p.y, hx - p.x) : null);
+      // (capped by turn rate); ballistic rounds just integrate velocity. An arcing homing
+      // round (#57) doesn't engage its seeker until it's descending — mostly ballistic on the
+      // way up (like a missile still climbing out of the tube), then curving onto the target
+      // as it comes down. Scale the round's turn rate by that ascent/descent blend rather than
+      // hard-gating the desired angle, so the turn-in reads as a smooth curve, not a snap.
+      const homingActive = p.homing && !targetGone;
+      let restoreTurn = null;
+      if (homingActive && p.arc) {
+        const blend = arcHomingBlend(p.dist / p.maxDist);
+        if (blend <= 0) {
+          restoreTurn = p.turn;
+          p.turn = 0;
+        } else if (blend < 1) {
+          restoreTurn = p.turn;
+          p.turn = p.turn * blend;
+        }
+      }
+      stepProjectile(p, dt, homingActive ? Math.atan2(hy - p.y, hx - p.x) : null);
+      if (restoreTurn != null) p.turn = restoreTurn;
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
       if (!p.arc && this._isWall(p.x, p.y)) {
         p.dead = true;
@@ -58,6 +92,7 @@ export const ProjectilesMixin = {
     // lofts toward the "camera" and the ground shadow tightens beneath it, so the round
     // stays planted on its true ground position.
     let scale = 1;
+    let drawAngle = p.angle;
     if (p.arc) {
       const t = p.dist / p.maxDist;
       const h = 4 * t * (1 - t);                              // 0..1 parabolic height fraction
@@ -67,10 +102,16 @@ export const ProjectilesMixin = {
       scale = 1 + h * bump;
       const sw = 8 - h * 4;                                   // shadow tightens with height
       g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
+      // Cosmetic pitch (#57): dh/dt of the parabola (4(1-2t)) is positive while rising and
+      // negative while falling, so it nudges the DRAWN angle to nose up on the way up and nose
+      // down on the way down, on top of the round's true 2D heading — never touches p.angle
+      // itself, which still drives steering/physics.
+      const climbRate = 4 * (1 - 2 * t);                      // +1 at launch → -1 at impact
+      drawAngle = p.angle - climbRate * PITCH_TILT;
     }
     // The round body itself is shared art (so the garage icon matches); `p.dist` drives
     // the flame flicker.
-    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale * (p.scale || 1), p.dist);
+    drawProjectileBody(g, p.x, p.y, drawAngle, p.kind, p.color, scale * (p.scale || 1), p.dist);
   },
 
   // Persistent hitscan beams: age them, retire expired ones into a brief spark-fade, and
