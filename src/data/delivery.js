@@ -124,6 +124,12 @@ export function planEmissions(weapon) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
       const fireDelay = jitterRad ? Math.random() * SPREAD_JITTER_DELAY : 0;
       shots.push(shot({ angleOffset: (c / (n - 1)) * cone + jitter, delay: fireDelay }));
+    } else if (jitterRad) {
+      // A single continuously-streamed shot (Flamethrower, #46) still gets the same
+      // per-shot angle jitter a multi-pellet spread would use — each rapid-fire particle
+      // lands at its own random angle, so the held stream reads as a chaotic gout rather
+      // than a laser-straight repeating line.
+      shots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad }));
     } else shots.push(shot());
   }
 

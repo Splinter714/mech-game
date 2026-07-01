@@ -80,13 +80,16 @@ export const WEAPONS = {
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40 },
   }),
-  flamethrower: w({ // short-range spray of slow flame; chews up anything close
+  flamethrower: w({ // short-range gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
     damage: 2, range: { min: 0, opt: 55, max: 100 },
-    ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 100,
-    // spreadJitter (#46): randomizes each particle's angle/timing so the stream reads as a
-    // chaotic gout of fire, not a clean repeating pulse of evenly-fanned shots.
-    delivery: { hit: 'projectile', pattern: 'spread', spreadCount: 6, spreadAngle: 12, spreadJitter: 20, velocity: 165, kind: 'flame', splash: 6 },
+    ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
+    // pattern: 'stream' + fireRate (continuous rework, #46): a rapid single-particle
+    // stream fired every ~45ms instead of a burst of pellets every cycle, so holding the
+    // trigger reads as one unbroken tongue of fire rather than a series of pulses.
+    // spreadJitter still randomizes each particle's angle (and makeProjectile's speed) so
+    // the stream looks like a chaotic gout, not a laser-straight line.
+    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 22, spreadJitter: 20, velocity: 165, kind: 'flame', splash: 6 },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a
