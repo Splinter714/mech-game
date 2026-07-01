@@ -291,6 +291,20 @@ export class AudioEngine {
 
   // ── Synth voices ── each schedules itself at `at` (default: now) and frees on stop. ──
 
+  // Shapes a voice's gain envelope: attack, then decay to (near) silence by `t + dur`. If
+  // `sweeping` (a freq/filter ramp is running across the same window), the gain HOLDS at
+  // full volume until a short release right at the end instead of decaying the whole time —
+  // otherwise the swept target is masked by its own fade and never really gets heard.
+  _envelope(g, t, gain, attack, dur, sweeping) {
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + attack);
+    if (sweeping) {
+      const release = Math.min(dur * 0.3, 0.05);
+      g.gain.setValueAtTime(gain, t + Math.max(attack, dur - release));
+    }
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  }
+
   // A pitched oscillator with a fast attack + exponential decay; optional pitch glide.
   // (gain <= 0 is skipped — exponential ramps can't target 0, and a silent voice is a no-op.)
   tone(bus, { type = 'sine', freq = 440, freqEnd, dur = 0.15, gain = 0.4, attack = 0.004 }, at) {
@@ -301,9 +315,7 @@ export class AudioEngine {
     o.frequency.setValueAtTime(Math.max(1, freq), t);
     if (freqEnd) o.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t + dur);
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(gain, t + attack);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    this._envelope(g, t, gain, attack, dur, !!freqEnd);
     o.connect(g).connect(bus);
     o.start(t); o.stop(t + dur + 0.03);
   }
@@ -319,9 +331,7 @@ export class AudioEngine {
     if (freqEnd) f.frequency.exponentialRampToValueAtTime(Math.max(40, freqEnd), t + dur);
     f.Q.value = q;
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(gain, t + attack);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    this._envelope(g, t, gain, attack, dur, !!freqEnd);
     src.connect(f).connect(g).connect(bus);
     src.start(t); src.stop(t + dur + 0.03);
   }
