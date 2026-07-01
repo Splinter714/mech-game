@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DEFAULT_SFX, loadSfxParams, saveSfxParams } from './sfxParams.js';
+import { DEFAULT_SFX, loadSfxParams, saveSfxParams, HELD_SFX, hasHeldSfx } from './sfxParams.js';
 
 // A minimal in-memory localStorage mock — vitest's default (node) environment has no
 // real one, and this only needs get/set for these tests.
@@ -48,5 +48,34 @@ describe('SFX param persistence (Weapon Lab sound panel)', () => {
 
     globalThis.localStorage = { getItem: () => 'not json{{', setItem: () => {} };
     expect(() => loadSfxParams()).not.toThrow();
+  });
+});
+
+describe('gunCrackLayers (#54 — 4-layer ballistic crack)', () => {
+  it('gives autocannon/shotgun 2 tone + 2 noise layers', () => {
+    for (const id of ['autocannon', 'shotgun']) {
+      const layers = DEFAULT_SFX[id].fire;
+      expect(layers.length).toBe(4);
+      expect(layers.filter((l) => l.kind === 'noise').length).toBe(2);
+      expect(layers.filter((l) => l.kind === 'tone').length).toBe(2);
+    }
+  });
+
+  it('leaves machineGun on its own bespoke layers, untouched', () => {
+    expect(DEFAULT_SFX.machineGun.fire.length).toBe(2);
+  });
+});
+
+describe('HELD_SFX (#53 — held/looping fire sound data)', () => {
+  it('has an entry for flamethrower and beamLaser', () => {
+    expect(HELD_SFX.flamethrower).toBeTruthy();
+    expect(HELD_SFX.beamLaser).toBeTruthy();
+  });
+
+  it('hasHeldSfx reports true only for weapons with an entry', () => {
+    expect(hasHeldSfx('flamethrower')).toBe(true);
+    expect(hasHeldSfx('beamLaser')).toBe(true);
+    expect(hasHeldSfx('autocannon')).toBe(false);
+    expect(hasHeldSfx('made-up-weapon')).toBe(false);
   });
 });

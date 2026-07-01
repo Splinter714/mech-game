@@ -5,9 +5,14 @@
 // entry in sfxParams.js, not a new function.** Ability/footstep/explosion cues are still
 // small dedicated functions; they're not weapon-specific. The engine keeps the public
 // facade (guards + `_resume`) and delegates here.
-import { playLayers } from './sfxLayers.js';
+import { playLayers, startLoopLayers } from './sfxLayers.js';
+import { HELD_SFX } from './sfxParams.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// Dial the one-shot trajectory cue's gain down for the sustained loop — up to 6 can play at
+// once (Swarm Rack); tune here.
+const TRAJECTORY_LOOP_GAIN_SCALE = 0.6;
 
 export function fire(e, weapon) {
   playLayers(e, e.sfx, e.getSfxParams(weapon.id).fire);
@@ -20,6 +25,26 @@ export function trajectory(e, weaponId) {
 
 export function impact(e, weaponId) {
   playLayers(e, e.sfx, e.getSfxParams(weaponId).impact);
+}
+
+// ── Held/looping fire sound (#53) — flamethrower/beamLaser use ONE continuous source
+// instead of a retriggered one-shot burst every cadence tick (see sfxLayers.js's
+// startLoopLayers for the actual node-graph lifecycle). Returns null if there's no HELD_SFX
+// entry for this weapon, or the engine isn't ready.
+export function startHeld(e, weaponId) {
+  const cfg = HELD_SFX[weaponId];
+  if (!cfg || !e.ready) return null;
+  return startLoopLayers(e, e.sfx, [cfg]);
+}
+
+// ── Per-projectile in-flight loop (#56) — missiles/lobbed weapons get a continuous
+// trajectory cue for the round's actual flight time instead of one fixed-duration one-shot.
+// Reuses the weapon's existing `trajectory` layers (looped, gain scaled down since several
+// can play at once — e.g. Swarm Rack's 6 simultaneous missiles) rather than a new data table.
+export function startTrajectory(e, weaponId) {
+  const layers = e.getSfxParams(weaponId).trajectory;
+  if (!layers || !layers.length || !e.ready) return null;
+  return startLoopLayers(e, e.sfx, layers, TRAJECTORY_LOOP_GAIN_SCALE);
 }
 
 // ── Ability cues (jump-jet dash vs. bubble-shield raise). ───────────────────────────────

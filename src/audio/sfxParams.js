@@ -8,9 +8,15 @@
 // each weapon's actual damage/pattern) so the game sounds IDENTICAL until someone moves a
 // slider. **Add a weapon = give it an entry here** (or it falls back to DEFAULT_SFX).
 
+// Ballistic fire cue (#54): two tone layers (a low thud + a higher ring) and two noise
+// layers (a highpass crack + a bandpass body) — four independently tunable layers instead
+// of one tone + one noise, so the Weapon Lab panel gets four knob-pairs for autocannon/
+// shotgun. `machineGun` keeps its own bespoke layers (unaffected by this).
 const gunCrackLayers = (stream) => [
   { kind: 'noise', type: 'highpass', freq: 1600, freqEnd: 700, dur: stream ? 0.045 : 0.11, gain: stream ? 0.10 : 0.26, attack: 0.0008 },
+  { kind: 'noise', type: 'bandpass', freq: 900, freqEnd: 500, q: 1.1, dur: stream ? 0.05 : 0.12, gain: stream ? 0.05 : 0.12, attack: 0.001 },
   { kind: 'tone', type: 'triangle', freq: stream ? 220 : 170, freqEnd: 55, dur: stream ? 0.05 : 0.13, gain: stream ? 0.07 : 0.20, attack: 0.004 },
+  { kind: 'tone', type: 'square', freq: stream ? 440 : 340, freqEnd: 150, dur: stream ? 0.035 : 0.08, gain: stream ? 0.03 : 0.08, attack: 0.002 },
 ];
 const laserZapLayers = (weapon, stream) => {
   const base = Math.max(180, Math.min(1300, 1000 - weapon.damage * 11));
@@ -124,6 +130,27 @@ export const DEFAULT_SFX = withQDefaults({
     impact: blastLayers(0.55),
   },
 });
+
+// ── Held/looping SFX (#53) ──────────────────────────────────────────────────────────────
+// Hold-to-fire, continuous weapons (cycleTime: 0, pattern: 'stream') don't retrigger a
+// one-shot burst every cadence tick — instead they get ONE continuous source that starts
+// on button-down and stops on button-up (see AudioEngine.startHeld/stopHeld + sfx.js's
+// startHeld). This is a separate table (not nested under a weapon's fire/trajectory/impact
+// stages) since it's a fundamentally different playback lifecycle (loop, not one-shot decay)
+// — the Weapon Lab panel doesn't expose it yet (out of scope; edit these by hand).
+export const HELD_SFX = {
+  // Flamethrower: a filtered-noise roar — bandpass noise centered in the "fire" range,
+  // wide-ish Q so it reads as a breathy gout rather than a whistle.
+  flamethrower: { kind: 'noise', type: 'bandpass', freq: 700, q: 0.5, gain: 0.14 },
+  // Beam Laser: a sustained tone hum — sawtooth for a buzzy energy-weapon timbre.
+  beamLaser: { kind: 'tone', type: 'sawtooth', freq: 320, gain: 0.10 },
+};
+
+// Cheap lookup for firing.js: does this weapon use a held/looping sound instead of a
+// per-shot one-shot fire cue?
+export function hasHeldSfx(weaponId) {
+  return !!HELD_SFX[weaponId];
+}
 
 // ms after the fire cue before the trajectory ("now it's airborne") cue plays — shared by
 // the arena and the Weapon Lab preview so the timing feels identical in both.

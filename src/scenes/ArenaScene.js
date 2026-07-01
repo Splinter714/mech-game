@@ -94,7 +94,13 @@ export default class ArenaScene extends Phaser.Scene {
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
     this.scene.launch('HudScene');
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scene.stop('HudScene'));
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scene.stop('HudScene');
+      Audio.stopAllHeld();   // #53: don't leave a flamethrower/beam-laser loop running into the garage
+      // #56: any in-flight rounds still looping their trajectory cue (didn't get to impact
+      // before the scene tore down) need their loops stopped too, or they'd run forever.
+      for (const p of this.projectiles) p.stopTrajectorySfx?.();
+    });
   }
 
   // The per-frame loop is a thin orchestrator: each step is a mixin method (drive, gait,

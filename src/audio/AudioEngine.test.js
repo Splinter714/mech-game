@@ -11,16 +11,17 @@ function mockContext() {
   const param = () => ({
     value: 0,
     setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
+    cancelScheduledValues() {},
   });
-  const node = () => ({ connect: (dest) => dest });
+  const node = () => ({ connect: (dest) => dest, disconnect() {} });
   const ctx = {
     state: 'running', currentTime: 1.0, sampleRate: 48000, destination: node(),
-    createGain: () => ({ gain: param(), connect: (d) => d }),
+    createGain: () => ({ gain: param(), connect: (d) => d, disconnect() {} }),
     createWaveShaper: () => ({ curve: null, oversample: 'none', connect: (d) => d }),
-    createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d }),
+    createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d, disconnect() {} }),
     createDynamicsCompressor: () => ({ threshold: param(), ratio: param(), attack: param(), release: param(), connect: (d) => d }),
-    createOscillator: () => { oscillators++; return { type: '', frequency: param(), connect: (d) => d, start() {}, stop() {} }; },
-    createBufferSource: () => { sources++; return { buffer: null, connect: (d) => d, start() {}, stop() {} }; },
+    createOscillator: () => { oscillators++; return { type: '', frequency: param(), connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
+    createBufferSource: () => { sources++; return { buffer: null, loop: false, connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
     createBuffer: (_c, len) => ({ getChannelData: () => new Float32Array(len) }),
     resume: () => Promise.resolve(),
     _counts: () => ({ oscillators, sources }),
@@ -89,5 +90,64 @@ describe('AudioEngine (mock context)', () => {
     const bare = new AudioEngine();
     expect(bare.ready).toBe(false);
     expect(() => { bare.fire(getWeapon('autocannon')); bare.explosion(); bare.footstep(); }).not.toThrow();
+  });
+
+  // #53: held/looping fire sound (flamethrower/beam laser) instead of a retriggered one-shot.
+  describe('held/looping fire sound (#53)', () => {
+    it('starts a continuous voice for a weapon with a HELD_SFX entry and stops it cleanly', () => {
+      const before = ctx._counts();
+      eng.startHeld('leftArm', 'flamethrower');
+      expect(ctx._counts().sources).toBeGreaterThan(before.sources); // noise loop voice created
+      expect(() => eng.stopHeld('leftArm')).not.toThrow();
+    });
+
+    it('guards against double-starting the same location', () => {
+      eng.startHeld('leftArm', 'flamethrower');
+      const after1 = ctx._counts();
+      eng.startHeld('leftArm', 'flamethrower');   // same location again — should no-op
+      expect(ctx._counts()).toEqual(after1);
+      eng.stopHeld('leftArm');
+    });
+
+    it('tracks two simultaneous held weapons at different locations independently', () => {
+      eng.startHeld('leftArm', 'flamethrower');
+      eng.startHeld('rightArm', 'beamLaser');
+      expect(() => { eng.stopHeld('leftArm'); eng.stopHeld('rightArm'); }).not.toThrow();
+    });
+
+    it('is a no-op for a weapon with no HELD_SFX entry', () => {
+      const before = ctx._counts();
+      eng.startHeld('leftArm', 'autocannon');
+      expect(ctx._counts()).toEqual(before);
+    });
+
+    it('stopHeld is safe to call on a location with nothing playing', () => {
+      expect(() => eng.stopHeld('rightTorso')).not.toThrow();
+    });
+
+    it('stopAllHeld stops every tracked location and clears the map', () => {
+      eng.startHeld('leftArm', 'flamethrower');
+      eng.startHeld('rightArm', 'beamLaser');
+      eng.stopAllHeld();
+      expect(eng._heldSounds.size).toBe(0);
+    });
+  });
+
+  // #56: per-projectile in-flight trajectory loop (missiles/lobbed weapons).
+  describe('per-projectile trajectory loop (#56)', () => {
+    it('starts a loop and returns a stop closure for a weapon with a trajectory stage', () => {
+      const stop = eng.startTrajectoryLoop('swarmRack');
+      expect(typeof stop).toBe('function');
+      expect(() => stop()).not.toThrow();
+    });
+
+    it('returns null for a weapon with no trajectory stage', () => {
+      expect(eng.startTrajectoryLoop('autocannon')).toBeNull();
+    });
+
+    it('returns null when the engine is not ready', () => {
+      const bare = new AudioEngine();
+      expect(bare.startTrajectoryLoop('swarmRack')).toBeNull();
+    });
   });
 });
