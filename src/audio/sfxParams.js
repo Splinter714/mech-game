@@ -29,7 +29,22 @@ const blastLayers = (scale) => [
   { kind: 'noise', type: 'highpass', freq: 2200, dur: 0.08, gain: 0.14, attack: 0.002 },
 ];
 
-export const DEFAULT_SFX = {
+// Every noise layer always gets a `q` (defaulting to the engine's own 0.8) even if the
+// original archetype cue never used one — a lowpass/highpass layer with no `q` set doesn't
+// need it for that filter type, but the Weapon Lab panel lets you switch a layer's filter
+// type freely (bandpass/notch DO care about `q`), so the slider needs a value to start from.
+function addQDefaults(stages) {
+  for (const layers of Object.values(stages)) {
+    for (const layer of layers) if (layer.kind === 'noise' && layer.q == null) layer.q = 0.8;
+  }
+  return stages;
+}
+function withQDefaults(weapons) {
+  for (const stages of Object.values(weapons)) addQDefaults(stages);
+  return weapons;
+}
+
+export const DEFAULT_SFX = withQDefaults({
   // ── energy ──
   pulseLaser: {
     fire: laserZapLayers({ damage: 16 / 5 }, false),
@@ -103,7 +118,7 @@ export const DEFAULT_SFX = {
     trajectory: [{ kind: 'noise', type: 'bandpass', freq: 600, freqEnd: 900, q: 0.8, dur: 0.20, gain: 0.05, attack: 0.02 }],
     impact: blastLayers(0.55),
   },
-};
+});
 
 // ms after the fire cue before the trajectory ("now it's airborne") cue plays — shared by
 // the arena and the Weapon Lab preview so the timing feels identical in both.
@@ -147,10 +162,10 @@ export function saveSfxParams(params) {
 
 // Fallback for a weapon id with no entry above (keeps the panel/engine safe for any future
 // weapon added without sound design yet) — the old default ballistic crack + slug clank.
-export const FALLBACK_SFX = {
+export const FALLBACK_SFX = addQDefaults({
   fire: gunCrackLayers(false),
   impact: [
     { kind: 'noise', type: 'highpass', freq: 2000, freqEnd: 800, dur: 0.05, gain: 0.18, attack: 0.002 },
     { kind: 'tone', type: 'triangle', freq: 320, freqEnd: 120, dur: 0.06, gain: 0.10, attack: 0.004 },
   ],
-};
+});

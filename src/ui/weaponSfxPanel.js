@@ -25,6 +25,14 @@ const FIELD_SPEC = {
 const FIELD_ORDER = ['freq', 'freqEnd', 'dur', 'gain', 'attack', 'q'];
 const FIELD_LABEL = { freq: 'freq', freqEnd: 'freq end', dur: 'dur', gain: 'gain', attack: 'attack', q: 'Q' };
 
+// `type` picker options, by layer kind — a tone's oscillator waveform vs. a noise layer's
+// filter shape (its BiquadFilterNode type). Distinct sets since they mean different things.
+const TONE_TYPES = ['sine', 'triangle', 'sawtooth', 'square'];
+const TONE_ABBR = { sine: 'sin', triangle: 'tri', sawtooth: 'saw', square: 'sqr' };
+const NOISE_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
+const NOISE_ABBR = { lowpass: 'low', highpass: 'high', bandpass: 'band', notch: 'notch' };
+const TYPE_ROW_H = 22;
+
 export class WeaponSfxPanel {
   constructor(scene, { x, y, w, h }) {
     this.scene = scene;
@@ -95,6 +103,36 @@ export class WeaponSfxPanel {
     return { rect, text };
   }
 
+  // A row of small buttons picking `layer.type` — a tone's waveform or a noise layer's
+  // filter shape, whichever `layer.kind` calls for. Repaints in place (no full rebuild) so
+  // dragging sliders elsewhere in the panel isn't disturbed by a waveform change.
+  _typeRow(x, y, w, layer, weaponId, stage, li) {
+    const isNoise = layer.kind === 'noise';
+    const types = isNoise ? NOISE_TYPES : TONE_TYPES;
+    const abbr = isNoise ? NOISE_ABBR : TONE_ABBR;
+    const gap = 3;
+    const bw = Math.floor((w - (types.length - 1) * gap) / types.length);
+    const btns = [];
+    const paint = () => btns.forEach(({ rect, tw }) => {
+      const on = layer.type === tw;
+      rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.edge);
+    });
+    types.forEach((tw, i) => {
+      const bx = x + i * (bw + gap);
+      const rect = this.scene.add.rectangle(bx, y, bw, 16, UI.btn).setOrigin(0, 0)
+        .setStrokeStyle(1, UI.edge).setInteractive({ useHandCursor: true });
+      const text = this.scene.add.text(bx + bw / 2, y + 8, abbr[tw], { fontFamily: 'monospace', fontSize: '8px', color: UI.text }).setOrigin(0.5);
+      rect.on('pointerdown', () => {
+        Audio.setSfxParam(weaponId, stage, li, 'type', tw);   // mutates the same layer object
+        paint();
+        this._previewThrottled(stage);
+      });
+      this.scroller.add([rect, text]);
+      btns.push({ rect, tw });
+    });
+    paint();
+  }
+
   _build() {
     for (const s of this.sliders) s.destroy();
     this.sliders = [];
@@ -125,10 +163,12 @@ export class WeaponSfxPanel {
       this.scroller.add(this.scene.add.text(ox, y, label, { fontFamily: 'monospace', fontSize: '11px', color: UI.text }));
       y += 18;
       layers.forEach((layer, li) => {
-        this.scroller.add(this.scene.add.text(ox + 6, y, `layer ${li + 1} · ${layer.kind ?? 'tone'} · ${layer.type}`, {
+        this.scroller.add(this.scene.add.text(ox + 6, y, `layer ${li + 1} · ${layer.kind ?? 'tone'}`, {
           fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
         }));
-        y += 15;
+        y += 14;
+        this._typeRow(ox + 6, y, w - 16, layer, this.weaponId, stage, li);
+        y += TYPE_ROW_H;
         for (const field of FIELD_ORDER) {
           if (!(field in layer)) continue;
           const [min, max, step] = FIELD_SPEC[field];
