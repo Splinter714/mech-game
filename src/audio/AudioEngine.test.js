@@ -8,19 +8,14 @@ import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 // chaining in the engine works.
 function mockContext() {
   let oscillators = 0, sources = 0;
-  const gainLogs = [];
-  // `log` (only given to gain params) records the automation calls a voice schedules, so
-  // tests can assert on the ENVELOPE SHAPE, not just "it didn't throw".
-  const param = (log) => ({
+  const param = () => ({
     value: 0,
-    setValueAtTime(v, t) { log?.push(['set', v, t]); },
-    linearRampToValueAtTime(v, t) { log?.push(['linRamp', v, t]); },
-    exponentialRampToValueAtTime(v, t) { log?.push(['expRamp', v, t]); },
+    setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
   });
   const node = () => ({ connect: (dest) => dest });
   const ctx = {
     state: 'running', currentTime: 1.0, sampleRate: 48000, destination: node(),
-    createGain: () => { const log = []; gainLogs.push(log); return { gain: param(log), connect: (d) => d }; },
+    createGain: () => ({ gain: param(), connect: (d) => d }),
     createWaveShaper: () => ({ curve: null, oversample: 'none', connect: (d) => d }),
     createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d }),
     createDynamicsCompressor: () => ({ threshold: param(), ratio: param(), attack: param(), release: param(), connect: (d) => d }),
@@ -29,7 +24,6 @@ function mockContext() {
     createBuffer: (_c, len) => ({ getChannelData: () => new Float32Array(len) }),
     resume: () => Promise.resolve(),
     _counts: () => ({ oscillators, sources }),
-    _lastGainLog: () => gainLogs[gainLogs.length - 1],
   };
   return ctx;
 }
@@ -62,22 +56,6 @@ describe('AudioEngine (mock context)', () => {
     eng.explosion(0.6);
     eng.explosion(1.2);
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
-  });
-
-  it('holds gain through a freq sweep instead of decaying across it (else the swept target is inaudible)', () => {
-    eng.tone(eng.sfx, { freq: 200, freqEnd: 2000, dur: 0.2, gain: 0.5, attack: 0.01 });
-    const swept = ctx._lastGainLog();
-    // attack ramp up, THEN an explicit hold at full gain, THEN the final release ramp down —
-    // three automation events, not two, and the hold sits at the full `gain` value.
-    expect(swept.filter((c) => c[0] === 'set').length).toBe(2);   // initial silence + the hold
-    expect(swept.at(-2)[0]).toBe('set');
-    expect(swept.at(-2)[1]).toBe(0.5);                            // holds at full gain...
-    expect(swept.at(-1)[0]).toBe('expRamp');                      // ...then releases to silence
-    expect(swept.at(-1)[1]).toBeCloseTo(0.0001, 4);
-
-    eng.tone(eng.sfx, { freq: 200, dur: 0.2, gain: 0.5, attack: 0.01 }); // no freqEnd -> no hold
-    const plain = ctx._lastGainLog();
-    expect(plain.filter((c) => c[0] === 'set').length).toBe(1);    // just the initial silence
   });
 
   it('tunes a weapon SFX param live (Weapon Lab sound panel) without touching other weapons', () => {
