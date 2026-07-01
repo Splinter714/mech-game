@@ -132,7 +132,9 @@ export const WEAPONS = {
     damage: 4, range: { min: 80, opt: 300, max: 500 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300, wobble: 'jostle' },
+    // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
+    // salvo can clear cover; guidance blends in during descent (see projectiles.js).
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300, wobble: 'jostle', path: 'arcing' },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
@@ -140,7 +142,8 @@ export const WEAPONS = {
     ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
-    delivery: { hit: 'projectile', guidance: 'homing', velocity: 440, wobble: 'weave', burst: { count: 6, interval: 70 } },
+    // path: 'arcing' (#57) — same loft-over-cover treatment as Swarm Rack.
+    delivery: { hit: 'projectile', guidance: 'homing', velocity: 440, wobble: 'weave', burst: { count: 6, interval: 70 }, path: 'arcing' },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
