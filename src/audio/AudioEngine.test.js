@@ -94,7 +94,7 @@ describe('AudioEngine (mock context)', () => {
 
   // #53: held/looping fire sound (flamethrower/beam laser) instead of a retriggered one-shot.
   describe('held/looping fire sound (#53)', () => {
-    it('starts a continuous voice for a weapon with a HELD_SFX entry and stops it cleanly', () => {
+    it('starts a continuous voice for a held-sound weapon and stops it cleanly', () => {
       const before = ctx._counts();
       eng.startHeld('leftArm', 'flamethrower');
       expect(ctx._counts().sources).toBeGreaterThan(before.sources); // noise loop voice created
@@ -115,7 +115,7 @@ describe('AudioEngine (mock context)', () => {
       expect(() => { eng.stopHeld('leftArm'); eng.stopHeld('rightArm'); }).not.toThrow();
     });
 
-    it('is a no-op for a weapon with no HELD_SFX entry', () => {
+    it('is a no-op for a weapon with no held/looping sound', () => {
       const before = ctx._counts();
       eng.startHeld('leftArm', 'autocannon');
       expect(ctx._counts()).toEqual(before);

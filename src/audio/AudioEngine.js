@@ -361,7 +361,7 @@ export class AudioEngine {
   // mount location `location`. Guards against double-starting the same location (a stray
   // repeated call finds one already playing there and no-ops) — callers should stopHeld()
   // first if that location's weapon has genuinely changed. No-ops if the engine isn't ready
-  // or the weapon has no HELD_SFX entry.
+  // or the weapon isn't a held/looping one (hasHeldSfx).
   startHeld(location, weaponId) {
     this._resume();
     if (!this.ready || this._heldSounds.has(location)) return;

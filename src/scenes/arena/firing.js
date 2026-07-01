@@ -22,9 +22,9 @@ export const FiringMixin = {
       this.fireCooldowns[w.location] = Math.max(0, cd);
 
       // Held/looping fire sound (#53): a genuinely continuous weapon (flamethrower/beam
-      // laser) starts its loop on the rising edge (button just pressed, weapon has a
-      // HELD_SFX entry) and stops it on the falling edge — button released, OR the weapon
-      // ran dry / went offline while held (ammo depleted, part destroyed).
+      // laser, hasHeldSfx) starts its loop on the rising edge (button just pressed) and
+      // stops it on the falling edge — button released, OR the weapon ran dry / went
+      // offline while held (ammo depleted, part destroyed).
       const held = intent.fire[w.location] && w.ready && hasHeldSfx(w.weapon.id);
       const wasHeld = this._heldAudio[w.location];
       if (held && !wasHeld) Audio.startHeld(w.location, w.weapon.id);

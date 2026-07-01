@@ -4,6 +4,12 @@
 // one), and `impact` (on landing). Each stage is an array of layers (see sfxLayers.js); a
 // layer is `{ kind: 'tone' | 'noise', ...e.tone()/e.noise() fields }`.
 //
+// Every weapon's `fire` stage has exactly 2 tone + 2 noise layers, even if a weapon only
+// ever used one kind — the unused ones sit at gain 0 (silent) so the panel's knob layout is
+// identical across weapons, and there's always somewhere to grow a sound without adding a
+// new layer slot. (Held/looping weapons — flamethrower, beamLaser — are the same 4-layer
+// shape; startHeld just loops whichever layers are non-zero instead of decaying them out.)
+//
 // These defaults were ported 1:1 from the old archetype-keyed cues in sfx.js (computed at
 // each weapon's actual damage/pattern) so the game sounds IDENTICAL until someone moves a
 // slider. **Add a weapon = give it an entry here** (or it falls back to DEFAULT_SFX).
@@ -18,16 +24,23 @@ const gunCrackLayers = (stream) => [
   { kind: 'tone', type: 'triangle', freq: stream ? 220 : 170, freqEnd: 55, dur: stream ? 0.05 : 0.13, gain: stream ? 0.07 : 0.20, attack: 0.004 },
   { kind: 'tone', type: 'square', freq: stream ? 440 : 340, freqEnd: 150, dur: stream ? 0.035 : 0.08, gain: stream ? 0.03 : 0.08, attack: 0.002 },
 ];
+// Every weapon's `fire` stage has exactly 2 tone + 2 noise layers, so every weapon's sound
+// panel has the same knob layout — weapons that only ever used one kind get the other kind
+// added at gain 0 (silent until tuned) rather than left out.
 const laserZapLayers = (weapon, stream) => {
   const base = Math.max(180, Math.min(1300, 1000 - weapon.damage * 11));
   return [
     { kind: 'tone', type: 'sawtooth', freq: base * 2.4, freqEnd: base, dur: stream ? 0.07 : 0.15, gain: 0.13, attack: 0.001 },
     { kind: 'tone', type: 'square', freq: base, freqEnd: base * 0.6, dur: stream ? 0.06 : 0.10, gain: 0.06, attack: 0.004 },
+    { kind: 'noise', type: 'highpass', freq: 1800, freqEnd: 900, dur: 0.06, gain: 0, attack: 0.001, q: 0.8 },
+    { kind: 'noise', type: 'bandpass', freq: 1000, freqEnd: 600, dur: 0.08, gain: 0, attack: 0.002, q: 1.0 },
   ];
 };
 const missileWhooshLayers = () => [
   { kind: 'noise', type: 'bandpass', freq: 480, freqEnd: 1700, q: 0.7, dur: 0.34, gain: 0.16, attack: 0.02 },
   { kind: 'tone', type: 'sawtooth', freq: 200, freqEnd: 440, dur: 0.22, gain: 0.05, attack: 0.004 },
+  { kind: 'noise', type: 'highpass', freq: 1200, freqEnd: 600, dur: 0.1, gain: 0, attack: 0.002, q: 0.8 },
+  { kind: 'tone', type: 'square', freq: 300, freqEnd: 500, dur: 0.12, gain: 0, attack: 0.004 },
 ];
 const blastLayers = (scale) => [
   { kind: 'tone', type: 'sine', freq: 140 * scale, freqEnd: 30, dur: 0.5 * scale, gain: 0.34, attack: 0.003 },
@@ -57,8 +70,14 @@ export const DEFAULT_SFX = withQDefaults({
     impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
   },
   beamLaser: {
-    fire: laserZapLayers({ damage: 2 }, true),
-    impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
+    // Held/looping (#53) — hand-tuned via the Weapon Lab sound panel.
+    fire: [
+      { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.005, gain: 0.15, attack: 0 },
+      { kind: 'tone', type: 'sawtooth', freq: 20, freqEnd: 20, dur: 0.005, gain: 0.15, attack: 0 },
+      { kind: 'noise', type: 'bandpass', freq: 1395, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 4.6000000000000005 },
+      { kind: 'noise', type: 'bandpass', freq: 1490, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 4.15 },
+    ],
+    impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0, attack: 0.002, q: 0.8 }],
   },
   railLance: {
     fire: laserZapLayers({ damage: 34 }, false),
@@ -73,9 +92,15 @@ export const DEFAULT_SFX = withQDefaults({
     ],
   },
   flamethrower: {
-    // Shorter/quieter than the old pulsed cue (dur 0.16/gain 0.10) — this now retriggers
-    // every ~45ms as a continuous stream, so a long decay would smear into a muddy drone.
-    fire: [{ kind: 'noise', type: 'bandpass', freq: 1100, freqEnd: 600, q: 0.6, dur: 0.08, gain: 0.08, attack: 0.002 }],
+    // Held/looping (#53) — layer 1 is the audible sustained roar (matches the old separate
+    // HELD_SFX entry so the sound didn't change when it was unified into `fire`); the other
+    // 3 are silent until tuned. Sliders here now genuinely control the loop, not a dead cue.
+    fire: [
+      { kind: 'noise', type: 'bandpass', freq: 700, dur: 0.08, gain: 0.14, attack: 0.002, q: 0.5 },
+      { kind: 'noise', type: 'highpass', freq: 1400, freqEnd: 600, dur: 0.06, gain: 0, attack: 0.001, q: 0.8 },
+      { kind: 'tone', type: 'sawtooth', freq: 180, freqEnd: 120, dur: 0.08, gain: 0, attack: 0.004 },
+      { kind: 'tone', type: 'square', freq: 260, freqEnd: 150, dur: 0.06, gain: 0, attack: 0.004 },
+    ],
     impact: [{ kind: 'noise', type: 'lowpass', freq: 900, dur: 0.12, gain: 0.07, attack: 0.002 }],
   },
 
@@ -88,9 +113,14 @@ export const DEFAULT_SFX = withQDefaults({
     ],
   },
   machineGun: {
+    // Bespoke layers (kept — do not revert to gunCrackLayers). Muted 2nd noise/2nd tone
+    // slots added so this has the same 2-noise + 2-tone shape as autocannon/shotgun (#54);
+    // gain 0 until tuned, everything else untouched.
     fire: [
       { kind: 'noise', type: 'bandpass', freq: 1300, freqEnd: 20, dur: 0.36, gain: 0.2, attack: 0, q: 0.45 },
+      { kind: 'noise', type: 'highpass', freq: 1600, freqEnd: 700, dur: 0.045, gain: 0, attack: 0.0008 },
       { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.155, gain: 0.3, attack: 0.04 },
+      { kind: 'tone', type: 'square', freq: 440, freqEnd: 150, dur: 0.035, gain: 0, attack: 0.002 },
     ],
     impact: [
       { kind: 'noise', type: 'bandpass', freq: 1275, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 0.1 },
@@ -108,6 +138,8 @@ export const DEFAULT_SFX = withQDefaults({
     fire: [
       { kind: 'tone', type: 'triangle', freq: 130, freqEnd: 60, dur: 0.16, gain: 0.22, attack: 0.004 },
       { kind: 'noise', type: 'lowpass', freq: 700, dur: 0.10, gain: 0.12, attack: 0.002 },
+      { kind: 'tone', type: 'square', freq: 200, freqEnd: 100, dur: 0.1, gain: 0, attack: 0.004 },
+      { kind: 'noise', type: 'highpass', freq: 1500, freqEnd: 700, dur: 0.05, gain: 0, attack: 0.001, q: 0.8 },
     ],
     trajectory: [{ kind: 'noise', type: 'bandpass', freq: 350, freqEnd: 250, q: 0.9, dur: 0.22, gain: 0.05, attack: 0.02 }],
     impact: blastLayers(0.55),
@@ -133,23 +165,18 @@ export const DEFAULT_SFX = withQDefaults({
 
 // ── Held/looping SFX (#53) ──────────────────────────────────────────────────────────────
 // Hold-to-fire, continuous weapons (cycleTime: 0, pattern: 'stream') don't retrigger a
-// one-shot burst every cadence tick — instead they get ONE continuous source that starts
-// on button-down and stops on button-up (see AudioEngine.startHeld/stopHeld + sfx.js's
-// startHeld). This is a separate table (not nested under a weapon's fire/trajectory/impact
-// stages) since it's a fundamentally different playback lifecycle (loop, not one-shot decay)
-// — the Weapon Lab panel doesn't expose it yet (out of scope; edit these by hand).
-export const HELD_SFX = {
-  // Flamethrower: a filtered-noise roar — bandpass noise centered in the "fire" range,
-  // wide-ish Q so it reads as a breathy gout rather than a whistle.
-  flamethrower: { kind: 'noise', type: 'bandpass', freq: 700, q: 0.5, gain: 0.14 },
-  // Beam Laser: a sustained tone hum — sawtooth for a buzzy energy-weapon timbre.
-  beamLaser: { kind: 'tone', type: 'sawtooth', freq: 320, gain: 0.10 },
-};
+// one-shot burst every cadence tick — instead they get ONE continuous source that starts on
+// button-down and stops on button-up (see AudioEngine.startHeld/stopHeld + sfx.js's
+// startHeld). The loop's SOUND now comes from the weapon's own `fire` layers (same data the
+// Weapon Lab panel's sliders control — startLoopLayers just ignores the one-shot-only fields
+// like dur/attack), so tuning `fire` genuinely retunes the loop. This set is only the
+// membership flag: which weapons use the held/loop dispatch instead of a per-shot one-shot.
+const HELD_WEAPONS = new Set(['flamethrower', 'beamLaser']);
 
 // Cheap lookup for firing.js: does this weapon use a held/looping sound instead of a
 // per-shot one-shot fire cue?
 export function hasHeldSfx(weaponId) {
-  return !!HELD_SFX[weaponId];
+  return HELD_WEAPONS.has(weaponId);
 }
 
 // ms after the fire cue before the trajectory ("now it's airborne") cue plays — shared by
@@ -177,7 +204,14 @@ export function loadSfxParams() {
     const entry = {};
     for (const stage of Object.keys(def)) {
       const savedLayers = sav[stage] || [];
-      entry[stage] = def[stage].map((layer, i) => ({ ...layer, ...savedLayers[i] }));
+      // Only merge a saved layer onto a default layer at the SAME index if they're the same
+      // kind (tone vs. noise) — a layer count/order change (e.g. a new default layer
+      // inserted) would otherwise splice a stale tone layer's fields onto a noise layer's
+      // slot (kind/type included), silently turning it into the wrong kind of sound.
+      entry[stage] = def[stage].map((layer, i) => {
+        const sl = savedLayers[i];
+        return sl && sl.kind === layer.kind ? { ...layer, ...sl } : { ...layer };
+      });
     }
     merged[weaponId] = entry;
   }

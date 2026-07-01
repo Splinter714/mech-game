@@ -4,7 +4,7 @@ import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
 import { Audio } from '../audio/index.js';
-import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
+import { TRAJECTORY_DELAY, hasHeldSfx } from '../audio/sfxParams.js';
 
 // Shared weapon/ability card list — the SINGLE implementation behind both the standalone
 // Weapon Lab tab and the garage catalog, so the two can't drift. It renders a scrollable
@@ -95,7 +95,7 @@ export class WeaponCardList {
   // Rebuild the card set (e.g. filtered to a slot's eligible items). Reuses nothing — cards
   // are cheap and this only fires on a slot change, not per frame.
   setIds(ids) {
-    for (const c of this.cards) c.container.destroy();
+    for (const c of this.cards) { c.container.destroy(); if (c._heldOn) Audio.stopHeld(c.id); }
     this.cards = [];
     for (const id of ids) this._buildCard(getItem(id), id);
     this._scrollY = 0;
@@ -208,13 +208,17 @@ export class WeaponCardList {
   // Cadence only — WHEN a trigger pulls. The shared delivery sim owns what each pull emits.
   _tickWeapon(card, delta) {
     const w = card.weapon, d = w.delivery;
+    const held = hasHeldSfx(w.id);
     card.holdBeam = false;
     if (d.sustained) {
       card.streamPhase += delta;
       card.holdBeam = card.streamPhase % 2400 < 1600;
+      if (held) this._setHeld(card, card.holdBeam);
     } else if (d.pattern === 'stream') {
       card.streamPhase += delta;
-      if (card.streamPhase % 2400 < 1600) {
+      const active = card.streamPhase % 2400 < 1600;
+      if (held) this._setHeld(card, active);
+      if (active) {
         card.cd -= delta;
         if (card.cd <= 0) { this._fire(card); card.cd = Math.max(1000 / (d.fireRate || 10), 16); }
       } else card.cd = 0;
@@ -233,8 +237,21 @@ export class WeaponCardList {
   // actually listening to (e.g. tuning in the Weapon Lab sound panel).
   _isAudible(card) { return card.id === this.selectedId; }
 
+  // Held/looping fire sound (#53), mirroring firing.js's edge-detected start/stop — a card
+  // never gets a real button press, so "held" here just means "in its active duty-cycle
+  // window AND selected"; deselecting a card while it's mid-loop stops it on the next tick.
+  _setHeld(card, active) {
+    const want = active && this._isAudible(card);
+    if (want === !!card._heldOn) return;
+    card._heldOn = want;
+    if (want) Audio.startHeld(card.id, card.weapon.id);
+    else Audio.stopHeld(card.id);
+  }
+
   _fire(card) {
-    if (this._isAudible(card)) {
+    // A held-sound weapon's audio comes entirely from its loop (started/stopped by
+    // _setHeld above) — skip the per-tick one-shot cue so it doesn't stutter over the loop.
+    if (this._isAudible(card) && !hasHeldSfx(card.weapon.id)) {
       Audio.fire(card.weapon);
       this.scene.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(card.weapon.id));
     }
@@ -262,7 +279,16 @@ export class WeaponCardList {
     const angle = s.angleOffset;
     const perp = angle + Math.PI / 2;
     const ox = ax + Math.cos(perp) * s.lateral, oy = ay + Math.sin(perp) * s.lateral;
-    card.projectiles.push(makeProjectile(card.weapon, ox, oy, angle, { maxDist: card.stageW }));
+    const p = makeProjectile(card.weapon, ox, oy, angle, { maxDist: card.stageW });
+    card.projectiles.push(p);
+    // Continuous in-flight loop (#56) — mirrors firing.js's _spawnProjectile: only weapons
+    // with a `trajectory` stage get one, started a beat after launch.
+    if (this._isAudible(card) && Audio.getSfxParams(card.weapon.id).trajectory) {
+      this.scene.time.delayedCall(TRAJECTORY_DELAY, () => {
+        if (p.dead) return;
+        p.stopTrajectorySfx = Audio.startTrajectoryLoop(card.weapon.id);
+      });
+    }
   }
 
   _advance(card, dt, delta) {
@@ -275,6 +301,7 @@ export class WeaponCardList {
       stepProjectile(p, dt, p.homing ? 0 : null);
       if (p.dist >= p.maxDist) {
         p.dead = true;
+        p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
         if (this._isAudible(card)) Audio.impact(p.weaponId);
         if (p.ground) card.patches.push({ x: p.x, y: card.muzzleY, r: Math.min(p.ground.radius, 26), born: 0, ttl: p.ground.duration * 1000 });
         else card.bursts.push({ x: p.x, y: p.y, color: p.color, t: 0, ttl: 220 });
@@ -339,6 +366,7 @@ export class WeaponCardList {
     s.input.off('pointerdown', this._onDown);
     s.input.off('pointermove', this._onMove);
     s.input.off('pointerup', this._onUp);
+    for (const c of this.cards) if (c._heldOn) Audio.stopHeld(c.id);
     this.maskG.destroy();
     this.root.destroy();
     this.cards = [];

@@ -6,7 +6,7 @@
 // small dedicated functions; they're not weapon-specific. The engine keeps the public
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
-import { HELD_SFX } from './sfxParams.js';
+import { hasHeldSfx } from './sfxParams.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -29,12 +29,16 @@ export function impact(e, weaponId) {
 
 // ── Held/looping fire sound (#53) — flamethrower/beamLaser use ONE continuous source
 // instead of a retriggered one-shot burst every cadence tick (see sfxLayers.js's
-// startLoopLayers for the actual node-graph lifecycle). Returns null if there's no HELD_SFX
-// entry for this weapon, or the engine isn't ready.
+// startLoopLayers for the actual node-graph lifecycle). Reuses the weapon's own `fire`
+// layers (same live, tunable data the Weapon Lab panel's sliders control) rather than a
+// separate table, so tuning `fire` actually retunes what you hear while holding the button.
+// Gated on hasHeldSfx — every weapon has `fire` layers now, but only flamethrower/beamLaser
+// actually use the held/loop dispatch; everyone else fires one-shots.
 export function startHeld(e, weaponId) {
-  const cfg = HELD_SFX[weaponId];
-  if (!cfg || !e.ready) return null;
-  return startLoopLayers(e, e.sfx, [cfg]);
+  if (!hasHeldSfx(weaponId) || !e.ready) return null;
+  const layers = e.getSfxParams(weaponId).fire;
+  if (!layers || !layers.length) return null;
+  return startLoopLayers(e, e.sfx, layers);
 }
 
 // ── Per-projectile in-flight loop (#56) — missiles/lobbed weapons get a continuous

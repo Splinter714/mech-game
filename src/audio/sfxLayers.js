@@ -11,7 +11,12 @@ export function playLayers(e, bus, layers) {
   }
 }
 
-const HELD_ATTACK = 0.05;    // s, gain ramp-up on start (30-60ms window)
+// MIN_ATTACK is just enough ramp to avoid a hard click (an instant 0->gain jump on a
+// continuous waveform pops) — everything above that floor comes from the layer's OWN
+// `attack` field (the same value its slider shows/controls), so tuning attack to ~0
+// actually reads as instant instead of silently landing on a fixed internal ramp.
+const MIN_ATTACK = 0.003;    // s, click-safety floor
+const HELD_ATTACK_DEFAULT = 0.008; // s, fallback if a layer has no `attack` set
 const HELD_RELEASE = 0.08;   // s, gain ramp-down on stop (60-100ms window)
 
 // Held/looping counterpart to playLayers() (#53 held fire sounds, #56 in-flight trajectory
@@ -29,8 +34,9 @@ export function startLoopLayers(e, bus, layers, gainScale = 1) {
     if (!l) continue;
     const g = ctx.createGain();
     const targetGain = Math.max(0.0001, (l.gain ?? 0.15) * gainScale);
+    const attack = Math.max(MIN_ATTACK, l.attack ?? HELD_ATTACK_DEFAULT);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(targetGain, t + HELD_ATTACK);
+    g.gain.exponentialRampToValueAtTime(targetGain, t + attack);
     g.connect(bus);
 
     const isNoise = l.kind === 'noise';

@@ -21,6 +21,11 @@ import { drawProjectileBody } from './projectiles/index.js';
 export { projectileKind };
 export { drawProjectileBody };
 
+// TEMP (off while iterating on something else): the splatter/inner spark flecks below read
+// as visual static on every beam (pulse/beam/rail laser share this one drawBeam). Flip back
+// to true to restore them — the glow/core/warble above are unaffected either way.
+const SPARKS_ENABLED = false;
+
 // A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.
 // `phase` is a ms timestamp driving the warble (callers pass time or beam age).
 // `heavy` thickens everything for the rail lance.
@@ -67,6 +72,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
   }
   } // end sparkAlpha >= 1 block
+
+  if (!SPARKS_ENABLED) return;
 
   // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
   const sparkCount = heavy ? 10 : 12;
