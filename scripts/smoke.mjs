@@ -7,6 +7,14 @@
 
 import { chromium } from 'playwright';
 import { resolveDevServerUrl } from './dev-server-url.mjs';
+import { hexToPixel } from '../src/data/hexgrid.js';
+
+// Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
+// weapon range with terrain possibly between it and the origin. For the deterministic
+// firing tests we teleport the target onto DUMMY_HEX (3,-1) — a spot the world generator
+// explicitly clears back to open grass with clear line-of-sight from the origin (0,0),
+// and ~220px out, inside every weapon's range.
+const DUMMY_PX = hexToPixel(3, -1);
 
 // `?canvas` (added by the resolver) forces Phaser's Canvas renderer — headless
 // Chromium lacks WebGL framebuffers, and the logic we assert on is renderer-agnostic.
@@ -61,12 +69,11 @@ try {
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
   }, { timeout: 20000 });
 
-  const arena = await page.evaluate(() => {
+  const arena = await page.evaluate((dummyPx) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first (and at boot, only) enemy
     const em = e0.mech;
-    const ex0 = e0.x, ey0 = e0.y;   // enemy spawn (known clear line of sight from origin)
 
     // Tank locomotion: holding throttle should drive the mech forward (up = -y).
     const y0 = a.py;
@@ -82,11 +89,12 @@ try {
     for (let i = 0; i < 300; i++) { a.update(0, 16); if (a._isWall(a.px, a.py)) everInWall = true; }
     a.controls.keys.D.isDown = false;
     const collisionHolds = !everInWall && !a._blocked(a.px, a.py);
-    // Reset both mechs to their spawn (clear LOS) for the deterministic firing tests.
-    // Disable aim-assist so shots go straight along the (manually set) turret facing.
+    // Put the player at the origin and the target on DUMMY_HEX (clear grass, clear LOS,
+    // in range) for the deterministic firing tests. e0's real spawn is off-screen (#44),
+    // far out of range, so it can't be fired on from the origin without driving in first.
     a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
-    e0.x = ex0; e0.y = ey0; e0.vx = 0; e0.vy = 0;
-    a.assistOn = false;
+    e0.x = dummyPx.x; e0.y = dummyPx.y; e0.vx = 0; e0.vy = 0;
+    e0.spawnX = e0.x; e0.spawnY = e0.y;   // so _resetEnemies restores it here, not off-screen
 
     // Per-part damage loop: point the turret at the enemy and fire each ready weapon;
     // its centre torso (nearest part to the ray) must lose health, and over-damage
@@ -148,7 +156,7 @@ try {
       extraDamaged,
       resetWorked,
     };
-  });
+  }, DUMMY_PX);
   await page.screenshot({ path: '/tmp/mech-arena.png' });
 
   console.log(JSON.stringify({ garage, arena }, null, 2));
