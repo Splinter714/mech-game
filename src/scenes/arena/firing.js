@@ -212,20 +212,25 @@ export const FiringMixin = {
     }
   },
 
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0) {
+  // `seekOverride` (#62): a fixed {x,y} aimpoint for indirect fire — the player passes the lock's
+  // aim point implicitly (below); an ENEMY firing blind over cover passes the player's predicted
+  // last-known position so its homing/arcing rounds lob onto it without LOS. When omitted, the
+  // player derives its seek from the lock and the enemy chases the live player as before.
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
-    // Indirect-fire targeting (#31): a player round seeks the locked enemy ONLY when the lock
-    // is fully charged (red) — no lock, no seek, the missile dumb-fires straight. Enemy rounds
-    // chase the player.
-    const hasLock = owner === 'player' && this.lockProgress >= 1 && this.lockEnemy && !this.lockEnemy.mech.isDestroyed();
-    const seekTarget = hasLock ? this.lockEnemy : null;
+    // Indirect-fire targeting (#31, #62): a player round seeks the MAINTAINED lock's aim point
+    // ONLY when the lock is fully charged (red). With LOS that point is the live enemy; while the
+    // lock is blind (LOS broken behind cover) it's the target's last-known + dead-reckoned
+    // predicted position, so the round arcs over the wall onto where the target probably is. No
+    // lock ⇒ no seek, the round dumb-fires straight. An enemy's blind lob passes `seekOverride`.
+    const seekTarget = seekOverride || (owner === 'player' ? this._lockAimPoint() : null);
     // An arcing round lobs to where its target actually is (else to optimal range); straight
     // rounds just run out at max range. This travel budget is what the kinematic round flies.
     let maxDist = maxRange;
     if (d.path === 'arcing') {
-      const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : { x: this.px, y: this.py };
+      const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : (seekTarget ?? { x: this.px, y: this.py });
       const ex = tgt.x - x, ey = tgt.y - y;
       const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
       const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));

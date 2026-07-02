@@ -26,6 +26,7 @@ import { buildMechTextures, reskinMech } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE } from './shared.js';
+import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -173,6 +174,8 @@ export const EnemiesMixin = {
     e.lastHealth = lethalHealth(e.mech);
     e.hurtUntil = 0;              // scene-time until which recent damage biases toward cover
     e.recampAt = 0;               // ms until an all-indirect mech hunts a fresh camp spot
+    e.lock = makeLock();          // #62: this enemy's indirect-fire lock ON THE PLAYER
+    e.lockBlindAge = 0;           // s since this enemy last had LOS to the player (blind lead)
   },
 
   // #44 follow-up: the default opening squad — one of each mech type — dropped OFF-SCREEN so
@@ -309,18 +312,35 @@ export const EnemiesMixin = {
     e.turret = Phaser.Math.Angle.RotateTo(e.turret, bearing, mv.turretSlew * dt);
     if (Math.hypot(e.vx, e.vy) > 5) e.angle = Phaser.Math.Angle.RotateTo(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate * dt);
 
-    // Fire ready weapons at the player when in range with line of sight (gated by #28), with
-    // a small lead so shots aren't always behind a moving player.
+    // Line-of-sight to the player right now, and this enemy's maintained lock ON the player (#62).
+    const los = this._wallDistance(e.x, e.y, bearing, dist) === Infinity;
+    this._updateEnemyLock(e, dist, bearing, los, dt);
+
+    // Fire ready weapons at the player (gated by #28). Direct-fire weapons need current LOS. An
+    // indirect-fire weapon (homing/arcing) may also fire BLIND over cover (#62/#44) when this
+    // enemy holds a maintained lock — it lobs onto the player's last-known/predicted position.
     if (this.enemyFire) for (const w of e.mech.readyWeapons()) {
       let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
-      const aim = this._enemyFireAngle(e, w, dxp, dyp, dist);
-      const los = this._wallDistance(e.x, e.y, bearing, dist) === Infinity;
-      if (cd <= 0 && inRange && los) {
+      const indirect = isIndirectWeapon(w.weapon);
+      const blindFire = indirect && !los && isFullLock(e.lock);   // maintained lock, lobbing over cover
+      const canFire = inRange && (los || blindFire);
+      // Blind indirect fire aims at the dead-reckoned last-known player position; otherwise lead live.
+      let aim;
+      if (blindFire) {
+        const pt = predictedTarget(e.lock, e.lockBlindAge);
+        aim = Math.atan2(pt.y - e.y, pt.x - e.x);
+      } else {
+        aim = this._enemyFireAngle(e, w, dxp, dyp, dist);
+      }
+      if (cd <= 0 && canFire) {
         e.mech.consumeAmmo(w.location, w.index, 1);
         const aimErr = (Math.random() - 0.5) * 0.12;
         const mx2 = e.x + Math.cos(e.turret) * 16, my2 = e.y + Math.sin(e.turret) * 16;
-        this._spawnProjectile(w, mx2, my2, aim + aimErr, 'enemy');
+        // Blind lobs pass the predicted point as the seek target so homing rounds arc onto it;
+        // direct/LOS shots keep the intrinsic chase-the-player behaviour (seekTarget undefined).
+        const seek = blindFire ? predictedTarget(e.lock, e.lockBlindAge) : null;
+        this._spawnProjectile(w, mx2, my2, aim + aimErr, 'enemy', 0, seek);
         cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
       e.fireCd[w.location] = Math.max(0, cd);
@@ -484,6 +504,28 @@ export const EnemiesMixin = {
   // by HOLD / in-band PRESS so the enemy isn't a sitting duck without committing to a full orbit.
   _strafeIntent(e, ux, uy) {
     return { mx: -uy * e.handed * 0.6, my: ux * e.handed * 0.6 };
+  },
+
+  // Advance an enemy's indirect-fire lock ON the player (#62/#44). Mirrors the player's lock but
+  // the target is fixed (the player), so the "candidate" is simply the player whenever it's in
+  // range and this enemy currently has LOS — that's what lets an all-indirect mech get eyes on the
+  // player just long enough to lock, then retreat behind a wall and keep bombarding (blind) using
+  // the maintained window. Only enemies with at least one indirect weapon bother maintaining a lock.
+  _updateEnemyLock(e, dist, bearing, los, dt) {
+    const LOCK_RANGE = 700;   // px within which an enemy can acquire/hold a lock on the player
+    // The player as a STABLE target handle for the shared state machine (one per enemy, mutated in
+    // place — a fresh object each frame would keep resetting the charge, since the charge phase
+    // resets on target-identity change). Carries `.mech` (validity) + live position/velocity.
+    const player = e.playerTarget ??= { mech: this.mech, x: 0, y: 0, vx: 0, vy: 0 };
+    player.mech = this.mech; player.x = this.px; player.y = this.py;
+    player.vx = this.vx || 0; player.vy = this.vy || 0;
+    const inRange = dist <= LOCK_RANGE;
+    // Acquire only while this enemy can actually see the player and is in range; the maintain
+    // window (targetlock.js) carries the lock through the subsequent LOS break behind cover.
+    const cand = (los && inRange) ? player : null;
+    const valid = inRange;   // the player never "dies" here; range is the only invalidator
+    stepLock(e.lock, { dt, cand, hasLos: los, targetPos: player, valid });
+    e.lockBlindAge = e.lock.blind ? (e.lockBlindAge || 0) + dt : 0;
   },
 
   // Firing aim with a simple lead: aim where the player will be by the time a projectile
