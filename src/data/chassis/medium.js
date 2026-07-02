@@ -8,9 +8,12 @@ export const MEDIUM_CONFIG = {
   baseStructure: 36,
   art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },
   movement: {
-    // #45: speeds reduced ~25% from the original 130/420 (owner: tune to taste).
-    accel: 315, maxSpeed: 98, turnRate: 1.9,
-    turretSlew: 3.2, turretArcDeg: 110,
-    stepInterval: 340, stepBob: 2.5,
+    // #3 MechWarrior-feel pass. The workhorse: noticeably more ponderous than a light —
+    // slower to spool up, longer coast, lazier turn + turret, a heavier planted step.
+    // See light.js for what each knob does. Momentum gap (accel vs decel) is wider than a
+    // light's, so a medium "leans into" starts and stops more.
+    accel: 210, decel: 140, maxSpeed: 98, turnRate: 1.55,
+    turretSlew: 2.9, turretArcDeg: 110,
+    stepInterval: 340, stepBob: 2.7, footShake: 3.0,
   },
 };
