@@ -187,6 +187,20 @@ export class Mech {
     }
   }
 
+  // Scale every location's max armor + structure by `mult` (and refill to the new max).
+  // Opt-in and applied at instantiation time — NOT in the shared chassis data — so it
+  // affects only the mech it's called on. The arena uses this to give the PLAYER a large
+  // survivability buffer without touching enemies (who share the same chassis configs).
+  boostHealth(mult) {
+    for (const loc of LOCATIONS) {
+      const p = this.parts[loc];
+      p.maxArmor = Math.round(p.maxArmor * mult);
+      p.maxStructure = Math.round(p.maxStructure * mult);
+      p.armor = p.maxArmor;
+      p.structure = p.maxStructure;
+    }
+  }
+
   // Restore a mech to pristine condition (used when deploying a fresh build): full
   // health and full magazines.
   repairAll() {

@@ -38,6 +38,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
     this.mech.repairAll();
+    // Player-only survivability buffer: ~100x the chassis' per-location armor + structure.
+    // Applied here (deploy time), not in the shared chassis data, so enemies are unaffected.
+    this.mech.boostHealth(100);
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
