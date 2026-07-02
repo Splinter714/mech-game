@@ -34,6 +34,8 @@ export default class ArenaScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#0d1014');
 
     buildHexTextures(this);
+    // Biome for this sortie (#67) — chosen by the garage per deploy; defaults to grassland.
+    this.biomeId = this.registry.get('arenaBiome');
     this._buildWorld();
 
     // Player mech (repaired fresh for the sortie).

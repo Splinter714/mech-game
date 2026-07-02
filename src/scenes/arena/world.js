@@ -4,8 +4,9 @@
 import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, range, axialKey, neighbors } from '../../data/hexgrid.js';
 import {
-  getTerrain, terrainSpeedFactor, isPassable, blocksLOS, buildingHp, damageBuilding, RUBBLE,
+  getTerrain, terrainSpeedFactor, isPassable, blocksLOS, buildingHp, damageBuilding, rubbleFor,
 } from '../../data/terrain.js';
+import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { Audio } from '../../audio/index.js';
 import { DUMMY_HEX } from './shared.js';
 
@@ -27,54 +28,65 @@ export const WorldMixin = {
     const rng = mulberry32(0x5eed);
     const all = range({ q: 0, r: 0 }, R);
     const T = new Map();
-    const isGrass = (k) => { const t = T.get(k); return t === 'grass' || t === 'grassB'; };
+    // The biome to build (set on the scene before create(), e.g. per deploy/stage #64). The role
+    // → terrain-id mapping comes entirely from the biome data, so this generator never branches on
+    // which biome it is; swapping biomes just swaps the ids it stamps.
+    const B = getBiome(this.biomeId ?? DEFAULT_BIOME);
+    this.biome = B;
+    const groundAt = (h) => ((h.q + h.r) % 2 ? B.groundB : B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
 
-    // Base: a checkered grass field.
-    for (const h of all) T.set(axialKey(h.q, h.r), (h.q + h.r) % 2 ? 'grassB' : 'grass');
+    // Base: a checkered open floor (grass / sand / snow / pavement / ash by biome).
+    for (const h of all) T.set(axialKey(h.q, h.r), groundAt(h));
 
-    // River: a winding SHALLOW water course sweeping across the map — passable but slowing, and
-    // you can shoot over it (no LOS block).
-    for (let q = -R + 2; q <= R - 2; q++) {
-      const r = Math.round(7 * Math.sin(q * 0.26) + 3 * Math.sin(q * 0.11));
-      for (const dr of [0, 1]) { const k = axialKey(q, r + dr); if (T.has(k)) T.set(k, 'river'); }
-    }
-
-    // A DEEP-water lake (impassable) off to one side of the map, distinct from the river. Grown
-    // as a blobby disc so its shoreline reads naturally; kept clear of the centre spawn area.
-    const lake = all[Math.floor(rng() * all.length)];
-    if (Math.hypot(hexToPixel(lake.q, lake.r).x, hexToPixel(lake.q, lake.r).y) > 6 * 48) {
-      for (const h of range(lake, 3)) {
-        const d = Math.max(Math.abs(h.q - lake.q), Math.abs(h.r - lake.r), Math.abs(h.q + h.r - lake.q - lake.r));
-        const k = axialKey(h.q, h.r);
-        if (T.has(k) && rng() < 1 - d * 0.28) T.set(k, 'deepWater');
+    // Channel: a winding strip sweeping across the map — river / dry-bed / slush / road / lava-crust.
+    // Passable, non-LOS-blocking; slowing (or a fast lane in the city) per the terrain's own props.
+    if (B.hasChannel) {
+      for (let q = -R + 2; q <= R - 2; q++) {
+        const r = Math.round(7 * Math.sin(q * 0.26) + 3 * Math.sin(q * 0.11));
+        for (const dr of [0, 1]) { const k = axialKey(q, r + dr); if (T.has(k)) T.set(k, B.channel); }
       }
     }
 
-    // Forest clusters scattered across the field (seed + organic neighbour growth) — walk-through
-    // cover (passable, slowing, blocks LOS).
-    for (let i = 0; i < Math.round(R * 2.2); i++) {
+    // A DEEP impassable blob off to one side (lake / mesa / ice / collapsed heap / lava pool),
+    // distinct from the channel. Grown as a blobby disc so its edge reads naturally; kept clear of
+    // the centre spawn area.
+    if (B.hasDeep) {
+      const deep = all[Math.floor(rng() * all.length)];
+      if (Math.hypot(hexToPixel(deep.q, deep.r).x, hexToPixel(deep.q, deep.r).y) > 6 * 48) {
+        for (const h of range(deep, 3)) {
+          const d = Math.max(Math.abs(h.q - deep.q), Math.abs(h.r - deep.r), Math.abs(h.q + h.r - deep.q - deep.r));
+          const k = axialKey(h.q, h.r);
+          if (T.has(k) && rng() < 1 - d * 0.28) T.set(k, B.deep);
+        }
+      }
+    }
+
+    // Cover clusters scattered across the field (seed + organic neighbour growth) — walk-through
+    // cover (forest / scrub / snowdrift / wreckage / fumarole). Density scales per biome.
+    for (let i = 0; i < Math.round(R * 2.2 * B.coverClusters); i++) {
       const c = all[Math.floor(rng() * all.length)];
       const k0 = axialKey(c.q, c.r);
-      if (!isGrass(k0)) continue;
-      T.set(k0, 'forest');
+      if (!isGround(k0)) continue;
+      T.set(k0, B.cover);
       for (const n of neighbors(c.q, c.r)) {
         const k = axialKey(n.q, n.r);
-        if (isGrass(k) && rng() < 0.6) T.set(k, 'forest');
+        if (isGround(k) && rng() < 0.6) T.set(k, B.cover);
       }
     }
 
-    // A few industrial outposts (building clusters) — DESTRUCTIBLE hard cover. HP seeded below.
-    for (let i = 0; i < 4; i++) {
+    // A few DESTRUCTIBLE outposts (building clusters) — hard cover. HP seeded below.
+    for (let i = 0; i < B.outposts; i++) {
       const c = all[Math.floor(rng() * all.length)];
       for (const h of [c, ...neighbors(c.q, c.r).filter(() => rng() < 0.55)]) {
-        const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, 'building');
+        const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, B.outpost);
       }
     }
 
-    // Clear the centre (spawns + line of fire) back to open grass.
-    for (const h of range({ q: 0, r: 0 }, 3)) T.set(axialKey(h.q, h.r), (h.q + h.r) % 2 ? 'grassB' : 'grass');
-    T.set('0,0', 'grass');
-    T.set(axialKey(DUMMY_HEX.q, DUMMY_HEX.r), 'grass');
+    // Clear the centre (spawns + line of fire) back to open ground.
+    for (const h of range({ q: 0, r: 0 }, 3)) T.set(axialKey(h.q, h.r), groundAt(h));
+    T.set('0,0', B.groundA);
+    T.set(axialKey(DUMMY_HEX.q, DUMMY_HEX.r), B.groundA);
 
     this.terrain = T;
     this.buildingHp = new Map();   // hexKey → remaining HP for destructible (building) hexes
@@ -122,11 +134,13 @@ export const WorldMixin = {
     if (!this.buildingHp.has(k)) return false;
     const { hp, destroyed } = damageBuilding(this.buildingHp.get(k), amount);
     if (!destroyed) { this.buildingHp.set(k, hp); return false; }
-    // Collapse to rubble: swap the terrain data (movement + LOS now read `rubble`) and texture.
+    // Collapse to rubble: swap the terrain data (movement + LOS now read the biome's rubble) and
+    // texture. `rubbleFor` maps this outpost to its biome-appropriate debris (data-driven).
     this.buildingHp.delete(k);
-    this.terrain.set(k, RUBBLE);
+    const rub = rubbleFor(this.terrain.get(k));
+    this.terrain.set(k, rub);
     const img = this.tileImages.get(k);
-    if (img) img.setTexture(getTerrain(RUBBLE).tex);
+    if (img) img.setTexture(getTerrain(rub).tex);
     const { x: cx, y: cy } = hexToPixel(h.q, h.r);
     this._outpostCollapseFx(cx, cy);
     return true;

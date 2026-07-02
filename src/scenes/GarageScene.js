@@ -9,6 +9,7 @@ import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { MECH_DEPLOYED } from '../data/events.js';
+import { BIOME_IDS } from '../data/biomes.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
@@ -344,6 +345,12 @@ export default class GarageScene extends Phaser.Scene {
     }
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
+    // Pick the battlefield biome per deployment (#67). Deterministic: rotate through the roster
+    // so successive sorties visit each terrain set; the FIRST deploy of a session is grassland
+    // (BIOME_IDS[0]), which keeps the headless smoke test's origin/DUMMY-hex assumptions stable.
+    const n = this.registry.get('deployCount') || 0;
+    this.registry.set('deployCount', n + 1);
+    this.registry.set('arenaBiome', BIOME_IDS[n % BIOME_IDS.length]);
     this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
     this.scene.start('ArenaScene');
   }
