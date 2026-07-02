@@ -243,12 +243,20 @@ export const LocomotionMixin = {
   // camera.shake() intensity is a fraction of the viewport, so convert px→fraction via the
   // camera height. Duration is deliberately brief (a jolt, not a rumble) and the offset is
   // capped so a heavy can't shake the frame into nausea — a knob the owner can still push.
+  //
+  // #3 feel follow-up: the full-screen shake was jarring/nauseating, so it's dialled WAY back
+  // here — a lower px→offset cap (SHAKE_MAX_PX), a smaller share of the kick coming from the
+  // per-chassis magnitude (SHAKE_GAIN), and a shorter duration (SHAKE_MS). A heavy still
+  // "thumps" but no longer heaves the frame. All three are named knobs, easy to re-tune.
   _footShake(powerPx) {
     if (!powerPx) return;
+    const SHAKE_GAIN = 0.45;  // fraction of the chassis footShake px that reaches the camera
+    const SHAKE_MAX_PX = 4;   // hard cap on camera offset (was 9) — kills the nausea ceiling
+    const SHAKE_MS = 60;      // duration of the jolt (was 90) — a shorter, softer tick
     const cam = this.cameras.main;
     const speedScale = Phaser.Math.Clamp(Math.abs(this.speed) / this.mech.movement.maxSpeed, 0, 1);
-    const px = Math.min(9, powerPx) * (0.5 + 0.5 * speedScale);   // px of camera offset
+    const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);
     const intensity = px / Math.max(1, cam.height);
-    cam.shake(90, intensity, true);   // force=true so a new step overrides the tail of the last
+    cam.shake(SHAKE_MS, intensity, true);   // force=true so a new step overrides the tail of the last
   },
 };
