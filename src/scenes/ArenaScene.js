@@ -4,6 +4,7 @@ import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
+import { makeLock } from '../data/targetlock.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
 import { CombatMixin } from './arena/combat.js';
@@ -74,16 +75,22 @@ export default class ArenaScene extends Phaser.Scene {
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.abilityCd = {};       // ability location → ms until it can fire again
     this.shieldUntil = 0;      // timestamp the bubble shield is active until
-    this.assistOn = true;      // soft-lock targeting: a default, always-on aid (#31)
-    this.lockEnemy = null;     // the currently soft-locked enemy (sticky across frames)
-    this.lockProgress = 0;     // 0→1 charge while a target is held in-cone (amber→red)
+    // Indirect-fire lock (#62): the always-available acquire-and-hold targeting for homing/arcing
+    // weapons. `this.lock` is the pure state record (data/targetlock.js); `aimEnemy` is the live
+    // most-aimed enemy used only by direct-fire convergence (kept separate so a blind lock behind
+    // cover never drags laser convergence). `lockEnemy`/`lockProgress` mirror the lock for readers.
+    this.lock = makeLock();
+    this.aimEnemy = null;
+    this.lockEnemy = null;
+    this.lockProgress = 0;
+    this._lockBlindAge = 0;
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
     this.enemyMove = true;
     this.enemyFire = true;
 
     this.input.keyboard.on('keydown-G', () => this.toGarage());
-    this.input.keyboard.on('keydown-T', () => this._toggleAssist());
+    this.input.keyboard.on('keydown-T', () => this._dropLock());   // #62: drop the current lock
     this.input.keyboard.on('keydown-M', () => {
       const muted = Audio.toggleMute();
       this._floatText(this.px, this.py - 30, muted ? 'MUTED' : 'SOUND ON', '#7c8794');
@@ -123,16 +130,17 @@ export default class ArenaScene extends Phaser.Scene {
 
     this._drive(intent, dt);
 
-    // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #31 assist). ──
-    if (this.padEdges.pressed(PAD.R3)) this._toggleAssist();
+    // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #62 drop-lock). ──
+    if (this.padEdges.pressed(PAD.R3)) this._dropLock();   // #62: R3 drops the current lock (was assist)
     if (this.padEdges.pressed(PAD.SELECT) || this.padEdges.pressed(PAD.B)) this.toGarage();
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
     if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
 
-    // ── Soft-lock targeting (#31): locks the enemy nearest the aim line; indirect weapons
-    // (missiles/lobs) seek it. Direct weapons converge geometrically, no lock needed. ──
+    // ── Indirect-fire lock (#62): acquire amber→red on the enemy nearest the aim line, then
+    // maintain it through cover (blind fire onto its last-known/predicted position). Homing/arcing
+    // weapons seek it; direct weapons converge on the live most-aimed enemy, no lock needed. ──
     this._updateLock(dt);
     this._stepGait(dt);
     this._handleFiring(intent, delta);
@@ -147,8 +155,14 @@ export default class ArenaScene extends Phaser.Scene {
     // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
     this._updatePowerups(delta);
 
-    // Soft-lock reticle, drawn after projFx is cleared above so it isn't wiped.
-    if (this.lockEnemy) this._drawLockReticle(this.lockEnemy.x, this.lockEnemy.y, this.lockProgress);
+    // Lock reticle, drawn after projFx is cleared above so it isn't wiped. A maintained-but-blind
+    // lock (#62) draws at the last-known/predicted position in a distinct "firing blind" colour so
+    // the player sees they're lobbing from memory; otherwise it tracks the live locked enemy.
+    if (this.lock.enemy) {
+      const blind = this.lock.blind;
+      const pt = blind ? this._lockAimPoint() : { x: this.lock.enemy.x, y: this.lock.enemy.y };
+      if (pt) this._drawLockReticle(pt.x, pt.y, this.lock.progress, blind);
+    }
 
     // Bubble shield bubble, drawn over the player while active.
     if (this.time.now < this.shieldUntil) {

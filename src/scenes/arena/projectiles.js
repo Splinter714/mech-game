@@ -34,12 +34,19 @@ export const ProjectilesMixin = {
       const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
       const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
 
-      // Homing steers toward the round's seek target (the lock, captured at fire). If the
-      // locked enemy dies mid-flight the round goes dumb — it does not retarget to the nearest.
+      // Homing steers toward the round's seek target (the lock's aim point, captured at fire).
+      // The target is either a live enemy handle (follow it as it moves) OR a fixed point — a
+      // blind-lock's last-known/predicted position (#62), which has no `.mech` and is steered
+      // toward as a static aimpoint. A live enemy that dies mid-flight makes the round go dumb;
+      // it does not retarget to the nearest.
       let hx = tx, hy = ty;
-      if (p.homing && !enemyShot) {
-        if (p.seekTarget && !p.seekTarget.mech.isDestroyed()) { hx = p.seekTarget.x; hy = p.seekTarget.y; }
+      if (p.homing && p.seekTarget) {
+        const st = p.seekTarget;
+        if (!st.mech) { hx = st.x; hy = st.y; }                     // fixed point (blind lob)
+        else if (!st.mech.isDestroyed()) { hx = st.x; hy = st.y; }  // live enemy
         else p.homing = false;
+      } else if (p.homing && !enemyShot) {
+        p.homing = false;
       }
       // Advance via the shared kinematics — guided rounds steer toward the live target
       // (capped by turn rate); ballistic rounds just integrate velocity. An arcing homing

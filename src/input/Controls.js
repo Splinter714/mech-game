@@ -11,8 +11,9 @@ import Phaser from 'phaser';
 //   right arm    RT / right-mouse        left arm     LT / left-mouse
 //   right torso  RB / E                  left torso   LB / Q
 //   centre torso L3 / Space (the one ability slot)
-// R3 is no longer a fire bind — the head stopped being a skill slot (#31); R3 now
-// toggles aim-assist (handled via PadEdges, not the per-frame fire intent).
+// R3 is no longer a fire bind — the head stopped being a skill slot (#31); R3 now DROPS the
+// current indirect-fire lock (#62) so a fresh amber→red re-lock can be re-acquired by re-aiming
+// (keyboard equivalent: T). Handled via PadEdges, not the per-frame fire intent.
 
 const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
