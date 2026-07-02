@@ -144,10 +144,11 @@ export function planEmissions(weapon) {
 
   const shots = [];
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
+  const clusterSpacing = d.clusterSpacing || CLUSTER_SPACING;   // per-weapon clump tightness (#51)
   for (let i = 0; i < n; i++) {
     const c = n > 1 ? (i - (n - 1) / 2) : 0;       // centred index: −…0…+
     if (d.cluster) {
-      shots.push(shot({ lateral: c * CLUSTER_SPACING }));
+      shots.push(shot({ lateral: c * clusterSpacing }));
     } else if (n > 1) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
       const fireDelay = jitterRad ? Math.random() * SPREAD_JITTER_DELAY : 0;

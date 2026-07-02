@@ -14,7 +14,6 @@ const HIT_RADIUS = 32;            // a shot within this of a mech's centre strik
 // than a snap. Both are feel/balance levers.
 const ASCENT_END = 0.4;           // fraction of flight spent mostly ballistic before homing engages
 const HOMING_BLEND_SPAN = 0.35;   // fraction of flight over which homing ramps from 0% to 100%
-const PITCH_TILT = 0.9;           // rad, max cosmetic nose-up/nose-down tilt at launch/impact
 
 // How strongly an arcing homing round should steer toward its target at flight-fraction `t`:
 // 0 during ascent, ramping smoothly up to 1 by the time it's well into its descent.
@@ -90,30 +89,26 @@ export const ProjectilesMixin = {
 
   _drawProjectile(p) {
     const g = this.projFx;
-    // Arcing rounds fake height with size alone (no vertical offset): the body grows as it
-    // lofts toward the "camera" and the ground shadow tightens beneath it, so the round
-    // stays planted on its true ground position.
+    // Arcing rounds fake "up and over" with SIZE alone — no vertical offset and, per #57
+    // playtest feedback, NO sprite rotation/pitch. The body grows as the round lofts toward
+    // the "camera" and shrinks back down as it descends (a subtle parabolic scale pulse), and
+    // the ground shadow tightens beneath it — so the round reads as lofting over an obstacle
+    // while staying planted on its true ground position and flat to its heading. The lateral
+    // undulation (jostle/weave, applied in stepProjectile) supplies the "arcing" wiggle.
     let scale = 1;
-    let drawAngle = p.angle;
     if (p.arc) {
       const t = p.dist / p.maxDist;
       const h = 4 * t * (1 - t);                              // 0..1 parabolic height fraction
       // Constant apex: every lob peaks at the same height regardless of range, so a near
       // toss looks like a steep mortar pop and a far shot looks flat and skimming.
-      const bump = 0.75;                                      // peak size gain at apex
+      const bump = 0.6;                                       // peak size gain at apex — subtle grow-then-shrink
       scale = 1 + h * bump;
       const sw = 8 - h * 4;                                   // shadow tightens with height
       g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
-      // Cosmetic pitch (#57): dh/dt of the parabola (4(1-2t)) is positive while rising and
-      // negative while falling, so it nudges the DRAWN angle to nose up on the way up and nose
-      // down on the way down, on top of the round's true 2D heading — never touches p.angle
-      // itself, which still drives steering/physics.
-      const climbRate = 4 * (1 - 2 * t);                      // +1 at launch → -1 at impact
-      drawAngle = p.angle - climbRate * PITCH_TILT;
     }
-    // The round body itself is shared art (so the garage icon matches); `p.dist` drives
-    // the flame flicker.
-    drawProjectileBody(g, p.x, p.y, drawAngle, p.kind, p.color, scale * (p.scale || 1), p.dist);
+    // The round body itself is shared art (so the garage icon matches); it's drawn flat to
+    // its true heading (p.angle) — never pitched — and `p.dist` drives the flame flicker.
+    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale * (p.scale || 1), p.dist);
   },
 
   // Persistent hitscan beams: age them, retire expired ones into a brief spark-fade, and
