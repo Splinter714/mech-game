@@ -22,9 +22,11 @@ export const LIGHT_CONFIG = {
     // decel   px/s² spent bleeding speed when you ease off / reverse. LOWER than accel =
     //         the mech carries momentum and coasts to a stop instead of braking instantly.
     accel: 340, decel: 240, maxSpeed: 135, turnRate: 2.3,
-    turretSlew: 4.2, turretArcDeg: 130,
+    // #3 feel follow-up: torso-twist rate slowed (was 4.2) so the turret swings more
+    // deliberately/weighty — still the snappiest of the three, just heavier.
+    turretSlew: 3.0, turretArcDeg: 130,
     // stepInterval ms between footfalls at full speed; stepBob px of body lurch per step;
     // footShake px of step-synced camera kick (0 = none). Light = quick, shallow, gentle.
-    stepInterval: 250, stepBob: 1.6, footShake: 1.4,
+    stepInterval: 250, stepBob: 1.6, footShake: 0.9,
   },
 };

@@ -23,7 +23,9 @@ export const HEAVY_CONFIG = {
     // stick, it just answers heavily. See light.js for what each knob does. Widest
     // accel↔decel gap = the most momentum-heavy start-up and coast of the three.
     accel: 120, decel: 80, maxSpeed: 68, turnRate: 1.0,
-    turretSlew: 1.9, turretArcDeg: 95,
-    stepInterval: 460, stepBob: 3.8, footShake: 5.5,
+    // #3 feel follow-up: torso-twist rate slowed (was 1.9) so the turret really crawls — you
+    // lean on turning the whole body to track a flanker. Still usable, just the weightiest slew.
+    turretSlew: 1.3, turretArcDeg: 95,
+    stepInterval: 460, stepBob: 3.8, footShake: 4.0,
   },
 };
