@@ -117,7 +117,7 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s) {
   weaponIds.forEach((id, i) => {
     const wpn = getWeapon(id);
     const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-    drawWeaponMount(sg, T, wpn?.category ?? 'energy', bx, front, s);
+    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s);
   });
 }
 
