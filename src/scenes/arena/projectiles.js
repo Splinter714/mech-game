@@ -61,10 +61,12 @@ export const ProjectilesMixin = {
       }
       stepProjectile(p, dt, homingActive ? Math.atan2(hy - p.y, hx - p.x) : null);
       if (restoreTurn != null) p.turn = restoreTurn;
-      // Cover: a round that flies into a wall detonates there (arcing rounds lob over).
+      // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if
+      // that wall is a destructible outpost, the round chips its HP (and may flatten it to rubble).
       if (!p.arc && this._isWall(p.x, p.y)) {
         p.dead = true;
         p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
+        this._damageBuildingAt(p.x, p.y, p.damage);
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
         continue;
       }

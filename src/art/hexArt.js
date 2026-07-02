@@ -17,11 +17,16 @@ const PAL = {
   groundB: { fill: 0x1f2630, edge: 0x2a333f },
   wall:    { fill: 0x3a4250, edge: 0x4a5564 },
   // Natural battlefield (#41).
-  grass:   { fill: 0x2f5230, edge: 0x24401f },
-  grassB:  { fill: 0x35592f, edge: 0x284a22 },
-  water:   { fill: 0x1f4a6b, edge: 0x173a55 },
-  forest:  { fill: 0x223f20, edge: 0x18311a },
-  building:{ fill: 0x3c4148, edge: 0x2a2e34 },
+  grass:    { fill: 0x2f5230, edge: 0x24401f },
+  grassB:   { fill: 0x35592f, edge: 0x284a22 },
+  // Shallow river: lighter, brighter blue-green (you can see the riverbed through it).
+  river:    { fill: 0x2f6d86, edge: 0x24566a },
+  // Deep water: darker, colder navy.
+  deepWater:{ fill: 0x163a58, edge: 0x0f2c45 },
+  forest:   { fill: 0x223f20, edge: 0x18311a },
+  building: { fill: 0x3c4148, edge: 0x2a2e34 },
+  // Rubble: the ashen debris a flattened outpost leaves behind.
+  rubble:   { fill: 0x2f3138, edge: 0x212329 },
 };
 
 function drawHex(sg, fill, edge, inset = 0.9) {
@@ -107,11 +112,40 @@ const DETAIL = {
     sg.fillStyle(0x284a24, 0.7);
     for (const [dx, dy] of [[-8, 4], [6, 8], [10, -5], [-11, -4], [2, -8]]) sg.fillEllipse(C.cx + dx, C.cy + dy, 5, 2.4);
   },
-  hex_water: (sg) => {
-    sg.fillStyle(0x2f6a92, 0.6);
-    sg.fillEllipse(C.cx - 6, C.cy - 4, 16, 2.6);
-    sg.fillEllipse(C.cx + 5, C.cy + 7, 13, 2.3);
-    sg.fillStyle(0x4a86b0, 0.4); sg.fillEllipse(C.cx + 1, C.cy + 1, 11, 2);
+  // Shallow river: many bright, thin ripple streaks (lighter/animated feel) plus a couple of
+  // sandy riverbed glints showing through — reads as fast, shallow water you can wade/shoot over.
+  hex_river: (sg) => {
+    sg.fillStyle(0x4f95b2, 0.55);
+    for (const [dx, dy, w] of [[-7, -7, 15], [4, -3, 17], [-4, 2, 14], [6, 7, 13], [-8, 9, 11]]) {
+      sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2);
+    }
+    sg.fillStyle(0x8fc4d8, 0.5);   // bright crest highlights (sun on ripples)
+    for (const [dx, dy, w] of [[-2, -5, 9], [3, 4, 8], [-5, 8, 7]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.4);
+    sg.fillStyle(0x6d8a7a, 0.35);  // riverbed peeking through the shallows
+    sg.fillEllipse(C.cx + 2, C.cy - 1, 6, 3);
+  },
+  // Deep water: a few slow, dark swells and a faint cold sheen — heavier and stiller than the river.
+  hex_deepWater: (sg) => {
+    sg.fillStyle(0x1f4d6e, 0.6);
+    sg.fillEllipse(C.cx - 5, C.cy - 4, 18, 3.2);
+    sg.fillEllipse(C.cx + 5, C.cy + 6, 16, 3);
+    sg.fillStyle(0x2c6488, 0.4); sg.fillEllipse(C.cx + 1, C.cy + 1, 12, 2.4);
+    sg.fillStyle(0x0e2a40, 0.5); sg.fillEllipse(C.cx - 3, C.cy + 8, 14, 2.6);  // dark depths
+  },
+  // Rubble: a scatter of broken slabs + ash over the ashen base — the remains of a stomped outpost.
+  hex_rubble: (sg) => {
+    sg.fillStyle(0x24262b, 0.8);   // scorch/ash base
+    sg.fillEllipse(C.cx, C.cy, 26, 20);
+    const chunks = [
+      [-9, -6, 7, 5], [3, -8, 6, 4], [8, 2, 5, 6], [-6, 6, 6, 4],
+      [1, 7, 5, 4], [-2, -2, 4, 4], [11, -3, 4, 3],
+    ];
+    for (const [dx, dy, w, h] of chunks) {
+      sg.fillStyle(0x3a3d44, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
+      sg.fillStyle(0x4c4f57, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.5);  // top-lit edge
+    }
+    sg.fillStyle(0x191b1f, 0.6);   // a couple of dark gaps between the debris
+    sg.fillRect(C.cx - 2, C.cy + 1, 3, 3); sg.fillRect(C.cx + 5, C.cy - 5, 2, 3);
   },
   hex_forest: (sg) => {
     // Shadowy forest floor under the canopy, filling the whole hex.
@@ -132,8 +166,9 @@ const DETAIL = {
 export function buildHexTextures(scene) {
   const tiles = {
     hex_ground: PAL.ground, hex_groundB: PAL.groundB,
-    hex_grass: PAL.grass, hex_grassB: PAL.grassB, hex_water: PAL.water,
-    hex_forest: PAL.forest, hex_building: PAL.building,
+    hex_grass: PAL.grass, hex_grassB: PAL.grassB,
+    hex_river: PAL.river, hex_deepWater: PAL.deepWater,
+    hex_forest: PAL.forest, hex_building: PAL.building, hex_rubble: PAL.rubble,
   };
   for (const [key, pal] of Object.entries(tiles)) {
     gen(scene, key, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {

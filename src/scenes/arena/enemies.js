@@ -289,7 +289,9 @@ export const EnemiesMixin = {
         const gd = Math.hypot(e.goal.x - e.x, e.goal.y - e.y);
         if (gd < ARRIVE_SLOW) speedFrac *= clamp(gd / ARRIVE_SLOW, 0, 1);
       }
-      const spd = mv.maxSpeed * speedFrac * backScale;
+      // #41: rough terrain (river/forest/rubble) under the enemy slows it too, same data-driven factor.
+      const terrainScale = this._speedFactorAt(e.x, e.y);
+      const spd = mv.maxSpeed * speedFrac * backScale * terrainScale;
       e.vx = approach(e.vx, mx * spd, mv.accel * dt);
       e.vy = approach(e.vy, my * spd, mv.accel * dt);
       let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;

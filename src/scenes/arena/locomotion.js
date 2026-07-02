@@ -120,8 +120,11 @@ export const LocomotionMixin = {
 
     // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
     const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
+    // #41: the terrain UNDER the mech scales its top speed — a shallow river or forest bogs it
+    // down (rubble mildly), open grass is normal.
+    const terrainScale = this._speedFactorAt(this.px, this.py);
     // #60 Overclock boosts max speed via moveMult; #3 weight inertia drives the accel curve.
-    const maxSp = mv.maxSpeed * legF * backScale * moveMult;
+    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * moveMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
     // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that
@@ -135,6 +138,10 @@ export const LocomotionMixin = {
     const ox = this.px, oy = this.py;
     let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
     if (this._blocked(nx, ny)) {
+      // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
+      // pressing against them (damage scaled by how hard it's driving in). Once flattened to
+      // rubble the hex becomes passable and the mech rolls over it.
+      this._stompBuildingAt(nx, ny, dt);
       if (!this._blocked(ox, ny)) { nx = ox; this.vx = 0; }
       else if (!this._blocked(nx, oy)) { ny = oy; this.vy = 0; }
       else { nx = ox; ny = oy; this.vx = 0; this.vy = 0; }
