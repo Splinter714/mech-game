@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { configDefaults } from 'vitest/config';
 
 export default defineConfig(({ command }) => ({
   // Production (GitHub Pages) is served under /mech-game/, but in dev serve at root
@@ -18,5 +19,12 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: 'dist',
     assetsInlineLimit: 0,
+  },
+  test: {
+    // Agent worktrees are the default workflow here, and each is a full repo copy
+    // containing its own `*.test.js` files. Without this, running tests from the main
+    // checkout globs those copies too and inflates the reported counts. Keep vitest's
+    // built-in excludes and add the worktree/.git trees.
+    exclude: [...configDefaults.exclude, '**/.claude/worktrees/**', '**/.git/**'],
   },
 }));
