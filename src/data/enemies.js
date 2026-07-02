@@ -44,11 +44,19 @@ export const ENEMIES = {
 };
 
 // Spawn rotation for the debug "add enemy" control (#39) and the arena's mixed opener, so
-// consecutive spawns cycle through roles instead of stacking identical orbits. The starting
-// enemy is index 0 (the Raider), keeping the first-deploy experience stable.
-export const ENEMY_ROTATION = ['raider', 'skirmisher', 'sniper', 'artillery'];
+// consecutive spawns cycle through roles instead of stacking identical orbits. Mixes the mech
+// loadouts with the #68 non-mech KINDS (turret / tank / drone 'swarm' / helicopter — the ids
+// live in data/enemyKinds.js; 'swarm' expands into several drones), so pressing N cycles through
+// the whole bestiary. The starting enemy is index 0 (the Raider), keeping the first deploy stable.
+export const ENEMY_ROTATION = [
+  'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turret', 'artillery', 'swarm',
+];
 
-// The default opening squad (#44 follow-up): one of each type so the arena shows off all four
-// behaviours from the first frame — brawler, skirmisher, sniper, and the cover-camping
-// bombardier. Order is the spawn order; the arena drops them off-screen and they walk in.
-export const DEFAULT_SQUAD = ['skirmisher', 'raider', 'sniper', 'artillery'];
+// The default opening squad (#44 / #68): a mix of mechs and non-mech units so the arena shows
+// off the whole bestiary from the first frames — a mech skirmisher/raider/sniper alongside a
+// tank, a turret, a drone swarm, and a gunship. Index 0 stays a mech (Raider) so the smoke test's
+// mech-specific per-part damage assertions remain meaningful. Order is the spawn order; the arena
+// drops each just off-screen and they move in per their AI (the turret just sits and guards).
+export const DEFAULT_SQUAD = [
+  'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turret', 'swarm',
+];

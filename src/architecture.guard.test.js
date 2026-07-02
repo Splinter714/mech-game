@@ -70,6 +70,20 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
     assertNoVariantBranch('art/decor/index.js');
   });
 
+  it('non-mech vehicle art (by kind)', () => {
+    const code = stripComments(read('art/vehicles/index.js'));
+    expect(code, 'buildVehicleTextures must dispatch via VEHICLE_ART[def.art]')
+      .toMatch(/VEHICLE_ART\s*\[/);
+    assertNoVariantBranch('art/vehicles/index.js');
+  });
+
+  it('non-mech enemy behavior (by kind)', () => {
+    const code = stripComments(read('scenes/arena/enemyBehaviors.js'));
+    expect(code, 'enemy behaviors must be a registry (ENEMY_BEHAVIORS), dispatched by key')
+      .toMatch(/ENEMY_BEHAVIORS\s*=/);
+    assertNoVariantBranch('scenes/arena/enemyBehaviors.js');
+  });
+
   it('gameplay sfx cues (by weapon id / kind)', () => {
     // Weapon fire/trajectory/impact are now per-weapon DATA (sfxParams.js, tunable live by
     // the Weapon Lab sound panel) played back by the generic playLayers() — assert sfx.js

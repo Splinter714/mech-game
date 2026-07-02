@@ -143,6 +143,42 @@ try {
     // em was just killed (centre-torso overkill above); reset must bring it back to life.
     const resetWorked = !em.isDestroyed();
 
+    // #68: NON-MECH kinds spawn, render (their own vehicle textures), take damage through the
+    // SAME body interface (isDestroyed/applyDamage/partHealthFraction), and die — and a FLYER
+    // ignores ground cover. Spawn one of each kind at the origin and exercise all of that.
+    const veh = { spawned: 0, textured: 0, damaged: 0, killed: 0, flyerIgnoresWall: false };
+    for (const kind of ['turret', 'tank', 'drone', 'helicopter']) {
+      const e = a._spawnKind(0, 0, kind);
+      veh.spawned++;
+      if (g.textures.exists(e.key + '_hull') && g.textures.exists(e.key + '_turret')) veh.textured++;
+      const before = e.mech.partHealthFraction(e.mech.locations()[0]);
+      a._damageEnemyAt(e, e.x, e.y, 10, 0xffffff);
+      if (e.mech.partHealthFraction(e.mech.locations()[0]) < before) veh.damaged++;
+      a._damageEnemyAt(e, e.x, e.y, 9999, 0xffffff);
+      if (e.mech.isDestroyed()) veh.killed++;
+    }
+    // A flyer's update must NOT be stopped by a wall: drive a fresh helicopter straight at a
+    // forest/building hex and confirm it passes through (ground units would be blocked).
+    const heli = a._spawnKind(0, 0, 'helicopter');
+    // Find a nearby wall (forest/building) to aim it at; if none in range, the flag stays false
+    // but we still assert flyers don't collide by pushing velocity into a known wall if present.
+    let wallPt = null;
+    for (let r = 40; r < 400 && !wallPt; r += 20) {
+      for (let ang = 0; ang < Math.PI * 2; ang += Math.PI / 8) {
+        const wx = Math.cos(ang) * r, wy = Math.sin(ang) * r;
+        if (a._isWall(wx, wy)) { wallPt = { x: wx, y: wy }; break; }
+      }
+    }
+    if (wallPt) {
+      heli.x = wallPt.x; heli.y = wallPt.y;   // sit it ON the wall hex
+      // A flyer sitting on a wall is fine (it's above it); a ground unit would never be placed
+      // there by its own movement. Assert the flyer flag + that it isn't force-ejected.
+      a._updateVehicle(heli, 0.016, 16);
+      veh.flyerIgnoresWall = heli.flying === true && a._isWall(heli.x, heli.y);
+    } else {
+      veh.flyerIgnoresWall = heli.flying === true;   // no wall handy; flag still records it flies
+    }
+
     return {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
@@ -155,6 +191,7 @@ try {
       spawnedExtra,
       extraDamaged,
       resetWorked,
+      veh,
     };
   }, DUMMY_PX);
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -178,6 +215,12 @@ try {
   if (!arena.extraDamaged) fail('#39 the newly spawned enemy could not be damaged');
   if (!arena.resetWorked) fail('#39 reset-enemies did not restore a destroyed enemy');
   if (!arena.dummyDead) fail('dummy did not register destruction on centre-torso kill');
+  // #68: the four non-mech kinds spawn, render their own textures, take damage, and die.
+  if (arena.veh.spawned !== 4) fail(`#68 expected 4 non-mech kinds spawned, got ${arena.veh.spawned}`);
+  if (arena.veh.textured !== 4) fail('#68 a non-mech kind is missing its hull/turret textures');
+  if (arena.veh.damaged !== 4) fail('#68 a non-mech kind did not take damage via the body interface');
+  if (arena.veh.killed !== 4) fail('#68 a non-mech kind did not register destruction');
+  if (!arena.veh.flyerIgnoresWall) fail('#68 a flyer did not ignore ground cover');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {

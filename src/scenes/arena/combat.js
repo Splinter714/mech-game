@@ -59,20 +59,25 @@ export const CombatMixin = {
     }
   },
 
-  // Apply `damage` to enemy `e`'s part nearest the world point (x, y).
+  // Apply `damage` to enemy `e`'s part nearest the world point (x, y). Works for BOTH a mech
+  // (parts positioned via mechLayout, re-skinned to show damage) and a non-mech HpBody unit
+  // (#68: parts carry their own {x,y}; single-pool, so the nearest part only decides where the
+  // damage number floats — the whole unit shares the hp — and its textures are static, no reskin).
   _damageEnemyAt(e, x, y, damage, color) {
     if (e.mech.isDestroyed()) return;
+    const isMech = e.kind === 'mech' || e.kind === undefined;
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
     const lx = x - e.x, ly = y - e.y;
-    const lay = mechLayout(e.mech);
+    const lay = isMech ? mechLayout(e.mech) : e.mech.parts;
+    const locs = isMech ? DAMAGEABLE : e.mech.locations();
     let best = null, bestD = Infinity;
-    for (const loc of DAMAGEABLE) {
+    for (const loc of locs) {
       const a = lay[loc];
       const d = Math.hypot(lx - a.x * dispUnit, ly - a.y * dispUnit);
       if (d < bestD) { bestD = d; best = loc; }
     }
     const res = e.mech.applyDamage(best, damage);
-    reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+    if (isMech) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     this._floatText(x, y, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (e.mech.isDestroyed()) {

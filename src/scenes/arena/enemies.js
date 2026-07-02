@@ -22,11 +22,15 @@
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
-import { buildMechTextures, reskinMech } from '../../art/index.js';
+import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE } from '../../data/enemyKinds.js';
+import { HpBody } from '../../data/HpBody.js';
+import { getWeapon } from '../../data/weapons.js';
+import { buildMechTextures, reskinMech, buildVehicleTextures } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
+import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -93,6 +97,10 @@ const PLAYER_VULN_HEALTH = 0.4;     // player lethal-part health below this ⇒ 
 const TRACKED_DOT = 0.965;          // player aim·(toward enemy) above this ⇒ "being tracked" (~15°)
 const TRACKED_BREAK_CHANCE = 0.7;   // odds a tracked enemy juke-breaks its current plan on a decide
 
+// #68: on-screen scale of a non-mech unit's sprites. A touch larger than the mech scale so a
+// tank/helicopter reads as a substantial vehicle; drones are drawn small in their own texture.
+const VEHICLE_SCALE = ARENA_MECH_SCALE * 1.15;
+
 // Small helpers ---------------------------------------------------------------------------
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -139,8 +147,19 @@ function lethalHealth(mech) {
 export const EnemiesMixin = {
   // ── Enemy lifecycle (#39 debug controls) ──────────────────────────────────────────
   // Build a fresh enemy with its own textures + view + AI state and track it. `typeId`
-  // selects a loadout from data/enemies.js (defaults to the rotation for variety).
+  // selects EITHER a non-mech KIND (data/enemyKinds.js — turret/tank/drone/helicopter) or a
+  // mech loadout (data/enemies.js, the default). Dispatched on isEnemyKind so the mech path
+  // stays byte-for-byte unchanged; non-mech kinds go through _spawnKind. Returns the enemy (or
+  // the last drone for a 'swarm' request, which expands into several).
   _spawnEnemy(x, y, typeId = 'raider') {
+    if (typeId === 'swarm') return this._spawnSwarm(x, y);
+    if (isEnemyKind(typeId)) return this._spawnKind(x, y, typeId);
+    return this._spawnMech(x, y, typeId);
+  },
+
+  // A MECH enemy (the original path): a Mech + mech textures + the six-sprite view + the #44
+  // tactical AI state. Unchanged from the pre-#68 _spawnEnemy body.
+  _spawnMech(x, y, typeId = 'raider') {
     const key = `enemy${this._enemySeq++}`;
     const def = ENEMIES[typeId] ?? ENEMIES.raider;
     const mech = new Mech(def);
@@ -151,7 +170,7 @@ export const EnemiesMixin = {
     const opt = meanOpt(mech);
     const e = {
       key, mech, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: {},
-      spawnX: x, spawnY: y, typeId,
+      spawnX: x, spawnY: y, typeId, kind: 'mech',
       // #44 tactical-AI state.
       role: roleFor(opt),
       standoff: clamp(opt * STANDOFF_FRAC, STANDOFF_MIN, STANDOFF_MAX),
@@ -163,6 +182,58 @@ export const EnemiesMixin = {
     this.enemies.push(e);
     this.registry.set('dummyMech', this.enemies[0].mech);
     return e;
+  },
+
+  // A NON-MECH KIND (#68): an HpBody + vehicle textures + a simple two-sprite (hull/turret) view
+  // + a per-kind behavior (enemyBehaviors.js, dispatched by def.behavior). `flying` units skip
+  // wall collision and draw a drop shadow. The body satisfies the same interface the arena uses
+  // (isDestroyed/applyDamage/partHealthFraction/name/parts), so combat/hit/HUD code is uniform.
+  _spawnKind(x, y, typeId) {
+    const key = `enemy${this._enemySeq++}`;
+    const def = ENEMY_KINDS[typeId];
+    const body = new HpBody(def);
+    buildVehicleTextures(this, key, def);
+    const angle = Math.PI / 2;
+    const view = this._makeVehicleView(key, x, y, angle, def);
+    const e = {
+      key, mech: body, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: 0,
+      spawnX: x, spawnY: y, typeId, kind: def.kind, kindDef: def, flying: !!def.flying,
+      behavior: def.behavior, handed: Math.random() < 0.5 ? 1 : -1,
+      rotorSpin: 0,           // flyers spin their rotor overlay
+    };
+    this.enemies.push(e);
+    this.registry.set('dummyMech', this.enemies[0].mech);
+    return e;
+  },
+
+  // Expand a 'swarm' request into SWARM_SIZE drones dropped in a tight cluster around (x,y), so
+  // the pack arrives together and reads as numbers. Returns the last drone spawned.
+  _spawnSwarm(x, y) {
+    let last = null;
+    for (let i = 0; i < SWARM_SIZE; i++) {
+      const a = (i / SWARM_SIZE) * Math.PI * 2;
+      last = this._spawnKind(x + Math.cos(a) * 40, y + Math.sin(a) * 40, 'drone');
+    }
+    return last;
+  },
+
+  // A non-mech unit's view: a hull sprite (base/airframe, faces travel) + a turret sprite (gun /
+  // rotor, faces aim or spins), optionally over a drop shadow for flyers so they read elevated.
+  _makeVehicleView(key, x, y, angle, def) {
+    const parts = [];
+    let shadow = null;
+    if (def.flying) {
+      shadow = this.add.ellipse(0, 0, 26, 14, 0x000000, 0.28);
+      parts.push(shadow);
+    }
+    const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(VEHICLE_SCALE);
+    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(VEHICLE_SCALE);
+    hull.rotation = angle + Math.PI / 2;
+    turret.rotation = angle + Math.PI / 2;
+    parts.push(hull, turret);
+    const c = this.add.container(x, y, parts);
+    c.hull = hull; c.turret = turret; c.shadow = shadow;
+    return c;
   },
 
   // Zero an enemy's transient AI decision state (state machine + timers + memory). Split out
@@ -226,15 +297,22 @@ export const EnemiesMixin = {
     this._floatText(this.px, this.py - 34, `${e.mech.name || 'ENEMY'} INBOUND`, '#efc14a');
   },
 
-  // Restore every enemy to full health at its spawn point (in place, no re-deploy).
+  // Restore every enemy to full health at its spawn point (in place, no re-deploy). Mech and
+  // non-mech units share the same repair/reposition; only the fireCd shape (map vs. number) and
+  // the texture reskin (mechs re-draw damage stumps; vehicles have static textures) differ.
   _resetEnemies() {
     for (const e of this.enemies) {
       e.mech.repairAll();
       e.x = e.spawnX; e.y = e.spawnY; e.vx = 0; e.vy = 0;
-      e.angle = Math.PI / 2; e.turret = Math.PI / 2; e.fireCd = {};
-      this._resetAiState(e);   // #44: fresh decision state, no mid-plan carry-over
+      e.angle = Math.PI / 2; e.turret = Math.PI / 2;
       e.view.setAlpha(1).setPosition(e.x, e.y);
-      reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+      if (e.kind === 'mech') {
+        e.fireCd = {};
+        this._resetAiState(e);   // #44: fresh decision state, no mid-plan carry-over
+        reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+      } else {
+        e.fireCd = 0;            // vehicles use a single numeric cooldown
+      }
     }
     this._floatText(this.px, this.py - 40, 'ENEMIES RESET', '#5ec8e0');
   },
@@ -259,6 +337,8 @@ export const EnemiesMixin = {
 
   _updateEnemy(e, dt, delta) {
     if (e.mech.isDestroyed()) { e.view.setAlpha(0.5); return; }
+    // #68: non-mech kinds run their own simple per-kind brain + integrate/render path.
+    if (e.kind !== 'mech') { this._updateVehicle(e, dt, delta); return; }
     const mv = e.mech.movement;
     const dxp = this.px - e.x, dyp = this.py - e.y;
     const dist = Math.hypot(dxp, dyp) || 1;
@@ -354,6 +434,67 @@ export const EnemiesMixin = {
     e.view.turret.rotation = e.turret + Math.PI / 2;
     // Place + rotate all four pivoting parts each frame at the enemy's turret facing, tilt 0.
     this._syncTilts(e.view, e.mech, e.turret, ARENA_MECH_SCALE, 0, 0, {}, dt);
+  },
+
+  // ── Non-mech unit update (#68) ────────────────────────────────────────────────────────
+  // Run one non-mech enemy: compute the per-frame basics, call its kind behavior (which sets
+  // vx/vy + angle/turret and may fire), integrate position (with wall collision UNLESS it flies),
+  // then sync the hull/turret/shadow sprites. The behavior registry keeps this free of any
+  // `=== 'tank'` branching — the brain is chosen by def.behavior.
+  _updateVehicle(e, dt, delta) {
+    const dxp = this.px - e.x, dyp = this.py - e.y;
+    const dist = Math.hypot(dxp, dyp) || 1;
+    const bearing = Math.atan2(dyp, dxp);
+    const ux = dxp / dist, uy = dyp / dist;
+    const ctx = { dt, delta, dxp, dyp, dist, bearing, ux, uy };
+
+    const behavior = ENEMY_BEHAVIORS[e.behavior];
+    if (this.enemyMove || e.behavior === 'turret') behavior(this, e, ctx);
+    else { e.vx = approach(e.vx, 0, (e.kindDef.move.accel || 200) * dt); e.vy = approach(e.vy, 0, (e.kindDef.move.accel || 200) * dt); }
+
+    // Integrate. Flyers pass over walls/water/forest; ground units collide + slide like a mech.
+    let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
+    if (!e.flying && this._blocked(nx, ny)) {
+      if (!this._blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
+      else if (!this._blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
+      else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
+    }
+    // #41: ground units are slowed by rough terrain underfoot (same data-driven factor as mechs).
+    if (!e.flying) {
+      const tScale = this._speedFactorAt(e.x, e.y);
+      nx = e.x + (nx - e.x) * tScale; ny = e.y + (ny - e.y) * tScale;
+    }
+    e.x = nx; e.y = ny;
+
+    // Tick the weapon cooldown (a single per-unit timer; the kind's cadence lives in data).
+    if (e.fireCd > 0) e.fireCd = Math.max(0, e.fireCd - delta);
+
+    // Render. Hull faces travel/hull-facing; turret faces its gun; flyers spin their rotor overlay
+    // and float their shadow slightly offset so they read as airborne.
+    e.view.setPosition(e.x, e.y);
+    e.view.hull.rotation = e.angle + Math.PI / 2;
+    if (e.kindDef.art === 'drone' || e.kindDef.art === 'helicopter') {
+      e.rotorSpin += dt * (e.kindDef.art === 'drone' ? 40 : 26);
+      e.view.turret.rotation = e.rotorSpin;                 // rotor overlay spins fast
+    } else {
+      e.view.turret.rotation = e.turret + Math.PI / 2;      // gun tracks the player
+    }
+    if (e.view.shadow) { e.view.shadow.x = 10; e.view.shadow.y = 16; }   // offset = "height" read
+  },
+
+  // Fire a non-mech unit's weapon at `aim` (its turret angle). The weapon comes from data
+  // (getWeapon(def.weaponId)) — NO weapon-id literal in this file — wrapped as the {weapon,
+  // location} shape _spawnProjectile expects. Enemy-owned round; cadence is the kind's fireEveryMs.
+  _fireVehicleWeapon(e, ctx, aim) {
+    if (e.fireCd > 0) return;
+    const def = e.kindDef;
+    const weapon = getWeapon(def.weaponId);
+    if (!weapon) return;
+    const w = { weapon, location: e.kind, index: 0 };
+    const aimErr = (Math.random() - 0.5) * 0.1;
+    const mx = e.x + Math.cos(aim) * 18, my = e.y + Math.sin(aim) * 18;
+    this._spawnProjectile(w, mx, my, aim + aimErr, 'enemy', 0, null);
+    e.fireCd = def.fireEveryMs ?? 1000;
   },
 
   // ── State selection ─────────────────────────────────────────────────────────────────
