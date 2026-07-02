@@ -156,7 +156,9 @@ export const WEAPONS = {
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
     damage: 5, range: { min: 0, opt: 220, max: 320 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
-    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, velocity: 380 },
+    // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
+    // playtest): a denser, more compact salvo rather than a loose spread.
+    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, clusterSpacing: 3.5, velocity: 380, scale: 0.8 },
   }),
 };
 
