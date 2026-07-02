@@ -185,16 +185,13 @@ const WHOLES   = 'xoooooooooooooooxooooooooooooooo';   // one ringing chord per 
 // share the same root (E) so switching is a pure mode comparison.
 const STYLE_ROOT = 82.41;                                   // E2 — common key for every style
 const PICK_MODES = ['aeolian', 'phrygian', 'harmonicMinor'];
-const MODE_TAG = { aeolian: 'aeolian', phrygian: 'phrygian', harmonicMinor: 'harm.min',
-                   dorian: 'dorian', mixolydian: 'mixolydian' };
+const MODE_TAG = { aeolian: 'aeolian', phrygian: 'phrygian', harmonicMinor: 'harm.min' };
 
 const STYLES = [
   // THRASH GALLOP — the original: fast dd-dd palm-muted gallop, driving double-bass, slow 8-bar
   // harmony (stretch ×2) at 120 BPM, with the screaming leads. Restored to its first form.
   {
-    // Rendered in aeolian (dark thrash) and mixolydian — the raised 3rd + ♭7 give the gallop a
-    // brighter, major-tinged hard-rock swagger over the same dd-dd feel.
-    key: 'gallop', name: 'gallop', tempo: 120, chug: 0.08, stretch: 2, modes: ['aeolian', 'mixolydian'],
+    key: 'gallop', name: 'gallop', tempo: 120, chug: 0.08, stretch: 2, modes: ['aeolian'],
     gtr: [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2,   // bar 1: E pedal, tail G-F#
            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 5,   // bar 2: E pedal, tail A-B (climbs into C)
            6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,   // bar 3: C pedal, tail B-A
@@ -218,9 +215,7 @@ const STYLES = [
   // DRIVE — up-tempo hard rock: relentless straight downpicked EIGHTH-note power chords (chug on
   // the beat), four-on-the-floor double kick + backbeat. Leads open.
   {
-    // Rendered in aeolian (dark hard rock) and dorian — the raised 6th lifts the up-tempo
-    // downpicked chug into a bright-minor drive without losing the minor tonic.
-    key: 'drive', name: 'drive', tempo: 150, chug: 0.12, modes: ['aeolian', 'dorian'],
+    key: 'drive', name: 'drive', tempo: 150, chug: 0.12, modes: ['aeolian'],
     gtr: [[1, 1, 1, 3,  1, 1, 5, 4,  1, 1, 1, 3,  7, 7, 5, 1], EIGHTHS + EIGHTHS],
     // Bass tracks the guitar's 2-bar riff: pedals the root under the quick passing 3, then
     // follows the structural tail moves (5-4 in bar 1, 7-7-5-1 in bar 2) so it locks instead of
@@ -232,9 +227,7 @@ const STYLES = [
   // BLAST — extreme/fast: constant sixteenth-note TREMOLO picking over a blast beat (kick/snare
   // alternating every sixteenth). Leads open.
   {
-    // Rendered in phrygian (dark ♭2 blast) and harmonicMinor — the raised-7th leading tone gives
-    // the tremolo blast a neoclassical bite.
-    key: 'blast', name: 'blast', tempo: 140, chug: 0.045, modes: ['phrygian', 'harmonicMinor'],
+    key: 'blast', name: 'blast', tempo: 140, chug: 0.045, modes: ['phrygian'],
     gtr: [[1, 1, 7, 1,  3, 1, 7, 1,  5, 5, 7, 8,  7, 6, 5, 7], TREMOLO + TREMOLO],
     bass: '1111111177771111' + '3333111155557777' + '1111111166665555' + '7777555533331111',
     drums: { kick: 'xoxoxoxoxoxoxoxoxoxoxoxoxoxoxoxo', snare: 'oxoxoxoxoxoxoxoxoxoxoxoxoxoxoxox',
