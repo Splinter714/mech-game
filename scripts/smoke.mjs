@@ -179,6 +179,24 @@ try {
       veh.flyerIgnoresWall = heli.flying === true;   // no wall handy; flag still records it flies
     }
 
+    // #66: Mission wiring — the arena designates one outpost as `a.objectiveHex` at create()
+    // (deterministic, see mission.js `_initMission`) and publishes `a.mission` each frame.
+    // Confirm it starts active with the assault objective, then hammer the objective hex with
+    // `_damageBuildingAt` (same path real weapon fire uses) until it collapses, and confirm the
+    // mission flips to 'complete'.
+    const missionStartedActive = a.mission?.status === 'active' && a.mission?.typeId === 'assault';
+    let missionCompleted = false;
+    if (a.objectiveHex) {
+      // Axial → pixel (pointy-top), mirroring data/hexgrid.js `hexToPixel` — inlined because
+      // this callback runs in the page context, where the Node-side import isn't reachable.
+      const [oq, or_] = a.objectiveHex.split(',').map(Number);
+      const SIZE = 48, SQRT3 = Math.sqrt(3);
+      const ox = SIZE * SQRT3 * (oq + or_ / 2), oy = SIZE * (3 / 2) * or_;
+      for (let i = 0; i < 20 && a.buildingHp.has(a.objectiveHex); i++) a._damageBuildingAt(ox, oy, 20);
+      a._updateMission();
+      missionCompleted = a.mission?.status === 'complete';
+    }
+
     return {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
@@ -192,6 +210,8 @@ try {
       extraDamaged,
       resetWorked,
       veh,
+      missionStartedActive,
+      missionCompleted,
     };
   }, DUMMY_PX);
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -221,6 +241,10 @@ try {
   if (arena.veh.damaged !== 4) fail('#68 a non-mech kind did not take damage via the body interface');
   if (arena.veh.killed !== 4) fail('#68 a non-mech kind did not register destruction');
   if (!arena.veh.flyerIgnoresWall) fail('#68 a flyer did not ignore ground cover');
+  // #66: mission starts active on the assault objective, and destroying the objective hex
+  // (via the same _damageBuildingAt path weapon fire uses) completes it.
+  if (!arena.missionStartedActive) fail('#66 mission did not start active with the assault objective');
+  if (!arena.missionCompleted) fail('#66 destroying the objective hex did not complete the mission');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
