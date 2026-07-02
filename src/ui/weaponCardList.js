@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx, itemFxKey } from '../art/index.js';
+import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
@@ -29,8 +29,14 @@ const UI = {
 
 const CARD_H = 96;
 const CARD_GAP = 12;
-const ICON = 30;
-const LABEL_W = 200;     // left block: icon + name + stats
+const LABEL_W = 200;     // left block: name + stats
+// The mount texture (see art/mounts/icons.js) is a DESIGN-px square (mechPrims CENTER=32)
+// with the weapon anchored at (centre-x, frontY). MOUNT_BASE_OY is that base as a normalised
+// origin so the emitter image pivots on the weapon's base. EMIT_SIZE is its on-card display
+// size; EMIT_BACK nudges the base left of the muzzle so the barrel reaches over the shots.
+const MOUNT_BASE_OY = (DESIGN / 2 + MOUNT_FRONT_Y) / DESIGN;   // weapon base within the texture
+const EMIT_SIZE = 44;
+const EMIT_BACK = 8;
 
 export class WeaponCardList {
   constructor(scene, { x, y, w, h, ids, onSelect = null, selectedId = null } = {}) {
@@ -111,7 +117,14 @@ export class WeaponCardList {
     const panel = this.scene.add.rectangle(0, 0, 100, CARD_H, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
     const stage = this.scene.add.rectangle(0, 0, 100, 100, UI.stage).setOrigin(0, 0);
     const swatch = this.scene.add.rectangle(14, 16, 4, CARD_H - 32, color).setOrigin(0, 0);
-    const icon = this.scene.add.image(0, 0, itemFxKey(id)).setDisplaySize(ICON, ICON);
+    // The weapon's actual on-mech mount hardware IS the emitter the live preview fires from —
+    // the same silhouette drawWeaponMount() paints on the body. The texture points up and is
+    // anchored at its base (design centre-x, frontY); rotating +90° aims the barrel to the
+    // right (the fire direction), base-pivoted so every weapon's hardware sits at the same
+    // spot with its muzzle reaching toward the shots. Abilities have no mount, so no emitter.
+    const emitter = weapon
+      ? this.scene.add.image(0, 0, mountIconKey(id)).setOrigin(0.5, MOUNT_BASE_OY).setRotation(Math.PI / 2)
+      : null;
     const name = this.scene.add.text(0, 14, item.name, { fontFamily: 'monospace', fontSize: '14px', color: UI.text });
     const catLabel = weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : 'Ability';
     const cat = this.scene.add.text(0, 33, catLabel, {
@@ -122,11 +135,12 @@ export class WeaponCardList {
     });
     const fxG = this.scene.add.graphics();
 
-    c.add([panel, stage, swatch, icon, name, cat, stats, fxG]);
+    // emitter sits under fxG so projectiles/beams render over the muzzle.
+    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats, fxG]);
     this.scroller.add(c);
 
     const card = {
-      id, item, weapon, color, container: c, panel, stage, icon, name, cat, stats, fxG,
+      id, item, weapon, color, container: c, panel, stage, emitter, name, cat, stats, fxG,
       cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
     };
@@ -177,11 +191,12 @@ export class WeaponCardList {
       card.container.setPosition(0, y);
       card.panel.setSize(cardW, CARD_H);
       card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), CARD_H - 16);
-      card.icon.setPosition(28, CARD_H / 2);
-      card.name.setX(48); card.cat.setX(48); card.stats.setX(48);
+      card.name.setX(20); card.cat.setX(20); card.stats.setX(20);
       card.muzzleX = stageX + 14;
       card.muzzleY = 8 + (CARD_H - 16) / 2;
       card.stageW = Math.max(20, stageW - 22);
+      // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
+      card.emitter?.setDisplaySize(EMIT_SIZE, EMIT_SIZE).setPosition(card.muzzleX - EMIT_BACK, card.muzzleY);
     });
     const contentH = this.cards.length * (CARD_H + CARD_GAP);
     this._maxScroll = Math.max(0, contentH - this.region.h);
@@ -338,7 +353,7 @@ export class WeaponCardList {
     }
 
     const w = card.weapon;
-    g.fillStyle(0x3a4654, 1).fillRect(card.muzzleX - 12, card.muzzleY - 4, 12, 8);   // muzzle nub
+    // (the emitter/mount is a rotated Image behind fxG, not drawn here — see _buildCard.)
     for (const fp of card.patches) drawGroundFire(g, fp.x, fp.y, fp.r, fp.born, 1);
     if (card.holdBeam) {
       const len = Math.min(card.stageW, w.range.opt || 220);
