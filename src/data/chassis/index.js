@@ -36,16 +36,19 @@ export function makeChassis(cfg) {
     art: cfg.art,
     locations,
     movement: {
-      // Linear feel.
-      accel: m.accel,           // px/s² while throttling
-      maxSpeed: m.maxSpeed,     // px/s top speed (forward)
-      turnRate: m.turnRate,     // rad/s the legs/chassis can rotate
+      // Linear feel — accel and decel are SEPARATE so the mech carries momentum (#3):
+      // spool up at `accel`, coast down at the (lower) `decel` when you ease off/reverse.
+      accel: m.accel,               // px/s² while throttling toward the stick target
+      decel: m.decel ?? m.accel,    // px/s² while bleeding speed (defaults to accel if unset)
+      maxSpeed: m.maxSpeed,         // px/s top speed (forward)
+      turnRate: m.turnRate,         // rad/s the legs/chassis can rotate
       // Turret feel.
       turretSlew: m.turretSlew, // rad/s the weapon mount tracks toward the aim
       turretArc: m.turretArcDeg * Math.PI / 180, // max deviation (half-arc) from chassis facing
-      // Stompy gait.
+      // Stompy gait + footfall.
       stepInterval: m.stepInterval, // ms between footfalls at full speed
       stepBob: m.stepBob,           // px of body lurch per step
+      footShake: m.footShake ?? 0,  // px of step-synced camera kick (weight cue; 0 = none)
     },
   };
 }

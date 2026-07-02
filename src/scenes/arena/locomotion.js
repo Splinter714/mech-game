@@ -120,9 +120,17 @@ export const LocomotionMixin = {
 
     // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
     const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
+    // #60 Overclock boosts max speed via moveMult; #3 weight inertia drives the accel curve.
     const maxSp = mv.maxSpeed * legF * backScale * moveMult;
-    this.vx = approach(this.vx, intent.move.x * maxSp, mv.accel * dt);
-    this.vy = approach(this.vy, intent.move.y * maxSp, mv.accel * dt);
+    // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
+    // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
+    // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that
+    // axis is winding up (target farther from 0 than current, same sign) or slowing/reversing.
+    const tx = intent.move.x * maxSp, ty = intent.move.y * maxSp;
+    const rampX = (tx !== 0 && Math.sign(tx) === Math.sign(this.vx) && Math.abs(tx) > Math.abs(this.vx));
+    const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(this.vy) && Math.abs(ty) > Math.abs(this.vy));
+    this.vx = approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
+    this.vy = approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
     // Move with wall/boundary collision, sliding along blocked axes.
     const ox = this.px, oy = this.py;
     let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
@@ -164,9 +172,22 @@ export const LocomotionMixin = {
       if (this.stepMs >= mv.stepInterval) {
         this.stepMs -= mv.stepInterval;
         this.hullFrame = (this.hullFrame + 1) % 4;
-        if (this.hullFrame % 2 === 0) { this._footImpactFx(this.hullFrame === 0 ? 0 : 1, mv.stepBob); Audio.footstep(this.hullFrame === 0 ? 0 : 1); }
+        // A footfall lands only on the two planted frames (0 and 2); frames 1/3 are the
+        // mid-stride swing. Kick the local impact FX + weight-scaled camera shake + sound.
+        if (this.hullFrame % 2 === 0) {
+          const foot = this.hullFrame === 0 ? 0 : 1;
+          this._footImpactFx(foot, mv.stepBob);
+          this._footShake(mv.footShake);
+          Audio.footstep(foot);
+        }
       }
-      bob = Math.abs(Math.sin((this.stepMs / mv.stepInterval) * Math.PI)) * mv.stepBob;
+      // Stompy lurch: the body rides UP mid-stride and DROPS onto the plant. Skewing the
+      // sine toward the front of the stride (the ^1.4 easing) makes the drop feel like the
+      // mech's mass settling onto the foot rather than a smooth float. Scales with speed so a
+      // crawl barely bobs and a full-tilt march heaves. `stepBob` is the per-chassis amplitude.
+      const phase = this.stepMs / mv.stepInterval;                 // 0→1 across one step
+      const speedScale = Phaser.Math.Clamp(Math.abs(this.speed) / mv.maxSpeed, 0, 1);
+      bob = Math.pow(Math.abs(Math.sin(phase * Math.PI)), 1.4) * mv.stepBob * speedScale;
     }
     this.playerView.hull.setTexture(`playerMech_hull_${this.hullFrame}`);
     this.playerView.hull.rotation = this.angle + Math.PI / 2;
@@ -203,6 +224,7 @@ export const LocomotionMixin = {
 
     // Squash the body briefly (heavier stomp = deeper). Guard against stacking tweens so a
     // fast gait doesn't leave the container mis-scaled.
+    // (Camera shake is kicked separately by _footShake, synced to the same footfall.)
     const v = this.playerView;
     if (!v._stomping) {
       v._stomping = true;
@@ -212,5 +234,21 @@ export const LocomotionMixin = {
         onComplete: () => { v.setScale(1); v._stomping = false; },
       });
     }
+  },
+
+  // Step-synced camera shake (#3/#37): a short, sharp kick on each footfall so the WHOLE
+  // world jolts when the mech plants a foot — the headline "heavy machine" cue. `powerPx` is
+  // the chassis' `footShake` in pixels (heavy stomps hardest, light barely). Scaled by how
+  // fast we're moving so a slow creep only trembles and a full march really pounds. Phaser's
+  // camera.shake() intensity is a fraction of the viewport, so convert px→fraction via the
+  // camera height. Duration is deliberately brief (a jolt, not a rumble) and the offset is
+  // capped so a heavy can't shake the frame into nausea — a knob the owner can still push.
+  _footShake(powerPx) {
+    if (!powerPx) return;
+    const cam = this.cameras.main;
+    const speedScale = Phaser.Math.Clamp(Math.abs(this.speed) / this.mech.movement.maxSpeed, 0, 1);
+    const px = Math.min(9, powerPx) * (0.5 + 0.5 * speedScale);   // px of camera offset
+    const intensity = px / Math.max(1, cam.height);
+    cam.shake(90, intensity, true);   // force=true so a new step overrides the tail of the last
   },
 };

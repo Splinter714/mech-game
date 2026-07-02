@@ -16,9 +16,14 @@ export const HEAVY_CONFIG = {
     decor: [{ kind: 'pauldron', side: -1 }, { kind: 'pauldron', side: 1 }, { kind: 'stack', side: -1 }, { kind: 'stack', side: 1 }],
   },
   movement: {
-    // #45: speeds reduced ~25% from the original 90/280 (owner: tune to taste).
-    accel: 210, maxSpeed: 68, turnRate: 1.3,
-    turretSlew: 2.2, turretArcDeg: 95,
-    stepInterval: 440, stepBob: 3.5,
+    // #3 MechWarrior-feel pass. The immovable object: it takes real time to get moving and
+    // a long slow coast to stop, the whole chassis pivots slowly, the turret crawls (you
+    // often have to turn the body to track a flanker), and each footfall lands like a pile
+    // driver. Deliberately the most ponderous — but NOT unresponsive: it still answers the
+    // stick, it just answers heavily. See light.js for what each knob does. Widest
+    // accel↔decel gap = the most momentum-heavy start-up and coast of the three.
+    accel: 120, decel: 80, maxSpeed: 68, turnRate: 1.0,
+    turretSlew: 1.9, turretArcDeg: 95,
+    stepInterval: 460, stepBob: 3.8, footShake: 5.5,
   },
 };
