@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
+import { POWERUPS } from '../data/powerups.js';
 
 // Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
 // garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
@@ -31,6 +32,10 @@ export default class HudScene extends Phaser.Scene {
     this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
     this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
     this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
+
+    // #60: active timed-buff readout, top-right under the enemy count. One line per active
+    // powerup with its remaining seconds; rebuilt each frame from the registry overlay.
+    this.buffTexts = [];
 
     // Per-part integrity column (player), top-left under the hints.
     this.add.text(16, 80, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -106,5 +111,28 @@ export default class HudScene extends Phaser.Scene {
     if (total) {
       this.dummyText.setText(`ENEMIES ${alive}/${total}`).setColor(alive ? C.dim : C.bad);
     }
+
+    this._updateBuffHud();
+  }
+
+  // #60: draw one line per active timed buff (label + remaining seconds) in its powerup colour.
+  // Text objects are pooled/reused so the count of active buffs can grow and shrink each frame
+  // without churning objects.
+  _updateBuffHud() {
+    const active = this.registry.get('activePowerups') || {};
+    const ids = Object.keys(active).filter((id) => active[id] > 0);
+    let y = 40;
+    ids.forEach((id, i) => {
+      const p = POWERUPS[id];
+      const col = '#' + (p?.color ?? 0xffffff).toString(16).padStart(6, '0');
+      let t = this.buffTexts[i];
+      if (!t) {
+        t = this.add.text(this.W - 16, 0, '', { fontFamily: 'monospace', fontSize: '13px' }).setOrigin(1, 0);
+        this.buffTexts[i] = t;
+      }
+      t.setText(`${p?.label ?? id}  ${(active[id] / 1000).toFixed(1)}s`).setColor(col).setPosition(this.W - 16, y).setVisible(true);
+      y += 16;
+    });
+    for (let i = ids.length; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
   }
 }

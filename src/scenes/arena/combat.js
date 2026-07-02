@@ -79,6 +79,9 @@ export const CombatMixin = {
       e.view.setAlpha(0.5);
       this._floatText(e.x, e.y - 30, 'DESTROYED', '#e2533a');
       Audio.explosion(1.15);                   // catastrophic kill
+      // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
+      // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
+      this._maybeDropPowerup?.(e.x, e.y);
     }
   },
 

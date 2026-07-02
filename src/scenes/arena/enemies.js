@@ -321,7 +321,7 @@ export const EnemiesMixin = {
         const aimErr = (Math.random() - 0.5) * 0.12;
         const mx2 = e.x + Math.cos(e.turret) * 16, my2 = e.y + Math.sin(e.turret) * 16;
         this._spawnProjectile(w, mx2, my2, aim + aimErr, 'enemy');
-        cd = this._fireInterval(w.weapon);
+        cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
       e.fireCd[w.location] = Math.max(0, cd);
     }

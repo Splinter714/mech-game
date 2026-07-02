@@ -12,6 +12,7 @@ import { ProjectilesMixin } from './arena/projectiles.js';
 import { TargetingMixin } from './arena/targeting.js';
 import { FiringMixin } from './arena/firing.js';
 import { LocomotionMixin } from './arena/locomotion.js';
+import { PowerupsMixin } from './arena/powerups.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -99,6 +100,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
+    this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
     this.scene.launch('HudScene');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scene.stop('HudScene');
@@ -115,6 +117,9 @@ export default class ArenaScene extends Phaser.Scene {
   update(_time, delta) {
     const dt = Math.min(0.05, delta / 1000);
     const intent = this.controls.read();
+
+    // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
+    this._refreshBuffMods();
 
     this._drive(intent, dt);
 
@@ -139,6 +144,9 @@ export default class ArenaScene extends Phaser.Scene {
     this._updateFirePatches();
     this._updateBeams(delta);
 
+    // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
+    this._updatePowerups(delta);
+
     // Soft-lock reticle, drawn after projFx is cleared above so it isn't wiped.
     if (this.lockEnemy) this._drawLockReticle(this.lockEnemy.x, this.lockEnemy.y, this.lockProgress);
 
@@ -148,8 +156,9 @@ export default class ArenaScene extends Phaser.Scene {
       this.projFx.fillStyle(0x5ec8e0, 0.10).fillCircle(this.px, this.py, 34);
     }
 
-    // ── Ammo regen ── every magazine tops back up over time.
-    this.mech.regenAmmo(dt);
+    // ── Ammo regen ── every magazine tops back up over time. #60 Surge multiplies the regen
+    // rate (applied as a scaled dt, since regen is linear in dt) for its duration.
+    this.mech.regenAmmo(dt * this._buffMods().ammoRegenMult);
   }
 
   toGarage() {
@@ -163,5 +172,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin,
 );
