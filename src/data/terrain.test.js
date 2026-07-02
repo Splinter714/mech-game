@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TERRAIN, getTerrain, terrainSpeedFactor, isPassable, blocksLOS,
-  isDestructible, buildingHp, damageBuilding, RUBBLE,
+  isDestructible, buildingHp, damageBuilding, RUBBLE, rubbleFor,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -87,6 +87,26 @@ describe('terrain property resolvers', () => {
       expect(isDestructible(id)).toBe(false);
       expect(buildingHp(id)).toBe(0);
     }
+  });
+});
+
+describe('rubbleFor — a destructible collapses into its biome rubble (#67)', () => {
+  it('maps each biome outpost to its own passable, no-cover debris', () => {
+    const pairs = [
+      ['building', 'rubble'], ['adobe', 'sandRubble'], ['iceRuin', 'snowRubble'],
+      ['tower', 'cityRubble'], ['obsidian', 'ashRubble'],
+    ];
+    for (const [outpost, rub] of pairs) {
+      expect(rubbleFor(outpost)).toBe(rub);
+      expect(isPassable(rub)).toBe(true);
+      expect(blocksLOS(rub)).toBe(false);
+    }
+  });
+
+  it('falls back to the default RUBBLE for non-destructible / unknown terrain', () => {
+    expect(rubbleFor('grass')).toBe(RUBBLE);
+    expect(rubbleFor(undefined)).toBe(RUBBLE);
+    expect(rubbleFor('nope')).toBe(RUBBLE);
   });
 });
 

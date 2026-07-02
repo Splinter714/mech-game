@@ -27,6 +27,42 @@ const PAL = {
   building: { fill: 0x3c4148, edge: 0x2a2e34 },
   // Rubble: the ashen debris a flattened outpost leaves behind.
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
+
+  // ── Desert / badlands (#67) — warm sandy palette. ──
+  sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
+  sandB:     { fill: 0xc7a666, edge: 0xab8a4e },
+  dryRiver:  { fill: 0x9c7f4a, edge: 0x836838 },
+  mesa:      { fill: 0x8a5a3a, edge: 0x633c26 },
+  scrub:     { fill: 0xb1904f, edge: 0x8f7440 },
+  adobe:     { fill: 0xc79a5c, edge: 0x8a6636 },
+  sandRubble:{ fill: 0x9c8355, edge: 0x7d6741 },
+
+  // ── Snow / arctic (#67) — cold white/blue palette. ──
+  snow:      { fill: 0xd9e6ef, edge: 0xbccbd8 },
+  snowB:     { fill: 0xcfdeeb, edge: 0xb2c3d3 },
+  slush:     { fill: 0x9db6c6, edge: 0x84a0b3 },
+  ice:       { fill: 0x9fc4dd, edge: 0x76a3c4 },
+  drift:     { fill: 0xe4eef5, edge: 0xc3d3e0 },
+  iceRuin:   { fill: 0xaebfcc, edge: 0x8497a6 },
+  snowRubble:{ fill: 0xb6c4cf, edge: 0x96a6b3 },
+
+  // ── Urban ruins (#67) — grey industrial palette. ──
+  pavement:  { fill: 0x4b4f56, edge: 0x3a3e44 },
+  pavementB: { fill: 0x53575e, edge: 0x40444a },
+  road:      { fill: 0x36393f, edge: 0x2a2c31 },
+  collapsed: { fill: 0x44484f, edge: 0x2f3238 },
+  wreck:     { fill: 0x4a4640, edge: 0x35322d },
+  tower:     { fill: 0x565b63, edge: 0x393d43 },
+  cityRubble:{ fill: 0x3f4249, edge: 0x2c2f34 },
+
+  // ── Volcanic wasteland (#67) — dark/ember palette. ──
+  ash:       { fill: 0x2b2723, edge: 0x1d1a17 },
+  ashB:      { fill: 0x322d28, edge: 0x201d19 },
+  crust:     { fill: 0x3a2620, edge: 0x281713 },
+  lava:      { fill: 0x7a2410, edge: 0x4a1608 },
+  fumarole:  { fill: 0x35302b, edge: 0x211d19 },
+  obsidian:  { fill: 0x2a2530, edge: 0x171420 },
+  ashRubble: { fill: 0x322d28, edge: 0x211d19 },
 };
 
 function drawHex(sg, fill, edge, inset = 0.9) {
@@ -67,6 +103,106 @@ function tree(sg, cx, cy, r) {
 }
 
 const C = { cx: HEX_TEX_W / 2, cy: HEX_TEX_H / 2 };
+
+// Tiny deterministic RNG so per-tile detail scatter is stable build-to-build.
+function seeded(seed) {
+  let s = seed >>> 0;
+  return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+}
+
+// A scatter of small speckles (rocks / snow lumps / cinders) inside the hex, given a seed.
+function speckle(sg, seed, color, alpha, count, rMin, rMax, spread = 16) {
+  const rnd = seeded(seed);
+  sg.fillStyle(color, alpha);
+  for (let i = 0; i < count; i++) {
+    const dx = (rnd() - 0.5) * 2 * spread;
+    const dy = (rnd() - 0.5) * 2 * spread;
+    sg.fillCircle(C.cx + dx, C.cy + dy, rMin + rnd() * (rMax - rMin));
+  }
+}
+
+// A biome "cover clump" (scrub bush / snowdrift / wreck pile / ash mound): a soft shadow, a dark
+// base silhouette, a mid body pulled toward the sun (upper-left), and a highlight — the same
+// read-as-a-mass recipe the forest tree uses, parameterized by palette so each biome's cover
+// reads distinctly. `jag` adds a jaggier (rocky/wreck) vs rounder (snow/brush) silhouette.
+const CLUMP_BLOBS = [
+  [0, 0, 1.0], [-0.5, -0.3, 0.6], [0.5, -0.2, 0.55], [0.2, 0.45, 0.55], [-0.4, 0.4, 0.45],
+];
+function coverClump(sg, cx, cy, r, dark, mid, light, jag = 0) {
+  sg.fillStyle(0x000000, 0.28); sg.fillEllipse(cx + 1.5, cy + 2, r * 2.1, r * 1.4);
+  sg.fillStyle(dark, 1);
+  for (const [dx, dy, s] of CLUMP_BLOBS) sg.fillCircle(cx + dx * r, cy + dy * r, r * s * (1 + jag * (dx > 0 ? 0.1 : 0)));
+  sg.fillStyle(mid, 1);
+  for (const [dx, dy, s] of CLUMP_BLOBS) sg.fillCircle(cx + dx * r - r * 0.12, cy + dy * r - r * 0.12, r * s * 0.8);
+  sg.fillStyle(light, 0.95);
+  sg.fillCircle(cx - r * 0.3, cy - r * 0.3, r * 0.5);
+  sg.fillCircle(cx + r * 0.1, cy - r * 0.02, r * 0.3);
+}
+
+// A full-tile grove of cover clumps on the same jittered lattice the forest uses, drawn
+// back-to-front — reused by every biome's walk-through cover so the mass fills the hex.
+function buildClumpLattice(seed) {
+  const s = HEX_SIZE * 0.98;
+  const step = 13;
+  const rnd = seeded(seed);
+  const spots = [];
+  for (let row = -4; row <= 4; row++) {
+    const oy = row * step * 0.86;
+    const xoff = (row & 1) ? step / 2 : 0;
+    for (let col = -4; col <= 4; col++) {
+      const dx = col * step + xoff + (rnd() - 0.5) * 5;
+      const dy = oy + (rnd() - 0.5) * 5;
+      const r = 5 + rnd() * 3;
+      if (inHex(dx, dy, s - r * 0.5)) spots.push([dx, dy, r]);
+    }
+  }
+  spots.sort((a, b) => a[1] - b[1]);
+  return spots;
+}
+const CLUMP_SPOTS = buildClumpLattice(4242);
+
+// Fill the whole hex with a darker floor colour under a cover grove (matches the forest recipe).
+function coverFloor(sg, color, alpha = 0.7) {
+  sg.fillStyle(color, alpha);
+  sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
+}
+
+// A generic destructible-outpost roof (adobe / ice-ruin / tower / obsidian): a base outline, a
+// roof plate, a top-light strip, and a couple of detail marks — palette-driven per biome.
+function outpostRoof(sg, base, roof, light, mark, markCol) {
+  sg.fillStyle(base, 1); sg.fillRect(C.cx - 15, C.cy - 13, 30, 26);
+  sg.fillStyle(roof, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 22);
+  sg.fillStyle(light, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 5);
+  sg.fillStyle(base, 1); sg.fillRect(C.cx - 7, C.cy - 1, 6, 6); sg.fillRect(C.cx + 3, C.cy + 4, 5, 5);
+  if (mark) { sg.fillStyle(markCol, 0.9); sg.fillRect(C.cx + 6, C.cy - 9, 3, 3); }
+}
+
+// A thin "crack"/seam line between successive points, drawn as a chain of thin oriented quads
+// (the scaledGraphics wrapper has no stroke-path API, so we approximate with fillTriangle pairs).
+function crackLine(sg, pts, color, alpha, width = 1) {
+  sg.fillStyle(color, alpha);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * (width / 2), ny = (dx / len) * (width / 2);
+    // Quad (x0±n, y0±n)–(x1±n) as two triangles.
+    sg.fillTriangle(x0 + nx, y0 + ny, x0 - nx, y0 - ny, x1 + nx, y1 + ny);
+    sg.fillTriangle(x0 - nx, y0 - ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny);
+  }
+}
+
+// A generic rubble scatter (broken slabs over a scorched base), palette-driven per biome.
+function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
+  sg.fillStyle(baseCol, 0.8); sg.fillEllipse(C.cx, C.cy, 26, 20);
+  const rnd = seeded(seed);
+  for (let i = 0; i < 7; i++) {
+    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 16;
+    const w = 4 + rnd() * 4, h = 3 + rnd() * 3;
+    sg.fillStyle(slabCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
+    sg.fillStyle(litCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.5);
+  }
+}
 
 // Is (dx,dy) — offset from the hex centre — inside a pointy-top hexagon of circumradius s?
 function inHex(dx, dy, s) {
@@ -161,6 +297,140 @@ const DETAIL = {
     sg.fillStyle(0x2a2e34, 1); sg.fillRect(C.cx - 7, C.cy - 1, 6, 6); sg.fillRect(C.cx + 3, C.cy + 4, 5, 5); // vents
     sg.fillStyle(0xc8a23a, 0.85); sg.fillRect(C.cx + 6, C.cy - 9, 3, 3);     // a warning light
   },
+
+  // ── Desert / badlands ──────────────────────────────────────────────────────────────────
+  hex_sand: (sg) => {   // wind-blown dune ripples + a couple of pebbles
+    sg.fillStyle(0xa5834a, 0.5);
+    for (const [dx, dy, w] of [[-8, -6, 15], [5, -1, 17], [-3, 5, 15], [7, 9, 12]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2);
+    sg.fillStyle(0xd9bd80, 0.5);   // sun-lit ripple crests
+    for (const [dx, dy, w] of [[-6, -7, 11], [3, 0, 12], [-1, 6, 10]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.3);
+    speckle(sg, 0x21, 0x8a6a3a, 0.6, 3, 1, 2.2, 14);
+  },
+  hex_sandB: (sg) => {
+    sg.fillStyle(0xab8a4e, 0.5);
+    for (const [dx, dy, w] of [[-7, 4, 15], [6, 8, 13], [9, -4, 12], [-10, -3, 11]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2);
+    speckle(sg, 0x37, 0x8a6a3a, 0.55, 3, 1, 2, 14);
+  },
+  hex_dryRiver: (sg) => {   // a cracked, dry riverbed channel
+    sg.fillStyle(0x836838, 0.7); sg.fillEllipse(C.cx, C.cy, 26, 12);
+    crackLine(sg, [[C.cx - 12, C.cy - 3], [C.cx - 2, C.cy + 1], [C.cx + 5, C.cy - 2], [C.cx + 12, C.cy + 2]], 0x6a5228, 0.8, 1);
+    crackLine(sg, [[C.cx - 8, C.cy + 4], [C.cx + 1, C.cy + 2], [C.cx + 9, C.cy + 5]], 0x6a5228, 0.8, 1);
+    sg.fillStyle(0xc7a666, 0.4); sg.fillEllipse(C.cx - 4, C.cy - 4, 8, 2);   // dry sandbank
+  },
+  hex_mesa: (sg) => {   // a stepped rock butte casting a shadow — reads as a tall impassable cliff
+    sg.fillStyle(0x000000, 0.3); sg.fillEllipse(C.cx + 2, C.cy + 4, 26, 16);
+    sg.fillStyle(0x633c26, 1); sg.fillEllipse(C.cx, C.cy + 2, 26, 18);        // base
+    sg.fillStyle(0x8a5a3a, 1); sg.fillEllipse(C.cx - 1, C.cy - 1, 22, 14);    // mid ledge
+    sg.fillStyle(0xa5714a, 1); sg.fillEllipse(C.cx - 2, C.cy - 4, 15, 9);     // top plateau
+    sg.fillStyle(0xc08a5c, 0.9); sg.fillEllipse(C.cx - 3, C.cy - 6, 9, 4);    // sun-lit cap
+    sg.fillStyle(0x4a2c1c, 0.5); sg.fillRect(C.cx + 4, C.cy - 2, 2, 8);       // strata shadow
+  },
+  hex_scrub: (sg) => {   // sparse desert brush cover
+    coverFloor(sg, 0x8f7440, 0.55);
+    for (const [dx, dy, r] of CLUMP_SPOTS) {
+      if ((dx + dy) % 2 === 0) continue;   // sparse: skip ~half the lattice
+      coverClump(sg, C.cx + dx, C.cy + dy, r * 0.8, 0x5c4a24, 0x7d6a34, 0xa89150);
+    }
+  },
+  hex_adobe: (sg) => outpostRoof(sg, 0x8a6636, 0xc79a5c, 0xd8b070, true, 0x6a4a24),
+  hex_sandRubble: (sg) => rubbleScatter(sg, 0x7d6741, 0x9c8355, 0xb89b64, 0x51),
+
+  // ── Snow / arctic ──────────────────────────────────────────────────────────────────────
+  hex_snow: (sg) => {   // soft drift shadows + sparkle
+    sg.fillStyle(0xbccbd8, 0.5);
+    for (const [dx, dy, w] of [[-8, -5, 15], [5, 2, 16], [-4, 7, 13]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 3);
+    sg.fillStyle(0xffffff, 0.8);
+    for (const [dx, dy] of [[-9, -6], [6, -3], [2, 6], [-5, 4]]) sg.fillCircle(C.cx + dx, C.cy + dy, 1.2);
+  },
+  hex_snowB: (sg) => {
+    sg.fillStyle(0xb2c3d3, 0.5);
+    for (const [dx, dy, w] of [[-6, 5, 15], [7, -4, 14], [-9, -3, 12]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 3);
+    sg.fillStyle(0xffffff, 0.75);
+    for (const [dx, dy] of [[-7, 6], [8, 3], [-2, -6]]) sg.fillCircle(C.cx + dx, C.cy + dy, 1.1);
+  },
+  hex_slush: (sg) => {   // half-frozen melt: cold water streaks with ice skins
+    sg.fillStyle(0x7f9cb0, 0.6); for (const [dx, dy, w] of [[-6, -5, 15], [4, 1, 16], [-3, 6, 13]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
+    sg.fillStyle(0xdbe7f0, 0.55); for (const [dx, dy, w] of [[-4, -3, 9], [3, 4, 8]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.6); // ice skins
+  },
+  hex_ice: (sg) => {   // a solid frozen lake: pale sheen + cracks
+    sg.fillStyle(0xc4dcec, 0.5); sg.fillEllipse(C.cx - 3, C.cy - 3, 20, 10);
+    crackLine(sg, [[C.cx - 11, C.cy - 5], [C.cx - 1, C.cy - 1], [C.cx + 6, C.cy - 5]], 0x76a3c4, 0.8, 1);
+    crackLine(sg, [[C.cx - 2, C.cy - 1], [C.cx + 3, C.cy + 7]], 0x76a3c4, 0.8, 1);
+    sg.fillStyle(0xffffff, 0.5); sg.fillEllipse(C.cx + 4, C.cy + 2, 8, 2);   // glare
+  },
+  hex_drift: (sg) => {   // snowdrifts / frosted pines cover
+    coverFloor(sg, 0xb2c3d3, 0.6);
+    for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r, 0xa9bccb, 0xcfe0ec, 0xffffff);
+  },
+  hex_iceRuin: (sg) => outpostRoof(sg, 0x8497a6, 0xaebfcc, 0xd2e0ea, true, 0x6f8698),
+  hex_snowRubble: (sg) => rubbleScatter(sg, 0x96a6b3, 0xb6c4cf, 0xdae6ee, 0x63),
+
+  // ── Urban ruins ────────────────────────────────────────────────────────────────────────
+  hex_pavement: (sg) => {   // cracked concrete slab with seams
+    sg.fillStyle(0x33363c, 0.7); sg.fillRect(C.cx - 13, C.cy - 2.5, 26, 1); sg.fillRect(C.cx + 1.5, C.cy - 12, 1, 24); // seams
+    sg.fillStyle(0x3a3e44, 0.5); sg.fillCircle(C.cx - 6, C.cy + 5, 1.4); sg.fillCircle(C.cx + 7, C.cy - 6, 1.2); // potholes
+  },
+  hex_pavementB: (sg) => {
+    sg.fillStyle(0x3a3e44, 0.7); sg.fillRect(C.cx - 13, C.cy + 3.5, 26, 1); sg.fillRect(C.cx - 5.5, C.cy - 12, 1, 24);
+    sg.fillStyle(0x2f3238, 0.5); sg.fillCircle(C.cx + 5, C.cy + 6, 1.3);
+  },
+  hex_road: (sg) => {   // dark asphalt lane with a dashed centre line
+    sg.fillStyle(0x2a2c31, 0.6); sg.fillRect(C.cx - 15, C.cy - 6, 30, 12);
+    sg.fillStyle(0xc8b23a, 0.8);
+    for (const dx of [-10, -2, 6]) sg.fillRect(C.cx + dx, C.cy - 1, 5, 2);   // centre-line dashes
+    sg.fillStyle(0x9aa0a8, 0.4); sg.fillRect(C.cx - 15, C.cy - 6, 30, 1); sg.fillRect(C.cx - 15, C.cy + 5, 30, 1); // curbs
+  },
+  hex_collapsed: (sg) => {   // an impassable heap of collapsed structure
+    sg.fillStyle(0x000000, 0.28); sg.fillEllipse(C.cx + 2, C.cy + 4, 26, 15);
+    const rnd = seeded(0x99);
+    for (let i = 0; i < 9; i++) {
+      const dx = (rnd() - 0.5) * 24, dy = (rnd() - 0.5) * 18;
+      const w = 6 + rnd() * 7, h = 5 + rnd() * 6;
+      sg.fillStyle(0x2f3238, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
+      sg.fillStyle(0x5a5f68, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 2);
+    }
+    sg.fillStyle(0x6d7480, 0.8); sg.fillRect(C.cx - 3, C.cy - 8, 4, 14);   // a leaning girder
+  },
+  hex_wreck: (sg) => {   // burned-out wreckage / low walls cover
+    coverFloor(sg, 0x35322d, 0.6);
+    for (const [dx, dy, r] of CLUMP_SPOTS) {
+      if ((dx + 2 * dy) % 3 === 0) continue;
+      coverClump(sg, C.cx + dx, C.cy + dy, r * 0.85, 0x2a2723, 0x4a453d, 0x6a6258, 0.4);
+    }
+    sg.fillStyle(0xd8632a, 0.35); sg.fillCircle(C.cx + 3, C.cy - 2, 5);   // a faint smoulder glow
+  },
+  hex_tower: (sg) => outpostRoof(sg, 0x393d43, 0x565b63, 0x676d76, true, 0xc8a23a),
+  hex_cityRubble: (sg) => rubbleScatter(sg, 0x2c2f34, 0x484c53, 0x5c626b, 0x77),
+
+  // ── Volcanic wasteland ─────────────────────────────────────────────────────────────────
+  hex_ash: (sg) => {   // grey ash drifts + a few glowing embers
+    sg.fillStyle(0x1d1a17, 0.5); for (const [dx, dy, w] of [[-7, -5, 15], [5, 2, 16], [-3, 7, 13]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
+    sg.fillStyle(0x45403a, 0.5); for (const [dx, dy, w] of [[-5, -6, 10], [3, 1, 11]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.4);
+    sg.fillStyle(0xff6a1e, 0.85); sg.fillCircle(C.cx - 6, C.cy + 4, 1); sg.fillCircle(C.cx + 8, C.cy - 5, 0.9); // embers
+  },
+  hex_ashB: (sg) => {
+    sg.fillStyle(0x201d19, 0.5); for (const [dx, dy, w] of [[-6, 4, 15], [7, -4, 13], [-9, -3, 12]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
+    sg.fillStyle(0xff6a1e, 0.8); sg.fillCircle(C.cx + 4, C.cy + 5, 0.9); sg.fillCircle(C.cx - 7, C.cy - 4, 0.8);
+  },
+  hex_crust: (sg) => {   // cooling lava crust: dark plates with molten cracks glowing through
+    sg.fillStyle(0x1c110d, 0.6); sg.fillEllipse(C.cx, C.cy, 26, 16);
+    crackLine(sg, [[C.cx - 12, C.cy - 3], [C.cx - 2, C.cy + 1], [C.cx + 6, C.cy - 3], [C.cx + 12, C.cy + 2]], 0xff5a14, 0.85, 1.4);
+    crackLine(sg, [[C.cx - 6, C.cy + 4], [C.cx + 3, C.cy + 6]], 0xff5a14, 0.85, 1.4);
+    crackLine(sg, [[C.cx - 11, C.cy - 3], [C.cx - 3, C.cy + 0.5]], 0xffc23a, 0.7, 0.8);
+  },
+  hex_lava: (sg) => {   // molten lava: bright flow with hot crests and dark cooling skin
+    sg.fillStyle(0xd8461a, 0.8); sg.fillEllipse(C.cx, C.cy, 24, 14);
+    sg.fillStyle(0xffb028, 0.9); sg.fillEllipse(C.cx - 3, C.cy - 2, 14, 6);
+    sg.fillStyle(0xfff0a0, 0.85); sg.fillEllipse(C.cx - 4, C.cy - 3, 7, 3);   // white-hot core
+    sg.fillStyle(0x2a1108, 0.7); sg.fillEllipse(C.cx + 7, C.cy + 4, 8, 3); sg.fillEllipse(C.cx - 8, C.cy + 5, 6, 2); // cooling skin islands
+  },
+  hex_fumarole: (sg) => {   // ash mounds / smoke plumes cover
+    coverFloor(sg, 0x211d19, 0.6);
+    for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r * 0.9, 0x1e1a17, 0x3a352f, 0x55504a);
+    sg.fillStyle(0xff6a1e, 0.3); sg.fillCircle(C.cx, C.cy, 6);   // ember glow at the vent
+  },
+  hex_obsidian: (sg) => outpostRoof(sg, 0x171420, 0x2a2530, 0x3f3848, true, 0xff5a14),
+  hex_ashRubble: (sg) => rubbleScatter(sg, 0x211d19, 0x3a352f, 0x55504a, 0x88),
 };
 
 export function buildHexTextures(scene) {
@@ -170,6 +440,13 @@ export function buildHexTextures(scene) {
     hex_river: PAL.river, hex_deepWater: PAL.deepWater,
     hex_forest: PAL.forest, hex_building: PAL.building, hex_rubble: PAL.rubble,
   };
+  // Biome tiles (#67): every palette key besides the abstract-arena ones maps to a `hex_<key>`
+  // texture, so adding a biome terrain is just its PAL entry (+ optional DETAIL painter) — no
+  // per-tile wiring here.
+  for (const [key, pal] of Object.entries(PAL)) {
+    if (key === 'ground' || key === 'groundB' || key === 'wall') continue;
+    tiles[`hex_${key}`] = pal;
+  }
   for (const [key, pal] of Object.entries(tiles)) {
     gen(scene, key, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
       const sg = scaledGraphics(g);
