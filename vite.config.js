@@ -1,8 +1,34 @@
 import { defineConfig } from 'vite';
 import { configDefaults } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const ROOT = dirname(fileURLToPath(import.meta.url));
+
+// Short content hash of the generated app icons → a `?v=` cache-buster stamped onto every
+// icon URL (manifest + apple-touch-icon). iOS caches the apple-touch-icon and the home-screen
+// snapshot extremely hard, keyed by URL, so a same-name icon update never lands. Changing the
+// query whenever the icon BYTES change forces Safari / Chrome / the OS installer to re-fetch.
+// Regenerate the icons with `npm run icons`; the hash updates automatically. Falls back to a
+// static token if the files aren't present (e.g. before the first `npm run icons`).
+function iconVersion() {
+  try {
+    const h = createHash('sha256');
+    for (const f of ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png']) {
+      h.update(readFileSync(resolve(ROOT, 'public/icons', f)));
+    }
+    return h.digest('hex').slice(0, 8);
+  } catch {
+    return 'dev';
+  }
+}
 
 export default defineConfig(({ command }) => {
+  const iv = iconVersion();
+  const q = `?v=${iv}`;
   // Production (GitHub Pages) is served under /mech-game/, but in dev serve at root
   // so the Claude Code preview — which health-checks `/` — gets a 200 instead of a
   // 302 redirect and actually attaches. The PWA manifest's start_url/scope/icon paths
@@ -26,9 +52,9 @@ export default defineConfig(({ command }) => {
           start_url: '.',
           scope: '.',
           icons: [
-            { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+            { src: `icons/icon-192.png${q}`, sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: `icons/icon-512.png${q}`, sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: `icons/icon-maskable-512.png${q}`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
         },
         workbox: {
@@ -36,10 +62,22 @@ export default defineConfig(({ command }) => {
           // the built shell is all that's needed to play offline. No runtime API caching.
           globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
           navigateFallback: 'index.html',
+          // The icon URLs carry a `?v=` cache-buster (see iconVersion). Strip it when matching
+          // the precache so the SW still serves the freshly-precached icon offline; the query
+          // is only there to bust the browser/OS HTTP cache, not the SW precache.
+          ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^v$/],
         },
         // Inject the theme-color / apple-touch-icon head tags for us.
         includeAssets: ['icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'],
       }),
+      // Inject the iOS apple-touch-icon with the same ?v= content hash as the manifest icons,
+      // so a changed icon gets a fresh URL Safari can't serve stale from its icon cache.
+      {
+        name: 'apple-touch-icon',
+        transformIndexHtml: () => [
+          { tag: 'link', attrs: { rel: 'apple-touch-icon', href: `icons/icon-192.png${q}` }, injectTo: 'head' },
+        ],
+      },
     ],
     server: {
       host: true,
