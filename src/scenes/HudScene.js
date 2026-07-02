@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
-import { POWERUPS } from '../data/powerups.js';
+import { POWERUPS, durationMs } from '../data/powerups.js';
 
 // Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
 // garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
@@ -33,9 +33,13 @@ export default class HudScene extends Phaser.Scene {
     this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
     this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
 
-    // #60: active timed-buff readout, top-right under the enemy count. One line per active
-    // powerup with its remaining seconds; rebuilt each frame from the registry overlay.
+    // #60: active timed-buff readout, top-right under the enemy count. One radial "cooldown-pie"
+    // per active buff — a ring tinted the buff colour that drains clockwise as it runs out, with
+    // the label + remaining seconds beside it. A single Graphics layer draws all the rings; the
+    // labels are pooled Text objects. Armor Patch is instant so it never appears here.
+    this.buffGfx = this.add.graphics();
     this.buffTexts = [];
+    this._buffCache = {};   // typeId → full duration (ms), captured the frame a buff first appears
 
     // Per-part integrity column (player), top-left under the hints.
     this.add.text(16, 80, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -115,23 +119,64 @@ export default class HudScene extends Phaser.Scene {
     this._updateBuffHud();
   }
 
-  // #60: draw one line per active timed buff (label + remaining seconds) in its powerup colour.
-  // Text objects are pooled/reused so the count of active buffs can grow and shrink each frame
-  // without churning objects.
+  // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
+  // timer, tinted the buff colour, whose arc empties clockwise from full to zero over the buff's
+  // duration — a cooldown-pie. The label + remaining seconds sit to the left so several buffs
+  // stack readably down the top-right. Text objects are pooled; the Graphics layer is redrawn
+  // each frame. Instant buffs (Armor Patch) never enter `activePowerups`, so they never show.
   _updateBuffHud() {
     const active = this.registry.get('activePowerups') || {};
     const ids = Object.keys(active).filter((id) => active[id] > 0);
-    let y = 40;
+
+    // Peak-remaining denominator: on pickup/refresh a buff's remaining jumps up, so track the
+    // max seen for each live type as its "full" and derive the drain fraction against it. Falls
+    // back to the catalog duration. Prune types that are no longer active.
+    for (const id of Object.keys(this._buffCache)) if (!ids.includes(id)) delete this._buffCache[id];
+    for (const id of ids) {
+      const full = durationMs(id) || active[id];
+      this._buffCache[id] = Math.max(this._buffCache[id] || 0, active[id], full);
+    }
+
+    const g = this.buffGfx;
+    g.clear();
+    const R = 15;                 // ring radius
+    const cx = this.W - 16 - R;   // ring centre x (ring hugs the right edge)
+    const rowH = 2 * R + 10;
+    let y = 44;
+
     ids.forEach((id, i) => {
       const p = POWERUPS[id];
-      const col = '#' + (p?.color ?? 0xffffff).toString(16).padStart(6, '0');
+      const color = p?.color ?? 0xffffff;
+      const colStr = '#' + color.toString(16).padStart(6, '0');
+      const cy = y + R;
+      const frac = Math.max(0, Math.min(1, active[id] / (this._buffCache[id] || active[id])));
+
+      // Track: a dim full ring behind the drain, so the empty portion still reads as a ring.
+      g.lineStyle(4, color, 0.22);
+      g.strokeCircle(cx, cy, R);
+      // Drained-in remainder: an arc from 12 o'clock going clockwise, shrinking as time runs out.
+      const start = -Math.PI / 2;                 // 12 o'clock
+      const end = start + frac * Math.PI * 2;      // clockwise sweep for the time remaining
+      g.lineStyle(4, color, 1);
+      g.beginPath();
+      g.arc(cx, cy, R, start, end, false);
+      g.strokePath();
+      // Soft inner fill so the pie centre glows in the buff colour (fades as it drains).
+      g.fillStyle(color, 0.10 + 0.14 * frac);
+      g.fillCircle(cx, cy, R - 3);
+
+      // Label + seconds to the left of the ring.
       let t = this.buffTexts[i];
       if (!t) {
-        t = this.add.text(this.W - 16, 0, '', { fontFamily: 'monospace', fontSize: '13px' }).setOrigin(1, 0);
+        t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px' }).setOrigin(1, 0.5);
         this.buffTexts[i] = t;
       }
-      t.setText(`${p?.label ?? id}  ${(active[id] / 1000).toFixed(1)}s`).setColor(col).setPosition(this.W - 16, y).setVisible(true);
-      y += 16;
+      t.setText(`${p?.label ?? id}  ${(active[id] / 1000).toFixed(1)}s`)
+        .setColor(colStr)
+        .setPosition(cx - R - 8, cy)
+        .setVisible(true);
+
+      y += rowH;
     });
     for (let i = ids.length; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
   }

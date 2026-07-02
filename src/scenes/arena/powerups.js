@@ -44,14 +44,28 @@ export const PowerupsMixin = {
     if (Math.random() < DROP_CHANCE) this.spawnPowerup(x, y);
   },
 
-  // The collectible's look: a small glowing diamond in the powerup's colour with a soft halo,
-  // built as a container so it can bob + pulse and be destroyed cleanly on pickup/expiry.
+  // The collectible's look: a high-contrast beacon so it's easy to spot across the dark arena.
+  // Layered bottom→top: a flat ground glow puddle (sits on the terrain), a vertical light beam
+  // rising off it, a big soft pulsing halo, a bright spinning ring, and a hot near-white core in
+  // the powerup's colour. Built as a container so the whole beacon bobs, pulses and spins, and
+  // tears down cleanly on pickup/expiry. Everything is tinted with the per-type `p.color`.
   _makePowerupView(x, y, p) {
-    const halo = this.add.circle(0, 0, 16, p.color, 0.18);
-    const ring = this.add.circle(0, 0, 11).setStrokeStyle(2, p.color, 0.9);
-    const core = this.add.rectangle(0, 0, 11, 11, p.color, 0.95).setAngle(45);
-    const c = this.add.container(x, y, [halo, ring, core]);
-    c._halo = halo; c._core = core;
+    // Flat ground puddle — an ellipse squashed on Y so it reads as light pooled on the floor,
+    // NOT bobbing with the rest (kept at the base). Two rings for a soft edge.
+    const glowOuter = this.add.ellipse(0, 6, 60, 22, p.color, 0.16);
+    const glowInner = this.add.ellipse(0, 6, 34, 13, p.color, 0.28);
+    // Vertical light beam rising off the drop — a tall thin triangle, brightest at the base.
+    const beam = this.add.triangle(0, 0, -7, 4, 7, 4, 0, -46, p.color, 0.22);
+    // Big soft halo that pulses — the main "there's something here" signal.
+    const halo = this.add.circle(0, 0, 22, p.color, 0.28);
+    // Bright spinning ring outline.
+    const ring = this.add.circle(0, 0, 13).setStrokeStyle(3, p.color, 1);
+    // Hot core — near-white centre so it punches against dark ground, edged in the type colour.
+    const core = this.add.rectangle(0, 0, 12, 12, p.color, 1).setAngle(45).setStrokeStyle(2, 0xffffff, 0.9);
+    const spark = this.add.rectangle(0, 0, 5, 5, 0xffffff, 0.95).setAngle(45);
+    const c = this.add.container(x, y, [glowOuter, glowInner, beam, halo, ring, core, spark]);
+    c._halo = halo; c._core = core; c._ring = ring; c._beam = beam;
+    c._glow = [glowOuter, glowInner]; c._spark = spark;
     return c;
   },
 
@@ -62,14 +76,25 @@ export const PowerupsMixin = {
       const pk = this.powerups[i];
       pk.age += delta;
       pk.ttl -= delta;
-      // Bob + pulse.
+      // Bob + pulse + spin. The container bobs; the ground glow is counter-offset so it stays
+      // pooled on the floor while the beacon rises and falls above it.
       const t = pk.age / BOB_PERIOD;
-      pk.view.y = pk.y + Math.sin(t * Math.PI * 2) * 3;
-      const pulse = 0.85 + 0.15 * Math.sin(t * Math.PI * 4);
-      pk.view._core.setScale(pulse);
-      pk.view._halo.setScale(pulse);
+      const bob = Math.sin(t * Math.PI * 2) * 4;
+      const v = pk.view;
+      v.y = pk.y + bob;
+      // Fast, high-contrast pulse: the halo swells and brightens on the beat so it visibly
+      // "breathes" against the dark ground; the core pumps a touch out of phase for life.
+      const pulse = 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * Math.PI * 4));  // 0..1 on the beat
+      v._halo.setScale(0.85 + 0.5 * pulse).setAlpha(0.18 + 0.34 * pulse);
+      v._core.setScale(0.92 + 0.12 * Math.sin(t * Math.PI * 4 + 1));
+      v._ring.setScale(0.95 + 0.18 * pulse);
+      v._ring.rotation += delta * 0.003;           // slow spin on the ring
+      v._spark.rotation -= delta * 0.006;
+      v._beam.setScale(1, 0.9 + 0.25 * pulse).setAlpha(0.14 + 0.18 * pulse);
+      // Ground glow stays on the floor (counter the bob) and shimmers with the pulse.
+      for (const g of v._glow) { g.y = 6 - bob; g.setScale(0.9 + 0.2 * pulse); }
       // Fade out in the last second before expiry.
-      if (pk.ttl < 1000) pk.view.setAlpha(Math.max(0, pk.ttl / 1000));
+      if (pk.ttl < 1000) v.setAlpha(Math.max(0, pk.ttl / 1000));
 
       // Pickup: player within grab radius.
       if (Math.hypot(this.px - pk.x, this.py - pk.y) <= PICKUP_RADIUS) {
