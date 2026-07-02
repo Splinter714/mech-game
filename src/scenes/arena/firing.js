@@ -3,7 +3,7 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions } from '../../data/delivery.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
@@ -66,24 +66,35 @@ export const FiringMixin = {
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the
-  // rest use their cycle time (with a small floor so nothing fires every frame).
-  _fireInterval(weapon) {
+  // rest use their cycle time (with a small floor so nothing fires every frame). #60
+  // Overdrive scales the interval down (cycleMult < 1 ⇒ faster). This is used by the PLAYER
+  // firing path and the enemy firing path alike; enemies pass `mods` explicitly (they have no
+  // powerups, so the identity), while the player omits it and picks up the live buff overlay.
+  _fireInterval(weapon, mods = this._buffMods?.()) {
+    const cycleMult = mods?.cycleMult ?? 1;
     if (weapon.delivery.pattern === 'stream' && weapon.delivery.fireRate > 0) {
-      return 1000 / weapon.delivery.fireRate;
+      return (1000 / weapon.delivery.fireRate) * cycleMult;
     }
-    return Math.max(120, weapon.cycleTime);
+    return Math.max(120 * cycleMult, weapon.cycleTime * cycleMult);
   },
 
   // Fire one weapon. Hitscan/contact resolve instantly (a beam); projectile weapons
   // spawn travelling rounds that respect velocity, arc, and spread.
   fireWeapon(w) {
     if (!this.scene.isActive()) return;
-    this.mech.consumeAmmo(w.location, w.index, 1);
+    const mods = this._buffMods?.() ?? {};
+    // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend one.
+    if (!mods.freeAmmo) this.mech.consumeAmmo(w.location, w.index, 1);
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
     // and aim so a slewing turret and aim-assist still apply per sub-shot.
-    const plan = planEmissions(w.weapon);
+    let plan = planEmissions(w.weapon);
+    // #60 Double Shot: every fire emits TWICE for the duration. Each original emission is
+    // duplicated with a tiny delay stagger so the pair reads as a genuine double (not one fat
+    // shot); spread/cluster offsets are tightened (spreadTighten < 1) so the doubled fan reads
+    // as a double rather than just a wider cone.
+    if (mods.doubleShot) plan = { ...plan, shots: doubleShotEmissions(plan.shots, mods.spreadTighten ?? 1) };
     // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
     // trajectory beat) are scheduled in one shared place (audio/fireCues.js) that the Weapon
     // Lab preview calls too, so their timing can't drift; the arena always plays (audible:

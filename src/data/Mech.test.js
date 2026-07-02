@@ -169,6 +169,29 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
   });
 });
 
+describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor repair)', () => {
+  it('restores a fraction of each damaged location\'s missing armor, leaving structure alone', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const ct = m.parts.centerTorso;
+    // Knock armor down (stay within armor so structure is untouched).
+    m.applyDamage('centerTorso', Math.min(ct.maxArmor, 20));
+    const missing = ct.maxArmor - ct.armor;
+    const structureBefore = ct.structure;
+    const restored = m.repairArmor(0.5);
+    expect(ct.armor).toBeCloseTo(ct.maxArmor - missing + missing * 0.5);
+    expect(ct.structure).toBe(structureBefore);   // patches plating only
+    expect(restored).toBeGreaterThan(0);
+  });
+
+  it('never exceeds max armor and is a no-op on a pristine mech', () => {
+    const m = new Mech({ chassisId: 'light' });
+    expect(m.repairArmor(0.5)).toBe(0);
+    for (const loc of Object.keys(m.parts)) {
+      expect(m.parts[loc].armor).toBeLessThanOrEqual(m.parts[loc].maxArmor);
+    }
+  });
+});
+
 describe('Mech serialization', () => {
   it('round-trips chassis, mounts, and battle damage', () => {
     const m = new Mech({ chassisId: 'heavy', name: 'Old Faithful' });

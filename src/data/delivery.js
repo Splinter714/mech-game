@@ -183,6 +183,23 @@ function shot({ delay = 0, angleOffset = 0, lateral = 0 } = {}) {
   return { delay, angleOffset, lateral };
 }
 
+// #60 Double Shot powerup: turn a plan's emission list into a doubled one — every original
+// emission gets a twin fired a hair later (DOUBLE_SHOT_STAGGER ms) so the pair reads as a
+// genuine double rather than one fat shot. To keep the doubled output reading as a DOUBLE and
+// not merely a wider fan/clump, each shot's spread offsets (angle + lateral) are scaled by
+// `tighten` (< 1 pulls the fan in). Pure — operates on the { delay, angleOffset, lateral }
+// descriptors planEmissions produces, so it's shared/unit-tested and Phaser-free.
+const DOUBLE_SHOT_STAGGER = 40;   // ms between a shot and its twin
+export function doubleShotEmissions(shots, tighten = 1) {
+  const out = [];
+  for (const s of shots) {
+    const tightened = { delay: s.delay, angleOffset: s.angleOffset * tighten, lateral: s.lateral * tighten };
+    out.push(tightened);
+    out.push({ ...tightened, delay: s.delay + DOUBLE_SHOT_STAGGER });
+  }
+  return out;
+}
+
 // Build a round's kinematic state. The caller supplies `maxDist` (its own travel budget:
 // the arena's target/lob distance, the Lab's stage width) and may tack on scene-specific
 // fields (owner, trail) afterward.

@@ -113,10 +113,14 @@ export const LocomotionMixin = {
   _drive(intent, dt) {
     const mv = this.mech.movement;
     const legF = this.mech.legFactor();
+    // #60 Overclock: boost movement max speed + turret slew for the duration (identity when idle).
+    const mods = this._buffMods?.() ?? {};
+    const moveMult = mods.moveMult ?? 1;
+    const slewMult = mods.slewMult ?? 1;
 
     // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
     const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
-    const maxSp = mv.maxSpeed * legF * backScale;
+    const maxSp = mv.maxSpeed * legF * backScale * moveMult;
     this.vx = approach(this.vx, intent.move.x * maxSp, mv.accel * dt);
     this.vy = approach(this.vy, intent.move.y * maxSp, mv.accel * dt);
     // Move with wall/boundary collision, sliding along blocked axes.
@@ -145,7 +149,7 @@ export const LocomotionMixin = {
       this.aimY = this.py + Math.sin(intent.aim.angle) * 800;
     }
     const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
-    this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * dt);
+    this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * slewMult * dt);
     this.registry.set('inputMode', intent.mode);
   },
 

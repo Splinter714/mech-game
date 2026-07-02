@@ -201,6 +201,23 @@ export class Mech {
     }
   }
 
+  // Instant proportional armor repair (#60 Armor Patch powerup): restore a fraction of
+  // EACH damaged location's MISSING armor (maxArmor - armor), so every location that has
+  // lost armor gets some back scaled to what it's missing. Structure is untouched (this
+  // patches the outer plating only). Returns the total armor restored, for feedback.
+  repairArmor(frac) {
+    let restored = 0;
+    for (const loc of LOCATIONS) {
+      const p = this.parts[loc];
+      const missing = p.maxArmor - p.armor;
+      if (missing <= 0) continue;
+      const add = missing * frac;
+      p.armor = Math.min(p.maxArmor, p.armor + add);
+      restored += add;
+    }
+    return restored;
+  }
+
   // Restore a mech to pristine condition (used when deploying a fresh build): full
   // health and full magazines.
   repairAll() {
