@@ -81,7 +81,9 @@
         // fit DESIGN into `fit`, and feed the SAME S to the transform.
         const S = fit / (DESIGN * ART_SCALE);
         const disp = DESIGN * ART_SCALE * S;       // displayed sprite size in icon px
-        const cx = size / 2, cy = size / 2;
+        // Centre horizontally; nudge the mech UP from vertical centre so it sits higher
+        // in the square (leaves the downward muzzles room without floating in the middle).
+        const cx = size / 2, cy = size / 2 - size * 0.12;
         const angle = Math.PI / 2;                 // aim straight down (south)
 
         const blit = (img, dx, dy, rot, ox, oy) => {
