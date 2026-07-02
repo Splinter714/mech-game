@@ -28,6 +28,13 @@ export default class HudScene extends Phaser.Scene {
     this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
       { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
 
+    // #66: objective line, reading the live Mission published to the registry each frame.
+    this.objectiveText = this.add.text(16, 70, '', { fontFamily: 'monospace', fontSize: '13px', color: C.warn });
+    // Big centred "MISSION COMPLETE" banner, hidden until the mission resolves.
+    this.completeBanner = this.add.text(this.W / 2, this.H * 0.32, 'MISSION COMPLETE', {
+      fontFamily: 'monospace', fontSize: '40px', color: C.good, fontStyle: 'bold',
+    }).setOrigin(0.5).setVisible(false);
+
     this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
     this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
     this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
@@ -40,10 +47,10 @@ export default class HudScene extends Phaser.Scene {
     this.buffTexts = [];
     this._buffCache = {};   // typeId → full duration (ms), captured the frame a buff first appears
 
-    // Per-part integrity column (player), top-left under the hints.
-    this.add.text(16, 80, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
+    // Per-part integrity column (player), top-left under the hints + objective line.
+    this.add.text(16, 96, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.partTexts = {};
-    let y = 98;
+    let y = 114;
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;
       this.partTexts[loc] = this.add.text(16, y, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text });
@@ -111,6 +118,16 @@ export default class HudScene extends Phaser.Scene {
     const alive = this.registry.get('enemiesAlive') ?? total;
     if (total) {
       this.dummyText.setText(`ENEMIES ${alive}/${total}`).setColor(alive ? C.dim : C.bad);
+    }
+
+    // #66: objective line + win banner, driven by the Mission the arena publishes each frame.
+    const mission = this.registry.get('mission');
+    if (mission) {
+      const complete = mission.status === 'complete';
+      this.objectiveText
+        .setText(`OBJECTIVE: ${mission.objective}${complete ? '  [COMPLETE]' : ''}`)
+        .setColor(complete ? C.good : C.warn);
+      this.completeBanner.setVisible(complete);
     }
 
     this._updateBuffHud();

@@ -14,6 +14,7 @@ import { TargetingMixin } from './arena/targeting.js';
 import { FiringMixin } from './arena/firing.js';
 import { LocomotionMixin } from './arena/locomotion.js';
 import { PowerupsMixin } from './arena/powerups.js';
+import { MissionMixin } from './arena/mission.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -37,6 +38,9 @@ export default class ArenaScene extends Phaser.Scene {
     // Biome for this sortie (#67) — chosen by the garage per deploy; defaults to grassland.
     this.biomeId = this.registry.get('arenaBiome');
     this._buildWorld();
+    // #66: designate the mission objective (one of the world's outposts) now that
+    // `buildingHp` exists, and mark it in the world.
+    this._initMission();
 
     // Player mech (repaired fresh for the sortie).
     this.allMechs = this.registry.get('allMechs');
@@ -157,6 +161,9 @@ export default class ArenaScene extends Phaser.Scene {
     // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
     this._updatePowerups(delta);
 
+    // #66: has the objective been destroyed? Evaluate + publish the mission each frame.
+    this._updateMission();
+
     // Lock reticle, drawn after projFx is cleared above so it isn't wiped. A maintained-but-blind
     // lock (#62) draws at the last-known/predicted position in a distinct "firing blind" colour so
     // the player sees they're lobbing from memory; otherwise it tracks the live locked enemy.
@@ -188,5 +195,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin,
 );
