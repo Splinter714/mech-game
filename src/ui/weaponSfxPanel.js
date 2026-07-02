@@ -33,6 +33,37 @@ const NOISE_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
 const NOISE_ABBR = { lowpass: 'low', highpass: 'high', bandpass: 'band', notch: 'notch' };
 const TYPE_ROW_H = 22;
 
+// Copy `text` to the clipboard, resolving to whether it actually landed. The async
+// Clipboard API only exists in secure contexts (HTTPS/localhost); on plain-HTTP LAN
+// (how the game is reached on mobile) `navigator.clipboard` is undefined, so fall back
+// to the legacy hidden-textarea + execCommand path. Never throws — always a boolean.
+async function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // secure-context API present but rejected (e.g. permission denied) — try fallback
+    }
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export class WeaponSfxPanel {
   constructor(scene, { x, y, w, h }) {
     this.scene = scene;
@@ -217,9 +248,10 @@ export class WeaponSfxPanel {
   _copy() {
     const params = Audio.getSfxParams(this.weaponId);
     const text = `  ${this.weaponId}: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
-    navigator.clipboard?.writeText(text).catch(() => {});
     console.log(`[SFX TUNER] ${this.weaponId}:\n` + text);
-    this._toast('copied! (also in console)');
+    copyToClipboard(text).then((ok) => {
+      this._toast(ok ? 'copied! (also in console)' : 'copy failed — see console');
+    });
   }
 
   _toast(msg) {
