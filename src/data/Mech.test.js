@@ -192,6 +192,49 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
   });
 });
 
+describe('Mech.boostHealth (#69 deploy survivability buffer — must not compound)', () => {
+  it('multiplies chassis base max armor/structure by exactly mult', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const baseArmor = m.parts.centerTorso.maxArmor;
+    const baseStructure = m.parts.centerTorso.maxStructure;
+    m.boostHealth(100);
+    expect(m.parts.centerTorso.maxArmor).toBe(Math.round(baseArmor * 100));
+    expect(m.parts.centerTorso.maxStructure).toBe(Math.round(baseStructure * 100));
+    expect(m.parts.centerTorso.armor).toBe(m.parts.centerTorso.maxArmor);
+    expect(m.parts.centerTorso.structure).toBe(m.parts.centerTorso.maxStructure);
+  });
+
+  it('calling boostHealth twice in a row (simulating repeated redeploys) is idempotent, not compounding', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const baseArmor = m.parts.centerTorso.maxArmor;
+    const baseStructure = m.parts.centerTorso.maxStructure;
+
+    m.boostHealth(100);
+    const afterFirst = { armor: m.parts.centerTorso.maxArmor, structure: m.parts.centerTorso.maxStructure };
+
+    m.boostHealth(100);
+    const afterSecond = { armor: m.parts.centerTorso.maxArmor, structure: m.parts.centerTorso.maxStructure };
+
+    expect(afterSecond).toEqual(afterFirst);
+    expect(afterSecond.armor).toBe(Math.round(baseArmor * 100));
+    expect(afterSecond.structure).toBe(Math.round(baseStructure * 100));
+  });
+
+  it('repairAll (deploy refill) between boosts does not cause boostHealth to compound', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const baseArmor = m.parts.centerTorso.maxArmor;
+
+    // Simulate the ArenaScene deploy path across three sorties: repairAll() then
+    // boostHealth(100) each time.
+    for (let i = 0; i < 3; i++) {
+      m.repairAll();
+      m.boostHealth(100);
+    }
+
+    expect(m.parts.centerTorso.maxArmor).toBe(Math.round(baseArmor * 100));
+  });
+});
+
 describe('Mech serialization', () => {
   it('round-trips chassis, mounts, and battle damage', () => {
     const m = new Mech({ chassisId: 'heavy', name: 'Old Faithful' });

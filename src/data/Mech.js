@@ -39,6 +39,11 @@ export class Mech {
       this.parts[loc] = {
         maxArmor: def.maxArmor,
         maxStructure: def.maxStructure,
+        // True chassis base, captured once and never touched again — boostHealth
+        // always multiplies FROM this, so re-applying a buffer is idempotent instead
+        // of compounding on whatever maxArmor/maxStructure currently holds.
+        baseMaxArmor: def.maxArmor,
+        baseMaxStructure: def.maxStructure,
         armor: saved?.armor ?? def.maxArmor,
         structure: saved?.structure ?? def.maxStructure,
       };
@@ -187,15 +192,17 @@ export class Mech {
     }
   }
 
-  // Scale every location's max armor + structure by `mult` (and refill to the new max).
-  // Opt-in and applied at instantiation time — NOT in the shared chassis data — so it
-  // affects only the mech it's called on. The arena uses this to give the PLAYER a large
-  // survivability buffer without touching enemies (who share the same chassis configs).
+  // Scale every location's max armor + structure by `mult` of the chassis BASE (and
+  // refill to the new max). Opt-in and applied at instantiation time — NOT in the shared
+  // chassis data — so it affects only the mech it's called on. The arena uses this to give
+  // the PLAYER a large survivability buffer without touching enemies (who share the same
+  // chassis configs). Always computes from the stored base, never the current max, so
+  // calling this repeatedly (e.g. once per redeploy) is idempotent rather than compounding.
   boostHealth(mult) {
     for (const loc of LOCATIONS) {
       const p = this.parts[loc];
-      p.maxArmor = Math.round(p.maxArmor * mult);
-      p.maxStructure = Math.round(p.maxStructure * mult);
+      p.maxArmor = Math.round(p.baseMaxArmor * mult);
+      p.maxStructure = Math.round(p.baseMaxStructure * mult);
       p.armor = p.maxArmor;
       p.structure = p.maxStructure;
     }
