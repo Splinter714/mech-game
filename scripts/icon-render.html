@@ -82,7 +82,7 @@
         const S = fit / (DESIGN * ART_SCALE);
         const disp = DESIGN * ART_SCALE * S;       // displayed sprite size in icon px
         const cx = size / 2, cy = size / 2;
-        const angle = -Math.PI / 2;                // aim straight up (north)
+        const angle = Math.PI / 2;                 // aim straight down (south)
 
         const blit = (img, dx, dy, rot, ox, oy) => {
           ctx.save();
