@@ -89,6 +89,9 @@ export const CombatMixin = {
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
       // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
       this._maybeDropPowerup?.(e.x, e.y);
+      // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
+      // in data/shop.js) — independent roll from the powerup drop, same kill site.
+      this._maybeDropSalvage?.(e.x, e.y);
     }
   },
 

@@ -39,10 +39,16 @@ const EMIT_SIZE = 44;
 const EMIT_BACK = 8;
 
 export class WeaponCardList {
-  constructor(scene, { x, y, w, h, ids, onSelect = null, selectedId = null } = {}) {
+  // #65: `isLocked(id)`/`costOf(id)` are optional — when given, a locked card renders dimmed
+  // with a "🔒 N SCRAP" overlay in place of its stats. `onSelect` still fires on click either
+  // way; the caller (GarageScene) decides whether that's an attempted purchase or a mount.
+  // Omitting them (the Weapon Lab's usage) shows every card fully unlocked, unchanged.
+  constructor(scene, { x, y, w, h, ids, onSelect = null, selectedId = null, isLocked = null, costOf = null } = {}) {
     this.scene = scene;
     this.onSelect = onSelect;
     this.selectedId = selectedId;
+    this.isLocked = isLocked;
+    this.costOf = costOf;
     this.region = { x, y, w, h };
     this._scrollY = 0;
     this._maxScroll = 0;
@@ -135,12 +141,22 @@ export class WeaponCardList {
     });
     const fxG = this.scene.add.graphics();
 
-    // emitter sits under fxG so projectiles/beams render over the muzzle.
-    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats, fxG]);
+    // #65: a lock overlay — a dim scrim over the whole card plus a centred "🔒 N SCRAP" label
+    // — sits on TOP of everything when the item is locked, hiding the live preview without
+    // tearing it down (still simulated underneath so unlocking it needs no rebuild of state).
+    const lockScrim = this.scene.add.rectangle(0, 0, 100, CARD_H, 0x05070a, 0.72).setOrigin(0, 0).setVisible(false);
+    const lockLabel = this.scene.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '13px', color: '#f5c542', align: 'center',
+    }).setOrigin(0.5).setVisible(false);
+
+    // emitter sits under fxG so projectiles/beams render over the muzzle; the lock overlay
+    // sits above everything.
+    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats, fxG, lockScrim, lockLabel]);
     this.scroller.add(c);
 
     const card = {
       id, item, weapon, color, container: c, panel, stage, emitter, name, cat, stats, fxG,
+      lockScrim, lockLabel,
       cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
     };
@@ -153,6 +169,25 @@ export class WeaponCardList {
     }
     this.cards.push(card);
     this._paintSelection(card);
+    this._paintLock(card);
+  }
+
+  // #65: apply/refresh a single card's locked look without rebuilding it. Call after a
+  // purchase (or any balance change) to redraw locks in place — cheaper than setIds().
+  _paintLock(card) {
+    const locked = this.isLocked?.(card.id) ?? false;
+    card.lockScrim.setVisible(locked);
+    card.lockLabel.setVisible(locked);
+    if (locked) {
+      const cost = this.costOf?.(card.id) ?? 0;
+      card.lockLabel.setText(`🔒 LOCKED\n${cost} SCRAP`);
+    }
+  }
+
+  // Re-evaluate every card's locked state in place (e.g. after a purchase changes the
+  // unlocked set or the SCRAP balance) — no rebuild, no preview-sim reset.
+  refreshLocks() {
+    for (const c of this.cards) this._paintLock(c);
   }
 
   _paintSelection(card) {
@@ -197,6 +232,8 @@ export class WeaponCardList {
       card.stageW = Math.max(20, stageW - 22);
       // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
       card.emitter?.setDisplaySize(EMIT_SIZE, EMIT_SIZE).setPosition(card.muzzleX - EMIT_BACK, card.muzzleY);
+      card.lockScrim.setSize(cardW, CARD_H);
+      card.lockLabel.setPosition(cardW / 2, CARD_H / 2);
     });
     const contentH = this.cards.length * (CARD_H + CARD_GAP);
     this._maxScroll = Math.max(0, contentH - this.region.h);

@@ -5,6 +5,7 @@
 
 import { ROSTERS } from './rosters.js';
 import { RUN_CURRENCY_KEY } from './events.js';
+import { STARTING_UNLOCKED } from './shop.js';
 
 export function makeRoster({ storageKey, Model, defaultRoster }) {
   function readSaved() {
@@ -81,6 +82,32 @@ export function loadRunCurrency() {
 export function saveRunCurrency(amount) {
   try {
     localStorage.setItem(RUN_CURRENCY_STORAGE_KEY, JSON.stringify(amount));
+  } catch {
+    // localStorage blocked/unavailable — the game still plays this session.
+  }
+}
+
+// #65: the player's permanently-unlocked catalog (meta-progression, persists across runs AND
+// page reloads, mirrors the run-currency pattern above). Stored as an id array; loaded back as
+// a Set. The starting kit is always folded in on load so an old/corrupt save can never leave a
+// fresh deploy un-buildable.
+const UNLOCKED_STORAGE_KEY = 'mech-game-unlocked-v1';
+
+export function loadUnlocked() {
+  try {
+    const raw = localStorage.getItem(UNLOCKED_STORAGE_KEY);
+    const arr = raw != null ? JSON.parse(raw) : null;
+    const set = new Set(Array.isArray(arr) ? arr : STARTING_UNLOCKED);
+    for (const id of STARTING_UNLOCKED) set.add(id);
+    return set;
+  } catch {
+    return new Set(STARTING_UNLOCKED);
+  }
+}
+
+export function saveUnlocked(set) {
+  try {
+    localStorage.setItem(UNLOCKED_STORAGE_KEY, JSON.stringify([...set]));
   } catch {
     // localStorage blocked/unavailable — the game still plays this session.
   }

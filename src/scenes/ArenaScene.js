@@ -16,6 +16,7 @@ import { LocomotionMixin } from './arena/locomotion.js';
 import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
+import { SalvageMixin } from './arena/salvage.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -120,6 +121,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
+    this._initSalvage();                  // #65: SCRAP pickups dropped by destroyed enemies
     this.scene.launch('HudScene');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scene.stop('HudScene');
@@ -166,6 +168,8 @@ export default class ArenaScene extends Phaser.Scene {
 
     // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
     this._updatePowerups(delta);
+    // #65: bob/expire dropped SCRAP pickups, grab any the player touches.
+    this._updateSalvage(delta);
 
     // #66: has the objective been destroyed? Evaluate + publish the mission each frame.
     this._updateMission();
@@ -204,5 +208,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin,
 );

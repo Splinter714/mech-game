@@ -3,10 +3,11 @@ import { buildMechTextures, reskinMech, partSpriteTransform } from '../art/index
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
-import { saveAllMechs } from '../data/save.js';
+import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
+import { costOf } from '../data/shop.js';
 import { WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { MECH_DEPLOYED, RUN_CURRENCY_KEY } from '../data/events.js';
 import { BIOME_IDS } from '../data/biomes.js';
@@ -56,6 +57,9 @@ export default class GarageScene extends Phaser.Scene {
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
     this.selected = null;   // the slot currently being edited (filters the catalog)
     this.catalogIds = [...WEAPON_IDS, ...EQUIPMENT_IDS];
+    // #65: the permanently-unlocked catalog (meta-progression, persists across runs). Loaded
+    // before the WeaponCardList so its isLocked/costOf callbacks see real data from frame one.
+    this.unlocked = loadUnlocked();
 
     // Layout: the weapon catalog (shared WeaponCardList) spans the FULL width across the top so
     // each card's live preview is as wide as the Weapon Lab's; a bottom strip holds the skill
@@ -74,6 +78,8 @@ export default class GarageScene extends Phaser.Scene {
     this.list = new WeaponCardList(this, {
       x: 20, y: top, w: this.W - 40, h: this.H - top - this.bottomH - 16,
       ids: this.catalogIds, onSelect: (id) => this._pickItem(id),
+      isLocked: (id) => !this.unlocked.has(id),
+      costOf: (id) => costOf(id),
     });
 
     this._buildPreview();
@@ -237,8 +243,10 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Pick a catalog item: mount it into the selected slot (or unmount if it's already there).
-  // With no slot selected, picking a card selects the first slot it fits.
+  // With no slot selected, picking a card selects the first slot it fits. #65: a LOCKED item
+  // can't be mounted at all — clicking it attempts to buy it instead (spends SCRAP, permanent).
   _pickItem(id) {
+    if (!this.unlocked.has(id)) { this._purchase(id); return; }
     if (!this.selected) {
       const loc = this._eligibleSlotFor(id);
       if (loc) this._selectSlot(loc);
@@ -248,6 +256,22 @@ export default class GarageScene extends Phaser.Scene {
     if (cur === id) this.unmount(this.selected, 0);
     else this._mountInto(this.selected, id);
     this.list.setSelected(this.mech.mounts[this.selected]?.[0] ?? null);
+  }
+
+  // #65: spend banked SCRAP to permanently unlock `id`. Insufficient funds just toasts —
+  // no partial spend, no per-use cost once unlocked (a flat, one-time purchase).
+  _purchase(id) {
+    const price = costOf(id);
+    const balance = this.registry.get(RUN_CURRENCY_KEY) || 0;
+    if (balance < price) { this.toast(`NOT ENOUGH SCRAP — need ${price}`); return; }
+    this.unlocked.add(id);
+    saveUnlocked(this.unlocked);
+    const remaining = balance - price;
+    this.registry.set(RUN_CURRENCY_KEY, remaining);
+    saveRunCurrency(remaining);
+    this._refreshCurrency();
+    this.list.refreshLocks();
+    this.toast(`UNLOCKED ${getItem(id).name}`, UI.accent);
   }
 
   _eligibleSlotFor(id) {
@@ -346,10 +370,10 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
   }
 
-  toast(msg) {
+  toast(msg, color = UI.bad) {
     if (this._toast) this._toast.destroy();
     this._toast = this.add.text(this.W / 2, this.H - 28, msg, {
-      fontFamily: 'monospace', fontSize: '14px', color: UI.bad, backgroundColor: '#161b22', padding: { x: 8, y: 4 },
+      fontFamily: 'monospace', fontSize: '14px', color, backgroundColor: '#161b22', padding: { x: 8, y: 4 },
     }).setOrigin(0.5);
     this.tweens.add({ targets: this._toast, alpha: 0, delay: 1100, duration: 500, onComplete: () => this._toast?.destroy() });
   }

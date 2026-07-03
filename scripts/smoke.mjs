@@ -8,6 +8,7 @@
 import { chromium } from 'playwright';
 import { resolveDevServerUrl } from './dev-server-url.mjs';
 import { hexToPixel } from '../src/data/hexgrid.js';
+import { RUN_CURRENCY_KEY } from '../src/data/events.js';
 
 // Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
 // weapon range with terrain possibly between it and the origin. For the deterministic
@@ -36,9 +37,10 @@ try {
     return !!(g && g.scene.isActive('GarageScene') && g.registry.get('allMechs'));
   }, { timeout: 20000 });
 
-  const garage = await page.evaluate(() => {
+  const garage = await page.evaluate((runCurrencyKey) => {
     const g = window.__game;
     const sc = g.scene.getScene('GarageScene');
+    const RUN_CURRENCY_KEY = runCurrencyKey;
     const mech = g.registry.get('allMechs').mech1;
     // Mount/unmount works in a weapon slot...
     mech.unmount('rightArm', 0);
@@ -51,6 +53,25 @@ try {
     // The default roster leaves centreTorso (the ability slot) empty; fill it with an ability
     // via the same catalog path so the build is COMPLETE — deploy() no-ops on an incomplete mech.
     if (!mech.mounts.centerTorso.length) { sc._selectSlot('centerTorso'); sc._pickItem('jumpJet'); }
+
+    // #65: shop economy. 'shotgun' isn't in the starting-unlocked set, so a fresh save must
+    // reject mounting it — clicking a locked card attempts a purchase instead, and with zero
+    // SCRAP that purchase must fail (no mount, no unlock, no spend). _selectSlot TOGGLES the
+    // same slot off if it's already selected, so only select rightArm if it isn't already.
+    if (sc.selected !== 'rightArm') sc._selectSlot('rightArm');
+    sc.registry.set(RUN_CURRENCY_KEY, 0);
+    sc._pickItem('shotgun');
+    const lockedRejectsMount = !mech.mounts.rightArm.includes('shotgun') && !sc.unlocked.has('shotgun');
+    // Fund the purchase, buy it, and confirm: SCRAP is spent, the id is now unlocked, AND it
+    // can now actually be mounted (the lock, not just a UI skin, gated it).
+    sc.registry.set(RUN_CURRENCY_KEY, 500);
+    sc._pickItem('shotgun');
+    const purchased = sc.unlocked.has('shotgun') && sc.registry.get(RUN_CURRENCY_KEY) < 500;
+    sc._pickItem('shotgun');   // now unlocked — this click mounts it into the still-selected slot
+    const unlockedMounts = mech.mounts.rightArm.includes('shotgun');
+    mech.unmount('rightArm', 0);
+    mech.mount('rightArm', 'autocannon');   // restore for the rest of the smoke run
+
     return {
       chassis: mech.chassisId,
       weaponMount,
@@ -58,8 +79,11 @@ try {
       dollBuilt,
       buildValid: mech.validate().ok,
       deployable: mech.isComplete(),
+      lockedRejectsMount,
+      purchased,
+      unlockedMounts,
     };
-  });
+  }, RUN_CURRENCY_KEY);
   await page.screenshot({ path: '/tmp/mech-garage.png' });
 
   // Deploy → arena.
@@ -216,6 +240,20 @@ try {
     // otherwise this would read 0 post-mortem instead of reflecting the earlier healthy state.
     const onlineWeapons = a.mech.onlineWeapons().length;
 
+    // #65: a salvage pickup adds straight into the LIVE run currency. Spawn one, walk the
+    // player onto it (mirrors _updatePowerups' pickup-radius check), and confirm the run's
+    // currency total increased by exactly the drop's amount.
+    // Clear first: the #68 vehicle-kill test above killed several units AT THE ORIGIN, each
+    // with a chance to drop its own salvage there — since _updateSalvage never ran meanwhile
+    // (only the full update() loop calls it, which this test avoids), any such drops are still
+    // sitting unpicked-up at (0,0) and would inflate this test's currency delta.
+    a.salvage.length = 0;
+    const currencyBeforeSalvage = a.run.currency;
+    const drop = { x: a.px, y: a.py, amount: 12, ttl: 15000, age: 0, view: a._makeSalvageView(a.px, a.py) };
+    a.salvage.push(drop);
+    a._updateSalvage(16);
+    const salvagePickedUp = a.run.currency === currencyBeforeSalvage + 12 && a.salvage.length === 0;
+
     // #64: run loop — player death ends the run and banks currency. Force-kill the player mech
     // (same overkill path used on the dummy above) and drive one update() so _updateRun notices.
     const currencyBeforeDeath = a.run.currency;
@@ -245,6 +283,7 @@ try {
       newStageHasSquad,
       runEndedOnDeath,
       currencyBankedOnDeath,
+      salvagePickedUp,
     };
   }, DUMMY_PX);
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -258,6 +297,11 @@ try {
   if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');
   if (!garage.buildValid) fail('default build is invalid (slots over capacity)');
   if (!garage.deployable) fail('build is not complete (an empty skill slot blocks deploy)');
+  // #65: shop economy — a locked item can't be mounted (or unlocked) with zero SCRAP; funding
+  // the purchase spends SCRAP and unlocks it; only THEN can it actually be mounted.
+  if (!garage.lockedRejectsMount) fail('#65 a locked item mounted (or unlocked) without being purchased');
+  if (!garage.purchased) fail('#65 purchasing a locked item did not spend SCRAP and unlock it');
+  if (!garage.unlockedMounts) fail('#65 an unlocked item still could not be mounted');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
@@ -287,6 +331,8 @@ try {
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
+  // #65: a salvage pickup adds straight into the live run currency total.
+  if (!arena.salvagePickedUp) fail('#65 a salvage pickup did not increase the live run currency');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
