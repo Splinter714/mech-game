@@ -8,7 +8,7 @@ import { WEAPON_IDS } from '../data/weapons.js';
 import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
-import { MECH_DEPLOYED } from '../data/events.js';
+import { MECH_DEPLOYED, RUN_CURRENCY_KEY } from '../data/events.js';
 import { BIOME_IDS } from '../data/biomes.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
@@ -78,6 +78,18 @@ export default class GarageScene extends Phaser.Scene {
 
     this._buildPreview();
     this.doll = this.add.container(0, 0);
+
+    // #64: the run-currency readout (banked total, meta-progression pool). Full spend/shop UI
+    // is #65's job — this is just a visible, persisted number, top-right under the tab bar. Also
+    // shows the last run's result (WON/DIED + its payout) as a one-line recap when present.
+    this.currencyText = this.add.text(this.W - 16, TAB_BAR_H + 10, '', {
+      fontFamily: 'monospace', fontSize: '14px', color: UI.accent,
+    }).setOrigin(1, 0);
+    this.lastRunText = this.add.text(this.W - 16, TAB_BAR_H + 30, '', {
+      fontFamily: 'monospace', fontSize: '12px', color: '#7c8794',
+    }).setOrigin(1, 0);
+    this._refreshCurrency();
+
     this.refresh();
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
@@ -96,6 +108,21 @@ export default class GarageScene extends Phaser.Scene {
     this.input.on('pointermove', () => this._setInputMode('kbm'));
     this.input.on('pointerdown', () => this._setInputMode('kbm'));
     this.input.keyboard.on('keydown', () => this._setInputMode('kbm'));
+  }
+
+  // #64: read the banked run currency + last run's result (if any) from the registry and
+  // paint them top-right. Called once from create() and again whenever they might have
+  // changed (there's no live-updating source once in the garage, so a single paint suffices).
+  _refreshCurrency() {
+    const total = this.registry.get(RUN_CURRENCY_KEY) || 0;
+    this.currencyText.setText(`⚙ ${total} SCRAP`);
+    const last = this.registry.get('lastRunResult');
+    if (last) {
+      const label = last.status === 'won' ? 'LAST RUN: WON' : 'LAST RUN: MECH LOST';
+      this.lastRunText.setText(`${label}  (+${last.currency})`);
+    } else {
+      this.lastRunText.setText('');
+    }
   }
 
   // Switch the displayed control scheme (and focus-cursor visibility), redrawing once.
@@ -351,6 +378,10 @@ export default class GarageScene extends Phaser.Scene {
     const n = this.registry.get('deployCount') || 0;
     this.registry.set('deployCount', n + 1);
     this.registry.set('arenaBiome', BIOME_IDS[n % BIOME_IDS.length]);
+    // #64: a fresh deploy always starts a NEW run at stage 0 — clear any leftover run state
+    // (a prior run's `run` registry value would otherwise look "in progress" to
+    // ArenaScene._initRun, which continues an existing run rather than starting fresh).
+    this.registry.set('run', null);
     this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
     this.scene.start('ArenaScene');
   }

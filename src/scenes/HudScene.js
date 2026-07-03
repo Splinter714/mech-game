@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 import { POWERUPS, durationMs } from '../data/powerups.js';
+import { STAGE_COUNT } from '../data/run.js';
 
 // Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
 // garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
@@ -28,11 +29,19 @@ export default class HudScene extends Phaser.Scene {
     this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
       { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
 
+    // #64: run/stage readout, sitting right next to the objective line.
+    this.stageText = this.add.text(16, 70, '', { fontFamily: 'monospace', fontSize: '13px', color: C.accent });
     // #66: objective line, reading the live Mission published to the registry each frame.
-    this.objectiveText = this.add.text(16, 70, '', { fontFamily: 'monospace', fontSize: '13px', color: C.warn });
+    this.objectiveText = this.add.text(16, 88, '', { fontFamily: 'monospace', fontSize: '13px', color: C.warn });
     // Big centred "MISSION COMPLETE" banner, hidden until the mission resolves.
     this.completeBanner = this.add.text(this.W / 2, this.H * 0.32, 'MISSION COMPLETE', {
       fontFamily: 'monospace', fontSize: '40px', color: C.good, fontStyle: 'bold',
+    }).setOrigin(0.5).setVisible(false);
+    // #64: run-over banner (WIN or DEAD), reusing the same big-centred-text styling/pattern as
+    // the mission-complete banner for consistency. Text/color are set live from the registry's
+    // `runOverBanner` (published by the run mixin) so this file stays free of win/lose branching.
+    this.runOverBanner = this.add.text(this.W / 2, this.H * 0.46, '', {
+      fontFamily: 'monospace', fontSize: '32px', color: C.bad, fontStyle: 'bold',
     }).setOrigin(0.5).setVisible(false);
 
     this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
@@ -47,10 +56,10 @@ export default class HudScene extends Phaser.Scene {
     this.buffTexts = [];
     this._buffCache = {};   // typeId → full duration (ms), captured the frame a buff first appears
 
-    // Per-part integrity column (player), top-left under the hints + objective line.
-    this.add.text(16, 96, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
+    // Per-part integrity column (player), top-left under the hints + stage/objective lines.
+    this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.partTexts = {};
-    let y = 114;
+    let y = 130;
     for (const loc of LOCATIONS) {
       if (loc === 'cockpit') continue;
       this.partTexts[loc] = this.add.text(16, y, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text });
@@ -120,6 +129,12 @@ export default class HudScene extends Phaser.Scene {
       this.dummyText.setText(`ENEMIES ${alive}/${total}`).setColor(alive ? C.dim : C.bad);
     }
 
+    // #64: run/stage readout, driven by the Run the arena publishes each frame.
+    const run = this.registry.get('run');
+    if (run) {
+      this.stageText.setText(`STAGE ${run.stageIndex + 1}/${STAGE_COUNT}   SCRAP ${run.currency}`);
+    }
+
     // #66: objective line + win banner, driven by the Mission the arena publishes each frame.
     const mission = this.registry.get('mission');
     if (mission) {
@@ -127,7 +142,20 @@ export default class HudScene extends Phaser.Scene {
       this.objectiveText
         .setText(`OBJECTIVE: ${mission.objective}${complete ? '  [COMPLETE]' : ''}`)
         .setColor(complete ? C.good : C.warn);
-      this.completeBanner.setVisible(complete);
+      // #64: the mission-complete banner only makes sense mid-run (a stage cleared, more to
+      // come) — once the run itself is over (run-over banner below takes precedence), suppress
+      // it so the two banners don't stack.
+      this.completeBanner.setVisible(complete && !this.registry.get('runOverBanner'));
+    }
+
+    // #64: run-over banner (WIN or DEAD) — the run mixin publishes `runOverBanner` (label,
+    // color, currency) for the few seconds it holds before returning to the garage; null once
+    // that beat elapses (or when there's no run in progress).
+    const over = this.registry.get('runOverBanner');
+    if (over) {
+      this.runOverBanner.setText(`${over.label}\n+${over.currency} SCRAP BANKED`).setColor(over.color).setVisible(true);
+    } else {
+      this.runOverBanner.setVisible(false);
     }
 
     this._updateBuffHud();

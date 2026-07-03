@@ -15,6 +15,7 @@ import { FiringMixin } from './arena/firing.js';
 import { LocomotionMixin } from './arena/locomotion.js';
 import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
+import { RunMixin } from './arena/run.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -41,14 +42,19 @@ export default class ArenaScene extends Phaser.Scene {
     // #66: designate the mission objective (one of the world's outposts) now that
     // `buildingHp` exists, and mark it in the world.
     this._initMission();
+    // #64: continue the in-progress run (set by a prior stage advance) or start a fresh one.
+    this._initRun();
 
     // Player mech (repaired fresh for the sortie).
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
     this.mech.repairAll();
-    // Player-only survivability buffer: ~100x the chassis' per-location armor + structure.
+    // Player-only survivability buffer: ~7x the chassis' per-location armor + structure.
     // Applied here (deploy time), not in the shared chassis data, so enemies are unaffected.
-    this.mech.boostHealth(100);
+    // #64: tuned down from the old 100x (near-invincible sandbox) to a moderate value in the
+    // 5-10x band — real damage across a run should threaten death (the run loop now ends the
+    // run on player destruction), but a single bad opening shouldn't be instant-death.
+    this.mech.boostHealth(7);
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
@@ -163,6 +169,9 @@ export default class ArenaScene extends Phaser.Scene {
 
     // #66: has the objective been destroyed? Evaluate + publish the mission each frame.
     this._updateMission();
+    // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
+    // the run on mission-complete, or end it on player destruction.
+    this._updateRun();
 
     // Lock reticle, drawn after projFx is cleared above so it isn't wiped. A maintained-but-blind
     // lock (#62) draws at the last-known/predicted position in a distinct "firing blind" colour so
@@ -195,5 +204,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin,
 );

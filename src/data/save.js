@@ -4,6 +4,7 @@
 // `makeRoster` is the generic load/save factory.
 
 import { ROSTERS } from './rosters.js';
+import { RUN_CURRENCY_KEY } from './events.js';
 
 export function makeRoster({ storageKey, Model, defaultRoster }) {
   function readSaved() {
@@ -61,3 +62,28 @@ export function resetAllMechs() {
     // nothing to clear
   }
 }
+
+// #64: the player's banked run currency (meta-progression pool, persists across runs AND
+// page reloads). Full spend/shop UI is #65's job — this is just enough to bank + display a
+// number. Mirrors the roster pattern (localStorage-backed, defaults to 0, never throws).
+const RUN_CURRENCY_STORAGE_KEY = 'mech-game-run-currency-v1';
+
+export function loadRunCurrency() {
+  try {
+    const raw = localStorage.getItem(RUN_CURRENCY_STORAGE_KEY);
+    const n = raw != null ? Number(JSON.parse(raw)) : 0;
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveRunCurrency(amount) {
+  try {
+    localStorage.setItem(RUN_CURRENCY_STORAGE_KEY, JSON.stringify(amount));
+  } catch {
+    // localStorage blocked/unavailable — the game still plays this session.
+  }
+}
+
+export { RUN_CURRENCY_KEY };
