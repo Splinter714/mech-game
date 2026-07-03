@@ -22,11 +22,13 @@ export const CombatMixin = {
     reskinMech(this, 'playerMech', this.mech);
     this._floatText(this.px, this.py - 20, `-${dmg}`, '#e2533a');
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
+    // #64: death feedback only — the run mixin (_updateRun, polled every frame) is what
+    // actually ends the run and drives the delayed return to the garage, so there's exactly
+    // one place owning that transition (and the run-over banner/currency banking with it).
     if (this.mech.isDestroyed() && !this._playerDead) {
       this._playerDead = true;
       this._floatText(this.px, this.py - 36, 'MECH DOWN', '#e2533a');
       Audio.explosion(1.2);
-      this.time.delayedCall(1600, () => this.toGarage());
     }
   },
 

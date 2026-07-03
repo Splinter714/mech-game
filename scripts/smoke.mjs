@@ -197,11 +197,38 @@ try {
       missionCompleted = a.mission?.status === 'complete';
     }
 
+    // #64: run loop — stage advance on mission-complete. The mission above was just driven to
+    // 'complete'; running the run mixin's per-frame check should notice and start advancing
+    // (banking currency, moving to stage 1) without waiting for the real transition timer —
+    // call the internal advance directly (mirrors how _updateRun would trigger it) and then
+    // force the delayed _startNextStage() through immediately so this stays a synchronous test.
+    const runStartedAtStageZero = a.run?.stageIndex === 0 && a.run?.status === 'active';
+    const enemyCountBeforeAdvance = a.enemies.length;
+    a._advanceRun();
+    const stageAdvanced = a.run?.stageIndex === 1 && a.run?.status === 'active';
+    // _advanceRun scheduled _startNextStage on a timer; fire it immediately so the smoke test
+    // doesn't need to sleep, then confirm a fresh (bigger) squad + a fresh active mission exist.
+    a._startNextStage();
+    const newStageHasMission = a.mission?.status === 'active';
+    const newStageHasSquad = a.enemies.length > 0;
+
+    // Captured BEFORE the run-loop death test below deliberately destroys the player mech —
+    // otherwise this would read 0 post-mortem instead of reflecting the earlier healthy state.
+    const onlineWeapons = a.mech.onlineWeapons().length;
+
+    // #64: run loop — player death ends the run and banks currency. Force-kill the player mech
+    // (same overkill path used on the dummy above) and drive one update() so _updateRun notices.
+    const currencyBeforeDeath = a.run.currency;
+    for (const loc of Object.keys(a.mech.parts)) a.mech.applyDamage(loc, 9999);
+    a.update(0, 16);
+    const runEndedOnDeath = a.run?.status === 'dead';
+    const currencyBankedOnDeath = (g.registry.get('runCurrency') || 0) >= currencyBeforeDeath;
+
     return {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
       dummyTex: g.textures.exists('enemy0_turret'),
-      onlineWeapons: a.mech.onlineWeapons().length,
+      onlineWeapons,
       projHit,
       collisionHolds,
       partDamaged: anyPartDamaged,
@@ -212,6 +239,12 @@ try {
       veh,
       missionStartedActive,
       missionCompleted,
+      runStartedAtStageZero,
+      stageAdvanced,
+      newStageHasMission,
+      newStageHasSquad,
+      runEndedOnDeath,
+      currencyBankedOnDeath,
     };
   }, DUMMY_PX);
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -245,6 +278,15 @@ try {
   // (via the same _damageBuildingAt path weapon fire uses) completes it.
   if (!arena.missionStartedActive) fail('#66 mission did not start active with the assault objective');
   if (!arena.missionCompleted) fail('#66 destroying the objective hex did not complete the mission');
+  // #64: run loop — a fresh deploy starts at stage 0, mission-complete advances the run to the
+  // next stage with a fresh mission + squad in the SAME arena session, and player death ends
+  // the run + banks its currency into the persistent registry value the garage reads.
+  if (!arena.runStartedAtStageZero) fail('#64 run did not start active at stage 0 on deploy');
+  if (!arena.stageAdvanced) fail('#64 mission-complete did not advance the run to the next stage');
+  if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
+  if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
+  if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
+  if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {

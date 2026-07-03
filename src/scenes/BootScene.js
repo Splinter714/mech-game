@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { buildBaseTextures } from '../art/index.js';
-import { ROSTER_SPECIES } from '../data/save.js';
+import { ROSTER_SPECIES, loadRunCurrency } from '../data/save.js';
+import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { Audio } from '../audio/index.js';
 
 // Boot: load the saved garage into the registry, build world/UI textures, then open
@@ -15,6 +16,8 @@ export default class BootScene extends Phaser.Scene {
     for (const { registryKey, load } of ROSTER_SPECIES) {
       this.registry.set(registryKey, load());
     }
+    // #64: the banked run-currency total (meta-progression pool) persists across page loads.
+    this.registry.set(RUN_CURRENCY_KEY, loadRunCurrency());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).

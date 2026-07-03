@@ -184,6 +184,33 @@ export const WorldMixin = {
     }
     return Infinity;
   },
+
+  // #64: seed ONE fresh destructible outpost hex, converting a nearby passable ground tile back
+  // into `biome.outpost` terrain with full HP and re-texturing it in place. Every outpost a
+  // biome starts with is eventually destroyed permanently (collapses to rubble, no repair — see
+  // `_damageBuildingAt`), so a run whose stage count exceeds a biome's outpost count needs a way
+  // to keep producing assault objectives; the run mixin calls this as a fallback once
+  // `buildingHp` runs dry. Picks a random ground hex within a modest ring of the world centre
+  // (clear of the permanent spawn-safe zone) so it doesn't land on top of the player or another
+  // outpost. Returns the new outpost's hex key, or null if no eligible ground hex was found.
+  _spawnOutpostAt(nearQ = 0, nearR = 0) {
+    const B = this.biome;
+    for (let tries = 0; tries < 40; tries++) {
+      const ring = 4 + Math.floor(Math.random() * (this.worldRadius - 6));
+      const ang = Math.random() * Math.PI * 2;
+      const q = Math.round(nearQ + ring * Math.cos(ang));
+      const r = Math.round(nearR + ring * Math.sin(ang) * (2 / Math.sqrt(3)) - (ring * Math.cos(ang)) / 2);
+      const k = axialKey(q, r);
+      const t = this.terrain.get(k);
+      if (t !== B.groundA && t !== B.groundB) continue;
+      this.terrain.set(k, B.outpost);
+      this.buildingHp.set(k, buildingHp(B.outpost));
+      const img = this.tileImages.get(k);
+      if (img) img.setTexture(getTerrain(B.outpost).tex);
+      return k;
+    }
+    return null;
+  },
 };
 
 // Small seeded PRNG (mulberry32) so the generated map is deterministic.
