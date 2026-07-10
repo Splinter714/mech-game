@@ -29,6 +29,16 @@ export function isMelee(itemId) {
   return getItem(itemId)?.category === 'melee';
 }
 
+// Which location (if any) currently holds `itemId`? Since each location holds at most one
+// item, this is the ONLY place a given id can live at a time — used to enforce "mounting an
+// already-mounted item moves it" instead of letting it exist in two slots at once (#84).
+export function locationOf(mounts, itemId) {
+  for (const loc of Object.keys(mounts)) {
+    if ((mounts[loc] ?? []).includes(itemId)) return loc;
+  }
+  return null;
+}
+
 // Can `itemId` be mounted in `locationId` given the current build? Returns
 // { ok, reason } so the UI can explain a blocked mount.
 export function canMount(chassis, mounts, locationId, itemId) {

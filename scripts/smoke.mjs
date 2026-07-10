@@ -84,6 +84,27 @@ try {
     mech.unmount('rightArm', 0);
     mech.mount('rightArm', 'autocannon');   // restore for the rest of the smoke run
 
+    // #84: mounting an already-mounted weapon into a NEW slot MOVES it — mouse flow. rightArm
+    // holds 'autocannon' (restored above); mounting it into leftTorso via the same click-to-mount
+    // path (_selectSlot + _pickItem) must empty rightArm, not leave it duplicated in both. Save
+    // whatever leftTorso held so the default build's completeness is restored afterward.
+    const leftTorsoWas = mech.mounts.leftTorso[0] ?? null;
+    sc._selectSlot('leftTorso');
+    sc._pickItem('autocannon');
+    const moveMouseNewSlot = mech.mounts.leftTorso.includes('autocannon');
+    const moveMouseOldSlotEmptied = !mech.mounts.rightArm.includes('autocannon');
+
+    // #84: pad quick-mount flow — highlighting a catalog item already mounted (leftTorso) and
+    // pressing a DIFFERENT slot's bind (_quickMount) must move it there too, never duplicate.
+    sc._quickMount('rightArm', 'autocannon');
+    const moveQuickNewSlot = mech.mounts.rightArm.includes('autocannon');
+    const moveQuickOldSlotEmptied = !mech.mounts.leftTorso.includes('autocannon');
+    // Exactly one slot holds it across the whole build, never two.
+    const onlyOneSlotHoldsIt = Object.values(mech.mounts).filter((arr) => arr.includes('autocannon')).length === 1;
+    // Restore leftTorso's original occupant (autocannon's move displaced it) so the rest of the
+    // smoke run still sees the default, complete build.
+    if (leftTorsoWas && !mech.mounts.leftTorso.includes(leftTorsoWas)) mech.mount('leftTorso', leftTorsoWas);
+
     return {
       chassis: mech.chassisId,
       weaponMount,
@@ -96,6 +117,11 @@ try {
       noReorderOnUnlock,
       reordersOnNextRebuild,
       unlockedMounts,
+      moveMouseNewSlot,
+      moveMouseOldSlotEmptied,
+      moveQuickNewSlot,
+      moveQuickOldSlotEmptied,
+      onlyOneSlotHoldsIt,
     };
   }, RUN_CURRENCY_KEY);
   await page.screenshot({ path: '/tmp/mech-garage.png' });
@@ -445,6 +471,13 @@ try {
   // the player; the re-sort only happens on the next natural rebuild (setIds).
   if (!garage.noReorderOnUnlock) fail('#78 the catalog reordered the instant a purchase unlocked an item');
   if (!garage.reordersOnNextRebuild) fail('#78 the catalog never re-sorted a newly-unlocked item on the next rebuild');
+  // #84: mounting an already-mounted weapon into a new slot MOVES it (old slot emptied), for
+  // both the mouse click-to-mount flow and the pad quick-mount flow — never duplicated.
+  if (!garage.moveMouseNewSlot) fail('#84 mouse-mounting an already-mounted weapon into a new slot did not move it there');
+  if (!garage.moveMouseOldSlotEmptied) fail('#84 mouse-moving a weapon left it duplicated in its old slot');
+  if (!garage.moveQuickNewSlot) fail('#84 pad quick-mount of an already-mounted weapon into a new slot did not move it there');
+  if (!garage.moveQuickOldSlotEmptied) fail('#84 pad quick-mount move left the weapon duplicated in its old slot');
+  if (!garage.onlyOneSlotHoldsIt) fail('#84 the same weapon id ended up mounted in more than one slot at once');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
