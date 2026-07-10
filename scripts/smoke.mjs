@@ -397,6 +397,21 @@ try {
     // otherwise this would read 0 post-mortem instead of reflecting the earlier healthy state.
     const onlineWeapons = a.mech.onlineWeapons().length;
 
+    // #88: a kill that drops BOTH a powerup and salvage must not stack them on the same pixel.
+    // spawnPowerup has no drop-chance gate (that lives in _maybeDropPowerup) so it always
+    // drops on call; _maybeDropSalvage does roll SALVAGE_DROP_CHANCE (0.35) so retry with real
+    // randomness until it actually drops (near-certain within a handful of tries). Both draw
+    // from the SAME exact origin — the #88 scatter (composed with the #73 reachable-ground
+    // snap) must still separate them.
+    a.powerups.length = 0;
+    a.salvage.length = 0;
+    const dropOriginX = a.px, dropOriginY = a.py;
+    a.spawnPowerup(dropOriginX, dropOriginY);
+    for (let i = 0; i < 200 && a.salvage.length === 0; i++) a._maybeDropSalvage(dropOriginX, dropOriginY);
+    const pu = a.powerups[a.powerups.length - 1];
+    const sv = a.salvage[a.salvage.length - 1];
+    const dropsDistinct = !!pu && !!sv && (pu.x !== sv.x || pu.y !== sv.y);
+
     // #65: a salvage pickup adds straight into the LIVE run currency. Spawn one, walk the
     // player onto it (mirrors _updatePowerups' pickup-radius check), and confirm the run's
     // currency total increased by exactly the drop's amount.
@@ -448,6 +463,7 @@ try {
       runEndedOnDeath,
       currencyBankedOnDeath,
       salvagePickedUp,
+      dropsDistinct,
       s72,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod });
@@ -517,6 +533,8 @@ try {
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
   // #65: a salvage pickup adds straight into the live run currency total.
   if (!arena.salvagePickedUp) fail('#65 a salvage pickup did not increase the live run currency');
+  // #88: a powerup and salvage dropped from the same kill point must scatter apart, not stack.
+  if (!arena.dropsDistinct) fail('#88 a powerup and salvage dropped from the same point landed at the same position');
   // #72: soft cover — own-hex transparency (both directions + firing out) and destructible/
   // burnable trees, exercised through the real projectile/fire-patch simulation.
   if (!arena.s72.occupantHit) fail('#72 a shot into the target\'s own soft-cover hex died at the hex edge instead of hitting');

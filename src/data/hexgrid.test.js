@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   hexToPixel, pixelToHex, neighbors, distance, range, ring, axialKey, HEX_SIZE,
-  nearestHex, hexesWithinPixelRadius,
+  nearestHex, hexesWithinPixelRadius, scatterOffset,
 } from './hexgrid.js';
 
 describe('hexgrid neighbors', () => {
@@ -100,6 +100,48 @@ describe('hexgrid nearestHex (reachable-drop search, #73)', () => {
 
   it('returns null when nothing within range passes (caller supplies a fallback)', () => {
     expect(nearestHex({ q: 0, r: 0 }, () => false, 3)).toBeNull();
+  });
+});
+
+describe('scatterOffset (spread simultaneous drops, #88)', () => {
+  it('two independent calls from the same origin land at different positions', () => {
+    const a = scatterOffset(100, 100, 30);
+    const b = scatterOffset(100, 100, 30);
+    // Astronomically unlikely to collide with the real Math.random, but guard against a
+    // degenerate implementation that always returns the same point regardless.
+    expect(a).not.toEqual(b);
+  });
+
+  it('is deterministic given an injected rand, and varies when the rand sequence varies', () => {
+    const seqA = [0.25, 0.5];   // angle=0.5π, r=sqrt(0.5)*30
+    const seqB = [0.75, 0.5];   // different angle, same radius fraction
+    const randFrom = (seq) => { let i = 0; return () => seq[i++ % seq.length]; };
+    const a1 = scatterOffset(0, 0, 30, randFrom(seqA));
+    const a2 = scatterOffset(0, 0, 30, randFrom(seqA));
+    expect(a1).toEqual(a2);   // same rand sequence → same offset (pure fn)
+    const b = scatterOffset(0, 0, 30, randFrom(seqB));
+    expect(b).not.toEqual(a1);
+  });
+
+  it('the offset is bounded by maxR (never wanders farther than the given radius)', () => {
+    for (let i = 0; i < 200; i++) {
+      const p = scatterOffset(500, -200, 30);
+      expect(Math.hypot(p.x - 500, p.y - (-200))).toBeLessThanOrEqual(30 + 1e-9);
+    }
+  });
+
+  it('a scattered point still resolves to reachable ground via nearestHex (#73 composition)', () => {
+    // Same passability model as the nearestHex describe block above: an in-disc, non-blocked
+    // predicate. Confirms scatterOffset composes cleanly with the existing #73 relocation path
+    // — scatter first, then snap — rather than fighting it.
+    const R = 5;
+    const ok = (q, r) => distance({ q: 0, r: 0 }, { q, r }) <= R;
+    for (let i = 0; i < 50; i++) {
+      const scattered = scatterOffset(0, 0, 30);
+      const hex = nearestHex(pixelToHex(scattered.x, scattered.y), ok, 40);
+      expect(hex).not.toBeNull();
+      expect(ok(hex.q, hex.r)).toBe(true);
+    }
   });
 });
 
