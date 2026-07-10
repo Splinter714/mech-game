@@ -86,7 +86,10 @@ export const RunMixin = {
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
 
     // A new, harder squad (per data/run.js escalation curve), dropped off-screen same as the
-    // opening squad.
+    // opening squad. #71: tear down the previous stage's enemies first (views + generated
+    // textures) — replacing the array alone leaked every prior stage's corpse sprites onto the
+    // display list for the rest of the session, dragging the frame rate down as a run went on.
+    for (const e of this.enemies) this._destroyEnemy(e);
     this.enemies = [];
     this._spawnSquad(desc.squad);
 
