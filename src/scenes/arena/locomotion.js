@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, approach, backwardSpeedScale } from './shared.js';
+import { ARENA_MECH_SCALE, approach, backwardSpeedScale, rotateToward } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
@@ -164,7 +164,7 @@ export const LocomotionMixin = {
       this.aimY = this.py + Math.sin(intent.aim.angle) * 800;
     }
     const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
-    this.turretAngle = Phaser.Math.Angle.RotateTo(this.turretAngle, aim, mv.turretSlew * slewMult * dt);
+    this.turretAngle = rotateToward(this.turretAngle, aim, mv.turretSlew * slewMult, dt);
     this.registry.set('inputMode', intent.mode);
   },
 

@@ -23,9 +23,12 @@ export const HEAVY_CONFIG = {
     // stick, it just answers heavily. See light.js for what each knob does. Widest
     // accel↔decel gap = the most momentum-heavy start-up and coast of the three.
     accel: 120, decel: 80, maxSpeed: 68, turnRate: 1.0,
-    // #3 feel follow-up: torso-twist rate slowed (was 1.9) so the turret really crawls — you
-    // lean on turning the whole body to track a flanker. Still usable, just the weightiest slew.
-    turretSlew: 1.3, turretArcDeg: 95,
+    // #86: restored from 1.3 back to 1.9 (the #3 feel-follow-up value) — playtest read the
+    // 1.3 slew as "choppy/laggy" aiming; profiling showed a steady 60fps with sub-ms dt
+    // jitter (profile-aim-idle.mjs), so the lag was the slew rate itself, not frame rate.
+    // Still the weightiest of the three — you lean on turning the whole body to track a
+    // flanker — just no longer so slow it reads as broken.
+    turretSlew: 1.9, turretArcDeg: 95,
     stepInterval: 460, stepBob: 3.8, footShake: 4.0,
   },
 };

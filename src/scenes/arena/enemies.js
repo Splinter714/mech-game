@@ -28,7 +28,7 @@ import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, rotateToward } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
@@ -416,8 +416,8 @@ export const EnemiesMixin = {
     }
 
     // Aim turret + face travel (turret still tracks even when stationary, for testing).
-    e.turret = Phaser.Math.Angle.RotateTo(e.turret, bearing, mv.turretSlew * dt);
-    if (Math.hypot(e.vx, e.vy) > 5) e.angle = Phaser.Math.Angle.RotateTo(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate * dt);
+    e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
+    if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
     // Line-of-sight to the player right now, and this enemy's maintained lock ON the player (#62).
     // #72: each endpoint's own soft-cover hex is transparent — a player standing in forest is
