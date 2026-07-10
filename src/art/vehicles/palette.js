@@ -1,24 +1,28 @@
 // Shared palette + tiny helpers for the non-mech VEHICLE art (turret / tank / drone /
-// helicopter). These units read as a distinct HOSTILE faction from the sleek white enemy
-// mechs: darker, industrial, warm-accented armour. Each kind passes its own `accent` colour
-// (from ENEMY_KINDS.themeColor) so they still differ from one another while sharing the family.
+// helicopter). These units now read as the SAME sleek WHITE faction as the player + enemy
+// mechs (mirrors the `enemy` mech theme in mechPrims.js: dark outline, pale ceramic panels,
+// a bright rim) rather than a separate dark industrial one. Each kind still passes its own
+// `accent` colour (from ENEMY_KINDS.themeColor) so they differ from ONE ANOTHER on the
+// "danger" bits (gun glow, sensor eye, rotor hub) — just on a light body now.
 //
-// Colours are chosen so the silhouette reads at arena scale (~0.34): a dark outline, a couple
-// of body greys, a light rim catching overhead light, and the kind's warm accent for the
-// "danger" bits (gun glow, sensor eye, rotor hub). Design coords match mechPrims (origin =
-// centre, −y = forward), so builders can reuse rectC/roundC/ellipseC/poly.
+// Contrast: the biomes include arctic/snow (light terrain). A white body could vanish on
+// snow, so the SILHOUETTE is carried by the dark `outline` (drawn around every plate) plus a
+// darker `deep` used for the ground/drop shadow — both read against snow AND dark volcanic
+// terrain. `tread` stays a mid-dark grey so tracks/barrels/guns pop off the pale panels.
+// Design coords match mechPrims (origin = centre, −y = forward), so builders can reuse
+// rectC/roundC/ellipseC/poly.
 
 export const VEHICLE = {
-  outline: 0x14171d,      // dark edge
-  deep: 0x232a33,         // ambient-occlusion shadow / underside
-  bodyDk: 0x3a434f,       // lower body panel
-  body: 0x4a5563,         // main body panel
-  bodyHi: 0x5c6a7a,       // upper body panel
-  rim: 0x7a8798,          // top highlight rim (overhead light)
-  rimHi: 0x9fb0c2,        // brightest edge
-  tread: 0x20262e,        // tank track / dark mechanical
-  treadHi: 0x39424d,      // track lug highlight
-  glass: 0x2b3a4a,        // cockpit glass
+  outline: 0x2b3441,      // dark blue-grey edge — carries the silhouette on snow + volcanic
+  deep: 0x39424f,         // shadow / underside / ground-drop shadow (kept dark so it reads on snow)
+  bodyDk: 0xb6c2cf,       // lower body panel (subtle grey shading)
+  body: 0xd3dae2,         // main body panel (pale)
+  bodyHi: 0xeef2f6,       // upper body panel (near-white highlight)
+  rim: 0xf6f9fb,          // top highlight rim (overhead light)
+  rimHi: 0xffffff,        // brightest edge
+  tread: 0x5a6675,        // tank track / barrel / dark mechanical (mid-dark, pops off white)
+  treadHi: 0x8b97a6,      // track lug / barrel highlight
+  glass: 0x51616f,        // cockpit glass (cool tint, darker so the canopy reads)
 };
 
 // A warm-accent glow ramp derived from a kind's accent colour, for the "hot" bits.

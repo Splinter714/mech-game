@@ -97,9 +97,12 @@ const PLAYER_VULN_HEALTH = 0.4;     // player lethal-part health below this ⇒ 
 const TRACKED_DOT = 0.965;          // player aim·(toward enemy) above this ⇒ "being tracked" (~15°)
 const TRACKED_BREAK_CHANCE = 0.7;   // odds a tracked enemy juke-breaks its current plan on a decide
 
-// #68: on-screen scale of a non-mech unit's sprites. A touch larger than the mech scale so a
-// tank/helicopter reads as a substantial vehicle; drones are drawn small in their own texture.
-const VEHICLE_SCALE = ARENA_MECH_SCALE * 1.15;
+// #68/#75: on-screen scale of a non-mech unit's sprites is now PER-KIND (data-driven): each
+// ENEMY_KINDS entry carries a `scale` MULTIPLE of the arena mech scale, so adding/retuning a
+// unit is a data edit. VEHICLE_SCALE_MULT is the fallback multiplier for a kind with no
+// `scale` (the old global 1.15× mech); `vehicleScale(def)` resolves the display scale.
+const VEHICLE_SCALE_MULT = 1.15;
+const vehicleScale = (def) => ARENA_MECH_SCALE * (def.scale ?? VEHICLE_SCALE_MULT);
 
 // Small helpers ---------------------------------------------------------------------------
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -226,8 +229,9 @@ export const EnemiesMixin = {
       shadow = this.add.ellipse(0, 0, 26, 14, 0x000000, 0.28);
       parts.push(shadow);
     }
-    const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(VEHICLE_SCALE);
-    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(VEHICLE_SCALE);
+    const vs = vehicleScale(def);
+    const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(vs);
+    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(vs);
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
     parts.push(hull, turret);

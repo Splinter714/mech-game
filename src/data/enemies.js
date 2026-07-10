@@ -52,11 +52,12 @@ export const ENEMY_ROTATION = [
   'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turret', 'artillery', 'swarm',
 ];
 
-// The default opening squad (#44 / #68): a mix of mechs and non-mech units so the arena shows
-// off the whole bestiary from the first frames — a mech skirmisher/raider/sniper alongside a
-// tank, a turret, a drone swarm, and a gunship. Index 0 stays a mech (Raider) so the smoke test's
-// mech-specific per-part damage assertions remain meaningful. Order is the spawn order; the arena
-// drops each just off-screen and they move in per their AI (the turret just sits and guards).
+// The default opening squad (#44 / #68 / #75): a mix of mechs and non-mech units so the arena
+// shows off the whole bestiary from the first frames. #75 bumps GUNSHIPS — two helicopters now
+// (they were requested more often) — a mech skirmisher/raider/sniper alongside a tank, a turret,
+// a drone swarm, and two gunships. Index 0 stays a mech (Raider) so the smoke test's mech-specific
+// per-part damage assertions remain meaningful. Order is the spawn order; the arena drops each
+// just off-screen and they move in per their AI (the turret just sits and guards).
 export const DEFAULT_SQUAD = [
-  'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turret', 'swarm',
+  'raider', 'helicopter', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turret', 'swarm',
 ];
