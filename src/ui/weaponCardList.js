@@ -216,27 +216,14 @@ export class WeaponCardList {
   }
 
   // Re-evaluate every card's locked state in place (e.g. after a purchase changes the
-  // unlocked set or the SCRAP balance) — no rebuild, no preview-sim reset. #78: also snap
-  // re-sort so a newly-unlocked item promotes up into its canonical slot among the unlocked
-  // (locked items stay at the bottom). Cards are reordered by reference (live sim state kept),
-  // the focus cursor follows its id, then everything re-lays out.
+  // unlocked set or the SCRAP balance) — no rebuild, no preview-sim reset, and (per the #78
+  // follow-up) no re-sort: reordering the instant a purchase completes moved cards out from
+  // under the player's cursor. The list keeps its current order until the next natural
+  // rebuild (setIds(), e.g. a slot change or leaving/re-entering the garage), which already
+  // applies orderByLock() against the live isLocked state — so a purchased item settles into
+  // its canonical slot on the next real navigation, not mid-interaction.
   refreshLocks() {
     for (const c of this.cards) this._paintLock(c);
-    if (typeof this.isLocked !== 'function' || !this._ids) return;
-    const focusedId = this.focusedId();
-    const byId = new Map(this.cards.map((c) => [c.id, c]));
-    const ordered = orderByLock(this._ids, this.isLocked)
-      .map((id) => byId.get(id)).filter(Boolean);
-    // Nothing moved? skip the relayout.
-    if (ordered.every((c, i) => c === this.cards[i])) return;
-    this.cards = ordered;
-    this._focus = focusedId == null ? -1 : this.indexOfId(focusedId);
-    this._layout();
-    for (const c of this.cards) this._paintSelection(c);
-    if (this._focus >= 0) {
-      const top = this._focus * (CARD_H + CARD_GAP);
-      this._setScroll(scrollToShow(this._scrollY, top, CARD_H, this.region.h, this._maxScroll));
-    }
   }
 
   _paintSelection(card) {
