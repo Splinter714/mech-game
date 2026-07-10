@@ -17,6 +17,29 @@ export function approach(cur, target, maxStep) {
   return cur;
 }
 
+// #86 — one shared turret/heading rotation step, used by the player's turret slew, every
+// enemy mech's turret + facing, and the vehicle-behavior turret tracking (locomotion.js,
+// enemies.js, enemyBehaviors.js all had their own copy of this exact expression, each calling
+// Phaser.Math.Angle.RotateTo directly). PURE reimplementation of that same algorithm (no
+// Phaser import — importing the `phaser` package itself crashes under vitest's node test
+// environment: it touches `navigator` at import time for device detection) so this is
+// directly unit-testable: rotate `cur` toward `target` at `radPerSec`, scaled by `dt` —
+// properly dt-scaled so it behaves the same at 30fps (dt≈0.033) as 60fps (dt≈0.017), taking
+// the short way around the ±π seam, and snapping to the target instead of overshooting past
+// it once the step would cover the remaining distance (a big dt, or being already close).
+const PI2 = Math.PI * 2;
+export function rotateToward(cur, target, radPerSec, dt) {
+  const lerp = radPerSec * dt;
+  if (cur === target) return cur;
+  let t = target;
+  const diff = Math.abs(t - cur);
+  if (diff <= lerp || diff >= PI2 - lerp) return t;
+  if (diff > Math.PI) t += t < cur ? PI2 : -PI2;
+  if (t > cur) return cur + lerp;
+  if (t < cur) return cur - lerp;
+  return cur;
+}
+
 // Re-exported for the combat mixin (damage maps to a body location; cockpit is hit via head).
 export const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit');
 

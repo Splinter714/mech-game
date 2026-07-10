@@ -14,6 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
+import { rotateToward } from './shared.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -23,7 +24,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 // of every behavior. Returns nothing; mutates e.turret and may spawn a shot.
 function aimAndFire(scene, e, ctx, { needLos }) {
   const def = e.kindDef;
-  e.turret = Phaser.Math.Angle.RotateTo(e.turret, ctx.bearing, def.move.turretSlew * ctx.dt);
+  e.turret = rotateToward(e.turret, ctx.bearing, def.move.turretSlew, ctx.dt);
   if (!scene.enemyFire) return;
   const inRange = ctx.dist < (def.fireRange ?? 300);
   // Ground units need a clear firing lane; flyers shoot over everything. #72 own-hex
@@ -60,7 +61,7 @@ function tankBehavior(scene, e, ctx) {
   e.vx = approach(e.vx, mx * (Math.abs(radial) + Math.abs(strafe) > 0 ? target : 0), mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * (Math.abs(radial) + Math.abs(strafe) > 0 ? target : 0), mv.accel * ctx.dt);
   // Hull faces the player (present the frontal armour), turning at the chassis turn rate.
-  e.angle = Phaser.Math.Angle.RotateTo(e.angle, ctx.bearing, mv.turnRate * ctx.dt);
+  e.angle = rotateToward(e.angle, ctx.bearing, mv.turnRate, ctx.dt);
   aimAndFire(scene, e, ctx, { needLos: true });
 }
 
