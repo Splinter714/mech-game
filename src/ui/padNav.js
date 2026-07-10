@@ -44,6 +44,15 @@ export function stepIndex(i, delta, n, { wrap = true } = {}) {
   return Math.min(n - 1, Math.max(0, j));
 }
 
+// Decide what pressing a slot's fire bind does to that slot, given the slot's current mount
+// and the highlighted catalog id (#70 catalog-first pad flow). Re-pressing a bind while the
+// slot already holds exactly the highlighted item toggles it OFF ('clear'); otherwise it
+// mounts the highlight ('mount'). With nothing highlighted there's nothing to do ('none').
+export function slotBindAction(currentId, highlightedId) {
+  if (highlightedId == null) return 'none';
+  return currentId === highlightedId ? 'clear' : 'mount';
+}
+
 // Minimal scroll adjustment so [itemTop, itemTop+itemH] (content coords) is visible in a
 // viewport of height viewH scrolled to scrollY. Result clamped to [0, maxScroll].
 export function scrollToShow(scrollY, itemTop, itemH, viewH, maxScroll) {

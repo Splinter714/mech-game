@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dominantDir, DirRepeater, stepIndex, scrollToShow, REPEAT_INITIAL, REPEAT_INTERVAL } from './padNav.js';
+import { dominantDir, DirRepeater, stepIndex, scrollToShow, slotBindAction, REPEAT_INITIAL, REPEAT_INTERVAL } from './padNav.js';
 
 describe('dominantDir', () => {
   it('returns null inside the deadzone', () => {
@@ -76,6 +76,30 @@ describe('stepIndex', () => {
   it('returns -1 for an empty collection', () => {
     expect(stepIndex(0, 1, 0)).toBe(-1);
     expect(stepIndex(0, -1, 0, { wrap: false })).toBe(-1);
+  });
+});
+
+describe('slotBindAction (catalog-first pad quick-mount/clear, #70)', () => {
+  it('mounts the highlighted item into an empty slot', () => {
+    expect(slotBindAction(null, 'autocannon')).toBe('mount');
+  });
+
+  it('mounts the highlighted item over a different existing mount (replace)', () => {
+    expect(slotBindAction('laser', 'autocannon')).toBe('mount');
+  });
+
+  it('clears (toggles off) when the slot already holds exactly the highlighted item', () => {
+    expect(slotBindAction('autocannon', 'autocannon')).toBe('clear');
+  });
+
+  it('works for abilities the same way (L3 → centre-torso)', () => {
+    expect(slotBindAction(null, 'jumpJet')).toBe('mount');
+    expect(slotBindAction('jumpJet', 'jumpJet')).toBe('clear');
+  });
+
+  it('does nothing when nothing is highlighted', () => {
+    expect(slotBindAction(null, null)).toBe('none');
+    expect(slotBindAction('autocannon', null)).toBe('none');
   });
 });
 

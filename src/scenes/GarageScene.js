@@ -15,7 +15,7 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
-import { DirRepeater, dominantDir, stepIndex } from '../ui/padNav.js';
+import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 
 // The mech lab. The build is five skill slots, shown as a row of square "skill button" tiles
 // (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
@@ -97,16 +97,17 @@ export default class GarageScene extends Phaser.Scene {
     }).setOrigin(1, 0);
     this._refreshCurrency();
 
-    // Controller support (#29 deploy + #30 + #70): a two-zone focus model — the tile row
-    // (left stick / d-pad left-right, A selects a slot AND enters the catalog, B clears) and
-    // the catalog (up/down browses with auto-scroll, A mounts/buys, B backs out; a slot's own
-    // bind quick-mounts the highlighted item). Focus visuals + the button legend only appear
-    // once a pad button is used (`padActive`), so mouse/keyboard users see no cursor.
+    // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
+    // catalog from the first pad press — the whole unfiltered set (all weapons AND abilities),
+    // never a per-slot filter. D-pad/left-stick up-down browse it with auto-scroll; a slot's own
+    // fire bind (RT/LT/RB/LB, and L3 for the centre-torso ability) ASSIGNS the highlighted item
+    // into that slot, or CLEARS it if the slot already holds exactly that item. There is no
+    // tile-first gate: the tile row still renders (mounts + binds) but is not a pad focus zone.
+    // Focus visuals + the button legend only appear once a pad button is used (`padActive`), so
+    // mouse/keyboard users see no cursor.
     this.padEdges = new PadEdges(this);
     this.inputMode = 'kbm';       // which scheme the tile bind labels reflect (#26)
-    this.padActive = false;       // pad in use → show the focus cursor + legend
-    this.focusTile = 0;           // index into TILE_ORDER
-    this.zone = 'tiles';          // 'tiles' | 'catalog' — where the pad focus lives (#70)
+    this.padActive = false;       // pad in use → show the catalog cursor + legend
     this.dirRepeat = new DirRepeater();   // shared d-pad/stick step auto-repeat
     attachPadTabCycle(this, 'GarageScene');   // SELECT cycles the top tabs
     // The pad button legend, along the very bottom under the tile row. Text set per-zone.
@@ -142,24 +143,42 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  // Switch the displayed control scheme (and focus-cursor/legend visibility), redrawing
-  // once. Dropping back to kbm also retracts the pad focus into the tile row so no stale
-  // catalog cursor lingers under mouse use.
+  // Switch the displayed control scheme (and focus-cursor/legend visibility), redrawing once.
+  // Waking the pad drops focus into the full catalog (catalog-first, #70); dropping back to
+  // kbm restores the mouse's slot-filtered view so no stale pad state lingers under the mouse.
   _setInputMode(mode) {
     if (this.inputMode === mode) return;
     this.inputMode = mode;
     this.padActive = mode === 'pad';
-    if (mode === 'kbm') { this.zone = 'tiles'; this.list.setFocus(null); }
+    if (mode === 'pad') this._enterCatalogFull();
+    else this._restoreMouseCatalog();
     this.refresh();
   }
 
-  // Per-frame: tick the live catalog previews, then handle the gamepad (#70). D-pad/left
-  // stick move the focus cursor in the current zone (tile row: left/right; catalog: up/down
-  // with auto-scroll), A activates (tile → select slot + enter catalog; card → mount/buy),
-  // B backs out (catalog → tile row; tile row → clear the slot). A slot's own bind button
-  // (RT/LT/RB/LB/L3) selects that slot from the tile row, or quick-mounts the highlighted
-  // catalog item straight into it. X/Y cycle chassis, Start deploys, Select cycles tabs
-  // (attachPadTabCycle).
+  // Catalog-first pad entry: show the whole unfiltered catalog (weapons AND abilities), clear
+  // any mouse slot selection, and put the focus cursor on the first card. Never calls the
+  // slot-filtering _selectSlot — the pad path always browses the full id set.
+  _enterCatalogFull() {
+    this.selected = null;
+    this.list.setIds(this.catalogIds);
+    this.list.setSelected(null);
+    this.list.setFocus(0);
+  }
+
+  // Return to the mouse's expected state: the slot-filtered catalog (or the full set when no
+  // slot is selected), the mounted item highlighted, and no pad focus cursor.
+  _restoreMouseCatalog() {
+    this.list.setIds(this._eligibleIds(this.selected));
+    this.list.setSelected(this.selected ? this.mech.mounts[this.selected][0] ?? null : null);
+    this.list.setFocus(null);
+  }
+
+  // Per-frame: tick the live catalog previews, then handle the gamepad (#70, catalog-first).
+  // D-pad/left-stick up-down browse the full catalog with auto-scroll. A slot's own fire bind
+  // (RT/LT/RB/LB, L3 for the ability) ASSIGNS the highlighted item into that slot, or CLEARS
+  // it if the slot already holds exactly that item; a locked item routes to purchase instead.
+  // X/Y cycle chassis, Start deploys, Select cycles tabs (attachPadTabCycle). The first pad
+  // press of a session just wakes the cursor (reveals it at the top of the catalog).
   update(time, delta) {
     this.list.update(time, delta);
 
@@ -172,16 +191,26 @@ export default class GarageScene extends Phaser.Scene {
     if (e.pressed(PAD.X)) { this._setInputMode('pad'); this.cycleChassis(-1); return; }
 
     for (const loc of TILE_ORDER) {
-      if (e.pressed(SLOT_BUTTON[loc])) { this._setInputMode('pad'); this._slotBind(loc); return; }
+      if (e.pressed(SLOT_BUTTON[loc])) {
+        if (this._wakePad()) return;   // first pad press just reveals the catalog cursor
+        this._slotBind(loc);
+        return;
+      }
     }
 
     const step = this.dirRepeat.step(this._padDir(pad), this.time.now);
-    const a = e.pressed(PAD.A), b = e.pressed(PAD.B);
-    if (!step && !a && !b) return;
-    this._setInputMode('pad');
+    if (!step) return;
+    if (this._wakePad()) return;       // first pad press just reveals the catalog cursor at 0
+    if (step === 'up') this.list.moveFocus(-1);
+    else if (step === 'down') this.list.moveFocus(+1);
+  }
 
-    if (this.zone === 'catalog') this._catalogNav(step, a, b);
-    else this._tileNav(step, a, b);
+  // Reveal the pad cursor on the first pad use. Returns true when this call was that first
+  // wake, so the caller treats the press as "show me the cursor" rather than an action.
+  _wakePad() {
+    if (this.padActive) return false;
+    this._setInputMode('pad');
+    return true;
   }
 
   // The held 4-way direction this frame — d-pad first, else the left stick's dominant axis.
@@ -195,62 +224,21 @@ export default class GarageScene extends Phaser.Scene {
     return s ? dominantDir(s.x, s.y) : null;
   }
 
-  // Zone 1 — the tile row. Left/right move the slot focus; A opens the focused slot's
-  // catalog; B unmounts it.
-  _tileNav(step, a, b) {
-    if (step === 'left') this.focusTile = stepIndex(this.focusTile, -1, TILE_ORDER.length);
-    else if (step === 'right') this.focusTile = stepIndex(this.focusTile, +1, TILE_ORDER.length);
-    if (a) { this._enterCatalog(TILE_ORDER[this.focusTile]); return; }
-    if (b) { this.unmount(TILE_ORDER[this.focusTile], 0); return; }
-    this.refresh();
-  }
-
-  // Zone 2 — the catalog. Up/down move the card focus (auto-scrolling); A picks the
-  // highlighted card (mount into the selected slot, or purchase if locked — the same path
-  // as clicking it); B steps back out to the tile row.
-  _catalogNav(step, a, b) {
-    if (step === 'up') this.list.moveFocus(-1);
-    else if (step === 'down') this.list.moveFocus(+1);
-    if (a) { const id = this.list.focusedId(); if (id) this._pickItem(id); return; }
-    if (b) { this._exitCatalog(); return; }
-    // (a step repaints/scrolls inside the list itself — no scene refresh needed)
-  }
-
-  // Select `loc` (filtering the catalog to what fits it) and move the pad focus into the
-  // catalog, starting on the currently-mounted item's card when there is one.
-  _enterCatalog(loc) {
-    this.focusTile = TILE_ORDER.indexOf(loc);
-    if (this.selected !== loc) this._selectSlot(loc);
-    this.zone = 'catalog';
-    const mounted = this.mech.mounts[loc][0] ?? null;
-    const idx = mounted != null ? this.list.indexOfId(mounted) : -1;
-    this.list.setFocus(idx >= 0 ? idx : 0);
-    this.refresh();
-  }
-
-  _exitCatalog() {
-    this.zone = 'tiles';
-    this.list.setFocus(null);
-    this.refresh();
-  }
-
-  // A slot's fire bind: from the tile row it selects that slot (entering its catalog); from
-  // the catalog it mounts the highlighted item straight into that slot — "highlight the
-  // autocannon, pull RT to put it in the right arm." Invalid mounts toast as usual; a locked
-  // item attempts the purchase instead.
+  // A slot's fire bind (RT/LT/RB/LB, or L3 for the centre-torso ability): assign the
+  // highlighted catalog item straight into that slot — "highlight the autocannon, pull RT to
+  // put it in the right arm." Re-pressing a bind while the slot already holds that exact item
+  // clears it. Invalid targets (ability into an arm, weapon into the ability slot, melee
+  // outside an arm) toast via _mountInto; a locked item routes to purchase.
   _slotBind(loc) {
-    if (this.zone === 'catalog') {
-      const id = this.list.focusedId();
-      if (id) this._quickMount(loc, id);
-      return;
-    }
-    this._enterCatalog(loc);
+    const id = this.list.focusedId();
+    if (id) this._quickMount(loc, id);
   }
 
   _quickMount(loc, id) {
     if (!this.unlocked.has(id)) { this._purchase(id); return; }
-    this._mountInto(loc, id);
-    if (loc === this.selected) this.list.setSelected(this.mech.mounts[loc][0] ?? null);
+    const action = slotBindAction(this.mech.mounts[loc][0] ?? null, id);
+    if (action === 'clear') this.unmount(loc, 0);
+    else if (action === 'mount') this._mountInto(loc, id);
   }
 
   button(x, y, w, h, label, onClick, color = UI.text) {
@@ -397,7 +385,7 @@ export default class GarageScene extends Phaser.Scene {
 
   // Rebuild the doll: the shared skill-tile row, each tile click-to-mount / click-to-clear.
   // Also rebuilds the tab bar so Deploy reflects the current build validity, and repaints
-  // the pad legend (contextual to the focused zone; hidden entirely under mouse/keyboard).
+  // the pad legend (the catalog-first button map; hidden entirely under mouse/keyboard).
   refresh() {
     this._buildHeader();
     this.doll.removeAll(true);
@@ -406,9 +394,7 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   _legendText() {
-    return this.zone === 'catalog'
-      ? '▲▼ BROWSE   A MOUNT/BUY   B BACK   RT/LT/RB/LB/L3 QUICK-MOUNT   SELECT TABS   START DEPLOY'
-      : '◄► SLOT   A EDIT   B CLEAR   X/Y CHASSIS   SELECT TABS   START DEPLOY';
+    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   L3 ABILITY   RE-PRESS CLEARS   X/Y CHASSIS   SELECT TABS   START DEPLOY';
   }
 
   _drawTile(rect) {
@@ -419,14 +405,9 @@ export default class GarageScene extends Phaser.Scene {
       loc, itemId: id, mode: this.inputMode, selected,
       subtitle: id ? getItem(id).name : '', subtitleColor: TILE_UI.text,
     });
-    // The pad focus cursor — a ring around the focused tile, only while the pad drives the
-    // tile row (in the catalog zone the cursor lives on a card instead).
-    if (this.padActive && this.zone === 'tiles' && TILE_ORDER[this.focusTile] === loc) {
-      const ring = this.add.rectangle(rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6)
-        .setOrigin(0, 0).setStrokeStyle(2, 0x5ec8e0);
-      this.doll.add(ring);
-    }
-    // Click a tile to edit that slot — the catalog filters to what fits it.
+    // Catalog-first pad flow (#70): the pad cursor lives on a catalog card, not the tile row,
+    // so tiles carry no pad focus ring — they just render the current mounts + fire binds.
+    // Click a tile to edit that slot — the catalog filters to what fits it (mouse path).
     refs.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._selectSlot(loc));
   }
 
