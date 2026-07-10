@@ -5,6 +5,7 @@ import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
 import WeaponLabScene from './scenes/WeaponLabScene.js';
 import MusicScene from './scenes/MusicScene.js';
+import AudioUnlockScene from './scenes/AudioUnlockScene.js';
 
 // `?canvas` forces Phaser's Canvas renderer. Headless browsers (the smoke test)
 // often lack WebGL framebuffers, and the game logic we verify there is
@@ -31,7 +32,7 @@ const config = {
     height: window.innerHeight * getDpr(),
   },
   input: { gamepad: true },
-  scene: [BootScene, GarageScene, ArenaScene, HudScene, WeaponLabScene, MusicScene],
+  scene: [BootScene, GarageScene, ArenaScene, HudScene, WeaponLabScene, MusicScene, AudioUnlockScene],
 };
 
 const game = new Phaser.Game(config);
