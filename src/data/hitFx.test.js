@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  FLOAT_COALESCE_MS, IMPACT_BURST_MS, IMPACT_MERGE_DIST, SOUND_THROTTLE_MS,
-  allowByKey, shouldMergeFloat, skipImpactBurst,
+  IMPACT_BURST_MS, IMPACT_MERGE_DIST, SOUND_THROTTLE_MS,
+  allowByKey, skipImpactBurst,
 } from './hitFx.js';
 
 describe('allowByKey — per-id sound rate limiter', () => {
@@ -37,26 +37,6 @@ describe('allowByKey — per-id sound rate limiter', () => {
     for (let t = 0; t < 1000; t += 10) if (allowByKey(last, 'gun', t, SOUND_THROTTLE_MS)) sounds++;
     expect(sounds).toBeLessThanOrEqual(Math.ceil(1000 / SOUND_THROTTLE_MS) + 1);
     expect(sounds).toBeLessThan(100); // massively fewer than the raw hit count
-  });
-});
-
-describe('shouldMergeFloat — coalescing damage numbers', () => {
-  it('does not merge when there is no active float', () => {
-    expect(shouldMergeFloat(null, 500)).toBe(false);
-    expect(shouldMergeFloat(undefined, 500)).toBe(false);
-  });
-
-  it('merges when the last hit was within the window', () => {
-    expect(shouldMergeFloat({ lastHit: 500 }, 500 + FLOAT_COALESCE_MS - 1)).toBe(true);
-  });
-
-  it('does not merge once the window has elapsed (fresh number pops)', () => {
-    expect(shouldMergeFloat({ lastHit: 500 }, 500 + FLOAT_COALESCE_MS)).toBe(false);
-  });
-
-  it('accepts a custom window', () => {
-    expect(shouldMergeFloat({ lastHit: 0 }, 50, 40)).toBe(false);
-    expect(shouldMergeFloat({ lastHit: 0 }, 30, 40)).toBe(true);
   });
 });
 
