@@ -21,10 +21,10 @@ import { drawProjectileBody } from './projectiles/index.js';
 export { projectileKind };
 export { drawProjectileBody };
 
-// TEMP (off while iterating on something else): the splatter/inner spark flecks below read
-// as visual static on every beam (pulse/beam/rail laser share this one drawBeam). Flip back
-// to true to restore them — the glow/core/warble above are unaffected either way.
-const SPARKS_ENABLED = false;
+// The splatter/inner spark flecks below (shared by every hitscan beam — pulse/beam/rail
+// laser all draw through this one drawBeam) — the glow/core/warble above are unaffected
+// either way. Flip to false to disable if they ever read as too noisy again.
+const SPARKS_ENABLED = true;
 
 // A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.
 // `phase` is a ms timestamp driving the warble (callers pass time or beam age).
