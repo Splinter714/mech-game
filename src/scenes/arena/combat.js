@@ -19,7 +19,10 @@ export const CombatMixin = {
     const loc = parts[Math.floor(Math.random() * parts.length)];
     const res = this.damagePlayer(loc, dmg);
     if (res.shielded) { this._floatText(this.px, this.py - 24, 'shielded', '#5ec8e0'); return; }
-    reskinMech(this, 'playerMech', this.mech);
+    // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
+    // weapons), not on continuous health — so only pay the 9-texture procedural rebuild when
+    // this hit actually broke a part. Reskinning on every hit was the main combat lag source.
+    if (res.destroyed) reskinMech(this, 'playerMech', this.mech);
     this._floatText(this.px, this.py - 20, `-${dmg}`, '#e2533a');
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     // #64: death feedback only — the run mixin (_updateRun, polled every frame) is what
@@ -79,7 +82,9 @@ export const CombatMixin = {
       if (d < bestD) { bestD = d; best = loc; }
     }
     const res = e.mech.applyDamage(best, damage);
-    if (isMech) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+    // #71: same as the player path — rebuild the enemy's textures only when a part just broke
+    // (that's the only damage state the art shows), not on every single hit.
+    if (isMech && res.destroyed) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     this._floatText(x, y, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (e.mech.isDestroyed()) {

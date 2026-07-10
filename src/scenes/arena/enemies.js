@@ -317,6 +317,22 @@ export const EnemiesMixin = {
     this._floatText(this.px, this.py - 40, 'ENEMIES RESET', '#5ec8e0');
   },
 
+  // #71: tear down one enemy's scene-side resources — its sprite container and the procedural
+  // textures generated under its key. Called when a stage's squad is replaced wholesale
+  // (run.js _startNextStage): without this, every stage's corpses left their multi-sprite views
+  // on the display list (and their textures in the texture manager) for the rest of the arena
+  // session, so the frame cost grew stage over stage — the measured cause of late-run combat lag.
+  _destroyEnemy(e) {
+    e.view.destroy();
+    const suffixes = e.kind === 'mech'
+      ? ['hull_0', 'hull_1', 'hull_2', 'hull_3', 'turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm']
+      : ['hull', 'turret'];
+    for (const s of suffixes) {
+      const key = `${e.key}_${s}`;
+      if (this.textures.exists(key)) this.textures.remove(key);
+    }
+  },
+
   // Debug (#28): flip enemy movement or firing on/off and toast the new state.
   _toggleAi(which) {
     if (which === 'move') this.enemyMove = !this.enemyMove;

@@ -98,6 +98,9 @@ try {
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first (and at boot, only) enemy
     const em = e0.mech;
+    // Captured NOW: the #64 stage-advance test below replaces the squad, and #71's teardown
+    // correctly REMOVES the old squad's textures — so this must be read before that runs.
+    const dummyTex = g.textures.exists(e0.key + '_turret');
 
     // Tank locomotion: holding throttle should drive the mech forward (up = -y).
     const y0 = a.py;
@@ -265,7 +268,10 @@ try {
     return {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
-      dummyTex: g.textures.exists('enemy0_turret'),
+      dummyTex,
+      // #71: the stage advance above tore the OLD squad down — its views and textures must be
+      // gone (this was the leak: every stage's corpse sprites piling up for the whole session).
+      oldSquadTornDown: !g.textures.exists(e0.key + '_turret') && !e0.view.active,
       onlineWeapons,
       projHit,
       collisionHolds,
@@ -329,6 +335,7 @@ try {
   if (!arena.stageAdvanced) fail('#64 mission-complete did not advance the run to the next stage');
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
+  if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
   // #65: a salvage pickup adds straight into the live run currency total.
