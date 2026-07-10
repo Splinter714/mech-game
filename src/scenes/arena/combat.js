@@ -4,6 +4,12 @@
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DAMAGEABLE } from './shared.js';
+import { SOUND_THROTTLE_MS, allowByKey, shouldMergeFloat, skipImpactBurst } from '../../data/hitFx.js';
+
+// Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
+// below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
+// recycling the oldest circle instead of create/destroy-ing one per hit.
+const IMPACT_CIRCLE_CAP = 48;
 
 export const CombatMixin = {
   // Incoming damage to the player (used once enemies fire) — fully absorbed while the
@@ -40,12 +46,20 @@ export const CombatMixin = {
   // `weaponId` drives the SOUND (per-weapon, tunable in the Weapon Lab); `kind` drives the
   // VISUAL burst shape below — they can differ (several weapons share a projectile `kind`).
   _impactFx(x, y, color, kind, splash, weaponId) {
-    Audio.impact(weaponId);
+    const now = this.time.now;
+    // #76: rate-limit the per-weapon impact SOUND so a frame full of simultaneous hits from one
+    // weapon (e.g. four Repeaters into one target) collapses to a bounded ~20 triggers/sec
+    // instead of flooding WebAudio with dozens of oscillators at once. Keyed per weapon so two
+    // different weapons hitting together still each sound.
+    if (allowByKey((this._impactSoundAt ??= {}), weaponId ?? '_', now, SOUND_THROTTLE_MS)) Audio.impact(weaponId);
+    // #76: collapse near-simultaneous bursts at the same point — concentrated fire lands many
+    // hits/frame at one spot, and the overlapping identical rings are indistinguishable, so keep
+    // only the first and skip the rest (no extra circles/tweens) for one frame's worth of window.
+    if (skipImpactBurst(this._lastBurst, x, y, now)) return;
+    this._lastBurst = { x, y, t: now };
     const burst = (r0, r1, col, alpha, dur, stroke) => {
-      const c = stroke
-        ? this.add.circle(x, y, r0).setStrokeStyle(2, col, alpha)
-        : this.add.circle(x, y, r0, col, alpha);
-      this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => c.destroy() });
+      const c = this._acquireImpactCircle(x, y, r0, col, alpha, stroke);
+      this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => this._freeImpactCircle(c) });
     };
     burst(3, 9, 0xffffff, 0.9, 120, false); // core flash, every hit
 
@@ -85,7 +99,9 @@ export const CombatMixin = {
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke
     // (that's the only damage state the art shows), not on every single hit.
     if (isMech && res.destroyed) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
-    this._floatText(x, y, `${damage}`, res.destroyed ? '#e2533a' : '#ffd56b');
+    // #76: coalesce the per-hit damage number — under concentrated fire, accumulate a rising
+    // running total on one floating Text per enemy instead of spawning a fresh Text every hit.
+    this._damageFloat(e, x, y, damage, res.destroyed ? '#e2533a' : '#ffd56b');
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (e.mech.isDestroyed()) {
       e.view.setAlpha(0.5);
@@ -103,5 +119,56 @@ export const CombatMixin = {
   _floatText(x, y, s, color) {
     const t = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '14px', color }).setOrigin(0.5);
     this.tweens.add({ targets: t, y: y - 26, alpha: 0, duration: 700, onComplete: () => t.destroy() });
+  },
+
+  // #76: a coalescing damage number, one live float per enemy. Fast successive hits accumulate a
+  // rising running total on the SAME Text (restarting its rise-and-fade) instead of spawning a
+  // new Text per hit — bounding the object churn under concentrated fire. Once the float's
+  // rise-and-fade completes (no hits for the tween's duration) it's cleared and the next hit
+  // pops a fresh number, so normal spaced-out fire looks exactly as before.
+  _damageFloat(e, x, y, amount, color) {
+    const now = this.time.now;
+    const f = e._dmgFloat;
+    if (f && f.text.active && shouldMergeFloat(f, now)) {
+      f.total += amount;
+      f.lastHit = now;
+      f.text.setText(`${f.total}`).setColor(color);
+      f.tween.restart();   // reset the rise + fade so the growing total stays visible
+      return;
+    }
+    const t = this.add.text(x, y, `${amount}`, { fontFamily: 'monospace', fontSize: '14px', color }).setOrigin(0.5);
+    const tw = this.tweens.add({
+      targets: t, y: y - 26, alpha: 0, duration: 700,
+      onComplete: () => { t.destroy(); if (e._dmgFloat && e._dmgFloat.text === t) e._dmgFloat = null; },
+    });
+    e._dmgFloat = { text: t, total: amount, lastHit: now, tween: tw };
+  },
+
+  // #76: capped, recycled pool of impact-flash circles. Reuse a freed circle when available;
+  // grow the pool up to IMPACT_CIRCLE_CAP; past the cap, recycle the oldest live one (kill its
+  // tween first) so the concurrent-circle count is hard-bounded instead of create/destroy per hit.
+  _acquireImpactCircle(x, y, r, col, alpha, stroke) {
+    const pool = (this._impactPool ??= []);
+    let c = pool.find((o) => !o._busy);
+    if (!c) {
+      if (pool.length < IMPACT_CIRCLE_CAP) { c = this.add.circle(0, 0, 1); pool.push(c); }
+      else {
+        // Pool full: evict the oldest via a round-robin cursor.
+        const i = (this._impactRR = ((this._impactRR ?? 0) + 1) % pool.length);
+        c = pool[i];
+        this.tweens.killTweensOf(c);
+      }
+    }
+    c._busy = true;
+    c.setPosition(x, y).setScale(1).setAlpha(alpha).setVisible(true);
+    c.setRadius(r);
+    if (stroke) { c.setFillStyle(); c.setStrokeStyle(2, col, alpha); }
+    else { c.setStrokeStyle(); c.setFillStyle(col, alpha); }
+    return c;
+  },
+
+  _freeImpactCircle(c) {
+    c._busy = false;
+    c.setVisible(false);
   },
 };
