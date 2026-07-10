@@ -48,7 +48,9 @@ export const TargetingMixin = {
     if (tgt && !tgt.mech.isDestroyed()) {
       const d = Math.hypot(tgt.x - this.px, tgt.y - this.py);
       const ang = Math.atan2(tgt.y - this.py, tgt.x - this.px);
-      hasLos = this._wallDistance(this.px, this.py, ang, d) === Infinity;
+      // #72 own-hex transparency: the target's own soft-cover hex (and the player's) doesn't
+      // break the lock's LOS — an enemy standing in forest is visible and lockable.
+      hasLos = this._wallDistance(this.px, this.py, ang, d, this._losTransparency(this.px, this.py, tgt.x, tgt.y)) === Infinity;
       targetPos = { x: tgt.x, y: tgt.y, vx: tgt.vx || 0, vy: tgt.vy || 0 };
     }
     stepLock(this.lock, { dt, cand, hasLos, targetPos, valid });

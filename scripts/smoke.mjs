@@ -239,6 +239,69 @@ try {
     const newStageHasMission = a.mission?.status === 'active';
     const newStageHasSquad = a.enemies.length > 0;
 
+    // #72: soft cover — own-hex transparency + destructible/burnable trees, end to end.
+    // Plant the biome's soft-cover terrain (forest/scrub/…) on known-clear ground near the
+    // origin, stand a fresh enemy INSIDE it, and prove a real travelling round fired from open
+    // ground hits the occupant instead of detonating at the hex edge (the old un-hittable bug).
+    const s72 = {};
+    {
+      const SIZE = 48, RT3 = Math.sqrt(3);
+      const hexPx = (q, r) => ({ x: SIZE * RT3 * (q + r / 2), y: SIZE * 1.5 * r });
+      const coverId = a.biome.cover;
+      const FK = '0,2', FP = hexPx(0, 2);      // world centre is cleared ground (radius 3)
+      a.terrain.set(FK, coverId);
+      a.coverHp.set(FK, 40);
+      const texBefore = a.tileImages.get(FK).texture.key;
+      const fe = a._spawnMech(FP.x, FP.y, 'raider');
+      fe.x = FP.x; fe.y = FP.y; fe.vx = fe.vy = 0;
+      a.px = 0; a.py = 0; a.vx = a.vy = 0;
+      a.turretAngle = Math.atan2(FP.y, FP.x); a.aimX = FP.x; a.aimY = FP.y;
+      const shoot = () => {
+        a.projectiles.length = 0;
+        a.fireWeapon(slug);
+        for (let i = 0; i < 120 && a.projectiles.length; i++) a._updateProjectiles(0.016);
+      };
+      // (a) A unit standing IN soft cover is hittable from outside.
+      const feHp0 = sumHp(fe.mech);
+      shoot();
+      s72.occupantHit = sumHp(fe.mech) < feHp0;
+      // (b) Firing OUT of soft cover: stand the PLAYER inside a second planted cover hex and
+      // fire at the same enemy — the round must not self-detonate on the muzzle's own hex.
+      const PK = '0,-2', PP = hexPx(0, -2);
+      a.terrain.set(PK, coverId);
+      a.coverHp.set(PK, 40);
+      a.px = PP.x; a.py = PP.y;
+      a.turretAngle = Math.atan2(FP.y - PP.y, FP.x - PP.x); a.aimX = FP.x; a.aimY = FP.y;
+      const feHp1 = sumHp(fe.mech);
+      shoot();
+      s72.firedOutOfCover = sumHp(fe.mech) < feHp1;
+      // (c) The reverse direction: an ENEMY round fired at the player hiding in soft cover
+      // must also reach its occupant.
+      const pHp0 = sumHp(a.mech);
+      a.projectiles.length = 0;
+      a._spawnProjectile(slug, FP.x, FP.y, Math.atan2(PP.y - FP.y, PP.x - FP.x), 'enemy');
+      for (let i = 0; i < 120 && a.projectiles.length; i++) a._updateProjectiles(0.016);
+      s72.enemyHitPlayerInCover = sumHp(a.mech) < pHp0;
+      // (d) Gunfire CHIPS an unoccupied soft-cover hex: kill the occupant, step the player
+      // back to open ground, and fire into the forest hex — the round detonates on it now
+      // (no occupant exemption) and bites its HP.
+      fe.mech.applyDamage('centerTorso', 9999);
+      a.px = 0; a.py = 0;
+      a.turretAngle = Math.atan2(FP.y, FP.x); a.aimX = FP.x; a.aimY = FP.y;
+      const cHp0 = a.coverHp.get(FK);
+      shoot();
+      s72.gunfireChips = (a.coverHp.get(FK) ?? 0) < cHp0;
+      // (e) Burning ground cooks soft cover FAST: a napalm-sized patch on the hex burns the
+      // rest of its HP off in a couple of ticks, flattening it to passable, no-cover ground
+      // with a visibly swapped tile texture.
+      a.firePatches.push({ x: FP.x, y: FP.y, r: 46, dps: 8, until: a.time.now + 60000, nextTick: 0 });
+      for (let i = 0; i < 4 && a.coverHp.has(FK); i++) a._updateFirePatches();
+      s72.fireFlattens = !a.coverHp.has(FK) && a.terrain.get(FK) !== coverId
+        && !a._isWall(FP.x, FP.y) && !a._blocked(FP.x, FP.y)
+        && a.tileImages.get(FK).texture.key !== texBefore;
+      a.firePatches.length = 0;   // done burning; keep later full-update() frames deterministic
+    }
+
     // Captured BEFORE the run-loop death test below deliberately destroys the player mech —
     // otherwise this would read 0 post-mortem instead of reflecting the earlier healthy state.
     const onlineWeapons = a.mech.onlineWeapons().length;
@@ -290,6 +353,7 @@ try {
       runEndedOnDeath,
       currencyBankedOnDeath,
       salvagePickedUp,
+      s72,
     };
   }, DUMMY_PX);
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -340,6 +404,13 @@ try {
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
   // #65: a salvage pickup adds straight into the live run currency total.
   if (!arena.salvagePickedUp) fail('#65 a salvage pickup did not increase the live run currency');
+  // #72: soft cover — own-hex transparency (both directions + firing out) and destructible/
+  // burnable trees, exercised through the real projectile/fire-patch simulation.
+  if (!arena.s72.occupantHit) fail('#72 a shot into the target\'s own soft-cover hex died at the hex edge instead of hitting');
+  if (!arena.s72.firedOutOfCover) fail('#72 firing OUT of a soft-cover hex self-detonated at the muzzle');
+  if (!arena.s72.enemyHitPlayerInCover) fail('#72 an enemy round could not hit the player standing in soft cover');
+  if (!arena.s72.gunfireChips) fail('#72 gunfire detonating on an unoccupied soft-cover hex did not chip its HP');
+  if (!arena.s72.fireFlattens) fail('#72 burning ground did not flatten the soft-cover hex to cleared terrain');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {

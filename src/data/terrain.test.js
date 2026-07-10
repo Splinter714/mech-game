@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TERRAIN, getTerrain, terrainSpeedFactor, isPassable, blocksLOS,
   isDestructible, buildingHp, damageBuilding, RUBBLE, rubbleFor,
+  isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -80,13 +81,89 @@ describe('terrain property resolvers', () => {
     expect(blocksLOS(undefined)).toBe(false);
   });
 
-  it('isDestructible + buildingHp: only buildings have HP', () => {
+  it('isDestructible + buildingHp: buildings and soft cover have HP; open ground does not', () => {
     expect(isDestructible('building')).toBe(true);
     expect(buildingHp('building')).toBe(TERRAIN.building.hp);
-    for (const id of ['grass', 'river', 'forest', 'deepWater', 'rubble', undefined]) {
+    expect(isDestructible('forest')).toBe(true);   // #72 destructible soft cover
+    expect(buildingHp('forest')).toBe(TERRAIN.forest.hp);
+    for (const id of ['grass', 'river', 'deepWater', 'rubble', undefined]) {
       expect(isDestructible(id)).toBe(false);
       expect(buildingHp(id)).toBe(0);
     }
+  });
+});
+
+describe('#72 soft cover — own-hex transparency + destructible/burnable trees', () => {
+  it('isSoftCover: exactly the passable+LOS-blocking terrains', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(isSoftCover(id)).toBe(true);
+    }
+    // Solid cover, open ground, hazards, and off-map are NOT soft cover.
+    for (const id of ['building', 'mesa', 'adobe', 'iceRuin', 'grass', 'river', 'deepWater', 'rubble', 'lava', undefined, 'nope']) {
+      expect(isSoftCover(id)).toBe(false);
+    }
+  });
+
+  it('every soft-cover terrain is destructible, with LESS HP than an outpost, and flattens to passable no-cover ground', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(isDestructible(id)).toBe(true);
+      expect(buildingHp(id)).toBeGreaterThan(0);
+      expect(buildingHp(id)).toBeLessThanOrEqual(TERRAIN.building.hp);
+      const rub = rubbleFor(id);
+      expect(isPassable(rub)).toBe(true);
+      expect(blocksLOS(rub)).toBe(false);
+      expect(getTerrain(rub).tex).not.toBe(getTerrain(id).tex);   // the hex visibly changes
+    }
+  });
+
+  it('soft cover flattens to its own biome rubble (data-driven)', () => {
+    expect(rubbleFor('forest')).toBe('rubble');
+    expect(rubbleFor('scrub')).toBe('sandRubble');
+    expect(rubbleFor('drift')).toBe('snowRubble');
+    expect(rubbleFor('wreck')).toBe('cityRubble');
+    expect(rubbleFor('fumarole')).toBe('ashRubble');
+  });
+
+  it('shotBlockedAt: soft cover is transparent for exempted hexes only', () => {
+    const exempt = new Set(['3,-1']);
+    // The target's own forest hex does not protect it...
+    expect(shotBlockedAt('forest', '3,-1', exempt)).toBe(false);
+    // ...but another forest hex on the way still blocks ("deep woods").
+    expect(shotBlockedAt('forest', '2,-1', exempt)).toBe(true);
+    // No exemptions at all → forest blocks like before.
+    expect(shotBlockedAt('forest', '3,-1', null)).toBe(true);
+    expect(shotBlockedAt('forest', '3,-1', new Set())).toBe(true);
+  });
+
+  it('shotBlockedAt: SOLID cover blocks even when exempted; open ground never blocks', () => {
+    const exempt = new Set(['3,-1']);
+    for (const id of ['building', 'mesa', 'adobe', 'iceRuin', 'tower', 'obsidian', 'collapsed']) {
+      expect(shotBlockedAt(id, '3,-1', exempt)).toBe(true);
+    }
+    for (const id of ['grass', 'river', 'deepWater', 'rubble', undefined]) {
+      expect(shotBlockedAt(id, '3,-1', exempt)).toBe(false);
+      expect(shotBlockedAt(id, '9,9', null)).toBe(false);
+    }
+  });
+
+  it('flame damage is multiplied so fire clears woods much faster than gunfire', () => {
+    expect(FLAME_COVER_MULT).toBeGreaterThan(1);
+    expect(flameCoverDamage(10)).toBe(10 * FLAME_COVER_MULT);
+    // A napalm ground-fire patch (dps 8, ticking every 500ms) must burn a forest hex down
+    // well within its 4s duration: per-tick terrain bite = flameCoverDamage(dps × 0.5).
+    const perTick = flameCoverDamage(8 * 0.5);
+    let hp = buildingHp('forest'), ticks = 0, destroyed = false;
+    while (!destroyed && ticks < 100) { ({ hp, destroyed } = damageBuilding(hp, perTick)); ticks++; }
+    expect(destroyed).toBe(true);
+    expect(ticks * 0.5).toBeLessThanOrEqual(2);   // cleared in ≤2s of burning
+  });
+
+  it('gunfire clears a forest hex in a few shots — feasible but not instant', () => {
+    // Autocannon-class hit: 16 damage. Forest must take more than 1 shot but not many.
+    let hp = buildingHp('forest'), shots = 0, destroyed = false;
+    while (!destroyed && shots < 50) { ({ hp, destroyed } = damageBuilding(hp, 16)); shots++; }
+    expect(shots).toBeGreaterThan(1);
+    expect(shots).toBeLessThanOrEqual(5);
   });
 });
 

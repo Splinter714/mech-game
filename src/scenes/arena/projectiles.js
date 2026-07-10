@@ -3,8 +3,14 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { stepProjectile } from '../../data/delivery.js';
+import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
+
+// #72: is a round an incendiary? Flame damage is multiplied against soft cover (terrain.js
+// FLAME_COVER_MULT) so the flamethrower ('flame' particles) and napalm ('fire' canisters +
+// their burning ground) are the premier forest-clearing tools.
+const isFlameKind = (kind) => kind === 'flame' || kind === 'fire';
 
 // Arcing homing missiles (#57): the seeker doesn't engage until the round is past the apex
 // and descending — like a real missile leaving the tube mostly ballistic, then curving in on
@@ -25,6 +31,13 @@ function arcHomingBlend(t) {
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
     this.projFx.clear();
+    // #72 own-hex transparency: precompute the hexes occupied by everything a round could HIT
+    // this frame — a player round may fly into any living enemy's soft-cover hex (and strike
+    // it); an enemy round into the player's. Each round adds its own origin hexes (so firing
+    // OUT of soft cover doesn't self-detonate at the muzzle).
+    const playerHex = this._hexKeyAt(this.px, this.py);
+    const enemyHexes = [];
+    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyHexes.push(this._hexKeyAt(e.x, e.y));
     for (const p of this.projectiles) {
       // Hit detection chases the nearest living enemy (enemy rounds chase the player), so a
       // round detonates on whatever it reaches.
@@ -69,13 +82,22 @@ export const ProjectilesMixin = {
       stepProjectile(p, dt, homingActive ? Math.atan2(hy - p.y, hx - p.x) : null);
       if (restoreTurn != null) p.turn = restoreTurn;
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if
-      // that wall is a destructible outpost, the round chips its HP (and may flatten it to rubble).
-      if (!p.arc && this._isWall(p.x, p.y)) {
-        p.dead = true;
-        p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
-        this._damageBuildingAt(p.x, p.y, p.damage);
-        this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
-        continue;
+      // that wall is a destructible outpost — or #72 a soft-cover hex — the round chips its HP
+      // (and may flatten it to rubble; flame rounds chew soft cover extra fast). #72 own-hex
+      // transparency: hexes holding something this round can hit, plus the round's own origin
+      // hexes, don't count as walls — so a unit standing in forest is hittable, and a unit
+      // firing OUT of forest doesn't detonate its own shot at the muzzle.
+      if (!p.arc) {
+        const transparent = new Set(p.originHexes ?? []);
+        if (enemyShot) transparent.add(playerHex);
+        else for (const k of enemyHexes) transparent.add(k);
+        if (this._isWall(p.x, p.y, transparent)) {
+          p.dead = true;
+          p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
+          this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
+          this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+          continue;
+        }
       }
       const toTarget = targetGone ? Infinity : Math.hypot(p.x - tx, p.y - ty);
       const landed = p.dist >= p.maxDist;
@@ -136,7 +158,9 @@ export const ProjectilesMixin = {
   },
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a
-  // flickering flame visual, until they burn out.
+  // flickering flame visual, until they burn out. #72: each tick also cooks any destructible
+  // SOFT-COVER hex the patch overlaps — the flame multiplier (terrain.js FLAME_COVER_MULT)
+  // makes ground fire clear a forest hex in a couple of ticks, far faster than gunfire.
   _updateFirePatches() {
     const now = this.time.now;
     for (const fp of this.firePatches) {
@@ -146,6 +170,11 @@ export const ProjectilesMixin = {
           if (!e.mech.isDestroyed() && Math.hypot(e.x - fp.x, e.y - fp.y) < fp.r) {
             this._damageEnemyAt(e, e.x, e.y, Math.max(1, Math.round(fp.dps * 0.5)), 0xff7a18);
           }
+        }
+        for (const h of hexesWithinPixelRadius(fp.x, fp.y, fp.r)) {
+          if (!this.coverHp.has(axialKey(h.q, h.r))) continue;
+          const c = hexToPixel(h.q, h.r);
+          this._damageBuildingAt(c.x, c.y, fp.dps * 0.5, { flame: true });
         }
       }
       drawGroundFire(this.projFx, fp.x, fp.y, fp.r, now);   // shared flame art (matches the lab)

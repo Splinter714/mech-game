@@ -26,8 +26,9 @@ function aimAndFire(scene, e, ctx, { needLos }) {
   e.turret = Phaser.Math.Angle.RotateTo(e.turret, ctx.bearing, def.move.turretSlew * ctx.dt);
   if (!scene.enemyFire) return;
   const inRange = ctx.dist < (def.fireRange ?? 300);
-  // Ground units need a clear firing lane; flyers shoot over everything.
-  const los = needLos ? scene._wallDistance(e.x, e.y, ctx.bearing, ctx.dist) === Infinity : true;
+  // Ground units need a clear firing lane; flyers shoot over everything. #72 own-hex
+  // transparency: the player's own soft-cover hex (and this unit's) doesn't block the lane.
+  const los = needLos ? scene._wallDistance(e.x, e.y, ctx.bearing, ctx.dist, scene._losTransparency(e.x, e.y, scene.px, scene.py)) === Infinity : true;
   // Only fire once the gun is roughly on target, so shots read as aimed.
   const onTarget = Math.abs(Phaser.Math.Angle.Wrap(e.turret - ctx.bearing)) < 0.35;
   if (inRange && los && onTarget) scene._fireVehicleWeapon(e, ctx, e.turret);

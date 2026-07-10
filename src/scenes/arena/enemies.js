@@ -30,6 +30,7 @@ import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
+import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
@@ -249,6 +250,7 @@ export const EnemiesMixin = {
     e.lastHealth = lethalHealth(e.mech);
     e.hurtUntil = 0;              // scene-time until which recent damage biases toward cover
     e.recampAt = 0;               // ms until an all-indirect mech hunts a fresh camp spot
+    e.coverSpot = null;           // #72 leash: {x, y, since} — the cover spot it's camped at
     e.lock = makeLock();          // #62: this enemy's indirect-fire lock ON THE PLAYER
     e.lockBlindAge = 0;           // s since this enemy last had LOS to the player (blind lead)
   },
@@ -378,6 +380,9 @@ export const EnemiesMixin = {
       const arrived = e.goal && Math.hypot(e.goal.x - e.x, e.goal.y - e.y) < ARRIVE_SLOW;
       if (e.decideAt <= 0 || (REPICK_ON_ARRIVE && arrived && (e.state === 'flank' || e.state === 'cover'))) {
         this._decideEnemyState(e, dist, bearing, hp);
+        // #72 leash bookkeeping: only a COVER commitment keeps its camp timer; anything else
+        // clears it so the next stint behind cover starts a fresh leash.
+        if (e.state !== 'cover') e.coverSpot = null;
         e.decideAt = rand(DECIDE_MIN, DECIDE_MAX);
       }
 
@@ -415,7 +420,9 @@ export const EnemiesMixin = {
     if (Math.hypot(e.vx, e.vy) > 5) e.angle = Phaser.Math.Angle.RotateTo(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate * dt);
 
     // Line-of-sight to the player right now, and this enemy's maintained lock ON the player (#62).
-    const los = this._wallDistance(e.x, e.y, bearing, dist) === Infinity;
+    // #72: each endpoint's own soft-cover hex is transparent — a player standing in forest is
+    // seen (and hittable), and an enemy inside forest can see/shoot out.
+    const los = this._wallDistance(e.x, e.y, bearing, dist, this._losTransparency(e.x, e.y, this.px, this.py)) === Infinity;
     this._updateEnemyLock(e, dist, bearing, los, dt);
 
     // Fire ready weapons at the player (gated by #28). Direct-fire weapons need current LOS. An
@@ -523,8 +530,9 @@ export const EnemiesMixin = {
   _decideEnemyState(e, dist, bearing, hp) {
     const tooClose = dist < e.standoff * TOO_CLOSE_FRAC;
     const tooFar = dist > e.standoff * TOO_FAR_FRAC;
-    const hasLos = this._wallDistance(e.x, e.y, bearing, dist) === Infinity;
+    const hasLos = this._wallDistance(e.x, e.y, bearing, dist, this._losTransparency(e.x, e.y, this.px, this.py)) === Infinity;
     const hurt = hp < COVER_HEALTH_TRIGGER || this.time.now < e.hurtUntil;
+    const now = this.time.now;
 
     // Player-reaction signals.
     const pspeed = Math.hypot(this.vx || 0, this.vy || 0);
@@ -543,19 +551,33 @@ export const EnemiesMixin = {
     //    still opens the distance if the player crowds it (tooClose), staying an area denier.
     if (e.allIndirect) {
       if (tooClose) { e.state = 'kite'; e.goal = null; return; }
-      // Already safely behind cover and its hold-timer hasn't elapsed → sit tight and shell.
+      // Already safely behind cover and its hold-timer hasn't elapsed → sit tight and shell —
+      // #72 leash permitting: after COVER_LEASH_MS parked at the same camp, it MUST relocate.
       const behindCover = !hasLos;
-      if (behindCover && e.recampAt > 0) { e.state = 'cover'; return; }
-      const cover = this._findCoverSpot(e, bearing);
-      if (cover) { e.state = 'cover'; e.goal = cover; e.recampAt = rand(ARTY_RECAMP_MIN, ARTY_RECAMP_MAX); return; }
-      // No cover in reach → hold at standoff and keep lobbing (still doesn't need to expose).
+      if (behindCover) e.coverSpot = trackCoverSpot(e.coverSpot, e.goal ?? { x: e.x, y: e.y }, now);
+      const mustMove = coverLeashExpired(e.coverSpot, now);
+      if (behindCover && e.recampAt > 0 && !mustMove) { e.state = 'cover'; return; }
+      const cover = this._findCoverSpot(e, bearing, mustMove ? e.coverSpot : null);
+      if (cover) {
+        e.state = 'cover'; e.goal = cover; e.recampAt = rand(ARTY_RECAMP_MIN, ARTY_RECAMP_MAX);
+        e.coverSpot = trackCoverSpot(e.coverSpot, cover, now);
+        return;
+      }
+      // No (fresh) cover in reach → hold at standoff and keep lobbing (or advance if far out).
       e.state = tooFar ? 'press' : 'hold'; e.goal = null; return;
     }
 
-    // 1) Hurt / under fire → break contact behind cover if any exists; else kite out.
+    // 1) Hurt / under fire → break contact behind cover if any exists; else kite out. #72 leash:
+    //    once it's sat at the same cover spot past COVER_LEASH_MS, that spot is excluded — it
+    //    must displace to a DIFFERENT spot (or kite/advance if none is reachable).
     if (hurt) {
-      const cover = this._findCoverSpot(e, bearing);
-      if (cover) { e.state = 'cover'; e.goal = cover; return; }
+      const mustMove = coverLeashExpired(e.coverSpot, now);
+      const cover = this._findCoverSpot(e, bearing, mustMove ? e.coverSpot : null);
+      if (cover) {
+        e.state = 'cover'; e.goal = cover;
+        e.coverSpot = trackCoverSpot(e.coverSpot, cover, now);
+        return;
+      }
       e.state = 'kite'; e.goal = null; return;
     }
 
@@ -605,7 +627,10 @@ export const EnemiesMixin = {
   // Search nearby hexes for a point that (a) is passable, (b) breaks LOS from the player to
   // that point (so the enemy is behind cover there), and (c) isn't absurdly far. Returns the
   // nearest such point, or null if no cover is reachable — real terrain reasoning via _isWall.
-  _findCoverSpot(e, bearing) {
+  // #72: a leash-expired camp spot is passed as `exclude` so the pick MUST differ; and the LOS
+  // probe uses own-hex transparency, so standing INSIDE a soft-cover hex no longer counts as
+  // cover (the hex wouldn't protect its occupant) — the spot must be BEHIND a blocking hex.
+  _findCoverSpot(e, bearing, exclude = null) {
     const here = { q: 0, r: 0 };
     // Candidate hex centres within a few rings of the enemy.
     const cand = range(here, COVER_SEARCH_RING)
@@ -616,10 +641,12 @@ export const EnemiesMixin = {
       .filter((p) => !this._blocked(p.x, p.y));
     let best = null, bestScore = Infinity;
     for (const p of cand) {
+      if (exclude && Math.hypot(p.x - exclude.x, p.y - exclude.y) <= COVER_SPOT_RADIUS) continue;
       const d = Math.hypot(p.x - this.px, p.y - this.py);
       const ang = Math.atan2(p.y - this.py, p.x - this.px);
-      // A spot is cover if the player's line of sight to it is broken by a wall before it.
-      const losBlocked = this._wallDistance(this.px, this.py, ang, d) < d - COVER_SEARCH_STEP;
+      // A spot is cover if the player's line of sight to it is broken by a wall before it
+      // (own-hex transparency applied: neither endpoint's soft-cover hex counts, #72).
+      const losBlocked = this._wallDistance(this.px, this.py, ang, d, this._losTransparency(this.px, this.py, p.x, p.y)) < d - COVER_SEARCH_STEP;
       if (!losBlocked) continue;
       // Prefer near cover that keeps us in the fight (not driven to the map edge).
       const travel = Math.hypot(p.x - e.x, p.y - e.y);

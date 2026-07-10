@@ -109,6 +109,23 @@ export function nearestHex(start, ok, maxSteps = 40) {
   return null;
 }
 
+// Every hex a pixel-space circle at (x, y) with radius `r` meaningfully overlaps: the hex
+// containing the centre point, plus any hex whose CENTRE lies within `r`. Used by burning
+// ground patches (#72) to find which soft-cover hexes a fire is cooking. Deliberately
+// centre-based (not exact hex-circle intersection) so a patch mostly burns the hex it sits
+// on and only spreads to a neighbour it substantially covers.
+export function hexesWithinPixelRadius(x, y, r, size = HEX_SIZE) {
+  const centre = pixelToHex(x, y, size);
+  const rings = Math.max(0, Math.ceil(r / (size * 1.5)));
+  const out = [];
+  for (const h of range(centre, rings)) {
+    if (h.q === centre.q && h.r === centre.r) { out.push(h); continue; }
+    const p = hexToPixel(h.q, h.r, size);
+    if (Math.hypot(p.x - x, p.y - y) <= r) out.push(h);
+  }
+  return out;
+}
+
 // The six corner points (pixel offsets from a hex centre) for drawing a pointy-top
 // hex. Corners are at 30° + 60°·i so the flat sides face left/right.
 export function hexCorners(size = HEX_SIZE) {
