@@ -16,7 +16,62 @@
 
 import { CATEGORIES } from './categories.js';
 
-const TURN_RATE = 4.0;            // guided-missile steering rate (rad/s)
+const TURN_RATE = 4.0;            // fallback guided steering rate (rad/s) for a round with no speed
+
+// ── Homing steering (#77) ────────────────────────────────────────────────────────────────
+// A guided round's turn rate is DERIVED from its speed so it can always corner within a fixed
+// radius: turn = speed / HOMING_TURN_RADIUS. The old fixed 4 rad/s cap meant a fast missile
+// (streak pod at 440 px/s) had a ~110px turn radius and would orbit / corkscrew a target it got
+// close to — it literally could not turn tight enough. Pinning the radius instead (clamped) lets
+// every missile bank onto its target the same way regardless of speed. Feel/tuning levers.
+const HOMING_TURN_RADIUS = 64;   // px — the turn radius every guided round is tuned to corner within
+const HOMING_TURN_MIN = 3.2;     // rad/s floor (very slow rounds still steer deliberately)
+const HOMING_TURN_MAX = 9.0;     // rad/s ceiling (very fast rounds don't snap-track instantly)
+
+// The steering rate a guided round of the given speed should fly with (see above).
+export function homingTurnRate(speed) {
+  return Math.max(HOMING_TURN_MIN, Math.min(HOMING_TURN_MAX, speed / HOMING_TURN_RADIUS));
+}
+
+// Proportional-navigation-style lead: the bearing a round at (px,py) flying at `speed` should aim
+// to INTERCEPT a target at (tx,ty) moving (tvx,tvy) — i.e. where the target will be when the round
+// arrives, not where it is now. Pure pursuit (aim at the current position) makes a missile trail a
+// crossing target and curve in lazily from behind; leading the intercept makes it commit to a clean
+// converging line. Solves |target + vel·t − shooter| = speed·t for the earliest positive t; if there
+// is no solution (target faster than the round, or stationary) it falls back to the direct bearing.
+export function leadAngle(px, py, speed, tx, ty, tvx = 0, tvy = 0) {
+  const rx = tx - px, ry = ty - py;
+  const a = tvx * tvx + tvy * tvy - speed * speed;
+  const b = 2 * (rx * tvx + ry * tvy);
+  const c = rx * rx + ry * ry;
+  let t = -1;
+  if (Math.abs(a) < 1e-6) {
+    if (Math.abs(b) > 1e-6) t = -c / b;
+  } else {
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      for (const cand of [(-b - sq) / (2 * a), (-b + sq) / (2 * a)]) {
+        if (cand > 0 && (t < 0 || cand < t)) t = cand;
+      }
+    }
+  }
+  if (!(t > 0) || !Number.isFinite(t)) return Math.atan2(ry, rx);
+  return Math.atan2(ry + tvy * t, rx + tvx * t);
+}
+
+// Shortest distance from point (px,py) to the segment (ax,ay)→(bx,by). Used for SWEPT hit
+// detection (#77): a fast round can move farther than the hit radius in one frame and tunnel
+// clean through a target if you only test its end position — testing the whole step segment
+// against the target catches the pass-through.
+export function segmentPointDistance(ax, ay, bx, by, px, py) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
 const CLUSTER_SPACING = 6;        // lateral px between rounds in a dumbfire cluster
 const STREAM_SPACING = 5;         // default lateral px between parallel lanes of a multi-stream weapon (Repeater)
 const DEFAULT_SPREAD_DEG = 16;    // fan width for a spread weapon that omits spreadAngle
@@ -222,7 +277,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     weaponId: weapon.id,
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,
-    homing: d.guidance === 'homing', turn: TURN_RATE,
+    // Turn rate is derived from speed (#77) so the round can always corner within a fixed radius
+    // instead of orbiting a target it's too fast to turn onto. Arcing lobs override `speed` after
+    // this (firing.js) and re-derive `turn` from the new speed.
+    homing: d.guidance === 'homing', turn: homingTurnRate(speed),
     // Flight-personality wobble — see wobbleKind(). `wobbleOffset` is the last-applied
     // lateral nudge (kept so the trail/art can read where the round visually is).
     wobble, wobblePhase, wobbleOffset: 0, wobbleTime: 0,

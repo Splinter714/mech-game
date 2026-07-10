@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions } from './delivery.js';
+import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions, homingTurnRate, leadAngle, segmentPointDistance } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -143,6 +143,59 @@ describe('kinematics', () => {
     expect(rounds.every((p) => p.wobble === 'sway')).toBe(true);
     const phases = rounds.map((p) => p.wobblePhase);
     expect(new Set(phases).size).toBeGreaterThan(1); // independent phases, not one shared value
+  });
+});
+
+describe('homing steering (#77)', () => {
+  it('derives turn rate from speed so the turn radius stays bounded', () => {
+    // radius = speed / turn ≈ constant across speeds (until the clamps bite).
+    const rSlow = 300 / homingTurnRate(300);
+    const rFast = 440 / homingTurnRate(440);
+    expect(rSlow).toBeCloseTo(rFast, 0);         // same corner radius regardless of speed
+    expect(rFast).toBeLessThan(120);             // far tighter than the old fixed-4-rad/s ~110px orbit
+  });
+
+  it('turn rate is clamped to sane bounds', () => {
+    expect(homingTurnRate(10)).toBeGreaterThanOrEqual(3.2);   // floor
+    expect(homingTurnRate(100000)).toBeLessThanOrEqual(9.0);  // ceiling
+  });
+
+  it('leadAngle aims AHEAD of a crossing target, not at its current position', () => {
+    // Round at origin flying right; target above moving right (crossing). The intercept bearing
+    // must lead — point further along +x than the straight bearing to the target's current spot.
+    const direct = Math.atan2(200, 300);                       // bearing to current pos
+    const lead = leadAngle(0, 0, 500, 300, 200, 120, 0);       // target moving +x at 120
+    expect(lead).toBeLessThan(direct);                         // aims lower/ahead of current pos
+  });
+
+  it('leadAngle degrades to the direct bearing for a stationary target', () => {
+    expect(leadAngle(0, 0, 500, 300, 200, 0, 0)).toBeCloseTo(Math.atan2(200, 300), 6);
+  });
+
+  it('a homing round CONVERGES on a crossing target instead of orbiting it', () => {
+    // Simulate a streak-pod-speed missile chasing a target that crosses its path. With the
+    // derived turn rate + intercept lead it should close to a hit, not settle into an orbit.
+    const speed = 440;
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 99999 });
+    p.arc = false;                                   // isolate the seeker from the arc blend
+    const tgt = { x: 300, y: 60, vx: 90, vy: 0 };    // crossing left→right
+    let minDist = Infinity;
+    for (let i = 0; i < 400; i++) {
+      tgt.x += tgt.vx * 0.016; tgt.y += tgt.vy * 0.016;
+      const desired = leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, tgt.vx, tgt.vy);
+      stepProjectile(p, 0.016, desired);
+      minDist = Math.min(minDist, Math.hypot(p.x - tgt.x, p.y - tgt.y));
+      if (minDist < 32) break;
+    }
+    expect(minDist).toBeLessThan(32);                // reaches hit radius — converges, doesn't orbit
+    void speed;
+  });
+
+  it('segmentPointDistance catches a fast round that tunnels past the target in one step', () => {
+    // A round steps from (-40,0) to (40,0) in one frame; the target sits at (0,0). The END points
+    // are 40px away (would miss a 32px hit test), but the SWEPT segment passes through it.
+    expect(segmentPointDistance(-40, 0, 40, 0, 0, 0)).toBeCloseTo(0, 6);
+    expect(Math.hypot(40, 0)).toBeGreaterThan(32);   // end-point test alone would have missed
   });
 });
 

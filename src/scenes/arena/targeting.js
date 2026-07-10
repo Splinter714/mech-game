@@ -4,18 +4,19 @@
 //    to a forward point at the LIVE most-aimed enemy's range (`aimEnemy`) — or CONVERGE_DIST when
 //    none — so shots land where the turret points. Purely geometric; decoupled from the lock so a
 //    blind lock behind cover never drags laser convergence around.
-//  • Indirect-fire lock (missiles, lobs): the enemy nearest the aim *line* is charged amber→red
-//    over LOCK_TIME; once red the lock MAINTAINS — it survives the target leaving the cone / LOS
+//  • Indirect-fire lock (missiles, lobs): the enemy the player clearly MEANS (pickLockCandidate:
+//    angular offset blended with proximity, plus stickiness) is charged amber→red over LOCK_TIME;
+//    once red the lock MAINTAINS — it survives the target leaving the cone / LOS
 //    being broken for LOCK_MAINTAIN seconds (refreshed whenever we have LOS). While blind, homing/
 //    arcing rounds arc onto the target's last-known + dead-reckoned predicted position. The pure
 //    lifecycle lives in data/targetlock.js so it's unit-tested; here we feed it the live queries.
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import Phaser from 'phaser';
-import { stepLock, dropLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
+import { stepLock, dropLock, isFullLock, predictedTarget, pickLockCandidate } from '../../data/targetlock.js';
 import { CONVERGE_DIST, convergedFireAngle } from './shared.js';
 
-const ACQUIRE_CONE = 0.35;        // radians half-angle to grab a new lock candidate
 const ASSIST_RANGE = 620;         // px the enemy must be within to lock / stay locked
+// The acquire cone + candidate scoring/stickiness now live in data/targetlock.js (unit-tested).
 
 export const TargetingMixin = {
   // Advance the indirect-fire lock (#62) plus the separate live convergence reference:
@@ -28,17 +29,22 @@ export const TargetingMixin = {
     const aimOff = (e) => Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - this.py, e.x - this.px) - this.turretAngle));
     const inRange = (e) => !e.mech.isDestroyed() && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE;
 
-    // Live most-aimed enemy (convergence): nearest the aim line, in range, no cone gate needed —
-    // convergence just wants "whatever I'm pointing closest to." Also serves as the lock candidate
-    // when it falls inside the ACQUIRE cone.
+    // Two derived things from the same sweep:
+    //  • aimEnemy (convergence): nearest the aim LINE, in range, no cone gate — direct fire just
+    //    wants "whatever I'm pointing closest to."
+    //  • cand (lock candidate, #77): chosen by pickLockCandidate, which blends angular offset with
+    //    PROXIMITY (so a near roughly-aimed enemy beats a distant dead-centred one) and gives the
+    //    current lock a small stickiness discount (so a tiny aim jitter never flicks the pick).
     let aimE = null, aimOffBest = Infinity;
+    const cands = [];
     for (const e of this.enemies) {
       if (!inRange(e)) continue;
       const off = aimOff(e);
       if (off < aimOffBest) { aimOffBest = off; aimE = e; }
+      cands.push({ handle: e, ang: off, dist: Math.hypot(e.x - this.px, e.y - this.py) });
     }
     this.aimEnemy = aimE;
-    const cand = aimE && aimOffBest < ACQUIRE_CONE ? aimE : null;
+    const cand = pickLockCandidate(cands, this.lock.enemy, ASSIST_RANGE);
 
     // Feed the pure lock state machine. The current locked target's validity + LOS + live position
     // are computed here (Phaser side) and handed in; the transitions/prediction live in targetlock.js.
