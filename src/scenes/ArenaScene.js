@@ -120,6 +120,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
+    // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
+    // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
+    this._impactPool = [];
+    this._impactRR = 0;
+    this._impactSoundAt = {};
+    this._lastBurst = null;
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
     this._initSalvage();                  // #65: SCRAP pickups dropped by destroyed enemies
     this.scene.launch('HudScene');
