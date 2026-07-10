@@ -287,6 +287,23 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   };
 }
 
+// Resolve a homing round's live steering aimpoint for THIS frame from its `seekTarget` handle
+// (regression guard for the "missiles hit where the target WAS" bug — #77 follow-up). Two shapes:
+//   • a LIVE target handle — `{ x, y, vx, vy, mech }`, the same mutable object the arena keeps
+//     updating in place every frame (an enemy record, or the enemy's `playerTarget`). Calling this
+//     fresh each frame re-reads its CURRENT x/y/vx/vy, so a round steers at where the target IS
+//     right now, not where it was when the round spawned.
+//   • a FIXED point — a plain `{ x, y }` with no `.mech` (a blind-fire dead-reckoned last-known +
+//     predicted position). No velocity to lead with; it's just steered toward directly.
+// Returns `{ x, y, vx, vy, alive }` — `alive: false` means the live target died mid-flight, and the
+// caller should stop homing (a dead target doesn't retarget to the nearest enemy).
+export function resolveSeekPoint(seekTarget) {
+  if (!seekTarget) return null;
+  if (!seekTarget.mech) return { x: seekTarget.x, y: seekTarget.y, vx: 0, vy: 0, alive: true };
+  if (seekTarget.mech.isDestroyed()) return { x: seekTarget.x, y: seekTarget.y, vx: 0, vy: 0, alive: false };
+  return { x: seekTarget.x, y: seekTarget.y, vx: seekTarget.vx || 0, vy: seekTarget.vy || 0, alive: true };
+}
+
 // Advance a round one frame. `desiredAngle` (radians) is where a guided round should steer
 // — the arena passes the bearing to its live target, the Lab passes straight-ahead;
 // `null` (or a non-homing round) flies ballistically.

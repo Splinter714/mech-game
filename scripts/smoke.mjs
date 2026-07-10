@@ -157,10 +157,18 @@ try {
       projHit = spawned && totalHp() < hp0;
     }
 
-    // #77: a homing missile CONNECTS with a MOVING target (guards the tracking fix). Fire a
-    // seeker at the live enemy while it strafes perpendicular to the shot; with the derived turn
-    // rate + intercept lead + swept hit detection it must curve on and land damage. arc/maxDist are
-    // overridden to isolate the SEEKER from the lob-apex distance gate (feel of the arc is playtest).
+    // #77 / #77-followup: a homing missile CONNECTS with a MOVING target AND keeps tracking it
+    // live rather than steering at where it was when fired. Fire through the REAL lock system —
+    // a full (red), non-blind lock on e0, exactly what `_lockAimPoint()` reads in real play —
+    // instead of handing `_spawnProjectile` the live enemy object directly via `seekOverride`;
+    // that shortcut would exercise the round's tracking machinery but never the lock→seekTarget
+    // wiring where the actual bug lived (`_lockAimPoint()` was returning a frozen `{x,y}` snapshot
+    // taken at spawn instead of the live enemy handle, so every homing round flew at the target's
+    // launch-instant position and increasingly missed a moving target — no amount of good turn-rate/
+    // intercept math could compensate for steering at a stale point). With the derived turn rate +
+    // intercept lead + swept hit detection + live-tracked lock aimpoint, the round must curve onto
+    // the target's CURRENT position each frame and land damage. arc/maxDist are overridden to
+    // isolate the SEEKER from the lob-apex distance gate (feel of the arc is playtest).
     let homingHit = false;
     {
       const hp0 = totalHp();
@@ -169,13 +177,19 @@ try {
       e0.vx = Math.cos(bearing + Math.PI / 2) * 70;   // strafe across the missile's path
       e0.vy = Math.sin(bearing + Math.PI / 2) * 70;
       a.projectiles.length = 0;
-      const m = a._spawnProjectile({ weapon: homingWeapon }, a.px, a.py, bearing, 'player', 0, e0);
+      a.lock.enemy = e0; a.lock.progress = 1; a.lock.maintain = 3; a.lock.blind = false;
+      const m = a._spawnProjectile({ weapon: homingWeapon }, a.px, a.py, bearing, 'player');
       m.arc = false; m.maxDist = 6000;
+      // seekTarget must be the LIVE enemy handle (carries `.mech`), never a detached {x,y} copy —
+      // this is the exact shape distinction _updateProjectiles uses to decide "keep following it"
+      // vs. "steer at this fixed point," so asserting it here guards the fix directly.
+      const seekIsLiveHandle = m.seekTarget === e0 && !!m.seekTarget.mech;
       for (let i = 0; i < 240 && a.projectiles.length; i++) {
         e0.x += e0.vx * 0.016; e0.y += e0.vy * 0.016;
         a._updateProjectiles(0.016);
       }
-      homingHit = totalHp() < hp0;
+      homingHit = seekIsLiveHandle && totalHp() < hp0;
+      a._dropLock();
       e0.x = px; e0.y = py; e0.vx = 0; e0.vy = 0;      // restore the dummy for the tests below
       a.projectiles.length = 0;
     }
