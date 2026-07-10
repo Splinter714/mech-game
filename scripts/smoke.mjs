@@ -282,6 +282,11 @@ try {
     // force the delayed _startNextStage() through immediately so this stays a synchronous test.
     const runStartedAtStageZero = a.run?.stageIndex === 0 && a.run?.status === 'active';
     const enemyCountBeforeAdvance = a.enemies.length;
+    // #81: snapshot the terrain + the player's exact position BEFORE the stage advance so we
+    // can prove the regenerated map is actually a different layout and the player was never
+    // teleported (px/py untouched — they keep driving from wherever they finished).
+    const terrainBefore = [...a.terrain.entries()];
+    const pxBefore = a.px, pyBefore = a.py;
     a._advanceRun();
     const stageAdvanced = a.run?.stageIndex === 1 && a.run?.status === 'active';
     // _advanceRun scheduled _startNextStage on a timer; fire it immediately so the smoke test
@@ -289,6 +294,15 @@ try {
     a._startNextStage();
     const newStageHasMission = a.mission?.status === 'active';
     const newStageHasSquad = a.enemies.length > 0;
+    // #81: the regenerated map must (a) actually differ from the previous stage's terrain,
+    // (b) leave the player's position untouched (no teleport), and (c) never leave the
+    // player standing on impassable terrain (the safe-clear zone follows them).
+    const terrainAfter = new Map(a.terrain);
+    let terrainDiffs = 0;
+    for (const [k, id] of terrainBefore) if (terrainAfter.get(k) !== id) terrainDiffs++;
+    const mapRegenerated = terrainDiffs > 0;
+    const playerPositionUnchanged = a.px === pxBefore && a.py === pyBefore;
+    const playerNotStranded = !a._blocked(a.px, a.py) && !a._isWall(a.px, a.py);
 
     // #72: soft cover — own-hex transparency + destructible/burnable trees, end to end.
     // Plant the biome's soft-cover terrain (forest/scrub/…) on known-clear ground near the
@@ -402,6 +416,9 @@ try {
       stageAdvanced,
       newStageHasMission,
       newStageHasSquad,
+      mapRegenerated,
+      playerPositionUnchanged,
+      playerNotStranded,
       runEndedOnDeath,
       currencyBankedOnDeath,
       salvagePickedUp,
@@ -457,6 +474,12 @@ try {
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
   if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
+  // #81: stage advance regenerates a FRESH map (not just a new objective in the same terrain),
+  // and the player continues from wherever they finished — no teleport, and never stranded on
+  // impassable ground once the safe-clear zone follows them to their actual position.
+  if (!arena.mapRegenerated) fail('#81 stage advance did not regenerate the terrain (layout was unchanged)');
+  if (!arena.playerPositionUnchanged) fail('#81 stage advance moved the player (should continue from where they finished, no teleport)');
+  if (!arena.playerNotStranded) fail('#81 the player ended up on impassable terrain after the map regenerated');
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
   // #65: a salvage pickup adds straight into the live run currency total.
