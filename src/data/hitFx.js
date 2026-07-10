@@ -1,18 +1,17 @@
 // Pure coalescing/throttle helpers for concentrated-fire hit feedback (#76). No Phaser here:
-// the ArenaScene owns the actual Text objects, impact circles and audio triggers — these
-// functions only DECIDE whether fresh feedback is warranted given recent activity. That lets
-// the pathological "4 Repeaters into one heavy mech" case (many hits/frame at essentially one
-// point) collapse into a bounded number of Text objects, circles and sounds, while ordinary
-// fire (hits spaced out in time / space) is left completely untouched.
+// the ArenaScene owns the actual impact circles and audio triggers — these functions only
+// DECIDE whether fresh feedback is warranted given recent activity. That lets the pathological
+// "4 Repeaters into one heavy mech" case (many hits/frame at essentially one point) collapse
+// into a bounded number of circles and sounds, while ordinary fire (hits spaced out in time /
+// space) is left completely untouched.
 //
-// The windows are deliberately short — a hair over one 60fps frame for bursts, ~7 frames for
-// the rising damage total — so the merging only ever triggers under genuinely concentrated
-// fire, never at a normal weapon's cadence.
-
-// Damage floats on ONE enemy that land within this window merge into a single rising total,
-// instead of spawning a fresh Text per hit. ~7 frames: long enough to catch a torrent, short
-// enough that separate volleys still pop their own number.
-export const FLOAT_COALESCE_MS = 110;
+// The windows are deliberately short — a hair over one 60fps frame — so the merging only ever
+// triggers under genuinely concentrated fire, never at a normal weapon's cadence.
+//
+// #83 removed the floating damage NUMBER display entirely, which also removed this module's
+// damage-float coalescing helper (`shouldMergeFloat`/`FLOAT_COALESCE_MS`) — it had no other
+// caller. The impact-burst and sound-throttle helpers below are unrelated to damage-number
+// display and stay fully intact.
 
 // Impact bursts at ~the same point within this window collapse to one (skip the later burst's
 // circles). Just over one frame — near-simultaneous hits at a point look identical anyway.
@@ -36,13 +35,6 @@ export function allowByKey(last, id, now, minGapMs) {
   if (prev !== undefined && now - prev < minGapMs) return false;
   last[id] = now;
   return true;
-}
-
-// Should a fresh damage number MERGE into an enemy's active float rather than spawn a new Text?
-// True when there is a live float whose most recent hit was within `windowMs` of `now`. `active`
-// is the per-enemy float record ({ lastHit, ... }) or a falsy value when none is live.
-export function shouldMergeFloat(active, now, windowMs = FLOAT_COALESCE_MS) {
-  return !!active && (now - active.lastHit) < windowMs;
 }
 
 // Should an impact burst be SKIPPED because an essentially-identical one just happened at the

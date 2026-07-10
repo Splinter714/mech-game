@@ -4,7 +4,7 @@
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DAMAGEABLE } from './shared.js';
-import { SOUND_THROTTLE_MS, allowByKey, shouldMergeFloat, skipImpactBurst } from '../../data/hitFx.js';
+import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -29,7 +29,8 @@ export const CombatMixin = {
     // weapons), not on continuous health — so only pay the 9-texture procedural rebuild when
     // this hit actually broke a part. Reskinning on every hit was the main combat lag source.
     if (res.destroyed) reskinMech(this, 'playerMech', this.mech);
-    this._floatText(this.px, this.py - 20, `-${dmg}`, '#e2533a');
+    // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
+    // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     // #64: death feedback only — the run mixin (_updateRun, polled every frame) is what
     // actually ends the run and drives the delayed return to the garage, so there's exactly
@@ -99,9 +100,8 @@ export const CombatMixin = {
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke
     // (that's the only damage state the art shows), not on every single hit.
     if (isMech && res.destroyed) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
-    // #76: coalesce the per-hit damage number — under concentrated fire, accumulate a rising
-    // running total on one floating Text per enemy instead of spawning a fresh Text every hit.
-    this._damageFloat(e, x, y, damage, res.destroyed ? '#e2533a' : '#ffd56b');
+    // #83: no floating damage number on enemy hits either — damage still applies above (res),
+    // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (e.mech.isDestroyed()) {
       e.view.setAlpha(0.5);
@@ -119,29 +119,6 @@ export const CombatMixin = {
   _floatText(x, y, s, color) {
     const t = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '14px', color }).setOrigin(0.5);
     this.tweens.add({ targets: t, y: y - 26, alpha: 0, duration: 700, onComplete: () => t.destroy() });
-  },
-
-  // #76: a coalescing damage number, one live float per enemy. Fast successive hits accumulate a
-  // rising running total on the SAME Text (restarting its rise-and-fade) instead of spawning a
-  // new Text per hit — bounding the object churn under concentrated fire. Once the float's
-  // rise-and-fade completes (no hits for the tween's duration) it's cleared and the next hit
-  // pops a fresh number, so normal spaced-out fire looks exactly as before.
-  _damageFloat(e, x, y, amount, color) {
-    const now = this.time.now;
-    const f = e._dmgFloat;
-    if (f && f.text.active && shouldMergeFloat(f, now)) {
-      f.total += amount;
-      f.lastHit = now;
-      f.text.setText(`${f.total}`).setColor(color);
-      f.tween.restart();   // reset the rise + fade so the growing total stays visible
-      return;
-    }
-    const t = this.add.text(x, y, `${amount}`, { fontFamily: 'monospace', fontSize: '14px', color }).setOrigin(0.5);
-    const tw = this.tweens.add({
-      targets: t, y: y - 26, alpha: 0, duration: 700,
-      onComplete: () => { t.destroy(); if (e._dmgFloat && e._dmgFloat.text === t) e._dmgFloat = null; },
-    });
-    e._dmgFloat = { text: t, total: amount, lastHit: now, tween: tw };
   },
 
   // #76: capped, recycled pool of impact-flash circles. Reuse a freed circle when available;
