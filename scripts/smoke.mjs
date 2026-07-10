@@ -9,6 +9,7 @@ import { chromium } from 'playwright';
 import { resolveDevServerUrl } from './dev-server-url.mjs';
 import { hexToPixel } from '../src/data/hexgrid.js';
 import { RUN_CURRENCY_KEY } from '../src/data/events.js';
+import { WEAPONS } from '../src/data/weapons.js';
 
 // Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
 // weapon range with terrain possibly between it and the origin. For the deterministic
@@ -93,7 +94,7 @@ try {
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
   }, { timeout: 20000 });
 
-  const arena = await page.evaluate((dummyPx) => {
+  const arena = await page.evaluate(({ dummyPx, homingWeapon }) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first (and at boot, only) enemy
@@ -141,6 +142,29 @@ try {
       const spawned = a.projectiles.length > 0;
       for (let i = 0; i < 60 && a.projectiles.length; i++) a._updateProjectiles(0.016);
       projHit = spawned && totalHp() < hp0;
+    }
+
+    // #77: a homing missile CONNECTS with a MOVING target (guards the tracking fix). Fire a
+    // seeker at the live enemy while it strafes perpendicular to the shot; with the derived turn
+    // rate + intercept lead + swept hit detection it must curve on and land damage. arc/maxDist are
+    // overridden to isolate the SEEKER from the lob-apex distance gate (feel of the arc is playtest).
+    let homingHit = false;
+    {
+      const hp0 = totalHp();
+      const bearing = Math.atan2(e0.y - a.py, e0.x - a.px);
+      const px = e0.x, py = e0.y;                 // remember to restore for later tests
+      e0.vx = Math.cos(bearing + Math.PI / 2) * 70;   // strafe across the missile's path
+      e0.vy = Math.sin(bearing + Math.PI / 2) * 70;
+      a.projectiles.length = 0;
+      const m = a._spawnProjectile({ weapon: homingWeapon }, a.px, a.py, bearing, 'player', 0, e0);
+      m.arc = false; m.maxDist = 6000;
+      for (let i = 0; i < 240 && a.projectiles.length; i++) {
+        e0.x += e0.vx * 0.016; e0.y += e0.vy * 0.016;
+        a._updateProjectiles(0.016);
+      }
+      homingHit = totalHp() < hp0;
+      e0.x = px; e0.y = py; e0.vx = 0; e0.vy = 0;      // restore the dummy for the tests below
+      a.projectiles.length = 0;
     }
 
     // Then fire everything and confirm per-part damage lands + destruction works.
@@ -337,6 +361,7 @@ try {
       oldSquadTornDown: !g.textures.exists(e0.key + '_turret') && !e0.view.active,
       onlineWeapons,
       projHit,
+      homingHit,
       collisionHolds,
       partDamaged: anyPartDamaged,
       dummyDead,
@@ -355,7 +380,7 @@ try {
       salvagePickedUp,
       s72,
     };
-  }, DUMMY_PX);
+  }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
 
   console.log(JSON.stringify({ garage, arena }, null, 2));
@@ -375,6 +400,7 @@ try {
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
+  if (!arena.homingHit) fail('#77 a homing missile did not track and hit a moving target');
   if (!arena.collisionHolds) fail('the mech drove through a wall or off the arena disc');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');
   if (!arena.partDamaged) fail('firing at the dummy did not apply per-part damage');

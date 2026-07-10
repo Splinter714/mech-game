@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeLock, stepLock, dropLock, isFullLock, predictedTarget,
-  LOCK_TIME, LOCK_MAINTAIN, LOCK_PREDICT_MAX,
+  pickLockCandidate, scoreCandidate,
+  LOCK_TIME, LOCK_MAINTAIN, LOCK_PREDICT_MAX, SWITCH_DWELL,
+  LOCK_PREDICT_MAX_SPEED, LOCK_PREDICT_MAX_DRIFT, ACQUIRE_CONE,
 } from './targetlock.js';
 
 const A = { id: 'a' };
@@ -61,11 +63,38 @@ describe('targetlock — maintain phase', () => {
     expect(lock.lastX).toBe(200);
   });
 
-  it('a full lock is NOT stolen by a fresh closer candidate', () => {
+  it('a full lock is not flicked to a fresh candidate by a single frame (#77 dwell)', () => {
     const lock = makeLock();
     chargeToFull(lock, A);
+    // One brief frame aiming at B is below SWITCH_DWELL → A is retained (anti-flicker).
     stepLock(lock, { dt: 0.1, cand: B, hasLos: true, targetPos: pos(0, 0), valid: true });
-    expect(lock.enemy).toBe(A);   // latched, B is ignored
+    expect(lock.enemy).toBe(A);
+  });
+
+  it('deliberately aiming at another enemy past SWITCH_DWELL hands the lock over (#77)', () => {
+    const lock = makeLock();
+    chargeToFull(lock, A);
+    // Keep aiming at B; the dwell accrues and once it clears SWITCH_DWELL the lock switches to B
+    // and RE-CHARGES from amber (progress back to 0) — the charge-up concept is preserved.
+    let switched = false;
+    for (let i = 0; i < 10; i++) {
+      stepLock(lock, { dt: SWITCH_DWELL / 3, cand: B, hasLos: true, targetPos: pos(0, 0), valid: true });
+      if (lock.enemy === B) { switched = true; break; }
+    }
+    expect(switched).toBe(true);
+    expect(lock.progress).toBeLessThan(1);   // handed over as a fresh amber charge, not instantly red
+  });
+
+  it('aiming back at the locked target resets the switch dwell (no accidental handover)', () => {
+    const lock = makeLock();
+    chargeToFull(lock, A);
+    // Aim at B for a bit (below dwell), then back at A → the challenge dwell must reset so a
+    // later brief B glance can't accumulate across the interruption into a stolen lock.
+    stepLock(lock, { dt: SWITCH_DWELL * 0.6, cand: B, hasLos: true, targetPos: pos(0, 0), valid: true });
+    stepLock(lock, { dt: 0.1, cand: A, hasLos: true, targetPos: pos(0, 0), valid: true });
+    expect(lock.challengeTime).toBe(0);
+    stepLock(lock, { dt: SWITCH_DWELL * 0.6, cand: B, hasLos: true, targetPos: pos(0, 0), valid: true });
+    expect(lock.enemy).toBe(A);   // the two 0.6·dwell glances don't add up because A reset it
   });
 
   it('goes blind and bleeds the maintain window when LOS is broken', () => {
@@ -116,6 +145,67 @@ describe('targetlock — dead-reckoned blind fire', () => {
     // Capped at LOCK_PREDICT_MAX regardless of age.
     const capped = predictedTarget(lock, 999);
     expect(capped.x).toBeCloseTo(100 + 20 * LOCK_PREDICT_MAX, 5);
+  });
+});
+
+describe('targetlock — candidate scoring & pick (#77)', () => {
+  const RANGE = 620;
+  it('picks the enemy under the reticle: proximity beats a distant dead-centred one', () => {
+    // Near, slightly off-axis vs. far, dead-centred. The player means the near one.
+    const near = { handle: A, ang: 0.12, dist: 160 };
+    const far = { handle: B, ang: 0.0, dist: 600 };
+    expect(pickLockCandidate([near, far], null, RANGE)).toBe(A);
+  });
+
+  it('a well-centred near enemy still beats a wildly off-axis near one', () => {
+    const centred = { handle: A, ang: 0.02, dist: 200 };
+    const offAxis = { handle: B, ang: 0.28, dist: 200 };
+    expect(pickLockCandidate([centred, offAxis], null, RANGE)).toBe(A);
+  });
+
+  it('gates candidates outside the acquire cone', () => {
+    const outOfCone = { handle: A, ang: ACQUIRE_CONE + 0.05, dist: 100 };
+    expect(pickLockCandidate([outOfCone], null, RANGE)).toBe(null);
+  });
+
+  it('stickiness holds the incumbent through a tiny jitter but yields to a clear aim-off', () => {
+    // Two near-equal candidates; the incumbent (A) wins by its sticky discount.
+    const a = { handle: A, ang: 0.10, dist: 200 };
+    const b = { handle: B, ang: 0.09, dist: 200 };
+    expect(pickLockCandidate([a, b], A, RANGE)).toBe(A);
+    // But when the player clearly aims at B (A now far off-axis), B wins despite A's stickiness.
+    const aOff = { handle: A, ang: 0.27, dist: 200 };
+    const bOn = { handle: B, ang: 0.03, dist: 200 };
+    expect(pickLockCandidate([aOff, bOn], A, RANGE)).toBe(B);
+  });
+
+  it('scoreCandidate is lower (better) for closer / more-centred targets', () => {
+    expect(scoreCandidate(0.0, 100, 620)).toBeLessThan(scoreCandidate(0.0, 500, 620));
+    expect(scoreCandidate(0.05, 200, 620)).toBeLessThan(scoreCandidate(0.25, 200, 620));
+  });
+});
+
+describe('targetlock — blind prediction clamps (#77)', () => {
+  it('clamps the reckoned velocity to a sane mech speed', () => {
+    const lock = makeLock();
+    lock.lastX = 0; lock.lastY = 0; lock.lastVx = 4000; lock.lastVy = 0;   // absurd velocity
+    const p = predictedTarget(lock, LOCK_PREDICT_MAX);
+    // Even at max horizon the drift is capped by (clamped speed × time), not the raw 4000.
+    expect(p.x).toBeLessThanOrEqual(LOCK_PREDICT_MAX_SPEED * LOCK_PREDICT_MAX + 1e-6);
+  });
+
+  it('caps how far the predicted point may drift from last-known', () => {
+    const lock = makeLock();
+    lock.lastX = 0; lock.lastY = 0; lock.lastVx = LOCK_PREDICT_MAX_SPEED; lock.lastVy = 0;
+    const p = predictedTarget(lock, LOCK_PREDICT_MAX);
+    const drift = Math.hypot(p.x - lock.lastX, p.y - lock.lastY);
+    expect(drift).toBeLessThanOrEqual(LOCK_PREDICT_MAX_DRIFT + 1e-6);
+  });
+
+  it('a modest, in-bounds prediction is unchanged', () => {
+    const lock = makeLock();
+    lock.lastX = 100; lock.lastY = 0; lock.lastVx = 40; lock.lastVy = 0;
+    expect(predictedTarget(lock, 0.5)).toEqual({ x: 120, y: 0 });
   });
 });
 

@@ -2,7 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
-import { stepProjectile } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
@@ -79,7 +79,18 @@ export const ProjectilesMixin = {
           p.turn = p.turn * blend;
         }
       }
-      stepProjectile(p, dt, homingActive ? Math.atan2(hy - p.y, hx - p.x) : null);
+      // Steer toward an INTERCEPT point (#77): lead a live moving enemy so the round commits to a
+      // clean converging line instead of trailing it and curving in lazily. A fixed blind-lob point
+      // has no velocity, so leadAngle degrades to the straight bearing there.
+      let desiredAngle = null;
+      if (homingActive) {
+        const st = p.seekTarget;
+        const tvx = st && st.mech ? (st.vx || 0) : 0;
+        const tvy = st && st.mech ? (st.vy || 0) : 0;
+        desiredAngle = leadAngle(p.x, p.y, p.speed, hx, hy, tvx, tvy);
+      }
+      const prevX = p.x, prevY = p.y;   // #77: for swept hit detection (fast rounds can tunnel)
+      stepProjectile(p, dt, desiredAngle);
       if (restoreTurn != null) p.turn = restoreTurn;
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if
       // that wall is a destructible outpost — or #72 a soft-cover hex — the round chips its HP
@@ -99,7 +110,9 @@ export const ProjectilesMixin = {
           continue;
         }
       }
-      const toTarget = targetGone ? Infinity : Math.hypot(p.x - tx, p.y - ty);
+      // Swept distance (#77): closest approach of THIS step's segment to the target, not just the
+      // end point — so a fast round that passes clean through the target in one frame still detonates.
+      const toTarget = targetGone ? Infinity : segmentPointDistance(prevX, prevY, p.x, p.y, tx, ty);
       const landed = p.dist >= p.maxDist;
       if (toTarget < HIT_RADIUS || landed) {
         p.dead = true;

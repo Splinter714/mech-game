@@ -3,7 +3,7 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions, homingTurnRate } from '../../data/delivery.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
@@ -256,6 +256,9 @@ export const FiringMixin = {
       round.speed = speed;
       round.vx = Math.cos(angle) * speed;
       round.vy = Math.sin(angle) * speed;
+      // #77: turn rate follows speed (see makeProjectile) — re-derive it for the lob's real speed
+      // so a fast far-range arc still corners onto the target instead of orbiting it.
+      if (round.homing) round.turn = homingTurnRate(round.speed);
     }
     if (owner === 'player') round.homing = round.homing && !!seekTarget;
     // Swarm Rack simultaneous-arrival (#49): nudge this shot's speed by how much farther
