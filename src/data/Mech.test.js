@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Mech } from './Mech.js';
+import { ABILITY_SLOTS } from './anatomy.js';
 
 // Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
 // melee category, which has no live entry in the registry anymore. Inject a test-only
@@ -48,9 +49,9 @@ describe('Mech build completeness (deploy gating)', () => {
     const m = new Mech({ chassisId: 'light' });
     expect(m.isComplete()).toBe(false);                 // empty build
     m.mount('leftArm', 'pulseLaser');
-    m.mount('rightArm', 'pulseLaser');
+    m.mount('rightArm', 'beamLaser');
     m.mount('leftTorso', 'autocannon');
-    m.mount('rightTorso', 'autocannon');
+    m.mount('rightTorso', 'machineGun');
     expect(m.isComplete()).toBe(false);                 // centre torso still empty
     m.mount('centerTorso', 'jumpJet');
     expect(m.isComplete()).toBe(true);                  // all five filled
@@ -232,6 +233,63 @@ describe('Mech.boostHealth (#69 deploy survivability buffer — must not compoun
     }
 
     expect(m.parts.centerTorso.maxArmor).toBe(Math.round(baseArmor * 100));
+  });
+});
+
+describe('Mech mounting: one copy of a weapon at a time (#84)', () => {
+  it('mounting an already-mounted weapon into a new slot MOVES it, not duplicates it', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'autocannon');
+    expect(m.mounts.leftArm).toEqual(['autocannon']);
+
+    const res = m.mount('rightArm', 'autocannon');
+    expect(res.ok).toBe(true);
+    expect(m.mounts.leftArm).toEqual([]);          // old slot vacated
+    expect(m.mounts.rightArm).toEqual(['autocannon']); // new slot holds it
+    // Exactly one location holds it, never two.
+    const holders = ['leftArm', 'rightArm', 'leftTorso', 'rightTorso'].filter(
+      (loc) => m.mounts[loc].includes('autocannon'),
+    );
+    expect(holders).toEqual(['rightArm']);
+  });
+
+  it('the moved weapon keeps a fresh magazine (ammo array stays in sync with the move)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'autocannon');
+    m.mount('rightArm', 'autocannon');
+    expect(m.ammo.leftArm).toEqual([]);
+    expect(m.ammo.rightArm).toHaveLength(1);
+  });
+
+  it('locationOf reports where an item currently lives, or null if unmounted', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    expect(m.locationOf('autocannon')).toBeNull();
+    m.mount('leftTorso', 'autocannon');
+    expect(m.locationOf('autocannon')).toBe('leftTorso');
+    m.mount('rightTorso', 'autocannon');
+    expect(m.locationOf('autocannon')).toBe('rightTorso');
+  });
+
+  it('re-mounting into the SAME slot it already occupies is a no-op move (stays put, no loss)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'autocannon');
+    m.mount('leftArm', 'autocannon');
+    expect(m.mounts.leftArm).toEqual(['autocannon']);
+  });
+
+  it('moving a weapon does not disturb an unrelated slot holding a different weapon', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'autocannon');
+    m.mount('leftTorso', 'pulseLaser');
+    m.mount('rightArm', 'autocannon');   // moves autocannon leftArm -> rightArm
+    expect(m.mounts.leftTorso).toEqual(['pulseLaser']);
+  });
+
+  it('abilities have only one mount point (centerTorso) so they cannot be duplicated across slots', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    expect(ABILITY_SLOTS).toEqual(['centerTorso']);
+    m.mount('centerTorso', 'jumpJet');
+    expect(m.locationOf('jumpJet')).toBe('centerTorso');
   });
 });
 

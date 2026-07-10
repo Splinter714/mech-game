@@ -118,9 +118,18 @@ export class Mech {
   // ── Mounting / build ──────────────────────────────────────────────────────
   canMount(loc, itemId) { return loadout.canMount(this._chassis, this.mounts, loc, itemId); }
 
+  // Which location (if any) currently holds `itemId`.
+  locationOf(itemId) { return loadout.locationOf(this.mounts, itemId); }
+
+  // Mount `itemId` into `loc`. An item only ever occupies ONE slot at a time (#84): if it's
+  // already mounted somewhere else, mounting it here MOVES it — the old slot is vacated
+  // rather than left with a duplicate. This only ever fires for weapons in practice (abilities
+  // have a single mount point — centerTorso — so they can't already be elsewhere).
   mount(loc, itemId) {
     const res = this.canMount(loc, itemId);
     if (res.ok) {
+      const prevLoc = this.locationOf(itemId);
+      if (prevLoc && prevLoc !== loc) this.unmount(prevLoc, this.mounts[prevLoc].indexOf(itemId));
       this.mounts[loc].push(itemId);
       this.ammo[loc].push(this._ammoCap(itemId));
     }
