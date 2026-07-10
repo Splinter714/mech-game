@@ -94,6 +94,21 @@ export function ring(center, n) {
   return out;
 }
 
+// Nearest hex to `start` (searched outward ring-by-ring) that satisfies the predicate
+// `ok(q, r)`. Returns the start hex itself when it already passes (distance 0), so an
+// already-valid spot is returned unchanged. Searches up to `maxSteps` rings outward and
+// returns the first passing hex on the innermost ring that has one; returns null if
+// nothing within range passes (the caller supplies a guaranteed fallback). Pure — the
+// predicate carries all the world knowledge (in-disc + passable), so this stays testable.
+export function nearestHex(start, ok, maxSteps = 40) {
+  for (let n = 0; n <= maxSteps; n++) {
+    for (const h of ring(start, n)) {
+      if (ok(h.q, h.r)) return { q: h.q, r: h.r };
+    }
+  }
+  return null;
+}
+
 // The six corner points (pixel offsets from a hex centre) for drawing a pointy-top
 // hex. Corners are at 30° + 60°·i so the flat sides face left/right.
 export function hexCorners(size = HEX_SIZE) {

@@ -12,6 +12,8 @@
 import {
   POWERUPS, DROP_CHANCE, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
+import { pixelToHex, hexToPixel, axialKey, nearestHex } from '../../data/hexgrid.js';
+import { isPassable } from '../../data/terrain.js';
 import { Audio } from '../../audio/index.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
@@ -32,10 +34,29 @@ export const PowerupsMixin = {
   spawnPowerup(x, y, typeId = pickPowerupType()) {
     const p = POWERUPS[typeId];
     if (!p) return null;
-    const view = this._makePowerupView(x, y, p);
-    const pk = { x, y, type: typeId, ttl: PICKUP_TTL, age: 0, view };
+    // #73: enemies (esp. flyers) can die over deep water, inside walls, or beyond the world
+    // edge, where the player can never walk to the drop. Relocate the collectible to the
+    // nearest REACHABLE ground so it's always collectible; the drop stays as close to the
+    // kill as possible.
+    const pos = this._reachableDropPos(x, y);
+    const view = this._makePowerupView(pos.x, pos.y, p);
+    const pk = { x: pos.x, y: pos.y, type: typeId, ttl: PICKUP_TTL, age: 0, view };
     this.powerups.push(pk);
     return pk;
+  },
+
+  // #73: snap a drop position to the nearest place the player can actually reach — inside the
+  // world disc and on passable ground (not deep water / impassable terrain / off-map). If the
+  // requested spot is already reachable it's returned unchanged; otherwise we search outward
+  // ring-by-ring from the death hex for the closest passable tile and use its centre. If (very
+  // unlikely) nothing passable is found nearby, fall back to the always-open world centre so a
+  // drop is NEVER stranded.
+  _reachableDropPos(x, y) {
+    if (this.terrain && this._blocked && !this._blocked(x, y)) return { x, y };
+    const start = pixelToHex(x, y);
+    const ok = (q, r) => isPassable(this.terrain?.get(axialKey(q, r)));
+    const hex = nearestHex(start, ok, (this.worldRadius ?? 20) * 2) ?? { q: 0, r: 0 };
+    return hexToPixel(hex.q, hex.r);
   },
 
   // Roll the drop chance and, on success, drop a powerup at an enemy's death position. Called
