@@ -79,7 +79,7 @@ describe('stepIndex', () => {
   });
 });
 
-describe('slotBindAction (catalog-first pad quick-mount/clear, #70)', () => {
+describe('slotBindAction (catalog-first pad quick-mount, never clears — #70)', () => {
   it('mounts the highlighted item into an empty slot', () => {
     expect(slotBindAction(null, 'autocannon')).toBe('mount');
   });
@@ -88,13 +88,13 @@ describe('slotBindAction (catalog-first pad quick-mount/clear, #70)', () => {
     expect(slotBindAction('laser', 'autocannon')).toBe('mount');
   });
 
-  it('clears (toggles off) when the slot already holds exactly the highlighted item', () => {
-    expect(slotBindAction('autocannon', 'autocannon')).toBe('clear');
+  it('is a no-op (never clears) when the slot already holds exactly the highlighted item', () => {
+    expect(slotBindAction('autocannon', 'autocannon')).toBe('none');
   });
 
   it('works for abilities the same way (L3 → centre-torso)', () => {
     expect(slotBindAction(null, 'jumpJet')).toBe('mount');
-    expect(slotBindAction('jumpJet', 'jumpJet')).toBe('clear');
+    expect(slotBindAction('jumpJet', 'jumpJet')).toBe('none');   // re-press keeps it mounted
   });
 
   it('does nothing when nothing is highlighted', () => {
