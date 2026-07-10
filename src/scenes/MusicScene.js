@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
+import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { Slider } from '../ui/slider.js';
 import { GROUPS, TRACK_OF, WAVE_PARAM, WAVES, WAVE_ABBR } from '../ui/musicTunerSpec.js';
 import { Audio } from '../audio/index.js';
@@ -36,6 +36,7 @@ export default class MusicScene extends Phaser.Scene {
     const mech = this.allMechs?.[ACTIVE_MECH_KEY];
     const canDeploy = mech instanceof Mech ? mech.isComplete() : false;
     buildTabBar(this, { active: 'MusicScene', canDeploy, onDeploy: () => this._deploy() });
+    attachPadTabCycle(this, 'MusicScene');   // SELECT cycles the top tabs (#70)
 
     Slider.attachDrag(this);
     this.body = this.add.container(0, 0);

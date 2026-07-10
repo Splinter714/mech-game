@@ -6,6 +6,11 @@
 // Usage (from a scene's create()):
 //   buildTabBar(this, { active: 'WeaponLabScene', onDeploy: () => this.deploy(), canDeploy });
 // Returns { height } so the caller can lay content out below it.
+//
+// Controller (#70): attachPadTabCycle(scene, active) — call ONCE per scene create() (not per
+// buildTabBar; the garage rebuilds its bar every refresh) — makes SELECT cycle to the next tab.
+
+import { PadEdges, PAD } from '../input/Controls.js';
 
 const TAB_UI = {
   bar: 0x12161d, barEdge: 0x2a333f,
@@ -21,6 +26,24 @@ const TABS = [
   { key: 'WEAPON LAB', scene: 'WeaponLabScene' },
   { key: 'MUSIC', scene: 'MusicScene' },
 ];
+
+// The scene key SELECT moves to from `active` (wrapping through TABS in order).
+export function nextTabScene(active, dir = 1) {
+  const i = TABS.findIndex((t) => t.scene === active);
+  const n = TABS.length;
+  return TABS[((i + dir) % n + n) % n].scene;
+}
+
+// Make the gamepad SELECT button cycle the tabs. Polls its own PadEdges on the scene's
+// update event (so it works in scenes without an update() method) and detaches on shutdown.
+export function attachPadTabCycle(scene, active) {
+  const edges = new PadEdges(scene);
+  const onUpdate = () => {
+    if (edges.pressed(PAD.SELECT)) scene.scene.start(nextTabScene(active));
+  };
+  scene.events.on('update', onUpdate);
+  scene.events.once('shutdown', () => scene.events.off('update', onUpdate));
+}
 
 // Draw the bar across the top of `scene`. `active` is the current scene key. `onDeploy` is
 // called when Deploy is clicked; `canDeploy` greys it out + makes it inert when false.
