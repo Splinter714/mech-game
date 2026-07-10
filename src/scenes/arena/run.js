@@ -1,17 +1,25 @@
 // Arena run mixin (#64) — wires the pure Run model (data/run.js) into the live arena: starts
 // or continues a run at create(), feeds the mission model a REAL playerDead signal now that
 // the deploy survivability buffer is tuned down, and sequences stage advance (mission
-// complete → fresh mission + a bigger/tougher squad in the SAME arena session) and run-over
-// (player destroyed OR final stage cleared → banner, bank currency, return to garage) after a
-// short beat so the banners read. Methods use `this` (the ArenaScene); composed onto the
+// complete → a FRESHLY REGENERATED map (#81) + a bigger/tougher squad in the SAME arena
+// session, continuing from wherever the player is — no teleport) and run-over (player
+// destroyed OR final stage cleared → banner, bank currency, return to garage) after a short
+// beat so the banners read. Methods use `this` (the ArenaScene); composed onto the
 // prototype via Object.assign, same as the other mixins.
 import { makeRun, advanceStage, endRunOnDeath, isRunOver, stageDescriptor } from '../../data/run.js';
 import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
+import { pixelToHex } from '../../data/hexgrid.js';
+import { pickFarObjective } from '../../data/worldgen.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
+// #81: a stage-advance objective must be at least this many hexes from the player's
+// continuing position — otherwise "the next standing outpost" could land right next to
+// where they're already standing, defeating the whole point of a freshly regenerated map.
+// Owner: tunable.
+const FAR_OBJECTIVE_MIN_DIST = 6;
 
 export const RunMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld()/_initMission() have set up the
@@ -67,19 +75,28 @@ export const RunMixin = {
   _startNextStage() {
     const desc = stageDescriptor(this.run.stageIndex);
 
-    // A fresh objective: the world's `buildingHp` map (hexKey → remaining HP) only holds
-    // outposts still STANDING — a destroyed one is deleted from it (world.js
-    // `_damageBuildingAt` collapses it to rubble permanently, no simple "repair"). So each
-    // stage claims the next still-standing outpost (sorted, same deterministic rule as
-    // _initMission) rather than re-using the one just destroyed. If the biome's original
-    // outposts have all been destroyed (a biome's outpost count can be less than STAGE_COUNT),
-    // seed a brand-new one (_spawnOutpostAt) so every stage always has an assault target.
-    let hexKeys = [...this.buildingHp.keys()].sort();
+    // #81: regenerate the WHOLE map fresh for this stage — a new seed, new river/lake/forest/
+    // outpost arrangement — instead of just picking a new objective inside the same terrain.
+    // The player is NOT teleported: the safe-clear zone (normally a fixed ring around world
+    // origin) is centred on wherever the mech actually is right now, so the fresh terrain can
+    // never strand it in a lake/wall, and it keeps driving from exactly where it finished (its
+    // own px/py are never touched here). The biome itself is unchanged — still set once per
+    // deploy — only the feature arrangement varies.
+    const playerHex = pixelToHex(this.px, this.py);
+    this._buildWorld(undefined, playerHex);
+
+    // A fresh objective: the just-rebuilt world's `buildingHp` map (hexKey → remaining HP)
+    // holds every outpost the new layout seeded. #81: bias the pick toward one that's
+    // actually FAR from the player's continuing position (pickFarObjective, data/worldgen.js)
+    // so reaching it takes a real drive across the new terrain, not a step to an adjacent hex.
+    // If the fresh layout somehow seeded no outposts at all, fall back to spawning one near
+    // the player (same fallback as before, just re-centred).
+    let hexKeys = [...this.buildingHp.keys()];
     if (!hexKeys.length) {
-      const fresh = this._spawnOutpostAt();
+      const fresh = this._spawnOutpostAt(playerHex.q, playerHex.r);
       hexKeys = fresh ? [fresh] : [];
     }
-    this.objectiveHex = hexKeys[0] ?? null;
+    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST);
     this.mission = makeMission(desc.missionTypeId);
     this.registry.set('mission', this.mission);
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }

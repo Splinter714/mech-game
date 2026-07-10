@@ -2,12 +2,13 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, range, axialKey, neighbors } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
-  isSoftCover, shotBlockedAt, flameCoverDamage,
+  shotBlockedAt, flameCoverDamage,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
+import { generateTerrain } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import { DUMMY_HEX } from './shared.js';
 
@@ -21,88 +22,48 @@ export const WorldMixin = {
   // outposts to roam through. Terrain is kept in `this.terrain` (hexKey → terrain id); collision,
   // line-of-sight, and the per-terrain speed penalty all read the data-table props. Building HP is
   // seeded into `this.buildingHp` (hexKey → hp) and the per-hex tile images are kept in
-  // `this.tileImages` so a destroyed outpost can swap its texture to rubble in place. Seeded so
-  // the layout is deterministic.
-  _buildWorld() {
+  // `this.tileImages` so a destroyed outpost can swap its texture to rubble in place.
+  //
+  // #81: this now RUNS AGAIN each stage advance (run.js `_startNextStage`), not just once at
+  // deploy — so the seed is a random draw by default (a NEW layout every call) rather than the
+  // old hardcoded `0x5eed` constant; pass an explicit `seed` to reproduce a layout (tests do
+  // this). The actual terrain-stamping algorithm is the pure `generateTerrain` (data/worldgen.js)
+  // so it's unit-testable without a scene; this method is just the thin Phaser-touching wrapper
+  // that turns the result into tile Images. `safeCenter` (default world origin, matching the
+  // original always-clear-the-centre behaviour) is the hex the spawn-safe zone clears around —
+  // stage advance passes the PLAYER'S continuing hex so the fresh terrain never strands the
+  // mech in a lake/wall (the player's px/py themselves are never touched — no teleport).
+  _buildWorld(seed = Math.floor(Math.random() * 0x100000000), safeCenter = { q: 0, r: 0 }) {
     this.worldRadius = 20;
-    const R = this.worldRadius;
-    const rng = mulberry32(0x5eed);
-    const all = range({ q: 0, r: 0 }, R);
-    const T = new Map();
     // The biome to build (set on the scene before create(), e.g. per deploy/stage #64). The role
     // → terrain-id mapping comes entirely from the biome data, so this generator never branches on
-    // which biome it is; swapping biomes just swaps the ids it stamps.
+    // which biome it is; swapping biomes just swaps the ids it stamps. #81: the biome stays fixed
+    // for the whole run (still chosen once per deploy) — only the feature ARRANGEMENT varies.
     const B = getBiome(this.biomeId ?? DEFAULT_BIOME);
     this.biome = B;
-    const groundAt = (h) => ((h.q + h.r) % 2 ? B.groundB : B.groundA);
-    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
 
-    // Base: a checkered open floor (grass / sand / snow / pavement / ash by biome).
-    for (const h of all) T.set(axialKey(h.q, h.r), groundAt(h));
+    // #81: a regenerate pass replaces the whole map — tear down the PREVIOUS pass's tile
+    // Images first so they don't pile up on the display list (the same leak #71 fixed for
+    // enemy views; a first-ever build has no `this.tileImages` yet).
+    if (this.tileImages) for (const img of this.tileImages.values()) img.destroy();
 
-    // Channel: a winding strip sweeping across the map — river / dry-bed / slush / road / lava-crust.
-    // Passable, non-LOS-blocking; slowing (or a fast lane in the city) per the terrain's own props.
-    if (B.hasChannel) {
-      for (let q = -R + 2; q <= R - 2; q++) {
-        const r = Math.round(7 * Math.sin(q * 0.26) + 3 * Math.sin(q * 0.11));
-        for (const dr of [0, 1]) { const k = axialKey(q, r + dr); if (T.has(k)) T.set(k, B.channel); }
-      }
-    }
+    const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
+    const { terrain, buildingHp: builtBuildingHp, coverHp } = generateTerrain({
+      seed, worldRadius: this.worldRadius, biome: B, safeCenter, extraClear: [dummyKey],
+    });
 
-    // A DEEP impassable blob off to one side (lake / mesa / ice / collapsed heap / lava pool),
-    // distinct from the channel. Grown as a blobby disc so its edge reads naturally; kept clear of
-    // the centre spawn area.
-    if (B.hasDeep) {
-      const deep = all[Math.floor(rng() * all.length)];
-      if (Math.hypot(hexToPixel(deep.q, deep.r).x, hexToPixel(deep.q, deep.r).y) > 6 * 48) {
-        for (const h of range(deep, 3)) {
-          const d = Math.max(Math.abs(h.q - deep.q), Math.abs(h.r - deep.r), Math.abs(h.q + h.r - deep.q - deep.r));
-          const k = axialKey(h.q, h.r);
-          if (T.has(k) && rng() < 1 - d * 0.28) T.set(k, B.deep);
-        }
-      }
-    }
-
-    // Cover clusters scattered across the field (seed + organic neighbour growth) — walk-through
-    // cover (forest / scrub / snowdrift / wreckage / fumarole). Density scales per biome.
-    for (let i = 0; i < Math.round(R * 2.2 * B.coverClusters); i++) {
-      const c = all[Math.floor(rng() * all.length)];
-      const k0 = axialKey(c.q, c.r);
-      if (!isGround(k0)) continue;
-      T.set(k0, B.cover);
-      for (const n of neighbors(c.q, c.r)) {
-        const k = axialKey(n.q, n.r);
-        if (isGround(k) && rng() < 0.6) T.set(k, B.cover);
-      }
-    }
-
-    // A few DESTRUCTIBLE outposts (building clusters) — hard cover. HP seeded below.
-    for (let i = 0; i < B.outposts; i++) {
-      const c = all[Math.floor(rng() * all.length)];
-      for (const h of [c, ...neighbors(c.q, c.r).filter(() => rng() < 0.55)]) {
-        const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, B.outpost);
-      }
-    }
-
-    // Clear the centre (spawns + line of fire) back to open ground.
-    for (const h of range({ q: 0, r: 0 }, 3)) T.set(axialKey(h.q, h.r), groundAt(h));
-    T.set('0,0', B.groundA);
-    T.set(axialKey(DUMMY_HEX.q, DUMMY_HEX.r), B.groundA);
-
-    this.terrain = T;
-    this.buildingHp = new Map();   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
+    this.terrain = terrain;
+    this.buildingHp = builtBuildingHp;   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
     // #72: destructible SOFT cover (forest/scrub/drift…) keeps its HP in a separate map so the
     // mission/run objective logic — which reads `buildingHp` as "the standing outposts" — never
     // designates a tree as an assault target. `_damageBuildingAt` chips/flattens both alike.
-    this.coverHp = new Map();      // hexKey → remaining HP for destructible soft-cover hexes
+    this.coverHp = coverHp;      // hexKey → remaining HP for destructible soft-cover hexes
     this.tileImages = new Map();   // hexKey → the tile Image, so a hex can be re-textured in place
-    for (const [k, id] of T) {
+    for (const [k, id] of this.terrain) {
       const [q, r] = k.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
       const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE);
       this.tileImages.set(k, img);
-      const hp = buildingHp(id);
-      if (hp > 0) (isSoftCover(id) ? this.coverHp : this.buildingHp).set(k, hp);
     }
   },
 
@@ -241,13 +202,3 @@ export const WorldMixin = {
     return null;
   },
 };
-
-// Small seeded PRNG (mulberry32) so the generated map is deterministic.
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
