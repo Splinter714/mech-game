@@ -104,7 +104,6 @@ export const CombatMixin = {
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (e.mech.isDestroyed()) {
-      e.view.setAlpha(0.5);
       this._floatText(e.x, e.y - 30, 'DESTROYED', '#e2533a');
       Audio.explosion(1.15);                   // catastrophic kill
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
@@ -113,6 +112,11 @@ export const CombatMixin = {
       // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
       // in data/shop.js) — independent roll from the powerup drop, same kill site.
       this._maybeDropSalvage?.(e.x, e.y);
+      // #87: clear the corpse shortly after the death beat lands instead of leaving it faded to
+      // alpha 0.5 and lingering in the world (previously only cleared at the NEXT stage advance's
+      // teardown, #71). ~650ms gives the DESTROYED float text (a 700ms tween) and explosion sound
+      // a beat to read before the sprite/textures are torn down and it drops out of `this.enemies`.
+      this.time.delayedCall(650, () => this._removeEnemy(e));
     }
   },
 

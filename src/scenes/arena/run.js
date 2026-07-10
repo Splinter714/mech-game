@@ -108,6 +108,7 @@ export const RunMixin = {
     // display list for the rest of the session, dragging the frame rate down as a run went on.
     for (const e of this.enemies) this._destroyEnemy(e);
     this.enemies = [];
+    this._enemiesSpawnedThisStage = 0;   // #87: fresh stage-total counter for the HUD's N/M
     this._spawnSquad(desc.squad);
 
     this._floatText(this.px, this.py - 40, desc.label, '#7bd17b');
