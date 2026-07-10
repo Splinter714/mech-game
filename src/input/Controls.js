@@ -1,5 +1,3 @@
-import Phaser from 'phaser';
-
 // Input abstraction. The arena reads an "intent" each frame — a world-space move vector
 // for the legs, an aim (mouse point OR right-stick direction) for the turret, and a held
 // flag per skill slot — instead of touching raw keys. Keyboard+mouse and a gamepad both
@@ -51,7 +49,12 @@ export class PadEdges {
   pressed(i) {
     const p = this.pad();
     const down = !!(p && p.buttons[i] && p.buttons[i].pressed);
-    const was = this.prev[i] || false;
+    // On the first poll of this index, seed the baseline to the current state so a
+    // button already held when this PadEdges is constructed (e.g. right after a scene
+    // transition) never registers as a fresh press. Real up→down transitions on later
+    // polls still fire normally.
+    const firstPoll = !(i in this.prev);
+    const was = firstPoll ? down : this.prev[i];
     this.prev[i] = down;
     return down && !was;
   }
