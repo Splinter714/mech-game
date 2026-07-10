@@ -63,11 +63,22 @@ try {
     sc.registry.set(RUN_CURRENCY_KEY, 0);
     sc._pickItem('shotgun');
     const lockedRejectsMount = !mech.mounts.rightArm.includes('shotgun') && !sc.unlocked.has('shotgun');
+    const orderBeforeUnlock = sc.list.cards.map((c) => c.id);
     // Fund the purchase, buy it, and confirm: SCRAP is spent, the id is now unlocked, AND it
     // can now actually be mounted (the lock, not just a UI skin, gated it).
     sc.registry.set(RUN_CURRENCY_KEY, 500);
     sc._pickItem('shotgun');
     const purchased = sc.unlocked.has('shotgun') && sc.registry.get(RUN_CURRENCY_KEY) < 500;
+    // #78 follow-up: the instant-unlock repaint must NOT reorder the list out from under the
+    // player — refreshLocks() only repaints the lock scrim in place. The card set should be
+    // untouched (same ids, same order) right after the purchase completes...
+    const orderRightAfterUnlock = sc.list.cards.map((c) => c.id);
+    const noReorderOnUnlock = JSON.stringify(orderRightAfterUnlock) === JSON.stringify(orderBeforeUnlock);
+    // ...but the NEXT natural rebuild (setIds — e.g. reselecting the slot) re-sorts against the
+    // live lock state, so the newly-unlocked item settles into its canonical unlocked position.
+    sc.list.setIds(sc._eligibleIds(sc.selected));
+    const orderAfterRebuild = sc.list.cards.map((c) => c.id);
+    const reordersOnNextRebuild = orderAfterRebuild.indexOf('shotgun') < orderRightAfterUnlock.indexOf('shotgun');
     sc._pickItem('shotgun');   // now unlocked — this click mounts it into the still-selected slot
     const unlockedMounts = mech.mounts.rightArm.includes('shotgun');
     mech.unmount('rightArm', 0);
@@ -82,6 +93,8 @@ try {
       deployable: mech.isComplete(),
       lockedRejectsMount,
       purchased,
+      noReorderOnUnlock,
+      reordersOnNextRebuild,
       unlockedMounts,
     };
   }, RUN_CURRENCY_KEY);
@@ -397,6 +410,10 @@ try {
   if (!garage.lockedRejectsMount) fail('#65 a locked item mounted (or unlocked) without being purchased');
   if (!garage.purchased) fail('#65 purchasing a locked item did not spend SCRAP and unlock it');
   if (!garage.unlockedMounts) fail('#65 an unlocked item still could not be mounted');
+  // #78 follow-up: the lock-overlay repaint on purchase must not yank the card out from under
+  // the player; the re-sort only happens on the next natural rebuild (setIds).
+  if (!garage.noReorderOnUnlock) fail('#78 the catalog reordered the instant a purchase unlocked an item');
+  if (!garage.reordersOnNextRebuild) fail('#78 the catalog never re-sorted a newly-unlocked item on the next rebuild');
   if (!arena.hullTex || !arena.dummyTex) fail('arena mech textures missing');
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
