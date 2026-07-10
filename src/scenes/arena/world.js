@@ -4,7 +4,8 @@
 import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, range, axialKey, neighbors } from '../../data/hexgrid.js';
 import {
-  getTerrain, terrainSpeedFactor, isPassable, blocksLOS, buildingHp, damageBuilding, rubbleFor,
+  getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
+  isSoftCover, shotBlockedAt, flameCoverDamage,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { Audio } from '../../audio/index.js';
@@ -89,7 +90,11 @@ export const WorldMixin = {
     T.set(axialKey(DUMMY_HEX.q, DUMMY_HEX.r), B.groundA);
 
     this.terrain = T;
-    this.buildingHp = new Map();   // hexKey → remaining HP for destructible (building) hexes
+    this.buildingHp = new Map();   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
+    // #72: destructible SOFT cover (forest/scrub/drift…) keeps its HP in a separate map so the
+    // mission/run objective logic — which reads `buildingHp` as "the standing outposts" — never
+    // designates a tree as an assault target. `_damageBuildingAt` chips/flattens both alike.
+    this.coverHp = new Map();      // hexKey → remaining HP for destructible soft-cover hexes
     this.tileImages = new Map();   // hexKey → the tile Image, so a hex can be re-textured in place
     for (const [k, id] of T) {
       const [q, r] = k.split(',').map(Number);
@@ -97,7 +102,7 @@ export const WorldMixin = {
       const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE);
       this.tileImages.set(k, img);
       const hp = buildingHp(id);
-      if (hp > 0) this.buildingHp.set(k, hp);
+      if (hp > 0) (isSoftCover(id) ? this.coverHp : this.buildingHp).set(k, hp);
     }
   },
 
@@ -107,10 +112,26 @@ export const WorldMixin = {
     return this.terrain.get(axialKey(h.q, h.r));
   },
 
+  // The hex key under a world point — the identity used for own-hex transparency (#72).
+  _hexKeyAt(x, y) {
+    const h = pixelToHex(x, y);
+    return axialKey(h.q, h.r);
+  },
+
   // Does a world point block line-of-sight (cover / projectile blocker)? Forest + buildings do;
   // open grass, river, and deep water do not (you can shoot over water and rubble).
-  _isWall(x, y) {
-    return blocksLOS(this._terrainAt(x, y));
+  // #72: `transparent` (optional Set of hex keys) lists hexes that are see-through for THIS
+  // ray — the shooter's muzzle hex and the target's own hex — so soft cover never protects its
+  // own occupant. Solid cover blocks regardless (the pure rule lives in terrain.js).
+  _isWall(x, y, transparent = null) {
+    const k = this._hexKeyAt(x, y);
+    return shotBlockedAt(this.terrain.get(k), k, transparent);
+  },
+
+  // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's
+  // hex is see-through (soft cover only — `shotBlockedAt` keeps solid cover blocking).
+  _losTransparency(x0, y0, x1, y1) {
+    return new Set([this._hexKeyAt(x0, y0), this._hexKeyAt(x1, y1)]);
   },
 
   // Is a world point impassable for the mech — non-passable terrain, or off the arena disc?
@@ -124,25 +145,30 @@ export const WorldMixin = {
     return terrainSpeedFactor(this._terrainAt(x, y));
   },
 
-  // Deal `amount` damage to the destructible outpost at a world point (weapon fire or a stomp).
-  // No-op on non-building hexes. On destruction the hex collapses to rubble: terrain + collision
-  // + LOS all update, the tile is re-textured, and a debris/explosion FX plays. Returns true iff
-  // this hit destroyed the building (so callers can react, e.g. a bigger boom).
-  _damageBuildingAt(x, y, amount) {
+  // Deal `amount` damage to the destructible terrain at a world point (weapon fire or a stomp) —
+  // a solid outpost (buildingHp) or, #72, a soft-cover hex (coverHp). No-op elsewhere. Flame
+  // damage (`opts.flame`) is multiplied against soft cover (terrain.js flameCoverDamage) so
+  // incendiaries clear woods fast. On destruction the hex flattens to its biome rubble: terrain
+  // + collision + LOS all update, the tile is re-textured, and a debris FX plays (a lighter one
+  // for soft cover). Returns true iff this hit destroyed the hex (so callers can react).
+  _damageBuildingAt(x, y, amount, opts = {}) {
     const h = pixelToHex(x, y);
     const k = axialKey(h.q, h.r);
-    if (!this.buildingHp.has(k)) return false;
-    const { hp, destroyed } = damageBuilding(this.buildingHp.get(k), amount);
-    if (!destroyed) { this.buildingHp.set(k, hp); return false; }
+    const store = this.buildingHp.has(k) ? this.buildingHp : (this.coverHp.has(k) ? this.coverHp : null);
+    if (!store) return false;
+    const soft = store === this.coverHp;
+    if (soft && opts.flame) amount = flameCoverDamage(amount);
+    const { hp, destroyed } = damageBuilding(store.get(k), amount);
+    if (!destroyed) { store.set(k, hp); return false; }
     // Collapse to rubble: swap the terrain data (movement + LOS now read the biome's rubble) and
     // texture. `rubbleFor` maps this outpost to its biome-appropriate debris (data-driven).
-    this.buildingHp.delete(k);
+    store.delete(k);
     const rub = rubbleFor(this.terrain.get(k));
     this.terrain.set(k, rub);
     const img = this.tileImages.get(k);
     if (img) img.setTexture(getTerrain(rub).tex);
     const { x: cx, y: cy } = hexToPixel(h.q, h.r);
-    this._outpostCollapseFx(cx, cy);
+    this._outpostCollapseFx(cx, cy, soft);
     return true;
   },
 
@@ -156,14 +182,15 @@ export const WorldMixin = {
   },
 
   // Debris + fireball when an outpost is flattened (#41): a bright flash, an expanding shock ring,
-  // and a scatter of dust/rubble chunks flung outward, plus a heavy explosion cue.
-  _outpostCollapseFx(x, y) {
-    Audio.explosion(1.0);
-    const flash = this.add.circle(x, y, 6, 0xffe6a0, 0.9);
-    this.tweens.add({ targets: flash, scale: 4, alpha: 0, duration: 220, onComplete: () => flash.destroy() });
-    const ring = this.add.circle(x, y, 8).setStrokeStyle(3, 0xff9a3c, 0.8);
-    this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
-    for (let i = 0; i < 12; i++) {
+  // and a scatter of dust/rubble chunks flung outward, plus a heavy explosion cue. #72: soft cover
+  // (a forest hex burning/chewed down) plays a lighter version — quieter cue, smaller flash/ring.
+  _outpostCollapseFx(x, y, soft = false) {
+    Audio.explosion(soft ? 0.45 : 1.0);
+    const flash = this.add.circle(x, y, 6, 0xffe6a0, soft ? 0.6 : 0.9);
+    this.tweens.add({ targets: flash, scale: soft ? 2.5 : 4, alpha: 0, duration: 220, onComplete: () => flash.destroy() });
+    const ring = this.add.circle(x, y, 8).setStrokeStyle(3, 0xff9a3c, soft ? 0.5 : 0.8);
+    this.tweens.add({ targets: ring, scale: soft ? 3 : 5, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
+    for (let i = 0; i < (soft ? 7 : 12); i++) {
       const ang = Math.random() * Math.PI * 2;
       const dist = 18 + Math.random() * 34;
       const chunk = this.add.rectangle(x, y, 3 + Math.random() * 4, 3 + Math.random() * 4, 0x64615a);
@@ -176,11 +203,13 @@ export const WorldMixin = {
   },
 
   // Distance from a muzzle along an angle to the first wall, or Infinity if clear within
-  // `maxT`. Used so beams/shots are blocked by cover.
-  _wallDistance(x0, y0, angle, maxT) {
+  // `maxT`. Used so beams/shots are blocked by cover. #72: pass a `transparent` hex-key Set
+  // (usually `_losTransparency(shooter, target)`) so each endpoint's own soft-cover hex
+  // doesn't block the ray.
+  _wallDistance(x0, y0, angle, maxT, transparent = null) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     for (let t = 8; t < maxT; t += 8) {
-      if (this._isWall(x0 + cx * t, y0 + cy * t)) return t;
+      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent)) return t;
     }
     return Infinity;
   },

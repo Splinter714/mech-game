@@ -184,8 +184,12 @@ export const FiringMixin = {
     }
     let hit = !!target;
     let endDist = hit ? t : Math.min(reach, 600);
-    // Cover: a wall between muzzle and target stops the beam short.
-    const wallT = this._wallDistance(muzzleX, muzzleY, angle, endDist);
+    // Cover: a wall between muzzle and target stops the beam short. #72 own-hex transparency:
+    // the muzzle's own hex (firing OUT of forest) and any living enemy's hex (a target standing
+    // IN forest) don't block the beam — only deeper soft cover and solid walls do.
+    const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY), this._hexKeyAt(this.px, this.py)]);
+    for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
+    const wallT = this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent);
     const blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
@@ -264,7 +268,12 @@ export const FiringMixin = {
       round.vx *= mult;
       round.vy *= mult;
     }
-    const pushed = { ...round, owner, trail: [], seekTarget };
+    // #72 own-hex transparency for the SHOOTER: remember which hex(es) this round was born in —
+    // the muzzle's hex plus the shooter's body hex (the muzzle sits ~a part-length ahead of the
+    // mech's centre, so back-project along the fire angle). A unit standing inside soft cover
+    // can then fire OUT without its own round detonating on its own hex.
+    const originHexes = [this._hexKeyAt(x, y), this._hexKeyAt(x - Math.cos(angle) * 24, y - Math.sin(angle) * 24)];
+    const pushed = { ...round, owner, trail: [], seekTarget, originHexes };
     this.projectiles.push(pushed);
     return pushed;
   },

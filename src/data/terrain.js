@@ -6,6 +6,18 @@
 //                 only meaningful for passable terrain)
 //   destructible — outposts have HP and turn into `rubble` when destroyed (weapon fire or a
 //                 mech stomp). `hp` is the starting hit points seeded per building hex.
+//
+// #72 soft cover: terrain that is BOTH passable and LOS-blocking (forest/scrub/drift/wreck/
+// fumarole) is "soft cover" — a unit can stand inside it. Two special rules apply, both driven
+// purely by the passable+blocksLOS combination (no extra flag to keep in sync):
+//   1. Own-hex transparency: a soft-cover hex does NOT protect its own occupant — shots treat
+//      the target's (and the shooter's muzzle's) own hex as see-through (`shotBlockedAt`).
+//      Deeper soft-cover hexes between shooter and target still block. Solid cover always blocks.
+//   2. Destructible + burnable: soft cover has HP (less than an outpost's 60) so gunfire chews
+//      firing lanes through it, and FLAME damage (flamethrower gouts, napalm ground fire) is
+//      multiplied by FLAME_COVER_MULT so incendiaries are the premier forest-clearing tool.
+//      At 0 HP the hex flattens to its biome's cleared/rubble terrain (`rubbleId`), same
+//      machinery as a collapsing outpost.
 // Adding a terrain type is one entry here + a matching texture. (Future: an external,
 // possibly AI-generated, tileset can register more here.) See issue #41.
 
@@ -17,7 +29,7 @@ export const TERRAIN = {
   // Deep water (lake/ocean): impassable; still shoot over it (no LOS block).
   deepWater: { id: 'deepWater', tex: 'hex_deepWater', passable: false, blocksLOS: false },
   // Forest: walk-through cover — passable but slowing, and it hides you (blocks LOS).
-  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: 0.6 },
+  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 40, rubbleId: 'rubble' },
   // Outpost building: hard cover you can DESTROY (weapon fire or a stomp) → collapses to rubble.
   building:  { id: 'building',  tex: 'hex_building',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'rubble' },
   // Rubble: what a destroyed building leaves behind — passable, no cover, mild slow (debris).
@@ -31,7 +43,7 @@ export const TERRAIN = {
   // Mesa: a natural rock butte — the impassable deep-water analog, but it ALSO blocks LOS (tall).
   mesa:      { id: 'mesa',      tex: 'hex_mesa',      passable: false, blocksLOS: true },
   // Scrub: sparse desert brush — walk-through cover (passable + slowing + blocks LOS), like forest.
-  scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: 0.7 },
+  scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: 0.7,  destructible: true, hp: 30, rubbleId: 'sandRubble' },
   // Adobe outpost: destructible hard cover, the desert building.
   adobe:     { id: 'adobe',     tex: 'hex_adobe',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'sandRubble' },
   sandRubble:{ id: 'sandRubble',tex: 'hex_sandRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
@@ -44,7 +56,7 @@ export const TERRAIN = {
   // Ice: solid frozen lake — the impassable deep-water analog (you can shoot over it).
   ice:       { id: 'ice',       tex: 'hex_ice',       passable: false, blocksLOS: false },
   // Snowdrift / frozen pines: walk-through cover (passable + slowing + LOS block).
-  drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: 0.6 },
+  drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 30, rubbleId: 'snowRubble' },
   // Frozen outpost: destructible hard cover.
   iceRuin:   { id: 'iceRuin',   tex: 'hex_iceRuin',   passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'snowRubble' },
   snowRubble:{ id: 'snowRubble',tex: 'hex_snowRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
@@ -57,7 +69,7 @@ export const TERRAIN = {
   // Collapsed tower: an impassable+LOS-blocking heap (the deep-water/mesa analog for the city).
   collapsed: { id: 'collapsed', tex: 'hex_collapsed', passable: false, blocksLOS: true },
   // Wreckage: burned-out vehicles / low wall — walk-through cover (passable + slow + LOS).
-  wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: 0.65 },
+  wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 40, rubbleId: 'cityRubble' },
   // Intact building: destructible hard cover (dense in this biome).
   tower:     { id: 'tower',     tex: 'hex_tower',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'cityRubble' },
   cityRubble:{ id: 'cityRubble',tex: 'hex_cityRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
@@ -70,7 +82,7 @@ export const TERRAIN = {
   // Molten lava: impassable hazard (the deep-water analog); you can shoot over it.
   lava:      { id: 'lava',      tex: 'hex_lava',      passable: false, blocksLOS: false },
   // Ash dunes / smoke plumes: walk-through cover (passable + slow + LOS block).
-  fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: 0.65 },
+  fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 30, rubbleId: 'ashRubble' },
   // Obsidian outpost: destructible hard cover.
   obsidian:  { id: 'obsidian',  tex: 'hex_obsidian',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'ashRubble' },
   ashRubble: { id: 'ashRubble', tex: 'hex_ashRubble', passable: true,  blocksLOS: false, speedFactor: 0.8 },
@@ -124,6 +136,32 @@ export const RUBBLE = 'rubble';
 export function rubbleFor(id) {
   const t = id && TERRAIN[id];
   return (t && t.rubbleId) || RUBBLE;
+}
+
+// #72: soft cover — walk-through concealment (forest/scrub/drift/wreck/fumarole). Purely the
+// passable+blocksLOS combination; there is no separate flag to keep in sync. Unknown ⇒ false.
+export function isSoftCover(id) {
+  const t = id && TERRAIN[id];
+  return !!t && t.passable && t.blocksLOS;
+}
+
+// #72 own-hex transparency: does terrain `id` at hex `key` stop a shot, given a Set of hex
+// keys treated as see-through for THIS shot (the shooter's muzzle hex + the target's own hex)?
+// Soft cover doesn't protect its own occupant — a shot may enter/impact within an exempted
+// soft-cover hex — but SOLID cover (buildings, mesa) blocks regardless of exemption, and
+// non-exempted soft-cover hexes between shooter and target still block ("deep woods").
+export function shotBlockedAt(id, key, transparent = null) {
+  if (!blocksLOS(id)) return false;
+  if (transparent && transparent.has(key) && isSoftCover(id)) return false;
+  return true;
+}
+
+// #72 burnable cover: flame damage (flamethrower gouts, napalm rounds + ground fire) is
+// multiplied against SOFT cover so incendiaries clear woods much faster than gunfire.
+// Owner: tunable. Solid outposts take flame damage unmultiplied.
+export const FLAME_COVER_MULT = 4;
+export function flameCoverDamage(amount) {
+  return amount * FLAME_COVER_MULT;
 }
 
 // Apply `amount` damage to a building hex's current `hp`. Pure: returns the remaining hp and
