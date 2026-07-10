@@ -4,7 +4,7 @@ import { Mech } from '../data/Mech.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs } from '../data/save.js';
 import { MECH_DEPLOYED } from '../data/events.js';
-import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
+import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
 import { Slider } from '../ui/slider.js';
@@ -37,6 +37,7 @@ export default class WeaponLabScene extends Phaser.Scene {
     const mech = this.allMechs?.[ACTIVE_MECH_KEY];
     const canDeploy = mech instanceof Mech ? mech.isComplete() : false;
     buildTabBar(this, { active: 'WeaponLabScene', canDeploy, onDeploy: () => this._deploy() });
+    attachPadTabCycle(this, 'WeaponLabScene');   // SELECT cycles the top tabs (#70)
 
     Slider.attachDrag(this);
     this.selectedId = null;

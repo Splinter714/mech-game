@@ -6,6 +6,7 @@ import { getItem, isWeapon } from '../data/items.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../audio/sfxParams.js';
 import { scheduleFireCues } from '../audio/fireCues.js';
+import { stepIndex, scrollToShow } from './padNav.js';
 
 // Shared weapon/ability card list — the SINGLE implementation behind both the standalone
 // Weapon Lab tab and the garage catalog, so the two can't drift. It renders a scrollable
@@ -24,7 +25,7 @@ import { scheduleFireCues } from '../audio/fireCues.js';
 
 const UI = {
   panel: 0x161b22, panelEdge: 0x2a333f, panelSel: 0x1b2430, stage: 0x0b0e12,
-  text: '#c8d2dd', dim: '#7c8794', sel: 0xefc14a,
+  text: '#c8d2dd', dim: '#7c8794', sel: 0xefc14a, focus: 0x5ec8e0,
 };
 
 const CARD_H = 96;
@@ -52,6 +53,7 @@ export class WeaponCardList {
     this.region = { x, y, w, h };
     this._scrollY = 0;
     this._maxScroll = 0;
+    this._focus = -1;      // pad focus cursor (#70); -1 = none (the Weapon Lab never sets one)
     this.cards = [];
 
     this.root = scene.add.container(x, y);
@@ -105,11 +107,36 @@ export class WeaponCardList {
     for (const c of this.cards) this._paintSelection(c);
   }
 
+  // ── Pad focus cursor (#70) — optional; only the garage drives it. ──────────────────────
+  // setFocus(i) highlights card i (null/-1 clears) and auto-scrolls it into view; moveFocus
+  // steps it (clamped, no wrap — it's a scrolling list); focusedId() is what A / a slot bind
+  // acts on. setIds() clears the focus, so a refilter needs a fresh setFocus.
+
+  setFocus(i) {
+    this._focus = (i == null || i < 0 || !this.cards.length)
+      ? -1 : Math.min(this.cards.length - 1, i);
+    for (const c of this.cards) this._paintSelection(c);
+    if (this._focus >= 0) {
+      const top = this._focus * (CARD_H + CARD_GAP);
+      this._setScroll(scrollToShow(this._scrollY, top, CARD_H, this.region.h, this._maxScroll));
+    }
+  }
+
+  moveFocus(delta) {
+    if (!this.cards.length) return;
+    this.setFocus(this._focus < 0 ? 0 : stepIndex(this._focus, delta, this.cards.length, { wrap: false }));
+  }
+
+  focusedId() { return this.cards[this._focus]?.id ?? null; }
+
+  indexOfId(id) { return this.cards.findIndex((c) => c.id === id); }
+
   // Rebuild the card set (e.g. filtered to a slot's eligible items). Reuses nothing — cards
   // are cheap and this only fires on a slot change, not per frame.
   setIds(ids) {
     for (const c of this.cards) { c.container.destroy(); if (c._heldOn) Audio.stopHeld(c.id); }
     this.cards = [];
+    this._focus = -1;
     for (const id of ids) this._buildCard(getItem(id), id);
     this._scrollY = 0;
     this._layout();
@@ -192,8 +219,9 @@ export class WeaponCardList {
 
   _paintSelection(card) {
     const on = card.id === this.selectedId;
-    card.panel.setFillStyle(on ? UI.panelSel : UI.panel)
-      .setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
+    const focused = this._focus >= 0 && this.cards[this._focus] === card;
+    card.panel.setFillStyle(on || focused ? UI.panelSel : UI.panel)
+      .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : on ? UI.sel : UI.panelEdge);
   }
 
   _statLines(item, weapon) {
