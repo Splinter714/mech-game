@@ -12,10 +12,10 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import Phaser from 'phaser';
 import { stepLock, dropLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
+import { CONVERGE_DIST, convergedFireAngle } from './shared.js';
 
 const ACQUIRE_CONE = 0.35;        // radians half-angle to grab a new lock candidate
 const ASSIST_RANGE = 620;         // px the enemy must be within to lock / stay locked
-const CONVERGE_DIST = 450;        // px convergence range for direct fire when nothing is aimed at
 
 export const TargetingMixin = {
   // Advance the indirect-fire lock (#62) plus the separate live convergence reference:
@@ -119,9 +119,9 @@ export const TargetingMixin = {
   _fireAngle(w, m) {
     const d = w.weapon.delivery;
     if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') return this.turretAngle;
+    // Converge on a point at the aimed enemy's range (or CONVERGE_DIST when none), but floored
+    // to MIN_CONVERGE_DIST inside convergedFireAngle so point-blank can't cross the muzzles (#74).
     const dist = this.aimEnemy ? Math.hypot(this.aimEnemy.x - this.px, this.aimEnemy.y - this.py) : CONVERGE_DIST;
-    const cx = this.px + Math.cos(this.turretAngle) * dist;
-    const cy = this.py + Math.sin(this.turretAngle) * dist;
-    return Math.atan2(cy - m.y, cx - m.x);
+    return convergedFireAngle(this.px, this.py, this.turretAngle, dist, m.x, m.y);
   },
 };
