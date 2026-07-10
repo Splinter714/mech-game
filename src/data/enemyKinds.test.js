@@ -44,6 +44,20 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     }
   });
 
+  it('#75: every kind carries a positive per-kind display scale', () => {
+    for (const id of ENEMY_KIND_IDS) {
+      const s = ENEMY_KINDS[id].scale;
+      expect(typeof s, `${id} scale`).toBe('number');
+      expect(s, `${id} scale`).toBeGreaterThan(0);
+    }
+    // The retune (#75): tank + drone shrank below the old 1.15 global, helicopter nudged down,
+    // turret left at the old size — so the vehicles read at distinct, sensible sizes.
+    expect(ENEMY_KINDS.tank.scale).toBeLessThan(1.15);
+    expect(ENEMY_KINDS.drone.scale).toBeLessThan(1.15);
+    expect(ENEMY_KINDS.helicopter.scale).toBeLessThan(1.15);
+    expect(ENEMY_KINDS.turret.scale).toBe(1.15);
+  });
+
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
     expect(isEnemyKind('tank')).toBe(true);
     expect(isEnemyKind('helicopter')).toBe(true);

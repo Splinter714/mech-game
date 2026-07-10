@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makeRun, advanceStage, endRunOnDeath, isRunOver,
   stageDescriptor, squadForStage, currencyForStage, STAGE_COUNT,
+  EARLY_POOL, LATE_POOL,
 } from './run.js';
 
 describe('run model', () => {
@@ -79,21 +80,32 @@ describe('run model', () => {
   });
 
   it('later stages skew toward the tougher unit pool (statistically)', () => {
-    const EARLY_ONLY = new Set(['raider', 'skirmisher', 'turret', 'tank']);
-    const sample = (stageIndex, trials) => {
-      let lateCount = 0, total = 0;
+    // #75: helicopter is now in BOTH pools, so it can't discriminate the skew. Test each pool's
+    // EXCLUSIVE ids instead: at stage 0 (all EARLY_POOL) the LATE-exclusive ids never appear; at
+    // the final stage (all LATE_POOL) the EARLY-exclusive ids never appear.
+    const EARLY_EXCLUSIVE = new Set(EARLY_POOL.filter((id) => !LATE_POOL.includes(id)));
+    const LATE_EXCLUSIVE = new Set(LATE_POOL.filter((id) => !EARLY_POOL.includes(id)));
+    const fracIn = (stageIndex, set, trials) => {
+      let count = 0, total = 0;
       for (let t = 0; t < trials; t++) {
-        for (const id of squadForStage(stageIndex)) {
-          total++;
-          if (!EARLY_ONLY.has(id)) lateCount++;
-        }
+        for (const id of squadForStage(stageIndex)) { total++; if (set.has(id)) count++; }
       }
-      return lateCount / total;
+      return count / total;
     };
-    const earlyFrac = sample(0, 60);
-    const lateFrac = sample(STAGE_COUNT - 1, 60);
-    expect(earlyFrac).toBeLessThan(0.15);   // stage 0 should draw almost entirely from EARLY_POOL
-    expect(lateFrac).toBeGreaterThan(0.85); // final stage should draw almost entirely from LATE_POOL
+    // Stage 0 draws only EARLY_POOL → zero late-exclusive ids; final stage draws only LATE_POOL
+    // → zero early-exclusive ids. (Helicopter, the shared id, is excluded from both sets.)
+    expect(fracIn(0, LATE_EXCLUSIVE, 60)).toBeLessThan(0.05);
+    expect(fracIn(STAGE_COUNT - 1, EARLY_EXCLUSIVE, 60)).toBeLessThan(0.05);
+    // And the composition really does flip: early-exclusive dominates stage 0; late-exclusive the last.
+    expect(fracIn(0, EARLY_EXCLUSIVE, 60)).toBeGreaterThan(0.5);
+    expect(fracIn(STAGE_COUNT - 1, LATE_EXCLUSIVE, 60)).toBeGreaterThan(0.5);
+  });
+
+  it('#75: helicopters are in both stage pools so gunships appear across a whole run', () => {
+    expect(EARLY_POOL).toContain('helicopter');
+    expect(LATE_POOL).toContain('helicopter');
+    // Weighted heavier among the hard kinds (listed more than once in LATE_POOL).
+    expect(LATE_POOL.filter((id) => id === 'helicopter').length).toBeGreaterThan(1);
   });
 
   it('stageDescriptor bundles mission type, squad, and a display label', () => {

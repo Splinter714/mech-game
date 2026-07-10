@@ -21,7 +21,12 @@
 //   move       { maxSpeed, accel, turnRate, turretSlew } px/s + rad/s locomotion tuning.
 //   art        key into the vehicle-art registry (src/art/vehicles/) — builds this unit's textures.
 //   behavior   key into the AI-behavior registry (scenes/arena/enemyBehaviors.js) — its update fn.
-//   themeColor accent colour for its procedural art (faction read; hostile = warm reds/oranges).
+//   themeColor accent colour for its procedural art (the kind's "danger" glow on a WHITE body).
+//   scale      on-screen sprite size as a MULTIPLE of the arena mech scale (data-driven per #75;
+//              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
+//              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75):
+//              turret 1.15 (unchanged), tank 0.82 (was too big), drone 0.72 (was too big),
+//              helicopter 1.0 (nudged down from 1.15).
 
 export const ENEMY_KINDS = {
   // 1) TURRET / emplacement — static objective defender. No locomotion; a squat armoured base
@@ -43,6 +48,7 @@ export const ENEMY_KINDS = {
     art: 'turret',
     behavior: 'turret',
     themeColor: 0xd66a3a,
+    scale: 1.15,           // #75: emplacement reads fine at the old size — left as-is.
   },
 
   // 2) TANK — ground armour. Slow, heavy, tough frontal facing; a turreted main gun (direct
@@ -66,6 +72,7 @@ export const ENEMY_KINDS = {
     art: 'tank',
     behavior: 'tank',
     themeColor: 0xc65a34,
+    scale: 0.82,           // #75: was noticeably too big — shrunk to read as a compact tank.
   },
 
   // 3) DRONE — one unit of an infantry/drone SWARM. Cheap, small, fast, individually weak; a
@@ -87,6 +94,7 @@ export const ENEMY_KINDS = {
     art: 'drone',
     behavior: 'drone',
     themeColor: 0xe0b13a,
+    scale: 0.72,           // #75: was too big for a cheap swarm unit — shrunk so a pack reads as a cloud.
   },
 
   // 4) HELICOPTER / VTOL — fast flyer. Ignores ground cover entirely (flies over walls, forest,
@@ -110,6 +118,7 @@ export const ENEMY_KINDS = {
     art: 'helicopter',
     behavior: 'helicopter',
     themeColor: 0xcf4d4d,
+    scale: 1.0,            // #75: slightly too big — nudged down a touch from the 1.15 global.
   },
 };
 

@@ -20,8 +20,12 @@ export const STAGE_COUNT = 5;
 // openers), late stages draw mostly from LATE_POOL (snipers/artillery/tanks/helicopters/swarms
 // — the harder mech roles + toughest non-mech kinds). The mix is a straight lerp by stage
 // index so the curve is easy to eyeball and retune.
-const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'tank'];
-const LATE_POOL = ['sniper', 'artillery', 'helicopter', 'swarm'];
+// #75: gunships appear more often across a run. Helicopter is added to EARLY_POOL (so it can
+// show up even in early stages) AND listed twice in LATE_POOL (so it's weighted heavier among
+// the hard kinds). It's the only id shared by both pools — see run.test.js, which discriminates
+// the early/late skew on each pool's EXCLUSIVE ids, not on the shared helicopter.
+export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'tank', 'helicopter'];
+export const LATE_POOL = ['sniper', 'artillery', 'helicopter', 'helicopter', 'swarm'];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has
 // `SQUAD_BASE + Math.round(N * SQUAD_GROWTH)` units. 3 → 3,4,5,6,7 across 5 stages.
