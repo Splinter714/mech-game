@@ -2,7 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
-import { stepProjectile, leadAngle, segmentPointDistance } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
@@ -47,16 +47,17 @@ export const ProjectilesMixin = {
       const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
       const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
 
-      // Homing steers toward the round's seek target (the lock's aim point, captured at fire).
-      // The target is either a live enemy handle (follow it as it moves) OR a fixed point — a
-      // blind-lock's last-known/predicted position (#62), which has no `.mech` and is steered
-      // toward as a static aimpoint. A live enemy that dies mid-flight makes the round go dumb;
-      // it does not retarget to the nearest.
-      let hx = tx, hy = ty;
+      // Homing steers toward the round's seek target (the lock's aim point, stashed once at fire —
+      // firing.js). The target handle itself is either a LIVE enemy record (re-read fresh every
+      // frame via resolveSeekPoint, so the round follows it as it moves — the #77-followup fix: it
+      // must NOT be a position snapshot frozen at spawn) OR a fixed point — a blind-lock's
+      // last-known/predicted position (#62), which has no `.mech` and is steered toward as a static
+      // aimpoint. A live enemy that dies mid-flight makes the round go dumb; it does not retarget
+      // to the nearest.
+      let hx = tx, hy = ty, seekVx = 0, seekVy = 0;
       if (p.homing && p.seekTarget) {
-        const st = p.seekTarget;
-        if (!st.mech) { hx = st.x; hy = st.y; }                     // fixed point (blind lob)
-        else if (!st.mech.isDestroyed()) { hx = st.x; hy = st.y; }  // live enemy
+        const resolved = resolveSeekPoint(p.seekTarget);
+        if (resolved.alive) { hx = resolved.x; hy = resolved.y; seekVx = resolved.vx; seekVy = resolved.vy; }
         else p.homing = false;
       } else if (p.homing && !enemyShot) {
         p.homing = false;
@@ -84,10 +85,7 @@ export const ProjectilesMixin = {
       // has no velocity, so leadAngle degrades to the straight bearing there.
       let desiredAngle = null;
       if (homingActive) {
-        const st = p.seekTarget;
-        const tvx = st && st.mech ? (st.vx || 0) : 0;
-        const tvy = st && st.mech ? (st.vy || 0) : 0;
-        desiredAngle = leadAngle(p.x, p.y, p.speed, hx, hy, tvx, tvy);
+        desiredAngle = leadAngle(p.x, p.y, p.speed, hx, hy, seekVx, seekVy);
       }
       const prevX = p.x, prevY = p.y;   // #77: for swept hit detection (fast rounds can tunnel)
       stepProjectile(p, dt, desiredAngle);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions, homingTurnRate, leadAngle, segmentPointDistance } from './delivery.js';
+import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -196,6 +196,77 @@ describe('homing steering (#77)', () => {
     // are 40px away (would miss a 32px hit test), but the SWEPT segment passes through it.
     expect(segmentPointDistance(-40, 0, 40, 0, 0, 0)).toBeCloseTo(0, 6);
     expect(Math.hypot(40, 0)).toBeGreaterThan(32);   // end-point test alone would have missed
+  });
+});
+
+describe('resolveSeekPoint (#77 follow-up: live tracking, not a spawn-time snapshot)', () => {
+  // The bug: "missiles hit where the target was when they were fired, instead of continuing
+  // to track." A round's seekTarget must be re-read fresh from the live target handle every
+  // frame, not resolved once into a frozen {x,y} at spawn.
+  it('re-reads the CURRENT x/y of a live target handle each call, not its spawn-time position', () => {
+    const target = { x: 100, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
+    const atSpawn = resolveSeekPoint(target);
+    expect(atSpawn).toMatchObject({ x: 100, y: 0, alive: true });
+
+    // The target moves after the round has already spawned (mutated in place, exactly as the
+    // arena's enemy/playerTarget records are updated every frame).
+    target.x = 500; target.y = 300; target.vx = 40; target.vy = -20;
+    const later = resolveSeekPoint(target);
+    expect(later).toMatchObject({ x: 500, y: 300, vx: 40, vy: -20, alive: true });
+    expect(later).not.toMatchObject(atSpawn); // proves it's live, not a cached copy
+  });
+
+  it('a fixed blind-fire point (no .mech) is returned as-is with zero velocity', () => {
+    const point = { x: 42, y: -7 };
+    expect(resolveSeekPoint(point)).toEqual({ x: 42, y: -7, vx: 0, vy: 0, alive: true });
+  });
+
+  it('flags a live target as dead once its mech is destroyed, so the caller can stop homing', () => {
+    const target = { x: 10, y: 10, vx: 0, vy: 0, mech: { isDestroyed: () => true } };
+    expect(resolveSeekPoint(target).alive).toBe(false);
+  });
+
+  it('null seekTarget resolves to null (dumb-fire round, no lock)', () => {
+    expect(resolveSeekPoint(null)).toBeNull();
+  });
+
+  it('end-to-end: a homing round steers toward the target\'s CURRENT position at every step, ' +
+     'not the position it had when the round spawned', () => {
+    // A live target handle exactly like the arena's enemy record: a mutable object the "game
+    // loop" moves each frame, referenced by the round's seekTarget (not copied).
+    const target = { x: 300, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 99999 });
+    p.arc = false;
+
+    // Step 1: target hasn't moved yet — the round should steer straight at it.
+    let resolved = resolveSeekPoint(target);
+    let desired = leadAngle(p.x, p.y, p.speed, resolved.x, resolved.y, resolved.vx, resolved.vy);
+    expect(desired).toBeCloseTo(0, 6); // (300,0) from (0,0) is straight ahead
+
+    // Now the "game loop" moves the target far off its spawn line — well away from the spawn
+    // position AND from where a straight-ahead round would still be heading.
+    target.x = 300; target.y = 400;
+
+    // Re-resolving the SAME seekTarget reference must reflect the target's new position — this
+    // is the crux of the fix: a snapshot taken once at spawn (the bug) would still say y=0 here.
+    resolved = resolveSeekPoint(target);
+    expect(resolved.y).toBe(400); // live, not frozen at the spawn-time y=0
+
+    desired = leadAngle(p.x, p.y, p.speed, resolved.x, resolved.y, resolved.vx, resolved.vy);
+    expect(desired).toBeGreaterThan(0.5); // now steers well off the old straight-ahead bearing
+
+    // Drive the round for a while using resolveSeekPoint fresh every frame (as the arena does)
+    // and confirm it actually converges on the target's NEW position, proving live tracking end
+    // to end rather than merely proving the resolver's return value changed.
+    let minDist = Infinity;
+    for (let i = 0; i < 400; i++) {
+      const r = resolveSeekPoint(target);
+      const desiredAngle = leadAngle(p.x, p.y, p.speed, r.x, r.y, r.vx, r.vy);
+      stepProjectile(p, 0.016, desiredAngle);
+      minDist = Math.min(minDist, Math.hypot(p.x - target.x, p.y - target.y));
+      if (minDist < 32) break;
+    }
+    expect(minDist).toBeLessThan(32); // reaches the target's CURRENT (post-move) position
   });
 });
 

@@ -81,11 +81,19 @@ export const TargetingMixin = {
   // The point indirect (homing/arcing) player fire should seek this frame — only when the lock is
   // fully charged (red). While the holder has LOS it's the live target; while blind it's the
   // dead-reckoned last-known + predicted position, so rounds arc over cover onto it. Null = no lock.
+  //
+  // IMPORTANT: with LOS this returns the LIVE enemy handle itself (`e`, carrying `.mech`/`.x`/`.y`/
+  // `.vx`/`.vy`), not a `{x,y}` copy taken right now. A round's `seekTarget` is stashed once at
+  // spawn (firing.js) and then re-read every frame in _updateProjectiles (projectiles.js) — the
+  // `.mech` presence is exactly how that per-frame code tells "live enemy, keep following it" apart
+  // from "fixed point, a blind-fire dead-reckoned guess." Returning a fresh `{x,y}` snapshot here
+  // used to make every homing round steer at the target's spawn-instant position forever, even
+  // with a full unbroken LOS lock — the round would fly to where the target WAS, not where it IS.
   _lockAimPoint() {
     if (!isFullLock(this.lock)) return null;
     if (this.lock.blind) return predictedTarget(this.lock, this._lockBlindAge || 0);
     const e = this.lock.enemy;
-    return e && !e.mech.isDestroyed() ? { x: e.x, y: e.y } : predictedTarget(this.lock, this._lockBlindAge || 0);
+    return e && !e.mech.isDestroyed() ? e : predictedTarget(this.lock, this._lockBlindAge || 0);
   },
 
   // The closest living enemy to a point, within `maxDist` (default: any). Used for homing/hitscan
