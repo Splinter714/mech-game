@@ -226,9 +226,10 @@ export default class GarageScene extends Phaser.Scene {
 
   // A slot's fire bind (RT/LT/RB/LB, or L3 for the centre-torso ability): assign the
   // highlighted catalog item straight into that slot — "highlight the autocannon, pull RT to
-  // put it in the right arm." Re-pressing a bind while the slot already holds that exact item
-  // clears it. Invalid targets (ability into an arm, weapon into the ability slot, melee
-  // outside an arm) toast via _mountInto; a locked item routes to purchase.
+  // put it in the right arm." A bind always mounts/replaces and never removes; re-pressing
+  // a bind while the slot already holds that exact item is a no-op (it stays mounted, #70).
+  // Invalid targets (ability into an arm, weapon into the ability slot, melee outside an arm)
+  // toast via _mountInto; a locked item routes to purchase.
   _slotBind(loc) {
     const id = this.list.focusedId();
     if (id) this._quickMount(loc, id);
@@ -236,9 +237,9 @@ export default class GarageScene extends Phaser.Scene {
 
   _quickMount(loc, id) {
     if (!this.unlocked.has(id)) { this._purchase(id); return; }
-    const action = slotBindAction(this.mech.mounts[loc][0] ?? null, id);
-    if (action === 'clear') this.unmount(loc, 0);
-    else if (action === 'mount') this._mountInto(loc, id);
+    // A slot bind always mounts / replaces; re-pressing the same item is a no-op (#70). A
+    // slot bind never removes a weapon — there's no toggle-off, and no separate pad clear.
+    if (slotBindAction(this.mech.mounts[loc][0] ?? null, id) === 'mount') this._mountInto(loc, id);
   }
 
   button(x, y, w, h, label, onClick, color = UI.text) {
@@ -301,9 +302,11 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
   }
 
-  // Pick a catalog item: mount it into the selected slot (or unmount if it's already there).
-  // With no slot selected, picking a card selects the first slot it fits. #65: a LOCKED item
-  // can't be mounted at all — clicking it attempts to buy it instead (spends SCRAP, permanent).
+  // Pick a catalog item: mount it into the selected slot. With no slot selected, picking a card
+  // selects the first slot it fits. Selecting a weapon never removes it — re-clicking the item
+  // already mounted in the selected slot is a no-op (#70); only choosing a DIFFERENT item
+  // replaces. #65: a LOCKED item can't be mounted at all — clicking it attempts to buy it
+  // instead (spends SCRAP, permanent).
   _pickItem(id) {
     if (!this.unlocked.has(id)) { this._purchase(id); return; }
     if (!this.selected) {
@@ -312,8 +315,7 @@ export default class GarageScene extends Phaser.Scene {
       return;
     }
     const cur = this.mech.mounts[this.selected][0];
-    if (cur === id) this.unmount(this.selected, 0);
-    else this._mountInto(this.selected, id);
+    if (cur !== id) this._mountInto(this.selected, id);   // same item → no-op, stays mounted
     this.list.setSelected(this.mech.mounts[this.selected]?.[0] ?? null);
   }
 

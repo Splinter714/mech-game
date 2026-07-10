@@ -45,12 +45,13 @@ export function stepIndex(i, delta, n, { wrap = true } = {}) {
 }
 
 // Decide what pressing a slot's fire bind does to that slot, given the slot's current mount
-// and the highlighted catalog id (#70 catalog-first pad flow). Re-pressing a bind while the
-// slot already holds exactly the highlighted item toggles it OFF ('clear'); otherwise it
-// mounts the highlight ('mount'). With nothing highlighted there's nothing to do ('none').
+// and the highlighted catalog id (#70 catalog-first pad flow). A slot bind ALWAYS mounts /
+// replaces the slot with the highlight ('mount') — it never removes a weapon. Re-pressing the
+// bind while the slot already holds exactly that item is a no-op ('none', stays mounted).
+// With nothing highlighted there's likewise nothing to do ('none').
 export function slotBindAction(currentId, highlightedId) {
   if (highlightedId == null) return 'none';
-  return currentId === highlightedId ? 'clear' : 'mount';
+  return currentId === highlightedId ? 'none' : 'mount';
 }
 
 // Minimal scroll adjustment so [itemTop, itemTop+itemH] (content coords) is visible in a
