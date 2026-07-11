@@ -25,11 +25,11 @@
 //   scale      on-screen sprite size as a MULTIPLE of the arena mech scale (data-driven per #75;
 //              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
 //              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75,
-//              then shrunk further per #89's composition/sizing pass): turret 0.55 (way down
-//              from 1.15 — it now spawns in tight clusters, see TURRET_CLUSTER_SIZE, so a nest
-//              of tiny sentries reads right instead of one big one), tank 0.6 (down from 0.82),
-//              drone 0.62 (down from 0.72 — cheaper/smaller now that swarms are much bigger),
-//              helicopter 0.75 (down from 1.0).
+//              shrunk further per #89's composition/sizing pass, then nudged down again per
+//              #91): turret 0.55 (way down from 1.15 — it now spawns in tight clusters, see
+//              TURRET_CLUSTER_SIZE, so a nest of tiny sentries reads right instead of one big
+//              one), tank 0.48 (down from 0.6 per #91 — "tanks smaller"), drone 0.52 (down from
+//              0.62 per #91 — "drones slightly smaller again"), helicopter 0.75 (down from 1.0).
 
 export const ENEMY_KINDS = {
   // 1) TURRET / emplacement — static objective defender. No locomotion; a squat armoured base
@@ -73,12 +73,14 @@ export const ENEMY_KINDS = {
     fireEveryMs: 1500,
     standoff: 300,          // px it wants to hold from the player
     flying: false,
-    move: { maxSpeed: 78, accel: 120, turnRate: 1.4, turretSlew: 2.2 },
+    move: { maxSpeed: 52, accel: 120, turnRate: 1.4, turretSlew: 2.2 },   // #91: slowed further
+                                                                          // (was 78) — reads as
+                                                                          // noticeably heavier/
+                                                                          // slower ("tanks slower").
     art: 'tank',
     behavior: 'tank',
     themeColor: 0xc65a34,
-    scale: 0.6,            // #89: shrunk further (was 0.82) — reads as a smaller, more numerous
-                           // ground unit now that tanks spawn more often.
+    scale: 0.48,           // #91: shrunk further (was 0.6) — "tanks smaller".
   },
 
   // 3) DRONE — one unit of an infantry/drone SWARM. Cheap, small, fast, individually weak; a
@@ -100,8 +102,8 @@ export const ENEMY_KINDS = {
     art: 'drone',
     behavior: 'drone',
     themeColor: 0xe0b13a,
-    scale: 0.62,           // #89: nudged down further (was 0.72) — the swarm is now MUCH bigger
-                           // (SWARM_SIZE below), so each drone reads smaller within the cloud.
+    scale: 0.52,           // #91: nudged down further (was 0.62) — "drones slightly smaller
+                           // again", now that the swarm (SWARM_SIZE below) reads even fuller.
   },
 
   // 4) HELICOPTER / VTOL — fast flyer. Ignores ground cover entirely (flies over walls, forest,
