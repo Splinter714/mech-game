@@ -10,11 +10,16 @@ import {
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { generateTerrain } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
-import { DUMMY_HEX } from './shared.js';
+import { DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains } from './shared.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
 // building has 60 HP, so ~1.5–2s of leaning at speed flattens it. Owner: tunable.
 const STOMP_DPS = 45;
+
+// #92: how fast the player crushes a TANK by driving into it (HP/sec at full drive-in speed).
+// A tank has 160 HP, so a few seconds of sustained pressing at full speed flattens it — mirrors
+// STOMP_DPS's spirit (not instant, not never). Owner: tunable.
+const TANK_CRUSH_DPS = 55;
 
 export const WorldMixin = {
   // Generate a large natural battlefield (#41): a big grass disc with a winding SHALLOW river,
@@ -120,6 +125,31 @@ export const WorldMixin = {
     return !isPassable(this._terrainAt(x, y));
   },
 
+  // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying
+  // kinds (helicopter/drone) narratively fly over ground obstacles, so they're excluded — only
+  // mechs, tanks, and turrets can physically block the player. Returns the blocking enemy (so
+  // the caller can special-case a tank for crush damage), or null if nothing there blocks.
+  _blockedByGroundEnemy(x, y) {
+    for (const e of this.enemies) {
+      if (e.flying) continue;
+      if (e.mech.isDestroyed()) continue;
+      if (circleContains(x, y, e.x, e.y, groundEnemyRadius(e))) return e;
+    }
+    return null;
+  },
+
+  // #92: the player leaning into a TANK specifically crushes it, mirroring the outpost-stomp
+  // mechanic (`_stompBuildingAt` below) — damage scaled by how hard the player is driving in.
+  // Goes through combat.js `_damageEnemyAt`, so a kill runs the normal death path (explosion FX,
+  // corpse removal, powerup/salvage drop). Other ground enemies (mechs, turrets) just BLOCK via
+  // `_blockedByGroundEnemy` above — no crush damage — per the explicit tank-only ask.
+  _crushTankAt(e, dt) {
+    if (e.mech.isDestroyed()) return;
+    const speedFrac = Math.min(1, this.speed / Math.max(1, this.mech.movement.maxSpeed));
+    const dmg = crushDamage(TANK_CRUSH_DPS, dt, speedFrac);
+    if (dmg > 0) this._damageEnemyAt(e, e.x, e.y, dmg, 0xffffff);
+  },
+
   // Max-speed multiplier for the terrain under a world point — river/forest/rubble slow the mech;
   // grass is normal. Off-map / unknown ⇒ 1 (passability is handled separately by _blocked).
   _speedFactorAt(x, y) {
@@ -158,7 +188,7 @@ export const WorldMixin = {
   // on an outpost flattens it in a beat or two rather than instantly. No-op off buildings.
   _stompBuildingAt(x, y, dt) {
     const speedFrac = Math.min(1, this.speed / Math.max(1, this.mech.movement.maxSpeed));
-    const dmg = STOMP_DPS * dt * (0.35 + 0.65 * speedFrac);
+    const dmg = crushDamage(STOMP_DPS, dt, speedFrac);
     if (dmg > 0) this._damageBuildingAt(x, y, dmg);
   },
 

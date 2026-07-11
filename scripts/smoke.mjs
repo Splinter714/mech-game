@@ -525,6 +525,67 @@ try {
     const runEndedOnDeath = a.run?.status === 'dead';
     const currencyBankedOnDeath = (g.registry.get('runCurrency') || 0) >= currencyBeforeDeath;
 
+    // #92: tank independent turret movement, player-vs-ground-enemy collision, and tank crush.
+    // Run LAST — these drive the player around a lot of real update() frames, and the player
+    // mech is already dead/run-ended by this point (harmless: `_drive` doesn't gate on mech
+    // death), so it can't perturb the mission/run assertions captured above.
+    const s92 = {};
+    {
+      // (b) A ground unit (a stationary turret — won't itself relocate, isolating the collision
+      // check from any AI movement) directly ahead of the player blocks it from driving through
+      // — position must never pass the blocker's centre, mirroring terrain collision.
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const blocker = a._spawnKind(140, 0, 'turret');
+      a.controls.keys.D.isDown = true;
+      for (let i = 0; i < 200; i++) a.update(0, 16);
+      a.controls.keys.D.isDown = false;
+      s92.groundBlocks = a.px < blocker.x - 5;
+      a._removeEnemy(blocker);
+
+      // (a) Tank hull faces travel, turret tracks the player independently. Placed at its exact
+      // standoff range from the player, the tank's only commanded motion (inside the standoff
+      // band) is a lateral strafe (perpendicular to the player bearing) — so its hull (which now
+      // faces travel, #92) should end up roughly perpendicular to its turret (which keeps
+      // tracking the bearing straight at the player via aimAndFire's independent slew).
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const tank = a._spawnKind(300, 0, 'tank');
+      for (let i = 0; i < 180; i++) a._updateVehicle(tank, 0.016, 16);
+      const wrap = (ang) => { let x = ang; while (x > Math.PI) x -= Math.PI * 2; while (x < -Math.PI) x += Math.PI * 2; return x; };
+      s92.hullTurretDiverge = Math.abs(wrap(tank.angle - tank.turret)) > 1.0;
+
+      // (c) Sustained collision with a TANK crushes it — pin it directly in the player's path
+      // (bypassing its own standoff AI, which would otherwise dodge/retreat and make "drive
+      // straight into it" nondeterministic) and drive into it; it must chip HP and eventually
+      // die through the NORMAL death path (explosion FX, removed from this.enemies / torn down).
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const tankX = 80, tankY = 0;
+      tank.x = tankX; tank.y = tankY;
+      const beforeCount = a.enemies.length;
+      a.controls.keys.D.isDown = true;
+      for (let i = 0; i < 1200 && a.enemies.includes(tank); i++) {
+        a.update(0, 16);
+        if (a.enemies.includes(tank)) { tank.x = tankX; tank.y = tankY; tank.vx = 0; tank.vy = 0; }
+      }
+      a.controls.keys.D.isDown = false;
+      s92.tankCrushed = !a.enemies.includes(tank) && a.enemies.length === beforeCount - 1 && tank._tornDown === true;
+
+      // (d) A FLYING enemy (helicopter) pinned directly in the player's path must NOT block —
+      // flyers narratively pass over ground obstacles. Re-pin its position every frame so it
+      // stays a fixed obstacle in the path rather than strafing away under its own AI.
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const heliX = 140, heliY = 0;
+      const heli2 = a._spawnKind(heliX, heliY, 'helicopter');
+      a.controls.keys.D.isDown = true;
+      for (let i = 0; i < 200; i++) {
+        a.update(0, 16);
+        heli2.x = heliX; heli2.y = heliY; heli2.vx = 0; heli2.vy = 0;
+      }
+      a.controls.keys.D.isDown = false;
+      s92.flyerDoesNotBlock = a.px > heliX + 5;
+      a._removeEnemy(heli2);
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+    }
+
     return {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
@@ -562,6 +623,7 @@ try {
       droneDropRate,
       heavyDropRate,
       s72,
+      s92,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -657,6 +719,11 @@ try {
   if (!arena.s72.enemyHitPlayerInCover) fail('#72 an enemy round could not hit the player standing in soft cover');
   if (!arena.s72.gunfireChips) fail('#72 gunfire detonating on an unoccupied soft-cover hex did not chip its HP');
   if (!arena.s72.fireFlattens) fail('#72 burning ground did not flatten the soft-cover hex to cleared terrain');
+  // #92: tank independent turret movement, player-vs-ground-enemy collision, tank crush.
+  if (!arena.s92.groundBlocks) fail('#92 a ground enemy unit did not block the player from driving through it');
+  if (!arena.s92.hullTurretDiverge) fail("#92 a tank's hull and turret did not diverge — they still look rigidly linked");
+  if (!arena.s92.tankCrushed) fail('#92 sustained collision with a tank did not crush/destroy it through the normal death path');
+  if (!arena.s92.flyerDoesNotBlock) fail('#92 a flying enemy (helicopter) wrongly blocked the player\'s movement');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {

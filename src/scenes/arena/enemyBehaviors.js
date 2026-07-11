@@ -14,7 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
-import { rotateToward } from './shared.js';
+import { rotateToward, hullTravelAngle } from './shared.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -41,8 +41,12 @@ function turretBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: true });
 }
 
-// TANK — grinds to a firing standoff and holds, hull facing the player (tough frontal facing
-// toward the threat). Slow, heavy; blocked by cover/water. Backs off if the player crowds it.
+// TANK — grinds to a firing standoff and holds. #92: the HULL drives like a real tank — it
+// turns to face wherever it's actually TRAVELLING, not the player — while the TURRET tracks
+// the player completely independently (aimAndFire below sets e.turret on its own slew), the
+// same hull-vs-turret decoupling the player's own mech has (locomotion.js `_drive`: `this.angle`
+// follows travel, `this.turretAngle` follows aim). Slow, heavy; blocked by cover/water. Backs
+// off if the player crowds it.
 function tankBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const standoff = def.standoff ?? 300;
@@ -60,8 +64,9 @@ function tankBehavior(scene, e, ctx) {
   const target = radial === 0 && strafe === 0 ? 0 : mv.maxSpeed;
   e.vx = approach(e.vx, mx * (Math.abs(radial) + Math.abs(strafe) > 0 ? target : 0), mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * (Math.abs(radial) + Math.abs(strafe) > 0 ? target : 0), mv.accel * ctx.dt);
-  // Hull faces the player (present the frontal armour), turning at the chassis turn rate.
-  e.angle = rotateToward(e.angle, ctx.bearing, mv.turnRate, ctx.dt);
+  // Hull faces the direction of travel (tank-like driving), turning at the chassis turn rate;
+  // it holds its last heading while stopped rather than snapping to face the player.
+  e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
   aimAndFire(scene, e, ctx, { needLos: true });
 }
 

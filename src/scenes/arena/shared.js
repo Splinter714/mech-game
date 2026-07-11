@@ -87,6 +87,48 @@ export function convergedFireAngle(px, py, turretAngle, dist, mx, my, minDist = 
   return Math.atan2(cy - my, cx - mx);
 }
 
+// #92: the tank's HULL turns to face its direction of TRAVEL (like a real tank driving),
+// completely independent of its turret (which separately tracks the player — see aimAndFire
+// in enemyBehaviors.js, which drives e.turret). PURE + testable: only turns while actually
+// moving faster than `moveThreshold` (a stopped tank keeps facing wherever it last drove,
+// rather than snapping to some arbitrary heading), reusing the same dt-scaled `rotateToward`
+// step every other facing/aim rotation in the arena uses.
+export function hullTravelAngle(curAngle, vx, vy, turnRate, dt, moveThreshold = 5) {
+  if (Math.hypot(vx, vy) <= moveThreshold) return curAngle;
+  return rotateToward(curAngle, Math.atan2(vy, vx), turnRate, dt);
+}
+
+// #92: is point (px, py) inside a circle of `radius` centred at (ex, ey)? PURE — the shared
+// primitive behind the player-vs-ground-enemy collision check (world.js `_blockedByGroundEnemy`),
+// factored out so the geometry itself is unit-testable without a scene.
+export function circleContains(px, py, ex, ey, radius) {
+  return Math.hypot(px - ex, py - ey) < radius;
+}
+
+// #92: the on-screen collision footprint (px) of a GROUND enemy unit, used both to block the
+// player's movement (world.js `_blockedByGroundEnemy`) and to decide how close counts as
+// "pressed into it" for the tank-crush check. A mech enemy uses one flat radius (they're all
+// drawn at the same ARENA_MECH_SCALE); a non-mech vehicle kind scales a base radius by its
+// own data-driven `scale` (enemyKinds.js) so a small turret and a bulkier tank each collide at
+// roughly their drawn size. Both radii are owner-tunable — picked to roughly match the sprite
+// footprints, not derived from exact art bounds.
+export const ENEMY_COLLIDE_RADIUS_MECH = 28;      // px — enemy mech chassis footprint
+export const ENEMY_COLLIDE_RADIUS_VEHICLE = 24;   // px — base non-mech ground-unit footprint
+export function groundEnemyRadius(e) {
+  if (e.kind === 'mech' || e.kind === undefined) return ENEMY_COLLIDE_RADIUS_MECH;
+  return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
+}
+
+// #92: crush/stomp damage for ONE frame of the player leaning into a destructible thing (an
+// outpost, or now a tank) — DPS scaled by how hard the player is driving in (speedFrac, clamped
+// 0..1), with a floor (0.35) so even a gentle press still chips away instead of doing nothing.
+// PURE — shared by world.js `_stompBuildingAt` (outposts, #41) and `_crushTankAt` (tanks, #92)
+// so the two crush mechanics can't drift apart.
+export function crushDamage(dps, dt, speedFrac) {
+  const frac = speedFrac < 0 ? 0 : speedFrac > 1 ? 1 : speedFrac;
+  return dps * dt * (0.35 + 0.65 * frac);
+}
+
 // #45: mechs don't run backwards at full tilt. Scale a max-speed figure down when the
 // movement-intent vector (mx, my; needn't be normalized) has a net negative component
 // along the turret facing — i.e. the mech is backing away from where it's aimed. Pure
