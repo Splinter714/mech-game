@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rotateToward, CRUSHABLE_BEHAVIORS } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
@@ -27,7 +27,10 @@ export const LocomotionMixin = {
   // occlude them — the top-down read at tilt 0, and what keeps an inward-canted part tucked
   // under the body. Each off-centre part pivots at its own joint (arms at the shoulder, side
   // torsos nearer their centre — see partSpriteTransform).
-  _makeMechView(key, x, y, angle) {
+  // #113: `isPlayer` picks the depth tier — the player mech (ArenaScene.create()) passes true and
+  // stays at DEPTH.UNITS; every enemy mech (enemies.js `_spawnMech`) leaves it false and renders
+  // at the lower DEPTH.GROUND_UNITS, so a ground unit can never stand over/hide the player.
+  _makeMechView(key, x, y, angle, isPlayer = false) {
     const hull = this.add.sprite(0, 0, `${key}_hull_0`).setScale(ARENA_MECH_SCALE);
     const torL = this.add.sprite(0, 0, `${key}_leftTorso`).setScale(ARENA_MECH_SCALE);
     const torR = this.add.sprite(0, 0, `${key}_rightTorso`).setScale(ARENA_MECH_SCALE);
@@ -39,8 +42,10 @@ export const LocomotionMixin = {
     const c = this.add.container(x, y, [hull, torL, torR, armL, armR, turret]);
     // #99: explicit depth — was relying on scene add-order, which put whichever mech view got
     // created LAST (any enemy spawned after the player) on top regardless of actual position.
-    // Player and enemy mechs share one flat tier (see DEPTH.UNITS) so neither hides the other.
-    c.setDepth(DEPTH.UNITS);
+    // #113: enemy mechs are GROUND units and now render one tier below the player (DEPTH.UNITS)
+    // instead of sharing it — see `unitDepth` / the tier comment in shared.js. An enemy mech is
+    // never a flying kind, so `flying` is always false here.
+    c.setDepth(unitDepth(isPlayer, false));
     c.hull = hull; c.torL = torL; c.torR = torR; c.armL = armL; c.armR = armR; c.turret = turret;
     // Per-view smoothing state: the CURRENTLY-APPLIED convergence tilt of each pivoting part,
     // eased toward its target each frame (see _syncTilts). Starts at the resting tilt (0) so a
@@ -138,22 +143,30 @@ export const LocomotionMixin = {
     const ox = this.px, oy = this.py;
     const groundBlocked = (x, y) => this._blocked(x, y) || !!this._blockedByGroundEnemy(x, y);
     let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
-    let enemyHit = this._blockedByGroundEnemy(nx, ny);
     // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
     // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
     // teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same tick). #104
     // extends the same instant-crush treatment to INFANTRY (see `CRUSHABLE_BEHAVIORS`) — and
     // loops rather than crushing just once, so driving into a packed infantry cluster crushes
     // every trooper the mech is actually touching this frame, not only the first one found (a
-    // tight mob can have several troopers overlapping the same contact point at once). Re-check
-    // `_blockedByGroundEnemy` after each kill: the crushed enemy is gone from `this.enemies` now,
-    // so this either finds the next overlapping trooper to crush too, or nothing — in which case
-    // the player rolls straight through into the space just vacated instead of still
-    // sliding/stopping against a corpse that no longer blocks.
-    while (enemyHit && CRUSHABLE_BEHAVIORS.has(enemyHit.behavior)) {
-      this._crushGroundEnemyAt(enemyHit);
-      enemyHit = this._blockedByGroundEnemy(nx, ny);
+    // tight mob can have several troopers overlapping the same contact point at once). #112: the
+    // crush check itself uses `_crushTargetAt` (the enemy's radius PLUS the player's own
+    // crush-trigger contribution — see `PLAYER_CRUSH_RADIUS_BONUS`, shared.js), a deliberately
+    // bigger/looser test than the general blocking check below so a stomp is easy to trigger
+    // without also loosening how tightly a mech/turret blocks the player. Re-check
+    // `_crushTargetAt` after each kill: the crushed enemy is gone from `this.enemies` now, so this
+    // either finds the next overlapping trooper to crush too, or nothing — in which case the
+    // player rolls straight through into the space just vacated instead of still sliding/stopping
+    // against a corpse that no longer blocks.
+    let crushTarget = this._crushTargetAt(nx, ny);
+    while (crushTarget) {
+      this._crushGroundEnemyAt(crushTarget);
+      crushTarget = this._crushTargetAt(nx, ny);
     }
+    // General ground-enemy blocking (mech/turret, or a crushable enemy just outside the tighter
+    // block radius) still uses the unchanged, tighter `groundEnemyRadius` via
+    // `_blockedByGroundEnemy` — only the crush trigger above got bigger.
+    const enemyHit = this._blockedByGroundEnemy(nx, ny);
     if (this._blocked(nx, ny) || enemyHit) {
       // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
       // pressing against them (damage scaled by how hard it's driving in). Once flattened to

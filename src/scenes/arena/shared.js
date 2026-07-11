@@ -26,12 +26,26 @@ export const ARENA_MECH_SCALE = 0.34;
 // fresh ground tiles above the player instead of below. Giving terrain tiles the same explicit
 // `DEPTH.TERRAIN` every time (initial build AND every growth pass) removes that ambiguity for good
 // — see world.js `_buildWorld`.
+//
+// #113 (playtest 2026-07-10: "all ground units should be z-ordered below the player mech, such
+// as infantry"): reverses part of #99's original "no player-above/below-enemies rule, just one
+// flat UNITS tier" call — that flat tier is still correct for FLYING units (helicopter/drone:
+// they're narratively elevated, and #92 already excludes them from ground collision for the same
+// reason, so there's no "who's actually closer to the ground" ambiguity to resolve for them) but
+// wrong for ground units, which can now stand directly under/beside the player and visually hide
+// it. `GROUND_UNITS` slots into the previously-unused gap between GROUND_FX (1) and UNITS (3) —
+// every non-flying enemy view (mech, tank, turret, infantry) renders here; the player and flying
+// units keep DEPTH.UNITS.
 export const DEPTH = {
   TERRAIN: 0,         // terrain tiles (world.js) — the floor, always lowest, explicit every time.
   GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
-  UNITS: 3,           // every ground unit alike — the player AND every enemy view (mech or
-                      // vehicle) share this tier; no player-above/below-enemies rule, just a
-                      // flat tier so neither unconditionally hides the other.
+  GROUND_UNITS: 2,    // #113: non-flying enemy views (mech, tank, turret, infantry) — always
+                      // below the player so a ground unit standing under/near the player can
+                      // never obscure it.
+  UNITS: 3,           // the player, and flying enemy views (helicopter, drone) — elevated units
+                      // that don't have the same "who's actually closer to the ground" ambiguity
+                      // ground units do, so they keep the original flat #99 tier alongside the
+                      // player.
   PROJECTILES: 4,     // in-flight rounds, persistent beams, muzzle flash / melee slash — flying
                       // over the units they're headed toward or past.
   IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text
@@ -39,6 +53,16 @@ export const DEPTH = {
   WORLD_UI: 6,        // world-space markers: the mission objective beacon, powerup/salvage
                       // beacons — always legible above units and FX.
 };
+
+// #113: which DEPTH tier a unit's view belongs at. The player and any FLYING enemy (helicopter,
+// drone) stay at DEPTH.UNITS; every other (ground) unit — enemy mech, tank, turret, infantry —
+// renders one tier lower at DEPTH.GROUND_UNITS so it can never stand over/obscure the player.
+// PURE so the actual tier-SELECTION logic is unit-testable without touching Phaser; the two real
+// call sites (locomotion.js `_makeMechView`, enemies.js `_makeVehicleView`) just feed this and
+// call `setDepth()` with the result, and are covered by the arena smoke test instead.
+export function unitDepth(isPlayer, flying) {
+  return (isPlayer || flying) ? DEPTH.UNITS : DEPTH.GROUND_UNITS;
+}
 
 // The starting enemy's hex (world build clears it; create() spawns the first enemy there).
 export const DUMMY_HEX = { q: 3, r: -1 };
@@ -193,6 +217,33 @@ export const ENEMY_COLLIDE_RADIUS_VEHICLE = 24;   // px — base non-mech ground
 export function groundEnemyRadius(e) {
   if (e.kind === 'mech' || e.kind === undefined) return ENEMY_COLLIDE_RADIUS_MECH;
   return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
+}
+
+// #112 (playtest 2026-07-10: "the stomp hitbox... needs to be bigger"): the crush-trigger check
+// (world.js `_crushTargetAt`, called from locomotion.js `_drive`) used to test the player's
+// point position against `groundEnemyRadius(e)` alone — i.e. the PLAYER contributed zero radius
+// of its own, so triggering a stomp required the player's exact centre to land inside the
+// enemy's (often tiny) footprint. That's especially punishing for the two crushable kinds:
+// CRUSHABLE_BEHAVIORS are tank (scale 0.48 ⇒ ENEMY_COLLIDE_RADIUS_VEHICLE*0.48 ≈ 11.5px) and
+// infantry (scale 0.38 ⇒ ≈ 9.1px) — both well under half the player mech's own on-screen
+// footprint (drawn at the same ARENA_MECH_SCALE as an enemy mech, whose flat collision radius is
+// ENEMY_COLLIDE_RADIUS_MECH = 28px), so "lining up" meant threading a target roughly a third the
+// size of the mech doing the stomping. This constant is the player's own contribution to the
+// crush trigger ONLY — added on top of the enemy's existing radius via `crushTriggerRadius`
+// below — so the general "can't walk through a mech/turret" blocking check
+// (`_blockedByGroundEnemy`, still just `groundEnemyRadius(e)`) is deliberately left untouched:
+// bumping the shared radius would also make merely blocking past an uncrushable mech/turret feel
+// too generous, which nobody asked for. 26px (≈ the base vehicle footprint, and roughly half the
+// player's own drawn radius) roughly triples the tank's and infantry's effective trigger circle
+// (≈37.5px / ≈35.1px) — big enough that brushing past a trooper cluster reliably stomps them,
+// without ballooning to something that reaches out and crushes units the player only grazed.
+export const PLAYER_CRUSH_RADIUS_BONUS = 26; // px — player's own contribution, crush-trigger only
+
+// #112: crush-trigger radius for a specific enemy — the enemy's own footprint plus the player's
+// contribution above. Deliberately separate from `groundEnemyRadius` (general blocking) so the
+// two can diverge; see the comment on `PLAYER_CRUSH_RADIUS_BONUS`.
+export function crushTriggerRadius(e) {
+  return groundEnemyRadius(e) + PLAYER_CRUSH_RADIUS_BONUS;
 }
 
 // #92/#104: which `behavior` keys get the instant-crush-on-contact treatment (world.js

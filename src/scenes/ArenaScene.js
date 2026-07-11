@@ -79,7 +79,9 @@ export default class ArenaScene extends Phaser.Scene {
     this.vx = 0; this.vy = 0;      // world-space velocity (twin-stick movement)
     this.speed = 0;
     this.stepMs = 0; this.hullFrame = 0;
-    this.playerView = this._makeMechView('playerMech', this.px, this.py, this.angle);
+    // #113: the player is the one unit that stays at DEPTH.UNITS — every ground enemy renders
+    // below it (DEPTH.GROUND_UNITS) so it's never visually obscured.
+    this.playerView = this._makeMechView('playerMech', this.px, this.py, this.angle, true);
 
     this.cameras.main.startFollow(this.playerView, true, 0.12, 0.12);
 

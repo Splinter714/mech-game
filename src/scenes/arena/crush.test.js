@@ -121,6 +121,48 @@ describe('CRUSHABLE_BEHAVIORS — the #104 scope for instant-crush-on-contact', 
   });
 });
 
+// #112: the crush TRIGGER (this scan) must be looser than plain ground-enemy blocking
+// (`_blockedByGroundEnemy`), which stays untouched. Build a real `this.enemies` list (the two
+// helpers above don't need one since they operate on an already-found enemy) to exercise the
+// actual scan in world.js.
+describe('_crushTargetAt — the #112 looser crush-trigger scan (bigger than plain blocking)', () => {
+  function makeSceneWithEnemies(enemies) {
+    const scene = { enemies };
+    Object.assign(scene, WorldMixin);
+    return scene;
+  }
+
+  it('finds a crushable tank from farther away than `_blockedByGroundEnemy` would', async () => {
+    const { groundEnemyRadius } = await import('./shared.js');
+    const tank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', kindDef: { scale: 0.48 },
+      mech: { isDestroyed: () => false } };
+    const r = groundEnemyRadius(tank);
+    const scene = makeSceneWithEnemies([tank]);
+    // Just past the tight blocking radius: general blocking says no...
+    expect(scene._blockedByGroundEnemy(r + 5, 0)).toBeNull();
+    // ...but the crush trigger (player's extra reach) still finds it.
+    expect(scene._crushTargetAt(r + 5, 0)).toBe(tank);
+  });
+
+  it('ignores a non-crushable ground enemy (mech/turret) even within the bigger crush radius', () => {
+    const turret = { x: 0, y: 0, behavior: 'turret', kind: 'turret', kindDef: {},
+      mech: { isDestroyed: () => false } };
+    const scene = makeSceneWithEnemies([turret]);
+    expect(scene._crushTargetAt(5, 0)).toBeNull();
+    // But it still blocks movement normally.
+    expect(scene._blockedByGroundEnemy(5, 0)).toBe(turret);
+  });
+
+  it('ignores a flying kind and an already-destroyed enemy', () => {
+    const flyingTank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', flying: true, kindDef: {},
+      mech: { isDestroyed: () => false } };
+    const deadTank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', kindDef: {},
+      mech: { isDestroyed: () => true } };
+    const scene = makeSceneWithEnemies([flyingTank, deadTank]);
+    expect(scene._crushTargetAt(0, 0)).toBeNull();
+  });
+});
+
 describe('_stompBuildingAt — outpost stomp keeps its ORIGINAL gradual behavior, unaffected by '
   + 'the tank-only instant-kill fix (#41 unchanged)', () => {
   it('takes multiple calls to flatten a building — a single call does not destroy it outright', () => {
