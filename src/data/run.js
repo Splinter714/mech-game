@@ -24,8 +24,16 @@ export const STAGE_COUNT = 5;
 // show up even in early stages) AND listed twice in LATE_POOL (so it's weighted heavier among
 // the hard kinds). It's the only id shared by both pools — see run.test.js, which discriminates
 // the early/late skew on each pool's EXCLUSIVE ids, not on the shared helicopter.
-export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'tank', 'helicopter'];
-export const LATE_POOL = ['sniper', 'artillery', 'helicopter', 'helicopter', 'swarm'];
+// #89: rebalanced per playtest feedback — mechs (raider/skirmisher/sniper/artillery) are now a
+// clear MINORITY of each pool, tanks/helicopters get extra copies (heavier weight), and the new
+// 'turretNest' cluster-spawn (data/enemyKinds.js TURRET_CLUSTER_SIZE) replaces solo 'turret' in
+// the harder LATE_POOL — a nest is the tougher escalation of a lone sentry. Helicopter remains
+// the only id shared between both pools (see run.test.js's shared-id assumption above).
+export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', 'tank', 'helicopter'];
+export const LATE_POOL = [
+  'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
+  'turretNest', 'turretNest',
+];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has
 // `SQUAD_BASE + Math.round(N * SQUAD_GROWTH)` units. 3 → 3,4,5,6,7 across 5 stages.

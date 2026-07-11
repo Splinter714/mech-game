@@ -24,9 +24,12 @@
 //   themeColor accent colour for its procedural art (the kind's "danger" glow on a WHITE body).
 //   scale      on-screen sprite size as a MULTIPLE of the arena mech scale (data-driven per #75;
 //              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
-//              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75):
-//              turret 1.15 (unchanged), tank 0.82 (was too big), drone 0.72 (was too big),
-//              helicopter 1.0 (nudged down from 1.15).
+//              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75,
+//              then shrunk further per #89's composition/sizing pass): turret 0.55 (way down
+//              from 1.15 — it now spawns in tight clusters, see TURRET_CLUSTER_SIZE, so a nest
+//              of tiny sentries reads right instead of one big one), tank 0.6 (down from 0.82),
+//              drone 0.62 (down from 0.72 — cheaper/smaller now that swarms are much bigger),
+//              helicopter 0.75 (down from 1.0).
 
 export const ENEMY_KINDS = {
   // 1) TURRET / emplacement — static objective defender. No locomotion; a squat armoured base
@@ -48,7 +51,9 @@ export const ENEMY_KINDS = {
     art: 'turret',
     behavior: 'turret',
     themeColor: 0xd66a3a,
-    scale: 1.15,           // #75: emplacement reads fine at the old size — left as-is.
+    scale: 0.55,           // #89: shrunk way down — turrets now spawn in tight clusters
+                           // (see TURRET_CLUSTER_SIZE / 'turretNest'), so a nest of small
+                           // sentries reads better than one big emplacement.
   },
 
   // 2) TANK — ground armour. Slow, heavy, tough frontal facing; a turreted main gun (direct
@@ -72,7 +77,8 @@ export const ENEMY_KINDS = {
     art: 'tank',
     behavior: 'tank',
     themeColor: 0xc65a34,
-    scale: 0.82,           // #75: was noticeably too big — shrunk to read as a compact tank.
+    scale: 0.6,            // #89: shrunk further (was 0.82) — reads as a smaller, more numerous
+                           // ground unit now that tanks spawn more often.
   },
 
   // 3) DRONE — one unit of an infantry/drone SWARM. Cheap, small, fast, individually weak; a
@@ -94,7 +100,8 @@ export const ENEMY_KINDS = {
     art: 'drone',
     behavior: 'drone',
     themeColor: 0xe0b13a,
-    scale: 0.72,           // #75: was too big for a cheap swarm unit — shrunk so a pack reads as a cloud.
+    scale: 0.62,           // #89: nudged down further (was 0.72) — the swarm is now MUCH bigger
+                           // (SWARM_SIZE below), so each drone reads smaller within the cloud.
   },
 
   // 4) HELICOPTER / VTOL — fast flyer. Ignores ground cover entirely (flies over walls, forest,
@@ -118,13 +125,24 @@ export const ENEMY_KINDS = {
     art: 'helicopter',
     behavior: 'helicopter',
     themeColor: 0xcf4d4d,
-    scale: 1.0,            // #75: slightly too big — nudged down a touch from the 1.15 global.
+    scale: 0.75,           // #89: shrunk further (was 1.0) — more gunships spawn now, so each
+                           // one reads smaller and the sky feels busier rather than crowded-big.
   },
 };
 
 // A non-mech spawn ships several drones as one "swarm" unit so the pack reads as numbers. The
-// arena expands a 'swarm' request into this many drones.
-export const SWARM_SIZE = 5;
+// arena expands a 'swarm' request into this many drones. #89: drastically increased (was 5) per
+// playtest feedback ("waaaaaay more of them at once") — this is exactly the concentrated-unit
+// load the #71/#76 performance fixes (per-enemy view/texture teardown, throttled impact FX) were
+// built to hold up under; profiled at 18 concurrent drones (see #89 report) with headroom to
+// spare, so this is picked as a strong "way more" without measurably hurting frame rate.
+export const SWARM_SIZE = 18;
+
+// A 'turretNest' spawn expands into this many turrets dropped close together in a tight, fixed
+// formation (#89 — "a few of them should spawn together"). Turrets are stationary (maxSpeed 0),
+// so unlike the drone swarm's loose orbiting cloud, the nest is a small static cluster — picked
+// small and sensible so it reads as an emplacement, not a wall of guns.
+export const TURRET_CLUSTER_SIZE = 3;
 
 // Is a type id a non-mech kind? (Anything not in this table is a mech loadout.)
 export function isEnemyKind(typeId) {
