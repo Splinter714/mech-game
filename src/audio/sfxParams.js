@@ -156,11 +156,21 @@ export const DEFAULT_SFX = withQDefaults({
   },
   // #117: plasmaLance — its own tuned cue, not a beamLaser/plasmaCannon reuse. Fire uses the
   // shared laser-zap tone/noise layers (heavier — damage 20 pulls the base pitch down a touch
-  // vs plasmaCannon's 18), plus a trajectory hum (it's a travelling round, unlike beamLaser) and
-  // a punchier impact than plasmaCannon's to read as a heavier bolt.
+  // vs plasmaCannon's 18), plus (originally) a trajectory hum, and a punchier impact than
+  // plasmaCannon's to read as a heavier bolt. #125: the weapon's actual per-bolt damage dropped
+  // to 2 (traded for a 20/sec stream cadence), but this cue's `damage: 20` is deliberately left
+  // as-is — it's a tone-shaping input for the fire pitch, not read from the live weapon, and
+  // keeping it preserves the heavier bolt sound that's part of the "look" Jackson wants kept.
+  // The per-round `trajectory` HUM LOOP was dropped in the same pass: firing.js starts one
+  // independent oscillator loop per projectile (stopped only at that round's impact/expiry, see
+  // `_spawnProjectile`/fireWeapon's trajectory-loop wiring), and at a ~1s flight time with a new
+  // bolt every 50ms that would stack ~15-20 overlapping hum loops during sustained fire — a wall
+  // of noise, not a rapid-fire read. Every other `pattern: 'stream'` projectile weapon
+  // (Repeater/machineGun) already has no per-round trajectory hum for the same reason; Plasma
+  // Lance now matches that convention. The one-shot per-bolt fire crack (below) still plays
+  // every tick via scheduleFireCues, so the rapid cadence still reads audibly.
   plasmaLance: {
     fire: laserZapLayers({ damage: 20 }, false),
-    trajectory: [{ kind: 'noise', type: 'bandpass', freq: 850, freqEnd: 1400, q: 0.9, dur: 0.2, gain: 0.07, attack: 0.01 }],
     impact: [
       { kind: 'noise', type: 'bandpass', freq: 2000, freqEnd: 800, q: 1.3, dur: 0.2, gain: 0.16, attack: 0.002 },
       { kind: 'tone', type: 'square', freq: 210, freqEnd: 70, dur: 0.14, gain: 0.12, attack: 0.004 },
