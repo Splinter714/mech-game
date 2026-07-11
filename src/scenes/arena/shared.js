@@ -119,11 +119,12 @@ export function groundEnemyRadius(e) {
   return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
 }
 
-// #92: crush/stomp damage for ONE frame of the player leaning into a destructible thing (an
-// outpost, or now a tank) — DPS scaled by how hard the player is driving in (speedFrac, clamped
-// 0..1), with a floor (0.35) so even a gentle press still chips away instead of doing nothing.
-// PURE — shared by world.js `_stompBuildingAt` (outposts, #41) and `_crushTankAt` (tanks, #92)
-// so the two crush mechanics can't drift apart.
+// #41: crush/stomp damage for ONE frame of the player leaning into a destructible outpost — DPS
+// scaled by how hard the player is driving in (speedFrac, clamped 0..1), with a floor (0.35) so
+// even a gentle press still chips away instead of doing nothing. PURE — used by world.js
+// `_stompBuildingAt`. #92 (corrected 2026-07-10): tanks used to share this gradual formula via
+// `_crushTankAt`, but playtest feedback ("it should be instant smash") moved tank-crushing to a
+// one-hit kill instead — `_crushTankAt` no longer calls this helper, only buildings still do.
 export function crushDamage(dps, dt, speedFrac) {
   const frac = speedFrac < 0 ? 0 : speedFrac > 1 ? 1 : speedFrac;
   return dps * dt * (0.35 + 0.65 * frac);

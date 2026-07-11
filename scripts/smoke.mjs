@@ -591,16 +591,24 @@ try {
       const wrap = (ang) => { let x = ang; while (x > Math.PI) x -= Math.PI * 2; while (x < -Math.PI) x += Math.PI * 2; return x; };
       s92.hullTurretDiverge = Math.abs(wrap(tank.angle - tank.turret)) > 1.0;
 
-      // (c) Sustained collision with a TANK crushes it — pin it directly in the player's path
-      // (bypassing its own standoff AI, which would otherwise dodge/retreat and make "drive
-      // straight into it" nondeterministic) and drive into it; it must chip HP and eventually
-      // die through the NORMAL death path (explosion FX, removed from this.enemies / torn down).
+      // (c) Contact with a TANK is an INSTANT kill (corrected per playtest 2026-07-10: the
+      // original gradual multi-second crush read as "stuck/blocked" rather than "destroying the
+      // tank") — pin it directly in the player's path (bypassing its own standoff AI, which would
+      // otherwise dodge/retreat and make "drive straight into it" nondeterministic) and drive
+      // into it for exactly ONE contact frame; it must die THAT SAME frame through the NORMAL
+      // death path (explosion FX, removed from this.enemies / torn down) — not require sustained
+      // multi-frame pressing.
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
       const tankX = 80, tankY = 0;
       tank.x = tankX; tank.y = tankY;
       const beforeCount = a.enemies.length;
       a.controls.keys.D.isDown = true;
-      for (let i = 0; i < 1200 && a.enemies.includes(tank); i++) {
+      // A handful of frames to close the remaining gap and make contact — the tank must be dead
+      // by the time this short budget runs out. Deliberately far too small a budget for the OLD
+      // gradual crush (160 HP / 55 DPS ≈ 2.9s of sustained full-contact pressing, on top of the
+      // travel time to close the gap first) to have finished — so this budget only passes if the
+      // kill happens on/near the very first contact frame, not via a multi-second grind.
+      for (let i = 0; i < 90 && a.enemies.includes(tank); i++) {
         a.update(0, 16);
         if (a.enemies.includes(tank)) { tank.x = tankX; tank.y = tankY; tank.vx = 0; tank.vy = 0; }
       }

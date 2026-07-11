@@ -16,10 +16,6 @@ import { DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains } from './sha
 // building has 60 HP, so ~1.5–2s of leaning at speed flattens it. Owner: tunable.
 const STOMP_DPS = 45;
 
-// #92: how fast the player crushes a TANK by driving into it (HP/sec at full drive-in speed).
-// A tank has 160 HP, so a few seconds of sustained pressing at full speed flattens it — mirrors
-// STOMP_DPS's spirit (not instant, not never). Owner: tunable.
-const TANK_CRUSH_DPS = 55;
 
 export const WorldMixin = {
   // Generate a large natural battlefield (#41): a big grass disc with a winding SHALLOW river,
@@ -138,16 +134,18 @@ export const WorldMixin = {
     return null;
   },
 
-  // #92: the player leaning into a TANK specifically crushes it, mirroring the outpost-stomp
-  // mechanic (`_stompBuildingAt` below) — damage scaled by how hard the player is driving in.
-  // Goes through combat.js `_damageEnemyAt`, so a kill runs the normal death path (explosion FX,
-  // corpse removal, powerup/salvage drop). Other ground enemies (mechs, turrets) just BLOCK via
-  // `_blockedByGroundEnemy` above — no crush damage — per the explicit tank-only ask.
-  _crushTankAt(e, dt) {
+  // #92 (corrected per playtest 2026-07-10): the player driving into a TANK specifically is an
+  // INSTANT kill on contact, not a multi-second grind — the original gradual-DPS crush (mirroring
+  // the outpost stomp below) read as "blocked/stuck" rather than "destroying the tank." One call
+  // dealing damage >= the tank's entire remaining hp pool, so it dies THIS frame. Still goes
+  // through combat.js `_damageEnemyAt`, so the kill runs the normal death path unchanged
+  // (explosion FX, corpse teardown, powerup/salvage drop) — only the amount/pacing changed, not
+  // the destruction machinery. Other ground enemies (mechs, turrets) just BLOCK via
+  // `_blockedByGroundEnemy` above — no crush/instakill — per the explicit tank-only scope.
+  _crushTankAt(e) {
     if (e.mech.isDestroyed()) return;
-    const speedFrac = Math.min(1, this.speed / Math.max(1, this.mech.movement.maxSpeed));
-    const dmg = crushDamage(TANK_CRUSH_DPS, dt, speedFrac);
-    if (dmg > 0) this._damageEnemyAt(e, e.x, e.y, dmg, 0xffffff);
+    const dmg = (e.mech.hp ?? e.mech.maxHp) + 1;   // comfortably >= remaining hp: dies in one hit
+    this._damageEnemyAt(e, e.x, e.y, dmg, 0xffffff);
   },
 
   // Max-speed multiplier for the terrain under a world point — river/forest/rubble slow the mech;
