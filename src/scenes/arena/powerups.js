@@ -10,7 +10,7 @@
 // pure buffModifiers) into the multipliers/flags the other mixins read. Stacking is one-per-
 // type: a duplicate pickup of an active type just refreshes its remaining time.
 import {
-  POWERUPS, DROP_CHANCE, pickPowerupType, isInstant, durationMs, buffModifiers,
+  POWERUPS, dropChanceForMaxHp, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
 import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
@@ -70,8 +70,11 @@ export const PowerupsMixin = {
 
   // Roll the drop chance and, on success, drop a powerup at an enemy's death position. Called
   // from the kill path (combat.js). Kept here so the drop odds + spawn live in one place.
-  _maybeDropPowerup(x, y) {
-    if (Math.random() < DROP_CHANCE) this.spawnPowerup(x, y);
+  // #90: the odds now scale with `maxHp`, the killed enemy's max hit points (a uniform
+  // difficulty signal present on both Mech and the non-mech HpBody) — see
+  // `dropChanceForMaxHp` in data/powerups.js for the curve/bounds.
+  _maybeDropPowerup(x, y, maxHp) {
+    if (Math.random() < dropChanceForMaxHp(maxHp)) this.spawnPowerup(x, y);
   },
 
   // The collectible's look: a high-contrast beacon so it's easy to spot across the dark arena.

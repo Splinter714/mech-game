@@ -468,6 +468,23 @@ try {
     const sv = a.salvage[a.salvage.length - 1];
     const dropsDistinct = !!pu && !!sv && (pu.x !== sv.x || pu.y !== sv.y);
 
+    // #90: powerup drop chance now scales with the killed enemy's maxHp (difficulty) instead
+    // of a flat roll — sanity-check the LIVE roll path (_maybeDropPowerup) over many trials:
+    // a tough kill (base heavy mech, maxHp 616) should drop noticeably MORE often than a
+    // trivial one (drone, maxHp 14). Stub spawnPowerup to a counter so this only exercises the
+    // roll (no real sprite/art work), keeping a few hundred trials each effectively instant.
+    const origSpawnPowerup = a.spawnPowerup.bind(a);
+    let spawnCount = 0;
+    a.spawnPowerup = () => { spawnCount++; return null; };
+    const DROP_TRIALS = 400;
+    spawnCount = 0;
+    for (let i = 0; i < DROP_TRIALS; i++) a._maybeDropPowerup(0, 0, 14);
+    const droneDropRate = spawnCount / DROP_TRIALS;
+    spawnCount = 0;
+    for (let i = 0; i < DROP_TRIALS; i++) a._maybeDropPowerup(0, 0, 616);
+    const heavyDropRate = spawnCount / DROP_TRIALS;
+    a.spawnPowerup = origSpawnPowerup;
+
     // #65: a salvage pickup adds straight into the LIVE run currency. Spawn one, walk the
     // player onto it (mirrors _updatePowerups' pickup-radius check), and confirm the run's
     // currency total increased by exactly the drop's amount.
@@ -523,6 +540,8 @@ try {
       currencyBankedOnDeath,
       salvagePickedUp,
       dropsDistinct,
+      droneDropRate,
+      heavyDropRate,
       s72,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod });
@@ -606,6 +625,11 @@ try {
   if (!arena.salvagePickedUp) fail('#65 a salvage pickup did not increase the live run currency');
   // #88: a powerup and salvage dropped from the same kill point must scatter apart, not stack.
   if (!arena.dropsDistinct) fail('#88 a powerup and salvage dropped from the same point landed at the same position');
+  // #90: powerup drop RATE over many trials must be clearly higher for a tough kill (heavy
+  // mech, maxHp 616 → target 0.95) than a trivial one (drone, maxHp 14 → target 0.35).
+  if (!(arena.heavyDropRate > arena.droneDropRate + 0.2)) {
+    fail(`#90 heavy-mech drop rate (${arena.heavyDropRate}) was not clearly higher than drone drop rate (${arena.droneDropRate})`);
+  }
   // #72: soft cover — own-hex transparency (both directions + firing out) and destructible/
   // burnable trees, exercised through the real projectile/fire-patch simulation.
   if (!arena.s72.occupantHit) fail('#72 a shot into the target\'s own soft-cover hex died at the hex edge instead of hitting');

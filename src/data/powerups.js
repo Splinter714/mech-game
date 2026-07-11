@@ -55,10 +55,36 @@ export const POWERUPS = {
   },
 };
 
-// Drop tuning. `DROP_CHANCE` is the odds an enemy kill drops a powerup — defaulted generous
-// for playtest (owner: tune down for balance later). Kept here so the source (enemy death,
-// or a future facility) reads one number.
+// Drop tuning. #90 (playtest 2026-07-10): the drop chance used to be a flat `DROP_CHANCE`
+// roll regardless of what died — a drone and a heavy sniper mech had identical odds. Now it
+// SCALES with the killed enemy's toughness, using `maxHp` as the difficulty signal (both
+// `Mech` and the non-mech `HpBody` expose a uniform `.maxHp`, so this needs no per-kind
+// branching at the call site — see combat.js `_damageEnemyAt`).
+//
+// Bounds picked from the actual roster's max-hp spread: the weakest real enemy is a drone
+// (hp 14) and the toughest is a base heavy-chassis mech (maxHp 616 — see Mech.js `maxHp`).
+// MIN/MAX_DROP_CHANCE are the odds at/below the floor and at/above the ceiling; everything
+// between lerps linearly. Nice sanity check: a medium mech (maxHp 416, probably the most
+// common kill) lands at ~0.75 — almost exactly the old flat rate — so "typical" kills feel
+// unchanged while drones/turrets/tanks drop less and heavy mechs drop noticeably more.
+export const MIN_DROP_CHANCE = 0.35;   // weakest kill (drone, maxHp ~14)
+export const MAX_DROP_CHANCE = 0.95;   // toughest kill (heavy mech, maxHp ~616)
+const DROP_HP_FLOOR = 14;              // maxHp at/below which a kill gets MIN_DROP_CHANCE
+const DROP_HP_CEIL = 616;              // maxHp at/above which a kill gets MAX_DROP_CHANCE
+
+// Kept for anything still importing the old flat constant (none in-tree after #90, but
+// harmless to leave as a documented "typical" reference point).
 export const DROP_CHANCE = 0.75;
+
+// Difficulty-scaled powerup drop chance for a kill whose max hit points was `maxHp`. Pure —
+// no enemy-kind branching, no Phaser — so it's unit-testable independent of the scene. Clamps
+// outside the floor/ceil and lerps linearly between them.
+export function dropChanceForMaxHp(maxHp) {
+  const hp = Math.max(0, maxHp || 0);
+  const span = DROP_HP_CEIL - DROP_HP_FLOOR;
+  const t = span > 0 ? Math.min(1, Math.max(0, (hp - DROP_HP_FLOOR) / span)) : 1;
+  return MIN_DROP_CHANCE + t * (MAX_DROP_CHANCE - MIN_DROP_CHANCE);
+}
 
 // Ordered id list (stable) — used by the weighted pick and by any UI that wants a fixed order.
 export const POWERUP_IDS = Object.keys(POWERUPS);

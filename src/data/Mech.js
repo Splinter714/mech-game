@@ -66,6 +66,15 @@ export class Mech {
   get weightClass() { return this._chassis.weightClass; }
   get movement() { return this._chassis.movement; }
 
+  // Total max hit points across every location (armor + structure summed) — one scalar
+  // "how tough is this build" figure (light ≈266, medium ≈416, heavy ≈616 at base chassis
+  // stats). #90: gives callers (e.g. the powerup drop-chance scaling) a `.maxHp` uniform
+  // with the non-mech `HpBody.maxHp`, so difficulty-scaled logic doesn't need to branch on
+  // enemy kind.
+  get maxHp() {
+    return LOCATIONS.reduce((sum, loc) => sum + this.parts[loc].maxArmor + this.parts[loc].maxStructure, 0);
+  }
+
   // ── Damage & destruction ──────────────────────────────────────────────────
   // Apply `amount` damage to a location: armor absorbs first, the rest cuts into
   // structure. Structure at 0 = the part is destroyed; destroying the head also
