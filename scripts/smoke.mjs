@@ -283,6 +283,37 @@ try {
       veh.flyerIgnoresWall = heli.flying === true;   // no wall handy; flag still records it flies
     }
 
+    // #87 (corrected per playtest 2026-07-10): a kill must tear its corpse down and prune it
+    // out of `this.enemies` the SAME tick — no lingering delayed removal — and its death
+    // explosion must be sized to the enemy (drone small, heavy mech noticeably bigger).
+    // Intercept `_acquireImpactCircle` (the pooled burst-circle primitive `_deathFx` draws
+    // through) to record the radii requested, kill a lightweight drone then a heavy mech
+    // (chassisId 'heavy' — see data/enemies.js `sniper`), and compare.
+    const deathFx = { droneRemovedSameTick: false, droneMaxR: 0, heavyMaxR: 0 };
+    {
+      const origAcquire = a._acquireImpactCircle.bind(a);
+      let recorded = [];
+      a._acquireImpactCircle = (x, y, r, col, alpha, stroke) => {
+        recorded.push(r);
+        return origAcquire(x, y, r, col, alpha, stroke);
+      };
+
+      const drone = a._spawnKind(-500, -500, 'drone');
+      const beforeLen = a.enemies.length;
+      recorded = [];
+      a._damageEnemyAt(drone, drone.x, drone.y, 99999, 0xffffff);
+      deathFx.droneRemovedSameTick =
+        a.enemies.length === beforeLen - 1 && a.enemies.indexOf(drone) === -1 && drone._tornDown === true;
+      deathFx.droneMaxR = recorded.length ? Math.max(...recorded) : 0;
+
+      const heavy = a._spawnEnemy(-500, -520, 'sniper');
+      recorded = [];
+      a._damageEnemyAt(heavy, heavy.x, heavy.y, 99999, 0xffffff);
+      deathFx.heavyMaxR = recorded.length ? Math.max(...recorded) : 0;
+
+      a._acquireImpactCircle = origAcquire;
+    }
+
     // #66: Mission wiring — the arena designates one outpost as `a.objectiveHex` at create()
     // (deterministic, see mission.js `_initMission`) and publishes `a.mission` each frame.
     // Confirm it starts active with the assault objective, then hammer the objective hex with
@@ -451,6 +482,7 @@ try {
       extraDamaged,
       resetWorked,
       veh,
+      deathFx,
       missionStartedActive,
       missionCompleted,
       runStartedAtStageZero,
@@ -505,6 +537,13 @@ try {
   if (!arena.extraDamaged) fail('#39 the newly spawned enemy could not be damaged');
   if (!arena.resetWorked) fail('#39 reset-enemies did not restore a destroyed enemy');
   if (!arena.dummyDead) fail('dummy did not register destruction on centre-torso kill');
+  // #87 (corrected): the corpse must be gone from `this.enemies` (and torn down) the SAME
+  // tick the kill lands — no delayed removal — and a heavy mech's death explosion must be
+  // measurably bigger than a drone's.
+  if (!arena.deathFx.droneRemovedSameTick) fail('#87 a killed enemy was not removed from this.enemies in the same tick');
+  if (!(arena.deathFx.heavyMaxR > arena.deathFx.droneMaxR)) {
+    fail(`#87 heavy mech death explosion (${arena.deathFx.heavyMaxR}) was not bigger than a drone's (${arena.deathFx.droneMaxR})`);
+  }
   // #68: the four non-mech kinds spawn, render their own textures, take damage, and die.
   if (arena.veh.spawned !== 4) fail(`#68 expected 4 non-mech kinds spawned, got ${arena.veh.spawned}`);
   if (arena.veh.textured !== 4) fail('#68 a non-mech kind is missing its hull/turret textures');
