@@ -97,13 +97,32 @@ const SWAY_FREQUENCY = 7;         // rad/s
 
 // Which wobble personality (if any) a weapon's rounds fly with. Cluster weapons always get
 // 'sway' (#51 — a small per-rocket-independent undulation); among homing weapons, it's an
-// explicit opt-in data flag (`delivery.wobble: 'jostle' | 'weave'`), never a hardcoded
-// weapon id, so this stays shared/variant-agnostic plumbing.
+// explicit opt-in data flag (`delivery.wobble: 'jostle' | 'weave'`); a non-cluster,
+// non-homing weapon can also opt directly into 'sway' (#101 — Scatter Gun: fixed, even
+// launch fan, but each pellet still independently sways in flight, exactly like a Cluster
+// Salvo rocket) — never a hardcoded weapon id, so this stays shared/variant-agnostic
+// plumbing.
 function wobbleKind(weapon) {
   const d = weapon.delivery || {};
-  if (d.cluster) return 'sway';
+  if (d.cluster || d.wobble === 'sway') return 'sway';
   if (d.guidance !== 'homing') return null;
   return d.wobble === 'jostle' || d.wobble === 'weave' ? d.wobble : null;
+}
+
+// Default lateral amplitude (px) / angular frequency (rad/s) for each wobble personality —
+// a weapon can override either via `delivery.wobbleAmplitude` / `delivery.wobbleFrequency`
+// (#101 — Scatter Gun's pellets scale these down/up for their much shorter flight).
+function defaultWobbleAmplitude(kind) {
+  if (kind === 'jostle') return JOSTLE_AMPLITUDE;
+  if (kind === 'weave') return WEAVE_AMPLITUDE;
+  if (kind === 'sway') return SWAY_AMPLITUDE;
+  return 0;
+}
+function defaultWobbleFrequency(kind) {
+  if (kind === 'jostle') return JOSTLE_FREQUENCY;
+  if (kind === 'weave') return WEAVE_FREQUENCY;
+  if (kind === 'sway') return SWAY_FREQUENCY;
+  return 0;
 }
 
 // ── Arcing lob travel budget (#77 follow-up) ────────────────────────────────────────────
@@ -315,7 +334,11 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   // Every wobble kind — including a cluster's 'sway' (#51) — rolls its OWN random phase, so
   // no two rounds in a salvo/clump ever undulate in lockstep. For a cluster this means each
   // rocket wiggles independently within the (still tight) clump instead of snaking together.
+  // Same for Scatter Gun's pellets (#101): each pellet's launch angle is fixed (the even fan),
+  // but its own random phase makes it sway independently in flight.
   const wobblePhase = wobble ? Math.random() * Math.PI * 2 : 0;
+  const wobbleAmplitude = d.wobbleAmplitude ?? defaultWobbleAmplitude(wobble);
+  const wobbleFrequency = d.wobbleFrequency ?? defaultWobbleFrequency(wobble);
   return {
     x, y, angle, speed,
     vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
@@ -329,7 +352,9 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     homing: d.guidance === 'homing', turn: homingTurnRate(speed),
     // Flight-personality wobble — see wobbleKind(). `wobbleOffset` is the last-applied
     // lateral nudge (kept so the trail/art can read where the round visually is).
-    wobble, wobblePhase, wobbleOffset: 0, wobbleTime: 0,
+    // `wobbleAmplitude`/`wobbleFrequency` are per-round so a weapon can scale its wobble
+    // (e.g. Scatter Gun's shorter-range pellets, #101) without touching the shared defaults.
+    wobble, wobblePhase, wobbleOffset: 0, wobbleTime: 0, wobbleAmplitude, wobbleFrequency,
   };
 }
 
@@ -368,19 +393,13 @@ export function stepProjectile(p, dt, desiredAngle = null) {
   // wobble never accumulates into drift.
   if (p.wobble) {
     p.wobbleTime += dt;
-    let offset = 0;
-    if (p.wobble === 'jostle') {
-      // Chaotic random-phase jiggle, constant amplitude all the way to impact (no settling).
-      offset = Math.sin(p.wobbleTime * JOSTLE_FREQUENCY + p.wobblePhase) * JOSTLE_AMPLITUDE;
-    } else if (p.wobble === 'weave') {
-      // Smooth, deliberate sine weave at constant amplitude — no decay, no randomness.
-      offset = Math.sin(p.wobbleTime * WEAVE_FREQUENCY + p.wobblePhase) * WEAVE_AMPLITUDE;
-    } else if (p.wobble === 'sway') {
-      // Each rocket has its OWN random phase (#51), so within one clump every rocket
-      // undulates independently — a loose-but-together group that wiggles internally,
-      // never a rigid formation snaking in lockstep. Small amplitude keeps the clump tight.
-      offset = Math.sin(p.wobbleTime * SWAY_FREQUENCY + p.wobblePhase) * SWAY_AMPLITUDE;
-    }
+    // All three personalities (jostle/weave/sway) are the same sine — a constant-amplitude
+    // undulation, never settling — differing only in amplitude/frequency (defaultWobbleAmplitude/
+    // defaultWobbleFrequency above) and each round's own random `wobblePhase`, so no two rounds
+    // in a salvo/clump/spread ever move in lockstep (jostle: chaotic jiggle; weave: deliberate
+    // sway; sway: each cluster rocket — or, #101, each Scatter Gun pellet — wiggles
+    // independently within its clump/fan instead of snaking together).
+    const offset = Math.sin(p.wobbleTime * p.wobbleFrequency + p.wobblePhase) * p.wobbleAmplitude;
     const perp = p.angle + Math.PI / 2;
     const dx = Math.cos(perp) * (offset - p.wobbleOffset);
     const dy = Math.sin(perp) * (offset - p.wobbleOffset);

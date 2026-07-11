@@ -123,13 +123,17 @@ export const WEAPONS = {
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
     damage: 3, range: { min: 0, opt: 180, max: 320 },
     ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
-    // spreadJitter (#101): pellets used to land at a perfectly even, evenly-spaced fan
-    // position every trigger pull, which read as a mechanical, repeating pattern rather
-    // than a shotgun blast. spreadJitter randomizes each pellet's angle (and adds a small
-    // random emission stagger) on top of that base fan — the same "organic, chaotic
-    // shot-to-shot" mechanism already used by the flamethrower (#46) — while `spreadAngle`
-    // still sets the overall cone width, so the pellets' rough coverage is unchanged.
-    delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', spreadCount: 7, spreadAngle: 7, spreadJitter: 4, kind: 'bullet' },
+    // #101 correction: an earlier pass jittered each pellet's LAUNCH angle for an "organic"
+    // feel, but the owner wants the fan itself perfectly even/deterministic every trigger
+    // pull — no spreadJitter. Instead the pellets get Cluster Salvo's actual mechanism
+    // (#51): independent per-projectile FLIGHT wobble (`wobble: 'sway'`, see wobbleKind() /
+    // stepProjectile in delivery.js) — each pellet rolls its own random wobblePhase, so it
+    // sways along its own fixed launch line during flight even though the fan angles stay
+    // fixed. Amplitude/frequency are scaled down for a pellet's much shorter flight (max
+    // range 320px @ 980px/s ≈ a third of Cluster Salvo's flight time): half the lateral
+    // amplitude, double the frequency, so the wobble still reads as a visible sway rather
+    // than a flat line over that short a flight.
+    delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', spreadCount: 7, spreadAngle: 7, kind: 'bullet', wobble: 'sway', wobbleAmplitude: 2.5, wobbleFrequency: 14 },
   }),
   napalm: w({       // lobbed canister that bursts into a burning ground patch
     id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',

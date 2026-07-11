@@ -12,7 +12,7 @@ describe('planEmissions', () => {
 
   it('fans a spread weapon into spreadCount angled shots, centred on the aim line', () => {
     // swarmRack has no spreadJitter, so its fan is the plain deterministic (unjittered)
-    // case — shotgun now carries spreadJitter (#101, see below) so it's covered separately.
+    // case — shotgun (#101) shares this same deterministic-fan behaviour, verified below.
     const p = planEmissions(WEAPONS.swarmRack);
     expect(p.shots).toHaveLength(WEAPONS.swarmRack.delivery.spreadCount);
     const angles = p.shots.map((s) => s.angleOffset);
@@ -22,30 +22,32 @@ describe('planEmissions', () => {
     expect(p.shots.every((s) => s.lateral === 0)).toBe(true);
   });
 
-  it('jitters Scatter Gun\'s pellet angles so repeated blasts don\'t land in the exact same evenly-spaced fan (#101)', () => {
+  it('fans Scatter Gun\'s pellets into a perfectly even, deterministic fan every trigger pull (#101 correction)', () => {
+    // #101 correction: a prior pass jittered each pellet's LAUNCH angle (spreadJitter) for an
+    // "organic" feel, but the owner wants the fan itself perfectly even/repeatable — no
+    // launch-angle jitter. Instead the organic feel comes from independent per-pellet FLIGHT
+    // wobble (see the 'kinematics' describe block below), which never touches these angles.
     const { spreadCount, spreadAngle, spreadJitter } = WEAPONS.shotgun.delivery;
     const cone = (spreadAngle * Math.PI) / 180;
-    const jitter = (spreadJitter * Math.PI) / 180;
 
-    // Pellet count, damage, and overall cone width are unchanged by the jitter fix.
     expect(spreadCount).toBe(7);
     expect(WEAPONS.shotgun.damage).toBe(3);
-    const p0 = planEmissions(WEAPONS.shotgun);
-    expect(p0.shots).toHaveLength(spreadCount);
+    expect(spreadJitter).toBeUndefined(); // no launch-angle jitter (reverted)
 
-    // (a) Angles vary between repeated trigger pulls — not the same fixed fan every time.
+    // Repeated trigger pulls produce the EXACT same evenly-spaced fan every time.
     const runs = Array.from({ length: 20 }, () => planEmissions(WEAPONS.shotgun).shots.map((s) => s.angleOffset));
-    const firstPelletAngles = new Set(runs.map((angles) => angles[0]));
-    expect(firstPelletAngles.size).toBeGreaterThan(1);
+    const first = runs[0];
+    expect(first).toHaveLength(spreadCount);
+    for (const angles of runs) expect(angles).toEqual(first);
 
-    // (b) The overall coverage stays roughly the same as the original fixed fan (±cone/2):
-    // jitter nudges each pellet off its base slot but shouldn't blow the spread out far
-    // beyond the original extremes.
-    const allAngles = runs.flat();
-    const maxAbs = Math.max(...allAngles.map((a) => Math.abs(a)));
-    const originalMaxAbs = cone / 2;
-    expect(maxAbs).toBeGreaterThan(originalMaxAbs); // jitter does push a little past the old fixed extreme...
-    expect(maxAbs).toBeLessThan(originalMaxAbs + jitter + 0.01); // ...but never past base slot + full jitter
+    // The fan spans exactly ±cone/2 (centred, symmetric) with no random overshoot.
+    expect(Math.min(...first)).toBeCloseTo(-cone / 2);
+    expect(Math.max(...first)).toBeCloseTo(cone / 2);
+    expect(first.reduce((a, b) => a + b, 0)).toBeCloseTo(0);
+
+    // No random emission stagger either — every pellet fires immediately.
+    const p = planEmissions(WEAPONS.shotgun);
+    expect(p.shots.every((s) => s.delay === 0)).toBe(true);
   });
 
   it('clusters a dumbfire clump with lateral offsets and ~parallel headings (no fan)', () => {
@@ -171,6 +173,31 @@ describe('kinematics', () => {
     expect(rounds.every((p) => p.wobble === 'sway')).toBe(true);
     const phases = rounds.map((p) => p.wobblePhase);
     expect(new Set(phases).size).toBeGreaterThan(1); // independent phases, not one shared value
+  });
+
+  it('Scatter Gun pellets each get their OWN independent flight-wobble phase, same mechanism as Cluster Salvo (#101)', () => {
+    // #101 correction: pellets launch on the fixed even fan (see planEmissions test above), but
+    // each pellet independently sways in FLIGHT — exactly like Cluster Salvo's rockets, just with
+    // its own (smaller/faster) amplitude and frequency tuned for a pellet's much shorter flight.
+    const plan = planEmissions(WEAPONS.shotgun);
+    const rounds = plan.shots.map((s) =>
+      makeProjectile(WEAPONS.shotgun, 0, 0, s.angleOffset, { maxDist: 9999 }));
+    expect(rounds.every((p) => p.wobble === 'sway')).toBe(true);
+    const phases = rounds.map((p) => p.wobblePhase);
+    expect(new Set(phases).size).toBeGreaterThan(1); // independent phases, not one shared value
+
+    // Pellet wobble is scaled DOWN in amplitude and UP in frequency relative to Cluster Salvo's,
+    // suited to the pellets' much shorter flight time/range.
+    const clusterRound = makeProjectile(WEAPONS.clusterRocket, 0, 0, 0, { maxDist: 9999 });
+    expect(rounds[0].wobbleAmplitude).toBeLessThan(clusterRound.wobbleAmplitude);
+    expect(rounds[0].wobbleFrequency).toBeGreaterThan(clusterRound.wobbleFrequency);
+
+    // The wobble actually nudges a pellet perpendicular to its flight path within a short
+    // flight — proves the mechanism does something visually meaningful for a pellet's brief
+    // travel time, not just that the flag is set.
+    const p = rounds[0];
+    for (let i = 0; i < 20; i++) stepProjectile(p, 0.016, null); // ~0.32s, roughly a pellet's max flight time
+    expect(p.wobbleOffset).not.toBe(0);
   });
 });
 
