@@ -35,6 +35,7 @@ import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
+import { planEmissions } from '../../data/delivery.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -602,10 +603,24 @@ export const EnemiesMixin = {
         const disp = ARENA_MECH_SCALE * ART_SCALE;
         const part = mechLayout(e.mech)[w.location];
         const { x: mx2, y: my2 } = partMuzzle(part, e.x, e.y, e.turret, disp);
-        // Blind lobs pass the predicted point as the seek target so homing rounds arc onto it;
-        // direct/LOS shots keep the intrinsic chase-the-player behaviour (seekTarget undefined).
-        const seek = blindFire ? predictedTarget(e.lock, e.lockBlindAge) : null;
-        this._spawnProjectile(w, mx2, my2, aim + aimErr, 'enemy', 0, seek);
+        const fireAngle = aim + aimErr;
+        // #117: route through the SAME delivery-type decision the player's fireWeapon makes
+        // (planEmissions), instead of unconditionally spawning a travelling projectile — a
+        // hitscan weapon (Beam Laser) now resolves as an instant beam via _fireHitscan, and a
+        // contact/melee weapon via _melee, both with owner: 'enemy' so damage lands on the
+        // player. Only genuinely projectile weapons still spawn a travelling round.
+        const plan = planEmissions(w.weapon);
+        if (plan.mode === 'contact') {
+          this._melee(w, mx2, my2, fireAngle, 'enemy');
+        } else if (plan.mode === 'hitscan') {
+          this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key);
+        } else {
+          // Blind lobs pass the predicted point as the seek target so homing rounds arc onto
+          // it; direct/LOS shots keep the intrinsic chase-the-player behaviour (seekTarget
+          // undefined).
+          const seek = blindFire ? predictedTarget(e.lock, e.lockBlindAge) : null;
+          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, seek);
+        }
         cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
       e.fireCd[w.location] = Math.max(0, cd);
@@ -937,10 +952,11 @@ export const EnemiesMixin = {
   },
 
   // Firing aim with a simple lead: aim where the player will be by the time a projectile
-  // arrives (hitscan → no lead). Keeps the existing small aim error at the call site.
+  // arrives (hitscan/contact → no lead, since both now actually resolve instantly via
+  // _fireHitscan/_melee — see #117). Keeps the existing small aim error at the call site.
   _enemyFireAngle(e, w, dxp, dyp, dist) {
     const d = w.weapon.delivery;
-    const vel = d.hit === 'hitscan' ? 0 : (d.velocity || 0);
+    const vel = (d.hit === 'hitscan' || d.hit === 'contact') ? 0 : (d.velocity || 0);
     if (vel <= 0) return Math.atan2(dyp, dxp);
     const t = dist / vel;
     const lx = this.px + (this.vx || 0) * t, ly = this.py + (this.vy || 0) * t;
