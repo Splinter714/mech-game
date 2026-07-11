@@ -10,7 +10,7 @@
 // safe-clear zone (previously a fixed ring around hex (0,0)) now clears around whatever hex
 // `safeCenter` names — the arena passes the player's CURRENT hex on stage advance so the new
 // terrain never strands the mech in a lake/wall, without moving its actual world position.
-import { axialKey, range, neighbors, hexToPixel, distance } from './hexgrid.js';
+import { axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isSoftCover } from './terrain.js';
 
 // Small seeded PRNG (mulberry32) — deterministic given `a`, so the same seed always yields
@@ -37,7 +37,20 @@ export function safeZoneKeys(center, radius = 3) {
 // always-clear-the-centre behaviour) is cleared back to open ground so nothing spawns
 // stranded there; `extraClear` is a list of additional hex keys (e.g. the debug DUMMY_HEX)
 // force-cleared regardless of the RNG, same as before.
-export function generateTerrain({ seed, worldRadius, biome, safeCenter = { q: 0, r: 0 }, extraClear = [] }) {
+//
+// #81 follow-up (directional partial regen): `reveal` (optional `(q, r) => boolean`) and
+// `previous` (optional `{ terrain, buildingHp, coverHp }` — the just-finished stage's live
+// maps) together opt into a PARTIAL regeneration instead of the full-disc one. When both are
+// supplied, every hex where `reveal(q, r)` is false is snapped back to its exact previous
+// value (terrain id AND remaining destructible HP, byte-identical) instead of the fresh stamp
+// computed below; only hexes where `reveal` is true keep the newly generated content. With
+// neither argument (the default), every hex keeps its fresh stamp — this is the original
+// #81 full-disc behavior, unchanged, so the very first stage's build (and any caller that
+// doesn't opt in) is unaffected.
+export function generateTerrain({
+  seed, worldRadius, biome, safeCenter = { q: 0, r: 0 }, extraClear = [],
+  reveal = null, previous = null,
+}) {
   const R = worldRadius;
   const rng = mulberry32(seed);
   const all = range({ q: 0, r: 0 }, R);
@@ -105,13 +118,84 @@ export function generateTerrain({ seed, worldRadius, biome, safeCenter = { q: 0,
     T.set(k, B.groundA);
   }
 
+  // Partial regen: restore every hex OUTSIDE `reveal` to its exact previous terrain id, so
+  // only the revealed region actually changed from the fresh stamp above.
+  const isPreserved = (q, r) => reveal && previous && !reveal(q, r) && previous.terrain.has(axialKey(q, r));
+  if (reveal && previous) {
+    for (const h of all) {
+      const k = axialKey(h.q, h.r);
+      if (isPreserved(h.q, h.r)) T.set(k, previous.terrain.get(k));
+    }
+  }
+
   const buildingHp = new Map();   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
   const coverHp = new Map();      // hexKey → remaining HP for destructible soft-cover hexes
   for (const [k, id] of T) {
+    const [q, r] = k.split(',').map(Number);
+    if (isPreserved(q, r)) {
+      // Preserved hexes carry over their exact remaining HP too (a half-destroyed outpost
+      // outside the reveal region stays half-destroyed, not reset to full).
+      if (previous.buildingHp.has(k)) buildingHp.set(k, previous.buildingHp.get(k));
+      if (previous.coverHp.has(k)) coverHp.set(k, previous.coverHp.get(k));
+      continue;
+    }
     const hp = buildingHpOf(id);
     if (hp > 0) (isSoftCover(id) ? coverHp : buildingHp).set(k, hp);
   }
   return { terrain: T, buildingHp, coverHp };
+}
+
+// #81 follow-up: the reveal-region geometry — a wedge/cone extending outward from the
+// player's current WORLD PIXEL position in one direction, starting beyond `bufferHexes` (so
+// nothing close to the player ever changes) out to the edge of the world disc. Returns a
+// `(q, r) => boolean` predicate suitable for `generateTerrain`'s `reveal` option. Half-angle
+// of ~40° (an ~80° wide cone) reads as a real "off in this direction" region without being so
+// narrow the player might miss it entirely. Owner: tunable.
+export const REVEAL_BUFFER_HEXES = 5;
+export const REVEAL_HALF_ANGLE = Math.PI * 2 / 9; // 40°
+
+export function makeRevealRegion(playerPx, playerPy, angle, {
+  bufferHexes = REVEAL_BUFFER_HEXES, halfAngle = REVEAL_HALF_ANGLE,
+} = {}) {
+  const bufferPx = bufferHexes * HEX_SIZE;
+  return (q, r) => {
+    const { x, y } = hexToPixel(q, r);
+    const dx = x - playerPx, dy = y - playerPy;
+    const dist = Math.hypot(dx, dy);
+    if (dist < bufferPx) return false;
+    let diff = Math.atan2(dy, dx) - angle;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff)); // normalize to (-pi, pi]
+    return Math.abs(diff) <= halfAngle;
+  };
+}
+
+// #81 follow-up: pick the angle (radians, world/pixel space) the new region opens up in.
+// Prefers continuing the player's current heading (`headingAngle`, derived from vx/vy by the
+// caller) if there's enough room in that direction within the fixed-size world disc; otherwise
+// samples random directions (deterministic via injectable `rand`) until one has room, and
+// falls back to "away from world origin" (the direction with the most guaranteed room for an
+// off-centre player) if nothing else clears. "Room" means a point `bufferHexes + minDepthHexes`
+// out along that direction is still within `worldRadius` hexes of the origin — so the reveal
+// region has real depth to generate into rather than immediately hitting the world edge.
+export function pickRevealAngle({
+  playerPx, playerPy, worldRadius, headingAngle = null,
+  bufferHexes = REVEAL_BUFFER_HEXES, minDepthHexes = 6, rand = Math.random, maxTries = 16,
+}) {
+  const testDist = (bufferHexes + minDepthHexes) * HEX_SIZE;
+  const hasRoom = (angle) => {
+    const tx = playerPx + Math.cos(angle) * testDist;
+    const ty = playerPy + Math.sin(angle) * testDist;
+    return distance(pixelToHex(tx, ty), { q: 0, r: 0 }) <= worldRadius - 1;
+  };
+  if (headingAngle != null && Number.isFinite(headingAngle) && hasRoom(headingAngle)) return headingAngle;
+  for (let i = 0; i < maxTries; i++) {
+    const angle = rand() * Math.PI * 2;
+    if (hasRoom(angle)) return angle;
+  }
+  // Fallback: away from world origin has the most guaranteed room for an off-centre player;
+  // at true origin every direction is equivalent, so just pick "east".
+  if (playerPx === 0 && playerPy === 0) return 0;
+  return Math.atan2(playerPy, playerPx);
 }
 
 // #81: pick the next stage's objective from the still-standing outpost hex keys, biased
@@ -122,9 +206,20 @@ export function generateTerrain({ seed, worldRadius, biome, safeCenter = { q: 0,
 // floor (e.g. a small biome with few outposts) falls back to the single farthest candidate
 // so a stage is never left without an objective. Ties among equal distances break on the
 // sorted hex-key order (same deterministic rule `_initMission` uses for stage 0).
-export function pickFarObjective(hexKeys, fromHex, minDistance = 6) {
+//
+// #81 follow-up: an optional `reveal` predicate (`(q, r) => boolean`, e.g. from
+// `makeRevealRegion`) restricts candidates to hexes INSIDE the newly-generated reveal
+// region — so the objective always lands in the fresh area the player has to walk into,
+// not just "far away" (which the whole-map regen made equivalent, but a partial regen does
+// not: "far from the player" and "in the untouched preserved terrain" can both be true).
+// Omitting `reveal` (the default) keeps the original whole-map behavior unchanged.
+export function pickFarObjective(hexKeys, fromHex, minDistance = 6, reveal = null) {
   if (!hexKeys || !hexKeys.length) return null;
-  const ranked = [...hexKeys].sort().map((k) => {
+  const candidates = reveal
+    ? hexKeys.filter((k) => { const [q, r] = k.split(',').map(Number); return reveal(q, r); })
+    : hexKeys;
+  if (!candidates.length) return null;
+  const ranked = [...candidates].sort().map((k) => {
     const [q, r] = k.split(',').map(Number);
     return { k, d: distance({ q, r }, fromHex) };
   }).sort((a, b) => b.d - a.d);

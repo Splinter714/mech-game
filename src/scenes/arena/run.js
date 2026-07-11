@@ -11,7 +11,7 @@ import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
-import { pickFarObjective } from '../../data/worldgen.js';
+import { pickFarObjective, pickRevealAngle, makeRevealRegion } from '../../data/worldgen.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -20,6 +20,10 @@ const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before re
 // where they're already standing, defeating the whole point of a freshly regenerated map.
 // Owner: tunable.
 const FAR_OBJECTIVE_MIN_DIST = 6;
+// #81 follow-up: below this speed (world px/s) the player isn't really "heading" anywhere in
+// particular, so the reveal direction falls back to a fresh random direction instead of
+// continuing a near-zero, noisy velocity vector. Owner: tunable.
+const MIN_HEADING_SPEED = 8;
 
 export const RunMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld()/_initMission() have set up the
@@ -75,28 +79,38 @@ export const RunMixin = {
   _startNextStage() {
     const desc = stageDescriptor(this.run.stageIndex);
 
-    // #81: regenerate the WHOLE map fresh for this stage — a new seed, new river/lake/forest/
-    // outpost arrangement — instead of just picking a new objective inside the same terrain.
-    // The player is NOT teleported: the safe-clear zone (normally a fixed ring around world
-    // origin) is centred on wherever the mech actually is right now, so the fresh terrain can
-    // never strand it in a lake/wall, and it keeps driving from exactly where it finished (its
-    // own px/py are never touched here). The biome itself is unchanged — still set once per
-    // deploy — only the feature arrangement varies.
+    // #81 follow-up (playtest 2026-07-10: the whole-map regen "spawned on top of the player
+    // mech"): regenerate ONLY a region opening up OFF IN ONE DIRECTION from the player, not the
+    // whole disc — everywhere else (behind/beside/near them) keeps the just-finished stage's
+    // terrain byte-identical, so nothing changes under their feet. Pick that direction from the
+    // player's current heading (if they're actually moving) or a fresh random direction with
+    // enough room in the fixed-size world disc; the reveal region is a wedge starting beyond a
+    // buffer distance from the player, out to the world edge (data/worldgen.js `pickRevealAngle`
+    // / `makeRevealRegion`). The player is still never teleported — its own px/py are untouched.
     const playerHex = pixelToHex(this.px, this.py);
-    this._buildWorld(undefined, playerHex);
+    const speed = Math.hypot(this.vx || 0, this.vy || 0);
+    const headingAngle = speed > MIN_HEADING_SPEED ? Math.atan2(this.vy, this.vx) : null;
+    const revealAngle = pickRevealAngle({
+      playerPx: this.px, playerPy: this.py, worldRadius: this.worldRadius, headingAngle,
+    });
+    const reveal = makeRevealRegion(this.px, this.py, revealAngle);
+    this._lastRevealAngle = revealAngle;   // exposed for tests/smoke — not read by gameplay
+    // Snapshot the just-finished stage's live maps BEFORE _buildWorld replaces them — this is
+    // what generateTerrain preserves byte-identical outside the reveal region.
+    const previous = { terrain: this.terrain, buildingHp: this.buildingHp, coverHp: this.coverHp };
+    this._buildWorld(undefined, playerHex, { reveal, previous });
 
     // A fresh objective: the just-rebuilt world's `buildingHp` map (hexKey → remaining HP)
-    // holds every outpost the new layout seeded. #81: bias the pick toward one that's
-    // actually FAR from the player's continuing position (pickFarObjective, data/worldgen.js)
-    // so reaching it takes a real drive across the new terrain, not a step to an adjacent hex.
-    // If the fresh layout somehow seeded no outposts at all, fall back to spawning one near
-    // the player (same fallback as before, just re-centred).
-    let hexKeys = [...this.buildingHp.keys()];
-    if (!hexKeys.length) {
-      const fresh = this._spawnOutpostAt(playerHex.q, playerHex.r);
-      hexKeys = fresh ? [fresh] : [];
-    }
-    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST);
+    // holds every outpost still standing (preserved ones keep their old remaining HP; only the
+    // reveal region got fresh outposts). #81 follow-up: the objective must specifically land
+    // INSIDE the reveal region (not just far away, which the old whole-map regen made
+    // equivalent) — reaching it means walking out into the fresh area. If no outpost landed in
+    // the region, seed one there directly; only fall back to "anywhere far" if even that fails,
+    // so a stage is never left without an objective.
+    const hexKeys = [...this.buildingHp.keys()];
+    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST, reveal)
+      ?? this._spawnOutpostAt(playerHex.q, playerHex.r, reveal)
+      ?? pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST);
     this.mission = makeMission(desc.missionTypeId);
     this.registry.set('mission', this.mission);
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
