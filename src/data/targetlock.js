@@ -87,6 +87,19 @@ export function isFullLock(lock) {
   return !!lock.enemy && lock.progress >= 1;
 }
 
+// Should a PLAYER trigger pull actually fire, given this weapon's delivery and the current lock
+// (#77 follow-up)? A genuine tracking/homing missile (guidance === 'homing' — swarmRack,
+// streakPod) needs a full (red) lock to fire at all: no lock ⇒ the trigger does nothing, not a
+// dumbfire-straight fallback. Everything else — direct-fire hitscan/lasers, dumbfire projectiles
+// (clusterRocket is explicitly guidance: 'dumbfire', never tracks), and arcing-but-unguided lobs
+// (plasma cannon, napalm — they fly a fixed arc off the turret facing and never needed a lock to
+// begin with) — fires unconditionally on trigger, lock or no lock. Pure; used by both the fire
+// gate (firing.js) and its tests.
+export function canFireWeapon(weapon, lock) {
+  if (weapon.delivery?.guidance !== 'homing') return true;
+  return isFullLock(lock);
+}
+
 // Advance the lock one step. Inputs (all computed by the caller from live world state):
 //   dt        — seconds elapsed
 //   cand      — the best fresh in-cone candidate this frame (target handle) or null

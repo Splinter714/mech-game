@@ -5,6 +5,7 @@
 import { CATEGORIES } from '../../data/categories.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
 import { traceHitscan } from '../../data/beamTrace.js';
+import { canFireWeapon } from '../../data/targetlock.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
@@ -91,6 +92,12 @@ export const FiringMixin = {
   // spawn travelling rounds that respect velocity, arc, and spread.
   fireWeapon(w) {
     if (!this.scene.isActive()) return;
+    // #77: a tracking (homing) weapon with no full lock does not fire at all — no dumbfire
+    // fallback. The trigger pull is a no-op: nothing spawns, no ammo spent, no cooldown-worthy
+    // shot actually happened. See data/targetlock.js `canFireWeapon` for exactly which
+    // deliveries this gates (only guidance: 'homing' — direct-fire and dumbfire/arcing-lob
+    // weapons are unaffected).
+    if (!canFireWeapon(w.weapon, this.lock)) return;
     const mods = this._buffMods?.() ?? {};
     // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend one.
     if (!mods.freeAmmo) this.mech.consumeAmmo(w.location, w.index, 1);
