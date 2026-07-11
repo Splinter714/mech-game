@@ -66,8 +66,12 @@ export const ENEMIES = {
 // (expands into a small cluster of turrets — see TURRET_CLUSTER_SIZE), so pressing N cycles
 // through the whole bestiary. The starting enemy is index 0 (the Raider), keeping the first
 // deploy stable.
+// #97: 'infantryMob' is appended to the rotation so the debug spawn-more control cycles through
+// it too (expands into INFANTRY_MOB_SIZE troopers — data/enemyKinds.js — mirroring 'swarm'/
+// 'turretNest').
 export const ENEMY_ROTATION = [
   'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest', 'artillery', 'swarm',
+  'infantryMob',
 ];
 
 // The default opening squad (#44 / #68 / #75 / #89): a mix of mechs and non-mech units so the
@@ -77,6 +81,10 @@ export const ENEMY_ROTATION = [
 // stays a mech (Raider) so the smoke test's mech-specific per-part damage assertions remain
 // meaningful. Order is the spawn order; the arena drops each just off-screen and they move in
 // per their AI (turrets just sit and guard).
+// #97: 'infantryMob' appended — the opening squad now shows off the new ground-swarm kind
+// alongside the drone swarm/turret nest. Profiled with the rest of the opening squad concurrent
+// (see #97 report) before landing on INFANTRY_MOB_SIZE; dial the mob size back if a future
+// profile run shows this combination doesn't hold ~60fps.
 export const DEFAULT_SQUAD = [
-  'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper',
+  'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper', 'infantryMob',
 ];

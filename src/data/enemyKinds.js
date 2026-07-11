@@ -146,6 +146,34 @@ export const ENEMY_KINDS = {
     scale: 0.75,           // #89: shrunk further (was 1.0) — more gunships spawn now, so each
                            // one reads smaller and the sky feels busier rather than crowded-big.
   },
+
+  // 5) INFANTRY — one trooper of a GROUND swarm (#97). The weakest unit in the game by a wide
+  //    margin: barely any hp, a single small part, a weak short-range popgun. Individually
+  //    meaningless — it threatens purely through the size of the mob it spawns in (see
+  //    INFANTRY_MOB_SIZE below, deliberately bigger than the drone SWARM_SIZE so a mob reads as
+  //    an overwhelming crowd, not just "a few more enemies"). Ground unit (flying: false), unlike
+  //    the drone it otherwise mirrors in spirit — advances/mills on foot, blocked by terrain like
+  //    a mech, and subject to #92 player-ground-collision (see groundEnemyRadius: its footprint
+  //    scales by `scale` same as every other vehicle, so at 0.38 each trooper's own collision
+  //    circle is tiny — a mob reads as a crowd you push through, not a solid wall; see the #97
+  //    report for the full reasoning).
+  infantry: {
+    name: 'Trooper',
+    kind: 'infantry',
+    hp: 6,                 // weaker than drone's 14 — dies in one or two hits from almost anything
+    parts: {
+      body: { x: 0, y: 0, w: 8, h: 12 },
+    },
+    weaponId: 'machineGun',   // cheap, short-range, already-mounted ballistic — fits a trooper
+    fireRange: 200,
+    fireEveryMs: 700,
+    flying: false,           // ground troop — walks, collides with terrain and the player
+    move: { maxSpeed: 85, accel: 260, turnRate: 5, turretSlew: 6 },
+    art: 'infantry',
+    behavior: 'infantry',
+    themeColor: 0x8fae4a,
+    scale: 0.38,            // noticeably smaller than drone's 0.52 (#97 ask: "smaller than drones")
+  },
 };
 
 // A non-mech spawn ships several drones as one "swarm" unit so the pack reads as numbers. The
@@ -161,6 +189,13 @@ export const SWARM_SIZE = 18;
 // so unlike the drone swarm's loose orbiting cloud, the nest is a small static cluster — picked
 // small and sensible so it reads as an emplacement, not a wall of guns.
 export const TURRET_CLUSTER_SIZE = 3;
+
+// An 'infantryMob' spawn expands into this many infantry dropped in a loose cluster (#97 —
+// "let's add infantry in large volumes, smaller than drones"). Deliberately bigger than the
+// drone SWARM_SIZE (18) so a mob reads as an overwhelming crowd rather than just "more of the
+// same"; profiled (see #97 report) alongside the #71/#76 concentrated-load perf work before
+// landing on this number — dial back if a future profile run shows it doesn't hold ~60fps.
+export const INFANTRY_MOB_SIZE = 28;
 
 // Is a type id a non-mech kind? (Anything not in this table is a mech loadout.)
 export function isEnemyKind(typeId) {

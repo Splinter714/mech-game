@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, isEnemyKind } from './enemyKinds.js';
+import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE, isEnemyKind } from './enemyKinds.js';
 import { getWeapon, WEAPONS } from './weapons.js';
 import { HpBody } from './HpBody.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
-  it('defines the four expected kinds', () => {
-    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'tank', 'turret']);
+  it('defines the five expected kinds', () => {
+    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'infantry', 'tank', 'turret']);
   });
 
   it('every kind names a REAL weapon id (so no scene ever hardcodes one)', () => {
@@ -35,6 +35,19 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.tank.flying).toBe(false);
     expect(ENEMY_KINDS.drone.flying).toBe(true);
     expect(ENEMY_KINDS.helicopter.flying).toBe(true);
+  });
+
+  it('#97: infantry is a GROUND unit (not flying), unlike the drone it swarms like', () => {
+    expect(ENEMY_KINDS.infantry.flying).toBe(false);
+  });
+
+  it('#97: infantry is smaller and weaker than the drone — the weakest unit in the game', () => {
+    expect(ENEMY_KINDS.infantry.scale).toBeLessThan(ENEMY_KINDS.drone.scale);
+    expect(ENEMY_KINDS.infantry.hp).toBeLessThan(ENEMY_KINDS.drone.hp);
+    for (const id of ENEMY_KIND_IDS) {
+      if (id === 'infantry') continue;
+      expect(ENEMY_KINDS.infantry.hp, `infantry vs ${id}`).toBeLessThanOrEqual(ENEMY_KINDS[id].hp);
+    }
   });
 
   it('each kind wires an art + behavior registry key', () => {
@@ -96,11 +109,12 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(isEnemyKind('nope')).toBe(false);
   });
 
-  it('isEnemyKind does not recognize the swarm/turretNest cluster-expansion ids', () => {
-    // 'swarm' and 'turretNest' are squad-composition ids the arena expands into several real
-    // kind spawns (drone / turret) — neither is itself an ENEMY_KINDS entry.
+  it('isEnemyKind does not recognize the swarm/turretNest/infantryMob cluster-expansion ids', () => {
+    // 'swarm', 'turretNest', and 'infantryMob' are squad-composition ids the arena expands into
+    // several real kind spawns (drone / turret / infantry) — none is itself an ENEMY_KINDS entry.
     expect(isEnemyKind('swarm')).toBe(false);
     expect(isEnemyKind('turretNest')).toBe(false);
+    expect(isEnemyKind('infantryMob')).toBe(false);
   });
 
   it('#89: SWARM_SIZE is a much larger swarm count ("waaaaaay more")', () => {
@@ -111,5 +125,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('#89: TURRET_CLUSTER_SIZE is a small positive count', () => {
     expect(TURRET_CLUSTER_SIZE).toBeGreaterThan(1);
     expect(TURRET_CLUSTER_SIZE).toBeLessThan(6);
+  });
+
+  it('#97: INFANTRY_MOB_SIZE is a bigger volume than the drone SWARM_SIZE ("large volumes")', () => {
+    expect(INFANTRY_MOB_SIZE).toBeGreaterThan(SWARM_SIZE);
+    expect(INFANTRY_MOB_SIZE).toBeLessThan(50);
   });
 });

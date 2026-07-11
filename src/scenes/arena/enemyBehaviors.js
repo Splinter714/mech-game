@@ -134,6 +134,38 @@ function helicopterBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: false });
 }
 
+// INFANTRY — one trooper of a ground swarm (#97). Simple "advance and mill": closes on the
+// player until it's roughly at its fire range, then loosely mills around that ring (a small
+// per-trooper jittered orbit angle, re-picked periodically) so a big mob reads as a churning
+// crowd rather than a single-file conga line or a static firing line. Ground unit — needs LOS
+// like a tank/turret (it can't shoot through walls), and collides with terrain like any
+// ground unit (handled generically by the caller, same as tank/turret).
+function infantryBehavior(scene, e, ctx) {
+  const def = e.kindDef;
+  const mv = def.move;
+  const standoff = (def.fireRange ?? 200) * 0.75;
+  e._jitterAt = (e._jitterAt ?? 0) - ctx.delta;
+  if (e._jitterAt <= 0) {
+    e._jitterAt = rand(500, 1100);
+    e._orbitAng = rand(0, Math.PI * 2);
+  }
+  let mx, my;
+  if (ctx.dist > standoff * 1.2) {
+    // Advance, with a little lateral jitter so the mob doesn't funnel into one file.
+    mx = ctx.ux + Math.cos(e._orbitAng) * 0.35;
+    my = ctx.uy + Math.sin(e._orbitAng) * 0.35;
+  } else {
+    // Close enough to shoot — mill loosely rather than standing dead still.
+    mx = Math.cos(e._orbitAng) * 0.5;
+    my = Math.sin(e._orbitAng) * 0.5;
+  }
+  const m = Math.hypot(mx, my) || 1;
+  e.vx = approach(e.vx, (mx / m) * mv.maxSpeed, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, (my / m) * mv.maxSpeed, mv.accel * ctx.dt);
+  if (Math.hypot(e.vx, e.vy) > 5) e.angle = Math.atan2(e.vy, e.vx);
+  aimAndFire(scene, e, ctx, { needLos: true });
+}
+
 // Local copy of the shared approach() (avoid importing the whole shared module chain here).
 function approach(cur, target, maxStep) {
   if (cur < target) return Math.min(cur + maxStep, target);
@@ -146,4 +178,5 @@ export const ENEMY_BEHAVIORS = {
   tank: tankBehavior,
   drone: droneBehavior,
   helicopter: helicopterBehavior,
+  infantry: infantryBehavior,
 };
