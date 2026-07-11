@@ -57,6 +57,14 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.helicopter.scale).toBeLessThan(1.0);
     expect(ENEMY_KINDS.turret.scale).toBeLessThan(1.15);
     expect(ENEMY_KINDS.turret.scale).toBeLessThanOrEqual(0.6);
+    // #91 retune: drones and tanks nudged smaller again (further than #89's already-reduced size).
+    expect(ENEMY_KINDS.tank.scale).toBeLessThan(0.6);
+    expect(ENEMY_KINDS.drone.scale).toBeLessThan(0.62);
+  });
+
+  it('#91: tank is noticeably slower/heavier than its #89 speed', () => {
+    expect(ENEMY_KINDS.tank.move.maxSpeed).toBeLessThan(78);
+    expect(ENEMY_KINDS.tank.move.maxSpeed).toBeGreaterThan(0);
   });
 
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
