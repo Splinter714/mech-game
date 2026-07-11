@@ -145,6 +145,13 @@ export default class ArenaScene extends Phaser.Scene {
     const dt = Math.min(0.05, delta / 1000);
     const intent = this.controls.read();
 
+    // #80: the camera's world-space view rect, republished each frame so HudScene's edge-
+    // direction arrow can tell whether the objective is on-screen and, if not, where to point.
+    // Copied to a plain object rather than handing out the live Phaser Rectangle, so the HUD
+    // reads a stable snapshot instead of an object the camera keeps mutating in place.
+    const wv = this.cameras.main.worldView;
+    this.registry.set('cameraView', { x: wv.x, y: wv.y, width: wv.width, height: wv.height });
+
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();
 
