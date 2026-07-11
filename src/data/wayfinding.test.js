@@ -69,6 +69,32 @@ describe('edgeArrowPosition', () => {
     expect(loose.x).toBeLessThan(tight.x);
   });
 
+  it('accepts a per-edge margin object and clamps a due-south target above the reserved bottom bar', () => {
+    // Simulates the arena HUD: a tall bottom margin (the skill-tile toolbar) and a smaller top
+    // margin, so a target straight below the player clamps well clear of the literal bottom
+    // pixel row, above where the toolbar sits — not at H - <uniform margin>.
+    const margins = { top: 20, right: 20, bottom: 110, left: 20 };
+    const { x, y } = edgeArrowPosition(VIEW, W, H, { x: 0, y: 10000 }, margins);
+    expect(y).toBeCloseTo(H - 110, 5);
+    expect(x).toBeCloseTo(W / 2, 5);
+  });
+
+  it('per-edge margin: a due-north target clamps against the (independent) top margin', () => {
+    const margins = { top: 60, right: 20, bottom: 110, left: 20 };
+    const { x, y } = edgeArrowPosition(VIEW, W, H, { x: 0, y: -10000 }, margins);
+    expect(y).toBeCloseTo(60, 5);
+    expect(x).toBeCloseTo(W / 2, 5);
+  });
+
+  it('per-edge margin: a diagonal target clamps against whichever inset edge the ray hits first', () => {
+    // Bottom margin (reserved toolbar) is larger than the others, so a south-east target clamps
+    // on the bottom edge (reached first, given this view/screen's aspect) rather than the right.
+    const margins = { top: 20, right: 20, bottom: 80, left: 20 };
+    const { x, y } = edgeArrowPosition(VIEW, W, H, { x: 10000, y: 10000 }, margins);
+    expect(y).toBeCloseTo(H - 80, 5);
+    expect(x).toBeLessThan(W - 20);
+  });
+
   it('handles a target exactly at screen-center without dividing by zero', () => {
     // Degenerate case: the target coincides with the camera center (no real direction to point
     // in). The function picks an arbitrary direction rather than NaN/crashing.
