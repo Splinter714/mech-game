@@ -11,7 +11,7 @@ import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
-import { pickFarObjective, pickRevealAngle, makeRevealRegion } from '../../data/worldgen.js';
+import { pickFarObjective, pickRevealAngle, pickGrowthCenter } from '../../data/worldgen.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -79,32 +79,35 @@ export const RunMixin = {
   _startNextStage() {
     const desc = stageDescriptor(this.run.stageIndex);
 
-    // #81 follow-up (playtest 2026-07-10: the whole-map regen "spawned on top of the player
-    // mech"): regenerate ONLY a region opening up OFF IN ONE DIRECTION from the player, not the
-    // whole disc — everywhere else (behind/beside/near them) keeps the just-finished stage's
-    // terrain byte-identical, so nothing changes under their feet. Pick that direction from the
-    // player's current heading (if they're actually moving) or a fresh random direction with
-    // enough room in the fixed-size world disc; the reveal region is a wedge starting beyond a
-    // buffer distance from the player, out to the world edge (data/worldgen.js `pickRevealAngle`
-    // / `makeRevealRegion`). The player is still never teleported — its own px/py are untouched.
+    // #81 (organic growth rewrite): ADD a fresh organically-shaped region of terrain beyond the
+    // edge of everywhere already explored, instead of reshuffling within a fixed-size disc —
+    // everywhere already explored (behind/beside/near the player) keeps the just-finished
+    // stage's terrain byte-identical, so nothing changes under their feet, but the total map is
+    // genuinely bigger afterward. Pick the growth direction from the player's current heading
+    // (if they're actually moving) or a fresh random direction with room before the hard
+    // MAX_WORLD_RADIUS cap (data/worldgen.js `pickRevealAngle`), then place the new lobe's
+    // centre out along that direction (`pickGrowthCenter`) so its own organic boundary reaches
+    // back to overlap the existing explored edge and extends fresh territory beyond it. The
+    // player is still never teleported — its own px/py are untouched.
     const playerHex = pixelToHex(this.px, this.py);
     const speed = Math.hypot(this.vx || 0, this.vy || 0);
     const headingAngle = speed > MIN_HEADING_SPEED ? Math.atan2(this.vy, this.vx) : null;
-    const revealAngle = pickRevealAngle({
-      playerPx: this.px, playerPy: this.py, worldRadius: this.worldRadius, headingAngle,
-    });
-    const reveal = makeRevealRegion(this.px, this.py, revealAngle);
-    this._lastRevealAngle = revealAngle;   // exposed for tests/smoke — not read by gameplay
-    // Snapshot the just-finished stage's live maps BEFORE _buildWorld replaces them — this is
-    // what generateTerrain preserves byte-identical outside the reveal region.
+    const growthAngle = pickRevealAngle({ playerPx: this.px, playerPy: this.py, headingAngle });
+    const growthCenter = pickGrowthCenter({ playerPx: this.px, playerPy: this.py, angle: growthAngle });
+    this._lastGrowthAngle = growthAngle;   // exposed for tests/smoke — not read by gameplay
+    // Snapshot the just-finished stage's live maps (the CUMULATIVE explored area, since every
+    // previous stage's build already folded in everything before IT) BEFORE _buildWorld
+    // replaces them — this is what generateTerrain preserves byte-identical outside the new
+    // growth lobe, and what the new lobe's `included` region unions on top of.
     const previous = { terrain: this.terrain, buildingHp: this.buildingHp, coverHp: this.coverHp };
-    this._buildWorld(undefined, playerHex, { reveal, previous });
+    this._buildWorld(undefined, playerHex, { previous, growthCenter });
+    const reveal = this._revealRegion;   // the newly-added lobe, minus anywhere already explored
 
     // A fresh objective: the just-rebuilt world's `buildingHp` map (hexKey → remaining HP)
     // holds every outpost still standing (preserved ones keep their old remaining HP; only the
-    // reveal region got fresh outposts). #81 follow-up: the objective must specifically land
-    // INSIDE the reveal region (not just far away, which the old whole-map regen made
-    // equivalent) — reaching it means walking out into the fresh area. If no outpost landed in
+    // new lobe got fresh outposts). The objective must specifically land INSIDE the new lobe
+    // (not just far away, which a full-map regen made equivalent, but additive growth does not)
+    // — reaching it means walking out into the freshly grown territory. If no outpost landed in
     // the region, seed one there directly; only fall back to "anywhere far" if even that fails,
     // so a stage is never left without an objective.
     const hexKeys = [...this.buildingHp.keys()];

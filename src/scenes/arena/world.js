@@ -8,7 +8,10 @@ import {
   shotBlockedAt, flameCoverDamage,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
-import { generateTerrain } from '../../data/worldgen.js';
+import {
+  generateTerrain, organicBoundary, growRegion, mulberry32,
+  INITIAL_BASE_RADIUS, INITIAL_VARIATION, SECTORS, MAX_WORLD_RADIUS,
+} from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import { DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains } from './shared.js';
 
@@ -18,30 +21,39 @@ const STOMP_DPS = 45;
 
 
 export const WorldMixin = {
-  // Generate a large natural battlefield (#41): a big grass disc with a winding SHALLOW river,
-  // a distinct DEEP-water lake, walk-through forest clusters, and a few DESTRUCTIBLE industrial
-  // outposts to roam through. Terrain is kept in `this.terrain` (hexKey → terrain id); collision,
-  // line-of-sight, and the per-terrain speed penalty all read the data-table props. Building HP is
+  // Generate a natural battlefield (#41): a grass area with a winding SHALLOW river, a distinct
+  // DEEP-water lake, walk-through forest clusters, and a few DESTRUCTIBLE industrial outposts to
+  // roam through. Terrain is kept in `this.terrain` (hexKey → terrain id); collision, line-of-
+  // sight, and the per-terrain speed penalty all read the data-table props. Building HP is
   // seeded into `this.buildingHp` (hexKey → hp) and the per-hex tile images are kept in
   // `this.tileImages` so a destroyed outpost can swap its texture to rubble in place.
   //
-  // #81: this now RUNS AGAIN each stage advance (run.js `_startNextStage`), not just once at
-  // deploy — so the seed is a random draw by default (a NEW layout every call) rather than the
-  // old hardcoded `0x5eed` constant; pass an explicit `seed` to reproduce a layout (tests do
-  // this). The actual terrain-stamping algorithm is the pure `generateTerrain` (data/worldgen.js)
-  // so it's unit-testable without a scene; this method is just the thin Phaser-touching wrapper
-  // that turns the result into tile Images. `safeCenter` (default world origin, matching the
-  // original always-clear-the-centre behaviour) is the hex the spawn-safe zone clears around —
-  // stage advance passes the PLAYER'S continuing hex so the fresh terrain never strands the
-  // mech in a lake/wall (the player's px/py themselves are never touched — no teleport).
+  // #81 (organic growth rewrite): the playable area is no longer a fixed-size hex disc — it's
+  // an IRREGULAR, organically-shaped region (`organicBoundary`, data/worldgen.js), and it
+  // actually GROWS each stage advance rather than being reshuffled within a constant footprint.
+  // `this.worldRadius` is now just the generous, finite BOUNDING cap (`MAX_WORLD_RADIUS`) a
+  // run's cumulative growth can never exceed — not the shape of the map itself.
   //
-  // #81 follow-up (directional partial regen): `opts.reveal` + `opts.previous`, when supplied,
-  // opt into regenerating ONLY the reveal-region hexes instead of the whole disc — run.js
-  // `_startNextStage` passes these so the new stage's terrain opens up off in one direction
-  // instead of replacing the map around the player. The first-ever build (ArenaScene.create())
-  // passes neither, so it keeps doing the original full-disc regenerate unchanged.
+  // Two modes, chosen by whether `opts.growthCenter` is supplied:
+  //  - No `growthCenter` (the first-ever build, `ArenaScene.create()`): a SMALL organic region
+  //    around world origin (`INITIAL_BASE_RADIUS`/`INITIAL_VARIATION`) — the whole thing is
+  //    fresh, so `reveal`/`previous` are unused.
+  //  - `opts.growthCenter` + `opts.previous` (every stage advance, run.js `_startNextStage`):
+  //    ADD a fresh organic lobe centred there on top of whatever `opts.previous` already
+  //    explored (`growRegion`) — everywhere already explored is preserved byte-identical
+  //    (reused from the original directional-partial-regen pass), only the new lobe is freshly
+  //    stamped. The resulting `reveal` predicate is stashed on `this._revealRegion` so run.js
+  //    can scope the new stage's objective to the freshly-added territory.
+  //
+  // The seed is a random draw by default (a NEW layout every call) rather than a hardcoded
+  // constant; pass an explicit `seed` to reproduce a layout (tests do this — the same seed also
+  // deterministically drives this build's organic-shape RNG, independent of `generateTerrain`'s
+  // own internal seed-derived RNG for terrain features). `safeCenter` (default world origin) is
+  // the hex the spawn-safe zone clears around — stage advance passes the PLAYER'S continuing
+  // hex so the fresh terrain never strands the mech in a lake/wall (the player's px/py
+  // themselves are never touched — no teleport).
   _buildWorld(seed = Math.floor(Math.random() * 0x100000000), safeCenter = { q: 0, r: 0 }, opts = {}) {
-    this.worldRadius = 20;
+    this.worldRadius = MAX_WORLD_RADIUS;
     // The biome to build (set on the scene before create(), e.g. per deploy/stage #64). The role
     // → terrain-id mapping comes entirely from the biome data, so this generator never branches on
     // which biome it is; swapping biomes just swaps the ids it stamps. #81: the biome stays fixed
@@ -49,10 +61,22 @@ export const WorldMixin = {
     const B = getBiome(this.biomeId ?? DEFAULT_BIOME);
     this.biome = B;
 
+    const shapeRng = mulberry32(seed);
+    let included, reveal;
+    if (opts.growthCenter) {
+      ({ included, reveal } = growRegion({ previous: opts.previous ?? null, center: opts.growthCenter, rng: shapeRng }));
+    } else {
+      included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
+        baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION, sectors: SECTORS,
+      });
+      reveal = null;
+    }
+    this._revealRegion = reveal;   // exposed for run.js (objective placement) + tests/smoke
+
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp: builtBuildingHp, coverHp } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, safeCenter, extraClear: [dummyKey],
-      reveal: opts.reveal ?? null, previous: opts.previous ?? null,
+      reveal, previous: opts.previous ?? null, included,
     });
 
     const prevTerrain = opts.previous?.terrain ?? null;
@@ -228,16 +252,20 @@ export const WorldMixin = {
   // biome starts with is eventually destroyed permanently (collapses to rubble, no repair — see
   // `_damageBuildingAt`), so a run whose stage count exceeds a biome's outpost count needs a way
   // to keep producing assault objectives; the run mixin calls this as a fallback once
-  // `buildingHp` runs dry. Picks a random ground hex within a modest ring of the world centre
+  // `buildingHp` runs dry. Picks a random ground hex within a modest ring of `nearQ,nearR`
   // (clear of the permanent spawn-safe zone) so it doesn't land on top of the player or another
   // outpost. #81 follow-up: an optional `reveal` predicate (`(q, r) => boolean`) restricts the
   // candidate hex to the freshly-opened reveal region, so a stage-advance fallback objective
-  // still lands somewhere the player has to walk into the new area to reach. Returns the new
-  // outpost's hex key, or null if no eligible ground hex was found.
+  // still lands somewhere the player has to walk into the new area to reach — when `reveal` is
+  // given, the search ring is capped to roughly the size of one growth lobe (not the much
+  // larger `worldRadius` bounding cap #81's organic growth introduced), so tries actually land
+  // near the lobe instead of mostly missing it. Returns the new outpost's hex key, or null if no
+  // eligible ground hex was found.
   _spawnOutpostAt(nearQ = 0, nearR = 0, reveal = null) {
     const B = this.biome;
+    const ringCap = reveal ? 24 : (this.worldRadius - 6);
     for (let tries = 0; tries < 40; tries++) {
-      const ring = 4 + Math.floor(Math.random() * (this.worldRadius - 6));
+      const ring = 4 + Math.floor(Math.random() * ringCap);
       const ang = Math.random() * Math.PI * 2;
       const q = Math.round(nearQ + ring * Math.cos(ang));
       const r = Math.round(nearR + ring * Math.sin(ang) * (2 / Math.sqrt(3)) - (ring * Math.cos(ang)) / 2);
