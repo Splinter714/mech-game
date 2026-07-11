@@ -1,10 +1,11 @@
-// #92 — tank independent turret movement, player-vs-ground-enemy collision, and tank crush
-// damage. Each piece has a PURE helper factored into shared.js specifically so it's testable
-// without a Phaser scene: `hullTravelAngle` (hull faces travel, not the player, decoupled from
-// the turret which tracks the player on its own slew), `circleContains`/`groundEnemyRadius`
-// (the circular collision test used to block the player against ground enemies), and
-// `crushDamage` (the shared crush/stomp damage-per-frame formula behind both the outpost stomp
-// and the new tank crush).
+// #92 — tank independent turret movement, player-vs-ground-enemy collision, and (originally)
+// tank crush damage. Each piece has a PURE helper factored into shared.js specifically so it's
+// testable without a Phaser scene: `hullTravelAngle` (hull faces travel, not the player,
+// decoupled from the turret which tracks the player on its own slew), `circleContains`/
+// `groundEnemyRadius` (the circular collision test used to block the player against ground
+// enemies), and `crushDamage` (the outpost-stomp damage-per-frame formula, #41). #92 correction
+// (2026-07-10): tank-crushing is now an instant kill, not a `crushDamage`-based gradual grind —
+// see `crush.test.js` for that behavior.
 import { describe, it, expect } from 'vitest';
 import {
   hullTravelAngle, circleContains, groundEnemyRadius,
@@ -84,13 +85,5 @@ describe('crushDamage — shared stomp/crush-per-frame formula (#92, mirrors #41
     const dps = 40, dt = 1;
     expect(crushDamage(dps, dt, -5)).toBeCloseTo(crushDamage(dps, dt, 0), 10);
     expect(crushDamage(dps, dt, 5)).toBeCloseTo(crushDamage(dps, dt, 1), 10);
-  });
-
-  it('a tank (160 HP) driven into at full speed dies within a handful of seconds, not '
-    + 'instantly and not never', () => {
-    const TANK_CRUSH_DPS = 55; // mirrors world.js's constant
-    const secondsToKill = 160 / TANK_CRUSH_DPS; // full-speed dps == crushDamage at speedFrac=1
-    expect(secondsToKill).toBeGreaterThan(1.5);
-    expect(secondsToKill).toBeLessThan(6);
   });
 });
