@@ -78,10 +78,28 @@ export function footstep(e, foot = 0) {
   e.noise(e.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
 }
 
-// Explosion (#36) — death / part break-off. `scale` 0.4..1.2 sizes the blast.
+// Explosion (#36, tunable data per #100) — death / part break-off. `scale` 0.3..1.6 sizes the
+// blast (`deathScaleFor`, scenes/arena/shared.js, drives this for a kill; a couple of fixed
+// calls elsewhere — a part breaking off, the player's own MECH DOWN — pass a flat intensity).
+// The cue's BASE sound now lives in sfxParams.js's `deathExplosion` entry (same tunable-layer
+// table every weapon's sound uses — Weapon Lab-style data, not a hardcoded function), so it's
+// editable through the identical getSfxParams/setSfxParam/resetSfxParams plumbing. `scale`
+// additionally reshapes each layer at trigger time: louder, longer (more sustain = more
+// "boominess"), and pitched DOWN (lower frequency = more bass/boomy) for a bigger kill — a
+// heavy mech should sound noticeably bigger AND lower than a drone, not just louder.
 export function explosion(e, scale = 1) {
-  const s = clamp(scale, 0.3, 1.4);
-  e.tone(e.sfx, { type: 'sine', freq: 140 * s, freqEnd: 30, dur: 0.5 * s, gain: 0.34, attack: 0.003 });   // sub-bass punch
-  e.noise(e.sfx, { dur: 0.6 * s, gain: 0.28, type: 'lowpass', freq: 1400, freqEnd: 180, attack: 0.002 }); // wide body
-  e.noise(e.sfx, { dur: 0.08, gain: 0.14, type: 'highpass', freq: 2200 });                                // high crack
+  const s = clamp(scale, 0.3, 1.6);
+  const layers = e.getSfxParams('deathExplosion').fire;
+  playLayers(e, e.sfx, layers.map((l) => scaleExplosionLayer(l, s)));
+}
+
+// Reshape one death-explosion layer by the kill's size factor `s` (see explosion() above).
+// Pure — no engine/context reads — so it's trivially unit-testable in isolation.
+export function scaleExplosionLayer(l, s) {
+  const out = { ...l };
+  if (out.dur != null) out.dur = out.dur * s;                                    // more sustain = boomier
+  if (out.gain != null && out.gain > 0) out.gain = out.gain * (0.7 + 0.3 * s);   // louder for a bigger kill
+  if (out.freq != null) out.freq = out.freq / s;                                 // lower pitch = more bass
+  if (out.freqEnd != null) out.freqEnd = out.freqEnd / s;
+  return out;
 }

@@ -177,6 +177,28 @@ export const DEFAULT_SFX = withQDefaults({
     trajectory: [{ kind: 'noise', type: 'bandpass', freq: 600, freqEnd: 900, q: 0.8, dur: 0.20, gain: 0.05, attack: 0.02 }],
     impact: blastLayers(0.55),
   },
+
+  // ── death / part-break explosion (#100) ──────────────────────────────────────────────
+  // Not a weapon — the death-explosion cue (Audio.explosion, `sfx.js` explosion()) used to be
+  // a hand-written function with hardcoded numbers. Giving it an entry in this SAME table
+  // (rather than a parallel data structure) means it's tunable through the identical
+  // load/save/reset plumbing every weapon's sound already goes through (loadSfxParams,
+  // AudioEngine.setSfxParam/getSfxParams/resetSfxParams, localStorage persistence) with zero
+  // new code — `deathExplosion` is just another key of DEFAULT_SFX. Same 2-tone + 2-noise `fire`
+  // shape as every weapon (see the file header): layer 0 is the sub-bass "boominess" punch
+  // (the low-frequency component + its own decay length is exactly the knob #100 asked for),
+  // layer 1 the wide filtered-noise body, layer 2 the sharp high-frequency crack, layer 3 an
+  // extra tone slot left silent (gain 0) for future tuning, matching every other weapon's shape.
+  // `sfx.js` explosion() reads this table and additionally scales gain/dur/freq by the killed
+  // enemy's size (`deathScaleFor`, shared.js) at trigger time — see `scaleExplosionLayer`.
+  deathExplosion: {
+    fire: [
+      { kind: 'tone', type: 'sine', freq: 140, freqEnd: 30, dur: 0.5, gain: 0.34, attack: 0.003 },     // sub-bass punch (boominess)
+      { kind: 'noise', type: 'lowpass', freq: 1400, freqEnd: 180, dur: 0.6, gain: 0.28, attack: 0.002 }, // wide body
+      { kind: 'noise', type: 'highpass', freq: 2200, dur: 0.08, gain: 0.14, attack: 0.002 },             // high crack
+      { kind: 'tone', type: 'square', freq: 90, freqEnd: 35, dur: 0.3, gain: 0, attack: 0.004 },         // silent — open slot for tuning
+    ],
+  },
 });
 
 // ── Held/looping SFX (#53) ──────────────────────────────────────────────────────────────

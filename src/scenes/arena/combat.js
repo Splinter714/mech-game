@@ -11,6 +11,12 @@ import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx
 // recycling the oldest circle instead of create/destroy-ing one per hit.
 const IMPACT_CIRCLE_CAP = 48;
 
+// Same worst-case-bounding idea as IMPACT_CIRCLE_CAP, for the death-explosion debris chunks
+// (#100): a mass-kill (e.g. an AoE wiping a drone swarm of 18) fires `_deathFx` many times in
+// one frame, and each call flings a handful of rectangles, so the concurrent-debris count is
+// hard-capped and recycled instead of growing unbounded.
+const DEBRIS_CAP = 60;
+
 export const CombatMixin = {
   // Incoming damage to the player (used once enemies fire) — fully absorbed while the
   // bubble shield is up.
@@ -113,7 +119,8 @@ export const CombatMixin = {
       // explosion itself (sized to the enemy) AS the death feedback, not a delayed afterthought.
       // Read everything off `e` we still need BEFORE tearing it down.
       const dx = e.x, dy = e.y;
-      this._floatText(dx, dy - 30, 'DESTROYED', '#e2533a');   // just floating text, no lingering body
+      // #100: the red "DESTROYED" floating text read as redundant/noisy on top of the
+      // explosion itself (which IS the death feedback) — removed. No lingering body either way.
       this._deathFx(dx, dy, deathScaleFor(e));
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
       // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
@@ -129,19 +136,68 @@ export const CombatMixin = {
     }
   },
 
-  // Catastrophic-kill explosion, sized to the dying enemy (`scale`: ~0.7 drone … ~1.35 heavy
-  // mech — see `deathScaleFor`). Draws the SAME fireball+shockring burst recipe `_impactFx` uses
-  // for missile/splash hits (via the shared `_burst` primitive) rather than inventing new
-  // drawing code — just scales the radius/duration and the explosion volume by enemy size.
+  // Catastrophic-kill explosion, sized to the dying enemy (`scale`: ~0.5 drone … ~1.3 heavy
+  // mech — see `deathScaleFor`). #100 (playtest 2026-07-10: "should be more explosion-y, not
+  // just an expanding circle"): a plain fireball+shockring pair of clean concentric circles
+  // read as too geometric/clean. Now: a SHARP quick flash, several randomly-offset overlapping
+  // fireball blobs (irregular silhouette instead of one perfect circle), the shock ring kept
+  // (still reads as a shockwave), a lingering drifting smoke puff, and flung debris fragments.
+  // Everything scales off the same `scale` so a heavy mech's kill is a bigger, busier, longer
+  // event than a drone's, not just a wider version of the same circle.
   // Goes straight through `_burst`, bypassing `_impactFx`'s per-hit sound throttle/burst-merge
   // (tuned for concentrated weapon fire, not a once-per-kill event) so this always renders even
   // when the killing hit's own impact FX just fired at the same point this frame.
   _deathFx(x, y, scale = 1) {
     const r = 26 * scale;
-    this._burst(x, y, 4 * scale, 12 * scale, 0xffffff, 0.95, 140, false);     // core flash
-    this._burst(x, y, r * 0.4, r * 1.6, 0xff7a18, 0.5, 320 * scale, false);   // fireball
-    this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.9, 360 * scale, true);    // shock ring
+    // Sharp initial flash — brief and near-full-alpha so the very first frame reads as a
+    // punch rather than a smooth fade-in.
+    this._burst(x, y, 5 * scale, 15 * scale, 0xffffff, 1, 90, false);
+    // Irregular fireball: a few overlapping blobs offset at random angles/radii instead of one
+    // clean circle, so the burst silhouette reads as ragged rather than geometric.
+    const blobCount = 3;
+    for (let i = 0; i < blobCount; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const off = r * 0.3 * Math.random();
+      const bx = x + Math.cos(ang) * off, by = y + Math.sin(ang) * off;
+      const r0 = r * (0.3 + Math.random() * 0.2), r1 = r * (1.2 + Math.random() * 0.6);
+      this._burst(bx, by, r0, r1, 0xff7a18, 0.4, 260 * scale + Math.random() * 60, false);
+    }
+    this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.85, 340 * scale, true);   // shock ring
+    this._smokePuff(x, y, scale);
+    this._deathDebris(x, y, scale);
     Audio.explosion(1.15 * scale);
+  },
+
+  // Lingering smoke puff (#100): a soft grey blob that drifts a little and fades out much
+  // slower than the flash/fireball, so the kill site doesn't just vanish the instant the
+  // bright burst ends. Reuses the shared pooled `_burst` circle primitive (no new pool needed).
+  _smokePuff(x, y, scale) {
+    const r = 20 * scale;
+    const dx = (Math.random() - 0.5) * 14 * scale, dy = (Math.random() - 0.5) * 14 * scale;
+    const c = this._acquireImpactCircle(x, y, r * 0.6, 0x555049, 0.3, false);
+    this.tweens.add({
+      targets: c, x: x + dx, y: y + dy, scale: (r * 1.8) / (r * 0.6), alpha: 0,
+      duration: 620 * scale, ease: 'Quad.easeOut', onComplete: () => this._freeImpactCircle(c),
+    });
+  },
+
+  // Debris fragments flung outward from the kill site (#100), mirroring world.js's
+  // `_outpostCollapseFx` rubble-chunk pattern. Pooled + hard-capped (`DEBRIS_CAP`) — a kill's
+  // debris only fires once (not per hit), but a mass-kill (e.g. an AoE clearing a drone swarm
+  // of 18) can still land many kills in one frame, so the pool bounds the worst case exactly
+  // like `_acquireImpactCircle` does for impact bursts (#76 lesson).
+  _deathDebris(x, y, scale) {
+    const count = Math.min(9, Math.round(4 + scale * 4));
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = (18 + Math.random() * 30) * scale;
+      const chunk = this._acquireDebrisChunk(x, y, (2 + Math.random() * 3) * scale, (2 + Math.random() * 3) * scale, 0x3a3733);
+      this.tweens.add({
+        targets: chunk, x: x + Math.cos(ang) * dist, y: y + Math.sin(ang) * dist,
+        angle: Math.random() * 360, alpha: 0, duration: (300 + Math.random() * 260) * scale,
+        ease: 'Quad.easeOut', onComplete: () => this._freeDebrisChunk(chunk),
+      });
+    }
   },
 
   _floatText(x, y, s, color) {
@@ -178,6 +234,30 @@ export const CombatMixin = {
   },
 
   _freeImpactCircle(c) {
+    c._busy = false;
+    c.setVisible(false);
+  },
+
+  // #100: capped, recycled pool of death-explosion debris rectangles — same shape as the
+  // impact-circle pool above (acquire a free one, grow up to the cap, then round-robin recycle
+  // the oldest live one past that) so a mass-kill's flung fragments can't grow unbounded.
+  _acquireDebrisChunk(x, y, w, h, col) {
+    const pool = (this._debrisPool ??= []);
+    let c = pool.find((o) => !o._busy);
+    if (!c) {
+      if (pool.length < DEBRIS_CAP) { c = this.add.rectangle(0, 0, 1, 1); pool.push(c); }
+      else {
+        const i = (this._debrisRR = ((this._debrisRR ?? 0) + 1) % pool.length);
+        c = pool[i];
+        this.tweens.killTweensOf(c);
+      }
+    }
+    c._busy = true;
+    c.setPosition(x, y).setSize(w, h).setRotation(0).setAlpha(1).setFillStyle(col, 1).setVisible(true);
+    return c;
+  },
+
+  _freeDebrisChunk(c) {
     c._busy = false;
     c.setVisible(false);
   },
