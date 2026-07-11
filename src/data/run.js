@@ -30,9 +30,13 @@ export const STAGE_COUNT = 5;
 // the harder LATE_POOL — a nest is the tougher escalation of a lone sentry. Helicopter remains
 // the only id shared between both pools (see run.test.js's shared-id assumption above).
 export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', 'tank', 'helicopter'];
+// #97: 'infantryMob' (a large ground-swarm expansion, data/enemyKinds.js INFANTRY_MOB_SIZE) is
+// added to LATE_POOL only, not EARLY_POOL — it's a bigger single-draw volume spike than 'swarm'
+// (28 vs 18 troopers), so it's reserved for the harder late-stage escalation rather than risking
+// an early-stage squad-size draw ballooning unexpectedly.
 export const LATE_POOL = [
   'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
-  'turretNest', 'turretNest',
+  'turretNest', 'turretNest', 'infantryMob',
 ];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has

@@ -22,7 +22,7 @@
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
-import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE } from '../../data/enemyKinds.js';
+import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { HpBody } from '../../data/HpBody.js';
 import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures } from '../../art/index.js';
@@ -158,6 +158,7 @@ export const EnemiesMixin = {
   _spawnEnemy(x, y, typeId = 'raider') {
     if (typeId === 'swarm') return this._spawnSwarm(x, y);
     if (typeId === 'turretNest') return this._spawnTurretCluster(x, y);
+    if (typeId === 'infantryMob') return this._spawnInfantryMob(x, y);
     if (isEnemyKind(typeId)) return this._spawnKind(x, y, typeId);
     return this._spawnMech(x, y, typeId);
   },
@@ -242,6 +243,25 @@ export const EnemiesMixin = {
     return last;
   },
 
+  // #97: expand an 'infantryMob' request into INFANTRY_MOB_SIZE troopers dropped in a loose
+  // cluster around (x,y) — bigger volume than the drone swarm (SWARM_SIZE) so it reads as an
+  // overwhelming crowd. Ground units, so they're placed on a few concentric rings (not one
+  // ring like the drone swarm) to avoid dropping dozens of them exactly on top of each other
+  // right before terrain/collision resolves them apart. Returns the last trooper spawned.
+  _spawnInfantryMob(x, y) {
+    let last = null;
+    const perRing = 10;
+    for (let i = 0; i < INFANTRY_MOB_SIZE; i++) {
+      const ring = Math.floor(i / perRing);
+      const idxInRing = i % perRing;
+      const ringCount = Math.min(perRing, INFANTRY_MOB_SIZE - ring * perRing);
+      const a = (idxInRing / ringCount) * Math.PI * 2 + ring * 0.4;
+      const r = 30 + ring * 34;
+      last = this._spawnKind(x + Math.cos(a) * r, y + Math.sin(a) * r, 'infantry');
+    }
+    return last;
+  },
+
   // A non-mech unit's view: a hull sprite (base/airframe, faces travel) + a turret sprite (gun /
   // rotor, faces aim or spins), optionally over a drop shadow for flyers so they read elevated.
   _makeVehicleView(key, x, y, angle, def) {
@@ -252,7 +272,10 @@ export const EnemiesMixin = {
       // #93: the shadow's own footprint scales with the unit's display scale (vs) — it was
       // previously a fixed 26x14 regardless of body size, so it read as oversized once drones
       // were shrunk repeatedly (#75/#89/#91). Sized off the same `vs` the hull/turret sprites use.
-      shadow = this.add.ellipse(0, 0, 26 * vs, 14 * vs, 0x000000, 0.28);
+      // #98: #93's base 26x14 undershot — after the same scale multiply it read too SMALL next
+      // to the drone/helicopter art's actual footprint. Bumped the base ellipse up to 34x18 (the
+      // scale-multiply behaviour from #93 is unchanged, only these two base numbers moved).
+      shadow = this.add.ellipse(0, 0, 34 * vs, 18 * vs, 0x000000, 0.28);
       parts.push(shadow);
     }
     const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(vs);

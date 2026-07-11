@@ -10,6 +10,7 @@ import { resolveDevServerUrl } from './dev-server-url.mjs';
 import { hexToPixel } from '../src/data/hexgrid.js';
 import { RUN_CURRENCY_KEY } from '../src/data/events.js';
 import { WEAPONS } from '../src/data/weapons.js';
+import { INFANTRY_MOB_SIZE } from '../src/data/enemyKinds.js';
 
 // Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
 // weapon range with terrain possibly between it and the origin. For the deterministic
@@ -133,7 +134,7 @@ try {
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
   }, { timeout: 20000 });
 
-  const arena = await page.evaluate(({ dummyPx, homingWeapon }) => {
+  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize }) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first (and at boot, only) enemy
@@ -269,7 +270,7 @@ try {
     // SAME body interface (isDestroyed/applyDamage/partHealthFraction), and die — and a FLYER
     // ignores ground cover. Spawn one of each kind at the origin and exercise all of that.
     const veh = { spawned: 0, textured: 0, damaged: 0, killed: 0, flyerIgnoresWall: false };
-    for (const kind of ['turret', 'tank', 'drone', 'helicopter']) {
+    for (const kind of ['turret', 'tank', 'drone', 'helicopter', 'infantry']) {
       const e = a._spawnKind(0, 0, kind);
       veh.spawned++;
       if (g.textures.exists(e.key + '_hull') && g.textures.exists(e.key + '_turret')) veh.textured++;
@@ -300,6 +301,44 @@ try {
     } else {
       veh.flyerIgnoresWall = heli.flying === true;   // no wall handy; flag still records it flies
     }
+
+    // #97: 'infantryMob' expands into a LARGE volume of infantry troopers (bigger than the drone
+    // swarm) — confirm the whole mob spawns, renders, takes damage, and dies through the normal
+    // death path (same body interface + removal as every other kind).
+    const infMob = (() => {
+      const before = a.enemies.length;
+      const last = a._spawnEnemy(600, 600, 'infantryMob');
+      const spawnedCount = a.enemies.length - before;
+      const matchesMobSize = spawnedCount === infantryMobSize;
+      const textured = g.textures.exists(last.key + '_hull') && g.textures.exists(last.key + '_turret');
+      const one = a.enemies[a.enemies.length - 5];   // an arbitrary trooper from the mob, not just the last
+      const hpBefore = one.mech.partHealthFraction(one.mech.locations()[0]);
+      a._damageEnemyAt(one, one.x, one.y, 2, 0xffffff);
+      const damaged = one.mech.partHealthFraction(one.mech.locations()[0]) < hpBefore;
+      const beforeLen = a.enemies.length;
+      a._damageEnemyAt(one, one.x, one.y, 9999, 0xffffff);
+      const diedAndRemoved = a.enemies.length === beforeLen - 1 && a.enemies.indexOf(one) === -1;
+      return { spawnedCount, matchesMobSize, textured, damaged, diedAndRemoved };
+    })();
+
+    // #98: air-enemy shadow base ellipse was bumped from 26x14 to 34x18 (still × kindDef.scale,
+    // per #93). Confirm a fresh drone/helicopter's shadow reflects the NEW, bigger base — i.e.
+    // it's noticeably larger than what the #93-era 26x14 base would have produced.
+    const shadowCheck = (() => {
+      const ARENA_MECH_SCALE = 0.34;   // scenes/arena/shared.js — mirrored here, not imported
+      const d = a._spawnKind(700, 700, 'drone');
+      const h = a._spawnKind(750, 750, 'helicopter');
+      const droneVs = ARENA_MECH_SCALE * d.kindDef.scale;
+      const heliVs = ARENA_MECH_SCALE * h.kindDef.scale;
+      return {
+        droneShadowW: d.view.shadow?.width,
+        droneOldW: 26 * droneVs,
+        droneNewExpectedW: 34 * droneVs,
+        heliShadowW: h.view.shadow?.width,
+        heliOldW: 26 * heliVs,
+        heliNewExpectedW: 34 * heliVs,
+      };
+    })();
 
     // #87 (corrected per playtest 2026-07-10): a kill must tear its corpse down and prune it
     // out of `this.enemies` the SAME tick — no lingering delayed removal — and its death
@@ -604,6 +643,8 @@ try {
       extraDamaged,
       resetWorked,
       veh,
+      infMob,
+      shadowCheck,
       deathFx,
       missionStartedActive,
       missionCompleted,
@@ -625,7 +666,7 @@ try {
       s72,
       s92,
     };
-  }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod });
+  }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
 
   console.log(JSON.stringify({ garage, arena }, null, 2));
@@ -672,12 +713,27 @@ try {
   if (!(arena.deathFx.heavyMaxR > arena.deathFx.droneMaxR)) {
     fail(`#87 heavy mech death explosion (${arena.deathFx.heavyMaxR}) was not bigger than a drone's (${arena.deathFx.droneMaxR})`);
   }
-  // #68: the four non-mech kinds spawn, render their own textures, take damage, and die.
-  if (arena.veh.spawned !== 4) fail(`#68 expected 4 non-mech kinds spawned, got ${arena.veh.spawned}`);
-  if (arena.veh.textured !== 4) fail('#68 a non-mech kind is missing its hull/turret textures');
-  if (arena.veh.damaged !== 4) fail('#68 a non-mech kind did not take damage via the body interface');
-  if (arena.veh.killed !== 4) fail('#68 a non-mech kind did not register destruction');
+  // #68/#97: the five non-mech kinds (turret/tank/drone/helicopter/infantry) spawn, render
+  // their own textures, take damage, and die.
+  if (arena.veh.spawned !== 5) fail(`#68 expected 5 non-mech kinds spawned, got ${arena.veh.spawned}`);
+  if (arena.veh.textured !== 5) fail('#68 a non-mech kind is missing its hull/turret textures');
+  if (arena.veh.damaged !== 5) fail('#68 a non-mech kind did not take damage via the body interface');
+  if (arena.veh.killed !== 5) fail('#68 a non-mech kind did not register destruction');
   if (!arena.veh.flyerIgnoresWall) fail('#68 a flyer did not ignore ground cover');
+  // #97: an 'infantryMob' spawn drops the full large-volume mob, and any one trooper renders,
+  // takes damage, and dies through the normal death path (removed + torn down).
+  if (!arena.infMob.matchesMobSize) fail(`#97 infantryMob spawned ${arena.infMob.spawnedCount} troopers, expected INFANTRY_MOB_SIZE`);
+  if (!arena.infMob.textured) fail('#97 an infantry trooper is missing its hull/turret textures');
+  if (!arena.infMob.damaged) fail('#97 an infantry trooper did not take damage via the body interface');
+  if (!arena.infMob.diedAndRemoved) fail('#97 an infantry trooper did not die + get removed through the normal death path');
+  // #98: the air-enemy shadow base ellipse was bumped from 26x14 to 34x18 (still × kindDef.scale
+  // per #93) — a fresh drone/helicopter's shadow width must reflect the bigger base.
+  if (!(arena.shadowCheck.droneShadowW > arena.shadowCheck.droneOldW)) {
+    fail(`#98 drone shadow width (${arena.shadowCheck.droneShadowW}) is not bigger than the old #93 base (${arena.shadowCheck.droneOldW})`);
+  }
+  if (!(arena.shadowCheck.heliShadowW > arena.shadowCheck.heliOldW)) {
+    fail(`#98 helicopter shadow width (${arena.shadowCheck.heliShadowW}) is not bigger than the old #93 base (${arena.shadowCheck.heliOldW})`);
+  }
   // #66: mission starts active on the assault objective, and destroying the objective hex
   // (via the same _damageBuildingAt path weapon fire uses) completes it.
   if (!arena.missionStartedActive) fail('#66 mission did not start active with the assault objective');
