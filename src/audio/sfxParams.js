@@ -154,14 +154,10 @@ export const DEFAULT_SFX = withQDefaults({
     fire: laserZapLayers({ damage: 34 }, false),
     impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
   },
-  // #117: plasmaLance — its own tuned cue, not a beamLaser/plasmaCannon reuse. Fire uses the
-  // shared laser-zap tone/noise layers (heavier — damage 20 pulls the base pitch down a touch
-  // vs plasmaCannon's 18), plus (originally) a trajectory hum, and a punchier impact than
-  // plasmaCannon's to read as a heavier bolt. #125: the weapon's actual per-bolt damage dropped
-  // to 2 (traded for a 20/sec stream cadence), but this cue's `damage: 20` is deliberately left
-  // as-is — it's a tone-shaping input for the fire pitch, not read from the live weapon, and
-  // keeping it preserves the heavier bolt sound that's part of the "look" Jackson wants kept.
-  // The per-round `trajectory` HUM LOOP was dropped in the same pass: firing.js starts one
+  // #117: plasmaLance — its own tuned cue, not a beamLaser/plasmaCannon reuse. #125: the
+  // weapon's actual per-bolt damage dropped to 2 (traded for a 20/sec stream cadence), but the
+  // fire cue was kept heavier/punchier than that to preserve the "look" Jackson wants kept.
+  // The per-round `trajectory` HUM LOOP was dropped in an earlier pass: firing.js starts one
   // independent oscillator loop per projectile (stopped only at that round's impact/expiry, see
   // `_spawnProjectile`/fireWeapon's trajectory-loop wiring), and at a ~1s flight time with a new
   // bolt every 50ms that would stack ~15-20 overlapping hum loops during sustained fire — a wall
@@ -169,11 +165,20 @@ export const DEFAULT_SFX = withQDefaults({
   // (Repeater/machineGun) already has no per-round trajectory hum for the same reason; Plasma
   // Lance now matches that convention. The one-shot per-bolt fire crack (below) still plays
   // every tick via scheduleFireCues, so the rapid cadence still reads audibly.
+  // #133: `fire` is now a literal hand-tuned array (no longer generated via laserZapLayers) —
+  // Jackson tuned it live in the Weapon Lab sound panel and copied these values out verbatim.
+  // Both `impact` layers and two of the four `fire` layers sit at `gain: 0` because he silenced
+  // them while tuning — that's intentional, not a bug; don't restore nonzero gain.
   plasmaLance: {
-    fire: laserZapLayers({ damage: 20 }, false),
+    fire: [
+      { kind: 'tone', type: 'triangle', freq: 115, freqEnd: 1680, dur: 0.145, gain: 0.49, attack: 0.01 },
+      { kind: 'tone', type: 'square', freq: 610, freqEnd: 45, dur: 0.22, gain: 0.05, attack: 0.026 },
+      { kind: 'noise', type: 'bandpass', freq: 800, freqEnd: 90, dur: 0.06, gain: 0.08, attack: 0.001, q: 0.1 },
+      { kind: 'noise', type: 'bandpass', freq: 1000, freqEnd: 600, dur: 0.08, gain: 0, attack: 0.002, q: 1 },
+    ],
     impact: [
-      { kind: 'noise', type: 'bandpass', freq: 2000, freqEnd: 800, q: 1.3, dur: 0.2, gain: 0.16, attack: 0.002 },
-      { kind: 'tone', type: 'square', freq: 210, freqEnd: 70, dur: 0.14, gain: 0.12, attack: 0.004 },
+      { kind: 'noise', type: 'bandpass', freq: 2000, freqEnd: 800, q: 1.3, dur: 0.2, gain: 0, attack: 0.002 },
+      { kind: 'tone', type: 'square', freq: 210, freqEnd: 70, dur: 0.14, gain: 0, attack: 0.004 },
     ],
   },
   plasmaCannon: {
