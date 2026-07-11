@@ -15,19 +15,28 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
+import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
+import { EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId } from '../audio/sfxParams.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 
 // The mech lab. The build is five skill slots, shown as a row of square "skill button" tiles
 // (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
-// a tile to edit that slot: the right-hand catalog (the SHARED WeaponCardList, identical to the
-// Weapon Lab) filters to the items that fit it, each card running its live shot/fx preview.
-// Click a card to mount it (or to unmount if it's already there). A small live mech preview +
-// the chassis switch sit bottom-right. "Deploy" (greyed until every slot is filled) enters the
-// arena.
+// a tile to edit that slot: the catalog (the SHARED WeaponCardList, formerly also hosted by the
+// now-retired Weapon Lab tab) filters to the items that fit it, each card running its live
+// shot/fx preview. Click a card to mount it (or to unmount if it's already there) AND to open
+// its sound-tuning sliders in the persistent right-side WeaponSfxPanel (#121) — the two aren't
+// mutually exclusive, one click does both. A small strip above the catalog picks one of the
+// #107 destruction-explosion size categories instead of a weapon, feeding the SAME panel. A
+// small live mech preview + the chassis switch sit bottom-right. "Deploy" (greyed until every
+// slot is filled) enters the arena.
 const UI = {
-  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a',
-  panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
+  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', dim: '#7c8794',
+  panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744, sel: 0xefc14a,
 };
+const PANEL_W = 300;
+const PANEL_GAP = 14;
+const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
+const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
 
 // The skill-tile row (order, layout, drawing) is shared with the arena HUD via
 // ../ui/skillTiles.js, so the two read identically. TILE_ORDER comes from there.
@@ -72,10 +81,9 @@ export default class GarageScene extends Phaser.Scene {
       for (const id of this.catalogIds) this.unlocked.add(id);
     }
 
-    // Layout: the weapon catalog (shared WeaponCardList) spans the FULL width across the top so
-    // each card's live preview is as wide as the Weapon Lab's; a bottom strip holds the skill
-    // tiles (left) and the small live mech preview + chassis switch (right).
-    const top = TAB_BAR_H + 14;
+    // Layout: the top region holds the weapon catalog (shared WeaponCardList) + a persistent
+    // SFX panel on the right (#121, see _topRegion); a bottom strip holds the skill tiles
+    // (left) and the small live mech preview + chassis switch (right).
     this.bottomH = 200;                             // bottom strip height (tiles + preview)
     this.previewW = 210;                            // right slice of the strip for the preview
     this.dollX = 20;
@@ -84,14 +92,32 @@ export default class GarageScene extends Phaser.Scene {
 
     buildMechTextures(this, 'garageMech', this.mech);
 
-    // Full-width catalog, reusing the exact Weapon Lab card list. Picking a card mounts it into
-    // the selected slot (toggles off if it's already there).
+    // #121 follow-up: the SCRAP/last-run readout (below) is right-anchored to the raw screen
+    // edge, independent of the SFX panel — at narrow widths the panel's left-aligned header
+    // text ("Select a weapon" / a weapon name) and that right-anchored readout end up in the
+    // same row with no gap between them and visibly collide. Starting the WHOLE catalog region
+    // (list/panel/explosion row) below the two-line readout instead of right under the tab bar
+    // keeps them on separate rows at every width, so there's no shared horizontal band to
+    // collide in. CATALOG_TOP_GAP clears currencyText + lastRunText (2 lines, see below).
+    const CATALOG_TOP_GAP = 54;
+    const catalogTop = TAB_BAR_H + CATALOG_TOP_GAP;
+    // #121: the top catalog region is split list+panel (mirrors the retired Weapon Lab's
+    // _region()) — the catalog gets the remaining width after the fixed-width SFX panel, with
+    // the #107 explosion-category row sitting above the catalog, feeding the same panel.
+    const r = this._topRegion(catalogTop);
+    this.selectedExplosion = null;
+    // Picking a card both mounts it into the selected slot (unchanged Garage behavior) AND
+    // opens its sound-tuning sliders in the panel (formerly the Weapon Lab's job) — see
+    // _onCardSelect.
     this.list = new WeaponCardList(this, {
-      x: 20, y: top, w: this.W - 40, h: this.H - top - this.bottomH - 16,
-      ids: this.catalogIds, onSelect: (id) => this._pickItem(id),
+      x: r.list.x, y: r.list.y, w: r.list.w, h: r.list.h,
+      ids: this.catalogIds, onSelect: (id) => this._onCardSelect(id),
       isLocked: (id) => !this.unlocked.has(id),
       costOf: (id) => costOf(id),
     });
+    this.panel = new WeaponSfxPanel(this, r.panel);
+    this.panelEdge = this.add.rectangle(r.panel.x - PANEL_GAP / 2, r.panel.y, 1, r.panel.h, UI.panelEdge).setOrigin(0.5, 0);
+    this._buildExplosionRow(r.explosion);
 
     this._buildPreview();
     this.doll = this.add.container(0, 0);
@@ -130,7 +156,12 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-D', () => this.deploy());
     this.input.keyboard.on('keydown-C', () => this.cycleChassis());
     this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));
-    this.events.once('shutdown', () => this.list.destroy());
+    this.events.once('shutdown', () => {
+      this.list.destroy();
+      this.panel.destroy();
+      this.explosionHeader.destroy();
+      for (const b of this.explosionButtons) { b.rect.destroy(); b.text.destroy(); }
+    });
 
     // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
     this.input.on('pointermove', () => this._setInputMode('kbm'));
@@ -310,6 +341,81 @@ export default class GarageScene extends Phaser.Scene {
     this.list.setIds(this._eligibleIds(this.selected));
     this.list.setSelected(this.selected ? this.mech.mounts[this.selected][0] ?? null : null);
     this.refresh();
+  }
+
+  // #121: split the top catalog area into a list region (remaining width) and a fixed-width
+  // SFX panel + explosion-category row above it, mirroring the retired Weapon Lab's _region().
+  _topRegion(top) {
+    const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
+    const listTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
+    const bottom = this.H - this.bottomH - 16;
+    return {
+      explosion: { x: 20, y: top, w: listW, h: EXPLOSION_ROW_H },
+      list: { x: 20, y: listTop, w: listW, h: bottom - listTop },
+      panel: { x: 20 + listW + PANEL_GAP, y: top, w: PANEL_W - PANEL_GAP, h: bottom - top },
+    };
+  }
+
+  // Selecting a catalog card does both of its jobs at once (#121): mount it into the selected
+  // slot (Garage's existing behavior, _pickItem) AND populate the SFX panel with it (formerly
+  // the Weapon Lab's _select) — the two don't conflict, since mounting doesn't need exclusive
+  // control of "which card is selected for tuning."
+  _onCardSelect(id) {
+    this.selectedExplosion = null;
+    this.panel.setWeapon(id);
+    this._paintExplosionRow();
+    this._pickItem(id);
+  }
+
+  // #107: the destruction-explosion size-category row — a fixed strip of 4 buttons (small/
+  // medium/large/massive) above the catalog. Picking one feeds its sfxParams id
+  // (explosionSfxId) into the SAME WeaponSfxPanel a weapon card would, with a friendly label
+  // instead of the raw id, so tuning an explosion category is the identical slider/preview/
+  // reset flow the weapon-sound cards already use — just a different id going into the panel.
+  _buildExplosionRow(region) {
+    this.explosionHeader = this.add.text(region.x, region.y, 'DESTRUCTION EXPLOSION — size category', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    });
+    this.explosionButtons = EXPLOSION_CATEGORIES.map((category, i) => {
+      const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
+        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+      const text = this.add.text(0, 0, category[0].toUpperCase() + category.slice(1), {
+        fontFamily: 'monospace', fontSize: '11px', color: UI.text,
+      }).setOrigin(0.5);
+      rect.on('pointerover', () => { if (this.selectedExplosion !== category) rect.setFillStyle(UI.btnHover); });
+      rect.on('pointerout', () => this._paintExplosionRow());
+      rect.on('pointerdown', () => this._selectExplosion(category));
+      return { category, rect, text, i };
+    });
+    this._layoutExplosionRow(region);
+  }
+
+  _layoutExplosionRow(region) {
+    this.explosionHeader.setPosition(region.x, region.y);
+    const gap = 6;
+    const bw = Math.floor((region.w - gap * (this.explosionButtons.length - 1)) / this.explosionButtons.length);
+    const by = region.y + 18;
+    for (const b of this.explosionButtons) {
+      const bx = region.x + b.i * (bw + gap);
+      b.rect.setPosition(bx, by).setSize(bw, 22);
+      b.text.setPosition(bx + bw / 2, by + 11);
+    }
+  }
+
+  // Explosion-category selection is independent of the catalog's mount-highlight state (unlike
+  // the retired Weapon Lab, where selecting a card and selecting a category were mutually
+  // exclusive) — it only drives the SFX panel + its own row's highlight.
+  _selectExplosion(category) {
+    this.selectedExplosion = category;
+    this.panel.setWeapon(explosionSfxId(category), EXPLOSION_CATEGORY_LABEL[category]);
+    this._paintExplosionRow();
+  }
+
+  _paintExplosionRow() {
+    for (const b of this.explosionButtons) {
+      const on = b.category === this.selectedExplosion;
+      b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
+    }
   }
 
   // Pick a catalog item: mount it into the selected slot. With no slot selected, picking a card

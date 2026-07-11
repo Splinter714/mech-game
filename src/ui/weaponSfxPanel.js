@@ -5,15 +5,16 @@ import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 
 // #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
 // are tuned through this SAME panel — they're just more sfxParams ids (single `fire` stage,
-// no trajectory/impact) fed in by WeaponLabScene's category row via setWeapon(id, label). This
+// no trajectory/impact) fed in by GarageScene's category row via setWeapon(id, label). This
 // prefix is how the panel tells "a category" from "a real weapon" apart for cosmetic tweaks
 // only (the header label, the ▶ button's wording) — everything else (sliders/type-row/reset/
 // copy) already works on any sfxParams id unchanged.
 const EXPLOSION_ID_PREFIX = 'deathExplosion';
 
-// Weapon Lab sound panel — a right-side column of live sliders for whichever weapon is
-// selected in the card list, one section per stage (fire / trajectory / impact), one row
-// per tunable field of each stage's layers (see audio/sfxParams.js for the data shape).
+// #121: the sound-tuning panel, formerly the standalone Weapon Lab's right-hand column, now
+// embedded directly in GarageScene's catalog region — a column of live sliders for whichever
+// weapon is selected in the card list, one section per stage (fire / trajectory / impact), one
+// row per tunable field of each stage's layers (see audio/sfxParams.js for the data shape).
 // Dragging a slider writes straight to Audio.sfxParams and plays that stage back (throttled)
 // so the change is audible immediately. Mirrors the Music tab's tuner (same Slider widget,
 // same "copy settings" convention), scoped to one weapon at a time instead of one global mix.

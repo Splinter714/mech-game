@@ -31,8 +31,8 @@ export default class BootScene extends Phaser.Scene {
     // the controller-only unlock gap (Phaser's own sound manager already unlocks on
     // keyboard/mouse). No UI: if the browser blocks it, sound just stays off.
     startGamepadAudioUnlock();
-    // `?lab` boots straight into the weapon art preview (dev tool).
-    const lab = new URLSearchParams(window.location.search).has('lab');
-    this.scene.start(lab ? 'WeaponLabScene' : 'GarageScene');
+    // #121: the standalone Weapon Lab scene is retired (its catalog + SFX panel now live
+    // inside GarageScene) — `?lab` no longer routes anywhere different, so it's just Garage.
+    this.scene.start('GarageScene');
   }
 }
