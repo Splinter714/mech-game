@@ -85,6 +85,11 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.tank.move.maxSpeed).toBeGreaterThan(0);
   });
 
+  it('#104: infantry is noticeably slower than its #97 launch speed (85)', () => {
+    expect(ENEMY_KINDS.infantry.move.maxSpeed).toBeLessThan(85);
+    expect(ENEMY_KINDS.infantry.move.maxSpeed).toBeGreaterThan(0);
+  });
+
   it('#94: turret is an artillery emplacement — arcing indirect weapon at an insane range', () => {
     const t = ENEMY_KINDS.turret;
     const weapon = getWeapon(t.weaponId);
