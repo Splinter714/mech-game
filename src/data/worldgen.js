@@ -170,12 +170,24 @@ export function generateTerrain({
 // clamps every new lobe to fit inside it, so a run's total map size is generous but finite
 // regardless of how many stages or which directions growth wanders in.
 export const SECTORS = 20;
-export const INITIAL_BASE_RADIUS = 9;
-export const INITIAL_VARIATION = 3;
+export const INITIAL_BASE_RADIUS = 12;
+export const INITIAL_VARIATION = 4;
 export const GROWTH_RADIUS = 13;
 export const GROWTH_VARIATION = 4;
 export const GROWTH_ANCHOR_FRACTION = 0.6; // how far (× growth radius) the new lobe's centre sits beyond the player, so its near edge overlaps the existing explored area
 export const MAX_WORLD_RADIUS = 80;
+// #81 follow-up (playtest 2026-07-10 point 2): "it seems to grow in multiple directions instead
+// of more in the direction of the objective." The organic lobe itself used to be a full 360°
+// blob around its offset centre — the radial per-sector variation gave it an irregular COASTLINE,
+// but nothing stopped the reveal region from fanning out sideways just as far as it pushed
+// forward, so a stage's growth read as omnidirectional rather than a clear push toward the new
+// objective. `GROWTH_ARC_HALF_ANGLE` caps the new lobe to a cone opening from the player's
+// current position toward the chosen growth angle (±this many radians) — the radial boundary
+// still gives the cone's edges their organic, non-uniform shape, but the growth as a whole now
+// unambiguously reads as "the map is opening up THIS way." ~50° each side (100° total arc) is
+// tight enough to feel directional while still wide enough that the objective (placed inside the
+// revealed lobe, see run.js `pickFarObjective`) has visible room around it.
+export const GROWTH_ARC_HALF_ANGLE = Math.PI * 0.28; // ~50°
 
 // The per-sector boundary distances (in hex units) for one organic region: a base radius +
 // randomized variation per angular sector, smoothed by averaging each sector with its two
@@ -222,8 +234,26 @@ export function organicBoundary(center, rng, opts = {}) {
 // preserved rather than being re-stamped. This is genuinely ADDITIVE — everywhere in
 // `previous.terrain` stays part of `included` forever, so nothing already explored can ever
 // fall back out of the map on a later stage.
-export function growRegion({ previous, center, rng, baseRadius = GROWTH_RADIUS, variation = GROWTH_VARIATION, sectors = SECTORS }) {
-  const lobe = organicBoundary(center, rng, { baseRadius, variation, sectors });
+// #81 follow-up (playtest 2026-07-10 point 2): `angle` + `arcFrom` (world-pixel `{x, y}`,
+// normally the player's current position) restrict the new lobe to a directional CONE opening
+// from `arcFrom` toward `angle` (± `arcHalfAngle`), on top of the organic radial boundary
+// centred at `center` — so the lobe's outer edge still reads as irregular/organic, but the
+// growth as a whole reads as ONE clear push in a direction instead of a blob that fans out
+// evenly on every side. Omitting `angle`/`arcFrom` (the default) keeps the original unrestricted
+// 360° lobe, so existing full-map/no-direction callers are unaffected.
+export function growRegion({
+  previous, center, rng, baseRadius = GROWTH_RADIUS, variation = GROWTH_VARIATION, sectors = SECTORS,
+  angle = null, arcFrom = null, arcHalfAngle = GROWTH_ARC_HALF_ANGLE,
+}) {
+  const radial = organicBoundary(center, rng, { baseRadius, variation, sectors });
+  const withinArc = (q, r) => {
+    if (angle == null || !arcFrom) return true;
+    const { x, y } = hexToPixel(q, r);
+    const hexAngle = Math.atan2(y - arcFrom.y, x - arcFrom.x);
+    const diff = Math.atan2(Math.sin(hexAngle - angle), Math.cos(hexAngle - angle));
+    return Math.abs(diff) <= arcHalfAngle;
+  };
+  const lobe = (q, r) => radial(q, r) && withinArc(q, r);
   const prevTerrain = previous?.terrain ?? null;
   const alreadyExplored = (q, r) => !!prevTerrain && prevTerrain.has(axialKey(q, r));
   const included = (q, r) => alreadyExplored(q, r) || lobe(q, r);
@@ -295,7 +325,14 @@ export function pickGrowthCenter({
 // (which a full-map regen made equivalent, but additive growth does not: "far from the
 // player" and "in the untouched preserved terrain" can both be true). Omitting `reveal` (the
 // default) keeps the original whole-map behavior unchanged.
-export function pickFarObjective(hexKeys, fromHex, minDistance = 6, reveal = null) {
+//
+// #81 follow-up (playtest 2026-07-10 point 4): the FIRST stage's objective (mission.js
+// `_initMission`) used to be picked with no distance consideration at all — the sorted-hex-key-
+// first outpost could land right next to spawn. It now shares this exact same far-objective
+// logic (and the same `FAR_OBJECTIVE_MIN_DIST` floor) as every later stage-advance, so the
+// player never starts a run with the objective already visible/reachable at spawn.
+export const FAR_OBJECTIVE_MIN_DIST = 6;
+export function pickFarObjective(hexKeys, fromHex, minDistance = FAR_OBJECTIVE_MIN_DIST, reveal = null) {
   if (!hexKeys || !hexKeys.length) return null;
   const candidates = reveal
     ? hexKeys.filter((k) => { const [q, r] = k.split(',').map(Number); return reveal(q, r); })

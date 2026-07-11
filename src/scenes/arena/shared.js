@@ -17,8 +17,17 @@ export const ARENA_MECH_SCALE = 0.34;
 // after both the player view and every enemy view, so the fire patch painted over both too.
 // Neither bug was about ground fire or tanks specifically — it was every layer implicitly
 // depending on creation order. One flat, named scale fixes both and holds as new layers arrive:
+// #81 follow-up (playtest 2026-07-10 point 1): terrain tiles used to rely on that same default-
+// depth-0 behavior, which happens to sort correctly ONLY because Phaser re-runs its depth sort
+// whenever a game object is added to the display list — true for the very first world build, but
+// a stage-advance's growth pass adds its NEW tile Images well after `this.playerView` (depth
+// DEPTH.UNITS) already exists, and (depending on Phaser's internal batching) an unset depth can
+// still end up compared by list index against objects it was never sorted against, landing the
+// fresh ground tiles above the player instead of below. Giving terrain tiles the same explicit
+// `DEPTH.TERRAIN` every time (initial build AND every growth pass) removes that ambiguity for good
+// — see world.js `_buildWorld`.
 export const DEPTH = {
-  // Terrain tiles (world.js) are left at the default (unset ⇒ 0) — the floor, always lowest.
+  TERRAIN: 0,         // terrain tiles (world.js) — the floor, always lowest, explicit every time.
   GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
   UNITS: 3,           // every ground unit alike — the player AND every enemy view (mech or
                       // vehicle) share this tier; no player-above/below-enemies rule, just a
