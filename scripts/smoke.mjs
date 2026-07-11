@@ -308,9 +308,12 @@ try {
     // force the delayed _startNextStage() through immediately so this stays a synchronous test.
     const runStartedAtStageZero = a.run?.stageIndex === 0 && a.run?.status === 'active';
     const enemyCountBeforeAdvance = a.enemies.length;
-    // #81: snapshot the terrain + the player's exact position BEFORE the stage advance so we
-    // can prove the regenerated map is actually a different layout and the player was never
-    // teleported (px/py untouched — they keep driving from wherever they finished).
+    // #81 follow-up: snapshot the terrain + the player's exact position BEFORE the stage
+    // advance so we can prove (a) the reveal region actually regenerated SOME of the map, (b)
+    // everywhere else — specifically far BEHIND the player, opposite the chosen reveal
+    // direction — stayed byte-identical (the "doesn't pop in around you" fix), and (c) the
+    // player was never teleported (px/py untouched — they keep driving from wherever they
+    // finished).
     const terrainBefore = [...a.terrain.entries()];
     const pxBefore = a.px, pyBefore = a.py;
     a._advanceRun();
@@ -320,13 +323,35 @@ try {
     a._startNextStage();
     const newStageHasMission = a.mission?.status === 'active';
     const newStageHasSquad = a.enemies.length > 0;
-    // #81: the regenerated map must (a) actually differ from the previous stage's terrain,
-    // (b) leave the player's position untouched (no teleport), and (c) never leave the
-    // player standing on impassable terrain (the safe-clear zone follows them).
+    // #81 follow-up: the regenerated map must (a) actually differ from the previous stage's
+    // terrain SOMEWHERE (the reveal region opening up) but NOT everywhere (everything outside
+    // it is preserved — this is the whole point of the directional fix, replacing the old
+    // "whole map changed" check), (b) leave a spot directly BEHIND the chosen reveal direction
+    // completely unchanged (nothing pops in around/behind the player), (c) leave the player's
+    // position untouched (no teleport), and (d) never leave the player standing on impassable
+    // terrain (the safe-clear zone follows them).
     const terrainAfter = new Map(a.terrain);
     let terrainDiffs = 0;
+    const total = terrainBefore.length;
     for (const [k, id] of terrainBefore) if (terrainAfter.get(k) !== id) terrainDiffs++;
     const mapRegenerated = terrainDiffs > 0;
+    const mapNotFullyReplaced = terrainDiffs < total;
+    // A hex straight behind the reveal direction, well past the buffer, must be untouched.
+    // Pixel → axial hex, inlined (mirrors data/hexgrid.js pixelToHex/cubeRound exactly) — the
+    // Node-side import isn't reachable from this page-context callback.
+    const behindAngle = a._lastRevealAngle + Math.PI;
+    const SIZE = 48, RT3 = Math.sqrt(3);
+    const behindX = pxBefore + Math.cos(behindAngle) * 8 * SIZE;
+    const behindY = pyBefore + Math.sin(behindAngle) * 8 * SIZE;
+    const qf = (RT3 / 3 * behindX - 1 / 3 * behindY) / SIZE;
+    const rf = (2 / 3 * behindY) / SIZE;
+    const xf = qf, zf = rf, yf = -qf - rf;
+    let bx = Math.round(xf), by = Math.round(yf), bz = Math.round(zf);
+    const bdx = Math.abs(bx - xf), bdy = Math.abs(by - yf), bdz = Math.abs(bz - zf);
+    if (bdx > bdy && bdx > bdz) bx = -by - bz; else if (bdy > bdz) by = -bx - bz; else bz = -bx - by;
+    const behindKey = `${bx},${bz}`;
+    const beforeMap = new Map(terrainBefore);
+    const behindHexUnchanged = !beforeMap.has(behindKey) || a.terrain.get(behindKey) === beforeMap.get(behindKey);
     const playerPositionUnchanged = a.px === pxBefore && a.py === pyBefore;
     const playerNotStranded = !a._blocked(a.px, a.py) && !a._isWall(a.px, a.py);
 
@@ -458,6 +483,8 @@ try {
       newStageHasMission,
       newStageHasSquad,
       mapRegenerated,
+      mapNotFullyReplaced,
+      behindHexUnchanged,
       playerPositionUnchanged,
       playerNotStranded,
       runEndedOnDeath,
@@ -523,10 +550,15 @@ try {
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
   if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
-  // #81: stage advance regenerates a FRESH map (not just a new objective in the same terrain),
+  // #81: stage advance regenerates the terrain (not just a new objective in the same layout),
   // and the player continues from wherever they finished — no teleport, and never stranded on
   // impassable ground once the safe-clear zone follows them to their actual position.
-  if (!arena.mapRegenerated) fail('#81 stage advance did not regenerate the terrain (layout was unchanged)');
+  if (!arena.mapRegenerated) fail('#81 stage advance did not regenerate any terrain (layout was fully unchanged)');
+  // #81 follow-up (playtest 2026-07-10 correction): the regen must be DIRECTIONAL, not a
+  // whole-map swap — only the reveal region (opening up off in one direction) changes; a spot
+  // straight behind that direction, and the map as a whole, must NOT be fully replaced.
+  if (!arena.mapNotFullyReplaced) fail('#81 follow-up stage advance replaced the WHOLE map instead of only the directional reveal region');
+  if (!arena.behindHexUnchanged) fail('#81 follow-up terrain behind the reveal direction changed — the map should not pop in around/behind the player');
   if (!arena.playerPositionUnchanged) fail('#81 stage advance moved the player (should continue from where they finished, no teleport)');
   if (!arena.playerNotStranded) fail('#81 the player ended up on impassable terrain after the map regenerated');
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');

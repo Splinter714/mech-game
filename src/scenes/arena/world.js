@@ -33,7 +33,13 @@ export const WorldMixin = {
   // original always-clear-the-centre behaviour) is the hex the spawn-safe zone clears around —
   // stage advance passes the PLAYER'S continuing hex so the fresh terrain never strands the
   // mech in a lake/wall (the player's px/py themselves are never touched — no teleport).
-  _buildWorld(seed = Math.floor(Math.random() * 0x100000000), safeCenter = { q: 0, r: 0 }) {
+  //
+  // #81 follow-up (directional partial regen): `opts.reveal` + `opts.previous`, when supplied,
+  // opt into regenerating ONLY the reveal-region hexes instead of the whole disc — run.js
+  // `_startNextStage` passes these so the new stage's terrain opens up off in one direction
+  // instead of replacing the map around the player. The first-ever build (ArenaScene.create())
+  // passes neither, so it keeps doing the original full-disc regenerate unchanged.
+  _buildWorld(seed = Math.floor(Math.random() * 0x100000000), safeCenter = { q: 0, r: 0 }, opts = {}) {
     this.worldRadius = 20;
     // The biome to build (set on the scene before create(), e.g. per deploy/stage #64). The role
     // → terrain-id mapping comes entirely from the biome data, so this generator never branches on
@@ -42,15 +48,14 @@ export const WorldMixin = {
     const B = getBiome(this.biomeId ?? DEFAULT_BIOME);
     this.biome = B;
 
-    // #81: a regenerate pass replaces the whole map — tear down the PREVIOUS pass's tile
-    // Images first so they don't pile up on the display list (the same leak #71 fixed for
-    // enemy views; a first-ever build has no `this.tileImages` yet).
-    if (this.tileImages) for (const img of this.tileImages.values()) img.destroy();
-
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp: builtBuildingHp, coverHp } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, safeCenter, extraClear: [dummyKey],
+      reveal: opts.reveal ?? null, previous: opts.previous ?? null,
     });
+
+    const prevTerrain = opts.previous?.terrain ?? null;
+    const prevTileImages = this.tileImages ?? null;
 
     this.terrain = terrain;
     this.buildingHp = builtBuildingHp;   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
@@ -60,10 +65,25 @@ export const WorldMixin = {
     this.coverHp = coverHp;      // hexKey → remaining HP for destructible soft-cover hexes
     this.tileImages = new Map();   // hexKey → the tile Image, so a hex can be re-textured in place
     for (const [k, id] of this.terrain) {
+      // #81 follow-up: a partial (directional) regen leaves most hexes byte-identical to the
+      // previous pass — reuse that hex's existing tile Image untouched instead of destroying
+      // and recreating it, so nothing near/behind the player visibly redraws. Only hexes whose
+      // terrain id actually changed (i.e. inside the reveal region, or ANY hex on a full-disc
+      // regen where there's no `previous` to compare against) get a fresh Image.
+      if (prevTerrain && prevTileImages && prevTerrain.get(k) === id && prevTileImages.has(k)) {
+        this.tileImages.set(k, prevTileImages.get(k));
+        continue;
+      }
       const [q, r] = k.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
       const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE);
       this.tileImages.set(k, img);
+    }
+    // Destroy every PREVIOUS tile Image that wasn't carried over above (the same leak #71 fixed
+    // for enemy views) — everything that changed, plus (on a first-ever full-disc build) all of
+    // them, since `this.tileImages` above only re-collects survivors.
+    if (prevTileImages) {
+      for (const [k, img] of prevTileImages) if (this.tileImages.get(k) !== img) img.destroy();
     }
   },
 
@@ -182,14 +202,18 @@ export const WorldMixin = {
   // to keep producing assault objectives; the run mixin calls this as a fallback once
   // `buildingHp` runs dry. Picks a random ground hex within a modest ring of the world centre
   // (clear of the permanent spawn-safe zone) so it doesn't land on top of the player or another
-  // outpost. Returns the new outpost's hex key, or null if no eligible ground hex was found.
-  _spawnOutpostAt(nearQ = 0, nearR = 0) {
+  // outpost. #81 follow-up: an optional `reveal` predicate (`(q, r) => boolean`) restricts the
+  // candidate hex to the freshly-opened reveal region, so a stage-advance fallback objective
+  // still lands somewhere the player has to walk into the new area to reach. Returns the new
+  // outpost's hex key, or null if no eligible ground hex was found.
+  _spawnOutpostAt(nearQ = 0, nearR = 0, reveal = null) {
     const B = this.biome;
     for (let tries = 0; tries < 40; tries++) {
       const ring = 4 + Math.floor(Math.random() * (this.worldRadius - 6));
       const ang = Math.random() * Math.PI * 2;
       const q = Math.round(nearQ + ring * Math.cos(ang));
       const r = Math.round(nearR + ring * Math.sin(ang) * (2 / Math.sqrt(3)) - (ring * Math.cos(ang)) / 2);
+      if (reveal && !reveal(q, r)) continue;
       const k = axialKey(q, r);
       const t = this.terrain.get(k);
       if (t !== B.groundA && t !== B.groundB) continue;
