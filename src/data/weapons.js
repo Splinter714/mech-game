@@ -172,7 +172,15 @@ export const WEAPONS = {
   }),
 };
 
-export const WEAPON_IDS = Object.keys(WEAPONS);
+// #95: temporary shelve list — homing/tracking weapons pulled from active player circulation
+// pending a full lock/tracking rework (playtest feedback 2026-07-10: "locking/tracking missiles
+// still feel horrible"). Their WEAPONS entries above stay fully intact (data, art, sfx, etc.) —
+// only the player-facing catalog (WEAPON_IDS, and anything derived from it: garage/weapon-lab
+// lists, shop) excludes them. To re-enable a weapon once its rework lands, just delete its id
+// from this array — nothing else needs to change.
+export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod'];
+
+export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 
 export function getWeapon(id) {
   return WEAPONS[id];
