@@ -18,11 +18,19 @@ export function isPointInView(view, point) {
 // world-space view rect, the HUD's screen size, and the target's world position? The view rect
 // maps linearly onto the screen (0,0)..(screenW,screenH) — that's exactly what a camera's
 // worldView represents — so the target's screen-space position is a simple linear remap. From
-// there, draw a ray from screen-center through the target and clamp it to the inset rectangle
-// (screen bounds minus `margin`) so the indicator always sits just inside the edge, pointing
-// along the true direction to the (possibly far off-screen) target.
+// there, draw a ray from screen-center through the target and clamp it to an inset rectangle so
+// the indicator always sits just inside the edge, pointing along the true direction to the
+// (possibly far off-screen) target.
+//
+// `margin` is either a single number (uniform inset on all four edges — the old behaviour) or a
+// per-edge `{ top, right, bottom, left }` object. The arena HUD reserves real screen space along
+// the bottom (the skill-tile toolbar) and a smaller strip along the top (hints/objective text),
+// so it passes a taller bottom/top margin there to keep the arrow from landing underneath them —
+// see HudScene's `_updateWayArrow`.
 // Returns {x, y, angle} in HUD screen space (angle in radians, atan2 convention).
 export function edgeArrowPosition(view, screenW, screenH, point, margin = 24) {
+  const m = typeof margin === 'number' ? { top: margin, right: margin, bottom: margin, left: margin } : margin;
+
   const sx = view.width ? ((point.x - view.x) / view.width) * screenW : screenW / 2;
   const sy = view.height ? ((point.y - view.y) / view.height) * screenH : screenH / 2;
   const cx = screenW / 2, cy = screenH / 2;
@@ -30,10 +38,12 @@ export function edgeArrowPosition(view, screenW, screenH, point, margin = 24) {
   if (dx === 0 && dy === 0) dx = 1;   // degenerate (target exactly at center) — arbitrary direction
   const angle = Math.atan2(dy, dx);
 
-  const halfW = Math.max(1, screenW / 2 - margin);
-  const halfH = Math.max(1, screenH / 2 - margin);
-  const tx = dx !== 0 ? halfW / Math.abs(dx) : Infinity;
-  const ty = dy !== 0 ? halfH / Math.abs(dy) : Infinity;
+  // Ray from screen-center through (dx, dy); find where it crosses the inset box's edges (the
+  // box may be off-center when margins differ per side) and clamp to the nearer crossing.
+  const xEdge = dx > 0 ? screenW - m.right : m.left;
+  const yEdge = dy > 0 ? screenH - m.bottom : m.top;
+  const tx = dx !== 0 ? (xEdge - cx) / dx : Infinity;
+  const ty = dy !== 0 ? (yEdge - cy) / dy : Infinity;
   const t = Math.min(tx, ty);
   return { x: cx + dx * t, y: cy + dy * t, angle };
 }

@@ -80,7 +80,10 @@ export default class HudScene extends Phaser.Scene {
 
     // #80: edge-direction arrow — an always-on indicator pointing at the current mission
     // objective whenever it's off-screen. Own Graphics layer, cleared/redrawn each frame.
-    this.wayGfx = this.add.graphics();
+    // Explicit depth (mirroring tabBar/MusicScene/mission-marker's use of setDepth) keeps it
+    // drawn above the skill-tile toolbar regardless of scene add-order, since a playtest found
+    // the arrow getting lost behind that bottom bar (#80 follow-up).
+    this.wayGfx = this.add.graphics().setDepth(20);
 
     // Per-part integrity column (player), top-left under the hints + stage/objective lines.
     this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -96,10 +99,18 @@ export default class HudScene extends Phaser.Scene {
     this.skillBar = this.add.container(0, 0);
     this.skillRefs = {};
     const mech = this.registry.get('playerMech');
-    for (const r of tileRow(this.W * 0.12, this.W * 0.76, { bottom: this.H - 10, maxSize: 92 })) {
+    const tiles = tileRow(this.W * 0.12, this.W * 0.76, { bottom: this.H - 10, maxSize: 92 });
+    for (const r of tiles) {
       const id = mech?.mounts[r.loc]?.[0] ?? null;
       this.skillRefs[r.loc] = drawSkillTile(this, this.skillBar, r, { loc: r.loc, itemId: id });
     }
+
+    // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
+    // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
+    // toolbar (its top edge + a little breathing room); top excludes the hints/objective text
+    // block (INTEGRITY starts at y=112, so keep clear of that).
+    const tileTop = tiles.length ? tiles[0].y : this.H - 10;
+    this.wayMargins = { top: 116, right: 24, bottom: this.H - tileTop + 12, left: 24 };
   }
 
   update() {
@@ -202,7 +213,7 @@ export default class HudScene extends Phaser.Scene {
     g.clear();
     if (!objectiveWorld || !view) return;
     if (isPointInView(view, objectiveWorld)) return;
-    const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, objectiveWorld, 30);
+    const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, objectiveWorld, this.wayMargins);
     drawChevron(g, x, y, angle, 16, 0xffb84a);   // amber, matching the objective marker's colour
   }
 
