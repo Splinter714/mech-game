@@ -47,6 +47,10 @@ export const TERRAIN = {
   // Adobe outpost: destructible hard cover, the desert building.
   adobe:     { id: 'adobe',     tex: 'hex_adobe',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'sandRubble' },
   sandRubble:{ id: 'sandRubble',tex: 'hex_sandRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #110: quicksand — the desert's LESSER in-map hazard, standing in for 'mesa' now that mesa
+  // is reserved exclusively for the world boundary. Passable but heavily slowing; no LOS block
+  // (you sink, you don't hide).
+  quicksand: { id: 'quicksand', tex: 'hex_quicksand', passable: true,  blocksLOS: false, speedFactor: 0.35 },
 
   // ── Snow / arctic (#67) — cold white/blue palette. ──
   snow:      { id: 'snow',      tex: 'hex_snow',      passable: true,  blocksLOS: false, speedFactor: 0.85 },
@@ -60,6 +64,10 @@ export const TERRAIN = {
   // Frozen outpost: destructible hard cover.
   iceRuin:   { id: 'iceRuin',   tex: 'hex_iceRuin',   passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'snowRubble' },
   snowRubble:{ id: 'snowRubble',tex: 'hex_snowRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #110: broken ice — the arctic's LESSER in-map hazard, standing in for solid 'ice' now that
+  // ice is reserved exclusively for the world boundary. Passable but slow (thin/cracked ice);
+  // no LOS block.
+  brokenIce: { id: 'brokenIce', tex: 'hex_brokenIce', passable: true,  blocksLOS: false, speedFactor: 0.4 },
 
   // ── Urban ruins (#67) — grey industrial palette; dense destructible cover + roads. ──
   pavement:  { id: 'pavement',  tex: 'hex_pavement',  passable: true,  blocksLOS: false, speedFactor: 1 },
@@ -73,6 +81,10 @@ export const TERRAIN = {
   // Intact building: destructible hard cover (dense in this biome).
   tower:     { id: 'tower',     tex: 'hex_tower',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'cityRubble' },
   cityRubble:{ id: 'cityRubble',tex: 'hex_cityRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #110: debris field — the urban biome's LESSER in-map hazard, standing in for 'collapsed'
+  // now that a collapsed heap is reserved exclusively for the world boundary. Passable but
+  // slow (a rubble-strewn street); no LOS block.
+  debris:    { id: 'debris',    tex: 'hex_debris',    passable: true,  blocksLOS: false, speedFactor: 0.45 },
 
   // ── Volcanic wasteland (#67) — dark/ember palette; lava hazards + ash fields. ──
   ash:       { id: 'ash',       tex: 'hex_ash',       passable: true,  blocksLOS: false, speedFactor: 0.9 },
@@ -86,6 +98,12 @@ export const TERRAIN = {
   // Obsidian outpost: destructible hard cover.
   obsidian:  { id: 'obsidian',  tex: 'hex_obsidian',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'ashRubble' },
   ashRubble: { id: 'ashRubble', tex: 'hex_ashRubble', passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #110: cinder field — the volcanic biome's LESSER in-map hazard. Lava itself reads fine as
+  // BOTH an occasional in-map pool AND the boundary (Jackson: "lava could work for lava map"),
+  // but per-biome consistency (every other biome's severe hazard is boundary-only) this gives
+  // volcanic its own lesser in-map danger too — a hot ash/cinder patch, passable but slow, no
+  // LOS block — while 'lava' itself is reserved for the boundary ring only (see biomes.js).
+  cinderField: { id: 'cinderField', tex: 'hex_cinderField', passable: true, blocksLOS: false, speedFactor: 0.4 },
 };
 
 export function getTerrain(id) {

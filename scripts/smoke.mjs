@@ -404,72 +404,91 @@ try {
     // call the internal advance directly (mirrors how _updateRun would trigger it).
     const runStartedAtStageZero = a.run?.stageIndex === 0 && a.run?.status === 'active';
     const enemyCountBeforeAdvance = a.enemies.length;
-    // #81 (organic growth rewrite): snapshot the terrain + the player's exact position BEFORE
-    // the stage advance so we can prove (a) the new growth lobe actually added SOME fresh
-    // terrain, (b) everywhere already explored — specifically far BEHIND the player, opposite
-    // the chosen growth direction — stayed byte-identical (the "doesn't pop in around you"
-    // fix), (c) the TOTAL explored hex count is strictly LARGER afterward (the core "map gets
-    // bigger" proof this pass replaces the old fixed-footprint reshuffle with), and (d) the
-    // player was never teleported (px/py untouched — they keep driving from wherever they
-    // finished).
-    const terrainBefore = [...a.terrain.entries()];
-    const hexCountBeforeAdvance = a.terrain.size;
+    // #111: the whole run's terrain is now built ONCE at deploy — stage advance must NEVER
+    // touch it. Snapshot the terrain + the player's exact position BEFORE the stage advance so
+    // we can prove (a) the terrain map is BYTE-IDENTICAL afterward (not just "mostly
+    // preserved" — the old #81 incremental-growth invariant), and (b) the player was never
+    // teleported (px/py untouched — they keep driving from wherever they finished).
+    const terrainBefore = new Map(a.terrain);
     const pxBefore = a.px, pyBefore = a.py;
     a._advanceRun();
     const stageAdvanced = a.run?.stageIndex === 1 && a.run?.status === 'active';
-    // #81 follow-up (playtest 2026-07-10 point 3): terrain growth + the new objective/mission
-    // now happen SYNCHRONOUSLY inside `_advanceRun` (via `_growNextStageTerrain`) — confirm the
-    // map already grew and the new mission is already live BEFORE ever firing the still-deferred
-    // squad spawn below, proving growth isn't gated behind the transition delay.
-    const terrainGrewImmediatelyOnAdvance = a.terrain.size > hexCountBeforeAdvance;
+    // #111 follow-up (playtest 2026-07-10 point 3, corrected): the new objective/mission still
+    // happen SYNCHRONOUSLY inside `_advanceRun` (via `_pickNextStageObjective`) — confirm the
+    // new mission is already live BEFORE ever firing the still-deferred squad spawn below,
+    // proving the objective pick isn't gated behind the transition delay. Unlike the old #81
+    // model, this is now a pure re-pick within the SAME already-built terrain, not a rebuild.
     const newStageHasMission = a.mission?.status === 'active';
-    // #81 follow-up (playtest 2026-07-10 point 1): every growth-added tile Image must carry the
-    // SAME explicit terrain depth (DEPTH.TERRAIN = 0) as the initial build's tiles, strictly
-    // below the player's view (DEPTH.UNITS = 3) — otherwise freshly-grown ground can render on
-    // top of the player. Find a tile that's new since the snapshot above (present now, absent —
-    // or a different terrain id — before) and check its depth directly.
-    const beforeTerrainMap = new Map(terrainBefore);
-    let newTileDepth = null;
-    for (const [k, id] of a.terrain) {
-      if (beforeTerrainMap.get(k) !== id) { newTileDepth = a.tileImages.get(k)?.depth; break; }
-    }
-    const growthTileDepthCorrect = newTileDepth === 0 && newTileDepth < a.playerView.depth;
+    const newObjectiveAssigned = !!a.objectiveHex;
     // Only the squad spawn still waits for the short readability beat (see run.js
     // `_spawnNextStageSquad`) — fire it immediately so the smoke test doesn't need to sleep,
     // then confirm a fresh (bigger) squad exists.
     a._spawnNextStageSquad();
     const newStageHasSquad = a.enemies.length > 0;
-    // #81 (organic growth rewrite): this is additive growth, so — unlike the old reshuffle —
-    // every hex that existed BEFORE the advance must come back byte-identical (a), while the
-    // TOTAL hex count strictly increases because a whole new lobe of hexes that didn't exist
-    // before got added on top (b, the core "map gets bigger" proof). (c) a spot directly
-    // BEHIND the chosen growth direction stays completely unchanged (nothing pops in
-    // around/behind the player), and (d) the player's position stays untouched (no teleport)
-    // on terrain that isn't impassable (the safe-clear zone follows them).
-    const terrainAfter = new Map(a.terrain);
+    // #111: terrain is now STATIC after the initial build — stage advance changes only the
+    // objective/mission and the enemy squad, never a single terrain hex. This replaces the old
+    // #81 "additive growth" invariants (mapGrewLarger/behindHexUnchanged) with the simpler,
+    // stronger claim the new architecture actually guarantees.
+    const terrainAfter = a.terrain;
     let terrainDiffs = 0;
-    for (const [k, id] of terrainBefore) if (terrainAfter.get(k) !== id) terrainDiffs++;
-    const oldTerrainPreserved = terrainDiffs === 0;
-    const hexCountAfterAdvance = a.terrain.size;
-    const mapGrewLarger = hexCountAfterAdvance > hexCountBeforeAdvance;
-    // A hex straight behind the growth direction, well past a buffer, must be untouched.
-    // Pixel → axial hex, inlined (mirrors data/hexgrid.js pixelToHex/cubeRound exactly) — the
-    // Node-side import isn't reachable from this page-context callback.
-    const behindAngle = a._lastGrowthAngle + Math.PI;
-    const SIZE = 48, RT3 = Math.sqrt(3);
-    const behindX = pxBefore + Math.cos(behindAngle) * 8 * SIZE;
-    const behindY = pyBefore + Math.sin(behindAngle) * 8 * SIZE;
-    const qf = (RT3 / 3 * behindX - 1 / 3 * behindY) / SIZE;
-    const rf = (2 / 3 * behindY) / SIZE;
-    const xf = qf, zf = rf, yf = -qf - rf;
-    let bx = Math.round(xf), by = Math.round(yf), bz = Math.round(zf);
-    const bdx = Math.abs(bx - xf), bdy = Math.abs(by - yf), bdz = Math.abs(bz - zf);
-    if (bdx > bdy && bdx > bdz) bx = -by - bz; else if (bdy > bdz) by = -bx - bz; else bz = -bx - by;
-    const behindKey = `${bx},${bz}`;
-    const beforeMap = new Map(terrainBefore);
-    const behindHexUnchanged = !beforeMap.has(behindKey) || a.terrain.get(behindKey) === beforeMap.get(behindKey);
+    if (terrainAfter.size !== terrainBefore.size) terrainDiffs = Infinity;
+    else for (const [k, id] of terrainBefore) if (terrainAfter.get(k) !== id) terrainDiffs++;
+    const terrainUnchangedByStageAdvance = terrainDiffs === 0;
     const playerPositionUnchanged = a.px === pxBefore && a.py === pyBefore;
     const playerNotStranded = !a._blocked(a.px, a.py) && !a._isWall(a.px, a.py);
+
+    // #110: the biome's reserved "deep" terrain must appear as the boundary ring around the
+    // OUTER edge of the whole pre-built area — never as an in-map feature near the player's
+    // starting area. `a._boundaryRing` (set by `_buildWorld`) is the exact Set of hex keys the
+    // boundary was stamped onto; confirm at least one exists, that it really does carry the
+    // biome's `deep` id, and that `deep` is ABSENT from a generous radius around spawn.
+    const boundary = {};
+    {
+      const ringKeys = [...(a._boundaryRing ?? [])];
+      boundary.ringExists = ringKeys.length > 0;
+      boundary.ringUsesDeepId = ringKeys.length > 0 && ringKeys.every((k) => a.terrain.get(k) === a.biome.deep);
+      boundary.deepAbsentNearSpawn = true;
+      const SIZE = 48, RT3 = Math.sqrt(3);
+      for (let q = -20; q <= 20 && boundary.deepAbsentNearSpawn; q++) {
+        for (let r = -20; r <= 20; r++) {
+          if (Math.abs(q) + Math.abs(r) + Math.abs(q + r) > 40) continue;
+          const k = `${q},${r}`;
+          if (a.terrain.get(k) === a.biome.deep) { boundary.deepAbsentNearSpawn = false; break; }
+        }
+      }
+      // A ground-blocking spot check: `_blocked` must read the boundary ring as impassable for
+      // ground units, exactly like any other impassable terrain.
+      if (ringKeys.length) {
+        const [rq, rr] = ringKeys[0].split(',').map(Number);
+        const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
+        boundary.groundBlockedAtRing = a._blocked(bx, by);
+      } else boundary.groundBlockedAtRing = false;
+    }
+
+    // Flying enemies must ignore the boundary the same way they ignore every other terrain
+    // (the coordinator's follow-up: "as we change from black off-map to stuff like deep
+    // water... we should still allow flying enemies to go out there"). `_updateVehicle`
+    // (scenes/arena/enemies.js) only gates GROUND units on `_blocked` (`if (!e.flying &&
+    // this._blocked(nx, ny))`) — a `flying: true` kind (helicopter/drone) skips that gate
+    // entirely. Mirrors the existing #68 `flyerIgnoresWall` check (which pins a helicopter
+    // directly onto a wall hex and confirms it isn't force-ejected) but against the NEW
+    // boundary terrain specifically, re-pinning position each frame the same way the #92
+    // flyerDoesNotBlock check does, so real AI-driven drift can't make this nondeterministic.
+    const flyOverBoundary = { tested: false, groundBlockedThere: false, flyerCrossedThere: false };
+    if (a._boundaryRing && a._boundaryRing.size) {
+      const SIZE = 48, RT3 = Math.sqrt(3);
+      const [rq, rr] = [...a._boundaryRing][0].split(',').map(Number);
+      const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
+      flyOverBoundary.tested = true;
+      flyOverBoundary.groundBlockedThere = a._blocked(bx, by);
+      const flyer = a._spawnKind(bx, by, 'helicopter');
+      for (let i = 0; i < 20; i++) { a._updateVehicle(flyer, 0.016, 16); flyer.x = bx; flyer.y = by; flyer.vx = 0; flyer.vy = 0; }
+      // Still sitting exactly on the (ground-impassable) boundary spot after repeated updates —
+      // a ground unit would never be placed/kept there by its own movement (see `groundBlocks`/
+      // `groundBlockedAtRing` above); a flyer is fine sitting right on it because it's above it.
+      flyOverBoundary.flyerCrossedThere = flyer.flying === true && flyer.x === bx && flyer.y === by;
+      a._removeEnemy(flyer);
+    }
 
     // #102: off-screen spawn points are biased toward the OBJECTIVE's direction rather than
     // scattered uniformly around the player. Sample the real picker many times (against the
@@ -799,15 +818,14 @@ try {
       firstObjectiveDistFromSpawn,
       runStartedAtStageZero,
       stageAdvanced,
-      terrainGrewImmediatelyOnAdvance,
-      growthTileDepthCorrect,
+      newObjectiveAssigned,
       newStageHasMission,
       newStageHasSquad,
-      oldTerrainPreserved,
-      mapGrewLarger,
-      behindHexUnchanged,
+      terrainUnchangedByStageAdvance,
       playerPositionUnchanged,
       playerNotStranded,
+      boundary,
+      flyOverBoundary,
       runEndedOnDeath,
       currencyBankedOnDeath,
       salvagePickedUp,
@@ -902,29 +920,33 @@ try {
   // the run + banks its currency into the persistent registry value the garage reads.
   if (!arena.runStartedAtStageZero) fail('#64 run did not start active at stage 0 on deploy');
   if (!arena.stageAdvanced) fail('#64 mission-complete did not advance the run to the next stage');
-  // #81 follow-up (playtest 2026-07-10 point 3): terrain growth + the new mission must be live
-  // immediately on mission-complete, not gated behind the full transition-delay beat.
-  if (!arena.terrainGrewImmediatelyOnAdvance) fail('#81 the new stage\'s terrain did not grow immediately on mission-complete — it must not wait for the transition delay');
+  // #111 follow-up (was playtest 2026-07-10 point 3): the new objective/mission must be live
+  // immediately on mission-complete, not gated behind the full transition-delay beat — this no
+  // longer involves rebuilding terrain (see #111 below), just re-picking within the same map.
+  if (!arena.newObjectiveAssigned) fail('#111 stage advance did not assign a new objective');
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
-  // #81 follow-up (playtest 2026-07-10 point 1): every growth-added terrain tile must carry the
-  // same explicit DEPTH.TERRAIN as the initial build, strictly below the player's view depth.
-  if (!arena.growthTileDepthCorrect) fail('#81 a growth-added terrain tile is not at the correct (below-player) depth');
   if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
-  // #81 (organic growth rewrite): stage advance ADDS a fresh organically-shaped region of
-  // terrain beyond the previously-explored edge (not just a new objective in the same
-  // footprint, and not a same-size reshuffle), and the player continues from wherever they
-  // finished — no teleport, and never stranded on impassable ground once the safe-clear zone
-  // follows them to their actual position.
-  // The growth must be ADDITIVE, not a whole-map swap — everywhere already explored before the
-  // advance must come back byte-identical.
-  if (!arena.oldTerrainPreserved) fail('#81 stage advance changed terrain that was already explored — growth must be additive, not a reshuffle');
-  if (!arena.behindHexUnchanged) fail('#81 terrain behind the growth direction changed — the map should not pop in around/behind the player');
-  // The core "map gets LARGER" proof (2026-07-10 correction): total explored hex count must
-  // strictly increase, not just get reshuffled within the same fixed-size footprint.
-  if (!arena.mapGrewLarger) fail('#81 stage advance did not increase the total explored hex count — the map must genuinely GROW, not just reshuffle');
-  if (!arena.playerPositionUnchanged) fail('#81 stage advance moved the player (should continue from where they finished, no teleport)');
-  if (!arena.playerNotStranded) fail('#81 the player ended up on impassable terrain after the map grew');
+  // #111: the whole run's terrain is built ONCE upfront — stage advance must NEVER touch a
+  // single terrain hex (this replaces the old #81 "additive growth" invariants entirely: there
+  // is no more growth to prove additive, just a static map that never changes underfoot). The
+  // player continues from wherever they finished — no teleport — and is never stranded on
+  // impassable ground (irrelevant now that terrain is static, but still asserted for safety).
+  if (!arena.terrainUnchangedByStageAdvance) fail('#111 stage advance changed the terrain — the whole run\'s map must be built once upfront and never rebuilt');
+  if (!arena.playerPositionUnchanged) fail('#111 stage advance moved the player (should continue from where they finished, no teleport)');
+  if (!arena.playerNotStranded) fail('#111 the player ended up on impassable terrain after a stage advance');
+  // #110: the biome's reserved "deep" terrain must exist as a boundary ring around the outer
+  // edge of the pre-built area, and must NOT appear as an in-map feature near player spawn.
+  if (!arena.boundary.ringExists) fail('#110 no boundary ring hexes were found around the pre-built area');
+  if (!arena.boundary.ringUsesDeepId) fail('#110 the boundary ring is not stamped with the biome\'s reserved "deep" terrain id');
+  if (!arena.boundary.deepAbsentNearSpawn) fail('#110 the biome\'s "deep" terrain appeared as an in-map feature near spawn — it must be boundary-only');
+  if (!arena.boundary.groundBlockedAtRing) fail('#110 the boundary ring did not block ground movement like any other impassable terrain');
+  // Flying enemies must ignore the new boundary terrain, same as they ignore every other
+  // terrain (helicopter/drone narratively fly over ground obstacles) — coordinator follow-up.
+  if (arena.flyOverBoundary.tested) {
+    if (!arena.flyOverBoundary.groundBlockedThere) fail('#110 test setup: the sampled boundary hex did not actually block ground movement');
+    if (!arena.flyOverBoundary.flyerCrossedThere) fail('#110 a flying enemy (helicopter) was blocked by the boundary terrain — flyers must ignore it');
+  }
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
   // #65: a salvage pickup adds straight into the live run currency total.

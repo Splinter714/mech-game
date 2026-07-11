@@ -1,24 +1,21 @@
 // Arena run mixin (#64) — wires the pure Run model (data/run.js) into the live arena: starts
 // or continues a run at create(), feeds the mission model a REAL playerDead signal now that
 // the deploy survivability buffer is tuned down, and sequences stage advance (mission
-// complete → a FRESHLY REGENERATED map (#81) + a bigger/tougher squad in the SAME arena
-// session, continuing from wherever the player is — no teleport) and run-over (player
-// destroyed OR final stage cleared → banner, bank currency, return to garage) after a short
-// beat so the banners read. Methods use `this` (the ArenaScene); composed onto the
-// prototype via Object.assign, same as the other mixins.
+// complete → a new objective (#111: within the SAME already-built terrain — no more per-stage
+// map regeneration) + a bigger/tougher squad in the SAME arena session, continuing from
+// wherever the player is — no teleport) and run-over (player destroyed OR final stage cleared
+// → banner, bank currency, return to garage) after a short beat so the banners read. Methods
+// use `this` (the ArenaScene); composed onto the prototype via Object.assign, same as the
+// other mixins.
 import { makeRun, advanceStage, endRunOnDeath, isRunOver, stageDescriptor } from '../../data/run.js';
 import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
-import { pickFarObjective, pickRevealAngle, pickGrowthCenter, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
+import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
-// #81 follow-up: below this speed (world px/s) the player isn't really "heading" anywhere in
-// particular, so the reveal direction falls back to a fresh random direction instead of
-// continuing a near-zero, noisy velocity vector. Owner: tunable.
-const MIN_HEADING_SPEED = 8;
 
 export const RunMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld()/_initMission() have set up the
@@ -53,7 +50,7 @@ export const RunMixin = {
   },
 
   // Mission cleared: bank the stage's currency, move to the next stage (or WIN if that was the
-  // last one), and — if the run is still active — grow the new stage's terrain right away
+  // last one), and — if the run is still active — place the new stage's objective right away
   // (playtest 2026-07-10 point 3: waiting for the whole transition beat read as the map not
   // opening up until an arbitrary delay had passed) while still holding the harder squad's
   // spawn + stage-label beat until after "MISSION COMPLETE" has had a moment to read.
@@ -67,60 +64,35 @@ export const RunMixin = {
       return;
     }
 
-    this._growNextStageTerrain();
+    this._pickNextStageObjective();
 
     const label = stageDescriptor(this.run.stageIndex).label;
     this._floatText(this.px, this.py - 60, `${label} INCOMING`, '#5ec8e0');
     this.time.delayedCall(STAGE_TRANSITION_DELAY, () => this._spawnNextStageSquad());
   },
 
-  // Grow stage N's terrain + place its objective IMMEDIATELY on mission-complete — no scene
-  // restart, no forced trip to the garage, and (playtest 2026-07-10 point 3) no waiting on
-  // STAGE_TRANSITION_DELAY first. Squad spawn is deliberately NOT here — see
-  // `_spawnNextStageSquad`, which runs after the short readability beat.
-  _growNextStageTerrain() {
+  // #111: pick stage N's objective + start its mission IMMEDIATELY on mission-complete — no
+  // scene restart, no forced trip to the garage, and (playtest 2026-07-10 point 3) no waiting
+  // on STAGE_TRANSITION_DELAY first. Unlike the old #81 incremental-growth system, the terrain
+  // itself is NEVER rebuilt here — the whole run's map was already built once at deploy
+  // (`ArenaScene.create()` → `_buildWorld()`); stage advance only reassigns `this.objectiveHex`
+  // within it and spawns a bigger/tougher squad (see `_spawnNextStageSquad`, which runs after
+  // the short readability beat). Player position, surviving enemies, and every hex of terrain
+  // are all untouched by this — the "no teleport" guarantee is now trivially true since
+  // nothing about the world changes under the player's feet.
+  _pickNextStageObjective() {
     const desc = stageDescriptor(this.run.stageIndex);
     this._pendingStageDesc = desc;   // handed to _spawnNextStageSquad after the beat
 
-    // #81 (organic growth rewrite): ADD a fresh organically-shaped region of terrain beyond the
-    // edge of everywhere already explored, instead of reshuffling within a fixed-size disc —
-    // everywhere already explored (behind/beside/near the player) keeps the just-finished
-    // stage's terrain byte-identical, so nothing changes under their feet, but the total map is
-    // genuinely bigger afterward. Pick the growth direction from the player's current heading
-    // (if they're actually moving) or a fresh random direction with room before the hard
-    // MAX_WORLD_RADIUS cap (data/worldgen.js `pickRevealAngle`), then place the new lobe's
-    // centre out along that direction (`pickGrowthCenter`) so its own organic boundary reaches
-    // back to overlap the existing explored edge and extends fresh territory beyond it. The
-    // player is still never teleported — its own px/py are untouched.
     const playerHex = pixelToHex(this.px, this.py);
-    const speed = Math.hypot(this.vx || 0, this.vy || 0);
-    const headingAngle = speed > MIN_HEADING_SPEED ? Math.atan2(this.vy, this.vx) : null;
-    const growthAngle = pickRevealAngle({ playerPx: this.px, playerPy: this.py, headingAngle });
-    const growthCenter = pickGrowthCenter({ playerPx: this.px, playerPy: this.py, angle: growthAngle });
-    this._lastGrowthAngle = growthAngle;   // exposed for tests/smoke — not read by gameplay
-    // Snapshot the just-finished stage's live maps (the CUMULATIVE explored area, since every
-    // previous stage's build already folded in everything before IT) BEFORE _buildWorld
-    // replaces them — this is what generateTerrain preserves byte-identical outside the new
-    // growth lobe, and what the new lobe's `included` region unions on top of.
-    const previous = { terrain: this.terrain, buildingHp: this.buildingHp, coverHp: this.coverHp };
-    // #81 follow-up (playtest 2026-07-10 point 2): pass the growth angle + the player's own
-    // pixel position through so `growRegion` can restrict the new lobe to a directional cone
-    // (GROWTH_ARC_HALF_ANGLE) opening toward that angle, instead of an omnidirectional blob.
-    this._buildWorld(undefined, playerHex, {
-      previous, growthCenter, growthAngle, arcFrom: { x: this.px, y: this.py },
-    });
-    const reveal = this._revealRegion;   // the newly-added lobe, minus anywhere already explored
-
-    // A fresh objective: the just-rebuilt world's `buildingHp` map (hexKey → remaining HP)
-    // holds every outpost still standing (preserved ones keep their old remaining HP; only the
-    // new lobe got fresh outposts). The objective must specifically land INSIDE the new lobe
-    // (not just far away, which a full-map regen made equivalent, but additive growth does not)
-    // — reaching it means walking out into the freshly grown territory. If no outpost landed in
-    // the region, seed one there directly; only fall back to "anywhere far" if even that fails,
-    // so a stage is never left without an objective.
+    // The world's `buildingHp` map (hexKey → remaining HP) holds every outpost still standing
+    // across the WHOLE pre-built map (a destroyed outpost — including a past stage's objective
+    // — leaves this map for good, so later stages naturally can't re-pick it). If every outpost
+    // in the whole map has been destroyed by this point in the run, seed a fresh one somewhere
+    // far from the player rather than leaving the stage without an objective.
     const hexKeys = [...this.buildingHp.keys()];
-    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST, reveal)
-      ?? this._spawnOutpostAt(playerHex.q, playerHex.r, reveal)
+    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST)
+      ?? this._spawnOutpostAt(playerHex.q, playerHex.r)
       ?? pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST);
     this.mission = makeMission(desc.missionTypeId);
     this.registry.set('mission', this.mission);
@@ -130,11 +102,11 @@ export const RunMixin = {
 
   // The harder squad (per data/run.js escalation curve), dropped off-screen same as the opening
   // squad — held back until after the "MISSION COMPLETE"/"STAGE N INCOMING" beat so a fresh wave
-  // doesn't ambush the player mid-banner, even though the terrain itself already grew instantly
-  // in `_growNextStageTerrain`. #71: tear down the previous stage's enemies first (views +
-  // generated textures) — replacing the array alone leaked every prior stage's corpse sprites
-  // onto the display list for the rest of the session, dragging the frame rate down as a run
-  // went on.
+  // doesn't ambush the player mid-banner, even though the new objective was already picked
+  // instantly in `_pickNextStageObjective`. #71: tear down the previous stage's enemies first
+  // (views + generated textures) — replacing the array alone leaked every prior stage's corpse
+  // sprites onto the display list for the rest of the session, dragging the frame rate down as
+  // a run went on.
   _spawnNextStageSquad() {
     const desc = this._pendingStageDesc;
     this._pendingStageDesc = null;

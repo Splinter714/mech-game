@@ -32,7 +32,7 @@ describe('biome registry (#67)', () => {
       // Channel: passable, shoot-over (no LOS block).
       expect(isPassable(b.channel)).toBe(true);
       expect(blocksLOS(b.channel)).toBe(false);
-      // Deep: impassable (the lake analog).
+      // Deep: impassable (the lake analog) — #110: boundary-ring-only, never in-map.
       expect(isPassable(b.deep)).toBe(false);
       // Cover: walk-through cover — passable AND blocks LOS.
       expect(isPassable(b.cover)).toBe(true);
@@ -48,12 +48,30 @@ describe('biome registry (#67)', () => {
     }
   });
 
+  // #110: every biome's LESSER in-map hazard (replacing the now boundary-only `deep`) must be
+  // passable — it's a danger to slow you down, not a wall — and, when declared, a real
+  // terrain id distinct from `deep` itself.
+  it('every biome hazard (if declared) is passable and distinct from the boundary-only deep id', () => {
+    for (const b of Object.values(BIOMES)) {
+      if (!b.hazard) { expect(b.hasHazard).toBe(false); continue; }
+      expect(TERRAIN[b.hazard]).toBeDefined();
+      expect(isPassable(b.hazard)).toBe(true);
+      expect(b.hazard).not.toBe(b.deep);
+      expect(b.hasHazard).toBe(true);
+    }
+  });
+
+  it('grassland has no separate in-map hazard blob — its channel already covers the role', () => {
+    expect(BIOMES.grassland.hazard).toBeNull();
+    expect(BIOMES.grassland.hasHazard).toBe(false);
+  });
+
   it('every biome declares generation knobs', () => {
     for (const b of Object.values(BIOMES)) {
       expect(typeof b.coverClusters).toBe('number');
       expect(Number.isInteger(b.outposts)).toBe(true);
       expect(typeof b.hasChannel).toBe('boolean');
-      expect(typeof b.hasDeep).toBe('boolean');
+      expect(typeof b.hasHazard).toBe('boolean');
     }
   });
 
