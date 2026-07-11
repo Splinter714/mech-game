@@ -72,6 +72,20 @@ export const WEAPONS = {
     ammoMax: 120, ammoRegen: 18, slots: 2, cycleTime: 0,
     delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true },
   }),
+  plasmaLance: w({  // #117: heavier, punchier travelling energy bolt — a real projectile
+    // weapon (kind explicitly 'plasma'), NOT a hitscan beam. Formalizes the look that used to
+    // happen accidentally: before #117's fix, enemy mechs mounting beamLaser (a hitscan/
+    // sustained-beam weapon) fired it through the same unconditional `_spawnProjectile` path
+    // every enemy weapon went through, so it fell back to a slow travelling plasma bolt instead
+    // of an instant beam. Jackson played it and liked that accidental look, so rather than
+    // "fixing" beamLaser to render as a proper beam for enemies, this is its own deliberately-
+    // tuned weapon: a single heavy bolt (not beamLaser's continuous stream), tuned independently
+    // (damage/velocity/range/cadence below are NOT inherited from beamLaser's numbers).
+    id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
+    damage: 20, range: { min: 0, opt: 460, max: 620 },
+    ammoMax: 14, ammoRegen: 1.4, slots: 2, cycleTime: 900,
+    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'single', kind: 'plasma' },
+  }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',
     damage: 34, range: { min: 120, opt: 400, max: 640 },
@@ -208,7 +222,12 @@ export const WEAPONS = {
 // The turret enemy still fires siegeShell normally — enemyKinds.js/enemies.js read WEAPONS
 // directly via getWeapon(), not the filtered WEAPON_IDS list. To re-enable a weapon, just
 // delete its id from this array — nothing else needs to change.
-export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm', 'siegeShell'];
+// #117: plasmaLance joins this list on the same "enemy-only for now" basis as siegeShell — it's
+// a brand-new weapon formalizing the sniper/artillery mechs' accidental pre-#117 look (see its
+// definition above), not yet vetted as a player-mountable weapon. Judgment call: it could
+// reasonably go the other way (it's a perfectly normal heavy energy bolt) — flagging this
+// explicitly rather than deciding unilaterally either way.
+export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm', 'siegeShell', 'plasmaLance'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 

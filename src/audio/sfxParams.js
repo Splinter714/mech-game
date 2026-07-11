@@ -154,6 +154,18 @@ export const DEFAULT_SFX = withQDefaults({
     fire: laserZapLayers({ damage: 34 }, false),
     impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
   },
+  // #117: plasmaLance — its own tuned cue, not a beamLaser/plasmaCannon reuse. Fire uses the
+  // shared laser-zap tone/noise layers (heavier — damage 20 pulls the base pitch down a touch
+  // vs plasmaCannon's 18), plus a trajectory hum (it's a travelling round, unlike beamLaser) and
+  // a punchier impact than plasmaCannon's to read as a heavier bolt.
+  plasmaLance: {
+    fire: laserZapLayers({ damage: 20 }, false),
+    trajectory: [{ kind: 'noise', type: 'bandpass', freq: 850, freqEnd: 1400, q: 0.9, dur: 0.2, gain: 0.07, attack: 0.01 }],
+    impact: [
+      { kind: 'noise', type: 'bandpass', freq: 2000, freqEnd: 800, q: 1.3, dur: 0.2, gain: 0.16, attack: 0.002 },
+      { kind: 'tone', type: 'square', freq: 210, freqEnd: 70, dur: 0.14, gain: 0.12, attack: 0.004 },
+    ],
+  },
   plasmaCannon: {
     fire: laserZapLayers({ damage: 18 }, false),
     trajectory: [{ kind: 'noise', type: 'bandpass', freq: 900, freqEnd: 1500, q: 0.8, dur: 0.18, gain: 0.06, attack: 0.01 }],

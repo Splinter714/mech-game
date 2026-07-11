@@ -134,7 +134,7 @@ try {
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
   }, { timeout: 20000 });
 
-  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize }) => {
+  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize, hitscanWeapon }) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first (and at boot, only) enemy
@@ -528,6 +528,51 @@ try {
       a.projectiles.length = 0;
     }
 
+    // #117: enemy MECHS used to unconditionally spawn EVERY weapon as a travelling projectile,
+    // ignoring delivery type entirely. The enemy fire loop now runs the same planEmissions
+    // decision the player's fireWeapon does, so a hitscan weapon routes to _fireHitscan (a beam)
+    // and a contact/melee weapon to _melee, both with owner: 'enemy' so damage lands on the
+    // player — only genuinely-projectile weapons still spawn a travelling round.
+    // Per Jackson's playtest call (2026-07-10) the pre-#117 accidental "enemy beamLaser fires as
+    // a slow plasma bolt" look is being KEPT on purpose, formalized as its own new weapon
+    // (plasmaLance, mounted by the sniper/artillery in place of beamLaser) rather than "fixed" to
+    // a beam. So this proves two things: (a) the sniper's actual mounted weapon still fires as a
+    // travelling projectile (the look is preserved), and (b) the general hitscan/melee dispatch
+    // machinery itself works for an enemy-owned shot — exercised directly against a real catalog
+    // hitscan weapon (Pulse Laser) and a synthetic contact/melee fixture, since no currently-
+    // mounted enemy loadout uses either.
+    const enemyDelivery = {};
+    {
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const sniper = a._spawnMech(100, 0, 'sniper');   // mounts plasmaLance + clusterRocket
+      sniper.awareness = 'aware';
+      a.projectiles.length = 0; a.beams.length = 0;
+      for (let i = 0; i < 200 && a.projectiles.length === 0 && a.beams.length === 0; i++) a._updateEnemy(sniper, 0.016, 16);
+      enemyDelivery.plasmaLanceStillFiresAsProjectile =
+        a.projectiles.some((p) => p.owner === 'enemy') && a.beams.length === 0;
+      a._removeEnemy(sniper);
+      a.projectiles.length = 0; a.beams.length = 0;
+
+      // (b) Directly exercise the general enemy-owned hitscan/contact dispatch — a real catalog
+      // hitscan weapon (Pulse Laser) and a synthetic contact/melee fixture — since no LIVE enemy
+      // loadout currently mounts either. Muzzle placed so the player (at the origin) sits
+      // squarely on the firing ray.
+      const hpBeforeHitscan = sumHp(a.mech);
+      const hitscanSlot = { weapon: hitscanWeapon, location: 'testHitscan', index: 0 };
+      a._fireHitscan(hitscanSlot, -40, 0, 0, 'enemy', 'testEnemy');
+      enemyDelivery.hitscanFiresBeamNotProjectile = a.beams.length > 0 && a.projectiles.length === 0;
+      enemyDelivery.hitscanDamagedPlayer = sumHp(a.mech) < hpBeforeHitscan;
+      a.beams.length = 0; a.projectiles.length = 0;
+
+      const hpBeforeMelee = sumHp(a.mech);
+      const meleeSlot = {
+        weapon: { id: 'testMelee', category: 'ballistic', damage: 12, range: { min: 0, opt: 32, max: 32 } },
+        location: 'testMelee', index: 0,
+      };
+      a._melee(meleeSlot, -20, 0, 0, 'enemy');   // reach 32 > the 20px muzzle-to-player distance
+      enemyDelivery.meleeDamagedPlayer = sumHp(a.mech) < hpBeforeMelee;
+    }
+
     // #72: soft cover — own-hex transparency + destructible/burnable trees, end to end.
     // Plant the biome's soft-cover terrain (forest/scrub/…) on known-clear ground near the
     // origin, stand a fresh enemy INSIDE it, and prove a real travelling round fired from open
@@ -832,8 +877,9 @@ try {
       s94,
       spawnBias,
       awareness,
+      enemyDelivery,
     };
-  }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE });
+  }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE, hitscanWeapon: WEAPONS.pulseLaser });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
 
   console.log(JSON.stringify({ garage, arena }, null, 2));
@@ -989,6 +1035,10 @@ try {
   if (!arena.awareness.noFireWhileUnaware) fail('#103 an UNAWARE enemy fired at the player');
   if (!arena.awareness.becameAware) fail('#103 an enemy within detection range never became AWARE');
   if (!arena.awareness.engagedAfterAware) fail('#103 an AWARE enemy in range never engaged (fired at) the player');
+  if (!arena.enemyDelivery.plasmaLanceStillFiresAsProjectile) fail('#117 the sniper\'s Plasma Lance did not fire as a travelling projectile (the kept look regressed)');
+  if (!arena.enemyDelivery.hitscanFiresBeamNotProjectile) fail('#117 an enemy-owned hitscan shot did not produce a beam (or produced a projectile instead)');
+  if (!arena.enemyDelivery.hitscanDamagedPlayer) fail('#117 an enemy-owned hitscan beam did not damage the player');
+  if (!arena.enemyDelivery.meleeDamagedPlayer) fail('#117 an enemy-owned melee/contact swing did not damage the player');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {

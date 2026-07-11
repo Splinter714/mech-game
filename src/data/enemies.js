@@ -28,13 +28,18 @@ export const ENEMIES = {
   // Sniper: long-range weapons on a slow heavy chassis, so it KITES — holds distance,
   // backpedals when the player closes, uses cover.
   // #96: railLance (opt 400) and napalm (opt 500) were both shelved per Jackson's weapon
-  // curation pass. Swapped to beamLaser (opt 500, max 640 — the longest-range keeper, and
-  // still hitscan so it reads as a precise sniping weapon) and clusterRocket (opt 660, max
-  // 960 — the other long-range keeper), preserving the "holds distance and kites" read.
+  // curation pass. Swapped to beamLaser (opt 500, max 640 — the longest-range keeper) and
+  // clusterRocket (opt 660, max 960 — the other long-range keeper), preserving the "holds
+  // distance and kites" read.
+  // #117: beamLaser swapped to plasmaLance (opt 460/max 620) — Jackson liked the pre-#117
+  // accidental look of an enemy "beamLaser" actually firing as a travelling plasma bolt (a bug:
+  // enemies never routed hitscan weapons through the beam-fire path at all), so that look is now
+  // formalized as its own real projectile weapon rather than "fixed" to an instant beam. See
+  // plasmaLance's definition in data/weapons.js for the full story.
   sniper: {
     chassisId: 'heavy',
     name: 'Warden',
-    mounts: { rightArm: ['beamLaser'], leftTorso: ['clusterRocket'] },
+    mounts: { rightArm: ['plasmaLance'], leftTorso: ['clusterRocket'] },
   },
 
   // Artillery / bombardier: EVERY weapon is indirect-fire — both mounts lob an arcing shell
@@ -52,10 +57,12 @@ export const ENEMIES = {
   // posture instead of hugging cover. Flagging this clearly rather than silently — an
   // artillery-specific indirect weapon may need to be added to the keep-list, or this enemy's
   // "camp cover" behaviour may need its own follow-up once Jackson weighs in.
+  // #117: beamLaser swapped to plasmaLance (same reasoning as the sniper above — direct, not
+  // indirect, so this doesn't change the isIndirectWeapon/camping situation already flagged).
   artillery: {
     chassisId: 'heavy',
     name: 'Mortarhead',
-    mounts: { rightTorso: ['beamLaser'], leftTorso: ['clusterRocket'] },
+    mounts: { rightTorso: ['plasmaLance'], leftTorso: ['clusterRocket'] },
   },
 };
 

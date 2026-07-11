@@ -92,6 +92,26 @@ describe('planEmissions', () => {
     expect(planEmissions(meleeFixture).mode).toBe('contact');
   });
 
+  // #117: the enemy fire loop never consulted planEmissions at all, so EVERY enemy weapon
+  // (including a real hitscan weapon like Beam Laser) fired as a travelling projectile via
+  // _spawnProjectile. The enemy loop now branches on this same `mode` the player's fireWeapon
+  // already used, so a hitscan weapon correctly routes to 'hitscan' (resolved as an instant beam
+  // via _fireHitscan) instead of 'projectile' — this is the pure dispatch decision the fix
+  // relies on. (Beam Laser itself is no longer enemy-mounted — see plasmaLance in weapons.js and
+  // the sniper/artillery loadouts in data/enemies.js for why — but the weapon and its hitscan
+  // classification are unchanged, and this same routing applies to any future enemy hitscan
+  // mount, e.g. Pulse Laser below.)
+  it('routes the Beam Laser to hitscan, not projectile', () => {
+    expect(planEmissions(WEAPONS.beamLaser).mode).toBe('hitscan');
+  });
+
+  // #117: plasmaLance formalizes the accidental "enemy beamLaser fires as a plasma bolt" look
+  // Jackson liked — it must stay a genuine travelling PROJECTILE (not get accidentally
+  // reclassified as hitscan later), since the enemy fire loop now actually honors this mode.
+  it('routes the new Plasma Lance to projectile, not hitscan', () => {
+    expect(planEmissions(WEAPONS.plasmaLance).mode).toBe('projectile');
+  });
+
   it('emits parallel lanes for a multi-stream weapon — offset laterally, no fan (Repeater)', () => {
     const p = planEmissions(WEAPONS.machineGun);
     const { streams, streamSpacing } = WEAPONS.machineGun.delivery;

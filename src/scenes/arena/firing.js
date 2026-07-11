@@ -157,20 +157,33 @@ export const FiringMixin = {
   },
 
   // Melee swing: same forward-ray hit detection as a beam, but drawn as a sweeping
-  // crescent (shared drawSlash art) instead of a straight line.
-  _melee(w, mx, my, angle) {
+  // crescent (shared drawSlash art) instead of a straight line. `owner` (#117) generalizes
+  // this for an ENEMY mech's melee/contact weapons: the player sweeps against `this.enemies`
+  // and damages via `_damageEnemyAt`; an enemy sweeps against the single player point and
+  // damages via `_damagePlayerAt` — same forward-ray math either way, just a different
+  // target set/damage sink.
+  _melee(w, mx, my, angle, owner = 'player') {
     const reach = w.weapon.range.max || 32;
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     let target = null, t = 0;
-    for (const e of this.enemies) {
-      if (e.mech.isDestroyed()) continue;
-      const ex = e.x - mx, ey = e.y - my, tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
-      if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
+    if (owner === 'enemy') {
+      if (!this.mech.isDestroyed()) {
+        const ex = this.px - mx, ey = this.py - my;
+        const tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
+        if (tt > 0 && tt < reach && perp < 44) { target = 'player'; t = tt; }
+      }
+    } else {
+      for (const e of this.enemies) {
+        if (e.mech.isDestroyed()) continue;
+        const ex = e.x - mx, ey = e.y - my, tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
+        if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
+      }
     }
     const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
     if (target) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
+      if (owner === 'enemy') this._damagePlayerAt(dmg);
+      else this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
     }
     // Animate the crescent across a few frames, then clear.
     for (const tt of [0.15, 0.45, 0.8]) {
@@ -208,6 +221,17 @@ export const FiringMixin = {
       .map((e) => ({ x: e.x, y: e.y, destroyed: false, ref: e }));
   },
 
+  // #117: same shape as `_liveEnemiesForTrace`, but for an ENEMY's hitscan shot — the player
+  // is the only possible target, represented as a one-item candidate list so `traceHitscan`
+  // (which only knows about a generic {x,y,destroyed,ref} candidate array) doesn't need to
+  // know who's shooting at whom.
+  _liveTargetsForTrace(owner) {
+    if (owner === 'enemy') {
+      return this.mech.isDestroyed() ? [] : [{ x: this.px, y: this.py, destroyed: false, ref: 'player' }];
+    }
+    return this._liveEnemiesForTrace();
+  },
+
   // How far a beam/wall-blocked ray from `muzzle` at `angle` actually reaches, honoring cover.
   // #72 own-hex transparency: the muzzle's own hex (firing OUT of forest) and any living
   // enemy's hex (a target standing IN forest) don't block the beam — only deeper soft cover
@@ -224,7 +248,7 @@ export const FiringMixin = {
   // damage, no ammo, no impact fx. If no fire tick has created the beam yet (the very first
   // frame it's held), there's nothing to reposition — fireWeapon creates it.
   _trackHeldBeam(w) {
-    const live = this.beams.find((b) => b.loc === w.location);
+    const live = this.beams.find((b) => b.loc === `player:${w.location}`);
     if (!live) return;
     const m = this._muzzle(w.location);
     const angle = this._fireAngle(w, m);
@@ -238,14 +262,21 @@ export const FiringMixin = {
     live.y1 = m.y + Math.sin(angle) * endDist;
   },
 
-  _fireHitscan(w, muzzleX, muzzleY, angle) {
+  // `owner`/`shooterKey` (#117): generalizes the player's beam-fire path for an ENEMY mech's
+  // hitscan weapons. The player fires against `this.enemies` and damages via `_damageEnemyAt`;
+  // an enemy fires at the single player point and damages via `_damagePlayerAt` — everything
+  // else (trace, cover-blocking, beam persistence, impact fx) is the same machinery either way.
+  // `shooterKey` disambiguates the "one live continuous beam per shooter+location" lookup below
+  // so two different enemies (or an enemy and the player) mounting the same weapon in the same
+  // body location don't stomp each other's beam object.
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player') {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
 
-    // Project each living enemy onto the firing ray (forward `t`, perpendicular miss) and
+    // Project each living target onto the firing ray (forward `t`, perpendicular miss) and
     // take the nearest one actually struck.
-    const trace = traceHitscan(muzzleX, muzzleY, angle, reach, this._liveEnemiesForTrace());
+    const trace = traceHitscan(muzzleX, muzzleY, angle, reach, this._liveTargetsForTrace(owner));
     let target = trace.target?.ref ?? null;
     let t = trace.t;
     let hit = !!target;
@@ -262,16 +293,18 @@ export const FiringMixin = {
     const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
     const heavy = w.weapon.delivery.kind === 'rail';
     const continuous = w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
-    const live = continuous ? this.beams.find((b) => b.loc === w.location) : null;
+    const beamKey = `${shooterKey}:${w.location}`;
+    const live = continuous ? this.beams.find((b) => b.loc === beamKey) : null;
     if (live) {
       live.x0 = muzzleX; live.y0 = muzzleY; live.x1 = endX; live.y1 = endY;
       live.ttl = beamTtl;   // age keeps advancing → warble flows continuously
     } else {
-      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? w.location : null });
+      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null });
     }
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      this._damageEnemyAt(target, endX, endY, dmg, color);
+      if (owner === 'enemy') this._damagePlayerAt(dmg);
+      else this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
