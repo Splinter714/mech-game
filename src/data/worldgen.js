@@ -161,10 +161,51 @@ export const FULL_BUILD_VARIATION = 16;
 // MAX_WORLD_RADIUS: the hard reference cap the full build's max reach (BASE + VARIATION) stays
 // inside of, plus a couple of hexes' headroom for the boundary ring outside the shape's edge.
 export const MAX_WORLD_RADIUS = 80;
+
+// #126 (playtest: black void visible past the boundary ring at some camera positions/zooms):
+// BOUNDARY_RING_WIDTH is sized from the actual worst-case camera view distance, not a guessed
+// constant, so the fix is a real guarantee rather than "probably fine."
+//
+// The camera's world-space viewport: `ArenaScene.create()` sets `cameras.main.setZoom(dpr)`,
+// and `main.js` sizes the Phaser canvas to `window.innerWidth * dpr` x `window.innerHeight *
+// dpr` (physical pixels, for crisp HiDPI rendering). Camera zoom divides the canvas size back
+// down, so the visible world-space rect is exactly `innerWidth x innerHeight` CSS px — the dpr
+// term cancels. 1 world unit === 1 CSS px at zoom 1 (see hexToPixel/HEX_SIZE).
+//
+// The camera follows the player (`startFollow(.12, .12)` lerp) and CONVERGES to being exactly
+// centred on the player at rest — so the farthest point ever visible from the player's own
+// position is half the viewport's diagonal (the screen's far corner). The player's own
+// worst-case position is flush against the boundary ring itself (the ring is impassable, so
+// that's as close as a mech can ever stand to it) — meaning the ring's rendered depth has to
+// cover that whole half-diagonal, with no credit for any extra buffer.
+//
+// WORST_CASE_VIEWPORT_*: sized off the largest common consumer display resolution (4K UHD,
+// 3840x2160) rather than an exotic 5K/8K/ultrawide monitor — those extreme/unbounded cases (plus
+// a user zooming their browser far out, which effectively enlarges `window.innerWidth/Height` in
+// CSS px beyond any fixed constant) are covered by a second, independent backstop: the arena's
+// camera background colour is painted to match the current biome's `deep` terrain fill
+// (scenes/arena/world.js `_buildWorld`), so even a viewport wider than this ring anticipates
+// blends into "more deep terrain" at the horizon instead of snapping to raw black. The ring
+// width below is the "make it look right, not just fail safe" layer; the background colour is
+// the "never literally black" guarantee.
+const WORST_CASE_VIEWPORT_W = 3840;
+const WORST_CASE_VIEWPORT_H = 2160;
+// 30% headroom on top of the raw 4K half-diagonal for camera-follow overshoot on a fast stop,
+// non-fullscreen browser chrome quirks, and modest zoom-out.
+const VIEW_DEPTH_SAFETY_MARGIN = 1.3;
+// Exported (not just an internal const) so worldgen.test.js can assert BOUNDARY_RING_WIDTH
+// actually derives from — and covers — this figure, rather than re-guessing a magic number.
+export const REQUIRED_VIEW_DEPTH_PX =
+  0.5 * Math.hypot(WORST_CASE_VIEWPORT_W, WORST_CASE_VIEWPORT_H) * VIEW_DEPTH_SAFETY_MARGIN; // ≈2864px
+// Euclidean centre-to-centre distance between adjacent hexes — constant in every direction on
+// this regular grid (unlike the hex "distance" metric), so it's the real px depth each BFS ring
+// layer in `boundaryRingKeys` adds outward.
+export const HEX_STEP_PX = HEX_SIZE * Math.sqrt(3); // ≈83.14px for HEX_SIZE=48
 // BOUNDARY_RING_WIDTH: how many hexes thick the impassable boundary ring is, just outside the
-// pre-built area's own organic edge — a "final safety boundary" (#111), unlikely to be reached
-// in a normal run but present in case a player explores aggressively.
-export const BOUNDARY_RING_WIDTH = 2;
+// pre-built area's own organic edge. Derived (not guessed) from the camera math above, so it's
+// guaranteed to outrun the farthest any real camera can ever see from the farthest any player
+// can ever stand — see the backstop note above for what covers viewports even bigger than this.
+export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_PX); // = 35
 
 // The per-sector boundary distances (in hex units) for one organic region: a base radius +
 // randomized variation per angular sector, smoothed by averaging each sector with its two

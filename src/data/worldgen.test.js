@@ -8,6 +8,7 @@ import {
   mulberry32, safeZoneKeys, generateTerrain, pickFarObjective, FAR_OBJECTIVE_MIN_DIST,
   sectorBoundaries, organicBoundary, boundaryRingKeys,
   FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH,
+  REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { axialKey, range, neighbors, distance } from './hexgrid.js';
@@ -269,9 +270,50 @@ describe('boundaryRingKeys (#110)', () => {
     expect(thick.size).toBeGreaterThan(thin.size);
   });
 
-  it('default BOUNDARY_RING_WIDTH is a small, sane positive number', () => {
-    expect(BOUNDARY_RING_WIDTH).toBeGreaterThan(0);
-    expect(BOUNDARY_RING_WIDTH).toBeLessThan(10);
+  // #126: playtest — the boundary ring wasn't deep enough; the raw black void past it was
+  // visible from some camera positions/zooms. BOUNDARY_RING_WIDTH must be derived from the
+  // actual worst-case camera view distance (half the viewport diagonal, since the camera
+  // converges to centring on the player, who can stand flush against the ring), not a guessed
+  // small constant — these tests pin that relationship down instead of just re-asserting
+  // whatever number is currently in the file.
+  describe('#126 boundary depth actually covers the worst-case camera view distance', () => {
+    it('BOUNDARY_RING_WIDTH rendered depth (in px) covers REQUIRED_VIEW_DEPTH_PX', () => {
+      const ringDepthPx = BOUNDARY_RING_WIDTH * HEX_STEP_PX;
+      expect(ringDepthPx).toBeGreaterThanOrEqual(REQUIRED_VIEW_DEPTH_PX);
+    });
+
+    it('is the tightest hex count that still covers that depth (not a wasteful over-guess)', () => {
+      // One ring narrower must fall short — otherwise BOUNDARY_RING_WIDTH is bigger than the
+      // math actually calls for (which would cost real perf/build-time for no benefit, #126's
+      // explicit performance concern).
+      const oneNarrower = (BOUNDARY_RING_WIDTH - 1) * HEX_STEP_PX;
+      expect(oneNarrower).toBeLessThan(REQUIRED_VIEW_DEPTH_PX);
+    });
+
+    it('a full BFS-built ring at the default width is actually that deep in practice', () => {
+      // Sanity-check the real BFS output (not just the arithmetic above) against a big, roughly
+      // circular region — walk outward from a point squarely inside the shape until we exit the
+      // ring, and confirm the ring's real span is at least BOUNDARY_RING_WIDTH hex-steps.
+      const rng = mulberry32(0x5eed);
+      const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 20, variation: 2 });
+      const ring = boundaryRingKeys(included, {
+        ringWidth: BOUNDARY_RING_WIDTH, boundingRadius: 20 + BOUNDARY_RING_WIDTH + 4,
+      });
+      // Walk due "east" (q+, r=0) from just outside the shape until we leave the ring.
+      let q = 0;
+      while (included(q, 0)) q++;
+      let depth = 0;
+      while (ring.has(axialKey(q, 0))) { q++; depth++; }
+      expect(depth).toBeGreaterThanOrEqual(BOUNDARY_RING_WIDTH);
+    });
+
+    it('stays within a sane order of magnitude (a real depth fix, not a runaway perf regression)', () => {
+      // Guards against a future edit accidentally blowing this up (e.g. a typo'd extra zero in
+      // the safety margin) — the whole world's tile count scales with this, per #126's own
+      // performance-implications warning.
+      expect(BOUNDARY_RING_WIDTH).toBeGreaterThan(10);
+      expect(BOUNDARY_RING_WIDTH).toBeLessThan(75);
+    });
   });
 });
 

@@ -462,6 +462,17 @@ const DETAIL = {
   },
 };
 
+// #126: the flat base fill colour behind a terrain id's hex texture (e.g. a biome's `deep`
+// boundary terrain) — exposed so the arena can paint the CAMERA BACKGROUND to match instead of
+// leaving it a fixed void black. This is the backstop half of the boundary-void fix: the
+// boundary ring itself is deepened to comfortably outrun any realistic camera view distance
+// (see data/worldgen.js BOUNDARY_RING_WIDTH), but a background-colour match means even an
+// utterly pathological viewport (a giant/ultrawide display, or a browser zoomed far out) still
+// blends into "more deep terrain" at the horizon rather than snapping to raw black.
+export function terrainFillColor(id) {
+  return PAL[id]?.fill;
+}
+
 export function buildHexTextures(scene) {
   const tiles = {
     hex_ground: PAL.ground, hex_groundB: PAL.groundB,
