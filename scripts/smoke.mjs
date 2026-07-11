@@ -527,10 +527,12 @@ try {
     const sv = a.salvage[a.salvage.length - 1];
     const dropsDistinct = !!pu && !!sv && (pu.x !== sv.x || pu.y !== sv.y);
 
-    // #90: powerup drop chance now scales with the killed enemy's maxHp (difficulty) instead
-    // of a flat roll — sanity-check the LIVE roll path (_maybeDropPowerup) over many trials:
-    // a tough kill (base heavy mech, maxHp 616) should drop noticeably MORE often than a
-    // trivial one (drone, maxHp 14). Stub spawnPowerup to a counter so this only exercises the
+    // #90 (updated #106): powerup drop chance scales with the killed enemy's maxHp (difficulty)
+    // instead of a flat roll — sanity-check the LIVE roll path (_maybeDropPowerup) over many
+    // trials: a tough kill (base heavy mech, maxHp 616) should drop noticeably MORE often than
+    // a trivial one (drone, maxHp 14), and #106 lowered the drone-tier floor from ~0.35 to ~0.05
+    // (a coin-flip-adjacent floor read as way too generous for trivial kills), so the drone rate
+    // itself should now read as rare. Stub spawnPowerup to a counter so this only exercises the
     // roll (no real sprite/art work), keeping a few hundred trials each effectively instant.
     const origSpawnPowerup = a.spawnPowerup.bind(a);
     let spawnCount = 0;
@@ -760,10 +762,15 @@ try {
   if (!arena.salvagePickedUp) fail('#65 a salvage pickup did not increase the live run currency');
   // #88: a powerup and salvage dropped from the same kill point must scatter apart, not stack.
   if (!arena.dropsDistinct) fail('#88 a powerup and salvage dropped from the same point landed at the same position');
-  // #90: powerup drop RATE over many trials must be clearly higher for a tough kill (heavy
-  // mech, maxHp 616 → target 0.95) than a trivial one (drone, maxHp 14 → target 0.35).
+  // #90/#106: powerup drop RATE over many trials must be clearly higher for a tough kill (heavy
+  // mech, maxHp 616 → target 0.95) than a trivial one (drone, maxHp 14 → target 0.05 as of #106).
   if (!(arena.heavyDropRate > arena.droneDropRate + 0.2)) {
     fail(`#90 heavy-mech drop rate (${arena.heavyDropRate}) was not clearly higher than drone drop rate (${arena.droneDropRate})`);
+  }
+  // #106: the drone-tier (weakest in-tree enemy) floor came down from ~0.35 to ~0.05 — verify
+  // the LIVE roll actually reads as rare now, not just "lower than heavy".
+  if (!(arena.droneDropRate < 0.15)) {
+    fail(`#106 drone drop rate (${arena.droneDropRate}) should read as rare (<0.15) after the floor was lowered`);
   }
   // #72: soft cover — own-hex transparency (both directions + firing out) and destructible/
   // burnable trees, exercised through the real projectile/fire-patch simulation.

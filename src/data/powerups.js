@@ -61,16 +61,38 @@ export const POWERUPS = {
 // `Mech` and the non-mech `HpBody` expose a uniform `.maxHp`, so this needs no per-kind
 // branching at the call site — see combat.js `_damageEnemyAt`).
 //
-// Bounds picked from the actual roster's max-hp spread: the weakest real enemy is a drone
-// (hp 14) and the toughest is a base heavy-chassis mech (maxHp 616 — see Mech.js `maxHp`).
-// MIN/MAX_DROP_CHANCE are the odds at/below the floor and at/above the ceiling; everything
-// between lerps linearly. Nice sanity check: a medium mech (maxHp 416, probably the most
-// common kill) lands at ~0.75 — almost exactly the old flat rate — so "typical" kills feel
-// unchanged while drones/turrets/tanks drop less and heavy mechs drop noticeably more.
-export const MIN_DROP_CHANCE = 0.35;   // weakest kill (drone, maxHp ~14)
-export const MAX_DROP_CHANCE = 0.95;   // toughest kill (heavy mech, maxHp ~616)
+// Bounds picked from the actual roster's max-hp spread: the weakest real enemy IN-TREE today
+// is a drone (hp 14) and the toughest is a base heavy-chassis mech (maxHp 616 — see Mech.js
+// `maxHp`). #97 (infantry, proposed maxHp 6) would be weaker still, but is not implemented as
+// of this pass — when it lands, drop DROP_HP_FLOOR to 6 so infantry becomes the true floor
+// point instead of quietly landing at MIN_DROP_CHANCE alongside the drone.
+//
+// #106 (playtest 2026-07-10, follow-up to #90): "small enemies still give WAAAAAAAAAAY too
+// many powerups for how easy they are to kill" — even the old 35% floor read as a coin-flip-
+// adjacent rate for a kill that's basically free. MIN_DROP_CHANCE comes down hard, to 5%, so
+// the weakest kills feel like an occasional bonus, not a norm.
+//
+// A plain linear lerp can't hit that low a floor without also gutting the middle of the curve:
+// widening the span from 0.6 (old 0.35→0.95) to 0.9 (new 0.05→0.95) would have dragged EVERY
+// non-ceiling tier down with it — including the medium mech, the most common kill, whose ~0.75
+// "typical kill feels unchanged" sanity check (#90) was the whole point of scaling by toughness
+// in the first place. Instead the curve is bent concave — `t ** DROP_CURVE_EXP` (exponent < 1)
+// in place of plain `t` — which still passes through exactly MIN at the floor and MAX at the
+// ceiling (0**k = 0, 1**k = 1 for any k), but bows the middle of the curve up relative to a
+// straight line. Net effect: weak/moderate kills (drone/heli/turret/tank) drop noticeably less
+// than before, while medium/heavy — the "normal" difficulty range — land close to where #90
+// put them. DROP_CURVE_EXP = 0.6 was solved for exactly that: dropChanceForMaxHp(416) ≈ 0.756.
+//
+// Resulting curve across the current roster (drone/heli/turret/tank/light/medium/heavy):
+//   0.05 → 0.27 → 0.31 → 0.43 → 0.58 → 0.76 → 0.95
+// vs. the old linear curve's 0.35 → 0.41 → 0.43 → 0.50 → 0.60 → 0.75 → 0.95 — trivial kills
+// down sharply, "normal" kills roughly where they were. Flagging for playtest per #106.
+export const MIN_DROP_CHANCE = 0.05;   // weakest kill (drone, maxHp ~14) — was 0.35
+export const MAX_DROP_CHANCE = 0.95;   // toughest kill (heavy mech, maxHp ~616) — unchanged
 const DROP_HP_FLOOR = 14;              // maxHp at/below which a kill gets MIN_DROP_CHANCE
 const DROP_HP_CEIL = 616;              // maxHp at/above which a kill gets MAX_DROP_CHANCE
+const DROP_CURVE_EXP = 0.6;            // <1 ⇒ concave: bows the mid-curve up so medium/heavy
+                                        // stay close to #90's values even with a much lower floor
 
 // Kept for anything still importing the old flat constant (none in-tree after #90, but
 // harmless to leave as a documented "typical" reference point).
@@ -78,12 +100,14 @@ export const DROP_CHANCE = 0.75;
 
 // Difficulty-scaled powerup drop chance for a kill whose max hit points was `maxHp`. Pure —
 // no enemy-kind branching, no Phaser — so it's unit-testable independent of the scene. Clamps
-// outside the floor/ceil and lerps linearly between them.
+// outside the floor/ceil, then bends the 0..1 progress through a concave curve (see comment
+// above) before lerping between MIN/MAX_DROP_CHANCE.
 export function dropChanceForMaxHp(maxHp) {
   const hp = Math.max(0, maxHp || 0);
   const span = DROP_HP_CEIL - DROP_HP_FLOOR;
   const t = span > 0 ? Math.min(1, Math.max(0, (hp - DROP_HP_FLOOR) / span)) : 1;
-  return MIN_DROP_CHANCE + t * (MAX_DROP_CHANCE - MIN_DROP_CHANCE);
+  const curved = Math.pow(t, DROP_CURVE_EXP);
+  return MIN_DROP_CHANCE + curved * (MAX_DROP_CHANCE - MIN_DROP_CHANCE);
 }
 
 // Ordered id list (stable) — used by the weighted pick and by any UI that wants a fixed order.
