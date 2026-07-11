@@ -22,7 +22,7 @@
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
-import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE } from '../../data/enemyKinds.js';
+import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE } from '../../data/enemyKinds.js';
 import { HpBody } from '../../data/HpBody.js';
 import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures } from '../../art/index.js';
@@ -154,9 +154,10 @@ export const EnemiesMixin = {
   // selects EITHER a non-mech KIND (data/enemyKinds.js — turret/tank/drone/helicopter) or a
   // mech loadout (data/enemies.js, the default). Dispatched on isEnemyKind so the mech path
   // stays byte-for-byte unchanged; non-mech kinds go through _spawnKind. Returns the enemy (or
-  // the last drone for a 'swarm' request, which expands into several).
+  // the last unit for a 'swarm'/'turretNest' request, which each expand into several).
   _spawnEnemy(x, y, typeId = 'raider') {
     if (typeId === 'swarm') return this._spawnSwarm(x, y);
+    if (typeId === 'turretNest') return this._spawnTurretCluster(x, y);
     if (isEnemyKind(typeId)) return this._spawnKind(x, y, typeId);
     return this._spawnMech(x, y, typeId);
   },
@@ -219,6 +220,24 @@ export const EnemiesMixin = {
     for (let i = 0; i < SWARM_SIZE; i++) {
       const a = (i / SWARM_SIZE) * Math.PI * 2;
       last = this._spawnKind(x + Math.cos(a) * 40, y + Math.sin(a) * 40, 'drone');
+    }
+    return last;
+  },
+
+  // #89: expand a 'turretNest' request into TURRET_CLUSTER_SIZE turrets dropped close together
+  // in a tight, FIXED formation around (x,y) — mirrors _spawnSwarm's drone-swarm expansion, but
+  // turrets are stationary (move.maxSpeed 0), so this is a static nest/emplacement layout rather
+  // than the drone swarm's loose orbiting cloud. A small 2-per-row grid keeps every turret close
+  // together without overlapping (turrets are small — see ENEMY_KINDS.turret.scale). Returns the
+  // last turret spawned.
+  _spawnTurretCluster(x, y) {
+    const SPACING = 46;   // px between nest slots — snug but non-overlapping at turret's scale
+    let last = null;
+    for (let i = 0; i < TURRET_CLUSTER_SIZE; i++) {
+      const row = Math.floor(i / 2), col = i % 2;
+      const ox = (col - 0.5) * SPACING + row * (SPACING * 0.3);
+      const oy = row * SPACING * 0.9;
+      last = this._spawnKind(x + ox, y + oy, 'turret');
     }
     return last;
   },

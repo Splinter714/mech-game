@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, isEnemyKind } from './enemyKinds.js';
+import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, isEnemyKind } from './enemyKinds.js';
 import { getWeapon } from './weapons.js';
 import { HpBody } from './HpBody.js';
 
@@ -44,18 +44,19 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     }
   });
 
-  it('#75: every kind carries a positive per-kind display scale', () => {
+  it('#75/#89: every kind carries a positive per-kind display scale', () => {
     for (const id of ENEMY_KIND_IDS) {
       const s = ENEMY_KINDS[id].scale;
       expect(typeof s, `${id} scale`).toBe('number');
       expect(s, `${id} scale`).toBeGreaterThan(0);
     }
-    // The retune (#75): tank + drone shrank below the old 1.15 global, helicopter nudged down,
-    // turret left at the old size — so the vehicles read at distinct, sensible sizes.
-    expect(ENEMY_KINDS.tank.scale).toBeLessThan(1.15);
-    expect(ENEMY_KINDS.drone.scale).toBeLessThan(1.15);
-    expect(ENEMY_KINDS.helicopter.scale).toBeLessThan(1.15);
-    expect(ENEMY_KINDS.turret.scale).toBe(1.15);
+    // #89 retune: every vehicle shrank further from its #75 size — tank/drone/helicopter/turret
+    // all read noticeably smaller now (turret especially, since it now spawns in clusters).
+    expect(ENEMY_KINDS.tank.scale).toBeLessThan(0.82);
+    expect(ENEMY_KINDS.drone.scale).toBeLessThan(0.72);
+    expect(ENEMY_KINDS.helicopter.scale).toBeLessThan(1.0);
+    expect(ENEMY_KINDS.turret.scale).toBeLessThan(1.15);
+    expect(ENEMY_KINDS.turret.scale).toBeLessThanOrEqual(0.6);
   });
 
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
@@ -65,8 +66,20 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(isEnemyKind('nope')).toBe(false);
   });
 
-  it('SWARM_SIZE is a small positive count', () => {
-    expect(SWARM_SIZE).toBeGreaterThan(1);
-    expect(SWARM_SIZE).toBeLessThan(12);
+  it('isEnemyKind does not recognize the swarm/turretNest cluster-expansion ids', () => {
+    // 'swarm' and 'turretNest' are squad-composition ids the arena expands into several real
+    // kind spawns (drone / turret) — neither is itself an ENEMY_KINDS entry.
+    expect(isEnemyKind('swarm')).toBe(false);
+    expect(isEnemyKind('turretNest')).toBe(false);
+  });
+
+  it('#89: SWARM_SIZE is a much larger swarm count ("waaaaaay more")', () => {
+    expect(SWARM_SIZE).toBeGreaterThan(14);
+    expect(SWARM_SIZE).toBeLessThan(30);
+  });
+
+  it('#89: TURRET_CLUSTER_SIZE is a small positive count', () => {
+    expect(TURRET_CLUSTER_SIZE).toBeGreaterThan(1);
+    expect(TURRET_CLUSTER_SIZE).toBeLessThan(6);
   });
 });
