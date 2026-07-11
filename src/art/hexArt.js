@@ -36,6 +36,8 @@ const PAL = {
   scrub:     { fill: 0xb1904f, edge: 0x8f7440 },
   adobe:     { fill: 0xc79a5c, edge: 0x8a6636 },
   sandRubble:{ fill: 0x9c8355, edge: 0x7d6741 },
+  // #110: quicksand — a lesser desert hazard (mesa is now boundary-only).
+  quicksand: { fill: 0x8a723e, edge: 0x6b5830 },
 
   // ── Snow / arctic (#67) — cold white/blue palette. ──
   snow:      { fill: 0xd9e6ef, edge: 0xbccbd8 },
@@ -45,6 +47,8 @@ const PAL = {
   drift:     { fill: 0xe4eef5, edge: 0xc3d3e0 },
   iceRuin:   { fill: 0xaebfcc, edge: 0x8497a6 },
   snowRubble:{ fill: 0xb6c4cf, edge: 0x96a6b3 },
+  // #110: broken ice — a lesser arctic hazard (solid ice is now boundary-only).
+  brokenIce: { fill: 0x7f9cb0, edge: 0x678698 },
 
   // ── Urban ruins (#67) — grey industrial palette. ──
   pavement:  { fill: 0x4b4f56, edge: 0x3a3e44 },
@@ -54,6 +58,8 @@ const PAL = {
   wreck:     { fill: 0x4a4640, edge: 0x35322d },
   tower:     { fill: 0x565b63, edge: 0x393d43 },
   cityRubble:{ fill: 0x3f4249, edge: 0x2c2f34 },
+  // #110: debris field — a lesser urban hazard (the collapsed heap is now boundary-only).
+  debris:    { fill: 0x4a4640, edge: 0x35322d },
 
   // ── Volcanic wasteland (#67) — dark/ember palette. ──
   ash:       { fill: 0x2b2723, edge: 0x1d1a17 },
@@ -63,6 +69,8 @@ const PAL = {
   fumarole:  { fill: 0x35302b, edge: 0x211d19 },
   obsidian:  { fill: 0x2a2530, edge: 0x171420 },
   ashRubble: { fill: 0x322d28, edge: 0x211d19 },
+  // #110: cinder field — a lesser volcanic hazard, distinct from boundary-only 'lava'.
+  cinderField: { fill: 0x4a2a18, edge: 0x341c0f },
 };
 
 function drawHex(sg, fill, edge, inset = 0.9) {
@@ -334,6 +342,12 @@ const DETAIL = {
   },
   hex_adobe: (sg) => outpostRoof(sg, 0x8a6636, 0xc79a5c, 0xd8b070, true, 0x6a4a24),
   hex_sandRubble: (sg) => rubbleScatter(sg, 0x7d6741, 0x9c8355, 0xb89b64, 0x51),
+  // #110: quicksand — a sunken, rippled pit distinct from the dry-riverbed channel.
+  hex_quicksand: (sg) => {
+    sg.fillStyle(0x6b5830, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 14);
+    sg.fillStyle(0xa5854a, 0.5); sg.fillEllipse(C.cx - 2, C.cy - 1, 14, 8);
+    crackLine(sg, [[C.cx - 9, C.cy - 2], [C.cx, C.cy + 2], [C.cx + 8, C.cy - 1]], 0x574726, 0.6, 1);
+  },
 
   // ── Snow / arctic ──────────────────────────────────────────────────────────────────────
   hex_snow: (sg) => {   // soft drift shadows + sparkle
@@ -364,6 +378,12 @@ const DETAIL = {
   },
   hex_iceRuin: (sg) => outpostRoof(sg, 0x8497a6, 0xaebfcc, 0xd2e0ea, true, 0x6f8698),
   hex_snowRubble: (sg) => rubbleScatter(sg, 0x96a6b3, 0xb6c4cf, 0xdae6ee, 0x63),
+  // #110: broken ice — thin cracked plates over cold water, lighter/weaker read than solid ice.
+  hex_brokenIce: (sg) => {
+    sg.fillStyle(0x638094, 0.55); sg.fillEllipse(C.cx, C.cy, 20, 10);
+    crackLine(sg, [[C.cx - 9, C.cy - 3], [C.cx - 1, C.cy], [C.cx + 7, C.cy - 3]], 0x4a6478, 0.7, 1);
+    sg.fillStyle(0xc4dcec, 0.35); sg.fillEllipse(C.cx + 3, C.cy + 2, 8, 2);
+  },
 
   // ── Urban ruins ────────────────────────────────────────────────────────────────────────
   hex_pavement: (sg) => {   // cracked concrete slab with seams
@@ -401,6 +421,8 @@ const DETAIL = {
   },
   hex_tower: (sg) => outpostRoof(sg, 0x393d43, 0x565b63, 0x676d76, true, 0xc8a23a),
   hex_cityRubble: (sg) => rubbleScatter(sg, 0x2c2f34, 0x484c53, 0x5c626b, 0x77),
+  // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed tower heap.
+  hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, 0x82),
 
   // ── Volcanic wasteland ─────────────────────────────────────────────────────────────────
   hex_ash: (sg) => {   // grey ash drifts + a few glowing embers
@@ -431,6 +453,13 @@ const DETAIL = {
   },
   hex_obsidian: (sg) => outpostRoof(sg, 0x171420, 0x2a2530, 0x3f3848, true, 0xff5a14),
   hex_ashRubble: (sg) => rubbleScatter(sg, 0x211d19, 0x3a352f, 0x55504a, 0x88),
+  // #110: cinder field — a hot ash/ember patch, milder read than a full molten-lava pool.
+  hex_cinderField: (sg) => {
+    sg.fillStyle(0x341c0f, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 13);
+    sg.fillStyle(0xd8461a, 0.5); sg.fillCircle(C.cx - 3, C.cy + 1, 3);
+    sg.fillStyle(0xff8a3a, 0.7); sg.fillCircle(C.cx - 3, C.cy + 1, 1.4);
+    sg.fillStyle(0xff6a1e, 0.6); sg.fillCircle(C.cx + 6, C.cy - 3, 1);
+  },
 };
 
 export function buildHexTextures(scene) {

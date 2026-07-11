@@ -1,18 +1,19 @@
-// #81 — pure world-generation coverage: the seeded terrain algorithm, the safe-zone
-// geometry, the organic (non-circular) region shaping, and the distance-biased objective
-// picker used by stage advance. No Phaser here; these are the deterministic/parameterized
-// pieces the arena mixin (scenes/arena/world.js, scenes/arena/run.js) is a thin wrapper around.
+// #81/#110/#111 — pure world-generation coverage: the seeded terrain algorithm, the safe-zone
+// geometry, the organic (non-circular) region shaping, the boundary ring, and the distance-
+// biased objective picker used by stage advance. No Phaser here; these are the deterministic/
+// parameterized pieces the arena mixin (scenes/arena/world.js, scenes/arena/run.js) is a thin
+// wrapper around.
 import { describe, it, expect } from 'vitest';
 import {
   mulberry32, safeZoneKeys, generateTerrain, pickFarObjective, FAR_OBJECTIVE_MIN_DIST,
-  sectorBoundaries, organicBoundary, growRegion, pickRevealAngle, pickGrowthCenter,
-  INITIAL_BASE_RADIUS, INITIAL_VARIATION, GROWTH_RADIUS, GROWTH_VARIATION, MAX_WORLD_RADIUS,
-  GROWTH_ARC_HALF_ANGLE,
+  sectorBoundaries, organicBoundary, boundaryRingKeys,
+  FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
-import { axialKey, range, distance, hexToPixel, pixelToHex } from './hexgrid.js';
+import { axialKey, range, neighbors, distance } from './hexgrid.js';
 
 const GRASSLAND = getBiome('grassland');
+const DESERT = getBiome('desert');
 
 describe('mulberry32', () => {
   it('is deterministic: the same seed always produces the same sequence', () => {
@@ -144,6 +145,39 @@ describe('generateTerrain', () => {
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
 
+  // #110: the biome's reserved-for-boundary `deep` id must never appear as an in-map feature —
+  // only the biome's lesser `hazard` (if any) may show up, and only ever via `boundaryRing`
+  // (tested separately below) does `deep` ever get stamped.
+  describe('#110 deep is boundary-only; hazard is the in-map feature', () => {
+    it('never stamps a biome\'s `deep` terrain id without an explicit boundaryRing', () => {
+      const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: DESERT });
+      for (const id of terrain.values()) expect(id).not.toBe(DESERT.deep);
+    });
+
+    it('may stamp the biome\'s lesser `hazard` id as an in-map feature (over many seeds)', () => {
+      let sawHazard = false;
+      for (let seed = 0; seed < 20 && !sawHazard; seed++) {
+        const { terrain } = generateTerrain({ seed, worldRadius: 25, biome: DESERT });
+        for (const id of terrain.values()) if (id === DESERT.hazard) { sawHazard = true; break; }
+      }
+      expect(sawHazard).toBe(true);
+    });
+
+    it('grassland (no hazard) never stamps anything but its normal roles', () => {
+      const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: GRASSLAND });
+      const validIds = new Set([
+        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost,
+      ]);
+      for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
+    });
+
+    it('stamps `boundaryRing` keys with the biome\'s `deep` id, unconditionally', () => {
+      const ring = new Set([axialKey(50, 0), axialKey(51, 0)]);
+      const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 5, biome: DESERT, boundaryRing: ring });
+      for (const k of ring) expect(terrain.get(k)).toBe(DESERT.deep);
+    });
+  });
+
   describe('included (organic-shape masking)', () => {
     it('excludes every hex outside the `included` predicate entirely (no tile at all)', () => {
       const included = (q, r) => q >= 0; // an arbitrary "east half" mask
@@ -156,9 +190,7 @@ describe('generateTerrain', () => {
 
     it('an organic region produces a genuinely smaller/irregular hex count than the full disc', () => {
       const rng = mulberry32(0x5eed);
-      const included = organicBoundary({ q: 0, r: 0 }, rng, {
-        baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION,
-      });
+      const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 12, variation: 4 });
       const organic = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND, included });
       const fullDisc = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND });
       expect(organic.terrain.size).toBeLessThan(fullDisc.terrain.size);
@@ -171,251 +203,75 @@ describe('generateTerrain', () => {
       expect([...a.terrain.entries()]).toEqual([...b.terrain.entries()]);
     });
   });
-
-  // #81 (organic growth rewrite): given an existing terrain map + a reveal-region predicate,
-  // hexes OUTSIDE the region must come back byte-identical to the input map, and hexes INSIDE
-  // the region must be the generator's fresh stamp (not the preserved value).
-  describe('partial regen (reveal + previous)', () => {
-    const worldRadius = 20;
-    // A simple "east half" reveal region so the split is easy to reason about in tests: q >= 0
-    // is "inside" (eligible to regenerate), q < 0 is "outside" (must be preserved).
-    const eastHalf = (q) => q >= 0;
-
-    it('preserves every hex outside the reveal region exactly as the previous map had it', () => {
-      const previous = generateTerrain({ seed: 0x5eed, worldRadius, biome: GRASSLAND });
-      const next = generateTerrain({
-        seed: 0xC0FFEE, worldRadius, biome: GRASSLAND, reveal: eastHalf, previous,
-      });
-      for (const [k, id] of previous.terrain) {
-        const [q] = k.split(',').map(Number);
-        if (!eastHalf(q)) {
-          expect(next.terrain.get(k)).toBe(id);
-          expect(next.buildingHp.get(k)).toBe(previous.buildingHp.get(k));
-          expect(next.coverHp.get(k)).toBe(previous.coverHp.get(k));
-        }
-      }
-    });
-
-    it('preserves a partially-destroyed outpost\'s remaining HP outside the region, not full HP', () => {
-      const previous = generateTerrain({ seed: 0x5eed, worldRadius, biome: GRASSLAND });
-      // Find a standing outpost hex outside the reveal region and simulate partial damage.
-      const outsideOutpost = [...previous.buildingHp.keys()].find((k) => !eastHalf(Number(k.split(',')[0])));
-      expect(outsideOutpost).toBeTruthy();
-      previous.buildingHp.set(outsideOutpost, 5); // partially damaged, far from full HP
-      const next = generateTerrain({
-        seed: 0xC0FFEE, worldRadius, biome: GRASSLAND, reveal: eastHalf, previous,
-      });
-      expect(next.buildingHp.get(outsideOutpost)).toBe(5);
-    });
-
-    it('actually regenerates hexes inside the reveal region with the new stamp', () => {
-      const previous = generateTerrain({ seed: 0x5eed, worldRadius, biome: GRASSLAND });
-      const next = generateTerrain({
-        seed: 0xC0FFEE, worldRadius, biome: GRASSLAND, reveal: eastHalf, previous,
-      });
-      // Compare against a fully independent second pass with the SAME new seed and no
-      // preservation — the "inside" hexes of `next` must match this fresh, un-preserved stamp
-      // (proving the generator's stamping logic ran for them, not just copied `previous`).
-      const freshOnly = generateTerrain({ seed: 0xC0FFEE, worldRadius, biome: GRASSLAND });
-      let matchesFresh = 0, matchesPrevious = 0, total = 0;
-      for (const [k, id] of next.terrain) {
-        const [q] = k.split(',').map(Number);
-        if (eastHalf(q)) {
-          total++;
-          if (id === freshOnly.terrain.get(k)) matchesFresh++;
-          if (id === previous.terrain.get(k)) matchesPrevious++;
-        }
-      }
-      expect(total).toBeGreaterThan(0);
-      expect(matchesFresh).toBe(total); // inside the region, `next` IS the fresh stamp
-      // And it's a genuinely new arrangement — not simply identical to the old one everywhere.
-      expect(matchesPrevious).toBeLessThan(total);
-    });
-
-    it('with no reveal/previous (the default), behaves exactly like the original full-disc regen', () => {
-      const opts = { seed: 0x5eed, worldRadius, biome: GRASSLAND };
-      const a = generateTerrain(opts);
-      const b = generateTerrain({ ...opts, reveal: null, previous: null });
-      expect([...a.terrain.entries()]).toEqual([...b.terrain.entries()]);
-      expect([...a.buildingHp.entries()]).toEqual([...b.buildingHp.entries()]);
-      expect([...a.coverHp.entries()]).toEqual([...b.coverHp.entries()]);
-    });
-  });
 });
 
-describe('growRegion', () => {
-  it('the resulting `included` is a strict superset of everywhere already explored', () => {
-    const previous = generateTerrain({
-      seed: 0x5eed, worldRadius: 20, biome: GRASSLAND,
-      included: organicBoundary({ q: 0, r: 0 }, mulberry32(1), { baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION }),
-    });
-    const { included } = growRegion({ previous, center: { q: 15, r: 0 }, rng: mulberry32(2) });
-    for (const k of previous.terrain.keys()) {
-      const [q, r] = k.split(',').map(Number);
-      expect(included(q, r)).toBe(true);
-    }
+// #111: the whole run's terrain is built ONCE, upfront, to a generous fixed max extent —
+// there is no more per-stage incremental growth.
+describe('full-run upfront build sizing (#111)', () => {
+  it('FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION stays within MAX_WORLD_RADIUS', () => {
+    expect(FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION).toBeLessThanOrEqual(MAX_WORLD_RADIUS);
   });
 
-  it('`reveal` never overlaps hexes already in `previous.terrain` (no re-stamping explored ground)', () => {
-    const previous = generateTerrain({
-      seed: 0x5eed, worldRadius: 20, biome: GRASSLAND,
-      included: organicBoundary({ q: 0, r: 0 }, mulberry32(1), { baseRadius: 12, variation: 3 }),
-    });
-    const { reveal } = growRegion({ previous, center: { q: 15, r: 0 }, rng: mulberry32(2) });
-    for (const k of previous.terrain.keys()) {
-      const [q, r] = k.split(',').map(Number);
-      expect(reveal(q, r)).toBe(false);
-    }
+  it('keeps genuine (non-zero) organic variation at the full-build radius', () => {
+    expect(FULL_BUILD_VARIATION).toBeGreaterThan(0);
   });
 
-  it('adds genuinely new territory: `included` is true for hexes beyond the previous edge', () => {
-    const previous = generateTerrain({
-      seed: 0x5eed, worldRadius: 20, biome: GRASSLAND,
-      included: organicBoundary({ q: 0, r: 0 }, mulberry32(1), { baseRadius: 9, variation: 2 }),
+  it('produces a single build sized for the whole run — non-circular, and reaching well beyond the old small initial area (12ish hexes)', () => {
+    const rng = mulberry32(0x5eed);
+    const region = organicBoundary({ q: 0, r: 0 }, rng, {
+      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
     });
-    const { included, reveal } = growRegion({ previous, center: { q: 18, r: 0 }, rng: mulberry32(2) });
-    // Somewhere near the new lobe's centre (far outside the small starting area) must now be
-    // included and specifically flagged as newly revealed, not preserved.
-    expect(included(18, 0)).toBe(true);
-    expect(reveal(18, 0)).toBe(true);
-    expect(previous.terrain.has(axialKey(18, 0))).toBe(false);
-  });
-
-  it('with no `previous`, `included` reduces to just the new lobe', () => {
-    const rng1 = mulberry32(9), rng2 = mulberry32(9);
-    const { included } = growRegion({ previous: null, center: { q: 0, r: 0 }, rng: rng1 });
-    const lobe = organicBoundary({ q: 0, r: 0 }, rng2, { baseRadius: GROWTH_RADIUS, variation: GROWTH_VARIATION });
-    for (const h of range({ q: 0, r: 0 }, 20)) {
-      expect(included(h.q, h.r)).toBe(lobe(h.q, h.r));
-    }
-  });
-
-  // #81 follow-up (playtest 2026-07-10 point 2): "it seems to grow in multiple directions
-  // instead of more in the direction of the objective." `angle` + `arcFrom` restrict the new
-  // lobe to a directional cone (GROWTH_ARC_HALF_ANGLE each side) instead of the full 360° blob.
-  describe('directional cone (angle + arcFrom)', () => {
-    it('with no angle/arcFrom given, keeps the original unrestricted 360° lobe (back-compat)', () => {
-      const center = { q: 10, r: 0 };
-      const a = growRegion({ previous: null, center, rng: mulberry32(9) });
-      const b = organicBoundary(center, mulberry32(9), { baseRadius: GROWTH_RADIUS, variation: GROWTH_VARIATION });
-      for (const h of range({ q: 0, r: 0 }, 20)) expect(a.reveal(h.q, h.r)).toBe(b(h.q, h.r));
-    });
-
-    it('includes a hex squarely along the growth angle', () => {
-      const angle = 0; // due "east" in pixel space
-      const arcFrom = { x: 0, y: 0 };
-      const center = pixelToHex(600, 0);
-      const { reveal } = growRegion({ previous: null, center, rng: mulberry32(5), angle, arcFrom });
-      expect(reveal(center.q, center.r)).toBe(true);
-    });
-
-    it('excludes a hex the pure organic radial shape would include but that falls outside the cone', () => {
-      const angle = 0;
-      const arcFrom = { x: 0, y: 0 };
-      // Deliberately place the growth centre well off the growth angle (~84° away, outside the
-      // ~50° half-angle cone either side) to isolate the arc restriction from the radial shape:
-      // the pure radial boundary always includes its own centre hex (see organicBoundary's
-      // "always includes the centre hex itself" test), so if the cone excludes it here, that
-      // exclusion can only be the directional restriction, not the radial one.
-      const offAngleCenter = pixelToHex(100, 1000);
-      const seed = 5;
-      const radialOnly = organicBoundary(offAngleCenter, mulberry32(seed), {
-        baseRadius: GROWTH_RADIUS, variation: GROWTH_VARIATION,
-      });
-      expect(radialOnly(offAngleCenter.q, offAngleCenter.r)).toBe(true);
-      const { reveal } = growRegion({
-        previous: null, center: offAngleCenter, rng: mulberry32(seed), angle, arcFrom,
-      });
-      expect(reveal(offAngleCenter.q, offAngleCenter.r)).toBe(false);
-    });
-
-    it('GROWTH_ARC_HALF_ANGLE is narrower than a full half-circle (reads as one direction, not omnidirectional)', () => {
-      expect(GROWTH_ARC_HALF_ANGLE).toBeGreaterThan(0);
-      expect(GROWTH_ARC_HALF_ANGLE).toBeLessThan(Math.PI / 2);
-    });
-  });
-});
-
-// #81 follow-up (playtest 2026-07-10 point 4): "the initial map should be slightly larger, but
-// still not rounded." The base radius was bumped up while keeping the same organic-variation
-// ratio (still an irregular shape, not a bigger round disc).
-describe('initial map size', () => {
-  it('the initial base radius was bumped up from the original disc-replacement value (9)', () => {
-    expect(INITIAL_BASE_RADIUS).toBeGreaterThan(9);
-  });
-
-  it('keeps genuine (non-zero) organic variation at the new, larger radius', () => {
-    expect(INITIAL_VARIATION).toBeGreaterThan(0);
-  });
-
-  it('produces a genuinely larger initial region than the old radius, while still irregular', () => {
-    const oldRegion = organicBoundary({ q: 0, r: 0 }, mulberry32(0x5eed), { baseRadius: 9, variation: 3 });
-    const newRegion = organicBoundary({ q: 0, r: 0 }, mulberry32(0x5eed), {
-      baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION,
-    });
-    const oldTerrain = generateTerrain({ seed: 0x5eed, worldRadius: 30, biome: GRASSLAND, included: oldRegion });
-    const newTerrain = generateTerrain({ seed: 0x5eed, worldRadius: 30, biome: GRASSLAND, included: newRegion });
-    expect(newTerrain.terrain.size).toBeGreaterThan(oldTerrain.terrain.size);
-    // Still organic — not a perfect disc — at the new radius too.
     const dirs = [{ q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 1, r: -1 }];
     const reach = dirs.map((d) => {
       let n = 0;
-      while (n < 30 && newRegion(d.q * n, d.r * n)) n++;
+      while (n < 90 && region(d.q * n, d.r * n)) n++;
       return n;
     });
+    // Non-circular: not every direction reaches the same distance.
     expect(new Set(reach).size).toBeGreaterThan(1);
+    // Generously larger than the old small opening area in every direction.
+    for (const r of reach) expect(r).toBeGreaterThan(30);
   });
 });
 
-describe('pickRevealAngle', () => {
-  it('continues the given heading when there is room in that direction', () => {
-    const angle = pickRevealAngle({ playerPx: 0, playerPy: 0, headingAngle: 0 });
-    expect(angle).toBe(0);
+// #110: the boundary ring — a biome-appropriate impassable hex ring drawn just outside the
+// pre-built area's own organic edge.
+describe('boundaryRingKeys (#110)', () => {
+  it('every ring hex is adjacent to at least one included hex (hugs the shape\'s edge)', () => {
+    const rng = mulberry32(1);
+    const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 8, variation: 2 });
+    const ring = boundaryRingKeys(included, { ringWidth: 1, boundingRadius: 14 });
+    expect(ring.size).toBeGreaterThan(0);
+    for (const k of ring) {
+      const [q, r] = k.split(',').map(Number);
+      expect(included(q, r)).toBe(false);
+      const touchesIncluded = neighbors(q, r).some((n) => included(n.q, n.r));
+      expect(touchesIncluded).toBe(true);
+    }
   });
 
-  it('does not continue a heading that would push growth past the world cap with no room', () => {
-    // Stand the player far enough out that heading further EAST has no depth left before the
-    // hard cap, but heading back WEST still comfortably fits (empirically in-band for the
-    // default growth-reach constants: MAX_WORLD_RADIUS - 64 hexes of headroom).
-    const originDistHexes = 64;
-    const edgePx = originDistHexes * 48 * Math.sqrt(3);
-    const outwardHeading = 0; // continuing further east runs straight into the cap
-    const angle = pickRevealAngle({
-      playerPx: edgePx, playerPy: 0, headingAngle: outwardHeading, rand: () => 0.5,
-    });
-    expect(angle).not.toBe(outwardHeading);
+  it('never includes a hex that is itself part of the shape', () => {
+    const rng = mulberry32(2);
+    const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 8, variation: 2 });
+    const ring = boundaryRingKeys(included, { ringWidth: 2, boundingRadius: 14 });
+    for (const k of ring) {
+      const [q, r] = k.split(',').map(Number);
+      expect(included(q, r)).toBe(false);
+    }
   });
 
-  it('is deterministic given an injected rand function', () => {
-    const opts = { playerPx: 100, playerPy: -50, headingAngle: null, rand: () => 0.37 };
-    expect(pickRevealAngle(opts)).toBe(pickRevealAngle(opts));
+  it('a wider ringWidth produces a thicker (larger) ring', () => {
+    const rng1 = mulberry32(3), rng2 = mulberry32(3);
+    const included1 = organicBoundary({ q: 0, r: 0 }, rng1, { baseRadius: 8, variation: 2 });
+    const included2 = organicBoundary({ q: 0, r: 0 }, rng2, { baseRadius: 8, variation: 2 });
+    const thin = boundaryRingKeys(included1, { ringWidth: 1, boundingRadius: 14 });
+    const thick = boundaryRingKeys(included2, { ringWidth: 3, boundingRadius: 14 });
+    expect(thick.size).toBeGreaterThan(thin.size);
   });
 
-  it('falls back to a real angle (not NaN) even from world origin with no heading', () => {
-    const angle = pickRevealAngle({ playerPx: 0, playerPy: 0, headingAngle: null, rand: () => 0.9 });
-    expect(Number.isFinite(angle)).toBe(true);
-  });
-});
-
-describe('pickGrowthCenter', () => {
-  it('places the centre out along the given angle from the player', () => {
-    const center = pickGrowthCenter({ playerPx: 0, playerPy: 0, angle: 0 });
-    expect(center.q).toBeGreaterThan(0);
-  });
-
-  it('never lets the new lobe reach beyond MAX_WORLD_RADIUS from world origin', () => {
-    // A player already far out, heading further away — without clamping this would push the
-    // lobe's centre (plus its own radius+variation reach) well past the cap.
-    const farPx = (MAX_WORLD_RADIUS - 5) * 48 * Math.sqrt(3);
-    const center = pickGrowthCenter({ playerPx: farPx, playerPy: 0, angle: 0 });
-    const reach = GROWTH_RADIUS + GROWTH_VARIATION;
-    // Small rounding slack (hex-grid rounding can be off by ~1) around the hard cap.
-    expect(distance(center, { q: 0, r: 0 }) + reach).toBeLessThanOrEqual(MAX_WORLD_RADIUS + 1);
-  });
-
-  it('is deterministic for the same inputs', () => {
-    const opts = { playerPx: 200, playerPy: -100, angle: 1.2 };
-    expect(pickGrowthCenter(opts)).toEqual(pickGrowthCenter(opts));
+  it('default BOUNDARY_RING_WIDTH is a small, sane positive number', () => {
+    expect(BOUNDARY_RING_WIDTH).toBeGreaterThan(0);
+    expect(BOUNDARY_RING_WIDTH).toBeLessThan(10);
   });
 });
 
@@ -446,9 +302,9 @@ describe('pickFarObjective', () => {
     expect(pickFarObjective(keys, from, 3)).toBe(pickFarObjective(keys, from, 3));
   });
 
-  // #81 follow-up: a `reveal` predicate scopes the pick to hexes inside the newly-added
-  // growth lobe — the objective must always land where the player has to walk into the fresh
-  // area, even if an outside-the-region candidate would otherwise have been picked as "farthest".
+  // A `reveal` predicate can still scope the pick to a subset of candidates — kept as an
+  // optional filter (nothing in the live game passes it since #111, but it's still exercised
+  // here since the parameter remains part of the pure API).
   describe('with a reveal predicate', () => {
     const from = { q: 0, r: 0 };
     const inRegion = (q) => q >= 0;
@@ -473,9 +329,8 @@ describe('pickFarObjective', () => {
   });
 
   // #81 follow-up (playtest 2026-07-10 point 4): the FIRST stage's objective (mission.js
-  // `_initMission`) now shares this exact function + floor — mirrored here the same way
-  // stage-advance's objective distance is tested above, just with the default `minDistance`
-  // (no explicit arg) since that's how `_initMission` calls it.
+  // `_initMission`) — and, per #111, every LATER stage's objective too (scenes/arena/run.js
+  // `_pickNextStageObjective`) — shares this exact function + floor.
   describe('as used for the FIRST stage objective (mission.js _initMission)', () => {
     it('the default minDistance IS the shared FAR_OBJECTIVE_MIN_DIST floor', () => {
       const from = { q: 0, r: 0 };
@@ -487,61 +342,5 @@ describe('pickFarObjective', () => {
     it('FAR_OBJECTIVE_MIN_DIST is exported so both the first stage and later stages share one floor', () => {
       expect(FAR_OBJECTIVE_MIN_DIST).toBeGreaterThan(0);
     });
-  });
-});
-
-describe('cumulative growth across multiple stages (integration of the pure pieces)', () => {
-  // Simulate several stage advances the way run.js does: each stage snapshots the previous
-  // live maps, grows a new lobe from a chosen centre, and folds it in via generateTerrain.
-  function buildInitial(seed) {
-    const included = organicBoundary({ q: 0, r: 0 }, mulberry32(seed), {
-      baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION,
-    });
-    return generateTerrain({ seed, worldRadius: 30, biome: GRASSLAND, included });
-  }
-
-  function advance(previous, seed, center) {
-    const { included, reveal } = growRegion({ previous, center, rng: mulberry32(seed) });
-    return generateTerrain({ seed, worldRadius: 60, biome: GRASSLAND, previous, reveal, included });
-  }
-
-  it('each advance strictly grows the total explored hex count', () => {
-    let world = buildInitial(1);
-    const sizes = [world.terrain.size];
-    const centers = [{ q: 14, r: 0 }, { q: 28, r: 0 }, { q: 42, r: 0 }];
-    for (let i = 0; i < centers.length; i++) {
-      world = advance(world, 100 + i, centers[i]);
-      sizes.push(world.terrain.size);
-    }
-    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1]);
-  });
-
-  it('keeps every previously-explored hex byte-identical across repeated advances (not just one)', () => {
-    let world = buildInitial(1);
-    const snapshotAfterStage0 = new Map(world.terrain);
-    world = advance(world, 101, { q: 14, r: 0 });
-    world = advance(world, 102, { q: 28, r: 0 });
-    world = advance(world, 103, { q: 42, r: 0 });
-    for (const [k, id] of snapshotAfterStage0) expect(world.terrain.get(k)).toBe(id);
-  });
-
-  it('growth keeps extending outward from the actual current edge, not resetting to the origin lobe', () => {
-    let world = buildInitial(1);
-    world = advance(world, 101, { q: 14, r: 0 });
-    const afterStage1 = new Map(world.terrain);
-    world = advance(world, 102, { q: 28, r: 0 });
-    // Stage 1's own newly-added territory (present after stage 1, absent before it) must still
-    // be there unchanged after stage 2 grows further out — i.e. stage 2 built ON TOP of stage
-    // 1's edge, it didn't discard it and regrow from scratch.
-    let stage1OnlyHexes = 0, preserved = 0;
-    const initialKeys = new Set(buildInitial(1).terrain.keys());
-    for (const [k, id] of afterStage1) {
-      if (!initialKeys.has(k)) {
-        stage1OnlyHexes++;
-        if (world.terrain.get(k) === id) preserved++;
-      }
-    }
-    expect(stage1OnlyHexes).toBeGreaterThan(0);
-    expect(preserved).toBe(stage1OnlyHexes);
   });
 });
