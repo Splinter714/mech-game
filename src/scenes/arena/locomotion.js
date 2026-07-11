@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, rotateToward, CRUSHABLE_BEHAVIORS } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rotateToward, CRUSHABLE_BEHAVIORS } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
@@ -102,13 +102,7 @@ export const LocomotionMixin = {
   _muzzle(loc) {
     const disp = ARENA_MECH_SCALE * ART_SCALE;
     const part = mechLayout(this.mech)[loc];
-    const f = (-part.y + part.h / 2) * disp;  // forward, to the part's front edge
-    const r = part.x * disp;                  // right of centre
-    const a = this.turretAngle;
-    return {
-      x: this.px + f * Math.cos(a) - r * Math.sin(a),
-      y: this.py + f * Math.sin(a) + r * Math.cos(a),
-    };
+    return partMuzzle(part, this.px, this.py, this.turretAngle, disp);
   },
 
   // Twin-stick locomotion + turret aim. The left stick / WASD is a world-space move vector;

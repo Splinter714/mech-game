@@ -25,10 +25,10 @@ import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { HpBody } from '../../data/HpBody.js';
 import { getWeapon } from '../../data/weapons.js';
-import { buildMechTextures, reskinMech, buildVehicleTextures } from '../../art/index.js';
+import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, rotateToward, DEPTH } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, DEPTH } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -587,7 +587,11 @@ export const EnemiesMixin = {
       if (cd <= 0 && canFire) {
         e.mech.consumeAmmo(w.location, w.index, 1);
         const aimErr = (Math.random() - 0.5) * 0.12;
-        const mx2 = e.x + Math.cos(e.turret) * 16, my2 = e.y + Math.sin(e.turret) * 16;
+        // #109: a real per-location muzzle (same math as the player's `_muzzle`), keyed off
+        // which body location actually mounts this weapon — not a fixed near-centre offset.
+        const disp = ARENA_MECH_SCALE * ART_SCALE;
+        const part = mechLayout(e.mech)[w.location];
+        const { x: mx2, y: my2 } = partMuzzle(part, e.x, e.y, e.turret, disp);
         // Blind lobs pass the predicted point as the seek target so homing rounds arc onto it;
         // direct/LOS shots keep the intrinsic chase-the-player behaviour (seekTarget undefined).
         const seek = blindFire ? predictedTarget(e.lock, e.lockBlindAge) : null;
@@ -686,7 +690,11 @@ export const EnemiesMixin = {
     if (!weapon) return;
     const w = { weapon, location: e.kind, index: 0 };
     const aimErr = (Math.random() - 0.5) * 0.1;
-    const mx = e.x + Math.cos(aim) * 18, my = e.y + Math.sin(aim) * 18;
+    // #109: spawn from the kind's actual gun/barrel part (enemyKinds.js `muzzlePart`), not a
+    // fixed 18px offset from the unit's centre — same real-muzzle math as mechs (partMuzzle).
+    const part = def.parts[def.muzzlePart] ?? Object.values(def.parts)[0];
+    const disp = vehicleScale(def) * ART_SCALE;
+    const { x: mx, y: my } = partMuzzle(part, e.x, e.y, aim, disp);
     this._spawnProjectile(w, mx, my, aim + aimErr, 'enemy', 0, null);
     e.fireCd = def.fireEveryMs ?? 1000;
   },

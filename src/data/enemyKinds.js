@@ -14,6 +14,8 @@
 //   name       display name (floats on spawn / used by feedback text).
 //   hp         single-pool hit points (HpBody).
 //   parts      { locId: {x,y,w,h} } damageable layout in mech-local design coords (−y forward).
+//   muzzlePart which entry in `parts` a shot actually spawns from (#109) — the gun/barrel/nose,
+//              not the unit's centre. Falls back to the first `parts` entry if omitted.
 //   weaponId   which WEAPONS entry this unit fires (its delivery drives the projectile).
 //   fireRange  px at which it opens fire (falls back to the weapon's own max).
 //   fireEveryMs cadence between shots (ms) — simple, per-kind, independent of the mech pipeline.
@@ -53,6 +55,7 @@ export const ENEMY_KINDS = {
       base: { x: 0, y: 6, w: 26, h: 16 },
       gun: { x: 0, y: -8, w: 12, h: 20 },
     },
+    muzzlePart: 'gun',
     weaponId: 'siegeShell',
     fireRange: 2400,       // #94: INSANE — well beyond the next-longest engagement range in the
                            // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
@@ -81,6 +84,7 @@ export const ENEMY_KINDS = {
       turret: { x: 0, y: -4, w: 18, h: 16 },
       barrel: { x: 0, y: -16, w: 6, h: 16 },
     },
+    muzzlePart: 'barrel',
     weaponId: 'autocannon',
     fireRange: 420,
     fireEveryMs: 1500,
@@ -106,6 +110,7 @@ export const ENEMY_KINDS = {
     parts: {
       body: { x: 0, y: 0, w: 12, h: 12 },
     },
+    muzzlePart: 'body',
     weaponId: 'machineGun',
     fireRange: 240,
     fireEveryMs: 260,
@@ -134,6 +139,7 @@ export const ENEMY_KINDS = {
       cockpit: { x: 0, y: -12, w: 12, h: 12 },
       tail: { x: 0, y: 18, w: 6, h: 14 },
     },
+    muzzlePart: 'cockpit',   // nose-mounted gun — cockpit is the most-forward part
     weaponId: 'machineGun',
     fireRange: 460,
     fireEveryMs: 1900,
@@ -164,6 +170,7 @@ export const ENEMY_KINDS = {
     parts: {
       body: { x: 0, y: 0, w: 8, h: 12 },
     },
+    muzzlePart: 'body',
     weaponId: 'machineGun',   // cheap, short-range, already-mounted ballistic — fits a trooper
     fireRange: 200,
     fireEveryMs: 700,
