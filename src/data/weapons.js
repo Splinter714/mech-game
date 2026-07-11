@@ -247,3 +247,27 @@ export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_ID
 export function getWeapon(id) {
   return WEAPONS[id];
 }
+
+// #120: the weapon catalog's card preview (src/ui/weaponCardList.js) draws each weapon's live
+// shot/beam scaled relative to the farthest-reaching weapon players actually see in the
+// catalog, so a short-range weapon visibly travels less of the card than a long-range one
+// instead of every card just maxing out its own pixel width. Pulled out here (pure, unit-
+// testable) rather than left inline in the Phaser-only UI file. Defaults to WEAPON_IDS (the
+// player-facing, non-shelved set both GarageScene and WeaponLabScene actually render as
+// cards) so a shelved weapon's huge range (e.g. Siege Shell's 2400) doesn't flatten the
+// visible spread among weapons nobody's looking at side by side.
+export function catalogMaxRange(ids = WEAPON_IDS) {
+  return Math.max(0, ...ids.map((id) => {
+    const r = WEAPONS[id]?.range;
+    return r?.opt || r?.max || 0;
+  }));
+}
+
+// Fraction (0-1, floored at minFrac so even the shortest-range weapon stays visible) of the
+// catalog's farthest range this weapon's own opt/max range represents.
+export function previewRangeFrac(weapon, catalogMax, minFrac = 0.15) {
+  const r = weapon?.range;
+  const opt = r?.opt || r?.max || 0;
+  if (!catalogMax) return 1;
+  return Math.max(minFrac, opt / catalogMax);
+}
