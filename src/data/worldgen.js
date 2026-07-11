@@ -140,27 +140,59 @@ export function generateTerrain({
   return { terrain: T, buildingHp, coverHp };
 }
 
-// #81 (organic growth rewrite), #111 (single upfront build): tunable shape constants.
+// #81 (organic growth rewrite), #111 (single upfront build), #127 (elongated corridor shape):
+// tunable shape constants.
 // SECTORS: how many angular wedges the per-direction boundary noise is sampled at — enough
 // to read as an irregular coastline once smoothed, not so many it looks noisy.
-// FULL_BUILD_BASE_RADIUS/VARIATION: the size of the ONE-TIME whole-run build (#111). Sized
-// generously for the whole run's escalation: STAGE_COUNT is 5 (data/run.js) and the OLD
-// incremental system added one ~13(+/-4)-hex organic lobe per stage advance on top of a
-// ~12(+/-4)-hex opening area, i.e. a worst-case cumulative reach of roughly
-// 16 + 4*17 = 84 hexes — which is why MAX_WORLD_RADIUS was already set to 80 as that system's
-// hard cap. The new single build reuses that same total-size budget in one pass: a base radius
-// of 62 + up to 16 hexes of organic variation reaches up to 78 hexes from the origin, just
-// inside MAX_WORLD_RADIUS, leaving room for the boundary ring (see below) to sit just outside
-// the shape's own edge without exceeding the old cap. This is a ONE-TIME generation cost paid
-// at deploy (not per-stage), so the extra up-front generation time is an acceptable tradeoff —
-// but it's still bounded by the same overall budget the old growth system used, so it doesn't
-// balloon tile count/perf versus what a full run already generated before.
+//
+// MAX_WORLD_RADIUS: the hard reference cap on the full build's max reach in ANY direction
+// (plus a couple of hexes' headroom for the boundary ring outside the shape's edge). Originally
+// derived from the OLD per-stage incremental-growth system's worst-case cumulative reach
+// (~84 hexes: a ~12(±4)-hex opening area + 4 more ~13(±4)-hex lobes across STAGE_COUNT=5 —
+// data/run.js), rounded down slightly to 80. `generateTerrain`'s `all` candidate set and
+// `boundaryRingKeys`'s BFS both scan a `range({q:0,r:0}, R)` bounded by this value — the whole
+// generation's O(R²)-ish cost scales off it, so it's deliberately NOT bumped up just to make
+// room for elongation (see below).
 export const SECTORS = 20;
-export const FULL_BUILD_BASE_RADIUS = 62;
-export const FULL_BUILD_VARIATION = 16;
-// MAX_WORLD_RADIUS: the hard reference cap the full build's max reach (BASE + VARIATION) stays
-// inside of, plus a couple of hexes' headroom for the boundary ring outside the shape's edge.
 export const MAX_WORLD_RADIUS = 80;
+// CORRIDOR_ASPECT_RATIO: the target long-axis-extent ÷ short-axis-extent (see
+// `sectorBoundaries`'s `aspectRatio` param) for the whole pre-built map's shape — #127
+// (playtest: the map read as a wide open blob, wanted "more linear-ish"). 2.25 means the map
+// reads more than twice as long as it is wide (before the organic per-sector noise perturbs
+// the edge): clearly "narrow on one axis," not a subtle nudge.
+//
+// #127 sizing pitfall (caught by the live smoke test, not by unit tests — see the regression
+// test below): `sectorBoundaries`' values are in "distHex" units — Euclidean pixel distance
+// from centre, divided by HEX_SIZE (see `organicBoundary`) — which is NOT the same as true hex
+// cube-distance (`hexgrid.distance`/`range`, what `generateTerrain`/`boundaryRingKeys`/the
+// player's actual travel distance all use). The ratio between the two varies by direction:
+// exactly √3 ≈ 1.732 along any of the six primary hex directions (where hex-distance grows by
+// exactly 1 per step — HEX_STEP_PX/HEX_SIZE = √3, see below), down to 3/2 = 1.5 at the
+// "in-between" angles (a regular hexagon's circumradius-to-apothem ratio). A boundary sized
+// only by eyeballing distHex numbers can therefore be MUCH closer, in real hex-distance, than
+// it looks — worst case, an actual reach of `distHex / 1.732` in a direction that happens to
+// align with a primary axis. An earlier attempt at these constants (base=45/variation=4/
+// aspectRatio=3) passed every unit test (which reasoned in distHex terms) yet failed the smoke
+// test's pre-existing #110 check (the biome's `deep` boundary must be absent within hex-
+// distance 20 of spawn) — because the SHORT axis's distHex minimum, once divided by the worst-
+// case 1.732 ratio, dropped to ~16-17 real hexes from spawn.
+export const CORRIDOR_ASPECT_RATIO = 2.25;
+// FULL_BUILD_BASE_RADIUS/VARIATION: the size of the ONE-TIME whole-run build (#111), sized so
+// the ELONGATED shape clears BOTH real (hex-distance) floors with margin, accounting for the
+// distHex-vs-hex-distance ratio above — verified empirically (generating `sectorBoundaries`
+// across thousands of seeds/longAxis draws, then converting via the WORST-CASE ratio for each
+// bound) rather than trusting the raw distHex numbers:
+//   - SHORT axis: worst-case hex-distance reach ≈ (worst observed distHex minimum) / 1.732
+//     must clear ~20 (the #110 near-spawn floor) with margin — comes out to ≈26 hexes here.
+//   - LONG axis: worst-case hex-distance reach ≈ (worst observed distHex maximum) / 1.5 must
+//     stay inside MAX_WORLD_RADIUS (80) — comes out to ≈74 hexes here, ~6 hexes of headroom.
+// This necessarily shrinks the OLD isotropic sizing's headroom (62/16, ~46 hexes of margin in
+// every direction) since a fixed budget spent mostly on one axis has less left for the
+// perpendicular one — that trade IS the elongation the issue asked for. The long axis still
+// averages ~70 hexes (close to the old ~62-78 reach), while the short axis averages ~31 hexes
+// (roughly 45% of that) — a real corridor, not a subtly-squashed circle.
+export const FULL_BUILD_BASE_RADIUS = 70;
+export const FULL_BUILD_VARIATION = 6;
 
 // #126 (playtest: black void visible past the boundary ring at some camera positions/zooms):
 // BOUNDARY_RING_WIDTH is sized from the actual worst-case camera view distance, not a guessed
@@ -212,8 +244,32 @@ export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_P
 // neighbours (wrapping around the full circle) so the outline reads as a rolling, irregular
 // coastline rather than spiky noise. Exported separately from `organicBoundary` so the
 // variation itself is directly unit-testable without going through hex/angle math.
-export function sectorBoundaries(rng, { baseRadius, variation = baseRadius * 0.35, sectors = SECTORS } = {}) {
-  const raw = Array.from({ length: sectors }, () => baseRadius + (rng() * 2 - 1) * variation);
+//
+// #127 (playtest: starting map read as a wide open blob, wanted "more linear-ish"): the shape
+// can now be ELONGATED along a chosen `longAxis` direction (radians) by an `aspectRatio` — the
+// long-axis extent divided by the short-axis (perpendicular) extent. Each sector's TARGET
+// radius (before the existing organic noise) is `baseRadius` scaled by a smooth cos^2 blend
+// between a long-axis multiplier and a short-axis multiplier, so the outline reads as a
+// stretched/organic corridor rather than a circle — not a hard rectangle, since the same
+// per-sector random `variation` + neighbour-smoothing noise from before still perturbs the
+// edge. `variation` scales with the LOCAL target radius (not the flat baseRadius) so the noise
+// stays proportionate on the narrow short axis too, instead of swamping it and erasing the
+// elongation. `aspectRatio = 1` (the default) reduces to the original uniform-radius behaviour
+// — every existing caller that doesn't pass `longAxis`/`aspectRatio` is unaffected.
+export function sectorBoundaries(rng, {
+  baseRadius, variation = baseRadius * 0.35, sectors = SECTORS, longAxis = 0, aspectRatio = 1,
+} = {}) {
+  const sectorAngle = (Math.PI * 2) / sectors;
+  const varFrac = variation / baseRadius;
+  const longMult = Math.sqrt(aspectRatio);
+  const shortMult = 1 / Math.sqrt(aspectRatio);
+  const raw = Array.from({ length: sectors }, (_, i) => {
+    const angle = (i + 0.5) * sectorAngle;
+    const c = Math.cos(angle - longAxis);
+    const w = c * c;   // 1 along the long axis (both ends — cos^2 is symmetric), 0 perpendicular
+    const target = baseRadius * (shortMult + (longMult - shortMult) * w);
+    return target + (rng() * 2 - 1) * (varFrac * target);
+  });
   return raw.map((d, i) => (raw[(i - 1 + sectors) % sectors] + d * 2 + raw[(i + 1) % sectors]) / 4);
 }
 

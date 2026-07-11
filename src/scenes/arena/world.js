@@ -11,7 +11,7 @@ import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor } from '../../art/hexArt.js';
 import {
   generateTerrain, organicBoundary, boundaryRingKeys, mulberry32,
-  FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, SECTORS, MAX_WORLD_RADIUS,
+  FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, SECTORS, MAX_WORLD_RADIUS, CORRIDOR_ASPECT_RATIO,
 } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import {
@@ -69,8 +69,13 @@ export const WorldMixin = {
     if (deepFill != null) this.cameras.main.setBackgroundColor(deepFill);
 
     const shapeRng = mulberry32(seed);
+    // #127: draw the corridor's long-axis direction from the SAME per-seed shape rng, before
+    // handing it to organicBoundary — still fully deterministic for a given seed, but a
+    // different orientation per run so every deploy isn't the exact same corridor heading.
+    const longAxis = shapeRng() * Math.PI * 2;
     const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
       baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION, sectors: SECTORS,
+      longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
     });
     const boundaryRing = boundaryRingKeys(included);
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke
