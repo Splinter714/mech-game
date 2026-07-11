@@ -4,6 +4,7 @@
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions, homingTurnRate } from '../../data/delivery.js';
+import { traceHitscan } from '../../data/beamTrace.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
@@ -24,6 +25,14 @@ export const FiringMixin = {
         cd = this._fireInterval(w.weapon);
       }
       this.fireCooldowns[w.location] = Math.max(0, cd);
+
+      // Continuous beam visual tracking (#86): a held sustained/stream hitscan (the beam
+      // laser) only re-pins its beam line on the block above, which runs at the WEAPON's own
+      // fire cadence (e.g. 20Hz) — well below the render frame rate. That made the beam step
+      // between angles as the turret swept instead of following it smoothly. This runs every
+      // render frame regardless of cadence and re-aims the beam's existing line at the current
+      // muzzle/angle; it's purely visual — damage still only applies on the cadence above.
+      if (intent.fire[w.location] && w.ready && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w);
 
       // Held/looping fire sound (#53): a genuinely continuous weapon (flamethrower/beam
       // laser, hasHeldSfx) starts its loop on the rising edge (button just pressed) and
@@ -167,6 +176,51 @@ export const FiringMixin = {
     return Math.max(0.2, 1 - 0.7 * t);
   },
 
+  // A hitscan weapon held as one continuous beam rather than discrete flickers/pulses
+  // (currently just the beam laser). Shared by the damage-tick resolve below and the
+  // per-frame visual tracker (#86).
+  _isHeldBeam(weapon) {
+    return weapon.delivery.hit === 'hitscan' && (weapon.delivery.sustained || weapon.delivery.pattern === 'stream');
+  },
+
+  // Enemies as the plain {x,y,destroyed} shape traceHitscan expects, with the live enemy
+  // object attached so callers can recover it from the returned target.
+  _liveEnemiesForTrace() {
+    return this.enemies
+      .filter((e) => !e.mech.isDestroyed())
+      .map((e) => ({ x: e.x, y: e.y, destroyed: false, ref: e }));
+  },
+
+  // How far a beam/wall-blocked ray from `muzzle` at `angle` actually reaches, honoring cover.
+  // #72 own-hex transparency: the muzzle's own hex (firing OUT of forest) and any living
+  // enemy's hex (a target standing IN forest) don't block the beam — only deeper soft cover
+  // and solid walls do.
+  _hitscanReach(muzzleX, muzzleY, angle, endDist) {
+    const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY), this._hexKeyAt(this.px, this.py)]);
+    for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
+    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent);
+  },
+
+  // Re-aim a held continuous beam's existing line at the current muzzle/angle, every render
+  // frame while the trigger is held — independent of the weapon's own (much slower) fire
+  // cadence, which only governs damage ticks via fireWeapon/_fireHitscan. Purely visual: no
+  // damage, no ammo, no impact fx. If no fire tick has created the beam yet (the very first
+  // frame it's held), there's nothing to reposition — fireWeapon creates it.
+  _trackHeldBeam(w) {
+    const live = this.beams.find((b) => b.loc === w.location);
+    if (!live) return;
+    const m = this._muzzle(w.location);
+    const angle = this._fireAngle(w, m);
+    const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
+    const trace = traceHitscan(m.x, m.y, angle, reach, this._liveEnemiesForTrace());
+    let endDist = trace.endDist;
+    const wallT = this._hitscanReach(m.x, m.y, angle, endDist);
+    if (wallT < endDist) endDist = wallT;
+    live.x0 = m.x; live.y0 = m.y;
+    live.x1 = m.x + Math.cos(angle) * endDist;
+    live.y1 = m.y + Math.sin(angle) * endDist;
+  },
+
   _fireHitscan(w, muzzleX, muzzleY, angle) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
@@ -174,22 +228,13 @@ export const FiringMixin = {
 
     // Project each living enemy onto the firing ray (forward `t`, perpendicular miss) and
     // take the nearest one actually struck.
-    let target = null, t = 0;
-    for (const e of this.enemies) {
-      if (e.mech.isDestroyed()) continue;
-      const ex = e.x - muzzleX, ey = e.y - muzzleY;
-      const tt = ex * dirX + ey * dirY;
-      const perp = Math.abs(ex * dirY - ey * dirX);
-      if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
-    }
+    const trace = traceHitscan(muzzleX, muzzleY, angle, reach, this._liveEnemiesForTrace());
+    let target = trace.target?.ref ?? null;
+    let t = trace.t;
     let hit = !!target;
-    let endDist = hit ? t : Math.min(reach, 600);
-    // Cover: a wall between muzzle and target stops the beam short. #72 own-hex transparency:
-    // the muzzle's own hex (firing OUT of forest) and any living enemy's hex (a target standing
-    // IN forest) don't block the beam — only deeper soft cover and solid walls do.
-    const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY), this._hexKeyAt(this.px, this.py)]);
-    for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
-    const wallT = this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent);
+    let endDist = trace.endDist;
+    // Cover: a wall between muzzle and target stops the beam short.
+    const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist);
     const blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
