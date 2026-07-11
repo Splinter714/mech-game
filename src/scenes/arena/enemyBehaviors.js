@@ -134,6 +134,64 @@ function helicopterBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: false });
 }
 
+// QUADRUPED — "Broodwalker" (#130). Grinds to a firing standoff and holds, same tank-style hull-
+// travel/turret-independent-track pattern as tankBehavior (reused deliberately, not reinvented —
+// see tankBehavior above for the same radial/strafe shape), just on a slower/heavier chassis.
+// PLUS a periodic deploy mechanic: while alive and AWARE (this fn only runs while aware — see
+// _updateVehicle's aware gate) it acts as a mobile "nest," dropping one drone or infantry
+// trooper near itself on a data-driven cadence (def.deployEveryMs) up to a lifetime cap
+// (def.deployCap), so a long fight can't have it spawn forever unbounded. This is new PER-FRAME
+// incremental spawning (unlike turretNest/infantryMob, which expand everything up front at
+// spawn time) — the timer/count state (`e.deployCd`/`e.deployCount`) is lazily initialized here
+// since _spawnKind stays a generic, kind-agnostic constructor.
+const QUADRUPED_DEPLOY_KINDS = ['drone', 'infantry'];
+
+// Drop a fresh kind spawn a short distance from the nest, nudging off blocked terrain toward the
+// nest itself (mirrors the same "nudge back toward a known-clear point" pattern used by
+// enemies.js `_flankGoal`/`_idleMoveIntent`) so a deploy can't land inside a wall/water hex.
+function deployNearby(scene, e, kindId) {
+  const a = Math.random() * Math.PI * 2;
+  const r = 50 + Math.random() * 30;
+  let x = e.x + Math.cos(a) * r, y = e.y + Math.sin(a) * r;
+  for (let t = 0; t < 5 && scene._blocked(x, y); t++) { x = (x + e.x) / 2; y = (y + e.y) / 2; }
+  scene._spawnKind(x, y, kindId);
+}
+
+function quadrupedBehavior(scene, e, ctx) {
+  const def = e.kindDef;
+  const standoff = def.standoff ?? 320;
+  const mv = def.move;
+  // Desired radial move: close if beyond standoff, ease off inside it, back up if very close —
+  // identical shape to tankBehavior's grind-to-standoff-and-hold.
+  let radial = 0;
+  if (ctx.dist > standoff * 1.15) radial = 1;
+  else if (ctx.dist < standoff * 0.7) radial = -0.8;
+  const strafe = (e.handed || 1) * 0.2;
+  let mx = ctx.ux * radial - ctx.uy * strafe;
+  let my = ctx.uy * radial + ctx.ux * strafe;
+  const m = Math.hypot(mx, my) || 1;
+  mx /= m; my /= m;
+  const target = Math.abs(radial) + Math.abs(strafe) > 0 ? mv.maxSpeed : 0;
+  e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
+  // Hull faces the direction of travel; turret tracks the player completely independently
+  // (aimAndFire below sets e.turret on its own slew) — same hull-vs-turret decoupling as tank.
+  e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
+  aimAndFire(scene, e, ctx, { needLos: true });
+
+  // #130 deploy mechanic — lazily initialize the per-enemy timer/count on first tick so the
+  // generic _spawnKind constructor never needs kind-specific bootstrapping.
+  if (e.deployCd == null) e.deployCd = rand(def.deployEveryMs * 0.4, def.deployEveryMs);
+  e.deployCount = e.deployCount ?? 0;
+  e.deployCd -= ctx.delta;
+  if (e.deployCd <= 0 && e.deployCount < (def.deployCap ?? 5)) {
+    const kindId = QUADRUPED_DEPLOY_KINDS[Math.floor(Math.random() * QUADRUPED_DEPLOY_KINDS.length)];
+    deployNearby(scene, e, kindId);
+    e.deployCount++;
+    e.deployCd = def.deployEveryMs;
+  }
+}
+
 // INFANTRY — one trooper of a ground swarm (#97). Simple "advance and mill": closes on the
 // player until it's roughly at its fire range, then loosely mills around that ring (a small
 // per-trooper jittered orbit angle, re-picked periodically) so a big mob reads as a churning
@@ -179,4 +237,5 @@ export const ENEMY_BEHAVIORS = {
   drone: droneBehavior,
   helicopter: helicopterBehavior,
   infantry: infantryBehavior,
+  quadruped: quadrupedBehavior,
 };

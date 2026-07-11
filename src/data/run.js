@@ -34,9 +34,13 @@ export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', '
 // added to LATE_POOL only, not EARLY_POOL — it's a bigger single-draw volume spike than 'swarm'
 // (28 vs 18 troopers), so it's reserved for the harder late-stage escalation rather than risking
 // an early-stage squad-size draw ballooning unexpectedly.
+// #130: 'quadruped' (the Broodwalker — a tanky mobile "nest" that deploys drones/infantry
+// during the fight, data/enemyKinds.js) is added ONCE to LATE_POOL only, at a similarly rare
+// tier to turretNest/infantryMob/sniper/artillery — a rarer, tougher escalation unit, not a
+// common draw.
 export const LATE_POOL = [
   'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
-  'turretNest', 'turretNest', 'infantryMob',
+  'turretNest', 'turretNest', 'infantryMob', 'quadruped',
 ];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has
