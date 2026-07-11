@@ -117,7 +117,9 @@ export const CombatMixin = {
       this._deathFx(dx, dy, deathScaleFor(e));
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
       // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
-      this._maybeDropPowerup?.(dx, dy);
+      // #90: pass the kill's maxHp (uniform across Mech/HpBody) so the odds scale with how
+      // tough the enemy was, instead of a flat roll.
+      this._maybeDropPowerup?.(dx, dy, e.mech.maxHp);
       // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
       // in data/shop.js) — independent roll from the powerup drop, same kill site.
       this._maybeDropSalvage?.(dx, dy);
