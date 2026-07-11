@@ -339,13 +339,16 @@ try {
     // force the delayed _startNextStage() through immediately so this stays a synchronous test.
     const runStartedAtStageZero = a.run?.stageIndex === 0 && a.run?.status === 'active';
     const enemyCountBeforeAdvance = a.enemies.length;
-    // #81 follow-up: snapshot the terrain + the player's exact position BEFORE the stage
-    // advance so we can prove (a) the reveal region actually regenerated SOME of the map, (b)
-    // everywhere else — specifically far BEHIND the player, opposite the chosen reveal
-    // direction — stayed byte-identical (the "doesn't pop in around you" fix), and (c) the
+    // #81 (organic growth rewrite): snapshot the terrain + the player's exact position BEFORE
+    // the stage advance so we can prove (a) the new growth lobe actually added SOME fresh
+    // terrain, (b) everywhere already explored — specifically far BEHIND the player, opposite
+    // the chosen growth direction — stayed byte-identical (the "doesn't pop in around you"
+    // fix), (c) the TOTAL explored hex count is strictly LARGER afterward (the core "map gets
+    // bigger" proof this pass replaces the old fixed-footprint reshuffle with), and (d) the
     // player was never teleported (px/py untouched — they keep driving from wherever they
     // finished).
     const terrainBefore = [...a.terrain.entries()];
+    const hexCountBeforeAdvance = a.terrain.size;
     const pxBefore = a.px, pyBefore = a.py;
     a._advanceRun();
     const stageAdvanced = a.run?.stageIndex === 1 && a.run?.status === 'active';
@@ -354,23 +357,23 @@ try {
     a._startNextStage();
     const newStageHasMission = a.mission?.status === 'active';
     const newStageHasSquad = a.enemies.length > 0;
-    // #81 follow-up: the regenerated map must (a) actually differ from the previous stage's
-    // terrain SOMEWHERE (the reveal region opening up) but NOT everywhere (everything outside
-    // it is preserved — this is the whole point of the directional fix, replacing the old
-    // "whole map changed" check), (b) leave a spot directly BEHIND the chosen reveal direction
-    // completely unchanged (nothing pops in around/behind the player), (c) leave the player's
-    // position untouched (no teleport), and (d) never leave the player standing on impassable
-    // terrain (the safe-clear zone follows them).
+    // #81 (organic growth rewrite): this is additive growth, so — unlike the old reshuffle —
+    // every hex that existed BEFORE the advance must come back byte-identical (a), while the
+    // TOTAL hex count strictly increases because a whole new lobe of hexes that didn't exist
+    // before got added on top (b, the core "map gets bigger" proof). (c) a spot directly
+    // BEHIND the chosen growth direction stays completely unchanged (nothing pops in
+    // around/behind the player), and (d) the player's position stays untouched (no teleport)
+    // on terrain that isn't impassable (the safe-clear zone follows them).
     const terrainAfter = new Map(a.terrain);
     let terrainDiffs = 0;
-    const total = terrainBefore.length;
     for (const [k, id] of terrainBefore) if (terrainAfter.get(k) !== id) terrainDiffs++;
-    const mapRegenerated = terrainDiffs > 0;
-    const mapNotFullyReplaced = terrainDiffs < total;
-    // A hex straight behind the reveal direction, well past the buffer, must be untouched.
+    const oldTerrainPreserved = terrainDiffs === 0;
+    const hexCountAfterAdvance = a.terrain.size;
+    const mapGrewLarger = hexCountAfterAdvance > hexCountBeforeAdvance;
+    // A hex straight behind the growth direction, well past a buffer, must be untouched.
     // Pixel → axial hex, inlined (mirrors data/hexgrid.js pixelToHex/cubeRound exactly) — the
     // Node-side import isn't reachable from this page-context callback.
-    const behindAngle = a._lastRevealAngle + Math.PI;
+    const behindAngle = a._lastGrowthAngle + Math.PI;
     const SIZE = 48, RT3 = Math.sqrt(3);
     const behindX = pxBefore + Math.cos(behindAngle) * 8 * SIZE;
     const behindY = pyBefore + Math.sin(behindAngle) * 8 * SIZE;
@@ -531,8 +534,8 @@ try {
       stageAdvanced,
       newStageHasMission,
       newStageHasSquad,
-      mapRegenerated,
-      mapNotFullyReplaced,
+      oldTerrainPreserved,
+      mapGrewLarger,
       behindHexUnchanged,
       playerPositionUnchanged,
       playerNotStranded,
@@ -608,17 +611,20 @@ try {
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
   if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
-  // #81: stage advance regenerates the terrain (not just a new objective in the same layout),
-  // and the player continues from wherever they finished — no teleport, and never stranded on
-  // impassable ground once the safe-clear zone follows them to their actual position.
-  if (!arena.mapRegenerated) fail('#81 stage advance did not regenerate any terrain (layout was fully unchanged)');
-  // #81 follow-up (playtest 2026-07-10 correction): the regen must be DIRECTIONAL, not a
-  // whole-map swap — only the reveal region (opening up off in one direction) changes; a spot
-  // straight behind that direction, and the map as a whole, must NOT be fully replaced.
-  if (!arena.mapNotFullyReplaced) fail('#81 follow-up stage advance replaced the WHOLE map instead of only the directional reveal region');
-  if (!arena.behindHexUnchanged) fail('#81 follow-up terrain behind the reveal direction changed — the map should not pop in around/behind the player');
+  // #81 (organic growth rewrite): stage advance ADDS a fresh organically-shaped region of
+  // terrain beyond the previously-explored edge (not just a new objective in the same
+  // footprint, and not a same-size reshuffle), and the player continues from wherever they
+  // finished — no teleport, and never stranded on impassable ground once the safe-clear zone
+  // follows them to their actual position.
+  // The growth must be ADDITIVE, not a whole-map swap — everywhere already explored before the
+  // advance must come back byte-identical.
+  if (!arena.oldTerrainPreserved) fail('#81 stage advance changed terrain that was already explored — growth must be additive, not a reshuffle');
+  if (!arena.behindHexUnchanged) fail('#81 terrain behind the growth direction changed — the map should not pop in around/behind the player');
+  // The core "map gets LARGER" proof (2026-07-10 correction): total explored hex count must
+  // strictly increase, not just get reshuffled within the same fixed-size footprint.
+  if (!arena.mapGrewLarger) fail('#81 stage advance did not increase the total explored hex count — the map must genuinely GROW, not just reshuffle');
   if (!arena.playerPositionUnchanged) fail('#81 stage advance moved the player (should continue from where they finished, no teleport)');
-  if (!arena.playerNotStranded) fail('#81 the player ended up on impassable terrain after the map regenerated');
+  if (!arena.playerNotStranded) fail('#81 the player ended up on impassable terrain after the map grew');
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
   // #65: a salvage pickup adds straight into the live run currency total.
