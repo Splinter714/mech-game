@@ -19,7 +19,7 @@ export const SHOP_COSTS = {
   autocannon: 0, pulseLaser: 0, clusterRocket: 0, machineGun: 0, jumpJet: 0,
   shotgun: 75, streakPod: 90, bubbleShield: 110,
   flamethrower: 125, napalm: 140, swarmRack: 150,
-  beamLaser: 175, railLance: 225, plasmaCannon: 250,
+  beamLaser: 175, railLance: 225, plasmaCannon: 250, siegeShell: 275,
 };
 
 const DEFAULT_COST = 100;

@@ -32,9 +32,19 @@
 //              0.62 per #91 — "drones slightly smaller again"), helicopter 0.75 (down from 1.0).
 
 export const ENEMY_KINDS = {
-  // 1) TURRET / emplacement — static objective defender. No locomotion; a squat armoured base
-  //    with a rotating gun that tracks and fires at the player. Tough but rooted: it guards
-  //    ground and can't chase. Direct-fire autocannon.
+  // 1) TURRET / emplacement — static objective defender. No locomotion. #94 (playtest: "turrets
+  //    should have INSANE range and not be LOS, they should do some kind of artillery shit"):
+  //    reworked from a short-range direct-fire autocannon sentry into a long-range artillery
+  //    emplacement — it lobs an arcing siege shell that never needs line-of-sight (arcing rounds
+  //    skip wall collision entirely, see scenes/arena/projectiles.js) at a fireRange far beyond
+  //    any other enemy's engagement envelope in the game. Tough, rooted, can't chase — but you
+  //    can't just hide from it either; you have to hunt it down or leave its enormous range.
+  //    Per-shot damage/cadence are tuned down from the old autocannon numbers (see siegeShell in
+  //    data/weapons.js) since turrets now spawn in clusters of 3 (TURRET_CLUSTER_SIZE) with
+  //    guaranteed uptime (no LOS to break) — three of the old autocannon's 16-dmg/1.1s cadence
+  //    firing constantly and unavoidably would be brutal; siegeShell's 10 dmg (with range
+  //    falloff further softening it near max range) on a slower 2.6s cadence keeps a nest a real
+  //    but survivable threat to actively deal with rather than an instant unavoidable shred.
   turret: {
     name: 'Sentry Turret',
     kind: 'turret',
@@ -43,9 +53,12 @@ export const ENEMY_KINDS = {
       base: { x: 0, y: 6, w: 26, h: 16 },
       gun: { x: 0, y: -8, w: 12, h: 20 },
     },
-    weaponId: 'autocannon',
-    fireRange: 380,
-    fireEveryMs: 1100,
+    weaponId: 'siegeShell',
+    fireRange: 2400,       // #94: INSANE — well beyond the next-longest engagement range in the
+                           // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
+                           // threatens from far outside normal combat distance.
+    fireEveryMs: 2600,     // #94: slowed from 1100 — a deliberate artillery cadence, and offsets
+                           // the fact this now always has a shot (no LOS to break) in a 3-turret nest.
     flying: false,
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
     art: 'turret',

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, isEnemyKind } from './enemyKinds.js';
-import { getWeapon } from './weapons.js';
+import { getWeapon, WEAPONS } from './weapons.js';
 import { HpBody } from './HpBody.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
@@ -65,6 +65,23 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('#91: tank is noticeably slower/heavier than its #89 speed', () => {
     expect(ENEMY_KINDS.tank.move.maxSpeed).toBeLessThan(78);
     expect(ENEMY_KINDS.tank.move.maxSpeed).toBeGreaterThan(0);
+  });
+
+  it('#94: turret is an artillery emplacement — arcing indirect weapon at an insane range', () => {
+    const t = ENEMY_KINDS.turret;
+    const weapon = getWeapon(t.weaponId);
+    // Indirect: arcing (or homing) delivery never needs line-of-sight (mirrors the "all-indirect"
+    // detection in scenes/arena/enemies.js isIndirectWeapon).
+    expect(weapon.delivery.path === 'arcing' || weapon.delivery.guidance === 'homing').toBe(true);
+    // INSANE range: meaningfully farther than every other weapon's max range in the catalog.
+    const otherMaxRanges = Object.values(WEAPONS)
+      .filter((w) => w.id !== t.weaponId)
+      .map((w) => w.range?.max ?? 0);
+    expect(t.fireRange).toBeGreaterThan(Math.max(...otherMaxRanges));
+    // The weapon's own max range must comfortably cover the turret's fireRange, or shells fired
+    // right at the edge of engagement would fizzle short of the target (see arcMaxDist in
+    // scenes/arena/firing.js, which bounds an arcing round's travel to weapon.range.max + 40).
+    expect(weapon.range.max).toBeGreaterThanOrEqual(t.fireRange);
   });
 
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
