@@ -91,9 +91,14 @@ describe('armorRepairPlan — whole-mech proportional repair (Armor Patch rework
   });
 });
 
-describe('dropChanceForMaxHp — #90 difficulty-scaled powerup drop odds', () => {
+describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', () => {
   it('gives the weakest real enemy (drone, hp 14) the MIN chance', () => {
     expect(dropChanceForMaxHp(14)).toBeCloseTo(MIN_DROP_CHANCE, 5);
+  });
+
+  it('#106: the floor reads as appropriately rare (low single digits), not a coin flip', () => {
+    expect(MIN_DROP_CHANCE).toBeLessThanOrEqual(0.08);
+    expect(MIN_DROP_CHANCE).toBeGreaterThan(0);
   });
 
   it('gives the toughest real enemy (base heavy mech, maxHp 616) the MAX chance', () => {
@@ -126,7 +131,17 @@ describe('dropChanceForMaxHp — #90 difficulty-scaled powerup drop odds', () =>
     for (let i = 1; i < chances.length; i++) expect(chances[i]).toBeGreaterThan(chances[i - 1]);
   });
 
+  it('#106: weak/moderate kills (drone/heli/turret) drop meaningfully less than the old floor', () => {
+    // Old flat-linear floor was 0.35 — every one of these trivial-to-moderate kills should now
+    // sit well under that, with the drone (true floor) reading as low single digits.
+    expect(dropChanceForMaxHp(14)).toBeLessThan(0.1);   // drone
+    expect(dropChanceForMaxHp(70)).toBeLessThan(0.35);  // helicopter
+    expect(dropChanceForMaxHp(90)).toBeLessThan(0.35);  // turret
+  });
+
   it('lands a medium mech (the likely most-common kill) close to the old flat 0.75 rate', () => {
+    // #106 bent the curve concave specifically so this "typical kill" sanity check from #90
+    // still holds even though the floor dropped from 0.35 to 0.05.
     expect(dropChanceForMaxHp(416)).toBeGreaterThan(0.7);
     expect(dropChanceForMaxHp(416)).toBeLessThan(0.8);
   });
