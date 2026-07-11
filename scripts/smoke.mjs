@@ -322,6 +322,19 @@ try {
     } else {
       veh.flyerIgnoresWall = heli.flying === true;   // no wall handy; flag still records it flies
     }
+    // #127 flake fix: this `heli` is scratch-only for the check above — whether or not a wall
+    // was found (and it often isn't; the search radius is small and depends on the map's random
+    // feature layout), it's left behind at whatever point it last sat, which is `(0,0)` — THE
+    // ORIGIN — in the common no-wall-found case. Every later test in this file that fires FROM
+    // the origin (e.g. #72's soft-cover tests below) resolves its target via `_nearestEnemy`,
+    // which picks whichever living enemy is nearest the ROUND's current position each frame —
+    // so a stray helicopter sitting exactly at the muzzle intercepts the shot before it ever
+    // reaches the test's real, deliberately-placed target, making the round appear to miss for
+    // no visible reason. This was a LATENT test-isolation bug (confirmed reproducible on the
+    // commit before #127 too, at a similar ~15% rate — the map-shape change didn't introduce it,
+    // it just got caught by more repeated smoke runs during #127 verification). Clean it up now
+    // that this check is done, same as `enemyDelivery`'s `sniper` a bit further down already does.
+    a._removeEnemy(heli);
 
     // #97: 'infantryMob' expands into a LARGE volume of infantry troopers (bigger than the drone
     // swarm) — confirm the whole mob spawns, renders, takes damage, and dies through the normal
