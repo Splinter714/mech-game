@@ -9,7 +9,9 @@ import { VEHICLE as V, accentGlow } from './palette.js';
 function drawBase(sg, accent) {
   // Ground shadow / footing.
   ellipseC(sg, 0, 8, 30, 12, V.deep, 0.9);
-  // Octagonal base plate.
+  // Octagonal base plate. #129: a legibility-halo pass drawn first, oversized, behind the
+  // exterior V.outline shapes below (see mechPrims.js's `HALO`).
+  poly(sg, [[-14.6, 1.5], [-8.6, -5.5], [8.6, -5.5], [14.6, 1.5], [14.6, 10.5], [8.6, 17.5], [-8.6, 17.5], [-14.6, 10.5]], V.halo);
   poly(sg, [[-13, 2], [-8, -4], [8, -4], [13, 2], [13, 10], [8, 16], [-8, 16], [-13, 10]], V.outline);
   poly(sg, [[-11, 3], [-7, -2], [7, -2], [11, 3], [11, 9], [7, 14], [-7, 14], [-11, 9]], V.bodyDk);
   poly(sg, [[-9, 3], [-6, -1], [6, -1], [9, 3], [9, 8], [6, 12], [-6, 12], [-9, 8]], V.body);
@@ -24,13 +26,16 @@ function drawBase(sg, accent) {
 function drawGun(sg, accent) {
   const A = accentGlow(accent);
   // Housing (the pivoting mass).
+  roundC(sg, 0, 0, 17.6, 14.6, V.halo, 4.8);   // #129
   roundC(sg, 0, 0, 16, 13, V.outline, 4);
   roundC(sg, 0, 0, 13, 10, V.bodyHi, 3.5);
   roundC(sg, 0, -1, 9, 6, V.rim, 3);
   // A sensor eye — the accent "danger" glow.
   ellipseC(sg, 0, -1, 4, 3.5, V.outline);
   ellipseC(sg, 0, -1, 2.6, 2.4, A.core, 0.95);
-  // Heavy barrel forward (−y).
+  // Heavy barrel forward (−y). It juts well past the housing's own halo ring, out into open
+  // ground, so it needs its own halo pass too.
+  rectC(sg, 0, -13, 7.6, 21.6, V.halo);   // #129
   rectC(sg, 0, -13, 6, 20, V.outline);
   rectC(sg, 0, -13, 3.6, 20, V.tread);
   rectC(sg, -1.4, -13, 1, 18, V.treadHi, 0.8);

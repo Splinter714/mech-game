@@ -14,6 +14,12 @@
 
 export const VEHICLE = {
   outline: 0x2b3441,      // dark blue-grey edge — carries the silhouette on snow + volcanic
+  // #129: an extra near-white ring drawn OUTSIDE `outline` on every exterior silhouette shape.
+  // `outline` alone reads fine against LIGHT terrain (snow, sand) but nearly matches DARK
+  // terrain (volcanic ash, night grass/urban) in tone, so the silhouette vanished there — see
+  // the long comment on mechPrims.js's `HALO` for the full reasoning. `halo` mirrors that same
+  // fixed colour so vehicles and mechs use one consistent legibility treatment.
+  halo: 0xfbfdff,
   deep: 0x39424f,         // shadow / underside / ground-drop shadow (kept dark so it reads on snow)
   bodyDk: 0xb6c2cf,       // lower body panel (subtle grey shading)
   body: 0xd3dae2,         // main body panel (pale)

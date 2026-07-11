@@ -26,17 +26,21 @@ function drawBody(sg, accent) {
   // Ground contact shadow — sized to the wider footprint below.
   ellipseC(sg, 0, 9, 9, 4, V.deep, 0.5);
   // Base/legs: one wide, thick blob (a stubby planted stance) merging straight into the torso —
-  // no separate thin leg lines to disappear at small scale.
+  // no separate thin leg lines to disappear at small scale. #129: at this unit's tiny render
+  // scale the legibility halo matters MORE, not less — add it first, oversized.
+  roundC(sg, 0, 6, 10.6, 9.6, V.halo, 4.3);
   roundC(sg, 0, 6, 9, 8, V.outline, 3.5);
   roundC(sg, 0, 5.5, 7.4, 6.4, V.tread, 3);
   // Torso: one big rounded blob, deliberately bulkier than a strict human silhouette so it
   // reads as solid mass even shrunk to a few px on screen.
+  roundC(sg, 0, -2, 12.1, 15.6, V.halo, 5.8);   // #129
   roundC(sg, 0, -2, 10.5, 14, V.outline, 5);
   roundC(sg, 0, -2.5, 9, 12.4, V.body, 4.4);
   roundC(sg, 0, -5.5, 7.4, 7, V.bodyHi, 3.2);
   // Faction accent chevron on the chest — a wide bar, not a thin stripe.
   roundC(sg, 0, -2.5, 6.2, 2.6, accent, 1.2, 0.9);
   // Head: overlaps directly into the top of the torso (no thin neck) — a bigger round helmet.
+  ellipseC(sg, 0, -12, 6.4, 6.2, V.halo);   // #129
   ellipseC(sg, 0, -12, 5, 4.8, V.outline);
   ellipseC(sg, 0, -12, 3.7, 3.5, V.bodyHi);
   // Visor glow (accent "danger" eye).
