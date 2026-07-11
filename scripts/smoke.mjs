@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { resolveDevServerUrl } from './dev-server-url.mjs';
 import { hexToPixel } from '../src/data/hexgrid.js';
 import { RUN_CURRENCY_KEY } from '../src/data/events.js';
-import { WEAPONS } from '../src/data/weapons.js';
+import { WEAPONS, WEAPON_IDS } from '../src/data/weapons.js';
 import { INFANTRY_MOB_SIZE } from '../src/data/enemyKinds.js';
 
 // Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
@@ -39,11 +39,24 @@ try {
     return !!(g && g.scene.isActive('GarageScene') && g.registry.get('allMechs'));
   }, { timeout: 20000 });
 
-  const garage = await page.evaluate((runCurrencyKey) => {
+  const garage = await page.evaluate(({ runCurrencyKey, weaponIds }) => {
     const g = window.__game;
     const sc = g.scene.getScene('GarageScene');
     const RUN_CURRENCY_KEY = runCurrencyKey;
     const mech = g.registry.get('allMechs').mech1;
+    // #118: Plasma Lance graduated off the shelved list — confirm it's actually in the
+    // garage's player-mountable catalog (not just in WEAPONS data), and that it can be
+    // purchased (it's shop-gated like beamLaser/shotgun, not in STARTING_UNLOCKED) and
+    // then mounted into a weapon slot.
+    const plasmaLanceInCatalog = sc.catalogIds.includes('plasmaLance') && weaponIds.includes('plasmaLance');
+    sc._selectSlot('rightArm');
+    sc.registry.set(RUN_CURRENCY_KEY, 500);
+    sc._pickItem('plasmaLance');   // first click purchases (locked-by-default, like beamLaser)
+    sc._pickItem('plasmaLance');   // second click mounts it, now unlocked
+    const plasmaLanceMounts = mech.mounts.rightArm.includes('plasmaLance');
+    mech.unmount('rightArm', 0);
+    mech.mount('rightArm', 'autocannon');   // restore default build before the rest of the run
+    sc._selectSlot('rightArm');   // _selectSlot toggles — deselect so state matches a fresh garage load
     // Mount/unmount works in a weapon slot...
     mech.unmount('rightArm', 0);
     sc._selectSlot('rightArm');
@@ -108,6 +121,8 @@ try {
 
     return {
       chassis: mech.chassisId,
+      plasmaLanceInCatalog,
+      plasmaLanceMounts,
       weaponMount,
       headRejectsWeapon,
       dollBuilt,
@@ -124,7 +139,7 @@ try {
       moveQuickOldSlotEmptied,
       onlyOneSlotHoldsIt,
     };
-  }, RUN_CURRENCY_KEY);
+  }, { runCurrencyKey: RUN_CURRENCY_KEY, weaponIds: WEAPON_IDS });
   await page.screenshot({ path: '/tmp/mech-garage.png' });
 
   // Deploy → arena.
@@ -1040,6 +1055,10 @@ try {
 
   if (errors.length) fail('runtime errors:\n' + errors.join('\n'));
   if (garage.chassis !== 'medium') fail(`expected medium chassis, got ${garage.chassis}`);
+  // #118: Plasma Lance is now player-mountable — must show up in the garage catalog and
+  // actually mount into a skill slot, not just exist in the WEAPONS data.
+  if (!garage.plasmaLanceInCatalog) fail('#118 Plasma Lance is not in the player-mountable weapon catalog');
+  if (!garage.plasmaLanceMounts) fail('#118 Plasma Lance did not mount into a weapon slot from the garage catalog');
   if (!garage.weaponMount) fail('mounting a weapon into a weapon slot did not take');
   if (!garage.headRejectsWeapon) fail('the head (not a skill slot) wrongly accepted a weapon');
   if (!garage.dollBuilt) fail('garage paper-doll did not render any slot cards');

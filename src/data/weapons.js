@@ -81,9 +81,24 @@ export const WEAPONS = {
     // "fixing" beamLaser to render as a proper beam for enemies, this is its own deliberately-
     // tuned weapon: a single heavy bolt (not beamLaser's continuous stream), tuned independently
     // (damage/velocity/range/cadence below are NOT inherited from beamLaser's numbers).
+    // #118: made player-mountable. damage/range/velocity are the weapon's visual identity (the
+    // "look" Jackson liked) and stay untouched. The ammo economy, though, was tuned for an AI
+    // that just fires nonstop and never worries about running dry: ammoRegen (1.4/s) was
+    // actually FASTER than the cycle-limited fire rate (1/0.9s ≈ 1.11/s), so the 14-round
+    // magazine never really mattered — it topped back up between shots as fast as it could
+    // fire, i.e. de facto unlimited ammo. That's fine for a sniper AI, but a player weapon
+    // needs the magazine to actually bite. Retuned ammoMax 14→10 and ammoRegen 1.4→1.0 (now
+    // below the cycle rate, so ammo is the real constraint) to land it at ~20 sustained DPS —
+    // above Autocannon (~14.6 dps) and Scatter Gun (~16.8 dps), the two other 2-slot ballistics
+    // in the curated roster, but well below Beam Laser's (~36+ dps) flagship tier — with a real
+    // ~9s magazine before it needs ~10s to fully recharge, in the same ballpark as Autocannon's
+    // ~13s cycle-limited magazine. cycleTime (900ms) is unchanged, so the enemy sniper/artillery
+    // loadouts still fire at the exact same cadence as before; only how long they COULD sustain
+    // fire before ammo mattered shifts slightly — a difference that barely shows up against
+    // typical enemy engagement lengths.
     id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
     damage: 20, range: { min: 0, opt: 460, max: 620 },
-    ammoMax: 14, ammoRegen: 1.4, slots: 2, cycleTime: 900,
+    ammoMax: 10, ammoRegen: 1.0, slots: 2, cycleTime: 900,
     delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'single', kind: 'plasma' },
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
@@ -222,12 +237,10 @@ export const WEAPONS = {
 // The turret enemy still fires siegeShell normally — enemyKinds.js/enemies.js read WEAPONS
 // directly via getWeapon(), not the filtered WEAPON_IDS list. To re-enable a weapon, just
 // delete its id from this array — nothing else needs to change.
-// #117: plasmaLance joins this list on the same "enemy-only for now" basis as siegeShell — it's
-// a brand-new weapon formalizing the sniper/artillery mechs' accidental pre-#117 look (see its
-// definition above), not yet vetted as a player-mountable weapon. Judgment call: it could
-// reasonably go the other way (it's a perfectly normal heavy energy bolt) — flagging this
-// explicitly rather than deciding unilaterally either way.
-export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm', 'siegeShell', 'plasmaLance'];
+// #118: plasmaLance graduated off this list — Jackson liked it enough (see #117) to want it
+// player-mountable too. Its ammo economy was retuned for that (see the comment on its WEAPONS
+// entry above); damage/range/velocity and the enemy sniper/artillery loadouts are unchanged.
+export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm', 'siegeShell'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 
