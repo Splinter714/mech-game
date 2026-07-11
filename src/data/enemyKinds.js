@@ -107,8 +107,11 @@ export const ENEMY_KINDS = {
   },
 
   // 4) HELICOPTER / VTOL — fast flyer. Ignores ground cover entirely (flies over walls, forest,
-  //    water). Runs strafing passes across the player's front and looses missiles, then peels off
+  //    water). Runs strafing passes across the player's front and loses fire, then peels off
   //    and comes around again — harder to hit because it never sits still. Elevated (big shadow).
+  //    #95: streakPod (homing) was shelved pending a lock/tracking rework, so this mount swaps
+  //    to machineGun — a direct-fire stream that reads as the gunship raking the ground with
+  //    cannon fire on each pass, no guidance/lock dependency.
   helicopter: {
     name: 'Gunship',
     kind: 'helicopter',
@@ -118,7 +121,7 @@ export const ENEMY_KINDS = {
       cockpit: { x: 0, y: -12, w: 12, h: 12 },
       tail: { x: 0, y: 18, w: 6, h: 14 },
     },
-    weaponId: 'streakPod',
+    weaponId: 'machineGun',
     fireRange: 460,
     fireEveryMs: 1900,
     strafeRange: 320,       // px offset of the pass line from the player

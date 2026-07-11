@@ -30,16 +30,19 @@ export const ENEMIES = {
     mounts: { rightArm: ['railLance'], leftTorso: ['napalm'] },
   },
 
-  // Artillery / bombardier: EVERY weapon is indirect-fire — swarmRack is homing (guidance
-  // 'homing') and napalm is a lobbed arc (path 'arcing'), so neither needs line-of-sight to
-  // hit. The AI detects "all weapons indirect" and treats hugging cover as this mech's PRIMARY
-  // posture: it camps behind a wall and bombards over it, only shifting to a fresh cover spot,
-  // essentially never exposing itself. On a heavy chassis (slow, tanky) it reads as an
-  // entrenched siege unit. Keep BOTH weapons indirect or it loses its camp-cover behaviour.
+  // Artillery / bombardier: EVERY weapon is indirect-fire — both mounts lob an arcing shell
+  // (path 'arcing'), so neither needs line-of-sight to hit. The AI detects "all weapons
+  // indirect" and treats hugging cover as this mech's PRIMARY posture: it camps behind a wall
+  // and bombards over it, only shifting to a fresh cover spot, essentially never exposing
+  // itself. On a heavy chassis (slow, tanky) it reads as an entrenched siege unit. Keep BOTH
+  // weapons indirect (arcing/homing) or it loses its camp-cover behaviour.
+  // #95: swarmRack (homing) was shelved pending a lock/tracking rework, so this mount swaps
+  // to plasmaCannon — an arcing splash bolt that stays fully indirect (isIndirectWeapon checks
+  // guidance === 'homing' || path === 'arcing') with no lock/guidance dependency at all.
   artillery: {
     chassisId: 'heavy',
     name: 'Mortarhead',
-    mounts: { rightTorso: ['swarmRack'], leftTorso: ['napalm'] },
+    mounts: { rightTorso: ['plasmaCannon'], leftTorso: ['napalm'] },
   },
 };
 
