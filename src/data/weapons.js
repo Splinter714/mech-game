@@ -79,27 +79,41 @@ export const WEAPONS = {
     // every enemy weapon went through, so it fell back to a slow travelling plasma bolt instead
     // of an instant beam. Jackson played it and liked that accidental look, so rather than
     // "fixing" beamLaser to render as a proper beam for enemies, this is its own deliberately-
-    // tuned weapon: a single heavy bolt (not beamLaser's continuous stream), tuned independently
-    // (damage/velocity/range/cadence below are NOT inherited from beamLaser's numbers).
-    // #118: made player-mountable. damage/range/velocity are the weapon's visual identity (the
-    // "look" Jackson liked) and stay untouched. The ammo economy, though, was tuned for an AI
-    // that just fires nonstop and never worries about running dry: ammoRegen (1.4/s) was
-    // actually FASTER than the cycle-limited fire rate (1/0.9s ≈ 1.11/s), so the 14-round
-    // magazine never really mattered — it topped back up between shots as fast as it could
-    // fire, i.e. de facto unlimited ammo. That's fine for a sniper AI, but a player weapon
-    // needs the magazine to actually bite. Retuned ammoMax 14→10 and ammoRegen 1.4→1.0 (now
-    // below the cycle rate, so ammo is the real constraint) to land it at ~20 sustained DPS —
-    // above Autocannon (~14.6 dps) and Scatter Gun (~16.8 dps), the two other 2-slot ballistics
-    // in the curated roster, but well below Beam Laser's (~36+ dps) flagship tier — with a real
-    // ~9s magazine before it needs ~10s to fully recharge, in the same ballpark as Autocannon's
-    // ~13s cycle-limited magazine. cycleTime (900ms) is unchanged, so the enemy sniper/artillery
-    // loadouts still fire at the exact same cadence as before; only how long they COULD sustain
-    // fire before ammo mattered shifts slightly — a difference that barely shows up against
-    // typical enemy engagement lengths.
+    // tuned weapon (damage/velocity/range/cadence NOT inherited from beamLaser's numbers).
+    // #118: made player-mountable, tuned as a single heavy bolt (cycleTime 900, pattern
+    // 'single'), ~1.1 shots/sec.
+    // #125: playtest correction — the "accidental" look Jackson actually liked wasn't just the
+    // travelling-bolt art, it was beamLaser's own cadence leaking through: beamLaser is
+    // `{ hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true }`, ticking ~20/sec
+    // while held, and pre-#117 every one of those ticks spawned its own bolt. #118's single-shot
+    // 900ms cadence was ~18x slower than that and read as "much less cool." Reworked to a genuine
+    // `hit: 'projectile'` STREAM — same delivery shape as Repeater/machineGun (`pattern:
+    // 'stream'` + `fireRate`), just single-lane instead of twin — so it now fires individual
+    // travelling plasma bolts at fireRate: 20, matching beamLaser's original misrouted cadence.
+    // velocity/range/kind ('plasma') are the weapon's visual identity and are UNCHANGED from
+    // #118 — only cadence and the numbers that have to move with it (damage, ammo) changed.
+    // Rebalance math: a ~18x cadence jump can't keep 20-damage hits (that'd be ~400 dps), so
+    // damage came down to 2/bolt — mirroring beamLaser's own per-tick damage (also 2), since
+    // both are now "many small hits at 20/sec" weapons. Ammo had to be redesigned from scratch
+    // for a stream instead of a single shot: ammoRegen (10/s) is deliberately HALF of fireRate
+    // (20/s), so — unlike #118's original retune note about the AI's ammoRegen accidentally
+    // outpacing its fire rate and giving de facto unlimited ammo — holding the trigger always
+    // drains the magazine net 10 ammo/s. ammoMax: 60 gives a real ~6s full-rate burst (60 /
+    // (20-10)) before the mag empties and fire throttles down to whatever the 10/s regen can
+    // support; steady-state that's damage(2) × regen(10) = 20 sustained dps — same ballpark as
+    // #118's original ~20 sustained dps target, so Plasma Lance keeps its spot above Autocannon
+    // (~14.6 dps) and Scatter Gun (~16.8 dps) but well below Beam Laser's (~36+ dps) flagship
+    // tier, while the initial burst (damage × fireRate = 40 raw dps) reads as a genuinely punchy
+    // rapid stream, not a trickle. Full recharge from empty takes ~6s (60 / 10), symmetric with
+    // the burst window. cycleTime is unused for a stream pattern (see _fireInterval in
+    // firing.js), left at 0 like every other stream weapon (beamLaser/machineGun/flamethrower).
+    // The enemy sniper/artillery fire loop (src/scenes/arena/enemies.js) already drives cadence
+    // generically off `_fireInterval`, which already branches on `pattern === 'stream'` — no
+    // enemy-side code changes were needed for this to work as an enemy-fired projectile stream.
     id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
-    damage: 20, range: { min: 0, opt: 460, max: 620 },
-    ammoMax: 10, ammoRegen: 1.0, slots: 2, cycleTime: 900,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'single', kind: 'plasma' },
+    damage: 2, range: { min: 0, opt: 460, max: 620 },
+    ammoMax: 60, ammoRegen: 10, slots: 2, cycleTime: 0,
+    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'stream', fireRate: 20, kind: 'plasma' },
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',

@@ -21,7 +21,8 @@ export const SHOP_COSTS = {
   flamethrower: 125, napalm: 140, swarmRack: 150,
   // #118: plasmaLance graduated off the shelved list. Priced between shotgun/streakPod and
   // beamLaser — it's a strong 2-slot heavy hitter (~20 sustained dps, long range) but not the
-  // flagship beamLaser (175) tier.
+  // flagship beamLaser (175) tier. #125: reworked to a rapid projectile stream (fireRate 20,
+  // damage 2/bolt) still landing at ~20 sustained dps — price unchanged.
   plasmaLance: 150,
   beamLaser: 175, railLance: 225, plasmaCannon: 250, siegeShell: 275,
 };
