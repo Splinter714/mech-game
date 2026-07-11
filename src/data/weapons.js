@@ -136,29 +136,39 @@ export const WEAPONS = {
   // stream of seekers, and a tight dumbfire cluster that flies straight as a clump. ──
   swarmRack: w({    // whole salvo launches at once, fans wide, then homes to the target
     id: 'swarmRack', name: 'Swarm Rack', category: 'missile',
-    damage: 4, range: { min: 80, opt: 300, max: 500 },
+    // #77 tuning follow-up: range 3.5x'd (80/300/500 → 280/1050/1750, min/opt/max shape kept
+    // intact) per playtest feedback that missile range felt way too short. `velocity` is scaled
+    // by the SAME factor so the constant-apex lob flight time (opt/velocity, firing.js
+    // _spawnProjectile) stays unchanged — only the distance covered per second grows, not how
+    // long a shot hangs in the air.
+    damage: 4, range: { min: 280, opt: 1050, max: 1750 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
     // salvo can clear cover; guidance blends in during descent (see projectiles.js).
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 300, wobble: 'jostle', path: 'arcing' },
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 1050, wobble: 'jostle', path: 'arcing' },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
-    damage: 5, range: { min: 60, opt: 260, max: 440 },
+    // #77 tuning follow-up: range 3.5x'd (60/260/440 → 210/910/1540); velocity scaled by the
+    // same 3.5x (see swarmRack comment above) to hold flight time constant.
+    damage: 5, range: { min: 210, opt: 910, max: 1540 },
     ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
     // path: 'arcing' (#57) — same loft-over-cover treatment as Swarm Rack.
-    delivery: { hit: 'projectile', guidance: 'homing', velocity: 440, wobble: 'weave', burst: { count: 6, interval: 70 }, path: 'arcing' },
+    delivery: { hit: 'projectile', guidance: 'homing', velocity: 1540, wobble: 'weave', burst: { count: 6, interval: 70 }, path: 'arcing' },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
-    damage: 5, range: { min: 0, opt: 220, max: 320 },
+    // #77 tuning follow-up: range 3x'd (0/220/320 → 0/660/960, kept at the low end of the 3-4x
+    // band since this one's a tight-clump dumbfire weapon, not a seeker); velocity scaled by the
+    // same 3x so its (straight, non-arcing) travel time to max range doesn't balloon.
+    damage: 5, range: { min: 0, opt: 660, max: 960 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
-    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, clusterSpacing: 3.5, velocity: 380, scale: 0.8 },
+    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },
   }),
 };
 

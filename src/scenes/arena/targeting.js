@@ -15,7 +15,10 @@ import Phaser from 'phaser';
 import { stepLock, dropLock, isFullLock, predictedTarget, pickLockCandidate } from '../../data/targetlock.js';
 import { CONVERGE_DIST, convergedFireAngle } from './shared.js';
 
-const ASSIST_RANGE = 620;         // px the enemy must be within to lock / stay locked
+// #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
+// so the lock can still be held at the weapon's own new effective range — kept comfortably
+// above the longest missile range.max (swarmRack, 1750) with the same margin ratio as before.
+const ASSIST_RANGE = 2200;        // px the enemy must be within to lock / stay locked
 // The acquire cone + candidate scoring/stickiness now live in data/targetlock.js (unit-tested).
 
 export const TargetingMixin = {

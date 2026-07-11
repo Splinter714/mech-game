@@ -212,28 +212,31 @@ describe('arcMaxDist (#77 follow-up: "missile range too low" / "swarm rack fligh
   const maxRange = WEAPONS.swarmRack.range.max + 40;
   const opt = WEAPONS.swarmRack.range.opt;
 
+  // #77 tuning follow-up: swarmRack's opt/max were 3.5x'd (300/500 → 1050/1750). The target
+  // distance below is scaled by the same factor (480 → 1680, ~96% of max, same as before) so it
+  // stays between the new opt and max — the geometry this test suite exercises.
   it('a centre (un-offset) shot gets the true straight-line distance to a far target', () => {
-    const tgt = { x: 480, y: 0 };
-    expect(arcMaxDist(0, 0, 0, tgt, maxRange, opt)).toBeCloseTo(480, 0);
+    const tgt = { x: 1680, y: 0 };
+    expect(arcMaxDist(0, 0, 0, tgt, maxRange, opt)).toBeCloseTo(1680, 0);
   });
 
   it('BUG (fixed): projecting onto a wide-fan shot\'s OWN offset angle truncates a valid target to `opt`', () => {
     // This reproduces the old, buggy call site — passing the shot's own 22°-offset launch
     // angle as the projection axis instead of the weapon's centre bearing.
     const offsetRad = (22 * Math.PI) / 180;
-    const tgt = { x: 480, y: 0 };                     // dead ahead of the CENTRE bearing (aimAngle=0)
+    const tgt = { x: 1680, y: 0 };                    // dead ahead of the CENTRE bearing (aimAngle=0)
     const buggy = arcMaxDist(0, 0, offsetRad, tgt, maxRange, opt);
-    expect(buggy).toBeCloseTo(opt, 0);                // falls back short of the real ~480px distance
+    expect(buggy).toBeCloseTo(opt, 0);                // falls back short of the real ~1680px distance
   });
 
   it('FIX: every shot in the fan gets the full/correct budget when projected onto the CENTRE bearing', () => {
     // Same geometry as the bug case above, but using aimAngle=0 (the shared centre bearing) —
     // exactly what firing.js now passes regardless of each shot's own angleOffset.
-    const tgt = { x: 480, y: 0 };
+    const tgt = { x: 1680, y: 0 };
     for (const offsetDeg of [0, 4.4, 8.8, 13.2, 17.6, 22]) {
       const dist = arcMaxDist(0, 0, 0, tgt, maxRange, opt);
       expect(dist).toBeGreaterThan(opt);              // reaches well past the old opt-only fallback
-      expect(dist).toBeCloseTo(480, 0);
+      expect(dist).toBeCloseTo(1680, 0);
       void offsetDeg; // aimAngle is the same (0) for every shot in the fan — that's the whole fix
     }
   });
