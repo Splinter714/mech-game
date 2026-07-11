@@ -8,10 +8,10 @@ import { LIGHT_CONFIG } from './light.js';
 import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
 
-// Relative bulk of each location, used to distribute armor + structure from the
-// chassis' center-torso baseline. The cockpit is internal (no armor), tiny structure.
+// Relative bulk of each damage-tracked location, used to distribute armor + structure
+// from the chassis' baseline stats. #128: head/cockpit/centerTorso dropped out of
+// LOCATIONS (cosmetic only now, no armor/structure), so they no longer need a factor.
 const FACTORS = {
-  head: 0.4, cockpit: 0.18, centerTorso: 1,
   leftTorso: 0.75, rightTorso: 0.75,
   leftArm: 0.6, rightArm: 0.6,
 };

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Mech } from './Mech.js';
-import { ABILITY_SLOTS } from './anatomy.js';
+import { ABILITY_SLOTS, LOCATIONS } from './anatomy.js';
 
 // Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
 // melee category, which has no live entry in the registry anymore. Inject a test-only
@@ -27,11 +27,11 @@ vi.mock('./weapons.js', async (importOriginal) => {
 describe('Mech damage: armor then structure', () => {
   it('depletes armor before structure, no destruction until structure hits 0', () => {
     const m = new Mech({ chassisId: 'light' });
-    const ct = m.parts.centerTorso;
-    m.applyDamage('centerTorso', ct.maxArmor + 5);
+    const ct = m.parts.leftTorso;
+    m.applyDamage('leftTorso', ct.maxArmor + 5);
     expect(ct.armor).toBe(0);
     expect(ct.structure).toBe(ct.maxStructure - 5);
-    expect(m.isPartDestroyed('centerTorso')).toBe(false);
+    expect(m.isPartDestroyed('leftTorso')).toBe(false);
   });
 
   it('destroys a part once structure reaches 0', () => {
@@ -58,33 +58,51 @@ describe('Mech build completeness (deploy gating)', () => {
   });
 });
 
-describe('Mech kill rule', () => {
+describe('Mech kill rule (#128: both side torsos destroyed = kill)', () => {
   const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxStructure + 50);
 
-  it('center torso destruction is lethal', () => {
+  it('destroying both side torsos is lethal', () => {
     const m = new Mech({ chassisId: 'medium' });
-    overkill(m, 'centerTorso');
+    overkill(m, 'leftTorso');
+    expect(m.isDestroyed()).toBe(false);   // one side torso alone isn't enough
+    overkill(m, 'rightTorso');
     expect(m.isDestroyed()).toBe(true);
   });
 
-  it('head destruction is lethal and takes the cockpit with it', () => {
+  it('destroying only one side torso is NOT lethal', () => {
     const m = new Mech({ chassisId: 'medium' });
-    overkill(m, 'head');
-    expect(m.isPartDestroyed('cockpit')).toBe(true);
-    expect(m.isDestroyed()).toBe(true);
+    overkill(m, 'leftTorso');
+    expect(m.isDestroyed()).toBe(false);
   });
 
-  it('cockpit destruction is lethal on its own', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    overkill(m, 'cockpit');
-    expect(m.isDestroyed()).toBe(true);
-  });
-
-  it('losing both arms is NOT lethal', () => {
+  it('losing both arms (torsos intact) is NOT lethal', () => {
     const m = new Mech({ chassisId: 'medium' });
     overkill(m, 'leftArm');
     overkill(m, 'rightArm');
     expect(m.isDestroyed()).toBe(false);
+  });
+
+  it('head/cockpit/centerTorso are no longer damage-tracked or lethal — massive "damage" to them is a no-op, never a kill', () => {
+    for (const loc of ['head', 'cockpit', 'centerTorso']) expect(LOCATIONS).not.toContain(loc);
+    const m = new Mech({ chassisId: 'medium' });
+    for (const loc of ['head', 'cockpit', 'centerTorso']) {
+      expect(m.parts[loc]).toBeUndefined();
+      const res = m.applyDamage(loc, 999999);
+      expect(res.applied).toBe(0);
+      expect(res.destroyed).toBe(false);
+      expect(m.isPartDestroyed(loc)).toBe(false);
+    }
+    expect(m.isDestroyed()).toBe(false);
+  });
+
+  it('centerTorso keeps working as the ability mount even though it has no health', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('centerTorso', 'jumpJet');
+    expect(m.locationOf('jumpJet')).toBe('centerTorso');
+    expect(m.abilities()).toHaveLength(1);
+    // "Damaging" it doesn't take the ability offline — there's no health to lose.
+    m.applyDamage('centerTorso', 999999);
+    expect(m.abilities()).toHaveLength(1);
   });
 });
 
@@ -107,10 +125,19 @@ describe('Mech damage propagation (cascade)', () => {
     expect(m.onlineWeapons()).toHaveLength(0);
   });
 
-  it('destroying the head still destroys the cockpit (via cascade)', () => {
+  it('destroying both side torsos leaves all four WEAPON_SLOTS destroyed (weapons blown off before death, per #128)', () => {
     const m = new Mech({ chassisId: 'medium' });
-    overkill(m, 'head');
-    expect(m.isPartDestroyed('cockpit')).toBe(true);
+    m.mount('leftArm', 'pulseLaser');
+    m.mount('rightArm', 'beamLaser');
+    m.mount('leftTorso', 'autocannon');
+    m.mount('rightTorso', 'machineGun');
+    overkill(m, 'leftTorso');
+    overkill(m, 'rightTorso');
+    expect(m.isDestroyed()).toBe(true);
+    for (const loc of ['leftTorso', 'rightTorso', 'leftArm', 'rightArm']) {
+      expect(m.isPartDestroyed(loc)).toBe(true);
+    }
+    expect(m.onlineWeapons()).toHaveLength(0);
   });
 });
 
@@ -173,9 +200,9 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
 describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor repair)', () => {
   it('restores a fraction of each damaged location\'s missing armor, leaving structure alone', () => {
     const m = new Mech({ chassisId: 'medium' });
-    const ct = m.parts.centerTorso;
+    const ct = m.parts.leftTorso;
     // Knock armor down (stay within armor so structure is untouched).
-    m.applyDamage('centerTorso', Math.min(ct.maxArmor, 20));
+    m.applyDamage('leftTorso', Math.min(ct.maxArmor, 20));
     const missing = ct.maxArmor - ct.armor;
     const structureBefore = ct.structure;
     const restored = m.repairArmor(0.5);
@@ -196,25 +223,25 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
 describe('Mech.boostHealth (#69 deploy survivability buffer — must not compound)', () => {
   it('multiplies chassis base max armor/structure by exactly mult', () => {
     const m = new Mech({ chassisId: 'medium' });
-    const baseArmor = m.parts.centerTorso.maxArmor;
-    const baseStructure = m.parts.centerTorso.maxStructure;
+    const baseArmor = m.parts.leftTorso.maxArmor;
+    const baseStructure = m.parts.leftTorso.maxStructure;
     m.boostHealth(100);
-    expect(m.parts.centerTorso.maxArmor).toBe(Math.round(baseArmor * 100));
-    expect(m.parts.centerTorso.maxStructure).toBe(Math.round(baseStructure * 100));
-    expect(m.parts.centerTorso.armor).toBe(m.parts.centerTorso.maxArmor);
-    expect(m.parts.centerTorso.structure).toBe(m.parts.centerTorso.maxStructure);
+    expect(m.parts.leftTorso.maxArmor).toBe(Math.round(baseArmor * 100));
+    expect(m.parts.leftTorso.maxStructure).toBe(Math.round(baseStructure * 100));
+    expect(m.parts.leftTorso.armor).toBe(m.parts.leftTorso.maxArmor);
+    expect(m.parts.leftTorso.structure).toBe(m.parts.leftTorso.maxStructure);
   });
 
   it('calling boostHealth twice in a row (simulating repeated redeploys) is idempotent, not compounding', () => {
     const m = new Mech({ chassisId: 'medium' });
-    const baseArmor = m.parts.centerTorso.maxArmor;
-    const baseStructure = m.parts.centerTorso.maxStructure;
+    const baseArmor = m.parts.leftTorso.maxArmor;
+    const baseStructure = m.parts.leftTorso.maxStructure;
 
     m.boostHealth(100);
-    const afterFirst = { armor: m.parts.centerTorso.maxArmor, structure: m.parts.centerTorso.maxStructure };
+    const afterFirst = { armor: m.parts.leftTorso.maxArmor, structure: m.parts.leftTorso.maxStructure };
 
     m.boostHealth(100);
-    const afterSecond = { armor: m.parts.centerTorso.maxArmor, structure: m.parts.centerTorso.maxStructure };
+    const afterSecond = { armor: m.parts.leftTorso.maxArmor, structure: m.parts.leftTorso.maxStructure };
 
     expect(afterSecond).toEqual(afterFirst);
     expect(afterSecond.armor).toBe(Math.round(baseArmor * 100));
@@ -223,7 +250,7 @@ describe('Mech.boostHealth (#69 deploy survivability buffer — must not compoun
 
   it('repairAll (deploy refill) between boosts does not cause boostHealth to compound', () => {
     const m = new Mech({ chassisId: 'medium' });
-    const baseArmor = m.parts.centerTorso.maxArmor;
+    const baseArmor = m.parts.leftTorso.maxArmor;
 
     // Simulate the ArenaScene deploy path across three sorties: repairAll() then
     // boostHealth(100) each time.
@@ -232,7 +259,7 @@ describe('Mech.boostHealth (#69 deploy survivability buffer — must not compoun
       m.boostHealth(100);
     }
 
-    expect(m.parts.centerTorso.maxArmor).toBe(Math.round(baseArmor * 100));
+    expect(m.parts.leftTorso.maxArmor).toBe(Math.round(baseArmor * 100));
   });
 });
 

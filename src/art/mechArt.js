@@ -168,32 +168,27 @@ function drawTurret(sg, mech, T) {
   const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
 
   // Center torso: armour slab → core inset → dark reactor housing → purple reactor.
+  // #128: no longer damage-tracked (no armor/structure of its own — it's still the
+  // ability mount, just untied from destructibility) — always draws intact, never a
+  // stump.
   const ct = lay.centerTorso;
-  if (mech.isPartDestroyed('centerTorso')) {
-    stump(sg, T, ct.x, ct.y, ct.w, ct.h);
-  } else {
-    plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
-    if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.6, ct.h * 0.78, T.faceMid);
-    else if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * 0.2);
-    else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
-    if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.4, ct.h * 0.7, T.housing);            // reactor housing
-    else rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);
-    glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                           // reactor spine
-    glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
-    glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
-  }
+  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
+  if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.6, ct.h * 0.78, T.faceMid);
+  else if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * 0.2);
+  else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
+  if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.4, ct.h * 0.7, T.housing);            // reactor housing
+  else rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);
+  glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                           // reactor spine
+  glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
+  glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
 
-  // Head + cockpit optic + antenna.
+  // Head + cockpit optic + antenna. #128: neither is damage-tracked any more — always
+  // draws intact, never a stump/charred cockpit.
   const hd = lay.head;
-  if (mech.isPartDestroyed('head')) {
-    stump(sg, T, hd.x, hd.y, hd.w, hd.h);
-  } else {
-    plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
-    rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, T.rimHi); // antenna
-    const cp = lay.cockpit;
-    if (mech.isPartDestroyed('cockpit')) rectC(sg, cp.x, cp.y, cp.w, cp.h, T.char);
-    else glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
-  }
+  plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
+  rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, T.rimHi); // antenna
+  const cp = lay.cockpit;
+  glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
 
   // Structural decor (mast / vane / exhaust stacks) under the weapons. The shoulder PAULDRONS
   // are drawn on the side-torso textures instead (so they cant with the side torso), so skip
