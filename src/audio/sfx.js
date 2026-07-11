@@ -6,7 +6,7 @@
 // small dedicated functions; they're not weapon-specific. The engine keeps the public
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
-import { hasHeldSfx } from './sfxParams.js';
+import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -78,28 +78,26 @@ export function footstep(e, foot = 0) {
   e.noise(e.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
 }
 
-// Explosion (#36, tunable data per #100) — death / part break-off. `scale` 0.3..1.6 sizes the
-// blast (`deathScaleFor`, scenes/arena/shared.js, drives this for a kill; a couple of fixed
-// calls elsewhere — a part breaking off, the player's own MECH DOWN — pass a flat intensity).
-// The cue's BASE sound now lives in sfxParams.js's `deathExplosion` entry (same tunable-layer
-// table every weapon's sound uses — Weapon Lab-style data, not a hardcoded function), so it's
-// editable through the identical getSfxParams/setSfxParam/resetSfxParams plumbing. `scale`
-// additionally reshapes each layer at trigger time: louder, longer (more sustain = more
-// "boominess"), and pitched DOWN (lower frequency = more bass/boomy) for a bigger kill — a
-// heavy mech should sound noticeably bigger AND lower than a drone, not just louder.
+// Explosion (#36, tunable data per #100) — a broken-off part / the player's own MECH DOWN.
+// `scale` 0.3..1.6 sizes the blast (a couple of fixed intensities — #107 moved the actual
+// per-KILL boom, which used to drive this via `deathScaleFor`, onto the discrete category path
+// below instead). The cue's BASE sound lives in sfxParams.js's `deathExplosion` entry (same
+// tunable-layer table every weapon's sound uses), so it's editable through the identical
+// getSfxParams/setSfxParam/resetSfxParams plumbing. `scale` additionally reshapes each layer at
+// trigger time via `scaleExplosionLayer` (sfxParams.js): louder, longer (more sustain = more
+// "boominess"), and pitched DOWN (lower frequency = more bass/boomy) for a bigger blast.
 export function explosion(e, scale = 1) {
   const s = clamp(scale, 0.3, 1.6);
   const layers = e.getSfxParams('deathExplosion').fire;
   playLayers(e, e.sfx, layers.map((l) => scaleExplosionLayer(l, s)));
 }
 
-// Reshape one death-explosion layer by the kill's size factor `s` (see explosion() above).
-// Pure — no engine/context reads — so it's trivially unit-testable in isolation.
-export function scaleExplosionLayer(l, s) {
-  const out = { ...l };
-  if (out.dur != null) out.dur = out.dur * s;                                    // more sustain = boomier
-  if (out.gain != null && out.gain > 0) out.gain = out.gain * (0.7 + 0.3 * s);   // louder for a bigger kill
-  if (out.freq != null) out.freq = out.freq / s;                                 // lower pitch = more bass
-  if (out.freqEnd != null) out.freqEnd = out.freqEnd / s;
-  return out;
+// Destruction explosion (#100), made tunable per discrete SIZE CATEGORY by #107 — the per-kill
+// boom (`scenes/arena/combat.js` `_deathFx`) instead of continuously rescaling one param set.
+// `category` is one of EXPLOSION_CATEGORIES (small/medium/large/massive — see
+// `explosionCategoryFor`, scenes/arena/shared.js); each has its OWN independently tunable
+// DEFAULT_SFX entry (`deathExplosionSmall` etc., sfxParams.js), so this is just the generic
+// layer player every weapon sound cue already uses, keyed by `explosionSfxId(category)`.
+export function deathExplosionByCategory(e, category) {
+  playLayers(e, e.sfx, e.getSfxParams(explosionSfxId(category)).fire);
 }

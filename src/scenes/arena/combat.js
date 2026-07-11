@@ -3,7 +3,7 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor } from './shared.js';
+import { ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor, explosionCategoryFor } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
@@ -121,7 +121,7 @@ export const CombatMixin = {
       const dx = e.x, dy = e.y;
       // #100: the red "DESTROYED" floating text read as redundant/noisy on top of the
       // explosion itself (which IS the death feedback) — removed. No lingering body either way.
-      this._deathFx(dx, dy, deathScaleFor(e));
+      this._deathFx(dx, dy, deathScaleFor(e), explosionCategoryFor(e));
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
       // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
       // #90: pass the kill's maxHp (uniform across Mech/HpBody) so the odds scale with how
@@ -143,11 +143,14 @@ export const CombatMixin = {
   // fireball blobs (irregular silhouette instead of one perfect circle), the shock ring kept
   // (still reads as a shockwave), a lingering drifting smoke puff, and flung debris fragments.
   // Everything scales off the same `scale` so a heavy mech's kill is a bigger, busier, longer
-  // event than a drone's, not just a wider version of the same circle.
+  // event than a drone's, not just a wider version of the same circle. The explosion SOUND
+  // (#107) is a discrete tunable `category` (small/medium/large/massive — see
+  // `explosionCategoryFor`) instead of continuously scaling one param set, so a heavy mech's
+  // kill sounds like ITS OWN tuned boom rather than one formula stretched.
   // Goes straight through `_burst`, bypassing `_impactFx`'s per-hit sound throttle/burst-merge
   // (tuned for concentrated weapon fire, not a once-per-kill event) so this always renders even
   // when the killing hit's own impact FX just fired at the same point this frame.
-  _deathFx(x, y, scale = 1) {
+  _deathFx(x, y, scale = 1, category = 'medium') {
     const r = 26 * scale;
     // Sharp initial flash — brief and near-full-alpha so the very first frame reads as a
     // punch rather than a smooth fade-in.
@@ -165,7 +168,7 @@ export const CombatMixin = {
     this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.85, 340 * scale, true);   // shock ring
     this._smokePuff(x, y, scale);
     this._deathDebris(x, y, scale);
-    Audio.explosion(1.15 * scale);
+    Audio.deathExplosion(category);
   },
 
   // Lingering smoke puff (#100): a soft grey blob that drifts a little and fades out much

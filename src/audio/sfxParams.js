@@ -63,6 +63,61 @@ function withQDefaults(weapons) {
   return weapons;
 }
 
+// ── Destruction explosion (#107): a FEW discrete size categories ────────────────────────
+// #100 gave the death-explosion cue a single entry (`deathExplosion` below) continuously
+// scaled at trigger time (see `scaleExplosionLayer`, driven by `deathScaleFor`) but no Weapon
+// Lab UI to tune it. Rather than exposing that one continuous scale as a slider, the KILL
+// explosion is split into a few discrete SIZE CATEGORIES — each its OWN entry in this same
+// DEFAULT_SFX table (`deathExplosionSmall/Medium/Large/Massive`, defined alongside
+// `deathExplosion` below), independently tunable through the exact same
+// getSfxParams/setSfxParam/resetSfxParams plumbing every real weapon already uses — no new
+// persistence/API needed. `deathExplosion` itself (continuous) is untouched, still driving
+// the other two `Audio.explosion()` callers (a part breaking off, the player's own MECH DOWN)
+// which #107 leaves alone; only the per-kill boom (`Audio.deathExplosion`, scenes/arena/
+// combat.js `_deathFx`) switches to a category lookup (`explosionCategoryFor`, shared.js).
+export const EXPLOSION_CATEGORIES = ['small', 'medium', 'large', 'massive'];
+export const EXPLOSION_CATEGORY_LABEL = {
+  small: 'Small (drone / infantry)',
+  medium: 'Medium (tank / turret / light mech)',
+  large: 'Large (medium mech)',
+  massive: 'Massive (heavy mech)',
+};
+const EXPLOSION_CATEGORY_SCALE = { small: 0.65, medium: 0.85, large: 1.15, massive: 1.55 };
+const EXPLOSION_CATEGORY_SFX_ID = {
+  small: 'deathExplosionSmall', medium: 'deathExplosionMedium',
+  large: 'deathExplosionLarge', massive: 'deathExplosionMassive',
+};
+// The sfxParams (DEFAULT_SFX) key tunable for a given category — falls back to 'medium' for
+// an unrecognized category rather than throwing.
+export function explosionSfxId(category) {
+  return EXPLOSION_CATEGORY_SFX_ID[category] ?? EXPLOSION_CATEGORY_SFX_ID.medium;
+}
+
+// Reshape one death-explosion layer by a size factor `s`: more sustain (boomier), louder, and
+// pitched DOWN (lower frequency = more bass) for a bigger blast. Pure — no engine/context
+// reads — so it's trivially unit-testable; used both by the continuous `explosion(scale)`
+// path (sfx.js) and to bake the four discrete category defaults below from one base recipe.
+export function scaleExplosionLayer(l, s) {
+  const out = { ...l };
+  if (out.dur != null) out.dur = out.dur * s;                                    // more sustain = boomier
+  if (out.gain != null && out.gain > 0) out.gain = out.gain * (0.7 + 0.3 * s);   // louder for a bigger kill
+  if (out.freq != null) out.freq = out.freq / s;                                 // lower pitch = more bass
+  if (out.freqEnd != null) out.freqEnd = out.freqEnd / s;
+  return out;
+}
+
+// The base death-explosion layer recipe (#100) — `deathExplosion` below uses it verbatim
+// (continuously rescaled at trigger time by the two non-kill callers); the four discrete
+// categories bake a fixed representative scale into their OWN independent copy via
+// scaleExplosionLayer, so tuning one category's sliders never touches another's (or the
+// continuous `deathExplosion` entry).
+const DEATH_EXPLOSION_LAYERS = [
+  { kind: 'tone', type: 'sine', freq: 140, freqEnd: 30, dur: 0.5, gain: 0.34, attack: 0.003 },     // sub-bass punch (boominess)
+  { kind: 'noise', type: 'lowpass', freq: 1400, freqEnd: 180, dur: 0.6, gain: 0.28, attack: 0.002 }, // wide body
+  { kind: 'noise', type: 'highpass', freq: 2200, dur: 0.08, gain: 0.14, attack: 0.002 },             // high crack
+  { kind: 'tone', type: 'square', freq: 90, freqEnd: 35, dur: 0.3, gain: 0, attack: 0.004 },         // silent — open slot for tuning
+];
+
 export const DEFAULT_SFX = withQDefaults({
   // ── energy ──
   pulseLaser: {
@@ -192,12 +247,24 @@ export const DEFAULT_SFX = withQDefaults({
   // `sfx.js` explosion() reads this table and additionally scales gain/dur/freq by the killed
   // enemy's size (`deathScaleFor`, shared.js) at trigger time — see `scaleExplosionLayer`.
   deathExplosion: {
-    fire: [
-      { kind: 'tone', type: 'sine', freq: 140, freqEnd: 30, dur: 0.5, gain: 0.34, attack: 0.003 },     // sub-bass punch (boominess)
-      { kind: 'noise', type: 'lowpass', freq: 1400, freqEnd: 180, dur: 0.6, gain: 0.28, attack: 0.002 }, // wide body
-      { kind: 'noise', type: 'highpass', freq: 2200, dur: 0.08, gain: 0.14, attack: 0.002 },             // high crack
-      { kind: 'tone', type: 'square', freq: 90, freqEnd: 35, dur: 0.3, gain: 0, attack: 0.004 },         // silent — open slot for tuning
-    ],
+    fire: DEATH_EXPLOSION_LAYERS.map((l) => ({ ...l })),
+  },
+
+  // ── discrete size categories (#107) — see the comment above EXPLOSION_CATEGORIES. Each is
+  // its own DEFAULT_SFX entry (single `fire` stage, same 2-tone + 2-noise shape as
+  // `deathExplosion`), baked from that same base recipe at a representative starting scale so
+  // the categories still visibly graduate small→massive before anyone touches a slider.
+  deathExplosionSmall: {
+    fire: DEATH_EXPLOSION_LAYERS.map((l) => scaleExplosionLayer(l, EXPLOSION_CATEGORY_SCALE.small)),
+  },
+  deathExplosionMedium: {
+    fire: DEATH_EXPLOSION_LAYERS.map((l) => scaleExplosionLayer(l, EXPLOSION_CATEGORY_SCALE.medium)),
+  },
+  deathExplosionLarge: {
+    fire: DEATH_EXPLOSION_LAYERS.map((l) => scaleExplosionLayer(l, EXPLOSION_CATEGORY_SCALE.large)),
+  },
+  deathExplosionMassive: {
+    fire: DEATH_EXPLOSION_LAYERS.map((l) => scaleExplosionLayer(l, EXPLOSION_CATEGORY_SCALE.massive)),
   },
 });
 

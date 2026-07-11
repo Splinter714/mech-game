@@ -65,6 +65,21 @@ export function deathScaleFor(e) {
   return DEATH_SCALE_MIN + t * (DEATH_SCALE_MAX - DEATH_SCALE_MIN);
 }
 
+// #107: which discrete destruction-EXPLOSION SOUND category a dying enemy's boom uses (Weapon
+// Lab tunable — see audio/sfxParams.js's deathExplosionSmall/Medium/Large/Massive entries +
+// Audio.deathExplosion). Buckets off the SAME `.maxHp` toughness signal `deathScaleFor` above
+// already uses (drone 14 hp … base heavy mech 616 hp) — a few tunable buckets instead of
+// continuously scaling one param set. Calibrated against the actual roster: drone 14 hp ⇒
+// small; turret 90 / tank 160 / helicopter 70 / light mech ≈266 hp ⇒ medium; medium mech ≈416
+// hp ⇒ large; heavy mech ≈616 hp ⇒ massive.
+export function explosionCategoryFor(e) {
+  const hp = Math.max(0, e.mech?.maxHp || 0);
+  if (hp < 50) return 'small';
+  if (hp < 300) return 'medium';
+  if (hp < 550) return 'large';
+  return 'massive';
+}
+
 // Move `cur` toward `target` by at most `maxStep`. Used by player + enemy locomotion.
 export function approach(cur, target, maxStep) {
   if (cur < target) return Math.min(cur + maxStep, target);

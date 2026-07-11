@@ -452,7 +452,8 @@ export class AudioEngine {
     Sfx.ability(this, kind);
   }
 
-  // Explosion (#36) — death / part break-off. `scale` 0.4..1.2 sizes the blast.
+  // Explosion (#36) — a broken-off part / player MECH DOWN. `scale` 0.4..1.2 sizes the blast.
+  // NOT used for enemy-kill explosions any more — see deathExplosion below (#107).
   explosion(scale = 1) {
     this._resume();
     if (!this.ready) return;
@@ -485,6 +486,18 @@ export class AudioEngine {
       depth: P.duckDepth, attack: P.duckAttack, hold: P.duckHold, release: P.duckRelease,
     });
     this.music.gain.setValueAtTime(P.music * mult, at);
+  }
+
+  // Destruction explosion (#100, made tunable by size category in #107) — the per-kill boom
+  // (not the player's own MECH DOWN / a part breaking off — those stay on `explosion` above).
+  // `category` is one of EXPLOSION_CATEGORIES (small/medium/large/massive; see sfxParams.js +
+  // scenes/arena/shared.js's explosionCategoryFor), each independently tunable via the Weapon
+  // Lab panel (same getSfxParams/setSfxParam/resetSfxParams plumbing, keyed by
+  // `explosionSfxId(category)`) instead of one continuous scale.
+  deathExplosion(category = 'medium') {
+    this._resume();
+    if (!this.ready) return;
+    Sfx.deathExplosionByCategory(this, category);
   }
 
   // ── Music (#38) ─────────────────────────────────────────────────────────────────────

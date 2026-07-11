@@ -59,6 +59,28 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
+  // #107: the per-kill destruction-explosion boom, tunable by discrete size category (not the
+  // continuous `explosion(scale)` above, still used for a part breaking off / player MECH DOWN).
+  it('plays a death explosion for every size category without throwing', () => {
+    for (const category of ['small', 'medium', 'large', 'massive']) {
+      expect(() => eng.deathExplosion(category)).not.toThrow();
+    }
+    expect(ctx._counts().oscillators).toBeGreaterThan(0);
+  });
+
+  it('falls back to medium for an unrecognized category, without throwing', () => {
+    expect(() => eng.deathExplosion('bogus')).not.toThrow();
+  });
+
+  it('tunes a death-explosion category live without touching the others or the continuous deathExplosion entry', () => {
+    const smallGainBefore = eng.getSfxParams('deathExplosionSmall').fire[0].gain;
+    const continuousGainBefore = eng.getSfxParams('deathExplosion').fire[0].gain;
+    eng.setSfxParam('deathExplosionMassive', 'fire', 0, 'gain', 0.99);
+    expect(eng.getSfxParams('deathExplosionMassive').fire[0].gain).toBe(0.99);
+    expect(eng.getSfxParams('deathExplosionSmall').fire[0].gain).toBe(smallGainBefore);
+    expect(eng.getSfxParams('deathExplosion').fire[0].gain).toBe(continuousGainBefore);
+  });
+
   it('tunes a weapon SFX param live (Weapon Lab sound panel) without touching other weapons', () => {
     const shotgunGainBefore = eng.getSfxParams('shotgun').fire[0].gain;
     eng.setSfxParam('autocannon', 'fire', 0, 'gain', 0.9);
