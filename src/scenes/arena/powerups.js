@@ -12,13 +12,18 @@
 import {
   POWERUPS, DROP_CHANCE, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
-import { pixelToHex, hexToPixel, axialKey, nearestHex } from '../../data/hexgrid.js';
+import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
 import { Audio } from '../../audio/index.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const PICKUP_TTL = 15000;        // ms — a dropped collectible lingers this long, then fades
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
+// #88: small random scatter applied to a drop's kill-site spawn point before the #73
+// reachable-ground snap, so simultaneous/nearby drops don't stack on the exact same pixel.
+// ~30px keeps the scatter well inside "still clearly at this kill site" (a hex is 48px) while
+// being comfortably bigger than PICKUP_RADIUS so two scattered drops usually don't overlap.
+const DROP_SCATTER_RADIUS = 30;
 
 export const PowerupsMixin = {
   // One-time init from ArenaScene.create(). Overlay state + the graphics layer collectibles
@@ -34,11 +39,15 @@ export const PowerupsMixin = {
   spawnPowerup(x, y, typeId = pickPowerupType()) {
     const p = POWERUPS[typeId];
     if (!p) return null;
-    // #73: enemies (esp. flyers) can die over deep water, inside walls, or beyond the world
-    // edge, where the player can never walk to the drop. Relocate the collectible to the
-    // nearest REACHABLE ground so it's always collectible; the drop stays as close to the
-    // kill as possible.
-    const pos = this._reachableDropPos(x, y);
+    // #88: scatter the ideal drop point a small random distance first, so a kill that drops
+    // multiple things (or several close-together kills) spreads them apart instead of
+    // stacking on the same pixel...
+    const scattered = scatterOffset(x, y, DROP_SCATTER_RADIUS);
+    // #73: ...then, enemies (esp. flyers) can die over deep water, inside walls, or beyond the
+    // world edge, where the player can never walk to the drop (and the scatter above could
+    // itself wander into one of those). Relocate to the nearest REACHABLE ground so it's
+    // always collectible; the drop stays as close to the (scattered) kill point as possible.
+    const pos = this._reachableDropPos(scattered.x, scattered.y);
     const view = this._makePowerupView(pos.x, pos.y, p);
     const pk = { x: pos.x, y: pos.y, type: typeId, ttl: PICKUP_TTL, age: 0, view };
     this.powerups.push(pk);

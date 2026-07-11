@@ -5,12 +5,16 @@
 // arena/run.js banks on stage-clear / loses on death), so it shows in the HUD SCRAP readout
 // immediately and follows #64's existing banked-vs-lost rules with no extra plumbing.
 import { SALVAGE_DROP_CHANCE, salvageAmount } from '../../data/shop.js';
+import { scatterOffset } from '../../data/hexgrid.js';
 import { Audio } from '../../audio/index.js';
 
 const SALVAGE_COLOR = 0xf5c542;   // gold/amber — reads distinct from the powerup palette
 const PICKUP_RADIUS = 26;
 const PICKUP_TTL = 15000;
 const BOB_PERIOD = 1300;
+// #88: same small scatter radius as powerups.js (arena/powerups.js DROP_SCATTER_RADIUS) so a
+// kill that drops both a powerup AND salvage spreads them apart rather than stacking.
+const DROP_SCATTER_RADIUS = 30;
 
 export const SalvageMixin = {
   _initSalvage() {
@@ -22,8 +26,15 @@ export const SalvageMixin = {
   _maybeDropSalvage(x, y) {
     if (Math.random() >= SALVAGE_DROP_CHANCE) return;
     const amount = salvageAmount();
-    const view = this._makeSalvageView(x, y);
-    this.salvage.push({ x, y, amount, ttl: PICKUP_TTL, age: 0, view });
+    // #88: scatter the ideal drop point (same treatment as powerups.js spawnPowerup) so a kill
+    // that drops both salvage and a powerup at the same spot spreads them apart, then (#73)
+    // snap to reachable ground in case the scatter — or the kill site itself, e.g. a flyer over
+    // water — landed somewhere the player can't walk to. `_reachableDropPos` lives on
+    // PowerupsMixin but both mixins compose onto the same ArenaScene prototype.
+    const scattered = scatterOffset(x, y, DROP_SCATTER_RADIUS);
+    const pos = this._reachableDropPos ? this._reachableDropPos(scattered.x, scattered.y) : scattered;
+    const view = this._makeSalvageView(pos.x, pos.y);
+    this.salvage.push({ x: pos.x, y: pos.y, amount, ttl: PICKUP_TTL, age: 0, view });
   },
 
   // A small spinning gold diamond over a ground glow — a lighter beacon than the powerup one

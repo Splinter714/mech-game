@@ -126,6 +126,20 @@ export function hexesWithinPixelRadius(x, y, r, size = HEX_SIZE) {
   return out;
 }
 
+// #88: nudge a drop's "ideal" spawn point (x, y) a small random distance away so two drops
+// that would otherwise land on the exact same spot (e.g. a powerup + salvage from the same
+// kill, or two kills close together) visually separate instead of stacking. Uniform over the
+// disc of radius `maxR` (sqrt-distributed so points don't cluster at the centre), full 360°
+// angle. `rand` is injectable (defaults to Math.random) so callers/tests can make it
+// deterministic. Pure — callers are expected to run the result through a reachable-ground
+// snap (e.g. arena/powerups.js `_reachableDropPos`, #73) so a scatter never lands somewhere
+// unreachable; this function only does the scatter math, not passability.
+export function scatterOffset(x, y, maxR = 30, rand = Math.random) {
+  const angle = rand() * Math.PI * 2;
+  const r = Math.sqrt(rand()) * maxR;
+  return { x: x + Math.cos(angle) * r, y: y + Math.sin(angle) * r };
+}
+
 // The six corner points (pixel offsets from a hex centre) for drawing a pointy-top
 // hex. Corners are at 30° + 60°·i so the flat sides face left/right.
 export function hexCorners(size = HEX_SIZE) {
