@@ -10,7 +10,7 @@ import {
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { generateTerrain } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
-import { DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains } from './shared.js';
+import { DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH } from './shared.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
 // building has 60 HP, so ~1.5–2s of leaning at speed flattens it. Owner: tunable.
@@ -197,14 +197,16 @@ export const WorldMixin = {
   // (a forest hex burning/chewed down) plays a lighter version — quieter cue, smaller flash/ring.
   _outpostCollapseFx(x, y, soft = false) {
     Audio.explosion(soft ? 0.45 : 1.0);
-    const flash = this.add.circle(x, y, 6, 0xffe6a0, soft ? 0.6 : 0.9);
+    // #99: explicit DEPTH.IMPACT_FX — same tier as combat.js's impact/death bursts, which this
+    // is (a collapse explosion); previously unset, only reading "on top" by add-order accident.
+    const flash = this.add.circle(x, y, 6, 0xffe6a0, soft ? 0.6 : 0.9).setDepth(DEPTH.IMPACT_FX);
     this.tweens.add({ targets: flash, scale: soft ? 2.5 : 4, alpha: 0, duration: 220, onComplete: () => flash.destroy() });
-    const ring = this.add.circle(x, y, 8).setStrokeStyle(3, 0xff9a3c, soft ? 0.5 : 0.8);
+    const ring = this.add.circle(x, y, 8).setStrokeStyle(3, 0xff9a3c, soft ? 0.5 : 0.8).setDepth(DEPTH.IMPACT_FX);
     this.tweens.add({ targets: ring, scale: soft ? 3 : 5, alpha: 0, duration: 420, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
     for (let i = 0; i < (soft ? 7 : 12); i++) {
       const ang = Math.random() * Math.PI * 2;
       const dist = 18 + Math.random() * 34;
-      const chunk = this.add.rectangle(x, y, 3 + Math.random() * 4, 3 + Math.random() * 4, 0x64615a);
+      const chunk = this.add.rectangle(x, y, 3 + Math.random() * 4, 3 + Math.random() * 4, 0x64615a).setDepth(DEPTH.IMPACT_FX);
       this.tweens.add({
         targets: chunk, x: x + Math.cos(ang) * dist, y: y + Math.sin(ang) * dist,
         angle: Math.random() * 360, alpha: 0, duration: 360 + Math.random() * 260,

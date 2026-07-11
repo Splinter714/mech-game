@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, approach, backwardSpeedScale, rotateToward } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, rotateToward } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
@@ -37,6 +37,10 @@ export const LocomotionMixin = {
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
     const c = this.add.container(x, y, [hull, torL, torR, armL, armR, turret]);
+    // #99: explicit depth — was relying on scene add-order, which put whichever mech view got
+    // created LAST (any enemy spawned after the player) on top regardless of actual position.
+    // Player and enemy mechs share one flat tier (see DEPTH.UNITS) so neither hides the other.
+    c.setDepth(DEPTH.UNITS);
     c.hull = hull; c.torL = torL; c.torR = torR; c.armL = armL; c.armR = armR; c.turret = turret;
     // Per-view smoothing state: the CURRENTLY-APPLIED convergence tilt of each pivoting part,
     // eased toward its target each frame (see _syncTilts). Starts at the resting tilt (0) so a
@@ -223,12 +227,14 @@ export const LocomotionMixin = {
     const x = this.px + (foot ? 11 : -11);
     const y = this.py + 16;                       // roughly at the feet, below the torso
 
-    const ring = this.add.circle(x, y, 3).setStrokeStyle(2, 0x8a93a0, 0.55);
+    // #99: DEPTH.GROUND_FX — a footfall ring/dust puff is ground decal at the mech's own feet,
+    // same tier as the fire-patch decal; it should never render OVER the mech casting it.
+    const ring = this.add.circle(x, y, 3).setStrokeStyle(2, 0x8a93a0, 0.55).setDepth(DEPTH.GROUND_FX);
     this.tweens.add({ targets: ring, scale: 1.6 + p * 0.5, alpha: 0, duration: 300, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
 
     for (let i = 0; i < 4; i++) {
       const ang = -Math.PI / 2 + (Math.random() - 0.5) * 2.6;   // fan up-and-out from the foot
-      const dust = this.add.circle(x, y, 1.5 + Math.random() * 2, 0x6b7280, 0.45);
+      const dust = this.add.circle(x, y, 1.5 + Math.random() * 2, 0x6b7280, 0.45).setDepth(DEPTH.GROUND_FX);
       this.tweens.add({
         targets: dust, x: x + Math.cos(ang) * (8 + p * 2 + Math.random() * 8),
         y: y + Math.sin(ang) * (5 + Math.random() * 5), alpha: 0, scale: 0.3,

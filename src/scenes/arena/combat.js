@@ -3,7 +3,7 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DAMAGEABLE, deathScaleFor } from './shared.js';
+import { ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
@@ -145,7 +145,8 @@ export const CombatMixin = {
   },
 
   _floatText(x, y, s, color) {
-    const t = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '14px', color }).setOrigin(0.5);
+    const t = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '14px', color })
+      .setOrigin(0.5).setDepth(DEPTH.IMPACT_FX);   // #99: reads over units/FX, not add-order luck
     this.tweens.add({ targets: t, y: y - 26, alpha: 0, duration: 700, onComplete: () => t.destroy() });
   },
 
@@ -156,7 +157,11 @@ export const CombatMixin = {
     const pool = (this._impactPool ??= []);
     let c = pool.find((o) => !o._busy);
     if (!c) {
-      if (pool.length < IMPACT_CIRCLE_CAP) { c = this.add.circle(0, 0, 1); pool.push(c); }
+      // #99: explicit depth on creation — these are pooled/reused for the life of the arena, so
+      // whatever depth they get here is what they keep; previously unset (0), which only read
+      // "above units" by the accident of the pool being lazily created after the player/enemy
+      // views already existed. Same tier as death FX / floating text (DEPTH.IMPACT_FX).
+      if (pool.length < IMPACT_CIRCLE_CAP) { c = this.add.circle(0, 0, 1).setDepth(DEPTH.IMPACT_FX); pool.push(c); }
       else {
         // Pool full: evict the oldest via a round-robin cursor.
         const i = (this._impactRR = ((this._impactRR ?? 0) + 1) % pool.length);

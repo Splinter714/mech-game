@@ -176,6 +176,12 @@ export const ProjectilesMixin = {
   // makes ground fire clear a forest hex in a couple of ticks, far faster than gunfire.
   _updateFirePatches() {
     const now = this.time.now;
+    // #99: cleared + redrawn each frame same as the other persistent-graphics layers
+    // (beamFx/projFx) — this used to draw straight into `projFx` (shared with in-flight
+    // projectiles), which put the burning-ground decal at whatever depth projectiles have
+    // (above units) instead of a proper low ground layer. Own graphics object (`groundFx`,
+    // DEPTH.GROUND_FX — set in ArenaScene.create()) so it can never render over a mech.
+    this.groundFx.clear();
     for (const fp of this.firePatches) {
       if (now >= fp.nextTick) {
         fp.nextTick += 500;
@@ -193,7 +199,7 @@ export const ProjectilesMixin = {
           this._damageBuildingAt(c.x, c.y, fp.dps * 0.5, { flame: true });
         }
       }
-      drawGroundFire(this.projFx, fp.x, fp.y, fp.r, now);   // shared flame art (matches the lab)
+      drawGroundFire(this.groundFx, fp.x, fp.y, fp.r, now);   // shared flame art (matches the lab)
       if (now >= fp.until) fp.dead = true;
     }
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);

@@ -17,6 +17,7 @@ import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
 import { SalvageMixin } from './arena/salvage.js';
+import { DEPTH } from './arena/shared.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -117,9 +118,14 @@ export default class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-R', () => this._resetEnemies());   // #39
     this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
 
-    this.fx = this.add.graphics();        // instant beams / impact flashes (timed clear)
-    this.beamFx = this.add.graphics();   // persistent beams + dying sparks (redrawn each frame)
-    this.projFx = this.add.graphics();    // travelling projectiles (redrawn each frame)
+    // #99: explicit depths (DEPTH.* — shared.js) instead of relying on scene add-order, which
+    // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
+    // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
+    // layer so a ground decal can never out-rank a unit no matter what else gets added later.
+    this.groundFx = this.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning-ground patches (napalm)
+    this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
+    this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
+    this.projFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);    // travelling projectiles (redrawn each frame)
     this.projectiles = [];
     this.beams = [];
     this.dyingBeams = [];

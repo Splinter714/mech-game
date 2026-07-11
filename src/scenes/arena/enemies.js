@@ -28,7 +28,7 @@ import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, rotateToward } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, rotateToward, DEPTH } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
@@ -261,6 +261,10 @@ export const EnemiesMixin = {
     turret.rotation = angle + Math.PI / 2;
     parts.push(hull, turret);
     const c = this.add.container(x, y, parts);
+    // #99: same UNITS tier as the mech view (locomotion.js `_makeMechView`) — a tank is a
+    // non-mech "kind" but is still a ground unit that shouldn't unconditionally render over (or
+    // under) the player just because of when it happened to spawn.
+    c.setDepth(DEPTH.UNITS);
     c.hull = hull; c.turret = turret; c.shadow = shadow;
     return c;
   },

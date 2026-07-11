@@ -7,6 +7,30 @@ import { LOCATIONS } from '../../data/anatomy.js';
 // and combat (mapping a hit point back to the nearest body part).
 export const ARENA_MECH_SCALE = 0.34;
 
+// #99: explicit world-space depth tiers for everything drawn in the arena. Before this, most
+// layers relied on Phaser's default same-depth tiebreak (scene display-list ADD ORDER) instead
+// of a real `setDepth()` — which happened to read right only by accident of when each thing got
+// created relative to the player. That broke down as more layers piled on: enemy views are
+// spawned (`_spawnSquad`) AFTER `this.playerView` is created (ArenaScene.create()), so a tank
+// unconditionally rendered over the player on overlap; napalm's burning-ground decal was drawn
+// into the SAME graphics object as in-flight projectiles (`projFx`), which is itself created
+// after both the player view and every enemy view, so the fire patch painted over both too.
+// Neither bug was about ground fire or tanks specifically — it was every layer implicitly
+// depending on creation order. One flat, named scale fixes both and holds as new layers arrive:
+export const DEPTH = {
+  // Terrain tiles (world.js) are left at the default (unset ⇒ 0) — the floor, always lowest.
+  GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
+  UNITS: 3,           // every ground unit alike — the player AND every enemy view (mech or
+                      // vehicle) share this tier; no player-above/below-enemies rule, just a
+                      // flat tier so neither unconditionally hides the other.
+  PROJECTILES: 4,     // in-flight rounds, persistent beams, muzzle flash / melee slash — flying
+                      // over the units they're headed toward or past.
+  IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text
+                      // — momentary feedback that should read clearly over whatever it's on.
+  WORLD_UI: 6,        // world-space markers: the mission objective beacon, powerup/salvage
+                      // beacons — always legible above units and FX.
+};
+
 // The starting enemy's hex (world build clears it; create() spawns the first enemy there).
 export const DUMMY_HEX = { q: 3, r: -1 };
 
