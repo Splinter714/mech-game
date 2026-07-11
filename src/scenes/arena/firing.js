@@ -101,6 +101,12 @@ export const FiringMixin = {
     const mods = this._buffMods?.() ?? {};
     // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend one.
     if (!mods.freeAmmo) this.mech.consumeAmmo(w.location, w.index, 1);
+    // #103 noise-aggro: a real shot just went off at the player's position — unaware enemies
+    // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
+    // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.
+    this._lastFireAt = this.time.now;
+    this._lastFireX = this.px;
+    this._lastFireY = this.py;
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle

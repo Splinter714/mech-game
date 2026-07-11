@@ -446,6 +446,55 @@ try {
     const playerPositionUnchanged = a.px === pxBefore && a.py === pyBefore;
     const playerNotStranded = !a._blocked(a.px, a.py) && !a._isWall(a.px, a.py);
 
+    // #102: off-screen spawn points are biased toward the OBJECTIVE's direction rather than
+    // scattered uniformly around the player. Sample the real picker many times (against the
+    // freshly-advanced stage's live objective) and confirm the large majority land within the
+    // tuned bias arc of the player→objective bearing (a little slack over the raw arc: the
+    // blocked-terrain nudge scales a candidate toward world origin, not the player, which can
+    // drift the bearing slightly on a real generated map).
+    const spawnBias = { total: 0, withinSpread: 0, objAngle: null, hasObjective: !!a.objectiveHex };
+    if (a.objectiveHex) {
+      const objAngle = a._objectiveAngle();
+      spawnBias.objAngle = objAngle;
+      const SPREAD = Math.PI / 2.4;   // mirrors data/spawnBias.js SPAWN_BIAS_SPREAD
+      const wrapDiff = (x) => { const d = Math.abs(x) % (Math.PI * 2); return d > Math.PI ? Math.PI * 2 - d : d; };
+      for (let i = 0; i < 40; i++) {
+        const p = a._offscreenSpawnPoint();
+        const ang = Math.atan2(p.y - a.py, p.x - a.px);
+        spawnBias.total++;
+        if (wrapDiff(ang - objAngle) <= SPREAD + 0.35) spawnBias.withinSpread++;
+      }
+    }
+
+    // #103: an enemy far from the player starts UNAWARE — it idles near its own spawn point
+    // (no beelining) and never fires — until the player comes within detection range, at which
+    // point it flips to AWARE (permanently) and engages normally.
+    const awareness = {};
+    {
+      a._lastFireAt = null;   // clear any earlier player-fire noise so it can't leak in here
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const far = a._spawnMech(2000, 0, 'raider');   // ~2000px — well beyond any detection range
+      awareness.startsUnaware = far.awareness === 'unaware';
+      const distBefore = Math.hypot(far.x - a.px, far.y - a.py);
+      a.projectiles.length = 0;
+      for (let i = 0; i < 120; i++) a._updateEnemy(far, 0.016, 16);   // ~2s of sim time
+      const distAfterFar = Math.hypot(far.x - a.px, far.y - a.py);
+      awareness.stayedUnawareFarAway = far.awareness === 'unaware';
+      // An idle enemy only loiters within a small radius of its spawn; a beelining (aware)
+      // enemy at this chassis speed would close well over 150px of a 2s window.
+      awareness.didNotBeeline = distAfterFar > distBefore - 150;
+      awareness.noFireWhileUnaware = a.projectiles.length === 0;
+      // Bring the player within detection range — it must become (and stay) AWARE, and then
+      // actually engage (fire) once close enough.
+      far.x = 80; far.y = 0;
+      a.projectiles.length = 0;
+      for (let i = 0; i < 90; i++) a._updateEnemy(far, 0.016, 16);
+      awareness.becameAware = far.awareness === 'aware';
+      awareness.engagedAfterAware = a.projectiles.some((p) => p.owner === 'enemy');
+      a._removeEnemy(far);
+      a.projectiles.length = 0;
+    }
+
     // #72: soft cover — own-hex transparency + destructible/burnable trees, end to end.
     // Plant the biome's soft-cover terrain (forest/scrub/…) on known-clear ground near the
     // origin, stand a fresh enemy INSIDE it, and prove a real travelling round fired from open
@@ -715,6 +764,8 @@ try {
       s72,
       s92,
       s94,
+      spawnBias,
+      awareness,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -838,6 +889,22 @@ try {
   if (!arena.s94.wallBlocksLos) fail('#94 test setup: the planted wall hex did not actually block LOS');
   if (!arena.s94.turretFiredAtInsaneRange) fail('#94 the turret never fired at long range with a wall between it and the player');
   if (!arena.s94.playerHitThroughWallAtRange) fail('#94 a turret\'s arcing siege shell did not hit the player through a wall at long range');
+
+  // #102: enemy spawn points are biased toward the objective's direction, not scattered
+  // uniformly around the player.
+  if (!arena.spawnBias.hasObjective) fail('#102 test setup: no live objective to bias spawns toward');
+  else if (arena.spawnBias.total === 0 || arena.spawnBias.withinSpread / arena.spawnBias.total < 0.8) {
+    fail(`#102 spawn points were not biased toward the objective direction (${arena.spawnBias.withinSpread}/${arena.spawnBias.total} within the bias arc)`);
+  }
+
+  // #103: enemy awareness — starts UNAWARE (idles, doesn't beeline or fire) until the player is
+  // detected, then flips to AWARE (permanently) and engages.
+  if (!arena.awareness.startsUnaware) fail('#103 a freshly spawned enemy was not UNAWARE');
+  if (!arena.awareness.stayedUnawareFarAway) fail('#103 an enemy far from the player became AWARE with no detection trigger');
+  if (!arena.awareness.didNotBeeline) fail('#103 an UNAWARE enemy beelined toward a distant player instead of idling near its spawn');
+  if (!arena.awareness.noFireWhileUnaware) fail('#103 an UNAWARE enemy fired at the player');
+  if (!arena.awareness.becameAware) fail('#103 an enemy within detection range never became AWARE');
+  if (!arena.awareness.engagedAfterAware) fail('#103 an AWARE enemy in range never engaged (fired at) the player');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {

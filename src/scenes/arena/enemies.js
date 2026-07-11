@@ -31,6 +31,8 @@ import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, rotateToward, DEPTH } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
+import { biasedSpawnAngle } from '../../data/spawnBias.js';
+import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
@@ -91,6 +93,14 @@ const SPAWN_WORLD_INSET = 1.5;      // hexes of inset from the world edge kept c
 const MOVE_SPEED_FRAC = 0.85;       // fraction of chassis maxSpeed the AI drives at
 const ARRIVE_SLOW = 70;             // px from a destination where the enemy eases to a stop
 const REPICK_ON_ARRIVE = true;      // arriving at a FLANK/COVER goal forces an early re-decide
+
+// #103 awareness: while UNAWARE, a mech loiters near its own spawn point instead of engaging —
+// a light idle wander so a "sleeping" squad still reads as alive, not frozen. Small radius/slow
+// re-pick cadence so it stays a subtle patrol, not a distraction from the aware enemies nearby.
+const IDLE_WANDER_RADIUS = 90;      // px around spawnX/spawnY the idle waypoint may land
+const IDLE_REPICK_MIN = 2200;       // ms — min hold before picking a fresh idle waypoint
+const IDLE_REPICK_MAX = 4200;       // ms — max hold before picking a fresh idle waypoint
+const IDLE_SPEED_FRAC = 0.35;       // fraction of MOVE_SPEED_FRAC used while idle (slow patrol)
 
 // Reactivity: bias state choice on what the player is doing.
 const PLAYER_FLEE_DOT = 0.35;       // player velocity·(away from enemy) above this ⇒ "fleeing"
@@ -183,6 +193,9 @@ export const EnemiesMixin = {
       handed: Math.random() < 0.5 ? 1 : -1,   // persistent flank handedness (spaces enemies out)
       // #44 follow-up: an all-indirect (homing/arcing) loadout camps cover as its primary posture.
       allIndirect: isAllIndirect(mech),
+      // #103: detection range derives from the same standoff/weapon-range concept the tactical
+      // AI already computed above, widened a touch (see data/awareness.js).
+      detectRange: detectionRangeFor(clamp(opt * STANDOFF_FRAC, STANDOFF_MIN, STANDOFF_MAX)),
     };
     this._resetAiState(e);
     this.enemies.push(e);
@@ -207,6 +220,11 @@ export const EnemiesMixin = {
       spawnX: x, spawnY: y, typeId, kind: def.kind, kindDef: def, flying: !!def.flying,
       behavior: def.behavior, handed: Math.random() < 0.5 ? 1 : -1,
       rotorSpin: 0,           // flyers spin their rotor overlay
+      // #103: starts UNAWARE — idles near spawn until it detects the player. Detection range
+      // reuses the kind's own engagement range (fireRange), widened a touch.
+      awareness: UNAWARE,
+      detectRange: detectionRangeFor(def.fireRange),
+      idleGoal: null, idleAt: 0,
     };
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
@@ -304,6 +322,11 @@ export const EnemiesMixin = {
     e.coverSpot = null;           // #72 leash: {x, y, since} — the cover spot it's camped at
     e.lock = makeLock();          // #62: this enemy's indirect-fire lock ON THE PLAYER
     e.lockBlindAge = 0;           // s since this enemy last had LOS to the player (blind lead)
+    // #103: fresh spawn (or a debug reset) starts UNAWARE again — idle near spawn until it
+    // detects the player. One-way per encounter, so a reset is the only thing that re-arms it.
+    e.awareness = UNAWARE;
+    e.idleGoal = null;            // {x, y} current idle-wander waypoint near spawnX/spawnY
+    e.idleAt = 0;                 // ms until the idle waypoint is re-picked
   },
 
   // #44 follow-up: the default opening squad — one of each mech type — dropped OFF-SCREEN so
@@ -331,8 +354,12 @@ export const EnemiesMixin = {
     const vh = this.scale.height / zoom;  // world-space viewport height
     const viewR = 0.5 * Math.hypot(vw, vh) + OFFSCREEN_MARGIN;
     const maxR = (this.worldRadius - SPAWN_WORLD_INSET) * HEX_SIZE * SQRT3;   // ~world edge in px
+    // #102: bias the spawn bearing toward the objective's direction — enemies read as coming
+    // from what you're attacking rather than scattering uniformly around the player. Falls back
+    // to a uniform bearing (biasedSpawnAngle's own null handling) if there's no live objective.
+    const objAngle = this._objectiveAngle();
     for (let tries = 0; tries < 24; tries++) {
-      const ang = Math.random() * Math.PI * 2;
+      const ang = biasedSpawnAngle(objAngle);
       // Distance from the player: just off-view, but never past the world edge.
       const d = Math.min(viewR + Math.random() * 120, maxR);
       let x = this.px + Math.cos(ang) * d, y = this.py + Math.sin(ang) * d;
@@ -343,6 +370,15 @@ export const EnemiesMixin = {
       if (!this._blocked(x, y)) return { x, y };
     }
     return { x: 0, y: -maxR * 0.8 };   // last-resort clear-ish fallback (map is open near centre)
+  },
+
+  // The bearing (radians, player → objective) spawn points are biased toward (#102), or null
+  // when there's no live objective this stage (spawns then fall back to a uniform bearing).
+  _objectiveAngle() {
+    if (!this.objectiveHex) return null;
+    const [q, r] = this.objectiveHex.split(',').map(Number);
+    const { x: ox, y: oy } = hexToPixel(q, r);
+    return Math.atan2(oy - this.py, ox - this.px);
   },
 
   // Drop an extra enemy from OFF-SCREEN so it walks into view (#44 follow-up), cycling the
@@ -442,34 +478,58 @@ export const EnemiesMixin = {
     const bearing = Math.atan2(dyp, dxp);           // from enemy → player
     const ux = dxp / dist, uy = dyp / dist;
 
+    // Line-of-sight to the player right now (needed both for awareness detection below and the
+    // firing gate further down). #72: each endpoint's own soft-cover hex is transparent — a
+    // player standing in forest is seen (and hittable), and an enemy inside forest can see/shoot
+    // out.
+    const los = this._wallDistance(e.x, e.y, bearing, dist, this._losTransparency(e.x, e.y, this.px, this.py)) === Infinity;
+
+    // #103 awareness: an UNAWARE enemy hasn't noticed the player yet — it idles near its spawn
+    // point rather than engaging. It flips to AWARE (permanently, for the rest of the encounter)
+    // the moment it's seen (in detection range + LOS) or hears the player fire nearby.
+    if (e.awareness !== AWARE) {
+      const noiseLive = this._lastFireAt != null && this.time.now - this._lastFireAt < NOISE_WINDOW_MS;
+      const noiseDist = noiseLive ? Math.hypot(this._lastFireX - e.x, this._lastFireY - e.y) : null;
+      if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange, hasLos: los, noiseDist })) {
+        e.awareness = AWARE;
+      }
+    }
+    const aware = e.awareness === AWARE;
+
     if (this.enemyMove) {
       // Track incoming damage: any drop in lethal health opens a "prefer cover" window.
       const hp = lethalHealth(e.mech);
       if (hp < e.lastHealth - 0.001) e.hurtUntil = this.time.now + COVER_DAMAGE_WINDOW;
       e.lastHealth = hp;
 
-      // Re-decide on a cadence timer (or immediately after arriving at a goal). Between
-      // decisions the enemy commits to its current state, so behaviour reads deliberately.
-      e.decideAt -= delta;
-      e.recampAt -= delta;   // all-indirect camp-hold timer (see _decideEnemyState)
-      const arrived = e.goal && Math.hypot(e.goal.x - e.x, e.goal.y - e.y) < ARRIVE_SLOW;
-      if (e.decideAt <= 0 || (REPICK_ON_ARRIVE && arrived && (e.state === 'flank' || e.state === 'cover'))) {
-        this._decideEnemyState(e, dist, bearing, hp);
-        // #72 leash bookkeeping: only a COVER commitment keeps its camp timer; anything else
-        // clears it so the next stint behind cover starts a fresh leash.
-        if (e.state !== 'cover') e.coverSpot = null;
-        e.decideAt = rand(DECIDE_MIN, DECIDE_MAX);
+      let mx, my;
+      if (!aware) {
+        // Idle/patrol: loiter near the spawn point instead of running the tactical brain.
+        ({ mx, my } = this._idleMoveIntent(e, delta));
+      } else {
+        // Re-decide on a cadence timer (or immediately after arriving at a goal). Between
+        // decisions the enemy commits to its current state, so behaviour reads deliberately.
+        e.decideAt -= delta;
+        e.recampAt -= delta;   // all-indirect camp-hold timer (see _decideEnemyState)
+        const arrived = e.goal && Math.hypot(e.goal.x - e.x, e.goal.y - e.y) < ARRIVE_SLOW;
+        if (e.decideAt <= 0 || (REPICK_ON_ARRIVE && arrived && (e.state === 'flank' || e.state === 'cover'))) {
+          this._decideEnemyState(e, dist, bearing, hp);
+          // #72 leash bookkeeping: only a COVER commitment keeps its camp timer; anything else
+          // clears it so the next stint behind cover starts a fresh leash.
+          if (e.state !== 'cover') e.coverSpot = null;
+          e.decideAt = rand(DECIDE_MIN, DECIDE_MAX);
+        }
+        // Resolve the current state into a movement-intent vector (mx, my), roughly unit length.
+        ({ mx, my } = this._enemyMoveIntent(e, dist, bearing, ux, uy));
       }
-
-      // Resolve the current state into a movement-intent vector (mx, my), roughly unit length.
-      const { mx, my } = this._enemyMoveIntent(e, dist, bearing, ux, uy);
 
       // #45: backing away (relative to turret facing) is slower.
       const backScale = backwardSpeedScale(mx, my, e.turret);
       // Ease to a stop near a point goal so the enemy doesn't jitter on top of it.
-      let speedFrac = MOVE_SPEED_FRAC;
-      if (e.goal) {
-        const gd = Math.hypot(e.goal.x - e.x, e.goal.y - e.y);
+      let speedFrac = aware ? MOVE_SPEED_FRAC : MOVE_SPEED_FRAC * IDLE_SPEED_FRAC;
+      const goal = aware ? e.goal : e.idleGoal;
+      if (goal) {
+        const gd = Math.hypot(goal.x - e.x, goal.y - e.y);
         if (gd < ARRIVE_SLOW) speedFrac *= clamp(gd / ARRIVE_SLOW, 0, 1);
       }
       // #41: rough terrain (river/forest/rubble) under the enemy slows it too, same data-driven factor.
@@ -483,27 +543,29 @@ export const EnemiesMixin = {
         else if (!this._blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
         else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
         // Bumped a wall while pathing to a goal — abandon it so we re-plan promptly.
-        if (e.goal) e.decideAt = Math.min(e.decideAt, 200);
+        if (aware && e.goal) e.decideAt = Math.min(e.decideAt, 200);
       }
       e.x = nx; e.y = ny;
     } else {
       e.vx = approach(e.vx, 0, mv.accel * dt); e.vy = approach(e.vy, 0, mv.accel * dt);
     }
 
-    // Aim turret + face travel (turret still tracks even when stationary, for testing).
-    e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
+    // Aim turret + face travel. While UNAWARE the turret doesn't track the player (it hasn't
+    // noticed it) — it just follows the idle travel direction, so the enemy reads as patrolling
+    // rather than watching the player it hasn't spotted yet.
+    if (aware) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
+    else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
-    // Line-of-sight to the player right now, and this enemy's maintained lock ON the player (#62).
-    // #72: each endpoint's own soft-cover hex is transparent — a player standing in forest is
-    // seen (and hittable), and an enemy inside forest can see/shoot out.
-    const los = this._wallDistance(e.x, e.y, bearing, dist, this._losTransparency(e.x, e.y, this.px, this.py)) === Infinity;
-    this._updateEnemyLock(e, dist, bearing, los, dt);
+    // This enemy's maintained indirect-fire lock ON the player (#62) — only meaningful once
+    // aware; an unaware enemy has no business tracking the player at all.
+    if (aware) this._updateEnemyLock(e, dist, bearing, los, dt);
 
-    // Fire ready weapons at the player (gated by #28). Direct-fire weapons need current LOS. An
-    // indirect-fire weapon (homing/arcing) may also fire BLIND over cover (#62/#44) when this
-    // enemy holds a maintained lock — it lobs onto the player's last-known/predicted position.
-    if (this.enemyFire) for (const w of e.mech.readyWeapons()) {
+    // Fire ready weapons at the player (gated by #28, and by #103 awareness — an unaware enemy
+    // never fires). Direct-fire weapons need current LOS. An indirect-fire weapon (homing/
+    // arcing) may also fire BLIND over cover (#62/#44) when this enemy holds a maintained lock —
+    // it lobs onto the player's last-known/predicted position.
+    if (this.enemyFire && aware) for (const w of e.mech.readyWeapons()) {
       let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
       const indirect = isIndirectWeapon(w.weapon);
@@ -550,9 +612,34 @@ export const EnemiesMixin = {
     const ux = dxp / dist, uy = dyp / dist;
     const ctx = { dt, delta, dxp, dyp, dist, bearing, ux, uy };
 
+    // #103 awareness: distance-only detection (+ noise) for non-mech kinds — deliberately
+    // simpler than the mech path's LOS check, since these often spawn in numbers (drone swarms,
+    // turret nests) and a per-unit wall raycast every frame for all of them would add up.
+    if (e.awareness !== AWARE) {
+      const noiseLive = this._lastFireAt != null && this.time.now - this._lastFireAt < NOISE_WINDOW_MS;
+      const noiseDist = noiseLive ? Math.hypot(this._lastFireX - e.x, this._lastFireY - e.y) : null;
+      if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange, noiseDist })) {
+        e.awareness = AWARE;
+      }
+    }
+    const aware = e.awareness === AWARE;
+
     const behavior = ENEMY_BEHAVIORS[e.behavior];
-    if (this.enemyMove || e.behavior === 'turret') behavior(this, e, ctx);
-    else { e.vx = approach(e.vx, 0, (e.kindDef.move.accel || 200) * dt); e.vy = approach(e.vy, 0, (e.kindDef.move.accel || 200) * dt); }
+    if (!aware) {
+      // Idle: loiter near spawn rather than running the kind's tactical brain (which also gates
+      // firing, since aimAndFire lives inside each behavior fn — an unaware unit never fires).
+      const mv = e.kindDef.move;
+      if (mv.maxSpeed > 0) {
+        const { mx, my } = this._idleMoveIntent(e, delta);
+        e.vx = approach(e.vx, mx * mv.maxSpeed * IDLE_SPEED_FRAC, mv.accel * dt);
+        e.vy = approach(e.vy, my * mv.maxSpeed * IDLE_SPEED_FRAC, mv.accel * dt);
+        if (Math.hypot(e.vx, e.vy) > 5) e.angle = Math.atan2(e.vy, e.vx);
+      } else {
+        e.vx = approach(e.vx, 0, (mv.accel || 200) * dt); e.vy = approach(e.vy, 0, (mv.accel || 200) * dt);
+      }
+    } else if (this.enemyMove || e.behavior === 'turret') {
+      behavior(this, e, ctx);
+    } else { e.vx = approach(e.vx, 0, (e.kindDef.move.accel || 200) * dt); e.vy = approach(e.vy, 0, (e.kindDef.move.accel || 200) * dt); }
 
     // Integrate. Flyers pass over walls/water/forest; ground units collide + slide like a mech.
     let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
@@ -769,6 +856,29 @@ export const EnemiesMixin = {
   // by HOLD / in-band PRESS so the enemy isn't a sitting duck without committing to a full orbit.
   _strafeIntent(e, ux, uy) {
     return { mx: -uy * e.handed * 0.6, my: ux * e.handed * 0.6 };
+  },
+
+  // #103: movement intent for an UNAWARE enemy — a light idle wander/loiter near its own spawn
+  // point (not the player), so it reads as patrolling rather than frozen while it hasn't noticed
+  // anything yet. Picks a fresh nearby waypoint on a slow cadence; holds still once it arrives
+  // until the next re-pick.
+  _idleMoveIntent(e, delta) {
+    e.idleAt -= delta;
+    const arrived = e.idleGoal && Math.hypot(e.idleGoal.x - e.x, e.idleGoal.y - e.y) < ARRIVE_SLOW;
+    if (!e.idleGoal || e.idleAt <= 0 || arrived) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * IDLE_WANDER_RADIUS;
+      let gx = e.spawnX + Math.cos(a) * r, gy = e.spawnY + Math.sin(a) * r;
+      for (let t = 0; t < 5 && this._blocked(gx, gy); t++) {
+        gx = (gx + e.spawnX) / 2; gy = (gy + e.spawnY) / 2;
+      }
+      e.idleGoal = { x: gx, y: gy };
+      e.idleAt = rand(IDLE_REPICK_MIN, IDLE_REPICK_MAX);
+    }
+    const gx = e.idleGoal.x - e.x, gy = e.idleGoal.y - e.y;
+    const gm = Math.hypot(gx, gy);
+    if (gm < 2) return { mx: 0, my: 0 };
+    return { mx: gx / gm, my: gy / gm };
   },
 
   // Advance an enemy's indirect-fire lock ON the player (#62/#44). Mirrors the player's lock but
