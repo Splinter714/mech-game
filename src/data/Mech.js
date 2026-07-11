@@ -19,9 +19,12 @@ export class Mech {
 
     // Mounted items per location (array of item ids). Unknown ids — e.g. equipment
     // removed from the catalog since an old build was saved — are dropped so stale
-    // saves load cleanly instead of crashing the renderer.
+    // saves load cleanly instead of crashing the renderer. Iterates MOUNT_LOCATIONS
+    // (not LOCATIONS): centerTorso is mountable (the ability slot) even though it has
+    // no armor/structure of its own (#128), so it needs a mounts entry LOCATIONS won't
+    // give it.
     this.mounts = {};
-    for (const loc of LOCATIONS) {
+    for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc] = (data.mounts?.[loc] ?? []).filter((id) => getItem(id));
     }
 
@@ -31,7 +34,9 @@ export class Mech {
     this._initAmmo();
 
     // Per-location health: armor (outer) + structure (inner). Restored from saved
-    // `damage` if present, else full from the chassis.
+    // `damage` if present, else full from the chassis. Only LOCATIONS (the damage-
+    // tracked set) get an entry — head/cockpit/centerTorso are cosmetic-only (#128) and
+    // never appear in `parts`.
     this.parts = {};
     for (const loc of LOCATIONS) {
       const def = this._chassis.locations[loc];
@@ -59,7 +64,7 @@ export class Mech {
   // (Re)build the ammo arrays so each weapon starts with a full magazine.
   _initAmmo() {
     this.ammo = {};
-    for (const loc of LOCATIONS) this.ammo[loc] = this.mounts[loc].map((id) => this._ammoCap(id));
+    for (const loc of MOUNT_LOCATIONS) this.ammo[loc] = this.mounts[loc].map((id) => this._ammoCap(id));
   }
 
   get chassis() { return this._chassis; }
@@ -106,7 +111,12 @@ export class Mech {
     }
   }
 
-  isPartDestroyed(locationId) { return partDestroyed(this.parts[locationId]); }
+  // Untracked locations (head/cockpit/centerTorso — cosmetic only since #128) have no
+  // `parts` entry and can never be destroyed; only damage-tracked LOCATIONS can.
+  isPartDestroyed(locationId) {
+    const p = this.parts[locationId];
+    return p ? partDestroyed(p) : false;
+  }
   isDestroyed() { return mechDestroyed(this.parts); }
 
   // Mobility multiplier. Legs aren't targetable any more, so mobility is always full;
@@ -201,7 +211,7 @@ export class Mech {
 
   // Top every magazine back up over time at the weapon's regen rate.
   regenAmmo(dt) {
-    for (const loc of LOCATIONS) {
+    for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, i) => {
         if (this.ammo[loc][i] == null) return;
         const w = getWeapon(id);
@@ -257,10 +267,8 @@ export class Mech {
   toJSON() {
     const mounts = {};
     const damage = {};
-    for (const loc of LOCATIONS) {
-      mounts[loc] = [...this.mounts[loc]];
-      damage[loc] = { armor: this.parts[loc].armor, structure: this.parts[loc].structure };
-    }
+    for (const loc of MOUNT_LOCATIONS) mounts[loc] = [...this.mounts[loc]];
+    for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, structure: this.parts[loc].structure };
     return { chassisId: this.chassisId, name: this.name, mounts, damage };
   }
 }

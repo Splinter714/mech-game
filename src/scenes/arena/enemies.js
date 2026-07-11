@@ -28,7 +28,7 @@ import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes } from '../../data/spawnPlacement.js';
-import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
+import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
@@ -148,14 +148,16 @@ function isAllIndirect(mech) {
   return ws.length > 0 && ws.every(isIndirectWeapon);
 }
 
-// Lowest health fraction among the enemy's lethal parts (head/cockpit/centreTorso) — the AI
-// reads "am I hurt?" off this to decide whether to seek cover / disengage.
+// Lowest health fraction among the enemy's lethal parts — #128: both side torsos, since
+// losing both is now the kill condition (LETHAL_GROUPS) — the AI reads "am I hurt?" off
+// this to decide whether to seek cover / disengage.
 function lethalHealth(mech) {
   let lo = 1;
-  for (const loc of LETHAL_LOCATIONS) {
-    if (loc === 'cockpit') continue;   // shares the head part; head covers it
-    const f = mech.partHealthFraction(loc);
-    if (f < lo) lo = f;
+  for (const group of LETHAL_GROUPS) {
+    for (const loc of group) {
+      const f = mech.partHealthFraction(loc);
+      if (f < lo) lo = f;
+    }
   }
   return lo;
 }

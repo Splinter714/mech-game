@@ -62,10 +62,11 @@ export const POWERUPS = {
 // branching at the call site — see combat.js `_damageEnemyAt`).
 //
 // Bounds picked from the actual roster's max-hp spread: the weakest real enemy IN-TREE today
-// is a drone (hp 14) and the toughest is a base heavy-chassis mech (maxHp 616 — see Mech.js
-// `maxHp`). #97 (infantry, proposed maxHp 6) would be weaker still, but is not implemented as
-// of this pass — when it lands, drop DROP_HP_FLOOR to 6 so infantry becomes the true floor
-// point instead of quietly landing at MIN_DROP_CHANCE alongside the drone.
+// is a drone (hp 14) and the toughest is a base heavy-chassis mech (maxHp 400 — see Mech.js
+// `maxHp`; dropped from 616 when #128 removed head/cockpit/centerTorso from the tracked
+// damage locations). #97 (infantry, proposed maxHp 6) would be weaker still, but is not
+// implemented as of this pass — when it lands, drop DROP_HP_FLOOR to 6 so infantry becomes
+// the true floor point instead of quietly landing at MIN_DROP_CHANCE alongside the drone.
 //
 // #106 (playtest 2026-07-10, follow-up to #90): "small enemies still give WAAAAAAAAAAY too
 // many powerups for how easy they are to kill" — even the old 35% floor read as a coin-flip-
@@ -81,18 +82,29 @@ export const POWERUPS = {
 // ceiling (0**k = 0, 1**k = 1 for any k), but bows the middle of the curve up relative to a
 // straight line. Net effect: weak/moderate kills (drone/heli/turret/tank) drop noticeably less
 // than before, while medium/heavy — the "normal" difficulty range — land close to where #90
-// put them. DROP_CURVE_EXP = 0.6 was solved for exactly that: dropChanceForMaxHp(416) ≈ 0.756.
+// put them. DROP_CURVE_EXP was originally 0.6, solved for dropChanceForMaxHp(416) ≈ 0.756
+// against a maxHp ceiling of 616.
+//
+// #128 dropped the heavy mech's real maxHp to 400 (head/cockpit/centerTorso left the tracked
+// damage locations), shrinking DROP_HP_CEIL to match — which on its own compresses the curve
+// and pushes every non-ceiling tier UP (e.g. the turret, at a fixed 90 hp, moved from 0.389
+// under the old ceiling to over the 0.35 "should read as rare" line). Re-solved
+// DROP_CURVE_EXP = 0.7 against the new floor/ceiling to restore both anchors: the medium mech
+// (now maxHp 270) back near ~0.75, and the turret back comfortably under 0.35.
 //
 // Resulting curve across the current roster (drone/heli/turret/tank/light/medium/heavy):
-//   0.05 → 0.27 → 0.31 → 0.43 → 0.58 → 0.76 → 0.95
+//   0.05 → 0.28 → 0.34 → 0.51 → 0.53 → 0.73 → 0.95
 // vs. the old linear curve's 0.35 → 0.41 → 0.43 → 0.50 → 0.60 → 0.75 → 0.95 — trivial kills
 // down sharply, "normal" kills roughly where they were. Flagging for playtest per #106.
 export const MIN_DROP_CHANCE = 0.05;   // weakest kill (drone, maxHp ~14) — was 0.35
-export const MAX_DROP_CHANCE = 0.95;   // toughest kill (heavy mech, maxHp ~616) — unchanged
+export const MAX_DROP_CHANCE = 0.95;   // toughest kill (heavy mech, maxHp ~400) — unchanged
 const DROP_HP_FLOOR = 14;              // maxHp at/below which a kill gets MIN_DROP_CHANCE
-const DROP_HP_CEIL = 616;              // maxHp at/above which a kill gets MAX_DROP_CHANCE
-const DROP_CURVE_EXP = 0.6;            // <1 ⇒ concave: bows the mid-curve up so medium/heavy
+const DROP_HP_CEIL = 400;              // maxHp at/above which a kill gets MAX_DROP_CHANCE
+                                        // (#128: heavy mech's real maxHp, was 616 before head/
+                                        // cockpit/centerTorso dropped out of tracked damage)
+const DROP_CURVE_EXP = 0.7;            // <1 ⇒ concave: bows the mid-curve up so medium/heavy
                                         // stay close to #90's values even with a much lower floor
+                                        // (re-solved for the #128 floor/ceiling, was 0.6)
 
 // Kept for anything still importing the old flat constant (none in-tree after #90, but
 // harmless to leave as a documented "typical" reference point).

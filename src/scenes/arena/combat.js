@@ -26,8 +26,11 @@ export const CombatMixin = {
   },
 
   // Enemy round hits the player: damage a (torso-weighted) random part through the shield.
+  // #128: head/centerTorso dropped out of this pool entirely — they're cosmetic only now
+  // (no armor/structure, so a hit "on" them would silently no-op) — the side torsos pick up
+  // the centre-mass weighting instead, so hits still lean toward the torsos over the arms.
   _damagePlayerAt(dmg) {
-    const parts = ['centerTorso', 'centerTorso', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm', 'head'];
+    const parts = ['leftTorso', 'leftTorso', 'rightTorso', 'rightTorso', 'leftArm', 'rightArm'];
     const loc = parts[Math.floor(Math.random() * parts.length)];
     const res = this.damagePlayer(loc, dmg);
     if (res.shielded) { this._floatText(this.px, this.py - 24, 'shielded', '#5ec8e0'); return; }

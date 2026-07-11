@@ -90,7 +90,6 @@ export default class HudScene extends Phaser.Scene {
     this.partTexts = {};
     let y = 130;
     for (const loc of LOCATIONS) {
-      if (loc === 'cockpit') continue;
       this.partTexts[loc] = this.add.text(16, y, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text });
       y += 14;
     }
@@ -151,7 +150,6 @@ export default class HudScene extends Phaser.Scene {
     }
 
     for (const loc of LOCATIONS) {
-      if (loc === 'cockpit') continue;
       const p = mech.parts[loc];
       const frac = mech.partHealthFraction(loc);
       const hp = Math.ceil(p.armor + p.structure);

@@ -271,7 +271,10 @@ try {
     const partsAfter = partFracs();
     const anyPartDamaged = partsAfter.some((f, i) => f < partsBefore[i]);
 
-    em.applyDamage('centerTorso', 999);
+    // #128: centerTorso is no longer damage-tracked (cosmetic only) — the kill condition is
+    // now both side torsos destroyed, so overkill those instead of the old one-hit centerTorso.
+    em.applyDamage('leftTorso', 999);
+    em.applyDamage('rightTorso', 999);
     const dummyDead = em.isDestroyed();
 
     // #39: spawn an extra enemy, confirm the arena tracks N and can damage the new one,
@@ -284,7 +287,7 @@ try {
     a._damageEnemyAt(e1, e1.x, e1.y, 30, 0xffffff);
     const extraDamaged = sumHp(e1.mech) < e1Hp0;
     a._resetEnemies();
-    // em was just killed (centre-torso overkill above); reset must bring it back to life.
+    // em was just killed (both-side-torso overkill above); reset must bring it back to life.
     const resetWorked = !em.isDestroyed();
 
     // #68: NON-MECH kinds spawn, render (their own vehicle textures), take damage through the
@@ -430,7 +433,14 @@ try {
         a.enemies.length === beforeLen - 1 && a.enemies.indexOf(drone) === -1 && drone._tornDown === true;
       deathFx.droneMaxR = recorded.length ? Math.max(...recorded) : 0;
 
+      // #128: killing a mech now needs BOTH side torsos destroyed (a single centre-mass hit no
+      // longer kills). Pre-destroy rightTorso directly (engine-level, no FX) so the mech is one
+      // torso from dead, then land the real _damageEnemyAt hit dead-centre — the nearest-part
+      // tie-break always resolves a centre hit to leftTorso (still alive), so this single call
+      // both destroys the last torso AND is the call that flips isDestroyed(), landing the death
+      // FX exactly where the real game would trigger it.
       const heavy = a._spawnEnemy(-500, -520, 'sniper');
+      heavy.mech.applyDamage('rightTorso', 99999);
       recorded = [];
       a._damageEnemyAt(heavy, heavy.x, heavy.y, 99999, 0xffffff);
       deathFx.heavyMaxR = recorded.length ? Math.max(...recorded) : 0;
@@ -789,8 +799,10 @@ try {
       s72.enemyHitPlayerInCover = sumHp(a.mech) < pHp0;
       // (d) Gunfire CHIPS an unoccupied soft-cover hex: kill the occupant, step the player
       // back to open ground, and fire into the forest hex — the round detonates on it now
-      // (no occupant exemption) and bites its HP.
-      fe.mech.applyDamage('centerTorso', 9999);
+      // (no occupant exemption) and bites its HP. #128: centerTorso is no longer damage-
+      // tracked/lethal — kill via both side torsos instead.
+      fe.mech.applyDamage('leftTorso', 9999);
+      fe.mech.applyDamage('rightTorso', 9999);
       a.px = 0; a.py = 0;
       a.turretAngle = Math.atan2(FP.y, FP.x); a.aimX = FP.x; a.aimY = FP.y;
       const cHp0 = a.coverHp.get(FK);

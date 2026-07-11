@@ -134,8 +134,10 @@ export function rotateToward(cur, target, radPerSec, dt) {
   return cur;
 }
 
-// Re-exported for the combat mixin (damage maps to a body location; cockpit is hit via head).
-export const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit');
+// Re-exported for the combat mixin (damage maps to a body location). #128: LOCATIONS is
+// already the damage-tracked set (head/cockpit/centerTorso are cosmetic only and can't be
+// hit), so no filtering is needed here any more.
+export const DAMAGEABLE = LOCATIONS;
 
 // #109: world position of a muzzle at a body part's front edge — the shared geometry behind
 // EVERY "where does this shot actually leave from" computation in the arena. `part` is a

@@ -101,8 +101,8 @@ describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', 
     expect(MIN_DROP_CHANCE).toBeGreaterThan(0);
   });
 
-  it('gives the toughest real enemy (base heavy mech, maxHp 616) the MAX chance', () => {
-    expect(dropChanceForMaxHp(616)).toBeCloseTo(MAX_DROP_CHANCE, 5);
+  it('gives the toughest real enemy (base heavy mech, maxHp 400) the MAX chance', () => {
+    expect(dropChanceForMaxHp(400)).toBeCloseTo(MAX_DROP_CHANCE, 5);
   });
 
   it('clamps below the floor and above the ceiling instead of extrapolating', () => {
@@ -119,7 +119,9 @@ describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', 
 
   it('is monotonic — a tougher enemy never yields a LOWER chance than a weaker one', () => {
     // The actual roster's maxHp spread, weakest to toughest (see enemyKinds.js + Mech.maxHp).
-    const roster = [14, 70, 90, 160, 266, 416, 616]; // drone, heli, turret, tank, light, medium, heavy
+    // #128: light/medium/heavy dropped to 172/270/400 when head/cockpit/centerTorso left the
+    // tracked damage locations (was 266/416/616).
+    const roster = [14, 70, 90, 160, 172, 270, 400]; // drone, heli, turret, tank, light, medium, heavy
     let prev = -Infinity;
     for (const hp of roster) {
       const chance = dropChanceForMaxHp(hp);
@@ -141,18 +143,22 @@ describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', 
 
   it('lands a medium mech (the likely most-common kill) close to the old flat 0.75 rate', () => {
     // #106 bent the curve concave specifically so this "typical kill" sanity check from #90
-    // still holds even though the floor dropped from 0.35 to 0.05.
-    expect(dropChanceForMaxHp(416)).toBeGreaterThan(0.7);
-    expect(dropChanceForMaxHp(416)).toBeLessThan(0.8);
+    // still holds even though the floor dropped from 0.35 to 0.05. #128 later moved the medium
+    // mech's real maxHp to 270 (was 416), but the floor/ceiling moved down in near-identical
+    // proportion, so this still lands in the same 0.7-0.8 band.
+    expect(dropChanceForMaxHp(270)).toBeGreaterThan(0.7);
+    expect(dropChanceForMaxHp(270)).toBeLessThan(0.8);
   });
 
   it('agrees with the real Mech.maxHp getter for each chassis', () => {
     const light = new Mech({ chassisId: 'light' }).maxHp;
     const medium = new Mech({ chassisId: 'medium' }).maxHp;
     const heavy = new Mech({ chassisId: 'heavy' }).maxHp;
-    expect(light).toBe(266);
-    expect(medium).toBe(416);
-    expect(heavy).toBe(616);
+    // #128: head/cockpit/centerTorso no longer contribute armor/structure to maxHp, so these
+    // are lower than the pre-#128 values (266/416/616).
+    expect(light).toBe(172);
+    expect(medium).toBe(270);
+    expect(heavy).toBe(400);
     expect(dropChanceForMaxHp(heavy)).toBeGreaterThan(dropChanceForMaxHp(medium));
     expect(dropChanceForMaxHp(medium)).toBeGreaterThan(dropChanceForMaxHp(light));
   });

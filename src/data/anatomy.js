@@ -1,24 +1,30 @@
-// Mech anatomy: the eight body locations every mech is built from, plus the rules
-// for what counts as a kill. This is pure data + small pure helpers (no Phaser), so
-// it's fully unit-tested (Mech.test.js) and shared by the model, the garage, and the
-// arena alike.
+// Mech anatomy: the body locations every mech is built from, plus the rules for what
+// counts as a kill. This is pure data + small pure helpers (no Phaser), so it's fully
+// unit-tested (Mech.test.js) and shared by the model, the garage, and the arena alike.
 //
-// Each location tracks its own armor (outer) + internal structure (inner): damage
-// eats armor first, then structure; structure at 0 = the part is destroyed. This is
-// the BattleTech model and is what makes partial destruction read cleanly.
+// Each DAMAGE-TRACKED location has its own armor (outer) + internal structure (inner):
+// damage eats armor first, then structure; structure at 0 = the part is destroyed. This
+// is the BattleTech model and is what makes partial destruction read cleanly.
+//
+// #128: "damage-tracked" and "mountable skill slot" are DELIBERATELY separate concepts,
+// not two views of one list. `head`/`cockpit`/`centerTorso` used to be both — the sole
+// health-tracked, instant-kill locations — but a playtest found that let a mech die from
+// one hit to center-mass before its arm/torso weapons ever got blown off. Head/cockpit/
+// centerTorso are now COSMETIC ONLY (drawn unconditionally by mechArt.js, never shown as
+// destroyed): they carry no armor/structure and can't be targeted or destroyed. Center
+// torso is UNCHANGED as a mount point though — it's still the one ability skill slot
+// (jumpJet/bubbleShield, L3/Space) — mounting and damage-tracking just no longer share a
+// location. See LOCATIONS (damage) vs MOUNT_LOCATIONS (mountable) below.
 
-// Location ids, in a stable order. `cockpit` is a small critical *inside* the head —
-// it has its own tiny structure, and destroying the head destroys it too. Legs are NOT
-// here: top-down they sit behind the torso, so they're purely the walk animation and
-// aren't health-tracked or targetable.
-export const LOCATIONS = [
-  'head', 'cockpit', 'centerTorso', 'leftTorso', 'rightTorso',
-  'leftArm', 'rightArm',
-];
+// Locations that track armor/structure and can be destroyed. Legs aren't here either:
+// top-down they sit behind the torso, so they're purely the walk animation and aren't
+// health-tracked or targetable.
+export const LOCATIONS = ['leftTorso', 'rightTorso', 'leftArm', 'rightArm'];
 
-// Display metadata + which locations are skill slots (can mount a weapon or ability).
-// Each mountable location is ONE skill slot bound to a fixed fire button; the six
-// upper-body locations are the hardpoints, and the cockpit is an internal critical.
+// Display metadata for every anatomical location, including the cosmetic-only ones
+// (head/cockpit/centerTorso) so UI that wants a label/short code for them still has one.
+// `mountable` drives MOUNT_LOCATIONS below; it is NOT the same axis as damage-tracking —
+// centerTorso is mountable but not in LOCATIONS, head/cockpit are neither.
 export const LOCATION_INFO = {
   head:        { label: 'Head',         short: 'H',  mountable: false, internal: false },
   cockpit:     { label: 'Cockpit',      short: 'C',  mountable: false, internal: true  },
@@ -29,39 +35,42 @@ export const LOCATION_INFO = {
   rightArm:    { label: 'Right Arm',    short: 'RA', mountable: true,  internal: false },
 };
 
+// All mountable location ids (weapon slots + the ability slot), for catalogs/UI that
+// iterate mount points. Computed from LOCATION_INFO (not LOCATIONS) since centerTorso is
+// mountable despite not being damage-tracked.
+export const MOUNT_LOCATIONS = Object.keys(LOCATION_INFO).filter((id) => LOCATION_INFO[id].mountable);
+
 // The arms — the only locations a melee weapon can mount in.
 export const MELEE_LOCATIONS = ['leftArm', 'rightArm'];
 
 // Skill slots split by what they accept: the four arm/side-torso slots hold weapons
 // (bound to triggers/bumpers); the centre torso holds the one ability (bound to L3 /
-// Space). The head is NOT a skill slot — it's a targetable location only (its R3 slot
-// was freed when target-lock became a default aim-assist mechanic, #31).
+// Space). The head is NOT a skill slot — it's not targetable either any more (#128).
 export const WEAPON_SLOTS = ['leftArm', 'rightArm', 'leftTorso', 'rightTorso'];
 export const ABILITY_SLOTS = ['centerTorso'];
 
-// Destroying one of these single locations is an instant kill.
-export const LETHAL_LOCATIONS = ['head', 'cockpit', 'centerTorso'];
+// Destroying one of these single locations is an instant kill. Empty since #128 retired
+// the head/cockpit/centerTorso one-hit-kill rule in favor of LETHAL_GROUPS below; kept as
+// a mechanism in case a future single-location instant-kill part is ever added.
+export const LETHAL_LOCATIONS = [];
 
-// Destroying ALL locations in any one of these groups is a kill. Empty now that legs
-// aren't targetable (the old "both legs gone" rule is retired), but kept as a mechanism
-// for future groups (e.g. "all four hover pods").
-export const LETHAL_GROUPS = [];
+// Destroying ALL locations in any one of these groups is a kill. #128: losing BOTH side
+// torsos is now the kill condition — DESTROY_CASCADE (below) already takes both arms with
+// them, so by the time this triggers every WEAPON_SLOTS location is gone too, matching
+// "you should experience your weapons getting blown off before dying."
+export const LETHAL_GROUPS = [['leftTorso', 'rightTorso']];
 
 // When a side torso is destroyed it takes the attached arm with it (the arm loses its
 // shoulder). Kept for callers that want the raw link.
 export const TORSO_ARM_LINK = { leftTorso: 'leftArm', rightTorso: 'rightArm' };
 
 // Destroying a location also destroys these dependent locations (applied recursively):
-// a side torso takes its arm; the head takes the cockpit inside it. Data-driven so new
-// links are just another entry.
+// a side torso takes its arm. Data-driven so new links are just another entry. (The old
+// head→cockpit link is gone with #128 — neither is damage-tracked any more.)
 export const DESTROY_CASCADE = {
-  head: ['cockpit'],
   leftTorso: ['leftArm'],
   rightTorso: ['rightArm'],
 };
-
-// Locations that mount weapons, for catalogs/UI that iterate mount points.
-export const MOUNT_LOCATIONS = LOCATIONS.filter((id) => LOCATION_INFO[id].mountable);
 
 // Is a part destroyed? Pure: a part with structure <= 0 (or that no longer exists).
 export function partDestroyed(part) {
@@ -69,8 +78,8 @@ export function partDestroyed(part) {
 }
 
 // Given a map of location id → part state, is the mech destroyed? Encodes the kill
-// rule: head OR cockpit OR centerTorso destroyed (or every location in any lethal
-// group, currently none).
+// rule: every location in any lethal group destroyed (#128: both side torsos), or any
+// single lethal location destroyed (currently none).
 export function mechDestroyed(parts) {
   for (const id of LETHAL_LOCATIONS) {
     if (partDestroyed(parts[id])) return true;
