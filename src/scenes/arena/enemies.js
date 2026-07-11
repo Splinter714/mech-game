@@ -247,11 +247,14 @@ export const EnemiesMixin = {
   _makeVehicleView(key, x, y, angle, def) {
     const parts = [];
     let shadow = null;
+    const vs = vehicleScale(def);
     if (def.flying) {
-      shadow = this.add.ellipse(0, 0, 26, 14, 0x000000, 0.28);
+      // #93: the shadow's own footprint scales with the unit's display scale (vs) — it was
+      // previously a fixed 26x14 regardless of body size, so it read as oversized once drones
+      // were shrunk repeatedly (#75/#89/#91). Sized off the same `vs` the hull/turret sprites use.
+      shadow = this.add.ellipse(0, 0, 26 * vs, 14 * vs, 0x000000, 0.28);
       parts.push(shadow);
     }
-    const vs = vehicleScale(def);
     const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(vs);
     const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(vs);
     hull.rotation = angle + Math.PI / 2;
