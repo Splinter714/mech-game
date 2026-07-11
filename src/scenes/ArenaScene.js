@@ -65,6 +65,10 @@ export default class ArenaScene extends Phaser.Scene {
     // enemies can be dropped just off-screen (relative to the viewport) and walk into view.
     this.enemies = [];
     this._enemySeq = 0;
+    // #87: total spawned THIS stage, separate from `this.enemies.length` — dead enemies are now
+    // pruned out of `this.enemies` shortly after death (see _removeEnemy) instead of lingering
+    // until stage advance, so the array length alone no longer means "squad size."
+    this._enemiesSpawnedThisStage = 0;
 
     // Player state.
     this.px = 0; this.py = 0;

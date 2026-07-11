@@ -184,6 +184,7 @@ export const EnemiesMixin = {
     };
     this._resetAiState(e);
     this.enemies.push(e);
+    this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);
     return e;
   },
@@ -206,6 +207,7 @@ export const EnemiesMixin = {
       rotorSpin: 0,           // flyers spin their rotor overlay
     };
     this.enemies.push(e);
+    this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);
     return e;
   },
@@ -329,6 +331,8 @@ export const EnemiesMixin = {
   // on the display list (and their textures in the texture manager) for the rest of the arena
   // session, so the frame cost grew stage over stage — the measured cause of late-run combat lag.
   _destroyEnemy(e) {
+    if (e._tornDown) return;   // #87: guard against a double-teardown race (see _removeEnemy)
+    e._tornDown = true;
     e.view.destroy();
     const suffixes = e.kind === 'mech'
       ? ['hull_0', 'hull_1', 'hull_2', 'hull_3', 'turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm']
@@ -337,6 +341,21 @@ export const EnemiesMixin = {
       const key = `${e.key}_${s}`;
       if (this.textures.exists(key)) this.textures.remove(key);
     }
+  },
+
+  // #87: remove a SINGLE destroyed enemy shortly after its death beat (explosion FX + DESTROYED
+  // text, fired from combat.js `_damageEnemyAt`) lands, instead of leaving a lingering
+  // alpha-0.5 corpse in the world for the rest of the stage. Reuses #71's `_destroyEnemy`
+  // teardown (view + generated textures), then prunes the entry out of `this.enemies` so
+  // nothing keeps iterating a dead unit. Scheduled via `time.delayedCall`, so by the time it
+  // fires the array may already have been replaced/cleared wholesale (stage advance, #39 debug
+  // reset never destroys though) — guard with an indexOf lookup so a stale callback is a no-op
+  // instead of double-tearing-down or splicing the wrong slot.
+  _removeEnemy(e) {
+    const idx = this.enemies.indexOf(e);
+    if (idx === -1) return;
+    this._destroyEnemy(e);
+    this.enemies.splice(idx, 1);
   },
 
   // Debug (#28): flip enemy movement or firing on/off and toast the new state.
@@ -353,12 +372,19 @@ export const EnemiesMixin = {
     this.registry.set('aiFire', this.enemyFire);
     for (const e of this.enemies) this._updateEnemy(e, dt, delta);
     const alive = this.enemies.filter((e) => !e.mech.isDestroyed()).length;
-    this.registry.set('enemyCount', this.enemies.length);
+    // #87: dead enemies are now pruned out of `this.enemies` shortly after death, so the array
+    // length alone no longer reflects the stage's squad size — use the running spawn counter for
+    // the HUD's "total" side (`_enemiesSpawnedThisStage`, reset per stage in ArenaScene.create /
+    // run.js _startNextStage) and fall back to the array length if it's somehow unset.
+    this.registry.set('enemyCount', this._enemiesSpawnedThisStage ?? this.enemies.length);
     this.registry.set('enemiesAlive', alive);
   },
 
   _updateEnemy(e, dt, delta) {
-    if (e.mech.isDestroyed()) { e.view.setAlpha(0.5); return; }
+    // #87: a dead enemy sits (briefly, un-faded) awaiting _removeEnemy's delayed teardown —
+    // no AI/movement in the meantime. It used to fade to alpha 0.5 and linger here for the rest
+    // of the stage; now it's pruned out of `this.enemies` shortly after death instead.
+    if (e.mech.isDestroyed()) return;
     // #68: non-mech kinds run their own simple per-kind brain + integrate/render path.
     if (e.kind !== 'mech') { this._updateVehicle(e, dt, delta); return; }
     const mv = e.mech.movement;
