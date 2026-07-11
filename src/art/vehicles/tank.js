@@ -14,6 +14,7 @@ function drawHull(sg, accent) {
 
   // Tracks (left + right dark ribbed bands running fore-aft).
   for (const sx of [-13, 13]) {
+    roundC(sg, sx, 2, 10.6, 35.6, V.halo, 3.8);   // #129: legibility halo (outer ring)
     roundC(sg, sx, 2, 9, 34, V.outline, 3);
     roundC(sg, sx, 2, 6.5, 32, V.tread, 2.5);
     // Track lugs (rungs) — a stack of light ticks so it reads as a moving belt.
@@ -23,6 +24,7 @@ function drawHull(sg, accent) {
   }
 
   // Central hull tub between the tracks.
+  poly(sg, [[-10.6, -14.6], [10.6, -14.6], [11.6, 15.6], [-11.6, 15.6]], V.halo);   // #129
   poly(sg, [[-9, -13], [9, -13], [10, 14], [-10, 14]], V.outline);
   poly(sg, [[-8, -12], [8, -12], [9, 13], [-9, 13]], V.bodyDk);
   // Sloped glacis plate at the FRONT (tough frontal facing) — a lighter trapezoid up top.
@@ -39,6 +41,7 @@ function drawHull(sg, accent) {
 function drawTurret(sg, accent) {
   const A = accentGlow(accent);
   // Turret body.
+  roundC(sg, 0, 0, 21.6, 18.6, V.halo, 6.8);   // #129: legibility halo (outer ring)
   roundC(sg, 0, 0, 20, 17, V.outline, 6);
   roundC(sg, 0, 0, 17, 14, V.body, 5);
   roundC(sg, 0, -1, 13, 9, V.bodyHi, 4);
@@ -48,12 +51,16 @@ function drawTurret(sg, accent) {
   // Sighting optic (accent eye).
   ellipseC(sg, -4, -2, 3.2, 2.8, V.outline);
   ellipseC(sg, -4, -2, 1.8, 1.6, A.core, 0.95);
-  // Mantlet + long gun (forward, −y).
+  // Mantlet + long gun (forward, −y). The gun juts well past the turret body's own halo ring,
+  // out into open ground, so it needs its own halo pass too.
+  rectC(sg, 0, -10, 9.6, 7.6, V.halo);   // #129
   rectC(sg, 0, -10, 8, 6, V.outline);
+  rectC(sg, 0, -20, 6.6, 23.6, V.halo);   // #129
   rectC(sg, 0, -20, 5, 22, V.outline);
   rectC(sg, 0, -20, 3, 22, V.tread);
   rectC(sg, -0.9, -20, 0.8, 20, V.treadHi, 0.7);
   // Muzzle brake + hot tip.
+  rectC(sg, 0, -30, 6.6, 5.1, V.halo);   // #129
   rectC(sg, 0, -30, 5, 3.5, V.bodyDk);
   ellipseC(sg, 0, -31, 2.6, 2, A.hot, 0.85);
   ellipseC(sg, 0, -31, 4, 3, A.halo, 0.3);

@@ -51,16 +51,24 @@ export const MissionMixin = {
   _makeObjectiveMarker(hexKey) {
     const [q, r] = hexKey.split(',').map(Number);
     const { x, y } = hexToPixel(q, r);
+    // #129: the amber ring alone can blend into some biome palettes (e.g. desert sand, or
+    // volcanic embers, are close to amber in hue). Add a fixed dark + light double outline
+    // OUTSIDE the amber ring — same reasoning as the enemy legibility halo (mechPrims.js's
+    // `HALO`): the dark ring reads against light terrain, the light ring reads against dark
+    // terrain, so together they carry the marker's edge against every biome without touching
+    // the amber "this is the objective" colour itself.
+    const haloRing = this.add.circle(0, 0, 33).setStrokeStyle(3, 0xfbfdff, 0.9);
+    const outlineRing = this.add.circle(0, 0, 31.5).setStrokeStyle(2, 0x0b0e14, 0.9);
     const ring = this.add.circle(0, 0, 30).setStrokeStyle(3, 0xffb84a, 0.9);
     const label = this.add.text(0, -46, 'OBJECTIVE', {
       fontFamily: 'monospace', fontSize: '12px', color: '#ffb84a',
     }).setOrigin(0.5);
-    const marker = this.add.container(x, y, [ring, label]);
+    const marker = this.add.container(x, y, [haloRing, outlineRing, ring, label]);
     // #99: bumped from a bare 5 to the shared DEPTH.WORLD_UI tier — established alongside the
     // rest of the arena's depth scheme (shared.js), one step above impact/death FX (5) so the
     // objective stays legible even through an explosion happening on top of it.
     marker.setDepth(DEPTH.WORLD_UI);
-    this.tweens.add({ targets: ring, scale: 1.35, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: [ring, outlineRing, haloRing], scale: 1.35, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     this._objectiveMarker = marker;
   },
 
@@ -88,10 +96,12 @@ export const MissionMixin = {
   _onMissionComplete() {
     this._floatText(this.px, this.py - 40, 'MISSION COMPLETE', '#7bd17b');
     if (this._objectiveMarker) {
-      const ring = this._objectiveMarker.list[0];
+      // #129: index 2 — the amber ring is now the third child (after the halo + outline
+      // legibility rings added around it; see `_makeObjectiveMarker`).
+      const ring = this._objectiveMarker.list[2];
       this.tweens.killTweensOf(ring);
       ring.setStrokeStyle(3, 0x7bd17b, 0.9);
-      const label = this._objectiveMarker.list[1];
+      const label = this._objectiveMarker.list[3];
       label.setText('CLEARED').setColor('#7bd17b');
     }
   },

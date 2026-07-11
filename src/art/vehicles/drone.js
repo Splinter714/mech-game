@@ -14,16 +14,21 @@ function drawFrame(sg, accent) {
   const A = accentGlow(accent);
   // Cross booms.
   for (const [x, y] of ARMS) {
-    sg.lineStyle?.(2.4, V.outline, 1);
+    // #129: legibility halo — a wider white stroke UNDER the dark outline stroke, so the boom
+    // still has a visible edge on dark terrain (where the dark outline alone would vanish).
+    sg.raw.lineStyle(4 * ART_SCALE, V.halo, 1);
+    sg.raw.lineBetween((DESIGN / 2) * ART_SCALE, (DESIGN / 2) * ART_SCALE, (DESIGN / 2 + x) * ART_SCALE, (DESIGN / 2 + y) * ART_SCALE);
     sg.raw.lineStyle(2.4 * ART_SCALE, V.outline, 1);
     sg.raw.lineBetween((DESIGN / 2) * ART_SCALE, (DESIGN / 2) * ART_SCALE, (DESIGN / 2 + x) * ART_SCALE, (DESIGN / 2 + y) * ART_SCALE);
     sg.raw.lineStyle(1.4 * ART_SCALE, V.rim, 0.9);
     sg.raw.lineBetween((DESIGN / 2) * ART_SCALE, (DESIGN / 2) * ART_SCALE, (DESIGN / 2 + x) * ART_SCALE, (DESIGN / 2 + y) * ART_SCALE);
     // Rotor hub at each tip.
+    ellipseC(sg, x, y, 3.9, 3.9, V.halo);   // #129
     ellipseC(sg, x, y, 3, 3, V.tread);
     ellipseC(sg, x, y, 1.6, 1.6, A.core, 0.8);
   }
   // Central pod.
+  poly(sg, [[-6.4, -5.4], [6.4, -5.4], [7.4, 5.4], [-7.4, 5.4]], V.halo);   // #129
   poly(sg, [[-5, -4], [5, -4], [6, 4], [-6, 4]], V.outline);
   poly(sg, [[-4, -3], [4, -3], [5, 3], [-5, 3]], V.bodyHi);
   // Forward sensor eye (accent glow), pointing −y.

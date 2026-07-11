@@ -22,7 +22,7 @@ import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
-  DESIGN, themeFor, REACTOR, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
+  DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -235,11 +235,14 @@ function drawHull(sg, mech, frame, T) {
   for (const dx of [-1, 1]) {
     const sx = dx * a.bodyWid * 0.24 * legSpread;
     if (T.bubbly) {
+      if (T.legibilityHalo) ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.34 + 1.4, a.bodyLen * 0.13 + 1.4, HALO);
       ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.34, a.bodyLen * 0.13, T.outline);
       ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.3, a.bodyLen * 0.11, T.faceMid);
       ellipseC(sg, sx - a.bodyWid * 0.05, a.bodyLen * 0.08, a.bodyWid * 0.12, a.bodyLen * 0.04, T.rim, 0.9);
       continue;
     }
+    if (T.legibilityHalo) poly(sg, [[sx - a.bodyWid * 0.17, a.bodyLen * 0.05], [sx + a.bodyWid * 0.17, a.bodyLen * 0.05],
+              [sx + a.bodyWid * 0.14, a.bodyLen * 0.18], [sx - a.bodyWid * 0.2, a.bodyLen * 0.18]], HALO);
     poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.06], [sx + a.bodyWid * 0.16, a.bodyLen * 0.06],
               [sx + a.bodyWid * 0.13, a.bodyLen * 0.17], [sx - a.bodyWid * 0.19, a.bodyLen * 0.17]], T.outline);
     poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.06], [sx + a.bodyWid * 0.15, a.bodyLen * 0.06],

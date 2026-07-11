@@ -18,7 +18,7 @@ const THEMES = {
     rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
   },
   enemy: {
-    rounded: true, bubbly: true,
+    rounded: true, bubbly: true, legibilityHalo: true,
     outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
     lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
@@ -28,6 +28,18 @@ export const themeFor = (opts) => THEMES[opts?.theme] ?? THEMES.player;
 
 // The mech's own power glow (not a weapon).
 export const REACTOR = { halo: 0x7a2ed6, core: 0xb15cff, hot: 0xecd6ff, edge: 0x8a4ad6 };
+
+// #129: a fixed, near-white "legibility halo" — an extra silhouette ring drawn OUTSIDE a
+// part's existing dark outline, enemy/vehicle-only (`T.legibilityHalo`/opt-in per call site).
+// The existing dark outline already reads fine against LIGHT biome grounds (snow, sand): the
+// bug is dark biome grounds (volcanic ash, night-dark grass/urban patches) where that dark
+// outline is nearly the same tone as the terrain and the silhouette disappears. Rather than
+// re-picking per-biome colours (would require a combinatorial retune of every enemy × every
+// biome), this adds ONE more ring in a bright, fixed tone: on light terrain the inner dark
+// outline still carries the edge (unchanged); on dark terrain this outer bright ring now
+// does. The two rings together read against the whole 5-biome range without touching any
+// enemy's identifying body/accent colour.
+export const HALO = 0xfbfdff;
 
 // Per weapon-category glow ramps {halo, core, hot, edge}. Cores mirror CATEGORIES.color.
 export const NEON = {
@@ -77,6 +89,7 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   // Bubbly: each part is a glossy blob — an ellipse with a soft bottom shadow and a
   // bright highlight spot up top so it reads like an inflated/ceramic pod.
   if (T.bubbly) {
+    if (T.legibilityHalo) ellipseC(sg, cx, cy, w + 2.8, h + 2.8, HALO);
     ellipseC(sg, cx, cy, w + 1.4, h + 1.4, T.outline);
     ellipseC(sg, cx, cy, w, h, fill);
     ellipseC(sg, cx, cy + h * 0.24, w * 0.8, h * 0.4, T.ao, 0.35);
@@ -87,11 +100,13 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   let inset;
   if (T.rounded) {
     const r = Math.min(w, h) * 0.34;
+    if (T.legibilityHalo) roundC(sg, cx, cy, w + 2.6, h + 2.6, HALO, r + 0.8);
     roundC(sg, cx, cy, w + 1.2, h + 1.2, T.outline, r + 0.4);
     roundC(sg, cx, cy, w, h, fill, r);
     inset = Math.min(w, h) * 0.16;
   } else {
     const c = opts.chamfer ?? Math.min(w, h) * 0.22;
+    if (T.legibilityHalo) poly(sg, chamfer(cx, cy, w + 2.6, h + 2.6, c + 0.8), HALO);
     poly(sg, chamfer(cx, cy, w + 1.2, h + 1.2, c + 0.4), T.outline);
     poly(sg, chamfer(cx, cy, w, h, c), fill);
     inset = c;
@@ -129,12 +144,15 @@ export function barrel(sg, T, cx, cy, w, h) {
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
   if (T.bubbly) {
+    if (T.legibilityHalo) ellipseC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO);
     ellipseC(sg, cx, cy, w * 0.62, h * 0.5, T.outline);
     ellipseC(sg, cx, cy, w * 0.56, h * 0.44, T.char);
   } else if (T.rounded) {
+    if (T.legibilityHalo) roundC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO, m * 0.18 + 0.5);
     roundC(sg, cx, cy, w * 0.62, h * 0.5, T.outline, m * 0.18);
     roundC(sg, cx, cy, w * 0.56, h * 0.44, T.char, m * 0.16);
   } else {
+    if (T.legibilityHalo) poly(sg, chamfer(cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, m * 0.14 + 0.4), HALO);
     poly(sg, chamfer(cx, cy, w * 0.62, h * 0.5, m * 0.14), T.outline);
     poly(sg, chamfer(cx, cy, w * 0.56, h * 0.44, m * 0.14), T.char);
   }
