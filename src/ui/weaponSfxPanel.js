@@ -3,6 +3,14 @@ import { Slider } from './slider.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 
+// #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
+// are tuned through this SAME panel — they're just more sfxParams ids (single `fire` stage,
+// no trajectory/impact) fed in by WeaponLabScene's category row via setWeapon(id, label). This
+// prefix is how the panel tells "a category" from "a real weapon" apart for cosmetic tweaks
+// only (the header label, the ▶ button's wording) — everything else (sliders/type-row/reset/
+// copy) already works on any sfxParams id unchanged.
+const EXPLOSION_ID_PREFIX = 'deathExplosion';
+
 // Weapon Lab sound panel — a right-side column of live sliders for whichever weapon is
 // selected in the card list, one section per stage (fire / trajectory / impact), one row
 // per tunable field of each stage's layers (see audio/sfxParams.js for the data shape).
@@ -117,8 +125,12 @@ export class WeaponSfxPanel {
     this._build();
   }
 
-  setWeapon(weaponId) {
+  // `label` optionally overrides the header text (used by the destruction-explosion category
+  // row — "DEATHEXPLOSIONSMALL" reads badly, "Small (drone / infantry)" doesn't). Omit it for
+  // a real weapon id, where the id itself IS the label (unchanged behavior).
+  setWeapon(weaponId, label = null) {
     this.weaponId = weaponId;
+    this.weaponLabel = label;
     this._scrollY = 0;
     this._build();
   }
@@ -178,11 +190,12 @@ export class WeaponSfxPanel {
       return;
     }
 
+    const isExplosion = this.weaponId.startsWith(EXPLOSION_ID_PREFIX);
     let y = oy;
-    this.scroller.add(this.scene.add.text(ox, y, this.weaponId.toUpperCase(), { fontFamily: 'monospace', fontSize: '13px', color: UI.accent }));
+    this.scroller.add(this.scene.add.text(ox, y, this.weaponLabel ?? this.weaponId.toUpperCase(), { fontFamily: 'monospace', fontSize: '13px', color: UI.accent }));
     y += 4;
     const bw = Math.floor((w - 8) / 3);
-    this._button(ox, y + 18, bw, 22, '▶ test fire', () => this._testFire(), { color: UI.good });
+    this._button(ox, y + 18, bw, 22, isExplosion ? '▶ test boom' : '▶ test fire', () => this._testFire(), { color: UI.good });
     this._button(ox + bw + 4, y + 18, bw, 22, 'reset', () => this._reset());
     this._button(ox + (bw + 4) * 2, y + 18, bw, 22, 'copy', () => this._copy(), { color: UI.good });
     y += 50;

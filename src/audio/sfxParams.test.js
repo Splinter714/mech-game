@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DEFAULT_SFX, loadSfxParams, saveSfxParams, hasHeldSfx } from './sfxParams.js';
+import {
+  DEFAULT_SFX, loadSfxParams, saveSfxParams, hasHeldSfx,
+  EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId, scaleExplosionLayer,
+} from './sfxParams.js';
 
 // A minimal in-memory localStorage mock — vitest's default (node) environment has no
 // real one, and this only needs get/set for these tests.
@@ -78,6 +81,48 @@ describe('every weapon fire stage has 2 tone + 2 noise layers (#54, extended to 
     // Bespoke, not the shared archetype: the tuned first noise layer's filter type differs
     // from gunCrackLayers' first layer ('highpass').
     expect(DEFAULT_SFX.machineGun.fire[0].type).toBe('bandpass');
+  });
+});
+
+describe('destruction-explosion size categories (#107)', () => {
+  it('gives every category its own DEFAULT_SFX entry, tunable through the identical plumbing', () => {
+    for (const category of EXPLOSION_CATEGORIES) {
+      const id = explosionSfxId(category);
+      expect(DEFAULT_SFX[id], `${id} should exist in DEFAULT_SFX`).toBeTruthy();
+      expect(DEFAULT_SFX[id].fire.length).toBeGreaterThan(0);
+      expect(EXPLOSION_CATEGORY_LABEL[category]).toBeTruthy();
+    }
+  });
+
+  it('falls back to medium for an unrecognized category', () => {
+    expect(explosionSfxId('bogus')).toBe(explosionSfxId('medium'));
+  });
+
+  it('graduates louder/longer/lower-pitched small → massive (bigger boom for a tougher kill)', () => {
+    const small = DEFAULT_SFX[explosionSfxId('small')].fire[0];   // sub-bass tone layer
+    const massive = DEFAULT_SFX[explosionSfxId('massive')].fire[0];
+    expect(massive.dur).toBeGreaterThan(small.dur);      // more sustain
+    expect(massive.gain).toBeGreaterThan(small.gain);    // louder
+    expect(massive.freq).toBeLessThan(small.freq);       // lower pitch = more bass
+  });
+
+  it('deathExplosion (continuous, used elsewhere) is untouched by the category split', () => {
+    expect(DEFAULT_SFX.deathExplosion.fire.length).toBe(4);
+  });
+
+  it('scaleExplosionLayer scales dur/gain up and freq down for a bigger factor, and is pure', () => {
+    const layer = { kind: 'tone', freq: 100, freqEnd: 20, dur: 0.5, gain: 0.3 };
+    const out = scaleExplosionLayer(layer, 1.5);
+    expect(out.dur).toBeCloseTo(0.75, 5);
+    expect(out.gain).toBeCloseTo(0.3 * (0.7 + 0.3 * 1.5), 5);
+    expect(out.freq).toBeCloseTo(100 / 1.5, 5);
+    expect(out.freqEnd).toBeCloseTo(20 / 1.5, 5);
+    expect(layer.dur).toBe(0.5); // input untouched
+  });
+
+  it('leaves a zero-gain (silent) layer silent regardless of scale', () => {
+    const out = scaleExplosionLayer({ kind: 'tone', freq: 90, gain: 0 }, 1.55);
+    expect(out.gain).toBe(0);
   });
 });
 
