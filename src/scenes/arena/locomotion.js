@@ -134,16 +134,23 @@ export const LocomotionMixin = {
     const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(this.vy) && Math.abs(ty) > Math.abs(this.vy));
     this.vx = approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
     this.vy = approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
-    // Move with wall/boundary collision, sliding along blocked axes.
+    // Move with wall/boundary collision, sliding along blocked axes. #92: a living GROUND enemy
+    // (mech/tank/turret — flyers narratively fly over ground obstacles, see
+    // `_blockedByGroundEnemy`) blocks the player the same way impassable terrain does.
     const ox = this.px, oy = this.py;
+    const groundBlocked = (x, y) => this._blocked(x, y) || !!this._blockedByGroundEnemy(x, y);
     let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
-    if (this._blocked(nx, ny)) {
+    const enemyHit = this._blockedByGroundEnemy(nx, ny);
+    if (this._blocked(nx, ny) || enemyHit) {
       // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
       // pressing against them (damage scaled by how hard it's driving in). Once flattened to
       // rubble the hex becomes passable and the mech rolls over it.
       this._stompBuildingAt(nx, ny, dt);
-      if (!this._blocked(ox, ny)) { nx = ox; this.vx = 0; }
-      else if (!this._blocked(nx, oy)) { ny = oy; this.vy = 0; }
+      // #92: walking INTO a TANK specifically crushes it the same way (other ground enemies
+      // just block, per the explicit tank-only crush ask).
+      if (enemyHit && enemyHit.behavior === 'tank') this._crushTankAt(enemyHit, dt);
+      if (!groundBlocked(ox, ny)) { nx = ox; this.vx = 0; }
+      else if (!groundBlocked(nx, oy)) { ny = oy; this.vy = 0; }
       else { nx = ox; ny = oy; this.vx = 0; this.vy = 0; }
     }
     this.px = nx; this.py = ny;
