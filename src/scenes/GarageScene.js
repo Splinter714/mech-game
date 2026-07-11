@@ -16,6 +16,7 @@ import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
+import { Slider } from '../ui/slider.js';
 import { EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId } from '../audio/sfxParams.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 
@@ -62,6 +63,11 @@ export default class GarageScene extends Phaser.Scene {
     this.cameras.main.setZoom(dpr);
     this.cameras.main.setOrigin(0, 0);
     this.cameras.main.setBackgroundColor('#0d1014');
+
+    // Wire the shared pointermove/pointerup listeners that Slider._applyPointer needs to
+    // track an in-progress drag (see slider.js) — the SFX panel's sliders live in this scene
+    // since #121 folded WeaponSfxPanel in, so this scene must call it (mirrors MusicScene).
+    Slider.attachDrag(this);
 
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
