@@ -547,6 +547,91 @@ try {
       a.projectiles.length = 0;
     }
 
+    // #114/#115 bounds checks below spawn+remove their own throwaway enemies and must not leak
+    // any state into the tests that follow (s72/s92/s94 etc. assume specific player position and
+    // `a.enemies` contents) — save/restore the player transform and always clean up every enemy
+    // spawned here (via the real `_removeEnemy` teardown) before moving on.
+    const savedPlayer = { px: a.px, py: a.py, vx: a.vx, vy: a.vy };
+
+    // #114: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
+    // unoccupied-by-forest/water hexes — never off-map or stacked on impassable terrain. Spawn
+    // several clusters at varied raw points (near the origin, on any known wall/water hex from
+    // the #68 vehicle-kind check above, and just past the map's edge) and check every turret.
+    const turretClusterBounds = (() => {
+      let trials = 0, allValid = true, allCentered = true;
+      const spawnedNow = [];
+      // Just beyond the world's actual generated extent (organic boundary), not an extreme
+      // multiple of the MAX_WORLD_RADIUS bounding cap — mirrors how a real raw spawn point can
+      // land just past the map edge, not thousands of hexes away.
+      let edgeR = 0;
+      for (const h of a.terrain.keys()) {
+        const [q, r] = h.split(',').map(Number);
+        edgeR = Math.max(edgeR, Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)));
+      }
+      const edgePx = (edgeR + 3) * 48 * Math.sqrt(3);   // a few hexes past the farthest real tile
+      const rawPoints = [
+        { x: 0, y: 0 },
+        ...(wallPt ? [wallPt] : []),
+        { x: edgePx, y: 0 },
+        { x: 0, y: -edgePx },
+      ];
+      for (const p of rawPoints) {
+        const startLen = a.enemies.length;
+        a._spawnTurretCluster(p.x, p.y);
+        const cluster = a.enemies.slice(startLen);
+        spawnedNow.push(...cluster);
+        trials++;
+        if (cluster.length !== 3) allValid = false;
+        for (const t of cluster) {
+          if (a._blocked(t.x, t.y)) allValid = false;
+        }
+        // Every turret should be within a couple hex-steps of the cluster's own centre (2 rings
+        // ≈ up to ~2*83px plus some slack for the hex-centre snap).
+        if (cluster.length === 3) {
+          const cx = cluster.reduce((s, t) => s + t.x, 0) / cluster.length;
+          const cy = cluster.reduce((s, t) => s + t.y, 0) / cluster.length;
+          for (const t of cluster) {
+            if (Math.hypot(t.x - cx, t.y - cy) > 260) allCentered = false;
+          }
+        }
+      }
+      const spawnedTotal = spawnedNow.length;
+      for (const t of spawnedNow) a._removeEnemy(t);
+      return { trials, allValid, allCentered, spawnedTotal };
+    })();
+
+    // #115: infantry (idle-wander AND advance-toward-player) must never end up outside the
+    // playable map. Spawn a couple infantry mobs — including one right at the map's actual edge
+    // — then run real AI ticks (a mix of UNAWARE idle-wander and AWARE advance/mill) and confirm
+    // every trooper stays in-bounds the whole time, not just at spawn.
+    const infantryBounds = (() => {
+      let edgeR = 0;
+      for (const h of a.terrain.keys()) {
+        const [q, r] = h.split(',').map(Number);
+        edgeR = Math.max(edgeR, Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)));
+      }
+      const edgePx = (edgeR + 2) * 48 * Math.sqrt(3);
+      const rawPoints = [{ x: 0, y: 0 }, { x: edgePx, y: 0 }];
+      const mob = [];
+      for (const p of rawPoints) {
+        const startLen = a.enemies.length;
+        a._spawnInfantryMob(p.x, p.y);
+        mob.push(...a.enemies.slice(startLen));
+      }
+      const spawnAllValid = mob.every((t) => !a._blocked(t.x, t.y));
+      // Half the mob stays UNAWARE (idle-wander near spawn); the other half goes AWARE and
+      // advances toward a nearby player — exercises both movement paths in the same pass, using
+      // a scratch player position local to this check (restored below).
+      a.px = mob[0].x + 40; a.py = mob[0].y; a.vx = 0; a.vy = 0;
+      for (let i = 0; i < mob.length; i++) if (i % 2 === 0) mob[i].awareness = 'aware';
+      for (let i = 0; i < 240; i++) for (const t of mob) a._updateVehicle(t, 0.016, 16);
+      const movedAllValid = mob.every((t) => !a._blocked(t.x, t.y));
+      for (const t of mob) a._removeEnemy(t);
+      return { spawnedCount: mob.length, spawnAllValid, movedAllValid };
+    })();
+
+    a.px = savedPlayer.px; a.py = savedPlayer.py; a.vx = savedPlayer.vx; a.vy = savedPlayer.vy;
+
     // #72: soft cover — own-hex transparency + destructible/burnable trees, end to end.
     // Plant the biome's soft-cover terrain (forest/scrub/…) on known-clear ground near the
     // origin, stand a fresh enemy INSIDE it, and prove a real travelling round fired from open
@@ -899,6 +984,8 @@ try {
       s113,
       spawnBias,
       awareness,
+      turretClusterBounds,
+      infantryBounds,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -1069,6 +1156,21 @@ try {
   if (!arena.awareness.noFireWhileUnaware) fail('#103 an UNAWARE enemy fired at the player');
   if (!arena.awareness.becameAware) fail('#103 an enemy within detection range never became AWARE');
   if (!arena.awareness.engagedAfterAware) fail('#103 an AWARE enemy in range never engaged (fired at) the player');
+
+  // #114: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
+  // unoccupied-by-forest/water hexes, centred as one tight nest — across many raw spawn points,
+  // including some deliberately off-map or on top of blocked terrain.
+  if (arena.turretClusterBounds.spawnedTotal !== arena.turretClusterBounds.trials * 3) {
+    fail(`#114 a turret cluster did not spawn exactly 3 turrets every time (got ${arena.turretClusterBounds.spawnedTotal} across ${arena.turretClusterBounds.trials} trials)`);
+  }
+  if (!arena.turretClusterBounds.allValid) fail('#114 a turret cluster placed a turret on invalid (off-map/blocked) terrain');
+  if (!arena.turretClusterBounds.allCentered) fail('#114 a turret cluster\'s turrets were not tightly centred on a single hex');
+
+  // #115: infantry must never end up outside the playable map — neither at spawn (mirrors
+  // #114's mob-ring-offset bug) nor after real idle-wander/advance AI movement.
+  if (arena.infantryBounds.spawnedCount === 0) fail('#115 test setup: no infantry spawned for the bounds check');
+  if (!arena.infantryBounds.spawnAllValid) fail('#115 an infantry mob spawned a trooper on invalid (off-map/blocked) terrain');
+  if (!arena.infantryBounds.movedAllValid) fail('#115 infantry ended up off the playable map after idle-wander/advance movement');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
