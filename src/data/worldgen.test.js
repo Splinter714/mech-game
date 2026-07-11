@@ -8,10 +8,10 @@ import {
   mulberry32, safeZoneKeys, generateTerrain, pickFarObjective, FAR_OBJECTIVE_MIN_DIST,
   sectorBoundaries, organicBoundary, boundaryRingKeys,
   FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH,
-  REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
+  REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX, CORRIDOR_ASPECT_RATIO, SECTORS,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
-import { axialKey, range, neighbors, distance } from './hexgrid.js';
+import { axialKey, range, neighbors, distance, hexToPixel } from './hexgrid.js';
 
 const GRASSLAND = getBiome('grassland');
 const DESERT = getBiome('desert');
@@ -102,6 +102,78 @@ describe('organicBoundary', () => {
     const rng = mulberry32(3);
     const region = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 8, variation: 3 });
     expect(region(100, 0)).toBe(false);
+  });
+
+  // #127 (playtest: starting map read as a wide open blob — wants "more linear-ish"): the shape
+  // can be ELONGATED into a long corridor/strip via `longAxis`/`aspectRatio`, rather than the
+  // roughly-even organic blob the default `aspectRatio: 1` produces.
+  describe('#127 elongation (longAxis/aspectRatio)', () => {
+    // (1, 0) is exactly angle 0 in world space (hexToPixel(n, 0) has y === 0), matching
+    // `longAxis: 0` below. (-1, 2) is exactly angle π/2 (hexToPixel(-k, 2k) has x === 0) — the
+    // perpendicular ("short axis") direction. Both walk outward from the shared centre so the
+    // comparison is a straight reach-in-hexes measurement along each axis.
+    const alongLongAxis = { q: 1, r: 0 };
+    const alongShortAxis = { q: -1, r: 2 };
+    const reachAlong = (region, dir, max = 200) => {
+      let n = 0;
+      while (n < max && region(dir.q * n, dir.r * n)) n++;
+      return n;
+    };
+
+    it('reaches much farther along the long axis than the perpendicular short axis', () => {
+      const rng = mulberry32(0x5eed);
+      const region = organicBoundary({ q: 0, r: 0 }, rng, {
+        baseRadius: 40, variation: 10, longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
+      });
+      const longReach = reachAlong(region, alongLongAxis);
+      const shortReach = reachAlong(region, alongShortAxis);
+      // A "much narrower on one axis" corridor, not a subtle nudge: require at least a 2x
+      // difference (comfortably below the ~3x target ratio, allowing for per-sector noise).
+      expect(longReach).toBeGreaterThan(shortReach * 2);
+    });
+
+    // A single sampled ray is noisy (the per-sector `variation` noise can make one particular
+    // ray run short or long by chance — see the flat `reachAlong` checks above, which use a
+    // generous 2x margin to absorb that). To check that ROTATING `longAxis` actually rotates
+    // the shape (not just verify one fixed orientation), integrate over the WHOLE shape instead
+    // of a single ray: project every included hex's pixel position onto the rotated axis and
+    // measure the resulting bounding-box span. That average is far less sensitive to any one
+    // sector's noise draw than a single ray is.
+    const extentAlongAngle = (region, angle, boundingRadius = 120) => {
+      const cos = Math.cos(-angle), sin = Math.sin(-angle);
+      let min = Infinity, max = -Infinity;
+      for (const h of range({ q: 0, r: 0 }, boundingRadius)) {
+        if (!region(h.q, h.r)) continue;
+        const { x, y } = hexToPixel(h.q, h.r);
+        const projected = x * cos - y * sin;   // position along the rotated axis
+        if (projected < min) min = projected;
+        if (projected > max) max = projected;
+      }
+      return max - min;
+    };
+
+    it('rotating longAxis rotates which direction reads as "long"', () => {
+      const rng = mulberry32(0x5eed);
+      // Same seed/rng sequence, but the corridor now points along the OTHER axis (π/2) —
+      // what was the short axis should now be the long one, and vice versa.
+      const region = organicBoundary({ q: 0, r: 0 }, rng, {
+        baseRadius: 40, variation: 10, longAxis: Math.PI / 2, aspectRatio: CORRIDOR_ASPECT_RATIO,
+      });
+      const formerlyLongExtent = extentAlongAngle(region, 0);
+      const formerlyShortExtent = extentAlongAngle(region, Math.PI / 2);
+      expect(formerlyShortExtent).toBeGreaterThan(formerlyLongExtent * 1.5);
+    });
+
+    it('aspectRatio: 1 (the default) reproduces the original roughly-even organic shape', () => {
+      const rngA = mulberry32(11), rngB = mulberry32(11);
+      const withDefault = organicBoundary({ q: 0, r: 0 }, rngA, { baseRadius: 20, variation: 6 });
+      const withExplicitOne = organicBoundary({ q: 0, r: 0 }, rngB, {
+        baseRadius: 20, variation: 6, longAxis: 0, aspectRatio: 1,
+      });
+      for (const [q, r] of [[5, 0], [0, 5], [-4, 2], [3, -6]]) {
+        expect(withDefault(q, r)).toBe(withExplicitOne(q, r));
+      }
+    });
   });
 });
 
@@ -217,10 +289,14 @@ describe('full-run upfront build sizing (#111)', () => {
     expect(FULL_BUILD_VARIATION).toBeGreaterThan(0);
   });
 
-  it('produces a single build sized for the whole run — non-circular, and reaching well beyond the old small initial area (12ish hexes)', () => {
+  // #127: production (world.js `_buildWorld`) always builds this shape WITH the elongation
+  // applied (`aspectRatio: CORRIDOR_ASPECT_RATIO`), never the bare isotropic circle — so this
+  // sizing check exercises that actual combination, not just the raw radius constants alone.
+  it('produces a single build sized for the whole run — non-circular, and reaching well beyond the old small initial area (12ish hexes) along the long axis', () => {
     const rng = mulberry32(0x5eed);
     const region = organicBoundary({ q: 0, r: 0 }, rng, {
       baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
+      longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
     });
     const dirs = [{ q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 1, r: -1 }];
     const reach = dirs.map((d) => {
@@ -230,8 +306,96 @@ describe('full-run upfront build sizing (#111)', () => {
     });
     // Non-circular: not every direction reaches the same distance.
     expect(new Set(reach).size).toBeGreaterThan(1);
-    // Generously larger than the old small opening area in every direction.
-    for (const r of reach) expect(r).toBeGreaterThan(30);
+    // The long axis (q:1,r:0 is exactly angle 0, matching longAxis: 0) still reaches generously
+    // beyond the old small opening area, same as the pre-#127 isotropic build did.
+    expect(reach[0]).toBeGreaterThan(30);
+  });
+
+  // #127 sizing pitfall (see the big comment above FULL_BUILD_BASE_RADIUS/VARIATION): the
+  // sector boundary values are in "distHex" units (Euclidean pixel distance / HEX_SIZE), which
+  // is NOT the same as true hex cube-distance — the two differ by a factor that ranges from
+  // 3/2 (at the "in-between" angles) to √3 (along a primary hex direction). Converting a
+  // worst-case distHex value to true hex-distance means dividing by the ratio that makes the
+  // bound tightest for that check, not comparing the raw distHex number straight to a
+  // hex-distance cap (an early version of this test did exactly that and was too strict/wrong).
+  const HEX_DIST_RATIO_MIN = 1.5;              // "in-between" angles: smallest distHex/hexDist ratio
+  const HEX_DIST_RATIO_MAX = Math.sqrt(3);     // primary hex directions: largest ratio
+
+  // #127: the ELONGATED build's worst-case reach along the long axis must still stay within
+  // MAX_WORLD_RADIUS in real hex-distance terms — using the ratio that produces the LARGEST
+  // possible hex-distance for a given distHex value (the smallest ratio, 1.5), since that's the
+  // worst case for exceeding the cap.
+  it('the ELONGATED worst-case long-axis reach (in real hex-distance) stays within MAX_WORLD_RADIUS', () => {
+    const longMult = Math.sqrt(CORRIDOR_ASPECT_RATIO);
+    const worstCaseLongReachDistHex = (FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION) * longMult;
+    const worstCaseLongReachHexDist = worstCaseLongReachDistHex / HEX_DIST_RATIO_MIN;
+    expect(worstCaseLongReachHexDist).toBeLessThanOrEqual(MAX_WORLD_RADIUS);
+  });
+
+  // #127: the live game (scenes/arena/world.js `_buildWorld`) builds the full-run shape with
+  // `longAxis`/`aspectRatio: CORRIDOR_ASPECT_RATIO` — confirm THAT actual combination of
+  // constants (not just a toy baseRadius/variation) really does read as an elongated corridor.
+  it('the full-build shape, elongated with CORRIDOR_ASPECT_RATIO, reads as a corridor not a blob', () => {
+    const rng = mulberry32(0x5eed);
+    const region = organicBoundary({ q: 0, r: 0 }, rng, {
+      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
+      longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
+    });
+    let longReach = 0;
+    while (longReach < 200 && region(longReach, 0)) longReach++;
+    let shortReach = 0;
+    while (shortReach < 200 && region(-shortReach, 2 * shortReach)) shortReach++;
+    expect(longReach).toBeGreaterThan(shortReach * 1.5);
+  });
+
+  // #127 regression coverage: an earlier attempt at this sizing (base=45/variation=4/AR=3)
+  // passed every distHex-based check above yet FAILED the live smoke test — scripts/smoke.mjs's
+  // pre-existing #110 check that the biome's `deep` boundary terrain is absent within REAL
+  // hex-distance 20 of spawn in EVERY direction. This test pins the real (hex-distance, not
+  // distHex) near-spawn margin down directly at the data layer, converting the worst observed
+  // distHex minimum via the WORST-CASE ratio (√3, the largest one — smallest resulting
+  // hex-distance) — across many seeds/longAxis draws, not just one lucky/unlucky sample — so a
+  // future resize of these constants fails fast here instead of only surfacing downstream in a
+  // Playwright run.
+  it('never lets the near-spawn safety margin (#110, real hex-distance 20) get eroded by elongation', () => {
+    let worstMinDistHex = Infinity;
+    for (let seed = 0; seed < 500; seed++) {
+      const rng = mulberry32(seed * 7919 + 13);
+      const longAxis = rng() * Math.PI * 2;
+      const boundaries = sectorBoundaries(rng, {
+        baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
+        sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
+      });
+      for (const b of boundaries) if (b < worstMinDistHex) worstMinDistHex = b;
+    }
+    const worstMinHexDist = worstMinDistHex / HEX_DIST_RATIO_MAX;
+    // Comfortably clear of smoke.mjs's hex-distance-20 near-spawn scan, in REAL hex-distance
+    // units (not raw distHex).
+    expect(worstMinHexDist).toBeGreaterThan(24);
+  });
+
+  // #127: direct end-to-end confirmation at the data layer (mirroring what the live smoke test
+  // checks) — build the actual `organicBoundary` + `boundaryRingKeys` the game uses, across many
+  // seeds, and confirm the boundary/ring never lands within real hex-distance 20 of spawn. This
+  // is the strongest regression guard: it doesn't rely on the ratio-conversion math above being
+  // applied correctly, it just directly re-derives what scripts/smoke.mjs's #110 check verifies.
+  it('the actual built shape+ring never reaches within hex-distance 20 of spawn, across many seeds', () => {
+    let anyTooClose = false;
+    for (let seed = 0; seed < 200 && !anyTooClose; seed++) {
+      const shapeRng = mulberry32(seed);
+      const longAxis = shapeRng() * Math.PI * 2;
+      const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
+        baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
+        sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
+      });
+      for (let q = -20; q <= 20 && !anyTooClose; q++) {
+        for (let r = -20; r <= 20; r++) {
+          if (Math.abs(q) + Math.abs(r) + Math.abs(q + r) > 40) continue;   // hex-distance > 20
+          if (!included(q, r)) { anyTooClose = true; break; }
+        }
+      }
+    }
+    expect(anyTooClose).toBe(false);
   });
 });
 
