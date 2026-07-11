@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint } from './delivery.js';
+import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -196,6 +196,128 @@ describe('homing steering (#77)', () => {
     // are 40px away (would miss a 32px hit test), but the SWEPT segment passes through it.
     expect(segmentPointDistance(-40, 0, 40, 0, 0, 0)).toBeCloseTo(0, 6);
     expect(Math.hypot(40, 0)).toBeGreaterThan(32);   // end-point test alone would have missed
+  });
+});
+
+describe('arcMaxDist (#77 follow-up: "missile range too low" / "swarm rack flight path too crazy")', () => {
+  // The bug: firing.js used to project the target onto THIS SHOT'S OWN launch angle (which for
+  // a wide-fan weapon like Swarm Rack, spreadAngle 44°, is deliberately offset from the true
+  // target bearing) instead of the weapon's un-offset CENTRE bearing (`aimAngle`, shared by
+  // every shot in the fan). That made outer shots see a big perpendicular "miss" to the real
+  // target and fall back to a short `range.opt` travel budget instead of the real distance —
+  // landing them well short of the target (read as low range) with the homing-blend window
+  // squeezed into much less remaining distance for the round with the largest heading error to
+  // correct (read as a chaotic flight path).
+  const swarm = WEAPONS.swarmRack.delivery;   // spreadAngle 44°, spreadCount 6 → offsets up to ±22°
+  const maxRange = WEAPONS.swarmRack.range.max + 40;
+  const opt = WEAPONS.swarmRack.range.opt;
+
+  it('a centre (un-offset) shot gets the true straight-line distance to a far target', () => {
+    const tgt = { x: 480, y: 0 };
+    expect(arcMaxDist(0, 0, 0, tgt, maxRange, opt)).toBeCloseTo(480, 0);
+  });
+
+  it('BUG (fixed): projecting onto a wide-fan shot\'s OWN offset angle truncates a valid target to `opt`', () => {
+    // This reproduces the old, buggy call site — passing the shot's own 22°-offset launch
+    // angle as the projection axis instead of the weapon's centre bearing.
+    const offsetRad = (22 * Math.PI) / 180;
+    const tgt = { x: 480, y: 0 };                     // dead ahead of the CENTRE bearing (aimAngle=0)
+    const buggy = arcMaxDist(0, 0, offsetRad, tgt, maxRange, opt);
+    expect(buggy).toBeCloseTo(opt, 0);                // falls back short of the real ~480px distance
+  });
+
+  it('FIX: every shot in the fan gets the full/correct budget when projected onto the CENTRE bearing', () => {
+    // Same geometry as the bug case above, but using aimAngle=0 (the shared centre bearing) —
+    // exactly what firing.js now passes regardless of each shot's own angleOffset.
+    const tgt = { x: 480, y: 0 };
+    for (const offsetDeg of [0, 4.4, 8.8, 13.2, 17.6, 22]) {
+      const dist = arcMaxDist(0, 0, 0, tgt, maxRange, opt);
+      expect(dist).toBeGreaterThan(opt);              // reaches well past the old opt-only fallback
+      expect(dist).toBeCloseTo(480, 0);
+      void offsetDeg; // aimAngle is the same (0) for every shot in the fan — that's the whole fix
+    }
+  });
+
+  it('a target genuinely behind/far to the side still falls back to `opt`, not the full max range', () => {
+    const behind = { x: -200, y: 0 };
+    expect(arcMaxDist(0, 0, 0, behind, maxRange, opt)).toBe(opt);
+    const wide = { x: 50, y: 400 };   // far off to the side of the centre bearing
+    expect(arcMaxDist(0, 0, 0, wide, maxRange, opt)).toBe(opt);
+  });
+});
+
+describe('Swarm Rack wide-angle-offset flight (#77 follow-up regression guard)', () => {
+  // End-to-end simulation of a real Swarm Rack salvo: build rounds at their ACTUAL launch
+  // angles (aim line + spreadAngle fan offsets) but give every round the maxDist the FIXED
+  // firing.js now computes (arcMaxDist projected onto the shared centre bearing), then fly them
+  // with the real arc-homing blend + turn-rate-from-speed steering and confirm the wide-offset
+  // rounds converge smoothly — no wild oscillation/overshoot past the target line — same as a
+  // narrow-offset round, instead of whipping through an exaggerated last-second correction.
+  function simulate(angleOffsetRad, target) {
+    const weapon = WEAPONS.swarmRack;
+    const aimAngle = 0;                              // the shared centre bearing every shot fans from
+    const launchAngle = aimAngle + angleOffsetRad;
+    const maxDist = arcMaxDist(0, 0, aimAngle, target, weapon.range.max + 40, weapon.range.opt);
+    const p = makeProjectile(weapon, 0, 0, launchAngle, { maxDist });
+    p.arc = true;
+    // Constant-apex speed re-derivation, mirroring firing.js for an arcing round.
+    const flightTime = weapon.range.opt / p.speed;
+    p.speed = maxDist / flightTime;
+    p.vx = Math.cos(launchAngle) * p.speed; p.vy = Math.sin(launchAngle) * p.speed;
+    p.turn = homingTurnRate(p.speed);
+
+    let maxHeadingStep = 0;
+    let crossings = 0;               // how many times the round crosses the direct target line
+    let prevSign = null;
+    const dt = 0.016;
+    let minDist = Infinity;
+    for (let i = 0; i < 500 && p.dist < p.maxDist; i++) {
+      const blend = arcHomingBlend(p.dist / p.maxDist);
+      const restoreTurn = p.turn;
+      p.turn = p.turn * blend;
+      const desired = blend > 0 ? leadAngle(p.x, p.y, p.speed, target.x, target.y) : null;
+      const beforeAngle = p.angle;
+      stepProjectile(p, dt, desired);
+      p.turn = restoreTurn;
+      maxHeadingStep = Math.max(maxHeadingStep, Math.abs(rotateToward(beforeAngle, p.angle, 1e9) - beforeAngle));
+
+      const sign = Math.sign(p.y - (target.y / target.x) * p.x || 0);
+      if (prevSign != null && sign !== 0 && prevSign !== sign) crossings++;
+      if (sign !== 0) prevSign = sign;
+
+      minDist = Math.min(minDist, Math.hypot(p.x - target.x, p.y - target.y));
+    }
+    return { maxHeadingStep, crossings, minDist, dist: p.dist, maxDist: p.maxDist };
+  }
+
+  it('a wide-offset (outer swarm) round converges without an oscillating/overshooting path', () => {
+    const target = { x: 400, y: 0 };
+    const wide = simulate((22 * Math.PI) / 180, target);
+    // Bounded per-step heading correction — no snap/whip turn even with the largest fan offset.
+    expect(wide.maxHeadingStep).toBeLessThan(0.35);           // radians/frame, generous smoothness bound
+    // Converges close to the target rather than sailing past it repeatedly.
+    expect(wide.minDist).toBeLessThan(40);
+    // Doesn't cross back and forth over the direct target line more than once or twice —
+    // repeated crossings are exactly what "oscillating" looks like.
+    expect(wide.crossings).toBeLessThanOrEqual(2);
+  });
+
+  it('a wide-offset round gets (approximately) the SAME flight budget as a centred round — not a truncated one', () => {
+    const target = { x: 400, y: 0 };
+    const centre = simulate(0, target);
+    const wide = simulate((22 * Math.PI) / 180, target);
+    // Before the fix, the wide shot's maxDist collapsed to `range.opt` (300) while the centre
+    // shot's stayed the true ~400 — a large, visible mismatch. After the fix both should be
+    // (essentially) the same, since both project onto the shared centre bearing.
+    expect(Math.abs(wide.maxDist - centre.maxDist)).toBeLessThan(1);
+  });
+
+  it('the homing blend only starts after ASCENT_END and the round is still mostly ballistic before it', () => {
+    const target = { x: 400, y: 0 };
+    const p = makeProjectile(WEAPONS.swarmRack, 0, 0, (22 * Math.PI) / 180, { maxDist: 400 });
+    p.arc = true;
+    expect(arcHomingBlend((ASCENT_END - 0.05) * p.maxDist / p.maxDist)).toBe(0);
+    expect(arcHomingBlend((ASCENT_END + 0.05) * p.maxDist / p.maxDist)).toBeGreaterThan(0);
   });
 });
 

@@ -106,6 +106,52 @@ function wobbleKind(weapon) {
   return d.wobble === 'jostle' || d.wobble === 'weave' ? d.wobble : null;
 }
 
+// ── Arcing lob travel budget (#77 follow-up) ────────────────────────────────────────────
+// An arcing round's flight distance ("how far before it's `landed`" — projectiles.js) is
+// normally the straight-line distance to its seek target, so a wide-fan salvo (Swarm Rack,
+// spreadAngle 44°) still gives every round the SAME correct budget even though each round's
+// own launch heading is offset from the true target bearing. `aimAngle` must be the weapon's
+// un-offset CENTRE bearing (shared by every shot in the fan), not the individual shot's own
+// launch angle — projecting onto a wide fan-offset angle instead made the target's
+// perpendicular "miss" balloon with range (e.g. ~112px at 300px range, 22° offset) past
+// ARC_PERP_GATE, so those rounds fell back to a short `range.opt` budget: they landed well
+// short of the target (read as "range is too low") AND had the homing-blend window (see
+// arcHomingBlend below, which ramps over a fraction of this same maxDist) squeezed into a much
+// shorter remaining distance for the round with the LARGEST initial heading error to correct —
+// together, that read as "the flight path is too crazy".
+const ARC_PERP_GATE = 80;   // px — perpendicular miss beyond which we don't trust "target ahead"
+
+// The travel budget (px) an arcing round should fly this shot: the straight-line distance to
+// `tgt` when it's roughly ahead of the launch point (along the weapon's CENTRE bearing
+// `aimAngle`, not this shot's own possibly fan-offset launch angle) and within `maxRange`;
+// otherwise a fallback lob distance (`opt`, the weapon's optimal range) for a shot with no
+// usable target ahead of it (no lock, or a target behind/far to the side).
+export function arcMaxDist(x, y, aimAngle, tgt, maxRange, opt) {
+  const ex = tgt.x - x, ey = tgt.y - y;
+  const fwd = ex * Math.cos(aimAngle) + ey * Math.sin(aimAngle);
+  const perp = Math.abs(ex * Math.sin(aimAngle) - ey * Math.cos(aimAngle));
+  return (fwd > 0 && fwd < maxRange && perp < ARC_PERP_GATE) ? fwd : opt;
+}
+
+// ── Arcing homing blend (#57) ────────────────────────────────────────────────────────────
+// The seeker on an arcing homing round doesn't engage until the round is past apex and
+// descending — like a real missile leaving the tube mostly ballistic, then curving in on its
+// target during the back half of the arc. `ASCENT_END` is the fractional-flight-distance
+// (dist / maxDist) where the seeker starts blending in (0 = launch, 1 = impact); the blend then
+// ramps from 0→1 over `HOMING_BLEND_SPAN` so the turn-in reads as a smooth curve, not a snap.
+export const ASCENT_END = 0.4;           // fraction of flight spent mostly ballistic before homing engages
+export const HOMING_BLEND_SPAN = 0.35;   // fraction of flight over which homing ramps from 0% to 100%
+
+// How strongly an arcing homing round should steer toward its target at flight-fraction `t`
+// (dist / maxDist): 0 during ascent, ramping smoothly up to 1 by the time it's well into its
+// descent. Getting `maxDist` right (arcMaxDist above) matters here too — a maxDist that's
+// artificially short compresses this whole ramp into much less real distance, so a round with
+// a large heading error has to correct it far more abruptly.
+export function arcHomingBlend(t) {
+  if (t <= ASCENT_END) return 0;
+  return Math.min(1, (t - ASCENT_END) / HOMING_BLEND_SPAN);
+}
+
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
 
 // Swarm Rack (#49): all 6 missiles launch at once from the same point but fan out at
