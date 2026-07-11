@@ -3,6 +3,7 @@ import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx,
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
+import { catalogMaxRange, previewRangeFrac } from '../data/weapons.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../audio/sfxParams.js';
 import { scheduleFireCues } from '../audio/fireCues.js';
@@ -39,6 +40,15 @@ const LABEL_W = 200;     // left block: name + stats
 const MOUNT_BASE_OY = (DESIGN / 2 + MOUNT_FRONT_Y) / DESIGN;   // weapon base within the texture
 const EMIT_SIZE = 44;
 const EMIT_BACK = 8;
+
+// #120: the card preview's travel distance used to just be `Math.min(card.stageW, ...)` —
+// since almost every weapon's real range comfortably exceeds a card's pixel width, nearly
+// every shot/beam maxed out the same stage width regardless of the weapon's actual range,
+// so range differences (Scatter Gun's short spread vs. Autocannon's long reach) were
+// invisible. CATALOG_MAX_RANGE (computed once against WEAPON_IDS, the player-facing set both
+// scenes render as cards — see data/weapons.js) lets _rangeLen() scale each weapon's shot
+// proportionally: the farthest-reaching weapon fills the card, everything else draws shorter.
+const CATALOG_MAX_RANGE = catalogMaxRange();
 
 export class WeaponCardList {
   // #65: `isLocked(id)`/`costOf(id)` are optional — when given, a locked card renders dimmed
@@ -352,6 +362,12 @@ export class WeaponCardList {
     }
   }
 
+  // #120: this card's travel distance, scaled by its weapon's range relative to the whole
+  // catalog (see CATALOG_MAX_RANGE above) and capped at the stage width.
+  _rangeLen(card) {
+    return Math.min(card.stageW, card.stageW * previewRangeFrac(card.weapon, CATALOG_MAX_RANGE));
+  }
+
   _emit(card, mode, s) {
     const ax = card.muzzleX, ay = card.muzzleY, color = card.color;
     if (mode === 'contact') {
@@ -360,7 +376,7 @@ export class WeaponCardList {
       return;
     }
     if (mode === 'hitscan') {
-      const len = Math.min(card.stageW, card.weapon.range.opt || 200);
+      const len = this._rangeLen(card);
       const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
       card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: card.weapon.delivery.kind === 'rail' });
       if (this._isAudible(card)) Audio.impact(card.weapon.id);
@@ -369,7 +385,7 @@ export class WeaponCardList {
     const angle = s.angleOffset;
     const perp = angle + Math.PI / 2;
     const ox = ax + Math.cos(perp) * s.lateral, oy = ay + Math.sin(perp) * s.lateral;
-    const p = makeProjectile(card.weapon, ox, oy, angle, { maxDist: card.stageW });
+    const p = makeProjectile(card.weapon, ox, oy, angle, { maxDist: this._rangeLen(card) });
     card.projectiles.push(p);
     // Continuous in-flight loop (#56) — mirrors firing.js's _spawnProjectile: only weapons
     // with a `trajectory` stage get one, started a beat after launch.
@@ -430,7 +446,7 @@ export class WeaponCardList {
     // (the emitter/mount is a rotated Image behind fxG, not drawn here — see _buildCard.)
     for (const fp of card.patches) drawGroundFire(g, fp.x, fp.y, fp.r, fp.born, 1);
     if (card.holdBeam) {
-      const len = Math.min(card.stageW, w.range.opt || 220);
+      const len = this._rangeLen(card);
       drawBeam(g, card.muzzleX, card.muzzleY, card.muzzleX + len, card.muzzleY, card.color, 1, false, card.streamPhase);
     }
     for (const b of card.beams) drawBeam(g, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age);
