@@ -243,11 +243,16 @@ export const EnemiesMixin = {
     return last;
   },
 
-  // #97: expand an 'infantryMob' request into INFANTRY_MOB_SIZE troopers dropped in a loose
-  // cluster around (x,y) — bigger volume than the drone swarm (SWARM_SIZE) so it reads as an
+  // #97: expand an 'infantryMob' request into INFANTRY_MOB_SIZE troopers dropped in a cluster
+  // around (x,y) — bigger volume than the drone swarm (SWARM_SIZE) so it reads as an
   // overwhelming crowd. Ground units, so they're placed on a few concentric rings (not one
   // ring like the drone swarm) to avoid dropping dozens of them exactly on top of each other
-  // right before terrain/collision resolves them apart. Returns the last trooper spawned.
+  // right before terrain/collision resolves them apart. #104 (playtest: "they should be more
+  // clustered together") — the rings were originally spread wide (30 + ring*34, i.e. successive
+  // rings at 30/64/98/...px out), which read as the mob spread across a broad disc rather than a
+  // huddle. Tightened to a much smaller base radius and per-ring step so the whole mob packs
+  // into a dense knot the player has to plow through, not a wide spread. Returns the last
+  // trooper spawned.
   _spawnInfantryMob(x, y) {
     let last = null;
     const perRing = 10;
@@ -256,7 +261,7 @@ export const EnemiesMixin = {
       const idxInRing = i % perRing;
       const ringCount = Math.min(perRing, INFANTRY_MOB_SIZE - ring * perRing);
       const a = (idxInRing / ringCount) * Math.PI * 2 + ring * 0.4;
-      const r = 30 + ring * 34;
+      const r = 14 + ring * 16;
       last = this._spawnKind(x + Math.cos(a) * r, y + Math.sin(a) * r, 'infantry');
     }
     return last;

@@ -657,6 +657,31 @@ try {
       a.controls.keys.D.isDown = false;
       s92.tankCrushed = !a.enemies.includes(tank) && a.enemies.length === beforeCount - 1 && tank._tornDown === true;
 
+      // (c2) #104: infantry get the SAME instant-crush-on-contact treatment as tanks (playtest:
+      // infantry — the weakest unit in the game — "should be stompable"). Pin a trooper directly
+      // in the player's path exactly like the tank check above and confirm it dies on contact
+      // through the normal death path. Infantry's collision radius is much smaller than a tank's
+      // (groundEnemyRadius scales by the kind's own `scale`, and infantry's 0.38 is the smallest
+      // in the game), so closing the gap all the way to actual contact takes a few more frames of
+      // travel than the tank check above at the same start distance — by this point in the smoke
+      // run the player mech has already been force-killed (the run-death test above), degrading
+      // its move speed, so the budget here is deliberately generous rather than reusing the
+      // tank check's tight 90-frame one (that tightness was specifically about disproving the
+      // OLD gradual multi-second crush, which infantry never had).
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const trooperX = 80, trooperY = 0;
+      const trooper = a._spawnKind(trooperX, trooperY, 'infantry');
+      trooper.x = trooperX; trooper.y = trooperY;
+      const beforeCountInf = a.enemies.length;
+      a.controls.keys.D.isDown = true;
+      for (let i = 0; i < 240 && a.enemies.includes(trooper); i++) {
+        a.update(0, 16);
+        if (a.enemies.includes(trooper)) { trooper.x = trooperX; trooper.y = trooperY; trooper.vx = 0; trooper.vy = 0; }
+      }
+      a.controls.keys.D.isDown = false;
+      s92.infantryCrushed = !a.enemies.includes(trooper) && a.enemies.length === beforeCountInf - 1 && trooper._tornDown === true;
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+
       // (d) A FLYING enemy (helicopter) pinned directly in the player's path must NOT block —
       // flyers narratively pass over ground obstacles. Re-pin its position every frame so it
       // stays a fixed obstacle in the path rather than strafing away under its own AI.
@@ -832,6 +857,7 @@ try {
   if (!arena.s92.groundBlocks) fail('#92 a ground enemy unit did not block the player from driving through it');
   if (!arena.s92.hullTurretDiverge) fail("#92 a tank's hull and turret did not diverge — they still look rigidly linked");
   if (!arena.s92.tankCrushed) fail('#92 sustained collision with a tank did not crush/destroy it through the normal death path');
+  if (!arena.s92.infantryCrushed) fail('#104 driving into an infantry trooper did not crush/destroy it through the normal death path');
   if (!arena.s92.flyerDoesNotBlock) fail('#92 a flying enemy (helicopter) wrongly blocked the player\'s movement');
 
   // #94: turret rework — artillery-style indirect fire, no LOS needed, insane range.

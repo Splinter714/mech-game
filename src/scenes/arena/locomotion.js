@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, rotateToward } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, rotateToward, CRUSHABLE_BEHAVIORS } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
@@ -145,14 +145,19 @@ export const LocomotionMixin = {
     const groundBlocked = (x, y) => this._blocked(x, y) || !!this._blockedByGroundEnemy(x, y);
     let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
     let enemyHit = this._blockedByGroundEnemy(nx, ny);
-    // #92 (corrected 2026-07-10): walking INTO a TANK specifically is an INSTANT kill, not a
-    // gradual crush — `_crushTankAt` destroys it in this one call (normal death path: explosion
-    // FX, corpse teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same
-    // tick). Re-check `_blockedByGroundEnemy` afterward: the tank is gone from `this.enemies` now,
-    // so if nothing else occupies (nx, ny) the player rolls straight through into the space the
-    // tank just vacated instead of still sliding/stopping against a corpse that no longer blocks.
-    if (enemyHit && enemyHit.behavior === 'tank') {
-      this._crushTankAt(enemyHit);
+    // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
+    // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
+    // teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same tick). #104
+    // extends the same instant-crush treatment to INFANTRY (see `CRUSHABLE_BEHAVIORS`) — and
+    // loops rather than crushing just once, so driving into a packed infantry cluster crushes
+    // every trooper the mech is actually touching this frame, not only the first one found (a
+    // tight mob can have several troopers overlapping the same contact point at once). Re-check
+    // `_blockedByGroundEnemy` after each kill: the crushed enemy is gone from `this.enemies` now,
+    // so this either finds the next overlapping trooper to crush too, or nothing — in which case
+    // the player rolls straight through into the space just vacated instead of still
+    // sliding/stopping against a corpse that no longer blocks.
+    while (enemyHit && CRUSHABLE_BEHAVIORS.has(enemyHit.behavior)) {
+      this._crushGroundEnemyAt(enemyHit);
       enemyHit = this._blockedByGroundEnemy(nx, ny);
     }
     if (this._blocked(nx, ny) || enemyHit) {

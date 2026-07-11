@@ -151,12 +151,20 @@ export function groundEnemyRadius(e) {
   return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
 }
 
+// #92/#104: which `behavior` keys get the instant-crush-on-contact treatment (world.js
+// `_crushGroundEnemyAt`, called from locomotion.js `_drive`) instead of just blocking the player
+// like a normal ground enemy. Originally tank-only (#92 correction); #104 extends it to infantry
+// — the weakest unit in the game (hp 6) — since a single stomp destroying one trooper as the
+// player drives through a cluster is the natural read of "infantry should be stompable."
+export const CRUSHABLE_BEHAVIORS = new Set(['tank', 'infantry']);
+
 // #41: crush/stomp damage for ONE frame of the player leaning into a destructible outpost — DPS
 // scaled by how hard the player is driving in (speedFrac, clamped 0..1), with a floor (0.35) so
 // even a gentle press still chips away instead of doing nothing. PURE — used by world.js
 // `_stompBuildingAt`. #92 (corrected 2026-07-10): tanks used to share this gradual formula via
-// `_crushTankAt`, but playtest feedback ("it should be instant smash") moved tank-crushing to a
-// one-hit kill instead — `_crushTankAt` no longer calls this helper, only buildings still do.
+// `_crushTankAt`, but playtest feedback ("it should be instant smash") moved tank-crushing (and,
+// per #104, infantry too — see `_crushGroundEnemyAt`) to a one-hit kill instead — buildings are
+// the only thing still using this gradual formula.
 export function crushDamage(dps, dt, speedFrac) {
   const frac = speedFrac < 0 ? 0 : speedFrac > 1 ? 1 : speedFrac;
   return dps * dt * (0.35 + 0.65 * frac);

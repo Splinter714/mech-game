@@ -1,20 +1,32 @@
 // #92 (corrected per playtest 2026-07-10): "is the blocking on ground enemies preventing me
 // from stomping the tanks? it should be instant smash." The original crush mechanic applied
 // gradual DPS over several seconds of sustained pressing, which read as "stuck/blocked" rather
-// than "destroying the tank." `_crushTankAt` (world.js) must now destroy a tank in ONE call,
-// while the sibling outpost-stomp mechanic (`_stompBuildingAt`, #41) is unaffected — it's not in
-// scope for this fix and should still chip down gradually over multiple calls.
+// than "destroying the tank." `_crushGroundEnemyAt` (world.js) must now destroy a tank in ONE
+// call, while the sibling outpost-stomp mechanic (`_stompBuildingAt`, #41) is unaffected — it's
+// not in scope for this fix and should still chip down gradually over multiple calls.
+// #104 (playtest: infantry — the weakest unit in the game — "should be stompable" too) extends
+// the exact same instant-kill treatment to infantry; `_crushGroundEnemyAt` itself is generic (it
+// was renamed from `_crushTankAt`), so the same assertions below are re-run against an infantry
+// trooper to confirm it composes.
 import { describe, it, expect, vi } from 'vitest';
 import { WorldMixin } from './world.js';
 
 // A minimal HpBody-shaped enemy: single hp pool, mirrors data/HpBody.js's interface just enough
-// for _crushTankAt/_damageEnemyAt-style callers (the real _damageEnemyAt is stubbed out below so
-// we're only asserting what damage `_crushTankAt` computes and passes through, not the full
-// damage-application/death pipeline — that pipeline is exercised elsewhere, unchanged).
+// for _crushGroundEnemyAt/_damageEnemyAt-style callers (the real _damageEnemyAt is stubbed out
+// below so we're only asserting what damage `_crushGroundEnemyAt` computes and passes through,
+// not the full damage-application/death pipeline — that pipeline is exercised elsewhere,
+// unchanged).
 function makeTank(hp) {
   return {
     x: 10, y: 10, behavior: 'tank', kind: 'tank',
     mech: { hp, maxHp: 160, isDestroyed: () => hp <= 0 },
+  };
+}
+
+function makeInfantry(hp) {
+  return {
+    x: 10, y: 10, behavior: 'infantry', kind: 'infantry',
+    mech: { hp, maxHp: 6, isDestroyed: () => hp <= 0 },
   };
 }
 
@@ -40,11 +52,11 @@ function makeScene() {
   return { scene, damageCalls };
 }
 
-describe('_crushTankAt — instant tank kill on contact (#92 correction)', () => {
+describe('_crushGroundEnemyAt — instant tank kill on contact (#92 correction)', () => {
   it('deals damage >= the tank\'s full remaining hp in a SINGLE call', () => {
     const { scene, damageCalls } = makeScene();
     const tank = makeTank(160);
-    scene._crushTankAt(tank);
+    scene._crushGroundEnemyAt(tank);
     expect(damageCalls.length).toBe(1);
     expect(damageCalls[0]).toBeGreaterThanOrEqual(160);
   });
@@ -52,7 +64,7 @@ describe('_crushTankAt — instant tank kill on contact (#92 correction)', () =>
   it('still works (dies in one hit) for a tank already partially damaged', () => {
     const { scene, damageCalls } = makeScene();
     const tank = makeTank(37);
-    scene._crushTankAt(tank);
+    scene._crushGroundEnemyAt(tank);
     expect(damageCalls.length).toBe(1);
     expect(damageCalls[0]).toBeGreaterThanOrEqual(37);
   });
@@ -60,7 +72,7 @@ describe('_crushTankAt — instant tank kill on contact (#92 correction)', () =>
   it('is a no-op against an already-destroyed tank (no double-kill call)', () => {
     const { scene, damageCalls } = makeScene();
     const tank = makeTank(0);
-    scene._crushTankAt(tank);
+    scene._crushGroundEnemyAt(tank);
     expect(damageCalls.length).toBe(0);
   });
 
@@ -69,8 +81,43 @@ describe('_crushTankAt — instant tank kill on contact (#92 correction)', () =>
     const { scene, damageCalls } = makeScene();
     scene.speed = 0; // stationary — the old DPS-based crush would deal ~35% damage at rest
     const tank = makeTank(160);
-    scene._crushTankAt(tank);
+    scene._crushGroundEnemyAt(tank);
     expect(damageCalls[0]).toBeGreaterThanOrEqual(160);
+  });
+});
+
+describe('_crushGroundEnemyAt — extended to infantry, the weakest unit in the game (#104)', () => {
+  it('deals damage >= the trooper\'s full remaining hp in a SINGLE call', () => {
+    const { scene, damageCalls } = makeScene();
+    const trooper = makeInfantry(6);
+    scene._crushGroundEnemyAt(trooper);
+    expect(damageCalls.length).toBe(1);
+    expect(damageCalls[0]).toBeGreaterThanOrEqual(6);
+  });
+
+  it('is a no-op against an already-destroyed trooper (no double-kill call)', () => {
+    const { scene, damageCalls } = makeScene();
+    const trooper = makeInfantry(0);
+    scene._crushGroundEnemyAt(trooper);
+    expect(damageCalls.length).toBe(0);
+  });
+
+  it('does NOT scale with drive-in speed — full damage regardless of `this.speed`', () => {
+    const { scene, damageCalls } = makeScene();
+    scene.speed = 0;
+    const trooper = makeInfantry(6);
+    scene._crushGroundEnemyAt(trooper);
+    expect(damageCalls[0]).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe('CRUSHABLE_BEHAVIORS — the #104 scope for instant-crush-on-contact', () => {
+  it('includes tank and infantry, and excludes other ground behaviors', async () => {
+    const { CRUSHABLE_BEHAVIORS } = await import('./shared.js');
+    expect(CRUSHABLE_BEHAVIORS.has('tank')).toBe(true);
+    expect(CRUSHABLE_BEHAVIORS.has('infantry')).toBe(true);
+    expect(CRUSHABLE_BEHAVIORS.has('turret')).toBe(false);
+    expect(CRUSHABLE_BEHAVIORS.has(undefined)).toBe(false); // mech enemies (behavior undefined)
   });
 });
 

@@ -168,7 +168,11 @@ export const ENEMY_KINDS = {
     fireRange: 200,
     fireEveryMs: 700,
     flying: false,           // ground troop — walks, collides with terrain and the player
-    move: { maxSpeed: 85, accel: 260, turnRate: 5, turretSlew: 6 },
+    move: { maxSpeed: 48, accel: 260, turnRate: 5, turretSlew: 6 },  // #104: slowed noticeably
+                                                                     // from 85 (playtest: "should
+                                                                     // be slower") — a lumbering
+                                                                     // mob you can outrun/outdrive,
+                                                                     // not a fast-closing swarm.
     art: 'infantry',
     behavior: 'infantry',
     themeColor: 0x8fae4a,
