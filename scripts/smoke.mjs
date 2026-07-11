@@ -313,11 +313,26 @@ try {
     for (let r = 40; r < 400 && !wallPt; r += 20) {
       for (let ang = 0; ang < Math.PI * 2; ang += Math.PI / 8) {
         const wx = Math.cos(ang) * r, wy = Math.sin(ang) * r;
-        if (a._isWall(wx, wy)) { wallPt = { x: wx, y: wy }; break; }
+        if (a._isWall(wx, wy)) {
+          // #134: snap to the wall HEX'S TRUE CENTER, not the raw radial sample point. The raw
+          // sample can land arbitrarily close to a hex edge (e.g. an angle near a multiple of
+          // π/2 puts x/y within float epsilon of 0, which is exactly the seam between two hex
+          // columns/rows) — close enough that even a flyer's own sub-pixel AI drift during the
+          // single `_updateVehicle` tick below (it becomes aware and starts easing toward a
+          // strafe waypoint; accel-limited, but still nonzero) can cross into the NEIGHBOURING
+          // hex, which may not be a wall. That made `_isWall` disagree between placement and the
+          // post-tick check ~1/15 runs despite the flyer correctly ignoring collision the whole
+          // time. The hex's true center sits a half-hex-width (tens of px) from every edge, so
+          // one tick's worth of drift can never cross out of it.
+          const SIZE = 48, RT3 = Math.sqrt(3);
+          const [wq, wr] = a._hexKeyAt(wx, wy).split(',').map(Number);
+          wallPt = { x: SIZE * RT3 * (wq + wr / 2), y: SIZE * (3 / 2) * wr };
+          break;
+        }
       }
     }
     if (wallPt) {
-      heli.x = wallPt.x; heli.y = wallPt.y;   // sit it ON the wall hex
+      heli.x = wallPt.x; heli.y = wallPt.y;   // sit it ON the wall hex (its true center)
       // A flyer sitting on a wall is fine (it's above it); a ground unit would never be placed
       // there by its own movement. Assert the flyer flag + that it isn't force-ejected.
       a._updateVehicle(heli, 0.016, 16);
