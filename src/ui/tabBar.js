@@ -1,10 +1,13 @@
-// Shared top tab bar for the lab scenes (Mech Lab / Weapon Lab / Music), with a Deploy
+// Shared top tab bar for the lab scenes (Mech Lab / Music), with a Deploy
 // action pinned to the right. One source of truth so every lab screen gets an identical
 // header and navigation reads the same everywhere. Each tab just starts its scene; the
 // active tab is highlighted and inert.
 //
+// #121: the Weapon Lab tab is retired — its catalog + sound-tuning panel now live inside
+// GarageScene's own catalog region, so there's no separate scene to navigate to.
+//
 // Usage (from a scene's create()):
-//   buildTabBar(this, { active: 'WeaponLabScene', onDeploy: () => this.deploy(), canDeploy });
+//   buildTabBar(this, { active: 'GarageScene', onDeploy: () => this.deploy(), canDeploy });
 // Returns { height } so the caller can lay content out below it.
 //
 // Controller (#70): attachPadTabCycle(scene, active) — call ONCE per scene create() (not per
@@ -23,7 +26,6 @@ export const TAB_BAR_H = 52;   // logical px
 // The tabs, in order. `scene` is the Phaser scene key each one navigates to.
 const TABS = [
   { key: 'MECH LAB', scene: 'GarageScene' },
-  { key: 'WEAPON LAB', scene: 'WeaponLabScene' },
   { key: 'MUSIC', scene: 'MusicScene' },
 ];
 
