@@ -11,13 +11,41 @@ describe('planEmissions', () => {
   });
 
   it('fans a spread weapon into spreadCount angled shots, centred on the aim line', () => {
-    const p = planEmissions(WEAPONS.shotgun);
-    expect(p.shots).toHaveLength(WEAPONS.shotgun.delivery.spreadCount);
+    // swarmRack has no spreadJitter, so its fan is the plain deterministic (unjittered)
+    // case — shotgun now carries spreadJitter (#101, see below) so it's covered separately.
+    const p = planEmissions(WEAPONS.swarmRack);
+    expect(p.shots).toHaveLength(WEAPONS.swarmRack.delivery.spreadCount);
     const angles = p.shots.map((s) => s.angleOffset);
     expect(Math.min(...angles)).toBeLessThan(0);
     expect(Math.max(...angles)).toBeGreaterThan(0);
     expect(angles.reduce((a, b) => a + b, 0)).toBeCloseTo(0); // symmetric fan
     expect(p.shots.every((s) => s.lateral === 0)).toBe(true);
+  });
+
+  it('jitters Scatter Gun\'s pellet angles so repeated blasts don\'t land in the exact same evenly-spaced fan (#101)', () => {
+    const { spreadCount, spreadAngle, spreadJitter } = WEAPONS.shotgun.delivery;
+    const cone = (spreadAngle * Math.PI) / 180;
+    const jitter = (spreadJitter * Math.PI) / 180;
+
+    // Pellet count, damage, and overall cone width are unchanged by the jitter fix.
+    expect(spreadCount).toBe(7);
+    expect(WEAPONS.shotgun.damage).toBe(3);
+    const p0 = planEmissions(WEAPONS.shotgun);
+    expect(p0.shots).toHaveLength(spreadCount);
+
+    // (a) Angles vary between repeated trigger pulls — not the same fixed fan every time.
+    const runs = Array.from({ length: 20 }, () => planEmissions(WEAPONS.shotgun).shots.map((s) => s.angleOffset));
+    const firstPelletAngles = new Set(runs.map((angles) => angles[0]));
+    expect(firstPelletAngles.size).toBeGreaterThan(1);
+
+    // (b) The overall coverage stays roughly the same as the original fixed fan (±cone/2):
+    // jitter nudges each pellet off its base slot but shouldn't blow the spread out far
+    // beyond the original extremes.
+    const allAngles = runs.flat();
+    const maxAbs = Math.max(...allAngles.map((a) => Math.abs(a)));
+    const originalMaxAbs = cone / 2;
+    expect(maxAbs).toBeGreaterThan(originalMaxAbs); // jitter does push a little past the old fixed extreme...
+    expect(maxAbs).toBeLessThan(originalMaxAbs + jitter + 0.01); // ...but never past base slot + full jitter
   });
 
   it('clusters a dumbfire clump with lateral offsets and ~parallel headings (no fan)', () => {
