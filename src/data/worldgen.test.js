@@ -4,12 +4,13 @@
 // pieces the arena mixin (scenes/arena/world.js, scenes/arena/run.js) is a thin wrapper around.
 import { describe, it, expect } from 'vitest';
 import {
-  mulberry32, safeZoneKeys, generateTerrain, pickFarObjective,
+  mulberry32, safeZoneKeys, generateTerrain, pickFarObjective, FAR_OBJECTIVE_MIN_DIST,
   sectorBoundaries, organicBoundary, growRegion, pickRevealAngle, pickGrowthCenter,
   INITIAL_BASE_RADIUS, INITIAL_VARIATION, GROWTH_RADIUS, GROWTH_VARIATION, MAX_WORLD_RADIUS,
+  GROWTH_ARC_HALF_ANGLE,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
-import { axialKey, range, distance } from './hexgrid.js';
+import { axialKey, range, distance, hexToPixel, pixelToHex } from './hexgrid.js';
 
 const GRASSLAND = getBiome('grassland');
 
@@ -288,6 +289,82 @@ describe('growRegion', () => {
       expect(included(h.q, h.r)).toBe(lobe(h.q, h.r));
     }
   });
+
+  // #81 follow-up (playtest 2026-07-10 point 2): "it seems to grow in multiple directions
+  // instead of more in the direction of the objective." `angle` + `arcFrom` restrict the new
+  // lobe to a directional cone (GROWTH_ARC_HALF_ANGLE each side) instead of the full 360° blob.
+  describe('directional cone (angle + arcFrom)', () => {
+    it('with no angle/arcFrom given, keeps the original unrestricted 360° lobe (back-compat)', () => {
+      const center = { q: 10, r: 0 };
+      const a = growRegion({ previous: null, center, rng: mulberry32(9) });
+      const b = organicBoundary(center, mulberry32(9), { baseRadius: GROWTH_RADIUS, variation: GROWTH_VARIATION });
+      for (const h of range({ q: 0, r: 0 }, 20)) expect(a.reveal(h.q, h.r)).toBe(b(h.q, h.r));
+    });
+
+    it('includes a hex squarely along the growth angle', () => {
+      const angle = 0; // due "east" in pixel space
+      const arcFrom = { x: 0, y: 0 };
+      const center = pixelToHex(600, 0);
+      const { reveal } = growRegion({ previous: null, center, rng: mulberry32(5), angle, arcFrom });
+      expect(reveal(center.q, center.r)).toBe(true);
+    });
+
+    it('excludes a hex the pure organic radial shape would include but that falls outside the cone', () => {
+      const angle = 0;
+      const arcFrom = { x: 0, y: 0 };
+      // Deliberately place the growth centre well off the growth angle (~84° away, outside the
+      // ~50° half-angle cone either side) to isolate the arc restriction from the radial shape:
+      // the pure radial boundary always includes its own centre hex (see organicBoundary's
+      // "always includes the centre hex itself" test), so if the cone excludes it here, that
+      // exclusion can only be the directional restriction, not the radial one.
+      const offAngleCenter = pixelToHex(100, 1000);
+      const seed = 5;
+      const radialOnly = organicBoundary(offAngleCenter, mulberry32(seed), {
+        baseRadius: GROWTH_RADIUS, variation: GROWTH_VARIATION,
+      });
+      expect(radialOnly(offAngleCenter.q, offAngleCenter.r)).toBe(true);
+      const { reveal } = growRegion({
+        previous: null, center: offAngleCenter, rng: mulberry32(seed), angle, arcFrom,
+      });
+      expect(reveal(offAngleCenter.q, offAngleCenter.r)).toBe(false);
+    });
+
+    it('GROWTH_ARC_HALF_ANGLE is narrower than a full half-circle (reads as one direction, not omnidirectional)', () => {
+      expect(GROWTH_ARC_HALF_ANGLE).toBeGreaterThan(0);
+      expect(GROWTH_ARC_HALF_ANGLE).toBeLessThan(Math.PI / 2);
+    });
+  });
+});
+
+// #81 follow-up (playtest 2026-07-10 point 4): "the initial map should be slightly larger, but
+// still not rounded." The base radius was bumped up while keeping the same organic-variation
+// ratio (still an irregular shape, not a bigger round disc).
+describe('initial map size', () => {
+  it('the initial base radius was bumped up from the original disc-replacement value (9)', () => {
+    expect(INITIAL_BASE_RADIUS).toBeGreaterThan(9);
+  });
+
+  it('keeps genuine (non-zero) organic variation at the new, larger radius', () => {
+    expect(INITIAL_VARIATION).toBeGreaterThan(0);
+  });
+
+  it('produces a genuinely larger initial region than the old radius, while still irregular', () => {
+    const oldRegion = organicBoundary({ q: 0, r: 0 }, mulberry32(0x5eed), { baseRadius: 9, variation: 3 });
+    const newRegion = organicBoundary({ q: 0, r: 0 }, mulberry32(0x5eed), {
+      baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION,
+    });
+    const oldTerrain = generateTerrain({ seed: 0x5eed, worldRadius: 30, biome: GRASSLAND, included: oldRegion });
+    const newTerrain = generateTerrain({ seed: 0x5eed, worldRadius: 30, biome: GRASSLAND, included: newRegion });
+    expect(newTerrain.terrain.size).toBeGreaterThan(oldTerrain.terrain.size);
+    // Still organic — not a perfect disc — at the new radius too.
+    const dirs = [{ q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 1, r: -1 }];
+    const reach = dirs.map((d) => {
+      let n = 0;
+      while (n < 30 && newRegion(d.q * n, d.r * n)) n++;
+      return n;
+    });
+    expect(new Set(reach).size).toBeGreaterThan(1);
+  });
 });
 
 describe('pickRevealAngle', () => {
@@ -392,6 +469,23 @@ describe('pickFarObjective', () => {
       const near = axialKey(2, 0);
       const far = axialKey(-10, 0);
       expect(pickFarObjective([near, far], from, 6)).toBe(far);
+    });
+  });
+
+  // #81 follow-up (playtest 2026-07-10 point 4): the FIRST stage's objective (mission.js
+  // `_initMission`) now shares this exact function + floor — mirrored here the same way
+  // stage-advance's objective distance is tested above, just with the default `minDistance`
+  // (no explicit arg) since that's how `_initMission` calls it.
+  describe('as used for the FIRST stage objective (mission.js _initMission)', () => {
+    it('the default minDistance IS the shared FAR_OBJECTIVE_MIN_DIST floor', () => {
+      const from = { q: 0, r: 0 };
+      const near = axialKey(2, 0);   // distance 2 — inside spawn view, must not be picked
+      const far = axialKey(10, 0);   // distance 10 — requires real travel
+      expect(pickFarObjective([near, far], from)).toBe(far);
+    });
+
+    it('FAR_OBJECTIVE_MIN_DIST is exported so both the first stage and later stages share one floor', () => {
+      expect(FAR_OBJECTIVE_MIN_DIST).toBeGreaterThan(0);
     });
   });
 });

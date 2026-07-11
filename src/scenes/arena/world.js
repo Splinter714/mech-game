@@ -64,7 +64,13 @@ export const WorldMixin = {
     const shapeRng = mulberry32(seed);
     let included, reveal;
     if (opts.growthCenter) {
-      ({ included, reveal } = growRegion({ previous: opts.previous ?? null, center: opts.growthCenter, rng: shapeRng }));
+      // #81 follow-up (playtest 2026-07-10 point 2): forward the growth angle + the player's
+      // pixel position (run.js `_growNextStageTerrain`) so the new lobe reads as a directional
+      // cone rather than a 360° blob — see `growRegion`'s `angle`/`arcFrom` params.
+      ({ included, reveal } = growRegion({
+        previous: opts.previous ?? null, center: opts.growthCenter, rng: shapeRng,
+        angle: opts.growthAngle ?? null, arcFrom: opts.arcFrom ?? null,
+      }));
     } else {
       included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
         baseRadius: INITIAL_BASE_RADIUS, variation: INITIAL_VARIATION, sectors: SECTORS,
@@ -101,7 +107,10 @@ export const WorldMixin = {
       }
       const [q, r] = k.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
-      const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE);
+      // #81 follow-up (playtest 2026-07-10 point 1): explicit DEPTH.TERRAIN on every tile, not
+      // just the very first world build — a growth-pass tile added long after `this.playerView`
+      // (DEPTH.UNITS) must sort the same way the initial-build tiles do, not rely on add-order.
+      const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
     }
     // Destroy every PREVIOUS tile Image that wasn't carried over above (the same leak #71 fixed

@@ -8,18 +8,24 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
+import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
 import { DEPTH } from './shared.js';
 
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated
-  // `this.buildingHp`. Picks the objective DETERMINISTICALLY (not randomly) so the smoke
-  // test can rely on it: the outpost hex whose map key sorts first. `this.buildingHp` is
-  // a Map keyed by `axialKey`, built by iterating the world's hex range in a fixed order
-  // (see world.js `_buildWorld`), so Map insertion order is already deterministic — just
-  // take the first entry.
+  // `this.buildingHp`. Picks the objective DETERMINISTICALLY (not randomly) so the smoke test
+  // can rely on it — `pickFarObjective` is itself pure/deterministic (no RNG, just distance +
+  // the tie-breaking sorted-hex-key order), so the same seed always yields the same objective.
+  //
+  // #81 follow-up (playtest 2026-07-10 point 4): this used to just take the sorted-hex-key-first
+  // outpost with NO distance consideration, unlike every later stage-advance objective (run.js
+  // `_startNextStage`), which already biases toward a candidate far from the player. That could
+  // land the very first objective right next to spawn. Now shares the exact same far-objective
+  // logic (and its `FAR_OBJECTIVE_MIN_DIST` floor) as every later stage, from the player's spawn
+  // hex (world origin) — so the player always has to travel for the first objective too.
   _initMission() {
-    const hexKeys = [...this.buildingHp.keys()].sort();
-    this.objectiveHex = hexKeys[0] ?? null;
+    const hexKeys = [...this.buildingHp.keys()];
+    this.objectiveHex = pickFarObjective(hexKeys, { q: 0, r: 0 }, FAR_OBJECTIVE_MIN_DIST);
     this.mission = makeMission('assault');
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);

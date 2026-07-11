@@ -377,6 +377,15 @@ try {
     // `_damageBuildingAt` (same path real weapon fire uses) until it collapses, and confirm the
     // mission flips to 'complete'.
     const missionStartedActive = a.mission?.status === 'active' && a.mission?.typeId === 'assault';
+    // #81 follow-up (playtest 2026-07-10 point 4): the FIRST stage's objective must also require
+    // real travel — capture its distance from spawn (world origin) BEFORE anything else touches
+    // `a.objectiveHex` (the stage-advance below reassigns it). Axial hex distance, inlined (mirrors
+    // data/hexgrid.js `distance`) since this callback runs in the page context.
+    let firstObjectiveDistFromSpawn = null;
+    if (a.objectiveHex) {
+      const [foq, for_] = a.objectiveHex.split(',').map(Number);
+      firstObjectiveDistFromSpawn = (Math.abs(foq) + Math.abs(for_) + Math.abs(foq + for_)) / 2;
+    }
     let missionCompleted = false;
     if (a.objectiveHex) {
       // Axial → pixel (pointy-top), mirroring data/hexgrid.js `hexToPixel` — inlined because
@@ -392,8 +401,7 @@ try {
     // #64: run loop — stage advance on mission-complete. The mission above was just driven to
     // 'complete'; running the run mixin's per-frame check should notice and start advancing
     // (banking currency, moving to stage 1) without waiting for the real transition timer —
-    // call the internal advance directly (mirrors how _updateRun would trigger it) and then
-    // force the delayed _startNextStage() through immediately so this stays a synchronous test.
+    // call the internal advance directly (mirrors how _updateRun would trigger it).
     const runStartedAtStageZero = a.run?.stageIndex === 0 && a.run?.status === 'active';
     const enemyCountBeforeAdvance = a.enemies.length;
     // #81 (organic growth rewrite): snapshot the terrain + the player's exact position BEFORE
@@ -409,10 +417,27 @@ try {
     const pxBefore = a.px, pyBefore = a.py;
     a._advanceRun();
     const stageAdvanced = a.run?.stageIndex === 1 && a.run?.status === 'active';
-    // _advanceRun scheduled _startNextStage on a timer; fire it immediately so the smoke test
-    // doesn't need to sleep, then confirm a fresh (bigger) squad + a fresh active mission exist.
-    a._startNextStage();
+    // #81 follow-up (playtest 2026-07-10 point 3): terrain growth + the new objective/mission
+    // now happen SYNCHRONOUSLY inside `_advanceRun` (via `_growNextStageTerrain`) — confirm the
+    // map already grew and the new mission is already live BEFORE ever firing the still-deferred
+    // squad spawn below, proving growth isn't gated behind the transition delay.
+    const terrainGrewImmediatelyOnAdvance = a.terrain.size > hexCountBeforeAdvance;
     const newStageHasMission = a.mission?.status === 'active';
+    // #81 follow-up (playtest 2026-07-10 point 1): every growth-added tile Image must carry the
+    // SAME explicit terrain depth (DEPTH.TERRAIN = 0) as the initial build's tiles, strictly
+    // below the player's view (DEPTH.UNITS = 3) — otherwise freshly-grown ground can render on
+    // top of the player. Find a tile that's new since the snapshot above (present now, absent —
+    // or a different terrain id — before) and check its depth directly.
+    const beforeTerrainMap = new Map(terrainBefore);
+    let newTileDepth = null;
+    for (const [k, id] of a.terrain) {
+      if (beforeTerrainMap.get(k) !== id) { newTileDepth = a.tileImages.get(k)?.depth; break; }
+    }
+    const growthTileDepthCorrect = newTileDepth === 0 && newTileDepth < a.playerView.depth;
+    // Only the squad spawn still waits for the short readability beat (see run.js
+    // `_spawnNextStageSquad`) — fire it immediately so the smoke test doesn't need to sleep,
+    // then confirm a fresh (bigger) squad exists.
+    a._spawnNextStageSquad();
     const newStageHasSquad = a.enemies.length > 0;
     // #81 (organic growth rewrite): this is additive growth, so — unlike the old reshuffle —
     // every hex that existed BEFORE the advance must come back byte-identical (a), while the
@@ -697,8 +722,11 @@ try {
       deathFx,
       missionStartedActive,
       missionCompleted,
+      firstObjectiveDistFromSpawn,
       runStartedAtStageZero,
       stageAdvanced,
+      terrainGrewImmediatelyOnAdvance,
+      growthTileDepthCorrect,
       newStageHasMission,
       newStageHasSquad,
       oldTerrainPreserved,
@@ -788,13 +816,24 @@ try {
   // (via the same _damageBuildingAt path weapon fire uses) completes it.
   if (!arena.missionStartedActive) fail('#66 mission did not start active with the assault objective');
   if (!arena.missionCompleted) fail('#66 destroying the objective hex did not complete the mission');
+  // #81 follow-up (playtest 2026-07-10 point 4): the very FIRST stage's objective must also
+  // require real travel from spawn, same as every later stage-advance objective.
+  if (!(arena.firstObjectiveDistFromSpawn >= 6)) {
+    fail(`#81 the first stage's objective was only ${arena.firstObjectiveDistFromSpawn} hexes from spawn — it must require real travel`);
+  }
   // #64: run loop — a fresh deploy starts at stage 0, mission-complete advances the run to the
   // next stage with a fresh mission + squad in the SAME arena session, and player death ends
   // the run + banks its currency into the persistent registry value the garage reads.
   if (!arena.runStartedAtStageZero) fail('#64 run did not start active at stage 0 on deploy');
   if (!arena.stageAdvanced) fail('#64 mission-complete did not advance the run to the next stage');
+  // #81 follow-up (playtest 2026-07-10 point 3): terrain growth + the new mission must be live
+  // immediately on mission-complete, not gated behind the full transition-delay beat.
+  if (!arena.terrainGrewImmediatelyOnAdvance) fail('#81 the new stage\'s terrain did not grow immediately on mission-complete — it must not wait for the transition delay');
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
+  // #81 follow-up (playtest 2026-07-10 point 1): every growth-added terrain tile must carry the
+  // same explicit DEPTH.TERRAIN as the initial build, strictly below the player's view depth.
+  if (!arena.growthTileDepthCorrect) fail('#81 a growth-added terrain tile is not at the correct (below-player) depth');
   if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
   // #81 (organic growth rewrite): stage advance ADDS a fresh organically-shaped region of
   // terrain beyond the previously-explored edge (not just a new objective in the same
