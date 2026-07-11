@@ -27,6 +27,7 @@ import { HpBody } from '../../data/HpBody.js';
 import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
+import { nearestValidPixel, turretClusterHexes } from '../../data/spawnPlacement.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, DEPTH } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
@@ -243,20 +244,21 @@ export const EnemiesMixin = {
     return last;
   },
 
-  // #89: expand a 'turretNest' request into TURRET_CLUSTER_SIZE turrets dropped close together
-  // in a tight, FIXED formation around (x,y) — mirrors _spawnSwarm's drone-swarm expansion, but
-  // turrets are stationary (move.maxSpeed 0), so this is a static nest/emplacement layout rather
-  // than the drone swarm's loose orbiting cloud. A small 2-per-row grid keeps every turret close
-  // together without overlapping (turrets are small — see ENEMY_KINDS.turret.scale). Returns the
-  // last turret spawned.
+  // #89 (fixed per #114 — playtest 2026-07-10: clusters spawning off-map / on forest/water):
+  // expand a 'turretNest' request into TURRET_CLUSTER_SIZE turrets dropped close together
+  // around a SINGLE VALIDATED hex, rather than blindly grid-offsetting from the raw (x, y) spawn
+  // point — that old fixed 2-per-row pixel-offset grid never checked terrain/bounds, so
+  // individual turrets could land off the playable map or on top of forest/water/other occupied
+  // terrain. `turretClusterHexes` (data/spawnPlacement.js, pure + unit-tested) does the actual
+  // validation: nearest passable/in-bounds hex to the raw point as the centre (mirrors the
+  // `_reachableDropPos` primitive powerups.js/#73 uses for drop placement), then the closest
+  // other individually-valid hexes around it. Returns the last turret spawned.
   _spawnTurretCluster(x, y) {
-    const SPACING = 46;   // px between nest slots — snug but non-overlapping at turret's scale
+    const hexes = turretClusterHexes(this.terrain, this.worldRadius, x, y, TURRET_CLUSTER_SIZE);
     let last = null;
-    for (let i = 0; i < TURRET_CLUSTER_SIZE; i++) {
-      const row = Math.floor(i / 2), col = i % 2;
-      const ox = (col - 0.5) * SPACING + row * (SPACING * 0.3);
-      const oy = row * SPACING * 0.9;
-      last = this._spawnKind(x + ox, y + oy, 'turret');
+    for (const hex of hexes) {
+      const { x: px, y: py } = hexToPixel(hex.q, hex.r);
+      last = this._spawnKind(px, py, 'turret');
     }
     return last;
   },
@@ -269,8 +271,14 @@ export const EnemiesMixin = {
   // clustered together") — the rings were originally spread wide (30 + ring*34, i.e. successive
   // rings at 30/64/98/...px out), which read as the mob spread across a broad disc rather than a
   // huddle. Tightened to a much smaller base radius and per-ring step so the whole mob packs
-  // into a dense knot the player has to plow through, not a wide spread. Returns the last
-  // trooper spawned.
+  // into a dense knot the player has to plow through, not a wide spread.
+  // #115 (playtest 2026-07-10: "infantry movement seems to let them off the map sometimes?"):
+  // these ring offsets, like the old turret-cluster grid (#114), were never checked against
+  // terrain/bounds — a trooper on an outer ring could land off the playable map or on forest/
+  // water. Each computed ring point is now snapped through `nearestValidPixel` (data/
+  // spawnPlacement.js, pure + unit-tested) before spawning, so no trooper is ever placed
+  // somewhere invalid to begin with (movement-time bounds-checking is handled separately, see
+  // `_updateVehicle`'s off-map recovery). Returns the last trooper spawned.
   _spawnInfantryMob(x, y) {
     let last = null;
     const perRing = 10;
@@ -280,7 +288,8 @@ export const EnemiesMixin = {
       const ringCount = Math.min(perRing, INFANTRY_MOB_SIZE - ring * perRing);
       const a = (idxInRing / ringCount) * Math.PI * 2 + ring * 0.4;
       const r = 14 + ring * 16;
-      last = this._spawnKind(x + Math.cos(a) * r, y + Math.sin(a) * r, 'infantry');
+      const pos = nearestValidPixel(this.terrain, this.worldRadius, x + Math.cos(a) * r, y + Math.sin(a) * r);
+      last = this._spawnKind(pos.x, pos.y, 'infantry');
     }
     return last;
   },
@@ -615,6 +624,16 @@ export const EnemiesMixin = {
   // then sync the hull/turret/shadow sprites. The behavior registry keeps this free of any
   // `=== 'tank'` branching — the brain is chosen by def.behavior.
   _updateVehicle(e, dt, delta) {
+    // #115: a ground unit (infantry/tank/turret) should never be sitting on off-map/impassable
+    // terrain to begin with — the per-frame integration below already blocks it from MOVING
+    // there, but this recovers one that somehow ended up there anyway (a bad spawn placement
+    // predating the #114/#115 spawn-time validation, or terrain that shrank/shifted under it),
+    // snapping it back onto the nearest valid ground rather than leaving it permanently stranded
+    // outside the playable area. Flyers are exempt — they narratively ignore ground terrain.
+    if (!e.flying && this._blocked(e.x, e.y)) {
+      const p = nearestValidPixel(this.terrain, this.worldRadius, e.x, e.y);
+      e.x = p.x; e.y = p.y; e.vx = 0; e.vy = 0;
+    }
     const dxp = this.px - e.x, dyp = this.py - e.y;
     const dist = Math.hypot(dxp, dyp) || 1;
     const bearing = Math.atan2(dyp, dxp);
