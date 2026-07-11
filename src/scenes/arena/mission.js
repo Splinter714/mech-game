@@ -8,6 +8,7 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
+import { DEPTH } from './shared.js';
 
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated
@@ -49,7 +50,10 @@ export const MissionMixin = {
       fontFamily: 'monospace', fontSize: '12px', color: '#ffb84a',
     }).setOrigin(0.5);
     const marker = this.add.container(x, y, [ring, label]);
-    marker.setDepth(5);
+    // #99: bumped from a bare 5 to the shared DEPTH.WORLD_UI tier — established alongside the
+    // rest of the arena's depth scheme (shared.js), one step above impact/death FX (5) so the
+    // objective stays legible even through an explosion happening on top of it.
+    marker.setDepth(DEPTH.WORLD_UI);
     this.tweens.add({ targets: ring, scale: 1.35, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     this._objectiveMarker = marker;
   },

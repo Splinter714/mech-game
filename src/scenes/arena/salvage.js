@@ -7,6 +7,7 @@
 import { SALVAGE_DROP_CHANCE, salvageAmount } from '../../data/shop.js';
 import { scatterOffset } from '../../data/hexgrid.js';
 import { Audio } from '../../audio/index.js';
+import { DEPTH } from './shared.js';
 
 const SALVAGE_COLOR = 0xf5c542;   // gold/amber — reads distinct from the powerup palette
 const PICKUP_RADIUS = 26;
@@ -44,6 +45,9 @@ export const SalvageMixin = {
     const ring = this.add.circle(0, 0, 10, SALVAGE_COLOR, 0.16).setStrokeStyle(2, SALVAGE_COLOR, 0.9);
     const gem = this.add.rectangle(0, 0, 9, 9, SALVAGE_COLOR, 1).setAngle(45).setStrokeStyle(1, 0xffffff, 0.8);
     const c = this.add.container(x, y, [glow, ring, gem]);
+    // #99: same WORLD_UI tier as the objective/powerup beacons — a pickup should always read
+    // clearly, not get buried under whichever unit happens to walk near it.
+    c.setDepth(DEPTH.WORLD_UI);
     c._glow = glow; c._ring = ring; c._gem = gem;
     return c;
   },

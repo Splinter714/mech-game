@@ -15,6 +15,7 @@ import {
 import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
 import { Audio } from '../../audio/index.js';
+import { DEPTH } from './shared.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const PICKUP_TTL = 15000;        // ms — a dropped collectible lingers this long, then fades
@@ -97,6 +98,9 @@ export const PowerupsMixin = {
     const core = this.add.rectangle(0, 0, 12, 12, p.color, 1).setAngle(45).setStrokeStyle(2, 0xffffff, 0.9);
     const spark = this.add.rectangle(0, 0, 5, 5, 0xffffff, 0.95).setAngle(45);
     const c = this.add.container(x, y, [glowOuter, glowInner, beam, halo, ring, core, spark]);
+    // #99: same WORLD_UI tier as the objective marker/salvage beacon — a timed-buff pickup is
+    // meant to be an eye-catching beacon, so it should never get lost under a passing unit.
+    c.setDepth(DEPTH.WORLD_UI);
     c._halo = halo; c._core = core; c._ring = ring; c._beam = beam;
     c._glow = [glowOuter, glowInner]; c._spark = spark;
     return c;
