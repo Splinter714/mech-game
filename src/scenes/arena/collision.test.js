@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   hullTravelAngle, circleContains, groundEnemyRadius,
   ENEMY_COLLIDE_RADIUS_MECH, ENEMY_COLLIDE_RADIUS_VEHICLE, crushDamage,
+  crushTriggerRadius, PLAYER_CRUSH_RADIUS_BONUS, DEPTH, unitDepth,
 } from './shared.js';
 
 describe('hullTravelAngle — tank hull faces travel, decoupled from turret (#92)', () => {
@@ -59,6 +60,47 @@ describe('circleContains + groundEnemyRadius — player-vs-ground-enemy collisio
   it('falls back to the base vehicle radius when a kind has no scale', () => {
     const turret = { kind: 'turret', kindDef: {} };
     expect(groundEnemyRadius(turret)).toBe(ENEMY_COLLIDE_RADIUS_VEHICLE);
+  });
+});
+
+describe('crushTriggerRadius — the #112 player crush-trigger contribution', () => {
+  it('is strictly bigger than the plain blocking radius for the same enemy', () => {
+    const tank = { kind: 'tank', kindDef: { scale: 0.48 } };
+    expect(crushTriggerRadius(tank)).toBeGreaterThan(groundEnemyRadius(tank));
+  });
+
+  it('adds exactly PLAYER_CRUSH_RADIUS_BONUS on top of the enemy\'s own radius', () => {
+    const tank = { kind: 'tank', kindDef: { scale: 0.48 } };
+    expect(crushTriggerRadius(tank)).toBeCloseTo(groundEnemyRadius(tank) + PLAYER_CRUSH_RADIUS_BONUS, 10);
+    const infantry = { kind: 'infantry', kindDef: { scale: 0.38 } };
+    expect(crushTriggerRadius(infantry)).toBeCloseTo(groundEnemyRadius(infantry) + PLAYER_CRUSH_RADIUS_BONUS, 10);
+  });
+
+  it('makes a point that would have missed the tight blocking radius still trigger a crush', () => {
+    // A point 20px off a small-footprint tank misses the plain (tight) blocking radius...
+    const tank = { x: 0, y: 0, kind: 'tank', kindDef: { scale: 0.48 } };
+    expect(circleContains(20, 0, tank.x, tank.y, groundEnemyRadius(tank))).toBe(false);
+    // ...but IS inside the looser crush-trigger radius, per #112's "much larger" ask.
+    expect(circleContains(20, 0, tank.x, tank.y, crushTriggerRadius(tank))).toBe(true);
+  });
+});
+
+describe('unitDepth — the #113 ground-unit-below-player depth tier selection', () => {
+  it('puts the player at DEPTH.UNITS', () => {
+    expect(unitDepth(true, false)).toBe(DEPTH.UNITS);
+  });
+
+  it('puts a flying enemy (helicopter/drone) at DEPTH.UNITS, same as the player', () => {
+    expect(unitDepth(false, true)).toBe(DEPTH.UNITS);
+  });
+
+  it('puts a ground enemy (mech/tank/turret/infantry) at DEPTH.GROUND_UNITS, below the player', () => {
+    expect(unitDepth(false, false)).toBe(DEPTH.GROUND_UNITS);
+    expect(DEPTH.GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
+  });
+
+  it('a hypothetical flying player still resolves to DEPTH.UNITS (isPlayer wins either way)', () => {
+    expect(unitDepth(true, true)).toBe(DEPTH.UNITS);
   });
 });
 

@@ -28,7 +28,7 @@ import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { LETHAL_LOCATIONS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, DEPTH } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -307,10 +307,11 @@ export const EnemiesMixin = {
     turret.rotation = angle + Math.PI / 2;
     parts.push(hull, turret);
     const c = this.add.container(x, y, parts);
-    // #99: same UNITS tier as the mech view (locomotion.js `_makeMechView`) — a tank is a
-    // non-mech "kind" but is still a ground unit that shouldn't unconditionally render over (or
-    // under) the player just because of when it happened to spawn.
-    c.setDepth(DEPTH.UNITS);
+    // #99/#113: a flying kind (helicopter/drone — narratively elevated, no "who's closer to the
+    // ground" ambiguity) shares the player's DEPTH.UNITS tier, same as before. A GROUND kind
+    // (tank/turret/infantry) now renders one tier below at DEPTH.GROUND_UNITS so it can never
+    // stand over/hide the player — see the tier comments in shared.js.
+    c.setDepth(unitDepth(false, def.flying));
     c.hull = hull; c.turret = turret; c.shadow = shadow;
     return c;
   },

@@ -13,7 +13,10 @@ import {
   INITIAL_BASE_RADIUS, INITIAL_VARIATION, SECTORS, MAX_WORLD_RADIUS,
 } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
-import { DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH } from './shared.js';
+import {
+  DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
+  CRUSHABLE_BEHAVIORS, crushTriggerRadius,
+} from './shared.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
 // building has 60 HP, so ~1.5–2s of leaning at speed flattens it. Owner: tunable.
@@ -164,6 +167,22 @@ export const WorldMixin = {
       if (e.flying) continue;
       if (e.mech.isDestroyed()) continue;
       if (circleContains(x, y, e.x, e.y, groundEnemyRadius(e))) return e;
+    }
+    return null;
+  },
+
+  // #112: is a CRUSHABLE ground enemy (tank/infantry — see CRUSHABLE_BEHAVIORS) within the
+  // (larger) crush-trigger radius of world point (x, y)? Deliberately separate from
+  // `_blockedByGroundEnemy` above: that one still uses `groundEnemyRadius` alone (unchanged) so
+  // general movement-blocking against a mech/turret stays exactly as tight as before — only the
+  // crush trigger itself gets the player's extra reach (`crushTriggerRadius`, shared.js). Only
+  // scans crushable behaviors, so a nearby mech/turret can never satisfy this check.
+  _crushTargetAt(x, y) {
+    for (const e of this.enemies) {
+      if (e.flying) continue;
+      if (!CRUSHABLE_BEHAVIORS.has(e.behavior)) continue;
+      if (e.mech.isDestroyed()) continue;
+      if (circleContains(x, y, e.x, e.y, crushTriggerRadius(e))) return e;
     }
     return null;
   },

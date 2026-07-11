@@ -756,6 +756,28 @@ try {
       s92.infantryCrushed = !a.enemies.includes(trooper) && a.enemies.length === beforeCountInf - 1 && trooper._tornDown === true;
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
 
+      // (c3) #112 (playtest: "the stomp hitbox needs to be bigger" — the player had to line up
+      // almost exactly to trigger a stomp): a trooper pinned OFF the player's straight-line path
+      // (20px lateral offset — well outside the OLD tight radius, groundEnemyRadius for infantry
+      // ≈9.1px, but inside the new crushTriggerRadius ≈35.1px) must still get crushed as the
+      // player drives straight past it, without ever steering to line up dead-center.
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const looseX = 80, looseY = 20;
+      const looseTrooper = a._spawnKind(looseX, looseY, 'infantry');
+      looseTrooper.x = looseX; looseTrooper.y = looseY;
+      const beforeCountLoose = a.enemies.length;
+      a.controls.keys.D.isDown = true;   // straight drive along x=0..; never steers toward looseY
+      for (let i = 0; i < 240 && a.enemies.includes(looseTrooper); i++) {
+        a.update(0, 16);
+        if (a.enemies.includes(looseTrooper)) {
+          looseTrooper.x = looseX; looseTrooper.y = looseY; looseTrooper.vx = 0; looseTrooper.vy = 0;
+        }
+      }
+      a.controls.keys.D.isDown = false;
+      s92.looseCrushTrigger = !a.enemies.includes(looseTrooper)
+        && a.enemies.length === beforeCountLoose - 1 && looseTrooper._tornDown === true;
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+
       // (d) A FLYING enemy (helicopter) pinned directly in the player's path must NOT block —
       // flyers narratively pass over ground obstacles. Re-pin its position every frame so it
       // stays a fixed obstacle in the path rather than strafing away under its own AI.
@@ -771,6 +793,32 @@ try {
       s92.flyerDoesNotBlock = a.px > heliX + 5;
       a._removeEnemy(heli2);
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+    }
+
+    // #113: ALL ground units (mech, tank, turret, infantry) must render BELOW the player
+    // (DEPTH.GROUND_UNITS < DEPTH.UNITS); flying units (helicopter, drone) stay at the player's
+    // own tier. Check one of each real view kind against the live player view's depth.
+    const s113 = {};
+    {
+      // Spawn a FRESH enemy mech directly rather than trusting `a.enemies[0]` — by this point in
+      // the run the squad has rotated/advanced stages, so enemies[0] could just as easily be a
+      // flying kind (drone/helicopter) depending on the random squad composition, which would
+      // correctly share the player's depth and give a false failure here.
+      const enemyMech = a._spawnMech(480, 480);
+      const tank113 = a._spawnKind(500, 500, 'tank');
+      const turret113 = a._spawnKind(520, 520, 'turret');
+      const trooper113 = a._spawnKind(540, 540, 'infantry');
+      const heli113 = a._spawnKind(560, 560, 'helicopter');
+      const drone113 = a._spawnKind(580, 580, 'drone');
+      s113.playerAboveMech = enemyMech.view.depth < a.playerView.depth;
+      s113.playerAboveTank = tank113.view.depth < a.playerView.depth;
+      s113.playerAboveTurret = turret113.view.depth < a.playerView.depth;
+      s113.playerAboveInfantry = trooper113.view.depth < a.playerView.depth;
+      s113.flyerSharesPlayerDepth = heli113.view.depth === a.playerView.depth
+        && drone113.view.depth === a.playerView.depth;
+      a._removeEnemy(enemyMech);
+      a._removeEnemy(tank113); a._removeEnemy(turret113); a._removeEnemy(trooper113);
+      a._removeEnemy(heli113); a._removeEnemy(drone113);
     }
 
     return {
@@ -817,6 +865,7 @@ try {
       s72,
       s92,
       s94,
+      s113,
       spawnBias,
       awareness,
     };
@@ -949,6 +998,15 @@ try {
   if (!arena.s92.tankCrushed) fail('#92 sustained collision with a tank did not crush/destroy it through the normal death path');
   if (!arena.s92.infantryCrushed) fail('#104 driving into an infantry trooper did not crush/destroy it through the normal death path');
   if (!arena.s92.flyerDoesNotBlock) fail('#92 a flying enemy (helicopter) wrongly blocked the player\'s movement');
+  // #112: the crush trigger radius is now looser than plain blocking — an off-path trooper still gets stomped.
+  if (!arena.s92.looseCrushTrigger) fail('#112 a trooper 20px off the player\'s straight path was not crushed — the stomp trigger is still too tight');
+
+  // #113: ground units (mech/tank/turret/infantry) render below the player; flyers share its tier.
+  if (!arena.s113.playerAboveMech) fail('#113 an enemy mech\'s depth is not below the player\'s');
+  if (!arena.s113.playerAboveTank) fail('#113 a tank\'s depth is not below the player\'s');
+  if (!arena.s113.playerAboveTurret) fail('#113 a turret\'s depth is not below the player\'s');
+  if (!arena.s113.playerAboveInfantry) fail('#113 an infantry trooper\'s depth is not below the player\'s');
+  if (!arena.s113.flyerSharesPlayerDepth) fail('#113 a flying unit (helicopter/drone) does not share the player\'s depth tier');
 
   // #94: turret rework — artillery-style indirect fire, no LOS needed, insane range.
   if (!arena.s94.wallBlocksLos) fail('#94 test setup: the planted wall hex did not actually block LOS');
