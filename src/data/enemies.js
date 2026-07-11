@@ -14,20 +14,27 @@ export const ENEMIES = {
     mounts: { rightArm: ['autocannon'], leftTorso: ['clusterRocket'] },
   },
 
-  // Brawler: short-range weapons (shotgun opt 180, flamethrower opt 90) on a fast light
-  // chassis, so it wants to CLOSE and stay in the player's face. Reads as aggressive.
+  // Brawler: short/mid-range weapons on a fast light chassis, so it wants to CLOSE and stay
+  // in the player's face. Reads as aggressive.
+  // #96: flamethrower (opt 90) was shelved per Jackson's weapon curation pass, so this mount
+  // swaps to machineGun/Repeater (opt 180) — still a close/mid-range direct-fire weapon that
+  // keeps the pairing with shotgun reading as an aggressive, get-in-your-face brawler.
   skirmisher: {
     chassisId: 'light',
     name: 'Stalker',
-    mounts: { rightArm: ['shotgun'], leftArm: ['flamethrower'] },
+    mounts: { rightArm: ['shotgun'], leftArm: ['machineGun'] },
   },
 
-  // Sniper: long-range weapons (rail lance opt 400, napalm lobber opt 500) on a slow heavy
-  // chassis, so it KITES — holds distance, backpedals when the player closes, uses cover.
+  // Sniper: long-range weapons on a slow heavy chassis, so it KITES — holds distance,
+  // backpedals when the player closes, uses cover.
+  // #96: railLance (opt 400) and napalm (opt 500) were both shelved per Jackson's weapon
+  // curation pass. Swapped to beamLaser (opt 500, max 640 — the longest-range keeper, and
+  // still hitscan so it reads as a precise sniping weapon) and clusterRocket (opt 660, max
+  // 960 — the other long-range keeper), preserving the "holds distance and kites" read.
   sniper: {
     chassisId: 'heavy',
     name: 'Warden',
-    mounts: { rightArm: ['railLance'], leftTorso: ['napalm'] },
+    mounts: { rightArm: ['beamLaser'], leftTorso: ['clusterRocket'] },
   },
 
   // Artillery / bombardier: EVERY weapon is indirect-fire — both mounts lob an arcing shell
@@ -36,13 +43,19 @@ export const ENEMIES = {
   // and bombards over it, only shifting to a fresh cover spot, essentially never exposing
   // itself. On a heavy chassis (slow, tanky) it reads as an entrenched siege unit. Keep BOTH
   // weapons indirect (arcing/homing) or it loses its camp-cover behaviour.
-  // #95: swarmRack (homing) was shelved pending a lock/tracking rework, so this mount swaps
-  // to plasmaCannon — an arcing splash bolt that stays fully indirect (isIndirectWeapon checks
-  // guidance === 'homing' || path === 'arcing') with no lock/guidance dependency at all.
+  // #96 CONFLICT: plasmaCannon and napalm (both arcing) were shelved per Jackson's weapon
+  // curation pass, and NONE of the 6 kept weapons are indirect (arcing/homing) — so this
+  // mech's whole "camp behind cover and bombard" design can no longer be preserved with an
+  // active weapon. Swapped to the two longest-range keepers (beamLaser opt 500/max 640,
+  // clusterRocket opt 660/max 960) so it still reads as a long-range unit, but isIndirectWeapon
+  // will now be false for both mounts, so the AI will fall back to its normal (non-camping)
+  // posture instead of hugging cover. Flagging this clearly rather than silently — an
+  // artillery-specific indirect weapon may need to be added to the keep-list, or this enemy's
+  // "camp cover" behaviour may need its own follow-up once Jackson weighs in.
   artillery: {
     chassisId: 'heavy',
     name: 'Mortarhead',
-    mounts: { rightTorso: ['plasmaCannon'], leftTorso: ['napalm'] },
+    mounts: { rightTorso: ['beamLaser'], leftTorso: ['clusterRocket'] },
   },
 };
 

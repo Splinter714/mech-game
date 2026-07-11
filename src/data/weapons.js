@@ -172,13 +172,16 @@ export const WEAPONS = {
   }),
 };
 
-// #95: temporary shelve list — homing/tracking weapons pulled from active player circulation
-// pending a full lock/tracking rework (playtest feedback 2026-07-10: "locking/tracking missiles
-// still feel horrible"). Their WEAPONS entries above stay fully intact (data, art, sfx, etc.) —
+// #95/#96: temporary shelve list — pared down to Jackson's curated keep-list (2026-07-10
+// weapon curation pass, #96): Beam Laser + Repeater (great, unchanged) and Pulse Laser,
+// Cluster Salvo, Autocannon, Scattergun (decent, kept active pending a future tuning pass).
+// Everything else is shelved, including the #95 homing/tracking pair (swarmRack/streakPod,
+// pending a lock/tracking rework) plus railLance/plasmaCannon/flamethrower/napalm (#96 — not
+// on the keep-list). Their WEAPONS entries above stay fully intact (data, art, sfx, etc.) —
 // only the player-facing catalog (WEAPON_IDS, and anything derived from it: garage/weapon-lab
-// lists, shop) excludes them. To re-enable a weapon once its rework lands, just delete its id
-// from this array — nothing else needs to change.
-export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod'];
+// lists, shop) excludes them. To re-enable a weapon, just delete its id from this array —
+// nothing else needs to change.
+export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 
