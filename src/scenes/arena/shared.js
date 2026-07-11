@@ -10,18 +10,26 @@ export const ARENA_MECH_SCALE = 0.34;
 // The starting enemy's hex (world build clears it; create() spawns the first enemy there).
 export const DUMMY_HEX = { q: 3, r: -1 };
 
-// #87 (corrected): a dying enemy's death explosion should read as size-appropriate — a drone
-// popping should look small, a tank/heavy mech's should go up in a noticeably bigger blast.
-// Both enemy shapes already carry a size signal: a mech's `weightClass` (light/medium/heavy
-// off its chassis) or a non-mech kind's data-driven `scale` (enemyKinds.js — already used to
-// size its on-screen sprite; a drone is 0.72, a tank 0.82, etc.). Map either to one multiplier
-// so the death FX (combat.js `_damageEnemyAt`) can scale a single burst recipe instead of two.
-const MECH_WEIGHT_DEATH_SCALE = { light: 0.8, medium: 1.0, heavy: 1.35 };
+// #100 (playtest 2026-07-10, correcting #87): a dying enemy's death explosion should scale
+// with how TOUGH the enemy actually was, not its ON-SCREEN SPRITE scale. #87 used the sprite
+// scale (enemyKinds.js `scale` / a mech's weightClass table) as the size signal, but sprite
+// scale is a visual-composition knob, not a toughness one — e.g. the Battle Tank (hp 160, the
+// toughest non-mech enemy) is deliberately drawn SMALL (scale 0.48, "tanks smaller" — #91) so
+// it produced a SMALLER death explosion than a drone (hp 14, scale 0.52), exactly backwards
+// from what a player expects. Both `Mech` and the non-mech `HpBody` expose a uniform `.maxHp`
+// (#90) that already drives the powerup drop-chance scaling on this same "how big a deal was
+// this kill" signal (data/powerups.js `dropChanceForMaxHp` — same floor/ceiling bounds, same
+// roster spread: weakest real enemy is a drone at hp 14, toughest is a base heavy-chassis mech
+// at maxHp 616) — reuse it here too instead of inventing a second, kind-branching one.
+const DEATH_HP_FLOOR = 14;    // maxHp at/below which a kill gets the smallest boom (a drone)
+const DEATH_HP_CEIL = 616;    // maxHp at/above which a kill gets the biggest boom (base heavy mech)
+const DEATH_SCALE_MIN = 0.5;
+const DEATH_SCALE_MAX = 1.3;
 export function deathScaleFor(e) {
-  if (e.kind === 'mech' || e.kind === undefined) {
-    return MECH_WEIGHT_DEATH_SCALE[e.mech.weightClass] ?? 1.0;
-  }
-  return e.kindDef?.scale ?? 1.0;
+  const hp = Math.max(0, e.mech?.maxHp || 0);
+  const span = DEATH_HP_CEIL - DEATH_HP_FLOOR;
+  const t = span > 0 ? Math.min(1, Math.max(0, (hp - DEATH_HP_FLOOR) / span)) : 1;
+  return DEATH_SCALE_MIN + t * (DEATH_SCALE_MAX - DEATH_SCALE_MIN);
 }
 
 // Move `cur` toward `target` by at most `maxStep`. Used by player + enemy locomotion.
