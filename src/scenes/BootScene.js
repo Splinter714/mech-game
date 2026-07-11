@@ -3,6 +3,7 @@ import { buildBaseTextures } from '../art/index.js';
 import { ROSTER_SPECIES, loadRunCurrency } from '../data/save.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { Audio } from '../audio/index.js';
+import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
 
 // Boot: load the saved garage into the registry, build world/UI textures, then open
 // the garage. Roster load is registry-driven (data/rosters.js) so adding a saved-build
@@ -26,10 +27,10 @@ export default class BootScene extends Phaser.Scene {
     // `__sfxDebug = true` turns on per-shot timing logs. (Not `window.Audio` — that's the
     // browser's built-in HTMLAudioElement constructor.)
     if (import.meta.env.DEV) window.__audio = Audio;
-    // #85: a small always-on-top overlay that covers the controller-only unlock gap (Phaser's
-    // own sound manager already unlocks on keyboard/mouse). Launched in PARALLEL, never gates
-    // this scene transition — nothing here changes for keyboard/mouse players.
-    this.scene.launch('AudioUnlockScene');
+    // #85: silently keep trying to resume the AudioContext off of gamepad activity — covers
+    // the controller-only unlock gap (Phaser's own sound manager already unlocks on
+    // keyboard/mouse). No UI: if the browser blocks it, sound just stays off.
+    startGamepadAudioUnlock();
     // `?lab` boots straight into the weapon art preview (dev tool).
     const lab = new URLSearchParams(window.location.search).has('lab');
     this.scene.start(lab ? 'WeaponLabScene' : 'GarageScene');
