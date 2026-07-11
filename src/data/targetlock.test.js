@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeLock, stepLock, dropLock, isFullLock, predictedTarget,
-  pickLockCandidate, scoreCandidate,
+  pickLockCandidate, scoreCandidate, canFireWeapon,
   LOCK_TIME, LOCK_MAINTAIN, LOCK_PREDICT_MAX, SWITCH_DWELL,
   LOCK_PREDICT_MAX_SPEED, LOCK_PREDICT_MAX_DRIFT, ACQUIRE_CONE,
 } from './targetlock.js';
@@ -218,5 +218,60 @@ describe('targetlock — dropLock', () => {
     expect(lock.progress).toBe(0);
     expect(lock.maintain).toBe(0);
     expect(lock.blind).toBe(false);
+  });
+});
+
+// #77 follow-up: "tracking missiles should not fire unless there is a lock" — a homing weapon
+// with no full lock must not fire at all (no dumbfire fallback); every other delivery is
+// unaffected by lock state.
+describe('targetlock — canFireWeapon (#77 no-lock-no-fire gate)', () => {
+  const homing = { delivery: { guidance: 'homing', path: 'arcing' } };
+  const dumbfireMissile = { delivery: { guidance: 'dumbfire', path: 'straight' } };
+  const arcingLob = { delivery: { guidance: null, path: 'arcing' } };
+  const directHitscan = { delivery: { guidance: null, path: 'straight', hit: 'hitscan' } };
+
+  it('blocks a homing weapon with no lock at all', () => {
+    const lock = makeLock();
+    expect(canFireWeapon(homing, lock)).toBe(false);
+  });
+
+  it('blocks a homing weapon with only a charging (amber, not full) lock', () => {
+    const lock = makeLock();
+    stepLock(lock, { dt: LOCK_TIME / 2, cand: A, hasLos: true, targetPos: pos(100, 0), valid: true });
+    expect(isFullLock(lock)).toBe(false);
+    expect(canFireWeapon(homing, lock)).toBe(false);
+  });
+
+  it('allows a homing weapon once the lock is full (red)', () => {
+    const lock = makeLock();
+    chargeToFull(lock, A);
+    expect(isFullLock(lock)).toBe(true);
+    expect(canFireWeapon(homing, lock)).toBe(true);
+  });
+
+  it('allows a homing weapon to fire again if the lock is dropped after being full', () => {
+    const lock = makeLock();
+    chargeToFull(lock, A);
+    dropLock(lock);
+    expect(canFireWeapon(homing, lock)).toBe(false);
+  });
+
+  it('never gates a dumbfire missile (clusterRocket) regardless of lock state', () => {
+    const lock = makeLock();
+    expect(canFireWeapon(dumbfireMissile, lock)).toBe(true);
+    chargeToFull(lock, A);
+    expect(canFireWeapon(dumbfireMissile, lock)).toBe(true);
+  });
+
+  it('never gates an arcing-but-unguided lob (plasma/napalm) regardless of lock state', () => {
+    const lock = makeLock();
+    expect(canFireWeapon(arcingLob, lock)).toBe(true);
+  });
+
+  it('never gates a direct-fire hitscan weapon regardless of lock state', () => {
+    const lock = makeLock();
+    expect(canFireWeapon(directHitscan, lock)).toBe(true);
+    chargeToFull(lock, A);
+    expect(canFireWeapon(directHitscan, lock)).toBe(true);
   });
 });

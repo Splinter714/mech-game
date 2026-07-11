@@ -220,6 +220,24 @@ try {
       a.projectiles.length = 0;
     }
 
+    // #77: "tracking missiles should not fire unless there is a lock" — a homing weapon held
+    // with NO active/full lock must not fire at all (no dumbfire fallback): no round spawned,
+    // no ammo spent. Fire through the real per-slot `fireWeapon` (the actual trigger→shot path),
+    // not `_spawnProjectile` directly, so this exercises the fire gate itself.
+    let noLockNoFire = false;
+    {
+      a._dropLock();
+      const mount = a.mech.weapons()[0];
+      const fakeSlot = { ...mount, weapon: homingWeapon };
+      const ammoBefore = a.mech.ammo[fakeSlot.location][fakeSlot.index];
+      a.projectiles.length = 0;
+      a.fireWeapon(fakeSlot);
+      const noProjectiles = a.projectiles.length === 0;
+      const ammoUnchanged = a.mech.ammo[fakeSlot.location][fakeSlot.index] === ammoBefore;
+      noLockNoFire = noProjectiles && ammoUnchanged;
+      a.projectiles.length = 0;
+    }
+
     // Then fire everything and confirm per-part damage lands + destruction works.
     // Spread/multi-weapon fire + muzzle offsets scatter hits across the enemy's body, so
     // assert that SOME part lost health (per-part damage applied), not one fixed location.
@@ -517,6 +535,7 @@ try {
       onlineWeapons,
       projHit,
       homingHit,
+      noLockNoFire,
       collisionHolds,
       partDamaged: anyPartDamaged,
       dummyDead,
@@ -576,6 +595,7 @@ try {
   if (arena.onlineWeapons < 1) fail('player mech has no online weapons in the arena');
   if (!arena.projHit) fail('a travelling projectile did not cross the gap and damage the dummy');
   if (!arena.homingHit) fail('#77 a homing missile did not track and hit a moving target');
+  if (!arena.noLockNoFire) fail('#77 a homing weapon fired (or spent ammo) with no active lock — should be a no-op');
   if (!arena.collisionHolds) fail('the mech drove through a wall or off the arena disc');
   if (!arena.droveForward) fail('tank locomotion did not move the mech forward');
   if (!arena.partDamaged) fail('firing at the dummy did not apply per-part damage');
