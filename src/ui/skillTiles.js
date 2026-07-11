@@ -43,9 +43,15 @@ export function drawSkillTile(scene, parent, rect, opts) {
   const plus = scene.add.text(cx, rect.y + rect.h * 0.46, '+', {
     fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.2)}px`, color: TILE_UI.slotEdge,
   }).setOrigin(0.5).setVisible(false);
+  // #121 follow-up: at narrow window widths the tile row shrinks (see GarageScene's
+  // dollW/tileRow), and a single long item name (e.g. "Autocannon", "Repeater" — one word,
+  // nothing to break on) doesn't fit the default wordWrap's whitespace-only splitting, so it
+  // overflows the tile and visually runs into the next one, reading as "smashed together."
+  // useAdvancedWrap makes Phaser break mid-word when a word alone exceeds the wrap width, so
+  // the label always stays inside its own tile.
   const subtitle = scene.add.text(cx, rect.y + rect.h - 22, '', {
     fontFamily: 'monospace', fontSize: '10px', color: TILE_UI.dim, align: 'center',
-    wordWrap: { width: rect.w - 6 },
+    wordWrap: { width: rect.w - 6, useAdvancedWrap: true },
   }).setOrigin(0.5, 0);
   const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
   const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);

@@ -74,7 +74,6 @@ export default class GarageScene extends Phaser.Scene {
     // Layout: the top region holds the weapon catalog (shared WeaponCardList) + a persistent
     // SFX panel on the right (#121, see _topRegion); a bottom strip holds the skill tiles
     // (left) and the small live mech preview + chassis switch (right).
-    const top = TAB_BAR_H + 14;
     this.bottomH = 200;                             // bottom strip height (tiles + preview)
     this.previewW = 210;                            // right slice of the strip for the preview
     this.dollX = 20;
@@ -83,10 +82,19 @@ export default class GarageScene extends Phaser.Scene {
 
     buildMechTextures(this, 'garageMech', this.mech);
 
+    // #121 follow-up: the SCRAP/last-run readout (below) is right-anchored to the raw screen
+    // edge, independent of the SFX panel — at narrow widths the panel's left-aligned header
+    // text ("Select a weapon" / a weapon name) and that right-anchored readout end up in the
+    // same row with no gap between them and visibly collide. Starting the WHOLE catalog region
+    // (list/panel/explosion row) below the two-line readout instead of right under the tab bar
+    // keeps them on separate rows at every width, so there's no shared horizontal band to
+    // collide in. CATALOG_TOP_GAP clears currencyText + lastRunText (2 lines, see below).
+    const CATALOG_TOP_GAP = 54;
+    const catalogTop = TAB_BAR_H + CATALOG_TOP_GAP;
     // #121: the top catalog region is split list+panel (mirrors the retired Weapon Lab's
     // _region()) — the catalog gets the remaining width after the fixed-width SFX panel, with
     // the #107 explosion-category row sitting above the catalog, feeding the same panel.
-    const r = this._topRegion(top);
+    const r = this._topRegion(catalogTop);
     this.selectedExplosion = null;
     // Picking a card both mounts it into the selected slot (unchanged Garage behavior) AND
     // opens its sound-tuning sliders in the panel (formerly the Weapon Lab's job) — see
