@@ -40,7 +40,14 @@ export const SKILL_BINDS = {
 // transitions) where the held-flag fire intent isn't appropriate. One instance per scene
 // that needs button edges; each button index should be polled at most once per frame.
 export class PadEdges {
-  constructor(scene) { this.scene = scene; this.prev = {}; }
+  constructor(scene) {
+    this.scene = scene;
+    this.prev = {};
+    // #122: same fresh-scene Gamepad-wrapper quirk as Controls (see its constructor comment) —
+    // force an immediate resync so a pad already connected/held when this scene starts isn't
+    // read as all-zero until its next genuinely new native state-change timestamp.
+    for (const pad of scene.input.gamepad?.getAll?.() ?? []) pad._created = 0;
+  }
   pad() {
     const gp = this.scene.input.gamepad;
     const p = gp && gp.total ? gp.getPad(0) : null;
@@ -65,6 +72,21 @@ export class Controls {
     this.scene = scene;
     this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,SPACE');
     scene.input.mouse?.disableContextMenu(); // so right-click fires instead of opening a menu
+
+    // #122: each Phaser Scene gets its OWN GamepadPlugin, so a pad already connected (and in
+    // active use, e.g. Garage → Arena deploy) is wrapped in a brand-new `Gamepad` instance here
+    // whose private `_created` timestamp is "now" (the transition instant). Phaser's
+    // `Gamepad.update()` refuses to sync button/axis values whenever the NATIVE pad's
+    // `timestamp` is older than that `_created` cutoff — and a real controller's timestamp only
+    // advances when its hardware state actually changes. If the player is holding the stick
+    // steady (or a button held) right through the transition, no new native timestamp is ever
+    // generated, so the freshly-created wrapper reads all-zero forever and this scene's
+    // `Controls` never sees `padActive`, latching on 'kbm' until the player happens to move the
+    // stick/press a button again (a genuinely new native timestamp). Force every pad this scene
+    // already knows about to re-sync unconditionally on the very next poll by clearing that
+    // cutoff, so already-held input is picked up immediately rather than waiting for a fresh
+    // physical edge that may not come.
+    for (const pad of scene.input.gamepad?.getAll?.() ?? []) pad._created = 0;
 
     // Active input scheme. We latch onto whichever device was used last: once a pad is
     // touched we stay in 'pad' mode (ignoring the mouse, holding the last aim when the
