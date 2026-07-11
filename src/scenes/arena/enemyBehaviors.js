@@ -35,10 +35,18 @@ function aimAndFire(scene, e, ctx, { needLos }) {
   if (inRange && los && onTarget) scene._fireVehicleWeapon(e, ctx, e.turret);
 }
 
-// TURRET — static emplacement. No locomotion at all; just track + fire. Needs LOS (ground).
+// TURRET — static artillery emplacement. No locomotion at all; just track + fire. #94: fires an
+// arcing siege shell (data/enemyKinds.js weaponId) at insane range, so — unlike the tank, which
+// still needs a direct-fire lane — it never needs LOS: needLos: false here (same as the flyers)
+// even though the turret itself doesn't fly. It's the arcing DELIVERY, not flight, that lets the
+// round skip wall collision (see scenes/arena/projectiles.js `if (!p.arc)`); a stationary
+// emplacement lobbing shells over any cover in between is exactly the artillery-bombardment
+// posture the mech AI's "all-indirect" mechs already camp behind cover to achieve (enemies.js
+// isAllIndirect) — the turret gets the same never-needs-LOS behavior for free just by dropping
+// the LOS gate, since it's already rooted in place.
 function turretBehavior(scene, e, ctx) {
   e.vx = 0; e.vy = 0;
-  aimAndFire(scene, e, ctx, { needLos: true });
+  aimAndFire(scene, e, ctx, { needLos: false });
 }
 
 // TANK — grinds to a firing standoff and holds. #92: the HULL drives like a real tank — it

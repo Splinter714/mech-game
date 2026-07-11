@@ -131,6 +131,19 @@ export const WEAPONS = {
     ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
   }),
+  siegeShell: w({   // #94: heavy mortar shell lobbed from EXTREME range — the sentry turret's
+    // artillery-style bombardment round. Arcing (never needs LOS — see delivery.path/arcing
+    // handling in scenes/arena/projectiles.js, which skips wall collision entirely for arcing
+    // rounds), with a long, slow flight time (opt/velocity ≈ 2.9s) so an incoming shell reads as
+    // a telegraphed "incoming!" lob rather than an instant snipe. Splash + a lingering burn patch
+    // (like napalm) reward hunting the emplacement down or leaving its enormous engagement
+    // envelope rather than trying to out-trade it. Also player-mountable (any WEAPONS entry is
+    // catalog-visible, see data/shop.js) as a heavy, deliberate siege weapon.
+    id: 'siegeShell', name: 'Siege Shell', category: 'ballistic',
+    damage: 10, range: { min: 300, opt: 1600, max: 2400 },
+    ammoMax: 20, ammoRegen: 0.6, slots: 2, cycleTime: 2600,
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 550, splash: 55, kind: 'fire', groundFire: { radius: 44, dps: 5, duration: 3 } },
+  }),
 
   // ── MISSILE ── three guidance archetypes: an all-at-once homing swarm, a rapid
   // stream of seekers, and a tight dumbfire cluster that flies straight as a clump. ──

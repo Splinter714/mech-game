@@ -467,6 +467,44 @@ try {
       a.firePatches.length = 0;   // done burning; keep later full-update() frames deterministic
     }
 
+    // #94: the sentry turret is now an artillery emplacement — an arcing siege shell fired at
+    // an INSANE range with no line-of-sight requirement at all (unlike the tank, which still
+    // needs a direct-fire lane). Plant a real solid wall hex directly between the player and a
+    // turret parked far out (well beyond every weapon's old max range and the old turret's
+    // 380 fireRange), drive the real turret AI (_updateVehicle → turretBehavior) + real
+    // projectile flight together for several seconds, and confirm the player takes damage
+    // anyway despite the wall.
+    const s94 = {};
+    {
+      const turretDist = 1600;             // far beyond autocannon's old 380 fireRange/max range
+      const wallDist = turretDist / 2;     // sits squarely on the firing line between them
+      const wallKey = a._hexKeyAt(wallDist, 0);
+      const coverId = a.biome.cover;
+      a.terrain.set(wallKey, coverId);
+      a.coverHp.set(wallKey, 999999);      // don't let the shell chip/flatten it mid-test
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      s94.wallBlocksLos = a._isWall(wallDist, 0);   // sanity: this really is a solid obstruction
+      const t94 = a._spawnKind(turretDist, 0, 'turret');
+      a.projectiles.length = 0;
+      const pHp0 = sumHp(a.mech);
+      let everFired = false;
+      // Run well past the turret's own fireEveryMs cadence (multiple shots) — its very first
+      // shot can land a bit long/short while the turret is still slewing onto an exact bearing
+      // (rotateToward converges over a few frames), but a stationary turret vs. a stationary
+      // player locks to a dead-on bearing well before the SECOND shot, so a multi-cycle window
+      // reliably lands at least one hit if the no-LOS/insane-range fix works at all.
+      for (let i = 0; i < 500; i++) {
+        a._updateVehicle(t94, 0.016, 16);
+        if (a.projectiles.length > 0) everFired = true;
+        a._updateProjectiles(0.016);
+      }
+      s94.turretFiredAtInsaneRange = everFired;
+      s94.playerHitThroughWallAtRange = sumHp(a.mech) < pHp0;
+      // Cleanup so later terrain-diff / stage-advance assertions aren't thrown off by this hex.
+      a.terrain.delete(wallKey);
+      a.coverHp.delete(wallKey);
+    }
+
     // Captured BEFORE the run-loop death test below deliberately destroys the player mech —
     // otherwise this would read 0 post-mortem instead of reflecting the earlier healthy state.
     const onlineWeapons = a.mech.onlineWeapons().length;
@@ -624,6 +662,7 @@ try {
       heavyDropRate,
       s72,
       s92,
+      s94,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
@@ -724,6 +763,11 @@ try {
   if (!arena.s92.hullTurretDiverge) fail("#92 a tank's hull and turret did not diverge — they still look rigidly linked");
   if (!arena.s92.tankCrushed) fail('#92 sustained collision with a tank did not crush/destroy it through the normal death path');
   if (!arena.s92.flyerDoesNotBlock) fail('#92 a flying enemy (helicopter) wrongly blocked the player\'s movement');
+
+  // #94: turret rework — artillery-style indirect fire, no LOS needed, insane range.
+  if (!arena.s94.wallBlocksLos) fail('#94 test setup: the planted wall hex did not actually block LOS');
+  if (!arena.s94.turretFiredAtInsaneRange) fail('#94 the turret never fired at long range with a wall between it and the player');
+  if (!arena.s94.playerHitThroughWallAtRange) fail('#94 a turret\'s arcing siege shell did not hit the player through a wall at long range');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
