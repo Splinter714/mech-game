@@ -185,16 +185,20 @@ export const WEAPONS = {
   }),
 };
 
-// #95/#96: temporary shelve list — pared down to Jackson's curated keep-list (2026-07-10
+// #94/#95/#96: temporary shelve list — pared down to Jackson's curated keep-list (2026-07-10
 // weapon curation pass, #96): Beam Laser + Repeater (great, unchanged) and Pulse Laser,
 // Cluster Salvo, Autocannon, Scattergun (decent, kept active pending a future tuning pass).
 // Everything else is shelved, including the #95 homing/tracking pair (swarmRack/streakPod,
-// pending a lock/tracking rework) plus railLance/plasmaCannon/flamethrower/napalm (#96 — not
-// on the keep-list). Their WEAPONS entries above stay fully intact (data, art, sfx, etc.) —
-// only the player-facing catalog (WEAPON_IDS, and anything derived from it: garage/weapon-lab
-// lists, shop) excludes them. To re-enable a weapon, just delete its id from this array —
-// nothing else needs to change.
-export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm'];
+// pending a lock/tracking rework), railLance/plasmaCannon/flamethrower/napalm (#96 — not
+// on the keep-list), and siegeShell (#94 — the sentry turret's artillery weapon; added on a
+// separate branch around the same time as the #96 curation pass so it never got evaluated
+// against the keep-list; it's enemy-only for now, not vetted for player use). Their WEAPONS
+// entries above stay fully intact (data, art, sfx, etc.) — only the player-facing catalog
+// (WEAPON_IDS, and anything derived from it: garage/weapon-lab lists, shop) excludes them.
+// The turret enemy still fires siegeShell normally — enemyKinds.js/enemies.js read WEAPONS
+// directly via getWeapon(), not the filtered WEAPON_IDS list. To re-enable a weapon, just
+// delete its id from this array — nothing else needs to change.
+export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm', 'siegeShell'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 
