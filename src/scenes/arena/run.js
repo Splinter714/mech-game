@@ -120,12 +120,24 @@ export const RunMixin = {
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
 
     // A new, harder squad (per data/run.js escalation curve), dropped off-screen same as the
-    // opening squad. #71: tear down the previous stage's enemies first (views + generated
-    // textures) — replacing the array alone leaked every prior stage's corpse sprites onto the
-    // display list for the rest of the session, dragging the frame rate down as a run went on.
-    for (const e of this.enemies) this._destroyEnemy(e);
-    this.enemies = [];
-    this._enemiesSpawnedThisStage = 0;   // #87: fresh stage-total counter for the HUD's N/M
+    // opening squad. #105 (playtest 2026-07-10): clearing the objective and reaching the next
+    // stage must NOT wipe out enemies still alive from the just-finished stage — only ADD the
+    // new squad on top of whatever's still standing. (#71's old "destroy + clear this.enemies"
+    // step here was about cleaning up DEAD enemies' leftover sprites/textures across stages;
+    // that's now handled the instant a kill registers by #87's `_removeEnemy`, so live enemies
+    // are never the ones piling up and this array is safe to leave untouched.)
+    // Belt-and-suspenders: every real kill tears its corpse down + prunes it out of
+    // `this.enemies` synchronously (combat.js `_damageEnemyAt` → `_removeEnemy`), so in normal
+    // play nothing dead should still be sitting in the array — but if a dead-but-not-yet-removed
+    // entry ever does slip through, don't carry THAT over as a lingering corpse.
+    this.enemies = this.enemies.filter((e) => {
+      if (e.mech.isDestroyed()) { this._destroyEnemy(e); return false; }
+      return true;
+    });
+    // The HUD's "N/M" counter (`_enemiesSpawnedThisStage`) is reseeded to the current survivor
+    // count — rather than reset to 0 — so `_spawnSquad`'s per-spawn increments land on "this
+    // stage's whole active roster" (survivors + new squad), not just the new squad's size.
+    this._enemiesSpawnedThisStage = this.enemies.length;
     this._spawnSquad(desc.squad);
 
     this._floatText(this.px, this.py - 40, desc.label, '#7bd17b');

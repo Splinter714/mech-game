@@ -375,6 +375,14 @@ try {
     a._startNextStage();
     const newStageHasMission = a.mission?.status === 'active';
     const newStageHasSquad = a.enemies.length > 0;
+    // #105 (playtest 2026-07-10): clearing the objective must NOT wipe enemies still alive from
+    // the just-finished stage — e0 was repaired back to full health by `_resetEnemies()` above,
+    // so it must still be in `a.enemies`, still alive, its view/textures untouched, after the
+    // stage advance, with the new squad ADDED on top of it rather than replacing it.
+    const survivorCarriedOver =
+      a.enemies.includes(e0) && !e0.mech.isDestroyed() &&
+      e0.view.active && g.textures.exists(e0.key + '_turret');
+    const squadAddedOnTopOfSurvivors = a.enemies.length > enemyCountBeforeAdvance;
     // #81 (organic growth rewrite): this is additive growth, so — unlike the old reshuffle —
     // every hex that existed BEFORE the advance must come back byte-identical (a), while the
     // TOTAL hex count strictly increases because a whole new lobe of hexes that didn't exist
@@ -639,9 +647,12 @@ try {
       droveForward,
       hullTex: g.textures.exists('playerMech_hull_0'),
       dummyTex,
-      // #71: the stage advance above tore the OLD squad down — its views and textures must be
-      // gone (this was the leak: every stage's corpse sprites piling up for the whole session).
-      oldSquadTornDown: !g.textures.exists(e0.key + '_turret') && !e0.view.active,
+      // #105: the stage advance above must NOT tear down a still-alive survivor's view/textures
+      // — it carries over into the new stage instead of being wiped (superseded #71 behavior,
+      // which tore down the WHOLE squad here; that corpse-leak concern is now handled the
+      // instant a kill registers by #87's synchronous `_removeEnemy`, not at stage-advance time).
+      survivorCarriedOver,
+      squadAddedOnTopOfSurvivors,
       onlineWeapons,
       projHit,
       homingHit,
@@ -739,7 +750,8 @@ try {
   if (!arena.stageAdvanced) fail('#64 mission-complete did not advance the run to the next stage');
   if (!arena.newStageHasMission) fail('#64 the next stage did not start with a fresh active mission');
   if (!arena.newStageHasSquad) fail('#64 the next stage did not spawn a fresh squad');
-  if (!arena.oldSquadTornDown) fail('#71 stage advance did not tear down the old squad\'s views/textures');
+  if (!arena.survivorCarriedOver) fail('#105 stage advance destroyed/removed a still-alive survivor instead of carrying it over');
+  if (!arena.squadAddedOnTopOfSurvivors) fail('#105 the new squad did not get added on top of the surviving enemies');
   // #81 (organic growth rewrite): stage advance ADDS a fresh organically-shaped region of
   // terrain beyond the previously-explored edge (not just a new objective in the same
   // footprint, and not a same-size reshuffle), and the player continues from wherever they
