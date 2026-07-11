@@ -8,6 +8,7 @@ import {
   shotBlockedAt, flameCoverDamage,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
+import { terrainFillColor } from '../../art/hexArt.js';
 import {
   generateTerrain, organicBoundary, boundaryRingKeys, mulberry32,
   FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, SECTORS, MAX_WORLD_RADIUS,
@@ -58,6 +59,14 @@ export const WorldMixin = {
     // the whole run (chosen once per deploy) — only the feature ARRANGEMENT varies per seed.
     const B = getBiome(this.biomeId ?? DEFAULT_BIOME);
     this.biome = B;
+
+    // #126: paint the camera background to match this biome's `deep` boundary terrain instead
+    // of the fixed void-black set in ArenaScene.create() — the deepened boundary ring (see
+    // worldgen.js BOUNDARY_RING_WIDTH) is sized to outrun any realistic camera view distance, but
+    // this is the unconditional backstop: any viewport wider than that (or a browser zoomed far
+    // out) still sees "more deep terrain colour" at the horizon, never raw black.
+    const deepFill = terrainFillColor(B.deep);
+    if (deepFill != null) this.cameras.main.setBackgroundColor(deepFill);
 
     const shapeRng = mulberry32(seed);
     const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
