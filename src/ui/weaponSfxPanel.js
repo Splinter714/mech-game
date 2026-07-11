@@ -20,10 +20,16 @@ const EXPLOSION_ID_PREFIX = 'deathExplosion';
 // same "copy settings" convention), scoped to one weapon at a time instead of one global mix.
 const UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', btn: 0x1a212b, btnHover: 0x232c38, edge: 0x2a333f,
+  mute: 0xe08a5e, muteText: '#1a0f08', solo: 0x7bd17b, soloText: '#0b1a0b',
 };
 const ROW_H = 18;
 const STAGES = [['fire', 'FIRE (trigger pull)'], ['trajectory', 'TRAJECTORY (in flight)'], ['impact', 'IMPACT (on landing)']];
 const PREVIEW_THROTTLE = 140;   // ms between live-preview replays while dragging a slider
+
+// #131: short per-component labels for the top mixer strip ("fire·1", "traj·2", "impact·1") —
+// abbreviated enough to fit next to a compact slider + Mute/Solo buttons.
+const STAGE_ABBR = { fire: 'fire', trajectory: 'traj', impact: 'impact' };
+const MIX_ROW_H = 22;
 
 // Only numeric fields get a slider; `type`/`kind` (waveform/filter shape) stay fixed —
 // hand-edit via "copy settings" if a layer needs a different shape.
@@ -79,6 +85,12 @@ export class WeaponSfxPanel {
     this.region = { x, y, w, h };
     this.weaponId = null;
     this._lastPreviewAt = { fire: 0, trajectory: 0, impact: 0 };
+    // #131: transient (never persisted) DAW-style mute/solo for the live-preview only — keyed
+    // by `${stage}:${li}`. Reset whenever the selected weapon/category changes (see setWeapon).
+    this._mutedSet = new Set();
+    this._soloedSet = new Set();
+    this._components = [];   // flat [{stage, li, layer}] for the current weapon, rebuilt in _build()
+    this._gainSliders = {};  // key -> { top, full } Slider refs, kept in sync on either one's onChange
 
     // Both containers stay at world (0,0) — the Slider widget caches absolute world
     // coordinates at construction time (it compares against pointer.worldX directly, not
@@ -133,6 +145,8 @@ export class WeaponSfxPanel {
     this.weaponId = weaponId;
     this.weaponLabel = label;
     this._scrollY = 0;
+    this._mutedSet.clear();
+    this._soloedSet.clear();
     this._build();
   }
 
@@ -145,6 +159,94 @@ export class WeaponSfxPanel {
     rect.on('pointerdown', onClick);
     this.scroller.add([rect, text]);
     return { rect, text };
+  }
+
+  // A small two-state toggle button (Mute/Solo in the mixer strip) — filled with `onColor`
+  // when active, the normal button chrome otherwise. Unlike `_typeRow`'s in-place repaint,
+  // this just triggers a full `_build()` on click (mute/solo toggles are infrequent, so the
+  // rebuild cost is a non-issue, and it keeps this path simple).
+  _toggleBtn(x, y, w, h, label, active, onColor, onTextColor, onClick) {
+    const fill = active ? onColor : UI.btn;
+    const rect = this.scene.add.rectangle(x, y, w, h, fill).setOrigin(0, 0)
+      .setStrokeStyle(1, active ? onColor : UI.edge).setInteractive({ useHandCursor: true });
+    const text = this.scene.add.text(x + w / 2, y + h / 2, label, {
+      fontFamily: 'monospace', fontSize: '9px', color: active ? onTextColor : UI.text,
+    }).setOrigin(0.5);
+    rect.on('pointerover', () => { if (!active) rect.setFillStyle(UI.btnHover); });
+    rect.on('pointerout', () => rect.setFillStyle(fill));
+    rect.on('pointerdown', onClick);
+    this.scroller.add([rect, text]);
+  }
+
+  _toggleMute(key) {
+    this._mutedSet.has(key) ? this._mutedSet.delete(key) : this._mutedSet.add(key);
+    this._build();
+  }
+
+  _toggleSolo(key) {
+    this._soloedSet.has(key) ? this._soloedSet.delete(key) : this._soloedSet.add(key);
+    this._build();
+  }
+
+  // Whether a component should actually sound in the live preview right now: soloing anything
+  // silences every non-soloed component regardless of its own mute state; otherwise it's just
+  // "not muted." Never touches the stored gain — see _applyPreviewMuting.
+  _isAudible(key) {
+    if (this._soloedSet.size) return this._soloedSet.has(key);
+    return !this._mutedSet.has(key);
+  }
+
+  // Temporarily zero out the real `gain` of every inaudible component among `stages` (the
+  // stage(s) about to play), synchronously, so this must be called immediately before the
+  // Audio.fire/trajectory/impact call and restored immediately after — playLayers/tone/noise
+  // read `gain` synchronously at schedule time (WebAudio bakes it into the node graph via
+  // setValueAtTime then), so a value restored right after the call has already been "consumed"
+  // by the sound that's now playing asynchronously. Never calls Audio.setSfxParam, so
+  // sfxParams/localStorage/reset/copy never see the muted value.
+  _applyPreviewMuting(stages) {
+    const overrides = [];
+    for (const { stage, li, layer } of this._components) {
+      if (!stages.includes(stage)) continue;
+      const key = `${stage}:${li}`;
+      if (!this._isAudible(key)) {
+        overrides.push({ layer, gain: layer.gain });
+        layer.gain = 0;
+      }
+    }
+    return () => { for (const o of overrides) o.layer.gain = o.gain; };
+  }
+
+  // The compact DAW-mixer strip at the top of the panel (#131) — one row per component
+  // (stage + layer) with a compact gain slider synced to that component's full-size slider
+  // further down, plus Mute/Solo. Built from `this._components`, computed by `_build()`.
+  _buildMixerStrip(ox, y, w) {
+    if (!this._components.length) return y;
+    this.scroller.add(this.scene.add.text(ox, y, 'MIXER (gain / mute / solo)', { fontFamily: 'monospace', fontSize: '10px', color: UI.dim }));
+    y += 16;
+    const gap = 4, muteW = 28, soloW = 28;
+    const sliderW = w - muteW - soloW - gap * 2;
+    for (const { stage, li, layer } of this._components) {
+      const key = `${stage}:${li}`;
+      const label = `${STAGE_ABBR[stage]}·${li + 1}`;
+      const slider = new Slider(this.scene, {
+        x: ox, y, w: sliderW, labelW: 42, valueW: 30, label, min: 0, max: 1, step: 0.01,
+        value: layer.gain ?? 0,
+        onChange: (v) => {
+          Audio.setSfxParam(this.weaponId, stage, li, 'gain', v);
+          this._gainSliders[key]?.full?.setValue(v);
+          this._previewThrottled(stage);
+        },
+      });
+      this.scroller.add(slider.container);
+      this.sliders.push(slider);
+      (this._gainSliders[key] ??= {}).top = slider;
+
+      const mx = ox + sliderW + gap;
+      this._toggleBtn(mx, y - 3, muteW, MIX_ROW_H - 4, 'M', this._mutedSet.has(key), UI.mute, UI.muteText, () => this._toggleMute(key));
+      this._toggleBtn(mx + muteW + gap, y - 3, soloW, MIX_ROW_H - 4, 'S', this._soloedSet.has(key), UI.solo, UI.soloText, () => this._toggleSolo(key));
+      y += MIX_ROW_H;
+    }
+    return y + 8;
   }
 
   // A row of small buttons picking `layer.type` — a tone's waveform or a noise layer's
@@ -202,6 +304,20 @@ export class WeaponSfxPanel {
     y += 50;
 
     const params = Audio.getSfxParams(this.weaponId);
+
+    // #131: flatten every stage's layers into one list up front so the mixer strip can render
+    // all of them before the detailed per-stage sections below (which still use `params`
+    // directly, unchanged). `_gainSliders` is rebuilt alongside so stale refs from a previous
+    // weapon/rebuild never leak into the new sync wiring.
+    this._components = [];
+    for (const [stage] of STAGES) {
+      const layers = params[stage];
+      if (!layers) continue;
+      layers.forEach((layer, li) => this._components.push({ stage, li, layer }));
+    }
+    this._gainSliders = {};
+    y = this._buildMixerStrip(ox, y, w);
+
     for (const [stage, label] of STAGES) {
       const layers = params[stage];
       if (!layers || !layers.length) continue;
@@ -222,11 +338,13 @@ export class WeaponSfxPanel {
             value: layer[field],
             onChange: (v) => {
               Audio.setSfxParam(this.weaponId, stage, li, field, v);
+              if (field === 'gain') this._gainSliders[`${stage}:${li}`]?.top?.setValue(v);
               this._previewThrottled(stage);
             },
           });
           this.scroller.add(s.container);
           this.sliders.push(s);
+          if (field === 'gain') (this._gainSliders[`${stage}:${li}`] ??= {}).full = s;
           y += ROW_H;
         }
         y += 8;
@@ -241,16 +359,31 @@ export class WeaponSfxPanel {
     const t = this.scene.time.now;
     if (t - this._lastPreviewAt[stage] < PREVIEW_THROTTLE) return;
     this._lastPreviewAt[stage] = t;
+    const restore = this._applyPreviewMuting([stage]);
     if (stage === 'fire') Audio.fire({ id: this.weaponId });
     else if (stage === 'trajectory') Audio.trajectory(this.weaponId);
     else Audio.impact(this.weaponId);
+    restore();
   }
 
-  // Fires the full sequence in context (fire -> trajectory -> impact), like a real shot.
+  // Fires the full sequence in context (fire -> trajectory -> impact), like a real shot. Each
+  // stage's mute override is applied/restored right around its own (possibly delayed) call —
+  // not all up front — since a stage's mute/solo state could only change via a full _build()
+  // rebuild anyway, but this keeps the override window as tight as possible per stage.
   _testFire() {
+    const rFire = this._applyPreviewMuting(['fire']);
     Audio.fire({ id: this.weaponId });
-    this.scene.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(this.weaponId));
-    this.scene.time.delayedCall(300, () => Audio.impact(this.weaponId));
+    rFire();
+    this.scene.time.delayedCall(TRAJECTORY_DELAY, () => {
+      const r = this._applyPreviewMuting(['trajectory']);
+      Audio.trajectory(this.weaponId);
+      r();
+    });
+    this.scene.time.delayedCall(300, () => {
+      const r = this._applyPreviewMuting(['impact']);
+      Audio.impact(this.weaponId);
+      r();
+    });
   }
 
   _reset() {
