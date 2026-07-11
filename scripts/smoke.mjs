@@ -74,6 +74,12 @@ try {
     // SCRAP that purchase must fail (no mount, no unlock, no spend). _selectSlot TOGGLES the
     // same slot off if it's already selected, so only select rightArm if it isn't already.
     if (sc.selected !== 'rightArm') sc._selectSlot('rightArm');
+    // #124: dev builds (this smoke server included) start every catalog id pre-unlocked as a
+    // playtest convenience — reset 'shotgun' back to locked and force a real resort (setIds,
+    // not the in-place refreshLocks) so the #65/#78 block below still exercises the real
+    // purchase/lock/re-sort mechanic from a genuinely-locked starting position.
+    sc.unlocked.delete('shotgun');
+    sc.list.setIds(sc._eligibleIds(sc.selected));
     sc.registry.set(RUN_CURRENCY_KEY, 0);
     sc._pickItem('shotgun');
     const lockedRejectsMount = !mech.mounts.rightArm.includes('shotgun') && !sc.unlocked.has('shotgun');

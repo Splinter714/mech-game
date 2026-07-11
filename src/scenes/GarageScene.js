@@ -61,6 +61,16 @@ export default class GarageScene extends Phaser.Scene {
     // #65: the permanently-unlocked catalog (meta-progression, persists across runs). Loaded
     // before the WeaponCardList so its isLocked/costOf callbacks see real data from frame one.
     this.unlocked = loadUnlocked();
+    // #124: dev builds skip the unlock grind entirely — every weapon/equipment id starts
+    // unlocked so playtesting isn't gated behind the shop. `import.meta.env.DEV` is Vite's
+    // build-time flag (true under `npm run dev`, stripped to `false` — and dead-code-eliminated
+    // — in `npm run build`/`vite build`), so this can never leak into a production bundle. Kept
+    // here (a Phaser scene) rather than in data/save.js or data/shop.js: those are pure `data/`
+    // modules with no Vite/browser dependency today, and Vitest doesn't run through Vite's env
+    // injection the same way, so importing `import.meta.env` there risks breaking `npm test`.
+    if (import.meta.env.DEV) {
+      for (const id of this.catalogIds) this.unlocked.add(id);
+    }
 
     // Layout: the weapon catalog (shared WeaponCardList) spans the FULL width across the top so
     // each card's live preview is as wide as the Weapon Lab's; a bottom strip holds the skill
