@@ -3,7 +3,7 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions, homingTurnRate } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
@@ -105,13 +105,17 @@ export const FiringMixin = {
       const go = () => {
         if (!this.scene.isActive()) return;
         const m = this._muzzle(w.location);
-        const baseAngle = this._fireAngle(w, m) + s.angleOffset;
+        const aimAngle = this._fireAngle(w, m);
+        const baseAngle = aimAngle + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
         else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle);
         else {
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset);
+          // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
+          // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
+          // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle);
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -220,7 +224,12 @@ export const FiringMixin = {
   // aim point implicitly (below); an ENEMY firing blind over cover passes the player's predicted
   // last-known position so its homing/arcing rounds lob onto it without LOS. When omitted, the
   // player derives its seek from the lock and the enemy chases the live player as before.
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null) {
+  // `aimAngle` (#77 follow-up): the weapon's un-offset CENTRE bearing, for weapons that fan a
+  // spread of simultaneous shots (Swarm Rack) at an angleOffset off that centre — see the
+  // maxDist comment below for why this must be the centre bearing, not `angle` (this shot's own
+  // launch heading). Defaults to `angle` for every single-shot caller (enemies, non-spread
+  // weapons), where the two are identical anyway.
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -235,10 +244,11 @@ export const FiringMixin = {
     let maxDist = maxRange;
     if (d.path === 'arcing') {
       const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : (seekTarget ?? { x: this.px, y: this.py });
-      const ex = tgt.x - x, ey = tgt.y - y;
-      const fwd = ex * Math.cos(angle) + ey * Math.sin(angle);
-      const perp = Math.abs(ex * Math.sin(angle) - ey * Math.cos(angle));
-      maxDist = (fwd > 0 && fwd < maxRange && perp < 80) ? fwd : (w.weapon.range?.opt ?? 160);
+      // arcMaxDist (data/delivery.js, #77 follow-up) takes `aimAngle` — the weapon's un-offset
+      // CENTRE bearing — not `angle` (this shot's own possibly fan-offset launch heading). See
+      // that function's comment for why using the shot's own angle here regressed both missile
+      // range and Swarm Rack's flight path.
+      maxDist = arcMaxDist(x, y, aimAngle, tgt, maxRange, w.weapon.range?.opt ?? 160);
       // Constant-apex lobs: hold flight time fixed so every arc peaks at the same height —
       // a far shot therefore launches faster. The weapon's `velocity` is calibrated at its
       // optimal range (T = opt / velocity), and that same airtime is reused at any range.

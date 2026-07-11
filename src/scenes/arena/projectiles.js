@@ -2,7 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
@@ -12,21 +12,9 @@ const HIT_RADIUS = 32;            // a shot within this of a mech's centre strik
 // their burning ground) are the premier forest-clearing tools.
 const isFlameKind = (kind) => kind === 'flame' || kind === 'fire';
 
-// Arcing homing missiles (#57): the seeker doesn't engage until the round is past the apex
-// and descending — like a real missile leaving the tube mostly ballistic, then curving in on
-// its target during the back half of the arc. `ASCENT_END` is the fractional-flight-distance
-// (p.dist / p.maxDist) where the seeker starts blending in (0 = launch, 1 = impact); the blend
-// then ramps from 0→1 over `HOMING_BLEND_SPAN` so the turn-in reads as a smooth curve rather
-// than a snap. Both are feel/balance levers.
-const ASCENT_END = 0.4;           // fraction of flight spent mostly ballistic before homing engages
-const HOMING_BLEND_SPAN = 0.35;   // fraction of flight over which homing ramps from 0% to 100%
-
-// How strongly an arcing homing round should steer toward its target at flight-fraction `t`:
-// 0 during ascent, ramping smoothly up to 1 by the time it's well into its descent.
-function arcHomingBlend(t) {
-  if (t <= ASCENT_END) return 0;
-  return Math.min(1, (t - ASCENT_END) / HOMING_BLEND_SPAN);
-}
+// Arcing homing missiles (#57): the seeker doesn't engage until the round is past the apex and
+// descending — see arcHomingBlend (data/delivery.js) for the ascent/descent blend curve, moved
+// there (#77 follow-up) so it's shared, pure, and unit-testable Phaser-free.
 
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
@@ -39,10 +27,24 @@ export const ProjectilesMixin = {
     const enemyHexes = [];
     for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyHexes.push(this._hexKeyAt(e.x, e.y));
     for (const p of this.projectiles) {
-      // Hit detection chases the nearest living enemy (enemy rounds chase the player), so a
-      // round detonates on whatever it reaches.
+      // Hit detection normally chases the nearest living enemy (enemy rounds always chase the
+      // player, the one and only target they can have), so a dumbfire round detonates on
+      // whatever it reaches. A round with a LIVE LOCKED target is different (#77 follow-up bug:
+      // "tracking missiles should not get blocked by other enemies in the way") — `p.seekTarget`
+      // being the actual enemy handle (carries `.mech`, as opposed to a blind-fire dead-reckoned
+      // `{x,y}` point with none) means this round was fired at THAT specific enemy, so its hit
+      // test must be scoped to that handle, not re-resolved to "whichever enemy is nearest right
+      // now." Re-resolving via `_nearestEnemy` every frame let a bystander that merely happened
+      // to be closer to the round's current position steal the hit meant for the locked target
+      // — reading as the bystander "blocking" the shot. Non-homing rounds and blind-fire lobs
+      // (no live handle to scope to) keep the previous any-target-nearby behavior.
       const enemyShot = p.owner === 'enemy';
-      const hitEnemy = enemyShot ? null : this._nearestEnemy(p.x, p.y);
+      const lockedLive = !enemyShot && p.homing && p.seekTarget?.mech ? p.seekTarget : null;
+      const hitEnemy = enemyShot
+        ? null
+        : lockedLive
+          ? (lockedLive.mech.isDestroyed() ? null : lockedLive)
+          : this._nearestEnemy(p.x, p.y);
       const targetGone = enemyShot ? this.mech.isDestroyed() : !hitEnemy;
       const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
       const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
