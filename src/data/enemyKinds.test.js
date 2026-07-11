@@ -4,8 +4,8 @@ import { getWeapon, WEAPONS } from './weapons.js';
 import { HpBody } from './HpBody.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
-  it('defines the five expected kinds', () => {
-    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'infantry', 'tank', 'turret']);
+  it('defines the six expected kinds', () => {
+    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'infantry', 'quadruped', 'tank', 'turret']);
   });
 
   it('every kind names a REAL weapon id (so no scene ever hardcodes one)', () => {
@@ -105,6 +105,26 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     // right at the edge of engagement would fizzle short of the target (see arcMaxDist in
     // scenes/arena/firing.js, which bounds an arcing round's travel to weapon.range.max + 40).
     expect(weapon.range.max).toBeGreaterThanOrEqual(t.fireRange);
+  });
+
+  it('#130: quadruped (Broodwalker) is a slow, tanky ground unit with a deploy mechanic', () => {
+    const q = ENEMY_KINDS.quadruped;
+    expect(q.flying).toBe(false);
+    // "comparable to or slower than tank" — tank's own maxSpeed is 52.
+    expect(q.move.maxSpeed).toBeLessThanOrEqual(ENEMY_KINDS.tank.move.maxSpeed);
+    expect(q.move.maxSpeed).toBeGreaterThan(0);
+    // Tougher than tank (160) but well under a heavy mech's ~616-hp pool — a real but beatable
+    // objective target, not a brick wall.
+    expect(q.hp).toBeGreaterThan(ENEMY_KINDS.tank.hp);
+    expect(q.hp).toBeLessThan(616);
+    // A real weapon mount, same as every other kind.
+    expect(getWeapon(q.weaponId)).toBeTruthy();
+    // The deploy mechanic's cadence/cap are present and sane: not so fast it floods the arena,
+    // not so rare it's never noticed (6-12s ballpark), and a positive, bounded lifetime cap.
+    expect(q.deployEveryMs).toBeGreaterThanOrEqual(4000);
+    expect(q.deployEveryMs).toBeLessThanOrEqual(16000);
+    expect(q.deployCap).toBeGreaterThan(0);
+    expect(q.deployCap).toBeLessThan(10);
   });
 
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {

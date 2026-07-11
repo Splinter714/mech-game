@@ -153,7 +153,49 @@ export const ENEMY_KINDS = {
                            // one reads smaller and the sky feels busier rather than crowded-big.
   },
 
-  // 5) INFANTRY — one trooper of a GROUND swarm (#97). The weakest unit in the game by a wide
+  // 5) QUADRUPED — "Broodwalker" (#130). A slow, tanky four-legged ground unit with a
+  //    turreted main gun (same independent hull-vs-turret decoupling as tank, reusing
+  //    tankBehavior's movement pattern via quadrupedBehavior) PLUS a periodic deploy
+  //    mechanic: while alive and AWARE it acts as a mobile "nest," dropping a drone or
+  //    infantry trooper near itself every so often (see quadrupedBehavior in
+  //    enemyBehaviors.js) up to a lifetime cap, rather than a cluster spawning everything
+  //    up front like turretNest/infantryMob. A support/objective unit — tougher than a
+  //    tank but well under a full mech's pool — so it reads as worth focusing down before
+  //    its spawns pile up, not a one-shot kill.
+  quadruped: {
+    name: 'Broodwalker',
+    kind: 'quadruped',
+    hp: 260,                // #130 (owner: tune): tougher than tank's 160, but well under a
+                             // heavy mech's ~616-hp pool (sniper/artillery's 'heavy' chassis) —
+                             // a real but beatable objective target, not a brick wall.
+    parts: {
+      hull: { x: 0, y: 2, w: 34, h: 30 },
+      turret: { x: 0, y: -8, w: 20, h: 18 },
+      barrel: { x: 0, y: -22, w: 6, h: 20 },
+    },
+    muzzlePart: 'barrel',
+    weaponId: 'autocannon',
+    fireRange: 380,
+    fireEveryMs: 1700,       // a touch slower cadence than tank's 1500 — bulkier support gun
+    standoff: 320,           // px it wants to hold from the player
+    flying: false,
+    // #130 (owner: tune): "comparable to or slower than tank" — tank's maxSpeed is 52, this is
+    // noticeably slower/heavier so it reads as a lumbering quadruped rather than a light tank.
+    move: { maxSpeed: 38, accel: 90, turnRate: 1.1, turretSlew: 2.0 },
+    // #130 deploy mechanic (owner: tune both numbers if it floods/starves the arena in play):
+    // roughly once every 8s (mid the requested 6-12s range) while alive+aware, spawns one
+    // drone or infantry trooper near itself (quadrupedBehavior), up to deployCap total over
+    // its lifetime so a long fight can't have it spawn forever unbounded.
+    deployEveryMs: 8000,
+    deployCap: 5,
+    art: 'quadruped',
+    behavior: 'quadruped',
+    themeColor: 0x8a4fc9,    // distinct violet accent — reads as a different "danger" bit
+                             // from tank's orange / turret's orange / drone's yellow / etc.
+    scale: 0.6,              // bigger footprint than tank's 0.48 — reads as a bulkier chassis
+  },
+
+  // 6) INFANTRY — one trooper of a GROUND swarm (#97). The weakest unit in the game by a wide
   //    margin: barely any hp, a single small part, a weak short-range popgun. Individually
   //    meaningless — it threatens purely through the size of the mob it spawns in (see
   //    INFANTRY_MOB_SIZE below, deliberately bigger than the drone SWARM_SIZE so a mob reads as

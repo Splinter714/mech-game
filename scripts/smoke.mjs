@@ -291,7 +291,7 @@ try {
     // SAME body interface (isDestroyed/applyDamage/partHealthFraction), and die — and a FLYER
     // ignores ground cover. Spawn one of each kind at the origin and exercise all of that.
     const veh = { spawned: 0, textured: 0, damaged: 0, killed: 0, flyerIgnoresWall: false };
-    for (const kind of ['turret', 'tank', 'drone', 'helicopter', 'infantry']) {
+    for (const kind of ['turret', 'tank', 'drone', 'helicopter', 'infantry', 'quadruped']) {
       const e = a._spawnKind(0, 0, kind);
       veh.spawned++;
       if (g.textures.exists(e.key + '_hull') && g.textures.exists(e.key + '_turret')) veh.textured++;
@@ -340,6 +340,52 @@ try {
       a._damageEnemyAt(one, one.x, one.y, 9999, 0xffffff);
       const diedAndRemoved = a.enemies.length === beforeLen - 1 && a.enemies.indexOf(one) === -1;
       return { spawnedCount, matchesMobSize, textured, damaged, diedAndRemoved };
+    })();
+
+    // #130: the Broodwalker (quadruped) — a slow tanky ground unit that fires its turret AND
+    // periodically deploys a drone/infantry trooper near itself while alive+aware. Park the
+    // player within its fireRange/detect range, force it AWARE (mirrors the #103 awareness test's
+    // direct-flag approach — this isolates the deploy/fire mechanic from the detection timing
+    // already covered by that test), and drive real `_updateVehicle` ticks covering several of
+    // its (deliberately short-circuited) deploy cooldowns.
+    const quad = (() => {
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const q = a._spawnKind(150, 0, 'quadruped');
+      q.awareness = 'aware';
+      q.deployCd = 50;               // short-circuit the first deploy so this test doesn't need
+                                      // thousands of ticks to reach the real ~8s cadence
+      const spawnedBefore = a.enemies.length;
+      a.projectiles.length = 0;
+      let deployedAtLeastOnce = false;
+      for (let i = 0; i < 4 && !deployedAtLeastOnce; i++) {
+        // Run one deploy-interval's worth of ticks, then re-shortcut the next cooldown so a
+        // handful of loop iterations reliably exercises multiple deploys without simulating the
+        // full real-world cadence.
+        for (let t = 0; t < 40; t++) a._updateVehicle(q, 0.016, 16);
+        if (a.enemies.length > spawnedBefore) deployedAtLeastOnce = true;
+        else q.deployCd = 50;
+      }
+      const deployedCount = a.enemies.length - spawnedBefore;
+      const deployedUnitsAreDroneOrInfantry = a.enemies.slice(spawnedBefore)
+        .every((e) => e.kind === 'drone' || e.kind === 'infantry');
+      const firedTurret = a.projectiles.some((p) => p.owner === 'enemy');
+      // Cap respected: deployCount tracked on the nest itself never exceeds its def.deployCap.
+      const capRespected = q.deployCount <= q.kindDef.deployCap;
+      // Kill the nest and confirm its previously-deployed drones/infantry are NOT orphaned:
+      // they're independent enemies.js entries with no parent link, so the nest's own death/
+      // teardown must remove ONLY the nest, leaving its spawned children alive and untouched.
+      const childrenBefore = a.enemies.slice(spawnedBefore).filter((e) => e !== q);
+      const beforeLen = a.enemies.length;
+      a._damageEnemyAt(q, q.x, q.y, 99999, 0xffffff);
+      const nestDiedAndRemoved = a.enemies.length === beforeLen - 1 && !a.enemies.includes(q) && q._tornDown === true;
+      const childrenSurvivedNestDeath = childrenBefore.every((e) => a.enemies.includes(e) && !e.mech.isDestroyed());
+      for (const e of a.enemies.slice(spawnedBefore)) a._removeEnemy(e);   // cleanup
+      a.projectiles.length = 0;
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      return {
+        deployedAtLeastOnce, deployedCount, deployedUnitsAreDroneOrInfantry, firedTurret,
+        capRespected, nestDiedAndRemoved, childrenSurvivedNestDeath,
+      };
     })();
 
     // #98: air-enemy shadow base ellipse was bumped from 26x14 to 34x18 (still × kindDef.scale,
@@ -1023,6 +1069,7 @@ try {
       resetWorked,
       veh,
       infMob,
+      quad,
       shadowCheck,
       deathFx,
       missionStartedActive,
@@ -1105,12 +1152,12 @@ try {
   if (!(arena.deathFx.heavyMaxR > arena.deathFx.droneMaxR)) {
     fail(`#87 heavy mech death explosion (${arena.deathFx.heavyMaxR}) was not bigger than a drone's (${arena.deathFx.droneMaxR})`);
   }
-  // #68/#97: the five non-mech kinds (turret/tank/drone/helicopter/infantry) spawn, render
-  // their own textures, take damage, and die.
-  if (arena.veh.spawned !== 5) fail(`#68 expected 5 non-mech kinds spawned, got ${arena.veh.spawned}`);
-  if (arena.veh.textured !== 5) fail('#68 a non-mech kind is missing its hull/turret textures');
-  if (arena.veh.damaged !== 5) fail('#68 a non-mech kind did not take damage via the body interface');
-  if (arena.veh.killed !== 5) fail('#68 a non-mech kind did not register destruction');
+  // #68/#97/#130: the six non-mech kinds (turret/tank/drone/helicopter/infantry/quadruped)
+  // spawn, render their own textures, take damage, and die.
+  if (arena.veh.spawned !== 6) fail(`#68 expected 6 non-mech kinds spawned, got ${arena.veh.spawned}`);
+  if (arena.veh.textured !== 6) fail('#68 a non-mech kind is missing its hull/turret textures');
+  if (arena.veh.damaged !== 6) fail('#68 a non-mech kind did not take damage via the body interface');
+  if (arena.veh.killed !== 6) fail('#68 a non-mech kind did not register destruction');
   if (!arena.veh.flyerIgnoresWall) fail('#68 a flyer did not ignore ground cover');
   // #97: an 'infantryMob' spawn drops the full large-volume mob, and any one trooper renders,
   // takes damage, and dies through the normal death path (removed + torn down).
@@ -1118,6 +1165,14 @@ try {
   if (!arena.infMob.textured) fail('#97 an infantry trooper is missing its hull/turret textures');
   if (!arena.infMob.damaged) fail('#97 an infantry trooper did not take damage via the body interface');
   if (!arena.infMob.diedAndRemoved) fail('#97 an infantry trooper did not die + get removed through the normal death path');
+  // #130: the Broodwalker (quadruped) fires its turret, deploys drones/infantry while aware,
+  // respects its deploy cap, and dying doesn't orphan/remove its already-deployed units.
+  if (!arena.quad.deployedAtLeastOnce) fail('#130 the quadruped never deployed a drone/infantry trooper while alive and aware');
+  if (!arena.quad.deployedUnitsAreDroneOrInfantry) fail('#130 the quadruped deployed something other than a drone/infantry trooper');
+  if (!arena.quad.firedTurret) fail('#130 the quadruped never fired its turret at the player');
+  if (!arena.quad.capRespected) fail(`#130 the quadruped deployed more than its own deployCap (deployed ${arena.quad.deployedCount})`);
+  if (!arena.quad.nestDiedAndRemoved) fail('#130 the quadruped did not die + get removed through the normal death path');
+  if (!arena.quad.childrenSurvivedNestDeath) fail('#130 the quadruped\'s already-deployed drones/infantry were orphaned/killed when the nest died');
   // #98: the air-enemy shadow base ellipse was bumped from 26x14 to 34x18 (still × kindDef.scale
   // per #93) — a fresh drone/helicopter's shadow width must reflect the bigger base.
   if (!(arena.shadowCheck.droneShadowW > arena.shadowCheck.droneOldW)) {

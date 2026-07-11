@@ -7,6 +7,7 @@ import { drawTank } from './tank.js';
 import { drawDrone } from './drone.js';
 import { drawHelicopter } from './helicopter.js';
 import { drawInfantry } from './infantry.js';
+import { drawQuadruped } from './quadruped.js';
 
 const VEHICLE_ART = {
   turret: drawTurret,
@@ -14,6 +15,7 @@ const VEHICLE_ART = {
   drone: drawDrone,
   helicopter: drawHelicopter,
   infantry: drawInfantry,
+  quadruped: drawQuadruped,
 };
 
 // Build the two textures (`<texKey>_hull`, `<texKey>_turret`) for one non-mech unit, from its
