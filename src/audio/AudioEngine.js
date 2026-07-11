@@ -14,6 +14,7 @@ import {
   TRACKS, TRACK_IDS, DEFAULT_TRACK,
 } from './music.js';
 import { DEFAULT_SFX, FALLBACK_SFX, loadSfxParams, saveSfxParams } from './sfxParams.js';
+import { duckGainAt, DUCK_DEFAULTS } from './duck.js';
 
 export class AudioEngine {
   constructor() {
@@ -63,6 +64,9 @@ export class AudioEngine {
       bassSub: 0.3, bassFifth: 0, bassOctave: 0, bassLength: 0.12,
       // base oscillator waveform per instrument: 'sine' | 'triangle' | 'sawtooth' | 'square'
       guitarWave: 'sawtooth', bassWave: 'sawtooth', leadWave: 'sawtooth', lead2Wave: 'sine',
+      // Combat music ducking (#108) — see duck.js for the envelope shape these drive.
+      duckDepth: DUCK_DEFAULTS.depth, duckAttack: DUCK_DEFAULTS.attack,
+      duckHold: DUCK_DEFAULTS.hold, duckRelease: DUCK_DEFAULTS.release,
     };
     this._fx = {};             // live node references the panel tweaks
     // Live-tunable per-weapon SFX (Weapon Lab sound panel), seeded from localStorage (see
@@ -75,6 +79,9 @@ export class AudioEngine {
     // simultaneous held weapons (e.g. flamethrower in one arm, beam laser in the other)
     // don't collide. Keyed by location; value is the stop() closure Sfx.startHeld returned.
     this._heldSounds = new Map();
+    // Combat music ducking (#108) — timestamps (ctx.currentTime) of recent weapon-fire/
+    // impact/explosion cues; see duck.js's duckGainAt for how these shape the music gain.
+    this._duckTriggers = [];
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -374,6 +381,7 @@ export class AudioEngine {
     this._resume();
     if (!this.ready || !weapon) return;
     Sfx.fire(this, weapon);
+    this._duckTrigger();
     this._logSfxTiming('fire');
   }
 
@@ -390,6 +398,7 @@ export class AudioEngine {
     this._resume();
     if (!this.ready) return;
     Sfx.impact(this, weaponId);
+    this._duckTrigger();
   }
 
   // ── Held/looping fire sound (#53) ──────────────────────────────────────────────────────
@@ -448,6 +457,34 @@ export class AudioEngine {
     this._resume();
     if (!this.ready) return;
     Sfx.explosion(this, scale);
+    this._duckTrigger();
+  }
+
+  // ── Combat music ducking (#108) ────────────────────────────────────────────────────────
+  // Record a combat-SFX trigger (weapon fire, impact, explosion — the audible "action is
+  // happening" cues; NOT footsteps/abilities/trajectory flavor, which are too frequent/subtle
+  // to duck against). The music bus gain is reshaped toward duckGainAt()'s envelope on the
+  // same 25ms tick that already drives the music clock (see _schedule/_updateDuck) — no extra
+  // timer, and it's a no-op whenever music isn't actually playing.
+  _duckTrigger() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this._duckTriggers.push(t);
+    // Bound the array: nothing further back than one full envelope cycle can still matter.
+    const P = this.params;
+    const horizon = t - (P.duckHold + P.duckRelease + P.duckAttack + 1);
+    while (this._duckTriggers.length && this._duckTriggers[0] < horizon) this._duckTriggers.shift();
+  }
+
+  // Push the music bus gain toward the current duck envelope value for time `at`. Called every
+  // music-clock tick (only while music is playing) — additive on top of the existing `music`
+  // level param, never replacing the panel's own volume control.
+  _updateDuck(at) {
+    const P = this.params;
+    const mult = duckGainAt(this._duckTriggers, at, {
+      depth: P.duckDepth, attack: P.duckAttack, hold: P.duckHold, release: P.duckRelease,
+    });
+    this.music.gain.setValueAtTime(P.music * mult, at);
   }
 
   // ── Music (#38) ─────────────────────────────────────────────────────────────────────
@@ -498,6 +535,7 @@ export class AudioEngine {
       this._nextStepTime += stepDur;
       this._step = (this._step + 1) % 384;
     }
+    this._updateDuck(now);
   }
 
   _playStep(step, at) {
