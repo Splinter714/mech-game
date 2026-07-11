@@ -96,7 +96,7 @@ export const ENEMY_KINDS = {
     weaponId: 'machineGun',
     fireRange: 240,
     fireEveryMs: 260,
-    swarmRadius: 150,       // px orbit radius the drone tries to hold around the player
+    swarmRadius: 200,       // px orbit radius the drone tries to hold around the player (#93: nudged out from 150 — playtest felt too close)
     flying: true,           // hovers — ignores ground cover, draws a small shadow
     move: { maxSpeed: 150, accel: 420, turnRate: 6, turretSlew: 9 },
     art: 'drone',

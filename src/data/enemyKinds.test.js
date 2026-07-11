@@ -62,6 +62,11 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.drone.scale).toBeLessThan(0.62);
   });
 
+  it('#93: drone swarmRadius nudged out from the too-close 150 (playtest feedback)', () => {
+    expect(ENEMY_KINDS.drone.swarmRadius).toBeGreaterThanOrEqual(190);
+    expect(ENEMY_KINDS.drone.swarmRadius).toBeLessThanOrEqual(210);
+  });
+
   it('#91: tank is noticeably slower/heavier than its #89 speed', () => {
     expect(ENEMY_KINDS.tank.move.maxSpeed).toBeLessThan(78);
     expect(ENEMY_KINDS.tank.move.maxSpeed).toBeGreaterThan(0);
