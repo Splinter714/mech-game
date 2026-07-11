@@ -10,6 +10,20 @@ export const ARENA_MECH_SCALE = 0.34;
 // The starting enemy's hex (world build clears it; create() spawns the first enemy there).
 export const DUMMY_HEX = { q: 3, r: -1 };
 
+// #87 (corrected): a dying enemy's death explosion should read as size-appropriate — a drone
+// popping should look small, a tank/heavy mech's should go up in a noticeably bigger blast.
+// Both enemy shapes already carry a size signal: a mech's `weightClass` (light/medium/heavy
+// off its chassis) or a non-mech kind's data-driven `scale` (enemyKinds.js — already used to
+// size its on-screen sprite; a drone is 0.72, a tank 0.82, etc.). Map either to one multiplier
+// so the death FX (combat.js `_damageEnemyAt`) can scale a single burst recipe instead of two.
+const MECH_WEIGHT_DEATH_SCALE = { light: 0.8, medium: 1.0, heavy: 1.35 };
+export function deathScaleFor(e) {
+  if (e.kind === 'mech' || e.kind === undefined) {
+    return MECH_WEIGHT_DEATH_SCALE[e.mech.weightClass] ?? 1.0;
+  }
+  return e.kindDef?.scale ?? 1.0;
+}
+
 // Move `cur` toward `target` by at most `maxStep`. Used by player + enemy locomotion.
 export function approach(cur, target, maxStep) {
   if (cur < target) return Math.min(cur + maxStep, target);

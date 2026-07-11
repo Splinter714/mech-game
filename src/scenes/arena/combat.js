@@ -3,7 +3,7 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DAMAGEABLE } from './shared.js';
+import { ARENA_MECH_SCALE, DAMAGEABLE, deathScaleFor } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
@@ -58,25 +58,29 @@ export const CombatMixin = {
     // only the first and skip the rest (no extra circles/tweens) for one frame's worth of window.
     if (skipImpactBurst(this._lastBurst, x, y, now)) return;
     this._lastBurst = { x, y, t: now };
-    const burst = (r0, r1, col, alpha, dur, stroke) => {
-      const c = this._acquireImpactCircle(x, y, r0, col, alpha, stroke);
-      this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => this._freeImpactCircle(c) });
-    };
-    burst(3, 9, 0xffffff, 0.9, 120, false); // core flash, every hit
+    this._burst(x, y, 3, 9, 0xffffff, 0.9, 120, false); // core flash, every hit
 
     if (kind === 'missile' || splash > 0) {
       const r = Math.max(10, splash);
-      burst(r * 0.4, r * 1.6, 0xff7a18, 0.4, 260, false);  // fireball
-      burst(r * 0.5, r * 1.9, 0xffd56b, 0.9, 300, true);   // shock ring
+      this._burst(x, y, r * 0.4, r * 1.6, 0xff7a18, 0.4, 260, false);  // fireball
+      this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.9, 300, true);   // shock ring
     } else if (kind === 'plasma') {
-      burst(4, 18, color, 0.6, 240, false);                // splatter blob
-      burst(3, 14, color, 0.9, 220, true);
+      this._burst(x, y, 4, 18, color, 0.6, 240, false);                // splatter blob
+      this._burst(x, y, 3, 14, color, 0.9, 220, true);
     } else if (kind === 'beam') {
-      burst(2, 7, color, 0.9, 110, false);                 // scorch flash
-    } else {                                                // ballistic spark
-      burst(2, 9, color, 0.85, 130, false);
-      burst(1.5, 7, 0xffffff, 0.7, 100, true);
+      this._burst(x, y, 2, 7, color, 0.9, 110, false);                 // scorch flash
+    } else {                                                            // ballistic spark
+      this._burst(x, y, 2, 9, color, 0.85, 130, false);
+      this._burst(x, y, 1.5, 7, 0xffffff, 0.7, 100, true);
     }
+  },
+
+  // Shared burst-circle primitive behind `_impactFx`'s per-kind bursts above and `_deathFx`
+  // below: acquire a pooled circle at (x, y) with start radius `r0`, tween it out to `r1` while
+  // fading, then free it back to the pool.
+  _burst(x, y, r0, r1, col, alpha, dur, stroke) {
+    const c = this._acquireImpactCircle(x, y, r0, col, alpha, stroke);
+    this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => this._freeImpactCircle(c) });
   },
 
   // Apply `damage` to enemy `e`'s part nearest the world point (x, y). Works for BOTH a mech
@@ -104,20 +108,38 @@ export const CombatMixin = {
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
     if (e.mech.isDestroyed()) {
-      this._floatText(e.x, e.y - 30, 'DESTROYED', '#e2533a');
-      Audio.explosion(1.15);                   // catastrophic kill
+      // #87 (corrected per playtest 2026-07-10): a lingering, frozen corpse before cleanup read
+      // as "horrible and looks dumb" — the corpse must vanish IMMEDIATELY on death, with the
+      // explosion itself (sized to the enemy) AS the death feedback, not a delayed afterthought.
+      // Read everything off `e` we still need BEFORE tearing it down.
+      const dx = e.x, dy = e.y;
+      this._floatText(dx, dy - 30, 'DESTROYED', '#e2533a');   // just floating text, no lingering body
+      this._deathFx(dx, dy, deathScaleFor(e));
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
       // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
-      this._maybeDropPowerup?.(e.x, e.y);
+      this._maybeDropPowerup?.(dx, dy);
       // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
       // in data/shop.js) — independent roll from the powerup drop, same kill site.
-      this._maybeDropSalvage?.(e.x, e.y);
-      // #87: clear the corpse shortly after the death beat lands instead of leaving it faded to
-      // alpha 0.5 and lingering in the world (previously only cleared at the NEXT stage advance's
-      // teardown, #71). ~650ms gives the DESTROYED float text (a 700ms tween) and explosion sound
-      // a beat to read before the sprite/textures are torn down and it drops out of `this.enemies`.
-      this.time.delayedCall(650, () => this._removeEnemy(e));
+      this._maybeDropSalvage?.(dx, dy);
+      // Tear the corpse (view + generated textures) down and drop it out of `this.enemies` in
+      // the SAME tick the kill registers — no delayed teardown, no frozen body sitting around.
+      this._removeEnemy(e);
     }
+  },
+
+  // Catastrophic-kill explosion, sized to the dying enemy (`scale`: ~0.7 drone … ~1.35 heavy
+  // mech — see `deathScaleFor`). Draws the SAME fireball+shockring burst recipe `_impactFx` uses
+  // for missile/splash hits (via the shared `_burst` primitive) rather than inventing new
+  // drawing code — just scales the radius/duration and the explosion volume by enemy size.
+  // Goes straight through `_burst`, bypassing `_impactFx`'s per-hit sound throttle/burst-merge
+  // (tuned for concentrated weapon fire, not a once-per-kill event) so this always renders even
+  // when the killing hit's own impact FX just fired at the same point this frame.
+  _deathFx(x, y, scale = 1) {
+    const r = 26 * scale;
+    this._burst(x, y, 4 * scale, 12 * scale, 0xffffff, 0.95, 140, false);     // core flash
+    this._burst(x, y, r * 0.4, r * 1.6, 0xff7a18, 0.5, 320 * scale, false);   // fireball
+    this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.9, 360 * scale, true);    // shock ring
+    Audio.explosion(1.15 * scale);
   },
 
   _floatText(x, y, s, color) {

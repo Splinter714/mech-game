@@ -179,7 +179,10 @@ export const ProjectilesMixin = {
     for (const fp of this.firePatches) {
       if (now >= fp.nextTick) {
         fp.nextTick += 500;
-        for (const e of this.enemies) {
+        // #87: iterate a SNAPSHOT — a killing tick now tears the enemy down and splices it out
+        // of `this.enemies` synchronously (no more delayed removal), which would otherwise skip
+        // whichever enemy shifts into the removed slot mid-iteration.
+        for (const e of [...this.enemies]) {
           if (!e.mech.isDestroyed() && Math.hypot(e.x - fp.x, e.y - fp.y) < fp.r) {
             this._damageEnemyAt(e, e.x, e.y, Math.max(1, Math.round(fp.dps * 0.5)), 0xff7a18);
           }
