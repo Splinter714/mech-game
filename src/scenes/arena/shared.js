@@ -89,6 +89,26 @@ export function rotateToward(cur, target, radPerSec, dt) {
 // Re-exported for the combat mixin (damage maps to a body location; cockpit is hit via head).
 export const DAMAGEABLE = LOCATIONS.filter((l) => l !== 'cockpit');
 
+// #109: world position of a muzzle at a body part's front edge — the shared geometry behind
+// EVERY "where does this shot actually leave from" computation in the arena. `part` is a
+// {x, y, w, h} box in mech-local design coords (origin = unit centre, −y = forward): x is
+// lateral offset from centre, y is the box's own centre, w/h its size. `disp` converts design
+// units → world px (chassis/vehicle on-screen scale × ART_SCALE). Placed at world (x, y),
+// rotated by `angle` (the unit's current turret/aim facing). PURE (no Phaser/scene) so it's
+// unit-testable. Originally just the player's locomotion `_muzzle(loc)` (a left-arm shot visibly
+// leaves the left arm); factored out here so enemy MECH fire (enemies.js, keyed off w.location
+// via mechLayout) and non-mech KIND fire (enemies.js `_fireVehicleWeapon`, keyed off the kind's
+// gun/barrel/etc. part in enemyKinds.js) compute the same real muzzle instead of each using its
+// own fixed near-centre offset (#109).
+export function partMuzzle(part, x, y, angle, disp) {
+  const f = (-part.y + part.h / 2) * disp;  // forward, to the part's front edge
+  const r = part.x * disp;                  // right of centre
+  return {
+    x: x + f * Math.cos(angle) - r * Math.sin(angle),
+    y: y + f * Math.sin(angle) + r * Math.cos(angle),
+  };
+}
+
 // ── Direct-fire convergence (#40, #31, #74) ──────────────────────────────────────────
 // Direct-fire weapons (lasers, autocannons) toe their off-centre muzzles inward to a point
 // on the turret line at the live most-aimed enemy's range, so shots land where the turret
