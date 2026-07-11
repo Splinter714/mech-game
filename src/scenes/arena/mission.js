@@ -22,6 +22,20 @@ export const MissionMixin = {
     this.mission = makeMission('assault');
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);
+    this._publishObjectiveWorld();
+  },
+
+  // #80: the objective's world-space position, republished under its own registry key so
+  // HudScene's edge-direction arrow (and, later, the minimap) has a single live source that
+  // agrees with the world-space marker above — both read the SAME `this.objectiveHex`, just
+  // converted once here via the same `hexToPixel` the marker itself uses. Called from
+  // `_initMission` (immediate availability the very first frame) and every frame from
+  // `_updateMission` below, so a stage-advance reassignment of `this.objectiveHex` (run.js
+  // `_startNextStage`) is picked up with no extra wiring on that side.
+  _publishObjectiveWorld() {
+    if (!this.objectiveHex) { this.registry.set('objectiveWorld', null); return; }
+    const [q, r] = this.objectiveHex.split(',').map(Number);
+    this.registry.set('objectiveWorld', hexToPixel(q, r));
   },
 
   // A simple, readable beacon over the objective hex: a pulsing amber ring + a small
@@ -52,6 +66,7 @@ export const MissionMixin = {
     // always passes false and the mission can only ever go active → complete for now.
     this.mission.status = evaluateMission(this.mission, { objectiveDestroyed, playerDead: false });
     this.registry.set('mission', this.mission);
+    this._publishObjectiveWorld();   // #80: keep the HUD wayfinding source fresh every frame
     if (wasActive && this.mission.status === 'complete') this._onMissionComplete();
   },
 

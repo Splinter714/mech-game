@@ -3,6 +3,28 @@ import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 import { POWERUPS, durationMs } from '../data/powerups.js';
 import { STAGE_COUNT } from '../data/run.js';
+import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
+
+// #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
+// the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
+// to reuse if a second indicator ever wants the same shape.
+const ARROW_SPREAD = 2.55;   // radians between the tip direction and each back corner (~146°)
+function drawChevron(g, x, y, angle, size, color) {
+  const tipX = x + Math.cos(angle) * size, tipY = y + Math.sin(angle) * size;
+  const b1x = x + Math.cos(angle + ARROW_SPREAD) * size * 0.62;
+  const b1y = y + Math.sin(angle + ARROW_SPREAD) * size * 0.62;
+  const b2x = x + Math.cos(angle - ARROW_SPREAD) * size * 0.62;
+  const b2y = y + Math.sin(angle - ARROW_SPREAD) * size * 0.62;
+  g.fillStyle(color, 0.92);
+  g.lineStyle(2, 0x000000, 0.35);
+  g.beginPath();
+  g.moveTo(tipX, tipY);
+  g.lineTo(b1x, b1y);
+  g.lineTo(b2x, b2y);
+  g.closePath();
+  g.fillPath();
+  g.strokePath();
+}
 
 // Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
 // garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
@@ -55,6 +77,10 @@ export default class HudScene extends Phaser.Scene {
     this.buffGfx = this.add.graphics();
     this.buffTexts = [];
     this._buffCache = {};   // typeId → full duration (ms), captured the frame a buff first appears
+
+    // #80: edge-direction arrow — an always-on indicator pointing at the current mission
+    // objective whenever it's off-screen. Own Graphics layer, cleared/redrawn each frame.
+    this.wayGfx = this.add.graphics();
 
     // Per-part integrity column (player), top-left under the hints + stage/objective lines.
     this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -159,6 +185,25 @@ export default class HudScene extends Phaser.Scene {
     }
 
     this._updateBuffHud();
+    this._updateWayArrow();
+  }
+
+  // #80: point at the current objective whenever it's off-camera. Reads the SAME live source
+  // the world-space objective marker (mission.js `_makeObjectiveMarker`) is built from — both
+  // trace back to `this.objectiveHex` via `hexToPixel`, republished each frame as
+  // `objectiveWorld` — so the two indicators can never disagree, and a stage advance (#81
+  // reassigns `objectiveHex` to a fresh outpost on the regenerated map) is picked up for free.
+  // Hides once the objective's own world-space marker is genuinely on-screen — no need to
+  // double up on an indicator at that point.
+  _updateWayArrow() {
+    const objectiveWorld = this.registry.get('objectiveWorld');
+    const view = this.registry.get('cameraView');
+    const g = this.wayGfx;
+    g.clear();
+    if (!objectiveWorld || !view) return;
+    if (isPointInView(view, objectiveWorld)) return;
+    const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, objectiveWorld, 30);
+    drawChevron(g, x, y, angle, 16, 0xffb84a);   // amber, matching the objective marker's colour
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
