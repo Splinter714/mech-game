@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
+import { storeOverride, clearOverride, setAudioContext, _resetForTest } from './sfxOverrides.js';
 
 // Minimal mock Web Audio context: records how many voices (oscillators / noise sources)
 // were created so we can assert the synth actually scheduled sound, and that every event
@@ -23,6 +24,10 @@ function mockContext() {
     createOscillator: () => { oscillators++; return { type: '', frequency: param(), connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
     createBufferSource: () => { sources++; return { buffer: null, loop: false, connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
     createBuffer: (_c, len) => ({ getChannelData: () => new Float32Array(len) }),
+    // #150: real-file SFX overrides decode through the context too — a trivial fake decode
+    // (tag the "buffer" with the byte length) is enough to prove override plumbing, without
+    // needing an actual audio codec in tests.
+    decodeAudioData: async (bytes) => ({ __fakeDecodedBytes: bytes.byteLength }),
     resume: () => Promise.resolve(),
     _counts: () => ({ oscillators, sources }),
   };
@@ -178,6 +183,53 @@ describe('AudioEngine (mock context)', () => {
     it('returns null when the engine is not ready', () => {
       const bare = new AudioEngine();
       expect(bare.startTrajectoryLoop('swarmRack')).toBeNull();
+    });
+  });
+
+  // #150: real-file SFX overrides — a loaded file takes priority over the procedural layers
+  // for that weaponId+stage; everything else must be an untouched no-op.
+  describe('real-file SFX overrides (#150)', () => {
+    const fakeFile = (name, tag) => ({
+      name, type: 'audio/wav', arrayBuffer: async () => new TextEncoder().encode(tag).buffer,
+    });
+
+    // Reset sfxOverrides' shared in-memory cache between tests (it's a module-level
+    // singleton), then re-point it at THIS test's engine context directly — the outer
+    // `beforeEach` above already called `eng.init(ctx)`, which normally wires this up via
+    // AudioEngine.init, but `_resetForTest()` clears that wiring too (and `eng.init` no-ops
+    // on an already-initialized engine), so it must be redone explicitly.
+    beforeEach(() => { _resetForTest(); setAudioContext(ctx); });
+    afterEach(() => { delete globalThis.indexedDB; }); // no fake DB set up here — persistence is covered in sfxOverrides.test.js
+
+    it('plays the override buffer via a buffer source instead of the procedural layers', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      // AudioEngine.init (in the outer beforeEach) already wired the engine's ctx into
+      // sfxOverrides — decode above used it, so getOverride resolves without needing a
+      // persisted DB (globalThis.indexedDB is unset here on purpose).
+      const before = ctx._counts();
+      eng.fire(getWeapon('autocannon'));
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);      // exactly one buffer source: the override
+      expect(after.oscillators).toBe(before.oscillators);  // no procedural tone layers ran
+    });
+
+    it('falls back to procedural playback once the override is cleared', async () => {
+      await storeOverride('autocannon', 'impact', fakeFile('b.wav', 'B'));
+      await clearOverride('autocannon', 'impact');
+      const before = ctx._counts();
+      eng.impact('autocannon');
+      const after = ctx._counts();
+      // autocannon's impact stage is 1 noise + 1 tone layer — procedural playback ran again.
+      expect(after.oscillators).toBeGreaterThan(before.oscillators);
+    });
+
+    it('is scoped to the exact weaponId+stage — other stages/weapons are unaffected', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('c.wav', 'C'));
+      const before = ctx._counts();
+      eng.impact('autocannon');            // different stage, no override
+      eng.fire(getWeapon('shotgun'));      // different weapon, no override
+      const after = ctx._counts();
+      expect(after.oscillators).toBeGreaterThan(before.oscillators); // both ran procedurally
     });
   });
 });
