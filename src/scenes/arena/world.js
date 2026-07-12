@@ -2,7 +2,7 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage,
@@ -201,6 +201,22 @@ export const WorldMixin = {
   // Is a world point impassable for the mech — non-passable terrain, or off the arena disc?
   _blocked(x, y) {
     return !isPassable(this._terrainAt(x, y));
+  },
+
+  // #159: is any hex along the straight PIXEL path from (x0,y0) to (x1,y1) impassable? A
+  // single-endpoint `_blocked(x1, y1)` check is only safe when a frame's movement stays
+  // smaller than a hex — at the higher chassis speeds + INSTANT_VELOCITY's no-ramp-up snap, a
+  // fast mech approaching a wall at a shallow/grazing angle can clip a hex's narrow
+  // cross-section and land its endpoint sample on the far side without ever landing INSIDE
+  // that hex, tunneling straight through (confirmed empirically — see hexgrid.js
+  // `hexesAlongSegment`'s comment). This walks every hex the segment actually crosses via the
+  // standard hex line-draw algorithm, so it catches a wall regardless of speed or angle — the
+  // movement-resolution code (`_drive`) uses this instead of a raw endpoint `_blocked` call.
+  _blockedAlongSegment(x0, y0, x1, y1) {
+    for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
+      if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return true;
+    }
+    return false;
   },
 
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying

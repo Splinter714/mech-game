@@ -32,10 +32,17 @@ export function hexToPixel(q, r, size = HEX_SIZE) {
   };
 }
 
+// Pixel → fractional axial coord (pointy-top), no rounding. Shared by pixelToHex (which
+// rounds it to a concrete hex) and hexesAlongSegment (which needs to interpolate between
+// two *fractional* positions before rounding each sample — rounding first and interpolating
+// integer hexes would miss which hexes a path between them actually passes through).
+function pixelToAxialFrac(x, y, size) {
+  return { q: (SQRT3 / 3 * x - 1 / 3 * y) / size, r: (2 / 3 * y) / size };
+}
+
 // Pixel → nearest axial hex (pointy-top), via fractional cube + cube rounding.
 export function pixelToHex(x, y, size = HEX_SIZE) {
-  const q = (SQRT3 / 3 * x - 1 / 3 * y) / size;
-  const r = (2 / 3 * y) / size;
+  const { q, r } = pixelToAxialFrac(x, y, size);
   return cubeRound(q, r);
 }
 
@@ -123,6 +130,47 @@ export function hexesWithinPixelRadius(x, y, r, size = HEX_SIZE) {
     const p = hexToPixel(h.q, h.r, size);
     if (Math.hypot(p.x - x, p.y - y) <= r) out.push(h);
   }
+  return out;
+}
+
+// #159: every hex a straight PIXEL-SPACE segment from (x0,y0) to (x1,y1) passes through, in
+// order. The standard cube-line-draw algorithm (redblobgames.com/grids/hexagons/#line-drawing):
+// interpolate the two endpoints' FRACTIONAL axial coords (not the rounded hexes — rounding
+// first would already lose which hexes a diagonal path grazes) at one sample per hex-step of
+// distance, cube-rounding each sample. This is what makes swept collision exact regardless of
+// approach angle or step size — a fixed-size position substep can still skip clean over a hex
+// whose cross-section, at a shallow/grazing angle, is much narrower than the substep length
+// (confirmed empirically: forcing a wall hex and driving a fast, INSTANT_VELOCITY-toggled mech
+// into it from a broad continuous-angle sweep tunneled through in the majority of angles even
+// at an 8px substep). Enumerating the actual hexes crossed has no such gap — PROVIDED its
+// endpoints agree with plain `pixelToHex` (what `_blocked`/collision callers use to classify
+// those exact same points): an earlier version nudged BOTH endpoints by a fixed epsilon (the
+// textbook fix for a line running exactly along a hex edge/vertex tie) and, empirically, that
+// nudge could flip an ENDPOINT's own rounding to a different hex than plain `pixelToHex(x1,y1)`
+// would give it — a real, reproducible case, not just theoretical (straight-up/-down keyboard
+// movement, whose x stays exactly 0, hit a hex-vertex tie where nudging the endpoint picked the
+// wrong neighbour, letting a substep land inside a wall the swept check had just failed to
+// flag). So the nudge is now confined to INTERIOR samples only — the first and last hexes in
+// the result are always the exact, un-nudged `cubeRound` of the segment's own endpoints,
+// guaranteeing this always agrees with a plain point-check of those same coordinates.
+export function hexesAlongSegment(x0, y0, x1, y1, size = HEX_SIZE) {
+  const a = pixelToAxialFrac(x0, y0, size);
+  const b = pixelToAxialFrac(x1, y1, size);
+  const startHex = cubeRound(a.q, a.r);
+  const endHex = cubeRound(b.q, b.r);
+  const n = distance(startHex, endHex);
+  if (n === 0) return [startHex];
+  const EPS = 1e-6;
+  const out = [startHex];
+  let lastKey = axialKey(startHex.q, startHex.r);
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const h = cubeRound(a.q + (b.q - a.q) * t + EPS, a.r + (b.r - a.r) * t + EPS);
+    const key = axialKey(h.q, h.r);
+    if (key !== lastKey) { out.push(h); lastKey = key; }
+  }
+  const endKey = axialKey(endHex.q, endHex.r);
+  if (endKey !== lastKey) out.push(endHex);
   return out;
 }
 

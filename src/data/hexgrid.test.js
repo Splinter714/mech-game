@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   hexToPixel, pixelToHex, neighbors, distance, range, ring, axialKey, HEX_SIZE,
-  nearestHex, hexesWithinPixelRadius, scatterOffset,
+  nearestHex, hexesWithinPixelRadius, scatterOffset, hexesAlongSegment,
 } from './hexgrid.js';
 
 describe('hexgrid neighbors', () => {
@@ -177,5 +177,82 @@ describe('hexesWithinPixelRadius (#72 burning ground → terrain)', () => {
     expect(hexes.length).toBeGreaterThanOrEqual(1);
     const centre = pixelToHex(c.x + HEX_SIZE * 0.8, c.y);
     expect(hexes).toContainEqual(centre);
+  });
+});
+
+// #159: swept-path hex enumeration, used by collision to stop a fast mech from tunneling
+// through a wall it only grazes at a shallow angle (an endpoint-only point check can miss it).
+// Comparisons below go through `axialKey` rather than raw object equality: `cubeRound` can
+// legitimately produce a signed `-0` for a coordinate that rounds to zero (e.g. {q:-0,r:0} vs
+// {q:0,r:0}) depending on which side of zero the fractional input approached from — numerically
+// identical hexes (`-0 === 0`, and axialKey stringifies both the same way), but `toEqual`'s deep
+// equality treats them as different objects. Not a real bug, just an assertion-robustness detail.
+describe('hexgrid hexesAlongSegment', () => {
+  const key = (h) => axialKey(h.q, h.r);
+
+  it('a zero-length segment returns just its own hex', () => {
+    expect(hexesAlongSegment(10, 10, 10, 10).map(key)).toEqual([key(pixelToHex(10, 10))]);
+  });
+
+  it('a short segment that stays within one hex returns only that hex', () => {
+    const c = hexToPixel(0, 0);
+    expect(hexesAlongSegment(c.x - 2, c.y - 2, c.x + 2, c.y + 2).map(key)).toEqual(['0,0']);
+  });
+
+  // #159 regression: an earlier version nudged BOTH endpoints of the interpolation by a fixed
+  // epsilon (the textbook line-drawing tie-break) — which could flip an ENDPOINT's own hex to a
+  // different one than a plain, un-nudged `pixelToHex` of that exact same point. Reproduced with
+  // real gameplay coordinates (a light-chassis substep driving due "north" — x staying exactly
+  // 0 — approaching a hex-vertex boundary near y=-48): the segment reported its far endpoint as
+  // hex (1,-1) while `pixelToHex(0, -48.24)` (what `_blocked` actually checks) said (0,-1) — the
+  // wall hex the mech was about to enter — so the swept check missed it and the mech tunneled in.
+  it('always agrees with plain pixelToHex at both endpoints — never a different hex', () => {
+    expect(key(pixelToHex(0, -48.24))).toBe('0,-1');
+    const hexes = hexesAlongSegment(0, -42.21, 0, -48.24);
+    expect(key(hexes[0])).toBe(key(pixelToHex(0, -42.21)));
+    expect(key(hexes[hexes.length - 1])).toBe(key(pixelToHex(0, -48.24)));
+    expect(hexes.map(key)).toEqual(['0,0', '0,-1']);
+  });
+
+  it('endpoints match plain pixelToHex across a broad sweep of angles/distances (no drift)', () => {
+    for (let deg = 0; deg < 360; deg += 5) {
+      const ang = (deg * Math.PI) / 180;
+      for (const dist of [10, 30, 48.24, 60, 100, 150]) {
+        const x0 = 0, y0 = 0;
+        const x1 = Math.cos(ang) * dist, y1 = Math.sin(ang) * dist;
+        const hexes = hexesAlongSegment(x0, y0, x1, y1);
+        expect(key(hexes[0])).toBe(key(pixelToHex(x0, y0)));
+        expect(key(hexes[hexes.length - 1])).toBe(key(pixelToHex(x1, y1)));
+      }
+    }
+  });
+
+  it('returns a connected path — every consecutive pair is hex-adjacent (or identical only at the ends)', () => {
+    const hexes = hexesAlongSegment(0, 0, 300, 260);
+    expect(hexes.length).toBeGreaterThan(1);
+    for (let i = 1; i < hexes.length; i++) {
+      expect(distance(hexes[i - 1], hexes[i])).toBe(1);
+    }
+  });
+
+  it('the path length (hex count) matches the axial distance between the endpoint hexes', () => {
+    const start = pixelToHex(0, 0);
+    const end = pixelToHex(300, 260);
+    const hexes = hexesAlongSegment(0, 0, 300, 260);
+    expect(hexes.length).toBe(distance(start, end) + 1);
+  });
+
+  it('never skips the wall hex a straight path grazes at a shallow/corner-on angle', () => {
+    // The scenario that motivated this function: force one hex a bit past the mech's own hex to
+    // an arbitrary id and confirm sweeping the segment toward it always finds it, at an angle
+    // deliberately chosen to clip the hex near its corner (the case a fixed-size position
+    // substep can skip clean over, since the corner cross-section is much narrower than the
+    // substep length — see locomotion.js's `_drive` comment).
+    const wallHex = { q: 1, r: -1 };
+    const wallCentre = hexToPixel(wallHex.q, wallHex.r);
+    // Aim just past the wall hex's centre so the segment terminates beyond it, grazing through.
+    const beyond = { x: wallCentre.x * 1.1, y: wallCentre.y * 1.1 };
+    const hexes = hexesAlongSegment(0, 0, beyond.x, beyond.y);
+    expect(hexes).toContainEqual(wallHex);
   });
 });

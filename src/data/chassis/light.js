@@ -21,7 +21,10 @@ export const LIGHT_CONFIG = {
     // accel   px/s² spent winding UP to the throttle target (start-up snappiness).
     // decel   px/s² spent bleeding speed when you ease off / reverse. LOWER than accel =
     //         the mech carries momentum and coasts to a stop instead of braking instantly.
-    accel: 340, decel: 240, maxSpeed: 135, turnRate: 2.3,
+    // #159: maxSpeed bumped from 135 → 268 (×135/68 ≈ 1.9853, the same scale factor applied
+    // to all three chassis so heavy lands exactly on light's OLD 135 while every chassis
+    // keeps its old relative ordering/spacing — see heavy.js/medium.js for the same factor).
+    accel: 340, decel: 240, maxSpeed: 268, turnRate: 2.3,
     // #86: the #3 feel follow-up dialled this down to 3.0 (from 4.2) for a weightier swing,
     // but playtest (2026-07-10) read it as "choppy/laggy aiming" — profiling ruled out FPS/
     // frame-pacing as the cause (steady 60fps, <1ms dt jitter; see scripts/profile-aim-idle.mjs),
