@@ -162,7 +162,12 @@ export default class ArenaScene extends Phaser.Scene {
     // Copied to a plain object rather than handing out the live Phaser Rectangle, so the HUD
     // reads a stable snapshot instead of an object the camera keeps mutating in place.
     const wv = this.cameras.main.worldView;
-    this.registry.set('cameraView', { x: wv.x, y: wv.y, width: wv.width, height: wv.height });
+    const view = { x: wv.x, y: wv.y, width: wv.width, height: wv.height };
+    this.registry.set('cameraView', view);
+    // #155: hide map tiles outside the camera's view (+ margin) — see world.js for why this is
+    // the single biggest FPS cost in the game. Reuses this same view rect, not a second camera-
+    // bounds computation.
+    this._updateTileCulling(view);
 
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();

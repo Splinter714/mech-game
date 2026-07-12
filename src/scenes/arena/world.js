@@ -2,7 +2,7 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage,
@@ -22,6 +22,18 @@ import {
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
 // building has 60 HP, so ~1.5–2s of leaning at speed flattens it. Owner: tunable.
 const STOMP_DPS = 45;
+
+// #155: tile-visibility culling. Phaser does no camera-frustum culling of its own, and the
+// whole run's terrain is pre-built as ~20k live Image GameObjects (#111) — rendering all of
+// them every frame, regardless of camera position, measured as ~10x the entire rest of the
+// frame cost (#148 audit: 30.2ms→3.4ms/frame just from hiding far tiles). `CULL_MARGIN_PX` is
+// how far beyond the camera's current view rect a tile is still kept visible (padding so
+// nothing visibly pops in/out right at the screen edge — the audit's own 1200px test value).
+// `CULL_RECHECK_PX` is how far the camera's centre has to move before we bother re-deriving
+// the visible set at all — with a margin this generous, a camera nudge well under the margin
+// can't have changed which tiles should show, so most frames skip the recompute entirely.
+const CULL_MARGIN_PX = 1200;
+const CULL_RECHECK_PX = 300;
 
 
 export const WorldMixin = {
@@ -99,6 +111,63 @@ export const WorldMixin = {
       const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
     }
+    // #155: culling state — see `_updateTileCulling` below. Every tile Image is actually
+    // visible right now (Phaser default), so `_visibleTiles` starts as the FULL key set to
+    // match that reality — starting it empty would mean the first real cull pass only ever
+    // turns tiles ON (diffing against an empty "previously visible" set never turns any of
+    // the ~20k default-visible tiles OFF). `_cullCenterX/Y` start null so the very first call
+    // (whatever the camera's initial view is) always runs a full recompute regardless of the
+    // move-threshold check.
+    this._visibleTiles = new Set(this.terrain.keys());
+    this._cullCenterX = null;
+    this._cullCenterY = null;
+  },
+
+  // #155: hide every tile GameObject outside the camera's current view (+ margin), show every
+  // tile inside it — toggling `.visible` on the SAME Image created in `_buildWorld`, never
+  // destroying/recreating (recreation would cost far more than this saves). `view` is the exact
+  // `cameraView` rect ArenaScene already computes/publishes every frame for the HUD — reused
+  // as-is, not recomputed here. Purely a rendering change: gameplay (collision/LOS/passability/
+  // combat) reads `this.terrain`/`this.buildingHp`/`this.coverHp` — plain data Maps — never the
+  // Image objects this toggles, and an invisible Phaser GameObject is still fully queryable, so
+  // nothing downstream can observe or be affected by a tile's visibility.
+  //
+  // Cheap by construction, not by scanning: rather than bounds-checking all ~20k tiles every
+  // frame, this (a) skips the recompute entirely unless the camera's centre has moved more than
+  // `CULL_RECHECK_PX` since the last recompute, and (b) even when it does recompute, only asks
+  // `hexesWithinPixelRadius` (data/hexgrid.js) for the hexes near the new centre — a small ring,
+  // not a scan — then diffs that against the previous visible set so only the tiles crossing the
+  // boundary actually get a `setVisible` call.
+  _updateTileCulling(view, margin = CULL_MARGIN_PX) {
+    const cx = view.x + view.width / 2;
+    const cy = view.y + view.height / 2;
+    if (this._cullCenterX != null) {
+      const moved = Math.hypot(cx - this._cullCenterX, cy - this._cullCenterY);
+      if (moved < CULL_RECHECK_PX) return;
+    }
+    this._cullCenterX = cx;
+    this._cullCenterY = cy;
+
+    // A circle centred on the view, radius = half-diagonal of the margined view rect, fully
+    // contains the margined rect itself — `hexesWithinPixelRadius` turns that into just the
+    // nearby hex keys instead of walking the whole terrain map.
+    const radius = Math.hypot(view.width / 2 + margin, view.height / 2 + margin);
+    const nextVisible = new Set();
+    for (const h of hexesWithinPixelRadius(cx, cy, radius)) {
+      nextVisible.add(axialKey(h.q, h.r));
+    }
+
+    for (const k of nextVisible) {
+      if (this._visibleTiles.has(k)) continue;
+      const img = this.tileImages.get(k);
+      if (img) img.setVisible(true);
+    }
+    for (const k of this._visibleTiles) {
+      if (nextVisible.has(k)) continue;
+      const img = this.tileImages.get(k);
+      if (img) img.setVisible(false);
+    }
+    this._visibleTiles = nextVisible;
   },
 
   // Terrain id at a world point (undefined = outside the arena disc).
