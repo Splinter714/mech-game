@@ -13,7 +13,9 @@
 // current indirect-fire lock (#62) so a fresh amber→red re-lock can be re-acquired by re-aiming
 // (keyboard equivalent: T). Handled via PadEdges, not the per-frame fire intent.
 
-const STICK_DEADZONE = 0.25;
+// Exported so other modules (e.g. arena/locomotion.js's instant-turning facing-angle gate,
+// #156) can reuse the same "is this raw input meaningful" threshold instead of inventing one.
+export const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
 
 // Standard-gamepad button indices Phaser doesn't name (sticks, d-pad, menu buttons).
