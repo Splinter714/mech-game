@@ -3,6 +3,7 @@ import {
   TERRAIN, getTerrain, terrainSpeedFactor, isPassable, blocksLOS,
   isDestructible, buildingHp, damageBuilding, RUBBLE, rubbleFor,
   isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
+  isWaterTerrain,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -164,6 +165,37 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
     while (!destroyed && shots < 50) { ({ hp, destroyed } = damageBuilding(hp, 16)); shots++; }
     expect(shots).toBeGreaterThan(1);
     expect(shots).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('isWaterTerrain (#151) — reads as actual water, not just slow terrain in general', () => {
+  it('flags exactly the water-like ids across all 5 biomes', () => {
+    for (const id of ['river', 'deepWater', 'slush', 'ice', 'brokenIce']) {
+      expect(isWaterTerrain(id), id).toBe(true);
+    }
+  });
+
+  it('does NOT flag other slow-but-not-water terrain (dry riverbeds, sand, ash, rubble, roads)', () => {
+    for (const id of [
+      'grass', 'grassB', 'forest', 'rubble',
+      'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'adobe', 'sandRubble', 'quicksand',
+      'snow', 'snowB', 'drift', 'iceRuin', 'snowRubble',
+      'pavement', 'pavementB', 'road', 'collapsed', 'wreck', 'tower', 'cityRubble', 'debris',
+      'ash', 'ashB', 'crust', 'lava', 'fumarole', 'obsidian', 'ashRubble', 'cinderField',
+      undefined, 'nope',
+    ]) {
+      expect(isWaterTerrain(id), String(id)).toBe(false);
+    }
+  });
+
+  it('includes both the passable shallow analogs and the impassable deep/boundary analogs', () => {
+    // Passable — a unit CAN wade these, it just shouldn't choose to loiter there.
+    expect(isPassable('river')).toBe(true);
+    expect(isPassable('slush')).toBe(true);
+    expect(isPassable('brokenIce')).toBe(true);
+    // Impassable boundary-only water.
+    expect(isPassable('deepWater')).toBe(false);
+    expect(isPassable('ice')).toBe(false);
   });
 });
 

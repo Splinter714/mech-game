@@ -90,6 +90,16 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.infantry.move.maxSpeed).toBeGreaterThan(0);
   });
 
+  it('#151: infantry avoids voluntarily wandering into water; no other kind is flagged', () => {
+    expect(ENEMY_KINDS.infantry.avoidWater).toBe(true);
+    // Explicitly infantry-only per the #151 report: turret is static (N/A), drone/helicopter fly
+    // over water regardless, tank/quadruped are bulkier and read fine wading through it.
+    for (const id of ENEMY_KIND_IDS) {
+      if (id === 'infantry') continue;
+      expect(ENEMY_KINDS[id].avoidWater, id).toBeFalsy();
+    }
+  });
+
   it('#94: turret is an artillery emplacement — arcing indirect weapon at an insane range', () => {
     const t = ENEMY_KINDS.turret;
     const weapon = getWeapon(t.weaponId);

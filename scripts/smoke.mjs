@@ -751,6 +751,47 @@ try {
       return { spawnedCount: mob.length, spawnAllValid, movedAllValid };
     })();
 
+    // #151 (playtest: "infantry swarms hanging out in the water"): grassland's river/channel is
+    // `passable` by design (mechs/tanks are meant to wade it) but a trooper voluntarily settling
+    // in one reads badly. Drop a fresh batch of troopers all at the SAME point (bypassing
+    // `_spawnInfantryMob`'s ring-scatter, which is already covered by the #114/#115 bounds check
+    // above — here we want a single, exact, known-dry anchor with zero contamination risk), then
+    // flood every hex OUTSIDE that anchor's own hex with water. Rather than simulating full
+    // physics ticks (idle troopers crawl at ~16px/s and only re-pick every 2.2-4.2s, so a
+    // real-time simulation would need an impractical number of ticks to force many arrivals),
+    // call the real `_idleMoveIntent` directly — the exact method #151 changed — over and over,
+    // forcing a fresh waypoint pick each time (as if the hold timer had just expired), and check
+    // whether the picked `idleGoal` (where the trooper walks to and holds) ever lands on water.
+    const infantryWaterAvoidance = (() => {
+      const SIZE = 48, RT3 = Math.sqrt(3);
+      const hexPx = (q, r) => ({ x: SIZE * RT3 * (q + r / 2), y: SIZE * 1.5 * r });
+      const waterId = 'river';   // grassland's water-like terrain (real id, unit-tested in terrain.js)
+      const OQ = 16, OR = 0;     // far from every other planted-terrain hex used above
+      const center = hexPx(OQ, OR);
+      for (let dq = -4; dq <= 4; dq++) {
+        for (let dr = -4; dr <= 4; dr++) {
+          if (dq === 0 && dr === 0) continue;   // the anchor hex itself stays dry (untouched)
+          a.terrain.set(`${OQ + dq},${OR + dr}`, waterId);
+        }
+      }
+      const mob = [];
+      for (let i = 0; i < infantryMobSize; i++) mob.push(a._spawnKind(center.x, center.y, 'infantry'));
+      const spawnOffWater = mob.every((t) => a._terrainAt(t.x, t.y) !== waterId);
+      let picks = 0, picksOnWater = 0;
+      for (let round = 0; round < 40; round++) {
+        for (const t of mob) {
+          t.idleGoal = null; t.idleAt = 0;   // force a fresh pick, as if just spawned/timed-out
+          t.x = center.x; t.y = center.y;    // re-anchor: this is where a real idle trooper drifts back near between picks
+          a._idleMoveIntent(t, 16);
+          picks++;
+          if (a._terrainAt(t.idleGoal.x, t.idleGoal.y) === waterId) picksOnWater++;
+        }
+      }
+      const noneSettledOnWater = picksOnWater === 0;
+      for (const t of mob) a._removeEnemy(t);
+      return { spawnedCount: mob.length, spawnOffWater, picks, picksOnWater, noneSettledOnWater };
+    })();
+
     a.px = savedPlayer.px; a.py = savedPlayer.py; a.vx = savedPlayer.vx; a.vy = savedPlayer.vy;
 
     // #117: enemy MECHS used to unconditionally spawn EVERY weapon as a travelling projectile,
@@ -1155,6 +1196,7 @@ try {
       awareness,
       turretClusterBounds,
       infantryBounds,
+      infantryWaterAvoidance,
       enemyDelivery,
     };
   }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE, hitscanWeapon: WEAPONS.pulseLaser });
@@ -1359,6 +1401,12 @@ try {
   if (arena.infantryBounds.spawnedCount === 0) fail('#115 test setup: no infantry spawned for the bounds check');
   if (!arena.infantryBounds.spawnAllValid) fail('#115 an infantry mob spawned a trooper on invalid (off-map/blocked) terrain');
   if (!arena.infantryBounds.movedAllValid) fail('#115 infantry ended up off the playable map after idle-wander/advance movement');
+
+  // #151: infantry must never CHOOSE a water hex as an idle-wander destination (a passable river
+  // is meant for mechs/tanks to wade, not for a trooper to voluntarily settle in).
+  if (arena.infantryWaterAvoidance.spawnedCount === 0) fail('#151 test setup: no infantry spawned for the water-avoidance check');
+  if (!arena.infantryWaterAvoidance.spawnOffWater) fail('#151 test setup: an infantry trooper spawned directly on the planted water terrain (test needs a bigger dry radius)');
+  if (!arena.infantryWaterAvoidance.noneSettledOnWater) fail('#151 an UNAWARE infantry trooper idle-wandered onto/settled in water terrain');
 
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
