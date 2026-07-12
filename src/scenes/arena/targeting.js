@@ -13,7 +13,7 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import Phaser from 'phaser';
 import { stepLock, dropLock, isFullLock, predictedTarget, pickLockCandidate } from '../../data/targetlock.js';
-import { CONVERGE_DIST, convergedFireAngle, UI_HIGHLIGHT_COLOR } from './shared.js';
+import { CONVERGE_DIST, convergedFireAngle } from './shared.js';
 
 // #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
 // so the lock can still be held at the weapon's own new effective range — kept comfortably
@@ -129,27 +129,33 @@ export const TargetingMixin = {
     if (locked) this.projFx.lineStyle(1.5, col, 0.9).strokeCircle(x, y, r + 4);
   },
 
-  // #136: a small, subtle "current facing" line — where the turret is ACTUALLY pointed
-  // (`this.turretAngle`, which lags the raw mouse/stick aim via each chassis' turretSlew), not
-  // where the player is aiming the mouse/stick. Lets the player see the slew gap at a glance.
-  // Drawn from just past the mech's own hull (so it doesn't start buried under the sprite) out
-  // a short, fixed distance — a facing indicator, not a full-screen crosshair/lead reticle.
-  // Uses the shared UI_HIGHLIGHT_COLOR (shared.js) — the same wayfinding amber as the objective
-  // marker's ring and the edge-direction arrow — so all three read as one consistent "pay
-  // attention here" language instead of three independently-picked colours.
-  // Legibility: a thin flat amber line can vanish against some biome terrain the same way
-  // enemies used to before #129's halo fix, so it gets the same halo treatment as the
-  // objective marker (mission.js `_makeObjectiveMarker`) — a light halo + dark outline drawn
-  // wide-to-narrow underneath the amber core, rather than inventing a new legibility trick.
+  // #140 (playtest correction on #136 — "looks genuinely horrible... WAAAAY longer... very
+  // faint, greyscale, maybe dotted"): a long, faint sightline out along where the turret is
+  // ACTUALLY pointed (`this.turretAngle`, which lags the raw mouse/stick aim via each chassis'
+  // turretSlew) — NOT a short "which way is it pointed" nub any more, and deliberately NOT the
+  // #129 halo+outline / UI_HIGHLIGHT_COLOR wayfinding language the objective marker and edge-
+  // direction arrow use (that reads as "go here"; this should read as a passive sightline
+  // overlay, not a UI callout). Drawn as short dashes (Phaser's Graphics has no built-in dashed-
+  // line primitive, so this simulates one) in flat greyscale, fading out with distance so a
+  // 1000px+ line doesn't end in a harsh cutoff and doesn't visually compete with far-off
+  // terrain/enemies the way a uniform-opacity line would.
   _drawAimLine() {
-    const startDist = 26;   // px forward of the mech centre — clears the hull sprite
-    const length = 55;      // short, fixed — reads as "which way is it pointed", not a beam
+    const startDist = 26;     // px forward of the mech centre — clears the hull sprite
+    const length = 1100;      // #140: long sightline, well past the extended (#135) weapon ranges
+    const dash = 14, gap = 10;
+    const color = 0xd7dde4;   // flat light grey — NOT UI_HIGHLIGHT_COLOR/amber, no halo/outline
+    const nearAlpha = 0.22;   // already faint at the muzzle...
+    const farAlpha = 0;       // ...fading fully out by the far end, not cutting off hard
     const cos = Math.cos(this.turretAngle), sin = Math.sin(this.turretAngle);
-    const x0 = this.px + cos * startDist, y0 = this.py + sin * startDist;
-    const x1 = this.px + cos * (startDist + length), y1 = this.py + sin * (startDist + length);
-    this.projFx.lineStyle(5, 0xfbfdff, 0.35).lineBetween(x0, y0, x1, y1);      // light halo (widest)
-    this.projFx.lineStyle(3, 0x0b0e14, 0.45).lineBetween(x0, y0, x1, y1);      // dark outline
-    this.projFx.lineStyle(1.5, UI_HIGHLIGHT_COLOR, 0.85).lineBetween(x0, y0, x1, y1);  // amber core
+    const step = dash + gap;
+    for (let d = startDist; d < startDist + length; d += step) {
+      const d1 = Math.min(d + dash, startDist + length);
+      const t = (d - startDist) / length;          // 0 near the mech .. 1 at the far end
+      const alpha = nearAlpha + (farAlpha - nearAlpha) * t;
+      if (alpha <= 0.01) break;
+      this.projFx.lineStyle(1.5, color, alpha)
+        .lineBetween(this.px + cos * d, this.py + sin * d, this.px + cos * d1, this.py + sin * d1);
+    }
   },
 
   // The direction a weapon fires (#40, #31). Two regimes:
