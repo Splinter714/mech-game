@@ -7,6 +7,29 @@ import { LOCATIONS } from '../../data/anatomy.js';
 // and combat (mapping a hit point back to the nearest body part).
 export const ARENA_MECH_SCALE = 0.34;
 
+// #149 (follow-up to #138: "the map still feels huge" — but the owner's playtest clarified the
+// complaint isn't walking distance, it's PERCEIVED scale: "even standing still at spawn, the
+// amount of open terrain/corridor visible or implied reads as vast"). Before this, ArenaScene's
+// camera only neutralized device-pixel-ratio scaling (`setZoom(dpr)` — 1 world unit === 1 CSS
+// px), with no separate gameplay-framing zoom on top; the world rendered at native scale, so a
+// typical viewport showed a LOT of open ground per glance. GAMEPLAY_ZOOM is an extra multiplier
+// applied ONLY in the arena (`setZoom(dpr * GAMEPLAY_ZOOM)`, ArenaScene.create() + main.js's
+// resize handler) — purely a rendering/framing change: every world-space distance (weapon
+// range, movement speed, hex size, `_offscreenSpawnPoint`'s viewport math) is untouched, only
+// how much of that world-space a screen shows changes.
+//
+// Chosen by comparing real Playwright screenshots at the same seed/spawn across candidate
+// factors (1.0/1.15/1.3/1.5/1.75): 1.15 read as barely different from native scale; 1.5+ started
+// meaningfully shrinking how far an incoming threat is visible before it's already close (no
+// enemy-radar/arrow exists in this game — only the mission-objective wayfinding arrow — so
+// anything not on-screen is genuinely unseen, not just off the beaten path). 1.3 was the
+// smallest factor that visibly changed the "vast empty field" read: the player mech and nearby
+// terrain fill noticeably more of the frame, tree clusters/water read as closer landmarks
+// instead of distant scenery, while still leaving a comfortable viewport radius for spotting
+// enemies (most direct-fire weapons' optimal range, 338-500px, still fits well inside the
+// shrunk view at any common viewport size).
+export const GAMEPLAY_ZOOM = 1.3;
+
 // #136: the single shared "wayfinding/aim highlight" colour — one source of truth for every
 // UI element that means "pay attention to this direction/spot": the objective marker's amber
 // ring (mission.js), the edge-direction arrow (HudScene.js), and the turret aim-line (targeting.js

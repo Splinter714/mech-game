@@ -361,13 +361,16 @@ export const EnemiesMixin = {
   // bearing from the player — so the enemy starts unseen and walks in. The camera follows the
   // player, so "off-view" is a radius from the player: half the visible world rect's diagonal,
   // plus OFFSCREEN_MARGIN. The viewport size in world units is the canvas size (game.scale)
-  // divided by the camera zoom (= dpr). We read it from the scale manager + registry because
-  // those are valid synchronously in create() — unlike cam.worldView / cam.width, which are only
-  // filled after the first camera update (so a squad spawned during create() would land on-view).
-  // The result is clamped into the world radius so a spawn can't land off-map or on blocked
-  // terrain (nudged inward until clear); a ring point is the fallback if every try is blocked.
+  // divided by the camera's actual zoom. We read `cameras.main.zoom` (set synchronously in
+  // ArenaScene.create() before `_spawnSquad()` runs, so it's valid here) rather than the raw
+  // `dpr`: #149 gave the arena its own `zoomFactor` on top of dpr (GAMEPLAY_ZOOM, arena/shared.js)
+  // — before that, dpr and the camera's zoom were always the same number, so reading either
+  // worked, but they can now diverge, and this math needs the REAL effective zoom to size the
+  // world-space viewport correctly (using the stale dpr alone would overestimate the true
+  // viewport and spawn enemies farther out than actually necessary to stay off-screen). `dpr` is
+  // kept only as the fallback for the (never-hit-in-practice) case zoom isn't set yet.
   _offscreenSpawnPoint() {
-    const zoom = this.registry.get('dpr') || this.cameras.main.zoom || 1;
+    const zoom = this.cameras.main.zoom || this.registry.get('dpr') || 1;
     const vw = this.scale.width / zoom;   // world-space viewport width
     const vh = this.scale.height / zoom;  // world-space viewport height
     const viewR = 0.5 * Math.hypot(vw, vh) + OFFSCREEN_MARGIN;

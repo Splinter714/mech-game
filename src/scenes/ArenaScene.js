@@ -17,7 +17,7 @@ import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
 import { SalvageMixin } from './arena/salvage.js';
-import { DEPTH } from './arena/shared.js';
+import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -34,7 +34,13 @@ export default class ArenaScene extends Phaser.Scene {
 
   create() {
     const dpr = this.registry.get('dpr') || 1;
-    this.cameras.main.setZoom(dpr);
+    // #149: `zoomFactor` (read by main.js's resize handler, alongside every other scene's plain
+    // dpr) is the arena's own gameplay-framing zoom ON TOP OF the dpr-neutralizing zoom every
+    // scene applies — see GAMEPLAY_ZOOM's comment (arena/shared.js) for why. Set as an instance
+    // property (not a one-off local) so a window resize re-derives `dpr * zoomFactor` instead of
+    // reverting to the bare `dpr` every other scene uses.
+    this.zoomFactor = GAMEPLAY_ZOOM;
+    this.cameras.main.setZoom(dpr * this.zoomFactor);
     this.cameras.main.setBackgroundColor('#0d1014');
 
     buildHexTextures(this);

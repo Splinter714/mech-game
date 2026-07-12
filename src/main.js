@@ -52,7 +52,11 @@ function applySize() {
   game.scale.resize(w * dpr, h * dpr);
   const c = game.canvas;
   if (c) { c.style.width = w + 'px'; c.style.height = h + 'px'; }
-  game.scene.scenes.forEach((s) => s.cameras?.main?.setZoom(dpr));
+  // #149: most scenes just neutralize DPR (zoom = dpr), but ArenaScene layers its own
+  // `zoomFactor` (GAMEPLAY_ZOOM, arena/shared.js) on top to frame the world less "vast" — a
+  // resize must re-derive `dpr * zoomFactor`, not stomp it back down to the bare dpr every
+  // other scene uses.
+  game.scene.scenes.forEach((s) => s.cameras?.main?.setZoom(dpr * (s.zoomFactor || 1)));
 }
 
 applySize();
