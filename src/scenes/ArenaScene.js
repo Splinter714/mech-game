@@ -170,6 +170,13 @@ export default class ArenaScene extends Phaser.Scene {
     const wv = this.cameras.main.worldView;
     const view = { x: wv.x, y: wv.y, width: wv.width, height: wv.height };
     this.registry.set('cameraView', view);
+    // #116: live player pose + enemy positions for the HUD corner minimap. Same "publish a plain
+    // snapshot each frame" pattern as cameraView above — the HUD reads these to place the player
+    // marker (angle = hull heading), objective (from objectiveWorld), and enemy dots on the map.
+    this.registry.set('playerWorld', { x: this.px, y: this.py, angle: this.angle });
+    const enemyPos = [];
+    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyPos.push({ x: e.x, y: e.y });
+    this.registry.set('enemyPositions', enemyPos);
     // #155: hide map tiles outside the camera's view (+ margin) — see world.js for why this is
     // the single biggest FPS cost in the game. Reuses this same view rect, not a second camera-
     // bounds computation.
