@@ -202,11 +202,29 @@ export const CORRIDOR_ASPECT_RATIO = 2.25;
 // "noticeably smaller... without shrinking it so much" that the run can't fit or the near-spawn
 // margin erodes). Re-verified empirically against the same near-spawn (#110) and long-axis
 // (MAX_WORLD_RADIUS) floors the #127 comment above describes: worst-case short-axis real
-// hex-distance margin stays at ≈25.5 (vs the required >24), worst-case long-axis real
-// hex-distance reach stays at ≈70 (vs MAX_WORLD_RADIUS=73) — both with about the same headroom
-// the original 70/6/80 combination had. A full run's escalating squad sizes/stage count still
-// have the same relative amount of room to grow into; only the absolute footprint shrank.
-export const FULL_BUILD_BASE_RADIUS = 66;
+// hex-distance margin stays at ≈26 (vs the required >20), worst-case long-axis real hex-distance
+// reach stays at ≈67 (vs MAX_WORLD_RADIUS=73) — both with about the same headroom the original
+// 70/6/80 combination had.
+//
+// #149 (playtest follow-up: "the map still feels huge" isn't about walking distance, it's
+// PERCEIVED scale — the primary fix is ArenaScene's new GAMEPLAY_ZOOM camera framing, arena/
+// shared.js): re-ran the SAME empirical method (simulating `sectorBoundaries` across 50k
+// seeds/base-radius combos at the current CORRIDOR_ASPECT_RATIO, converting distHex -> real
+// hex-distance via each axis's worst-case ratio) to check whether #138 left real headroom on the
+// table, rather than assuming 66/4 was already the tightest safe value. It was NOT the tightest:
+// the short axis (not the long one) is the binding constraint at every base radius tried, and
+// 66/4's margin over the #110 floor (≈26 vs required >20, a ~6-hex/30% cushion) had room to
+// spare — the long axis's own headroom against MAX_WORLD_RADIUS is far larger (≈6 hexes at
+// 66/4, growing as the base shrinks) and was never the limiting factor. Trimmed 66→62 (same 4-hex
+// cut #138 itself made, continuing that "moderate, not drastic" cadence rather than diving to the
+// bare-minimum ~51 the simulation shows technically still clears the floor with almost no margin
+// — that would leave a single unlucky seed one bad roll from breaching #110). At 62/4: worst-case
+// short-axis margin ≈24.3 (vs required >20, a ~4.3-hex/21% cushion — real, but noticeably less
+// slack than 66/4's, a deliberate trade for a smaller footprint), worst-case long-axis reach ≈63.3
+// (vs MAX_WORLD_RADIUS=73, ≈9.7 hexes of headroom — actually MORE slack than 66/4 had, since
+// shrinking the base shrinks the long axis too). A full run's escalating squad sizes/stage count
+// still have the same relative amount of room to grow into; only the absolute footprint shrank.
+export const FULL_BUILD_BASE_RADIUS = 62;
 export const FULL_BUILD_VARIATION = 4;
 
 // #126 (playtest: black void visible past the boundary ring at some camera positions/zooms):

@@ -371,9 +371,16 @@ describe('full-run upfront build sizing (#111)', () => {
       for (const b of boundaries) if (b < worstMinDistHex) worstMinDistHex = b;
     }
     const worstMinHexDist = worstMinDistHex / HEX_DIST_RATIO_MAX;
-    // Comfortably clear of smoke.mjs's hex-distance-20 near-spawn scan, in REAL hex-distance
-    // units (not raw distHex).
-    expect(worstMinHexDist).toBeGreaterThan(24);
+    // #149 (playtest follow-up: map still reads as visually "vast" — see FULL_BUILD_BASE_RADIUS's
+    // own comment): re-derived the tightest safe base radius via this exact method (many more
+    // seeds than this test samples) and found real headroom #138 left unused, trimming 66→62.
+    // That deliberately spends DOWN part of the old cushion (worst case converges to ≈23.7 real
+    // hex-distance across 50k seeds, vs the old 66/4's ≈26) in exchange for a smaller footprint —
+    // still a real ~3.7-hex/18% margin over the hard #110 floor of 20, just tighter than before.
+    // The threshold below is set a couple hexes under that observed worst case (not right at it)
+    // so this guard doesn't flake on a sample this test's own smaller 500-seed sweep didn't hit,
+    // while still catching any future resize that erodes toward the actual 20 floor.
+    expect(worstMinHexDist).toBeGreaterThan(22);
   });
 
   // #127: direct end-to-end confirmation at the data layer (mirroring what the live smoke test
