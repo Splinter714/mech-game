@@ -24,6 +24,10 @@
 // type, so this resolves to a hashed URL). The source WAV (96kHz/24-bit stereo, ~1.8MB) was
 // converted with macOS `afconvert` to 48kHz stereo AAC at ~192kbps (~64KB) for web delivery.
 import bitBombExplosion from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
+// #175: plasmaLance's FIRE cue — "Bass wave.wav" from the same Helton Yan pack (mono 44.1kHz
+// 16-bit, 1.199s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps (~24KB).
+// Played back with a 130ms trim (#166) and a 420ms fade-out (#174, clamped to the 130ms window).
+import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-bassWave.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -43,6 +47,17 @@ export const BAKED_SFX = {
     asset: bitBombExplosion,
     startMs: 0,
     trimMs: null,
+    processing: null,
+  },
+  // Helton Yan's Pixel Combat pack — "Bass wave.wav". Trimmed to the first 130ms (#166) with a
+  // 420ms fade-out (#174) as plasmaLance's fire cue. The recipe's fadeOutMs (420) exceeds the
+  // 130ms played window on purpose — playBuffer clamps the fade to the played duration, so it
+  // fades across the whole 130ms; the literal owner recipe value is recorded here unclamped.
+  'plasmaLance::fire': {
+    asset: plasmaLanceFire,
+    startMs: 0,
+    trimMs: 130,
+    fadeOutMs: 420,
     processing: null,
   },
 };
