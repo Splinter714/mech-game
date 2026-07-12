@@ -595,6 +595,72 @@ describe('AudioEngine (mock context)', () => {
       expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bassWave' }); // last source is still the FIRE bake
     });
 
+    // #176: firing pulseLaser (no dev override) schedules exactly ONE baked buffer source with the
+    // #166 start+trim window (offset≈0.32s, duration≈0.06s), the #172 processing chain applied —
+    // +10c detune ON the source and a reverb ConvolverNode with a 0.25 wet-mix gain — plus a #174
+    // fade ramping the gain to 0 within the played window, and ZERO procedural oscillators. This is
+    // the first bake to exercise a NON-null baked `processing`. Uses the shipped
+    // BAKED_SFX['pulseLaser::fire'] recipe (startMs 320, trimMs 60, fadeOutMs 450, detune 10,
+    // reverbMix 0.25, reverbSize 2.3) as-is.
+    it('plays pulseLaser/fire as a single start+trimmed baked buffer with detune + reverb + fade, no procedural tones', () => {
+      _setBakedBufferForTest('pulseLaser', 'fire', { __baked: 'bassBuzz' });
+      const before = ctx._counts();
+      eng.fire(getWeapon('pulseLaser'));
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);        // exactly one buffer source: the bake
+      expect(after.oscillators).toBe(before.oscillators);    // no procedural tone layers ran
+      const src = ctx._lastBufferSource();
+      expect(src.buffer).toEqual({ __baked: 'bassBuzz' });
+
+      // #166 start+trim: start(when, offset≈0.32s, duration≈0.06s → the 320-380ms window).
+      const [when, offset, duration] = ctx._lastBufferSourceStart();
+      expect(when).toBe(ctx.currentTime);
+      expect(offset).toBeCloseTo(0.32, 5);
+      expect(duration).toBeCloseTo(0.06, 5);
+
+      // #172 pitch: +10 cents detune applied directly to the source node.
+      expect(src.detune.value).toBe(10);
+
+      // #172 reverb: a ConvolverNode with a generated IR, plus a wet-mix gain node at 0.25 and a
+      // dry gain at 1 - 0.25 = 0.75 (connectReverb's wet/dry split).
+      const convolvers = ctx._convolvers().slice(before.convolvers);
+      expect(convolvers.length).toBe(1);
+      expect(convolvers[0].buffer).toBeTruthy();             // a generated impulse-response was assigned
+      const gainValues = ctx._gainNodes().map((g) => g.gain.value);
+      expect(gainValues).toContain(0.25);                    // wet mix
+      expect(gainValues).toContain(0.75);                    // dry (1 - mix)
+
+      // #174 fade: one gain node ramps to 0 within the 60ms window. The 450ms fadeOutMs is clamped
+      // to the 60ms played duration, so the ramp spans the whole window (end - 0.06s → end).
+      const fades = ctx._fadeGains();
+      expect(fades.length).toBe(1);
+      const events = fades[0]._events;
+      const endTime = ctx.currentTime + 0.06;
+      expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.06, 5)]);
+      expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
+    });
+
+    // #176: the other bakes and pulseLaser's own impact stage are unaffected by the pulseLaser/fire
+    // bake — plasmaLance/fire still plays ITS baked buffer, and pulseLaser/impact stays procedural.
+    it('leaves plasmaLance/fire and pulseLaser/impact unaffected by the pulseLaser/fire bake', () => {
+      _setBakedBufferForTest('pulseLaser', 'fire', { __baked: 'bassBuzz' });
+      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'bassWave' });
+
+      // plasmaLance/fire still routes to ITS own baked buffer, not pulseLaser's.
+      const beforePlasma = ctx._counts();
+      eng.fire(getWeapon('plasmaLance'));
+      expect(ctx._counts().sources).toBe(beforePlasma.sources + 1);
+      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bassWave' });
+
+      // pulseLaser/impact has no bake → plays procedurally, never routing through the baked buffer.
+      const beforeImpact = ctx._counts();
+      eng.impact('pulseLaser');
+      const afterImpact = ctx._counts();
+      expect(afterImpact.oscillators + afterImpact.sources)
+        .toBeGreaterThan(beforeImpact.oscillators + beforeImpact.sources); // procedural layers ran
+      expect(ctx._lastBufferSource().buffer).not.toEqual({ __baked: 'bassBuzz' }); // impact never used the fire bake
+    });
+
     // #174: a baked entry can carry a fadeOutMs (same recipe shape as an override), and it fades
     // through the identical shared playBuffer path. Temporarily attach a trim+fade to the shipped
     // clusterRocket/fire entry (restored afterward) so the assertion doesn't depend on ship data.

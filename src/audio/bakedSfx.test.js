@@ -51,6 +51,20 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.fadeOutMs).toBe(420);           // #174 fade — literal recipe value (runtime clamps to the 130ms window)
       expect(entry.processing).toBeNull();
     });
+
+    // #176: pulseLaser's fire cue — a start+trimmed (320→380ms) window of "Bass Buzz_warning
+    // sound.wav" with the FIRST non-null baked processing chain (+10c detune, 0.25/2.3s reverb)
+    // plus a 450ms fade-out.
+    it('registers pulseLaser/fire with a bundled asset and the #166 start+trim, #172 processing, #174 fade recipe', () => {
+      const entry = BAKED_SFX['pulseLaser::fire'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
+      expect(entry.asset.length).toBeGreaterThan(0);
+      expect(entry.startMs).toBe(320);             // #166 start offset (320ms into the file)
+      expect(entry.trimMs).toBe(60);               // #166 trim (60ms window → 320-380ms)
+      expect(entry.fadeOutMs).toBe(450);           // #174 fade — literal recipe value (runtime clamps to the 60ms window)
+      expect(entry.processing).toEqual({ detune: 10, reverbMix: 0.25, reverbSize: 2.3 }); // #172 chain — first NON-null baked processing
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -62,6 +76,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     const tags = new Map([
       [BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB'],
       [BAKED_SFX['plasmaLance::fire'].asset, 'BASSWAVE'],
+      [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
     ]);
     installFakeFetch(tags);
     setAudioContext(fakeCtx());
@@ -84,18 +99,32 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(plasma.trimMs).toBe(130);
     expect(plasma.fadeOutMs).toBe(420);
     expect(plasma.processing).toBeNull();
+
+    // #176: pulseLaser/fire decodes into its own slot — getBaked must SURFACE the full recipe
+    // including the first NON-null baked `processing` chain (proves getBaked doesn't drop it).
+    expect(hasBaked('pulseLaser', 'fire')).toBe(true);
+    const pulse = getBaked('pulseLaser', 'fire');
+    expect(pulse.buffer).toEqual({ __decodedFrom: 'BASSBUZZ' });
+    expect(pulse).toMatchObject({
+      startMs: 320,
+      trimMs: 60,
+      fadeOutMs: 450,
+      processing: { detune: 10, reverbMix: 0.25, reverbSize: 2.3 },
+    });
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
     installFakeFetch(new Map([
       [BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB'],
       [BAKED_SFX['plasmaLance::fire'].asset, 'BASSWAVE'],
+      [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
     expect(getBaked('autocannon', 'fire')).toBeNull();
     expect(getBaked('clusterRocket', 'impact')).toBeNull();   // right weapon, wrong stage
     expect(getBaked('plasmaLance', 'impact')).toBeNull();     // #175: impact stays procedural — bake is fire-only
+    expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
   });
 
   it('loadAllBaked is a safe no-op with no context set yet (nothing decodes, never throws)', async () => {
