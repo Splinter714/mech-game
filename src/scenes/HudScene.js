@@ -10,14 +10,18 @@ import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
 // to reuse if a second indicator ever wants the same shape.
 const ARROW_SPREAD = 2.55;   // radians between the tip direction and each back corner (~146°)
-function drawChevron(g, x, y, angle, size, color) {
+function chevronPoints(x, y, angle, size) {
   const tipX = x + Math.cos(angle) * size, tipY = y + Math.sin(angle) * size;
   const b1x = x + Math.cos(angle + ARROW_SPREAD) * size * 0.62;
   const b1y = y + Math.sin(angle + ARROW_SPREAD) * size * 0.62;
   const b2x = x + Math.cos(angle - ARROW_SPREAD) * size * 0.62;
   const b2y = y + Math.sin(angle - ARROW_SPREAD) * size * 0.62;
-  g.fillStyle(color, 0.92);
-  g.lineStyle(2, 0x000000, 0.35);
+  return { tipX, tipY, b1x, b1y, b2x, b2y };
+}
+function drawChevron(g, x, y, angle, size, color, alpha = 0.92) {
+  const { tipX, tipY, b1x, b1y, b2x, b2y } = chevronPoints(x, y, angle, size);
+  g.fillStyle(color, alpha);
+  g.lineStyle(2, 0x000000, 0.35 * (alpha / 0.92));
   g.beginPath();
   g.moveTo(tipX, tipY);
   g.lineTo(b1x, b1y);
@@ -25,6 +29,25 @@ function drawChevron(g, x, y, angle, size, color) {
   g.closePath();
   g.fillPath();
   g.strokePath();
+}
+
+// #143: a soft attention-drawing halo behind the chevron — two oversized, unstroked, low-alpha
+// copies of the same silhouette (bigger + fainter, then smaller + brighter), the same "oversized
+// silhouette drawn first and fainter" layering spirit as the #129 legibility-halo passes used
+// elsewhere in the art, but here purely for visual emphasis rather than terrain contrast. Plain
+// Graphics has no blur filter, so stacked oversized fills stand in for a blurred glow.
+function drawChevronGlow(g, x, y, angle, size, color, alpha) {
+  const layers = [{ mul: 2.4, a: 0.16 }, { mul: 1.7, a: 0.28 }];
+  for (const { mul, a } of layers) {
+    const { tipX, tipY, b1x, b1y, b2x, b2y } = chevronPoints(x, y, angle, size * mul);
+    g.fillStyle(color, a * alpha);
+    g.beginPath();
+    g.moveTo(tipX, tipY);
+    g.lineTo(b1x, b1y);
+    g.lineTo(b2x, b2y);
+    g.closePath();
+    g.fillPath();
+  }
 }
 
 // Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
@@ -85,6 +108,12 @@ export default class HudScene extends Phaser.Scene {
     // drawn above the skill-tile toolbar regardless of scene add-order, since a playtest found
     // the arrow getting lost behind that bottom bar (#80 follow-up).
     this.wayGfx = this.add.graphics().setDepth(20);
+    // #143: pulsing scale+alpha for the chevron (playtest: the static arrow wasn't eye-catching
+    // enough). The Graphics layer itself is cleared/redrawn each frame, so the actual tween
+    // target is a plain counter object read back in `_updateWayArrow` to scale/fade the shape
+    // and its glow together.
+    this.wayPulse = { t: 0 };
+    this.tweens.add({ targets: this.wayPulse, t: 1, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 
     // Per-part integrity column (player), top-left under the hints + stage/objective lines.
     this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
@@ -213,7 +242,14 @@ export default class HudScene extends Phaser.Scene {
     if (!objectiveWorld || !view) return;
     if (isPointInView(view, objectiveWorld)) return;
     const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, objectiveWorld, this.wayMargins);
-    drawChevron(g, x, y, angle, 16, UI_HIGHLIGHT_COLOR);   // shared wayfinding highlight colour (#136)
+    // #143: ride the pulse counter for both a scale bump (1.0 → 1.35x) and an alpha swell
+    // (0.55 → 1.0), plus a glow halo behind the chevron whose own strength rides the same pulse —
+    // combining both treatments read best in playtest vs. either alone.
+    const pulse = this.wayPulse.t;
+    const size = 16 * (1 + 0.35 * pulse);
+    const alpha = 0.55 + 0.45 * pulse;
+    drawChevronGlow(g, x, y, angle, size, UI_HIGHLIGHT_COLOR, alpha);
+    drawChevron(g, x, y, angle, size, UI_HIGHLIGHT_COLOR, 0.92 * (0.7 + 0.3 * pulse));   // shared wayfinding highlight colour (#136)
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
