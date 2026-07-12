@@ -7,6 +7,13 @@ import { LOCATIONS } from '../../data/anatomy.js';
 // and combat (mapping a hit point back to the nearest body part).
 export const ARENA_MECH_SCALE = 0.34;
 
+// #136: the single shared "wayfinding/aim highlight" colour — one source of truth for every
+// UI element that means "pay attention to this direction/spot": the objective marker's amber
+// ring (mission.js), the edge-direction arrow (HudScene.js), and the turret aim-line (targeting.js
+// `_drawAimLine`). Previously each of the first two hardcoded the same 0xffb84a hex independently;
+// naming it here means a future re-tint only ever needs one edit.
+export const UI_HIGHLIGHT_COLOR = 0xffb84a;
+
 // #99: explicit world-space depth tiers for everything drawn in the arena. Before this, most
 // layers relied on Phaser's default same-depth tiebreak (scene display-list ADD ORDER) instead
 // of a real `setDepth()` — which happened to read right only by accident of when each thing got

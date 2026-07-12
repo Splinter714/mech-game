@@ -9,7 +9,7 @@
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
 import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
-import { DEPTH } from './shared.js';
+import { DEPTH, UI_HIGHLIGHT_COLOR } from './shared.js';
 
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated
@@ -59,9 +59,9 @@ export const MissionMixin = {
     // the amber "this is the objective" colour itself.
     const haloRing = this.add.circle(0, 0, 33).setStrokeStyle(3, 0xfbfdff, 0.9);
     const outlineRing = this.add.circle(0, 0, 31.5).setStrokeStyle(2, 0x0b0e14, 0.9);
-    const ring = this.add.circle(0, 0, 30).setStrokeStyle(3, 0xffb84a, 0.9);
+    const ring = this.add.circle(0, 0, 30).setStrokeStyle(3, UI_HIGHLIGHT_COLOR, 0.9);
     const label = this.add.text(0, -46, 'OBJECTIVE', {
-      fontFamily: 'monospace', fontSize: '12px', color: '#ffb84a',
+      fontFamily: 'monospace', fontSize: '12px', color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
     }).setOrigin(0.5);
     const marker = this.add.container(x, y, [haloRing, outlineRing, ring, label]);
     // #99: bumped from a bare 5 to the shared DEPTH.WORLD_UI tier — established alongside the
