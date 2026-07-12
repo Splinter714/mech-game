@@ -202,6 +202,11 @@ export default class ArenaScene extends Phaser.Scene {
     // the run on mission-complete, or end it on player destruction.
     this._updateRun();
 
+    // #136: subtle facing line (shared wayfinding highlight colour) — always drawn (no lock
+    // needed) so the mouse/stick-vs-turret slew gap is visible at a glance. Drawn before the
+    // lock reticle, same graphics layer.
+    this._drawAimLine();
+
     // Lock reticle, drawn after projFx is cleared above so it isn't wiped. A maintained-but-blind
     // lock (#62) draws at the last-known/predicted position in a distinct "firing blind" colour so
     // the player sees they're lobbing from memory; otherwise it tracks the live locked enemy.

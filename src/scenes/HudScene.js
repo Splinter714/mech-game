@@ -4,6 +4,7 @@ import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skill
 import { POWERUPS, durationMs } from '../data/powerups.js';
 import { STAGE_COUNT } from '../data/run.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
+import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -212,7 +213,7 @@ export default class HudScene extends Phaser.Scene {
     if (!objectiveWorld || !view) return;
     if (isPointInView(view, objectiveWorld)) return;
     const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, objectiveWorld, this.wayMargins);
-    drawChevron(g, x, y, angle, 16, 0xffb84a);   // amber, matching the objective marker's colour
+    drawChevron(g, x, y, angle, 16, UI_HIGHLIGHT_COLOR);   // shared wayfinding highlight colour (#136)
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
