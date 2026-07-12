@@ -7,6 +7,7 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
+import { getOverride } from './sfxOverrides.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -14,16 +15,35 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // once (Swarm Rack); tune here.
 const TRAJECTORY_LOOP_GAIN_SCALE = 0.6;
 
+// #150: at each one-shot choke point, a real loaded file (Weapon Lab sound panel) takes
+// priority over the procedural layers for that weapon+stage. `getOverride` is a synchronous
+// in-memory lookup (null until a file's been loaded+decoded for this weaponId/stage, which is
+// the common case for every weapon that's never touched the feature), so this is a strict
+// no-op — same node graph, same behavior — whenever no override exists. Returns true if it
+// played the override (so callers skip the procedural fallback), false otherwise.
+function playOverride(e, bus, weaponId, stage) {
+  const buffer = getOverride(weaponId, stage);
+  if (!buffer || !e.ctx) return false;
+  const src = e.ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(bus);
+  src.start(e._now());
+  return true;
+}
+
 export function fire(e, weapon) {
+  if (playOverride(e, e.sfx, weapon.id, 'fire')) return;
   playLayers(e, e.sfx, e.getSfxParams(weapon.id).fire);
 }
 
 export function trajectory(e, weaponId) {
+  if (playOverride(e, e.sfx, weaponId, 'trajectory')) return;
   const p = e.getSfxParams(weaponId);
   if (p.trajectory) playLayers(e, e.sfx, p.trajectory);
 }
 
 export function impact(e, weaponId) {
+  if (playOverride(e, e.sfx, weaponId, 'impact')) return;
   playLayers(e, e.sfx, e.getSfxParams(weaponId).impact);
 }
 

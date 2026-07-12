@@ -15,6 +15,7 @@ import {
 } from './music.js';
 import { DEFAULT_SFX, FALLBACK_SFX, loadSfxParams, saveSfxParams } from './sfxParams.js';
 import { duckGainAt, DUCK_DEFAULTS } from './duck.js';
+import { setAudioContext as setOverrideAudioContext } from './sfxOverrides.js';
 
 export class AudioEngine {
   constructor() {
@@ -89,6 +90,9 @@ export class AudioEngine {
   init(ctx) {
     if (this.ctx || !ctx) return;
     this.ctx = ctx;
+    // #150: give the file-override module a context to decode against (loading the actual
+    // stored overrides is a separate, async, boot-time step — see sfxOverrides.loadAllOverrides).
+    setOverrideAudioContext(ctx);
     this.master = ctx.createGain(); this.master.gain.value = this.params.master;
     // Master bus: a compressor for broadband leveling, then a soft-clip limiter as the
     // brick wall so even a hot mix can't hard-clip the output.

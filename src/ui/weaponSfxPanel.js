@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Slider } from './slider.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
+import { storeOverride, clearOverride, hasOverride, getOverrideMeta } from '../audio/sfxOverrides.js';
 
 // #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
 // are tuned through this SAME panel — they're just more sfxParams ids (single `fire` stage,
@@ -48,6 +49,11 @@ const NOISE_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
 const NOISE_ABBR = { lowpass: 'low', highpass: 'high', bandpass: 'band', notch: 'notch' };
 const TYPE_ROW_H = 22;
 
+// #150: the dim alpha applied to a stage's mixer/detail controls once a real-file override is
+// active for it (they're still there — reset/copy still touch the underlying layer data —
+// just visually inert, since nothing procedural is actually sounding for that stage any more).
+const OVERRIDDEN_ALPHA = 0.35;
+
 // Copy `text` to the clipboard, resolving to whether it actually landed. The async
 // Clipboard API only exists in secure contexts (HTTPS/localhost); on plain-HTTP LAN
 // (how the game is reached on mobile) `navigator.clipboard` is undefined, so fall back
@@ -91,6 +97,36 @@ export class WeaponSfxPanel {
     this._soloedSet = new Set();
     this._components = [];   // flat [{stage, li, layer}] for the current weapon, rebuilt in _build()
     this._gainSliders = {};  // key -> top-mixer-strip gain Slider ref (#139: the only gain slider now)
+
+    // #150: one shared hidden <input type="file"> reused across every "load sound file"
+    // button (a file picker per weapon+stage would mean creating/destroying a DOM element on
+    // every rebuild — this one just gets re-targeted via `_pendingLoad` right before `.click()`).
+    // Bridging a native file input into Phaser: the button itself is a normal Phaser rectangle
+    // (so it looks/behaves like every other panel button); its click programmatically clicks
+    // this real hidden input, which is what actually opens the OS file picker.
+    this._pendingLoad = null;   // { weaponId, stage } set immediately before the input is clicked
+    this._fileInput = document.createElement('input');
+    this._fileInput.type = 'file';
+    this._fileInput.accept = 'audio/*';
+    this._fileInput.style.position = 'fixed';
+    this._fileInput.style.left = '-9999px';
+    this._fileInput.style.top = '-9999px';
+    document.body.appendChild(this._fileInput);
+    this._onFileChosen = () => {
+      const file = this._fileInput.files?.[0];
+      const target = this._pendingLoad;
+      this._pendingLoad = null;
+      this._fileInput.value = '';   // so choosing the same file again still fires 'change'
+      if (!file || !target) return;
+      storeOverride(target.weaponId, target.stage, file).then((buffer) => {
+        // The selected weapon/category may have changed while the OS picker was open —
+        // only toast/rebuild if we're still looking at the same one.
+        if (this.weaponId !== target.weaponId) return;
+        this._toast(buffer ? `loaded ${file.name}` : `couldn't decode ${file.name}`);
+        this._build();
+      });
+    };
+    this._fileInput.addEventListener('change', this._onFileChosen);
 
     // Both containers stay at world (0,0) — the Slider widget caches absolute world
     // coordinates at construction time (it compares against pointer.worldX directly, not
@@ -176,6 +212,48 @@ export class WeaponSfxPanel {
     rect.on('pointerout', () => rect.setFillStyle(fill));
     rect.on('pointerdown', onClick);
     this.scroller.add([rect, text]);
+    return { rect, text };
+  }
+
+  // #150: grey out + disable a control once its stage has a real-file override active — the
+  // gain/mute/solo sliders and type-row buttons don't affect anything real any more (nothing
+  // procedural is playing for that stage). `objs` is a flat list of Phaser game objects with
+  // `setAlpha`; interactive ones (rectangles) also get their input disabled.
+  _greyOut(objs) {
+    for (const o of objs) {
+      o.setAlpha?.(OVERRIDDEN_ALPHA);
+      if (o.input) o.disableInteractive();
+    }
+  }
+
+  // #150: the per-stage "real file override" row — shows what's loaded (if anything) and the
+  // load/clear controls. `label` isn't a weapon-catalog concept, so this reads the same for a
+  // real weapon or a destruction-explosion category (`setWeapon`'s `label` override already
+  // handles the header text the same way).
+  _buildOverrideRow(ox, y, w, stage) {
+    const weaponId = this.weaponId;
+    const active = hasOverride(weaponId, stage);
+    const meta = active ? getOverrideMeta(weaponId, stage) : null;
+    const status = active ? `file override: ${meta?.name || '(loaded)'}` : 'file override: none (procedural)';
+    this.scroller.add(this.scene.add.text(ox + 6, y, status, {
+      fontFamily: 'monospace', fontSize: '9px', color: active ? UI.good : UI.dim,
+    }));
+    y += 13;
+    const gap = 4;
+    const bw = Math.floor((w - 12 - gap) / 2);
+    this._button(ox + 6, y, bw, 20, 'load sound file…', () => {
+      this._pendingLoad = { weaponId, stage };
+      this._fileInput.click();
+    });
+    this._button(ox + 6 + bw + gap, y, bw, 20, 'clear override', () => {
+      clearOverride(weaponId, stage).then(() => {
+        if (this.weaponId !== weaponId) return;   // selection changed while this resolved
+        this._toast(`${stage}: reverted to procedural`);
+        this._build();
+      });
+    }, { color: active ? UI.good : UI.dim });
+    y += 20 + 8;
+    return y;
   }
 
   _toggleMute(key) {
@@ -242,8 +320,13 @@ export class WeaponSfxPanel {
       this._gainSliders[key] = slider;
 
       const mx = ox + sliderW + gap;
-      this._toggleBtn(mx, y - 3, muteW, MIX_ROW_H - 4, 'M', this._mutedSet.has(key), UI.mute, UI.muteText, () => this._toggleMute(key));
-      this._toggleBtn(mx + muteW + gap, y - 3, soloW, MIX_ROW_H - 4, 'S', this._soloedSet.has(key), UI.solo, UI.soloText, () => this._toggleSolo(key));
+      const mute = this._toggleBtn(mx, y - 3, muteW, MIX_ROW_H - 4, 'M', this._mutedSet.has(key), UI.mute, UI.muteText, () => this._toggleMute(key));
+      const solo = this._toggleBtn(mx + muteW + gap, y - 3, soloW, MIX_ROW_H - 4, 'S', this._soloedSet.has(key), UI.solo, UI.soloText, () => this._toggleSolo(key));
+      // #150: this component's stage has a real-file override playing instead — its gain/
+      // mute/solo controls don't touch anything audible any more.
+      if (hasOverride(this.weaponId, stage)) {
+        this._greyOut([slider.container, slider.hit, mute.rect, mute.text, solo.rect, solo.text]);
+      }
       y += MIX_ROW_H;
     }
     return y + 8;
@@ -321,8 +404,17 @@ export class WeaponSfxPanel {
     for (const [stage, label] of STAGES) {
       const layers = params[stage];
       if (!layers || !layers.length) continue;
+      const overridden = hasOverride(this.weaponId, stage);
       this.scroller.add(this.scene.add.text(ox, y, label, { fontFamily: 'monospace', fontSize: '11px', color: UI.text }));
       y += 18;
+      // #150: the "load sound file / clear" control for this stage — always fully interactive
+      // (never greyed), so it's the one thing here you can act on once a stage is overridden.
+      y = this._buildOverrideRow(ox, y, w, stage);
+
+      // Everything below (waveform/filter picker + field sliders) tunes the PROCEDURAL layers,
+      // which don't sound any more once a real file is overriding this stage — grey it all out
+      // rather than remove it (reset/copy still operate on the underlying data untouched).
+      const detailStart = this.scroller.list.length;
       layers.forEach((layer, li) => {
         this.scroller.add(this.scene.add.text(ox + 6, y, `layer ${li + 1} · ${layer.kind ?? 'tone'}`, {
           fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
@@ -347,6 +439,7 @@ export class WeaponSfxPanel {
         }
         y += 8;
       });
+      if (overridden) this._greyOut(this.scroller.list.slice(detailStart));
       y += 6;
     }
     this._maxScroll = Math.max(0, y - oy - this.region.h + 12);
@@ -414,5 +507,7 @@ export class WeaponSfxPanel {
     for (const s of this.sliders) s.destroy();
     this.root.destroy();
     this.maskG.destroy();
+    this._fileInput.removeEventListener('change', this._onFileChosen);
+    this._fileInput.remove();
   }
 }
