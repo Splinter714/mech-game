@@ -9,7 +9,7 @@
 // fix mirrors the existing `_reachableDropPos` primitive (scenes/arena/powerups.js, #73) used
 // for powerup drops: snap to the nearest passable, in-bounds hex via `nearestHex` + an
 // `isPassable` predicate read off the live terrain Map.
-import { axialKey, hexToPixel, pixelToHex, nearestHex, range, distance } from './hexgrid.js';
+import { axialKey, hexToPixel, pixelToHex, nearestHex } from './hexgrid.js';
 import { isPassable } from './terrain.js';
 
 // Is (q, r) a hex this terrain map actually has AND that's passable ground? A hex outside the
@@ -40,19 +40,17 @@ export function nearestValidPixel(terrain, worldRadius, x, y) {
   return hexToPixel(hex.q, hex.r);
 }
 
-// The `count` hexes a turret-nest cluster should occupy around a raw pixel point: the nearest
-// valid hex to the raw point as the cluster's CENTRE, then the closest other passable/in-bounds
-// hexes around it (nearest-first, out to 2 rings). If fewer than `count` valid hexes exist that
-// close (extremely cramped terrain), the centre hex is reused for the remainder — every
-// returned hex is still guaranteed individually valid, it just means some units stack on the
-// same spot rather than one ever landing somewhere invalid.
+// #145 (playtest 2026-07-11: "turrets are in 3 separate hexes, but they should be in 1 hex
+// centered on that hex's center"): a turret-nest cluster is now a single tight emplacement, not
+// spread across a neighborhood — every one of the `count` turrets shares the SAME validated hex
+// (the nearest passable/in-bounds hex to the raw point). Callers still get an array of `count`
+// hexes back (same shape as before #145) so they don't need to special-case a single-hex result;
+// they're just all identical now. `_spawnTurretCluster` (scenes/arena/enemies.js) is responsible
+// for nudging the turrets a few px apart around that one hex's centre so they don't render as an
+// indistinguishable blob.
 export function turretClusterHexes(terrain, worldRadius, x, y, count) {
   const centerHex = nearestValidHex(terrain, worldRadius, x, y);
-  const ok = passableCheck(terrain);
-  const candidates = range(centerHex, 2)
-    .filter((h) => ok(h.q, h.r))
-    .sort((a, b) => distance(centerHex, a) - distance(centerHex, b));
   const hexes = [];
-  for (let i = 0; i < count; i++) hexes.push(candidates[i] ?? centerHex);
+  for (let i = 0; i < count; i++) hexes.push(centerHex);
   return hexes;
 }

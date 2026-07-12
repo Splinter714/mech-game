@@ -85,13 +85,15 @@ describe('turretClusterHexes (#114)', () => {
     }
   });
 
-  it('centres the cluster on a single validated hex — every unit within 2 rings of it', () => {
+  it('#145: puts every unit on the exact SAME single validated hex (a tight one-hex nest)', () => {
     const terrain = makeTerrain();
     const { x, y } = hexToPixel(3, -2);
     const hexes = turretClusterHexes(terrain, BIG_RADIUS, x, y, 3);
     const centerHex = nearestValidHex(terrain, BIG_RADIUS, x, y);
     for (const h of hexes) {
-      expect(distance(h, centerHex)).toBeLessThanOrEqual(2);
+      expect(distance(h, centerHex)).toBe(0);
+      expect(h.q).toBe(centerHex.q);
+      expect(h.r).toBe(centerHex.r);
     }
   });
 

@@ -91,6 +91,12 @@ const ARTY_RECAMP_MAX = 5200;       // ms — max before it looks for a fresh co
 const OFFSCREEN_MARGIN = 120;       // px beyond the visible edge to drop a spawning enemy
 const SPAWN_WORLD_INSET = 1.5;      // hexes of inset from the world edge kept clear for spawns
 
+// #145: a turret-nest cluster's 3 turrets all share ONE validated hex — this is just enough of a
+// px nudge, spread evenly around that hex's centre, that 3 overlapping sprites still read as 3
+// distinct turrets rather than rendering as one indistinguishable blob. Small relative to the hex
+// radius (48px) so the emplacement still reads as tightly "centered on this one hex."
+const TURRET_HUDDLE_OFFSET = 10;
+
 // Movement feel.
 const MOVE_SPEED_FRAC = 0.85;       // fraction of chassis maxSpeed the AI drives at
 const ARRIVE_SLOW = 70;             // px from a destination where the enemy eases to a stop
@@ -247,20 +253,25 @@ export const EnemiesMixin = {
     return last;
   },
 
-  // #89 (fixed per #114 — playtest 2026-07-10: clusters spawning off-map / on forest/water):
-  // expand a 'turretNest' request into TURRET_CLUSTER_SIZE turrets dropped close together
-  // around a SINGLE VALIDATED hex, rather than blindly grid-offsetting from the raw (x, y) spawn
-  // point — that old fixed 2-per-row pixel-offset grid never checked terrain/bounds, so
-  // individual turrets could land off the playable map or on top of forest/water/other occupied
-  // terrain. `turretClusterHexes` (data/spawnPlacement.js, pure + unit-tested) does the actual
-  // validation: nearest passable/in-bounds hex to the raw point as the centre (mirrors the
-  // `_reachableDropPos` primitive powerups.js/#73 uses for drop placement), then the closest
-  // other individually-valid hexes around it. Returns the last turret spawned.
+  // #89 (fixed per #114 — playtest 2026-07-10: clusters spawning off-map / on forest/water),
+  // tightened per #145 (playtest 2026-07-11: "turrets are in 3 separate hexes, but they should be
+  // in 1 hex centered on that hex's center"): expand a 'turretNest' request into
+  // TURRET_CLUSTER_SIZE turrets dropped together on a SINGLE VALIDATED hex, rather than blindly
+  // grid-offsetting from the raw (x, y) spawn point (the old fixed 2-per-row pixel-offset grid
+  // never checked terrain/bounds) or spreading across a neighborhood of distinct hexes (#114's
+  // fix, which #145 walks back). `turretClusterHexes` (data/spawnPlacement.js, pure + unit-tested)
+  // finds the nearest passable/in-bounds hex to the raw point (mirrors the `_reachableDropPos`
+  // primitive powerups.js/#73 uses for drop placement) — every turret lands on that one hex, just
+  // nudged a few px apart around its centre (`TURRET_HUDDLE_OFFSET`) so 3 overlapping sprites still
+  // read as 3 distinct turrets rather than one blob. Returns the last turret spawned.
   _spawnTurretCluster(x, y) {
     const hexes = turretClusterHexes(this.terrain, this.worldRadius, x, y, TURRET_CLUSTER_SIZE);
+    const { x: cx, y: cy } = hexToPixel(hexes[0].q, hexes[0].r);
     let last = null;
-    for (const hex of hexes) {
-      const { x: px, y: py } = hexToPixel(hex.q, hex.r);
+    for (let i = 0; i < hexes.length; i++) {
+      const a = (i / hexes.length) * Math.PI * 2;
+      const px = cx + Math.cos(a) * TURRET_HUDDLE_OFFSET;
+      const py = cy + Math.sin(a) * TURRET_HUDDLE_OFFSET;
       last = this._spawnKind(px, py, 'turret');
     }
     return last;
