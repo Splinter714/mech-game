@@ -62,7 +62,7 @@ export const WEAPONS = {
   // arcing plasma lob, and a close-range flame cone. No ammo (battery recharge). ──
   pulseLaser: w({   // every trigger pull = a rapid burst of light beam pulses
     id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
-    totalDamage: 16, range: { min: 0, opt: 170, max: 300 },
+    totalDamage: 16, range: { min: 0, opt: 340, max: 600 },
     ammoMax: 24, ammoRegen: 3.0, slots: 1, cycleTime: 3000,
     delivery: { hit: 'hitscan', pattern: 'single', burst: { count: 5, wubOn: 25, wubOff: 50 } },
   }),
@@ -129,7 +129,7 @@ export const WEAPONS = {
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
-    damage: 2, range: { min: 0, opt: 90, max: 160 },
+    damage: 2, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
@@ -138,10 +138,15 @@ export const WEAPONS = {
     // never runs the magazine dry. spreadJitter is narrower than the original pulsed
     // version (9° vs 20°) for a tighter cone, and still randomizes each particle's angle
     // (and makeProjectile's speed) so the stream looks chaotic, not laser-straight.
-    // range/velocity pushed out (#52): the flame reaches further (max 160, opt 90) while
-    // velocity 230 keeps it a punchy close-mid gout — the round dies at range.max+40, so
-    // the speed is bumped in step so particles actually reach the new max before expiring
-    // instead of crawling out and fizzling short.
+    // range/velocity pushed out (#52): the flame reaches further (max 160, opt 90 at the
+    // time) while velocity 230 keeps it a punchy close-mid gout — the round dies at
+    // range.max+40, so the speed is bumped in step so particles actually reach the new
+    // max before expiring instead of crawling out and fizzling short.
+    // #135: range extended further still (opt 90/max 160 → opt 338/max 600) to bring every
+    // weapon's max range up to at least 600. This meaningfully changes flamethrower's
+    // close-range identity (a short gout of flame) more than the other weapons touched by
+    // #135 — applied per explicit instruction, but flagged as worth a follow-up
+    // conversation about whether flamethrower should have been an exception.
     delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, sprayCount: { min: 2, max: 4 }, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
   }),
 
@@ -149,13 +154,13 @@ export const WEAPONS = {
   // tight fast pellet burst, and a lobbed incendiary that paints the ground. ──
   autocannon: w({   // one heavy, very fast direct-fire shell — punchy single hits
     id: 'autocannon', name: 'Autocannon', category: 'ballistic',
-    damage: 16, range: { min: 0, opt: 220, max: 380 },
+    damage: 16, range: { min: 0, opt: 347, max: 600 },
     ammoMax: 12, ammoRegen: 1.0, slots: 2, cycleTime: 1100,
     delivery: { hit: 'projectile', path: 'straight', velocity: 760, pattern: 'single', kind: 'slug' },
   }),
   machineGun: w({   // sustained stream of small fast tracer rounds
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
-    damage: 2, range: { min: 0, opt: 180, max: 320 },
+    damage: 2, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
     // streams: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
     // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
@@ -164,7 +169,7 @@ export const WEAPONS = {
   }),
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
-    damage: 3, range: { min: 0, opt: 180, max: 320 },
+    damage: 3, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
     // #101 correction: an earlier pass jittered each pellet's LAUNCH angle for an "organic"
     // feel, but the owner wants the fan itself perfectly even/deterministic every trigger
