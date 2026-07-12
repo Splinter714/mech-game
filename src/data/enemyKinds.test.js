@@ -119,12 +119,17 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(q.hp).toBeLessThan(616);
     // A real weapon mount, same as every other kind.
     expect(getWeapon(q.weaponId)).toBeTruthy();
-    // The deploy mechanic's cadence/cap are present and sane: not so fast it floods the arena,
-    // not so rare it's never noticed (6-12s ballpark), and a positive, bounded lifetime cap.
-    expect(q.deployEveryMs).toBeGreaterThanOrEqual(4000);
-    expect(q.deployEveryMs).toBeLessThanOrEqual(16000);
-    expect(q.deployCap).toBeGreaterThan(0);
-    expect(q.deployCap).toBeLessThan(10);
+    // #147: the deploy mechanic was reworked into a SWARM — a batch of several units per tick,
+    // a faster cadence, and a much higher lifetime cap — rather than #130's original 1-per-8s
+    // trickle capped at 5. Cadence still sane (not so fast it floods the arena instantly), and
+    // the batch/cap numbers are internally consistent (batch bounds positive and ordered, cap
+    // comfortably larger than a single batch so it actually reads as multiple bursts).
+    expect(q.deployEveryMs).toBeGreaterThanOrEqual(2000);
+    expect(q.deployEveryMs).toBeLessThanOrEqual(8000);
+    expect(q.deployBatchMin).toBeGreaterThan(1);   // more than one unit per tick — a real "batch"
+    expect(q.deployBatchMax).toBeGreaterThanOrEqual(q.deployBatchMin);
+    expect(q.deployCap).toBeGreaterThan(q.deployBatchMax);   // room for multiple bursts, not just one
+    expect(q.deployCap).toBeLessThanOrEqual(30);   // generous, but still a bounded lifetime cap
   });
 
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
