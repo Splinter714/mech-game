@@ -553,11 +553,13 @@ export const EnemiesMixin = {
     const bearing = Math.atan2(dyp, dxp);           // from enemy → player
     const ux = dxp / dist, uy = dyp / dist;
 
-    // Line-of-sight to the player right now (needed both for awareness detection below and the
-    // firing gate further down). #72: each endpoint's own soft-cover hex is transparent — a
-    // player standing in forest is seen (and hittable), and an enemy inside forest can see/shoot
-    // out.
-    const los = this._wallDistance(e.x, e.y, bearing, dist, this._losTransparency(e.x, e.y, this.px, this.py)) === Infinity;
+    // Line-of-sight to the player (needed both for awareness detection below and the firing gate
+    // further down). #72: each endpoint's own soft-cover hex is transparent — a player standing
+    // in forest is seen (and hittable), and an enemy inside forest can see/shoot out. #167: this
+    // was the top game-logic CPU cost run raw per mech per frame — now a STAGGERED CACHE
+    // (`_cachedLosToPlayer`, ~120ms per-enemy refresh) so the expensive raycast runs ~8x less
+    // often; the value is exact at each refresh and feeds awareness, the lock, and firing alike.
+    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, this.px, this.py);
 
     // #103 awareness: an UNAWARE enemy hasn't noticed the player yet — it idles near its spawn
     // point rather than engaging. It flips to AWARE (permanently, for the rest of the encounter)
@@ -824,7 +826,9 @@ export const EnemiesMixin = {
   _decideEnemyState(e, dist, bearing, hp) {
     const tooClose = dist < e.standoff * TOO_CLOSE_FRAC;
     const tooFar = dist > e.standoff * TOO_FAR_FRAC;
-    const hasLos = this._wallDistance(e.x, e.y, bearing, dist, this._losTransparency(e.x, e.y, this.px, this.py)) === Infinity;
+    // #167: fresh (not cached) — state decisions run on the slow DECIDE_MIN/MAX cadence, not per
+    // frame, so this wants a current read; still routed through the allocation-free raycast.
+    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, this.px, this.py) === Infinity;
     const hurt = hp < COVER_HEALTH_TRIGGER || this.time.now < e.hurtUntil;
     const now = this.time.now;
 
@@ -940,7 +944,7 @@ export const EnemiesMixin = {
       const ang = Math.atan2(p.y - this.py, p.x - this.px);
       // A spot is cover if the player's line of sight to it is broken by a wall before it
       // (own-hex transparency applied: neither endpoint's soft-cover hex counts, #72).
-      const losBlocked = this._wallDistance(this.px, this.py, ang, d, this._losTransparency(this.px, this.py, p.x, p.y)) < d - COVER_SEARCH_STEP;
+      const losBlocked = this._wallDistanceLos(this.px, this.py, ang, d, p.x, p.y) < d - COVER_SEARCH_STEP;
       if (!losBlocked) continue;
       // Prefer near cover that keeps us in the fight (not driven to the map edge).
       const travel = Math.hypot(p.x - e.x, p.y - e.y);

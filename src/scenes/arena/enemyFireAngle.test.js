@@ -63,6 +63,8 @@ function makeScene({ px, py, vx = 0, vy = 0, blocked = false }) {
   };
   Object.assign(scene, EnemiesMixin);
   scene._wallDistance = () => (blocked ? 1 : Infinity);   // finite => LOS blocked
+  scene._wallDistanceLos = () => (blocked ? 1 : Infinity); // #167 allocation-free variant
+  scene._cachedLosToPlayer = () => !blocked;               // #167: mech per-frame LOS is now cached
   scene._losTransparency = () => 0;
   scene._blocked = () => false;
   scene._speedFactorAt = () => 1;

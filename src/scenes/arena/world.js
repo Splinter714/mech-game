@@ -35,6 +35,18 @@ const STOMP_DPS = 45;
 const CULL_MARGIN_PX = 1200;
 const CULL_RECHECK_PX = 300;
 
+// #167: per-enemy LOS/firing-lane raycasts (`_wallDistanceLos` below) were the top game-logic
+// CPU cost once #155/#161 fixed the render + swarm-texture costs (#148/#164 profiles measured
+// 1.5–2.4ms/frame, 94–118 calls/frame with a swarm). Line-of-sight rarely flips frame-to-frame,
+// so each enemy recomputes its LOS to the player only every ~LOS_REFRESH_MS instead of every
+// frame (`_cachedLosToPlayer`), staggered by a random per-enemy phase so a whole swarm's
+// recomputes spread across frames rather than spiking on one tick. Between refreshes the last
+// result is reused, so an enemy's LOS knowledge can be up to one window stale. The audit's
+// recommended window was 100–150ms (~6–9 frames): short enough that a firing enemy never
+// visibly shoots through cover that just closed, nor holds fire for a noticeable beat after a
+// lane opens (a shot cadence is itself ≥120ms), yet long enough to cut the recompute rate ~8x.
+export const LOS_REFRESH_MS = 120;
+
 
 export const WorldMixin = {
   // Generate a natural battlefield (#41): a grass area with a winding SHALLOW river, walk-through
@@ -222,7 +234,10 @@ export const WorldMixin = {
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's
-  // hex is see-through (soft cover only — `shotBlockedAt` keeps solid cover blocking).
+  // hex is see-through (soft cover only — `shotBlockedAt` keeps solid cover blocking). #167
+  // inlined this two-key check into `_wallDistanceLos` (no per-call Set) for the hot per-enemy
+  // LOS path, so production no longer calls this directly; it's retained as the canonical
+  // reference the equivalence test pins `_wallDistanceLos` against (world.test.js).
   _losTransparency(x0, y0, x1, y1) {
     return new Set([this._hexKeyAt(x0, y0), this._hexKeyAt(x1, y1)]);
   },
@@ -370,6 +385,74 @@ export const WorldMixin = {
       if (this._isWall(x0 + cx * t, y0 + cy * t, transparent)) return t;
     }
     return Infinity;
+  },
+
+  // #167: allocation-free equivalent of `_wallDistance(x0,y0,angle,maxT, _losTransparency(x0,y0,
+  // x1,y1))` — the exact per-enemy LOS/firing-lane query, with own-hex soft-cover transparency
+  // for the ray's TWO endpoints (#72). Returns the IDENTICAL value to that call (same 8px
+  // stepping, same geometry, same returned `t`); ONLY the allocations are removed:
+  //   • no `new Set` per call — the two transparent endpoint hexes are compared by q/r in place
+  //     (like `_isWallForRound`), instead of `_losTransparency`'s per-call two-key Set;
+  //   • no hex-key STRING built per 8px step — consecutive 8px samples almost always land in the
+  //     SAME hex (an 8px step inside a 48px-radius hex rarely crosses a boundary), and a hex's
+  //     wall-ness can't change between two samples that fall in it, so the terrain lookup (and
+  //     its key string) is done ONLY when the hex actually changes: ~7 lookups for a 400px ray,
+  //     not ~50, and ~7 key strings instead of ~50.
+  // The (x1,y1) endpoint is passed explicitly (not re-derived from `angle`/`maxT`) so its
+  // transparency hex is bit-identical to the old `_losTransparency(x0,y0,x1,y1)` endpoint, and
+  // `cx`/`cy` reuse the same `Math.cos/sin(angle)` the old loop used — the sampled points are
+  // therefore the same to the bit. Mirrors `shotBlockedAt`'s rule via the same `blocksLOS`/
+  // `isSoftCover` predicates it uses internally (verified equal in world.test.js).
+  _wallDistanceLos(x0, y0, angle, maxT, x1, y1) {
+    const cx = Math.cos(angle), cy = Math.sin(angle);
+    const oh = pixelToHex(x0, y0);          // shooter/muzzle endpoint hex (soft-cover-transparent)
+    const eh = pixelToHex(x1, y1);          // target endpoint hex (soft-cover-transparent)
+    let lastQ = null, lastR = null;
+    for (let t = 8; t < maxT; t += 8) {
+      const h = pixelToHex(x0 + cx * t, y0 + cy * t);
+      if (h.q === lastQ && h.r === lastR) continue;   // same hex as last step ⇒ wall-ness unchanged
+      lastQ = h.q; lastR = h.r;
+      const id = this.terrain.get(axialKey(h.q, h.r));
+      if (!blocksLOS(id)) continue;
+      // #72: soft cover on either endpoint's OWN hex is see-through for this ray; solid cover and
+      // any non-endpoint soft cover between the two blocks (exactly shotBlockedAt's rule).
+      const transparent = (h.q === oh.q && h.r === oh.r) || (h.q === eh.q && h.r === eh.r);
+      if (transparent && isSoftCover(id)) continue;
+      return t;
+    }
+    return Infinity;
+  },
+
+  // #167: staggered + cached LOS boolean — "does enemy `e` have a clear firing lane / line of
+  // sight to the player right now?" The underlying raycast (`_wallDistanceLos`) is recomputed
+  // only once every ~LOS_REFRESH_MS of SIMULATION time; between refreshes the last result is
+  // reused. See LOS_REFRESH_MS (top of file) for the staleness-vs-correctness reasoning. `x1,y1`
+  // is the ray endpoint (the player) for #72 endpoint transparency. The cached value EQUALS the
+  // un-cached `_wallDistanceLos(...) === Infinity` at the moment of each refresh — only the
+  // recompute FREQUENCY changes.
+  //
+  // The cadence is driven by the per-frame `delta` (ms) every caller already has — a per-enemy
+  // countdown (`_losCd`) — NOT wall-clock `this.time.now`. That makes it (a) simulation-time
+  // correct: it matches the frame budget the audit described and behaves identically whether or
+  // not the scene clock is advancing (a paused game, or a headless test that drives `_updateEnemy`
+  // directly), and (b) trivially staggered: the countdown is seeded to a RANDOM point in the
+  // window on first use, so a batch spawned on one frame refreshes on spread-out frames rather
+  // than all at once, and the offset persists across refreshes.
+  _cachedLosToPlayer(e, delta, x0, y0, angle, maxT, x1, y1) {
+    if (e._losCd === undefined) {
+      // Seed the countdown at a random point in the window (stagger) and assume NO clear lane
+      // until the first refresh fires — an enemy holds fire / stays unaware rather than acting on
+      // an unverified lane (errs toward not shooting; self-corrects within one window).
+      e._losCd = Math.random() * LOS_REFRESH_MS;
+      e._losClear = false;
+    }
+    e._losCd -= delta;
+    if (e._losCd <= 0) {
+      e._losCd += LOS_REFRESH_MS;                 // preserve sub-frame phase (keeps the stagger)
+      if (e._losCd <= 0) e._losCd = LOS_REFRESH_MS;   // guard: a huge delta spike still recomputes once
+      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1) === Infinity;
+    }
+    return e._losClear;
   },
 
   // #64: seed ONE fresh destructible outpost hex, converting a nearby passable ground tile back
