@@ -8,6 +8,7 @@
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
 import { getOverride, getTrimMs, getStartMs, getProcessing } from './sfxOverrides.js';
+import { getBaked } from './bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -15,12 +16,12 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // once (Swarm Rack); tune here.
 const TRAJECTORY_LOOP_GAIN_SCALE = 0.6;
 
-// #150: at each one-shot choke point, a real loaded file (Weapon Lab sound panel) takes
-// priority over the procedural layers for that weapon+stage. `getOverride` is a synchronous
-// in-memory lookup (null until a file's been loaded+decoded for this weaponId/stage, which is
-// the common case for every weapon that's never touched the feature), so this is a strict
-// no-op — same node graph, same behavior — whenever no override exists. Returns true if it
-// played the override (so callers skip the procedural fallback), false otherwise.
+// At each one-shot choke point, a decoded buffer can take priority over the procedural layers
+// for that weapon+stage. Two buffer sources feed this, in precedence order (#173): a dev-loaded
+// IndexedDB override (#150, Weapon Lab sound panel) FIRST, then a shipped BAKED asset
+// (bakedSfx.js). Both are synchronous in-memory lookups (null until decoded), so whenever
+// neither exists this is a strict no-op — same node graph, same behavior as pure procedural.
+// See playOverride (precedence) + playBuffer (the shared scheduling/DSP chain both sources use).
 //
 // #172: a runtime-synthesized reverb impulse response — decaying stereo white noise, so the
 // ConvolverNode needs NO asset file (keeps the zero-asset philosophy). `seconds` sets the tail
@@ -50,21 +51,24 @@ function connectReverb(ctx, input, bus, mix, sizeSec) {
   input.connect(conv); conv.connect(wet); wet.connect(bus);
 }
 
-// #166: non-destructive start/end pair — `getStartMs`/`getTrimMs` are the same kind of
-// synchronous no-await lookup, null unless set for this weapon+stage. `startMs` becomes the
-// `offset` arg (skip ahead into the buffer before playback begins) and `trimMs` becomes the
-// `duration` arg (how long to play FROM that new start point, not from the original file
-// start) to AudioBufferSourceNode.start(when, offset, duration); the buffer itself is never
-// sliced/copied, so both stay purely scheduling parameters, instantly adjustable/reversible.
+// #166: non-destructive start/end pair — `startMs`/`trimMs`. `startMs` becomes the `offset` arg
+// (skip ahead into the buffer before playback begins) and `trimMs` becomes the `duration` arg
+// (how long to play FROM that new start point, not from the original file start) to
+// AudioBufferSourceNode.start(when, offset, duration); the buffer itself is never sliced/copied,
+// so both stay purely scheduling parameters, instantly adjustable/reversible.
 //
 // #172: non-destructive PROCESSING chain layered on top — pitch/rate (a `detune` on the source
-// node, pitch+speed coupled), a BiquadFilter, and a wet/dry reverb, read via getProcessing().
+// node, pitch+speed coupled), a BiquadFilter, and a wet/dry reverb (the sparse `proc` object).
 // Chain order: source (with #166 offset/duration + detune) → [filter] → [reverb wet/dry] → bus
 // (the existing sfx gain) → output. Each stage is inserted ONLY when its param is non-neutral,
-// so an override with no processing set builds the exact same `source → bus` graph as before —
-// a strict clean passthrough, no regression.
-function playOverride(e, bus, weaponId, stage) {
-  const buffer = getOverride(weaponId, stage);
+// so a buffer with no processing builds the exact same `source → bus` graph as before — a
+// strict clean passthrough, no regression.
+//
+// #173: this is the SHARED scheduling/DSP chain — both a dev IndexedDB override (#150) and a
+// shipped BAKED asset (bakedSfx.js) play a decoded buffer through this exact code, differing
+// only in where `buffer` and its (startMs/trimMs/proc) recipe come from. Returns true if it
+// scheduled the buffer, false if there was nothing to play.
+function playBuffer(e, bus, buffer, startMs, trimMs, proc) {
   if (!buffer || !e.ctx) return false;
   const ctx = e.ctx;
   const src = ctx.createBufferSource();
@@ -72,7 +76,6 @@ function playOverride(e, bus, weaponId, stage) {
 
   // #172: assemble the processing chain from src outward; `tail` is whatever the next node
   // should connect FROM. Neutral/absent params add nothing, leaving src → bus untouched.
-  const proc = getProcessing(weaponId, stage);
   if (proc?.detune && src.detune) src.detune.value = proc.detune;   // cents (pitch+speed coupled)
   let tail = src;
   if (proc?.filterType) {
@@ -86,13 +89,27 @@ function playOverride(e, bus, weaponId, stage) {
   if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
   else tail.connect(bus);
 
-  const startMs = getStartMs(weaponId, stage);
-  const trimMs = getTrimMs(weaponId, stage);
   const offsetSec = (startMs ?? 0) / 1000;
   if (startMs == null && trimMs == null) src.start(e._now());
   else if (trimMs != null) src.start(e._now(), offsetSec, trimMs / 1000);
   else src.start(e._now(), offsetSec);
   return true;
+}
+
+// Buffer-source precedence at each choke point (#173): a dev-loaded IndexedDB override (#150)
+// wins FIRST — so a dev auditioning a live-loaded file in the Weapon Lab still beats a shipped
+// bake — then a BAKED asset (bakedSfx.js), then (by returning false here) the caller's
+// procedural fallback. Both buffer sources schedule through the shared playBuffer above, so the
+// #166 trim + #172 processing recipe applies identically to either. In a shipped build there
+// are no IndexedDB overrides, so this is effectively baked-then-procedural.
+function playOverride(e, bus, weaponId, stage) {
+  const override = getOverride(weaponId, stage);
+  if (override) {
+    return playBuffer(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage));
+  }
+  const baked = getBaked(weaponId, stage);
+  if (baked) return playBuffer(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing);
+  return false;
 }
 
 export function fire(e, weapon) {
