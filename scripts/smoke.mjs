@@ -1085,9 +1085,25 @@ try {
       // band) is a lateral strafe (perpendicular to the player bearing) — so its hull (which now
       // faces travel, #92) should end up roughly perpendicular to its turret (which keeps
       // tracking the bearing straight at the player via aimAndFire's independent slew).
+      // #163: this is a pure hull-vs-turret KINEMATICS check, not a terrain/collision check (that's
+      // test (b) above) — but the world's terrain is randomly seeded every run (`_buildWorld`'s
+      // default `seed = Math.random()...`), and the tank's 300px standoff + strafe puts it well
+      // outside the guaranteed-clear safe zone around spawn. Root-caused via a 4000-trial Monte
+      // Carlo replay of the real generateTerrain/isPassable code: on rare unlucky seeds the tank's
+      // lateral strafe gets wedged against randomly-placed cover/an outpost, zeroing its velocity
+      // (the same collision-slide `_updateVehicle` gives every ground unit) — which freezes hull
+      // rotation entirely (`hullTravelAngle`'s moveThreshold gate holds the last heading while
+      // stationary) while the turret keeps slewing independently, occasionally leaving the
+      // divergence under the 1.0 rad threshold within the fixed tick budget. On open ground the
+      // kinematics are reliable regardless of strafe direction (converges to ~1.57 rad divergence
+      // by frame ~132, well inside the budget) — so stub out collision for this isolated check,
+      // exactly like (b) above isolates the collision check from AI movement.
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
       const tank = a._spawnKind(300, 0, 'tank');
+      const origBlocked = a._blocked;
+      a._blocked = () => false;
       for (let i = 0; i < 180; i++) a._updateVehicle(tank, 0.016, 16);
+      a._blocked = origBlocked;
       const wrap = (ang) => { let x = ang; while (x > Math.PI) x -= Math.PI * 2; while (x < -Math.PI) x += Math.PI * 2; return x; };
       s92.hullTurretDiverge = Math.abs(wrap(tank.angle - tank.turret)) > 1.0;
 
