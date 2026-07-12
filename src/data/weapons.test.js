@@ -29,7 +29,7 @@ describe('catalogMaxRange', () => {
 describe('previewRangeFrac', () => {
   it('gives a short-range weapon a visibly smaller fraction than a long-range one', () => {
     const catalogMax = catalogMaxRange(WEAPON_IDS);
-    // Repeater (opt 180) is much shorter-range than Cluster Salvo (opt 660), the farthest
+    // Repeater (opt 338) is much shorter-range than Cluster Salvo (opt 660), the farthest
     // weapon on the player-facing catalog.
     const shortFrac = previewRangeFrac(WEAPONS.machineGun, catalogMax);
     const longFrac = previewRangeFrac(WEAPONS.clusterRocket, catalogMax);

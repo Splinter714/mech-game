@@ -6,8 +6,9 @@
 // range to pick a ROLE (brawler presses in, sniper kites, skirmisher flanks mid-range), so
 // giving enemies distinct loadouts makes them read as behaving differently — not one orbit.
 export const ENEMIES = {
-  // Mid-range flanker: an autocannon (opt 220) + cluster salvo (opt 220). The original
-  // Raider — a skirmisher that fights at a middling standoff and flanks.
+  // Mid-range flanker: an autocannon (opt 347, was 220 before #135's range-floor pass) +
+  // cluster salvo (opt 660). The original Raider — a skirmisher that fights at a middling
+  // standoff and flanks.
   raider: {
     chassisId: 'light',
     name: 'Raider',
@@ -17,8 +18,12 @@ export const ENEMIES = {
   // Brawler: short/mid-range weapons on a fast light chassis, so it wants to CLOSE and stay
   // in the player's face. Reads as aggressive.
   // #96: flamethrower (opt 90) was shelved per Jackson's weapon curation pass, so this mount
-  // swaps to machineGun/Repeater (opt 180) — still a close/mid-range direct-fire weapon that
-  // keeps the pairing with shotgun reading as an aggressive, get-in-your-face brawler.
+  // swaps to machineGun/Repeater — still a close/mid-range direct-fire weapon that keeps the
+  // pairing with shotgun reading as an aggressive, get-in-your-face brawler.
+  // #135: machineGun/shotgun opt both moved from 180 to 338 (range-floor pass, every weapon's
+  // max brought to >=600) — this pushes the brawler's standoff distance out further than
+  // before; still reads as close/mid-range relative to the sniper/artillery loadouts below,
+  // but worth an eye during playtest if "brawler" no longer feels like it's pressing in enough.
   skirmisher: {
     chassisId: 'light',
     name: 'Stalker',
