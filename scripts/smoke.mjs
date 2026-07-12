@@ -159,11 +159,30 @@ try {
   const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize, hitscanWeapon, nearSpawnHexDist }) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
-    const e0 = a.enemies[0];        // the first (and at boot, only) enemy
+    const e0 = a.enemies[0];        // the first enemy — NOT the only one anymore (see below)
     const em = e0.mech;
     // Captured NOW: the #64 stage-advance test below replaces the squad, and #71's teardown
     // correctly REMOVES the old squad's textures — so this must be read before that runs.
     const dummyTex = g.textures.exists(e0.key + '_turret');
+    // #158b: the boot squad is actually a whole stage's worth of enemies (dozens), not just
+    // e0 — the old "first and only enemy" comment above went stale once per-stage squads grew.
+    // Stash the full squad and temporarily narrow `a.enemies` to just e0 for the deterministic
+    // single-target firing block below (restored right before the multi-enemy tests that need
+    // it — #39's debug-spawn section). Why this matters: a fired round's hit resolution
+    // (`_nearestEnemy`, projectiles.js) re-targets whichever LIVING enemy is nearest the round's
+    // CURRENT position every frame — intentional so a dumbfire round detonates on whatever
+    // bystander it actually reaches — but that means with the FULL squad present (spawned
+    // off-screen at positions #44 dictates), a round aimed at the teleported dummy can detonate
+    // early on some other squad member that happens to sit nearer the muzzle or the flight path,
+    // never reaching the dummy at all. At the old, much larger pre-#158 map the squad's off-
+    // screen spawn points were far enough out that this basically never happened; #158's much
+    // smaller playable interior packs that same squad into a far smaller area, making a bystander
+    // sitting near the origin-to-dummy line common enough to intermittently fail this test (~1 in
+    // 10-15 `npm run smoke` runs, confirmed by repeated real runs). Isolating the array for this
+    // block makes the test's actual intent — "a shot aimed at the dummy hits the dummy" — hold
+    // regardless of where the rest of the squad happens to spawn.
+    const fullSquad = a.enemies.slice();
+    a.enemies = [e0];
 
     // Tank locomotion: holding throttle should drive the mech forward (up = -y).
     const y0 = a.py;
@@ -197,6 +216,15 @@ try {
     // must destroy it. Weapons fire along turretAngle at the reticle distance (#40).
     a.turretAngle = Math.atan2(e0.y - a.py, e0.x - a.px);
     a.aimX = e0.x; a.aimY = e0.y;
+    // #158b: `aimEnemy` (targeting.js `_updateAim`, normally refreshed every real frame) is what
+    // `_fireAngle` reads to pick the CONVERGENCE distance for direct-fire weapons — an off-centre
+    // muzzle toes in assuming the target is at this distance along the turret line. This scene
+    // never runs a real `update()` after the manual teleport above, so without this, `aimEnemy`
+    // is left at whatever the earlier drive-test updates (while e0 was still at its far off-
+    // screen real spawn) happened to set it to — some random distance/target dictated by the
+    // world seed, not the dummy's real ~220px range. Setting it explicitly to e0 mirrors what a
+    // real frame of play would do when honestly aiming centre-mass at the dummy.
+    a.aimEnemy = e0;
 
     // Projectile travel: fire ONLY a travelling round (the slug, not the hitscan laser)
     // at the pristine enemy and let it fly — it must cross the gap and deal damage.
@@ -271,6 +299,7 @@ try {
     // Spread/multi-weapon fire + muzzle offsets scatter hits across the enemy's body, so
     // assert that SOME part lost health (per-part damage applied), not one fixed location.
     a.aimX = e0.x; a.aimY = e0.y;   // re-aim (the steps above advance the sim)
+    a.aimEnemy = e0;   // #158b: e0 hasn't moved, but keep this explicit (see the note above)
     const partFracs = () => Object.keys(em.parts).map((k) => em.partHealthFraction(k));
     const partsBefore = partFracs();
     for (const w of a.mech.readyWeapons()) a.fireWeapon(w);
@@ -283,6 +312,12 @@ try {
     em.applyDamage('leftTorso', 999);
     em.applyDamage('rightTorso', 999);
     const dummyDead = em.isDestroyed();
+
+    // #158b: restore the full squad now that the deterministic single-target firing block
+    // above (which needed e0 to be the ONLY thing `_nearestEnemy` could resolve a shot onto)
+    // is done — everything from here on (debug-spawn, stage-advance, survivor carry-over) is
+    // multi-enemy aware and expects the real squad to still be there.
+    a.enemies = fullSquad;
 
     // #39: spawn an extra enemy, confirm the arena tracks N and can damage the new one,
     // then reset restores every enemy to full health in place.
