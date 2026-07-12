@@ -154,7 +154,14 @@ export function generateTerrain({
 // generation's O(R²)-ish cost scales off it, so it's deliberately NOT bumped up just to make
 // room for elongation (see below).
 export const SECTORS = 20;
-export const MAX_WORLD_RADIUS = 80;
+// #138 (playtest follow-up to #127: "the map still feels huge"): trimmed down from the original
+// 80. The near-spawn safety margin below (the #110 hex-distance-20 floor) is an ABSOLUTE
+// geometric requirement independent of overall map size — given the fixed CORRIDOR_ASPECT_RATIO,
+// that puts a real floor under how far these constants can shrink (verified empirically, same
+// method as the #127 comment below: simulating `sectorBoundaries` across many seeds/longAxis
+// draws and converting via the worst-case ratio). 80 → 73 is the room available without eroding
+// that margin; see FULL_BUILD_BASE_RADIUS/VARIATION just below for the matching trim.
+export const MAX_WORLD_RADIUS = 73;
 // CORRIDOR_ASPECT_RATIO: the target long-axis-extent ÷ short-axis-extent (see
 // `sectorBoundaries`'s `aspectRatio` param) for the whole pre-built map's shape — #127
 // (playtest: the map read as a wide open blob, wanted "more linear-ish"). 2.25 means the map
@@ -191,8 +198,16 @@ export const CORRIDOR_ASPECT_RATIO = 2.25;
 // perpendicular one — that trade IS the elongation the issue asked for. The long axis still
 // averages ~70 hexes (close to the old ~62-78 reach), while the short axis averages ~31 hexes
 // (roughly 45% of that) — a real corridor, not a subtly-squashed circle.
-export const FULL_BUILD_BASE_RADIUS = 70;
-export const FULL_BUILD_VARIATION = 6;
+// #138: trimmed from 70/6 to 66/4 — a moderate, not drastic, cut (per the issue's own framing:
+// "noticeably smaller... without shrinking it so much" that the run can't fit or the near-spawn
+// margin erodes). Re-verified empirically against the same near-spawn (#110) and long-axis
+// (MAX_WORLD_RADIUS) floors the #127 comment above describes: worst-case short-axis real
+// hex-distance margin stays at ≈25.5 (vs the required >24), worst-case long-axis real
+// hex-distance reach stays at ≈70 (vs MAX_WORLD_RADIUS=73) — both with about the same headroom
+// the original 70/6/80 combination had. A full run's escalating squad sizes/stage count still
+// have the same relative amount of room to grow into; only the absolute footprint shrank.
+export const FULL_BUILD_BASE_RADIUS = 66;
+export const FULL_BUILD_VARIATION = 4;
 
 // #126 (playtest: black void visible past the boundary ring at some camera positions/zooms):
 // BOUNDARY_RING_WIDTH is sized from the actual worst-case camera view distance, not a guessed
@@ -356,4 +371,55 @@ export function pickFarObjective(hexKeys, fromHex, minDistance = FAR_OBJECTIVE_M
   }).sort((a, b) => b.d - a.d);
   const farEnough = ranked.find((c) => c.d >= minDistance);
   return (farEnough ?? ranked[0]).k;
+}
+
+// #138 (playtest: "the map still feels huge, especially on initial deploy"): `pickFarObjective`
+// above always targets the single FARTHEST standing outpost, with no regard for which stage of
+// the run this is — since #111 pre-builds the WHOLE run's terrain upfront (sized to hold every
+// stage's escalation), that meant even stage 0's objective, the very first thing the player does
+// on deploy, landed near the far end of the map. `pickStageObjective` targets a distance that's
+// a function of `lateFrac` (the same 0→1 `lateFraction(stageIndex)` curve data/run.js already
+// uses for squad-composition escalation — reused here, not reinvented, so the two curves can
+// never drift out of sync): stage 0 (`lateFrac` 0) targets a NEAR objective, a short welcoming
+// first trek at STAGE_OBJECTIVE_NEAR_FRACTION of the farthest standing candidate's distance; the
+// final stage (`lateFrac` 1) targets STAGE_OBJECTIVE_FAR_FRACTION — the farthest candidate,
+// i.e. `pickFarObjective`'s old always-farthest behavior. Distances in between lerp linearly.
+//
+// The target is relative to the CURRENT candidate set's own farthest distance (not an absolute
+// map-radius constant), so it stays sensible even late in a run when most outposts near the
+// player have already been destroyed and the remaining standing set is naturally sparser/nearer
+// — there's no separate "few outposts left" fallback because "closest candidate to the target
+// distance" already degrades gracefully to "just pick the best of what's left."
+//
+// Picks the candidate whose distance from `fromHex` is closest to the target (ties broken by
+// sorted hex-key order, same deterministic rule `pickFarObjective` and `_initMission` use) —
+// this is "target a distance," not "rank descending, take the top." `minDistance` still floors
+// the target itself (so an early stage's near-target can never resolve to sitting on top of the
+// player) — the shared `FAR_OBJECTIVE_MIN_DIST` by default, same floor `pickFarObjective` uses.
+export const STAGE_OBJECTIVE_NEAR_FRACTION = 0.2;
+export const STAGE_OBJECTIVE_FAR_FRACTION = 1.0;
+export function pickStageObjective(
+  hexKeys, fromHex, lateFrac, minDistance = FAR_OBJECTIVE_MIN_DIST, reveal = null,
+) {
+  if (!hexKeys || !hexKeys.length) return null;
+  const candidates = reveal
+    ? hexKeys.filter((k) => { const [q, r] = k.split(',').map(Number); return reveal(q, r); })
+    : hexKeys;
+  if (!candidates.length) return null;
+  const ranked = [...candidates].sort().map((k) => {
+    const [q, r] = k.split(',').map(Number);
+    return { k, d: distance({ q, r }, fromHex) };
+  });
+  const maxD = ranked.reduce((m, c) => Math.max(m, c.d), 0);
+  const clampedFrac = Math.max(0, Math.min(1, lateFrac));
+  const frac = STAGE_OBJECTIVE_NEAR_FRACTION
+    + clampedFrac * (STAGE_OBJECTIVE_FAR_FRACTION - STAGE_OBJECTIVE_NEAR_FRACTION);
+  const targetD = Math.max(minDistance, frac * maxD);
+  let best = ranked[0];
+  let bestDiff = Math.abs(best.d - targetD);
+  for (const c of ranked) {
+    const diff = Math.abs(c.d - targetD);
+    if (diff < bestDiff) { best = c; bestDiff = diff; }
+  }
+  return best.k;
 }
