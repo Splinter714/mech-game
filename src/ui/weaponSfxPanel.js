@@ -34,11 +34,11 @@ const MIX_ROW_H = 22;
 // Only numeric fields get a slider; `type`/`kind` (waveform/filter shape) stay fixed —
 // hand-edit via "copy settings" if a layer needs a different shape.
 const FIELD_SPEC = {
-  freq: [20, 4000, 5], freqEnd: [20, 4000, 5], dur: [0.005, 1, 0.005], gain: [0, 1, 0.01],
+  freq: [20, 4000, 5], freqEnd: [20, 4000, 5], dur: [0.005, 1, 0.005],
   attack: [0, 0.05, 0.001], q: [0.1, 6, 0.05],
 };
-const FIELD_ORDER = ['freq', 'freqEnd', 'dur', 'gain', 'attack', 'q'];
-const FIELD_LABEL = { freq: 'freq', freqEnd: 'freq end', dur: 'dur', gain: 'gain', attack: 'attack', q: 'Q' };
+const FIELD_ORDER = ['freq', 'freqEnd', 'dur', 'attack', 'q'];
+const FIELD_LABEL = { freq: 'freq', freqEnd: 'freq end', dur: 'dur', attack: 'attack', q: 'Q' };
 
 // `type` picker options, by layer kind — a tone's oscillator waveform vs. a noise layer's
 // filter shape (its BiquadFilterNode type). Distinct sets since they mean different things.
@@ -90,7 +90,7 @@ export class WeaponSfxPanel {
     this._mutedSet = new Set();
     this._soloedSet = new Set();
     this._components = [];   // flat [{stage, li, layer}] for the current weapon, rebuilt in _build()
-    this._gainSliders = {};  // key -> { top, full } Slider refs, kept in sync on either one's onChange
+    this._gainSliders = {};  // key -> top-mixer-strip gain Slider ref (#139: the only gain slider now)
 
     // Both containers stay at world (0,0) — the Slider widget caches absolute world
     // coordinates at construction time (it compares against pointer.worldX directly, not
@@ -217,8 +217,9 @@ export class WeaponSfxPanel {
   }
 
   // The compact DAW-mixer strip at the top of the panel (#131) — one row per component
-  // (stage + layer) with a compact gain slider synced to that component's full-size slider
-  // further down, plus Mute/Solo. Built from `this._components`, computed by `_build()`.
+  // (stage + layer) with a compact gain slider (the ONLY gain slider — #139 removed the
+  // redundant per-section one further down), plus Mute/Solo. Built from `this._components`,
+  // computed by `_build()`.
   _buildMixerStrip(ox, y, w) {
     if (!this._components.length) return y;
     this.scroller.add(this.scene.add.text(ox, y, 'MIXER (gain / mute / solo)', { fontFamily: 'monospace', fontSize: '10px', color: UI.dim }));
@@ -233,13 +234,12 @@ export class WeaponSfxPanel {
         value: layer.gain ?? 0,
         onChange: (v) => {
           Audio.setSfxParam(this.weaponId, stage, li, 'gain', v);
-          this._gainSliders[key]?.full?.setValue(v);
           this._previewThrottled(stage);
         },
       });
       this.scroller.add(slider.container);
       this.sliders.push(slider);
-      (this._gainSliders[key] ??= {}).top = slider;
+      this._gainSliders[key] = slider;
 
       const mx = ox + sliderW + gap;
       this._toggleBtn(mx, y - 3, muteW, MIX_ROW_H - 4, 'M', this._mutedSet.has(key), UI.mute, UI.muteText, () => this._toggleMute(key));
@@ -338,13 +338,11 @@ export class WeaponSfxPanel {
             value: layer[field],
             onChange: (v) => {
               Audio.setSfxParam(this.weaponId, stage, li, field, v);
-              if (field === 'gain') this._gainSliders[`${stage}:${li}`]?.top?.setValue(v);
               this._previewThrottled(stage);
             },
           });
           this.scroller.add(s.container);
           this.sliders.push(s);
-          if (field === 'gain') (this._gainSliders[`${stage}:${li}`] ??= {}).full = s;
           y += ROW_H;
         }
         y += 8;
