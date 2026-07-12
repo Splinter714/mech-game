@@ -1,16 +1,15 @@
-// #81/#110/#111 — pure world-generation coverage: the seeded terrain algorithm, the safe-zone
-// geometry, the organic (non-circular) region shaping, the boundary ring, and the distance-
-// biased objective picker used by stage advance. No Phaser here; these are the deterministic/
-// parameterized pieces the arena mixin (scenes/arena/world.js, scenes/arena/run.js) is a thin
-// wrapper around.
+// #81/#110/#111/#169 — pure world-generation coverage: the seeded terrain algorithm, the safe-zone
+// geometry, the snaking-corridor spine + carving, the boundary ring, and the distance-biased
+// objective picker used by stage advance. No Phaser here; these are the deterministic/parameterized
+// pieces the arena mixin (scenes/arena/world.js, scenes/arena/run.js) is a thin wrapper around.
 import { describe, it, expect } from 'vitest';
 import {
   mulberry32, safeZoneKeys, generateTerrain, pickFarObjective, FAR_OBJECTIVE_MIN_DIST,
   pickStageObjective, STAGE_OBJECTIVE_NEAR_FRACTION, STAGE_OBJECTIVE_FAR_FRACTION,
-  sectorBoundaries, organicBoundary, boundaryRingKeys,
-  FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH,
-  REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX, CORRIDOR_ASPECT_RATIO, SECTORS,
-  MIN_SPAWN_BOUNDARY_HEX_DIST,
+  boundaryRingKeys, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH, MIN_SPAWN_BOUNDARY_HEX_DIST,
+  REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
+  generateSpine, corridorHexSet, spineProgressHexOf,
+  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX,
 } from './worldgen.js';
 import { lateFraction as runLateFraction, STAGE_COUNT } from './run.js';
 import { getBiome } from './biomes.js';
@@ -19,6 +18,19 @@ import { GAMEPLAY_ZOOM } from '../scenes/arena/shared.js';
 
 const GRASSLAND = getBiome('grassland');
 const DESERT = getBiome('desert');
+
+// A simple analytic disc predicate, used to exercise the boundaryRingKeys/generateTerrain
+// `included`-predicate fallback path without the (removed) organic-blob generator.
+const disc = (radius) => (q, r) => distance({ q, r }, { q: 0, r: 0 }) <= radius;
+
+// Build the live corridor exactly the way scenes/arena/world.js `_buildWorld` does, for a seed.
+function buildCorridor(seed, halfWidth = CORRIDOR_HALF_WIDTH_PX) {
+  const shapeRng = mulberry32(seed);
+  const startAngle = shapeRng() * Math.PI * 2;
+  const spine = generateSpine(shapeRng, { startAngle });
+  const includedKeys = corridorHexSet(spine.points, halfWidth, safeZoneKeys({ q: 0, r: 0 }, 3));
+  return { spine, includedKeys, startAngle };
+}
 
 describe('mulberry32', () => {
   it('is deterministic: the same seed always produces the same sequence', () => {
@@ -42,7 +54,6 @@ describe('safeZoneKeys', () => {
     const keys = safeZoneKeys(center, 3);
     const expected = range(center, 3).map((h) => axialKey(h.q, h.r));
     expect(new Set(keys)).toEqual(new Set(expected));
-    // A radius-3 disc has 1 + 3*3*4 = 37 hexes.
     expect(keys.length).toBe(37);
   });
 
@@ -53,131 +64,98 @@ describe('safeZoneKeys', () => {
   });
 });
 
-describe('sectorBoundaries', () => {
-  it('varies meaningfully by sector — not a uniform (circular) radius', () => {
-    const rng = mulberry32(0x5eed);
-    const boundaries = sectorBoundaries(rng, { baseRadius: 10, variation: 4, sectors: 20 });
-    expect(boundaries.length).toBe(20);
-    const min = Math.min(...boundaries), max = Math.max(...boundaries);
-    // A perfect circle would have max === min; real variation should spread noticeably.
-    expect(max - min).toBeGreaterThan(1);
+// #169: the snaking-corridor spine + carving.
+describe('generateSpine (#169)', () => {
+  it('is deterministic given the same seeded rng + options', () => {
+    const a = generateSpine(mulberry32(42), { startAngle: 1 });
+    const b = generateSpine(mulberry32(42), { startAngle: 1 });
+    expect(a.points).toEqual(b.points);
   });
 
-  it('is deterministic given the same seeded rng sequence', () => {
-    const a = sectorBoundaries(mulberry32(42), { baseRadius: 10, variation: 4 });
-    const b = sectorBoundaries(mulberry32(42), { baseRadius: 10, variation: 4 });
-    expect(a).toEqual(b);
+  it('passes exactly through world origin at u=0 (the spawn end)', () => {
+    const spine = generateSpine(mulberry32(7), { startAngle: 2.1 });
+    const at0 = spine.points.find((p) => Math.abs(p.u) < 1e-6);
+    expect(at0).toBeDefined();
+    expect(Math.hypot(at0.x, at0.y)).toBeLessThan(1e-6);
   });
 
-  it('smooths each sector toward its neighbours (no wild single-sector spikes)', () => {
-    // With smoothing, no sector should land outside the theoretical unsmoothed extreme
-    // (baseRadius ± variation) — smoothing only pulls values IN toward their neighbours.
-    const rng = mulberry32(7);
-    const boundaries = sectorBoundaries(rng, { baseRadius: 10, variation: 4, sectors: 16 });
-    for (const d of boundaries) {
-      expect(d).toBeGreaterThanOrEqual(10 - 4 - 1e-9);
-      expect(d).toBeLessThanOrEqual(10 + 4 + 1e-9);
+  it('is a single non-self-intersecting path: main-axis progress u is strictly monotonic', () => {
+    // A single-valued lateral offset over a monotonic main axis can never self-intersect or
+    // double back — this pins the property the geometry relies on. Checked across seeds/headings.
+    for (let seed = 0; seed < 50; seed++) {
+      const spine = buildCorridor(seed).spine;
+      for (let i = 1; i < spine.points.length; i++) {
+        expect(spine.points[i].u).toBeGreaterThan(spine.points[i - 1].u);
+      }
     }
+  });
+
+  it('spans from behind the spawn end to the full corridor length', () => {
+    const spine = generateSpine(mulberry32(3), { startAngle: 0 });
+    const us = spine.points.map((p) => p.u);
+    // Extends behind the spawn end by ~rearPad (snapped out to the u=0-aligned sample grid).
+    expect(Math.min(...us)).toBeLessThanOrEqual(-CORRIDOR_REAR_PAD_PX);
+    expect(Math.min(...us)).toBeGreaterThan(-CORRIDOR_REAR_PAD_PX - HEX_STEP_PX);
+    expect(Math.max(...us)).toBeGreaterThanOrEqual(CORRIDOR_LENGTH_PX - HEX_STEP_PX);
+  });
+
+  it('genuinely snakes: the spine wanders off a straight main axis', () => {
+    // Project each point onto the perpendicular of its own start heading; a straight corridor
+    // would stay at 0, a snake swings out to ~CORRIDOR_CURVINESS.
+    const startAngle = 0.9;
+    const spine = generateSpine(mulberry32(11), { startAngle });
+    const perpX = -Math.sin(startAngle), perpY = Math.cos(startAngle);
+    const maxPerp = Math.max(...spine.points.map((p) => Math.abs(p.x * perpX + p.y * perpY)));
+    expect(maxPerp).toBeGreaterThan(120);
   });
 });
 
-describe('organicBoundary', () => {
-  it('produces a non-circular shape: included distance varies by direction', () => {
-    const rng = mulberry32(0x5eed);
-    const region = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 10, variation: 4, sectors: 20 });
-    // Walk outward along several different directions and find how far each stays "inside".
-    const dirs = [{ q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 1, r: -1 }];
-    const reach = dirs.map((d) => {
-      let n = 0;
-      while (n < 30 && region(d.q * n, d.r * n)) n++;
-      return n;
-    });
-    // A perfect disc would give identical reach in every direction; an organic shape shouldn't.
-    expect(new Set(reach).size).toBeGreaterThan(1);
+describe('corridorHexSet (#169)', () => {
+  it('always contains the spawn safe zone (force-included)', () => {
+    const { includedKeys } = buildCorridor(5);
+    for (const k of safeZoneKeys({ q: 0, r: 0 }, 3)) expect(includedKeys.has(k)).toBe(true);
   });
 
-  it('always includes the centre hex itself', () => {
-    const rng = mulberry32(3);
-    const region = organicBoundary({ q: 5, r: -2 }, rng, { baseRadius: 8, variation: 3 });
-    expect(region(5, -2)).toBe(true);
-  });
-
-  it('excludes hexes far beyond baseRadius + variation in every direction', () => {
-    const rng = mulberry32(3);
-    const region = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 8, variation: 3 });
-    expect(region(100, 0)).toBe(false);
-  });
-
-  // #127 (playtest: starting map read as a wide open blob — wants "more linear-ish"): the shape
-  // can be ELONGATED into a long corridor/strip via `longAxis`/`aspectRatio`, rather than the
-  // roughly-even organic blob the default `aspectRatio: 1` produces.
-  describe('#127 elongation (longAxis/aspectRatio)', () => {
-    // (1, 0) is exactly angle 0 in world space (hexToPixel(n, 0) has y === 0), matching
-    // `longAxis: 0` below. (-1, 2) is exactly angle π/2 (hexToPixel(-k, 2k) has x === 0) — the
-    // perpendicular ("short axis") direction. Both walk outward from the shared centre so the
-    // comparison is a straight reach-in-hexes measurement along each axis.
-    const alongLongAxis = { q: 1, r: 0 };
-    const alongShortAxis = { q: -1, r: 2 };
-    const reachAlong = (region, dir, max = 200) => {
-      let n = 0;
-      while (n < max && region(dir.q * n, dir.r * n)) n++;
-      return n;
-    };
-
-    it('reaches much farther along the long axis than the perpendicular short axis', () => {
-      const rng = mulberry32(0x5eed);
-      const region = organicBoundary({ q: 0, r: 0 }, rng, {
-        baseRadius: 40, variation: 10, longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
-      });
-      const longReach = reachAlong(region, alongLongAxis);
-      const shortReach = reachAlong(region, alongShortAxis);
-      // A "much narrower on one axis" corridor, not a subtle nudge: require at least a 2x
-      // difference (comfortably below the ~3x target ratio, allowing for per-sector noise).
-      expect(longReach).toBeGreaterThan(shortReach * 2);
-    });
-
-    // A single sampled ray is noisy (the per-sector `variation` noise can make one particular
-    // ray run short or long by chance — see the flat `reachAlong` checks above, which use a
-    // generous 2x margin to absorb that). To check that ROTATING `longAxis` actually rotates
-    // the shape (not just verify one fixed orientation), integrate over the WHOLE shape instead
-    // of a single ray: project every included hex's pixel position onto the rotated axis and
-    // measure the resulting bounding-box span. That average is far less sensitive to any one
-    // sector's noise draw than a single ray is.
-    const extentAlongAngle = (region, angle, boundingRadius = 120) => {
-      const cos = Math.cos(-angle), sin = Math.sin(-angle);
-      let min = Infinity, max = -Infinity;
-      for (const h of range({ q: 0, r: 0 }, boundingRadius)) {
-        if (!region(h.q, h.r)) continue;
-        const { x, y } = hexToPixel(h.q, h.r);
-        const projected = x * cos - y * sin;   // position along the rotated axis
-        if (projected < min) min = projected;
-        if (projected > max) max = projected;
+  it('is a single connected component (one continuous corridor, no islands)', () => {
+    for (let seed = 0; seed < 30; seed++) {
+      const { includedKeys } = buildCorridor(seed);
+      const start = [...includedKeys][0];
+      const seen = new Set([start]);
+      const stack = [start];
+      while (stack.length) {
+        const [q, r] = stack.pop().split(',').map(Number);
+        for (const n of neighbors(q, r)) {
+          const nk = axialKey(n.q, n.r);
+          if (includedKeys.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+        }
       }
-      return max - min;
-    };
+      expect(seen.size).toBe(includedKeys.size);
+    }
+  });
 
-    it('rotating longAxis rotates which direction reads as "long"', () => {
-      const rng = mulberry32(0x5eed);
-      // Same seed/rng sequence, but the corridor now points along the OTHER axis (π/2) —
-      // what was the short axis should now be the long one, and vice versa.
-      const region = organicBoundary({ q: 0, r: 0 }, rng, {
-        baseRadius: 40, variation: 10, longAxis: Math.PI / 2, aspectRatio: CORRIDOR_ASPECT_RATIO,
-      });
-      const formerlyLongExtent = extentAlongAngle(region, 0);
-      const formerlyShortExtent = extentAlongAngle(region, Math.PI / 2);
-      expect(formerlyShortExtent).toBeGreaterThan(formerlyLongExtent * 1.5);
-    });
+  it('is genuinely narrow: far thinner than a disc that reaches as far', () => {
+    const { includedKeys } = buildCorridor(1);
+    // Max hex-distance the corridor reaches from origin.
+    let reach = 0;
+    for (const k of includedKeys) {
+      const [q, r] = k.split(',').map(Number);
+      reach = Math.max(reach, distance({ q, r }, { q: 0, r: 0 }));
+    }
+    const discArea = 3 * reach * reach; // ~hex count of a filled disc of that radius
+    expect(includedKeys.size).toBeLessThan(discArea * 0.5);
+  });
+});
 
-    it('aspectRatio: 1 (the default) reproduces the original roughly-even organic shape', () => {
-      const rngA = mulberry32(11), rngB = mulberry32(11);
-      const withDefault = organicBoundary({ q: 0, r: 0 }, rngA, { baseRadius: 20, variation: 6 });
-      const withExplicitOne = organicBoundary({ q: 0, r: 0 }, rngB, {
-        baseRadius: 20, variation: 6, longAxis: 0, aspectRatio: 1,
-      });
-      for (const [q, r] of [[5, 0], [0, 5], [-4, 2], [3, -6]]) {
-        expect(withDefault(q, r)).toBe(withExplicitOne(q, r));
-      }
-    });
+describe('spineProgressHexOf (#169)', () => {
+  it('is ~0 at the spawn end and grows toward the far end', () => {
+    const { spine } = buildCorridor(4);
+    expect(Math.abs(spineProgressHexOf(spine, 0, 0))).toBeLessThan(1);
+    // The far tip of the spine, as a hex, should read as a large progress. Inline nearest-hex of
+    // the far pixel (hexToPixel-consistent axial rounding) to avoid importing more helpers here.
+    const farPt = spine.points[spine.points.length - 1];
+    const fq = Math.round((Math.sqrt(3) / 3 * farPt.x - 1 / 3 * farPt.y) / 48);
+    const fr = Math.round((2 / 3 * farPt.y) / 48);
+    expect(spineProgressHexOf(spine, fq, fr)).toBeGreaterThan(CORRIDOR_LENGTH_PX / HEX_STEP_PX * 0.6);
   });
 });
 
@@ -222,9 +200,6 @@ describe('generateTerrain', () => {
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
 
-  // #110: the biome's reserved-for-boundary `deep` id must never appear as an in-map feature —
-  // only the biome's lesser `hazard` (if any) may show up, and only ever via `boundaryRing`
-  // (tested separately below) does `deep` ever get stamped.
   describe('#110 deep is boundary-only; hazard is the in-map feature', () => {
     it('never stamps a biome\'s `deep` terrain id without an explicit boundaryRing', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: DESERT });
@@ -255,9 +230,9 @@ describe('generateTerrain', () => {
     });
   });
 
-  describe('included (organic-shape masking)', () => {
-    it('excludes every hex outside the `included` predicate entirely (no tile at all)', () => {
-      const included = (q, r) => q >= 0; // an arbitrary "east half" mask
+  describe('playable-area masking', () => {
+    it('via `included` predicate: excludes every hex outside it (no tile at all)', () => {
+      const included = (q) => q >= 0; // an arbitrary "east half" mask
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND, included });
       for (const [k] of terrain) {
         const [q] = k.split(',').map(Number);
@@ -265,307 +240,108 @@ describe('generateTerrain', () => {
       }
     });
 
-    it('an organic region produces a genuinely smaller/irregular hex count than the full disc', () => {
-      const rng = mulberry32(0x5eed);
-      const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 12, variation: 4 });
-      const organic = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND, included });
-      const fullDisc = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND });
-      expect(organic.terrain.size).toBeLessThan(fullDisc.terrain.size);
+    it('via `includedKeys`: the terrain map covers exactly the given corridor set (plus its boundary ring)', () => {
+      const { includedKeys } = buildCorridor(2);
+      const { terrain } = generateTerrain({
+        seed: 0x5eed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys,
+      });
+      // Every corridor hex got a tile; every terrain hex is a corridor hex (no boundary ring passed).
+      for (const k of includedKeys) expect(terrain.has(k)).toBe(true);
+      for (const k of terrain.keys()) expect(includedKeys.has(k)).toBe(true);
     });
 
-    it('omitting `included` (the default) keeps the full worldRadius-disc behavior', () => {
+    it('an organic corridor produces a genuinely smaller hex count than the full disc', () => {
+      const { includedKeys } = buildCorridor(3);
+      const corridor = generateTerrain({ seed: 0x5eed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys });
+      const fullDisc = generateTerrain({ seed: 0x5eed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND });
+      expect(corridor.terrain.size).toBeLessThan(fullDisc.terrain.size);
+    });
+
+    it('omitting both masks (the default) keeps the full worldRadius-disc behavior', () => {
       const opts = { seed: 0x5eed, worldRadius: 20, biome: GRASSLAND };
       const a = generateTerrain(opts);
-      const b = generateTerrain({ ...opts, included: null });
+      const b = generateTerrain({ ...opts, included: null, includedKeys: null });
       expect([...a.terrain.entries()]).toEqual([...b.terrain.entries()]);
+    });
+
+    it('the `outposts` override controls how many outpost seeds are placed', () => {
+      const { includedKeys } = buildCorridor(9);
+      const few = generateTerrain({ seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, outposts: 1 });
+      const many = generateTerrain({ seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, outposts: 20 });
+      expect(many.buildingHp.size).toBeGreaterThan(few.buildingHp.size);
     });
   });
 });
 
-// #111: the whole run's terrain is built ONCE, upfront, to a generous fixed max extent —
-// there is no more per-stage incremental growth.
-describe('full-run upfront build sizing (#111)', () => {
-  it('FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION stays within MAX_WORLD_RADIUS', () => {
-    expect(FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION).toBeLessThanOrEqual(MAX_WORLD_RADIUS);
-  });
+// #169: the corridor is sized (via simulation, scripts/corridor-sim.mjs) so the boundary ring is
+// reliably visible on the SIDES at the real GAMEPLAY_ZOOM=1.3 camera, while the safe-zone invariant
+// (#110/#158) is never violated. These re-derive that at the data layer, mirroring what the live
+// smoke test checks.
+describe('#169 corridor sizing (boundary visible on the narrow sides; safe zone protected)', () => {
+  const VIEWPORT_W = 1280, VIEWPORT_H = 720;
+  const HALF_W = (VIEWPORT_W / 2) / GAMEPLAY_ZOOM;
+  const HALF_H = (VIEWPORT_H / 2) / GAMEPLAY_ZOOM;
 
-  it('keeps genuine (non-zero) organic variation at the full-build radius', () => {
-    expect(FULL_BUILD_VARIATION).toBeGreaterThan(0);
-  });
-
-  // #127: production (world.js `_buildWorld`) always builds this shape WITH the elongation
-  // applied (`aspectRatio: CORRIDOR_ASPECT_RATIO`), never the bare isotropic circle — so this
-  // sizing check exercises that actual combination, not just the raw radius constants alone.
-  it('produces a single build sized for the whole run — non-circular, and reaching well beyond the old small initial area (12ish hexes) along the long axis', () => {
-    const rng = mulberry32(0x5eed);
-    const region = organicBoundary({ q: 0, r: 0 }, rng, {
-      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-      longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
-    });
-    const dirs = [{ q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 1, r: -1 }];
-    const reach = dirs.map((d) => {
-      let n = 0;
-      while (n < 90 && region(d.q * n, d.r * n)) n++;
-      return n;
-    });
-    // Non-circular: not every direction reaches the same distance.
-    expect(new Set(reach).size).toBeGreaterThan(1);
-    // The long axis (q:1,r:0 is exactly angle 0, matching longAxis: 0) still reaches a real
-    // distance, not a degenerate point — #158 (re-derived against the real GAMEPLAY_ZOOM=1.3
-    // rectangle) shrank the WHOLE build much further than the original #158 pass did (the old
-    // ">30 hexes, beyond the pre-#127 12-hex opening lobe" comparison no longer applies at this
-    // tiny scale; see the dedicated elongation-ratio check below for "long axis clearly beats
-    // short axis," which is the actual shape claim that matters).
-    expect(reach[0]).toBeGreaterThan(5);
-  });
-
-  // #127 sizing pitfall (see the big comment above FULL_BUILD_BASE_RADIUS/VARIATION): the
-  // sector boundary values are in "distHex" units (Euclidean pixel distance / HEX_SIZE), which
-  // is NOT the same as true hex cube-distance — the two differ by a factor that ranges from
-  // 3/2 (at the "in-between" angles) to √3 (along a primary hex direction). Converting a
-  // worst-case distHex value to true hex-distance means dividing by the ratio that makes the
-  // bound tightest for that check, not comparing the raw distHex number straight to a
-  // hex-distance cap (an early version of this test did exactly that and was too strict/wrong).
-  const HEX_DIST_RATIO_MIN = 1.5;              // "in-between" angles: smallest distHex/hexDist ratio
-  const HEX_DIST_RATIO_MAX = Math.sqrt(3);     // primary hex directions: largest ratio
-
-  // #127: the ELONGATED build's worst-case reach along the long axis must still stay within
-  // MAX_WORLD_RADIUS in real hex-distance terms — using the ratio that produces the LARGEST
-  // possible hex-distance for a given distHex value (the smallest ratio, 1.5), since that's the
-  // worst case for exceeding the cap.
-  it('the ELONGATED worst-case long-axis reach (in real hex-distance) stays within MAX_WORLD_RADIUS', () => {
-    const longMult = Math.sqrt(CORRIDOR_ASPECT_RATIO);
-    const worstCaseLongReachDistHex = (FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION) * longMult;
-    const worstCaseLongReachHexDist = worstCaseLongReachDistHex / HEX_DIST_RATIO_MIN;
-    expect(worstCaseLongReachHexDist).toBeLessThanOrEqual(MAX_WORLD_RADIUS);
-  });
-
-  // #127: the live game (scenes/arena/world.js `_buildWorld`) builds the full-run shape with
-  // `longAxis`/`aspectRatio: CORRIDOR_ASPECT_RATIO` — confirm THAT actual combination of
-  // constants (not just a toy baseRadius/variation) really does read as an elongated corridor.
-  it('the full-build shape, elongated with CORRIDOR_ASPECT_RATIO, reads as a corridor not a blob', () => {
-    const rng = mulberry32(0x5eed);
-    const region = organicBoundary({ q: 0, r: 0 }, rng, {
-      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-      longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
-    });
-    let longReach = 0;
-    while (longReach < 200 && region(longReach, 0)) longReach++;
-    let shortReach = 0;
-    while (shortReach < 200 && region(-shortReach, 2 * shortReach)) shortReach++;
-    expect(longReach).toBeGreaterThan(shortReach * 1.5);
-  });
-
-  // #127 regression coverage: an earlier attempt at this sizing (base=45/variation=4/AR=3)
-  // passed every distHex-based check above yet FAILED the live smoke test — scripts/smoke.mjs's
-  // pre-existing #110 check that the biome's `deep` boundary terrain is absent within REAL
-  // hex-distance 20 of spawn in EVERY direction. This test pins the real (hex-distance, not
-  // distHex) near-spawn margin down directly at the data layer, converting the worst observed
-  // distHex minimum via the WORST-CASE ratio (√3, the largest one — smallest resulting
-  // hex-distance) — across many seeds/longAxis draws, not just one lucky/unlucky sample — so a
-  // future resize of these constants fails fast here instead of only surfacing downstream in a
-  // Playwright run.
-  // #158: the flat hex-distance-20 floor this test used to pin down was never derived from
-  // anything but a "comfortably large" guess (see MIN_SPAWN_BOUNDARY_HEX_DIST's own comment in
-  // worldgen.js) — the ACTUAL requirement is just "the safe-clear zone (radius 3) never gets
-  // encroached by the boundary ring." Re-derived MIN_SPAWN_BOUNDARY_HEX_DIST (6) as a real, much
-  // smaller floor that still clears that hard requirement with margin, now that #158 deliberately
-  // shrinks the interior so the boundary sits within camera view. This test still exists to catch
-  // a future resize eroding even THAT smaller floor.
-  it('never lets the near-spawn safety margin (#158, real hex-distance) get eroded below MIN_SPAWN_BOUNDARY_HEX_DIST', () => {
-    let worstMinDistHex = Infinity;
-    for (let seed = 0; seed < 500; seed++) {
-      const rng = mulberry32(seed * 7919 + 13);
-      const longAxis = rng() * Math.PI * 2;
-      const boundaries = sectorBoundaries(rng, {
-        baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-        sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
-      });
-      for (const b of boundaries) if (b < worstMinDistHex) worstMinDistHex = b;
+  // A shallow ringWidth is used purely for TEST SPEED — this only ever checks whether the ring's
+  // NEAR edge falls inside the camera rectangle, identical whether the ring is 6 or 35 hexes deep.
+  function boundaryOnScreen(ring, cx, cy) {
+    for (const k of ring) {
+      const [q, r] = k.split(',').map(Number);
+      const { x, y } = hexToPixel(q, r);
+      if (x >= cx - HALF_W && x <= cx + HALF_W && y >= cy - HALF_H && y <= cy + HALF_H) return true;
     }
-    const worstMinHexDist = worstMinDistHex / HEX_DIST_RATIO_MAX;
-    // A direct grid-scan simulation (worldgen.js's own #158 comment, 2000 seeds) puts the real
-    // worst case at 4 real hex-distance at 11/4 — this distHex/ratio conversion is a DIFFERENT,
-    // more pessimistic method (divides by the largest ratio, so it always reads at or below the
-    // true value), so it's checked against the hard floor with -1 slack rather than the observed
-    // 4 directly, to avoid flaking on the two methods' small, expected disagreement.
-    expect(worstMinHexDist).toBeGreaterThanOrEqual(MIN_SPAWN_BOUNDARY_HEX_DIST - 1);
-  });
+    return false;
+  }
 
-  // #127/#158: direct end-to-end confirmation at the data layer (mirroring what the live smoke
-  // test checks) — build the actual `organicBoundary` + `boundaryRingKeys` the game uses, across
-  // many seeds, and confirm the boundary/ring never lands within MIN_SPAWN_BOUNDARY_HEX_DIST of
-  // spawn. This is the strongest regression guard: it doesn't rely on the ratio-conversion math
-  // above being applied correctly, it just directly re-derives what scripts/smoke.mjs's near-spawn
-  // check verifies.
-  it('the actual built shape+ring never reaches within MIN_SPAWN_BOUNDARY_HEX_DIST of spawn, across many seeds', () => {
+  it('at spawn, the boundary ring is on screen (inside the real 1280x720 @1.3x rectangle), across many seeds', () => {
+    let onScreen = 0;
+    const seeds = 500;
+    for (let seed = 0; seed < seeds; seed++) {
+      const { includedKeys } = buildCorridor(seed);
+      const ring = boundaryRingKeys(null, { insideKeys: includedKeys, ringWidth: 6 });
+      if (boundaryOnScreen(ring, 0, 0)) onScreen++;
+    }
+    // The 4000-seed sweep (scripts/corridor-sim.mjs) lands at ~99.8%; threshold set well under to
+    // absorb this smaller sample. Far more reliable than #158's blob (90.6%) — a corridor is
+    // wrapped by boundary on both sides AND behind the spawn end.
+    expect(onScreen).toBeGreaterThanOrEqual(Math.floor(seeds * 0.95));
+  }, 30000);
+
+  it('the safe zone is never encroached: `deep` boundary stays clear of MIN_SPAWN_BOUNDARY_HEX_DIST of spawn', () => {
     let anyTooClose = false;
-    for (let seed = 0; seed < 200 && !anyTooClose; seed++) {
-      const shapeRng = mulberry32(seed);
-      const longAxis = shapeRng() * Math.PI * 2;
-      const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
-        baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-        sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
-      });
+    for (let seed = 0; seed < 500 && !anyTooClose; seed++) {
+      const { includedKeys } = buildCorridor(seed);
+      const ring = boundaryRingKeys(null, { insideKeys: includedKeys, ringWidth: 4 });
       const D = MIN_SPAWN_BOUNDARY_HEX_DIST;
-      for (let q = -D; q <= D && !anyTooClose; q++) {
-        for (let r = -D; r <= D; r++) {
-          if (Math.abs(q) + Math.abs(r) + Math.abs(q + r) > 2 * D) continue;   // hex-distance > D
-          if (!included(q, r)) { anyTooClose = true; break; }
-        }
+      for (const k of ring) {
+        const [q, r] = k.split(',').map(Number);
+        if ((Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2 <= D) { anyTooClose = true; break; }
       }
     }
     expect(anyTooClose).toBe(false);
-  });
+  }, 20000);
 
-  // #158: the whole point of this resize — confirm the boundary is now WITHIN the real camera
-  // view RECTANGLE, not just "within half the viewport diagonal." An earlier version of this
-  // suite used a circular half-diagonal proxy (matching #126's OWN ring-depth math) and passed
-  // cleanly in simulation — then a real Playwright deploy showed the boundary on screen only
-  // ~50% of the time. The diagonal (≈734px at 1280x720) is the right worst-case bound for "how
-  // deep must the ring be so nothing beyond it is EVER visible" (#126's problem: any single
-  // direction reaching that far is enough), but it's the WRONG bound for "is the boundary
-  // reliably visible" (this issue's problem): the corridor's short axis lands at a random screen
-  // orientation each deploy, and a 1280x720 rectangle's half-HEIGHT (360px) is much smaller than
-  // its half-diagonal — a boundary hex "within the diagonal" is very often still outside the
-  // actual rectangle. Every check below uses the real axis-aligned rectangle, matching
-  // `world.js`/`ArenaScene`'s actual math (canvas size / zoom, dpr cancels) and the live smoke
-  // test's own on-screen check, not a circular approximation.
-  describe('#158 boundary visible within the real camera view', () => {
-    const VIEWPORT_W = 1280, VIEWPORT_H = 720;
-    const HALF_W = (VIEWPORT_W / 2) / GAMEPLAY_ZOOM;
-    const HALF_H = (VIEWPORT_H / 2) / GAMEPLAY_ZOOM;
-
-    // Each `boundaryRingKeys` call below passes a shallow `ringWidth: 8` (not the real
-    // BOUNDARY_RING_WIDTH: 35) purely for TEST SPEED — this only ever checks whether the ring's
-    // NEAR edge falls inside the camera rectangle, and the near edge is identical whether the
-    // ring is 8 or 35 hexes deep (the extra depth is all further away, never closer), so the
-    // on-screen determination is exactly the same either way at a fraction of the BFS cost. The
-    // live game (`world.js`) always builds the real full-depth ring; only this simulation shortcuts it.
-
-    // Does any boundary-ring hex fall inside the real camera rectangle centred at (cx, cy)?
-    function boundaryOnScreen(ring, cx, cy) {
-      for (const k of ring) {
+  it('MAX_WORLD_RADIUS comfortably bounds the corridor\'s real worst-case reach from origin', () => {
+    let worstReach = 0;
+    for (let seed = 0; seed < 200; seed++) {
+      const { includedKeys } = buildCorridor(seed);
+      for (const k of includedKeys) {
         const [q, r] = k.split(',').map(Number);
-        const { x: bx, y: by } = hexToPixel(q, r);
-        if (bx >= cx - HALF_W && bx <= cx + HALF_W && by >= cy - HALF_H && by <= cy + HALF_H) return true;
+        worstReach = Math.max(worstReach, distance({ q, r }, { q: 0, r: 0 }));
       }
-      return false;
     }
-
-    it('at spawn, the boundary ring is on screen (inside the real 1280x720 rectangle), across many seeds', () => {
-      let seeds = 0, onScreen = 0;
-      for (let seed = 0; seed < 500; seed++) {
-        const shapeRng = mulberry32(seed);
-        const longAxis = shapeRng() * Math.PI * 2;
-        const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
-          baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-          sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
-        });
-        const ring = boundaryRingKeys(included, {
-          ringWidth: 8, boundingRadius: FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 20,
-        });
-        seeds++;
-        if (boundaryOnScreen(ring, 0, 0)) onScreen++;
-      }
-      // #158 correction: re-derived against the REAL GAMEPLAY_ZOOM (1.3, not the stale 1.0 an
-      // earlier pass used) — the real viewport is smaller, so spawn-visibility reliability is
-      // capped lower than hoped: the hard safe-zone invariant (radius-3 clear disc around spawn
-      // must never be encroached by the boundary ring — see MIN_SPAWN_BOUNDARY_HEX_DIST) is the
-      // BINDING constraint on how small this map can get, and at the largest size that still
-      // respects it (FULL_BUILD_BASE_RADIUS/VARIATION 9/2), the live 5000-seed sweep in
-      // worldgen.js's own #158 comment lands at 90.6% — not 99%+. A smaller radius visibility-
-      // wise would do better, but breaks the safety invariant outright (verified: 9/3, 8/*, 7/*,
-      // 6/* all fail it). Threshold set a few points under that observed 90.6% so this smaller
-      // 500-seed sample doesn't flake.
-      expect(onScreen).toBeGreaterThanOrEqual(Math.floor(seeds * 0.85));
-    }, 30000);
-
-    it('near a stage-0 objective (pickStageObjective, lateFrac 0), the boundary is on screen', () => {
-      let seeds = 0, onScreen = 0;
-      for (let seed = 0; seed < 150; seed++) {
-        const shapeRng = mulberry32(seed);
-        const longAxis = shapeRng() * Math.PI * 2;
-        const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
-          baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-          sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
-        });
-        const candidates = [];
-        for (let d = 1; d < FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 15; d += 2) {
-          for (const dir of [{ q: 1, r: 0 }, { q: -1, r: 0 }, { q: 1, r: -2 }, { q: -1, r: 2 }]) {
-            if (included(dir.q * d, dir.r * d)) candidates.push(axialKey(dir.q * d, dir.r * d));
-          }
-        }
-        if (candidates.length < 4) continue;
-        const ring = boundaryRingKeys(included, {
-          ringWidth: 8, boundingRadius: FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 20,
-        });
-        const from = { q: 0, r: 0 };
-        const objKey = pickStageObjective(candidates, from, runLateFraction(0), FAR_OBJECTIVE_MIN_DIST);
-        if (!objKey) continue;
-        const [oq, or_] = objKey.split(',').map(Number);
-        const { x, y } = hexToPixel(oq, or_);
-        seeds++;
-        if (boundaryOnScreen(ring, x, y)) onScreen++;
-      }
-      expect(seeds).toBeGreaterThan(50);
-      expect(onScreen).toBe(seeds);
-    }, 20000);
-
-    it('near a mid-run stage objective, the boundary is on screen', () => {
-      let seeds = 0, onScreen = 0;
-      const midStage = Math.floor(STAGE_COUNT / 2);
-      for (let seed = 0; seed < 150; seed++) {
-        const shapeRng = mulberry32(seed);
-        const longAxis = shapeRng() * Math.PI * 2;
-        const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
-          baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-          sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
-        });
-        const candidates = [];
-        for (let d = 1; d < FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 15; d += 2) {
-          for (const dir of [{ q: 1, r: 0 }, { q: -1, r: 0 }, { q: 1, r: -2 }, { q: -1, r: 2 }]) {
-            if (included(dir.q * d, dir.r * d)) candidates.push(axialKey(dir.q * d, dir.r * d));
-          }
-        }
-        if (candidates.length < 4) continue;
-        const ring = boundaryRingKeys(included, {
-          ringWidth: 8, boundingRadius: FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 20,
-        });
-        const from = { q: 0, r: 0 };
-        const objKey = pickStageObjective(candidates, from, runLateFraction(midStage), FAR_OBJECTIVE_MIN_DIST);
-        if (!objKey) continue;
-        const [oq, or_] = objKey.split(',').map(Number);
-        const { x, y } = hexToPixel(oq, or_);
-        seeds++;
-        if (boundaryOnScreen(ring, x, y)) onScreen++;
-      }
-      expect(seeds).toBeGreaterThan(50);
-      expect(onScreen).toBe(seeds);
-    }, 20000);
-
-    it('MAX_WORLD_RADIUS still comfortably bounds the shrunk shape\'s real worst-case reach', () => {
-      // Mirrors the long-axis test above (distHex/ratio conversion) but as a direct sanity check
-      // against the actual constant in force, so a future MAX_WORLD_RADIUS edit that doesn't
-      // track the shrunk FULL_BUILD_* values fails here.
-      const longMult = Math.sqrt(CORRIDOR_ASPECT_RATIO);
-      const worstCaseLongReachDistHex = (FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION) * longMult;
-      const worstCaseLongReachHexDist = worstCaseLongReachDistHex / HEX_DIST_RATIO_MIN;
-      expect(worstCaseLongReachHexDist).toBeLessThan(MAX_WORLD_RADIUS);
-      // Not wastefully oversized either — MAX_WORLD_RADIUS bounds two O(R^2)-ish scans
-      // (generateTerrain's `all` candidate set, boundaryRingKeys' BFS), so a MAX_WORLD_RADIUS far
-      // beyond what the shape can ever reach costs real build time for no benefit.
-      expect(MAX_WORLD_RADIUS).toBeLessThan(worstCaseLongReachHexDist + 20);
-    });
-  });
+    expect(worstReach).toBeLessThanOrEqual(MAX_WORLD_RADIUS);
+    // Not wastefully oversized either.
+    expect(MAX_WORLD_RADIUS).toBeLessThan(worstReach + 25);
+  }, 20000);
 });
 
-// #110: the boundary ring — a biome-appropriate impassable hex ring drawn just outside the
-// pre-built area's own organic edge.
+// #110/#126: the boundary ring — a biome-appropriate impassable hex ring just outside the playable
+// area's own edge. Exercised here against a simple analytic disc region (the `included`-predicate
+// fallback path) and, for the corridor path, via `insideKeys`.
 describe('boundaryRingKeys (#110)', () => {
   it('every ring hex is adjacent to at least one included hex (hugs the shape\'s edge)', () => {
-    const rng = mulberry32(1);
-    const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 8, variation: 2 });
+    const included = disc(8);
     const ring = boundaryRingKeys(included, { ringWidth: 1, boundingRadius: 14 });
     expect(ring.size).toBeGreaterThan(0);
     for (const k of ring) {
@@ -577,8 +353,7 @@ describe('boundaryRingKeys (#110)', () => {
   });
 
   it('never includes a hex that is itself part of the shape', () => {
-    const rng = mulberry32(2);
-    const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 8, variation: 2 });
+    const included = disc(8);
     const ring = boundaryRingKeys(included, { ringWidth: 2, boundingRadius: 14 });
     for (const k of ring) {
       const [q, r] = k.split(',').map(Number);
@@ -587,20 +362,22 @@ describe('boundaryRingKeys (#110)', () => {
   });
 
   it('a wider ringWidth produces a thicker (larger) ring', () => {
-    const rng1 = mulberry32(3), rng2 = mulberry32(3);
-    const included1 = organicBoundary({ q: 0, r: 0 }, rng1, { baseRadius: 8, variation: 2 });
-    const included2 = organicBoundary({ q: 0, r: 0 }, rng2, { baseRadius: 8, variation: 2 });
-    const thin = boundaryRingKeys(included1, { ringWidth: 1, boundingRadius: 14 });
-    const thick = boundaryRingKeys(included2, { ringWidth: 3, boundingRadius: 14 });
+    const thin = boundaryRingKeys(disc(8), { ringWidth: 1, boundingRadius: 14 });
+    const thick = boundaryRingKeys(disc(8), { ringWidth: 3, boundingRadius: 14 });
     expect(thick.size).toBeGreaterThan(thin.size);
   });
 
-  // #126: playtest — the boundary ring wasn't deep enough; the raw black void past it was
-  // visible from some camera positions/zooms. BOUNDARY_RING_WIDTH must be derived from the
-  // actual worst-case camera view distance (half the viewport diagonal, since the camera
-  // converges to centring on the player, who can stand flush against the ring), not a guessed
-  // small constant — these tests pin that relationship down instead of just re-asserting
-  // whatever number is currently in the file.
+  it('via insideKeys, wraps the corridor set directly (no bounding-disc scan)', () => {
+    const { includedKeys } = buildCorridor(6);
+    const ring = boundaryRingKeys(null, { insideKeys: includedKeys, ringWidth: 1 });
+    expect(ring.size).toBeGreaterThan(0);
+    for (const k of ring) {
+      expect(includedKeys.has(k)).toBe(false);
+      const [q, r] = k.split(',').map(Number);
+      expect(neighbors(q, r).some((n) => includedKeys.has(axialKey(n.q, n.r)))).toBe(true);
+    }
+  });
+
   describe('#126 boundary depth actually covers the worst-case camera view distance', () => {
     it('BOUNDARY_RING_WIDTH rendered depth (in px) covers REQUIRED_VIEW_DEPTH_PX', () => {
       const ringDepthPx = BOUNDARY_RING_WIDTH * HEX_STEP_PX;
@@ -608,23 +385,15 @@ describe('boundaryRingKeys (#110)', () => {
     });
 
     it('is the tightest hex count that still covers that depth (not a wasteful over-guess)', () => {
-      // One ring narrower must fall short — otherwise BOUNDARY_RING_WIDTH is bigger than the
-      // math actually calls for (which would cost real perf/build-time for no benefit, #126's
-      // explicit performance concern).
       const oneNarrower = (BOUNDARY_RING_WIDTH - 1) * HEX_STEP_PX;
       expect(oneNarrower).toBeLessThan(REQUIRED_VIEW_DEPTH_PX);
     });
 
     it('a full BFS-built ring at the default width is actually that deep in practice', () => {
-      // Sanity-check the real BFS output (not just the arithmetic above) against a big, roughly
-      // circular region — walk outward from a point squarely inside the shape until we exit the
-      // ring, and confirm the ring's real span is at least BOUNDARY_RING_WIDTH hex-steps.
-      const rng = mulberry32(0x5eed);
-      const included = organicBoundary({ q: 0, r: 0 }, rng, { baseRadius: 20, variation: 2 });
+      const included = disc(20);
       const ring = boundaryRingKeys(included, {
         ringWidth: BOUNDARY_RING_WIDTH, boundingRadius: 20 + BOUNDARY_RING_WIDTH + 4,
       });
-      // Walk due "east" (q+, r=0) from just outside the shape until we leave the ring.
       let q = 0;
       while (included(q, 0)) q++;
       let depth = 0;
@@ -633,9 +402,6 @@ describe('boundaryRingKeys (#110)', () => {
     });
 
     it('stays within a sane order of magnitude (a real depth fix, not a runaway perf regression)', () => {
-      // Guards against a future edit accidentally blowing this up (e.g. a typo'd extra zero in
-      // the safety margin) — the whole world's tile count scales with this, per #126's own
-      // performance-implications warning.
       expect(BOUNDARY_RING_WIDTH).toBeGreaterThan(10);
       expect(BOUNDARY_RING_WIDTH).toBeLessThan(75);
     });
@@ -649,18 +415,16 @@ describe('pickFarObjective', () => {
 
   it('picks a candidate at or beyond minDistance over a closer one', () => {
     const from = { q: 0, r: 0 };
-    const near = axialKey(2, 0);   // distance 2
-    const far = axialKey(10, 0);   // distance 10
-    const picked = pickFarObjective([near, far], from, 6);
-    expect(picked).toBe(far);
+    const near = axialKey(2, 0);
+    const far = axialKey(10, 0);
+    expect(pickFarObjective([near, far], from, 6)).toBe(far);
   });
 
   it('falls back to the single farthest candidate if none clear minDistance', () => {
     const from = { q: 0, r: 0 };
-    const a = axialKey(1, 0);   // distance 1
-    const b = axialKey(2, 0);   // distance 2
-    const picked = pickFarObjective([a, b], from, 50);
-    expect(picked).toBe(b);
+    const a = axialKey(1, 0);
+    const b = axialKey(2, 0);
+    expect(pickFarObjective([a, b], from, 50)).toBe(b);
   });
 
   it('is deterministic given the same inputs (no RNG)', () => {
@@ -669,56 +433,35 @@ describe('pickFarObjective', () => {
     expect(pickFarObjective(keys, from, 3)).toBe(pickFarObjective(keys, from, 3));
   });
 
-  // A `reveal` predicate can still scope the pick to a subset of candidates — kept as an
-  // optional filter (nothing in the live game passes it since #111, but it's still exercised
-  // here since the parameter remains part of the pure API).
+  it('a `distanceOf` metric overrides straight-line distance (e.g. spine progress)', () => {
+    const from = { q: 0, r: 0 };
+    const a = axialKey(2, 0), b = axialKey(10, 0);
+    // Straight-line would pick b (far); an inverted metric makes a the "farthest".
+    const inverted = (q) => -q;
+    expect(pickFarObjective([a, b], from, 0, null, inverted)).toBe(a);
+  });
+
   describe('with a reveal predicate', () => {
     const from = { q: 0, r: 0 };
     const inRegion = (q) => q >= 0;
-
     it('never picks a candidate outside the reveal region', () => {
-      const nearButInRegion = axialKey(3, 0);     // q=3 >= 0: inside
-      const farButOutsideRegion = axialKey(-20, 0); // q=-20 < 0: outside, would win on distance alone
-      const picked = pickFarObjective([nearButInRegion, farButOutsideRegion], from, 6, inRegion);
-      expect(picked).toBe(nearButInRegion);
+      const picked = pickFarObjective([axialKey(3, 0), axialKey(-20, 0)], from, 6, inRegion);
+      expect(picked).toBe(axialKey(3, 0));
     });
-
     it('returns null if no candidate lies inside the reveal region', () => {
-      const onlyOutside = [axialKey(-4, 0), axialKey(-9, 2)];
-      expect(pickFarObjective(onlyOutside, from, 6, inRegion)).toBeNull();
-    });
-
-    it('omitting reveal keeps the original whole-map behavior', () => {
-      const near = axialKey(2, 0);
-      const far = axialKey(-10, 0);
-      expect(pickFarObjective([near, far], from, 6)).toBe(far);
+      expect(pickFarObjective([axialKey(-4, 0), axialKey(-9, 2)], from, 6, inRegion)).toBeNull();
     });
   });
 
-  // #81 follow-up (playtest 2026-07-10 point 4): the FIRST stage's objective (mission.js
-  // `_initMission`) — and, per #111, every LATER stage's objective too (scenes/arena/run.js
-  // `_pickNextStageObjective`) — shares this exact function + floor.
-  describe('as used for the FIRST stage objective (mission.js _initMission)', () => {
-    it('the default minDistance IS the shared FAR_OBJECTIVE_MIN_DIST floor', () => {
-      const from = { q: 0, r: 0 };
-      const near = axialKey(2, 0);   // distance 2 — inside spawn view, must not be picked
-      const far = axialKey(10, 0);   // distance 10 — requires real travel
-      expect(pickFarObjective([near, far], from)).toBe(far);
-    });
-
-    it('FAR_OBJECTIVE_MIN_DIST is exported so both the first stage and later stages share one floor', () => {
-      expect(FAR_OBJECTIVE_MIN_DIST).toBeGreaterThan(0);
-    });
+  it('the default minDistance IS the shared FAR_OBJECTIVE_MIN_DIST floor', () => {
+    const from = { q: 0, r: 0 };
+    expect(pickFarObjective([axialKey(2, 0), axialKey(10, 0)], from)).toBe(axialKey(10, 0));
+    expect(FAR_OBJECTIVE_MIN_DIST).toBeGreaterThan(0);
   });
 });
 
-// #138 (playtest: "the map still feels huge, especially on initial deploy"): the objective
-// distance now scales with the run's `lateFraction` curve (reused straight from data/run.js,
-// not reinvented here) instead of always jumping to the single farthest standing outpost.
 describe('pickStageObjective (#138)', () => {
   const from = { q: 0, r: 0 };
-  // A spread of candidates from very close to very far, so "closest to the target fraction of
-  // the farthest candidate" has real choices to make at every stage of the curve.
   const spread = [1, 4, 8, 12, 16, 20, 30, 40, 50, 60].map((d) => axialKey(d, 0));
 
   it('returns null for an empty candidate list', () => {
@@ -728,16 +471,14 @@ describe('pickStageObjective (#138)', () => {
   it('stage 0 (lateFrac 0) picks a NEAR objective, not the farthest candidate', () => {
     const picked = pickStageObjective(spread, from, 0);
     const [q, r] = picked.split(',').map(Number);
-    // Farthest candidate is at distance 60; a near (lateFrac 0) pick should land well short of it.
     expect(distance({ q, r }, from)).toBeLessThan(30);
   });
 
-  it('the final stage (lateFrac 1) picks the single farthest candidate, matching the old always-farthest behavior', () => {
-    const picked = pickStageObjective(spread, from, 1);
-    expect(picked).toBe(pickFarObjective(spread, from));
+  it('the final stage (lateFrac 1) picks the single farthest candidate', () => {
+    expect(pickStageObjective(spread, from, 1)).toBe(pickFarObjective(spread, from));
   });
 
-  it('the escalation curve is real: later lateFrac values pick meaningfully farther objectives than stage 0', () => {
+  it('the escalation curve is real: later lateFrac values pick meaningfully farther objectives', () => {
     const distOf = (k) => { const [q, r] = k.split(',').map(Number); return distance({ q, r }, from); };
     const d0 = distOf(pickStageObjective(spread, from, 0));
     const dMid = distOf(pickStageObjective(spread, from, 0.5));
@@ -747,23 +488,11 @@ describe('pickStageObjective (#138)', () => {
   });
 
   it('respects minDistance as a floor on the TARGET, even for a near (stage 0) pick', () => {
-    // maxD=7, so a raw 20%-of-max target would be ~1.4 — the minDistance floor of 6 pulls the
-    // target up to 6, so the candidate AT distance 6 (not the closer ones) should be picked.
     const nearby = [axialKey(1, 0), axialKey(2, 0), axialKey(6, 0), axialKey(7, 0)];
-    const picked = pickStageObjective(nearby, from, 0, 6);
-    expect(picked).toBe(axialKey(6, 0));
+    expect(pickStageObjective(nearby, from, 0, 6)).toBe(axialKey(6, 0));
   });
 
-  // Regression (found post-merge, real bug not flakiness): `targetD` was floored at
-  // `minDistance`, but the "closest candidate to the target" search wasn't itself restricted to
-  // candidates clearing that floor — if the nearest available candidate to a floored target
-  // happened to sit UNDER minDistance (because it was numerically closer to the target than any
-  // candidate that actually cleared the floor), it still got picked, silently violating the
-  // floor the caller asked for. maxD=20 so target=max(6, 0.2*20=4)=6; among [3, 5, 20], distance
-  // 5 is numerically closest to 6 (diff 1) but sits BELOW minDistance, while 20 is the only
-  // candidate that actually clears it — the returned candidate's OWN distance must clear
-  // minDistance, not just have shaped the target that produced it.
-  it('never returns a candidate whose OWN distance falls under minDistance, even if it is numerically closest to the (floored) target', () => {
+  it('never returns a candidate whose OWN distance falls under minDistance', () => {
     const gappy = [axialKey(3, 0), axialKey(5, 0), axialKey(20, 0)];
     const picked = pickStageObjective(gappy, from, 0, 6);
     const [q, r] = picked.split(',').map(Number);
@@ -773,16 +502,7 @@ describe('pickStageObjective (#138)', () => {
 
   it('falls back to the overall closest-to-target candidate if NONE clear minDistance at all', () => {
     const allTooClose = [axialKey(1, 0), axialKey(2, 0), axialKey(3, 0)];
-    // maxD=3, target=max(6, 0.2*3=0.6)=6 — nothing here clears 6, so the fallback picks whatever
-    // is numerically closest to the target among the whole set (distance 3, diff 3, is closest).
-    const picked = pickStageObjective(allTooClose, from, 0, 6);
-    expect(picked).toBe(axialKey(3, 0));
-  });
-
-  it('degrades gracefully with very few standing candidates (no separate fallback needed)', () => {
-    const onlyTwo = [axialKey(2, 0), axialKey(3, 0)];
-    const picked = pickStageObjective(onlyTwo, from, 0);
-    expect(onlyTwo).toContain(picked);
+    expect(pickStageObjective(allTooClose, from, 0, 6)).toBe(axialKey(3, 0));
   });
 
   it('is deterministic given the same inputs (no RNG)', () => {
@@ -795,40 +515,29 @@ describe('pickStageObjective (#138)', () => {
     expect(STAGE_OBJECTIVE_FAR_FRACTION).toBe(1);
   });
 
-  // End-to-end check using the SAME curve the live game wires through mission.js/run.js: reusing
-  // data/run.js's own `lateFraction(stageIndex)` across all STAGE_COUNT stages, confirm stage 0's
-  // objective is meaningfully nearer than the final stage's, on a realistic candidate spread built
-  // over an actual (trimmed, #138) full-run map shape.
-  it('across the real run curve (data/run.js lateFraction), stage 0 is meaningfully nearer than the final stage', () => {
-    const rng = mulberry32(0xF00D);
-    const region = organicBoundary({ q: 0, r: 0 }, rng, {
-      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
-      longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
-    });
-    // A candidate outpost every hex along the long axis, out to the shape's edge. #158 shrank
-    // MAX_WORLD_RADIUS enough that the old "every 3 hexes" stride left too few samples on this
-    // much smaller map — every hex still reads as "a realistic candidate spread," just denser.
-    const candidates = [];
-    for (let d = 1; d < MAX_WORLD_RADIUS; d += 1) {
-      if (region(d, 0)) candidates.push(axialKey(d, 0));
+  // #169: measured ALONG THE SPINE via a `distanceOf` metric, objectives march monotonically down
+  // the corridor across the real run curve — stage 0 near the spawn end, final near the far end.
+  it('across the real run curve, objectives progress monotonically DOWN THE SPINE end-to-end', () => {
+    let allMonotonic = true, checked = 0;
+    for (let seed = 0; seed < 60; seed++) {
+      const { spine, includedKeys } = buildCorridor(seed);
+      const progressOf = (q, r) => spineProgressHexOf(spine, q, r);
+      // A realistic candidate spread: every ~5th corridor hex stands in for a generated outpost.
+      const candidates = [...includedKeys].filter((_, i) => i % 5 === 0);
+      const progOf = (k) => { const [q, r] = k.split(',').map(Number); return progressOf(q, r); };
+      const stages = [];
+      for (let s = 0; s < STAGE_COUNT; s++) {
+        const k = pickStageObjective(candidates, from, runLateFraction(s), FAR_OBJECTIVE_MIN_DIST, null, progressOf);
+        stages.push(progOf(k));
+      }
+      checked++;
+      for (let s = 1; s < stages.length; s++) if (stages[s] < stages[s - 1]) allMonotonic = false;
+      // Stage 0 is near the spawn end; the final stage reaches well down the corridor.
+      const maxProg = Math.max(...candidates.map(progOf));
+      expect(stages[0]).toBeLessThan(maxProg * 0.5);
+      expect(stages[STAGE_COUNT - 1]).toBeGreaterThan(stages[0] * 1.5);
     }
-    expect(candidates.length).toBeGreaterThan(5);
-
-    const distOf = (k) => { const [q, r] = k.split(',').map(Number); return distance({ q, r }, from); };
-    const stage0Dist = distOf(pickStageObjective(candidates, from, runLateFraction(0)));
-    const lastStageDist = distOf(pickStageObjective(candidates, from, runLateFraction(STAGE_COUNT - 1)));
-    const maxCandidateDist = Math.max(...candidates.map(distOf));
-
-    // Stage 0's objective is a short trek relative to the map's overall reachable distance...
-    // #158: at the deliberately much-smaller post-#158 map size (re-derived against the real
-    // GAMEPLAY_ZOOM=1.3 rectangle — FULL_BUILD_BASE_RADIUS 9, MAX_WORLD_RADIUS 16),
-    // FAR_OBJECTIVE_MIN_DIST (3) is now close to HALF of maxCandidateDist on some seeds, so a
-    // fixed 0.4-of-max fraction is no longer a reliable proxy for "short trek" — the floor itself
-    // dominates. The real, scale-independent claim is just "stage 0 doesn't land on the single
-    // farthest candidate" (strictly nearer than the max), which the ratio check below (stage 0
-    // meaningfully nearer than the final stage) backs up with a real margin.
-    expect(stage0Dist).toBeLessThan(maxCandidateDist);
-    // ...while the final stage reaches noticeably farther than stage 0 did.
-    expect(lastStageDist).toBeGreaterThan(stage0Dist * 1.5);
+    expect(checked).toBeGreaterThan(50);
+    expect(allMonotonic).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
-import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
+import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -101,9 +101,12 @@ export const RunMixin = {
     // where the stage-aware pick comes back empty) rather than leaving a stage without one.
     const hexKeys = [...this.buildingHp.keys()];
     const frac = lateFraction(this.run.stageIndex);
-    this.objectiveHex = pickStageObjective(hexKeys, playerHex, frac, FAR_OBJECTIVE_MIN_DIST)
+    // #169: objective distance is measured ALONG THE SPINE (progress down the corridor), so later
+    // stages' objectives march progressively toward the far end — the run traverses the whole spine.
+    const progressOf = (q, r) => spineProgressHexOf(this._spine, q, r);
+    this.objectiveHex = pickStageObjective(hexKeys, playerHex, frac, FAR_OBJECTIVE_MIN_DIST, null, progressOf)
       ?? this._spawnOutpostAt(playerHex.q, playerHex.r)
-      ?? pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST);
+      ?? pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST, null, progressOf);
     this.mission = makeMission(desc.missionTypeId);
     this.registry.set('mission', this.mission);
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }

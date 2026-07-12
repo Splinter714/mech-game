@@ -687,42 +687,60 @@ try {
       } else boundary.groundBlockedAtRing = false;
     }
 
-    // #158: the whole point of this resize — the boundary terrain must be genuinely ON-SCREEN at
-    // spawn, not just "somewhere within a generous radius." Force the player back to world origin
-    // (matches every other "at spawn" check in this file) and compute the REAL camera world-space
-    // viewport (same formula ArenaScene.create()/`_offscreenSpawnPoint` use: canvas size / actual
-    // zoom, since dpr cancels — see worldgen.js's own #158 comment) rather than re-deriving it a
-    // third way, then confirm at least one boundary-ring hex actually falls inside that rect.
+    // #169: the whole point of the snaking-corridor resize — the boundary terrain must be genuinely
+    // ON-SCREEN, on the narrow SIDES (and behind the spawn END), not just "somewhere on the map."
+    // Compute the REAL camera world-space viewport (canvas size / actual zoom, dpr cancels — same
+    // formula ArenaScene.create()/`_offscreenSpawnPoint` use) and count boundary-ring hexes inside
+    // the rect from a spread of vantage points: spawn (origin, the corridor's end) AND several
+    // points marching down the spine. This is a ROBUST AGGREGATE, not a single frozen-frame ~1-in-N
+    // gamble (the old #158 single-spawn-frame check passed only ~90% by design on the shrunk blob;
+    // each corridor vantage point is ~99.7% per the 4000-seed sweep in scripts/corridor-sim.mjs, so
+    // a strong-majority requirement essentially never flakes while proving "boundary visible on the
+    // sides throughout the corridor," end to end).
     const boundaryVisibility = {};
     {
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
       const zoom = a.cameras.main.zoom || 1;
       const vw = a.scale.width / zoom, vh = a.scale.height / zoom;
-      const viewX0 = a.px - vw / 2, viewY0 = a.py - vh / 2;
-      const viewX1 = viewX0 + vw, viewY1 = viewY0 + vh;
       const SIZE = 48, RT3 = Math.sqrt(3);
-      let onScreen = 0;
-      for (const k of (a._boundaryRing ?? [])) {
+      const ringHexes = [...(a._boundaryRing ?? [])].map((k) => {
         const [rq, rr] = k.split(',').map(Number);
-        const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
-        if (bx >= viewX0 && bx <= viewX1 && by >= viewY0 && by <= viewY1) onScreen++;
+        return { x: SIZE * RT3 * (rq + rr / 2), y: SIZE * (3 / 2) * rr };
+      });
+      const visibleCountFrom = (cx, cy) => {
+        const x0 = cx - vw / 2, y0 = cy - vh / 2, x1 = cx + vw / 2, y1 = cy + vh / 2;
+        let n = 0;
+        for (const h of ringHexes) if (h.x >= x0 && h.x <= x1 && h.y >= y0 && h.y <= y1) n++;
+        return n;
+      };
+      // Vantage points: spawn, then several sampled along the actual generated spine.
+      const spine = a._spine;
+      const vantage = [{ x: 0, y: 0 }];
+      if (spine && spine.points.length) {
+        const maxU = spine.points[spine.points.length - 1].u;
+        for (const frac of [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) {
+          const targetU = frac * maxU;
+          let best = spine.points[0];
+          for (const p of spine.points) if (Math.abs(p.u - targetU) < Math.abs(best.u - targetU)) best = p;
+          vantage.push({ x: best.x, y: best.y });
+        }
       }
-      boundaryVisibility.atSpawn = onScreen > 0;
-      boundaryVisibility.hexesOnScreenAtSpawn = onScreen;
+      const hexesOnScreenAtSpawn = visibleCountFrom(0, 0);
+      let visiblePoints = 0;
+      for (const v of vantage) if (visibleCountFrom(v.x, v.y) > 0) visiblePoints++;
+      boundaryVisibility.atSpawn = hexesOnScreenAtSpawn > 0;
+      boundaryVisibility.hexesOnScreenAtSpawn = hexesOnScreenAtSpawn;
+      boundaryVisibility.totalVantagePoints = vantage.length;
+      boundaryVisibility.visibleVantagePoints = visiblePoints;
+      // Robust gate: a strong majority of vantage points (spawn + down the spine) must see boundary.
+      boundaryVisibility.robustlyVisible = visiblePoints >= Math.ceil(vantage.length * 0.75);
 
-      // Also check from the CURRENT mission objective's position — a realistic "normal play"
-      // vantage point, not just the origin. At this point in the smoke run the objective is
-      // still stage 0's (the stage-advance test that reassigns it runs later).
+      // Also check from the CURRENT stage-0 objective's position — a realistic play vantage. At
+      // this point in the smoke run the objective is still stage 0's (stage-advance runs later).
       if (a.objectiveHex) {
         const [oq, or_] = a.objectiveHex.split(',').map(Number);
         const ox = SIZE * RT3 * (oq + or_ / 2), oy = SIZE * (3 / 2) * or_;
-        const ovX0 = ox - vw / 2, ovY0 = oy - vh / 2, ovX1 = ovX0 + vw, ovY1 = ovY0 + vh;
-        let onScreenAtObjective = 0;
-        for (const k of (a._boundaryRing ?? [])) {
-          const [rq, rr] = k.split(',').map(Number);
-          const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
-          if (bx >= ovX0 && bx <= ovX1 && by >= ovY0 && by <= ovY1) onScreenAtObjective++;
-        }
+        const onScreenAtObjective = visibleCountFrom(ox, oy);
         boundaryVisibility.nearStage0Objective = onScreenAtObjective > 0;
         boundaryVisibility.hexesOnScreenAtObjective = onScreenAtObjective;
       } else {
@@ -1493,11 +1511,12 @@ try {
   if (!arena.boundary.ringUsesDeepId) fail('#110 the boundary ring is not stamped with the biome\'s reserved "deep" terrain id');
   if (!arena.boundary.deepAbsentNearSpawn) fail('#110/#158 the biome\'s "deep" terrain appeared as an in-map feature within the near-spawn safety margin — it must be boundary-only');
   if (!arena.boundary.groundBlockedAtRing) fail('#110 the boundary ring did not block ground movement like any other impassable terrain');
-  // #158: the concrete, measurable target from the issue — boundary terrain must actually be
-  // visible on screen, not just present somewhere on the map. Checked against the REAL camera
-  // viewport (canvas size / actual zoom), both at spawn and near the live stage-0 objective.
-  if (!arena.boundaryVisibility.atSpawn) fail(`#158 boundary terrain is not visible on screen at spawn (camera viewport contains 0 boundary-ring hexes)`);
-  if (arena.boundaryVisibility.nearStage0Objective === false) fail(`#158 boundary terrain is not visible on screen near the stage-0 objective (camera viewport contains 0 boundary-ring hexes)`);
+  // #169: the concrete, measurable target — boundary terrain must actually be visible on the narrow
+  // corridor SIDES, checked against the REAL camera viewport (canvas size / actual zoom) from a
+  // spread of vantage points (spawn + down the spine), so it's a robust aggregate, not a flaky
+  // single-frame gamble. A strong majority of points must see the boundary.
+  if (!arena.boundaryVisibility.robustlyVisible) fail(`#169 boundary terrain not reliably visible along the corridor: only ${arena.boundaryVisibility.visibleVantagePoints}/${arena.boundaryVisibility.totalVantagePoints} vantage points (spawn + down the spine) had a boundary-ring hex on screen — the narrow corridor should show the boundary on the sides throughout`);
+  if (arena.boundaryVisibility.nearStage0Objective === false) fail(`#169 boundary terrain is not visible on screen near the stage-0 objective (camera viewport contains 0 boundary-ring hexes)`);
   // Flying enemies must ignore the new boundary terrain, same as they ignore every other
   // terrain (helicopter/drone narratively fly over ground obstacles) — coordinator follow-up.
   if (arena.flyOverBoundary.tested) {
