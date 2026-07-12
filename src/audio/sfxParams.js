@@ -171,8 +171,8 @@ export const DEFAULT_SFX = withQDefaults({
   // them while tuning — that's intentional, not a bug; don't restore nonzero gain.
   plasmaLance: {
     fire: [
-      { kind: 'tone', type: 'triangle', freq: 115, freqEnd: 1680, dur: 0.145, gain: 0.49, attack: 0.01 },
-      { kind: 'tone', type: 'square', freq: 610, freqEnd: 45, dur: 0.22, gain: 0.05, attack: 0.026 },
+      { kind: 'tone', type: 'triangle', freq: 425, freqEnd: 20, dur: 0.26, gain: 1, attack: 0.005 },
+      { kind: 'tone', type: 'sawtooth', freq: 920, freqEnd: 1275, dur: 0.11, gain: 0.08, attack: 0.011 },
       { kind: 'noise', type: 'bandpass', freq: 800, freqEnd: 90, dur: 0.06, gain: 0.08, attack: 0.001, q: 0.1 },
       { kind: 'noise', type: 'bandpass', freq: 1000, freqEnd: 600, dur: 0.08, gain: 0, attack: 0.002, q: 1 },
     ],
