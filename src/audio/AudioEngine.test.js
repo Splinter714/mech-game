@@ -4,6 +4,9 @@ import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
   storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, _resetForTest,
 } from './sfxOverrides.js';
+import {
+  _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
+} from './bakedSfx.js';
 
 // Minimal mock Web Audio context: records how many voices (oscillators / noise sources)
 // were created so we can assert the synth actually scheduled sound, and that every event
@@ -401,6 +404,69 @@ describe('AudioEngine (mock context)', () => {
         expect(after.convolvers).toBe(before.convolvers);
         expect(ctx._lastBufferSource().detune.value).toBe(0);
       });
+    });
+  });
+
+  // #173: baked-in SFX assets — a file shipped in the build plays for a weapon+stage, sitting
+  // BELOW a dev IndexedDB override but ABOVE procedural synthesis. Buffers are seeded directly
+  // (node can't fetch a bundled Vite URL); the decode+cache path itself is covered in
+  // bakedSfx.test.js. Precedence + procedural fallback are the point here.
+  describe('baked SFX (#173)', () => {
+    const fakeFile = (name, tag) => ({
+      name, type: 'audio/wav', arrayBuffer: async () => new TextEncoder().encode(tag).buffer,
+    });
+
+    // Both override modules are module-level singletons — reset each and re-point the override
+    // module at THIS test's context (the outer beforeEach's eng.init already wired baked+override
+    // contexts, but _resetForTest clears them and eng.init no-ops on an initialised engine).
+    beforeEach(() => { _resetForTest(); _resetBakedForTest(); setAudioContext(ctx); });
+    afterEach(() => { _resetBakedForTest(); delete globalThis.indexedDB; });
+
+    it('plays the baked buffer via a buffer source instead of the procedural layers', () => {
+      const bakedBuf = { __baked: 'bitBomb' };
+      _setBakedBufferForTest('clusterRocket', 'fire', bakedBuf);
+      const before = ctx._counts();
+      eng.fire(getWeapon('clusterRocket'));
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);          // exactly one buffer source: the bake
+      expect(after.oscillators).toBe(before.oscillators);      // no procedural tone layers ran
+      expect(ctx._lastBufferSource().buffer).toBe(bakedBuf);   // and it was the baked buffer
+    });
+
+    it('a dev IndexedDB override still WINS over the baked asset for the same weapon+stage', async () => {
+      const bakedBuf = { __baked: 'bitBomb' };
+      _setBakedBufferForTest('clusterRocket', 'fire', bakedBuf);
+      const overrideBuf = await storeOverride('clusterRocket', 'fire', fakeFile('dev.wav', 'DEV'));
+      const before = ctx._counts();
+      eng.fire(getWeapon('clusterRocket'));
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);              // one buffer source...
+      expect(ctx._lastBufferSource().buffer).toBe(overrideBuf);    // ...the OVERRIDE, not the bake
+      expect(ctx._lastBufferSource().buffer).not.toBe(bakedBuf);
+    });
+
+    it('a weapon+stage with a bake but no decoded buffer yet plays procedurally (never throws)', () => {
+      // clusterRocket HAS a BAKED_SFX entry, but nothing seeded into the cache = pre-decode state.
+      const before = ctx._counts();
+      eng.fire(getWeapon('clusterRocket'));
+      const after = ctx._counts();
+      expect(after.oscillators + after.sources).toBeGreaterThan(before.oscillators + before.sources);
+    });
+
+    it('a weapon with NO baked entry is unaffected — plays procedurally even with bakes loaded', () => {
+      _setBakedBufferForTest('clusterRocket', 'fire', { __baked: 'bitBomb' });
+      const before = ctx._counts();
+      eng.fire(getWeapon('autocannon'));   // no bake for autocannon/fire
+      const after = ctx._counts();
+      expect(after.oscillators).toBeGreaterThan(before.oscillators);  // procedural layers ran
+    });
+
+    it('the bake is scoped to fire — clusterRocket impact still plays procedurally', () => {
+      _setBakedBufferForTest('clusterRocket', 'fire', { __baked: 'bitBomb' });
+      const before = ctx._counts();
+      eng.impact('clusterRocket');   // impact stage, no bake
+      const after = ctx._counts();
+      expect(after.oscillators).toBeGreaterThan(before.oscillators);
     });
   });
 });
