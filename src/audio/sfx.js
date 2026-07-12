@@ -7,7 +7,7 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
-import { getOverride } from './sfxOverrides.js';
+import { getOverride, getTrimMs, getStartMs } from './sfxOverrides.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -21,13 +21,25 @@ const TRAJECTORY_LOOP_GAIN_SCALE = 0.6;
 // the common case for every weapon that's never touched the feature), so this is a strict
 // no-op — same node graph, same behavior — whenever no override exists. Returns true if it
 // played the override (so callers skip the procedural fallback), false otherwise.
+//
+// #166: non-destructive start/end pair — `getStartMs`/`getTrimMs` are the same kind of
+// synchronous no-await lookup, null unless set for this weapon+stage. `startMs` becomes the
+// `offset` arg (skip ahead into the buffer before playback begins) and `trimMs` becomes the
+// `duration` arg (how long to play FROM that new start point, not from the original file
+// start) to AudioBufferSourceNode.start(when, offset, duration); the buffer itself is never
+// sliced/copied, so both stay purely scheduling parameters, instantly adjustable/reversible.
 function playOverride(e, bus, weaponId, stage) {
   const buffer = getOverride(weaponId, stage);
   if (!buffer || !e.ctx) return false;
   const src = e.ctx.createBufferSource();
   src.buffer = buffer;
   src.connect(bus);
-  src.start(e._now());
+  const startMs = getStartMs(weaponId, stage);
+  const trimMs = getTrimMs(weaponId, stage);
+  const offsetSec = (startMs ?? 0) / 1000;
+  if (startMs == null && trimMs == null) src.start(e._now());
+  else if (trimMs != null) src.start(e._now(), offsetSec, trimMs / 1000);
+  else src.start(e._now(), offsetSec);
   return true;
 }
 

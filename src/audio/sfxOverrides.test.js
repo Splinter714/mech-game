@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
-  setAudioContext, _resetForTest,
+  setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -180,5 +180,180 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
     expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'A' });
     await expect(clearOverride('autocannon', 'fire')).resolves.toBeUndefined();
     await expect(loadAllOverrides()).resolves.toBeUndefined();
+  });
+
+  // #166: non-destructive trim (play only the first N ms of a loaded override file).
+  describe('trim (#166)', () => {
+    it('has no trim by default for a freshly-stored override', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      expect(getTrimMs('autocannon', 'fire')).toBeNull();
+    });
+
+    it('setTrim sets a trim visible immediately via getTrimMs', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setTrim('autocannon', 'fire', 400);
+      expect(getTrimMs('autocannon', 'fire')).toBe(400);
+    });
+
+    it('setTrim(null) clears a previously-set trim', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setTrim('autocannon', 'fire', 400);
+      await setTrim('autocannon', 'fire', null);
+      expect(getTrimMs('autocannon', 'fire')).toBeNull();
+    });
+
+    it('persists the trim across a simulated reload, alongside the rest of the override', async () => {
+      await storeOverride('railLance', 'fire', fakeFile('zap.wav', 'ZAP'));
+      await setTrim('railLance', 'fire', 250);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      expect(getTrimMs('railLance', 'fire')).toBeNull(); // pre-boot state, not loaded yet
+
+      await loadAllOverrides();
+      expect(getTrimMs('railLance', 'fire')).toBe(250);
+      expect(getOverride('railLance', 'fire')).toEqual({ __decodedFrom: 'ZAP' }); // override itself unaffected
+    });
+
+    it('a reload with no trim ever set leaves getTrimMs null (backward-compatible with pre-#166 overrides)', async () => {
+      // Simulates an override stored before trimMs existed: no setTrim call at all.
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getTrimMs('shotgun', 'impact')).toBeNull();
+      expect(getOverride('shotgun', 'impact')).toEqual({ __decodedFrom: 'X' });
+    });
+
+    it('clearOverride also clears the trim, including across a reload', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setTrim('shotgun', 'impact', 300);
+      await clearOverride('shotgun', 'impact');
+      expect(getTrimMs('shotgun', 'impact')).toBeNull();
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getTrimMs('shotgun', 'impact')).toBeNull();
+      expect(getOverride('shotgun', 'impact')).toBeNull();
+    });
+
+    it('loading a new file into a previously-trimmed slot does not inherit the stale trim', async () => {
+      await storeOverride('napalm', 'fire', fakeFile('old.wav', 'OLD'));
+      await setTrim('napalm', 'fire', 500);
+      expect(getTrimMs('napalm', 'fire')).toBe(500);
+
+      // Load a different file into the SAME weapon+stage without an explicit clear first.
+      await storeOverride('napalm', 'fire', fakeFile('new.wav', 'NEW'));
+      expect(getTrimMs('napalm', 'fire')).toBeNull();
+      expect(getOverride('napalm', 'fire')).toEqual({ __decodedFrom: 'NEW' });
+    });
+
+    it('setTrim is a safe no-op (in-memory only) when there is no active override for that slot', async () => {
+      await expect(setTrim('nothingLoaded', 'fire', 300)).resolves.toBeUndefined();
+      expect(getTrimMs('nothingLoaded', 'fire')).toBe(300); // still visible in-memory this session
+    });
+
+    it('never throws when IndexedDB is unavailable', async () => {
+      delete globalThis.indexedDB;
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A')); // persists nowhere, decodes fine in-memory
+      await expect(setTrim('autocannon', 'fire', 200)).resolves.toBeUndefined();
+      expect(getTrimMs('autocannon', 'fire')).toBe(200);
+    });
+  });
+
+  // #166 (scope expansion): a real START offset alongside the end trim, forming a genuine
+  // start/end pair — startMs skips ahead into the buffer, trimMs is the duration to play from
+  // THAT point (not from the original file start).
+  describe('start offset (#166)', () => {
+    it('has no start offset by default for a freshly-stored override', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      expect(getStartMs('autocannon', 'fire')).toBeNull();
+    });
+
+    it('setStart sets a start offset visible immediately via getStartMs', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setStart('autocannon', 'fire', 500);
+      expect(getStartMs('autocannon', 'fire')).toBe(500);
+    });
+
+    it('setStart(null) clears a previously-set start offset', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setStart('autocannon', 'fire', 500);
+      await setStart('autocannon', 'fire', null);
+      expect(getStartMs('autocannon', 'fire')).toBeNull();
+    });
+
+    it('persists the start offset across a simulated reload, alongside the trim', async () => {
+      await storeOverride('railLance', 'fire', fakeFile('zap.wav', 'ZAP'));
+      await setStart('railLance', 'fire', 500);
+      await setTrim('railLance', 'fire', 300);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      expect(getStartMs('railLance', 'fire')).toBeNull(); // pre-boot state, not loaded yet
+
+      await loadAllOverrides();
+      expect(getStartMs('railLance', 'fire')).toBe(500);
+      expect(getTrimMs('railLance', 'fire')).toBe(300);
+      expect(getOverride('railLance', 'fire')).toEqual({ __decodedFrom: 'ZAP' });
+    });
+
+    it('a reload with no start ever set leaves getStartMs null (backward-compatible)', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setTrim('shotgun', 'impact', 300); // trim set, start never touched
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getStartMs('shotgun', 'impact')).toBeNull();
+      expect(getTrimMs('shotgun', 'impact')).toBe(300);
+    });
+
+    it('clearOverride also clears the start offset, including across a reload', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setStart('shotgun', 'impact', 500);
+      await clearOverride('shotgun', 'impact');
+      expect(getStartMs('shotgun', 'impact')).toBeNull();
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getStartMs('shotgun', 'impact')).toBeNull();
+      expect(getOverride('shotgun', 'impact')).toBeNull();
+    });
+
+    it('loading a new file into a previously-started slot does not inherit the stale start', async () => {
+      await storeOverride('napalm', 'fire', fakeFile('old.wav', 'OLD'));
+      await setStart('napalm', 'fire', 500);
+      expect(getStartMs('napalm', 'fire')).toBe(500);
+
+      await storeOverride('napalm', 'fire', fakeFile('new.wav', 'NEW'));
+      expect(getStartMs('napalm', 'fire')).toBeNull();
+      expect(getOverride('napalm', 'fire')).toEqual({ __decodedFrom: 'NEW' });
+    });
+
+    it('setStart is a safe no-op (in-memory only) when there is no active override for that slot', async () => {
+      await expect(setStart('nothingLoaded', 'fire', 500)).resolves.toBeUndefined();
+      expect(getStartMs('nothingLoaded', 'fire')).toBe(500);
+    });
+
+    it('never throws when IndexedDB is unavailable', async () => {
+      delete globalThis.indexedDB;
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await expect(setStart('autocannon', 'fire', 200)).resolves.toBeUndefined();
+      expect(getStartMs('autocannon', 'fire')).toBe(200);
+    });
+
+    it('setting start and trim independently persists both together', async () => {
+      await storeOverride('railgun', 'fire', fakeFile('r.wav', 'R'));
+      await setTrim('railgun', 'fire', 300);
+      await setStart('railgun', 'fire', 500); // set after trim — must not clobber it
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getStartMs('railgun', 'fire')).toBe(500);
+      expect(getTrimMs('railgun', 'fire')).toBe(300);
+    });
   });
 });

@@ -2,7 +2,10 @@ import Phaser from 'phaser';
 import { Slider } from './slider.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
-import { storeOverride, clearOverride, hasOverride, getOverrideMeta } from '../audio/sfxOverrides.js';
+import {
+  storeOverride, clearOverride, hasOverride, getOverrideMeta, getOverride,
+  getTrimMs, setTrim, getStartMs, setStart,
+} from '../audio/sfxOverrides.js';
 
 // #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
 // are tuned through this SAME panel — they're just more sfxParams ids (single `fire` stage,
@@ -248,11 +251,67 @@ export class WeaponSfxPanel {
     this._button(ox + 6 + bw + gap, y, bw, 20, 'clear override', () => {
       clearOverride(weaponId, stage).then(() => {
         if (this.weaponId !== weaponId) return;   // selection changed while this resolved
-        this._toast(`${stage}: reverted to procedural`);
+        this._toast(`${stage}: reverted to procedural`);   // #166: clearOverride also resets its start/trim
         this._build();
       });
     }, { color: active ? UI.good : UI.dim });
     y += 20 + 8;
+
+    // #166: non-destructive start/end pair — only shown once this stage actually has a file
+    // override loaded (mirrors the load/clear controls above and the #150 grey-out convention:
+    // nothing trim-related exists for a purely-procedural stage). Shows the loaded file's real
+    // full duration so the owner knows the range he's adjusting within, then two sliders: a
+    // START point (how far into the buffer playback begins) and an END point (where it stops,
+    // expressed as an absolute position for legibility — stored underneath as `trimMs`, a
+    // DURATION from the start point, per the sfxOverrides.js contract). Dragging start to 0 or
+    // end to the very end clears that side back to "full file" (undefined/null) rather than
+    // storing a redundant exact-match value — same end state, cleaner data.
+    if (active) {
+      const buffer = getOverride(weaponId, stage);
+      const fullSec = Math.max(buffer?.duration ?? 0, 0.01);
+      const startMs = getStartMs(weaponId, stage);
+      const trimMs = getTrimMs(weaponId, stage);
+      const startSec = Phaser.Math.Clamp(startMs != null ? startMs / 1000 : 0, 0, fullSec);
+      const endSec = Phaser.Math.Clamp(
+        trimMs != null ? startSec + trimMs / 1000 : fullSec, startSec, fullSec,
+      );
+      this.scroller.add(this.scene.add.text(ox + 6, y, `full length: ${fullSec.toFixed(2)}s`, {
+        fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
+      }));
+      y += 13;
+      const startSlider = new Slider(this.scene, {
+        x: ox + 6, y, w: w - 12, labelW: 40, valueW: 40, label: 'start', min: 0, max: fullSec, step: 0.01,
+        value: startSec,
+        onChange: (v) => {
+          const newStart = Phaser.Math.Clamp(v, 0, fullSec);
+          const newEnd = Math.max(endSec, newStart); // never let end sit behind the new start
+          const startMsOut = newStart <= 0.005 ? null : Math.round(newStart * 1000);
+          const trimMsOut = newEnd >= fullSec - 0.005 ? null : Math.round((newEnd - newStart) * 1000);
+          setStart(weaponId, stage, startMsOut);
+          setTrim(weaponId, stage, trimMsOut);
+          this._toast(startMsOut == null ? `${stage}: starts at 0s` : `${stage}: starts at ${newStart.toFixed(2)}s`);
+          this._previewThrottled(stage);
+          this._build(); // end slider's min/value depends on the new start
+        },
+      });
+      this.scroller.add(startSlider.container);
+      this.sliders.push(startSlider);
+      y += ROW_H + 4;
+      const endSlider = new Slider(this.scene, {
+        x: ox + 6, y, w: w - 12, labelW: 40, valueW: 40, label: 'end', min: startSec, max: fullSec, step: 0.01,
+        value: endSec,
+        onChange: (v) => {
+          const newEnd = Phaser.Math.Clamp(v, startSec, fullSec);
+          const ms = newEnd >= fullSec - 0.005 ? null : Math.round((newEnd - startSec) * 1000);
+          setTrim(weaponId, stage, ms);
+          this._toast(ms == null ? `${stage}: plays to end` : `${stage}: ends at ${newEnd.toFixed(2)}s`);
+          this._previewThrottled(stage);
+        },
+      });
+      this.scroller.add(endSlider.container);
+      this.sliders.push(endSlider);
+      y += ROW_H + 8;
+    }
     return y;
   }
 
