@@ -28,6 +28,11 @@ import bitBombExplosion from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
 // 16-bit, 1.199s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps (~24KB).
 // Played back with a 130ms trim (#166) and a 420ms fade-out (#174, clamped to the 130ms window).
 import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-bassWave.m4a';
+// #176: pulseLaser's FIRE cue — "Bass Buzz_warning sound.wav" from the same Helton Yan pack (mono
+// 44.1kHz 16-bit, 1.590s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps
+// (~30KB). Played back as a 60ms window starting 320ms into the file (#166 start+trim), pitched up
+// +10 cents with a wet reverb (#172 processing), and a 450ms fade-out (#174, clamped to the window).
+import pulseLaserFire from '../assets/sfx/pulseLaser-fire-bassBuzz.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -59,6 +64,19 @@ export const BAKED_SFX = {
     trimMs: 130,
     fadeOutMs: 420,
     processing: null,
+  },
+  // Helton Yan's Pixel Combat pack — "Bass Buzz_warning sound.wav". A 60ms window starting 320ms
+  // into the file (#166 start+trim: startMs 320, trimMs 60) as pulseLaser's fire cue, pitched up
+  // +10 cents with a 0.25-mix / 2.3s reverb (#172 processing) and a 450ms fade-out (#174). The
+  // recipe's fadeOutMs (450) exceeds the 60ms played window on purpose — playBuffer clamps the fade
+  // to the played duration, so it fades across the whole 60ms; the literal owner recipe value is
+  // recorded here unclamped. This is the first bake to carry a NON-null `processing` chain.
+  'pulseLaser::fire': {
+    asset: pulseLaserFire,
+    startMs: 320,
+    trimMs: 60,
+    fadeOutMs: 450,
+    processing: { detune: 10, reverbMix: 0.25, reverbSize: 2.3 },
   },
 };
 
