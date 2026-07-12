@@ -6,10 +6,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   mulberry32, safeZoneKeys, generateTerrain, pickFarObjective, FAR_OBJECTIVE_MIN_DIST,
+  pickStageObjective, STAGE_OBJECTIVE_NEAR_FRACTION, STAGE_OBJECTIVE_FAR_FRACTION,
   sectorBoundaries, organicBoundary, boundaryRingKeys,
   FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH,
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX, CORRIDOR_ASPECT_RATIO, SECTORS,
 } from './worldgen.js';
+import { lateFraction as runLateFraction, STAGE_COUNT } from './run.js';
 import { getBiome } from './biomes.js';
 import { axialKey, range, neighbors, distance, hexToPixel } from './hexgrid.js';
 
@@ -548,5 +550,92 @@ describe('pickFarObjective', () => {
     it('FAR_OBJECTIVE_MIN_DIST is exported so both the first stage and later stages share one floor', () => {
       expect(FAR_OBJECTIVE_MIN_DIST).toBeGreaterThan(0);
     });
+  });
+});
+
+// #138 (playtest: "the map still feels huge, especially on initial deploy"): the objective
+// distance now scales with the run's `lateFraction` curve (reused straight from data/run.js,
+// not reinvented here) instead of always jumping to the single farthest standing outpost.
+describe('pickStageObjective (#138)', () => {
+  const from = { q: 0, r: 0 };
+  // A spread of candidates from very close to very far, so "closest to the target fraction of
+  // the farthest candidate" has real choices to make at every stage of the curve.
+  const spread = [1, 4, 8, 12, 16, 20, 30, 40, 50, 60].map((d) => axialKey(d, 0));
+
+  it('returns null for an empty candidate list', () => {
+    expect(pickStageObjective([], from, 0)).toBeNull();
+  });
+
+  it('stage 0 (lateFrac 0) picks a NEAR objective, not the farthest candidate', () => {
+    const picked = pickStageObjective(spread, from, 0);
+    const [q, r] = picked.split(',').map(Number);
+    // Farthest candidate is at distance 60; a near (lateFrac 0) pick should land well short of it.
+    expect(distance({ q, r }, from)).toBeLessThan(30);
+  });
+
+  it('the final stage (lateFrac 1) picks the single farthest candidate, matching the old always-farthest behavior', () => {
+    const picked = pickStageObjective(spread, from, 1);
+    expect(picked).toBe(pickFarObjective(spread, from));
+  });
+
+  it('the escalation curve is real: later lateFrac values pick meaningfully farther objectives than stage 0', () => {
+    const distOf = (k) => { const [q, r] = k.split(',').map(Number); return distance({ q, r }, from); };
+    const d0 = distOf(pickStageObjective(spread, from, 0));
+    const dMid = distOf(pickStageObjective(spread, from, 0.5));
+    const dFinal = distOf(pickStageObjective(spread, from, 1));
+    expect(dMid).toBeGreaterThan(d0);
+    expect(dFinal).toBeGreaterThan(dMid);
+  });
+
+  it('respects minDistance as a floor on the TARGET, even for a near (stage 0) pick', () => {
+    // maxD=7, so a raw 20%-of-max target would be ~1.4 — the minDistance floor of 6 pulls the
+    // target up to 6, so the candidate AT distance 6 (not the closer ones) should be picked.
+    const nearby = [axialKey(1, 0), axialKey(2, 0), axialKey(6, 0), axialKey(7, 0)];
+    const picked = pickStageObjective(nearby, from, 0, 6);
+    expect(picked).toBe(axialKey(6, 0));
+  });
+
+  it('degrades gracefully with very few standing candidates (no separate fallback needed)', () => {
+    const onlyTwo = [axialKey(2, 0), axialKey(3, 0)];
+    const picked = pickStageObjective(onlyTwo, from, 0);
+    expect(onlyTwo).toContain(picked);
+  });
+
+  it('is deterministic given the same inputs (no RNG)', () => {
+    expect(pickStageObjective(spread, from, 0.5)).toBe(pickStageObjective(spread, from, 0.5));
+  });
+
+  it('STAGE_OBJECTIVE_NEAR_FRACTION is meaningfully smaller than STAGE_OBJECTIVE_FAR_FRACTION', () => {
+    expect(STAGE_OBJECTIVE_NEAR_FRACTION).toBeGreaterThan(0);
+    expect(STAGE_OBJECTIVE_NEAR_FRACTION).toBeLessThan(0.5);
+    expect(STAGE_OBJECTIVE_FAR_FRACTION).toBe(1);
+  });
+
+  // End-to-end check using the SAME curve the live game wires through mission.js/run.js: reusing
+  // data/run.js's own `lateFraction(stageIndex)` across all STAGE_COUNT stages, confirm stage 0's
+  // objective is meaningfully nearer than the final stage's, on a realistic candidate spread built
+  // over an actual (trimmed, #138) full-run map shape.
+  it('across the real run curve (data/run.js lateFraction), stage 0 is meaningfully nearer than the final stage', () => {
+    const rng = mulberry32(0xF00D);
+    const region = organicBoundary({ q: 0, r: 0 }, rng, {
+      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
+      longAxis: 0, aspectRatio: CORRIDOR_ASPECT_RATIO,
+    });
+    // A candidate outpost every few hexes along the long axis, out to the shape's edge.
+    const candidates = [];
+    for (let d = 1; d < MAX_WORLD_RADIUS; d += 3) {
+      if (region(d, 0)) candidates.push(axialKey(d, 0));
+    }
+    expect(candidates.length).toBeGreaterThan(5);
+
+    const distOf = (k) => { const [q, r] = k.split(',').map(Number); return distance({ q, r }, from); };
+    const stage0Dist = distOf(pickStageObjective(candidates, from, runLateFraction(0)));
+    const lastStageDist = distOf(pickStageObjective(candidates, from, runLateFraction(STAGE_COUNT - 1)));
+    const maxCandidateDist = Math.max(...candidates.map(distOf));
+
+    // Stage 0's objective is a short trek relative to the map's overall reachable distance...
+    expect(stage0Dist).toBeLessThan(maxCandidateDist * 0.4);
+    // ...while the final stage reaches noticeably farther than stage 0 did.
+    expect(lastStageDist).toBeGreaterThan(stage0Dist * 1.5);
   });
 });

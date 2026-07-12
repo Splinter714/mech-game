@@ -56,7 +56,11 @@ const CURRENCY_PER_STAGE = 25;
 
 // Fraction of the tiered pool draw taken from LATE_POOL at a given stage index (0-based),
 // ramping linearly from 0 (stage 0, all-early) to 1 (final stage, all-late).
-function lateFraction(stageIndex) {
+// #138: exported (not just an internal helper) so worldgen.js's stage-aware objective-distance
+// picker (data/worldgen.js `pickStageObjective`, wired in via scenes/arena/mission.js and
+// scenes/arena/run.js) can reuse the EXACT same 0→1 escalation curve squad composition already
+// uses, rather than inventing a second one that could drift out of sync with it.
+export function lateFraction(stageIndex) {
   if (STAGE_COUNT <= 1) return 0;
   return stageIndex / (STAGE_COUNT - 1);
 }

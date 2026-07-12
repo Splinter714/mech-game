@@ -7,12 +7,14 @@
 // → banner, bank currency, return to garage) after a short beat so the banners read. Methods
 // use `this` (the ArenaScene); composed onto the prototype via Object.assign, same as the
 // other mixins.
-import { makeRun, advanceStage, endRunOnDeath, isRunOver, stageDescriptor } from '../../data/run.js';
+import {
+  makeRun, advanceStage, endRunOnDeath, isRunOver, stageDescriptor, lateFraction,
+} from '../../data/run.js';
 import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
-import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
+import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -80,6 +82,11 @@ export const RunMixin = {
   // the short readability beat). Player position, surviving enemies, and every hex of terrain
   // are all untouched by this — the "no teleport" guarantee is now trivially true since
   // nothing about the world changes under the player's feet.
+  //
+  // #138 (playtest: "the map still feels huge, especially on initial deploy"): the objective
+  // distance now scales with `lateFraction(stageIndex)` — the SAME curve data/run.js already
+  // uses for squad-composition escalation — via `pickStageObjective`, so early stages stay near
+  // and only later stages reach out toward the old always-farthest behavior.
   _pickNextStageObjective() {
     const desc = stageDescriptor(this.run.stageIndex);
     this._pendingStageDesc = desc;   // handed to _spawnNextStageSquad after the beat
@@ -89,9 +96,12 @@ export const RunMixin = {
     // across the WHOLE pre-built map (a destroyed outpost — including a past stage's objective
     // — leaves this map for good, so later stages naturally can't re-pick it). If every outpost
     // in the whole map has been destroyed by this point in the run, seed a fresh one somewhere
-    // far from the player rather than leaving the stage without an objective.
+    // far from the player rather than leaving the stage without an objective. The strict
+    // farthest-candidate fallback (`pickFarObjective`) is kept for that edge case (and the case
+    // where the stage-aware pick comes back empty) rather than leaving a stage without one.
     const hexKeys = [...this.buildingHp.keys()];
-    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST)
+    const frac = lateFraction(this.run.stageIndex);
+    this.objectiveHex = pickStageObjective(hexKeys, playerHex, frac, FAR_OBJECTIVE_MIN_DIST)
       ?? this._spawnOutpostAt(playerHex.q, playerHex.r)
       ?? pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST);
     this.mission = makeMission(desc.missionTypeId);

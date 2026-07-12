@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makeRun, advanceStage, endRunOnDeath, isRunOver,
   stageDescriptor, squadForStage, currencyForStage, STAGE_COUNT,
-  EARLY_POOL, LATE_POOL,
+  EARLY_POOL, LATE_POOL, lateFraction,
 } from './run.js';
 
 describe('run model', () => {
@@ -121,5 +121,25 @@ describe('run model', () => {
     for (let i = 1; i < STAGE_COUNT; i++) {
       expect(currencyForStage(i)).toBeGreaterThan(currencyForStage(i - 1));
     }
+  });
+
+  // #138: `lateFraction` is now exported so data/worldgen.js's stage-aware objective-distance
+  // picker (`pickStageObjective`, wired in via scenes/arena/mission.js/run.js) can reuse the
+  // EXACT same 0→1 curve squad composition already escalates on, rather than a second curve
+  // that could drift out of sync with it.
+  describe('lateFraction (#138)', () => {
+    it('is 0 at stage 0 and 1 at the final stage', () => {
+      expect(lateFraction(0)).toBe(0);
+      expect(lateFraction(STAGE_COUNT - 1)).toBe(1);
+    });
+
+    it('increases monotonically across the run', () => {
+      let prev = lateFraction(0);
+      for (let i = 1; i < STAGE_COUNT; i++) {
+        const cur = lateFraction(i);
+        expect(cur).toBeGreaterThan(prev);
+        prev = cur;
+      }
+    });
   });
 });
