@@ -118,6 +118,17 @@ const PLAYER_VULN_HEALTH = 0.4;     // player lethal-part health below this ⇒ 
 const TRACKED_DOT = 0.965;          // player aim·(toward enemy) above this ⇒ "being tracked" (~15°)
 const TRACKED_BREAK_CHANCE = 0.7;   // odds a tracked enemy juke-breaks its current plan on a decide
 
+// #161: a non-mech KIND's textures depend only on its art builder + accent colour (def.art +
+// def.themeColor), both fixed per ENEMY_KINDS entry — never varied per spawned instance (no
+// reskin/theme-swap mechanic exists for vehicles; see the comment on _resetEnemies). So every
+// live unit of the same kind+theme is pixel-identical and can safely share ONE texture set,
+// keyed off that visual identity instead of the old per-spawn `enemy${seq}` key. Distinct kinds
+// with the same themeColor still get distinct keys (the art id is part of the key), and a kind
+// reused with a different themeColor (none today, but data-driven) would also get its own set.
+function vehicleTextureKey(def) {
+  return `vehicle_${def.art}_${(def.themeColor ?? 0).toString(16)}`;
+}
+
 // #68/#75: on-screen scale of a non-mech unit's sprites is now PER-KIND (data-driven): each
 // ENEMY_KINDS entry carries a `scale` MULTIPLE of the arena mech scale, so adding/retuning a
 // unit is a data edit. VEHICLE_SCALE_MULT is the fallback multiplier for a kind with no
@@ -220,11 +231,20 @@ export const EnemiesMixin = {
   // + a per-kind behavior (enemyBehaviors.js, dispatched by def.behavior). `flying` units skip
   // wall collision and draw a drop shadow. The body satisfies the same interface the arena uses
   // (isDestroyed/applyDamage/partHealthFraction/name/parts), so combat/hit/HUD code is uniform.
+  // #161: `key` is now the CANONICAL (kind+theme) texture key, not a fresh per-spawn key — every
+  // unit of the same visual identity points at the same texture set. `buildVehicleTextures` only
+  // actually runs the first time a given key is seen (checked via `_turret`, which every art
+  // builder always generates, walk-cycle or not); every subsequent unit of that kind+theme just
+  // reuses what's already in the texture manager, skipping the (measured 11.4ms on an 80-unit
+  // infantry mob) redundant canvas-raster work entirely. `e.key` still only feeds texture lookups
+  // for non-mech kinds (verified: no shooter/beam-identity or reskin code path reads it — those
+  // are mech-only), so sharing it is safe.
   _spawnKind(x, y, typeId) {
-    const key = `enemy${this._enemySeq++}`;
+    this._enemySeq++;   // keep the debug spawn-rotation counter advancing (unchanged behavior)
     const def = ENEMY_KINDS[typeId];
+    const key = vehicleTextureKey(def);
+    if (!this.textures.exists(`${key}_turret`)) buildVehicleTextures(this, key, def);
     const body = new HpBody(def);
-    buildVehicleTextures(this, key, def);
     const angle = Math.PI / 2;
     const view = this._makeVehicleView(key, x, y, angle, def);
     const e = {
@@ -460,14 +480,23 @@ export const EnemiesMixin = {
     if (e._tornDown) return;   // guard against a double-teardown race (see _removeEnemy)
     e._tornDown = true;
     e.view.destroy();
-    // #152: a non-mech kind whose art built a walk-cycle (def.legFrames) generated
-    // `<key>_hull_0..N` instead of one static `<key>_hull` — clean up whichever set actually
-    // exists so a killed Broodwalker doesn't leak its per-frame textures.
-    const suffixes = e.kind === 'mech'
-      ? ['hull_0', 'hull_1', 'hull_2', 'hull_3', 'turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm']
-      : e.kindDef?.legFrames
-        ? [...Array(e.kindDef.legFrames).keys()].map((f) => `hull_${f}`).concat('turret')
-        : ['hull', 'turret'];
+    // A MECH enemy still owns a unique per-instance texture set (buildMechTextures/reskinMech key
+    // off `e.key`, one per spawned mech, since damage-state reskins are per-instance) — cleaned up
+    // here exactly as before, including #152's `hull_0..3` walk-cycle frames.
+    //
+    // #161: a non-mech KIND's textures are now SHARED across every live unit of the same
+    // (art, themeColor) — see `vehicleTextureKey`/`_spawnKind` above — so `e.key` here names a
+    // texture set that other still-living siblings may be actively rendering from. Removing it on
+    // this one enemy's death would break (or texture-glitch) every sibling still pointing at it.
+    // The set of distinct (kind, theme) combinations is small and bounded by ENEMY_KINDS (not by
+    // spawn count), so — same as `buildBaseTextures`'s boot-time textures, which are also never
+    // removed — the correct fix is to just let these persist for the scene's lifetime rather than
+    // try to reference-count them. (Checked: there's no per-instance reskin/theme-swap mechanic
+    // for vehicles — `_resetEnemies` explicitly skips a texture rebuild for non-mech kinds — so
+    // there's no legitimate case where a live vehicle's shared texture ever needs to be replaced
+    // out from under it.)
+    if (e.kind !== 'mech') return;
+    const suffixes = ['hull_0', 'hull_1', 'hull_2', 'hull_3', 'turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm'];
     for (const s of suffixes) {
       const key = `${e.key}_${s}`;
       if (this.textures.exists(key)) this.textures.remove(key);
