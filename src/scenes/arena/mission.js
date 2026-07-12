@@ -8,7 +8,7 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
-import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST } from '../../data/worldgen.js';
+import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
 import { lateFraction } from '../../data/run.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR } from './shared.js';
 
@@ -33,8 +33,11 @@ export const MissionMixin = {
   // if the stage-aware pick comes back empty (e.g. no standing outposts at all).
   _initMission() {
     const hexKeys = [...this.buildingHp.keys()];
-    this.objectiveHex = pickStageObjective(hexKeys, { q: 0, r: 0 }, lateFraction(0), FAR_OBJECTIVE_MIN_DIST)
-      ?? pickFarObjective(hexKeys, { q: 0, r: 0 }, FAR_OBJECTIVE_MIN_DIST);
+    // #169: objective distance is measured ALONG THE SPINE (progress down the corridor), not
+    // straight-line from spawn — stage 0 (lateFraction 0) sits a short way down the corridor.
+    const progressOf = (q, r) => spineProgressHexOf(this._spine, q, r);
+    this.objectiveHex = pickStageObjective(hexKeys, { q: 0, r: 0 }, lateFraction(0), FAR_OBJECTIVE_MIN_DIST, null, progressOf)
+      ?? pickFarObjective(hexKeys, { q: 0, r: 0 }, FAR_OBJECTIVE_MIN_DIST, null, progressOf);
     this.mission = makeMission('assault');
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);

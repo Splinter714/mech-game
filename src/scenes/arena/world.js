@@ -10,8 +10,8 @@ import {
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor } from '../../art/hexArt.js';
 import {
-  generateTerrain, organicBoundary, boundaryRingKeys, mulberry32,
-  FULL_BUILD_BASE_RADIUS, FULL_BUILD_VARIATION, SECTORS, MAX_WORLD_RADIUS, CORRIDOR_ASPECT_RATIO,
+  generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
+  safeZoneKeys, CORRIDOR_LENGTH_PX, HEX_STEP_PX, MAX_WORLD_RADIUS,
 } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import {
@@ -45,12 +45,12 @@ export const WorldMixin = {
   // kept in `this.tileImages` so a destroyed outpost can swap its texture to rubble in place.
   //
   // #111: the WHOLE run's terrain is built ONCE here, at deploy time (`ArenaScene.create()`) —
-  // there is no more per-stage incremental growth. The playable area is a single, generously
-  // sized, IRREGULAR organically-shaped region (`organicBoundary`, data/worldgen.js) big enough
-  // for the entire run's escalation (see `FULL_BUILD_BASE_RADIUS`/`FULL_BUILD_VARIATION`'s
-  // sizing rationale in worldgen.js). `this.worldRadius` is the generous, finite BOUNDING cap
-  // (`MAX_WORLD_RADIUS`) that shape's own reach — plus the boundary ring just outside it —
-  // never exceeds.
+  // there is no more per-stage incremental growth. #169: the playable area is a single, long,
+  // non-self-intersecting SNAKING CORRIDOR — a winding spine (`generateSpine`) with every hex
+  // within CORRIDOR_HALF_WIDTH_PX of it carved out as the floor (`corridorHexSet`, data/
+  // worldgen.js). Width is narrow (so the boundary shows on the sides, #158's principle) and
+  // decoupled from the long length, so the far end is not visible from spawn and a run traverses
+  // the whole corridor. `this.worldRadius` (`MAX_WORLD_RADIUS`) is a loose finite bounding cap.
   //
   // #110: a biome-appropriate IMPASSABLE boundary ring (`boundaryRingKeys`) is stamped just
   // outside the built area's own organic edge, using the biome's `deep` terrain id (lake / mesa
@@ -81,21 +81,28 @@ export const WorldMixin = {
     if (deepFill != null) this.cameras.main.setBackgroundColor(deepFill);
 
     const shapeRng = mulberry32(seed);
-    // #127: draw the corridor's long-axis direction from the SAME per-seed shape rng, before
-    // handing it to organicBoundary — still fully deterministic for a given seed, but a
-    // different orientation per run so every deploy isn't the exact same corridor heading.
-    const longAxis = shapeRng() * Math.PI * 2;
-    const included = organicBoundary({ q: 0, r: 0 }, shapeRng, {
-      baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION, sectors: SECTORS,
-      longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
-    });
-    const boundaryRing = boundaryRingKeys(included);
+    // #169: a long, single, non-self-intersecting SNAKING corridor. Draw the main-axis heading from
+    // the SAME per-seed shape rng (still deterministic for a given seed, but a different orientation
+    // each deploy), generate the winding spine anchored at world origin (the spawn END), and carve
+    // the playable area as every hex within CORRIDOR_HALF_WIDTH_PX of the spine. The radius-3 spawn
+    // safe zone is force-included so the boundary ring (#110) can never encroach it, and the
+    // boundary BFS is seeded directly from the corridor set — no bounding-disc scan.
+    const startAngle = shapeRng() * Math.PI * 2;
+    const spine = generateSpine(shapeRng, { startAngle });
+    this._spine = spine;   // exposed for objective-along-spine placement (mission.js/run.js)
+    const includedKeys = corridorHexSet(spine.points, undefined, safeZoneKeys({ q: 0, r: 0 }, 3));
+    const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke
+
+    // Scale outpost count with corridor length so standing objectives exist the whole way down the
+    // spine — a flat biome count would leave the far end (where late stages aim) without a target.
+    const lengthHex = CORRIDOR_LENGTH_PX / HEX_STEP_PX;
+    const outposts = Math.max(B.outposts, Math.round(lengthHex / 3));
 
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp, coverHp } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
-      included, boundaryRing,
+      includedKeys, boundaryRing, outposts,
     });
 
     this.terrain = terrain;
