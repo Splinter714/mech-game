@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
-  storeOverride, clearOverride, setAudioContext, setTrim, setStart, _resetForTest,
+  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, _resetForTest,
 } from './sfxOverrides.js';
 
 // Minimal mock Web Audio context: records how many voices (oscillators / noise sources)
@@ -12,6 +12,9 @@ import {
 function mockContext() {
   let oscillators = 0, sources = 0;
   const bufferSourceStarts = [];   // #166: recorded (when, offset, duration) args from every src.start() call
+  const biquads = [];              // #172: every BiquadFilter created (incl. the music chain + override filters)
+  const convolvers = [];           // #172: every ConvolverNode created (only the override reverb makes these)
+  const bufferSources = [];        // #172: every buffer source node (so its detune AudioParam is inspectable)
   const param = () => ({
     value: 0,
     setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
@@ -22,16 +25,19 @@ function mockContext() {
     state: 'running', currentTime: 1.0, sampleRate: 48000, baseLatency: 0.0053, outputLatency: 0.168, destination: node(),
     createGain: () => ({ gain: param(), connect: (d) => d, disconnect() {} }),
     createWaveShaper: () => ({ curve: null, oversample: 'none', connect: (d) => d }),
-    createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d, disconnect() {} }),
+    createBiquadFilter: () => { const n = { type: '', frequency: param(), Q: param(), connect: (d) => d, disconnect() {} }; biquads.push(n); return n; },
+    createConvolver: () => { const n = { buffer: null, normalize: true, connect: (d) => d, disconnect() {} }; convolvers.push(n); return n; },
     createDynamicsCompressor: () => ({ threshold: param(), ratio: param(), attack: param(), release: param(), connect: (d) => d }),
     createOscillator: () => { oscillators++; return { type: '', frequency: param(), connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
     createBufferSource: () => {
       sources++;
-      return {
-        buffer: null, loop: false, connect: (d) => d,
+      const n = {
+        buffer: null, loop: false, detune: param(), connect: (d) => d,
         start(...args) { bufferSourceStarts.push(args); },
         stop() {}, disconnect() {},
       };
+      bufferSources.push(n);
+      return n;
     },
     createBuffer: (_c, len) => ({ getChannelData: () => new Float32Array(len) }),
     // #150: real-file SFX overrides decode through the context too — a trivial fake decode
@@ -39,8 +45,11 @@ function mockContext() {
     // needing an actual audio codec in tests.
     decodeAudioData: async (bytes) => ({ __fakeDecodedBytes: bytes.byteLength }),
     resume: () => Promise.resolve(),
-    _counts: () => ({ oscillators, sources }),
+    _counts: () => ({ oscillators, sources, biquads: biquads.length, convolvers: convolvers.length }),
     _lastBufferSourceStart: () => bufferSourceStarts[bufferSourceStarts.length - 1],
+    _lastBufferSource: () => bufferSources[bufferSources.length - 1],
+    _biquads: () => biquads,
+    _convolvers: () => convolvers,
   };
   return ctx;
 }
@@ -308,6 +317,89 @@ describe('AudioEngine (mock context)', () => {
         eng.impact('shotgun');
         const args = ctx._lastBufferSourceStart();
         expect(args.length).toBe(1);
+      });
+    });
+
+    // #172: non-destructive playback processing — pitch (detune on the source), a BiquadFilter,
+    // and a wet/dry reverb (ConvolverNode). Asserted by inspecting the REAL scheduled node graph
+    // (the mock records each node), not just UI/param state.
+    describe('processing (#172)', () => {
+      it('default (no processing set) is a strict clean passthrough — no detune, filter, or reverb', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        const before = ctx._counts();
+        eng.fire(getWeapon('autocannon'));
+        const after = ctx._counts();
+        expect(after.sources).toBe(before.sources + 1);          // just the override source
+        expect(after.biquads).toBe(before.biquads);              // no filter node added
+        expect(after.convolvers).toBe(before.convolvers);        // no reverb node added
+        expect(ctx._lastBufferSource().detune.value).toBe(0);    // pitch untouched
+      });
+
+      it('applies detune (cents) to the source node when a pitch is set', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setProcessing('autocannon', 'fire', { detune: 300 });
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._lastBufferSource().detune.value).toBe(300);
+        // ...and no filter/reverb crept in from a pitch-only change
+        expect(ctx._convolvers().length).toBe(0);
+      });
+
+      it('inserts a BiquadFilter with the set type/frequency/Q when a filter is set', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setProcessing('autocannon', 'fire', { filterType: 'highpass', filterFreq: 1200, filterQ: 3 });
+        const before = ctx._counts().biquads;
+        eng.fire(getWeapon('autocannon'));
+        const added = ctx._biquads().slice(before);
+        expect(added.length).toBe(1);
+        expect(added[0].type).toBe('highpass');
+        expect(added[0].frequency.value).toBe(1200);
+        expect(added[0].Q.value).toBe(3);
+      });
+
+      it('inserts a reverb (ConvolverNode wet path) when reverb mix > 0', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setProcessing('autocannon', 'fire', { reverbMix: 0.4, reverbSize: 1.2 });
+        const before = ctx._counts().convolvers;
+        eng.fire(getWeapon('autocannon'));
+        const added = ctx._convolvers().slice(before);
+        expect(added.length).toBe(1);
+        expect(added[0].buffer).toBeTruthy();                     // a generated IR was assigned
+      });
+
+      it('a reverb mix of 0 adds no convolver (clean passthrough)', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setProcessing('autocannon', 'fire', { reverbMix: 0 });   // setProcessing treats a stored 0 as-is; playback gates on > 0
+        const before = ctx._counts().convolvers;
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._counts().convolvers).toBe(before);
+      });
+
+      it('composes with #166 start/trim: detune on the source AND the start/duration args together', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setStart('autocannon', 'fire', 500);
+        await setTrim('autocannon', 'fire', 300);
+        await setProcessing('autocannon', 'fire', { detune: -200, filterType: 'lowpass', filterFreq: 800, filterQ: 1 });
+        const beforeBq = ctx._counts().biquads;
+        eng.fire(getWeapon('autocannon'));
+        const [when, offset, duration] = ctx._lastBufferSourceStart();
+        expect(when).toBe(ctx.currentTime);
+        expect(offset).toBeCloseTo(0.5, 5);
+        expect(duration).toBeCloseTo(0.3, 5);
+        expect(ctx._lastBufferSource().detune.value).toBe(-200);
+        expect(ctx._biquads().slice(beforeBq)[0].type).toBe('lowpass');
+      });
+
+      it('clearing all processing back to neutral restores the clean passthrough', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setProcessing('autocannon', 'fire', { detune: 400, filterType: 'bandpass', filterFreq: 900, filterQ: 2, reverbMix: 0.5, reverbSize: 1 });
+        // Now clear every field.
+        await setProcessing('autocannon', 'fire', { detune: null, filterType: null, filterFreq: null, filterQ: null, reverbMix: null, reverbSize: null });
+        const before = ctx._counts();
+        eng.fire(getWeapon('autocannon'));
+        const after = ctx._counts();
+        expect(after.biquads).toBe(before.biquads);
+        expect(after.convolvers).toBe(before.convolvers);
+        expect(ctx._lastBufferSource().detune.value).toBe(0);
       });
     });
   });

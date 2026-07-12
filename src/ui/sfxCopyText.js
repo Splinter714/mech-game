@@ -15,7 +15,7 @@
 // A weapon with NO overrides at all emits the historical whole-params JSON block byte-for-byte
 // (see below), so pasting a fully-tuned procedural weapon back into DEFAULT_SFX is unchanged.
 
-import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride } from '../audio/sfxOverrides.js';
+import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing } from '../audio/sfxOverrides.js';
 
 // Fire before trajectory before impact — matches the panel's STAGES ordering. Explosion
 // categories only have `fire`; stages absent from `params` are simply skipped.
@@ -53,7 +53,31 @@ function overrideBlock(weaponId, stage) {
     endLine,
   ];
   if (fullMs != null) lines.push(`    full file length: ${fullMs} ms`);
-  lines.push(`    → bake "${name}" into the repo as ${weaponId}'s ${stage} sound, ${bake}.`);
+
+  // #172: the non-destructive playback processing chain (pitch/filter/reverb), when any of it is
+  // set — so the copied recipe carries the full processing the owner tuned, not just the trim.
+  // Each line is emitted only for a non-neutral param (a clean/unprocessed override adds none),
+  // and the processing is summarised into the bake instruction too.
+  const proc = getProcessing(weaponId, stage);
+  const procNotes = [];
+  if (proc?.detune) {
+    lines.push(`    pitch:           ${proc.detune > 0 ? '+' : ''}${proc.detune} cents  (pitch+speed coupled)`);
+    procNotes.push(`pitch ${proc.detune > 0 ? '+' : ''}${proc.detune} cents`);
+  }
+  if (proc?.filterType) {
+    const fq = proc.filterFreq != null ? `${proc.filterFreq} Hz` : '(default freq)';
+    const q = proc.filterQ != null ? `, Q ${proc.filterQ}` : '';
+    lines.push(`    filter:          ${proc.filterType} @ ${fq}${q}`);
+    procNotes.push(`${proc.filterType} filter @ ${fq}${q}`);
+  }
+  if (proc?.reverbMix > 0) {
+    const size = proc.reverbSize != null ? `${proc.reverbSize}s` : '(default size)';
+    lines.push(`    reverb:          mix ${proc.reverbMix}, size ${size}`);
+    procNotes.push(`reverb mix ${proc.reverbMix} / size ${size}`);
+  }
+
+  const procBake = procNotes.length ? `, then apply ${procNotes.join(', ')}` : '';
+  lines.push(`    → bake "${name}" into the repo as ${weaponId}'s ${stage} sound, ${bake}${procBake}.`);
   return lines.join('\n');
 }
 

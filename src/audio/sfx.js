@@ -7,7 +7,7 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
-import { getOverride, getTrimMs, getStartMs } from './sfxOverrides.js';
+import { getOverride, getTrimMs, getStartMs, getProcessing } from './sfxOverrides.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -22,18 +22,70 @@ const TRAJECTORY_LOOP_GAIN_SCALE = 0.6;
 // no-op — same node graph, same behavior — whenever no override exists. Returns true if it
 // played the override (so callers skip the procedural fallback), false otherwise.
 //
+// #172: a runtime-synthesized reverb impulse response — decaying stereo white noise, so the
+// ConvolverNode needs NO asset file (keeps the zero-asset philosophy). `seconds` sets the tail
+// length; `decay` shapes how fast it fades (higher = tighter). Regenerated per shot, which is
+// cheap for the short IRs a UI reverb uses and keeps the dev-tool path dead simple.
+function makeImpulse(ctx, seconds, decay = 3) {
+  const rate = ctx.sampleRate || 48000;
+  const len = Math.max(1, Math.floor(seconds * rate));
+  const buf = ctx.createBuffer(2, len, rate);
+  for (let c = 0; c < 2; c++) {
+    const data = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  }
+  return buf;
+}
+
+// #172: splice a wet/dry reverb into the chain between `input` and `bus`. The dry path carries
+// (1 - mix) straight through; the wet path runs `input` through a convolver (fed the generated
+// IR) at `mix`. Only ever called when mix > 0 — a mix of 0 skips this entirely upstream, so a
+// reverb-off override is a true clean passthrough (no extra nodes at all).
+function connectReverb(ctx, input, bus, mix, sizeSec) {
+  const dry = ctx.createGain(); dry.gain.value = 1 - mix;
+  const wet = ctx.createGain(); wet.gain.value = mix;
+  const conv = ctx.createConvolver();
+  conv.buffer = makeImpulse(ctx, Math.max(0.05, sizeSec ?? 1.5));
+  input.connect(dry); dry.connect(bus);
+  input.connect(conv); conv.connect(wet); wet.connect(bus);
+}
+
 // #166: non-destructive start/end pair — `getStartMs`/`getTrimMs` are the same kind of
 // synchronous no-await lookup, null unless set for this weapon+stage. `startMs` becomes the
 // `offset` arg (skip ahead into the buffer before playback begins) and `trimMs` becomes the
 // `duration` arg (how long to play FROM that new start point, not from the original file
 // start) to AudioBufferSourceNode.start(when, offset, duration); the buffer itself is never
 // sliced/copied, so both stay purely scheduling parameters, instantly adjustable/reversible.
+//
+// #172: non-destructive PROCESSING chain layered on top — pitch/rate (a `detune` on the source
+// node, pitch+speed coupled), a BiquadFilter, and a wet/dry reverb, read via getProcessing().
+// Chain order: source (with #166 offset/duration + detune) → [filter] → [reverb wet/dry] → bus
+// (the existing sfx gain) → output. Each stage is inserted ONLY when its param is non-neutral,
+// so an override with no processing set builds the exact same `source → bus` graph as before —
+// a strict clean passthrough, no regression.
 function playOverride(e, bus, weaponId, stage) {
   const buffer = getOverride(weaponId, stage);
   if (!buffer || !e.ctx) return false;
-  const src = e.ctx.createBufferSource();
+  const ctx = e.ctx;
+  const src = ctx.createBufferSource();
   src.buffer = buffer;
-  src.connect(bus);
+
+  // #172: assemble the processing chain from src outward; `tail` is whatever the next node
+  // should connect FROM. Neutral/absent params add nothing, leaving src → bus untouched.
+  const proc = getProcessing(weaponId, stage);
+  if (proc?.detune && src.detune) src.detune.value = proc.detune;   // cents (pitch+speed coupled)
+  let tail = src;
+  if (proc?.filterType) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = proc.filterType;
+    if (proc.filterFreq != null) filter.frequency.value = proc.filterFreq;
+    if (proc.filterQ != null) filter.Q.value = proc.filterQ;
+    tail.connect(filter);
+    tail = filter;
+  }
+  if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
+  else tail.connect(bus);
+
   const startMs = getStartMs(weaponId, stage);
   const trimMs = getTrimMs(weaponId, stage);
   const offsetSec = (startMs ?? 0) / 1000;
