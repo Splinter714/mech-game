@@ -5,7 +5,7 @@ import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
-  shotBlockedAt, flameCoverDamage,
+  shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor } from '../../art/hexArt.js';
@@ -190,6 +190,24 @@ export const WorldMixin = {
   _isWall(x, y, transparent = null) {
     const k = this._hexKeyAt(x, y);
     return shotBlockedAt(this.terrain.get(k), k, transparent);
+  },
+
+  // #168: like `_isWall`, but the see-through set is the UNION of a shared per-frame Set (all
+  // living enemy hexes for a player round, or the player's own hex for an enemy round — built
+  // once per frame and reused across every round of that owner) and this round's own tiny
+  // `originHexes` array. Checked in place so no fresh combined Set is allocated per round per
+  // frame. Behaviourally identical to `_isWall(x, y, new Set([...originHexes, ...shared]))`;
+  // only the allocation is removed. `shotBlockedAt`'s exact rule is mirrored here via the same
+  // terrain predicates it uses internally (blocksLOS / isSoftCover).
+  _isWallForRound(x, y, sharedTransparent, originHexes) {
+    const k = this._hexKeyAt(x, y);
+    const id = this.terrain.get(k);
+    if (!blocksLOS(id)) return false;
+    const transparent =
+      (sharedTransparent != null && sharedTransparent.has(k)) ||
+      (originHexes != null && originHexes.includes(k));
+    if (transparent && isSoftCover(id)) return false;
+    return true;
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's

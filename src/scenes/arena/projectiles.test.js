@@ -25,21 +25,14 @@ function makeScene({ enemies, projectiles, playerDestroyed = false }) {
     time: { now: 0 },
     projFx: { clear: vi.fn() },
     _hexKeyAt: () => 'h',
-    _isWall: () => false,
+    // #168: the per-round wall test moved from `_isWall` to `_isWallForRound`; in an open field
+    // (no cover) it never blocks, same as before.
+    _isWallForRound: () => false,
     _damageBuildingAt: vi.fn(),
     _impactFx: vi.fn(),
     _damagePlayerAt: vi.fn((dmg) => damaged.push({ target: 'player', dmg })),
     _damageEnemyAt: vi.fn((e, x, y, dmg) => damaged.push({ target: e.id, dmg })),
     _rangeFactor: () => 1,
-    _nearestEnemy(x, y) {
-      let best = null, bd = Infinity;
-      for (const e of this.enemies) {
-        if (e.mech.isDestroyed()) continue;
-        const d = Math.hypot(e.x - x, e.y - y);
-        if (d < bd) { bd = d; best = e; }
-      }
-      return best;
-    },
   };
   Object.assign(scene, ProjectilesMixin);
   // Drawing is pure Phaser canvas art, irrelevant to hit-detection scoping — stub it out
@@ -149,5 +142,50 @@ describe('locked homing round hit-detection is scoped to its own seek target (#7
 
     expect(damaged.some((d) => d.target === 'player')).toBe(true);
     expect(damaged.some((d) => d.target === 'other')).toBe(false);
+  });
+});
+
+// #168: the spatial-index `nearest()` that replaced the full O(enemies) `_nearestEnemy` scan must
+// return the EXACT same enemy a brute-force scan would — a performance change, not a behaviour one.
+describe('_buildEnemyIndex().nearest matches a brute-force nearest scan (#168)', () => {
+  // Brute-force reference: identical to the old `_nearestEnemy` (first-encountered wins ties, but
+  // ties are measure-zero here since coordinates are random floats).
+  const brute = (enemies, x, y) => {
+    let best = null, bd = Infinity;
+    for (const e of enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  };
+
+  it('agrees with brute force over many random enemy fields and query points', () => {
+    // Deterministic PRNG (mulberry32) so the property check is reproducible.
+    let s = 0x9e3779b9;
+    const rand = () => {
+      s |= 0; s = (s + 0x6d2b79f5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const coord = () => (rand() - 0.5) * 4000;   // spread wider than a single grid cell (160px)
+
+    for (let trial = 0; trial < 300; trial++) {
+      const n = Math.floor(rand() * 25);         // 0..24 enemies, incl. the empty case
+      const enemies = [];
+      for (let i = 0; i < n; i++) {
+        // ~30% destroyed, to confirm the index skips them exactly like the scan does.
+        enemies.push(makeEnemy('e' + i, coord(), coord(), rand() < 0.3));
+      }
+      const { scene } = makeScene({ enemies, projectiles: [] });
+      const index = scene._buildEnemyIndex();
+      for (let q = 0; q < 8; q++) {
+        const qx = coord(), qy = coord();
+        const got = index.nearest(qx, qy);
+        const want = brute(enemies, qx, qy);
+        expect(got).toBe(want);   // object identity — same handle, not merely same position
+      }
+    }
   });
 });
