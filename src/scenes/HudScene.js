@@ -71,6 +71,13 @@ export default class HudScene extends Phaser.Scene {
     this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
     this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
 
+    // #142: FPS readout, bottom-left — the one corner nothing else occupies (top-left has the
+    // hints/stage/objective/integrity block, top-right has enemy count + buff rings, bottom-right
+    // has mode/AI text, bottom-centre has the skill bar). Phaser's own `game.loop.actualFps` is
+    // already an EMA (25% new / 75% old, see TimeStep.js) refreshed once a second — plenty stable
+    // frame-to-frame on its own, so no extra rolling-average layer is needed on top of it.
+    this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '12px', color: C.dim }).setOrigin(0, 1);
+
     // #60: active timed-buff readout, top-right under the enemy count. One radial "cooldown-pie"
     // per active buff — a ring tinted the buff colour that drains clockwise as it runs out, with
     // the label + remaining seconds beside it. A single Graphics layer draws all the rings; the
@@ -196,6 +203,9 @@ export default class HudScene extends Phaser.Scene {
 
     this._updateBuffHud();
     this._updateWayArrow();
+
+    // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
+    this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
   }
 
   // #80: point at the current objective whenever it's off-camera. Reads the SAME live source
