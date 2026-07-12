@@ -9,6 +9,7 @@ import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
+import { STICK_DEADZONE } from '../../input/Controls.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
 // snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
@@ -189,11 +190,21 @@ export const LocomotionMixin = {
 
     // Legs turn to face the direction of travel (so the walk reads), at the chassis turn
     // rate — heavier mechs pivot their stance more slowly.
-    if (this.speed > 5) {
+    // #156: under INSTANT_TURNING the target facing must come from the RAW INPUT direction
+    // (intent.move), not from velocity — this.vx/this.vy still ease toward the commanded
+    // direction via the accel/decel weight-inertia model above, so snapping `this.angle` to
+    // atan2(vy, vx) would still visibly lag the player's actual input while velocity ramps up.
+    // Gate on input magnitude (not mech speed, which is meaningless for this path) and hold the
+    // last facing when the stick/keys are centred, mirroring how aim holds its last angle.
+    // The non-instant path is completely unchanged: it still derives moveAng from velocity.
+    if (INSTANT_TURNING) {
+      const inputMag = Math.hypot(intent.move.x, intent.move.y);
+      if (inputMag > STICK_DEADZONE) {
+        this.angle = Math.atan2(intent.move.y, intent.move.x);
+      }
+    } else if (this.speed > 5) {
       const moveAng = Math.atan2(this.vy, this.vx);
-      this.angle = INSTANT_TURNING
-        ? moveAng
-        : Phaser.Math.Angle.RotateTo(this.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
+      this.angle = Phaser.Math.Angle.RotateTo(this.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
     }
 
     // ── Turret: aim freely, full 360° (no torso-twist arc), slewing toward the aim. ──
