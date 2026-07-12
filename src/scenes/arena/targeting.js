@@ -62,8 +62,10 @@ export const TargetingMixin = {
       const d = Math.hypot(tgt.x - this.px, tgt.y - this.py);
       const ang = Math.atan2(tgt.y - this.py, tgt.x - this.px);
       // #72 own-hex transparency: the target's own soft-cover hex (and the player's) doesn't
-      // break the lock's LOS — an enemy standing in forest is visible and lockable.
-      hasLos = this._wallDistance(this.px, this.py, ang, d, this._losTransparency(this.px, this.py, tgt.x, tgt.y)) === Infinity;
+      // break the lock's LOS — an enemy standing in forest is visible and lockable. #167: a
+      // single PLAYER-side raycast per frame (not per-enemy), so it stays fresh — just routed
+      // through the allocation-free raycast to drop its per-call Set + per-step key strings.
+      hasLos = this._wallDistanceLos(this.px, this.py, ang, d, tgt.x, tgt.y) === Infinity;
       targetPos = { x: tgt.x, y: tgt.y, vx: tgt.vx || 0, vy: tgt.vy || 0 };
     }
     stepLock(this.lock, { dt, cand, hasLos, targetPos, valid });
