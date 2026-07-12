@@ -163,16 +163,16 @@ export const SECTORS = 20;
 // available at #138's sizing without eroding that (much larger, pre-#158) margin.
 //
 // #158: re-derived from scratch alongside FULL_BUILD_BASE_RADIUS/VARIATION's much smaller
-// values — the shape's own real (hex-distance) worst-case reach in ANY direction tops out at 14
-// across 2000 simulated seeds at the new base/variation (worldgen.test.js's "#158" suite pins
-// this down directly, not just via the distHex/ratio formula). 20 leaves ~6 hexes of headroom
+// values — the shape's own real (hex-distance) worst-case reach in ANY direction tops out at 10
+// across 5000 simulated seeds at the new base/variation (worldgen.test.js's "#158" suite pins
+// this down directly, not just via the distHex/ratio formula). 16 leaves ~6 hexes of headroom
 // above that observed worst case. This bounds BOTH `generateTerrain`'s `all` candidate scan (a
 // real map-clipping risk if too small — the shape would get silently cut off) and
 // `boundaryRingKeys`' default BFS bounding radius (`MAX_WORLD_RADIUS + BOUNDARY_RING_WIDTH + 2`)
 // — shrinking it is a genuine perf win on top of the visibility fix: the boundary ring's own BFS
-// now scans a MUCH smaller candidate area (`range({0,0}, 20+35+2=57)` vs the old
+// now scans a MUCH smaller candidate area (`range({0,0}, 16+35+2=53)` vs the old
 // `range({0,0}, 73+35+2=110)`).
-export const MAX_WORLD_RADIUS = 20;
+export const MAX_WORLD_RADIUS = 16;
 // CORRIDOR_ASPECT_RATIO: the target long-axis-extent ÷ short-axis-extent (see
 // `sectorBoundaries`'s `aspectRatio` param) for the whole pre-built map's shape — #127
 // (playtest: the map read as a wide open blob, wanted "more linear-ish"). 2.25 means the map
@@ -239,48 +239,65 @@ export const CORRIDOR_ASPECT_RATIO = 2.25;
 //
 // #158 (playtest, 2026-07-11: "I want to see world boundary on 1-3 sides on initial spawn... and
 // on 1-2 sides throughout the full map gameplay too" — a concrete, measurable target, unlike the
-// earlier "feels vast" reports #138/#149 chased): #149's zoom-in got reverted (#157, "turn off
-// the 1.3x gameplay zoom" — GAMEPLAY_ZOOM is back to a 1.0 no-op, see arena/shared.js), so the
-// ONLY lever left for "boundary regularly on screen" is shrinking the playable interior itself
-// until the camera's real view RECTANGLE reaches into #126's boundary ring from ordinary player
-// positions — not just from spawn, but from where stage objectives actually put the player
-// (`pickStageObjective`, #138's escalation curve).
+// earlier "feels vast" reports #138/#149 chased): the ONLY lever for "boundary regularly on
+// screen" (once #157's zoom-in revert, and then #160's re-revert, are accounted for — see the
+// GAMEPLAY_ZOOM correction below) is shrinking the playable interior itself until the camera's
+// real view RECTANGLE reaches into #126's boundary ring from ordinary player positions — not just
+// from spawn, but from where stage objectives actually put the player (`pickStageObjective`,
+// #138's escalation curve).
 //
-// SIZING PITFALL (caught the same way #127's distHex-vs-hex-distance one was — a first attempt
-// that looked right on paper failed against the real thing): the camera's view is a RECTANGLE
-// (`ArenaScene`/`main.js`: canvas size / zoom, dpr cancels — 1280x720 at Playwright's own default
-// viewport, GAMEPLAY_ZOOM=1.0), not a circle. #126 sized its ring DEPTH off half the viewport
-// DIAGONAL (≈734px) because that's the correct worst-case bound for "how far might the camera
-// ever need to see" — the diagonal is only reached at the screen's own corners. Sizing the
-// INTERIOR for reliable visibility needed the OPPOSITE quantity: the corridor's short axis lands
-// at a RANDOM screen orientation each deploy (`longAxis` is redrawn every build), so a boundary
-// that's within the 734px diagonal in some direction is very often still OUTSIDE the actual
-// 1280x720 rectangle once you account for its much narrower half-HEIGHT (360px). A first pass at
-// this sizing (19/2) used the diagonal as if it were a uniform radius and looked solid in
-// simulation — then measured only ~50% real on-screen hits in an actual Playwright deploy (this
-// exact discrepancy is why "verify with real evidence" in the issue's own text mattered: the
-// live smoke check below caught what a circle-based simulation couldn't). Re-simulated using the
-// REAL axis-aligned rectangle (matches `world.js`/`ArenaScene`'s actual math and the smoke
-// test's own on-screen check) across thousands of seeds/longAxis draws at the live
-// CORRIDOR_ASPECT_RATIO.
+// SIZING PITFALL #1 (caught the same way #127's distHex-vs-hex-distance one was — a first
+// attempt that looked right on paper failed against the real thing): the camera's view is a
+// RECTANGLE (`ArenaScene`/`main.js`: canvas size / zoom, dpr cancels — 1280x720 at Playwright's
+// own default viewport), not a circle. #126 sized its ring DEPTH off half the viewport DIAGONAL
+// because that's the correct worst-case bound for "how far might the camera ever need to see" —
+// the diagonal is only reached at the screen's own corners. Sizing the INTERIOR for reliable
+// visibility needed the OPPOSITE quantity: the corridor's short axis lands at a RANDOM screen
+// orientation each deploy (`longAxis` is redrawn every build), so a boundary that's within the
+// diagonal in some direction is very often still OUTSIDE the actual rectangle once you account
+// for its much narrower half-HEIGHT. A first pass at this sizing (19/2) used the diagonal as if
+// it were a uniform radius and looked solid in simulation — then measured only ~50% real
+// on-screen hits in an actual Playwright deploy (this exact discrepancy is why "verify with real
+// evidence" in the issue's own text mattered: the live smoke check caught what a circle-based
+// simulation couldn't). Re-simulated using the REAL axis-aligned rectangle (matches
+// `world.js`/`ArenaScene`'s actual math and the smoke test's own on-screen check).
 //
-// At 11/4, across 4000 simulated seeds: the boundary lands inside the real 1280x720 view
-// rectangle from spawn in 3996/4000 (99.9%) — the residual handful of misses are a single frozen
-// spawn-instant snapshot at an unlucky orientation, not a persistent gap (the player sees it
-// within moments of moving). Near a stage-0 and a mid-run stage objective (`pickStageObjective`,
-// #138's escalation curve) it's 100% across the same sweep — objective positions sit off-centre
-// in the corridor, so they're closer to SOME edge more often than dead-centre spawn is. The
-// shape's own real (hex-distance) worst-case reach in ANY direction across 2000 seeds tops out
-// at 14 — see MAX_WORLD_RADIUS above for the matching cap. This is a MUCH more aggressive cut
-// than #138/#149's "roomier but shorter" trims (62/4 → 11/4) — a fundamentally smaller map, which
-// is what the issue explicitly asked for ("don't be conservative here"): at this size the
-// boundary is typically visible on ALL FOUR edges from spawn (the corridor's own footprint is now
-// comparable to the screen's), not a subtle 1-in-3 tease — a strong, unambiguous "yes, I can see
-// the edge of the world," the opposite failure mode from before. See worldgen.test.js's "#158
-// boundary visible within the real camera view" suite for the actual regression coverage (direct
-// simulation against the real rectangle, not a re-assertion of these numbers).
-export const FULL_BUILD_BASE_RADIUS = 11;
-export const FULL_BUILD_VARIATION = 4;
+// SIZING PITFALL #2 (caught by the coordinator, not by the first re-simulation): that
+// rectangle-corrected pass (11/4) was itself sized against GAMEPLAY_ZOOM=1.0 — correct for what
+// was checked out in this worktree at the time, but stale: `main` had already moved to
+// GAMEPLAY_ZOOM=1.3 (#160, "turn zoom back to 1.2 or 1.3, that was actually kinda cool" —
+// arena/shared.js, merged after this branch point; picked up here via `git merge origin/main`).
+// Camera zoom is a MAGNIFICATION factor (`setZoom(dpr * GAMEPLAY_ZOOM)`, world-space viewport =
+// canvas_px / zoom) — HIGHER zoom means the screen shows LESS world-space, not more, so the real
+// 1.3x viewport is SMALLER (half-dims ≈492x277px) than the 1.0x one this was sized against
+// (≈640x360px), making boundary visibility HARDER to guarantee at a given interior size, not
+// easier. Re-simulating 11/4 against the REAL (1.3x) rectangle confirmed this directly: spawn
+// hit rate dropped from 99.9% (at the wrong 1.0x) to ~68-73% (at the real 1.3x) — the interior
+// needed to shrink FURTHER, not grow, to restore reliability.
+//
+// Re-swept base/variation combinations against the REAL 1.3x rectangle, across 5000-seed samples
+// each, tracking BOTH the on-screen hit rate AND the hard safe-zone invariant (the guaranteed-
+// clear radius-3 disc around spawn must never be encroached by the boundary ring — see
+// MIN_SPAWN_BOUNDARY_HEX_DIST below). That invariant turned out to be the actual binding
+// constraint: shrinking below baseRadius 9 (at variation 2) started violating it outright
+// (`safeZoneOk: false` at 9/3, 8/*, 7/*, 6/*) — visibility kept improving as the radius shrank,
+// but the safety floor is non-negotiable regardless of how much smaller the map gets, so 9/2 is
+// the SMALLEST/tightest — and therefore best-visibility — configuration that still respects it:
+//   - baseRadius=9, variation=1: safeZoneOk, spawn hit rate 87.8%
+//   - baseRadius=9, variation=2: safeZoneOk, spawn hit rate 90.6% (chosen — best visibility
+//     within the safe range)
+//   - baseRadius=9, variation=3: spawn hit rate 92.9%, but safeZoneOk is FALSE — rejected despite
+//     the better visibility number, since the safety invariant is the harder constraint
+// At 9/2: stage-0 and mid-run-stage objective positions hit 100% (objective positions sit
+// off-centre in the corridor, closer to some edge more often than dead-centre spawn is) — the
+// spawn number (90.6%) is the binding one. This is honestly NOT the ~99%+ originally hoped for —
+// the real zoom-1.3 viewport combined with the hard safe-zone floor caps what's achievable at
+// spawn specifically, and 90.6% (roughly 1 in 11 deploys) is the actual, reported number, not a
+// rounded-up approximation. See worldgen.test.js's "#158" suite for the regression coverage
+// (direct simulation against the real GAMEPLAY_ZOOM-derived rectangle, re-verified with live
+// Playwright screenshots and repeated smoke runs, not just this comment's numbers).
+export const FULL_BUILD_BASE_RADIUS = 9;
+export const FULL_BUILD_VARIATION = 2;
 
 // #158: the near-spawn safety floor #110/#127 introduced (`deepAbsentNearSpawn`, originally a
 // flat, ungrounded "generous" hex-distance-20 scan radius in scripts/smoke.mjs) protected a
@@ -294,12 +311,13 @@ export const FULL_BUILD_VARIATION = 4;
 // the actual goal became "make the boundary visible," not "keep it always many screens away."
 // Set to the literal hard requirement (3, matching the safe-zone radius itself) rather than a
 // padded floor: at the FULL_BUILD_BASE_RADIUS/VARIATION above, the boundary's real worst-case
-// distance from spawn is only 4 hex-distance (2000-seed simulation, worldgen.test.js's "#158"
+// distance from spawn is only 4 hex-distance (5000-seed simulation, worldgen.test.js's "#158"
 // suite pins this down directly) — sizing the map small enough to be reliably ON SCREEN leaves
-// almost no room above the hard safe-zone floor by construction, so padding this constant further
-// would just make the test fail to catch the real, already-thin margin. 3 is the actual floor
-// this protects; the thinness above it is a deliberate, known trade-off of #158's shrink, not an
-// oversight.
+// almost no room above the hard safe-zone floor by construction (this IS the binding constraint
+// that stopped FULL_BUILD_BASE_RADIUS/VARIATION from shrinking any further — see above), so
+// padding this constant further would just make the test fail to catch the real, already-thin
+// margin. 3 is the actual floor this protects; the thinness above it is a deliberate, known
+// trade-off of #158's shrink, not an oversight.
 export const MIN_SPAWN_BOUNDARY_HEX_DIST = 3;
 
 // #126 (playtest: black void visible past the boundary ring at some camera positions/zooms):

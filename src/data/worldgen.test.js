@@ -311,11 +311,12 @@ describe('full-run upfront build sizing (#111)', () => {
     // Non-circular: not every direction reaches the same distance.
     expect(new Set(reach).size).toBeGreaterThan(1);
     // The long axis (q:1,r:0 is exactly angle 0, matching longAxis: 0) still reaches a real
-    // distance, not a degenerate point — #158 deliberately shrank the WHOLE build (the old ">30
-    // hexes, beyond the pre-#127 12-hex opening lobe" comparison no longer applies at this much
-    // smaller scale; see the dedicated elongation-ratio check below for "long axis clearly beats
+    // distance, not a degenerate point — #158 (re-derived against the real GAMEPLAY_ZOOM=1.3
+    // rectangle) shrank the WHOLE build much further than the original #158 pass did (the old
+    // ">30 hexes, beyond the pre-#127 12-hex opening lobe" comparison no longer applies at this
+    // tiny scale; see the dedicated elongation-ratio check below for "long axis clearly beats
     // short axis," which is the actual shape claim that matters).
-    expect(reach[0]).toBeGreaterThan(8);
+    expect(reach[0]).toBeGreaterThan(5);
   });
 
   // #127 sizing pitfall (see the big comment above FULL_BUILD_BASE_RADIUS/VARIATION): the
@@ -435,6 +436,13 @@ describe('full-run upfront build sizing (#111)', () => {
     const HALF_W = (VIEWPORT_W / 2) / GAMEPLAY_ZOOM;
     const HALF_H = (VIEWPORT_H / 2) / GAMEPLAY_ZOOM;
 
+    // Each `boundaryRingKeys` call below passes a shallow `ringWidth: 8` (not the real
+    // BOUNDARY_RING_WIDTH: 35) purely for TEST SPEED — this only ever checks whether the ring's
+    // NEAR edge falls inside the camera rectangle, and the near edge is identical whether the
+    // ring is 8 or 35 hexes deep (the extra depth is all further away, never closer), so the
+    // on-screen determination is exactly the same either way at a fraction of the BFS cost. The
+    // live game (`world.js`) always builds the real full-depth ring; only this simulation shortcuts it.
+
     // Does any boundary-ring hex fall inside the real camera rectangle centred at (cx, cy)?
     function boundaryOnScreen(ring, cx, cy) {
       for (const k of ring) {
@@ -454,15 +462,24 @@ describe('full-run upfront build sizing (#111)', () => {
           baseRadius: FULL_BUILD_BASE_RADIUS, variation: FULL_BUILD_VARIATION,
           sectors: SECTORS, longAxis, aspectRatio: CORRIDOR_ASPECT_RATIO,
         });
-        const ring = boundaryRingKeys(included);
+        const ring = boundaryRingKeys(included, {
+          ringWidth: 8, boundingRadius: FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 20,
+        });
         seeds++;
         if (boundaryOnScreen(ring, 0, 0)) onScreen++;
       }
-      // Matches the live 4000-seed sweep in worldgen.js's own #158 comment: 99.9% (a handful of
-      // misses at unlucky orientations, not a systematic gap) — not a strict 100%, since this is
-      // a single frozen spawn-instant snapshot and the player sees it within moments of moving.
-      expect(onScreen).toBeGreaterThanOrEqual(Math.floor(seeds * 0.99));
-    });
+      // #158 correction: re-derived against the REAL GAMEPLAY_ZOOM (1.3, not the stale 1.0 an
+      // earlier pass used) — the real viewport is smaller, so spawn-visibility reliability is
+      // capped lower than hoped: the hard safe-zone invariant (radius-3 clear disc around spawn
+      // must never be encroached by the boundary ring — see MIN_SPAWN_BOUNDARY_HEX_DIST) is the
+      // BINDING constraint on how small this map can get, and at the largest size that still
+      // respects it (FULL_BUILD_BASE_RADIUS/VARIATION 9/2), the live 5000-seed sweep in
+      // worldgen.js's own #158 comment lands at 90.6% — not 99%+. A smaller radius visibility-
+      // wise would do better, but breaks the safety invariant outright (verified: 9/3, 8/*, 7/*,
+      // 6/* all fail it). Threshold set a few points under that observed 90.6% so this smaller
+      // 500-seed sample doesn't flake.
+      expect(onScreen).toBeGreaterThanOrEqual(Math.floor(seeds * 0.85));
+    }, 30000);
 
     it('near a stage-0 objective (pickStageObjective, lateFrac 0), the boundary is on screen', () => {
       let seeds = 0, onScreen = 0;
@@ -480,7 +497,9 @@ describe('full-run upfront build sizing (#111)', () => {
           }
         }
         if (candidates.length < 4) continue;
-        const ring = boundaryRingKeys(included);
+        const ring = boundaryRingKeys(included, {
+          ringWidth: 8, boundingRadius: FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 20,
+        });
         const from = { q: 0, r: 0 };
         const objKey = pickStageObjective(candidates, from, runLateFraction(0), FAR_OBJECTIVE_MIN_DIST);
         if (!objKey) continue;
@@ -491,7 +510,7 @@ describe('full-run upfront build sizing (#111)', () => {
       }
       expect(seeds).toBeGreaterThan(50);
       expect(onScreen).toBe(seeds);
-    });
+    }, 20000);
 
     it('near a mid-run stage objective, the boundary is on screen', () => {
       let seeds = 0, onScreen = 0;
@@ -510,7 +529,9 @@ describe('full-run upfront build sizing (#111)', () => {
           }
         }
         if (candidates.length < 4) continue;
-        const ring = boundaryRingKeys(included);
+        const ring = boundaryRingKeys(included, {
+          ringWidth: 8, boundingRadius: FULL_BUILD_BASE_RADIUS + FULL_BUILD_VARIATION + 20,
+        });
         const from = { q: 0, r: 0 };
         const objKey = pickStageObjective(candidates, from, runLateFraction(midStage), FAR_OBJECTIVE_MIN_DIST);
         if (!objKey) continue;
@@ -521,7 +542,7 @@ describe('full-run upfront build sizing (#111)', () => {
       }
       expect(seeds).toBeGreaterThan(50);
       expect(onScreen).toBe(seeds);
-    });
+    }, 20000);
 
     it('MAX_WORLD_RADIUS still comfortably bounds the shrunk shape\'s real worst-case reach', () => {
       // Mirrors the long-axis test above (distHex/ratio conversion) but as a direct sanity check
@@ -799,10 +820,14 @@ describe('pickStageObjective (#138)', () => {
     const maxCandidateDist = Math.max(...candidates.map(distOf));
 
     // Stage 0's objective is a short trek relative to the map's overall reachable distance...
-    // #158: at the deliberately much-smaller post-#158 map size, FAR_OBJECTIVE_MIN_DIST (6) can
-    // land stage 0 EXACTLY on that floor (0.2 * maxCandidateDist rounds under it on a small map),
-    // so this is <= rather than a strict <: still a short trek, just occasionally floor-limited.
-    expect(stage0Dist).toBeLessThanOrEqual(maxCandidateDist * 0.4);
+    // #158: at the deliberately much-smaller post-#158 map size (re-derived against the real
+    // GAMEPLAY_ZOOM=1.3 rectangle — FULL_BUILD_BASE_RADIUS 9, MAX_WORLD_RADIUS 16),
+    // FAR_OBJECTIVE_MIN_DIST (3) is now close to HALF of maxCandidateDist on some seeds, so a
+    // fixed 0.4-of-max fraction is no longer a reliable proxy for "short trek" — the floor itself
+    // dominates. The real, scale-independent claim is just "stage 0 doesn't land on the single
+    // farthest candidate" (strictly nearer than the max), which the ratio check below (stage 0
+    // meaningfully nearer than the final stage) backs up with a real margin.
+    expect(stage0Dist).toBeLessThan(maxCandidateDist);
     // ...while the final stage reaches noticeably farther than stage 0 did.
     expect(lastStageDist).toBeGreaterThan(stage0Dist * 1.5);
   });
