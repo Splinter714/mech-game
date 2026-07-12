@@ -14,6 +14,16 @@
 // IndexedDB and decode it before gameplay can trigger any sound. A sound triggered before that
 // finishes just finds nothing in `_cache` yet and plays procedurally for that one instance —
 // never throws, never blocks.
+//
+// Trim (#166): a non-destructive start/end pair per weapon+stage, stored as `startMs`/`trimMs`
+// alongside the rest of the override record. `startMs` skips ahead into the buffer before
+// playback begins; `trimMs` is the DURATION to play *from that new start point* (not from the
+// original file start) — together they map directly onto
+// `AudioBufferSourceNode.start(when, offset, duration)`'s `offset`/`duration` params, read via
+// getStartMs()/getTrimMs() and applied purely as playback-time parameters (sfx.js) — the stored
+// bytes/decoded buffer are never sliced or re-encoded, so both are instantly adjustable/
+// reversible. undefined/null (including every override stored before this feature existed)
+// means "start at 0" / "play to the end," respectively.
 
 const DB_NAME = 'mech-game-sfx-overrides-v1';
 const STORE = 'overrides';
@@ -25,6 +35,20 @@ const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 const _cache = new Map();
 // Small bit of metadata (original filename/mime) purely for the panel's "loaded: foo.mp3" label.
 const _meta = new Map();
+// #166: non-destructive TRIM — play only the first `trimMs` milliseconds of the override
+// buffer. undefined/absent (never stored in this map) means "play the full file," so every
+// existing (pre-#166) override and every freshly-loaded file defaults to untrimmed. Kept as
+// its own synchronous in-memory map (mirroring `_cache`) so sfx.js's hot playback path never
+// awaits anything to read it.
+const _trim = new Map();
+// #166: non-destructive START offset — skip ahead `startMs` milliseconds into the buffer
+// before playback begins. Same convention/lifecycle as `_trim` (undefined/absent means "start
+// at 0," reset whenever a fresh file is loaded into the slot).
+const _start = new Map();
+// The raw Blob for each active override, cached purely so setTrim()/setStart() can persist a
+// full IDB record (key/weaponId/stage/blob/name/type/startMs/trimMs) without a
+// read-before-write round trip.
+const _blobs = new Map();
 
 let _ctx = null;
 // The audio context to decode with. AudioEngine.init() calls this once it has adopted
@@ -115,6 +139,12 @@ export async function storeOverride(weaponId, stage, fileBlob) {
   if (buffer) {
     _cache.set(key, buffer);
     _meta.set(key, { name: record.name, type: record.type });
+    _blobs.set(key, fileBlob);
+    // #166: a freshly-loaded file always starts untrimmed and at start=0 — a start/trim tuned
+    // against whatever was loaded before (if anything) has no meaningful relationship to this
+    // file's own content/length, so never let it carry over silently.
+    _trim.delete(key);
+    _start.delete(key);
   }
   return buffer;
 }
@@ -134,11 +164,66 @@ export function getOverrideMeta(weaponId, stage) {
   return _meta.get(keyFor(weaponId, stage)) ?? null;
 }
 
-// Remove an override, reverting that weapon+stage to procedural synthesis.
+// #166: synchronous lookup for the active trim (milliseconds) — the DURATION to play from the
+// start offset (see getStartMs), used at the sfx.js playback choke point. null means "no trim
+// set, play to the end of the file," same convention as getOverride.
+export function getTrimMs(weaponId, stage) {
+  return _trim.get(keyFor(weaponId, stage)) ?? null;
+}
+
+// #166: synchronous lookup for the active start offset (milliseconds into the buffer to skip
+// ahead before playback begins), used at the sfx.js playback choke point. null means "start at
+// the beginning of the file," same convention as getTrimMs.
+export function getStartMs(weaponId, stage) {
+  return _start.get(keyFor(weaponId, stage)) ?? null;
+}
+
+// Shared persistence for setTrim/setStart: writes a full IDB record combining whatever's
+// currently in the in-memory maps for this key, so either setter alone keeps both fields intact.
+async function _persistStartTrim(weaponId, stage) {
+  const key = keyFor(weaponId, stage);
+  const blob = _blobs.get(key);
+  if (!blob) return; // no active override to attach this to
+  const db = await openDB();
+  if (!db) return;
+  const meta = _meta.get(key) ?? {};
+  const record = { key, weaponId, stage, blob, name: meta.name ?? '', type: meta.type ?? '' };
+  const trimMs = _trim.get(key);
+  const startMs = _start.get(key);
+  if (trimMs != null) record.trimMs = trimMs;
+  if (startMs != null) record.startMs = startMs;
+  try { await idbPut(db, record); } catch { /* storage full/blocked — in-memory value still applies this session */ }
+}
+
+// #166: set (or clear, with null/undefined) the non-destructive trim (duration, from the start
+// offset) for an active override. Purely a playback-time parameter — never touches the decoded
+// buffer or the stored bytes. Persists alongside the existing override record in IndexedDB so
+// it survives a reload; a no-op (still updates the in-memory map for this session) if there's
+// no stored blob to attach it to yet, or if IndexedDB is unavailable/blocked.
+export async function setTrim(weaponId, stage, trimMs) {
+  const key = keyFor(weaponId, stage);
+  if (trimMs == null) _trim.delete(key); else _trim.set(key, trimMs);
+  await _persistStartTrim(weaponId, stage);
+}
+
+// #166: set (or clear, with null/undefined) the non-destructive start offset for an active
+// override. Same persistence/lifecycle contract as setTrim.
+export async function setStart(weaponId, stage, startMs) {
+  const key = keyFor(weaponId, stage);
+  if (startMs == null) _start.delete(key); else _start.set(key, startMs);
+  await _persistStartTrim(weaponId, stage);
+}
+
+// Remove an override, reverting that weapon+stage to procedural synthesis. Also clears any
+// trim set for it (#166) — a trim with no override to apply to is meaningless, and a future
+// file loaded into this same slot must never inherit a stale trim from a previous file.
 export async function clearOverride(weaponId, stage) {
   const key = keyFor(weaponId, stage);
   _cache.delete(key);
   _meta.delete(key);
+  _blobs.delete(key);
+  _trim.delete(key);
+  _start.delete(key);
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
@@ -158,6 +243,11 @@ export async function loadAllOverrides() {
       const buffer = await _ctx.decodeAudioData(bytes);
       _cache.set(rec.key, buffer);
       _meta.set(rec.key, { name: rec.name, type: rec.type });
+      _blobs.set(rec.key, rec.blob);
+      // #166: restore a persisted trim, if this record has one — a record saved before this
+      // feature existed simply has no `trimMs` field, which correctly leaves it untrimmed.
+      if (rec.trimMs != null) _trim.set(rec.key, rec.trimMs);
+      if (rec.startMs != null) _start.set(rec.key, rec.startMs);
     } catch {
       // A stored file that no longer decodes (corrupt, or the browser dropped codec support)
       // just stays a no-op override — that weapon+stage plays procedurally, same as if
@@ -171,6 +261,9 @@ export async function loadAllOverrides() {
 export function _resetForTest() {
   _cache.clear();
   _meta.clear();
+  _blobs.clear();
+  _trim.clear();
+  _start.clear();
   _dbPromise = null;
   _ctx = null;
 }

@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
-import { storeOverride, clearOverride, setAudioContext, _resetForTest } from './sfxOverrides.js';
+import {
+  storeOverride, clearOverride, setAudioContext, setTrim, setStart, _resetForTest,
+} from './sfxOverrides.js';
 
 // Minimal mock Web Audio context: records how many voices (oscillators / noise sources)
 // were created so we can assert the synth actually scheduled sound, and that every event
@@ -9,6 +11,7 @@ import { storeOverride, clearOverride, setAudioContext, _resetForTest } from './
 // chaining in the engine works.
 function mockContext() {
   let oscillators = 0, sources = 0;
+  const bufferSourceStarts = [];   // #166: recorded (when, offset, duration) args from every src.start() call
   const param = () => ({
     value: 0,
     setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
@@ -22,7 +25,14 @@ function mockContext() {
     createBiquadFilter: () => ({ type: '', frequency: param(), Q: param(), connect: (d) => d, disconnect() {} }),
     createDynamicsCompressor: () => ({ threshold: param(), ratio: param(), attack: param(), release: param(), connect: (d) => d }),
     createOscillator: () => { oscillators++; return { type: '', frequency: param(), connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
-    createBufferSource: () => { sources++; return { buffer: null, loop: false, connect: (d) => d, start() {}, stop() {}, disconnect() {} }; },
+    createBufferSource: () => {
+      sources++;
+      return {
+        buffer: null, loop: false, connect: (d) => d,
+        start(...args) { bufferSourceStarts.push(args); },
+        stop() {}, disconnect() {},
+      };
+    },
     createBuffer: (_c, len) => ({ getChannelData: () => new Float32Array(len) }),
     // #150: real-file SFX overrides decode through the context too — a trivial fake decode
     // (tag the "buffer" with the byte length) is enough to prove override plumbing, without
@@ -30,6 +40,7 @@ function mockContext() {
     decodeAudioData: async (bytes) => ({ __fakeDecodedBytes: bytes.byteLength }),
     resume: () => Promise.resolve(),
     _counts: () => ({ oscillators, sources }),
+    _lastBufferSourceStart: () => bufferSourceStarts[bufferSourceStarts.length - 1],
   };
   return ctx;
 }
@@ -230,6 +241,74 @@ describe('AudioEngine (mock context)', () => {
       eng.fire(getWeapon('shotgun'));      // different weapon, no override
       const after = ctx._counts();
       expect(after.oscillators).toBeGreaterThan(before.oscillators); // both ran procedurally
+    });
+
+    // #166: non-destructive trim — applied purely via AudioBufferSourceNode.start's `duration`
+    // arg, never by slicing/re-encoding the buffer itself.
+    describe('trim (#166)', () => {
+      it('passes trimMs (converted to seconds) as start()\'s duration arg when a trim is set', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('d.wav', 'D'));
+        await setTrim('autocannon', 'fire', 400);   // 400ms
+        eng.fire(getWeapon('autocannon'));
+        const [when, offset, duration] = ctx._lastBufferSourceStart();
+        expect(when).toBe(ctx.currentTime);
+        expect(offset).toBe(0);
+        expect(duration).toBeCloseTo(0.4, 5);
+      });
+
+      it('omits the duration arg (plays the full file) when no trim is set', async () => {
+        await storeOverride('autocannon', 'impact', fakeFile('e.wav', 'E'));
+        eng.impact('autocannon');
+        const args = ctx._lastBufferSourceStart();
+        expect(args.length).toBe(1);   // just `when` — untouched, exactly the pre-#166 call shape
+      });
+
+      it('an untrimmed pre-existing (#150-era) override plays full length, completely unaffected', async () => {
+        // Mirrors an override stored before trimMs existed: never calls setTrim at all.
+        await storeOverride('shotgun', 'fire', fakeFile('legacy.wav', 'LEGACY'));
+        eng.fire(getWeapon('shotgun'));
+        const args = ctx._lastBufferSourceStart();
+        expect(args.length).toBe(1);
+      });
+    });
+
+    // #166 (scope expansion): a real START offset alongside the end trim — together they form
+    // an actual start/end pair mapped onto start(when, offset, duration).
+    describe('start offset (#166)', () => {
+      it('passes startMs (converted to seconds) as start()\'s offset arg when only a start is set', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('f.wav', 'F'));
+        await setStart('autocannon', 'fire', 500);   // 500ms in, no end trim
+        eng.fire(getWeapon('autocannon'));
+        const [when, offset, duration] = ctx._lastBufferSourceStart();
+        expect(when).toBe(ctx.currentTime);
+        expect(offset).toBeCloseTo(0.5, 5);
+        expect(duration).toBeUndefined();   // plays from the offset to the end of the file
+      });
+
+      it('combines start + trim: plays a 300ms window beginning 500ms into the file', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('g.wav', 'G'));
+        await setStart('autocannon', 'fire', 500);
+        await setTrim('autocannon', 'fire', 300);   // duration FROM the new start point
+        eng.fire(getWeapon('autocannon'));
+        const [when, offset, duration] = ctx._lastBufferSourceStart();
+        expect(when).toBe(ctx.currentTime);
+        expect(offset).toBeCloseTo(0.5, 5);
+        expect(duration).toBeCloseTo(0.3, 5);
+      });
+
+      it('omits both offset and duration (plays the full file) when neither start nor trim is set', async () => {
+        await storeOverride('autocannon', 'impact', fakeFile('h.wav', 'H'));
+        eng.impact('autocannon');
+        const args = ctx._lastBufferSourceStart();
+        expect(args.length).toBe(1);
+      });
+
+      it('an untrimmed pre-existing override with no start set plays full length, unaffected', async () => {
+        await storeOverride('shotgun', 'impact', fakeFile('legacy2.wav', 'LEGACY2'));
+        eng.impact('shotgun');
+        const args = ctx._lastBufferSourceStart();
+        expect(args.length).toBe(1);
+      });
     });
   });
 });
