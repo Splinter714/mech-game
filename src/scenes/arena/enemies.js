@@ -816,7 +816,21 @@ export const EnemiesMixin = {
     const part = def.parts[def.muzzlePart] ?? Object.values(def.parts)[0];
     const disp = vehicleScale(def) * ART_SCALE;
     const { x: mx, y: my } = partMuzzle(part, e.x, e.y, aim, disp);
-    this._spawnProjectile(w, mx, my, aim + aimErr, 'enemy', 0, null);
+    const fireAngle = aim + aimErr;
+    // #123: route through the SAME delivery-type decision the mech fire loop uses (#117), rather
+    // than unconditionally spawning a travelling projectile — a hitscan weapon resolves as an
+    // instant beam via _fireHitscan, a contact/melee weapon via _melee, both owner: 'enemy' so
+    // damage lands on the player; only genuinely projectile weapons still spawn a travelling
+    // round. No visible change today (every live kind loadout is hit: 'projectile') — proactive
+    // hardening so a future hitscan/melee kind loadout renders correctly.
+    const plan = planEmissions(weapon);
+    if (plan.mode === 'contact') {
+      this._melee(w, mx, my, fireAngle, 'enemy');
+    } else if (plan.mode === 'hitscan') {
+      this._fireHitscan(w, mx, my, fireAngle, 'enemy', e.key);
+    } else {
+      this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null);
+    }
     e.fireCd = def.fireEveryMs ?? 1000;
   },
 
