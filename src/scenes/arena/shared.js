@@ -28,7 +28,10 @@ export const ARENA_MECH_SCALE = 0.34;
 // instead of distant scenery, while still leaving a comfortable viewport radius for spotting
 // enemies (most direct-fire weapons' optimal range, 338-500px, still fits well inside the
 // shrunk view at any common viewport size).
-export const GAMEPLAY_ZOOM = 1.3;
+// #157 (direct instruction, 2026-07-11: "turn off the new 1.3x game zoom"): set back to 1.0
+// (a no-op multiplier — setZoom(dpr * GAMEPLAY_ZOOM) is equivalent to the pre-#149
+// setZoom(dpr)). The mechanism above stays intact so a different value is a one-line change.
+export const GAMEPLAY_ZOOM = 1.0;
 
 // #136: the single shared "wayfinding/aim highlight" colour — one source of truth for every
 // UI element that means "pay attention to this direction/spot": the objective marker's amber
