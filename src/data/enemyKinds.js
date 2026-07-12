@@ -249,6 +249,14 @@ export const ENEMY_KINDS = {
                                                                      // be slower") — a lumbering
                                                                      // mob you can outrun/outdrive,
                                                                      // not a fast-closing swarm.
+    // #151 (playtest: "infantry swarms hanging out in the water"): a passable river/channel is
+    // meant for mechs/tanks to wade through, but a tiny trooper parking in it reads badly. This
+    // only affects idle-wander GOAL PICKING (scenes/arena/enemies.js `_idleMoveIntent`) — a
+    // trooper directly chasing/fleeing across a river when AWARE is unaffected (that's driven by
+    // direct-line movement toward the player, not a chosen destination) and can still physically
+    // cross passable water if forced to. Tank/quadruped are bulkier and read fine wading, so this
+    // is infantry-only, not a generic "small ground unit" flag — see #151 report.
+    avoidWater: true,
     art: 'infantry',
     behavior: 'infantry',
     themeColor: 0x8fae4a,

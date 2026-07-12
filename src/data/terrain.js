@@ -6,6 +6,14 @@
 //                 only meaningful for passable terrain)
 //   destructible — outposts have HP and turn into `rubble` when destroyed (weapon fire or a
 //                 mech stomp). `hp` is the starting hit points seeded per building hex.
+//   water        — #151: reads visually as actual water (or its frozen/melt equivalent) — NOT
+//                 just "slow terrain in general" (forest/scrub/debris/dryRiver/quicksand/crust/
+//                 cinderField are all slow but read as earth/ash/rock, not water). Passable water
+//                 is meant to be waded by mechs/vehicles, but small ground units (see enemyKinds.js
+//                 `avoidWater`) shouldn't voluntarily choose one as an idle-wander destination —
+//                 see `isWaterTerrain` below. Marked per-entry rather than inferred from biome
+//                 roles because a biome's `channel`/`hazard` role isn't reliably water (desert's
+//                 channel is a DRY riverbed; urban's is a paved road; volcanic's is a lava crust).
 //
 // #72 soft cover: terrain that is BOTH passable and LOS-blocking (forest/scrub/drift/wreck/
 // fumarole) is "soft cover" — a unit can stand inside it. Two special rules apply, both driven
@@ -25,9 +33,9 @@ export const TERRAIN = {
   grass:     { id: 'grass',     tex: 'hex_grass',     passable: true,  blocksLOS: false, speedFactor: 1 },
   grassB:    { id: 'grassB',    tex: 'hex_grassB',    passable: true,  blocksLOS: false, speedFactor: 1 },
   // Shallow winding river: drive through it, but it SLOWS the mech; shoot over it (no LOS block).
-  river:     { id: 'river',     tex: 'hex_river',     passable: true,  blocksLOS: false, speedFactor: 0.5 },
+  river:     { id: 'river',     tex: 'hex_river',     passable: true,  blocksLOS: false, speedFactor: 0.5, water: true },
   // Deep water (lake/ocean): impassable; still shoot over it (no LOS block).
-  deepWater: { id: 'deepWater', tex: 'hex_deepWater', passable: false, blocksLOS: false },
+  deepWater: { id: 'deepWater', tex: 'hex_deepWater', passable: false, blocksLOS: false, water: true },
   // Forest: walk-through cover — passable but slowing, and it hides you (blocks LOS).
   forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 40, rubbleId: 'rubble' },
   // Outpost building: hard cover you can DESTROY (weapon fire or a stomp) → collapses to rubble.
@@ -56,9 +64,9 @@ export const TERRAIN = {
   snow:      { id: 'snow',      tex: 'hex_snow',      passable: true,  blocksLOS: false, speedFactor: 0.85 },
   snowB:     { id: 'snowB',     tex: 'hex_snowB',     passable: true,  blocksLOS: false, speedFactor: 0.85 },
   // Slush: half-frozen melt — the shallow-water analog (passable, slowing, shoot over).
-  slush:     { id: 'slush',     tex: 'hex_slush',     passable: true,  blocksLOS: false, speedFactor: 0.5 },
+  slush:     { id: 'slush',     tex: 'hex_slush',     passable: true,  blocksLOS: false, speedFactor: 0.5, water: true },
   // Ice: solid frozen lake — the impassable deep-water analog (you can shoot over it).
-  ice:       { id: 'ice',       tex: 'hex_ice',       passable: false, blocksLOS: false },
+  ice:       { id: 'ice',       tex: 'hex_ice',       passable: false, blocksLOS: false, water: true },
   // Snowdrift / frozen pines: walk-through cover (passable + slowing + LOS block).
   drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 30, rubbleId: 'snowRubble' },
   // Frozen outpost: destructible hard cover.
@@ -66,8 +74,8 @@ export const TERRAIN = {
   snowRubble:{ id: 'snowRubble',tex: 'hex_snowRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
   // #110: broken ice — the arctic's LESSER in-map hazard, standing in for solid 'ice' now that
   // ice is reserved exclusively for the world boundary. Passable but slow (thin/cracked ice);
-  // no LOS block.
-  brokenIce: { id: 'brokenIce', tex: 'hex_brokenIce', passable: true,  blocksLOS: false, speedFactor: 0.4 },
+  // no LOS block. #151: still reads as water (cold water visible through the cracks).
+  brokenIce: { id: 'brokenIce', tex: 'hex_brokenIce', passable: true,  blocksLOS: false, speedFactor: 0.4, water: true },
 
   // ── Urban ruins (#67) — grey industrial palette; dense destructible cover + roads. ──
   pavement:  { id: 'pavement',  tex: 'hex_pavement',  passable: true,  blocksLOS: false, speedFactor: 1 },
@@ -125,6 +133,18 @@ export function terrainSpeedFactor(id) {
 export function isPassable(id) {
   const t = id && TERRAIN[id];
   return !!t && t.passable;
+}
+
+// #151: does this terrain read visually as actual water (river/deep water/slush/ice/broken ice
+// across the 5 biomes) — as opposed to merely slow terrain in general (forest, dryRiver,
+// quicksand, debris, crust, cinderField, etc.)? Driven purely by the `water` flag above so this
+// stays a single per-entry fact rather than an id list duplicated at every call site. Used to
+// keep small ground units (infantry) from voluntarily choosing a water hex as an idle-wander
+// destination, while still allowing them to be physically forced across passable water (a river
+// is still `passable`, just not a picked as a *destination*).
+export function isWaterTerrain(id) {
+  const t = id && TERRAIN[id];
+  return !!t && !!t.water;
 }
 
 // Does this terrain break line-of-sight (cover / projectile blocker)? Unknown ⇒ false.

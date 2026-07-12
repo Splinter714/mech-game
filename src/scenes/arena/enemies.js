@@ -28,6 +28,8 @@ import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes } from '../../data/spawnPlacement.js';
+import { pickWanderGoal } from '../../data/wander.js';
+import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
@@ -960,17 +962,18 @@ export const EnemiesMixin = {
   // point (not the player), so it reads as patrolling rather than frozen while it hasn't noticed
   // anything yet. Picks a fresh nearby waypoint on a slow cadence; holds still once it arrives
   // until the next re-pick.
+  // #151: a unit whose kindDef marks `avoidWater` (currently infantry only — see enemyKinds.js)
+  // never CHOOSES a water hex as this waypoint, on top of the existing impassable-terrain check.
+  // It's still free to stand in/cross water if AWARE-state chase/advance drives it there directly
+  // (that's not goal-picking — see _enemyMoveIntent/infantryBehavior); this only stops it from
+  // voluntarily loitering in a river while patrolling.
   _idleMoveIntent(e, delta) {
     e.idleAt -= delta;
     const arrived = e.idleGoal && Math.hypot(e.idleGoal.x - e.x, e.idleGoal.y - e.y) < ARRIVE_SLOW;
     if (!e.idleGoal || e.idleAt <= 0 || arrived) {
-      const a = Math.random() * Math.PI * 2;
-      const r = Math.random() * IDLE_WANDER_RADIUS;
-      let gx = e.spawnX + Math.cos(a) * r, gy = e.spawnY + Math.sin(a) * r;
-      for (let t = 0; t < 5 && this._blocked(gx, gy); t++) {
-        gx = (gx + e.spawnX) / 2; gy = (gy + e.spawnY) / 2;
-      }
-      e.idleGoal = { x: gx, y: gy };
+      const avoidsWater = !!e.kindDef?.avoidWater;
+      const isInvalid = (x, y) => this._blocked(x, y) || (avoidsWater && isWaterTerrain(this._terrainAt(x, y)));
+      e.idleGoal = pickWanderGoal(e.spawnX, e.spawnY, IDLE_WANDER_RADIUS, isInvalid);
       e.idleAt = rand(IDLE_REPICK_MIN, IDLE_REPICK_MAX);
     }
     const gx = e.idleGoal.x - e.x, gy = e.idleGoal.y - e.y;
