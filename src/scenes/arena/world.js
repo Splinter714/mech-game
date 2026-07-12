@@ -90,6 +90,10 @@ export const WorldMixin = {
     const startAngle = shapeRng() * Math.PI * 2;
     const spine = generateSpine(shapeRng, { startAngle });
     this._spine = spine;   // exposed for objective-along-spine placement (mission.js/run.js)
+    // #116: publish the spine centreline (plain {x,y} world points) for the HUD corner minimap,
+    // which draws the whole corridor's silhouette by unioning discs along it. Set once here (the
+    // corridor is built once per run, #111) — HudScene reads it as a stable snapshot each frame.
+    this.registry.set('spineWorld', spine.points.map((p) => ({ x: p.x, y: p.y })));
     const includedKeys = corridorHexSet(spine.points, undefined, safeZoneKeys({ q: 0, r: 0 }, 3));
     const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke

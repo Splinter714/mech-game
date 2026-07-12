@@ -5,6 +5,7 @@ import { POWERUPS, durationMs } from '../data/powerups.js';
 import { STAGE_COUNT } from '../data/run.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
+import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -56,6 +57,15 @@ function drawChevronGlow(g, x, y, angle, size, color, alpha) {
 // Runs as its own scene so it lays out in logical screen space without fighting the arena's
 // follow camera; tiles are built once and updated in place each frame.
 const C = { text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a' };
+
+// #116: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is a
+// muted steel; the player rides the shared accent, the objective the shared amber wayfinding
+// highlight (so it matches the edge arrow / world marker), and enemies the danger red.
+const MM = {
+  panelFill: 0x0c1116, panelStroke: 0x2b3742,
+  corridor: 0x39434d, corridorEdge: 0x515e6b,
+  player: 0x5ec8e0, enemy: 0xe2533a,
+};
 
 export default class HudScene extends Phaser.Scene {
   constructor() {
@@ -147,6 +157,23 @@ export default class HudScene extends Phaser.Scene {
     // block (INTEGRITY starts at y=112, so keep clear of that).
     const tileTop = tiles.length ? tiles[0].y : this.H - 10;
     this.wayMargins = { top: 116, right: 24, bottom: this.H - tileTop + 12, left: 24 };
+
+    // #116: corner minimap — the deferred half of #80 (the edge-direction arrow was the other
+    // half). A compact box in the RIGHT margin, sitting just ABOVE the skill-tile toolbar (so it
+    // clears both the toolbar and the bottom-right mode/AI text) and below the top-right enemy-
+    // count/buff stack. It renders the WHOLE snaking corridor's silhouette (from `spineWorld`)
+    // with live player/objective/enemy markers moving within it.
+    const mmW = 152, mmH = 128;
+    this.miniBox = { x: this.W - 14 - mmW, y: tileTop - 12 - mmH, w: mmW, h: mmH };
+    // Static layer: panel + corridor silhouette, drawn once the spine is known (it never changes
+    // mid-run). Dynamic layer: the live markers, cleared/redrawn each frame. Both on the same
+    // depth tier as the wayfinding arrow so they sit above the skill toolbar.
+    this.miniStaticGfx = this.add.graphics().setDepth(19);
+    this.miniGfx = this.add.graphics().setDepth(21);
+    this.miniLabel = this.add.text(this.miniBox.x + 6, this.miniBox.y + 4, 'MAP',
+      { fontFamily: 'monospace', fontSize: '10px', color: C.dim }).setDepth(21);
+    this._miniFit = null;      // {toMini, scale} once computed
+    this._miniSpineRef = null; // identity of the spine snapshot the static layer was drawn from
   }
 
   update() {
@@ -232,6 +259,7 @@ export default class HudScene extends Phaser.Scene {
 
     this._updateBuffHud();
     this._updateWayArrow();
+    this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
     this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
@@ -260,6 +288,105 @@ export default class HudScene extends Phaser.Scene {
     const alpha = 0.55 + 0.45 * pulse;
     drawChevronGlow(g, x, y, angle, size, UI_HIGHLIGHT_COLOR, alpha);
     drawChevron(g, x, y, angle, size, UI_HIGHLIGHT_COLOR, 0.92 * (0.7 + 0.3 * pulse));   // shared wayfinding highlight colour (#136)
+  }
+
+  // #116: build the world→minimap fit and paint the static layer (panel + corridor silhouette).
+  // Run once per run — the corridor is built once (#111), so `spineWorld` is a stable snapshot; we
+  // re-run only if its identity changes (a fresh deploy/run swaps in a new array). The fit letter-
+  // boxes the corridor's padded bounding box into the box preserving aspect, so any random
+  // per-deploy orientation of the snake fits cleanly whether it runs wide or tall.
+  _buildMinimap(spine) {
+    const box = this.miniBox;
+    const inset = 10;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of spine) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    // Pad the bounds by the corridor half-width so the drawn floor (and any marker out at the
+    // corridor's edge) stays inside the box, not clipped at the centreline's own extent.
+    const pad = CORRIDOR_HALF_WIDTH_PX;
+    minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+    const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
+    const availW = box.w - 2 * inset, availH = box.h - 2 * inset;
+    const scale = Math.min(availW / spanX, availH / spanY);
+    const offX = box.x + inset + (availW - spanX * scale) / 2;
+    const offY = box.y + inset + (availH - spanY * scale) / 2;
+    const toMini = (wx, wy) => ({ x: offX + (wx - minX) * scale, y: offY + (wy - minY) * scale });
+    this._miniFit = { toMini, scale };
+
+    const g = this.miniStaticGfx;
+    g.clear();
+    // Panel: dark rounded backing + subtle border.
+    g.fillStyle(MM.panelFill, 0.72);
+    g.fillRoundedRect(box.x, box.y, box.w, box.h, 6);
+    g.lineStyle(1, MM.panelStroke, 0.9);
+    g.strokeRoundedRect(box.x, box.y, box.w, box.h, 6);
+    // Corridor silhouette: the union of discs along the spine — exactly how the playable set is
+    // defined (worldgen.js `corridorHexSet`), so the sketch is faithful and gap-free. Subsample the
+    // dense spine (samples are 24px apart; discs are `CORRIDOR_HALF_WIDTH_PX` wide) so ~2 dozen
+    // solid circles cover it with heavy overlap instead of drawing all ~150 every rebuild.
+    const r = CORRIDOR_HALF_WIDTH_PX * scale;
+    const step = 6;
+    g.fillStyle(MM.corridor, 0.95);
+    for (let i = 0; i < spine.length; i += step) {
+      const m = toMini(spine[i].x, spine[i].y);
+      g.fillCircle(m.x, m.y, r);
+    }
+    // Always include the last sample so the far end isn't dropped by the stride.
+    const last = toMini(spine[spine.length - 1].x, spine[spine.length - 1].y);
+    g.fillCircle(last.x, last.y, r);
+    this._miniSpineRef = spine;
+  }
+
+  // #116: draw the live markers (player facing, objective, enemies) into the dynamic layer each
+  // frame. Reads the SAME `objectiveWorld` the edge arrow uses, so the two can never disagree.
+  _updateMinimap() {
+    const spine = this.registry.get('spineWorld');
+    const g = this.miniGfx;
+    g.clear();
+    if (!spine || !spine.length) { this.miniStaticGfx.clear(); return; }
+    if (this._miniSpineRef !== spine || !this._miniFit) this._buildMinimap(spine);
+    const { toMini } = this._miniFit;
+    const box = this.miniBox;
+    const inBox = (m) => m.x >= box.x && m.x <= box.x + box.w && m.y >= box.y && m.y <= box.y + box.h;
+
+    // Enemies: small danger dots. Cap to the nearest N to the player so a swarm stays readable.
+    const player = this.registry.get('playerWorld');
+    const enemies = this.registry.get('enemyPositions') || [];
+    let shown = enemies;
+    const CAP = 50;
+    if (enemies.length > CAP && player) {
+      shown = [...enemies]
+        .sort((a, b) => ((a.x - player.x) ** 2 + (a.y - player.y) ** 2) - ((b.x - player.x) ** 2 + (b.y - player.y) ** 2))
+        .slice(0, CAP);
+    }
+    g.fillStyle(MM.enemy, 0.95);
+    for (const e of shown) {
+      const m = toMini(e.x, e.y);
+      if (inBox(m)) g.fillCircle(m.x, m.y, 2.2);
+    }
+
+    // Objective: amber diamond + ring (shared wayfinding highlight colour).
+    const obj = this.registry.get('objectiveWorld');
+    if (obj) {
+      const m = toMini(obj.x, obj.y);
+      if (inBox(m)) {
+        g.fillStyle(UI_HIGHLIGHT_COLOR, 1);
+        g.beginPath();
+        g.moveTo(m.x, m.y - 4.5); g.lineTo(m.x + 4.5, m.y);
+        g.lineTo(m.x, m.y + 4.5); g.lineTo(m.x - 4.5, m.y);
+        g.closePath(); g.fillPath();
+        g.lineStyle(1.2, UI_HIGHLIGHT_COLOR, 0.8);
+        g.strokeCircle(m.x, m.y, 7);
+      }
+    }
+
+    // Player: a facing chevron in the shared accent colour, oriented to the hull heading.
+    if (player) {
+      const m = toMini(player.x, player.y);
+      if (inBox(m)) drawChevron(g, m.x, m.y, player.angle, 6.5, MM.player, 1);
+    }
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
