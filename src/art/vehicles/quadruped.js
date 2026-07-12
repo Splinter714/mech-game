@@ -9,23 +9,54 @@ import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, poly } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
 
+// A single tapered leg segment (hip/knee -> knee/foot), drawn as an outline poly with a
+// narrower fill poly on top (same layering idea as plate()) plus a thin highlight strip, so
+// it reads as a jointed limb rather than a flat blocky silhouette.
+function legSegment(sg, x1, y1, x2, y2, w1, w2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;   // unit perpendicular, for width offsets
+  poly(sg, [
+    [x1 + nx * (w1 + 0.8), y1 + ny * (w1 + 0.8)], [x1 - nx * (w1 + 0.8), y1 - ny * (w1 + 0.8)],
+    [x2 - nx * (w2 + 0.8), y2 - ny * (w2 + 0.8)], [x2 + nx * (w2 + 0.8), y2 + ny * (w2 + 0.8)],
+  ], V.outline);
+  poly(sg, [
+    [x1 + nx * w1, y1 + ny * w1], [x1 - nx * w1, y1 - ny * w1],
+    [x2 - nx * w2, y2 - ny * w2], [x2 + nx * w2, y2 + ny * w2],
+  ], V.tread);
+  poly(sg, [
+    [x1 + nx * w1 * 0.5, y1 + ny * w1 * 0.5], [x1 + nx * w1 * 0.1, y1 + ny * w1 * 0.1],
+    [x2 + nx * w2 * 0.1, y2 + ny * w2 * 0.1], [x2 + nx * w2 * 0.5, y2 + ny * w2 * 0.5],
+  ], V.treadHi, 0.7);
+}
+
+// A single articulated leg: hip -> knee -> foot, with a visible bend at the knee. #147: the
+// old single blocky rounded rect (roundC + horizontal "rung" bars) read as a stubby tank
+// tread, not a walking leg — this replaces it with two thinner tapered segments meeting at an
+// angled knee joint, which is what actually reads as "leg" rather than "tread."
+function drawLeg(sg, hipX, hipY, side) {
+  const dir = Math.sign(hipY) || 1;   // front legs (-y) bend the knee forward/up; rear (+y) back/down
+  const kneeX = hipX + side * 5, kneeY = hipY + dir * 9;
+  const footX = hipX, footY = hipY + dir * 20;
+  legSegment(sg, hipX, hipY, kneeX, kneeY, 3.4, 2.6);   // upper leg — thicker at the hip
+  legSegment(sg, kneeX, kneeY, footX, footY, 2.4, 1.7); // lower leg — thinner still
+  ellipseC(sg, kneeX, kneeY, 2.4, 2.4, V.treadHi, 0.9);   // knee joint accent
+  ellipseC(sg, kneeX, kneeY, 1.3, 1.3, V.outline);
+  ellipseC(sg, footX, footY, 4, 2.8, V.deep, 0.65);       // foot pad
+}
+
 // Hull + four splayed legs, drawn pointing "up" (−y = forward). A wide four-point stance (front
 // pair angled forward, rear pair angled back) reads as a quadruped rather than tank tracks.
 function drawHull(sg, accent) {
   // Ground shadow — wide, to match the four-point footprint.
   ellipseC(sg, 0, 5, 32, 28, V.deep, 0.35);
 
-  // Four stubby mechanical legs with foot pads.
+  // Four articulated legs (hip -> knee -> foot) with foot pads.
   const legs = [
-    { x: -17, y: -12 }, { x: 17, y: -12 },   // front-left / front-right
-    { x: -18, y: 13 }, { x: 18, y: 13 },     // rear-left / rear-right
+    { x: -17, y: -12, side: -1 }, { x: 17, y: -12, side: 1 },   // front-left / front-right
+    { x: -18, y: 13, side: -1 }, { x: 18, y: 13, side: 1 },     // rear-left / rear-right
   ];
-  for (const { x, y } of legs) {
-    roundC(sg, x, y, 7, 15, V.outline, 3);
-    roundC(sg, x, y, 5, 12, V.tread, 2.5);
-    for (const ly of [-4, 1, 6]) rectC(sg, x, y + ly, 4.6, 1.4, V.treadHi, 0.85);   // leg-strut rungs
-    ellipseC(sg, x, y + 8, 4.6, 3, V.deep, 0.65);   // foot pad
-  }
+  for (const { x, y, side } of legs) drawLeg(sg, x, y, side);
 
   // Central hull tub between the four legs.
   poly(sg, [[-11, -12], [11, -12], [12, 12], [-12, 12]], V.outline);

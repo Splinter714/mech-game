@@ -373,33 +373,41 @@ try {
       return { spawnedCount, matchesMobSize, textured, damaged, diedAndRemoved };
     })();
 
-    // #130: the Broodwalker (quadruped) — a slow tanky ground unit that fires its turret AND
-    // periodically deploys a drone/infantry trooper near itself while alive+aware. Park the
-    // player within its fireRange/detect range, force it AWARE (mirrors the #103 awareness test's
-    // direct-flag approach — this isolates the deploy/fire mechanic from the detection timing
-    // already covered by that test), and drive real `_updateVehicle` ticks covering several of
-    // its (deliberately short-circuited) deploy cooldowns.
+    // #130/#147: the Broodwalker (quadruped) — a slow tanky ground unit that fires its turret
+    // AND periodically deploys a whole SWARM-sized batch of drones/infantry near itself while
+    // alive+aware (reworked in #147 from a 1-unit-per-8s trickle into several units per burst,
+    // faster cadence, much higher lifetime cap). Park the player within its fireRange/detect
+    // range, force it AWARE (mirrors the #103 awareness test's direct-flag approach — this
+    // isolates the deploy/fire mechanic from the detection timing already covered by that test),
+    // and drive real `_updateVehicle` ticks covering several of its (deliberately
+    // short-circuited) deploy cooldowns.
     const quad = (() => {
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
       const q = a._spawnKind(150, 0, 'quadruped');
       q.awareness = 'aware';
       q.deployCd = 50;               // short-circuit the first deploy so this test doesn't need
-                                      // thousands of ticks to reach the real ~8s cadence
+                                      // thousands of ticks to reach the real ~4s cadence
       const spawnedBefore = a.enemies.length;
       a.projectiles.length = 0;
       let deployedAtLeastOnce = false;
+      let firstBurstSize = 0;
       for (let i = 0; i < 4 && !deployedAtLeastOnce; i++) {
         // Run one deploy-interval's worth of ticks, then re-shortcut the next cooldown so a
         // handful of loop iterations reliably exercises multiple deploys without simulating the
         // full real-world cadence.
         for (let t = 0; t < 40; t++) a._updateVehicle(q, 0.016, 16);
-        if (a.enemies.length > spawnedBefore) deployedAtLeastOnce = true;
-        else q.deployCd = 50;
+        if (a.enemies.length > spawnedBefore) {
+          deployedAtLeastOnce = true;
+          firstBurstSize = a.enemies.length - spawnedBefore;
+        } else q.deployCd = 50;
       }
       const deployedCount = a.enemies.length - spawnedBefore;
       const deployedUnitsAreDroneOrInfantry = a.enemies.slice(spawnedBefore)
         .every((e) => e.kind === 'drone' || e.kind === 'infantry');
       const firedTurret = a.projectiles.some((p) => p.owner === 'enemy');
+      // #147: a single deploy tick must drop a real multi-unit BATCH (deployBatchMin/Max), not
+      // just one unit at a time like the old #130 trickle.
+      const firstBurstIsSwarm = firstBurstSize >= (q.kindDef.deployBatchMin ?? 1);
       // Cap respected: deployCount tracked on the nest itself never exceeds its def.deployCap.
       const capRespected = q.deployCount <= q.kindDef.deployCap;
       // Kill the nest and confirm its previously-deployed drones/infantry are NOT orphaned:
@@ -414,7 +422,8 @@ try {
       a.projectiles.length = 0;
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
       return {
-        deployedAtLeastOnce, deployedCount, deployedUnitsAreDroneOrInfantry, firedTurret,
+        deployedAtLeastOnce, deployedCount, firstBurstSize, firstBurstIsSwarm,
+        deployedUnitsAreDroneOrInfantry, firedTurret,
         capRespected, nestDiedAndRemoved, childrenSurvivedNestDeath,
       };
     })();
@@ -1212,9 +1221,11 @@ try {
   if (!arena.infMob.textured) fail('#97 an infantry trooper is missing its hull/turret textures');
   if (!arena.infMob.damaged) fail('#97 an infantry trooper did not take damage via the body interface');
   if (!arena.infMob.diedAndRemoved) fail('#97 an infantry trooper did not die + get removed through the normal death path');
-  // #130: the Broodwalker (quadruped) fires its turret, deploys drones/infantry while aware,
-  // respects its deploy cap, and dying doesn't orphan/remove its already-deployed units.
+  // #130/#147: the Broodwalker (quadruped) fires its turret, deploys a SWARM-sized batch of
+  // drones/infantry per tick (not one at a time) while aware, respects its deploy cap, and
+  // dying doesn't orphan/remove its already-deployed units.
   if (!arena.quad.deployedAtLeastOnce) fail('#130 the quadruped never deployed a drone/infantry trooper while alive and aware');
+  if (!arena.quad.firstBurstIsSwarm) fail(`#147 the quadruped's first deploy burst only spawned ${arena.quad.firstBurstSize} unit(s), expected a multi-unit swarm batch`);
   if (!arena.quad.deployedUnitsAreDroneOrInfantry) fail('#130 the quadruped deployed something other than a drone/infantry trooper');
   if (!arena.quad.firedTurret) fail('#130 the quadruped never fired its turret at the player');
   if (!arena.quad.capRespected) fail(`#130 the quadruped deployed more than its own deployCap (deployed ${arena.quad.deployedCount})`);

@@ -182,17 +182,25 @@ export const ENEMY_KINDS = {
     // #130 (owner: tune): "comparable to or slower than tank" — tank's maxSpeed is 52, this is
     // noticeably slower/heavier so it reads as a lumbering quadruped rather than a light tank.
     move: { maxSpeed: 38, accel: 90, turnRate: 1.1, turretSlew: 2.0 },
-    // #130 deploy mechanic (owner: tune both numbers if it floods/starves the arena in play):
-    // roughly once every 8s (mid the requested 6-12s range) while alive+aware, spawns one
-    // drone or infantry trooper near itself (quadrupedBehavior), up to deployCap total over
-    // its lifetime so a long fight can't have it spawn forever unbounded.
-    deployEveryMs: 8000,
-    deployCap: 5,
+    // #147 (playtest follow-up to #130: "should deploy SWARMS of quadcopters and infantry" —
+    // the old 1-unit-per-8s-capped-at-5 trickle didn't read as a swarm at all). Now every 4s
+    // while alive+aware it drops a whole BATCH of deployBatchMin-deployBatchMax (3-5) drones/
+    // infantry troopers at once (quadrupedBehavior), up to a much higher deployCap (24, in the
+    // same ballpark as the drone SWARM_SIZE(18)/INFANTRY_MOB_SIZE(28) below) so a full fight
+    // reads as genuinely swarm-dangerous without spawning literally unbounded units and tanking
+    // arena performance.
+    deployEveryMs: 4000,
+    deployBatchMin: 3,
+    deployBatchMax: 5,
+    deployCap: 24,
     art: 'quadruped',
     behavior: 'quadruped',
     themeColor: 0x8a4fc9,    // distinct violet accent — reads as a different "danger" bit
                              // from tank's orange / turret's orange / drone's yellow / etc.
-    scale: 0.6,              // bigger footprint than tank's 0.48 — reads as a bulkier chassis
+    // #147: playtest said the #130 0.6 (already "bigger footprint than tank's 0.48") still read
+    // "way too small" for a tougher-than-tank objective unit — bumped to 1.0 (on par with a full
+    // player mech's effective on-screen scale, ARENA_MECH_SCALE × 1), a clearly obvious jump.
+    scale: 1.0,
   },
 
   // 6) INFANTRY — one trooper of a GROUND swarm (#97). The weakest unit in the game by a wide

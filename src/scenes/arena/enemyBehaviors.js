@@ -134,16 +134,17 @@ function helicopterBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: false });
 }
 
-// QUADRUPED — "Broodwalker" (#130). Grinds to a firing standoff and holds, same tank-style hull-
-// travel/turret-independent-track pattern as tankBehavior (reused deliberately, not reinvented —
-// see tankBehavior above for the same radial/strafe shape), just on a slower/heavier chassis.
-// PLUS a periodic deploy mechanic: while alive and AWARE (this fn only runs while aware — see
-// _updateVehicle's aware gate) it acts as a mobile "nest," dropping one drone or infantry
-// trooper near itself on a data-driven cadence (def.deployEveryMs) up to a lifetime cap
-// (def.deployCap), so a long fight can't have it spawn forever unbounded. This is new PER-FRAME
-// incremental spawning (unlike turretNest/infantryMob, which expand everything up front at
-// spawn time) — the timer/count state (`e.deployCd`/`e.deployCount`) is lazily initialized here
-// since _spawnKind stays a generic, kind-agnostic constructor.
+// QUADRUPED — "Broodwalker" (#130, swarm deploy reworked in #147). Grinds to a firing standoff
+// and holds, same tank-style hull-travel/turret-independent-track pattern as tankBehavior
+// (reused deliberately, not reinvented — see tankBehavior above for the same radial/strafe
+// shape), just on a slower/heavier chassis. PLUS a periodic SWARM deploy mechanic: while alive
+// and AWARE (this fn only runs while aware — see _updateVehicle's aware gate) it acts as a
+// mobile "nest," dropping a whole BATCH of drone/infantry troopers near itself on a data-driven
+// cadence (def.deployEveryMs), sized between def.deployBatchMin-deployBatchMax, up to a lifetime
+// cap (def.deployCap) so a long fight can't have it spawn forever unbounded. This is new
+// PER-FRAME incremental spawning (unlike turretNest/infantryMob, which expand everything up
+// front at spawn time) — the timer/count state (`e.deployCd`/`e.deployCount`) is lazily
+// initialized here since _spawnKind stays a generic, kind-agnostic constructor.
 const QUADRUPED_DEPLOY_KINDS = ['drone', 'infantry'];
 
 // Drop a fresh kind spawn a short distance from the nest, nudging off blocked terrain toward the
@@ -179,15 +180,24 @@ function quadrupedBehavior(scene, e, ctx) {
   e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
   aimAndFire(scene, e, ctx, { needLos: true });
 
-  // #130 deploy mechanic — lazily initialize the per-enemy timer/count on first tick so the
-  // generic _spawnKind constructor never needs kind-specific bootstrapping.
+  // #130/#147 deploy mechanic — lazily initialize the per-enemy timer/count on first tick so
+  // the generic _spawnKind constructor never needs kind-specific bootstrapping.
   if (e.deployCd == null) e.deployCd = rand(def.deployEveryMs * 0.4, def.deployEveryMs);
   e.deployCount = e.deployCount ?? 0;
   e.deployCd -= ctx.delta;
-  if (e.deployCd <= 0 && e.deployCount < (def.deployCap ?? 5)) {
-    const kindId = QUADRUPED_DEPLOY_KINDS[Math.floor(Math.random() * QUADRUPED_DEPLOY_KINDS.length)];
-    deployNearby(scene, e, kindId);
-    e.deployCount++;
+  const cap = def.deployCap ?? 5;
+  if (e.deployCd <= 0 && e.deployCount < cap) {
+    // #147: deploy a whole SWARM-sized batch at once (not one unit per tick) — sized between
+    // deployBatchMin/Max but clamped so a batch near the end of the lifetime cap can't overshoot
+    // it and spawn more than deployCap total.
+    const batchMin = def.deployBatchMin ?? 1, batchMax = def.deployBatchMax ?? batchMin;
+    const wanted = batchMin + Math.floor(Math.random() * (batchMax - batchMin + 1));
+    const batchSize = Math.min(wanted, cap - e.deployCount);
+    for (let i = 0; i < batchSize; i++) {
+      const kindId = QUADRUPED_DEPLOY_KINDS[Math.floor(Math.random() * QUADRUPED_DEPLOY_KINDS.length)];
+      deployNearby(scene, e, kindId);
+    }
+    e.deployCount += batchSize;
     e.deployCd = def.deployEveryMs;
   }
 }
