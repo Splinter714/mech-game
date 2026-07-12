@@ -21,6 +21,10 @@ import { CONVERGE_DIST, convergedFireAngle } from './shared.js';
 const ASSIST_RANGE = 2200;        // px the enemy must be within to lock / stay locked
 // The acquire cone + candidate scoring/stickiness now live in data/targetlock.js (unit-tested).
 
+// #144 playtest correction on #140 ("turn off the aiming dotted line for now, not loving it"):
+// disabled without deleting the implementation, so it's easy to re-enable later if revisited.
+const AIM_LINE_ENABLED = false;
+
 export const TargetingMixin = {
   // Advance the indirect-fire lock (#62) plus the separate live convergence reference:
   //  • `this.lock` (data/targetlock.js) — acquire amber→red on the enemy nearest the aim line,
@@ -140,6 +144,7 @@ export const TargetingMixin = {
   // 1000px+ line doesn't end in a harsh cutoff and doesn't visually compete with far-off
   // terrain/enemies the way a uniform-opacity line would.
   _drawAimLine() {
+    if (!AIM_LINE_ENABLED) return; // #144: disabled for now, see flag above
     const startDist = 26;     // px forward of the mech centre — clears the hull sprite
     const length = 1100;      // #140: long sightline, well past the extended (#135) weapon ranges
     const dash = 14, gap = 10;
