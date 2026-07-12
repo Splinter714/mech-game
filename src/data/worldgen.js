@@ -393,9 +393,15 @@ export function pickFarObjective(hexKeys, fromHex, minDistance = FAR_OBJECTIVE_M
 //
 // Picks the candidate whose distance from `fromHex` is closest to the target (ties broken by
 // sorted hex-key order, same deterministic rule `pickFarObjective` and `_initMission` use) —
-// this is "target a distance," not "rank descending, take the top." `minDistance` still floors
-// the target itself (so an early stage's near-target can never resolve to sitting on top of the
-// player) — the shared `FAR_OBJECTIVE_MIN_DIST` by default, same floor `pickFarObjective` uses.
+// this is "target a distance," not "rank descending, take the top." `minDistance` is a REAL
+// lower bound on the returned candidate, not just an input to the target math: the "closest to
+// target" search only considers candidates that themselves clear `minDistance`, so a target
+// pulled up by the floor can never resolve to a nearer, sub-floor candidate just because it
+// happens to sit closer to the (already-floored) target value. Only if NO candidate clears
+// `minDistance` at all (e.g. a very sparse late-run map with every standing outpost close by) do
+// we fall back to the overall closest-to-target among every candidate, floor or not — the same
+// "graceful degradation when the map is sparse" spirit as the rest of this function, and as
+// `pickFarObjective`'s own farthest-available fallback.
 export const STAGE_OBJECTIVE_NEAR_FRACTION = 0.2;
 export const STAGE_OBJECTIVE_FAR_FRACTION = 1.0;
 export function pickStageObjective(
@@ -415,11 +421,15 @@ export function pickStageObjective(
   const frac = STAGE_OBJECTIVE_NEAR_FRACTION
     + clampedFrac * (STAGE_OBJECTIVE_FAR_FRACTION - STAGE_OBJECTIVE_NEAR_FRACTION);
   const targetD = Math.max(minDistance, frac * maxD);
-  let best = ranked[0];
-  let bestDiff = Math.abs(best.d - targetD);
-  for (const c of ranked) {
-    const diff = Math.abs(c.d - targetD);
-    if (diff < bestDiff) { best = c; bestDiff = diff; }
-  }
-  return best.k;
+  const closestTo = (pool) => {
+    let best = pool[0];
+    let bestDiff = Math.abs(best.d - targetD);
+    for (const c of pool) {
+      const diff = Math.abs(c.d - targetD);
+      if (diff < bestDiff) { best = c; bestDiff = diff; }
+    }
+    return best;
+  };
+  const clearsFloor = ranked.filter((c) => c.d >= minDistance);
+  return closestTo(clearsFloor.length ? clearsFloor : ranked).k;
 }

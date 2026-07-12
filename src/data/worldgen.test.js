@@ -595,6 +595,31 @@ describe('pickStageObjective (#138)', () => {
     expect(picked).toBe(axialKey(6, 0));
   });
 
+  // Regression (found post-merge, real bug not flakiness): `targetD` was floored at
+  // `minDistance`, but the "closest candidate to the target" search wasn't itself restricted to
+  // candidates clearing that floor — if the nearest available candidate to a floored target
+  // happened to sit UNDER minDistance (because it was numerically closer to the target than any
+  // candidate that actually cleared the floor), it still got picked, silently violating the
+  // floor the caller asked for. maxD=20 so target=max(6, 0.2*20=4)=6; among [3, 5, 20], distance
+  // 5 is numerically closest to 6 (diff 1) but sits BELOW minDistance, while 20 is the only
+  // candidate that actually clears it — the returned candidate's OWN distance must clear
+  // minDistance, not just have shaped the target that produced it.
+  it('never returns a candidate whose OWN distance falls under minDistance, even if it is numerically closest to the (floored) target', () => {
+    const gappy = [axialKey(3, 0), axialKey(5, 0), axialKey(20, 0)];
+    const picked = pickStageObjective(gappy, from, 0, 6);
+    const [q, r] = picked.split(',').map(Number);
+    expect(distance({ q, r }, from)).toBeGreaterThanOrEqual(6);
+    expect(picked).toBe(axialKey(20, 0));
+  });
+
+  it('falls back to the overall closest-to-target candidate if NONE clear minDistance at all', () => {
+    const allTooClose = [axialKey(1, 0), axialKey(2, 0), axialKey(3, 0)];
+    // maxD=3, target=max(6, 0.2*3=0.6)=6 — nothing here clears 6, so the fallback picks whatever
+    // is numerically closest to the target among the whole set (distance 3, diff 3, is closest).
+    const picked = pickStageObjective(allTooClose, from, 0, 6);
+    expect(picked).toBe(axialKey(3, 0));
+  });
+
   it('degrades gracefully with very few standing candidates (no separate fallback needed)', () => {
     const onlyTwo = [axialKey(2, 0), axialKey(3, 0)];
     const picked = pickStageObjective(onlyTwo, from, 0);
