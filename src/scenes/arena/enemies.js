@@ -600,13 +600,20 @@ export const EnemiesMixin = {
       const indirect = isIndirectWeapon(w.weapon);
       const blindFire = indirect && !los && isFullLock(e.lock);   // maintained lock, lobbing over cover
       const canFire = inRange && (los || blindFire);
-      // Blind indirect fire aims at the dead-reckoned last-known player position; otherwise lead live.
+      // Blind indirect fire aims at the dead-reckoned last-known player position; otherwise
+      // #153: fire along the turret's actual current rendered angle (`e.turret`), NOT the
+      // idealized lead-the-player line `_enemyFireAngle` computes. `e.turret` only slews
+      // toward that (or the plain bearing, see above) at `turretSlew` rad/s, so a shot fired
+      // while it's still mid-rotation now travels where the gun art is actually pointing —
+      // matching the muzzle position math below (`partMuzzle` also keys off `e.turret`) — and
+      // can genuinely miss a target that out-turned it. `_enemyFireAngle`'s lead-prediction
+      // math is intentionally left uncalled here now; it no longer influences the fired shot.
       let aim;
       if (blindFire) {
         const pt = predictedTarget(e.lock, e.lockBlindAge);
         aim = Math.atan2(pt.y - e.y, pt.x - e.x);
       } else {
-        aim = this._enemyFireAngle(e, w, dxp, dyp, dist);
+        aim = e.turret;
       }
       if (cd <= 0 && canFire) {
         e.mech.consumeAmmo(w.location, w.index, 1);
