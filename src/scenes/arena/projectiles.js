@@ -23,9 +23,17 @@ export const ProjectilesMixin = {
     // this frame — a player round may fly into any living enemy's soft-cover hex (and strike
     // it); an enemy round into the player's. Each round adds its own origin hexes (so firing
     // OUT of soft cover doesn't self-detonate at the muzzle).
-    const playerHex = this._hexKeyAt(this.px, this.py);
-    const enemyHexes = [];
-    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyHexes.push(this._hexKeyAt(e.x, e.y));
+    // #168: build ONE shared transparency Set per owner, once per frame, and reuse it across all
+    // of that owner's rounds — instead of allocating a fresh Set (seeded with every enemy hex)
+    // per non-arcing round per frame. `_isWallForRound` unions the shared set with each round's
+    // own tiny originHexes without any per-round allocation. Same outcome, far less work/GC.
+    const playerTransparent = new Set([this._hexKeyAt(this.px, this.py)]);
+    const enemyTransparent = new Set();
+    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyTransparent.add(this._hexKeyAt(e.x, e.y));
+    // #168: a coarse spatial index over the living enemies, rebuilt once per frame, so a
+    // dumbfire round's nearest-enemy lookup checks only nearby cells rather than scanning every
+    // enemy. `nearest(x,y)` returns the EXACT same enemy the old full `_nearestEnemy` scan would.
+    const enemyIndex = this._buildEnemyIndex();
     for (const p of this.projectiles) {
       // Hit detection normally chases the nearest living enemy (enemy rounds always chase the
       // player, the one and only target they can have), so a dumbfire round detonates on
@@ -44,7 +52,7 @@ export const ProjectilesMixin = {
         ? null
         : lockedLive
           ? (lockedLive.mech.isDestroyed() ? null : lockedLive)
-          : this._nearestEnemy(p.x, p.y);
+          : enemyIndex.nearest(p.x, p.y);
       const targetGone = enemyShot ? this.mech.isDestroyed() : !hitEnemy;
       const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
       const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
@@ -99,10 +107,8 @@ export const ProjectilesMixin = {
       // hexes, don't count as walls — so a unit standing in forest is hittable, and a unit
       // firing OUT of forest doesn't detonate its own shot at the muzzle.
       if (!p.arc) {
-        const transparent = new Set(p.originHexes ?? []);
-        if (enemyShot) transparent.add(playerHex);
-        else for (const k of enemyHexes) transparent.add(k);
-        if (this._isWall(p.x, p.y, transparent)) {
+        const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
+        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes)) {
           p.dead = true;
           p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
@@ -129,6 +135,65 @@ export const ProjectilesMixin = {
       this._drawProjectile(p);
     }
     if (this.projectiles.some((p) => p.dead)) this.projectiles = this.projectiles.filter((p) => !p.dead);
+  },
+
+  // #168: a coarse uniform-grid spatial index over the living enemies, rebuilt once per frame.
+  // `nearest(x, y)` returns the closest living enemy to a point — the EXACT same result the old
+  // full O(enemies) `_nearestEnemy` scan gave, but by expanding Chebyshev rings of grid cells
+  // outward from the query cell and stopping as soon as no unsearched cell could possibly hold
+  // a closer enemy. Correctness proof: the query point sits inside its own cell, so a cell that
+  // is `m` rings away is separated by at least `(m-1)` full cells, i.e. its nearest point is
+  // ≥ `(m-1)*CELL` from the query. After searching every cell within ring `r`, any not-yet-seen
+  // enemy lives in a ring ≥ `r+1`, hence ≥ `r*CELL` away — so once the best distance found is
+  // ≤ `r*CELL`, nothing farther out can beat it and we stop. No distance is ever truncated, so
+  // fast rounds and large-splash rounds still resolve against the true nearest enemy exactly as
+  // before; only the average number of enemies inspected shrinks.
+  _buildEnemyIndex() {
+    const CELL = 160;                        // px per grid cell (~a few hex widths)
+    const cells = new Map();                 // "gx,gy" -> array of living enemies
+    let minGx = Infinity, maxGx = -Infinity, minGy = Infinity, maxGy = -Infinity;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const gx = Math.floor(e.x / CELL), gy = Math.floor(e.y / CELL);
+      if (gx < minGx) minGx = gx;
+      if (gx > maxGx) maxGx = gx;
+      if (gy < minGy) minGy = gy;
+      if (gy > maxGy) maxGy = gy;
+      const k = gx + ',' + gy;
+      let arr = cells.get(k);
+      if (!arr) cells.set(k, (arr = []));
+      arr.push(e);
+    }
+    return {
+      nearest(x, y) {
+        if (cells.size === 0) return null;
+        const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+        // Hard bound: the farthest populated cell from the query cell. Guarantees termination
+        // and full coverage if the early-out never trips.
+        const maxRing = Math.max(
+          Math.abs(cx - minGx), Math.abs(cx - maxGx),
+          Math.abs(cy - minGy), Math.abs(cy - maxGy),
+        );
+        let best = null, bd = Infinity;
+        for (let r = 0; r <= maxRing; r++) {
+          for (let gx = cx - r; gx <= cx + r; gx++) {
+            for (let gy = cy - r; gy <= cy + r; gy++) {
+              // Ring SHELL only — interior cells were searched at smaller r.
+              if (Math.max(Math.abs(gx - cx), Math.abs(gy - cy)) !== r) continue;
+              const arr = cells.get(gx + ',' + gy);
+              if (!arr) continue;
+              for (const e of arr) {
+                const dx = e.x - x, dy = e.y - y;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d < bd) { bd = d; best = e; }
+              }
+            }
+          }
+          if (best && bd <= r * CELL) break;   // nothing unsearched can be closer — done
+        }
+        return best;
+      },
+    };
   },
 
   _drawProjectile(p) {
