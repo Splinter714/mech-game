@@ -10,6 +10,7 @@ import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
+import { HEX_SIZE } from '../../data/hexgrid.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
 // snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
@@ -27,6 +28,38 @@ const TILT_SMOOTH_K = 12;
 // to restore the exact previous rate-limited feel. Only affects the player's _drive() below —
 // enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is separate and untouched.
 const INSTANT_TURNING = true;
+
+// #159 follow-up to #154/#156: INSTANT_TURNING only snapped the player's FACING to input —
+// the underlying VELOCITY still eased toward the commanded speed via the accel/decel
+// weight-inertia model below (`approach(this.vx, tx, ...)`), so the mech still visibly
+// ramped up/down rather than moving at full commanded speed immediately. This flag, same
+// trivially-reversible pattern as INSTANT_TURNING, snaps vx/vy directly to the target (tx/ty)
+// each frame instead of easing when true. Per-chassis accel/decel become moot while this is
+// on (left in the chassis data, just bypassed). Flip back to false to restore the exact
+// previous accel/decel behavior.
+const INSTANT_VELOCITY = true;
+
+// #159 follow-up (collision-tunneling fix): `_blocked` is a single-POINT check — it only tests
+// the mech's post-move endpoint each frame, not the path swept to get there. That was safe as
+// long as a frame's movement stayed comfortably smaller than a hex, but higher chassis speeds +
+// INSTANT_VELOCITY's no-ramp-up snap mean a single frame can now cover enough ground to graze
+// clean past a hex's narrow cross-section (at a shallow/grazing angle a hex's width along the
+// path can be far smaller than its ~48px radius) without ever landing a sample point inside it —
+// confirmed by direct measurement: forcing a wall hex and driving a fast, INSTANT_VELOCITY mech
+// into it from a broad sweep of continuous approach angles (simulating analog-stick input)
+// tunneled through in the MAJORITY of angles, even with an intermediate fix that substepped
+// position by a fixed 8px (nowhere near fine enough — a corner-graze can have an arbitrarily
+// small crossing width, so no fixed pixel substep size can fully close that gap). The actual
+// fix is `_blockedAlongSegment` (world.js) below, which walks every hex a substep's straight
+// path crosses (hexgrid.js `hexesAlongSegment`, the standard hex line-draw algorithm) instead
+// of sampling only its endpoint — exact regardless of angle or speed. `COLLISION_SUBSTEP_PX`
+// still subdivides the frame's movement, now mainly so the ENEMY-circle checks below
+// (`_crushTargetAt`/`_blockedByGroundEnemy`, still single-point per substep) stay reasonably
+// fine-grained at high speed too. HEX_SIZE/6 (=8px) keeps that reasonably tight while adding at
+// most a handful of cheap substeps per frame (worst-case ~18px/frame ÷ 8 ≈ 3). Applies
+// regardless of INSTANT_VELOCITY — the old ramped-accel path was just less likely to reach
+// tunneling-capable speeds, not immune to the underlying gap.
+const COLLISION_SUBSTEP_PX = HEX_SIZE / 6;
 
 export const LocomotionMixin = {
   // A mech = hull (legs) + side torsos + arms + turret-body stacked in a container so they can
@@ -144,48 +177,65 @@ export const LocomotionMixin = {
     const tx = intent.move.x * maxSp, ty = intent.move.y * maxSp;
     const rampX = (tx !== 0 && Math.sign(tx) === Math.sign(this.vx) && Math.abs(tx) > Math.abs(this.vx));
     const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(this.vy) && Math.abs(ty) > Math.abs(this.vy));
-    this.vx = approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
-    this.vy = approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
+    this.vx = INSTANT_VELOCITY ? tx : approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
+    this.vy = INSTANT_VELOCITY ? ty : approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
     // Move with wall/boundary collision, sliding along blocked axes. #92: a living GROUND enemy
     // (mech/tank/turret — flyers narratively fly over ground obstacles, see
     // `_blockedByGroundEnemy`) blocks the player the same way impassable terrain does.
-    const ox = this.px, oy = this.py;
-    const groundBlocked = (x, y) => this._blocked(x, y) || !!this._blockedByGroundEnemy(x, y);
-    let nx = this.px + this.vx * dt, ny = this.py + this.vy * dt;
-    // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
-    // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
-    // teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same tick). #104
-    // extends the same instant-crush treatment to INFANTRY (see `CRUSHABLE_BEHAVIORS`) — and
-    // loops rather than crushing just once, so driving into a packed infantry cluster crushes
-    // every trooper the mech is actually touching this frame, not only the first one found (a
-    // tight mob can have several troopers overlapping the same contact point at once). #112: the
-    // crush check itself uses `_crushTargetAt` (the enemy's radius PLUS the player's own
-    // crush-trigger contribution — see `PLAYER_CRUSH_RADIUS_BONUS`, shared.js), a deliberately
-    // bigger/looser test than the general blocking check below so a stomp is easy to trigger
-    // without also loosening how tightly a mech/turret blocks the player. Re-check
-    // `_crushTargetAt` after each kill: the crushed enemy is gone from `this.enemies` now, so this
-    // either finds the next overlapping trooper to crush too, or nothing — in which case the
-    // player rolls straight through into the space just vacated instead of still sliding/stopping
-    // against a corpse that no longer blocks.
-    let crushTarget = this._crushTargetAt(nx, ny);
-    while (crushTarget) {
-      this._crushGroundEnemyAt(crushTarget);
-      crushTarget = this._crushTargetAt(nx, ny);
+    // #159: substep a large frame movement into COLLISION_SUBSTEP_PX-sized chunks — mainly so
+    // the ENEMY-circle checks below (`_crushTargetAt`/`_blockedByGroundEnemy`, still single-point
+    // samples) stay fine-grained at high speed. Terrain/wall blocking itself is now handled by
+    // `_blockedAlongSegment` (swept across the whole substep, not just its endpoint), which is
+    // exact regardless of step size — see its comment for why a pure position substep alone
+    // isn't: a fast mech grazing a hex at a shallow angle can clip a cross-section narrower than
+    // any fixed substep length. At normal speeds/dt this loop is a single iteration, identical
+    // to the old code — `steps` only exceeds 1 once a frame's total movement exceeds one substep.
+    const totalDist = Math.hypot(this.vx * dt, this.vy * dt);
+    const steps = Math.max(1, Math.ceil(totalDist / COLLISION_SUBSTEP_PX));
+    const stepDt = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      const ox = this.px, oy = this.py;
+      const groundBlocked = (x, y) => this._blockedAlongSegment(ox, oy, x, y) || !!this._blockedByGroundEnemy(x, y);
+      let nx = this.px + this.vx * stepDt, ny = this.py + this.vy * stepDt;
+      // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
+      // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
+      // teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same tick). #104
+      // extends the same instant-crush treatment to INFANTRY (see `CRUSHABLE_BEHAVIORS`) — and
+      // loops rather than crushing just once, so driving into a packed infantry cluster crushes
+      // every trooper the mech is actually touching this frame, not only the first one found (a
+      // tight mob can have several troopers overlapping the same contact point at once). #112: the
+      // crush check itself uses `_crushTargetAt` (the enemy's radius PLUS the player's own
+      // crush-trigger contribution — see `PLAYER_CRUSH_RADIUS_BONUS`, shared.js), a deliberately
+      // bigger/looser test than the general blocking check below so a stomp is easy to trigger
+      // without also loosening how tightly a mech/turret blocks the player. Re-check
+      // `_crushTargetAt` after each kill: the crushed enemy is gone from `this.enemies` now, so this
+      // either finds the next overlapping trooper to crush too, or nothing — in which case the
+      // player rolls straight through into the space just vacated instead of still sliding/stopping
+      // against a corpse that no longer blocks.
+      let crushTarget = this._crushTargetAt(nx, ny);
+      while (crushTarget) {
+        this._crushGroundEnemyAt(crushTarget);
+        crushTarget = this._crushTargetAt(nx, ny);
+      }
+      // General ground-enemy blocking (mech/turret, or a crushable enemy just outside the tighter
+      // block radius) still uses the unchanged, tighter `groundEnemyRadius` via
+      // `_blockedByGroundEnemy` — only the crush trigger above got bigger.
+      const enemyHit = this._blockedByGroundEnemy(nx, ny);
+      // #159: swept, not endpoint-only — walks every hex between (ox,oy) and (nx,ny), so a wall
+      // this substep would have crossed through (not just ended inside) still blocks correctly.
+      if (this._blockedAlongSegment(ox, oy, nx, ny) || enemyHit) {
+        // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
+        // pressing against them (damage scaled by how hard it's driving in). Once flattened to
+        // rubble the hex becomes passable and the mech rolls over it. Uses `stepDt` (not the full
+        // frame `dt`) since this can now run once per substep — a mech pressed against a building
+        // for the whole frame still accumulates ~`dt` worth of stomp damage total across substeps.
+        this._stompBuildingAt(nx, ny, stepDt);
+        if (!groundBlocked(ox, ny)) { nx = ox; this.vx = 0; }
+        else if (!groundBlocked(nx, oy)) { ny = oy; this.vy = 0; }
+        else { nx = ox; ny = oy; this.vx = 0; this.vy = 0; }
+      }
+      this.px = nx; this.py = ny;
     }
-    // General ground-enemy blocking (mech/turret, or a crushable enemy just outside the tighter
-    // block radius) still uses the unchanged, tighter `groundEnemyRadius` via
-    // `_blockedByGroundEnemy` — only the crush trigger above got bigger.
-    const enemyHit = this._blockedByGroundEnemy(nx, ny);
-    if (this._blocked(nx, ny) || enemyHit) {
-      // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
-      // pressing against them (damage scaled by how hard it's driving in). Once flattened to
-      // rubble the hex becomes passable and the mech rolls over it.
-      this._stompBuildingAt(nx, ny, dt);
-      if (!groundBlocked(ox, ny)) { nx = ox; this.vx = 0; }
-      else if (!groundBlocked(nx, oy)) { ny = oy; this.vy = 0; }
-      else { nx = ox; ny = oy; this.vx = 0; this.vy = 0; }
-    }
-    this.px = nx; this.py = ny;
     this.speed = Math.hypot(this.vx, this.vy);
 
     // Legs turn to face the direction of travel (so the walk reads), at the chassis turn

@@ -171,13 +171,19 @@ try {
     a.controls.keys.W.isDown = false;
     const droveForward = a.py < y0 - 0.5;
 
-    // Collision: shoving into the world for a long time must never end up inside a wall
-    // hex or outside the arena disc.
+    // Collision: shoving into the world for a long time must never end up inside an
+    // IMPASSABLE hex or outside the arena disc. #159: this used to check `_isWall`, but
+    // that's the LOS-blocking predicate (forest/scrub/etc. — soft cover a mech can legally
+    // walk through, just slower and hidden) not the passability one — driving into ordinary
+    // walkable forest was flagged as a false-positive "drove through a wall" failure,
+    // intermittently (only when the higher post-#159 chassis speeds carried the mech far
+    // enough in this fixed real-time window to reach naturally-spawned forest at all).
+    // `_blocked` is the actual "can the mech stand here" predicate.
     a.controls.keys.D.isDown = true;
-    let everInWall = false;
-    for (let i = 0; i < 300; i++) { a.update(0, 16); if (a._isWall(a.px, a.py)) everInWall = true; }
+    let everBlocked = false;
+    for (let i = 0; i < 300; i++) { a.update(0, 16); if (a._blocked(a.px, a.py)) everBlocked = true; }
     a.controls.keys.D.isDown = false;
-    const collisionHolds = !everInWall && !a._blocked(a.px, a.py);
+    const collisionHolds = !everBlocked && !a._blocked(a.px, a.py);
     // Put the player at the origin and the target on DUMMY_HEX (clear grass, clear LOS,
     // in range) for the deterministic firing tests. e0's real spawn is off-screen (#44),
     // far out of range, so it can't be fired on from the origin without driving in first.

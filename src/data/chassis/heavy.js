@@ -22,7 +22,11 @@ export const HEAVY_CONFIG = {
     // driver. Deliberately the most ponderous — but NOT unresponsive: it still answers the
     // stick, it just answers heavily. See light.js for what each knob does. Widest
     // accel↔decel gap = the most momentum-heavy start-up and coast of the three.
-    accel: 120, decel: 80, maxSpeed: 68, turnRate: 1.0,
+    // #159: maxSpeed bumped from 68 → 135 — exactly light's OLD (pre-#159) maxSpeed, per the
+    // owner's ask ("biggest mech should increase to current smallest mech"). That's a ×135/68
+    // ≈ 1.9853 scale factor, applied uniformly to light/medium too (see those files) so the
+    // whole lineup keeps its old relative ordering/spacing at the new, faster range.
+    accel: 120, decel: 80, maxSpeed: 135, turnRate: 1.0,
     // #86: restored from 1.3 back to 1.9 (the #3 feel-follow-up value) — playtest read the
     // 1.3 slew as "choppy/laggy" aiming; profiling showed a steady 60fps with sub-ms dt
     // jitter (profile-aim-idle.mjs), so the lag was the slew rate itself, not frame rate.
