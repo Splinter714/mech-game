@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildSfxCopyText } from './sfxCopyText.js';
 import {
-  storeOverride, setTrim, setStart, _resetForTest, setAudioContext,
+  storeOverride, setTrim, setStart, setProcessing, _resetForTest, setAudioContext,
 } from '../audio/sfxOverrides.js';
 
 // Same minimal fake IndexedDB + File + AudioContext used by sfxOverrides.test.js — just enough
@@ -155,5 +155,32 @@ describe('buildSfxCopyText (#170 per-stage copy)', () => {
     const out = buildSfxCopyText('deathExplosionSmall', params);
     const expected = `  deathExplosionSmall: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
     expect(out).toBe(expected);
+  });
+
+  // #172: the copy payload carries the full processing recipe (pitch/filter/reverb) so a pasted
+  // FILE block bakes the processing too, not just the trim.
+  it('overridden stage with processing: emits the pitch, filter, and reverb params', async () => {
+    await storeOverride('autocannon', 'fire', fakeFile('boom.wav', 'BOOM'));
+    await setStart('autocannon', 'fire', 100);
+    await setTrim('autocannon', 'fire', 400);
+    await setProcessing('autocannon', 'fire', { detune: -300, filterType: 'lowpass', filterFreq: 1200, filterQ: 2.5, reverbMix: 0.4, reverbSize: 1.5 });
+
+    const out = buildSfxCopyText('autocannon', PARAMS());
+
+    expect(out).toContain('pitch:           -300 cents');
+    expect(out).toContain('filter:          lowpass @ 1200 Hz, Q 2.5');
+    expect(out).toContain('reverb:          mix 0.4, size 1.5s');
+    // the bake instruction summarises the processing too
+    expect(out).toContain('apply pitch -300 cents');
+    expect(out).toContain('lowpass filter @ 1200 Hz, Q 2.5');
+    expect(out).toContain('reverb mix 0.4 / size 1.5s');
+  });
+
+  it('overridden stage with NO processing: emits no pitch/filter/reverb lines (clean)', async () => {
+    await storeOverride('shotgun', 'fire', fakeFile('blast.wav', 'BLAST'));
+    const out = buildSfxCopyText('shotgun', PARAMS());
+    expect(out).not.toContain('pitch:');
+    expect(out).not.toContain('filter:');
+    expect(out).not.toContain('reverb:');
   });
 });

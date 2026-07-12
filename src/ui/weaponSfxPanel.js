@@ -5,7 +5,7 @@ import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
   storeOverride, clearOverride, hasOverride, getOverrideMeta, getOverride,
-  getTrimMs, setTrim, getStartMs, setStart,
+  getTrimMs, setTrim, getStartMs, setStart, getProcessing, setProcessing,
 } from '../audio/sfxOverrides.js';
 import { buildSfxCopyText } from './sfxCopyText.js';
 
@@ -53,6 +53,17 @@ const TONE_ABBR = { sine: 'sin', triangle: 'tri', sawtooth: 'saw', square: 'sqr'
 const NOISE_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch'];
 const NOISE_ABBR = { lowpass: 'low', highpass: 'high', bandpass: 'band', notch: 'notch' };
 const TYPE_ROW_H = 22;
+
+// #172: playback-time processing (pitch/filter/reverb) for a file override. Neutral defaults are
+// what the sliders sit at before anything's tuned — chosen so leaving them there stores nothing
+// (getProcessing stays null / the field is cleared) and playback is a strict clean passthrough.
+// Filter shapes match the procedural noise layers (lowpass/highpass/bandpass) for UI consistency,
+// plus an 'off' that removes the filter node entirely.
+const PROC_DEFAULT_FILTER_FREQ = 2000;   // Hz
+const PROC_DEFAULT_FILTER_Q = 1;
+const PROC_DEFAULT_REVERB_SIZE = 1.5;    // seconds of tail
+const FILTER_TYPES = ['off', 'lowpass', 'highpass', 'bandpass'];
+const FILTER_ABBR = { off: 'off', lowpass: 'low', highpass: 'high', bandpass: 'band' };
 
 // #150: the dim alpha applied to a stage's mixer/detail controls once a real-file override is
 // active for it (they're still there — reset/copy still touch the underlying layer data —
@@ -313,8 +324,146 @@ export class WeaponSfxPanel {
       this.scroller.add(endSlider.container);
       this.sliders.push(endSlider);
       y += ROW_H + 8;
+
+      // #172: non-destructive playback processing (pitch / filter / reverb) — same conditional
+      // pattern as the start/end sliders (only shown once a file override is loaded). Grouped
+      // under one header, reusing the Slider widget; each control is a merge-patch into the
+      // processing object, and returning them all to neutral restores a clean passthrough.
+      y = this._buildProcessingControls(ox, y, w, stage);
     }
     return y;
+  }
+
+  // #172: the pitch/filter/reverb controls for a loaded override (called only from within
+  // _buildOverrideRow's `active` branch). Reads the live processing object (null-safe) for its
+  // starting values and writes changes back via setProcessing (async persist; the in-memory
+  // update is synchronous so preview + copy see it immediately). Neutral positions store nothing.
+  _buildProcessingControls(ox, y, w, stage) {
+    const weaponId = this.weaponId;
+    const proc = getProcessing(weaponId, stage) || {};
+    this.scroller.add(this.scene.add.text(ox + 6, y, 'PROCESSING (pitch / filter / reverb)', {
+      fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
+    }));
+    y += 15;
+
+    // ── Pitch/rate: detune in cents (pitch+speed coupled). 0 = clear (delete the field). ──
+    const pitchSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'pitch¢', min: -1200, max: 1200, step: 10,
+      value: proc.detune ?? 0,
+      onChange: (v) => {
+        const cents = Math.round(v);
+        setProcessing(weaponId, stage, { detune: cents === 0 ? null : cents });
+        this._toast(cents === 0 ? `${stage}: pitch neutral` : `${stage}: pitch ${cents > 0 ? '+' : ''}${cents}¢`);
+        this._previewThrottled(stage);
+      },
+    });
+    this.scroller.add(pitchSlider.container);
+    this.sliders.push(pitchSlider);
+    y += ROW_H + 4;
+
+    // ── Filter: a shape picker (off / low / high / band) + frequency + Q. 'off' removes the
+    // BiquadFilter node entirely; picking a shape seeds freq/Q defaults if none are set yet. ──
+    this.scroller.add(this.scene.add.text(ox + 6, y, 'filter', { fontFamily: 'monospace', fontSize: '9px', color: UI.dim }));
+    y += 12;
+    this._filterTypeRow(ox + 6, y, w - 12, weaponId, stage);
+    y += TYPE_ROW_H;
+    const freqSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'freq', min: 40, max: 16000, step: 20,
+      value: proc.filterFreq ?? PROC_DEFAULT_FILTER_FREQ,
+      onChange: (v) => {
+        setProcessing(weaponId, stage, { filterFreq: Math.round(v) });
+        this._previewThrottled(stage);
+      },
+    });
+    this.scroller.add(freqSlider.container);
+    this.sliders.push(freqSlider);
+    y += ROW_H + 4;
+    const qSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'Q', min: 0.1, max: 12, step: 0.1,
+      value: proc.filterQ ?? PROC_DEFAULT_FILTER_Q,
+      onChange: (v) => {
+        setProcessing(weaponId, stage, { filterQ: +v.toFixed(2) });
+        this._previewThrottled(stage);
+      },
+    });
+    this.scroller.add(qSlider.container);
+    this.sliders.push(qSlider);
+    y += ROW_H + 6;
+
+    // ── Reverb: wet/dry mix (0 = off, removes the reverb nodes) + tail size in seconds. ──
+    this.scroller.add(this.scene.add.text(ox + 6, y, 'reverb', { fontFamily: 'monospace', fontSize: '9px', color: UI.dim }));
+    y += 12;
+    const mixSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'mix', min: 0, max: 1, step: 0.01,
+      value: proc.reverbMix ?? 0,
+      onChange: (v) => {
+        const mix = +v.toFixed(2);
+        if (mix <= 0.005) {
+          setProcessing(weaponId, stage, { reverbMix: null, reverbSize: null });
+          this._toast(`${stage}: reverb off`);
+        } else {
+          const size = getProcessing(weaponId, stage)?.reverbSize ?? PROC_DEFAULT_REVERB_SIZE;
+          setProcessing(weaponId, stage, { reverbMix: mix, reverbSize: size });
+        }
+        this._previewThrottled(stage);
+      },
+    });
+    this.scroller.add(mixSlider.container);
+    this.sliders.push(mixSlider);
+    y += ROW_H + 4;
+    const sizeSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'size s', min: 0.1, max: 3, step: 0.1,
+      value: proc.reverbSize ?? PROC_DEFAULT_REVERB_SIZE,
+      onChange: (v) => {
+        // Only re-store size when reverb is actually on — a size change with mix 0 stays inert
+        // (and mustn't resurrect a cleared reverb), so just remember it for when mix comes up.
+        if ((getProcessing(weaponId, stage)?.reverbMix ?? 0) > 0) {
+          setProcessing(weaponId, stage, { reverbSize: +v.toFixed(1) });
+          this._previewThrottled(stage);
+        }
+      },
+    });
+    this.scroller.add(sizeSlider.container);
+    this.sliders.push(sizeSlider);
+    y += ROW_H + 8;
+    return y;
+  }
+
+  // #172: the filter-shape picker row (off / low / high / band) for the processing chain.
+  // Repaints in place (like _typeRow) so tuning other sliders isn't disturbed. 'off' clears the
+  // filter field (no node inserted); any shape sets the type and seeds freq/Q defaults if unset.
+  _filterTypeRow(x, y, w, weaponId, stage) {
+    const gap = 3;
+    const bw = Math.floor((w - (FILTER_TYPES.length - 1) * gap) / FILTER_TYPES.length);
+    const btns = [];
+    const current = () => getProcessing(weaponId, stage)?.filterType ?? 'off';
+    const paint = () => btns.forEach(({ rect, ft }) => {
+      const on = current() === ft;
+      rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.edge);
+    });
+    FILTER_TYPES.forEach((ft, i) => {
+      const bx = x + i * (bw + gap);
+      const rect = this.scene.add.rectangle(bx, y, bw, 16, UI.btn).setOrigin(0, 0)
+        .setStrokeStyle(1, UI.edge).setInteractive({ useHandCursor: true });
+      const text = this.scene.add.text(bx + bw / 2, y + 8, FILTER_ABBR[ft], { fontFamily: 'monospace', fontSize: '8px', color: UI.text }).setOrigin(0.5);
+      rect.on('pointerdown', () => {
+        if (ft === 'off') {
+          setProcessing(weaponId, stage, { filterType: null });
+        } else {
+          const p = getProcessing(weaponId, stage) || {};
+          setProcessing(weaponId, stage, {
+            filterType: ft,
+            filterFreq: p.filterFreq ?? PROC_DEFAULT_FILTER_FREQ,
+            filterQ: p.filterQ ?? PROC_DEFAULT_FILTER_Q,
+          });
+        }
+        paint();
+        this._previewThrottled(stage);
+      });
+      this.scroller.add([rect, text]);
+      btns.push({ rect, ft });
+    });
+    paint();
   }
 
   // #171: toggling mute/solo must be *immediately audible*, or it reads as "the button does

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
   setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
+  getProcessing, setProcessing,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -354,6 +355,103 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await loadAllOverrides();
       expect(getStartMs('railgun', 'fire')).toBe(500);
       expect(getTrimMs('railgun', 'fire')).toBe(300);
+    });
+  });
+
+  // #172: the non-destructive playback processing chain (pitch/filter/reverb), stored as a
+  // single sparse `processing` object alongside startMs/trimMs. Same lifecycle contract as
+  // #166: persists across reload, cleared on clearOverride / a fresh file, back-compatible.
+  describe('processing (#172)', () => {
+    it('has no processing by default for a freshly-stored override', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      expect(getProcessing('autocannon', 'fire')).toBeNull();
+    });
+
+    it('setProcessing merge-patches fields, visible immediately via getProcessing', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setProcessing('autocannon', 'fire', { detune: 300 });
+      await setProcessing('autocannon', 'fire', { filterType: 'lowpass', filterFreq: 800, filterQ: 2 });
+      expect(getProcessing('autocannon', 'fire')).toEqual({ detune: 300, filterType: 'lowpass', filterFreq: 800, filterQ: 2 });
+    });
+
+    it('a null field in the patch clears just that field; clearing all fields drops processing to null', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setProcessing('autocannon', 'fire', { detune: 300, reverbMix: 0.5, reverbSize: 1 });
+      await setProcessing('autocannon', 'fire', { detune: null });
+      expect(getProcessing('autocannon', 'fire')).toEqual({ reverbMix: 0.5, reverbSize: 1 });
+      await setProcessing('autocannon', 'fire', { reverbMix: null, reverbSize: null });
+      expect(getProcessing('autocannon', 'fire')).toBeNull();   // fully neutral again
+    });
+
+    it('persists the processing across a simulated reload, alongside start/trim', async () => {
+      await storeOverride('railLance', 'fire', fakeFile('zap.wav', 'ZAP'));
+      await setStart('railLance', 'fire', 500);
+      await setTrim('railLance', 'fire', 300);
+      await setProcessing('railLance', 'fire', { detune: -200, filterType: 'bandpass', filterFreq: 1500, filterQ: 4, reverbMix: 0.35, reverbSize: 1.2 });
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      expect(getProcessing('railLance', 'fire')).toBeNull(); // pre-boot state, not loaded yet
+
+      await loadAllOverrides();
+      expect(getProcessing('railLance', 'fire')).toEqual({ detune: -200, filterType: 'bandpass', filterFreq: 1500, filterQ: 4, reverbMix: 0.35, reverbSize: 1.2 });
+      expect(getStartMs('railLance', 'fire')).toBe(500);
+      expect(getTrimMs('railLance', 'fire')).toBe(300);
+      expect(getOverride('railLance', 'fire')).toEqual({ __decodedFrom: 'ZAP' });
+    });
+
+    it('a reload with no processing ever set leaves getProcessing null (backward-compatible)', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setTrim('shotgun', 'impact', 300); // trim set, processing never touched
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getProcessing('shotgun', 'impact')).toBeNull();
+      expect(getTrimMs('shotgun', 'impact')).toBe(300);
+    });
+
+    it('clearOverride also clears the processing, including across a reload', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setProcessing('shotgun', 'impact', { detune: 400 });
+      await clearOverride('shotgun', 'impact');
+      expect(getProcessing('shotgun', 'impact')).toBeNull();
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getProcessing('shotgun', 'impact')).toBeNull();
+      expect(getOverride('shotgun', 'impact')).toBeNull();
+    });
+
+    it('loading a new file into a previously-processed slot does not inherit the stale processing', async () => {
+      await storeOverride('napalm', 'fire', fakeFile('old.wav', 'OLD'));
+      await setProcessing('napalm', 'fire', { detune: 400, reverbMix: 0.5, reverbSize: 1 });
+      expect(getProcessing('napalm', 'fire')).not.toBeNull();
+
+      await storeOverride('napalm', 'fire', fakeFile('new.wav', 'NEW'));
+      expect(getProcessing('napalm', 'fire')).toBeNull();
+      expect(getOverride('napalm', 'fire')).toEqual({ __decodedFrom: 'NEW' });
+    });
+
+    it('processing, start, and trim set independently all persist together', async () => {
+      await storeOverride('railgun', 'fire', fakeFile('r.wav', 'R'));
+      await setProcessing('railgun', 'fire', { filterType: 'highpass', filterFreq: 600, filterQ: 1 });
+      await setTrim('railgun', 'fire', 300);   // set after processing — must not clobber it
+      await setStart('railgun', 'fire', 500);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getProcessing('railgun', 'fire')).toEqual({ filterType: 'highpass', filterFreq: 600, filterQ: 1 });
+      expect(getStartMs('railgun', 'fire')).toBe(500);
+      expect(getTrimMs('railgun', 'fire')).toBe(300);
+    });
+
+    it('never throws when IndexedDB is unavailable', async () => {
+      delete globalThis.indexedDB;
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await expect(setProcessing('autocannon', 'fire', { detune: 200 })).resolves.toBeUndefined();
+      expect(getProcessing('autocannon', 'fire')).toEqual({ detune: 200 });
     });
   });
 });

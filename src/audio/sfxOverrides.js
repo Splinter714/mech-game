@@ -24,6 +24,20 @@
 // bytes/decoded buffer are never sliced or re-encoded, so both are instantly adjustable/
 // reversible. undefined/null (including every override stored before this feature existed)
 // means "start at 0" / "play to the end," respectively.
+//
+// Processing (#172): a non-destructive playback-time DSP chain per weapon+stage — pitch/rate,
+// a biquad filter, and an algorithmic reverb — stored as a single `processing` object alongside
+// `startMs`/`trimMs` in the same override record. Same philosophy as #166: nothing here touches
+// the stored bytes or decoded buffer; every param is applied live as extra AudioNodes between
+// the source and the sfx bus (see sfx.js's playOverride). The object is SPARSE — only
+// non-neutral fields are stored, and an absent/empty `processing` means "no processing at all"
+// (a strict clean passthrough, so an untouched file sounds byte-identical to pre-#172). Fields:
+//   detune      cents on the AudioBufferSourceNode (pitch+speed coupled, like a record) — omit/0 = none
+//   filterType  'lowpass' | 'highpass' | 'bandpass' — omit = no filter node inserted at all
+//   filterFreq  Hz  · filterQ  (only meaningful when filterType is present)
+//   reverbMix   0..1 wet/dry — omit/0 = no reverb nodes inserted at all
+//   reverbSize  reverb tail length in seconds (only meaningful when reverbMix > 0)
+// Read via getProcessing(); written (merge-patch, null clears a field) via setProcessing().
 
 const DB_NAME = 'mech-game-sfx-overrides-v1';
 const STORE = 'overrides';
@@ -45,6 +59,11 @@ const _trim = new Map();
 // before playback begins. Same convention/lifecycle as `_trim` (undefined/absent means "start
 // at 0," reset whenever a fresh file is loaded into the slot).
 const _start = new Map();
+// #172: non-destructive PROCESSING chain (pitch/filter/reverb) — a single sparse object per
+// key (see the module header for its fields). undefined/absent means "no processing," same
+// synchronous no-await in-memory lifecycle as `_trim`/`_start` so sfx.js's hot playback path
+// reads it without awaiting, and reset whenever a fresh file is loaded into the slot.
+const _proc = new Map();
 // The raw Blob for each active override, cached purely so setTrim()/setStart() can persist a
 // full IDB record (key/weaponId/stage/blob/name/type/startMs/trimMs) without a
 // read-before-write round trip.
@@ -145,6 +164,9 @@ export async function storeOverride(weaponId, stage, fileBlob) {
     // file's own content/length, so never let it carry over silently.
     _trim.delete(key);
     _start.delete(key);
+    // #172: same reasoning for the processing chain — a pitch/filter/reverb tuned against a
+    // previous file must never carry over silently onto a fresh one.
+    _proc.delete(key);
   }
   return buffer;
 }
@@ -178,9 +200,17 @@ export function getStartMs(weaponId, stage) {
   return _start.get(keyFor(weaponId, stage)) ?? null;
 }
 
-// Shared persistence for setTrim/setStart: writes a full IDB record combining whatever's
-// currently in the in-memory maps for this key, so either setter alone keeps both fields intact.
-async function _persistStartTrim(weaponId, stage) {
+// #172: synchronous lookup for the active processing chain (pitch/filter/reverb) — the sparse
+// object described in the module header, used at the sfx.js playback choke point. null means
+// "no processing (clean passthrough)," same convention/lifecycle as getStartMs/getTrimMs.
+export function getProcessing(weaponId, stage) {
+  return _proc.get(keyFor(weaponId, stage)) ?? null;
+}
+
+// Shared persistence for setTrim/setStart/setProcessing: writes a full IDB record combining
+// whatever's currently in the in-memory maps for this key, so any one setter alone keeps the
+// other fields intact.
+async function _persistParams(weaponId, stage) {
   const key = keyFor(weaponId, stage);
   const blob = _blobs.get(key);
   if (!blob) return; // no active override to attach this to
@@ -190,8 +220,10 @@ async function _persistStartTrim(weaponId, stage) {
   const record = { key, weaponId, stage, blob, name: meta.name ?? '', type: meta.type ?? '' };
   const trimMs = _trim.get(key);
   const startMs = _start.get(key);
+  const processing = _proc.get(key);
   if (trimMs != null) record.trimMs = trimMs;
   if (startMs != null) record.startMs = startMs;
+  if (processing != null) record.processing = processing;
   try { await idbPut(db, record); } catch { /* storage full/blocked — in-memory value still applies this session */ }
 }
 
@@ -203,7 +235,7 @@ async function _persistStartTrim(weaponId, stage) {
 export async function setTrim(weaponId, stage, trimMs) {
   const key = keyFor(weaponId, stage);
   if (trimMs == null) _trim.delete(key); else _trim.set(key, trimMs);
-  await _persistStartTrim(weaponId, stage);
+  await _persistParams(weaponId, stage);
 }
 
 // #166: set (or clear, with null/undefined) the non-destructive start offset for an active
@@ -211,7 +243,25 @@ export async function setTrim(weaponId, stage, trimMs) {
 export async function setStart(weaponId, stage, startMs) {
   const key = keyFor(weaponId, stage);
   if (startMs == null) _start.delete(key); else _start.set(key, startMs);
-  await _persistStartTrim(weaponId, stage);
+  await _persistParams(weaponId, stage);
+}
+
+// #172: merge-patch the non-destructive processing chain (pitch/filter/reverb) for an active
+// override. `patch` is a partial of the processing object (see the module header) — each field
+// set to a real value updates it, each field set to null/undefined CLEARS it. Once every field
+// is cleared the whole processing object is dropped (getProcessing → null), so returning all
+// controls to neutral restores an exact clean passthrough. Purely a playback-time parameter set
+// (never touches the decoded buffer/stored bytes); persists alongside the rest of the override
+// record. In-memory update is synchronous (getProcessing reflects it immediately) with the IDB
+// write awaited, matching setTrim/setStart.
+export async function setProcessing(weaponId, stage, patch) {
+  const key = keyFor(weaponId, stage);
+  const next = { ..._proc.get(key) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v == null) delete next[k]; else next[k] = v;
+  }
+  if (Object.keys(next).length === 0) _proc.delete(key); else _proc.set(key, next);
+  await _persistParams(weaponId, stage);
 }
 
 // Remove an override, reverting that weapon+stage to procedural synthesis. Also clears any
@@ -224,6 +274,7 @@ export async function clearOverride(weaponId, stage) {
   _blobs.delete(key);
   _trim.delete(key);
   _start.delete(key);
+  _proc.delete(key);   // #172: processing chain is meaningless without an override to apply to
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
@@ -248,6 +299,9 @@ export async function loadAllOverrides() {
       // feature existed simply has no `trimMs` field, which correctly leaves it untrimmed.
       if (rec.trimMs != null) _trim.set(rec.key, rec.trimMs);
       if (rec.startMs != null) _start.set(rec.key, rec.startMs);
+      // #172: restore a persisted processing chain, if any — a record saved before this feature
+      // existed simply has no `processing` field, which correctly leaves it clean/unprocessed.
+      if (rec.processing != null) _proc.set(rec.key, rec.processing);
     } catch {
       // A stored file that no longer decodes (corrupt, or the browser dropped codec support)
       // just stays a no-op override — that weapon+stage plays procedurally, same as if
@@ -264,6 +318,7 @@ export function _resetForTest() {
   _blobs.clear();
   _trim.clear();
   _start.clear();
+  _proc.clear();
   _dbPromise = null;
   _ctx = null;
 }
