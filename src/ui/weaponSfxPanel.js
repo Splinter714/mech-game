@@ -7,6 +7,7 @@ import {
   storeOverride, clearOverride, hasOverride, getOverrideMeta, getOverride,
   getTrimMs, setTrim, getStartMs, setStart,
 } from '../audio/sfxOverrides.js';
+import { buildSfxCopyText } from './sfxCopyText.js';
 
 // #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
 // are tuned through this SAME panel — they're just more sfxParams ids (single `fire` stage,
@@ -538,9 +539,15 @@ export class WeaponSfxPanel {
     this._toast('reset to defaults');
   }
 
+  // #170: per-stage-aware copy. Any stage with an active file override (#150/#166) emits a
+  // labeled FILE block (weapon/category id + stage + verbatim filename + start/end trim in ms)
+  // instead of that stage's procedural JSON — a payload the owner pastes to Claude to bake the
+  // real trimmed file into the repo. Stages still procedural keep emitting their synthesis JSON,
+  // and a weapon with no overrides copies exactly as before (see sfxCopyText.js). Dual-output
+  // (clipboard + console) and the copied/failed toast are unchanged.
   _copy() {
     const params = Audio.getSfxParams(this.weaponId);
-    const text = `  ${this.weaponId}: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
+    const text = buildSfxCopyText(this.weaponId, params);
     console.log(`[SFX TUNER] ${this.weaponId}:\n` + text);
     copyToClipboard(text).then((ok) => {
       this._toast(ok ? 'copied! (also in console)' : 'copy failed — see console');
