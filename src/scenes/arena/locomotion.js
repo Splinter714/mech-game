@@ -19,6 +19,14 @@ import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 // not sluggish, not springy.
 const TILT_SMOOTH_K = 12;
 
+// #154 experiment: try an instant-turning control feel — the PLAYER's body/leg facing and
+// turret snap immediately to their target angle every frame, bypassing the chassis'
+// `turnRate`/`turretSlew` rate limits entirely. This is a trivially-reversible toggle, not a
+// committed design change (same pattern as #144's aim-line disable flag): flip back to false
+// to restore the exact previous rate-limited feel. Only affects the player's _drive() below —
+// enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is separate and untouched.
+const INSTANT_TURNING = true;
+
 export const LocomotionMixin = {
   // A mech = hull (legs) + side torsos + arms + turret-body stacked in a container so they can
   // rotate independently around the shared centre. Layer order back→front:
@@ -183,7 +191,9 @@ export const LocomotionMixin = {
     // rate — heavier mechs pivot their stance more slowly.
     if (this.speed > 5) {
       const moveAng = Math.atan2(this.vy, this.vx);
-      this.angle = Phaser.Math.Angle.RotateTo(this.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
+      this.angle = INSTANT_TURNING
+        ? moveAng
+        : Phaser.Math.Angle.RotateTo(this.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
     }
 
     // ── Turret: aim freely, full 360° (no torso-twist arc), slewing toward the aim. ──
@@ -194,7 +204,9 @@ export const LocomotionMixin = {
       this.aimY = this.py + Math.sin(intent.aim.angle) * 800;
     }
     const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
-    this.turretAngle = rotateToward(this.turretAngle, aim, mv.turretSlew * slewMult, dt);
+    this.turretAngle = INSTANT_TURNING
+      ? aim
+      : rotateToward(this.turretAngle, aim, mv.turretSlew * slewMult, dt);
     this.registry.set('inputMode', intent.mode);
   },
 
