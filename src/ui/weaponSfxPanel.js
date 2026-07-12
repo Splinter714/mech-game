@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Slider } from './slider.js';
+import { isAudible, applyPreviewMuting } from './previewMuting.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
@@ -315,42 +316,38 @@ export class WeaponSfxPanel {
     return y;
   }
 
+  // #171: toggling mute/solo must be *immediately audible*, or it reads as "the button does
+  // nothing" — the whole point is a live A/B against the mix. Unlike the gain sliders (whose
+  // onChange auto-previews via _previewThrottled), the old toggles only rebuilt the strip and
+  // played nothing, so the change wasn't heard until the next manual test-fire. Replay the
+  // toggled component's own stage right after the rebuild, with the NEW mute/solo state applied
+  // (via _playStage → _applyPreviewMuting), so you hear the layer drop in/out on click. `key`
+  // is `${stage}:${li}`; preview just that stage. (Overridden stages disable these buttons, so
+  // a toggle here never lands on a file-buffer stage — see _buildMixerStrip's _greyOut.)
   _toggleMute(key) {
     this._mutedSet.has(key) ? this._mutedSet.delete(key) : this._mutedSet.add(key);
     this._build();
+    this._playStage(key.split(':')[0]);
   }
 
   _toggleSolo(key) {
     this._soloedSet.has(key) ? this._soloedSet.delete(key) : this._soloedSet.add(key);
     this._build();
+    this._playStage(key.split(':')[0]);
   }
 
-  // Whether a component should actually sound in the live preview right now: soloing anything
-  // silences every non-soloed component regardless of its own mute state; otherwise it's just
-  // "not muted." Never touches the stored gain — see _applyPreviewMuting.
+  // Whether a component should actually sound in the live preview right now (soloing anything
+  // silences every non-soloed component; otherwise it's just "not muted"). Pure logic lives in
+  // previewMuting.js so it's unit-testable without a scene; this is the bound convenience.
   _isAudible(key) {
-    if (this._soloedSet.size) return this._soloedSet.has(key);
-    return !this._mutedSet.has(key);
+    return isAudible(key, this._mutedSet, this._soloedSet);
   }
 
-  // Temporarily zero out the real `gain` of every inaudible component among `stages` (the
-  // stage(s) about to play), synchronously, so this must be called immediately before the
-  // Audio.fire/trajectory/impact call and restored immediately after — playLayers/tone/noise
-  // read `gain` synchronously at schedule time (WebAudio bakes it into the node graph via
-  // setValueAtTime then), so a value restored right after the call has already been "consumed"
-  // by the sound that's now playing asynchronously. Never calls Audio.setSfxParam, so
-  // sfxParams/localStorage/reset/copy never see the muted value.
+  // Transiently zero the inaudible components' real `gain` around a single preview cue, returning
+  // the restore closure — see previewMuting.applyPreviewMuting for the timing/invariant contract
+  // (mutates the same live layer objects the cue reads; stored params never see the muted 0).
   _applyPreviewMuting(stages) {
-    const overrides = [];
-    for (const { stage, li, layer } of this._components) {
-      if (!stages.includes(stage)) continue;
-      const key = `${stage}:${li}`;
-      if (!this._isAudible(key)) {
-        overrides.push({ layer, gain: layer.gain });
-        layer.gain = 0;
-      }
-    }
-    return () => { for (const o of overrides) o.layer.gain = o.gain; };
+    return applyPreviewMuting(this._components, stages, this._mutedSet, this._soloedSet);
   }
 
   // The compact DAW-mixer strip at the top of the panel (#131) — one row per component
@@ -505,10 +502,12 @@ export class WeaponSfxPanel {
     this._setScroll(this._scrollY);
   }
 
-  _previewThrottled(stage) {
-    const t = this.scene.time.now;
-    if (t - this._lastPreviewAt[stage] < PREVIEW_THROTTLE) return;
-    this._lastPreviewAt[stage] = t;
+  // Play ONE stage's live preview with the current mute/solo state applied. The mute window is
+  // opened and closed synchronously around the single Audio call: _applyPreviewMuting zeros the
+  // inaudible layers' `gain` in place, the cue reads those gains at schedule time (playLayers →
+  // tone/noise bake gain then), and the restore closure puts the real values back immediately —
+  // so the STORED params are never left mutated (copy/reset/persist always see the true gains).
+  _playStage(stage) {
     const restore = this._applyPreviewMuting([stage]);
     if (stage === 'fire') Audio.fire({ id: this.weaponId });
     else if (stage === 'trajectory') Audio.trajectory(this.weaponId);
@@ -516,24 +515,21 @@ export class WeaponSfxPanel {
     restore();
   }
 
+  _previewThrottled(stage) {
+    const t = this.scene.time.now;
+    if (t - this._lastPreviewAt[stage] < PREVIEW_THROTTLE) return;
+    this._lastPreviewAt[stage] = t;
+    this._playStage(stage);
+  }
+
   // Fires the full sequence in context (fire -> trajectory -> impact), like a real shot. Each
   // stage's mute override is applied/restored right around its own (possibly delayed) call —
   // not all up front — since a stage's mute/solo state could only change via a full _build()
   // rebuild anyway, but this keeps the override window as tight as possible per stage.
   _testFire() {
-    const rFire = this._applyPreviewMuting(['fire']);
-    Audio.fire({ id: this.weaponId });
-    rFire();
-    this.scene.time.delayedCall(TRAJECTORY_DELAY, () => {
-      const r = this._applyPreviewMuting(['trajectory']);
-      Audio.trajectory(this.weaponId);
-      r();
-    });
-    this.scene.time.delayedCall(300, () => {
-      const r = this._applyPreviewMuting(['impact']);
-      Audio.impact(this.weaponId);
-      r();
-    });
+    this._playStage('fire');
+    this.scene.time.delayedCall(TRAJECTORY_DELAY, () => this._playStage('trajectory'));
+    this.scene.time.delayedCall(300, () => this._playStage('impact'));
   }
 
   _reset() {
