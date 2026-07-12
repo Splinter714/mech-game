@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildSfxCopyText } from './sfxCopyText.js';
 import {
-  storeOverride, setTrim, setStart, setProcessing, _resetForTest, setAudioContext,
+  storeOverride, setTrim, setStart, setProcessing, setFadeOut, _resetForTest, setAudioContext,
 } from '../audio/sfxOverrides.js';
 
 // Same minimal fake IndexedDB + File + AudioContext used by sfxOverrides.test.js — just enough
@@ -182,5 +182,21 @@ describe('buildSfxCopyText (#170 per-stage copy)', () => {
     expect(out).not.toContain('pitch:');
     expect(out).not.toContain('filter:');
     expect(out).not.toContain('reverb:');
+  });
+
+  // #174: the copy payload carries the fade-out duration so a pasted FILE block bakes the fade too.
+  it('overridden stage with a fade-out: emits the fade-out line and folds it into the bake', async () => {
+    await storeOverride('autocannon', 'fire', fakeFile('boom.wav', 'BOOM'));
+    await setTrim('autocannon', 'fire', 400);
+    await setFadeOut('autocannon', 'fire', 120);
+    const out = buildSfxCopyText('autocannon', PARAMS());
+    expect(out).toContain('fade-out:        120 ms');
+    expect(out).toContain('fade-out 120 ms');   // summarised in the bake instruction
+  });
+
+  it('overridden stage with NO fade-out: emits no fade-out line (clean)', async () => {
+    await storeOverride('shotgun', 'fire', fakeFile('blast.wav', 'BLAST'));
+    const out = buildSfxCopyText('shotgun', PARAMS());
+    expect(out).not.toContain('fade-out:');
   });
 });

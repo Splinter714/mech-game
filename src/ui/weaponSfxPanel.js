@@ -6,6 +6,7 @@ import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
   storeOverride, clearOverride, hasOverride, getOverrideMeta, getOverride,
   getTrimMs, setTrim, getStartMs, setStart, getProcessing, setProcessing,
+  getFadeOutMs, setFadeOut,
 } from '../audio/sfxOverrides.js';
 import { buildSfxCopyText } from './sfxCopyText.js';
 
@@ -323,6 +324,28 @@ export class WeaponSfxPanel {
       });
       this.scroller.add(endSlider.container);
       this.sliders.push(endSlider);
+      y += ROW_H + 4;
+
+      // #174: fade-out duration — smooths the click/pop from an early-trimmed cutoff by ramping
+      // the gain to silence over the last N ms before the end point. Same conditional pattern as
+      // the start/end sliders (only shown once a file override is loaded). The range is capped at
+      // the played window (end - start) so the fade can't exceed what actually plays; 0 = no fade
+      // (the default hard cut). Stored as `fadeOutMs`; setFadeOut treats 0 as "clear."
+      const playedMs = Math.max(0, Math.round((endSec - startSec) * 1000));
+      const fadeMax = Math.max(10, playedMs);
+      const fadeMs = Phaser.Math.Clamp(getFadeOutMs(weaponId, stage) ?? 0, 0, fadeMax);
+      const fadeSlider = new Slider(this.scene, {
+        x: ox + 6, y, w: w - 12, labelW: 52, valueW: 44, label: 'fade-out', min: 0, max: fadeMax, step: 10,
+        value: fadeMs,
+        onChange: (v) => {
+          const ms = Math.round(v);
+          setFadeOut(weaponId, stage, ms <= 0 ? null : ms);
+          this._toast(ms <= 0 ? `${stage}: no fade-out` : `${stage}: fade-out ${ms}ms`);
+          this._previewThrottled(stage);
+        },
+      });
+      this.scroller.add(fadeSlider.container);
+      this.sliders.push(fadeSlider);
       y += ROW_H + 8;
 
       // #172: non-destructive playback processing (pitch / filter / reverb) — same conditional
