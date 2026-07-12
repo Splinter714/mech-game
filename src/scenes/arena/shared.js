@@ -31,7 +31,10 @@ export const ARENA_MECH_SCALE = 0.34;
 // #157 (direct instruction, 2026-07-11: "turn off the new 1.3x game zoom"): set back to 1.0
 // (a no-op multiplier — setZoom(dpr * GAMEPLAY_ZOOM) is equivalent to the pre-#149
 // setZoom(dpr)). The mechanism above stays intact so a different value is a one-line change.
-export const GAMEPLAY_ZOOM = 1.0;
+// #160 (direct instruction, 2026-07-11: "turn zoom back to 1.2 or 1.3, that was actually kinda
+// cool") — reverts #157. Owner played without the zoom after confirming #155's tile-culling fix
+// was the real FPS win (unrelated to zoom), and wants the 1.3 framing back.
+export const GAMEPLAY_ZOOM = 1.3;
 
 // #136: the single shared "wayfinding/aim highlight" colour — one source of truth for every
 // UI element that means "pay attention to this direction/spot": the objective marker's amber
