@@ -38,15 +38,9 @@ export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', '
 // during the fight, data/enemyKinds.js) is added ONCE to LATE_POOL only, at a similarly rare
 // tier to turretNest/infantryMob/sniper/artillery — a rarer, tougher escalation unit, not a
 // common draw.
-// #162 TEMPORARY PLAYTESTING BUMP: 'quadruped' is duplicated several extra times below so the
-// Broodwalker actually shows up during a playtest session, instead of being diluted to ~1/11 of
-// an already-probabilistic late-pool draw. This is NOT a permanent balance call — dial it back
-// down to a single entry (matching its #130 rarity tier) once the owner has had a chance to see
-// and evaluate it in play.
 export const LATE_POOL = [
   'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
-  'turretNest', 'turretNest', 'infantryMob',
-  'quadruped', 'quadruped', 'quadruped', 'quadruped', 'quadruped',
+  'turretNest', 'turretNest', 'infantryMob', 'quadruped',
 ];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has
