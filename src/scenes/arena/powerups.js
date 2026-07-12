@@ -14,6 +14,7 @@ import {
 } from '../../data/powerups.js';
 import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
+import { BOUNDARY_RING_WIDTH } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import { DEPTH } from './shared.js';
 
@@ -65,7 +66,12 @@ export const PowerupsMixin = {
     if (this.terrain && this._blocked && !this._blocked(x, y)) return { x, y };
     const start = pixelToHex(x, y);
     const ok = (q, r) => isPassable(this.terrain?.get(axialKey(q, r)));
-    const hex = nearestHex(start, ok, (this.worldRadius ?? 20) * 2) ?? { q: 0, r: 0 };
+    // #158: `worldRadius * 2` alone assumed worldRadius is always much bigger than
+    // BOUNDARY_RING_WIDTH (true pre-#158; no longer guaranteed once the playable interior
+    // shrinks below the ring's own fixed depth) — see spawnPlacement.js `nearestValidHex`'s
+    // matching fix/comment for the full reasoning.
+    const searchSteps = (this.worldRadius ?? 20) * 2 + BOUNDARY_RING_WIDTH + 15;
+    const hex = nearestHex(start, ok, searchSteps) ?? { q: 0, r: 0 };
     return hexToPixel(hex.q, hex.r);
   },
 

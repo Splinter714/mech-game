@@ -11,6 +11,7 @@ import { hexToPixel } from '../src/data/hexgrid.js';
 import { RUN_CURRENCY_KEY } from '../src/data/events.js';
 import { WEAPONS, WEAPON_IDS } from '../src/data/weapons.js';
 import { INFANTRY_MOB_SIZE } from '../src/data/enemyKinds.js';
+import { MIN_SPAWN_BOUNDARY_HEX_DIST, FAR_OBJECTIVE_MIN_DIST } from '../src/data/worldgen.js';
 
 // Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
 // weapon range with terrain possibly between it and the origin. For the deterministic
@@ -155,7 +156,7 @@ try {
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
   }, { timeout: 20000 });
 
-  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize, hitscanWeapon }) => {
+  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize, hitscanWeapon, nearSpawnHexDist }) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first (and at boot, only) enemy
@@ -614,11 +615,13 @@ try {
     const playerPositionUnchanged = a.px === pxBefore && a.py === pyBefore;
     const playerNotStranded = !a._blocked(a.px, a.py) && !a._isWall(a.px, a.py);
 
-    // #110: the biome's reserved "deep" terrain must appear as the boundary ring around the
+    // #110/#158: the biome's reserved "deep" terrain must appear as the boundary ring around the
     // OUTER edge of the whole pre-built area — never as an in-map feature near the player's
     // starting area. `a._boundaryRing` (set by `_buildWorld`) is the exact Set of hex keys the
     // boundary was stamped onto; confirm at least one exists, that it really does carry the
-    // biome's `deep` id, and that `deep` is ABSENT from a generous radius around spawn.
+    // biome's `deep` id, and that `deep` is ABSENT within `nearSpawnHexDist` (MIN_SPAWN_BOUNDARY_
+    // HEX_DIST, worldgen.js — #158 re-derived this down from an ungrounded flat 20 to a real,
+    // much smaller floor now that the map is deliberately sized for the boundary to be visible).
     const boundary = {};
     {
       const ringKeys = [...(a._boundaryRing ?? [])];
@@ -626,9 +629,10 @@ try {
       boundary.ringUsesDeepId = ringKeys.length > 0 && ringKeys.every((k) => a.terrain.get(k) === a.biome.deep);
       boundary.deepAbsentNearSpawn = true;
       const SIZE = 48, RT3 = Math.sqrt(3);
-      for (let q = -20; q <= 20 && boundary.deepAbsentNearSpawn; q++) {
-        for (let r = -20; r <= 20; r++) {
-          if (Math.abs(q) + Math.abs(r) + Math.abs(q + r) > 40) continue;
+      const D = nearSpawnHexDist;
+      for (let q = -D; q <= D && boundary.deepAbsentNearSpawn; q++) {
+        for (let r = -D; r <= D; r++) {
+          if (Math.abs(q) + Math.abs(r) + Math.abs(q + r) > 2 * D) continue;
           const k = `${q},${r}`;
           if (a.terrain.get(k) === a.biome.deep) { boundary.deepAbsentNearSpawn = false; break; }
         }
@@ -640,6 +644,49 @@ try {
         const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
         boundary.groundBlockedAtRing = a._blocked(bx, by);
       } else boundary.groundBlockedAtRing = false;
+    }
+
+    // #158: the whole point of this resize — the boundary terrain must be genuinely ON-SCREEN at
+    // spawn, not just "somewhere within a generous radius." Force the player back to world origin
+    // (matches every other "at spawn" check in this file) and compute the REAL camera world-space
+    // viewport (same formula ArenaScene.create()/`_offscreenSpawnPoint` use: canvas size / actual
+    // zoom, since dpr cancels — see worldgen.js's own #158 comment) rather than re-deriving it a
+    // third way, then confirm at least one boundary-ring hex actually falls inside that rect.
+    const boundaryVisibility = {};
+    {
+      a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
+      const zoom = a.cameras.main.zoom || 1;
+      const vw = a.scale.width / zoom, vh = a.scale.height / zoom;
+      const viewX0 = a.px - vw / 2, viewY0 = a.py - vh / 2;
+      const viewX1 = viewX0 + vw, viewY1 = viewY0 + vh;
+      const SIZE = 48, RT3 = Math.sqrt(3);
+      let onScreen = 0;
+      for (const k of (a._boundaryRing ?? [])) {
+        const [rq, rr] = k.split(',').map(Number);
+        const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
+        if (bx >= viewX0 && bx <= viewX1 && by >= viewY0 && by <= viewY1) onScreen++;
+      }
+      boundaryVisibility.atSpawn = onScreen > 0;
+      boundaryVisibility.hexesOnScreenAtSpawn = onScreen;
+
+      // Also check from the CURRENT mission objective's position — a realistic "normal play"
+      // vantage point, not just the origin. At this point in the smoke run the objective is
+      // still stage 0's (the stage-advance test that reassigns it runs later).
+      if (a.objectiveHex) {
+        const [oq, or_] = a.objectiveHex.split(',').map(Number);
+        const ox = SIZE * RT3 * (oq + or_ / 2), oy = SIZE * (3 / 2) * or_;
+        const ovX0 = ox - vw / 2, ovY0 = oy - vh / 2, ovX1 = ovX0 + vw, ovY1 = ovY0 + vh;
+        let onScreenAtObjective = 0;
+        for (const k of (a._boundaryRing ?? [])) {
+          const [rq, rr] = k.split(',').map(Number);
+          const bx = SIZE * RT3 * (rq + rr / 2), by = SIZE * (3 / 2) * rr;
+          if (bx >= ovX0 && bx <= ovX1 && by >= ovY0 && by <= ovY1) onScreenAtObjective++;
+        }
+        boundaryVisibility.nearStage0Objective = onScreenAtObjective > 0;
+        boundaryVisibility.hexesOnScreenAtObjective = onScreenAtObjective;
+      } else {
+        boundaryVisibility.nearStage0Objective = null;
+      }
     }
 
     // Flying enemies must ignore the boundary the same way they ignore every other terrain
@@ -1237,6 +1284,7 @@ try {
       playerPositionUnchanged,
       playerNotStranded,
       boundary,
+      boundaryVisibility,
       flyOverBoundary,
       runEndedOnDeath,
       currencyBankedOnDeath,
@@ -1255,7 +1303,10 @@ try {
       infantryWaterAvoidance,
       enemyDelivery,
     };
-  }, { dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE, hitscanWeapon: WEAPONS.pulseLaser });
+  }, {
+    dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE,
+    hitscanWeapon: WEAPONS.pulseLaser, nearSpawnHexDist: MIN_SPAWN_BOUNDARY_HEX_DIST,
+  });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
 
   console.log(JSON.stringify({ garage, arena }, null, 2));
@@ -1351,8 +1402,11 @@ try {
   if (!arena.missionStartedActive) fail('#66 mission did not start active with the assault objective');
   if (!arena.missionCompleted) fail('#66 destroying the objective hex did not complete the mission');
   // #81 follow-up (playtest 2026-07-10 point 4): the very FIRST stage's objective must also
-  // require real travel from spawn, same as every later stage-advance objective.
-  if (!(arena.firstObjectiveDistFromSpawn >= 6)) {
+  // require real travel from spawn, same as every later stage-advance objective. Checked against
+  // the SAME FAR_OBJECTIVE_MIN_DIST floor `pickStageObjective`/`pickFarObjective` actually use
+  // (worldgen.js) — was a hardcoded `>= 6` here, which went stale the moment #158 trimmed that
+  // floor to 3 for the much smaller map.
+  if (!(arena.firstObjectiveDistFromSpawn >= FAR_OBJECTIVE_MIN_DIST)) {
     fail(`#81 the first stage's objective was only ${arena.firstObjectiveDistFromSpawn} hexes from spawn — it must require real travel`);
   }
   // #64: run loop — a fresh deploy starts at stage 0, mission-complete advances the run to the
@@ -1380,8 +1434,13 @@ try {
   // edge of the pre-built area, and must NOT appear as an in-map feature near player spawn.
   if (!arena.boundary.ringExists) fail('#110 no boundary ring hexes were found around the pre-built area');
   if (!arena.boundary.ringUsesDeepId) fail('#110 the boundary ring is not stamped with the biome\'s reserved "deep" terrain id');
-  if (!arena.boundary.deepAbsentNearSpawn) fail('#110 the biome\'s "deep" terrain appeared as an in-map feature near spawn — it must be boundary-only');
+  if (!arena.boundary.deepAbsentNearSpawn) fail('#110/#158 the biome\'s "deep" terrain appeared as an in-map feature within the near-spawn safety margin — it must be boundary-only');
   if (!arena.boundary.groundBlockedAtRing) fail('#110 the boundary ring did not block ground movement like any other impassable terrain');
+  // #158: the concrete, measurable target from the issue — boundary terrain must actually be
+  // visible on screen, not just present somewhere on the map. Checked against the REAL camera
+  // viewport (canvas size / actual zoom), both at spawn and near the live stage-0 objective.
+  if (!arena.boundaryVisibility.atSpawn) fail(`#158 boundary terrain is not visible on screen at spawn (camera viewport contains 0 boundary-ring hexes)`);
+  if (arena.boundaryVisibility.nearStage0Objective === false) fail(`#158 boundary terrain is not visible on screen near the stage-0 objective (camera viewport contains 0 boundary-ring hexes)`);
   // Flying enemies must ignore the new boundary terrain, same as they ignore every other
   // terrain (helicopter/drone narratively fly over ground obstacles) — coordinator follow-up.
   if (arena.flyOverBoundary.tested) {

@@ -11,6 +11,7 @@
 // `isPassable` predicate read off the live terrain Map.
 import { axialKey, hexToPixel, pixelToHex, nearestHex } from './hexgrid.js';
 import { isPassable } from './terrain.js';
+import { BOUNDARY_RING_WIDTH } from './worldgen.js';
 
 // Is (q, r) a hex this terrain map actually has AND that's passable ground? A hex outside the
 // generated playable area (organic boundary / world radius) is simply absent from the map, so
@@ -21,13 +22,25 @@ function passableCheck(terrain) {
 }
 
 // Nearest passable, in-bounds HEX to a raw pixel point. Searches outward ring-by-ring
-// (`nearestHex`) up to `2 * worldRadius` hex-steps — generous enough to always find a valid
-// hex somewhere on any real map, but bounded so a degenerate all-blocked terrain map can't spin
-// forever; falls back to the raw (invalid) hex in that vanishingly unlikely case; callers than
-// still spawn there rather than crashing.
+// (`nearestHex`) — generous enough to always find a valid hex somewhere on any real map, but
+// bounded so a degenerate all-blocked terrain map can't spin forever; falls back to the raw
+// (invalid) hex in that vanishingly unlikely case; callers then still spawn there rather than
+// crashing.
+//
+// #158: `2 * worldRadius` alone (the original formula) silently assumed `worldRadius` (the
+// generous MAX_WORLD_RADIUS bounding cap, data/worldgen.js) was always much BIGGER than
+// BOUNDARY_RING_WIDTH (the impassable ring's fixed 35-hex depth, #126) — true at the old, much
+// larger map sizes (73 vs 35), but #158 shrank the playable interior enough that worldRadius can
+// now be SMALLER than the ring itself (e.g. 20 vs 35). A raw point that lands within or just past
+// the ring (a real case — this is exactly what "off the edge of the map" spawn points look like)
+// then needs to cross the ring's own width to get back to passable ground, which `2 *
+// worldRadius` alone no longer guarantees once worldRadius shrinks below it. Add
+// BOUNDARY_RING_WIDTH explicitly (plus a flat margin for the shape's own organic noise) so the
+// budget stays correct regardless of how small worldRadius gets relative to the ring.
 export function nearestValidHex(terrain, worldRadius, x, y) {
   const rawHex = pixelToHex(x, y);
-  return nearestHex(rawHex, passableCheck(terrain), (worldRadius ?? 20) * 2) ?? rawHex;
+  const searchSteps = (worldRadius ?? 20) * 2 + BOUNDARY_RING_WIDTH + 15;
+  return nearestHex(rawHex, passableCheck(terrain), searchSteps) ?? rawHex;
 }
 
 // Pixel-space counterpart: (x, y) unchanged if already passable + in-bounds, else the nearest
