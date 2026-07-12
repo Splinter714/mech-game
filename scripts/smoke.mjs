@@ -658,10 +658,13 @@ try {
     // spawned here (via the real `_removeEnemy` teardown) before moving on.
     const savedPlayer = { px: a.px, py: a.py, vx: a.vx, vy: a.vy };
 
-    // #114: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
-    // unoccupied-by-forest/water hexes — never off-map or stacked on impassable terrain. Spawn
-    // several clusters at varied raw points (near the origin, on any known wall/water hex from
-    // the #68 vehicle-kind check above, and just past the map's edge) and check every turret.
+    // #114/#145: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
+    // unoccupied-by-forest/water hexes — never off-map or stacked on impassable terrain — AND
+    // (#145, playtest 2026-07-11: "turrets are in 3 separate hexes, but they should be in 1 hex
+    // centered on that hex's center") the 3 turrets must sit tightly on a SINGLE hex's true
+    // centre, not spread across a neighborhood of hexes. Spawn several clusters at varied raw
+    // points (near the origin, on any known wall/water hex from the #68 vehicle-kind check above,
+    // and just past the map's edge) and check every turret.
     const turretClusterBounds = (() => {
       let trials = 0, allValid = true, allCentered = true;
       const spawnedNow = [];
@@ -690,13 +693,17 @@ try {
         for (const t of cluster) {
           if (a._blocked(t.x, t.y)) allValid = false;
         }
-        // Every turret should be within a couple hex-steps of the cluster's own centre (2 rings
-        // ≈ up to ~2*83px plus some slack for the hex-centre snap).
+        // #145: every turret should sit within a tight px radius of the cluster's own centroid —
+        // all 3 turrets are now only ever a few px of "huddle" offset apart on ONE hex (see
+        // TURRET_HUDDLE_OFFSET in enemies.js), not spread across a neighborhood of hexes (the old
+        // #114 behaviour, which could put turrets up to ~166px apart across 2 hex-rings). A tight
+        // 20px tolerance here would have failed under that old spread, so it still meaningfully
+        // distinguishes "one huddled nest" from "scattered across several hexes."
         if (cluster.length === 3) {
           const cx = cluster.reduce((s, t) => s + t.x, 0) / cluster.length;
           const cy = cluster.reduce((s, t) => s + t.y, 0) / cluster.length;
           for (const t of cluster) {
-            if (Math.hypot(t.x - cx, t.y - cy) > 260) allCentered = false;
+            if (Math.hypot(t.x - cx, t.y - cy) > 20) allCentered = false;
           }
         }
       }
@@ -1327,14 +1334,14 @@ try {
   if (!arena.enemyDelivery.hitscanDamagedPlayer) fail('#117 an enemy-owned hitscan beam did not damage the player');
   if (!arena.enemyDelivery.meleeDamagedPlayer) fail('#117 an enemy-owned melee/contact swing did not damage the player');
 
-  // #114: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
-  // unoccupied-by-forest/water hexes, centred as one tight nest — across many raw spawn points,
-  // including some deliberately off-map or on top of blocked terrain.
+  // #114/#145: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
+  // unoccupied-by-forest/water hexes, all huddled tightly on a SINGLE hex's true centre — across
+  // many raw spawn points, including some deliberately off-map or on top of blocked terrain.
   if (arena.turretClusterBounds.spawnedTotal !== arena.turretClusterBounds.trials * 3) {
     fail(`#114 a turret cluster did not spawn exactly 3 turrets every time (got ${arena.turretClusterBounds.spawnedTotal} across ${arena.turretClusterBounds.trials} trials)`);
   }
   if (!arena.turretClusterBounds.allValid) fail('#114 a turret cluster placed a turret on invalid (off-map/blocked) terrain');
-  if (!arena.turretClusterBounds.allCentered) fail('#114 a turret cluster\'s turrets were not tightly centred on a single hex');
+  if (!arena.turretClusterBounds.allCentered) fail('#145 a turret cluster\'s turrets were not tightly huddled on a single hex\'s centre');
 
   // #115: infantry must never end up outside the playable map — neither at spawn (mirrors
   // #114's mob-ring-offset bug) nor after real idle-wander/advance AI movement.
