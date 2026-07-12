@@ -28,6 +28,16 @@ const TILT_SMOOTH_K = 12;
 // enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is separate and untouched.
 const INSTANT_TURNING = true;
 
+// #159 follow-up to #154/#156: INSTANT_TURNING only snapped the player's FACING to input —
+// the underlying VELOCITY still eased toward the commanded speed via the accel/decel
+// weight-inertia model below (`approach(this.vx, tx, ...)`), so the mech still visibly
+// ramped up/down rather than moving at full commanded speed immediately. This flag, same
+// trivially-reversible pattern as INSTANT_TURNING, snaps vx/vy directly to the target (tx/ty)
+// each frame instead of easing when true. Per-chassis accel/decel become moot while this is
+// on (left in the chassis data, just bypassed). Flip back to false to restore the exact
+// previous accel/decel behavior.
+const INSTANT_VELOCITY = true;
+
 export const LocomotionMixin = {
   // A mech = hull (legs) + side torsos + arms + turret-body stacked in a container so they can
   // rotate independently around the shared centre. Layer order back→front:
@@ -144,8 +154,8 @@ export const LocomotionMixin = {
     const tx = intent.move.x * maxSp, ty = intent.move.y * maxSp;
     const rampX = (tx !== 0 && Math.sign(tx) === Math.sign(this.vx) && Math.abs(tx) > Math.abs(this.vx));
     const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(this.vy) && Math.abs(ty) > Math.abs(this.vy));
-    this.vx = approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
-    this.vy = approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
+    this.vx = INSTANT_VELOCITY ? tx : approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
+    this.vy = INSTANT_VELOCITY ? ty : approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
     // Move with wall/boundary collision, sliding along blocked axes. #92: a living GROUND enemy
     // (mech/tank/turret — flyers narratively fly over ground obstacles, see
     // `_blockedByGroundEnemy`) blocks the player the same way impassable terrain does.

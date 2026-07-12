@@ -12,7 +12,9 @@ export const MEDIUM_CONFIG = {
     // slower to spool up, longer coast, lazier turn + turret, a heavier planted step.
     // See light.js for what each knob does. Momentum gap (accel vs decel) is wider than a
     // light's, so a medium "leans into" starts and stops more.
-    accel: 210, decel: 140, maxSpeed: 98, turnRate: 1.55,
+    // #159: maxSpeed bumped from 98 → 195 (×135/68 ≈ 1.9853 — same uniform scale factor as
+    // light.js/heavy.js, so medium keeps landing between the two at its old relative spacing).
+    accel: 210, decel: 140, maxSpeed: 195, turnRate: 1.55,
     // #86: restored from 2.0 back to 2.9 (the #3 feel-follow-up value) — playtest read the
     // 2.0 slew as "choppy" aiming; profiling showed steady 60fps (see profile-aim-idle.mjs),
     // so it was the slew rate lagging a fast aim change, not a frame-rate/update-frequency bug.
