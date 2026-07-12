@@ -235,6 +235,9 @@ export const EnemiesMixin = {
       awareness: UNAWARE,
       detectRange: detectionRangeFor(def.fireRange),
       idleGoal: null, idleAt: 0,
+      // #152: walk-cycle animation state for a kind whose art builds multiple hull frames (see
+      // def.legFrames / _updateVehicle below) — harmless/unused for kinds without it.
+      stepMs: 0, hullFrame: 0,
     };
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
@@ -324,7 +327,11 @@ export const EnemiesMixin = {
       shadow = this.add.ellipse(0, 0, 34 * vs, 18 * vs, 0x000000, 0.28);
       parts.push(shadow);
     }
-    const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(vs);
+    // #152: a kind whose art builds a walk-cycle (def.legFrames — currently just the
+    // Broodwalker/quadruped) starts on frame 0 of `${key}_hull_0..N`; every other kind keeps the
+    // single static `${key}_hull` texture, unchanged.
+    const hullKey = def.legFrames ? `${key}_hull_0` : `${key}_hull`;
+    const hull = this.add.sprite(0, 0, hullKey).setScale(vs);
     const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(vs);
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
@@ -448,9 +455,14 @@ export const EnemiesMixin = {
     if (e._tornDown) return;   // guard against a double-teardown race (see _removeEnemy)
     e._tornDown = true;
     e.view.destroy();
+    // #152: a non-mech kind whose art built a walk-cycle (def.legFrames) generated
+    // `<key>_hull_0..N` instead of one static `<key>_hull` — clean up whichever set actually
+    // exists so a killed Broodwalker doesn't leak its per-frame textures.
     const suffixes = e.kind === 'mech'
       ? ['hull_0', 'hull_1', 'hull_2', 'hull_3', 'turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm']
-      : ['hull', 'turret'];
+      : e.kindDef?.legFrames
+        ? [...Array(e.kindDef.legFrames).keys()].map((f) => `hull_${f}`).concat('turret')
+        : ['hull', 'turret'];
     for (const s of suffixes) {
       const key = `${e.key}_${s}`;
       if (this.textures.exists(key)) this.textures.remove(key);
@@ -714,6 +726,24 @@ export const EnemiesMixin = {
 
     // Tick the weapon cooldown (a single per-unit timer; the kind's cadence lives in data).
     if (e.fireCd > 0) e.fireCd = Math.max(0, e.fireCd - delta);
+
+    // #152: legged walk-cycle for a kind whose art builds multiple hull frames (def.legFrames —
+    // currently just the Broodwalker/quadruped) — mirrors the player mech's stompy stepGait
+    // (locomotion.js _stepGait): advance a per-enemy stepMs by actual ground speed (not a fixed
+    // timer), and swap to the next hull frame each time it crosses the kind's own stepInterval,
+    // so the gait speeds up/slows down with real motion and stops cycling when stationary.
+    if (e.kindDef.legFrames) {
+      const mv = e.kindDef.move;
+      const speed = Math.hypot(e.vx, e.vy);
+      if (speed > 5 && mv.stepInterval) {
+        e.stepMs += dt * 1000 * (speed / mv.maxSpeed);
+        if (e.stepMs >= mv.stepInterval) {
+          e.stepMs -= mv.stepInterval;
+          e.hullFrame = (e.hullFrame + 1) % e.kindDef.legFrames;
+        }
+      }
+      e.view.hull.setTexture(`${e.key}_hull_${e.hullFrame}`);
+    }
 
     // Render. Hull faces travel/hull-facing; turret faces its gun; flyers spin their rotor overlay
     // and float their shadow slightly offset so they read as airborne.

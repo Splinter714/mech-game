@@ -5,6 +5,19 @@
 // drones/infantry it periodically releases (the actual deploy mechanic lives in data —
 // enemyKinds.js `deployEveryMs`/`deployCap` — and behavior — enemyBehaviors.js
 // `quadrupedBehavior` — this file only draws the silhouette).
+//
+// #152 (round-2 playtest, follow-up to #147): two fixes live here.
+//   1. "Legs aren't attached to the body" — the old hull tub (half-width ~11-12) fell well
+//      short of the leg hip anchors (x ±17/±18), leaving a visible gap between body and limb.
+//      The hull tub below is enlarged to reach past every hip anchor, and the hips themselves
+//      were pulled in slightly to sit ON the enlarged body's silhouette — so the body (drawn
+//      AFTER the legs) visually swallows each leg's root instead of floating past its edge.
+//   2. "No walk animation" — drawHull now takes a `frame` (0-3), mirroring the player mech's
+//      stompy 4-frame gait (mechArt.js): frames 0/2 are the planted/neutral pose, 1/3 swing the
+//      knee+foot (NOT the hip, which stays anchored to the body per fix #1) fore/aft. A
+//      quadruped's natural gait moves DIAGONAL leg pairs together (front-left+rear-right vs
+//      front-right+rear-left), not left/right in unison like the biped mech, so the swing here
+//      is keyed by diagonal pair rather than by side.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, poly } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
@@ -33,11 +46,14 @@ function legSegment(sg, x1, y1, x2, y2, w1, w2) {
 // A single articulated leg: hip -> knee -> foot, with a visible bend at the knee. #147: the
 // old single blocky rounded rect (roundC + horizontal "rung" bars) read as a stubby tank
 // tread, not a walking leg — this replaces it with two thinner tapered segments meeting at an
-// angled knee joint, which is what actually reads as "leg" rather than "tread."
-function drawLeg(sg, hipX, hipY, side) {
+// angled knee joint, which is what actually reads as "leg" rather than "tread." #152: the HIP
+// (hipX, hipY) always stays exactly where the body anchors it (never offset) so the leg reads
+// as firmly attached; `swing` shifts only the knee+foot fore/aft along the leg's own stride
+// axis, for the walk-cycle animation.
+function drawLeg(sg, hipX, hipY, side, swing = 0) {
   const dir = Math.sign(hipY) || 1;   // front legs (-y) bend the knee forward/up; rear (+y) back/down
-  const kneeX = hipX + side * 5, kneeY = hipY + dir * 9;
-  const footX = hipX, footY = hipY + dir * 20;
+  const kneeX = hipX + side * 5, kneeY = hipY + dir * 9 + swing;
+  const footX = hipX, footY = hipY + dir * 20 + swing * 1.6;   // the foot swings further than the knee
   legSegment(sg, hipX, hipY, kneeX, kneeY, 3.4, 2.6);   // upper leg — thicker at the hip
   legSegment(sg, kneeX, kneeY, footX, footY, 2.4, 1.7); // lower leg — thinner still
   ellipseC(sg, kneeX, kneeY, 2.4, 2.4, V.treadHi, 0.9);   // knee joint accent
@@ -45,29 +61,53 @@ function drawLeg(sg, hipX, hipY, side) {
   ellipseC(sg, footX, footY, 4, 2.8, V.deep, 0.65);       // foot pad
 }
 
+// #152: how far (px) a leg's knee+foot swing fore/aft on the two mid-stride frames (1 and 3);
+// frames 0/2 are fully planted (swing 0). Big enough to visibly read as a walk cycle at gameplay
+// scale (a too-subtle swing was the first draft's mistake), but the SLOW cadence (stepInterval,
+// enemyKinds.js) is what actually sells "heavy lurch" — amplitude alone doesn't need to be tiny
+// for that; a bigger, slower swing reads heavier than a small, slow one.
+const SWING = 6;
+
+// Diagonal-pair swing offset for one leg on a given walk-cycle frame. A real quadruped gait
+// moves front-left+rear-right together and front-right+rear-left together (a "trot" diagonal),
+// alternating which pair is planted vs swinging — so unlike the biped mech (which alternates
+// left/right), this keys off diagonal pairing.
+function legSwing(frame, legKey) {
+  if (frame % 2 === 0) return 0;                         // frames 0/2: both pairs planted
+  const pairA = legKey === 'fl' || legKey === 'rr';       // front-left + rear-right
+  const extreme = frame === 1 ? 1 : -1;
+  return (pairA ? extreme : -extreme) * SWING;
+}
+
 // Hull + four splayed legs, drawn pointing "up" (−y = forward). A wide four-point stance (front
 // pair angled forward, rear pair angled back) reads as a quadruped rather than tank tracks.
-function drawHull(sg, accent) {
+// `frame` (0-3) drives the walk-cycle leg swing (see legSwing above); frame 0 is the neutral/
+// static pose used everywhere a single texture is still expected (art previews, etc).
+function drawHull(sg, accent, frame = 0) {
   // Ground shadow — wide, to match the four-point footprint.
   ellipseC(sg, 0, 5, 32, 28, V.deep, 0.35);
 
-  // Four articulated legs (hip -> knee -> foot) with foot pads.
+  // Four articulated legs (hip -> knee -> foot) with foot pads. #152: hip anchors pulled in
+  // from the old ±17/±18 to sit ON the enlarged hull tub's edge below (not past it), so there's
+  // no gap between where the leg roots and where the body's silhouette ends.
   const legs = [
-    { x: -17, y: -12, side: -1 }, { x: 17, y: -12, side: 1 },   // front-left / front-right
-    { x: -18, y: 13, side: -1 }, { x: 18, y: 13, side: 1 },     // rear-left / rear-right
+    { key: 'fl', x: -15, y: -13, side: -1 }, { key: 'fr', x: 15, y: -13, side: 1 },
+    { key: 'rl', x: -16, y: 13, side: -1 }, { key: 'rr', x: 16, y: 13, side: 1 },
   ];
-  for (const { x, y, side } of legs) drawLeg(sg, x, y, side);
+  for (const { key, x, y, side } of legs) drawLeg(sg, x, y, side, legSwing(frame, key));
 
-  // Central hull tub between the four legs.
-  poly(sg, [[-11, -12], [11, -12], [12, 12], [-12, 12]], V.outline);
-  poly(sg, [[-9.5, -11], [9.5, -11], [10.5, 11], [-10.5, 11]], V.bodyDk);
-  poly(sg, [[-8, -10], [8, -10], [8.5, -2], [-8.5, -2]], V.body);
-  poly(sg, [[-6.5, -10], [6.5, -10], [7, -5.5], [-7, -5.5]], V.bodyHi);
+  // Central hull tub between the four legs. #152: enlarged well past every leg hip anchor above
+  // (was half-width ~11-12, hips sat out at ±17/±18 — a visible gap) so the body's own
+  // silhouette now overlaps each leg's root, selling "legs attached to a much bigger body."
+  poly(sg, [[-18, -15], [18, -15], [19, 15], [-19, 15]], V.outline);
+  poly(sg, [[-16, -14], [16, -14], [17, 14], [-17, 14]], V.bodyDk);
+  poly(sg, [[-13.5, -13], [13.5, -13], [14, -3], [-14, -3]], V.body);
+  poly(sg, [[-11, -13], [11, -13], [11.5, -7.5], [-11.5, -7.5]], V.bodyHi);
   // Rear engine/vent deck.
-  rectC(sg, 0, 8, 13, 6, V.bodyDk);
-  for (const y of [6.5, 8, 9.5]) rectC(sg, 0, y, 11, 1, V.tread, 0.8);
+  rectC(sg, 0, 10, 20, 7, V.bodyDk);
+  for (const y of [8, 10, 12]) rectC(sg, 0, y, 17, 1.2, V.tread, 0.8);
   // Hazard accent stripe.
-  rectC(sg, 0, -9, 9, 1.4, accent, 0.7);
+  rectC(sg, 0, -12, 14, 1.6, accent, 0.7);
 }
 
 // Rotating turret: a flatter, boxier housing than tank's rounded cast turret (distinct
@@ -95,9 +135,20 @@ function drawTurret(sg, accent) {
   ellipseC(sg, 0, -28, 3.8, 2.9, A.halo, 0.3);
 }
 
+// #152: how many walk-cycle hull frames this unit draws (mirrors the player mech's 4-frame
+// stompy gait — mechArt.js `<key>_hull_0..3`). Exported so enemyKinds.js's `legFrames` data
+// field and the arena's animation code (enemies.js `_updateVehicle`) share one source of truth
+// instead of duplicating the number "4".
+export const QUADRUPED_LEG_FRAMES = 4;
+
 export function drawQuadruped(scene, key, def) {
   const accent = def.themeColor ?? V.rim;
   const D = DESIGN * ART_SCALE;
-  gen(scene, `${key}_hull`, D, D, (g) => drawHull(scaledGraphics(g), accent));
+  // #152: a 4-frame walk cycle, same convention as the player mech's `<key>_hull_0..3` (see
+  // mechArt.js buildMechTextures) — the arena swaps between these based on ground speed instead
+  // of a single static hull texture, so the Broodwalker's legs visibly cycle as it walks.
+  for (let f = 0; f < QUADRUPED_LEG_FRAMES; f++) {
+    gen(scene, `${key}_hull_${f}`, D, D, (g) => drawHull(scaledGraphics(g), accent, f));
+  }
   gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent));
 }

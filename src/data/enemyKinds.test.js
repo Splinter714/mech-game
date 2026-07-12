@@ -132,6 +132,33 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(q.deployCap).toBeLessThanOrEqual(30);   // generous, but still a bounded lifetime cap
   });
 
+  it('#152: quadruped deploy batch minimum is at least 5 (round-2 playtest floor)', () => {
+    const q = ENEMY_KINDS.quadruped;
+    expect(q.deployBatchMin).toBeGreaterThanOrEqual(5);
+    expect(q.deployBatchMax).toBeGreaterThanOrEqual(q.deployBatchMin);
+  });
+
+  it('#152: quadruped body turnRate is now much slower, while turretSlew is UNCHANGED at 2.0', () => {
+    const q = ENEMY_KINDS.quadruped;
+    // Dropped hard from the #130/#147 value of 1.1 — well under a third of it, and under even the
+    // heavy player chassis's already-ponderous 1.0 body turnRate (chassis/heavy.js) — so the body
+    // reads as struggling to reorient.
+    expect(q.move.turnRate).toBeLessThan(0.5);
+    expect(q.move.turnRate).toBeGreaterThan(0);
+    // The turret must keep tracking responsively regardless — explicitly untouched.
+    expect(q.move.turretSlew).toBe(2.0);
+    expect(q.move.turretSlew).toBeGreaterThan(q.move.turnRate * 3);
+  });
+
+  it('#152: quadruped carries a walk-cycle leg-frame count for its animated gait', () => {
+    const q = ENEMY_KINDS.quadruped;
+    expect(q.legFrames).toBeGreaterThanOrEqual(2);
+    expect(q.move.stepInterval).toBeGreaterThan(0);
+    // A slow, heavy, LURCHING cadence — not a brisk trot — so noticeably slower than the heavy
+    // player chassis's own already-ponderous stepInterval (460ms, chassis/heavy.js).
+    expect(q.move.stepInterval).toBeGreaterThan(460);
+  });
+
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
     expect(isEnemyKind('tank')).toBe(true);
     expect(isEnemyKind('helicopter')).toBe(true);

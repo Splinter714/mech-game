@@ -181,17 +181,36 @@ export const ENEMY_KINDS = {
     flying: false,
     // #130 (owner: tune): "comparable to or slower than tank" — tank's maxSpeed is 52, this is
     // noticeably slower/heavier so it reads as a lumbering quadruped rather than a light tank.
-    move: { maxSpeed: 38, accel: 90, turnRate: 1.1, turretSlew: 2.0 },
+    // #152 (round-2 playtest): "body turn rate too fast" — turnRate dropped hard from 1.1 to
+    // 0.35 (under a third, and well below even the heavy player chassis's already-ponderous 1.0
+    // turnRate — see chassis/heavy.js) so the BODY struggles to reorient like a lumbering heavy
+    // machine. turretSlew is explicitly left at 2.0, UNCHANGED — the gun must keep tracking
+    // responsively (aimAndFire in enemyBehaviors.js slews the turret completely independently of
+    // the body's own turnRate) even while the hull turns slowly.
+    // stepInterval drives the walk-cycle frame swap (see legFrames below / enemies.js
+    // _updateVehicle) — a slow, heavy cadence (well above the heavy player chassis's 460ms —
+    // see chassis/heavy.js) so it lurches rather than trots.
+    move: { maxSpeed: 38, accel: 90, turnRate: 0.35, turretSlew: 2.0, stepInterval: 720 },
+    // #152: how many walk-cycle hull frames this kind's art builds (src/art/vehicles/quadruped.js
+    // QUADRUPED_LEG_FRAMES) — presence of this field is what tells the arena (enemies.js
+    // _makeVehicleView/_updateVehicle) to animate `<key>_hull_0..N` instead of using one static
+    // `<key>_hull` texture, mirroring the player mech's own multi-frame stompy gait.
+    legFrames: 4,
     // #147 (playtest follow-up to #130: "should deploy SWARMS of quadcopters and infantry" —
     // the old 1-unit-per-8s-capped-at-5 trickle didn't read as a swarm at all). Now every 4s
-    // while alive+aware it drops a whole BATCH of deployBatchMin-deployBatchMax (3-5) drones/
-    // infantry troopers at once (quadrupedBehavior), up to a much higher deployCap (24, in the
-    // same ballpark as the drone SWARM_SIZE(18)/INFANTRY_MOB_SIZE(28) below) so a full fight
-    // reads as genuinely swarm-dangerous without spawning literally unbounded units and tanking
-    // arena performance.
+    // while alive+aware it drops a whole BATCH of drones at once (quadrupedBehavior), up to a
+    // much higher deployCap (24, in the same ballpark as the drone SWARM_SIZE(18)/
+    // INFANTRY_MOB_SIZE(28) below) so a full fight reads as genuinely swarm-dangerous without
+    // spawning literally unbounded units and tanking arena performance.
+    // #152 (round-2 playtest): "deploy batch minimum 5" — bumped the floor from 3 to 5 (every
+    // burst is now a real swarm, never a small 3-unit trickle); max nudged up in step to 8 so
+    // there's still batch-size VARIETY above the new floor, not a flat constant every time.
+    // "deploy drones only" — quadrupedBehavior's QUADRUPED_DEPLOY_KINDS now excludes infantry
+    // (flag-disabled there, not deleted), so every deployed unit here is a drone regardless of
+    // this data's own batch sizing.
     deployEveryMs: 4000,
-    deployBatchMin: 3,
-    deployBatchMax: 5,
+    deployBatchMin: 5,
+    deployBatchMax: 8,
     deployCap: 24,
     art: 'quadruped',
     behavior: 'quadruped',

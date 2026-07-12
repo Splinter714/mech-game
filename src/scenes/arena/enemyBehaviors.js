@@ -134,28 +134,43 @@ function helicopterBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: false });
 }
 
-// QUADRUPED — "Broodwalker" (#130, swarm deploy reworked in #147). Grinds to a firing standoff
-// and holds, same tank-style hull-travel/turret-independent-track pattern as tankBehavior
-// (reused deliberately, not reinvented — see tankBehavior above for the same radial/strafe
-// shape), just on a slower/heavier chassis. PLUS a periodic SWARM deploy mechanic: while alive
-// and AWARE (this fn only runs while aware — see _updateVehicle's aware gate) it acts as a
-// mobile "nest," dropping a whole BATCH of drone/infantry troopers near itself on a data-driven
-// cadence (def.deployEveryMs), sized between def.deployBatchMin-deployBatchMax, up to a lifetime
-// cap (def.deployCap) so a long fight can't have it spawn forever unbounded. This is new
-// PER-FRAME incremental spawning (unlike turretNest/infantryMob, which expand everything up
+// QUADRUPED — "Broodwalker" (#130, swarm deploy reworked in #147, drones-only + origin fixed in
+// #152). Grinds to a firing standoff and holds, same tank-style hull-travel/turret-independent-
+// track pattern as tankBehavior (reused deliberately, not reinvented — see tankBehavior above
+// for the same radial/strafe shape), just on a slower/heavier chassis. PLUS a periodic SWARM
+// deploy mechanic: while alive and AWARE (this fn only runs while aware — see _updateVehicle's
+// aware gate) it acts as a mobile "nest," dropping a whole BATCH of units from its own body on a
+// data-driven cadence (def.deployEveryMs), sized between def.deployBatchMin-deployBatchMax, up
+// to a lifetime cap (def.deployCap) so a long fight can't have it spawn forever unbounded. This
+// is PER-FRAME incremental spawning (unlike turretNest/infantryMob, which expand everything up
 // front at spawn time) — the timer/count state (`e.deployCd`/`e.deployCount`) is lazily
 // initialized here since _spawnKind stays a generic, kind-agnostic constructor.
-const QUADRUPED_DEPLOY_KINDS = ['drone', 'infantry'];
+//
+// #152 (round-2 playtest): "deploy drones only" — DEPLOY_INFANTRY gates infantry back OUT of the
+// rotation (flag-disabled, not deleted — flip it back to `true` to restore the drone+infantry
+// mix from #147, same disable-not-delete pattern #144 used for the aim-line).
+const DEPLOY_INFANTRY = false;
+const QUADRUPED_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone'];
 
-// Drop a fresh kind spawn a short distance from the nest, nudging off blocked terrain toward the
-// nest itself (mirrors the same "nudge back toward a known-clear point" pattern used by
-// enemies.js `_flankGoal`/`_idleMoveIntent`) so a deploy can't land inside a wall/water hex.
+// Drop a fresh kind spawn essentially AT the nest's own body position — #152 (round-2 playtest:
+// "spawn from within the body, not beside it" — the old 50-80px offset read as popping in beside
+// the Broodwalker rather than emerging from it). A tiny few-px jitter keeps simultaneous spawns
+// within one batch from stacking on the exact same pixel; still nudges off blocked terrain toward
+// the nest itself (mirrors the same pattern used by enemies.js `_flankGoal`/`_idleMoveIntent`) as
+// a defensive fallback, though at this radius it's rarely ever needed. A brief "emerging" pop
+// (starts tiny/near-transparent, tweens up to full size/opacity) sells the idea that the unit is
+// birthed from the nest rather than simply appearing.
 function deployNearby(scene, e, kindId) {
   const a = Math.random() * Math.PI * 2;
-  const r = 50 + Math.random() * 30;
+  const r = Math.random() * 4;
   let x = e.x + Math.cos(a) * r, y = e.y + Math.sin(a) * r;
   for (let t = 0; t < 5 && scene._blocked(x, y); t++) { x = (x + e.x) / 2; y = (y + e.y) / 2; }
-  scene._spawnKind(x, y, kindId);
+  const spawned = scene._spawnKind(x, y, kindId);
+  if (spawned?.view) {
+    const view = spawned.view;
+    view.setScale(0.05, 0.05).setAlpha(0.15);
+    scene.tweens.add({ targets: view, scaleX: 1, scaleY: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+  }
 }
 
 function quadrupedBehavior(scene, e, ctx) {
