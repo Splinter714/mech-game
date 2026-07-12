@@ -7,7 +7,7 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
-import { getOverride, getTrimMs, getStartMs, getProcessing } from './sfxOverrides.js';
+import { getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs } from './sfxOverrides.js';
 import { getBaked } from './bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -66,9 +66,17 @@ function connectReverb(ctx, input, bus, mix, sizeSec) {
 //
 // #173: this is the SHARED scheduling/DSP chain — both a dev IndexedDB override (#150) and a
 // shipped BAKED asset (bakedSfx.js) play a decoded buffer through this exact code, differing
-// only in where `buffer` and its (startMs/trimMs/proc) recipe come from. Returns true if it
-// scheduled the buffer, false if there was nothing to play.
-function playBuffer(e, bus, buffer, startMs, trimMs, proc) {
+// only in where `buffer` and its (startMs/trimMs/proc/fadeOutMs) recipe come from. Returns true
+// if it scheduled the buffer, false if there was nothing to play.
+//
+// #174: an optional FADE-OUT — when `fadeOutMs > 0` and the played duration is known, a gain
+// node is spliced at the END of the chain (after processing, before the bus/reverb split) with a
+// scheduled envelope: full gain held until `endTime - fadeOutMs`, then a linear ramp to 0 landing
+// exactly on `endTime` (the scheduled stop = start-offset + played duration). This smooths the
+// click/pop from an early-trimmed cutoff. `fadeOutMs` is clamped so it can never exceed the played
+// duration; `fadeOutMs`=0/absent inserts NO gain node at all — a strict clean passthrough, so
+// unfaded playback builds the exact same graph as before.
+function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
   if (!buffer || !e.ctx) return false;
   const ctx = e.ctx;
   const src = ctx.createBufferSource();
@@ -86,13 +94,35 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc) {
     tail.connect(filter);
     tail = filter;
   }
+
+  const startAt = e._now();
+  const offsetSec = (startMs ?? 0) / 1000;
+  // The played duration (seconds) — the scheduled window length. trimMs wins when set; otherwise
+  // it's whatever remains of the buffer after the start offset (null if the buffer length is
+  // unknown, e.g. a fake decode in tests, which just means "can't compute a fade").
+  const playedSec = trimMs != null
+    ? trimMs / 1000
+    : (buffer.duration != null ? Math.max(0, buffer.duration - offsetSec) : null);
+
+  // #174: splice the fade-out gain node only when there's a real fade to apply (positive
+  // fadeOutMs AND a known, positive played duration). Clamp the fade so it can't exceed the
+  // played window, then anchor full gain at the fade-start and ramp linearly to 0 at endTime.
+  if (fadeOutMs > 0 && playedSec != null && playedSec > 0) {
+    const fadeSec = Math.min(fadeOutMs / 1000, playedSec);
+    const endTime = startAt + playedSec;
+    const fadeGain = ctx.createGain();
+    fadeGain.gain.setValueAtTime(1, endTime - fadeSec);
+    fadeGain.gain.linearRampToValueAtTime(0, endTime);
+    tail.connect(fadeGain);
+    tail = fadeGain;
+  }
+
   if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
   else tail.connect(bus);
 
-  const offsetSec = (startMs ?? 0) / 1000;
-  if (startMs == null && trimMs == null) src.start(e._now());
-  else if (trimMs != null) src.start(e._now(), offsetSec, trimMs / 1000);
-  else src.start(e._now(), offsetSec);
+  if (startMs == null && trimMs == null) src.start(startAt);
+  else if (trimMs != null) src.start(startAt, offsetSec, trimMs / 1000);
+  else src.start(startAt, offsetSec);
   return true;
 }
 
@@ -105,10 +135,10 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc) {
 function playOverride(e, bus, weaponId, stage) {
   const override = getOverride(weaponId, stage);
   if (override) {
-    return playBuffer(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage));
+    return playBuffer(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage));
   }
   const baked = getBaked(weaponId, stage);
-  if (baked) return playBuffer(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing);
+  if (baked) return playBuffer(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs);
   return false;
 }
 

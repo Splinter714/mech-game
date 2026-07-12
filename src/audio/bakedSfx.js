@@ -34,6 +34,8 @@ const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 //   trimMs      duration to play FROM that start point (null = play to the end of the file)
 //   processing  sparse pitch/filter/reverb object (null = a clean passthrough) — see the
 //               sfxOverrides.js header for the field list; played through the same #172 chain
+//   fadeOutMs   optional fade-out duration in ms (#174) — fade to silence over the last N ms
+//               before the scheduled stop (omit/null/0 = no fade, hard cut)
 export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Bit Bomb_HY_PC-001.wav". The full
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.
@@ -76,9 +78,10 @@ export async function loadAllBaked() {
 }
 
 // Synchronous lookup used at the sfx.js playback choke points: returns { buffer, startMs,
-// trimMs, processing } for a decoded bake, or null (no bake for this slot, or not decoded yet)
-// which callers treat as "fall back to procedural." The buffer comes from the decoded cache;
-// the recipe (start/trim/processing) comes straight from the static BAKED_SFX entry.
+// trimMs, processing, fadeOutMs } for a decoded bake, or null (no bake for this slot, or not
+// decoded yet) which callers treat as "fall back to procedural." The buffer comes from the
+// decoded cache; the recipe (start/trim/processing/fadeOut) comes straight from the static
+// BAKED_SFX entry.
 export function getBaked(weaponId, stage) {
   const key = keyFor(weaponId, stage);
   const buffer = _cache.get(key);
@@ -89,6 +92,7 @@ export function getBaked(weaponId, stage) {
     startMs: entry.startMs ?? null,
     trimMs: entry.trimMs ?? null,
     processing: entry.processing ?? null,
+    fadeOutMs: entry.fadeOutMs ?? null,
   };
 }
 

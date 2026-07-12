@@ -38,6 +38,17 @@
 //   reverbMix   0..1 wet/dry — omit/0 = no reverb nodes inserted at all
 //   reverbSize  reverb tail length in seconds (only meaningful when reverbMix > 0)
 // Read via getProcessing(); written (merge-patch, null clears a field) via setProcessing().
+//
+// Fade-out (#174): a non-destructive fade DURATION per weapon+stage, stored as `fadeOutMs`
+// alongside `startMs`/`trimMs`/`processing` in the same override record. When set, playback
+// (sfx.js) schedules a gain envelope on the played buffer: full gain held until
+// `endTime - fadeOutMs`, then a linear ramp to 0 landing exactly on `endTime` (the scheduled
+// stop = start-offset + trim duration), so an early-trimmed sound fades to silence instead of
+// clicking on the abrupt cutoff. Same philosophy as #166/#172: nothing here touches the stored
+// bytes or decoded buffer; it's a pure playback-time parameter, instantly adjustable/reversible.
+// undefined/null/0 (including every override stored before this feature existed) means "no fade
+// — hard cut," so unfaded playback is byte-for-byte unchanged. Read via getFadeOutMs(); written
+// (null/0 clears) via setFadeOut().
 
 const DB_NAME = 'mech-game-sfx-overrides-v1';
 const STORE = 'overrides';
@@ -64,6 +75,13 @@ const _start = new Map();
 // synchronous no-await in-memory lifecycle as `_trim`/`_start` so sfx.js's hot playback path
 // reads it without awaiting, and reset whenever a fresh file is loaded into the slot.
 const _proc = new Map();
+// #174: non-destructive FADE-OUT duration (milliseconds) — fade the played buffer from full gain
+// to silence over the last `fadeOutMs` before its scheduled stop. undefined/absent (never stored
+// in this map) means "no fade (hard cut)," so every existing (pre-#174) override and every
+// freshly-loaded file defaults to unfaded. Same synchronous no-await in-memory lifecycle as
+// `_trim`/`_start`/`_proc` so sfx.js's hot playback path reads it without awaiting, and reset
+// whenever a fresh file is loaded into the slot.
+const _fadeOut = new Map();
 // The raw Blob for each active override, cached purely so setTrim()/setStart() can persist a
 // full IDB record (key/weaponId/stage/blob/name/type/startMs/trimMs) without a
 // read-before-write round trip.
@@ -167,6 +185,9 @@ export async function storeOverride(weaponId, stage, fileBlob) {
     // #172: same reasoning for the processing chain — a pitch/filter/reverb tuned against a
     // previous file must never carry over silently onto a fresh one.
     _proc.delete(key);
+    // #174: same reasoning for the fade-out — a fade tuned against a previous file's length must
+    // never carry over silently onto a fresh one.
+    _fadeOut.delete(key);
   }
   return buffer;
 }
@@ -207,6 +228,13 @@ export function getProcessing(weaponId, stage) {
   return _proc.get(keyFor(weaponId, stage)) ?? null;
 }
 
+// #174: synchronous lookup for the active fade-out duration (milliseconds) — the length of the
+// gain ramp to silence ending at the scheduled stop, used at the sfx.js playback choke point.
+// null means "no fade (hard cut)," same convention/lifecycle as getStartMs/getTrimMs.
+export function getFadeOutMs(weaponId, stage) {
+  return _fadeOut.get(keyFor(weaponId, stage)) ?? null;
+}
+
 // Shared persistence for setTrim/setStart/setProcessing: writes a full IDB record combining
 // whatever's currently in the in-memory maps for this key, so any one setter alone keeps the
 // other fields intact.
@@ -221,9 +249,11 @@ async function _persistParams(weaponId, stage) {
   const trimMs = _trim.get(key);
   const startMs = _start.get(key);
   const processing = _proc.get(key);
+  const fadeOutMs = _fadeOut.get(key);
   if (trimMs != null) record.trimMs = trimMs;
   if (startMs != null) record.startMs = startMs;
   if (processing != null) record.processing = processing;
+  if (fadeOutMs != null) record.fadeOutMs = fadeOutMs;
   try { await idbPut(db, record); } catch { /* storage full/blocked — in-memory value still applies this session */ }
 }
 
@@ -243,6 +273,16 @@ export async function setTrim(weaponId, stage, trimMs) {
 export async function setStart(weaponId, stage, startMs) {
   const key = keyFor(weaponId, stage);
   if (startMs == null) _start.delete(key); else _start.set(key, startMs);
+  await _persistParams(weaponId, stage);
+}
+
+// #174: set (or clear, with null/undefined/0) the non-destructive fade-out duration for an active
+// override. Purely a playback-time parameter — never touches the decoded buffer or the stored
+// bytes. Same persistence/lifecycle contract as setTrim/setStart (0 is treated as "no fade" and
+// stored as absent, so returning the slider to 0 restores the exact hard-cut behavior).
+export async function setFadeOut(weaponId, stage, fadeOutMs) {
+  const key = keyFor(weaponId, stage);
+  if (fadeOutMs == null || fadeOutMs <= 0) _fadeOut.delete(key); else _fadeOut.set(key, fadeOutMs);
   await _persistParams(weaponId, stage);
 }
 
@@ -275,6 +315,7 @@ export async function clearOverride(weaponId, stage) {
   _trim.delete(key);
   _start.delete(key);
   _proc.delete(key);   // #172: processing chain is meaningless without an override to apply to
+  _fadeOut.delete(key); // #174: fade-out is meaningless without an override to apply to
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
@@ -302,6 +343,9 @@ export async function loadAllOverrides() {
       // #172: restore a persisted processing chain, if any — a record saved before this feature
       // existed simply has no `processing` field, which correctly leaves it clean/unprocessed.
       if (rec.processing != null) _proc.set(rec.key, rec.processing);
+      // #174: restore a persisted fade-out, if any — a record saved before this feature existed
+      // simply has no `fadeOutMs` field, which correctly leaves it unfaded (hard cut).
+      if (rec.fadeOutMs != null) _fadeOut.set(rec.key, rec.fadeOutMs);
     } catch {
       // A stored file that no longer decodes (corrupt, or the browser dropped codec support)
       // just stays a no-op override — that weapon+stage plays procedurally, same as if
@@ -319,6 +363,7 @@ export function _resetForTest() {
   _trim.clear();
   _start.clear();
   _proc.clear();
+  _fadeOut.clear();
   _dbPromise = null;
   _ctx = null;
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
   setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
-  getProcessing, setProcessing,
+  getProcessing, setProcessing, getFadeOutMs, setFadeOut,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -452,6 +452,94 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
       await expect(setProcessing('autocannon', 'fire', { detune: 200 })).resolves.toBeUndefined();
       expect(getProcessing('autocannon', 'fire')).toEqual({ detune: 200 });
+    });
+  });
+
+  // #174: non-destructive fade-out duration (fade the played buffer to silence over the last N
+  // ms). Same storage/persistence/clear contract as trim/start/processing.
+  describe('fade-out (#174)', () => {
+    it('has no fade-out by default for a freshly-stored override', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      expect(getFadeOutMs('autocannon', 'fire')).toBeNull();
+    });
+
+    it('setFadeOut sets a fade visible immediately via getFadeOutMs', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setFadeOut('autocannon', 'fire', 120);
+      expect(getFadeOutMs('autocannon', 'fire')).toBe(120);
+    });
+
+    it('setFadeOut(null) and setFadeOut(0) both clear a previously-set fade', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setFadeOut('autocannon', 'fire', 120);
+      await setFadeOut('autocannon', 'fire', null);
+      expect(getFadeOutMs('autocannon', 'fire')).toBeNull();
+      await setFadeOut('autocannon', 'fire', 120);
+      await setFadeOut('autocannon', 'fire', 0);   // 0 == "no fade" == cleared
+      expect(getFadeOutMs('autocannon', 'fire')).toBeNull();
+    });
+
+    it('persists the fade-out across a simulated reload, alongside the trim', async () => {
+      await storeOverride('railLance', 'fire', fakeFile('zap.wav', 'ZAP'));
+      await setTrim('railLance', 'fire', 300);
+      await setFadeOut('railLance', 'fire', 90);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      expect(getFadeOutMs('railLance', 'fire')).toBeNull(); // pre-boot state, not loaded yet
+
+      await loadAllOverrides();
+      expect(getFadeOutMs('railLance', 'fire')).toBe(90);
+      expect(getTrimMs('railLance', 'fire')).toBe(300);
+      expect(getOverride('railLance', 'fire')).toEqual({ __decodedFrom: 'ZAP' });
+    });
+
+    it('a reload with no fade ever set leaves getFadeOutMs null (backward-compatible with pre-#174 overrides)', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getFadeOutMs('shotgun', 'impact')).toBeNull();
+      expect(getOverride('shotgun', 'impact')).toEqual({ __decodedFrom: 'X' });
+    });
+
+    it('clearOverride also clears the fade-out, including across a reload', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setFadeOut('shotgun', 'impact', 200);
+      await clearOverride('shotgun', 'impact');
+      expect(getFadeOutMs('shotgun', 'impact')).toBeNull();
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getFadeOutMs('shotgun', 'impact')).toBeNull();
+    });
+
+    it('loading a new file into a previously-faded slot does not inherit the stale fade', async () => {
+      await storeOverride('napalm', 'fire', fakeFile('old.wav', 'OLD'));
+      await setFadeOut('napalm', 'fire', 250);
+      expect(getFadeOutMs('napalm', 'fire')).toBe(250);
+      await storeOverride('napalm', 'fire', fakeFile('new.wav', 'NEW'));
+      expect(getFadeOutMs('napalm', 'fire')).toBeNull();
+    });
+
+    it('does not clobber a coexisting processing chain (both persist together)', async () => {
+      await storeOverride('railgun', 'fire', fakeFile('r.wav', 'R'));
+      await setProcessing('railgun', 'fire', { detune: 200 });
+      await setFadeOut('railgun', 'fire', 75);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getProcessing('railgun', 'fire')).toEqual({ detune: 200 });
+      expect(getFadeOutMs('railgun', 'fire')).toBe(75);
+    });
+
+    it('never throws when IndexedDB is unavailable', async () => {
+      delete globalThis.indexedDB;
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await expect(setFadeOut('autocannon', 'fire', 150)).resolves.toBeUndefined();
+      expect(getFadeOutMs('autocannon', 'fire')).toBe(150);
     });
   });
 });

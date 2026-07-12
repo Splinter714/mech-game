@@ -15,7 +15,7 @@
 // A weapon with NO overrides at all emits the historical whole-params JSON block byte-for-byte
 // (see below), so pasting a fully-tuned procedural weapon back into DEFAULT_SFX is unchanged.
 
-import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing } from '../audio/sfxOverrides.js';
+import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing, getFadeOutMs } from '../audio/sfxOverrides.js';
 
 // Fire before trajectory before impact — matches the panel's STAGES ordering. Explosion
 // categories only have `fire`; stages absent from `params` are simply skipped.
@@ -74,6 +74,15 @@ function overrideBlock(weaponId, stage) {
     const size = proc.reverbSize != null ? `${proc.reverbSize}s` : '(default size)';
     lines.push(`    reverb:          mix ${proc.reverbMix}, size ${size}`);
     procNotes.push(`reverb mix ${proc.reverbMix} / size ${size}`);
+  }
+
+  // #174: the fade-out duration, when set — so the copied recipe carries the fade the owner
+  // tuned (fade to silence over the last N ms before the trim/end point). Emitted only when a
+  // real fade is active (0/absent adds no line), and summarised into the bake instruction too.
+  const fadeOutMs = getFadeOutMs(weaponId, stage);
+  if (fadeOutMs > 0) {
+    lines.push(`    fade-out:        ${fadeOutMs} ms  (ramp to silence before the end)`);
+    procNotes.push(`fade-out ${fadeOutMs} ms`);
   }
 
   const procBake = procNotes.length ? `, then apply ${procNotes.join(', ')}` : '';

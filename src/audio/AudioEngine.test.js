@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
-  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, _resetForTest,
+  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, _resetForTest,
 } from './sfxOverrides.js';
 import {
-  _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
+  BAKED_SFX, _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
 } from './bakedSfx.js';
 
 // Minimal mock Web Audio context: records how many voices (oscillators / noise sources)
@@ -18,15 +18,25 @@ function mockContext() {
   const biquads = [];              // #172: every BiquadFilter created (incl. the music chain + override filters)
   const convolvers = [];           // #172: every ConvolverNode created (only the override reverb makes these)
   const bufferSources = [];        // #172: every buffer source node (so its detune AudioParam is inspectable)
+  const gainNodes = [];            // #174: every gain node created, with its recorded envelope events
   const param = () => ({
     value: 0,
     setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
     cancelScheduledValues() {},
   });
+  // #174: a gain AudioParam that RECORDS its scheduled envelope events (as ['set'|'ramp', value,
+  // time] tuples) so a test can assert the exact fade-out ramp — setValueAtTime(full) then
+  // linearRampToValueAtTime(0) — landing on the trim point. Real GainNode gain defaults to 1.
+  const gainParam = (events) => ({
+    value: 1,
+    setValueAtTime(v, t) { events.push(['set', v, t]); return this; },
+    linearRampToValueAtTime(v, t) { events.push(['ramp', v, t]); return this; },
+    exponentialRampToValueAtTime() {}, cancelScheduledValues() {},
+  });
   const node = () => ({ connect: (dest) => dest, disconnect() {} });
   const ctx = {
     state: 'running', currentTime: 1.0, sampleRate: 48000, baseLatency: 0.0053, outputLatency: 0.168, destination: node(),
-    createGain: () => ({ gain: param(), connect: (d) => d, disconnect() {} }),
+    createGain: () => { const events = []; const n = { gain: gainParam(events), _events: events, connect: (d) => d, disconnect() {} }; gainNodes.push(n); return n; },
     createWaveShaper: () => ({ curve: null, oversample: 'none', connect: (d) => d }),
     createBiquadFilter: () => { const n = { type: '', frequency: param(), Q: param(), connect: (d) => d, disconnect() {} }; biquads.push(n); return n; },
     createConvolver: () => { const n = { buffer: null, normalize: true, connect: (d) => d, disconnect() {} }; convolvers.push(n); return n; },
@@ -53,6 +63,10 @@ function mockContext() {
     _lastBufferSource: () => bufferSources[bufferSources.length - 1],
     _biquads: () => biquads,
     _convolvers: () => convolvers,
+    _gainNodes: () => gainNodes,
+    // #174: the gain node(s) carrying a fade envelope — i.e. any gain that scheduled a linear
+    // ramp to 0 (the fade-out to silence). None means no fade node was inserted.
+    _fadeGains: () => gainNodes.filter((g) => g._events.some((e) => e[0] === 'ramp' && e[1] === 0)),
   };
   return ctx;
 }
@@ -405,6 +419,73 @@ describe('AudioEngine (mock context)', () => {
         expect(ctx._lastBufferSource().detune.value).toBe(0);
       });
     });
+
+    // #174: non-destructive FADE-OUT — a gain node scheduled to hold full then linearly ramp to
+    // 0 landing exactly on the scheduled stop, so an early-trimmed cutoff fades instead of
+    // clicking. Asserted by inspecting the REAL scheduled gain envelope on the mock node graph.
+    describe('fade-out (#174)', () => {
+      it('default (no fade set) schedules NO gain ramp — a strict hard-cut, unchanged behavior', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setTrim('autocannon', 'fire', 400);   // trimmed, but no fade
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._fadeGains().length).toBe(0);     // no fade gain node inserted at all
+      });
+
+      it('schedules setValueAtTime(1, end - fade) then linearRampToValueAtTime(0, end) ending exactly at the trim point', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setTrim('autocannon', 'fire', 400);    // plays 400ms from start=0
+        await setFadeOut('autocannon', 'fire', 120);  // fade the last 120ms
+        eng.fire(getWeapon('autocannon'));
+        const fades = ctx._fadeGains();
+        expect(fades.length).toBe(1);
+        const events = fades[0]._events;
+        // endTime = _now (== currentTime 1.0) + played 0.4s = 1.4s; fade starts at 1.4 - 0.12.
+        const endTime = ctx.currentTime + 0.4;
+        expect(events).toHaveLength(2);
+        expect(events[0][0]).toBe('set');
+        expect(events[0][1]).toBe(1);                        // holds FULL gain...
+        expect(events[0][2]).toBeCloseTo(endTime - 0.12, 5); // ...until end - fadeOut
+        expect(events[1][0]).toBe('ramp');
+        expect(events[1][1]).toBe(0);                        // ramps to SILENCE...
+        expect(events[1][2]).toBeCloseTo(endTime, 5);        // ...landing exactly on the trim point
+      });
+
+      it('clamps a fade longer than the played window down to the played duration (never over-runs)', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setTrim('autocannon', 'fire', 200);     // only 200ms plays
+        await setFadeOut('autocannon', 'fire', 5000);  // absurd 5s fade
+        eng.fire(getWeapon('autocannon'));
+        const events = ctx._fadeGains()[0]._events;
+        const endTime = ctx.currentTime + 0.2;
+        // clamped: fade spans the WHOLE 200ms window — set anchor sits at endTime - 0.2 == start.
+        expect(events[0][2]).toBeCloseTo(endTime - 0.2, 5);
+        expect(events[1][2]).toBeCloseTo(endTime, 5);
+      });
+
+      it('composes with a start offset: endTime = start-offset window, fade rides on top of #166 trim', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setStart('autocannon', 'fire', 500);    // begin 500ms in
+        await setTrim('autocannon', 'fire', 300);     // play 300ms from there
+        await setFadeOut('autocannon', 'fire', 100);
+        eng.fire(getWeapon('autocannon'));
+        const [when, offset, duration] = ctx._lastBufferSourceStart();
+        expect(offset).toBeCloseTo(0.5, 5);           // #166 start/trim still applied to the source...
+        expect(duration).toBeCloseTo(0.3, 5);
+        const events = ctx._fadeGains()[0]._events;
+        const endTime = when + 0.3;                   // played window is the trim duration
+        expect(events[0][2]).toBeCloseTo(endTime - 0.1, 5);
+        expect(events[1][2]).toBeCloseTo(endTime, 5);
+      });
+
+      it('clearing the fade back to 0 restores the hard cut (no ramp scheduled)', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setTrim('autocannon', 'fire', 400);
+        await setFadeOut('autocannon', 'fire', 150);
+        await setFadeOut('autocannon', 'fire', 0);    // back to no fade
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._fadeGains().length).toBe(0);
+      });
+    });
   });
 
   // #173: baked-in SFX assets — a file shipped in the build plays for a weapon+stage, sitting
@@ -467,6 +548,29 @@ describe('AudioEngine (mock context)', () => {
       eng.impact('clusterRocket');   // impact stage, no bake
       const after = ctx._counts();
       expect(after.oscillators).toBeGreaterThan(before.oscillators);
+    });
+
+    // #174: a baked entry can carry a fadeOutMs (same recipe shape as an override), and it fades
+    // through the identical shared playBuffer path. Temporarily attach a trim+fade to the shipped
+    // clusterRocket/fire entry (restored afterward) so the assertion doesn't depend on ship data.
+    it('applies a fade-out to a BAKED sound too (fadeOutMs on the BAKED_SFX entry)', () => {
+      const entry = BAKED_SFX['clusterRocket::fire'];
+      const saved = { trimMs: entry.trimMs, fadeOutMs: entry.fadeOutMs };
+      entry.trimMs = 500;        // 500ms played window (baked buffers have no .duration in tests)
+      entry.fadeOutMs = 90;      // fade the last 90ms
+      try {
+        _setBakedBufferForTest('clusterRocket', 'fire', { __baked: 'bitBomb' });
+        eng.fire(getWeapon('clusterRocket'));
+        const fades = ctx._fadeGains();
+        expect(fades.length).toBe(1);
+        const events = fades[0]._events;
+        const endTime = ctx.currentTime + 0.5;
+        expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.09, 5)]);
+        expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
+      } finally {
+        entry.trimMs = saved.trimMs;
+        entry.fadeOutMs = saved.fadeOutMs;
+      }
     });
   });
 });
