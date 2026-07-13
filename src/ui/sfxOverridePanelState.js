@@ -8,8 +8,20 @@
 import {
   hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing,
 } from '../audio/sfxOverrides.js';
+import { hasBaked } from '../audio/bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// #181: whether this (id, stage)'s procedural synthesis-layer editors (the tone/noise layer
+// sliders that author the ORIGINAL procedural def) are meaningful to show at all. Once a real
+// file — a dev-tool override OR a shipped bake — is what actually plays for this stage, the
+// procedural layer settings are dead weight (they don't affect what's heard), so the panel
+// hides them. This is deliberately independent of `active` (file-override-loaded) above: a
+// stage can have NO runtime override yet still have a shipped bake (e.g. plasmaLance/fire,
+// #175), in which case the procedural controls should still hide even though `active` is false.
+function proceduralControlsVisibleFor(id, stage) {
+  return !hasOverride(id, stage) && !hasBaked(id, stage);
+}
 
 // Returns `{ active: false, statusText }` when no file override is loaded for this (id, stage)
 // — nothing else to show. Once a file IS loaded, returns everything a start/end/fade-out/
@@ -17,11 +29,14 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // duration), `startSec`/`endSec` (the non-destructive trim window, #166), `fadeMs`/`fadeMax`
 // (the fade-out duration and its cap, #174), and `proc` (the sparse pitch/filter/reverb
 // processing object, #172 — never null, defaults to `{}` so callers can read fields directly).
+// `proceduralControlsVisible` (#181) is always present regardless of `active`: false whenever
+// EITHER a file override or a baked sound is active for this stage, true otherwise.
 export function getOverrideRowState(id, stage) {
   const active = hasOverride(id, stage);
   const meta = active ? getOverrideMeta(id, stage) : null;
   const statusText = active ? `file override: ${meta?.name || '(loaded)'}` : 'file override: none (procedural)';
-  if (!active) return { active, statusText, meta: null };
+  const proceduralControlsVisible = proceduralControlsVisibleFor(id, stage);
+  if (!active) return { active, statusText, meta: null, proceduralControlsVisible };
 
   const buffer = getOverride(id, stage);
   const fullSec = Math.max(buffer?.duration ?? 0, 0.01);
@@ -33,5 +48,7 @@ export function getOverrideRowState(id, stage) {
   const fadeMax = Math.max(10, playedMs);
   const fadeMs = clamp(getFadeOutMs(id, stage) ?? 0, 0, fadeMax);
   const proc = getProcessing(id, stage) || {};
-  return { active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, proc };
+  return {
+    active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, proc, proceduralControlsVisible,
+  };
 }

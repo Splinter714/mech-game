@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, setAudioContext, _resetForTest, setStart, setTrim, setFadeOut, setProcessing,
+  clearOverride,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
 import { SFX_DOMAINS, ALL_SFX_DOMAIN_ENTRIES, findSfxDomainEntry } from '../audio/sfxDomains.js';
 import { WEAPON_STAGES } from './weaponSfxStages.js';
+import { _resetForTest as _resetBakedForTest, _setBakedBufferForTest } from '../audio/bakedSfx.js';
 
 // Same minimal fake IndexedDB as sfxOverrides.test.js — just enough surface for storeOverride/
 // setStart/setTrim/setFadeOut/setProcessing to exercise the real persistence code path.
@@ -71,6 +73,7 @@ function fakeCtx(duration = 2) {
 describe('sfxOverridePanelState (#177 generalized id/stage panel display state)', () => {
   beforeEach(() => {
     _resetForTest();
+    _resetBakedForTest();
     globalThis.indexedDB = makeFakeIndexedDB();
     setAudioContext(fakeCtx());
   });
@@ -80,11 +83,39 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
 
   it('reports "no override" for an untouched (id, stage), weapon or otherwise', () => {
     expect(getOverrideRowState('autocannon', 'fire')).toEqual({
-      active: false, statusText: 'file override: none (procedural)', meta: null,
+      active: false, statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
     });
     expect(getOverrideRowState('ui_test', 'nav')).toEqual({
-      active: false, statusText: 'file override: none (procedural)', meta: null,
+      active: false, statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
     });
+  });
+
+  // #181: the procedural layer-editing controls (tone/noise sliders authoring the ORIGINAL
+  // synthesis def) should hide once a real file has taken over — whether that's a live dev
+  // override OR a shipped bake. `plasmaLance`/`fire` carries a real bake (#175); `plasmaLance`/
+  // `impact` has neither, so it proves the "stays visible" branch on the SAME weapon (only the
+  // overridden/baked stage hides, other stages of the same weapon are unaffected).
+  it('reports proceduralControlsVisible: false for a stage with an active BAKE, true for a sibling stage with none', () => {
+    _setBakedBufferForTest('plasmaLance', 'fire', { duration: 1.2 });
+    expect(getOverrideRowState('plasmaLance', 'fire').proceduralControlsVisible).toBe(false);
+    // The baked stage still reports no runtime override — `active` (file-override-loaded) and
+    // `proceduralControlsVisible` are deliberately independent booleans.
+    expect(getOverrideRowState('plasmaLance', 'fire').active).toBe(false);
+    expect(getOverrideRowState('plasmaLance', 'impact').proceduralControlsVisible).toBe(true);
+  });
+
+  // #181: a live dev-tool override (no bake involved) also hides the procedural controls, and
+  // they reappear once the override is cleared (with no bake present to keep them hidden).
+  it('flips proceduralControlsVisible false->true across storeOverride -> clearOverride when no bake exists', async () => {
+    const id = 'autocannon';
+    const stage = 'fire';
+    expect(getOverrideRowState(id, stage).proceduralControlsVisible).toBe(true);
+
+    await storeOverride(id, stage, fakeFile('boom.wav', 'BOOM'));
+    expect(getOverrideRowState(id, stage).proceduralControlsVisible).toBe(false);
+
+    await clearOverride(id, stage);
+    expect(getOverrideRowState(id, stage).proceduralControlsVisible).toBe(true);
   });
 
   // The core proof requested by #177: a synthetic NON-weapon id ('ui_test') with an arbitrary

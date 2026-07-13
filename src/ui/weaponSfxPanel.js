@@ -657,11 +657,16 @@ export class WeaponSfxPanel {
       y = this._buildOverrideRow(ox, y, w, stage);
       if (!layers || !layers.length) { y += 6; continue; }
 
-      const overridden = hasOverride(this.weaponId, stage);
-      // Everything below (waveform/filter picker + field sliders) tunes the PROCEDURAL layers,
-      // which don't sound any more once a real file is overriding this stage — grey it all out
-      // rather than remove it (reset/copy still operate on the underlying data untouched).
-      const detailStart = this.scroller.list.length;
+      // #181: hide the procedural layer-editing controls once EITHER a file override or a
+      // baked sound is active for this stage — a real file is what's actually playing, so the
+      // original procedural synthesis sliders are dead weight. `proceduralControlsVisible` is
+      // computed by the same pure state helper the override row above renders from (it checks
+      // both hasOverride AND hasBaked, unlike the old override-only check this replaces).
+      const proceduralVisible = getOverrideRowState(this.weaponId, stage).proceduralControlsVisible;
+      if (!proceduralVisible) { y += 6; continue; }
+      // Everything below (waveform/filter picker + field sliders) tunes the PROCEDURAL layers
+      // used to author the ORIGINAL synthesis def — reset/copy still operate on that underlying
+      // data untouched even while it's hidden here.
       layers.forEach((layer, li) => {
         this.scroller.add(this.scene.add.text(ox + 6, y, `layer ${li + 1} · ${layer.kind ?? 'tone'}`, {
           fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
@@ -686,7 +691,6 @@ export class WeaponSfxPanel {
         }
         y += 8;
       });
-      if (overridden) this._greyOut(this.scroller.list.slice(detailStart));
       y += 6;
     }
     this._maxScroll = Math.max(0, y - oy - this.region.h + 12);
