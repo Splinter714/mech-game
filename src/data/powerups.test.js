@@ -30,9 +30,11 @@ describe('powerup catalog', () => {
     expect(POWERUPS.shield.shieldCap).toBeGreaterThan(0);
   });
 
-  it('Overclock is untouched by #187 (its redesign was pulled out of scope) — still boosts both move and slew', () => {
-    expect(POWERUPS.overclock.moveMult).toBe(1.35);
-    expect(POWERUPS.overclock.slewMult).toBe(1.5);
+  it('#189: Overclock carries no numeric magnitude fields — its effect is force-Sprint, not a multiplier', () => {
+    expect(POWERUPS.overclock.moveMult).toBeUndefined();
+    expect(POWERUPS.overclock.slewMult).toBeUndefined();
+    expect(POWERUPS.overclock.effect).toBe('overclock');
+    expect(POWERUPS.overclock.duration).toBeGreaterThan(0);
   });
 });
 
@@ -53,7 +55,7 @@ describe('pickPowerupType — weighted selection', () => {
 describe('buffModifiers — collapsing the active overlay', () => {
   it('returns the identity when nothing is active', () => {
     const m = buffModifiers({});
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1, slewMult: 1 });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, overclockActive: false });
   });
 
   it('ignores expired (non-positive remaining) entries', () => {
@@ -66,20 +68,19 @@ describe('buffModifiers — collapsing the active overlay', () => {
     expect(buffModifiers({ overcharge: 500 }).freeAmmo).toBe(true);
     expect(buffModifiers({ overdrive: 500 }).cycleMult).toBe(POWERUPS.overdrive.cycleMult);
     const oc = buffModifiers({ overclock: 500 });
-    expect(oc.moveMult).toBe(POWERUPS.overclock.moveMult);
-    expect(oc.slewMult).toBe(POWERUPS.overclock.slewMult);
+    expect(oc.overclockActive).toBe(true);
   });
 
   it('stacks DIFFERENT types simultaneously (one-per-type overlay)', () => {
     const m = buffModifiers({ overcharge: 500, overdrive: 500, overclock: 500 });
     expect(m.freeAmmo).toBe(true);
     expect(m.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
-    expect(m.moveMult).toBe(POWERUPS.overclock.moveMult);
+    expect(m.overclockActive).toBe(true);
   });
 
   it('Shield never contributes to buffModifiers even when "active" would include it — it is tracked out-of-band', () => {
     const m = buffModifiers({ shield: 500 });
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1, slewMult: 1 });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, overclockActive: false });
   });
 });
 

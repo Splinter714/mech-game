@@ -101,6 +101,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.sprint = initialSprintState();   // #188: hardcoded L3/Space toggle + fuel, see data/sprint.js
+    // #189: whether the CURRENT sprint-active state is because Overclock is forcing it (vs.
+    // the player's own manual toggle), and last frame's Overclock-active reading (so
+    // activation is detected as a true rising edge) — see arena/firing.js `_handleSprint`
+    // for the full force/handoff state machine.
+    this._sprintForcedByOverclock = false;
+    this._overclockWasActive = false;
     // Indirect-fire lock (#62): the always-available acquire-and-hold targeting for homing/arcing
     // weapons. `this.lock` is the pure state record (data/targetlock.js); `aimEnemy` is the live
     // most-aimed enemy used only by direct-fire convergence (kept separate so a blind lock behind

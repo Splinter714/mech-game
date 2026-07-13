@@ -52,14 +52,63 @@ export const FiringMixin = {
   // mounted/equipped (replaced the old centre-torso ability slot's jumpJet/bubbleShield). A
   // depleting/regenerating fuel bar drains while active and refills while inactive; hitting
   // empty forces it off automatically. `intent.sprintPressed` is already rising-edge-detected
-  // by Controls.js, so a toggle only fires once per physical press, not every held frame. ──
+  // by Controls.js, so a toggle only fires once per physical press, not every held frame.
+  //
+  // #189: Overclock was redesigned from a flat moveMult/slewMult buff into forcing Sprint on,
+  // fuel-free, for its whole duration — so this method also owns that handoff. State machine:
+  // `this._sprintForcedByOverclock` tracks whether the mech's CURRENT sprint-active state is
+  // "because Overclock is holding it on" (as opposed to the player's own manual toggle), and
+  // `this._overclockWasActive` remembers last frame's buff state so activation is detected as
+  // a genuine RISING EDGE (false→true) rather than "buff is active and flag happens to be
+  // false" — the latter would misfire every frame after a manual toggle-off reclaims the flag
+  // while the buff is still nominally running, immediately re-forcing Sprint back on.
+  //   - Rising edge of Overclock claims Sprint: force `active = true` and set the flag,
+  //     REGARDLESS of prior state/fuel — Overclock ignores fuel entirely while it owns the
+  //     state (fuel-free by design, see data/powerups.js).
+  //   - While the flag is set and Sprint is active, fuel math is skipped entirely (not just
+  //     zero-drain) — `updateSprintFuel` would otherwise force `active` back to false on a
+  //     0-fuel mech via its own empty-tank floor check, even with drainRate 0.
+  //   - A manual toggle press ALWAYS wins, even mid-Overclock: `toggleSprint` flips the
+  //     CURRENT active state, so pressing while Overclock is forcing it on reads as "turn it
+  //     off" (true → false, always succeeds) exactly like the issue's spec asks. Either way,
+  //     the press immediately clears the flag — manual ownership resumes from that exact
+  //     frame, so normal drain/regen rules apply right away, not at Overclock's own expiry
+  //     (no discontinuity/free lunch — see sprintOverclock.test.js).
+  //   - If Overclock's duration ends while the flag is STILL set (no manual press reclaimed
+  //     it in between), hand control back exactly as if Overclock had never touched Sprint:
+  //     force it off, since the player never asked for it themselves.
   _handleSprint(intent, delta) {
     const dt = delta / 1000;
-    if (intent.sprintPressed) this.sprint.active = toggleSprint(this.sprint.active, this.sprint.fuel);
+    const overclockActive = !!this._buffMods?.().overclockActive;
+    const overclockRisingEdge = overclockActive && !this._overclockWasActive;
+    this._overclockWasActive = overclockActive;
+
+    if (overclockRisingEdge) {
+      this.sprint.active = true;
+      this._sprintForcedByOverclock = true;
+    }
+
+    if (intent.sprintPressed) {
+      this.sprint.active = toggleSprint(this.sprint.active, this.sprint.fuel);
+      this._sprintForcedByOverclock = false;
+    }
+
+    // Free ride only while Overclock is the reason Sprint is currently on — skip the fuel
+    // state machine entirely rather than passing drainRate: 0, since updateSprintFuel's
+    // empty-tank check (`fuel <= 0 ⇒ active = false`) fires independent of drain rate.
     const wasActive = this.sprint.active;
-    this.sprint = updateSprintFuel(this.sprint, dt);
-    // A cue on every real active/inactive transition — a manual toggle OR the forced-off at
-    // empty fuel both count, so running dry gets the same feedback as releasing it by hand.
+    if (!(this._sprintForcedByOverclock && this.sprint.active)) {
+      this.sprint = updateSprintFuel(this.sprint, dt);
+    }
+
+    // Overclock's window closed without the player ever taking the wheel — hand it back off.
+    if (!overclockActive && this._sprintForcedByOverclock) {
+      this.sprint.active = false;
+      this._sprintForcedByOverclock = false;
+    }
+
+    // A cue on every real active/inactive transition — a manual toggle, the forced-off at
+    // empty fuel, Overclock's auto-activation, or its expiry handoff all count.
     if (this.sprint.active && !wasActive) Audio.ui('sprintOn');
     else if (!this.sprint.active && wasActive) Audio.ui('sprintOff');
     this.registry.set('sprintActive', this.sprint.active);
