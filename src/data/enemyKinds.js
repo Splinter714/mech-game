@@ -28,10 +28,11 @@
 //              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
 //              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75,
 //              shrunk further per #89's composition/sizing pass, then nudged down again per
-//              #91): turret 0.55 (way down from 1.15 — it now spawns in tight clusters, see
-//              TURRET_CLUSTER_SIZE, so a nest of tiny sentries reads right instead of one big
-//              one), tank 0.48 (down from 0.6 per #91 — "tanks smaller"), drone 0.52 (down from
-//              0.62 per #91 — "drones slightly smaller again"), helicopter 0.75 (down from 1.0).
+//              #91, then again per #145's follow-up): turret 0.42 (down from 0.55, itself way
+//              down from 1.15 — it now spawns in tight clusters, see TURRET_CLUSTER_SIZE, so a
+//              nest of tiny sentries reads right instead of one big one), tank 0.48 (down from
+//              0.6 per #91 — "tanks smaller"), drone 0.52 (down from 0.62 per #91 — "drones
+//              slightly smaller again"), helicopter 0.75 (down from 1.0).
 
 export const ENEMY_KINDS = {
   // 1) TURRET / emplacement — static objective defender. No locomotion. #94 (playtest: "turrets
@@ -42,11 +43,16 @@ export const ENEMY_KINDS = {
   //    any other enemy's engagement envelope in the game. Tough, rooted, can't chase — but you
   //    can't just hide from it either; you have to hunt it down or leave its enormous range.
   //    Per-shot damage/cadence are tuned down from the old autocannon numbers (see siegeShell in
-  //    data/weapons.js) since turrets now spawn in clusters of 3 (TURRET_CLUSTER_SIZE) with
-  //    guaranteed uptime (no LOS to break) — three of the old autocannon's 16-dmg/1.1s cadence
-  //    firing constantly and unavoidably would be brutal; siegeShell's 10 dmg (with range
-  //    falloff further softening it near max range) on a slower 2.6s cadence keeps a nest a real
-  //    but survivable threat to actively deal with rather than an instant unavoidable shred.
+  //    data/weapons.js) since turrets now spawn in clusters (TURRET_CLUSTER_SIZE, currently 4 —
+  //    bumped up from 3 per #145's follow-up, alongside a further scale shrink, so the nest reads
+  //    as more/smaller sentries) with guaranteed uptime (no LOS to break) — several of the old
+  //    autocannon's 16-dmg/1.1s cadence firing constantly and unavoidably would be brutal;
+  //    siegeShell's 10 dmg (with range falloff further softening it near max range) on a slower
+  //    2.6s cadence keeps a nest a real but survivable threat to actively deal with rather than an
+  //    instant unavoidable shred. #145-followup: went from 3→4 turrets without raising per-shot
+  //    damage/cadence, so a nest's total DPS rises ~33% — worth another playtest pass to confirm
+  //    a 4-turret nest doesn't tip into "unavoidable shred" territory; if it does, softening
+  //    siegeShell's damage or cadence a touch (rather than the turret count) is the likely lever.
   turret: {
     name: 'Sentry Turret',
     kind: 'turret',
@@ -61,15 +67,18 @@ export const ENEMY_KINDS = {
                            // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
                            // threatens from far outside normal combat distance.
     fireEveryMs: 2600,     // #94: slowed from 1100 — a deliberate artillery cadence, and offsets
-                           // the fact this now always has a shot (no LOS to break) in a 3-turret nest.
+                           // the fact this now always has a shot (no LOS to break) in a nest of
+                           // TURRET_CLUSTER_SIZE turrets (4 as of #145's follow-up, was 3).
     flying: false,
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
     art: 'turret',
     behavior: 'turret',
     themeColor: 0xd66a3a,
-    scale: 0.55,           // #89: shrunk way down — turrets now spawn in tight clusters
-                           // (see TURRET_CLUSTER_SIZE / 'turretNest'), so a nest of small
-                           // sentries reads better than one big emplacement.
+    scale: 0.42,           // #145-followup: shrunk further (was 0.55) — playtest feedback
+                           // "turrets are too large" alongside bumping TURRET_CLUSTER_SIZE up
+                           // to 4, so a nest of even smaller sentries reads busy rather than
+                           // just big. #89: originally shrunk way down from 1.15 since turrets
+                           // spawn in tight clusters (see TURRET_CLUSTER_SIZE / 'turretNest').
   },
 
   // 2) TANK — ground armour. Slow, heavy, tough frontal facing; a turreted main gun (direct
@@ -275,8 +284,13 @@ export const SWARM_SIZE = 18;
 // A 'turretNest' spawn expands into this many turrets dropped close together in a tight, fixed
 // formation (#89 — "a few of them should spawn together"). Turrets are stationary (maxSpeed 0),
 // so unlike the drone swarm's loose orbiting cloud, the nest is a small static cluster — picked
-// small and sensible so it reads as an emplacement, not a wall of guns.
-export const TURRET_CLUSTER_SIZE = 3;
+// small and sensible so it reads as an emplacement, not a wall of guns. #145-followup (playtest
+// 2026-07-12: "could we try 2 or 4 at a time instead of 3?" — owner left the pick open): bumped
+// 3 → 4, paired with a further scale shrink on the `turret` kind above, so the nest reads as
+// "more, smaller" sentries rather than fewer, bigger ones. Easy to retune — just change this
+// constant (see the turretClusterHexes/_spawnTurretCluster call sites, which are fully
+// parameterized by count, not hardcoded to 3 or 4).
+export const TURRET_CLUSTER_SIZE = 4;
 
 // An 'infantryMob' spawn expands into this many infantry dropped in a loose cluster (#97 —
 // "let's add infantry in large volumes, smaller than drones"). Deliberately bigger than the
