@@ -75,6 +75,55 @@
 // of the override record, reset whenever a fresh file is loaded into the slot. Read via
 // getLoopStartMs(); written (null clears back to "= startMs") via setLoopStartMs().
 
+// #186: seeding a live override FROM a shipped bake (see seedOverrideFromBaked below) — the
+// bake only has a decoded AudioBuffer (bakedSfx.js's `_cache`), never the original file bytes,
+// so storeOverride (which persists raw bytes to IndexedDB) has nothing to write unless we
+// re-encode the buffer back into real bytes first. Rather than teach storeOverride a second,
+// bytes-less code path (which would also mean the seeded override can't survive a reload the
+// same way every other override does), this just PCM16-encodes the decoded buffer into a
+// standard WAV Blob — a well-understood, losslessly-round-trippable format for what's already
+// a decoded float buffer — so the seeded override flows through the EXACT same storeOverride/
+// IndexedDB/decode path as a file picked by hand, no special-casing anywhere else.
+import { getBaked } from './bakedSfx.js';
+
+function encodeWavBlob(buffer) {
+  const numChannels = buffer.numberOfChannels ?? 1;
+  const sampleRate = buffer.sampleRate ?? 44100;
+  const length = buffer.length ?? Math.round((buffer.duration ?? 0) * sampleRate);
+  const channels = [];
+  for (let c = 0; c < numChannels; c++) {
+    channels.push(buffer.getChannelData ? buffer.getChannelData(c) : new Float32Array(length));
+  }
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = length * blockAlign;
+  const arr = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(arr);
+  const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < length; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      const sample = Math.max(-1, Math.min(1, channels[c][i] ?? 0));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([arr], { type: 'audio/wav' });
+}
+
 const DB_NAME = 'mech-game-sfx-overrides-v1';
 const STORE = 'overrides';
 const DB_VERSION = 1;
@@ -414,6 +463,37 @@ export async function clearOverride(weaponId, stage) {
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
+}
+
+// #186: pre-load a shipped bake's settings into the live override slot for editing. Called by
+// the panel the moment the owner touches ANY slider for a stage that has a bake but no live
+// override yet (see WeaponSfxPanel._editOverride) — a no-op (returns true immediately) if a
+// live override already exists for this (id, stage), since there's nothing to seed. Otherwise:
+// pulls the bake's decoded buffer + full recipe (getBaked), re-encodes the buffer as a WAV Blob
+// (see encodeWavBlob above) and runs it through the ordinary storeOverride() path exactly as if
+// the owner had picked that file by hand, then replays the bake's own start/trim/fadeOut/volume/
+// processing/loopStart onto the new override via the normal setters — so the freshly-seeded
+// override starts IDENTICAL to what was already playing (the bake), and the caller's own
+// just-dragged value can then be applied on top of that by the normal setter path. Returns
+// false (no-op beyond the no-op check) if there's no bake to seed from, or if decoding the
+// re-encoded buffer failed.
+export async function seedOverrideFromBaked(weaponId, stage) {
+  if (hasOverride(weaponId, stage)) return true;
+  const baked = getBaked(weaponId, stage);
+  if (!baked?.buffer) return false;
+  const wavBlob = encodeWavBlob(baked.buffer);
+  const file = new File([wavBlob], `baked-${weaponId}-${stage}.wav`, { type: 'audio/wav' });
+  const decoded = await storeOverride(weaponId, stage, file);
+  if (!decoded) return false;
+  if (baked.startMs != null) await setStart(weaponId, stage, baked.startMs);
+  if (baked.trimMs != null) await setTrim(weaponId, stage, baked.trimMs);
+  if (baked.fadeOutMs != null) await setFadeOut(weaponId, stage, baked.fadeOutMs);
+  if (baked.volume != null && baked.volume !== 1) await setVolume(weaponId, stage, baked.volume);
+  if (baked.processing) await setProcessing(weaponId, stage, baked.processing);
+  if (baked.loopStartMs != null && baked.loopStartMs !== baked.startMs) {
+    await setLoopStartMs(weaponId, stage, baked.loopStartMs);
+  }
+  return true;
 }
 
 // Boot-time preload (#150): read every stored override out of IndexedDB and decode it, so

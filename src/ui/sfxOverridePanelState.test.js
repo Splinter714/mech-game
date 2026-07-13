@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, setAudioContext, _resetForTest, setStart, setTrim, setFadeOut, setProcessing, setVolume,
-  clearOverride,
+  clearOverride, hasOverride, seedOverrideFromBaked, getOverride,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
 import { SFX_DOMAINS, ALL_SFX_DOMAIN_ENTRIES, findSfxDomainEntry } from '../audio/sfxDomains.js';
@@ -81,12 +81,17 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     delete globalThis.indexedDB;
   });
 
-  it('reports "no override" for an untouched (id, stage), weapon or otherwise', () => {
+  it('reports "no override" for an untouched (id, stage) with NEITHER an override nor a bake — #186 unchanged path', () => {
     expect(getOverrideRowState('autocannon', 'fire')).toEqual({
-      active: false, statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
+      active: false, source: 'none', statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
     });
     expect(getOverrideRowState('ui_test', 'nav')).toEqual({
-      active: false, statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
+      active: false, source: 'none', statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
+    });
+    // #186: plasmaLance/impact has no bake and no override — same "none (procedural)" path,
+    // proving a bake elsewhere (plasmaLance/fire, see below) doesn't leak onto a sibling stage.
+    expect(getOverrideRowState('plasmaLance', 'impact')).toEqual({
+      active: false, source: 'none', statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible: true,
     });
   });
 
@@ -98,10 +103,30 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
   it('reports proceduralControlsVisible: false for a stage with an active BAKE, true for a sibling stage with none', () => {
     _setBakedBufferForTest('plasmaLance', 'fire', { duration: 1.2 });
     expect(getOverrideRowState('plasmaLance', 'fire').proceduralControlsVisible).toBe(false);
-    // The baked stage still reports no runtime override — `active` (file-override-loaded) and
-    // `proceduralControlsVisible` are deliberately independent booleans.
-    expect(getOverrideRowState('plasmaLance', 'fire').active).toBe(false);
     expect(getOverrideRowState('plasmaLance', 'impact').proceduralControlsVisible).toBe(true);
+  });
+
+  // #186: the core new behavior — a stage with a shipped bake but NO live override yet must show
+  // as "loaded," populated from the bake's own recipe, not from "none (procedural)". Uses the REAL
+  // plasmaLance/fire bake config from #175 (startMs 0, trimMs 130, fadeOutMs 420, no processing).
+  it('populates getOverrideRowState from the BAKE recipe when a bake exists but no live override yet', () => {
+    _setBakedBufferForTest('plasmaLance', 'fire', { duration: 1.199, numberOfChannels: 1, sampleRate: 44100 });
+    const state = getOverrideRowState('plasmaLance', 'fire');
+    expect(state.active).toBe(true);
+    expect(state.source).toBe('baked');
+    expect(state.statusText).toMatch(/baked/i);
+    expect(state.fullSec).toBeCloseTo(1.199);
+    expect(state.startSec).toBe(0);           // bake's startMs: 0
+    expect(state.endSec).toBeCloseTo(0.13);   // bake's trimMs: 130
+    // The bake's own fadeOutMs (420) exceeds its 130ms played window on purpose (see bakedSfx.js's
+    // comment on this exact entry) — getOverrideRowState clamps it to the played window, same as
+    // it already does for a live override's fadeMs.
+    expect(state.fadeMax).toBe(130);
+    expect(state.fadeMs).toBe(130);
+    expect(state.volume).toBe(1);
+    expect(state.proc).toEqual({});
+    // No live runtime override exists yet — this is purely the bake's recipe on display.
+    expect(hasOverride('plasmaLance', 'fire')).toBe(false);
   });
 
   // #181: a live dev-tool override (no bake involved) also hides the procedural controls, and
@@ -171,6 +196,67 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     // (id, stage) pair, never assumes "weapon" vs. "non-weapon").
     expect(getOverrideRowState(id, 'fire').active).toBe(false);
     expect(getOverrideRowState('autocannon', stage).active).toBe(false);
+  });
+
+  // #186: the seeding-on-first-edit flow — WeaponSfxPanel's _editOverride calls
+  // seedOverrideFromBaked the moment the owner touches ANY control for a bake-only stage. Proves
+  // the seeded override (a) actually exists afterward (hasOverride flips true), (b) starts with
+  // the bake's own recipe values carried over (so the row reads identically right after seeding,
+  // before any of the owner's own edit is applied), and (c) that a NEW edit on top of the seeded
+  // override persists normally and is what a subsequent playback-precedence check would resolve
+  // (override still beats baked — unchanged #173 precedence, not touched by this issue).
+  it('seedOverrideFromBaked creates a real live override from the bake, seeded with its recipe, which then persists edits and beats the bake at resolution', async () => {
+    const id = 'plasmaLance';
+    const stage = 'fire';
+    const length = Math.round(1.199 * 44100);
+    const data = new Float32Array(length).fill(0.1);
+    _setBakedBufferForTest(id, stage, {
+      duration: 1.199, numberOfChannels: 1, sampleRate: 44100, length, getChannelData: () => data,
+    });
+
+    expect(hasOverride(id, stage)).toBe(false);
+    expect(getOverrideRowState(id, stage).source).toBe('baked');
+
+    const ok = await seedOverrideFromBaked(id, stage);
+    expect(ok).toBe(true);
+    expect(hasOverride(id, stage)).toBe(true);
+
+    // Right after seeding (before any further edit), the row now shows a LIVE override — but
+    // seeded with the bake's own recipe, so nothing audibly changes yet.
+    let state = getOverrideRowState(id, stage);
+    expect(state.source).toBe('override');
+    expect(state.startSec).toBe(0);
+    expect(state.endSec).toBeCloseTo(0.13);
+    expect(state.fadeMs).toBe(130); // clamped to the played window, same as the bake-only reading
+
+    // A second call is a no-op (already seeded) — doesn't stomp the override that's there.
+    const bufferBeforeSecondSeed = getOverride(id, stage);
+    const ok2 = await seedOverrideFromBaked(id, stage);
+    expect(ok2).toBe(true);
+    expect(getOverride(id, stage)).toBe(bufferBeforeSecondSeed);
+
+    // Now apply the owner's OWN edit on top of the freshly-seeded override (mirrors what the
+    // panel's start-slider onChange does after _editOverride's seeding step) — this must persist
+    // through the ordinary setter path exactly like any hand-loaded override.
+    await setStart(id, stage, 40);
+    state = getOverrideRowState(id, stage);
+    expect(state.startSec).toBeCloseTo(0.04);
+    expect(state.source).toBe('override');
+
+    // Precedence check (#173, unchanged): with a live override now present, sfx.js's playOverride
+    // choke point resolves the OVERRIDE, not the bake — getOverride/hasOverride is exactly what
+    // that choke point reads (see src/audio/sfx.js), so this proves the override wins.
+    expect(hasOverride(id, stage)).toBe(true);
+    expect(getOverride(id, stage)).toBeTruthy();
+  });
+
+  // #186: seeding is a no-op (returns false) when there's nothing to seed from — no bake and no
+  // override for this (id, stage) — so a caller can safely call it unconditionally without first
+  // checking hasBaked itself.
+  it('seedOverrideFromBaked returns false and does nothing when there is no bake for this (id, stage)', async () => {
+    const ok = await seedOverrideFromBaked('plasmaLance', 'impact');
+    expect(ok).toBe(false);
+    expect(hasOverride('plasmaLance', 'impact')).toBe(false);
   });
 
   it('exposes the #178 UI/pickup sound-domain registry that round-trips through the same helpers', () => {

@@ -6,6 +6,7 @@ import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
   storeOverride, clearOverride, hasOverride,
   setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
+  seedOverrideFromBaked,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
 import { WEAPON_STAGES } from './weaponSfxStages.js';
@@ -261,6 +262,25 @@ export class WeaponSfxPanel {
     }
   }
 
+  // #186: the first edit to ANY override control for a stage that's only showing a shipped
+  // bake's values (getOverrideRowState's `source === 'baked'`) must seed a real live override
+  // FROM that bake before the edit itself can do anything — sfxOverrides.js's per-field setters
+  // (setStart/setTrim/etc.) only take effect once a live override buffer actually exists to
+  // attach them to (see sfxOverrides.js's `_persistParams`); with no override yet, playback keeps
+  // reading the bake's own static recipe regardless of what the in-memory maps hold. Runs `fn`
+  // immediately if a live override already exists (today's exact pre-#186 behavior, no seeding
+  // needed); otherwise seeds one from the bake first (buffer + full recipe, so the fresh override
+  // starts identical to what was already playing), THEN runs `fn` and rebuilds so the row flips
+  // from "(baked)" to a live "file override: baked-…wav" — same as loading any other file by hand.
+  _editOverride(weaponId, stage, fn) {
+    if (hasOverride(weaponId, stage)) { fn(); return; }
+    seedOverrideFromBaked(weaponId, stage).then((ok) => {
+      if (this.weaponId !== weaponId || !ok) return;   // selection changed while this resolved, or no bake to seed from
+      fn();
+      this._build();
+    });
+  }
+
   // #150: the per-stage "real file override" row — shows what's loaded (if anything) and the
   // load/clear controls. `label` isn't a weapon-catalog concept, so this reads the same for a
   // real weapon or a destruction-explosion category (`setWeapon`'s `label` override already
@@ -315,11 +335,13 @@ export class WeaponSfxPanel {
           const newEnd = Math.max(endSec, newStart); // never let end sit behind the new start
           const startMsOut = newStart <= 0.005 ? null : Math.round(newStart * 1000);
           const trimMsOut = newEnd >= fullSec - 0.005 ? null : Math.round((newEnd - newStart) * 1000);
-          setStart(weaponId, stage, startMsOut);
-          setTrim(weaponId, stage, trimMsOut);
-          this._toast(startMsOut == null ? `${stage}: starts at 0s` : `${stage}: starts at ${newStart.toFixed(2)}s`);
-          this._previewThrottled(stage);
-          this._build(); // end slider's min/value depends on the new start
+          this._editOverride(weaponId, stage, () => {
+            setStart(weaponId, stage, startMsOut);
+            setTrim(weaponId, stage, trimMsOut);
+            this._toast(startMsOut == null ? `${stage}: starts at 0s` : `${stage}: starts at ${newStart.toFixed(2)}s`);
+            this._previewThrottled(stage);
+            this._build(); // end slider's min/value depends on the new start
+          });
         },
       });
       this.scroller.add(startSlider.container);
@@ -331,9 +353,11 @@ export class WeaponSfxPanel {
         onChange: (v) => {
           const newEnd = Phaser.Math.Clamp(v, startSec, fullSec);
           const ms = newEnd >= fullSec - 0.005 ? null : Math.round((newEnd - startSec) * 1000);
-          setTrim(weaponId, stage, ms);
-          this._toast(ms == null ? `${stage}: plays to end` : `${stage}: ends at ${newEnd.toFixed(2)}s`);
-          this._previewThrottled(stage);
+          this._editOverride(weaponId, stage, () => {
+            setTrim(weaponId, stage, ms);
+            this._toast(ms == null ? `${stage}: plays to end` : `${stage}: ends at ${newEnd.toFixed(2)}s`);
+            this._previewThrottled(stage);
+          });
         },
       });
       this.scroller.add(endSlider.container);
@@ -353,9 +377,11 @@ export class WeaponSfxPanel {
         onChange: (v) => {
           const newLoopStart = Phaser.Math.Clamp(v, startSec, endSec);
           const startMsOut = newLoopStart <= startSec + 0.005 ? null : Math.round(newLoopStart * 1000);
-          setLoopStartMs(weaponId, stage, startMsOut);
-          this._toast(startMsOut == null ? `${stage}: loop start = start` : `${stage}: loop starts at ${newLoopStart.toFixed(2)}s`);
-          this._previewThrottled(stage);
+          this._editOverride(weaponId, stage, () => {
+            setLoopStartMs(weaponId, stage, startMsOut);
+            this._toast(startMsOut == null ? `${stage}: loop start = start` : `${stage}: loop starts at ${newLoopStart.toFixed(2)}s`);
+            this._previewThrottled(stage);
+          });
         },
       });
       this.scroller.add(loopStartSlider.container);
@@ -373,9 +399,11 @@ export class WeaponSfxPanel {
         value: fadeMs,
         onChange: (v) => {
           const ms = Math.round(v);
-          setFadeOut(weaponId, stage, ms <= 0 ? null : ms);
-          this._toast(ms <= 0 ? `${stage}: no fade-out` : `${stage}: fade-out ${ms}ms`);
-          this._previewThrottled(stage);
+          this._editOverride(weaponId, stage, () => {
+            setFadeOut(weaponId, stage, ms <= 0 ? null : ms);
+            this._toast(ms <= 0 ? `${stage}: no fade-out` : `${stage}: fade-out ${ms}ms`);
+            this._previewThrottled(stage);
+          });
         },
       });
       this.scroller.add(fadeSlider.container);
@@ -392,9 +420,11 @@ export class WeaponSfxPanel {
         value: volumePct,
         onChange: (v) => {
           const pct = Math.round(v);
-          setVolume(weaponId, stage, pct / 100);
-          this._toast(`${stage}: volume ${pct}%`);
-          this._previewThrottled(stage);
+          this._editOverride(weaponId, stage, () => {
+            setVolume(weaponId, stage, pct / 100);
+            this._toast(`${stage}: volume ${pct}%`);
+            this._previewThrottled(stage);
+          });
         },
       });
       this.scroller.add(volumeSlider.container);
@@ -428,9 +458,11 @@ export class WeaponSfxPanel {
       value: proc.detune ?? 0,
       onChange: (v) => {
         const cents = Math.round(v);
-        setProcessing(weaponId, stage, { detune: cents === 0 ? null : cents });
-        this._toast(cents === 0 ? `${stage}: pitch neutral` : `${stage}: pitch ${cents > 0 ? '+' : ''}${cents}¢`);
-        this._previewThrottled(stage);
+        this._editOverride(weaponId, stage, () => {
+          setProcessing(weaponId, stage, { detune: cents === 0 ? null : cents });
+          this._toast(cents === 0 ? `${stage}: pitch neutral` : `${stage}: pitch ${cents > 0 ? '+' : ''}${cents}¢`);
+          this._previewThrottled(stage);
+        });
       },
     });
     this.scroller.add(pitchSlider.container);
@@ -447,8 +479,10 @@ export class WeaponSfxPanel {
       x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'freq', min: 40, max: 16000, step: 20,
       value: proc.filterFreq ?? PROC_DEFAULT_FILTER_FREQ,
       onChange: (v) => {
-        setProcessing(weaponId, stage, { filterFreq: Math.round(v) });
-        this._previewThrottled(stage);
+        this._editOverride(weaponId, stage, () => {
+          setProcessing(weaponId, stage, { filterFreq: Math.round(v) });
+          this._previewThrottled(stage);
+        });
       },
     });
     this.scroller.add(freqSlider.container);
@@ -458,8 +492,10 @@ export class WeaponSfxPanel {
       x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'Q', min: 0.1, max: 12, step: 0.1,
       value: proc.filterQ ?? PROC_DEFAULT_FILTER_Q,
       onChange: (v) => {
-        setProcessing(weaponId, stage, { filterQ: +v.toFixed(2) });
-        this._previewThrottled(stage);
+        this._editOverride(weaponId, stage, () => {
+          setProcessing(weaponId, stage, { filterQ: +v.toFixed(2) });
+          this._previewThrottled(stage);
+        });
       },
     });
     this.scroller.add(qSlider.container);
@@ -474,14 +510,16 @@ export class WeaponSfxPanel {
       value: proc.reverbMix ?? 0,
       onChange: (v) => {
         const mix = +v.toFixed(2);
-        if (mix <= 0.005) {
-          setProcessing(weaponId, stage, { reverbMix: null, reverbSize: null });
-          this._toast(`${stage}: reverb off`);
-        } else {
-          const size = getProcessing(weaponId, stage)?.reverbSize ?? PROC_DEFAULT_REVERB_SIZE;
-          setProcessing(weaponId, stage, { reverbMix: mix, reverbSize: size });
-        }
-        this._previewThrottled(stage);
+        this._editOverride(weaponId, stage, () => {
+          if (mix <= 0.005) {
+            setProcessing(weaponId, stage, { reverbMix: null, reverbSize: null });
+            this._toast(`${stage}: reverb off`);
+          } else {
+            const size = getProcessing(weaponId, stage)?.reverbSize ?? PROC_DEFAULT_REVERB_SIZE;
+            setProcessing(weaponId, stage, { reverbMix: mix, reverbSize: size });
+          }
+          this._previewThrottled(stage);
+        });
       },
     });
     this.scroller.add(mixSlider.container);
@@ -491,12 +529,14 @@ export class WeaponSfxPanel {
       x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'size s', min: 0.1, max: 3, step: 0.1,
       value: proc.reverbSize ?? PROC_DEFAULT_REVERB_SIZE,
       onChange: (v) => {
-        // Only re-store size when reverb is actually on — a size change with mix 0 stays inert
-        // (and mustn't resurrect a cleared reverb), so just remember it for when mix comes up.
-        if ((getProcessing(weaponId, stage)?.reverbMix ?? 0) > 0) {
-          setProcessing(weaponId, stage, { reverbSize: +v.toFixed(1) });
-          this._previewThrottled(stage);
-        }
+        this._editOverride(weaponId, stage, () => {
+          // Only re-store size when reverb is actually on — a size change with mix 0 stays inert
+          // (and mustn't resurrect a cleared reverb), so just remember it for when mix comes up.
+          if ((getProcessing(weaponId, stage)?.reverbMix ?? 0) > 0) {
+            setProcessing(weaponId, stage, { reverbSize: +v.toFixed(1) });
+            this._previewThrottled(stage);
+          }
+        });
       },
     });
     this.scroller.add(sizeSlider.container);
@@ -523,18 +563,20 @@ export class WeaponSfxPanel {
         .setStrokeStyle(1, UI.edge).setInteractive({ useHandCursor: true });
       const text = this.scene.add.text(bx + bw / 2, y + 8, FILTER_ABBR[ft], { fontFamily: 'monospace', fontSize: '8px', color: UI.text }).setOrigin(0.5);
       rect.on('pointerdown', () => {
-        if (ft === 'off') {
-          setProcessing(weaponId, stage, { filterType: null });
-        } else {
-          const p = getProcessing(weaponId, stage) || {};
-          setProcessing(weaponId, stage, {
-            filterType: ft,
-            filterFreq: p.filterFreq ?? PROC_DEFAULT_FILTER_FREQ,
-            filterQ: p.filterQ ?? PROC_DEFAULT_FILTER_Q,
-          });
-        }
-        paint();
-        this._previewThrottled(stage);
+        this._editOverride(weaponId, stage, () => {
+          if (ft === 'off') {
+            setProcessing(weaponId, stage, { filterType: null });
+          } else {
+            const p = getProcessing(weaponId, stage) || {};
+            setProcessing(weaponId, stage, {
+              filterType: ft,
+              filterFreq: p.filterFreq ?? PROC_DEFAULT_FILTER_FREQ,
+              filterQ: p.filterQ ?? PROC_DEFAULT_FILTER_Q,
+            });
+          }
+          paint();
+          this._previewThrottled(stage);
+        });
       });
       this.scroller.add([rect, text]);
       btns.push({ rect, ft });
