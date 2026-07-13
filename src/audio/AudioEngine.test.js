@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
-  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, setVolume, _resetForTest,
+  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, setVolume,
+  setLoopStartMs, getLoopStartMs, _resetForTest,
 } from './sfxOverrides.js';
 import {
   BAKED_SFX, _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
@@ -879,6 +880,113 @@ describe('AudioEngine (mock context)', () => {
       expect(src.loopStart).toBeCloseTo(0.2, 5);
       expect(src.loopEnd).toBeCloseTo(0.7, 5);    // 0.2 + 0.5
       eng.stopHeld('leftArm');
+    });
+
+    // #185: intro-once, then loop a SHORTER sustain region — loopStartMs is a distinct field
+    // from startMs, so the source plays startMs→(startMs+trimMs) ONCE, then wraps to
+    // loopStartMs→(startMs+trimMs) forever, never replaying the intro/attack transient.
+    describe('loop-start split (#185)', () => {
+      it('getLoopStartMs defaults to getStartMs when unset — no regression for existing overrides', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();   // no startMs either yet
+        await setStart('beamLaser', 'fire', 200);
+        expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);    // falls back to startMs
+      });
+
+      it('loopStartMs unset produces byte-identical src.loopStart to pre-#185 behavior', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setStart('beamLaser', 'fire', 200);
+        await setTrim('beamLaser', 'fire', 500);
+        eng.startHeld('leftArm', 'beamLaser');
+        const src = ctx._lastBufferSource();
+        expect(src.loopStart).toBeCloseTo(0.2, 5);   // same as startMs/1000, exactly like before #185
+        expect(src.loopEnd).toBeCloseTo(0.7, 5);
+        // The initial start(when, offset) call still uses the startMs-derived offset.
+        expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.2, 5);
+        eng.stopHeld('leftArm');
+      });
+
+      it('loopStartMs LATER than startMs: intro plays once from startMs, loop region is loopStartMs→loopEnd', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setStart('beamLaser', 'fire', 200);     // intro begins 200ms in
+        await setTrim('beamLaser', 'fire', 500);      // played window ends at 700ms
+        await setLoopStartMs('beamLaser', 'fire', 450);   // loop repeats from 450ms, not 200ms
+        eng.startHeld('leftArm', 'beamLaser');
+        const src = ctx._lastBufferSource();
+        // The FIRST play still starts at the original startMs-derived offset (the intro).
+        expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.2, 5);
+        // But the repeat point (loopStart) is the NEW, later value — not startMs.
+        expect(src.loopStart).toBeCloseTo(0.45, 5);
+        // loopEnd stays anchored to the overall trim end (startMs + trimMs), unaffected by
+        // where the loop repeat point sits.
+        expect(src.loopEnd).toBeCloseTo(0.7, 5);
+        eng.stopHeld('leftArm');
+      });
+
+      it('loop-start split composes with the #182 volume and #174/#179 release fade unaffected', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setStart('beamLaser', 'fire', 100);
+        await setTrim('beamLaser', 'fire', 600);
+        await setLoopStartMs('beamLaser', 'fire', 300);
+        await setVolume('beamLaser', 'fire', 1.4);
+        await setFadeOut('beamLaser', 'fire', 150);   // this is the RELEASE window on stop(), unaffected by loop split
+        eng.startHeld('leftArm', 'beamLaser');
+        const src = ctx._lastBufferSource();
+        expect(src.loopStart).toBeCloseTo(0.3, 5);
+        const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+        const expEvent = loopGain._events.find((e) => e[0] === 'exp');
+        expect(expEvent[1]).toBe(1.4);   // attack still ramps to the configured volume
+        eng.stopHeld('leftArm');
+        const rampEvent = loopGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
+        expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.15, 5);   // release fade still 150ms, on stop
+      });
+
+      it('setLoopStartMs(null) clears back to "loop start = startMs"', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setStart('beamLaser', 'fire', 200);
+        await setLoopStartMs('beamLaser', 'fire', 450);
+        expect(getLoopStartMs('beamLaser', 'fire')).toBe(450);
+        await setLoopStartMs('beamLaser', 'fire', null);
+        expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);   // back to startMs
+      });
+
+      it('clearOverride also clears the loop start, so a fresh file never inherits a stale one', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setStart('beamLaser', 'fire', 200);
+        await setLoopStartMs('beamLaser', 'fire', 450);
+        await clearOverride('beamLaser', 'fire');
+        expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();
+      });
+
+      it('a BAKED entry with loopStartMs plays the loop split too, defaulting to its own startMs when omitted', () => {
+        BAKED_SFX['flamethrower::fire'] = {
+          startMs: 100, trimMs: 600, loopStartMs: 350, processing: null,
+        };
+        try {
+          _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
+          eng.startHeld('leftArm', 'flamethrower');
+          const src = ctx._lastBufferSource();
+          expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.1, 5);   // intro starts at startMs
+          expect(src.loopStart).toBeCloseTo(0.35, 5);                    // loop repeats from loopStartMs
+          expect(src.loopEnd).toBeCloseTo(0.7, 5);
+          eng.stopHeld('leftArm');
+        } finally {
+          delete BAKED_SFX['flamethrower::fire'];
+        }
+      });
+
+      it('a BAKED entry with NO loopStartMs defaults to its own startMs, unchanged from before #185', () => {
+        BAKED_SFX['flamethrower::fire'] = { startMs: 200, trimMs: 400, processing: null };
+        try {
+          _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
+          eng.startHeld('leftArm', 'flamethrower');
+          const src = ctx._lastBufferSource();
+          expect(src.loopStart).toBeCloseTo(0.2, 5);   // same as startMs — no separate loop region
+          eng.stopHeld('leftArm');
+        } finally {
+          delete BAKED_SFX['flamethrower::fire'];
+        }
+      });
     });
 
     it('applies the detune/filter/reverb processing chain (#172) to the loop the same way the one-shot path does', async () => {

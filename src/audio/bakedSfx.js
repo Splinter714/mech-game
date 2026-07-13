@@ -53,6 +53,11 @@ const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 //               before the scheduled stop (omit/null/0 = no fade, hard cut)
 //   volume      optional overall gain multiplier (#182) — 1.0 = unity (omit = unity, unchanged
 //               implicit gain); composes with fadeOutMs (the fade ramps FROM this level to 0)
+//   loopStartMs optional held-loop-only loop-start offset (#185), distinct from `startMs` — used
+//               ONLY by the held-sustain path (playBufferLoop). `startMs` is where the intro
+//               plays the first time; `loopStartMs` is where the REPEATING loop region begins.
+//               Omit = defaults to this entry's own `startMs` (no separate loop region, today's
+//               pre-#185 behavior: the whole intro-to-end clip re-loops every cycle).
 export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Bit Bomb_HY_PC-001.wav". The full
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.
@@ -129,11 +134,13 @@ export async function loadAllBaked() {
 }
 
 // Synchronous lookup used at the sfx.js playback choke points: returns { buffer, startMs,
-// trimMs, processing, fadeOutMs, volume } for a decoded bake, or null (no bake for this slot, or
-// not decoded yet) which callers treat as "fall back to procedural." The buffer comes from the
-// decoded cache; the recipe (start/trim/processing/fadeOut/volume) comes straight from the
-// static BAKED_SFX entry. `volume` defaults to 1 (unity) when the entry omits it (#182), same
-// convention sfxOverrides.getVolume() uses.
+// trimMs, processing, fadeOutMs, volume, loopStartMs } for a decoded bake, or null (no bake for
+// this slot, or not decoded yet) which callers treat as "fall back to procedural." The buffer
+// comes from the decoded cache; the recipe (start/trim/processing/fadeOut/volume/loopStartMs)
+// comes straight from the static BAKED_SFX entry. `volume` defaults to 1 (unity) when the entry
+// omits it (#182), same convention sfxOverrides.getVolume() uses. `loopStartMs` defaults to the
+// entry's own `startMs` when omitted (#185) — same "no separate loop region" fallback convention
+// as sfxOverrides.getLoopStartMs().
 export function getBaked(weaponId, stage) {
   const key = keyFor(weaponId, stage);
   const buffer = _cache.get(key);
@@ -146,6 +153,7 @@ export function getBaked(weaponId, stage) {
     processing: entry.processing ?? null,
     fadeOutMs: entry.fadeOutMs ?? null,
     volume: entry.volume ?? 1,
+    loopStartMs: entry.loopStartMs ?? entry.startMs ?? null,
   };
 }
 

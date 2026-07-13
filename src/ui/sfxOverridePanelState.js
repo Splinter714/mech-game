@@ -7,6 +7,7 @@
 // display logic, not just the raw storage layer (sfxOverrides.js), which was already generic.
 import {
   hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing, getVolume,
+  getLoopStartMs,
 } from '../audio/sfxOverrides.js';
 import { hasBaked } from '../audio/bakedSfx.js';
 
@@ -29,7 +30,10 @@ function proceduralControlsVisibleFor(id, stage) {
 // duration), `startSec`/`endSec` (the non-destructive trim window, #166), `fadeMs`/`fadeMax`
 // (the fade-out duration and its cap, #174), `volume` (the overall gain multiplier, #182 —
 // always a number, defaults to 1/unity), and `proc` (the sparse pitch/filter/reverb processing
-// object, #172 — never null, defaults to `{}` so callers can read fields directly).
+// object, #172 — never null, defaults to `{}` so callers can read fields directly). `loopStartSec`
+// (#185) is the held-loop-only loop-start position, clamped to `[startSec, endSec]` — defaults to
+// `startSec` (today's pre-#185 behavior: the loop region is the whole played window) when unset,
+// since getLoopStartMs() itself falls back to getStartMs().
 // `proceduralControlsVisible` (#181) is always present regardless of `active`: false whenever
 // EITHER a file override or a baked sound is active for this stage, true otherwise.
 export function getOverrideRowState(id, stage) {
@@ -50,7 +54,9 @@ export function getOverrideRowState(id, stage) {
   const fadeMs = clamp(getFadeOutMs(id, stage) ?? 0, 0, fadeMax);
   const volume = clamp(getVolume(id, stage), 0, 2);
   const proc = getProcessing(id, stage) || {};
+  const loopStartMs = getLoopStartMs(id, stage);
+  const loopStartSec = clamp(loopStartMs != null ? loopStartMs / 1000 : startSec, startSec, endSec);
   return {
-    active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, volume, proc, proceduralControlsVisible,
+    active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, volume, proc, loopStartSec, proceduralControlsVisible,
   };
 }
