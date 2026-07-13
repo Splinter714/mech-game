@@ -790,6 +790,47 @@ describe('AudioEngine (mock context)', () => {
         entry.fadeOutMs = saved.fadeOutMs;
       }
     });
+
+    // #184: deathExplosionByCategory previously called playLayers directly, completely bypassing
+    // playOverride — so the shipped deathExplosionMassive::fire bake (#180) was dead code at
+    // runtime and a mech kill always played the procedural explosion instead. These mirror the
+    // clusterRocket bake-precedence tests above, but through eng.deathExplosion('massive') (the
+    // actual per-kill call path: ArenaScene's combat.js `_deathFx` → Audio.deathExplosion(category)
+    // → AudioEngine.deathExplosion → Sfx.deathExplosionByCategory).
+    it('a mech-kill death explosion plays the BAKED buffer instead of procedural layers', () => {
+      const bakedBuf = { __baked: 'mechaDamaged2' };
+      _setBakedBufferForTest('deathExplosionMassive', 'fire', bakedBuf);
+      const before = ctx._counts();
+      eng.deathExplosion('massive');
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);          // exactly one buffer source: the bake
+      expect(after.oscillators).toBe(before.oscillators);      // no procedural tone/noise layers ran
+      expect(ctx._lastBufferSource().buffer).toBe(bakedBuf);   // and it was the baked buffer
+    });
+
+    it('a dev IndexedDB override still wins over the deathExplosionMassive bake', async () => {
+      const bakedBuf = { __baked: 'mechaDamaged2' };
+      _setBakedBufferForTest('deathExplosionMassive', 'fire', bakedBuf);
+      const overrideBuf = await storeOverride('deathExplosionMassive', 'fire', fakeFile('dev.wav', 'DEV'));
+      const before = ctx._counts();
+      eng.deathExplosion('massive');
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);              // one buffer source...
+      expect(ctx._lastBufferSource().buffer).toBe(overrideBuf);    // ...the OVERRIDE, not the bake
+      expect(ctx._lastBufferSource().buffer).not.toBe(bakedBuf);
+    });
+
+    // Critical no-regression check: small/medium/large have no baked/override entry (only
+    // massive does, from #180), so they must keep firing constantly in normal play through the
+    // exact same procedural playLayers path as before this fix.
+    it('death explosions with no bake/override (small/medium/large) still play procedurally, unchanged', () => {
+      for (const category of ['small', 'medium', 'large']) {
+        const before = ctx._counts();
+        eng.deathExplosion(category);
+        const after = ctx._counts();
+        expect(after.oscillators + after.sources).toBeGreaterThan(before.oscillators + before.sources);
+      }
+    });
   });
 
   // #179: held-sustain (beamLaser/flamethrower) file override/baked support — previously

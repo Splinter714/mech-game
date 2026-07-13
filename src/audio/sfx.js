@@ -412,5 +412,7 @@ export function explosion(e, scale = 1) {
 // DEFAULT_SFX entry (`deathExplosionSmall` etc., sfxParams.js), so this is just the generic
 // layer player every weapon sound cue already uses, keyed by `explosionSfxId(category)`.
 export function deathExplosionByCategory(e, category) {
-  playLayers(e, e.sfx, e.getSfxParams(explosionSfxId(category)).fire);
+  const id = explosionSfxId(category);
+  if (playOverride(e, e.sfx, id, 'fire')) return;
+  playLayers(e, e.sfx, e.getSfxParams(id).fire);
 }
