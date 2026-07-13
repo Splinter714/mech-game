@@ -51,8 +51,9 @@ export const POWERUPS = {
     instant: true, effect: 'armorPatch', repairFrac: 0.5,
   },
   // 5) #187: full damage absorption up to a fixed CUMULATIVE total — NOT time-based (distinct
-  //    from the timed-buff model above, and distinct from the equipment `bubbleShield` ability,
-  //    which is duration-based). `shieldCap` is the starting absorb pool in damage points. Picked
+  //    from the timed-buff model above). #188: the old equipment `bubbleShield` ability (a
+  //    separate, duration-based full absorb) is gone — this powerup pool is the only shield
+  //    mechanic now. `shieldCap` is the starting absorb pool in damage points. Picked
   //    by looking at src/data/weapons.js `damage` fields: single-shot weapons land ~2-34 per hit
   //    (the heaviest, a projectile launcher, hits for 34), so 60 absorbs a bit under two of the
   //    hardest single hits, or several ticks of a stream weapon — "1-2 solid exchanges, not a

@@ -453,14 +453,7 @@ export class AudioEngine {
     Sfx.footstep(this, foot);
   }
 
-  // Ability (#35) — jump-jet dash vs. bubble-shield raise.
-  ability(kind) {
-    this._resume();
-    if (!this.ready) return;
-    Sfx.ability(this, kind);
-  }
-
-  // Generic UI/pickup cue (#178) — equip/unequip/deploy/menu-nav/scrap/powerup, any (id,
+  // Generic UI/pickup cue (#178) — equip/unequip/deploy/menu-nav/scrap/powerup/sprint, any (id,
   // stage) pair registered in sfxDomains.js's `ui` domain. Same override/bake-first, then
   // procedural-fallback precedence every weapon stage uses (see Sfx.uiCue).
   ui(id, stage = 'play') {

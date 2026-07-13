@@ -10,6 +10,7 @@ import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
+import { toggleSprint, updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -47,32 +48,23 @@ export const FiringMixin = {
     }
   },
 
-  // ── Abilities ── the centre-torso ability fires on its button (L3 / Space) off cd. ──
-  _handleAbilities(intent, delta) {
-    const dashDir = Math.hypot(intent.move.x, intent.move.y) > 0.1
-      ? Math.atan2(intent.move.y, intent.move.x) : this.turretAngle;
-    for (const ab of this.mech.abilities()) {
-      let cd = (this.abilityCd[ab.location] ?? 0) - delta;
-      if (intent.fire[ab.location] && cd <= 0) { this._activateAbility(ab, dashDir); cd = ab.equip.cooldown * 1000; }
-      this.abilityCd[ab.location] = Math.max(0, cd);
-    }
-    this.registry.set('abilityCooldowns', this.abilityCd);
-    this.registry.set('shieldActive', this.time.now < this.shieldUntil);
-  },
-
-  _activateAbility(ab, dir) {
-    const e = ab.equip;
-    Audio.ability(e.ability);
-    if (e.ability === 'dash') {
-      this.vx += Math.cos(dir) * e.impulse;
-      this.vy += Math.sin(dir) * e.impulse;
-      // thruster puff at the mech, opposite the dash
-      this.fx.fillStyle(0xffd56b, 0.8).fillCircle(this.px - Math.cos(dir) * 16, this.py - Math.sin(dir) * 16, 6);
-      this.time.delayedCall(90, () => this.fx.clear());
-    } else if (e.ability === 'shield') {
-      this.shieldUntil = this.time.now + e.duration * 1000;
-      this._floatText(this.px, this.py - 30, 'SHIELD', '#5ec8e0');
-    }
+  // ── Sprint (#188) ── a hardcoded, always-available press-to-TOGGLE on L3/Space — not
+  // mounted/equipped (replaced the old centre-torso ability slot's jumpJet/bubbleShield). A
+  // depleting/regenerating fuel bar drains while active and refills while inactive; hitting
+  // empty forces it off automatically. `intent.sprintPressed` is already rising-edge-detected
+  // by Controls.js, so a toggle only fires once per physical press, not every held frame. ──
+  _handleSprint(intent, delta) {
+    const dt = delta / 1000;
+    if (intent.sprintPressed) this.sprint.active = toggleSprint(this.sprint.active, this.sprint.fuel);
+    const wasActive = this.sprint.active;
+    this.sprint = updateSprintFuel(this.sprint, dt);
+    // A cue on every real active/inactive transition — a manual toggle OR the forced-off at
+    // empty fuel both count, so running dry gets the same feedback as releasing it by hand.
+    if (this.sprint.active && !wasActive) Audio.ui('sprintOn');
+    else if (!this.sprint.active && wasActive) Audio.ui('sprintOff');
+    this.registry.set('sprintActive', this.sprint.active);
+    this.registry.set('sprintFuel', this.sprint.fuel);
+    this.registry.set('sprintFuelMax', SPRINT_FUEL_MAX);
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the

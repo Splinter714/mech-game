@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Mech } from './Mech.js';
-import { ABILITY_SLOTS, LOCATIONS } from './anatomy.js';
+import { LOCATIONS } from './anatomy.js';
 
 // Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
 // melee category, which has no live entry in the registry anymore. Inject a test-only
@@ -45,16 +45,15 @@ describe('Mech damage: armor then structure', () => {
 });
 
 describe('Mech build completeness (deploy gating)', () => {
-  it('isComplete only once every skill slot is filled with a legal item', () => {
+  it('isComplete only once every weapon slot is filled with a legal item', () => {
     const m = new Mech({ chassisId: 'light' });
     expect(m.isComplete()).toBe(false);                 // empty build
     m.mount('leftArm', 'pulseLaser');
     m.mount('rightArm', 'beamLaser');
     m.mount('leftTorso', 'autocannon');
+    expect(m.isComplete()).toBe(false);                 // right torso still empty
     m.mount('rightTorso', 'machineGun');
-    expect(m.isComplete()).toBe(false);                 // centre torso still empty
-    m.mount('centerTorso', 'jumpJet');
-    expect(m.isComplete()).toBe(true);                  // all five filled
+    expect(m.isComplete()).toBe(true);                  // all four filled
   });
 });
 
@@ -95,14 +94,10 @@ describe('Mech kill rule (#128: both side torsos destroyed = kill)', () => {
     expect(m.isDestroyed()).toBe(false);
   });
 
-  it('centerTorso keeps working as the ability mount even though it has no health', () => {
+  it('centerTorso is no longer mountable at all (#188: Sprint replaced the old ability slot)', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('centerTorso', 'jumpJet');
-    expect(m.locationOf('jumpJet')).toBe('centerTorso');
-    expect(m.abilities()).toHaveLength(1);
-    // "Damaging" it doesn't take the ability offline — there's no health to lose.
-    m.applyDamage('centerTorso', 999999);
-    expect(m.abilities()).toHaveLength(1);
+    expect(m.canMount('centerTorso', 'autocannon').ok).toBe(false);
+    expect(m.mounts.centerTorso).toBeUndefined();
   });
 });
 
@@ -312,12 +307,6 @@ describe('Mech mounting: one copy of a weapon at a time (#84)', () => {
     expect(m.mounts.leftTorso).toEqual(['pulseLaser']);
   });
 
-  it('abilities have only one mount point (centerTorso) so they cannot be duplicated across slots', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    expect(ABILITY_SLOTS).toEqual(['centerTorso']);
-    m.mount('centerTorso', 'jumpJet');
-    expect(m.locationOf('jumpJet')).toBe('centerTorso');
-  });
 });
 
 describe('Mech serialization', () => {

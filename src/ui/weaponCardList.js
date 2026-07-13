@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
+import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
@@ -435,13 +435,11 @@ export class WeaponCardList {
     const g = card.fxG;
     g.clear();
 
-    // Ability card: a gentle pulsing signature fx centred in the stage.
-    if (!card.weapon) {
-      const cx = card.muzzleX + card.stageW / 2, cy = card.muzzleY;
-      const pulse = 1 + 0.15 * Math.sin((card.streamPhase += 16) * 0.004);
-      drawAbilityFx(g, card.item.ability, cx, cy, 2.2 * pulse);
-      return;
-    }
+    // #188: every catalog card is a weapon now (the old non-weapon "ability" card — jumpJet/
+    // bubbleShield's pulsing signature fx — is gone along with equipment.js). `card.weapon` is
+    // never null in practice, but the null-safe shape elsewhere in this file (emitter/name/cat
+    // ternaries) is left as harmless, forward-compatible scaffolding.
+    if (!card.weapon) return;
 
     const w = card.weapon;
     // (the emitter/mount is a rotated Image behind fxG, not drawn here — see _buildCard.)

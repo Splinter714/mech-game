@@ -34,7 +34,7 @@ try {
   await page.evaluate(() => {
     const sc = window.__game.scene.getScene('GarageScene');
     const mech = window.__game.registry.get('allMechs').mech1;
-    if (!mech.mounts.centerTorso.length) { sc._selectSlot('centerTorso'); sc._pickItem('jumpJet'); }
+    // #188: centerTorso is no longer mountable — the four weapon slots are the whole build.
     sc.deploy();
   });
   await page.waitForFunction(() => window.__game.scene.isActive('ArenaScene'), { timeout: 20000 });
@@ -65,7 +65,7 @@ try {
       const ang = (t / REV_S) * Math.PI * 2;
       intent.move = { x: Math.cos(t * 0.6), y: Math.sin(t * 0.4) };
       intent.aim = { mode: 'pointer', x: a.px + Math.cos(ang) * 400, y: a.py + Math.sin(ang) * 400 };
-      for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso', 'centerTorso']) intent.fire[loc] = false;
+      for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) intent.fire[loc] = false;
       return intent;
     };
     a._updateRun = () => {}; // don't let the run loop end mid-profile

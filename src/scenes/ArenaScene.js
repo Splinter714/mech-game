@@ -5,6 +5,7 @@ import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
 import { makeLock } from '../data/targetlock.js';
+import { initialSprintState } from '../data/sprint.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
 import { CombatMixin } from './arena/combat.js';
@@ -99,8 +100,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
-    this.abilityCd = {};       // ability location → ms until it can fire again
-    this.shieldUntil = 0;      // timestamp the bubble shield is active until
+    this.sprint = initialSprintState();   // #188: hardcoded L3/Space toggle + fuel, see data/sprint.js
     // Indirect-fire lock (#62): the always-available acquire-and-hold targeting for homing/arcing
     // weapons. `this.lock` is the pure state record (data/targetlock.js); `aimEnemy` is the live
     // most-aimed enemy used only by direct-fire convergence (kept separate so a blind lock behind
@@ -157,7 +157,7 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   // The per-frame loop is a thin orchestrator: each step is a mixin method (drive, gait,
-  // firing, abilities, enemy AI, projectiles/beams/ground-fire), called in the original
+  // firing, sprint, enemy AI, projectiles/beams/ground-fire), called in the original
   // order. The few lines of overlay drawing + ammo regen stay inline.
   update(_time, delta) {
     const dt = Math.min(0.05, delta / 1000);
@@ -185,6 +185,9 @@ export default class ArenaScene extends Phaser.Scene {
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();
 
+    // #188: resolve the Sprint toggle + fuel drain/regen BEFORE _drive so a same-frame press
+    // is reflected in this frame's speed multiplier, not delayed a frame.
+    this._handleSprint(intent, delta);
     this._drive(intent, dt);
 
     // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #62 drop-lock). ──
@@ -201,7 +204,6 @@ export default class ArenaScene extends Phaser.Scene {
     this._updateLock(dt);
     this._stepGait(dt);
     this._handleFiring(intent, delta);
-    this._handleAbilities(intent, delta);
     this._updateEnemies(dt, delta);
 
     // ── Projectiles + burning ground ──
@@ -232,12 +234,6 @@ export default class ArenaScene extends Phaser.Scene {
       const blind = this.lock.blind;
       const pt = blind ? this._lockAimPoint() : { x: this.lock.enemy.x, y: this.lock.enemy.y };
       if (pt) this._drawLockReticle(pt.x, pt.y, this.lock.progress, blind);
-    }
-
-    // Bubble shield bubble, drawn over the player while active.
-    if (this.time.now < this.shieldUntil) {
-      this.projFx.lineStyle(2, 0x5ec8e0, 0.7).strokeCircle(this.px, this.py, 34);
-      this.projFx.fillStyle(0x5ec8e0, 0.10).fillCircle(this.px, this.py, 34);
     }
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:

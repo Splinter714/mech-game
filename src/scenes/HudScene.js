@@ -6,6 +6,7 @@ import { STAGE_COUNT } from '../data/run.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
+import { SPRINT_BIND } from '../input/Controls.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -151,6 +152,19 @@ export default class HudScene extends Phaser.Scene {
       this.skillRefs[r.loc] = drawSkillTile(this, this.skillBar, r, { loc: r.loc, itemId: id });
     }
 
+    // #188: Sprint fuel bar — a simple track+fill bar centred just above the skill-tile row,
+    // showing remaining fuel (drains while active, refills while not) and whether sprint is
+    // currently engaged. Mirrors the tile row's own ammo-bar visual language (a dim track
+    // rectangle behind a colored fill), same as the per-weapon ammo bars in skillTiles.js.
+    const barW = Math.min(260, this.W * 0.32), barH = 8;
+    const barX = this.W / 2 - barW / 2, barY = tiles.length ? tiles[0].y - 22 : this.H - 32;
+    this.sprintBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
+    this.sprintBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
+    this.sprintLabel = this.add.text(barX + barW / 2, barY - 12, '', {
+      fontFamily: 'monospace', fontSize: '10px', color: C.dim,
+    }).setOrigin(0.5, 1);
+    this._sprintBarW = barW;
+
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
     // toolbar (its top edge + a little breathing room); top excludes the hints/objective text
@@ -185,17 +199,15 @@ export default class HudScene extends Phaser.Scene {
     const aiFire = this.registry.get('aiFire') !== false;
     this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
 
-    // Skill tiles: live ammo on each weapon, cooldown on each ability (#).
+    // Skill tiles: live ammo on each weapon (#188: the old per-slot ability cooldown/shield
+    // display is gone along with the ability slot — Sprint's state renders in its own fuel
+    // bar below instead, since it isn't tied to a body location any more).
     const mode = this.registry.get('inputMode') === 'pad' ? 'pad' : 'kbm';
     const weapons = mech.weapons();
-    const abilities = mech.abilities();
-    const cds = this.registry.get('abilityCooldowns') || {};
-    const shieldActive = this.registry.get('shieldActive');
     for (const loc of TILE_ORDER) {
       const id = mech.mounts[loc][0] ?? null;
       const opts = { loc, itemId: id, mode };
       const w = weapons.find((x) => x.location === loc);
-      const ab = abilities.find((x) => x.location === loc);
       if (w) {
         opts.iconAlpha = w.online ? 1 : 0.3;
         if (!w.online) { opts.subtitle = 'OFFLINE'; opts.subtitleColor = C.bad; }
@@ -205,13 +217,13 @@ export default class HudScene extends Phaser.Scene {
           opts.subtitleColor = w.ready ? C.good : C.warn;
           opts.ammoFrac = w.ammo / w.weapon.ammoMax;
         }
-      } else if (ab) {
-        const cd = cds[loc] || 0;
-        if (loc === 'centerTorso' && shieldActive) { opts.subtitle = 'ACTIVE'; opts.subtitleColor = C.accent; }
-        else { opts.subtitle = cd > 0 ? `${(cd / 1000).toFixed(1)}s` : 'READY'; opts.subtitleColor = cd > 0 ? C.warn : C.good; }
       }
       updateSkillTile(this.skillRefs[loc], opts);
     }
+
+    // #188: Sprint fuel bar — fill fraction + color track remaining fuel; the label shows
+    // the bind + ACTIVE/READY/EMPTY state, mirroring the old ability tile's READY/cooldown text.
+    this._updateSprintBar();
 
     for (const loc of LOCATIONS) {
       const p = mech.parts[loc];
@@ -387,6 +399,24 @@ export default class HudScene extends Phaser.Scene {
       const m = toMini(player.x, player.y);
       if (inBox(m)) drawChevron(g, m.x, m.y, player.angle, 6.5, MM.player, 1);
     }
+  }
+
+  // #188: Sprint fuel bar — fill width tracks the live fuel fraction (registry-published by
+  // arena/firing.js's _handleSprint each frame); color/label reflect ACTIVE/READY/EMPTY so
+  // the owner can read at a glance both how much fuel is left and whether it's draining or
+  // regenerating right now.
+  _updateSprintBar() {
+    const fuel = this.registry.get('sprintFuel');
+    if (fuel == null) return;   // no player mech / sprint state published yet
+    const cap = this.registry.get('sprintFuelMax') || 1;
+    const active = !!this.registry.get('sprintActive');
+    const frac = Phaser.Math.Clamp(fuel / cap, 0, 1);
+    this.sprintBarFill.setSize(Math.max(1, this._sprintBarW * frac), this.sprintBarFill.height);
+    const color = active ? C.accent : frac > 0.25 ? C.good : frac > 0 ? C.warn : C.bad;
+    this.sprintBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
+    const bind = this.registry.get('inputMode') === 'pad' ? SPRINT_BIND.pad : SPRINT_BIND.key;
+    const state = active ? 'ACTIVE' : frac <= 0 ? 'EMPTY' : 'READY';
+    this.sprintLabel.setText(`SPRINT (${bind})  ${state}`).setColor(color);
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular

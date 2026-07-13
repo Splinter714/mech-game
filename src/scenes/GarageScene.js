@@ -5,10 +5,9 @@ import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
-import { EQUIPMENT_IDS } from '../data/equipment.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
-import { WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
+import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { MECH_DEPLOYED, RUN_CURRENCY_KEY } from '../data/events.js';
 import { BIOME_IDS } from '../data/biomes.js';
 import { PadEdges, PAD } from '../input/Controls.js';
@@ -22,7 +21,9 @@ import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 import { SFX_DOMAINS } from '../audio/sfxDomains.js';
 import { Audio } from '../audio/index.js';
 
-// The mech lab. The build is five skill slots, shown as a row of square "skill button" tiles
+// The mech lab. The build is four weapon skill slots (#188: the old fifth "ability" slot —
+// centerTorso, jumpJet/bubbleShield — is gone; Sprint is a hardcoded L3/Space toggle, never
+// mounted), shown as a row of square "skill button" tiles
 // (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
 // a tile to edit that slot: the catalog (the SHARED WeaponCardList, formerly also hosted by the
 // now-retired Weapon Lab tab) filters to the items that fit it, each card running its live
@@ -52,11 +53,10 @@ const UI_GAP = 10;
 
 // Each slot's controller button, so pressing a slot's own bind quick-mounts the highlighted
 // catalog item straight into it (#30). Mirrors SKILL_BINDS' pad labels: RT/LT triggers,
-// RB/LB bumpers, L3.
+// RB/LB bumpers. #188: L3 dropped out — it's Sprint's fixed toggle now, not a mountable slot.
 const SLOT_BUTTON = {
   leftArm: PAD.LT, rightArm: PAD.RT,
   leftTorso: PAD.LB, rightTorso: PAD.RB,
-  centerTorso: PAD.L3,
 };
 
 export default class GarageScene extends Phaser.Scene {
@@ -80,7 +80,7 @@ export default class GarageScene extends Phaser.Scene {
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
     this.selected = null;   // the slot currently being edited (filters the catalog)
-    this.catalogIds = [...WEAPON_IDS, ...EQUIPMENT_IDS];
+    this.catalogIds = [...WEAPON_IDS];
     // #65: the permanently-unlocked catalog (meta-progression, persists across runs). Loaded
     // before the WeaponCardList so its isLocked/costOf callbacks see real data from frame one.
     this.unlocked = loadUnlocked();
@@ -150,13 +150,12 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshCurrency();
 
     // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
-    // catalog from the first pad press — the whole unfiltered set (all weapons AND abilities),
-    // never a per-slot filter. D-pad/left-stick up-down browse it with auto-scroll; a slot's own
-    // fire bind (RT/LT/RB/LB, and L3 for the centre-torso ability) ASSIGNS the highlighted item
-    // into that slot, or CLEARS it if the slot already holds exactly that item. There is no
-    // tile-first gate: the tile row still renders (mounts + binds) but is not a pad focus zone.
-    // Focus visuals + the button legend only appear once a pad button is used (`padActive`), so
-    // mouse/keyboard users see no cursor.
+    // catalog from the first pad press — the whole unfiltered weapon set, never a per-slot
+    // filter. D-pad/left-stick up-down browse it with auto-scroll; a slot's own fire bind
+    // (RT/LT/RB/LB) ASSIGNS the highlighted item into that slot, or CLEARS it if the slot
+    // already holds exactly that item. There is no tile-first gate: the tile row still renders
+    // (mounts + binds) but is not a pad focus zone. Focus visuals + the button legend only
+    // appear once a pad button is used (`padActive`), so mouse/keyboard users see no cursor.
     this.padEdges = new PadEdges(this);
     this.inputMode = 'kbm';       // which scheme the tile bind labels reflect (#26)
     this.padActive = false;       // pad in use → show the catalog cursor + legend
@@ -212,9 +211,9 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
   }
 
-  // Catalog-first pad entry: show the whole unfiltered catalog (weapons AND abilities), clear
-  // any mouse slot selection, and put the focus cursor on the first card. Never calls the
-  // slot-filtering _selectSlot — the pad path always browses the full id set.
+  // Catalog-first pad entry: show the whole unfiltered catalog, clear any mouse slot
+  // selection, and put the focus cursor on the first card. Never calls the slot-filtering
+  // _selectSlot — the pad path always browses the full id set.
   _enterCatalogFull() {
     this.selected = null;
     this.list.setIds(this.catalogIds);
@@ -232,10 +231,10 @@ export default class GarageScene extends Phaser.Scene {
 
   // Per-frame: tick the live catalog previews, then handle the gamepad (#70, catalog-first).
   // D-pad/left-stick up-down browse the full catalog with auto-scroll. A slot's own fire bind
-  // (RT/LT/RB/LB, L3 for the ability) ASSIGNS the highlighted item into that slot, or CLEARS
-  // it if the slot already holds exactly that item; a locked item routes to purchase instead.
-  // X/Y cycle chassis, Start deploys, Select cycles tabs (attachPadTabCycle). The first pad
-  // press of a session just wakes the cursor (reveals it at the top of the catalog).
+  // (RT/LT/RB/LB) ASSIGNS the highlighted item into that slot, or CLEARS it if the slot
+  // already holds exactly that item; a locked item routes to purchase instead. X/Y cycle
+  // chassis, Start deploys, Select cycles tabs (attachPadTabCycle). The first pad press of a
+  // session just wakes the cursor (reveals it at the top of the catalog).
   update(time, delta) {
     this.list.update(time, delta);
 
@@ -281,12 +280,11 @@ export default class GarageScene extends Phaser.Scene {
     return s ? dominantDir(s.x, s.y) : null;
   }
 
-  // A slot's fire bind (RT/LT/RB/LB, or L3 for the centre-torso ability): assign the
-  // highlighted catalog item straight into that slot — "highlight the autocannon, pull RT to
-  // put it in the right arm." A bind always mounts/replaces and never removes; re-pressing
-  // a bind while the slot already holds that exact item is a no-op (it stays mounted, #70).
-  // Invalid targets (ability into an arm, weapon into the ability slot, melee outside an arm)
-  // toast via _mountInto; a locked item routes to purchase.
+  // A slot's fire bind (RT/LT/RB/LB): assign the highlighted catalog item straight into
+  // that slot — "highlight the autocannon, pull RT to put it in the right arm." A bind
+  // always mounts/replaces and never removes; re-pressing a bind while the slot already
+  // holds that exact item is a no-op (it stays mounted, #70). An invalid target (melee
+  // outside an arm) toasts via _mountInto; a locked item routes to purchase.
   _slotBind(loc) {
     const id = this.list.focusedId();
     if (id) this._quickMount(loc, id);
@@ -320,8 +318,8 @@ export default class GarageScene extends Phaser.Scene {
     });
   }
 
-  // Swap to the next chassis, carrying the loadout over (all chassis share the six skill
-  // slots, so mounts stay valid).
+  // Swap to the next chassis, carrying the loadout over (all chassis share the same four
+  // weapon skill slots, so mounts stay valid).
   cycleChassis(dir = 1) {
     const i = CHASSIS_IDS.indexOf(this.mech.chassisId);
     const n = CHASSIS_IDS.length;
@@ -338,16 +336,14 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Catalog ids eligible for a slot (occupancy ignored — picking replaces). With no slot
-  // selected, the whole catalog shows.
+  // selected, the whole catalog shows. #188: every catalog id is a weapon now (no more
+  // ability branch) — a slot just filters by weapon-slot / melee-arm legality.
   _eligibleIds(loc) {
     if (!loc) return this.catalogIds;
     return this.catalogIds.filter((id) => {
-      if (isWeapon(id)) {
-        if (!WEAPON_SLOTS.includes(loc)) return false;
-        if (getItem(id).category === 'melee' && !MELEE_LOCATIONS.includes(loc)) return false;
-        return true;
-      }
-      return ABILITY_SLOTS.includes(loc);
+      if (!isWeapon(id) || !WEAPON_SLOTS.includes(loc)) return false;
+      if (getItem(id).category === 'melee' && !MELEE_LOCATIONS.includes(loc)) return false;
+      return true;
     });
   }
 
@@ -589,7 +585,7 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   _legendText() {
-    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   L3 ABILITY   RE-PRESS CLEARS   X/Y CHASSIS   SELECT TABS   START DEPLOY';
+    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   X/Y CHASSIS   SELECT TABS   START DEPLOY';
   }
 
   _drawTile(rect) {

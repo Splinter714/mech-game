@@ -4,20 +4,20 @@
 // further to mount. Upgrade tiers (damage/ammo/cooldown) are a clean follow-up, not built here.
 //
 // **Add a shop item = one entry in SHOP_COSTS.** Anything not listed defaults to
-// DEFAULT_COST so a newly-added weapon/ability is never silently free.
+// DEFAULT_COST so a newly-added weapon is never silently free.
 import { WEAPON_IDS } from './weapons.js';
-import { EQUIPMENT_IDS } from './equipment.js';
 
 // The default roster's starting loadout (rosters.js) — these must ALWAYS be unlocked, or a
-// fresh save couldn't deploy at all. Also the smoke test's baseline build.
-export const STARTING_UNLOCKED = ['autocannon', 'pulseLaser', 'clusterRocket', 'machineGun', 'jumpJet'];
+// fresh save couldn't deploy at all. Also the smoke test's baseline build. #188: jumpJet
+// dropped out (equipment.js removed — Sprint is a hardcoded built-in, never unlocked/bought).
+export const STARTING_UNLOCKED = ['autocannon', 'pulseLaser', 'clusterRocket', 'machineGun'];
 
 // Costs are pitched against the run's stage payout curve (50 + 25*stageIndex per stage,
 // data/run.js) — early/cheap unlocks clear in a run or two, heavier late-game weapons take
 // several. Starting-kit items are listed at 0 for completeness (they're never actually locked).
 export const SHOP_COSTS = {
-  autocannon: 0, pulseLaser: 0, clusterRocket: 0, machineGun: 0, jumpJet: 0,
-  shotgun: 75, streakPod: 90, bubbleShield: 110,
+  autocannon: 0, pulseLaser: 0, clusterRocket: 0, machineGun: 0,
+  shotgun: 75, streakPod: 90,
   flamethrower: 125, napalm: 140, swarmRack: 150,
   // #118: plasmaLance graduated off the shelved list. Priced between shotgun/streakPod and
   // beamLaser — it's a strong 2-slot heavy hitter (~20 sustained dps, long range) but not the
@@ -33,9 +33,9 @@ export function costOf(id) {
   return SHOP_COSTS[id] ?? DEFAULT_COST;
 }
 
-// Every item that CAN be gated by the shop (every weapon + equipment id). Used to validate
-// the starting set / build a fresh locked-by-default set.
-export const SHOPPABLE_IDS = [...WEAPON_IDS, ...EQUIPMENT_IDS];
+// Every item that CAN be gated by the shop (every weapon id). Used to validate the starting
+// set / build a fresh locked-by-default set.
+export const SHOPPABLE_IDS = [...WEAPON_IDS];
 
 // Salvage drops (#65): a small SCRAP pickup dropped at some destroyed enemies' positions,
 // separate from the timed-buff powerups (data/powerups.js) but rolled at the same kill site.

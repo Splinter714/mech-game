@@ -10,6 +10,10 @@
 // stage) for the playback entry point). Each is a single one-shot cue, so every entry has
 // exactly one stage, `play` — WeaponSfxPanel's generic (id, stage) override/bake plumbing
 // (proven generic by #177) doesn't care that these aren't fire/trajectory/impact.
+//
+// #188: sprintOn/sprintOff replaced the old ability-specific dash/shield cues (equipment.js
+// removed) — Sprint is a hardcoded toggle, not a mounted item, so its cues live here in the
+// generic UI domain instead of a bespoke ability-cue system.
 export const SFX_DOMAINS = {
   ui: [
     { id: 'equip', label: 'Equip Weapon', stages: [['play', 'PLAY']] },
@@ -18,6 +22,8 @@ export const SFX_DOMAINS = {
     { id: 'menuNav', label: 'Menu Navigation', stages: [['play', 'PLAY']] },
     { id: 'scrapPickup', label: 'Scrap Pickup', stages: [['play', 'PLAY']] },
     { id: 'powerupPickup', label: 'Powerup Pickup', stages: [['play', 'PLAY']] },
+    { id: 'sprintOn', label: 'Sprint On', stages: [['play', 'PLAY']] },
+    { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
   ],
 };
 

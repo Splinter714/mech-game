@@ -2,13 +2,14 @@
 // operate on a chassis def + a plain `mounts` map (location id → array of item ids),
 // so they're trivially unit-tested and reused by both the Mech model and the garage UI.
 //
-// The build model is six skill slots: each mountable location holds at most ONE item
-// (a weapon or an ability), bound to a fixed fire button. Melee weapons only fit the
-// arms. There is no tonnage and no multi-slot capacity — a location is simply full or
-// empty.
+// The build model is four weapon skill slots: each mountable location holds at most ONE
+// weapon, bound to a fixed fire button. Melee weapons only fit the arms. There is no
+// tonnage and no multi-slot capacity — a location is simply full or empty. #188: the old
+// fifth "ability" slot (centerTorso) is gone — every mountable location is a weapon slot
+// now; Sprint (L3/Space) is a hardcoded built-in, never mounted.
 
 import { getItem, isWeapon } from './items.js';
-import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS, ABILITY_SLOTS } from './anatomy.js';
+import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS } from './anatomy.js';
 
 // Each mountable location is a single skill slot.
 export const SLOTS_PER_LOCATION = 1;
@@ -49,12 +50,9 @@ export function canMount(chassis, mounts, locationId, itemId) {
   if (usedSlots(mounts, locationId) >= SLOTS_PER_LOCATION) {
     return { ok: false, reason: 'slot occupied' };
   }
-  if (isWeapon(itemId)) {
-    if (!WEAPON_SLOTS.includes(locationId)) return { ok: false, reason: 'weapons go in arms/torsos' };
-    if (isMelee(itemId) && !MELEE_LOCATIONS.includes(locationId)) return { ok: false, reason: 'melee only in arms' };
-  } else if (!ABILITY_SLOTS.includes(locationId)) {
-    return { ok: false, reason: 'abilities go in head/centre' };
-  }
+  if (!isWeapon(itemId)) return { ok: false, reason: 'not a weapon' };
+  if (!WEAPON_SLOTS.includes(locationId)) return { ok: false, reason: 'weapons go in arms/torsos' };
+  if (isMelee(itemId) && !MELEE_LOCATIONS.includes(locationId)) return { ok: false, reason: 'melee only in arms' };
   return { ok: true };
 }
 
@@ -69,8 +67,7 @@ export function validateLoadout(chassis, mounts) {
     slotUsage[loc] = { used, cap: SLOTS_PER_LOCATION };
     if (used > SLOTS_PER_LOCATION) errors.push(`${loc} overfilled (${used})`);
     for (const id of mounts[loc] ?? []) {
-      if (isWeapon(id) && !WEAPON_SLOTS.includes(loc)) errors.push(`${id} (weapon) must be in an arm/torso`);
-      if (!isWeapon(id) && !ABILITY_SLOTS.includes(loc)) errors.push(`${id} (ability) must be in head/centre`);
+      if (!isWeapon(id)) errors.push(`${id} is not a weapon`);
       if (isMelee(id) && !MELEE_LOCATIONS.includes(loc)) errors.push(`${id} (melee) must be in an arm`);
     }
   }

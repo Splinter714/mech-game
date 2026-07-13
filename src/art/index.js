@@ -12,7 +12,7 @@ export { buildMechTextures, reskinMech, mechLayout, DESIGN, ART_SCALE, ARM_LOCAT
 export { buildVehicleTextures } from './vehicles/index.js';
 export { HEX_TEX_W, HEX_TEX_H } from './hexArt.js';
 // Shared projectile/beam art — used live by the arena and as still icons by the garage.
-export { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawAbilityFx, projectileKind, itemFxKey } from './projectileArt.js';
+export { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind, itemFxKey } from './projectileArt.js';
 // Weapon-mount silhouette stills — the on-mech hardware, shown as the catalog card icon.
 export { mountIconKey, MOUNT_FRONT_Y } from './mounts/icons.js';
 

@@ -5,10 +5,9 @@
 // (Mech.test.js); the arena/garage drive the model and render it.
 
 import { getChassis } from './chassis/index.js';
-import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
+import { LOCATIONS, MOUNT_LOCATIONS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
-import { getEquipment } from './equipment.js';
 import * as loadout from './loadout.js';
 
 export class Mech {
@@ -17,12 +16,10 @@ export class Mech {
     this._chassis = getChassis(this.chassisId);
     this.name = data.name ?? this._chassis.name;
 
-    // Mounted items per location (array of item ids). Unknown ids — e.g. equipment
+    // Mounted items per location (array of item ids). Unknown ids — e.g. a weapon
     // removed from the catalog since an old build was saved — are dropped so stale
-    // saves load cleanly instead of crashing the renderer. Iterates MOUNT_LOCATIONS
-    // (not LOCATIONS): centerTorso is mountable (the ability slot) even though it has
-    // no armor/structure of its own (#128), so it needs a mounts entry LOCATIONS won't
-    // give it.
+    // saves load cleanly instead of crashing the renderer. Iterates MOUNT_LOCATIONS,
+    // the four weapon slots (#188: centerTorso is no longer one — see anatomy.js).
     this.mounts = {};
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc] = (data.mounts?.[loc] ?? []).filter((id) => getItem(id));
@@ -142,8 +139,7 @@ export class Mech {
 
   // Mount `itemId` into `loc`. An item only ever occupies ONE slot at a time (#84): if it's
   // already mounted somewhere else, mounting it here MOVES it — the old slot is vacated
-  // rather than left with a duplicate. This only ever fires for weapons in practice (abilities
-  // have a single mount point — centerTorso — so they can't already be elsewhere).
+  // rather than left with a duplicate.
   mount(loc, itemId) {
     const res = this.canMount(loc, itemId);
     if (res.ok) {
@@ -164,7 +160,7 @@ export class Mech {
   slotCapacity(loc) { return loadout.slotCapacity(this._chassis, loc); }
   freeSlots(loc) { return loadout.freeSlots(this._chassis, this.mounts, loc); }
   validate() { return loadout.validateLoadout(this._chassis, this.mounts); }
-  // A build is deployable only when it's legal AND every skill slot is filled.
+  // A build is deployable only when it's legal AND every weapon slot is filled.
   isComplete() { return this.validate().ok && MOUNT_LOCATIONS.every((loc) => this.usedSlots(loc) > 0); }
 
   // ── Weapons & ammo ────────────────────────────────────────────────────────
@@ -190,17 +186,6 @@ export class Mech {
 
   onlineWeapons() { return this.weapons().filter((w) => w.online); }
   readyWeapons() { return this.weapons().filter((w) => w.ready); }
-
-  // Activated abilities mounted in the ability slots (head / centre torso), each with
-  // its bound location so the arena can map a button press to it.
-  abilities() {
-    const out = [];
-    for (const loc of ABILITY_SLOTS) {
-      const id = this.mounts[loc][0];
-      if (id && !isWeapon(id)) out.push({ location: loc, id, equip: getEquipment(id) });
-    }
-    return out;
-  }
 
   // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons).
   consumeAmmo(loc, index, n = 1) {

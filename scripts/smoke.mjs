@@ -66,9 +66,9 @@ try {
     // ...and the head is not a skill slot at all (#31), so it rejects a weapon.
     const headRejectsWeapon = !mech.mount('head', 'pulseLaser').ok;
     const dollBuilt = sc.doll.list.length > 0;
-    // The default roster leaves centreTorso (the ability slot) empty; fill it with an ability
-    // via the same catalog path so the build is COMPLETE — deploy() no-ops on an incomplete mech.
-    if (!mech.mounts.centerTorso.length) { sc._selectSlot('centerTorso'); sc._pickItem('jumpJet'); }
+    // #188: centerTorso is no longer mountable at all — the default roster's four weapon
+    // slots are the WHOLE build now, so no fifth "ability" slot needs filling for the mech
+    // to be COMPLETE (deploy() no-ops on an incomplete mech).
 
     // #65: shop economy. 'shotgun' isn't in the starting-unlocked set, so a fresh save must
     // reject mounting it — clicking a locked card attempts a purchase instead, and with zero
