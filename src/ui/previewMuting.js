@@ -11,6 +11,32 @@ export function isAudible(key, mutedSet, soloedSet) {
   return !mutedSet.has(key);
 }
 
+// #171 (re-fix): whether a whole STAGE should play at all, given the current mute/solo state.
+// applyPreviewMuting only zeroes the `gain` of PROCEDURAL layers — but fire()/trajectory()/
+// impact()/uiCue() all check for a file override or a shipped bake FIRST (sfx.js's
+// playOverride/playOverrideLoop) and, when one exists, play that buffer and return WITHOUT ever
+// touching the procedural layers' gain. That's why mute/solo looked broken again after the
+// original #171 fix: once a weapon's stage has a live override or a baked sound (increasingly
+// the common case — plasmaLance/pulseLaser/clusterRocket/deathExplosionMassive already ship
+// baked fire cues), toggling Mute/Solo on that stage's mixer row rebuilt the panel and replayed
+// the stage, but the replayed sound was the untouched buffer — gain-zeroing a procedural layer
+// nobody was reading had zero audible effect.
+//
+// The fix: before playing a stage at all, check whether ANY of its components are audible under
+// the current mute/solo state. If none are (every component muted, or something in a DIFFERENT
+// stage is soloed), skip the Audio.* call entirely — silencing the stage outright works
+// regardless of whether what would have played was procedural, a live override, or a baked file,
+// since it never depends on being able to reach into the buffer's own gain node.
+//
+// A stage with no components at all (e.g. a non-weapon domain's stage with no procedural layers
+// defined) is always treated as audible — there's nothing to mute in the mixer strip for it, so
+// nothing should suppress it either.
+export function isStageAudible(stage, components, mutedSet, soloedSet) {
+  const stageComponents = components.filter((c) => c.stage === stage);
+  if (!stageComponents.length) return true;
+  return stageComponents.some(({ stage: s, li }) => isAudible(`${s}:${li}`, mutedSet, soloedSet));
+}
+
 // Temporarily zero the real `gain` of every inaudible component among `stages` (the stage(s)
 // about to play), synchronously, then return a closure that restores every saved value. This
 // MUST bracket a single Audio.fire/trajectory/impact call: the cue reads each layer's `gain`
