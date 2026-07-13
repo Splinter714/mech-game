@@ -206,12 +206,15 @@ export const CONVERGE_DIST = 450;     // px: convergence range when nothing is b
 // Sanity-checked against the actual world-space muzzle geometry (part.x × ARENA_MECH_SCALE ×
 // ART_SCALE — see locomotion `_muzzle`): the widest muzzles are the arms, whose LATERAL
 // offset r ≈ 17px (light) … 33px (heavy) sit forward f ≈ 12–19px of the mech centre, so the
-// worst-case toe-in is atan(r / (dist − f)). At this 200px floor that peaks at ~10° (heavy/
-// medium arms) down to ~5° (light) — a modest inward cant, versus ~2–4° at the natural 450
-// range and the ~45–90° near-crossing it replaces at true point-blank. Raising it toes in
-// less (more parallel), lowering it toes in more; 200 keeps convergence active through the
+// worst-case toe-in is atan(r / (dist − f)). The tested worst case (heavy arm, r ≈ 32.7px,
+// f ≈ 12.1px — see convergence.test.js) needs dist ≳ 166px to stay under the test's 12° cap,
+// so 170 is the lowest round floor with headroom: it peaks at ~11.7° (heavy arm) down to
+// ~6° (light) — a modest inward cant, versus ~2–4° at the natural 450 range and the ~45–90°
+// near-crossing it replaces at true point-blank. Follow-up (2026-07-12): lowered from 200 to
+// 170 per playtest feedback that the floor was a bit too conservative. Raising it toes in
+// less (more parallel), lowering it toes in more; 170 keeps convergence active through the
 // common mid-range engagement while killing the point-blank cross-eye.
-export const MIN_CONVERGE_DIST = 200;
+export const MIN_CONVERGE_DIST = 170;
 
 // Fire angle for one direct-fire muzzle at world (mx, my): aim it at a convergence point on
 // the turret line `dist` ahead of the mech at (px, py), with `dist` clamped to `minDist` so
