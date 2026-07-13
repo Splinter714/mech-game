@@ -764,9 +764,12 @@ export class WeaponSfxPanel {
   // real trimmed file into the repo. Stages still procedural keep emitting their synthesis JSON,
   // and a weapon with no overrides copies exactly as before (see sfxCopyText.js). Dual-output
   // (clipboard + console) and the copied/failed toast are unchanged.
+  // #183: pass this.stages through — the target's REAL registered stage list (weapon
+  // fire/trajectory/impact by default, or whatever setTarget supplied for a non-weapon domain
+  // like a single-stage #178 UI cue) — so the export can't fabricate stages that don't exist.
   _copy() {
     const params = Audio.getSfxParams(this.weaponId);
-    const text = buildSfxCopyText(this.weaponId, params);
+    const text = buildSfxCopyText(this.weaponId, params, this.stages);
     console.log(`[SFX TUNER] ${this.weaponId}:\n` + text);
     copyToClipboard(text).then((ok) => {
       this._toast(ok ? 'copied! (also in console)' : 'copy failed — see console');

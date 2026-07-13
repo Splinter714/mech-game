@@ -214,4 +214,60 @@ describe('buildSfxCopyText (#170 per-stage copy)', () => {
     const out = buildSfxCopyText('shotgun', PARAMS());
     expect(out).not.toContain('volume:');
   });
+
+  // #183: single-stage (non-weapon) sounds — the #178 UI/pickup cues (menuNav, equip, deploy,
+  // scrapPickup, powerupPickup) each register ONE real stage, `play`, via setTarget(id, {
+  // stages: [['play', 'PLAY']] }) (src/audio/sfxDomains.js). `Audio.getSfxParams` falls back to
+  // the unrelated weapon-shaped FALLBACK_SFX ({ fire, impact }) for any id with no DEFAULT_SFX
+  // entry — which is exactly what menuNav's `params` looks like in practice — so buildSfxCopyText
+  // must be told the REAL stage list and must not fabricate fire/trajectory/impact from it.
+  const UI_STAGES = [['play', 'PLAY']];
+  // The shape Audio.getSfxParams('menuNav') actually returns today (FALLBACK_SFX) — no `play`
+  // key at all, since menuNav has no DEFAULT_SFX entry of its own.
+  const FALLBACK_SHAPED_PARAMS = () => ({
+    fire: [{ kind: 'noise', type: 'highpass', freq: 1600, dur: 0.11, gain: 0.26 }],
+    impact: [{ kind: 'noise', type: 'highpass', freq: 2000, dur: 0.05, gain: 0.18 }],
+  });
+
+  it('single-stage UI sound with no override: exports only its own stage, no fabricated fire/impact', () => {
+    const out = buildSfxCopyText('menuNav', FALLBACK_SHAPED_PARAMS(), UI_STAGES);
+    expect(out).not.toContain('fire');
+    expect(out).not.toContain('impact');
+    expect(out).not.toContain('highpass');
+    // No `play` procedural data exists either (menuNav's synthesis is a hardcoded cue, not a
+    // tunable DEFAULT_SFX entry) — the honest result is an empty params object, not borrowed
+    // weapon defaults.
+    expect(out).toBe('  menuNav: {},');
+  });
+
+  it('single-stage UI sound WITH a real `play` procedural stage: exports exactly that stage', () => {
+    const params = { play: [{ kind: 'tone', type: 'sine', freq: 900, dur: 0.035, gain: 0.05 }] };
+    const out = buildSfxCopyText('menuNav', params, UI_STAGES);
+    const expected = `  menuNav: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
+    expect(out).toBe(expected);
+    expect(out).not.toContain('fire');
+    expect(out).not.toContain('impact');
+  });
+
+  it('single-stage UI sound with a FILE override on `play`: emits the FILE block, not fake fire/impact', async () => {
+    await storeOverride('menuNav', 'play', fakeFile('blip.wav', 'BLIP'));
+    await setStart('menuNav', 'play', 10);
+    await setTrim('menuNav', 'play', 40);
+
+    const out = buildSfxCopyText('menuNav', FALLBACK_SHAPED_PARAMS(), UI_STAGES);
+
+    expect(out).toContain('[play] FILE OVERRIDE');
+    expect(out).toContain('blip.wav');
+    expect(out).toContain('menuNav');
+    expect(out).not.toContain('[fire]');
+    expect(out).not.toContain('[impact]');
+    expect(out).not.toContain('highpass');
+  });
+
+  it('weapon copy output is completely unchanged when no stageList is passed (back-compat default)', () => {
+    const params = PARAMS();
+    const out = buildSfxCopyText('autocannon', params);
+    const expected = `  autocannon: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
+    expect(out).toBe(expected);
+  });
 });
