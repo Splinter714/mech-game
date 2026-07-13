@@ -10,10 +10,10 @@
 // Fuel hitting empty forces sprint off automatically, and it can't be toggled back on until
 // at least some fuel has regenerated (no minimum threshold beyond "more than zero").
 
-// Speed multiplier while sprinting. Overclock (the timed powerup, #60) uses moveMult: 1.35
-// as its "noticeable but not absurd" reference point for a RARE buff; Sprint can afford to
-// be more dramatic since it's an always-available core mechanic the player pays for with a
-// depleting resource rather than a timed pickup, not a stacked bonus on top of one.
+// Speed multiplier while sprinting. #189: Overclock (the timed powerup, #60) no longer has
+// its own moveMult — it force-activates Sprint instead, so this is now the SOLE speed-boost
+// value in the game, whether Sprint is on because the player pressed the toggle or because
+// Overclock is holding it on for its duration (see arena/firing.js `_handleSprint`).
 export const SPRINT_SPEED_MULT = 1.5;
 
 // Fuel capacity, in seconds of continuous sprint at the drain rate below (1 fuel unit = 1

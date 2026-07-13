@@ -159,22 +159,19 @@ export const LocomotionMixin = {
   _drive(intent, dt) {
     const mv = this.mech.movement;
     const legF = this.mech.legFactor();
-    // #60 Overclock: boost movement max speed + turret slew for the duration (identity when idle).
-    const mods = this._buffMods?.() ?? {};
-    const moveMult = mods.moveMult ?? 1;
-    const slewMult = mods.slewMult ?? 1;
 
     // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
     const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
     // #41: the terrain UNDER the mech scales its top speed — a shallow river or forest bogs it
     // down (rubble mildly), open grass is normal.
     const terrainScale = this._speedFactorAt(this.px, this.py);
-    // #188: Sprint (the hardcoded L3/Space toggle) boosts max speed the same way Overclock's
-    // moveMult does, just from its own always-available fuel-gated state instead of a timed
-    // powerup — the two stack multiplicatively if a player somehow has both at once.
+    // #188/#189: Sprint (the hardcoded L3/Space toggle) is the ONLY movement-speed buff now —
+    // Overclock no longer applies its own moveMult; instead it force-activates Sprint itself
+    // (see arena/firing.js `_handleSprint`), so this reads as the single source of truth for
+    // "is the mech currently sprinting," whoever caused it.
     const sprintMult = this.sprint?.active ? SPRINT_SPEED_MULT : 1;
-    // #60 Overclock boosts max speed via moveMult; #3 weight inertia drives the accel curve.
-    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * moveMult * sprintMult;
+    // #3 weight inertia drives the accel curve.
+    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * sprintMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
     // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that
@@ -270,9 +267,11 @@ export const LocomotionMixin = {
       this.aimY = this.py + Math.sin(intent.aim.angle) * 800;
     }
     const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
+    // #189: turret slew no longer has a buff multiplier — Overclock's old slewMult was
+    // removed along with moveMult when it was redesigned to force-activate Sprint instead.
     this.turretAngle = INSTANT_TURNING
       ? aim
-      : rotateToward(this.turretAngle, aim, mv.turretSlew * slewMult, dt);
+      : rotateToward(this.turretAngle, aim, mv.turretSlew, dt);
     this.registry.set('inputMode', intent.mode);
   },
 

@@ -36,12 +36,15 @@ export const POWERUPS = {
     id: 'overdrive', label: 'OVERDRIVE', color: 0xe2533a, weight: 1,
     duration: 9, effect: 'fireRate', cycleMult: 0.5,
   },
-  // 3) Combined faster turret slew + movement-speed boost for the duration. (#187: Overclock's
-  //    redesign was pulled out of this issue's scope — split into a future issue blocked on the
-  //    unbuilt Sprint mechanic. Left byte-for-byte as it was before this pass.)
+  // 3) #189: redesigned on top of the Sprint mechanic (#188) — instead of a flat movement/
+  //    slew multiplier, Overclock now force-activates Sprint (fuel-free) for its whole
+  //    duration. No numeric magnitude fields: the "how much faster" question is answered by
+  //    Sprint's own SPRINT_SPEED_MULT (src/data/sprint.js), not a separate multiplier here.
+  //    See `buffModifiers` below (`overclockActive`) and the arena mixin's `_handleSprint`
+  //    (scenes/arena/firing.js) for how the force/handoff state machine works.
   overclock: {
     id: 'overclock', label: 'OVERCLOCK', color: 0x7bd17b, weight: 1,
-    duration: 10, effect: 'overclock', moveMult: 1.35, slewMult: 1.5,
+    duration: 10, effect: 'overclock',
   },
   // 4) INSTANT whole-mech proportional armor repair (no timer). Restores a fraction of EACH
   //    damaged location's MISSING armor, so every hurt location gets some back scaled to what
@@ -164,17 +167,18 @@ export function durationMs(id) {
 // is NOT part of this — it's a damage-pool buff, tracked/applied separately (see
 // `absorbShieldDamage` below and the arena mixin's parallel `shieldPool` tracking). The
 // returned shape is the single contract between this data layer and the scene:
-//   freeAmmo  — true ⇒ don't spend ammo (Overcharge)
-//   cycleMult — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
-//   moveMult  — multiplier on movement max speed (Overclock)
-//   slewMult  — multiplier on turret slew rate (Overclock)
-// Everything defaults to the identity (no buff) so callers can multiply unconditionally.
+//   freeAmmo        — true ⇒ don't spend ammo (Overcharge)
+//   cycleMult       — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
+//   overclockActive — true ⇒ Overclock is live (#189): the arena's Sprint handling
+//                     (scenes/arena/firing.js `_handleSprint`) forces Sprint on, fuel-free,
+//                     for as long as this stays true. No magnitude here — Sprint's own
+//                     SPRINT_SPEED_MULT (data/sprint.js) supplies the actual speed boost.
+// Everything defaults to the identity (no buff) so callers can multiply/branch unconditionally.
 export function buffModifiers(active) {
   const mods = {
     freeAmmo: false,
     cycleMult: 1,
-    moveMult: 1,
-    slewMult: 1,
+    overclockActive: false,
   };
   for (const id of Object.keys(active || {})) {
     if (!(active[id] > 0)) continue;
@@ -183,10 +187,7 @@ export function buffModifiers(active) {
     switch (p.effect) {
       case 'freeAmmo': mods.freeAmmo = true; break;
       case 'fireRate': mods.cycleMult *= p.cycleMult ?? 1; break;
-      case 'overclock':
-        mods.moveMult *= p.moveMult ?? 1;
-        mods.slewMult *= p.slewMult ?? 1;
-        break;
+      case 'overclock': mods.overclockActive = true; break;
       default: break;
     }
   }
