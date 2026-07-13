@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { isAudible, applyPreviewMuting } from './previewMuting.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { isAudible, isStageAudible, applyPreviewMuting } from './previewMuting.js';
 import { AudioEngine } from '../audio/AudioEngine.js';
 import { getWeapon } from '../data/weapons.js';
+import { _setBakedBufferForTest, _resetForTest as _resetBakedForTest } from '../audio/bakedSfx.js';
 
 // #171: the SFX tuner's mixer mute/solo buttons "did nothing." Root cause was NOT the muting
 // mechanism (it works — proven below) but that toggling them never replayed a preview, so the
@@ -55,6 +56,82 @@ describe('previewMuting (#171) — audibility rule', () => {
     expect(isAudible('fire:0', new Set(), soloed)).toBe(false);
     // a soloed-but-also-muted component still sounds (solo wins for the soloed key)
     expect(isAudible('fire:2', new Set(['fire:2']), soloed)).toBe(true);
+  });
+});
+
+describe('previewMuting (#171) — isStageAudible (a stage that bypasses procedural gain)', () => {
+  it('a stage is audible when nothing mutes it out', () => {
+    const comps = [{ stage: 'fire', li: 0, layer: { gain: 1 } }];
+    expect(isStageAudible('fire', comps, new Set(), new Set())).toBe(true);
+  });
+  it('a stage with every one of its own components muted is NOT audible', () => {
+    const comps = [
+      { stage: 'fire', li: 0, layer: { gain: 1 } },
+      { stage: 'fire', li: 1, layer: { gain: 1 } },
+    ];
+    expect(isStageAudible('fire', comps, new Set(['fire:0', 'fire:1']), new Set())).toBe(false);
+  });
+  it('a stage with at least one un-muted component IS audible', () => {
+    const comps = [
+      { stage: 'fire', li: 0, layer: { gain: 1 } },
+      { stage: 'fire', li: 1, layer: { gain: 1 } },
+    ];
+    expect(isStageAudible('fire', comps, new Set(['fire:0']), new Set())).toBe(true);
+  });
+  it('soloing a component in a DIFFERENT stage silences this whole stage', () => {
+    const comps = [
+      { stage: 'fire', li: 0, layer: { gain: 1 } },
+      { stage: 'impact', li: 0, layer: { gain: 1 } },
+    ];
+    expect(isStageAudible('fire', comps, new Set(), new Set(['impact:0']))).toBe(false);
+    expect(isStageAudible('impact', comps, new Set(), new Set(['impact:0']))).toBe(true);
+  });
+  it('a stage with no components of its own is always treated as audible', () => {
+    const comps = [{ stage: 'impact', li: 0, layer: { gain: 1 } }];
+    expect(isStageAudible('fire', comps, new Set(), new Set())).toBe(true);
+  });
+});
+
+describe('previewMuting (#171 re-fix) — mute/solo must silence a stage even when playback bypasses procedural layers entirely (a live override or a shipped bake)', () => {
+  let eng, ctx;
+  beforeEach(() => { eng = new AudioEngine(); ctx = mockContext(); eng.init(ctx); });
+  afterEach(() => { _resetBakedForTest(); });
+
+  // plasmaLance's `fire` stage ships a real baked sound (#175) — sfx.js's fire() checks
+  // playOverride/getBaked FIRST and, when a bake is decoded, plays that buffer and returns
+  // WITHOUT ever touching plasmaLance's procedural fire layers. This is exactly the scenario
+  // that made the panel's original #171 fix (which only zeroed procedural `layer.gain`) look
+  // broken again: muting/soloing a baked stage's mixer row had zero audible effect. The panel
+  // must skip the Audio.fire() call outright — proven here by asserting no buffer-source voice
+  // gets scheduled at all when the (baked) stage is muted out.
+  it('muting out a BAKED stage prevents the buffer from ever being scheduled', () => {
+    const fakeBuffer = { duration: 1, numberOfChannels: 1, sampleRate: 48000 };
+    _setBakedBufferForTest('plasmaLance', 'fire', fakeBuffer);
+
+    const comps = componentsFor(eng, 'plasmaLance'); // procedural fire layer(s), now bypassed
+    const before = ctx._voices();
+
+    // Un-muted: the baked buffer DOES play (a createBufferSource voice is scheduled).
+    if (isStageAudible('fire', comps, new Set(), new Set())) eng.fire({ id: 'plasmaLance' });
+    expect(ctx._voices() - before).toBeGreaterThan(0);
+
+    // Mute every component belonging to plasmaLance's fire stage — the stage must not play at
+    // all now, i.e. the panel must skip calling Audio.fire() entirely.
+    const muted = new Set(comps.filter((c) => c.stage === 'fire').map((c) => `${c.stage}:${c.li}`));
+    const b2 = ctx._voices();
+    if (isStageAudible('fire', comps, muted, new Set())) eng.fire({ id: 'plasmaLance' });
+    expect(ctx._voices() - b2).toBe(0);   // no voice scheduled — the mute genuinely silenced it
+  });
+
+  it('soloing a DIFFERENT stage silences a baked stage the same way', () => {
+    const fakeBuffer = { duration: 1, numberOfChannels: 1, sampleRate: 48000 };
+    _setBakedBufferForTest('plasmaLance', 'fire', fakeBuffer);
+    const comps = componentsFor(eng, 'plasmaLance');
+
+    const soloedElsewhere = new Set(['impact:0']);
+    const before = ctx._voices();
+    if (isStageAudible('fire', comps, new Set(), soloedElsewhere)) eng.fire({ id: 'plasmaLance' });
+    expect(ctx._voices() - before).toBe(0);
   });
 });
 

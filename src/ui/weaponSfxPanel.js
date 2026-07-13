@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { Slider } from './slider.js';
-import { isAudible, applyPreviewMuting } from './previewMuting.js';
+import { isAudible, isStageAudible, applyPreviewMuting } from './previewMuting.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
@@ -618,6 +618,15 @@ export class WeaponSfxPanel {
     return applyPreviewMuting(this._components, stages, this._mutedSet, this._soloedSet);
   }
 
+  // #171 (re-fix): whether `stage` should play at all right now — see previewMuting.isStageAudible.
+  // Needed because gain-zeroing (_applyPreviewMuting) only ever affects PROCEDURAL layers, but a
+  // stage with a live override or a shipped bake bypasses those layers entirely (sfx.js's
+  // playOverride/playOverrideLoop). Muting/soloing that stage out has to skip the Audio.* call
+  // outright to have any audible effect at all.
+  _isStageAudible(stage) {
+    return isStageAudible(stage, this._components, this._mutedSet, this._soloedSet);
+  }
+
   // The compact DAW-mixer strip at the top of the panel (#131) — one row per component
   // (stage + layer) with a compact gain slider (the ONLY gain slider — #139 removed the
   // redundant per-section one further down), plus Mute/Solo. Built from `this._components`,
@@ -646,10 +655,14 @@ export class WeaponSfxPanel {
       const mx = ox + sliderW + gap;
       const mute = this._toggleBtn(mx, y - 3, muteW, MIX_ROW_H - 4, 'M', this._mutedSet.has(key), UI.mute, UI.muteText, () => this._toggleMute(key));
       const solo = this._toggleBtn(mx + muteW + gap, y - 3, soloW, MIX_ROW_H - 4, 'S', this._soloedSet.has(key), UI.solo, UI.soloText, () => this._toggleSolo(key));
-      // #150: this component's stage has a real-file override playing instead — its gain/
-      // mute/solo controls don't touch anything audible any more.
+      // #150/#171: this component's stage has a real-file override playing instead of its
+      // procedural layer — the GAIN slider is dead weight (Audio.setSfxParam only ever touches
+      // the procedural layer, which nothing reads while an override is active), so it stays
+      // greyed out. Mute/Solo are different: _playStage now skips the Audio.* call outright for
+      // a fully-inaudible stage (see isStageAudible), so they genuinely silence an overridden
+      // stage's preview too — leave them fully interactive.
       if (hasOverride(this.weaponId, stage)) {
-        this._greyOut([slider.container, slider.hit, mute.rect, mute.text, solo.rect, solo.text]);
+        this._greyOut([slider.container, slider.hit]);
       }
       y += MIX_ROW_H;
     }
@@ -791,6 +804,10 @@ export class WeaponSfxPanel {
   // stage) instead, which resolves the SAME override/bake-then-procedural precedence keyed
   // by whatever id/stage this panel is currently targeting (see src/audio/sfxDomains.js).
   _playStage(stage) {
+    // #171 (re-fix): a stage muted-out entirely (or silenced by a solo elsewhere) must not play
+    // AT ALL — gain-zeroing below only reaches procedural layers, which a live override or baked
+    // sound for this stage bypasses completely (see isStageAudible's doc comment).
+    if (!this._isStageAudible(stage)) return;
     const restore = this._applyPreviewMuting([stage]);
     if (stage === 'fire') Audio.fire({ id: this.weaponId });
     else if (stage === 'trajectory') Audio.trajectory(this.weaponId);
