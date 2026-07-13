@@ -698,17 +698,17 @@ export class WeaponSfxPanel {
   // inaudible layers' `gain` in place, the cue reads those gains at schedule time (playLayers →
   // tone/noise bake gain then), and the restore closure puts the real values back immediately —
   // so the STORED params are never left mutated (copy/reset/persist always see the true gains).
-  // #177: only the three weapon-domain stage names have a dedicated Audio.* playback entry
-  // point today (Audio.fire/trajectory/impact are weapon-shaped calls, not generic-by-id) — a
-  // non-weapon stage (e.g. 'nav') has nothing to route a live preview through yet, so it's a
-  // safe no-op here rather than misrouting into one of the three real methods (which would
-  // look up the WRONG stage's override). Wiring an actual generic preview call is #178's job;
-  // this just avoids a silent bug when a non-weapon target is passed in.
+  // The three weapon-domain stage names have a dedicated Audio.* playback entry point
+  // (Audio.fire/trajectory/impact are weapon-shaped calls, not generic-by-id); any other
+  // stage (e.g. a non-weapon domain's 'play') routes through #178's generic Audio.ui(id,
+  // stage) instead, which resolves the SAME override/bake-then-procedural precedence keyed
+  // by whatever id/stage this panel is currently targeting (see src/audio/sfxDomains.js).
   _playStage(stage) {
     const restore = this._applyPreviewMuting([stage]);
     if (stage === 'fire') Audio.fire({ id: this.weaponId });
     else if (stage === 'trajectory') Audio.trajectory(this.weaponId);
     else if (stage === 'impact') Audio.impact(this.weaponId);
+    else Audio.ui(this.weaponId, stage);
     restore();
   }
 

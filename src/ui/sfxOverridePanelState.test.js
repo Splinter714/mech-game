@@ -136,13 +136,29 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     expect(getOverrideRowState('autocannon', stage).active).toBe(false);
   });
 
-  it('exposes a minimal non-weapon sound-domain registry that round-trips through the same helpers', () => {
+  it('exposes the #178 UI/pickup sound-domain registry that round-trips through the same helpers', () => {
     expect(Array.isArray(SFX_DOMAINS.ui)).toBe(true);
-    const entry = SFX_DOMAINS.ui.find((e) => e.id === 'ui_test');
-    expect(entry).toBeTruthy();
-    expect(entry.stages).toEqual([['nav', 'NAV (menu navigation)']]);
-    expect(ALL_SFX_DOMAIN_ENTRIES).toContain(entry);
-    expect(findSfxDomainEntry('ui_test')).toBe(entry);
+    const expectedIds = ['equip', 'unequip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup'];
+    for (const id of expectedIds) {
+      const entry = SFX_DOMAINS.ui.find((e) => e.id === id);
+      expect(entry).toBeTruthy();
+      expect(entry.stages).toEqual([['play', 'PLAY']]);
+      expect(ALL_SFX_DOMAIN_ENTRIES).toContain(entry);
+      expect(findSfxDomainEntry(id)).toBe(entry);
+    }
     expect(findSfxDomainEntry('does_not_exist')).toBeNull();
+  });
+
+  it('resolves a real UI domain (id, stage) pair through the override/bake lookup path exactly like a weapon stage', async () => {
+    const entry = findSfxDomainEntry('equip');
+    const [stage] = entry.stages[0];
+    expect(getOverrideRowState(entry.id, stage).active).toBe(false);
+    await storeOverride(entry.id, stage, fakeFile('clunk.wav', 'CLUNK'));
+    const state = getOverrideRowState(entry.id, stage);
+    expect(state.active).toBe(true);
+    expect(state.statusText).toContain('clunk.wav');
+    // A different domain entry's same stage name stays untouched — proves the lookup keys on
+    // the full (id, stage) pair, not just the stage.
+    expect(getOverrideRowState('deploy', stage).active).toBe(false);
   });
 });

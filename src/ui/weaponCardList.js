@@ -135,6 +135,7 @@ export class WeaponCardList {
 
   moveFocus(delta) {
     if (!this.cards.length) return;
+    Audio.ui('menuNav');   // #178: short quiet blip — pad/keyboard catalog browsing
     this.setFocus(this._focus < 0 ? 0 : stepIndex(this._focus, delta, this.cards.length, { wrap: false }));
   }
 
@@ -204,7 +205,7 @@ export class WeaponCardList {
 
     if (this.onSelect) {
       panel.setInteractive({ useHandCursor: true });
-      panel.on('pointerover', () => { if (this.selectedId !== id) panel.setFillStyle(UI.panelSel); });
+      panel.on('pointerover', () => { if (this.selectedId !== id) { panel.setFillStyle(UI.panelSel); Audio.ui('menuNav'); } });
       panel.on('pointerout', () => this._paintSelection(card));
       panel.on('pointerdown', () => this.onSelect(id));
     }

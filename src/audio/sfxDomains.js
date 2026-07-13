@@ -4,15 +4,20 @@
 // src/ui/weaponSfxPanel.js). `stages` is the same `[[key, sectionLabel], ...]` shape the panel
 // already uses for the weapon fire/trajectory/impact list.
 //
-// This does NOT wire up any real UI sound events yet (equip/menu-nav/deploy/etc. — that's
-// #178's job, once real sound cues for those moments exist). It only proves the panel/storage
-// plumbing is generic: a domain entry here can be handed to WeaponSfxPanel#setTarget exactly
-// like a weapon id, and its (id, stage) overrides round-trip through sfxOverrides.js/
-// bakedSfx.js the same way. `ui_test` is a placeholder proving id — not a real sound, not
-// referenced by any scene.
+// #178: real UI/pickup sound cues, wired into the actual moments (GarageScene's equip/
+// unequip/deploy, tabBar.js + weaponCardList.js's menu navigation, and the arena's SCRAP/
+// POWERUP pickups — see src/audio/sfx.js's UI_CUES for the procedural stubs and Audio.ui(id,
+// stage) for the playback entry point). Each is a single one-shot cue, so every entry has
+// exactly one stage, `play` — WeaponSfxPanel's generic (id, stage) override/bake plumbing
+// (proven generic by #177) doesn't care that these aren't fire/trajectory/impact.
 export const SFX_DOMAINS = {
   ui: [
-    { id: 'ui_test', label: 'UI TEST (placeholder — #178 will add real UI cues)', stages: [['nav', 'NAV (menu navigation)']] },
+    { id: 'equip', label: 'Equip Weapon', stages: [['play', 'PLAY']] },
+    { id: 'unequip', label: 'Unequip Weapon', stages: [['play', 'PLAY']] },
+    { id: 'deploy', label: 'Deploy', stages: [['play', 'PLAY']] },
+    { id: 'menuNav', label: 'Menu Navigation', stages: [['play', 'PLAY']] },
+    { id: 'scrapPickup', label: 'Scrap Pickup', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickup', label: 'Powerup Pickup', stages: [['play', 'PLAY']] },
   ],
 };
 
