@@ -30,9 +30,9 @@ describe('powerup catalog', () => {
     expect(POWERUPS.shield.shieldCap).toBeGreaterThan(0);
   });
 
-  it('Overclock keeps its movement boost but no longer carries a slew multiplier', () => {
+  it('Overclock is untouched by #187 (its redesign was pulled out of scope) — still boosts both move and slew', () => {
     expect(POWERUPS.overclock.moveMult).toBe(1.35);
-    expect(POWERUPS.overclock.slewMult).toBeUndefined();
+    expect(POWERUPS.overclock.slewMult).toBe(1.5);
   });
 });
 
@@ -53,7 +53,7 @@ describe('pickPowerupType — weighted selection', () => {
 describe('buffModifiers — collapsing the active overlay', () => {
   it('returns the identity when nothing is active', () => {
     const m = buffModifiers({});
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1 });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1, slewMult: 1 });
   });
 
   it('ignores expired (non-positive remaining) entries', () => {
@@ -67,7 +67,7 @@ describe('buffModifiers — collapsing the active overlay', () => {
     expect(buffModifiers({ overdrive: 500 }).cycleMult).toBe(POWERUPS.overdrive.cycleMult);
     const oc = buffModifiers({ overclock: 500 });
     expect(oc.moveMult).toBe(POWERUPS.overclock.moveMult);
-    expect(oc.slewMult).toBeUndefined();
+    expect(oc.slewMult).toBe(POWERUPS.overclock.slewMult);
   });
 
   it('stacks DIFFERENT types simultaneously (one-per-type overlay)', () => {
@@ -79,7 +79,7 @@ describe('buffModifiers — collapsing the active overlay', () => {
 
   it('Shield never contributes to buffModifiers even when "active" would include it — it is tracked out-of-band', () => {
     const m = buffModifiers({ shield: 500 });
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1 });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1, slewMult: 1 });
   });
 });
 

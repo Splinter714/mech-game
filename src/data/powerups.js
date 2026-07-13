@@ -36,12 +36,12 @@ export const POWERUPS = {
     id: 'overdrive', label: 'OVERDRIVE', color: 0xe2533a, weight: 1,
     duration: 9, effect: 'fireRate', cycleMult: 0.5,
   },
-  // 3) Movement-speed boost for the duration. #187 (owner design pass): used to also boost
-  //    turret slew (`slewMult`), but instant turret turning (#154) made a slew-rate buff
-  //    meaningless — trimmed to speed-only.
+  // 3) Combined faster turret slew + movement-speed boost for the duration. (#187: Overclock's
+  //    redesign was pulled out of this issue's scope — split into a future issue blocked on the
+  //    unbuilt Sprint mechanic. Left byte-for-byte as it was before this pass.)
   overclock: {
     id: 'overclock', label: 'OVERCLOCK', color: 0x7bd17b, weight: 1,
-    duration: 10, effect: 'overclock', moveMult: 1.35,
+    duration: 10, effect: 'overclock', moveMult: 1.35, slewMult: 1.5,
   },
   // 4) INSTANT whole-mech proportional armor repair (no timer). Restores a fraction of EACH
   //    damaged location's MISSING armor, so every hurt location gets some back scaled to what
@@ -158,20 +158,22 @@ export function durationMs(id) {
 
 // ── Buff overlay math ────────────────────────────────────────────────────────────────────
 // Collapse the ACTIVE set of timed buffs into the plain multiplier/flag object the arena's
-// firing/movement code reads each frame. `active` is a map: type id → remaining ms (only
-// positive-remaining entries should be present; the arena prunes expired ones). Shield is
-// NOT part of this — it's a damage-pool buff, tracked/applied separately (see
+// firing/movement/turret code reads each frame. `active` is a map: type id → remaining ms
+// (only positive-remaining entries should be present; the arena prunes expired ones). Shield
+// is NOT part of this — it's a damage-pool buff, tracked/applied separately (see
 // `absorbShieldDamage` below and the arena mixin's parallel `shieldPool` tracking). The
 // returned shape is the single contract between this data layer and the scene:
 //   freeAmmo  — true ⇒ don't spend ammo (Overcharge)
 //   cycleMult — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
 //   moveMult  — multiplier on movement max speed (Overclock)
+//   slewMult  — multiplier on turret slew rate (Overclock)
 // Everything defaults to the identity (no buff) so callers can multiply unconditionally.
 export function buffModifiers(active) {
   const mods = {
     freeAmmo: false,
     cycleMult: 1,
     moveMult: 1,
+    slewMult: 1,
   };
   for (const id of Object.keys(active || {})) {
     if (!(active[id] > 0)) continue;
@@ -180,7 +182,10 @@ export function buffModifiers(active) {
     switch (p.effect) {
       case 'freeAmmo': mods.freeAmmo = true; break;
       case 'fireRate': mods.cycleMult *= p.cycleMult ?? 1; break;
-      case 'overclock': mods.moveMult *= p.moveMult ?? 1; break;
+      case 'overclock':
+        mods.moveMult *= p.moveMult ?? 1;
+        mods.slewMult *= p.slewMult ?? 1;
+        break;
       default: break;
     }
   }
