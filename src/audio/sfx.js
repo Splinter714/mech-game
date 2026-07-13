@@ -142,6 +142,98 @@ function playOverride(e, bus, weaponId, stage) {
   return false;
 }
 
+// #179: a small attack ramp for a looping buffer's start, mirroring startLoopLayers' click-safety
+// floor (sfxLayers.js's MIN_ATTACK) — an instant 0->gain jump on a continuous source pops.
+const LOOP_ATTACK_SEC = 0.01;
+// #179: fallback release length (ms) when a looping override/bake has no fadeOutMs set — same
+// window sfxLayers.js's HELD_RELEASE uses for the procedural held path, so a loop with no tuned
+// fade still ramps down cleanly on release instead of clicking.
+const LOOP_RELEASE_DEFAULT_MS = 80;
+
+// #179: genuinely LOOPING counterpart to playBuffer — for the held-sustain path (beamLaser/
+// flamethrower), a one-shot buffer isn't enough; the source has to keep playing for as long as
+// the trigger is held. Sets `AudioBufferSourceNode.loop = true` with `loopStart`/`loopEnd` derived
+// from the SAME #166 startMs/trimMs fields playBuffer already reads (loopStart = startMs/1000,
+// loopEnd = loopStart + trimMs/1000 when trimMs is set, else left at the buffer's own end) — no
+// new override fields needed, a held sound's "trim" just becomes its loop window. Applies the
+// same #172 pitch/filter/reverb chain as the one-shot path. Fade-out (#174) semantics differ for
+// a loop: there's no fixed "end" to fade into mid-loop, so fadeOutMs (or the release fallback
+// above) is instead applied as the RELEASE ramp when the returned stop() is called — the gain
+// node doubles as both the tiny start-attack ramp and the release fade, exactly analogous to how
+// startLoopLayers' per-voice gain ramps up on start and down on stop.
+// Returns a stop() closure (same shape/contract as startLoopLayers'), or null if there's no
+// buffer/context to play through.
+function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
+  if (!buffer || !e.ctx) return null;
+  const ctx = e.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = true;
+
+  const offsetSec = (startMs ?? 0) / 1000;
+  src.loopStart = offsetSec;
+  if (trimMs != null) src.loopEnd = offsetSec + trimMs / 1000;
+  // else: leave loopEnd unset — Web Audio treats 0/absent as "the end of the buffer."
+
+  if (proc?.detune && src.detune) src.detune.value = proc.detune;
+  let tail = src;
+  let filter = null;
+  if (proc?.filterType) {
+    filter = ctx.createBiquadFilter();
+    filter.type = proc.filterType;
+    if (proc.filterFreq != null) filter.frequency.value = proc.filterFreq;
+    if (proc.filterQ != null) filter.Q.value = proc.filterQ;
+    tail.connect(filter);
+    tail = filter;
+  }
+
+  // Gain node carries both the start attack and the eventual release fade — same role
+  // startLoopLayers' per-voice gain plays for the procedural held path.
+  const g = ctx.createGain();
+  const startAt = e._now();
+  g.gain.setValueAtTime(0.0001, startAt);
+  g.gain.exponentialRampToValueAtTime(1, startAt + LOOP_ATTACK_SEC);
+  tail.connect(g);
+  tail = g;
+
+  if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
+  else tail.connect(bus);
+
+  src.start(startAt, offsetSec);
+
+  let stopped = false;
+  return function stop() {
+    if (stopped) return;
+    stopped = true;
+    const now = e.ctx ? e._now() : startAt;
+    const releaseSec = (fadeOutMs > 0 ? fadeOutMs : LOOP_RELEASE_DEFAULT_MS) / 1000;
+    // Linear ramp to exact 0 (same envelope shape #174's one-shot fade-out uses) rather than an
+    // exponential approach to a near-zero floor — a loop's release IS a #174-style fade, just
+    // triggered on stop() instead of scheduled against a known end time.
+    g.gain.cancelScheduledValues(now);
+    g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), now);
+    g.gain.linearRampToValueAtTime(0, now + releaseSec);
+    try { src.stop(now + releaseSec + 0.02); } catch { /* already stopped */ }
+    setTimeout(() => {
+      try { src.disconnect(); filter?.disconnect(); g.disconnect(); } catch { /* already gone */ }
+    }, (releaseSec + 0.05) * 1000);
+  };
+}
+
+// #179: override/baked lookup for the held-sustain path, mirroring playOverride's precedence
+// (dev IndexedDB override first, then a shipped bake) but scheduling a genuine LOOP via
+// playBufferLoop instead of a fixed-duration one-shot. Returns the stop() closure, or null if
+// there's no override/bake for this weapon+stage (caller falls back to procedural loop layers).
+function playOverrideLoop(e, bus, weaponId, stage) {
+  const override = getOverride(weaponId, stage);
+  if (override) {
+    return playBufferLoop(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage));
+  }
+  const baked = getBaked(weaponId, stage);
+  if (baked) return playBufferLoop(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs);
+  return null;
+}
+
 export function fire(e, weapon) {
   if (playOverride(e, e.sfx, weapon.id, 'fire')) return;
   playLayers(e, e.sfx, e.getSfxParams(weapon.id).fire);
@@ -165,8 +257,19 @@ export function impact(e, weaponId) {
 // separate table, so tuning `fire` actually retunes what you hear while holding the button.
 // Gated on hasHeldSfx — every weapon has `fire` layers now, but only flamethrower/beamLaser
 // actually use the held/loop dispatch; everyone else fires one-shots.
+//
+// #179: before falling back to procedural layers, check for a file override/bake at the
+// weapon's `fire` stage (same (id,stage) key `fire()` already reads for its one-shot cue —
+// reusing it means no new stage taxonomy, and tuning a weapon's `fire` override/bake retunes
+// both the one-shot AND the held sustain together). If one exists, schedule it as a genuine
+// LOOP via playOverrideLoop instead of the fixed-length one-shot playOverride uses, and return
+// its stop() closure. With no override/bake present (every weapon today), playOverrideLoop
+// returns null and this falls through to the exact same startLoopLayers call as before —
+// byte-for-byte unchanged procedural behavior.
 export function startHeld(e, weaponId) {
   if (!hasHeldSfx(weaponId) || !e.ready) return null;
+  const loopStop = playOverrideLoop(e, e.sfx, weaponId, 'fire');
+  if (loopStop) return loopStop;
   const layers = e.getSfxParams(weaponId).fire;
   if (!layers || !layers.length) return null;
   return startLoopLayers(e, e.sfx, layers);

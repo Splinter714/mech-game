@@ -684,4 +684,123 @@ describe('AudioEngine (mock context)', () => {
       }
     });
   });
+
+  // #179: held-sustain (beamLaser/flamethrower) file override/baked support — previously
+  // startHeld() went straight to procedural startLoopLayers, completely blind to any
+  // override/bake stored for the weapon's `fire` stage. Reuses the `fire` (id,stage) key (same
+  // one the one-shot cue reads) rather than inventing a new held-stage id.
+  describe('held-sustain loop override/bake (#179)', () => {
+    const fakeFile = (name, tag) => ({
+      name, type: 'audio/wav', arrayBuffer: async () => new TextEncoder().encode(tag).buffer,
+    });
+
+    beforeEach(() => { _resetForTest(); _resetBakedForTest(); setAudioContext(ctx); });
+    afterEach(() => { _resetBakedForTest(); delete globalThis.indexedDB; });
+
+    it('(a) no override/bake present: startHeld still uses procedural startLoopLayers, unchanged', () => {
+      const before = ctx._counts();
+      eng.startHeld('leftArm', 'beamLaser');
+      const after = ctx._counts();
+      // Procedural voices (oscillator/noise buffer source) were created — no dedicated
+      // "loop buffer" source, since beamLaser's fire layers are tones/noise, not a decoded file.
+      expect(after.oscillators + after.sources).toBeGreaterThan(before.oscillators + before.sources);
+      expect(() => eng.stopHeld('leftArm')).not.toThrow();
+    });
+
+    it('(b) an override present for the held weapon\'s fire stage: startHeld schedules a LOOPING buffer source instead of procedural layers', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      const before = ctx._counts();
+      eng.startHeld('leftArm', 'beamLaser');
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);          // exactly one buffer source: the override loop
+      expect(after.oscillators).toBe(before.oscillators);      // no procedural tone/noise layers ran
+      const src = ctx._lastBufferSource();
+      expect(src.loop).toBe(true);
+      expect(src.loopStart).toBeCloseTo(0, 5);
+      expect(src.loopEnd).toBeUndefined();                     // no trim set — loops the whole buffer
+      eng.stopHeld('leftArm');
+    });
+
+    it('derives loopStart/loopEnd from the existing startMs/trimMs override fields', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setStart('beamLaser', 'fire', 200);   // 200ms in
+      await setTrim('beamLaser', 'fire', 500);    // 500ms window from there
+      eng.startHeld('leftArm', 'beamLaser');
+      const src = ctx._lastBufferSource();
+      expect(src.loop).toBe(true);
+      expect(src.loopStart).toBeCloseTo(0.2, 5);
+      expect(src.loopEnd).toBeCloseTo(0.7, 5);    // 0.2 + 0.5
+      eng.stopHeld('leftArm');
+    });
+
+    it('applies the detune/filter/reverb processing chain (#172) to the loop the same way the one-shot path does', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setProcessing('flamethrower', 'fire', {
+        detune: 150, filterType: 'lowpass', filterFreq: 900, filterQ: 1, reverbMix: 0.3, reverbSize: 1.5,
+      });
+      const beforeBq = ctx._counts().biquads;
+      const beforeConv = ctx._counts().convolvers;
+      eng.startHeld('rightArm', 'flamethrower');
+      expect(ctx._lastBufferSource().loop).toBe(true);
+      expect(ctx._lastBufferSource().detune.value).toBe(150);
+      expect(ctx._counts().biquads).toBe(beforeBq + 1);
+      expect(ctx._counts().convolvers).toBe(beforeConv + 1);
+      eng.stopHeld('rightArm');
+    });
+
+    it('(c) stopHeld ramps gain to 0 over the fade/release duration and stops the source — no error if called twice', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setFadeOut('beamLaser', 'fire', 150);   // 150ms release
+      eng.startHeld('leftArm', 'beamLaser');
+      const releaseGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+      expect(() => eng.stopHeld('leftArm')).not.toThrow();
+      const events = releaseGain._events;
+      const rampEvent = events.find((e) => e[0] === 'ramp' && e[1] === 0);
+      expect(rampEvent).toBeTruthy();
+      expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.15, 5);   // now + releaseSec
+      // Calling stopHeld again for the same location is a no-op (nothing tracked anymore).
+      expect(() => eng.stopHeld('leftArm')).not.toThrow();
+    });
+
+    it('falls back to the default release window when no fadeOutMs is set on the override', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      eng.startHeld('leftArm', 'beamLaser');
+      const releaseGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+      eng.stopHeld('leftArm');
+      const rampEvent = releaseGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
+      expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.08, 5);   // 80ms default release
+    });
+
+    it('a dev override still wins over a baked loop for the same held weapon+stage', async () => {
+      _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
+      const overrideBuf = await storeOverride('flamethrower', 'fire', fakeFile('dev-roar.wav', 'DEVROAR'));
+      eng.startHeld('leftArm', 'flamethrower');
+      expect(ctx._lastBufferSource().buffer).toBe(overrideBuf);
+      expect(ctx._lastBufferSource().loop).toBe(true);
+      eng.stopHeld('leftArm');
+    });
+
+    it('a baked loop plays when no dev override exists for the held weapon+stage', () => {
+      // beamLaser has no shipped BAKED_SFX entry yet — temporarily add one (mirrors the existing
+      // "applies a fade-out to a BAKED sound too" test's pattern of mutating+restoring a live
+      // entry) so this exercises the real getBaked() data shape rather than a bespoke test-only one.
+      BAKED_SFX['beamLaser::fire'] = { startMs: 0, trimMs: null, processing: null, fadeOutMs: null };
+      try {
+        _setBakedBufferForTest('beamLaser', 'fire', { __baked: 'bakedHum' });
+        eng.startHeld('leftArm', 'beamLaser');
+        expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bakedHum' });
+        expect(ctx._lastBufferSource().loop).toBe(true);
+        eng.stopHeld('leftArm');
+      } finally {
+        delete BAKED_SFX['beamLaser::fire'];
+      }
+    });
+
+    it('an override/bake on a non-held weapon has no effect on startHeld (gated on hasHeldSfx first)', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('x.wav', 'X'));
+      const before = ctx._counts();
+      eng.startHeld('leftArm', 'autocannon');
+      expect(ctx._counts()).toEqual(before);   // no voice/source scheduled at all
+    });
+  });
 });
