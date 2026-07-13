@@ -5,6 +5,7 @@ import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor, explosionCategoryFor } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
+import { absorbShieldDamage } from '../../data/powerups.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -19,9 +20,20 @@ const DEBRIS_CAP = 60;
 
 export const CombatMixin = {
   // Incoming damage to the player (used once enemies fire) — fully absorbed while the
-  // bubble shield is up.
+  // equipment bubble shield is up, otherwise gated through the Shield POWERUP's damage pool
+  // (#187) if one is active: fully absorbs up to the remaining pool, and any overflow beyond
+  // it (the shield breaking mid-hit) passes through to the mech normally. The two shields are
+  // independent — the equipment ability is time-based and takes priority (it's the "more
+  // absolute" of the two while up); the powerup is a damage-pool that drains from real hits.
   damagePlayer(locationId, amount) {
     if (this.time.now < this.shieldUntil) return { applied: 0, shielded: true };
+    if (this.shieldPool > 0) {
+      const { absorbed, overflow, remaining } = absorbShieldDamage(this.shieldPool, amount);
+      this.shieldPool = remaining;
+      if (overflow <= 0) return { applied: 0, shielded: true, shieldAbsorbed: absorbed };
+      const res = this.mech.applyDamage(locationId, overflow);
+      return { ...res, shieldAbsorbed: absorbed };
+    }
     return this.mech.applyDamage(locationId, amount);
   },
 

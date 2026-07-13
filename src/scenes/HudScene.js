@@ -448,6 +448,46 @@ export default class HudScene extends Phaser.Scene {
 
       y += rowH;
     });
-    for (let i = ids.length; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
+
+    // #187: Shield draws one extra row, same visual language (a ring + label) as the timed
+    // buffs above, but keyed off the remaining damage POOL instead of remaining time — a
+    // simple starting treatment, left for the owner to refine visually via playtest. Not part
+    // of `ids`/`activePowerups` (Shield isn't a timed buff), so it always lands in the next
+    // slot after them and is skipped entirely (row hidden) when the pool is empty.
+    const shieldPool = this.registry.get('shieldPool') || 0;
+    let rows = ids.length;
+    if (shieldPool > 0) {
+      const cap = this._shieldCapSeen = Math.max(this._shieldCapSeen || 0, shieldPool);
+      const p = POWERUPS.shield;
+      const color = p?.color ?? 0x5ec8e0;
+      const colStr = '#' + color.toString(16).padStart(6, '0');
+      const cy = y + R;
+      const frac = Math.max(0, Math.min(1, shieldPool / cap));
+
+      g.lineStyle(4, color, 0.22);
+      g.strokeCircle(cx, cy, R);
+      const start = -Math.PI / 2;
+      const end = start + frac * Math.PI * 2;
+      g.lineStyle(4, color, 1);
+      g.beginPath();
+      g.arc(cx, cy, R, start, end, false);
+      g.strokePath();
+      g.fillStyle(color, 0.10 + 0.14 * frac);
+      g.fillCircle(cx, cy, R - 3);
+
+      let t = this.buffTexts[rows];
+      if (!t) {
+        t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px' }).setOrigin(1, 0.5);
+        this.buffTexts[rows] = t;
+      }
+      t.setText(`${p?.label ?? 'SHIELD'}  ${Math.round(shieldPool)}`)
+        .setColor(colStr)
+        .setPosition(cx - R - 8, cy)
+        .setVisible(true);
+      rows += 1;
+    } else {
+      this._shieldCapSeen = 0;   // reset the "full" reference once the shield is gone
+    }
+    for (let i = rows; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
   }
 }

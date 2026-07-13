@@ -240,9 +240,9 @@ export default class ArenaScene extends Phaser.Scene {
       this.projFx.fillStyle(0x5ec8e0, 0.10).fillCircle(this.px, this.py, 34);
     }
 
-    // ── Ammo regen ── every magazine tops back up over time. #60 Surge multiplies the regen
-    // rate (applied as a scaled dt, since regen is linear in dt) for its duration.
-    this.mech.regenAmmo(dt * this._buffMods().ammoRegenMult);
+    // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
+    // Surge, which used to multiply this rate, was removed as redundant with Overcharge.)
+    this.mech.regenAmmo(dt);
   }
 
   toGarage() {

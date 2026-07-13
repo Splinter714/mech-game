@@ -158,10 +158,11 @@ export const LocomotionMixin = {
   _drive(intent, dt) {
     const mv = this.mech.movement;
     const legF = this.mech.legFactor();
-    // #60 Overclock: boost movement max speed + turret slew for the duration (identity when idle).
+    // #60 Overclock: boost movement max speed for the duration (identity when idle). #187:
+    // Overclock's turret-slew boost was removed — instant turret turning (#154) made a
+    // slew-rate multiplier meaningless (see the turret-aim block below, which never reads it).
     const mods = this._buffMods?.() ?? {};
     const moveMult = mods.moveMult ?? 1;
-    const slewMult = mods.slewMult ?? 1;
 
     // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
     const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
@@ -267,7 +268,7 @@ export const LocomotionMixin = {
     const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
     this.turretAngle = INSTANT_TURNING
       ? aim
-      : rotateToward(this.turretAngle, aim, mv.turretSlew * slewMult, dt);
+      : rotateToward(this.turretAngle, aim, mv.turretSlew, dt);
     this.registry.set('inputMode', intent.mode);
   },
 
