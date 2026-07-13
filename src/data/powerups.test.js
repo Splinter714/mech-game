@@ -1,25 +1,38 @@
 import { describe, it, expect } from 'vitest';
 import {
   POWERUPS, POWERUP_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
-  dropChanceForMaxHp, MIN_DROP_CHANCE, MAX_DROP_CHANCE,
+  dropChanceForMaxHp, MIN_DROP_CHANCE, MAX_DROP_CHANCE, absorbShieldDamage,
 } from './powerups.js';
 import { Mech } from './Mech.js';
 
 describe('powerup catalog', () => {
-  it('has the six owner-approved powerups and NO Target Paint (it was cut)', () => {
+  it('has the #187 owner-approved roster (Surge + Double Shot cut, Shield added) and NO Target Paint', () => {
     expect(POWERUP_IDS.sort()).toEqual(
-      ['armorPatch', 'doubleShot', 'overcharge', 'overclock', 'overdrive', 'surge'].sort(),
+      ['armorPatch', 'overcharge', 'overclock', 'overdrive', 'shield'].sort(),
     );
+    expect(POWERUPS.surge).toBeUndefined();
+    expect(POWERUPS.doubleShot).toBeUndefined();
     expect(POWERUPS.targetPaint).toBeUndefined();
   });
 
-  it('marks only Armor Patch as instant (no timer); the rest are timed', () => {
+  it('marks Armor Patch as instant (no timer); Overcharge/Overdrive/Overclock are timed', () => {
     expect(isInstant('armorPatch')).toBe(true);
-    for (const id of ['overcharge', 'surge', 'overdrive', 'doubleShot', 'overclock']) {
+    for (const id of ['overcharge', 'overdrive', 'overclock']) {
       expect(isInstant(id)).toBe(false);
       expect(durationMs(id)).toBeGreaterThan(0);
     }
     expect(durationMs('armorPatch')).toBe(0);
+  });
+
+  it('Shield is neither instant nor timed — no duration, and not marked instant (it is a damage-pool buff tracked separately)', () => {
+    expect(isInstant('shield')).toBe(false);
+    expect(durationMs('shield')).toBe(0);
+    expect(POWERUPS.shield.shieldCap).toBeGreaterThan(0);
+  });
+
+  it('Overclock keeps its movement boost but no longer carries a slew multiplier', () => {
+    expect(POWERUPS.overclock.moveMult).toBe(1.35);
+    expect(POWERUPS.overclock.slewMult).toBeUndefined();
   });
 });
 
@@ -40,28 +53,21 @@ describe('pickPowerupType — weighted selection', () => {
 describe('buffModifiers — collapsing the active overlay', () => {
   it('returns the identity when nothing is active', () => {
     const m = buffModifiers({});
-    expect(m).toEqual({
-      freeAmmo: false, ammoRegenMult: 1, cycleMult: 1,
-      doubleShot: false, spreadTighten: 1, moveMult: 1, slewMult: 1,
-    });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1 });
   });
 
   it('ignores expired (non-positive remaining) entries', () => {
-    const m = buffModifiers({ overcharge: 0, surge: -5 });
+    const m = buffModifiers({ overcharge: 0, overdrive: -5 });
     expect(m.freeAmmo).toBe(false);
-    expect(m.ammoRegenMult).toBe(1);
+    expect(m.cycleMult).toBe(1);
   });
 
   it('applies each timed buff to its own field', () => {
     expect(buffModifiers({ overcharge: 500 }).freeAmmo).toBe(true);
-    expect(buffModifiers({ surge: 500 }).ammoRegenMult).toBe(POWERUPS.surge.ammoRegenMult);
     expect(buffModifiers({ overdrive: 500 }).cycleMult).toBe(POWERUPS.overdrive.cycleMult);
-    const ds = buffModifiers({ doubleShot: 500 });
-    expect(ds.doubleShot).toBe(true);
-    expect(ds.spreadTighten).toBe(POWERUPS.doubleShot.spreadTighten);
     const oc = buffModifiers({ overclock: 500 });
     expect(oc.moveMult).toBe(POWERUPS.overclock.moveMult);
-    expect(oc.slewMult).toBe(POWERUPS.overclock.slewMult);
+    expect(oc.slewMult).toBeUndefined();
   });
 
   it('stacks DIFFERENT types simultaneously (one-per-type overlay)', () => {
@@ -69,6 +75,57 @@ describe('buffModifiers — collapsing the active overlay', () => {
     expect(m.freeAmmo).toBe(true);
     expect(m.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
     expect(m.moveMult).toBe(POWERUPS.overclock.moveMult);
+  });
+
+  it('Shield never contributes to buffModifiers even when "active" would include it — it is tracked out-of-band', () => {
+    const m = buffModifiers({ shield: 500 });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, moveMult: 1 });
+  });
+});
+
+describe('absorbShieldDamage — #187 Shield damage-pool math', () => {
+  it('fully blocks a hit smaller than the remaining pool', () => {
+    const r = absorbShieldDamage(60, 20);
+    expect(r).toEqual({ absorbed: 20, overflow: 0, remaining: 40 });
+  });
+
+  it('fully blocks a hit exactly equal to the remaining pool, clearing it to zero', () => {
+    const r = absorbShieldDamage(60, 60);
+    expect(r).toEqual({ absorbed: 60, overflow: 0, remaining: 0 });
+  });
+
+  it('breaks the shield when a hit exceeds the remaining pool, passing the overflow through', () => {
+    const r = absorbShieldDamage(20, 34);
+    expect(r.absorbed).toBe(20);
+    expect(r.overflow).toBe(14);
+    expect(r.remaining).toBe(0);
+  });
+
+  it('a zero or negative pool absorbs nothing — the whole hit passes through', () => {
+    expect(absorbShieldDamage(0, 25)).toEqual({ absorbed: 0, overflow: 25, remaining: 0 });
+    expect(absorbShieldDamage(-5, 25)).toEqual({ absorbed: 0, overflow: 25, remaining: 0 });
+  });
+
+  it('treats missing/falsy pool or damage as zero, never NaN or negative', () => {
+    expect(absorbShieldDamage(undefined, 10)).toEqual({ absorbed: 0, overflow: 10, remaining: 0 });
+    expect(absorbShieldDamage(30, undefined)).toEqual({ absorbed: 0, overflow: 0, remaining: 30 });
+    expect(absorbShieldDamage(30, -10)).toEqual({ absorbed: 0, overflow: 0, remaining: 30 });
+  });
+
+  it('sequential hits drain the pool cumulatively until it breaks', () => {
+    let pool = POWERUPS.shield.shieldCap;
+    let r = absorbShieldDamage(pool, 25);
+    expect(r.overflow).toBe(0);
+    pool = r.remaining;
+    r = absorbShieldDamage(pool, 25);
+    expect(r.overflow).toBe(0);
+    pool = r.remaining;
+    // Third hit of 25 exceeds whatever's left (60 - 25 - 25 = 10) — shield breaks, overflow passes.
+    r = absorbShieldDamage(pool, 25);
+    expect(pool).toBe(10);
+    expect(r.absorbed).toBe(10);
+    expect(r.overflow).toBe(15);
+    expect(r.remaining).toBe(0);
   });
 });
 

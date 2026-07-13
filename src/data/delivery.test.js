@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, doubleShotEmissions, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END } from './delivery.js';
+import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -56,25 +56,6 @@ describe('planEmissions', () => {
     expect(p.shots.some((s) => s.lateral !== 0)).toBe(true);
     expect(p.shots.every((s) => Math.abs(s.angleOffset) < 0.05)).toBe(true); // tight, not a cone
     expect(p.shots.every((s) => s.delay === 0)).toBe(true);                  // whole clump launches at once
-  });
-
-  it('doubleShotEmissions (#60) doubles the emission count with a staggered twin per shot', () => {
-    const base = planEmissions(WEAPONS.autocannon).shots;
-    const doubled = doubleShotEmissions(base, 1);
-    expect(doubled).toHaveLength(base.length * 2);
-    // Each original shot is followed by a delayed twin.
-    expect(doubled[0].delay).toBe(base[0].delay);
-    expect(doubled[1].delay).toBeGreaterThan(base[0].delay);
-  });
-
-  it('doubleShotEmissions tightens spread offsets so a doubled fan reads as a double', () => {
-    const base = planEmissions(WEAPONS.shotgun).shots;
-    const doubled = doubleShotEmissions(base, 0.5);
-    // Original + twin share the tightened (halved) angle offset of their source pellet.
-    for (let i = 0; i < base.length; i++) {
-      expect(doubled[i * 2].angleOffset).toBeCloseTo(base[i].angleOffset * 0.5);
-      expect(doubled[i * 2 + 1].angleOffset).toBeCloseTo(base[i].angleOffset * 0.5);
-    }
   });
 
   it('schedules a multi-pulse burst as delayed sub-shots', () => {

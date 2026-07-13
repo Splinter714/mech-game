@@ -14,6 +14,12 @@
 //    own countdown); picking up a duplicate of an active type just refreshes that type's time.
 //  - Armor Patch is INSTANT (no timer) — it applies its repair on pickup and never enters the
 //    active set.
+//  - Shield (#187) is a THIRD kind, alongside timed buffs and instants: a damage-POOL buff.
+//    It doesn't expire on a timer and isn't instant either — it stays active until a
+//    cumulative damage total is absorbed. It never enters `active`/`buffModifiers`; the arena
+//    mixin tracks its remaining pool in a separate `shieldPool` number, and a duplicate pickup
+//    ADDS to that pool (mirroring how a duplicate timed buff refreshes remaining time). See
+//    `absorbShieldDamage` below for the pure math.
 
 // ── The powerup catalog (owner: tune) ───────────────────────────────────────────────────
 // Each entry: id, label (HUD), color (collectible + HUD), weight (relative drop odds), and
@@ -25,33 +31,35 @@ export const POWERUPS = {
     id: 'overcharge', label: 'OVERCHARGE', color: 0xffd56b, weight: 1,
     duration: 10, effect: 'freeAmmo',
   },
-  // 2) ~2.5x ammo regen rate for the duration.
-  surge: {
-    id: 'surge', label: 'SURGE', color: 0x5ec8e0, weight: 1,
-    duration: 12, effect: 'ammoRegen', ammoRegenMult: 2.5,
-  },
-  // 3) Halved weapon cycle times (doubled rate of fire) for the duration.
+  // 2) Halved weapon cycle times (doubled rate of fire) for the duration.
   overdrive: {
     id: 'overdrive', label: 'OVERDRIVE', color: 0xe2533a, weight: 1,
     duration: 9, effect: 'fireRate', cycleMult: 0.5,
   },
-  // 4) Every fire emits two rounds for the duration (double emissions per cycle; spread
-  //    weapons are tightened so it reads as a double rather than just a wider fan).
-  doubleShot: {
-    id: 'doubleShot', label: 'DOUBLE SHOT', color: 0xc07bff, weight: 1,
-    duration: 9, effect: 'doubleShot', spreadTighten: 0.5,
-  },
-  // 5) Combined faster turret slew + movement-speed boost for the duration.
+  // 3) Movement-speed boost for the duration. #187 (owner design pass): used to also boost
+  //    turret slew (`slewMult`), but instant turret turning (#154) made a slew-rate buff
+  //    meaningless — trimmed to speed-only.
   overclock: {
     id: 'overclock', label: 'OVERCLOCK', color: 0x7bd17b, weight: 1,
-    duration: 10, effect: 'overclock', moveMult: 1.35, slewMult: 1.5,
+    duration: 10, effect: 'overclock', moveMult: 1.35,
   },
-  // 6) INSTANT whole-mech proportional armor repair (no timer). Restores a fraction of EACH
+  // 4) INSTANT whole-mech proportional armor repair (no timer). Restores a fraction of EACH
   //    damaged location's MISSING armor, so every hurt location gets some back scaled to what
   //    it's missing. `repairFrac` is that fraction.
   armorPatch: {
     id: 'armorPatch', label: 'ARMOR PATCH', color: 0x8ad0ff, weight: 1.2,
     instant: true, effect: 'armorPatch', repairFrac: 0.5,
+  },
+  // 5) #187: full damage absorption up to a fixed CUMULATIVE total — NOT time-based (distinct
+  //    from the timed-buff model above, and distinct from the equipment `bubbleShield` ability,
+  //    which is duration-based). `shieldCap` is the starting absorb pool in damage points. Picked
+  //    by looking at src/data/weapons.js `damage` fields: single-shot weapons land ~2-34 per hit
+  //    (the heaviest, a projectile launcher, hits for 34), so 60 absorbs a bit under two of the
+  //    hardest single hits, or several ticks of a stream weapon — "1-2 solid exchanges, not a
+  //    full fight" per the owner's brief. Starting value, tune via playtest like the rest.
+  shield: {
+    id: 'shield', label: 'SHIELD', color: 0x5ec8e0, weight: 1,
+    effect: 'shield', shieldCap: 60,
   },
 };
 
@@ -150,26 +158,20 @@ export function durationMs(id) {
 
 // ── Buff overlay math ────────────────────────────────────────────────────────────────────
 // Collapse the ACTIVE set of timed buffs into the plain multiplier/flag object the arena's
-// firing/movement/turret code reads each frame. `active` is a map: type id → remaining ms
-// (only positive-remaining entries should be present; the arena prunes expired ones). The
+// firing/movement code reads each frame. `active` is a map: type id → remaining ms (only
+// positive-remaining entries should be present; the arena prunes expired ones). Shield is
+// NOT part of this — it's a damage-pool buff, tracked/applied separately (see
+// `absorbShieldDamage` below and the arena mixin's parallel `shieldPool` tracking). The
 // returned shape is the single contract between this data layer and the scene:
-//   freeAmmo     — true ⇒ don't spend ammo (Overcharge)
-//   ammoRegenMult — multiplier on ammo regen rate (Surge)
-//   cycleMult    — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
-//   doubleShot   — true ⇒ emit each fire twice (Double Shot)
-//   spreadTighten — factor to multiply spread lateral/angle by while doubled (<1 = tighter)
-//   moveMult     — multiplier on movement max speed (Overclock)
-//   slewMult     — multiplier on turret slew rate (Overclock)
+//   freeAmmo  — true ⇒ don't spend ammo (Overcharge)
+//   cycleMult — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
+//   moveMult  — multiplier on movement max speed (Overclock)
 // Everything defaults to the identity (no buff) so callers can multiply unconditionally.
 export function buffModifiers(active) {
   const mods = {
     freeAmmo: false,
-    ammoRegenMult: 1,
     cycleMult: 1,
-    doubleShot: false,
-    spreadTighten: 1,
     moveMult: 1,
-    slewMult: 1,
   };
   for (const id of Object.keys(active || {})) {
     if (!(active[id] > 0)) continue;
@@ -177,17 +179,28 @@ export function buffModifiers(active) {
     if (!p) continue;
     switch (p.effect) {
       case 'freeAmmo': mods.freeAmmo = true; break;
-      case 'ammoRegen': mods.ammoRegenMult *= p.ammoRegenMult ?? 1; break;
       case 'fireRate': mods.cycleMult *= p.cycleMult ?? 1; break;
-      case 'doubleShot': mods.doubleShot = true; mods.spreadTighten *= p.spreadTighten ?? 1; break;
-      case 'overclock':
-        mods.moveMult *= p.moveMult ?? 1;
-        mods.slewMult *= p.slewMult ?? 1;
-        break;
+      case 'overclock': mods.moveMult *= p.moveMult ?? 1; break;
       default: break;
     }
   }
   return mods;
+}
+
+// ── Shield damage-pool math ──────────────────────────────────────────────────────────────
+// Shield (#187) is NOT a timed buff — it's a damage-pool buff: incoming damage is fully
+// absorbed (zero armor/structure loss) until a cumulative total (the pool) is exhausted, at
+// which point the shield breaks and any excess in that same hit passes through normally.
+// Pure — no Phaser, no live Mech — so it's unit-tested in isolation. `pool` is the remaining
+// absorb capacity (>0 while the shield is active); `damage` is one hit's raw amount. Returns:
+//   absorbed  — how much of this hit the shield blocked (<= pool, <= damage)
+//   overflow  — how much passes through to armor/structure (damage - absorbed)
+//   remaining — pool left after this hit; 0 means the shield just broke
+export function absorbShieldDamage(pool, damage) {
+  const p = Math.max(0, pool || 0);
+  const d = Math.max(0, damage || 0);
+  const absorbed = Math.min(p, d);
+  return { absorbed, overflow: d - absorbed, remaining: p - absorbed };
 }
 
 // ── Instant Armor Patch: whole-mech proportional repair ──────────────────────────────────

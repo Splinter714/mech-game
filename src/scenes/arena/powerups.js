@@ -12,6 +12,10 @@
 import {
   POWERUPS, dropChanceForMaxHp, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
+// #187: Shield is a damage-pool buff (see data/powerups.js's `absorbShieldDamage`), not a
+// timed one — it's tracked here as `this.shieldPool` (a remaining-damage number) in parallel
+// to `this.activePowerups` (remaining-ms). Kept out of `buffModifiers`/`activePowerups` since
+// its "is it active" question is "pool > 0", not "time remaining > 0".
 import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
 import { BOUNDARY_RING_WIDTH } from '../../data/worldgen.js';
@@ -32,6 +36,7 @@ export const PowerupsMixin = {
   // are drawn on. Kept separate from the world so it can be cleared/redrawn each frame.
   _initPowerups() {
     this.activePowerups = {};        // typeId → remaining ms (only live buffs; expired pruned)
+    this.shieldPool = 0;             // #187: remaining Shield absorb capacity (damage points), 0 = inactive
     this.powerups = [];              // dropped collectibles awaiting pickup: { x, y, type, ttl, age, view }
     this.powerupFx = this.add.graphics();   // (unused sink kept for symmetry; sprites are containers)
   },
@@ -155,16 +160,28 @@ export const PowerupsMixin = {
       if (this.activePowerups[id] <= 0) delete this.activePowerups[id];
     }
     this.registry.set('activePowerups', { ...this.activePowerups });
+    // #187: Shield has no timer to count down — its pool only drains when damage actually
+    // lands (see combat.js `damagePlayer`), so just publish the current remaining pool for
+    // the HUD each frame.
+    this.registry.set('shieldPool', this.shieldPool || 0);
   },
 
   // Apply a picked-up powerup. Instant types (Armor Patch) resolve immediately and never enter
-  // the active set; timed types set/refresh their per-type countdown (one-per-type stacking).
+  // the active set; Shield ADDS to its remaining damage pool (its own "duplicate refreshes"
+  // rule, since it has no time to refresh); everything else is a timed buff that sets/refreshes
+  // its per-type countdown (one-per-type stacking).
   _activatePowerup(typeId) {
     const p = POWERUPS[typeId];
     if (!p) return;
     Audio.ui('powerupPickup');   // #178: distinct "buff acquired" cue — one shared cue per type
     if (isInstant(typeId)) {
       this._applyInstantPowerup(typeId);
+    } else if (p.effect === 'shield') {
+      // #187: duplicate pickup while already active ADDS to the remaining pool rather than
+      // replacing it — mirrors the timed-buff "duplicate refreshes remaining time" pattern,
+      // adapted to a damage-remaining pool (accumulate, no cap; the owner can add one via
+      // playtest if stacking turns out to be too strong).
+      this.shieldPool = (this.shieldPool || 0) + (p.shieldCap ?? 0);
     } else {
       this.activePowerups[typeId] = durationMs(typeId);   // set OR refresh
     }

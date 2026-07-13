@@ -3,7 +3,7 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, doubleShotEmissions, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
 import { drawSlash } from '../../art/index.js';
@@ -111,12 +111,7 @@ export const FiringMixin = {
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
     // and aim so a slewing turret and aim-assist still apply per sub-shot.
-    let plan = planEmissions(w.weapon);
-    // #60 Double Shot: every fire emits TWICE for the duration. Each original emission is
-    // duplicated with a tiny delay stagger so the pair reads as a genuine double (not one fat
-    // shot); spread/cluster offsets are tightened (spreadTighten < 1) so the doubled fan reads
-    // as a double rather than just a wider cone.
-    if (mods.doubleShot) plan = { ...plan, shots: doubleShotEmissions(plan.shots, mods.spreadTighten ?? 1) };
+    const plan = planEmissions(w.weapon);
     // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
     // trajectory beat) are scheduled in one shared place (audio/fireCues.js) that the Weapon
     // Lab preview calls too, so their timing can't drift; the arena always plays (audible:
