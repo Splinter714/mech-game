@@ -19,14 +19,13 @@ const IMPACT_CIRCLE_CAP = 48;
 const DEBRIS_CAP = 60;
 
 export const CombatMixin = {
-  // Incoming damage to the player (used once enemies fire) — fully absorbed while the
-  // equipment bubble shield is up, otherwise gated through the Shield POWERUP's damage pool
-  // (#187) if one is active: fully absorbs up to the remaining pool, and any overflow beyond
-  // it (the shield breaking mid-hit) passes through to the mech normally. The two shields are
-  // independent — the equipment ability is time-based and takes priority (it's the "more
-  // absolute" of the two while up); the powerup is a damage-pool that drains from real hits.
+  // Incoming damage to the player (used once enemies fire) — gated through the Shield
+  // POWERUP's damage pool (#187) if one is active: fully absorbs up to the remaining pool,
+  // and any overflow beyond it (the shield breaking mid-hit) passes through to the mech
+  // normally. #188: the old equipment bubble-shield ability (a separate, time-based full
+  // absorb that used to take priority over this) is gone — the powerup pool is the only
+  // shield mechanic now.
   damagePlayer(locationId, amount) {
-    if (this.time.now < this.shieldUntil) return { applied: 0, shielded: true };
     if (this.shieldPool > 0) {
       const { absorbed, overflow, remaining } = absorbShieldDamage(this.shieldPool, amount);
       this.shieldPool = remaining;

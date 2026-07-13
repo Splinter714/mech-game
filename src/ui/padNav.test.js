@@ -92,9 +92,9 @@ describe('slotBindAction (catalog-first pad quick-mount, never clears — #70)',
     expect(slotBindAction('autocannon', 'autocannon')).toBe('none');
   });
 
-  it('works for abilities the same way (L3 → centre-torso)', () => {
-    expect(slotBindAction(null, 'jumpJet')).toBe('mount');
-    expect(slotBindAction('jumpJet', 'jumpJet')).toBe('none');   // re-press keeps it mounted
+  it('works the same way for any other weapon id (generic string logic, no item lookup)', () => {
+    expect(slotBindAction(null, 'beamLaser')).toBe('mount');
+    expect(slotBindAction('beamLaser', 'beamLaser')).toBe('none');   // re-press keeps it mounted
   });
 
   it('does nothing when nothing is highlighted', () => {

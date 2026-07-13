@@ -21,8 +21,8 @@ export const ROSTERS = {
           rightArm: ['autocannon'],
           leftArm: ['pulseLaser'],
           leftTorso: ['clusterRocket'],
-          rightTorso: ['machineGun'],
-          centerTorso: ['jumpJet'],   // the ability slot — fills out a deployable default build
+          rightTorso: ['machineGun'],   // #188: centerTorso is no longer mountable — Sprint
+                                         // (L3/Space) is a hardcoded built-in now, not an item.
         },
       },
     }),

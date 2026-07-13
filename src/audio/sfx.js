@@ -326,30 +326,14 @@ export function startTrajectory(e, weaponId) {
   return startLoopLayers(e, e.sfx, layers, TRAJECTORY_LOOP_GAIN_SCALE);
 }
 
-// ── Ability cues (jump-jet dash vs. bubble-shield raise). ───────────────────────────────
-function dashCue(e) {                                      // thruster burst: rising filtered noise + pitch lift
-  e.noise(e.sfx, { dur: 0.3, gain: 0.18, type: 'bandpass', freq: 400, freqEnd: 1800, q: 0.6, attack: 0.01 });
-  e.tone(e.sfx, { type: 'sawtooth', freq: 180, freqEnd: 520, dur: 0.26, gain: 0.07 });
-}
-function shieldCue(e) {                                    // shimmering power-up: two detuned bell tones
-  e.tone(e.sfx, { type: 'sine', freq: 520, freqEnd: 780, dur: 0.5, gain: 0.10, attack: 0.02 });
-  e.tone(e.sfx, { type: 'sine', freq: 523, freqEnd: 784, dur: 0.5, gain: 0.08, attack: 0.02 });
-}
-
-export const ABILITY_CUES = { dash: dashCue, shield: shieldCue };
-
-export function ability(e, kind) {
-  ABILITY_CUES[kind]?.(e);
-}
-
 // ── UI/menu/pickup cues (#178) — small procedural stubs for events that had ZERO audio
 // before: equipping/unequipping a weapon into a garage slot, committing to Deploy, menu
-// navigation (tab switching, catalog hover, skill-tile focus), and the two arena pickup
-// types (SCRAP, POWERUP) that used to share the bubble-shield ability blip as a placeholder.
-// Each is registered as an `(id, 'play')` pair in sfxDomains.js's `ui` domain so the owner's
-// generalized tuner panel (#177) can override/bake a real file over it later; until then
-// uiCue() below plays these procedural fallbacks straight (through the SAME override/bake
-// lookup every weapon stage already goes through, via playOverride in this file).
+// navigation (tab switching, catalog hover, skill-tile focus), the two arena pickup types
+// (SCRAP, POWERUP), and (#188) toggling Sprint on/off. Each is registered as an
+// `(id, 'play')` pair in sfxDomains.js's `ui` domain so the owner's generalized tuner panel
+// (#177) can override/bake a real file over it later; until then uiCue() below plays these
+// procedural fallbacks straight (through the SAME override/bake lookup every weapon stage
+// already goes through, via playOverride in this file).
 function equipCue(e) {                                    // confident mechanical "clunk-click"
   e.noise(e.sfx, { dur: 0.05, gain: 0.22, type: 'lowpass', freq: 1600, freqEnd: 300, attack: 0.001 });
   e.tone(e.sfx, { type: 'square', freq: 220, freqEnd: 110, dur: 0.07, gain: 0.14, attack: 0.001 });
@@ -374,6 +358,18 @@ function powerupPickupCue(e) {                              // single shared "bu
   e.tone(e.sfx, { type: 'sine', freq: 500, freqEnd: 1000, dur: 0.22, gain: 0.12, attack: 0.01 });
   e.tone(e.sfx, { type: 'sine', freq: 750, freqEnd: 1500, dur: 0.22, gain: 0.09, attack: 0.01 });
 }
+// #188: Sprint engage/disengage — reuses the old jump-jet dash's "thruster burst" character
+// for engaging (a rising filtered-noise whoosh + pitch lift reads as "powering up"), with a
+// quick falling-pitch version for disengaging (mirrors equip/unequip's confident-vs-lighter
+// pairing).
+function sprintOnCue(e) {
+  e.noise(e.sfx, { dur: 0.3, gain: 0.18, type: 'bandpass', freq: 400, freqEnd: 1800, q: 0.6, attack: 0.01 });
+  e.tone(e.sfx, { type: 'sawtooth', freq: 180, freqEnd: 520, dur: 0.26, gain: 0.07 });
+}
+function sprintOffCue(e) {
+  e.noise(e.sfx, { dur: 0.14, gain: 0.12, type: 'bandpass', freq: 1200, freqEnd: 400, q: 0.6, attack: 0.005 });
+  e.tone(e.sfx, { type: 'sawtooth', freq: 420, freqEnd: 160, dur: 0.12, gain: 0.05 });
+}
 
 export const UI_CUES = {
   equip: equipCue,
@@ -382,6 +378,8 @@ export const UI_CUES = {
   menuNav: menuNavCue,
   scrapPickup: scrapPickupCue,
   powerupPickup: powerupPickupCue,
+  sprintOn: sprintOnCue,
+  sprintOff: sprintOffCue,
 };
 
 // Generic (id, stage) UI/pickup sound dispatch — file override/bake takes precedence (same

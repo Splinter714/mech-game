@@ -88,10 +88,12 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
     // Weapon fire/trajectory/impact are now per-weapon DATA (sfxParams.js, tunable live by
     // the Weapon Lab sound panel) played back by the generic playLayers() — assert sfx.js
     // dispatches through that data lookup rather than branching on an archetype literal.
-    // ABILITY_CUES (dash/shield) isn't weapon data, so it keeps its own registry.
+    // #188: the old ABILITY_CUES registry (dash/shield) is gone with equipment.js — Sprint's
+    // on/off cues (and every other non-weapon one-shot: equip/unequip/deploy/etc.) now route
+    // through the generic UI_CUES[id] registry instead.
     const code = stripComments(read('audio/sfx.js'));
     expect(code, 'sfx must dispatch weapon cues via e.getSfxParams(...)').toMatch(/getSfxParams\s*\(/);
-    expect(code, 'sfx must dispatch abilities via ABILITY_CUES[...]').toMatch(/ABILITY_CUES\s*\[/);
+    expect(code, 'sfx must dispatch UI/pickup cues via UI_CUES[...]').toMatch(/UI_CUES\s*\[/);
     expect(code, 'sfx must not dispatch on a kind/category string literal')
       .not.toMatch(/\b(kind|catId|category)\s*===\s*['"]/);
     expect(code, 'sfx must not switch on a variant').not.toMatch(/\bswitch\s*\(/);

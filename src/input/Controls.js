@@ -8,10 +8,14 @@
 // torso-twist arc). Skill slots are body locations, each on a fixed button (SKILL_BINDS):
 //   right arm    RT / right-mouse        left arm     LT / left-mouse
 //   right torso  RB / E                  left torso   LB / Q
-//   centre torso L3 / Space (the one ability slot)
 // R3 is no longer a fire bind — the head stopped being a skill slot (#31); R3 now DROPS the
 // current indirect-fire lock (#62) so a fresh amber→red re-lock can be re-acquired by re-aiming
 // (keyboard equivalent: T). Handled via PadEdges, not the per-frame fire intent.
+//
+// #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot is gone —
+// L3/Space is now a hardcoded, always-available Sprint TOGGLE (data/sprint.js), never routed
+// through mounts. `read()` reports it as `sprintPressed`, a rising-edge one-shot (not a held
+// flag like the weapon binds) since sprint is press-to-toggle, not hold-to-fire.
 
 // Exported so other modules (e.g. arena/locomotion.js's instant-turning facing-angle gate,
 // #156) can reuse the same "is this raw input meaningful" threshold instead of inventing one.
@@ -28,14 +32,19 @@ export const PAD = {
 const PAD_L3 = PAD.L3;
 
 // location → { key (keyboard/mouse label), pad (controller label) }. Order here is the
-// display order used by the garage/HUD. Five skill slots: four weapons + one ability.
+// display order used by the garage/HUD. #188: four weapon skill slots — the fifth
+// (centerTorso, the old ability slot) is gone; Sprint's bind lives in SPRINT_BIND below,
+// separate from this table since it's not a mountable location at all.
 export const SKILL_BINDS = {
   rightArm:    { key: 'RMB',   pad: 'RT' },
   leftArm:     { key: 'LMB',   pad: 'LT' },
   rightTorso:  { key: 'E',     pad: 'RB' },
   leftTorso:   { key: 'Q',     pad: 'LB' },
-  centerTorso: { key: 'Space', pad: 'L3' },
 };
+
+// Sprint's fixed bind (#188) — always available, never mounted, so it isn't keyed by a
+// body location like SKILL_BINDS. Exported for the HUD's fuel-bar label.
+export const SPRINT_BIND = { key: 'Space', pad: 'L3' };
 
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
@@ -96,6 +105,7 @@ export class Controls {
     this.mode = 'kbm';
     this.aimAngle = -Math.PI / 2;  // remembered turret aim, so a centred stick holds it
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
+    this._sprintDown = false;      // previous frame's raw L3/Space state, for edge-detecting the toggle
   }
 
   pad() {
@@ -156,13 +166,11 @@ export class Controls {
     // ── Fire ── only from the active scheme's buttons. ──
     let fire;
     if (padMode) {
-      const btn = (i) => pad.buttons[i] && pad.buttons[i].pressed;
       fire = {
         rightArm:    pad.R2 > TRIGGER_THRESHOLD,
         leftArm:     pad.L2 > TRIGGER_THRESHOLD,
         rightTorso:  pad.R1,
         leftTorso:   pad.L1,
-        centerTorso: btn(PAD_L3),
       };
     } else {
       fire = {
@@ -170,10 +178,16 @@ export class Controls {
         leftArm:     p.leftButtonDown(),
         rightTorso:  k.E.isDown,
         leftTorso:   k.Q.isDown,
-        centerTorso: k.SPACE.isDown,
       };
     }
 
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm' };
+    // ── Sprint toggle (#188) ── L3/Space, edge-detected here (not a held flag like the
+    // weapon binds above) since sprint is press-to-toggle, not hold-to-fire. Always resolves
+    // from the active scheme's own button regardless of loadout — it's never mounted.
+    const sprintDown = padMode ? !!(pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed) : k.SPACE.isDown;
+    const sprintPressed = sprintDown && !this._sprintDown;
+    this._sprintDown = sprintDown;
+
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', sprintPressed };
   }
 }

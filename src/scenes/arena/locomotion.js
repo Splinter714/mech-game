@@ -11,6 +11,7 @@ import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rota
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
+import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
 // snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
@@ -168,8 +169,12 @@ export const LocomotionMixin = {
     // #41: the terrain UNDER the mech scales its top speed — a shallow river or forest bogs it
     // down (rubble mildly), open grass is normal.
     const terrainScale = this._speedFactorAt(this.px, this.py);
+    // #188: Sprint (the hardcoded L3/Space toggle) boosts max speed the same way Overclock's
+    // moveMult does, just from its own always-available fuel-gated state instead of a timed
+    // powerup — the two stack multiplicatively if a player somehow has both at once.
+    const sprintMult = this.sprint?.active ? SPRINT_SPEED_MULT : 1;
     // #60 Overclock boosts max speed via moveMult; #3 weight inertia drives the accel curve.
-    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * moveMult;
+    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * moveMult * sprintMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
     // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that

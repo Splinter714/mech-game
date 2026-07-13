@@ -95,22 +95,20 @@ describe('AudioEngine (mock context)', () => {
     expect(() => { eng.fire({ id: 'made-up', delivery: {} }); eng.trajectory('made-up'); eng.impact('made-up'); }).not.toThrow();
   });
 
-  it('plays footsteps, abilities, and explosions', () => {
+  it('plays footsteps and explosions', () => {
     eng.footstep(0);
     eng.footstep(1); // second is throttled by time, but must not throw
-    eng.ability('dash');
-    eng.ability('shield');
     eng.explosion(0.6);
     eng.explosion(1.2);
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
-  // #178: the generic UI/pickup cue dispatch (equip/unequip/deploy/menuNav/scrapPickup/
-  // powerupPickup) — every id registered in sfxDomains.js's `ui` domain plays a procedural
-  // stub without throwing, and an unregistered id is a safe no-op (mirrors the weapon fallback
-  // behavior above).
+  // #178/#188: the generic UI/pickup cue dispatch (equip/unequip/deploy/menuNav/scrapPickup/
+  // powerupPickup/sprintOn/sprintOff) — every id registered in sfxDomains.js's `ui` domain
+  // plays a procedural stub without throwing, and an unregistered id is a safe no-op (mirrors
+  // the weapon fallback behavior above).
   it('plays a UI/pickup cue for every registered ui-domain id without throwing', () => {
-    for (const id of ['equip', 'unequip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup']) {
+    for (const id of ['equip', 'unequip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup', 'sprintOn', 'sprintOff']) {
       expect(() => eng.ui(id)).not.toThrow();
     }
     expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(0);

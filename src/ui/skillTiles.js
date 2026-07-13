@@ -10,10 +10,11 @@
 import { itemFxKey } from '../art/index.js';
 import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
-import { ABILITY_SLOTS } from '../data/anatomy.js';
 
-// Body order, left → right: left arm · left torso · centre torso · right torso · right arm.
-export const TILE_ORDER = ['leftArm', 'leftTorso', 'centerTorso', 'rightTorso', 'rightArm'];
+// Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
+// centre-torso ability slot is gone (Sprint is a hardcoded L3/Space toggle, not mounted), so
+// this is now four weapon slots only.
+export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 
 export const TILE_UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
@@ -85,6 +86,6 @@ export function updateSkillTile(refs, opts) {
     icon.setVisible(false);
     barTrack.setVisible(false); bar.setVisible(false);
     plus.setVisible(true);
-    subtitle.setText(ABILITY_SLOTS.includes(loc) ? 'ability' : 'weapon').setColor(TILE_UI.dim);
+    subtitle.setText('weapon').setColor(TILE_UI.dim);
   }
 }

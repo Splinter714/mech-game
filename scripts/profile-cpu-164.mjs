@@ -49,7 +49,7 @@ try {
   await page.evaluate(() => {
     const sc = window.__game.scene.getScene('GarageScene');
     const mech = window.__game.registry.get('allMechs').mech1;
-    if (!mech.mounts.centerTorso.length) { sc._selectSlot('centerTorso'); sc._pickItem('jumpJet'); }
+    // #188: centerTorso is no longer mountable — the four weapon slots are the whole build.
     sc.deploy();
   });
   await page.waitForFunction(() => window.__game.scene.isActive('ArenaScene'), { timeout: 60000 });
