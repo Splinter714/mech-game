@@ -4,10 +4,11 @@ import { isAudible, applyPreviewMuting } from './previewMuting.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
-  storeOverride, clearOverride, hasOverride, getOverrideMeta, getOverride,
-  getTrimMs, setTrim, getStartMs, setStart, getProcessing, setProcessing,
-  getFadeOutMs, setFadeOut,
+  storeOverride, clearOverride, hasOverride,
+  setTrim, setStart, getProcessing, setProcessing, setFadeOut,
 } from '../audio/sfxOverrides.js';
+import { getOverrideRowState } from './sfxOverridePanelState.js';
+import { WEAPON_STAGES } from './weaponSfxStages.js';
 import { buildSfxCopyText } from './sfxCopyText.js';
 
 // #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
@@ -30,7 +31,12 @@ const UI = {
   mute: 0xe08a5e, muteText: '#1a0f08', solo: 0x7bd17b, soloText: '#0b1a0b',
 };
 const ROW_H = 18;
-const STAGES = [['fire', 'FIRE (trigger pull)'], ['trajectory', 'TRAJECTORY (in flight)'], ['impact', 'IMPACT (on landing)']];
+// #177: the weapon domain's own stage list — now just the DEFAULT `stages` passed to
+// setTarget()/setWeapon() rather than a hardcoded assumption baked into the panel itself. Lives
+// in its own Phaser-free module (weaponSfxStages.js, imported above) so tests can import it
+// directly; re-exported here unchanged for existing callers. A non-weapon sound domain passes
+// its own `stages` array of the same `[key, label]` shape instead (see src/audio/sfxDomains.js).
+export { WEAPON_STAGES };
 const PREVIEW_THROTTLE = 140;   // ms between live-preview replays while dragging a slider
 
 // #131: short per-component labels for the top mixer strip ("fire·1", "traj·2", "impact·1") —
@@ -107,7 +113,8 @@ export class WeaponSfxPanel {
     this.scene = scene;
     this.region = { x, y, w, h };
     this.weaponId = null;
-    this._lastPreviewAt = { fire: 0, trajectory: 0, impact: 0 };
+    this.stages = WEAPON_STAGES;   // #177: overridden per-target by setTarget()/setWeapon()
+    this._lastPreviewAt = {};
     // #131: transient (never persisted) DAW-style mute/solo for the live-preview only — keyed
     // by `${stage}:${li}`. Reset whenever the selected weapon/category changes (see setWeapon).
     this._mutedSet = new Set();
@@ -191,16 +198,27 @@ export class WeaponSfxPanel {
     this._build();
   }
 
-  // `label` optionally overrides the header text (used by the destruction-explosion category
-  // row — "DEATHEXPLOSIONSMALL" reads badly, "Small (drone / infantry)" doesn't). Omit it for
-  // a real weapon id, where the id itself IS the label (unchanged behavior).
-  setWeapon(weaponId, label = null) {
-    this.weaponId = weaponId;
+  // #177: the generalized entry point — point the panel at ANY `(id, stages)` target, not just
+  // a weapon pulled from the weapons catalog. `stages` is the same `[[key, label], ...]` shape
+  // WEAPON_STAGES already used internally; a non-weapon sound domain (src/audio/sfxDomains.js)
+  // supplies its own list here (e.g. a single `['nav', 'NAV (menu navigation)']` stage) instead
+  // of fire/trajectory/impact. `label` optionally overrides the header text (used by the
+  // destruction-explosion category row — "DEATHEXPLOSIONSMALL" reads badly — and available to
+  // any other domain); omit it to fall back to the id itself, upper-cased.
+  setTarget(id, { label = null, stages = WEAPON_STAGES } = {}) {
+    this.weaponId = id;
     this.weaponLabel = label;
+    this.stages = stages;
     this._scrollY = 0;
     this._mutedSet.clear();
     this._soloedSet.clear();
     this._build();
+  }
+
+  // Thin backward-compat wrapper over setTarget() for the weapon/explosion-category call sites
+  // — same signature and behavior as before #177, just always passing the weapon stage list.
+  setWeapon(weaponId, label = null) {
+    this.setTarget(weaponId, { label, stages: WEAPON_STAGES });
   }
 
   _button(x, y, w, h, label, onClick, { color = UI.text } = {}) {
@@ -249,10 +267,13 @@ export class WeaponSfxPanel {
   // handles the header text the same way).
   _buildOverrideRow(ox, y, w, stage) {
     const weaponId = this.weaponId;
-    const active = hasOverride(weaponId, stage);
-    const meta = active ? getOverrideMeta(weaponId, stage) : null;
-    const status = active ? `file override: ${meta?.name || '(loaded)'}` : 'file override: none (procedural)';
-    this.scroller.add(this.scene.add.text(ox + 6, y, status, {
+    // #177: the display/edit state (active?, status text, trim window, fade cap, processing)
+    // is computed by a Phaser-free helper shared with tests (sfxOverridePanelState.js) — this
+    // method now just renders whatever it returns, so the SAME code the panel draws from is
+    // what gets unit-tested against a synthetic non-weapon (id, stage) target.
+    const state = getOverrideRowState(weaponId, stage);
+    const { active } = state;
+    this.scroller.add(this.scene.add.text(ox + 6, y, state.statusText, {
       fontFamily: 'monospace', fontSize: '9px', color: active ? UI.good : UI.dim,
     }));
     y += 13;
@@ -281,14 +302,7 @@ export class WeaponSfxPanel {
     // end to the very end clears that side back to "full file" (undefined/null) rather than
     // storing a redundant exact-match value — same end state, cleaner data.
     if (active) {
-      const buffer = getOverride(weaponId, stage);
-      const fullSec = Math.max(buffer?.duration ?? 0, 0.01);
-      const startMs = getStartMs(weaponId, stage);
-      const trimMs = getTrimMs(weaponId, stage);
-      const startSec = Phaser.Math.Clamp(startMs != null ? startMs / 1000 : 0, 0, fullSec);
-      const endSec = Phaser.Math.Clamp(
-        trimMs != null ? startSec + trimMs / 1000 : fullSec, startSec, fullSec,
-      );
+      const { fullSec, startSec, endSec } = state;
       this.scroller.add(this.scene.add.text(ox + 6, y, `full length: ${fullSec.toFixed(2)}s`, {
         fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
       }));
@@ -331,9 +345,7 @@ export class WeaponSfxPanel {
       // the start/end sliders (only shown once a file override is loaded). The range is capped at
       // the played window (end - start) so the fade can't exceed what actually plays; 0 = no fade
       // (the default hard cut). Stored as `fadeOutMs`; setFadeOut treats 0 as "clear."
-      const playedMs = Math.max(0, Math.round((endSec - startSec) * 1000));
-      const fadeMax = Math.max(10, playedMs);
-      const fadeMs = Phaser.Math.Clamp(getFadeOutMs(weaponId, stage) ?? 0, 0, fadeMax);
+      const { fadeMax, fadeMs } = state;
       const fadeSlider = new Slider(this.scene, {
         x: ox + 6, y, w: w - 12, labelW: 52, valueW: 44, label: 'fade-out', min: 0, max: fadeMax, step: 10,
         value: fadeMs,
@@ -535,7 +547,7 @@ export class WeaponSfxPanel {
     const sliderW = w - muteW - soloW - gap * 2;
     for (const { stage, li, layer } of this._components) {
       const key = `${stage}:${li}`;
-      const label = `${STAGE_ABBR[stage]}·${li + 1}`;
+      const label = `${STAGE_ABBR[stage] ?? stage.slice(0, 5)}·${li + 1}`;
       const slider = new Slider(this.scene, {
         x: ox, y, w: sliderW, labelW: 42, valueW: 30, label, min: 0, max: 1, step: 0.01,
         value: layer.gain ?? 0,
@@ -622,7 +634,7 @@ export class WeaponSfxPanel {
     // directly, unchanged). `_gainSliders` is rebuilt alongside so stale refs from a previous
     // weapon/rebuild never leak into the new sync wiring.
     this._components = [];
-    for (const [stage] of STAGES) {
+    for (const [stage] of this.stages) {
       const layers = params[stage];
       if (!layers) continue;
       layers.forEach((layer, li) => this._components.push({ stage, li, layer }));
@@ -630,16 +642,22 @@ export class WeaponSfxPanel {
     this._gainSliders = {};
     y = this._buildMixerStrip(ox, y, w);
 
-    for (const [stage, label] of STAGES) {
+    // #177: iterate the panel's own `stages` list (weapon fire/trajectory/impact by default,
+    // whatever a non-weapon target supplied via setTarget otherwise) rather than the module
+    // constant. The file-override row (load/clear/trim/fade/processing) no longer requires
+    // procedural `layers` to exist for the stage — a sound domain with no procedural synthesis
+    // data at all (e.g. a placeholder UI stage) still gets a working override row; only the
+    // waveform/field-slider detail block below it is procedural-layer-dependent.
+    for (const [stage, label] of this.stages) {
       const layers = params[stage];
-      if (!layers || !layers.length) continue;
-      const overridden = hasOverride(this.weaponId, stage);
       this.scroller.add(this.scene.add.text(ox, y, label, { fontFamily: 'monospace', fontSize: '11px', color: UI.text }));
       y += 18;
       // #150: the "load sound file / clear" control for this stage — always fully interactive
       // (never greyed), so it's the one thing here you can act on once a stage is overridden.
       y = this._buildOverrideRow(ox, y, w, stage);
+      if (!layers || !layers.length) { y += 6; continue; }
 
+      const overridden = hasOverride(this.weaponId, stage);
       // Everything below (waveform/filter picker + field sliders) tunes the PROCEDURAL layers,
       // which don't sound any more once a real file is overriding this stage — grey it all out
       // rather than remove it (reset/copy still operate on the underlying data untouched).
@@ -680,11 +698,17 @@ export class WeaponSfxPanel {
   // inaudible layers' `gain` in place, the cue reads those gains at schedule time (playLayers →
   // tone/noise bake gain then), and the restore closure puts the real values back immediately —
   // so the STORED params are never left mutated (copy/reset/persist always see the true gains).
+  // #177: only the three weapon-domain stage names have a dedicated Audio.* playback entry
+  // point today (Audio.fire/trajectory/impact are weapon-shaped calls, not generic-by-id) — a
+  // non-weapon stage (e.g. 'nav') has nothing to route a live preview through yet, so it's a
+  // safe no-op here rather than misrouting into one of the three real methods (which would
+  // look up the WRONG stage's override). Wiring an actual generic preview call is #178's job;
+  // this just avoids a silent bug when a non-weapon target is passed in.
   _playStage(stage) {
     const restore = this._applyPreviewMuting([stage]);
     if (stage === 'fire') Audio.fire({ id: this.weaponId });
     else if (stage === 'trajectory') Audio.trajectory(this.weaponId);
-    else Audio.impact(this.weaponId);
+    else if (stage === 'impact') Audio.impact(this.weaponId);
     restore();
   }
 
