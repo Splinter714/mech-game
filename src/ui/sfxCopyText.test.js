@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildSfxCopyText } from './sfxCopyText.js';
 import {
-  storeOverride, setTrim, setStart, setProcessing, setFadeOut, _resetForTest, setAudioContext,
+  storeOverride, setTrim, setStart, setProcessing, setFadeOut, setVolume, _resetForTest, setAudioContext,
 } from '../audio/sfxOverrides.js';
 
 // Same minimal fake IndexedDB + File + AudioContext used by sfxOverrides.test.js — just enough
@@ -198,5 +198,20 @@ describe('buildSfxCopyText (#170 per-stage copy)', () => {
     await storeOverride('shotgun', 'fire', fakeFile('blast.wav', 'BLAST'));
     const out = buildSfxCopyText('shotgun', PARAMS());
     expect(out).not.toContain('fade-out:');
+  });
+
+  // #182: the copy payload carries the volume multiplier so a pasted FILE block bakes the gain too.
+  it('overridden stage with a non-default volume: emits the volume line and folds it into the bake', async () => {
+    await storeOverride('autocannon', 'fire', fakeFile('boom.wav', 'BOOM'));
+    await setVolume('autocannon', 'fire', 1.3);
+    const out = buildSfxCopyText('autocannon', PARAMS());
+    expect(out).toContain('volume:          1.30x  (130%)');
+    expect(out).toContain('volume 1.30x');   // summarised in the bake instruction
+  });
+
+  it('overridden stage with default/unset volume (1.0): emits no volume line (clean)', async () => {
+    await storeOverride('shotgun', 'fire', fakeFile('blast.wav', 'BLAST'));
+    const out = buildSfxCopyText('shotgun', PARAMS());
+    expect(out).not.toContain('volume:');
   });
 });

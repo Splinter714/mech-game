@@ -5,7 +5,7 @@ import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
   storeOverride, clearOverride, hasOverride,
-  setTrim, setStart, getProcessing, setProcessing, setFadeOut,
+  setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
 import { WEAPON_STAGES } from './weaponSfxStages.js';
@@ -358,6 +358,25 @@ export class WeaponSfxPanel {
       });
       this.scroller.add(fadeSlider.container);
       this.sliders.push(fadeSlider);
+      y += ROW_H + 4;
+
+      // #182: overall volume — a plain linear gain multiplier on top of everything else in the
+      // playback chain, same conditional pattern as the other override controls (only shown once
+      // a file override is loaded). Range 0-200%; stored as a 0..2 linear multiplier via
+      // setVolume (which itself clamps/treats 1.0 as "clear back to default").
+      const volumePct = Math.round((state.volume ?? 1) * 100);
+      const volumeSlider = new Slider(this.scene, {
+        x: ox + 6, y, w: w - 12, labelW: 52, valueW: 44, label: 'volume', min: 0, max: 200, step: 5,
+        value: volumePct,
+        onChange: (v) => {
+          const pct = Math.round(v);
+          setVolume(weaponId, stage, pct / 100);
+          this._toast(`${stage}: volume ${pct}%`);
+          this._previewThrottled(stage);
+        },
+      });
+      this.scroller.add(volumeSlider.container);
+      this.sliders.push(volumeSlider);
       y += ROW_H + 8;
 
       // #172: non-destructive playback processing (pitch / filter / reverb) — same conditional

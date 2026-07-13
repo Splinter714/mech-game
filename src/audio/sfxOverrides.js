@@ -49,6 +49,17 @@
 // undefined/null/0 (including every override stored before this feature existed) means "no fade
 // — hard cut," so unfaded playback is byte-for-byte unchanged. Read via getFadeOutMs(); written
 // (null/0 clears) via setFadeOut().
+//
+// Volume (#182): a non-destructive overall GAIN multiplier per weapon+stage, stored as `volume`
+// alongside `startMs`/`trimMs`/`processing`/`fadeOutMs` in the same override record. Same
+// philosophy as the rest: purely a playback-time parameter (sfx.js applies it as a gain-node
+// multiplier), never touches the stored bytes/decoded buffer. Unity gain (1.0 — today's implicit
+// behavior) is the default and is never persisted as its own field, so an untouched/pre-#182
+// override reads back exactly as unity. Range is clamped to 0..2 (0-200%) in the setter. It
+// composes with the #174 fade-out envelope: the fade ramps FROM this volume level down to 0
+// (not from 1.0), so a loud (volume > 1) override still fades out cleanly at its own level.
+// Read via getVolume() (always returns a number, defaulting to 1); written (1.0 clears back to
+// the default) via setVolume().
 
 const DB_NAME = 'mech-game-sfx-overrides-v1';
 const STORE = 'overrides';
@@ -82,6 +93,13 @@ const _proc = new Map();
 // `_trim`/`_start`/`_proc` so sfx.js's hot playback path reads it without awaiting, and reset
 // whenever a fresh file is loaded into the slot.
 const _fadeOut = new Map();
+// #182: non-destructive overall VOLUME multiplier — a linear gain applied on top of everything
+// else in the playback chain. undefined/absent (never stored in this map) means "unity gain
+// (1.0)," so every existing (pre-#182) override and every freshly-loaded file defaults to
+// today's implicit behavior. Same synchronous no-await in-memory lifecycle as `_fadeOut`/`_proc`/
+// `_trim`/`_start` so sfx.js's hot playback path reads it without awaiting, and reset whenever a
+// fresh file is loaded into the slot.
+const _volume = new Map();
 // The raw Blob for each active override, cached purely so setTrim()/setStart() can persist a
 // full IDB record (key/weaponId/stage/blob/name/type/startMs/trimMs) without a
 // read-before-write round trip.
@@ -188,6 +206,9 @@ export async function storeOverride(weaponId, stage, fileBlob) {
     // #174: same reasoning for the fade-out — a fade tuned against a previous file's length must
     // never carry over silently onto a fresh one.
     _fadeOut.delete(key);
+    // #182: same reasoning for volume — a gain tuned against a previous file must never carry
+    // over silently onto a fresh one; a new file always starts at unity gain.
+    _volume.delete(key);
   }
   return buffer;
 }
@@ -235,6 +256,15 @@ export function getFadeOutMs(weaponId, stage) {
   return _fadeOut.get(keyFor(weaponId, stage)) ?? null;
 }
 
+// #182: synchronous lookup for the active overall volume multiplier, used at the sfx.js
+// playback choke point. Unlike the other getters, this ALWAYS returns a real number (never
+// null) — unity gain (1.0) is the meaningful default for "no volume override set," so callers
+// never need their own `?? 1` fallback.
+export function getVolume(weaponId, stage) {
+  const v = _volume.get(keyFor(weaponId, stage));
+  return v != null ? v : 1;
+}
+
 // Shared persistence for setTrim/setStart/setProcessing: writes a full IDB record combining
 // whatever's currently in the in-memory maps for this key, so any one setter alone keeps the
 // other fields intact.
@@ -250,10 +280,12 @@ async function _persistParams(weaponId, stage) {
   const startMs = _start.get(key);
   const processing = _proc.get(key);
   const fadeOutMs = _fadeOut.get(key);
+  const volume = _volume.get(key);
   if (trimMs != null) record.trimMs = trimMs;
   if (startMs != null) record.startMs = startMs;
   if (processing != null) record.processing = processing;
   if (fadeOutMs != null) record.fadeOutMs = fadeOutMs;
+  if (volume != null) record.volume = volume;
   try { await idbPut(db, record); } catch { /* storage full/blocked — in-memory value still applies this session */ }
 }
 
@@ -283,6 +315,23 @@ export async function setStart(weaponId, stage, startMs) {
 export async function setFadeOut(weaponId, stage, fadeOutMs) {
   const key = keyFor(weaponId, stage);
   if (fadeOutMs == null || fadeOutMs <= 0) _fadeOut.delete(key); else _fadeOut.set(key, fadeOutMs);
+  await _persistParams(weaponId, stage);
+}
+
+// #182: set (or clear, with null/1.0) the non-destructive overall volume multiplier for an
+// active override. Purely a playback-time parameter — never touches the decoded buffer or the
+// stored bytes. Clamped to a 0..2 (0-200%) range; unity gain (1.0, including null/undefined) is
+// treated as "no override" and stored as absent, so returning the slider to 100% restores the
+// exact implicit pre-#182 behavior. Same persistence/lifecycle contract as setTrim/setStart/
+// setFadeOut.
+export async function setVolume(weaponId, stage, volume) {
+  const key = keyFor(weaponId, stage);
+  if (volume == null) {
+    _volume.delete(key);
+  } else {
+    const clamped = Math.max(0, Math.min(2, volume));
+    if (clamped === 1) _volume.delete(key); else _volume.set(key, clamped);
+  }
   await _persistParams(weaponId, stage);
 }
 
@@ -316,6 +365,7 @@ export async function clearOverride(weaponId, stage) {
   _start.delete(key);
   _proc.delete(key);   // #172: processing chain is meaningless without an override to apply to
   _fadeOut.delete(key); // #174: fade-out is meaningless without an override to apply to
+  _volume.delete(key); // #182: volume is meaningless without an override to apply to
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
@@ -346,6 +396,9 @@ export async function loadAllOverrides() {
       // #174: restore a persisted fade-out, if any — a record saved before this feature existed
       // simply has no `fadeOutMs` field, which correctly leaves it unfaded (hard cut).
       if (rec.fadeOutMs != null) _fadeOut.set(rec.key, rec.fadeOutMs);
+      // #182: restore a persisted volume, if any — a record saved before this feature existed
+      // simply has no `volume` field, which correctly leaves it at unity gain (getVolume → 1).
+      if (rec.volume != null) _volume.set(rec.key, rec.volume);
     } catch {
       // A stored file that no longer decodes (corrupt, or the browser dropped codec support)
       // just stays a no-op override — that weapon+stage plays procedurally, same as if
@@ -364,6 +417,7 @@ export function _resetForTest() {
   _start.clear();
   _proc.clear();
   _fadeOut.clear();
+  _volume.clear();
   _dbPromise = null;
   _ctx = null;
 }
