@@ -101,6 +101,21 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
+  // #178: the generic UI/pickup cue dispatch (equip/unequip/deploy/menuNav/scrapPickup/
+  // powerupPickup) — every id registered in sfxDomains.js's `ui` domain plays a procedural
+  // stub without throwing, and an unregistered id is a safe no-op (mirrors the weapon fallback
+  // behavior above).
+  it('plays a UI/pickup cue for every registered ui-domain id without throwing', () => {
+    for (const id of ['equip', 'unequip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup']) {
+      expect(() => eng.ui(id)).not.toThrow();
+    }
+    expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(0);
+  });
+
+  it('no-ops for an unregistered ui id rather than throwing', () => {
+    expect(() => eng.ui('not-a-real-id')).not.toThrow();
+  });
+
   // #107: the per-kill destruction-explosion boom, tunable by discrete size category (not the
   // continuous `explosion(scale)` above, still used for a part breaking off / player MECH DOWN).
   it('plays a death explosion for every size category without throwing', () => {
@@ -267,6 +282,18 @@ describe('AudioEngine (mock context)', () => {
       eng.fire(getWeapon('shotgun'));      // different weapon, no override
       const after = ctx._counts();
       expect(after.oscillators).toBeGreaterThan(before.oscillators); // both ran procedurally
+    });
+
+    // #178: Audio.ui(id, stage) — the generic UI/pickup cue dispatch — resolves an override
+    // through the exact SAME playOverride path a weapon's fire/trajectory/impact stage does,
+    // even though 'equip'/'play' aren't a weapon id or one of the three weapon stage names.
+    it('plays an override buffer for a ui-domain (id, stage) pair via a buffer source', async () => {
+      await storeOverride('equip', 'play', fakeFile('clunk.wav', 'CLUNK'));
+      const before = ctx._counts();
+      eng.ui('equip', 'play');
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);
+      expect(after.oscillators).toBe(before.oscillators);   // procedural equip cue did NOT run
     });
 
     // #166: non-destructive trim — applied purely via AudioBufferSourceNode.start's `duration`

@@ -301,6 +301,55 @@ export function ability(e, kind) {
   ABILITY_CUES[kind]?.(e);
 }
 
+// ── UI/menu/pickup cues (#178) — small procedural stubs for events that had ZERO audio
+// before: equipping/unequipping a weapon into a garage slot, committing to Deploy, menu
+// navigation (tab switching, catalog hover, skill-tile focus), and the two arena pickup
+// types (SCRAP, POWERUP) that used to share the bubble-shield ability blip as a placeholder.
+// Each is registered as an `(id, 'play')` pair in sfxDomains.js's `ui` domain so the owner's
+// generalized tuner panel (#177) can override/bake a real file over it later; until then
+// uiCue() below plays these procedural fallbacks straight (through the SAME override/bake
+// lookup every weapon stage already goes through, via playOverride in this file).
+function equipCue(e) {                                    // confident mechanical "clunk-click"
+  e.noise(e.sfx, { dur: 0.05, gain: 0.22, type: 'lowpass', freq: 1600, freqEnd: 300, attack: 0.001 });
+  e.tone(e.sfx, { type: 'square', freq: 220, freqEnd: 110, dur: 0.07, gain: 0.14, attack: 0.001 });
+}
+function unequipCue(e) {                                  // lighter/quicker "release" — reversed feel
+  e.noise(e.sfx, { dur: 0.035, gain: 0.16, type: 'highpass', freq: 900, freqEnd: 2400, attack: 0.001 });
+  e.tone(e.sfx, { type: 'square', freq: 320, freqEnd: 480, dur: 0.045, gain: 0.09, attack: 0.001 });
+}
+function deployCue(e) {                                    // weightier rising anticipation whoosh
+  e.noise(e.sfx, { dur: 0.42, gain: 0.20, type: 'bandpass', freq: 250, freqEnd: 1400, q: 0.5, attack: 0.02 });
+  e.tone(e.sfx, { type: 'sawtooth', freq: 140, freqEnd: 360, dur: 0.4, gain: 0.16, attack: 0.02 });
+  e.tone(e.sfx, { type: 'sine', freq: 620, dur: 0.12, gain: 0.08, attack: 0.28 });   // brief confirm chime at the crest
+}
+function menuNavCue(e) {                                   // very short/quiet — fires often, must not annoy
+  e.tone(e.sfx, { type: 'sine', freq: 900, freqEnd: 1100, dur: 0.035, gain: 0.05, attack: 0.001 });
+}
+function scrapPickupCue(e) {                                // currency-ish coin/chime
+  e.tone(e.sfx, { type: 'square', freq: 1100, dur: 0.06, gain: 0.10, attack: 0.001 });
+  e.tone(e.sfx, { type: 'sine', freq: 1650, freqEnd: 2200, dur: 0.14, gain: 0.09, attack: 0.005 });
+}
+function powerupPickupCue(e) {                              // single shared "buff acquired" cue
+  e.tone(e.sfx, { type: 'sine', freq: 500, freqEnd: 1000, dur: 0.22, gain: 0.12, attack: 0.01 });
+  e.tone(e.sfx, { type: 'sine', freq: 750, freqEnd: 1500, dur: 0.22, gain: 0.09, attack: 0.01 });
+}
+
+export const UI_CUES = {
+  equip: equipCue,
+  unequip: unequipCue,
+  deploy: deployCue,
+  menuNav: menuNavCue,
+  scrapPickup: scrapPickupCue,
+  powerupPickup: powerupPickupCue,
+};
+
+// Generic (id, stage) UI/pickup sound dispatch — file override/bake takes precedence (same
+// playOverride helper every weapon stage uses), falling back to the procedural stub above.
+export function uiCue(e, id, stage = 'play') {
+  if (playOverride(e, e.sfx, id, stage)) return;
+  UI_CUES[id]?.(e);
+}
+
 // ── One-shot cues (no variants). ────────────────────────────────────────────────────────
 // Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly. Throttled so a
 // fast gait can't machine-gun the sound (throttle state lives on the engine).

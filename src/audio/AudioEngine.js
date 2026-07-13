@@ -460,6 +460,15 @@ export class AudioEngine {
     Sfx.ability(this, kind);
   }
 
+  // Generic UI/pickup cue (#178) — equip/unequip/deploy/menu-nav/scrap/powerup, any (id,
+  // stage) pair registered in sfxDomains.js's `ui` domain. Same override/bake-first, then
+  // procedural-fallback precedence every weapon stage uses (see Sfx.uiCue).
+  ui(id, stage = 'play') {
+    this._resume();
+    if (!this.ready || !id) return;
+    Sfx.uiCue(this, id, stage);
+  }
+
   // Explosion (#36) — a broken-off part / player MECH DOWN. `scale` 0.4..1.2 sizes the blast.
   // NOT used for enemy-kill explosions any more — see deathExplosion below (#107).
   explosion(scale = 1) {

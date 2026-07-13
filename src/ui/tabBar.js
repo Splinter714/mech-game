@@ -14,6 +14,7 @@
 // buildTabBar; the garage rebuilds its bar every refresh) — makes SELECT cycle to the next tab.
 
 import { PadEdges, PAD } from '../input/Controls.js';
+import { Audio } from '../audio/index.js';
 
 const TAB_UI = {
   bar: 0x12161d, barEdge: 0x2a333f,
@@ -41,7 +42,7 @@ export function nextTabScene(active, dir = 1) {
 export function attachPadTabCycle(scene, active) {
   const edges = new PadEdges(scene);
   const onUpdate = () => {
-    if (edges.pressed(PAD.SELECT)) scene.scene.start(nextTabScene(active));
+    if (edges.pressed(PAD.SELECT)) { Audio.ui('menuNav'); scene.scene.start(nextTabScene(active)); }
   };
   scene.events.on('update', onUpdate);
   scene.events.once('shutdown', () => scene.events.off('update', onUpdate));
@@ -71,7 +72,7 @@ export function buildTabBar(scene, { active, onDeploy, canDeploy = true } = {}) 
       r.setInteractive({ useHandCursor: true });
       r.on('pointerover', () => r.setFillStyle(TAB_UI.tabHover));
       r.on('pointerout', () => r.setFillStyle(TAB_UI.tab));
-      r.on('pointerdown', () => scene.scene.start(tab.scene));
+      r.on('pointerdown', () => { Audio.ui('menuNav'); scene.scene.start(tab.scene); });
     }
     x += tabW + gap;
   }

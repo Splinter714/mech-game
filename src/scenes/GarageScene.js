@@ -19,6 +19,8 @@ import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
 import { Slider } from '../ui/slider.js';
 import { EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId } from '../audio/sfxParams.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
+import { SFX_DOMAINS } from '../audio/sfxDomains.js';
+import { Audio } from '../audio/index.js';
 
 // The mech lab. The build is five skill slots, shown as a row of square "skill button" tiles
 // (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
@@ -38,6 +40,12 @@ const PANEL_W = 300;
 const PANEL_GAP = 14;
 const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
 const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
+// #178: a small strip of buttons for the `ui` sfxDomains entries (equip/unequip/deploy/
+// menuNav/scrapPickup/powerupPickup) — mirrors the #107 explosion-category row immediately
+// above it, feeding the SAME WeaponSfxPanel via setTarget() so the owner can preview/trim/
+// bake a real file over each new UI/pickup cue exactly like a weapon or explosion category.
+const UI_ROW_H = 46;
+const UI_GAP = 10;
 
 // The skill-tile row (order, layout, drawing) is shared with the arena HUD via
 // ../ui/skillTiles.js, so the two read identically. TILE_ORDER comes from there.
@@ -112,6 +120,7 @@ export default class GarageScene extends Phaser.Scene {
     // the #107 explosion-category row sitting above the catalog, feeding the same panel.
     const r = this._topRegion(catalogTop);
     this.selectedExplosion = null;
+    this.selectedUi = null;
     // Picking a card both mounts it into the selected slot (unchanged Garage behavior) AND
     // opens its sound-tuning sliders in the panel (formerly the Weapon Lab's job) — see
     // _onCardSelect.
@@ -124,6 +133,7 @@ export default class GarageScene extends Phaser.Scene {
     this.panel = new WeaponSfxPanel(this, r.panel);
     this.panelEdge = this.add.rectangle(r.panel.x - PANEL_GAP / 2, r.panel.y, 1, r.panel.h, UI.panelEdge).setOrigin(0.5, 0);
     this._buildExplosionRow(r.explosion);
+    this._buildUiRow(r.ui);
 
     this._buildPreview();
     this.doll = this.add.container(0, 0);
@@ -343,6 +353,7 @@ export default class GarageScene extends Phaser.Scene {
 
   // Select a slot to edit: filter the catalog to what fits it and highlight the mounted item.
   _selectSlot(loc) {
+    Audio.ui('menuNav');   // #178: short quiet blip — skill-tile focus change
     this.selected = this.selected === loc ? null : loc;
     this.list.setIds(this._eligibleIds(this.selected));
     this.list.setSelected(this.selected ? this.mech.mounts[this.selected][0] ?? null : null);
@@ -353,10 +364,12 @@ export default class GarageScene extends Phaser.Scene {
   // SFX panel + explosion-category row above it, mirroring the retired Weapon Lab's _region().
   _topRegion(top) {
     const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
-    const listTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
+    const uiTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
+    const listTop = uiTop + UI_ROW_H + UI_GAP;
     const bottom = this.H - this.bottomH - 16;
     return {
       explosion: { x: 20, y: top, w: listW, h: EXPLOSION_ROW_H },
+      ui: { x: 20, y: uiTop, w: listW, h: UI_ROW_H },
       list: { x: 20, y: listTop, w: listW, h: bottom - listTop },
       panel: { x: 20 + listW + PANEL_GAP, y: top, w: PANEL_W - PANEL_GAP, h: bottom - top },
     };
@@ -368,8 +381,10 @@ export default class GarageScene extends Phaser.Scene {
   // control of "which card is selected for tuning."
   _onCardSelect(id) {
     this.selectedExplosion = null;
+    this.selectedUi = null;
     this.panel.setWeapon(id);
     this._paintExplosionRow();
+    this._paintUiRow();
     this._pickItem(id);
   }
 
@@ -413,13 +428,69 @@ export default class GarageScene extends Phaser.Scene {
   // exclusive) — it only drives the SFX panel + its own row's highlight.
   _selectExplosion(category) {
     this.selectedExplosion = category;
+    this.selectedUi = null;
     this.panel.setWeapon(explosionSfxId(category), EXPLOSION_CATEGORY_LABEL[category]);
     this._paintExplosionRow();
+    this._paintUiRow();
   }
 
   _paintExplosionRow() {
     for (const b of this.explosionButtons) {
       const on = b.category === this.selectedExplosion;
+      b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
+    }
+  }
+
+  // #178: the `ui` sfxDomains row (equip/unequip/deploy/menuNav/scrapPickup/powerupPickup) —
+  // a fixed strip of buttons, one per registered UI/pickup sound, mirroring the #107 explosion
+  // row directly above it. Picking one feeds its (id, stages) into the SAME WeaponSfxPanel a
+  // weapon card or explosion category would, so the owner gets the identical slider/preview/
+  // reset/bake flow for these new stub cues.
+  _buildUiRow(region) {
+    this.uiHeader = this.add.text(region.x, region.y, 'UI / PICKUP SOUNDS', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    });
+    this.uiButtons = SFX_DOMAINS.ui.map((entry, i) => {
+      const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
+        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+      const text = this.add.text(0, 0, entry.label, {
+        fontFamily: 'monospace', fontSize: '10px', color: UI.text,
+      }).setOrigin(0.5);
+      rect.on('pointerover', () => { if (this.selectedUi !== entry.id) rect.setFillStyle(UI.btnHover); });
+      rect.on('pointerout', () => this._paintUiRow());
+      rect.on('pointerdown', () => this._selectUi(entry));
+      return { entry, rect, text, i };
+    });
+    this._layoutUiRow(region);
+  }
+
+  _layoutUiRow(region) {
+    this.uiHeader.setPosition(region.x, region.y);
+    const gap = 6;
+    const bw = Math.floor((region.w - gap * (this.uiButtons.length - 1)) / this.uiButtons.length);
+    const by = region.y + 18;
+    for (const b of this.uiButtons) {
+      const bx = region.x + b.i * (bw + gap);
+      b.rect.setPosition(bx, by).setSize(bw, 22);
+      b.text.setPosition(bx + bw / 2, by + 11);
+    }
+  }
+
+  // Selecting a UI/pickup sound is independent of the catalog + explosion-row state (same as
+  // explosion categories) — it only drives the SFX panel + its own row's highlight. Also plays
+  // the cue immediately so clicking the row is itself a quick preview.
+  _selectUi(entry) {
+    this.selectedUi = entry.id;
+    this.selectedExplosion = null;
+    this.panel.setTarget(entry.id, { label: entry.label, stages: entry.stages });
+    this._paintExplosionRow();
+    this._paintUiRow();
+    Audio.ui(entry.id, entry.stages[0][0]);
+  }
+
+  _paintUiRow() {
+    for (const b of this.uiButtons) {
+      const on = b.entry.id === this.selectedUi;
       b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
     }
   }
@@ -547,11 +618,17 @@ export default class GarageScene extends Phaser.Scene {
       this.refresh();
       return this.toast(res.reason);
     }
+    Audio.ui('equip');   // #178: confident mechanical clunk-click — fresh mount or a swap
     this.onChange();
   }
 
+  // #178: the dedicated explicit-removal path (distinct from _mountInto's swap-and-replace) —
+  // plays the lighter "release" cue. No mouse/pad gesture calls this yet (pre-existing — this
+  // scene has no standalone "clear a slot" input today, only mount/replace), but it's wired
+  // and ready for whenever one is added.
   unmount(loc, index) {
     this.mech.unmount(loc, index);
+    Audio.ui('unequip');
     this.onChange();
   }
 
@@ -585,6 +662,7 @@ export default class GarageScene extends Phaser.Scene {
       }
       return;
     }
+    Audio.ui('deploy');   // #178: weightier rising anticipation whoosh — committing to the run
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
     // Pick the battlefield biome per deployment (#67). Deterministic: rotate through the roster

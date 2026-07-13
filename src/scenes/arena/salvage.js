@@ -83,7 +83,7 @@ export const SalvageMixin = {
       this.run.currency += s.amount;
       this.registry.set('run', this.run);
     }
-    Audio.ability?.('shield');   // reuse the bright pickup blip; a bespoke cue is later polish
+    Audio.ui('scrapPickup');   // #178: distinct currency/coin-ish chime
     this._floatText(this.px, this.py - 34, `+${s.amount} SCRAP`, '#f5c542');
   },
 };
