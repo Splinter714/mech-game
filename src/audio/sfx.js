@@ -7,7 +7,7 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
-import { getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume } from './sfxOverrides.js';
+import { getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume, getLoopStartMs } from './sfxOverrides.js';
 import { getBaked } from './bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -174,22 +174,29 @@ const LOOP_RELEASE_DEFAULT_MS = 80;
 // #179: genuinely LOOPING counterpart to playBuffer — for the held-sustain path (beamLaser/
 // flamethrower), a one-shot buffer isn't enough; the source has to keep playing for as long as
 // the trigger is held. Sets `AudioBufferSourceNode.loop = true` with `loopStart`/`loopEnd` derived
-// from the SAME #166 startMs/trimMs fields playBuffer already reads (loopStart = startMs/1000,
-// loopEnd = loopStart + trimMs/1000 when trimMs is set, else left at the buffer's own end) — no
-// new override fields needed, a held sound's "trim" just becomes its loop window. Applies the
-// same #172 pitch/filter/reverb chain as the one-shot path. Fade-out (#174) semantics differ for
-// a loop: there's no fixed "end" to fade into mid-loop, so fadeOutMs (or the release fallback
-// above) is instead applied as the RELEASE ramp when the returned stop() is called — the gain
-// node doubles as both the tiny start-attack ramp and the release fade, exactly analogous to how
-// startLoopLayers' per-voice gain ramps up on start and down on stop.
+// from the #166 startMs/trimMs fields playBuffer already reads — `loopEnd` stays anchored to the
+// overall trim end (startMs/1000 + trimMs/1000): trimMs's meaning (the duration of the trimmed
+// region measured FROM startMs) never changes, so the played window's end doesn't move just
+// because the loop's repeat point does. Applies the same #172 pitch/filter/reverb chain as the
+// one-shot path. Fade-out (#174) semantics differ for a loop: there's no fixed "end" to fade into
+// mid-loop, so fadeOutMs (or the release fallback above) is instead applied as the RELEASE ramp
+// when the returned stop() is called — the gain node doubles as both the tiny start-attack ramp
+// and the release fade, exactly analogous to how startLoopLayers' per-voice gain ramps up on
+// start and down on stop.
 // #182: the same overall VOLUME multiplier as the one-shot path, applied to the held loop's
 // attack target — the gain node ramps up to `volume` (not always 1) on start and back down from
 // wherever it's currently held on release, so a non-unity volume carries through the whole held
 // sustain, not just the attack instant.
+// #185: an optional SEPARATE loop-start offset, `loopStartMs` — playback still STARTS at
+// `offsetSec` (from `startMs`, unchanged: the intro/attack transient plays once), but
+// `src.loopStart` is now `loopStartMs/1000` when it differs from `startMs`, so the source wraps
+// to a LATER point than where it began and never replays the intro. `loopStartMs` unset/absent
+// (or equal to `startMs`) defaults to `offsetSec` — byte-for-byte the same node graph/behavior as
+// before #185, so every existing held-loop override/bake (beamLaser/flamethrower) is unaffected.
 //
 // Returns a stop() closure (same shape/contract as startLoopLayers'), or null if there's no
 // buffer/context to play through.
-function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
+function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume, loopStartMs) {
   if (!buffer || !e.ctx) return null;
   const ctx = e.ctx;
   const src = ctx.createBufferSource();
@@ -197,7 +204,11 @@ function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume
   src.loop = true;
 
   const offsetSec = (startMs ?? 0) / 1000;
-  src.loopStart = offsetSec;
+  // #185: the loop's repeat point — defaults to the same position as the intro's start offset
+  // (today's behavior) when loopStartMs is unset/null, so an untouched held-loop sound builds the
+  // exact same graph as before this change.
+  const loopStartSec = loopStartMs != null ? loopStartMs / 1000 : offsetSec;
+  src.loopStart = loopStartSec;
   if (trimMs != null) src.loopEnd = offsetSec + trimMs / 1000;
   // else: leave loopEnd unset — Web Audio treats 0/absent as "the end of the buffer."
 
@@ -257,10 +268,10 @@ function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume
 function playOverrideLoop(e, bus, weaponId, stage) {
   const override = getOverride(weaponId, stage);
   if (override) {
-    return playBufferLoop(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage), getVolume(weaponId, stage));
+    return playBufferLoop(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage), getVolume(weaponId, stage), getLoopStartMs(weaponId, stage));
   }
   const baked = getBaked(weaponId, stage);
-  if (baked) return playBufferLoop(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs, baked.volume);
+  if (baked) return playBufferLoop(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs, baked.volume, baked.loopStartMs);
   return null;
 }
 

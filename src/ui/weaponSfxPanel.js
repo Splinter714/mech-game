@@ -5,7 +5,7 @@ import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
   storeOverride, clearOverride, hasOverride,
-  setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume,
+  setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
 import { WEAPON_STAGES } from './weaponSfxStages.js';
@@ -338,6 +338,28 @@ export class WeaponSfxPanel {
       });
       this.scroller.add(endSlider.container);
       this.sliders.push(endSlider);
+      y += ROW_H + 4;
+
+      // #185: loop-start offset — HELD-LOOP-ONLY (beamLaser/flamethrower use the sustain path;
+      // see HELD_WEAPONS in sfxParams.js), but simplest/least-cluttered to always show it here
+      // next to the trim controls rather than branching UI per weapon — it's a harmless no-op
+      // for one-shot stages (nothing ever reads it outside playBufferLoop). Lets the intro/attack
+      // transient (start→end) play once, then loop just `loopStart→end` on every repeat instead
+      // of re-looping the WHOLE trimmed window. Range is the played window (start..end); dragging
+      // back to the start clears it (null = "loop start = start," today's pre-#185 behavior).
+      const loopStartSlider = new Slider(this.scene, {
+        x: ox + 6, y, w: w - 12, labelW: 64, valueW: 44, label: 'loop start', min: startSec, max: endSec, step: 0.01,
+        value: state.loopStartSec,
+        onChange: (v) => {
+          const newLoopStart = Phaser.Math.Clamp(v, startSec, endSec);
+          const startMsOut = newLoopStart <= startSec + 0.005 ? null : Math.round(newLoopStart * 1000);
+          setLoopStartMs(weaponId, stage, startMsOut);
+          this._toast(startMsOut == null ? `${stage}: loop start = start` : `${stage}: loop starts at ${newLoopStart.toFixed(2)}s`);
+          this._previewThrottled(stage);
+        },
+      });
+      this.scroller.add(loopStartSlider.container);
+      this.sliders.push(loopStartSlider);
       y += ROW_H + 4;
 
       // #174: fade-out duration — smooths the click/pop from an early-trimmed cutoff by ramping

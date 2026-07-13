@@ -60,6 +60,20 @@
 // (not from 1.0), so a loud (volume > 1) override still fades out cleanly at its own level.
 // Read via getVolume() (always returns a number, defaulting to 1); written (1.0 clears back to
 // the default) via setVolume().
+//
+// Loop start (#185): a non-destructive SECOND start-offset, `loopStartMs`, used ONLY by the
+// held-loop path (playBufferLoop/playOverrideLoop) — the ordinary #166 `startMs` still marks
+// where playback begins the FIRST time (the intro/attack transient), while `loopStartMs` marks
+// where the REPEATING loop region begins once the source wraps. Web Audio's
+// AudioBufferSourceNode.start(when, offset) natively supports offset < loopStart: it plays
+// offset→loopEnd once, then repeats loopStart→loopEnd forever, so this needs no custom
+// scheduling — just a second offset fed to `loopStart` instead of reusing `startMs`. Unset/null
+// (including every override stored before this feature existed) means "no separate loop start,"
+// and getLoopStartMs() falls back to getStartMs() in that case — i.e. today's exact behavior
+// (the whole intro-to-end clip re-loops every cycle) is the default, fully backward compatible.
+// Same synchronous no-await in-memory lifecycle as `_start`/`_trim`, persisted alongside the rest
+// of the override record, reset whenever a fresh file is loaded into the slot. Read via
+// getLoopStartMs(); written (null clears back to "= startMs") via setLoopStartMs().
 
 const DB_NAME = 'mech-game-sfx-overrides-v1';
 const STORE = 'overrides';
@@ -100,6 +114,11 @@ const _fadeOut = new Map();
 // `_trim`/`_start` so sfx.js's hot playback path reads it without awaiting, and reset whenever a
 // fresh file is loaded into the slot.
 const _volume = new Map();
+// #185: non-destructive LOOP-START offset (milliseconds) — the held-loop path's own start
+// offset, distinct from `_start`. undefined/absent (never stored in this map) means "no separate
+// loop start," so getLoopStartMs() falls back to getStartMs() — same synchronous no-await
+// in-memory lifecycle as the rest of these maps, reset whenever a fresh file is loaded.
+const _loopStart = new Map();
 // The raw Blob for each active override, cached purely so setTrim()/setStart() can persist a
 // full IDB record (key/weaponId/stage/blob/name/type/startMs/trimMs) without a
 // read-before-write round trip.
@@ -209,6 +228,9 @@ export async function storeOverride(weaponId, stage, fileBlob) {
     // #182: same reasoning for volume — a gain tuned against a previous file must never carry
     // over silently onto a fresh one; a new file always starts at unity gain.
     _volume.delete(key);
+    // #185: same reasoning for loop start — a loop region tuned against a previous file's length
+    // must never carry over silently onto a fresh one.
+    _loopStart.delete(key);
   }
   return buffer;
 }
@@ -265,6 +287,16 @@ export function getVolume(weaponId, stage) {
   return v != null ? v : 1;
 }
 
+// #185: synchronous lookup for the held-loop path's own loop-start offset (milliseconds), used
+// at sfx.js's playBufferLoop choke point. Falls back to getStartMs() when unset — i.e. no
+// separate loop start means the loop region starts at the same place the intro does, which is
+// today's exact pre-#185 behavior (the whole clip re-loops from its own start every cycle).
+export function getLoopStartMs(weaponId, stage) {
+  const key = keyFor(weaponId, stage);
+  const v = _loopStart.get(key);
+  return v != null ? v : getStartMs(weaponId, stage);
+}
+
 // Shared persistence for setTrim/setStart/setProcessing: writes a full IDB record combining
 // whatever's currently in the in-memory maps for this key, so any one setter alone keeps the
 // other fields intact.
@@ -281,11 +313,13 @@ async function _persistParams(weaponId, stage) {
   const processing = _proc.get(key);
   const fadeOutMs = _fadeOut.get(key);
   const volume = _volume.get(key);
+  const loopStartMs = _loopStart.get(key);
   if (trimMs != null) record.trimMs = trimMs;
   if (startMs != null) record.startMs = startMs;
   if (processing != null) record.processing = processing;
   if (fadeOutMs != null) record.fadeOutMs = fadeOutMs;
   if (volume != null) record.volume = volume;
+  if (loopStartMs != null) record.loopStartMs = loopStartMs;
   try { await idbPut(db, record); } catch { /* storage full/blocked — in-memory value still applies this session */ }
 }
 
@@ -335,6 +369,16 @@ export async function setVolume(weaponId, stage, volume) {
   await _persistParams(weaponId, stage);
 }
 
+// #185: set (or clear, with null/undefined) the non-destructive loop-start offset for an active
+// override's held-loop path. Purely a playback-time parameter — never touches the decoded buffer
+// or the stored bytes. Same persistence/lifecycle contract as setStart (null restores "loop start
+// = startMs," today's exact pre-#185 behavior).
+export async function setLoopStartMs(weaponId, stage, loopStartMs) {
+  const key = keyFor(weaponId, stage);
+  if (loopStartMs == null) _loopStart.delete(key); else _loopStart.set(key, loopStartMs);
+  await _persistParams(weaponId, stage);
+}
+
 // #172: merge-patch the non-destructive processing chain (pitch/filter/reverb) for an active
 // override. `patch` is a partial of the processing object (see the module header) — each field
 // set to a real value updates it, each field set to null/undefined CLEARS it. Once every field
@@ -366,6 +410,7 @@ export async function clearOverride(weaponId, stage) {
   _proc.delete(key);   // #172: processing chain is meaningless without an override to apply to
   _fadeOut.delete(key); // #174: fade-out is meaningless without an override to apply to
   _volume.delete(key); // #182: volume is meaningless without an override to apply to
+  _loopStart.delete(key); // #185: loop start is meaningless without an override to apply to
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
@@ -399,6 +444,10 @@ export async function loadAllOverrides() {
       // #182: restore a persisted volume, if any — a record saved before this feature existed
       // simply has no `volume` field, which correctly leaves it at unity gain (getVolume → 1).
       if (rec.volume != null) _volume.set(rec.key, rec.volume);
+      // #185: restore a persisted loop start, if any — a record saved before this feature existed
+      // simply has no `loopStartMs` field, which correctly leaves it "= startMs" (getLoopStartMs
+      // falls back to getStartMs).
+      if (rec.loopStartMs != null) _loopStart.set(rec.key, rec.loopStartMs);
     } catch {
       // A stored file that no longer decodes (corrupt, or the browser dropped codec support)
       // just stays a no-op override — that weapon+stage plays procedurally, same as if
@@ -418,6 +467,7 @@ export function _resetForTest() {
   _proc.clear();
   _fadeOut.clear();
   _volume.clear();
+  _loopStart.clear();
   _dbPromise = null;
   _ctx = null;
 }
