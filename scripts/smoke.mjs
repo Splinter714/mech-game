@@ -10,7 +10,7 @@ import { resolveDevServerUrl } from './dev-server-url.mjs';
 import { hexToPixel } from '../src/data/hexgrid.js';
 import { RUN_CURRENCY_KEY } from '../src/data/events.js';
 import { WEAPONS, WEAPON_IDS } from '../src/data/weapons.js';
-import { INFANTRY_MOB_SIZE } from '../src/data/enemyKinds.js';
+import { INFANTRY_MOB_SIZE, TURRET_CLUSTER_SIZE } from '../src/data/enemyKinds.js';
 import { MIN_SPAWN_BOUNDARY_HEX_DIST, FAR_OBJECTIVE_MIN_DIST } from '../src/data/worldgen.js';
 
 // Enemies now spawn OFF-SCREEN and walk in (#44), so `enemies[0]` at boot is far out of
@@ -156,7 +156,7 @@ try {
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
   }, { timeout: 20000 });
 
-  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize, hitscanWeapon, nearSpawnHexDist }) => {
+  const arena = await page.evaluate(({ dummyPx, homingWeapon, infantryMobSize, hitscanWeapon, nearSpawnHexDist, turretClusterSize }) => {
     const g = window.__game;
     const a = g.scene.getScene('ArenaScene');
     const e0 = a.enemies[0];        // the first enemy — NOT the only one anymore (see below)
@@ -859,7 +859,7 @@ try {
         const cluster = a.enemies.slice(startLen);
         spawnedNow.push(...cluster);
         trials++;
-        if (cluster.length !== 3) allValid = false;
+        if (cluster.length !== turretClusterSize) allValid = false;
         for (const t of cluster) {
           if (a._blocked(t.x, t.y)) allValid = false;
         }
@@ -869,7 +869,7 @@ try {
         // #114 behaviour, which could put turrets up to ~166px apart across 2 hex-rings). A tight
         // 20px tolerance here would have failed under that old spread, so it still meaningfully
         // distinguishes "one huddled nest" from "scattered across several hexes."
-        if (cluster.length === 3) {
+        if (cluster.length === turretClusterSize) {
           const cx = cluster.reduce((s, t) => s + t.x, 0) / cluster.length;
           const cy = cluster.reduce((s, t) => s + t.y, 0) / cluster.length;
           for (const t of cluster) {
@@ -1381,6 +1381,7 @@ try {
   }, {
     dummyPx: DUMMY_PX, homingWeapon: WEAPONS.streakPod, infantryMobSize: INFANTRY_MOB_SIZE,
     hitscanWeapon: WEAPONS.pulseLaser, nearSpawnHexDist: MIN_SPAWN_BOUNDARY_HEX_DIST,
+    turretClusterSize: TURRET_CLUSTER_SIZE,
   });
   await page.screenshot({ path: '/tmp/mech-arena.png' });
 
@@ -1587,11 +1588,12 @@ try {
   if (!arena.enemyDelivery.hitscanDamagedPlayer) fail('#117 an enemy-owned hitscan beam did not damage the player');
   if (!arena.enemyDelivery.meleeDamagedPlayer) fail('#117 an enemy-owned melee/contact swing did not damage the player');
 
-  // #114/#145: a turret-cluster spawn must always land all 3 turrets on valid, in-bounds,
-  // unoccupied-by-forest/water hexes, all huddled tightly on a SINGLE hex's true centre — across
-  // many raw spawn points, including some deliberately off-map or on top of blocked terrain.
-  if (arena.turretClusterBounds.spawnedTotal !== arena.turretClusterBounds.trials * 3) {
-    fail(`#114 a turret cluster did not spawn exactly 3 turrets every time (got ${arena.turretClusterBounds.spawnedTotal} across ${arena.turretClusterBounds.trials} trials)`);
+  // #114/#145/#145-followup: a turret-cluster spawn must always land all TURRET_CLUSTER_SIZE
+  // turrets on valid, in-bounds, unoccupied-by-forest/water hexes, all huddled tightly on a
+  // SINGLE hex's true centre — across many raw spawn points, including some deliberately
+  // off-map or on top of blocked terrain.
+  if (arena.turretClusterBounds.spawnedTotal !== arena.turretClusterBounds.trials * TURRET_CLUSTER_SIZE) {
+    fail(`#114 a turret cluster did not spawn exactly ${TURRET_CLUSTER_SIZE} turrets every time (got ${arena.turretClusterBounds.spawnedTotal} across ${arena.turretClusterBounds.trials} trials)`);
   }
   if (!arena.turretClusterBounds.allValid) fail('#114 a turret cluster placed a turret on invalid (off-map/blocked) terrain');
   if (!arena.turretClusterBounds.allCentered) fail('#145 a turret cluster\'s turrets were not tightly huddled on a single hex\'s centre');

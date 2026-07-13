@@ -93,10 +93,11 @@ const ARTY_RECAMP_MAX = 5200;       // ms — max before it looks for a fresh co
 const OFFSCREEN_MARGIN = 120;       // px beyond the visible edge to drop a spawning enemy
 const SPAWN_WORLD_INSET = 1.5;      // hexes of inset from the world edge kept clear for spawns
 
-// #145: a turret-nest cluster's 3 turrets all share ONE validated hex — this is just enough of a
-// px nudge, spread evenly around that hex's centre, that 3 overlapping sprites still read as 3
-// distinct turrets rather than rendering as one indistinguishable blob. Small relative to the hex
-// radius (48px) so the emplacement still reads as tightly "centered on this one hex."
+// #145: a turret-nest cluster's TURRET_CLUSTER_SIZE turrets all share ONE validated hex — this is
+// just enough of a px nudge, spread evenly around that hex's centre, that the overlapping sprites
+// still read as distinct turrets rather than rendering as one indistinguishable blob. Small
+// relative to the hex radius (48px) so the emplacement still reads as tightly "centered on this
+// one hex."
 const TURRET_HUDDLE_OFFSET = 10;
 
 // Movement feel.
@@ -287,8 +288,8 @@ export const EnemiesMixin = {
   // fix, which #145 walks back). `turretClusterHexes` (data/spawnPlacement.js, pure + unit-tested)
   // finds the nearest passable/in-bounds hex to the raw point (mirrors the `_reachableDropPos`
   // primitive powerups.js/#73 uses for drop placement) — every turret lands on that one hex, just
-  // nudged a few px apart around its centre (`TURRET_HUDDLE_OFFSET`) so 3 overlapping sprites still
-  // read as 3 distinct turrets rather than one blob. Returns the last turret spawned.
+  // nudged a few px apart around its centre (`TURRET_HUDDLE_OFFSET`) so the overlapping sprites
+  // still read as distinct turrets rather than one blob. Returns the last turret spawned.
   _spawnTurretCluster(x, y) {
     const hexes = turretClusterHexes(this.terrain, this.worldRadius, x, y, TURRET_CLUSTER_SIZE);
     const { x: cx, y: cy } = hexToPixel(hexes[0].q, hexes[0].r);
