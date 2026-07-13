@@ -9,7 +9,7 @@ import {
   hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing, getVolume,
   getLoopStartMs,
 } from '../audio/sfxOverrides.js';
-import { hasBaked } from '../audio/bakedSfx.js';
+import { hasBaked, getBaked } from '../audio/bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -24,39 +24,80 @@ function proceduralControlsVisibleFor(id, stage) {
   return !hasOverride(id, stage) && !hasBaked(id, stage);
 }
 
-// Returns `{ active: false, statusText }` when no file override is loaded for this (id, stage)
-// — nothing else to show. Once a file IS loaded, returns everything a start/end/fade-out/
-// volume/processing UI needs to render its current values: `fullSec` (the loaded file's real
-// duration), `startSec`/`endSec` (the non-destructive trim window, #166), `fadeMs`/`fadeMax`
-// (the fade-out duration and its cap, #174), `volume` (the overall gain multiplier, #182 —
-// always a number, defaults to 1/unity), and `proc` (the sparse pitch/filter/reverb processing
-// object, #172 — never null, defaults to `{}` so callers can read fields directly). `loopStartSec`
-// (#185) is the held-loop-only loop-start position, clamped to `[startSec, endSec]` — defaults to
-// `startSec` (today's pre-#185 behavior: the loop region is the whole played window) when unset,
-// since getLoopStartMs() itself falls back to getStartMs().
-// `proceduralControlsVisible` (#181) is always present regardless of `active`: false whenever
-// EITHER a file override or a baked sound is active for this stage, true otherwise.
+// Returns `{ active: false, source: 'none', statusText }` when this (id, stage) has NEITHER a
+// live runtime override NOR a shipped bake — nothing else to show. Otherwise returns everything
+// a start/end/fade-out/volume/processing UI needs to render its current values: `fullSec` (the
+// loaded file's real duration), `startSec`/`endSec` (the non-destructive trim window, #166),
+// `fadeMs`/`fadeMax` (the fade-out duration and its cap, #174), `volume` (the overall gain
+// multiplier, #182 — always a number, defaults to 1/unity), and `proc` (the sparse pitch/filter/
+// reverb processing object, #172 — never null, defaults to `{}` so callers can read fields
+// directly). `loopStartSec` (#185) is the held-loop-only loop-start position, clamped to
+// `[startSec, endSec]`.
+//
+// #186: `source` distinguishes WHERE those values came from — `'override'` (a live runtime
+// override is loaded, same as before this issue), `'baked'` (no live override yet, but a
+// shipped bake exists for this stage — the values below are the bake's own recipe, read straight
+// out of bakedSfx.js's getBaked/hasBaked rather than the sfxOverrides.js getters), or `'none'`
+// (neither — the original "nothing to show" case, byte-for-byte unchanged from before #186).
+// `active` means "there's something to show/edit" and is now true for BOTH 'override' and
+// 'baked' (previously only true for a live override) — callers that only care about "is there
+// anything real playing here" (e.g. proceduralControlsVisibleFor, already independent of this
+// flag) are unaffected; callers that used `active` to mean "there's a LIVE override" should
+// switch to checking `source === 'override'` instead.
+//
+// `proceduralControlsVisible` (#181) is always present regardless of `active`/`source`: false
+// whenever EITHER a file override or a baked sound is active for this stage, true otherwise.
 export function getOverrideRowState(id, stage) {
-  const active = hasOverride(id, stage);
-  const meta = active ? getOverrideMeta(id, stage) : null;
-  const statusText = active ? `file override: ${meta?.name || '(loaded)'}` : 'file override: none (procedural)';
+  const overrideActive = hasOverride(id, stage);
   const proceduralControlsVisible = proceduralControlsVisibleFor(id, stage);
-  if (!active) return { active, statusText, meta: null, proceduralControlsVisible };
 
-  const buffer = getOverride(id, stage);
-  const fullSec = Math.max(buffer?.duration ?? 0, 0.01);
-  const startMs = getStartMs(id, stage);
-  const trimMs = getTrimMs(id, stage);
-  const startSec = clamp(startMs != null ? startMs / 1000 : 0, 0, fullSec);
-  const endSec = clamp(trimMs != null ? startSec + trimMs / 1000 : fullSec, startSec, fullSec);
-  const playedMs = Math.max(0, Math.round((endSec - startSec) * 1000));
-  const fadeMax = Math.max(10, playedMs);
-  const fadeMs = clamp(getFadeOutMs(id, stage) ?? 0, 0, fadeMax);
-  const volume = clamp(getVolume(id, stage), 0, 2);
-  const proc = getProcessing(id, stage) || {};
-  const loopStartMs = getLoopStartMs(id, stage);
-  const loopStartSec = clamp(loopStartMs != null ? loopStartMs / 1000 : startSec, startSec, endSec);
+  if (overrideActive) {
+    const meta = getOverrideMeta(id, stage);
+    const statusText = `file override: ${meta?.name || '(loaded)'}`;
+    const buffer = getOverride(id, stage);
+    const fullSec = Math.max(buffer?.duration ?? 0, 0.01);
+    const startMs = getStartMs(id, stage);
+    const trimMs = getTrimMs(id, stage);
+    const startSec = clamp(startMs != null ? startMs / 1000 : 0, 0, fullSec);
+    const endSec = clamp(trimMs != null ? startSec + trimMs / 1000 : fullSec, startSec, fullSec);
+    const playedMs = Math.max(0, Math.round((endSec - startSec) * 1000));
+    const fadeMax = Math.max(10, playedMs);
+    const fadeMs = clamp(getFadeOutMs(id, stage) ?? 0, 0, fadeMax);
+    const volume = clamp(getVolume(id, stage), 0, 2);
+    const proc = getProcessing(id, stage) || {};
+    const loopStartMs = getLoopStartMs(id, stage);
+    const loopStartSec = clamp(loopStartMs != null ? loopStartMs / 1000 : startSec, startSec, endSec);
+    return {
+      active: true, source: 'override', statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax,
+      volume, proc, loopStartSec, proceduralControlsVisible,
+    };
+  }
+
+  const baked = hasBaked(id, stage) ? getBaked(id, stage) : null;
+  if (baked) {
+    // #186: same shape as the 'override' branch above, but every value is read straight off the
+    // bake's own recipe (getBaked) instead of the sfxOverrides.js getters, since no live override
+    // record exists yet to read from. Editing any control seeds a real live override from this
+    // SAME bake (see sfxOverrides.js's seedOverrideFromBaked, wired up in weaponSfxPanel.js) —
+    // until then, this is a read-only preview of what's actually shipping.
+    const statusText = 'file override: (baked) shipped sound — edit any control to customize';
+    const fullSec = Math.max(baked.buffer?.duration ?? 0, 0.01);
+    const startSec = clamp(baked.startMs != null ? baked.startMs / 1000 : 0, 0, fullSec);
+    const endSec = clamp(baked.trimMs != null ? startSec + baked.trimMs / 1000 : fullSec, startSec, fullSec);
+    const playedMs = Math.max(0, Math.round((endSec - startSec) * 1000));
+    const fadeMax = Math.max(10, playedMs);
+    const fadeMs = clamp(baked.fadeOutMs ?? 0, 0, fadeMax);
+    const volume = clamp(baked.volume ?? 1, 0, 2);
+    const proc = baked.processing || {};
+    const loopStartMs = baked.loopStartMs ?? baked.startMs;
+    const loopStartSec = clamp(loopStartMs != null ? loopStartMs / 1000 : startSec, startSec, endSec);
+    return {
+      active: true, source: 'baked', statusText, meta: null, fullSec, startSec, endSec, fadeMs, fadeMax,
+      volume, proc, loopStartSec, proceduralControlsVisible,
+    };
+  }
+
   return {
-    active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, volume, proc, loopStartSec, proceduralControlsVisible,
+    active: false, source: 'none', statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible,
   };
 }
