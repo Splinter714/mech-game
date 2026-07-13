@@ -6,7 +6,7 @@
 // to prove the generalized (id, stage) plumbing works all the way up through the panel's own
 // display logic, not just the raw storage layer (sfxOverrides.js), which was already generic.
 import {
-  hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing,
+  hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing, getVolume,
 } from '../audio/sfxOverrides.js';
 import { hasBaked } from '../audio/bakedSfx.js';
 
@@ -25,10 +25,11 @@ function proceduralControlsVisibleFor(id, stage) {
 
 // Returns `{ active: false, statusText }` when no file override is loaded for this (id, stage)
 // — nothing else to show. Once a file IS loaded, returns everything a start/end/fade-out/
-// processing UI needs to render its current values: `fullSec` (the loaded file's real
+// volume/processing UI needs to render its current values: `fullSec` (the loaded file's real
 // duration), `startSec`/`endSec` (the non-destructive trim window, #166), `fadeMs`/`fadeMax`
-// (the fade-out duration and its cap, #174), and `proc` (the sparse pitch/filter/reverb
-// processing object, #172 — never null, defaults to `{}` so callers can read fields directly).
+// (the fade-out duration and its cap, #174), `volume` (the overall gain multiplier, #182 —
+// always a number, defaults to 1/unity), and `proc` (the sparse pitch/filter/reverb processing
+// object, #172 — never null, defaults to `{}` so callers can read fields directly).
 // `proceduralControlsVisible` (#181) is always present regardless of `active`: false whenever
 // EITHER a file override or a baked sound is active for this stage, true otherwise.
 export function getOverrideRowState(id, stage) {
@@ -47,8 +48,9 @@ export function getOverrideRowState(id, stage) {
   const playedMs = Math.max(0, Math.round((endSec - startSec) * 1000));
   const fadeMax = Math.max(10, playedMs);
   const fadeMs = clamp(getFadeOutMs(id, stage) ?? 0, 0, fadeMax);
+  const volume = clamp(getVolume(id, stage), 0, 2);
   const proc = getProcessing(id, stage) || {};
   return {
-    active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, proc, proceduralControlsVisible,
+    active, statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax, volume, proc, proceduralControlsVisible,
   };
 }

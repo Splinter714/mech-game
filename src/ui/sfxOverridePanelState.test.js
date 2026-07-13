@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  storeOverride, setAudioContext, _resetForTest, setStart, setTrim, setFadeOut, setProcessing,
+  storeOverride, setAudioContext, _resetForTest, setStart, setTrim, setFadeOut, setProcessing, setVolume,
   clearOverride,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
@@ -139,6 +139,7 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     expect(state.startSec).toBe(0);
     expect(state.endSec).toBe(2);
     expect(state.fadeMs).toBe(0);
+    expect(state.volume).toBe(1);   // #182: defaults to unity gain
     expect(state.proc).toEqual({});
 
     // Edit start/trim (#166) — mirrors the start/end slider onChange handlers in
@@ -159,6 +160,11 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     await setProcessing(id, stage, { detune: 150, filterType: 'lowpass', filterFreq: 900 });
     state = getOverrideRowState(id, stage);
     expect(state.proc).toEqual({ detune: 150, filterType: 'lowpass', filterFreq: 900 });
+
+    // Edit volume (#182).
+    await setVolume(id, stage, 1.4);
+    state = getOverrideRowState(id, stage);
+    expect(state.volume).toBe(1.4);
 
     // A DIFFERENT (id, stage) — including the weapon 'fire' stage of a totally unrelated id —
     // must stay untouched by any of the above (the storage/display layer keys purely on the

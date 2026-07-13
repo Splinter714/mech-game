@@ -7,7 +7,7 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
-import { getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs } from './sfxOverrides.js';
+import { getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume } from './sfxOverrides.js';
 import { getBaked } from './bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -76,7 +76,14 @@ function connectReverb(ctx, input, bus, mix, sizeSec) {
 // click/pop from an early-trimmed cutoff. `fadeOutMs` is clamped so it can never exceed the played
 // duration; `fadeOutMs`=0/absent inserts NO gain node at all — a strict clean passthrough, so
 // unfaded playback builds the exact same graph as before.
-function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
+//
+// #182: an optional overall VOLUME multiplier — a plain linear gain applied at the same point in
+// the chain as the fade-out node. `volume` unset/1.0 (unity gain, today's implicit default)
+// inserts NO extra gain node when there's also no fade-out — a strict clean passthrough, same
+// graph as before #182. When a fade-out IS also active, the two compose into the SAME gain node:
+// it holds at `volume` (not always 1) until the fade point, then ramps to 0 — so a loud
+// (volume > 1) or quiet (volume < 1) override still fades out from its own level, not from unity.
+function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
   if (!buffer || !e.ctx) return false;
   const ctx = e.ctx;
   const src = ctx.createBufferSource();
@@ -104,17 +111,31 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
     ? trimMs / 1000
     : (buffer.duration != null ? Math.max(0, buffer.duration - offsetSec) : null);
 
+  // #182: the volume multiplier — unset/null defaults to unity gain (1.0), same convention as
+  // getVolume(). Neutral (exactly 1) with no fade-out active means no extra node is needed at
+  // all (see below).
+  const vol = volume != null ? volume : 1;
+
   // #174: splice the fade-out gain node only when there's a real fade to apply (positive
   // fadeOutMs AND a known, positive played duration). Clamp the fade so it can't exceed the
-  // played window, then anchor full gain at the fade-start and ramp linearly to 0 at endTime.
+  // played window, then anchor gain at #182's `vol` (not always 1) at the fade-start and ramp
+  // linearly to 0 at endTime — so the fade rides FROM the volume level, not from unity.
   if (fadeOutMs > 0 && playedSec != null && playedSec > 0) {
     const fadeSec = Math.min(fadeOutMs / 1000, playedSec);
     const endTime = startAt + playedSec;
     const fadeGain = ctx.createGain();
-    fadeGain.gain.setValueAtTime(1, endTime - fadeSec);
+    fadeGain.gain.setValueAtTime(vol, endTime - fadeSec);
     fadeGain.gain.linearRampToValueAtTime(0, endTime);
     tail.connect(fadeGain);
     tail = fadeGain;
+  } else if (vol !== 1) {
+    // #182: no fade-out active, but a non-unity volume is set — a plain constant-gain node
+    // carries the multiplier. Omitted entirely when vol is unity, so an untouched/pre-#182
+    // override builds the exact same graph as before.
+    const volGain = ctx.createGain();
+    volGain.gain.value = vol;
+    tail.connect(volGain);
+    tail = volGain;
   }
 
   if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
@@ -135,10 +156,10 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
 function playOverride(e, bus, weaponId, stage) {
   const override = getOverride(weaponId, stage);
   if (override) {
-    return playBuffer(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage));
+    return playBuffer(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage), getVolume(weaponId, stage));
   }
   const baked = getBaked(weaponId, stage);
-  if (baked) return playBuffer(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs);
+  if (baked) return playBuffer(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs, baked.volume);
   return false;
 }
 
@@ -161,9 +182,14 @@ const LOOP_RELEASE_DEFAULT_MS = 80;
 // above) is instead applied as the RELEASE ramp when the returned stop() is called — the gain
 // node doubles as both the tiny start-attack ramp and the release fade, exactly analogous to how
 // startLoopLayers' per-voice gain ramps up on start and down on stop.
+// #182: the same overall VOLUME multiplier as the one-shot path, applied to the held loop's
+// attack target — the gain node ramps up to `volume` (not always 1) on start and back down from
+// wherever it's currently held on release, so a non-unity volume carries through the whole held
+// sustain, not just the attack instant.
+//
 // Returns a stop() closure (same shape/contract as startLoopLayers'), or null if there's no
 // buffer/context to play through.
-function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
+function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
   if (!buffer || !e.ctx) return null;
   const ctx = e.ctx;
   const src = ctx.createBufferSource();
@@ -188,11 +214,15 @@ function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
   }
 
   // Gain node carries both the start attack and the eventual release fade — same role
-  // startLoopLayers' per-voice gain plays for the procedural held path.
+  // startLoopLayers' per-voice gain plays for the procedural held path. #182: the attack ramps
+  // to `volume` (default unity) instead of a hardcoded 1, so a non-unity volume applies to the
+  // whole held sustain. exponentialRampToValueAtTime can't target exactly 0 (Web Audio requires
+  // a nonzero value), so a volume of 0 floors at the same tiny epsilon the attack starts from.
+  const vol = volume != null ? volume : 1;
   const g = ctx.createGain();
   const startAt = e._now();
   g.gain.setValueAtTime(0.0001, startAt);
-  g.gain.exponentialRampToValueAtTime(1, startAt + LOOP_ATTACK_SEC);
+  g.gain.exponentialRampToValueAtTime(vol > 0 ? vol : 0.0001, startAt + LOOP_ATTACK_SEC);
   tail.connect(g);
   tail = g;
 
@@ -227,10 +257,10 @@ function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs) {
 function playOverrideLoop(e, bus, weaponId, stage) {
   const override = getOverride(weaponId, stage);
   if (override) {
-    return playBufferLoop(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage));
+    return playBufferLoop(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage), getVolume(weaponId, stage));
   }
   const baked = getBaked(weaponId, stage);
-  if (baked) return playBufferLoop(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs);
+  if (baked) return playBufferLoop(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs, baked.volume);
   return null;
 }
 

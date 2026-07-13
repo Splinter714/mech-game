@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
   setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
-  getProcessing, setProcessing, getFadeOutMs, setFadeOut,
+  getProcessing, setProcessing, getFadeOutMs, setFadeOut, getVolume, setVolume,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -540,6 +540,104 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
       await expect(setFadeOut('autocannon', 'fire', 150)).resolves.toBeUndefined();
       expect(getFadeOutMs('autocannon', 'fire')).toBe(150);
+    });
+  });
+
+  // #182: non-destructive overall VOLUME multiplier — mirrors the fade-out (#174) test suite's
+  // shape exactly, since it's the same kind of playback-time parameter with the same lifecycle.
+  describe('volume (#182)', () => {
+    it('defaults to unity gain (1) for a freshly-stored override', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      expect(getVolume('autocannon', 'fire')).toBe(1);
+    });
+
+    it('setVolume sets a gain visible immediately via getVolume', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setVolume('autocannon', 'fire', 1.5);
+      expect(getVolume('autocannon', 'fire')).toBe(1.5);
+    });
+
+    it('setVolume(null) and setVolume(1) both clear a previously-set volume back to unity', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setVolume('autocannon', 'fire', 1.5);
+      await setVolume('autocannon', 'fire', null);
+      expect(getVolume('autocannon', 'fire')).toBe(1);
+      await setVolume('autocannon', 'fire', 1.5);
+      await setVolume('autocannon', 'fire', 1);   // 1 == unity == cleared
+      expect(getVolume('autocannon', 'fire')).toBe(1);
+    });
+
+    it('clamps to the 0..2 range', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await setVolume('autocannon', 'fire', 5);
+      expect(getVolume('autocannon', 'fire')).toBe(2);
+      await setVolume('autocannon', 'fire', -3);
+      expect(getVolume('autocannon', 'fire')).toBe(0);
+    });
+
+    it('persists the volume across a simulated reload, alongside the trim', async () => {
+      await storeOverride('railLance', 'fire', fakeFile('zap.wav', 'ZAP'));
+      await setTrim('railLance', 'fire', 300);
+      await setVolume('railLance', 'fire', 1.3);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      expect(getVolume('railLance', 'fire')).toBe(1); // pre-boot state, not loaded yet
+
+      await loadAllOverrides();
+      expect(getVolume('railLance', 'fire')).toBe(1.3);
+      expect(getTrimMs('railLance', 'fire')).toBe(300);
+      expect(getOverride('railLance', 'fire')).toEqual({ __decodedFrom: 'ZAP' });
+    });
+
+    it('a reload with no volume ever set leaves getVolume at unity (backward-compatible with pre-#182 overrides)', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getVolume('shotgun', 'impact')).toBe(1);
+      expect(getOverride('shotgun', 'impact')).toEqual({ __decodedFrom: 'X' });
+    });
+
+    it('clearOverride also clears the volume, including across a reload', async () => {
+      await storeOverride('shotgun', 'impact', fakeFile('x.wav', 'X'));
+      await setVolume('shotgun', 'impact', 1.7);
+      await clearOverride('shotgun', 'impact');
+      expect(getVolume('shotgun', 'impact')).toBe(1);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getVolume('shotgun', 'impact')).toBe(1);
+    });
+
+    it('loading a new file into a previously-volume-tuned slot does not inherit the stale gain', async () => {
+      await storeOverride('napalm', 'fire', fakeFile('old.wav', 'OLD'));
+      await setVolume('napalm', 'fire', 1.6);
+      expect(getVolume('napalm', 'fire')).toBe(1.6);
+      await storeOverride('napalm', 'fire', fakeFile('new.wav', 'NEW'));
+      expect(getVolume('napalm', 'fire')).toBe(1);
+    });
+
+    it('does not clobber coexisting processing/fade-out (all three persist together)', async () => {
+      await storeOverride('railgun', 'fire', fakeFile('r.wav', 'R'));
+      await setProcessing('railgun', 'fire', { detune: 200 });
+      await setFadeOut('railgun', 'fire', 75);
+      await setVolume('railgun', 'fire', 1.4);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getProcessing('railgun', 'fire')).toEqual({ detune: 200 });
+      expect(getFadeOutMs('railgun', 'fire')).toBe(75);
+      expect(getVolume('railgun', 'fire')).toBe(1.4);
+    });
+
+    it('never throws when IndexedDB is unavailable', async () => {
+      delete globalThis.indexedDB;
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await expect(setVolume('autocannon', 'fire', 1.5)).resolves.toBeUndefined();
+      expect(getVolume('autocannon', 'fire')).toBe(1.5);
     });
   });
 });

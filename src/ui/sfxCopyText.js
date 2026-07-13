@@ -15,7 +15,7 @@
 // A weapon with NO overrides at all emits the historical whole-params JSON block byte-for-byte
 // (see below), so pasting a fully-tuned procedural weapon back into DEFAULT_SFX is unchanged.
 
-import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing, getFadeOutMs } from '../audio/sfxOverrides.js';
+import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing, getFadeOutMs, getVolume } from '../audio/sfxOverrides.js';
 
 // Fire before trajectory before impact — matches the panel's STAGES ordering. Explosion
 // categories only have `fire`; stages absent from `params` are simply skipped.
@@ -83,6 +83,14 @@ function overrideBlock(weaponId, stage) {
   if (fadeOutMs > 0) {
     lines.push(`    fade-out:        ${fadeOutMs} ms  (ramp to silence before the end)`);
     procNotes.push(`fade-out ${fadeOutMs} ms`);
+  }
+
+  // #182: the overall volume multiplier, when non-default — so the copied recipe carries the
+  // gain the owner tuned. Emitted only when it differs from unity (1.0/absent adds no line).
+  const volume = getVolume(weaponId, stage);
+  if (volume !== 1) {
+    lines.push(`    volume:          ${volume.toFixed(2)}x  (${Math.round(volume * 100)}%)`);
+    procNotes.push(`volume ${volume.toFixed(2)}x`);
   }
 
   const procBake = procNotes.length ? `, then apply ${procNotes.join(', ')}` : '';

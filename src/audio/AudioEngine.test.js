@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
-  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, _resetForTest,
+  storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, setVolume, _resetForTest,
 } from './sfxOverrides.js';
 import {
   BAKED_SFX, _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
@@ -24,14 +24,17 @@ function mockContext() {
     setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {},
     cancelScheduledValues() {},
   });
-  // #174: a gain AudioParam that RECORDS its scheduled envelope events (as ['set'|'ramp', value,
-  // time] tuples) so a test can assert the exact fade-out ramp — setValueAtTime(full) then
+  // #174: a gain AudioParam that RECORDS its scheduled envelope events (as ['set'|'ramp'|'exp',
+  // value, time] tuples) so a test can assert the exact fade-out ramp — setValueAtTime(full) then
   // linearRampToValueAtTime(0) — landing on the trim point. Real GainNode gain defaults to 1.
+  // #182: exponentialRampToValueAtTime also records (as 'exp') so a test can assert the held-loop
+  // attack ramp's target (the #182 volume) — previously a no-op, since nothing needed its args.
   const gainParam = (events) => ({
     value: 1,
     setValueAtTime(v, t) { events.push(['set', v, t]); return this; },
     linearRampToValueAtTime(v, t) { events.push(['ramp', v, t]); return this; },
-    exponentialRampToValueAtTime() {}, cancelScheduledValues() {},
+    exponentialRampToValueAtTime(v, t) { events.push(['exp', v, t]); return this; },
+    cancelScheduledValues() {},
   });
   const node = () => ({ connect: (dest) => dest, disconnect() {} });
   const ctx = {
@@ -513,6 +516,83 @@ describe('AudioEngine (mock context)', () => {
         expect(ctx._fadeGains().length).toBe(0);
       });
     });
+
+    // #182: non-destructive overall VOLUME multiplier — a plain gain multiplier composing with
+    // the existing detune/filter/reverb (#172) chain and the #174 fade-out envelope.
+    describe('volume (#182)', () => {
+      it('default (volume unset/1.0) builds the exact SAME node graph as before #182 — no extra gain node', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        const before = ctx._counts();
+        const beforeGains = ctx._gainNodes().length;
+        eng.fire(getWeapon('autocannon'));
+        const after = ctx._counts();
+        expect(after.sources).toBe(before.sources + 1);
+        expect(ctx._gainNodes().length).toBe(beforeGains);   // no gain node inserted at all
+        expect(ctx._fadeGains().length).toBe(0);
+      });
+
+      it('inserts a plain gain node reflecting the volume value when set (no fade active)', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setVolume('autocannon', 'fire', 1.5);
+        const beforeGains = ctx._gainNodes().length;
+        eng.fire(getWeapon('autocannon'));
+        const added = ctx._gainNodes().slice(beforeGains);
+        expect(added.length).toBe(1);
+        expect(added[0].gain.value).toBe(1.5);
+        expect(ctx._fadeGains().length).toBe(0);   // this is a plain gain, not a fade-envelope node
+      });
+
+      it('composes with fade-out: the SAME gain node holds at volume (not 1) before ramping to 0', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setTrim('autocannon', 'fire', 400);
+        await setFadeOut('autocannon', 'fire', 120);
+        await setVolume('autocannon', 'fire', 1.5);
+        eng.fire(getWeapon('autocannon'));
+        const fades = ctx._fadeGains();
+        // With volume set, the fade-envelope gain now holds at 1.5 rather than a straight ramp-
+        // to-0 match on _fadeGains' 'ramp to 0' filter — still exactly one such node, only ONE
+        // gain node total was added for this stage (fade + volume share the same node).
+        expect(fades.length).toBe(1);
+        const events = fades[0]._events;
+        const endTime = ctx.currentTime + 0.4;
+        expect(events[0]).toEqual(['set', 1.5, expect.closeTo(endTime - 0.12, 5)]); // holds at VOLUME, not 1
+        expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);          // still ramps to silence
+      });
+
+      it('clamps volume into the 0..2 range via setVolume, reflected in the gain node', async () => {
+        await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+        await setVolume('autocannon', 'fire', 9);   // clamped to 2 by setVolume
+        const beforeGains = ctx._gainNodes().length;
+        eng.fire(getWeapon('autocannon'));
+        const added = ctx._gainNodes().slice(beforeGains);
+        expect(added[0].gain.value).toBe(2);
+      });
+
+      it('applies to a BAKED sound too (volume on the BAKED_SFX entry)', () => {
+        const entry = BAKED_SFX['clusterRocket::fire'];
+        const saved = { volume: entry.volume };
+        entry.volume = 0.6;
+        try {
+          _setBakedBufferForTest('clusterRocket', 'fire', { __baked: 'bitBomb' });
+          const beforeGains = ctx._gainNodes().length;
+          eng.fire(getWeapon('clusterRocket'));
+          const added = ctx._gainNodes().slice(beforeGains);
+          expect(added.length).toBe(1);
+          expect(added[0].gain.value).toBe(0.6);
+        } finally {
+          entry.volume = saved.volume;
+        }
+      });
+
+      it('a BAKED entry with no volume field defaults to unity — unaffected, no regression', () => {
+        // clusterRocket::fire ships with no `volume` field at all today.
+        expect(BAKED_SFX['clusterRocket::fire'].volume).toBeUndefined();
+        _setBakedBufferForTest('clusterRocket', 'fire', { __baked: 'bitBomb' });
+        const beforeGains = ctx._gainNodes().length;
+        eng.fire(getWeapon('clusterRocket'));
+        expect(ctx._gainNodes().length).toBe(beforeGains);   // no extra gain node — unity, unchanged
+      });
+    });
   });
 
   // #173: baked-in SFX assets — a file shipped in the build plays for a weapon+stage, sitting
@@ -796,6 +876,32 @@ describe('AudioEngine (mock context)', () => {
       eng.stopHeld('leftArm');
       const rampEvent = releaseGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
       expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.08, 5);   // 80ms default release
+    });
+
+    // #182: the overall volume multiplier also applies to the held-sustain LOOP path — the
+    // attack ramps to `volume` instead of a hardcoded 1, and the release ramp still lands on 0
+    // (composing correctly, same as the one-shot path's fade-out).
+    it('applies the #182 volume to the held-loop attack ramp target', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setVolume('beamLaser', 'fire', 1.6);
+      eng.startHeld('leftArm', 'beamLaser');
+      const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+      const expEvent = loopGain._events.find((e) => e[0] === 'exp');
+      expect(expEvent).toBeTruthy();
+      expect(expEvent[1]).toBe(1.6);   // attack ramps to the volume, not unity
+      eng.stopHeld('leftArm');
+      // Release still ramps cleanly to silence regardless of the volume level.
+      const rampEvent = loopGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
+      expect(rampEvent).toBeTruthy();
+    });
+
+    it('held-loop volume unset/1.0 attacks to unity, unchanged from before #182', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      eng.startHeld('leftArm', 'beamLaser');
+      const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+      const expEvent = loopGain._events.find((e) => e[0] === 'exp');
+      expect(expEvent[1]).toBe(1);
+      eng.stopHeld('leftArm');
     });
 
     it('a dev override still wins over a baked loop for the same held weapon+stage', async () => {

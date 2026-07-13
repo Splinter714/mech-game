@@ -51,6 +51,8 @@ const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 //               sfxOverrides.js header for the field list; played through the same #172 chain
 //   fadeOutMs   optional fade-out duration in ms (#174) — fade to silence over the last N ms
 //               before the scheduled stop (omit/null/0 = no fade, hard cut)
+//   volume      optional overall gain multiplier (#182) — 1.0 = unity (omit = unity, unchanged
+//               implicit gain); composes with fadeOutMs (the fade ramps FROM this level to 0)
 export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Bit Bomb_HY_PC-001.wav". The full
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.
@@ -127,10 +129,11 @@ export async function loadAllBaked() {
 }
 
 // Synchronous lookup used at the sfx.js playback choke points: returns { buffer, startMs,
-// trimMs, processing, fadeOutMs } for a decoded bake, or null (no bake for this slot, or not
-// decoded yet) which callers treat as "fall back to procedural." The buffer comes from the
-// decoded cache; the recipe (start/trim/processing/fadeOut) comes straight from the static
-// BAKED_SFX entry.
+// trimMs, processing, fadeOutMs, volume } for a decoded bake, or null (no bake for this slot, or
+// not decoded yet) which callers treat as "fall back to procedural." The buffer comes from the
+// decoded cache; the recipe (start/trim/processing/fadeOut/volume) comes straight from the
+// static BAKED_SFX entry. `volume` defaults to 1 (unity) when the entry omits it (#182), same
+// convention sfxOverrides.getVolume() uses.
 export function getBaked(weaponId, stage) {
   const key = keyFor(weaponId, stage);
   const buffer = _cache.get(key);
@@ -142,6 +145,7 @@ export function getBaked(weaponId, stage) {
     trimMs: entry.trimMs ?? null,
     processing: entry.processing ?? null,
     fadeOutMs: entry.fadeOutMs ?? null,
+    volume: entry.volume ?? 1,
   };
 }
 
