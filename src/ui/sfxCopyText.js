@@ -16,10 +16,7 @@
 // (see below), so pasting a fully-tuned procedural weapon back into DEFAULT_SFX is unchanged.
 
 import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing, getFadeOutMs, getVolume } from '../audio/sfxOverrides.js';
-
-// Fire before trajectory before impact — matches the panel's STAGES ordering. Explosion
-// categories only have `fire`; stages absent from `params` are simply skipped.
-const STAGE_ORDER = ['fire', 'trajectory', 'impact'];
+import { WEAPON_STAGES } from './weaponSfxStages.js';
 
 // The FILE block for one overridden stage. `startMs`/`trimMs` come from #166 (null = "start at
 // 0" / "play to end"); we surface an explicit start and end in ms so the trim window is
@@ -107,21 +104,39 @@ function proceduralBlock(stage, layers) {
 }
 
 // Build the full copy payload for `weaponId` given its live `params` (Audio.getSfxParams).
+// `stageList` is the target's REAL registered stage list — the same `[[key, label], ...]`
+// shape the panel renders controls from (`this.stages`, set via setTarget/setWeapon —
+// WEAPON_STAGES for a weapon/explosion category, or a single `[['play', 'PLAY']]` for a #178
+// UI/pickup cue). Defaults to WEAPON_STAGES for back-compat with older call sites.
+//
+// #183 fix: this used to hardcode the 3-stage weapon shape (fire/trajectory/impact)
+// regardless of what was actually being copied, so a single-stage UI sound (which has no
+// `fire`/`impact` of its own — `Audio.getSfxParams` falls back to the unrelated weapon-shaped
+// FALLBACK_SFX for any id with no DEFAULT_SFX entry) copied out fabricated fire/impact data
+// and silently dropped any real file override tuned on its actual `play` stage. Now every
+// stage considered — for both the override-detection pass and the plain-procedural fallback —
+// comes from `stageList`, so the export can only ever contain the target's real stage(s).
 // Returns a single string destined for both the clipboard and console.log.
-export function buildSfxCopyText(weaponId, params) {
-  const stages = STAGE_ORDER.filter((s) => params?.[s]?.length);
-  const overridden = stages.filter((s) => hasOverride(weaponId, s));
+export function buildSfxCopyText(weaponId, params, stageList = WEAPON_STAGES) {
+  const stageKeys = stageList.map(([key]) => key);
+  const overridden = stageKeys.filter((s) => hasOverride(weaponId, s));
 
-  // No file overrides anywhere → reproduce the pre-#170 output verbatim: the whole params
-  // object as a ready-to-paste DEFAULT_SFX entry (two-space indent + trailing comma). Keeping
-  // this byte-for-byte means a fully-procedural weapon copies exactly as it always has.
+  // No file overrides on any of this target's real stages → reproduce the pre-#170 output
+  // verbatim, but scoped to just those stages (picked from `params` in stage order) rather
+  // than the whole `params` object — for a weapon that's every key params has anyway (byte-
+  // identical to before); for a single-stage UI sound with no procedural entry, this yields an
+  // honestly-empty `{}` rather than fabricated fire/impact keys borrowed from the fallback.
   if (overridden.length === 0) {
-    return `  ${weaponId}: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
+    const picked = {};
+    for (const s of stageKeys) if (params?.[s]?.length) picked[s] = params[s];
+    return `  ${weaponId}: ${JSON.stringify(picked, null, 2).replace(/\n/g, '\n  ')},`;
   }
 
-  // At least one stage is a real file — emit a per-stage labeled payload mixing FILE blocks and
-  // procedural blocks, each clearly marked so the two kinds can't be confused.
-  const blocks = stages.map((stage) => (
+  // At least one real stage is a file override — emit a per-stage labeled payload mixing FILE
+  // blocks and procedural blocks, each clearly marked so the two kinds can't be confused. Only
+  // stages that either are overridden or have real procedural layers get a block.
+  const stagesWithData = stageKeys.filter((s) => overridden.includes(s) || params?.[s]?.length);
+  const blocks = stagesWithData.map((stage) => (
     hasOverride(weaponId, stage) ? overrideBlock(weaponId, stage) : proceduralBlock(stage, params[stage])
   ));
   const header = `${weaponId} — SFX export (file override + procedural mix)`;
