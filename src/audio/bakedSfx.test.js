@@ -65,6 +65,19 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.fadeOutMs).toBe(450);           // #174 fade — literal recipe value (runtime clamps to the 60ms window)
       expect(entry.processing).toEqual({ detune: 10, reverbMix: 0.25, reverbSize: 2.3 }); // #172 chain — first NON-null baked processing
     });
+
+    // #180: deathExplosionMassive's fire cue — a trimmed (1490ms) + faded (550ms) bake of
+    // "Mecha DAMAGED 2.wav" (kept STEREO, unlike the prior mono weapon-fire bakes).
+    it('registers deathExplosionMassive/fire with a bundled asset and the #166 trim + #174 fade recipe', () => {
+      const entry = BAKED_SFX['deathExplosionMassive::fire'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
+      expect(entry.asset.length).toBeGreaterThan(0);
+      expect(entry.startMs).toBe(0);
+      expect(entry.trimMs).toBe(1490);             // #166 trim
+      expect(entry.fadeOutMs).toBe(550);           // #174 fade
+      expect(entry.processing).toBeNull();
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -77,6 +90,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB'],
       [BAKED_SFX['plasmaLance::fire'].asset, 'BASSWAVE'],
       [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
+      [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
     ]);
     installFakeFetch(tags);
     setAudioContext(fakeCtx());
@@ -111,6 +125,15 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       fadeOutMs: 450,
       processing: { detune: 10, reverbMix: 0.25, reverbSize: 2.3 },
     });
+
+    // #180: deathExplosionMassive/fire decodes into its own slot carrying the trim + fade recipe.
+    expect(hasBaked('deathExplosionMassive', 'fire')).toBe(true);
+    const explosion = getBaked('deathExplosionMassive', 'fire');
+    expect(explosion.buffer).toEqual({ __decodedFrom: 'MECHADAMAGED' });
+    expect(explosion.startMs).toBe(0);
+    expect(explosion.trimMs).toBe(1490);
+    expect(explosion.fadeOutMs).toBe(550);
+    expect(explosion.processing).toBeNull();
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
@@ -118,6 +141,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB'],
       [BAKED_SFX['plasmaLance::fire'].asset, 'BASSWAVE'],
       [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
+      [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
@@ -125,6 +149,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(getBaked('clusterRocket', 'impact')).toBeNull();   // right weapon, wrong stage
     expect(getBaked('plasmaLance', 'impact')).toBeNull();     // #175: impact stays procedural — bake is fire-only
     expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
+    expect(getBaked('deathExplosionMassive', 'impact')).toBeNull(); // #180: impact stays procedural — bake is fire-only
   });
 
   it('loadAllBaked is a safe no-op with no context set yet (nothing decodes, never throws)', async () => {

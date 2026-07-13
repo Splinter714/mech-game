@@ -33,6 +33,12 @@ import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-bassWave.m4a';
 // (~30KB). Played back as a 60ms window starting 320ms into the file (#166 start+trim), pitched up
 // +10 cents with a wet reverb (#172 processing), and a 450ms fade-out (#174, clamped to the window).
 import pulseLaserFire from '../assets/sfx/pulseLaser-fire-bassBuzz.m4a';
+// #180: deathExplosionMassive's FIRE cue — "Mecha DAMAGED 2.wav" from the same Helton Yan pack
+// (STEREO 44.1kHz 16-bit, 3.429s). Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a
+// at ~224kbps (~99KB) — kept stereo (unlike the prior mono weapon-fire bakes) and encoded at a
+// higher bitrate to preserve the explosion's low end. Played back as the first 1490ms of the
+// file (#166 start+trim: startMs 0, trimMs 1490) with a 550ms fade-out (#174).
+import deathExplosionFire from '../assets/sfx/deathExplosionMassive-fire-mechaDamaged2.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -77,6 +83,16 @@ export const BAKED_SFX = {
     trimMs: 60,
     fadeOutMs: 450,
     processing: { detune: 10, reverbMix: 0.25, reverbSize: 2.3 },
+  },
+  // Helton Yan's Pixel Combat pack — "Mecha DAMAGED 2.wav" (stereo). The first 1490ms of the
+  // file (#166 start+trim: startMs 0, trimMs 1490) as deathExplosionMassive's fire cue, with a
+  // 550ms fade-out (#174). No pitch/filter/reverb processing.
+  'deathExplosionMassive::fire': {
+    asset: deathExplosionFire,
+    startMs: 0,
+    trimMs: 1490,
+    fadeOutMs: 550,
+    processing: null,
   },
 };
 
