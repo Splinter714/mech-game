@@ -39,6 +39,68 @@ export const PowerupsMixin = {
     this.shieldPool = 0;             // #187: remaining Shield absorb capacity (damage points), 0 = inactive
     this.powerups = [];              // dropped collectibles awaiting pickup: { x, y, type, ttl, age, view }
     this.powerupFx = this.add.graphics();   // (unused sink kept for symmetry; sprites are containers)
+    this._initShieldVisual();        // #205: persistent bubble overlay while shieldPool > 0
+  },
+
+  // #205 (playtest follow-up to #187): the Shield powerup had NO persistent visual on the
+  // player mech — only a per-hit 'shielded' floating text (combat.js). Draws a translucent
+  // bubble/ring, in the powerup's own colour (POWERUPS.shield.color), as CHILDREN of
+  // `this.playerView` — the player mech's container (locomotion.js `_makeMechView`) — so the
+  // bubble tracks the mech's position (and stompy bob) for free with zero per-frame position
+  // math of our own. Added after the mech's own sprites so it draws on top, like a shell around
+  // the hull. Starts fully hidden; `_updateShieldVisual` below is the only thing that toggles it.
+  _initShieldVisual() {
+    const color = POWERUPS.shield.color;
+    const fill = this.add.circle(0, 0, 36, color, 0.1).setVisible(false);
+    const ring = this.add.circle(0, 0, 36).setStrokeStyle(2.5, color, 0.8).setVisible(false);
+    const ringOuter = this.add.circle(0, 0, 41).setStrokeStyle(1.5, color, 0.3).setVisible(false);
+    this.playerView.add([fill, ring, ringOuter]);
+    this._shieldVisual = { fill, ring, ringOuter, active: false, t: 0 };
+  },
+
+  // #205: per-frame bubble upkeep — called once from `_updatePowerups` below (same cadence as
+  // the shieldPool bookkeeping it reads). Shows/hides the bubble the instant shieldPool crosses
+  // 0↔>0 (pickup / break), and while active scales its opacity with the remaining FRACTION of
+  // the pool rather than a flat on/off, so the player gets an at-a-glance "how much is left" read
+  // — same spirit as the Sprint fuel bar (HudScene `_updateSprintBar`), just drawn in-world
+  // instead of on the HUD since this is a persistent-on-the-mech indicator, not a HUD meter.
+  // `this._shieldPeak` is the pool value at the moment of the MOST RECENT pickup (set in
+  // `_activatePowerup` below) — since the pool only ever counts down between pickups (never back
+  // up on its own), that's exactly the right denominator even when a duplicate pickup stacks the
+  // cap past the base `shieldCap` (#187's stacking rule).
+  _updateShieldVisual(delta) {
+    const sv = this._shieldVisual;
+    if (!sv) return;
+    const pool = this.shieldPool || 0;
+    const active = pool > 0;
+    if (active !== sv.active) {
+      sv.fill.setVisible(active);
+      sv.ring.setVisible(active);
+      sv.ringOuter.setVisible(active);
+      sv.active = active;
+      if (!active) sv.t = 0;
+    }
+    if (!active) return;
+    sv.t += delta;
+    const cap = this._shieldPeak || POWERUPS.shield.shieldCap;
+    const frac = Math.max(0.15, Math.min(1, pool / cap));
+    // Slow ambient hum so an idle bubble still reads as "live" rather than a flat decal.
+    const pulse = 0.5 + 0.5 * Math.sin(sv.t * 0.0025);
+    sv.fill.setAlpha((0.05 + 0.12 * frac) * (0.85 + 0.3 * pulse));
+    sv.ring.setAlpha((0.35 + 0.5 * frac) * (0.85 + 0.2 * pulse));
+    sv.ringOuter.setAlpha((0.12 + 0.25 * frac) * (0.85 + 0.2 * pulse));
+  },
+
+  // #205: a brief outward pulse on the bubble the instant it actually absorbs a hit — reinforces
+  // the 'shielded' floating text (combat.js `_damagePlayerAt`) with something ON the mech itself.
+  // Mirrors the tween-driven feel of the existing impact `_burst` primitive (combat.js) without
+  // needing its pooled-circle machinery, since this reuses the bubble's own persistent shapes.
+  _shieldHitFlash() {
+    const sv = this._shieldVisual;
+    if (!sv || !sv.active) return;
+    sv.ring.setScale(1.3);
+    sv.fill.setScale(1.18);
+    this.tweens.add({ targets: [sv.ring, sv.fill], scale: 1, duration: 220, ease: 'Quad.out' });
   },
 
   // Source-agnostic drop: place a world-space collectible of a weighted-random type at (x, y).
@@ -164,6 +226,9 @@ export const PowerupsMixin = {
     // lands (see combat.js `damagePlayer`), so just publish the current remaining pool for
     // the HUD each frame.
     this.registry.set('shieldPool', this.shieldPool || 0);
+    // #205: keep the on-mech bubble in sync with the pool every frame (show/hide on the
+    // 0↔>0 edge, fade with the remaining fraction).
+    this._updateShieldVisual(delta);
   },
 
   // Apply a picked-up powerup. Instant types (Armor Patch) resolve immediately and never enter
@@ -184,6 +249,10 @@ export const PowerupsMixin = {
       // adapted to a damage-remaining pool (accumulate, no cap; the owner can add one via
       // playtest if stacking turns out to be too strong).
       this.shieldPool = (this.shieldPool || 0) + (p.shieldCap ?? 0);
+      // #205: remember the pool value at THIS pickup as the bubble's fraction denominator —
+      // see `_updateShieldVisual` above for why this (not the base shieldCap) is the right cap
+      // once stacking has pushed the pool past it.
+      this._shieldPeak = this.shieldPool;
     } else {
       this.activePowerups[typeId] = durationMs(typeId);   // set OR refresh
     }

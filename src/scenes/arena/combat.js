@@ -44,6 +44,10 @@ export const CombatMixin = {
     const parts = ['leftTorso', 'leftTorso', 'rightTorso', 'rightTorso', 'leftArm', 'rightArm'];
     const loc = parts[Math.floor(Math.random() * parts.length)];
     const res = this.damagePlayer(loc, dmg);
+    // #205: pulse the on-mech shield bubble any time the shield actually absorbed part of this
+    // hit — covers both a fully-absorbed hit (shielded, below) and a hit that partially absorbed
+    // then broke through (shieldAbsorbed > 0 but not `shielded`, see damagePlayer above).
+    if (res.shieldAbsorbed) this._shieldHitFlash();
     if (res.shielded) { this._floatText(this.px, this.py - 24, 'shielded', '#5ec8e0'); return; }
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
     // weapons), not on continuous health — so only pay the 9-texture procedural rebuild when
