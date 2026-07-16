@@ -50,9 +50,9 @@ function mockContext() {
     createBufferSource: () => {
       sources++;
       const n = {
-        buffer: null, loop: false, detune: param(), connect: (d) => d,
+        buffer: null, loop: false, detune: param(), connect: (d) => d, _stopArgs: null,
         start(...args) { bufferSourceStarts.push(args); },
-        stop() {}, disconnect() {},
+        stop(...args) { n._stopArgs = args; }, disconnect() {},
       };
       bufferSources.push(n);
       return n;
@@ -66,6 +66,8 @@ function mockContext() {
     _counts: () => ({ oscillators, sources, biquads: biquads.length, convolvers: convolvers.length }),
     _lastBufferSourceStart: () => bufferSourceStarts[bufferSourceStarts.length - 1],
     _lastBufferSource: () => bufferSources[bufferSources.length - 1],
+    _bufferSources: () => bufferSources.slice(),
+    _bufferSourceStarts: () => bufferSourceStarts.slice(),
     _biquads: () => biquads,
     _convolvers: () => convolvers,
     _gainNodes: () => gainNodes,
@@ -886,15 +888,22 @@ describe('AudioEngine (mock context)', () => {
       eng.stopHeld('leftArm');
     });
 
-    it('derives loopStart/loopEnd from the existing startMs/trimMs override fields', async () => {
+    // #185 crossfade fix: once a loop's length is knowable (trimMs set here), startHeld no
+    // longer uses a single native `.loop = true` source — it schedules a discrete, non-looping
+    // "intro" segment via the crossfaded scheduler (see sfx.js's playBufferLoopCrossfaded). The
+    // intro segment's own start(when, offset, duration) call still encodes the same
+    // startMs/trimMs window the native path used to express as loopStart/loopEnd: offset is the
+    // startMs-derived offset, and offset+duration is the trim end.
+    it('derives the intro segment\'s offset/duration from the existing startMs/trimMs override fields', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
       await setStart('beamLaser', 'fire', 200);   // 200ms in
       await setTrim('beamLaser', 'fire', 500);    // 500ms window from there
       eng.startHeld('leftArm', 'beamLaser');
       const src = ctx._lastBufferSource();
-      expect(src.loop).toBe(true);
-      expect(src.loopStart).toBeCloseTo(0.2, 5);
-      expect(src.loopEnd).toBeCloseTo(0.7, 5);    // 0.2 + 0.5
+      expect(src.loop).toBe(false);               // no longer a native loop — a scheduled segment
+      const [, offset, duration] = ctx._lastBufferSourceStart();
+      expect(offset).toBeCloseTo(0.2, 5);
+      expect(offset + duration).toBeCloseTo(0.7, 5);   // 0.2 + 0.5 — same overall trim end as before
       eng.stopHeld('leftArm');
     });
 
@@ -909,34 +918,41 @@ describe('AudioEngine (mock context)', () => {
         expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);    // falls back to startMs
       });
 
-      it('loopStartMs unset produces byte-identical src.loopStart to pre-#185 behavior', async () => {
+      it('loopStartMs unset: the intro segment\'s offset/duration matches pre-#185 semantics', async () => {
         await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
         await setStart('beamLaser', 'fire', 200);
         await setTrim('beamLaser', 'fire', 500);
         eng.startHeld('leftArm', 'beamLaser');
-        const src = ctx._lastBufferSource();
-        expect(src.loopStart).toBeCloseTo(0.2, 5);   // same as startMs/1000, exactly like before #185
-        expect(src.loopEnd).toBeCloseTo(0.7, 5);
-        // The initial start(when, offset) call still uses the startMs-derived offset.
-        expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.2, 5);
+        const [, offset, duration] = ctx._lastBufferSourceStart();
+        expect(offset).toBeCloseTo(0.2, 5);              // same as startMs/1000, exactly like before #185
+        expect(offset + duration).toBeCloseTo(0.7, 5);
         eng.stopHeld('leftArm');
       });
 
-      it('loopStartMs LATER than startMs: intro plays once from startMs, loop region is loopStartMs→loopEnd', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        await setStart('beamLaser', 'fire', 200);     // intro begins 200ms in
-        await setTrim('beamLaser', 'fire', 500);      // played window ends at 700ms
-        await setLoopStartMs('beamLaser', 'fire', 450);   // loop repeats from 450ms, not 200ms
-        eng.startHeld('leftArm', 'beamLaser');
-        const src = ctx._lastBufferSource();
-        // The FIRST play still starts at the original startMs-derived offset (the intro).
-        expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.2, 5);
-        // But the repeat point (loopStart) is the NEW, later value — not startMs.
-        expect(src.loopStart).toBeCloseTo(0.45, 5);
-        // loopEnd stays anchored to the overall trim end (startMs + trimMs), unaffected by
-        // where the loop repeat point sits.
-        expect(src.loopEnd).toBeCloseTo(0.7, 5);
-        eng.stopHeld('leftArm');
+      it('loopStartMs LATER than startMs: intro plays once from startMs, then the crossfade hands off into a segment starting at loopStartMs', async () => {
+        vi.useFakeTimers();
+        try {
+          await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+          await setStart('beamLaser', 'fire', 200);     // intro begins 200ms in
+          await setTrim('beamLaser', 'fire', 500);      // played window ends at 700ms
+          await setLoopStartMs('beamLaser', 'fire', 450);   // loop repeats from 450ms, not 200ms
+          eng.startHeld('leftArm', 'beamLaser');
+          // The FIRST (intro) segment still starts at the original startMs-derived offset.
+          const [, introOffset, introDur] = ctx._lastBufferSourceStart();
+          expect(introOffset).toBeCloseTo(0.2, 5);
+          expect(introOffset + introDur).toBeCloseTo(0.7, 5);
+          // Advance past the scheduled crossfade handoff — the NEXT segment repeats from the
+          // NEW, later loopStartMs value, not from startMs.
+          vi.advanceTimersByTime(1000);
+          const [, loopOffset, loopDur] = ctx._lastBufferSourceStart();
+          expect(loopOffset).toBeCloseTo(0.45, 5);
+          // The loop segment's own span stays anchored to the overall trim end (startMs +
+          // trimMs), unaffected by where the loop repeat point sits.
+          expect(loopOffset + loopDur).toBeCloseTo(0.7, 5);
+          eng.stopHeld('leftArm');
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it('loop-start split composes with the #182 volume and #174/#179 release fade unaffected', async () => {
@@ -947,11 +963,9 @@ describe('AudioEngine (mock context)', () => {
         await setVolume('beamLaser', 'fire', 1.4);
         await setFadeOut('beamLaser', 'fire', 150);   // this is the RELEASE window on stop(), unaffected by loop split
         eng.startHeld('leftArm', 'beamLaser');
-        const src = ctx._lastBufferSource();
-        expect(src.loopStart).toBeCloseTo(0.3, 5);
         const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
         const expEvent = loopGain._events.find((e) => e[0] === 'exp');
-        expect(expEvent[1]).toBe(1.4);   // attack still ramps to the configured volume
+        expect(expEvent[1]).toBe(1.4);   // intro attack still ramps to the configured volume
         eng.stopHeld('leftArm');
         const rampEvent = loopGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
         expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.15, 5);   // release fade still 150ms, on stop
@@ -975,19 +989,25 @@ describe('AudioEngine (mock context)', () => {
       });
 
       it('a BAKED entry with loopStartMs plays the loop split too, defaulting to its own startMs when omitted', () => {
-        BAKED_SFX['flamethrower::fire'] = {
-          startMs: 100, trimMs: 600, loopStartMs: 350, processing: null,
-        };
+        vi.useFakeTimers();
         try {
-          _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
-          eng.startHeld('leftArm', 'flamethrower');
-          const src = ctx._lastBufferSource();
-          expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.1, 5);   // intro starts at startMs
-          expect(src.loopStart).toBeCloseTo(0.35, 5);                    // loop repeats from loopStartMs
-          expect(src.loopEnd).toBeCloseTo(0.7, 5);
-          eng.stopHeld('leftArm');
+          BAKED_SFX['flamethrower::fire'] = {
+            startMs: 100, trimMs: 600, loopStartMs: 350, processing: null,
+          };
+          try {
+            _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
+            eng.startHeld('leftArm', 'flamethrower');
+            expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.1, 5);   // intro starts at startMs
+            vi.advanceTimersByTime(1000);   // advance past the intro->loop crossfade handoff
+            const [, loopOffset, loopDur] = ctx._lastBufferSourceStart();
+            expect(loopOffset).toBeCloseTo(0.35, 5);                    // loop repeats from loopStartMs
+            expect(loopOffset + loopDur).toBeCloseTo(0.7, 5);
+            eng.stopHeld('leftArm');
+          } finally {
+            delete BAKED_SFX['flamethrower::fire'];
+          }
         } finally {
-          delete BAKED_SFX['flamethrower::fire'];
+          vi.useRealTimers();
         }
       });
 
@@ -996,8 +1016,7 @@ describe('AudioEngine (mock context)', () => {
         try {
           _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
           eng.startHeld('leftArm', 'flamethrower');
-          const src = ctx._lastBufferSource();
-          expect(src.loopStart).toBeCloseTo(0.2, 5);   // same as startMs — no separate loop region
+          expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.2, 5);   // same as startMs — no separate loop region
           eng.stopHeld('leftArm');
         } finally {
           delete BAKED_SFX['flamethrower::fire'];
@@ -1092,6 +1111,86 @@ describe('AudioEngine (mock context)', () => {
       } finally {
         delete BAKED_SFX['beamLaser::fire'];
       }
+    });
+
+    // #185 follow-up: the actual crossfade fix for the "it sounds so robotic" playtest feedback.
+    // A native `AudioBufferSourceNode.loop` hard-cuts from loopEnd back to loopStart with no
+    // crossfade, which clicks audibly on most real waveforms. Once a loop's length is knowable
+    // (trimMs set, exercised here), startHeld now schedules a chain of overlapping, non-looping
+    // segments instead — each with its own gain envelope — that hand off to each other with a
+    // short crossfade rather than a hard jump.
+    describe('loop crossfade scheduling (#185 "robotic hard-cut" fix)', () => {
+      it('schedules the intro segment as a non-looping, gain-enveloped buffer source (not native .loop)', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setTrim('beamLaser', 'fire', 400);   // gives the loop a known, positive length
+        eng.startHeld('leftArm', 'beamLaser');
+        const src = ctx._lastBufferSource();
+        expect(src.loop).toBe(false);
+        const gain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+        // Attack ramps up from near-silence to full — a real envelope, not an instant jump.
+        const setEvents = gain._events.filter((e) => e[0] === 'set');
+        expect(setEvents[0][1]).toBeCloseTo(0.0001, 4);
+        expect(gain._events.some((e) => (e[0] === 'exp' || e[0] === 'ramp') && e[1] > 0)).toBe(true);
+        eng.stopHeld('leftArm');
+      });
+
+      it('two overlapping sources are live during a crossfade handoff, each scheduled to start before the other ends', async () => {
+        vi.useFakeTimers();
+        try {
+          await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+          await setTrim('beamLaser', 'fire', 400);   // 400ms loop region, well over the ~50ms crossfade window
+          eng.startHeld('leftArm', 'beamLaser');
+          const beforeCount = ctx._bufferSources().length;
+          vi.advanceTimersByTime(1000);   // run past at least one scheduled handoff
+          const starts = ctx._bufferSourceStarts();
+          expect(starts.length).toBeGreaterThan(beforeCount);   // a second (handoff) segment was scheduled
+          // starts[i] = [when, offset, duration] for the i-th source, in creation order (the
+          // intro segment is starts[0]; the first handoff segment is starts[1]).
+          const [introWhen, , introDur] = starts[0];
+          const [loopWhen] = starts[1];
+          const introEnd = introWhen + introDur;
+          // The handoff segment starts strictly BEFORE the intro segment's natural end — a real
+          // overlap window, not a back-to-back (click-prone) handoff.
+          expect(loopWhen).toBeLessThan(introEnd);
+          expect(loopWhen).toBeGreaterThan(introWhen);
+          eng.stopHeld('leftArm');
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('stopHeld tears down BOTH the outgoing and incoming segments when called mid-crossfade, not just the latest', async () => {
+        vi.useFakeTimers();
+        try {
+          await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+          await setTrim('beamLaser', 'fire', 400);
+          eng.startHeld('leftArm', 'beamLaser');
+          vi.advanceTimersByTime(220);   // land inside the intro->first-loop crossfade overlap window
+          const sources = ctx._bufferSources();
+          expect(sources.length).toBeGreaterThanOrEqual(2);
+          const [outgoing, incoming] = sources.slice(-2);
+          expect(() => eng.stopHeld('leftArm')).not.toThrow();
+          // Both segments still in their overlap window at the moment of stop() got a release
+          // ramp AND a stop() call — a still-live older segment isn't left dangling just because
+          // a newer one has already started.
+          expect(outgoing._stopArgs).toBeTruthy();
+          expect(incoming._stopArgs).toBeTruthy();
+          const gains = ctx._gainNodes();
+          const releaseRamps = gains.filter((g) => g._events.some((e) => e[0] === 'ramp' && e[1] === 0));
+          expect(releaseRamps.length).toBeGreaterThanOrEqual(2);
+          // Calling stopHeld again is a safe no-op.
+          expect(() => eng.stopHeld('leftArm')).not.toThrow();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('with no trim/known duration set, still falls back to a single native-looping source (no regression)', async () => {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        eng.startHeld('leftArm', 'beamLaser');
+        expect(ctx._lastBufferSource().loop).toBe(true);
+        eng.stopHeld('leftArm');
+      });
     });
 
     it('an override/bake on a non-held weapon has no effect on startHeld (gated on hasHeldSfx first)', async () => {

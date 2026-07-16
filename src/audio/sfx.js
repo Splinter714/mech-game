@@ -184,6 +184,29 @@ const LOOP_ATTACK_SEC = 0.01;
 // fade still ramps down cleanly on release instead of clicking.
 const LOOP_RELEASE_DEFAULT_MS = 80;
 
+// #185 follow-up ("it sounds so robotic" — playtest feedback): native `AudioBufferSourceNode.loop`
+// jumps from `loopEnd` back to `loopStart` with sample accuracy but ZERO crossfade — if the
+// waveform doesn't happen to align in phase/amplitude at that exact instant (it essentially never
+// does for a real recording), every repeat cycle produces an audible click/discontinuity, which
+// reads as a robotic hard-cut. Fixed below by NOT relying on the native `.loop` flag for the
+// repeating region at all: instead, two overlapping buffer-source instances of the same content
+// hand off to each other every cycle, each with its own gain envelope that fades the outgoing
+// instance out while fading the incoming instance in over `LOOP_CROSSFADE_SEC` — see
+// playBufferLoopCrossfaded below. The intro-to-first-loop transition gets the same treatment (the
+// intro segment crossfades into the first loop segment exactly like every subsequent handoff).
+//
+// Requires a KNOWN loop length to schedule the handoff against (`trimMs` or the buffer's own
+// `.duration`) — when neither is available (e.g. a still-decoding/fake buffer in tests, or a
+// loop with no trim and an as-yet-unknown duration), there is nothing to crossfade against, so
+// this falls back to the original single-source native `.loop = true` scheme unchanged
+// (`playBufferLoopNative` below) rather than guessing.
+const LOOP_CROSSFADE_SEC = 0.05;      // 50ms — enough to mask a boundary click without smearing a short loop
+// How far ahead of a segment's needed start time the JS-side scheduler wakes up to create the
+// next one. Web Audio `start(when, …)` is sample-accurate regardless of *when* the call is made,
+// as long as it's made before `when` arrives — this margin is generous headroom against normal
+// timer jitter, well clear of the audible edge itself.
+const LOOP_SCHEDULE_LOOKAHEAD_SEC = 0.15;
+
 // #179: genuinely LOOPING counterpart to playBuffer — for the held-sustain path (beamLaser/
 // flamethrower), a one-shot buffer isn't enough; the source has to keep playing for as long as
 // the trigger is held. Sets `AudioBufferSourceNode.loop = true` with `loopStart`/`loopEnd` derived
@@ -211,16 +234,33 @@ const LOOP_RELEASE_DEFAULT_MS = 80;
 // buffer/context to play through.
 function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume, loopStartMs) {
   if (!buffer || !e.ctx) return null;
-  const ctx = e.ctx;
-  const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  src.loop = true;
-
   const offsetSec = (startMs ?? 0) / 1000;
   // #185: the loop's repeat point — defaults to the same position as the intro's start offset
   // (today's behavior) when loopStartMs is unset/null, so an untouched held-loop sound builds the
   // exact same graph as before this change.
   const loopStartSec = loopStartMs != null ? loopStartMs / 1000 : offsetSec;
+  // The loop region's END — trimMs wins (same #166 semantics as the one-shot path); otherwise
+  // fall back to the buffer's own known duration (a real decoded AudioBuffer always has one; a
+  // still-fake/undecoded test buffer may not).
+  const loopEndSec = trimMs != null ? offsetSec + trimMs / 1000
+    : (buffer.duration != null ? buffer.duration : null);
+  const loopDur = loopEndSec != null ? loopEndSec - loopStartSec : null;
+
+  // Nothing to crossfade against without a known, positive loop length — fall back to the
+  // original single-source native `.loop = true` scheme, unchanged.
+  if (loopDur == null || loopDur <= 0) {
+    return playBufferLoopNative(e, bus, buffer, offsetSec, loopStartSec, trimMs, proc, fadeOutMs, volume);
+  }
+  return playBufferLoopCrossfaded(e, bus, buffer, offsetSec, loopStartSec, loopEndSec, loopDur, proc, fadeOutMs, volume);
+}
+
+// The pre-crossfade implementation, kept verbatim as the fallback for when a loop's length isn't
+// knowable yet (see playBufferLoop above). Single source, native `.loop = true`, hard-cut repeat.
+function playBufferLoopNative(e, bus, buffer, offsetSec, loopStartSec, trimMs, proc, fadeOutMs, volume) {
+  const ctx = e.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = true;
   src.loopStart = loopStartSec;
   if (trimMs != null) src.loopEnd = offsetSec + trimMs / 1000;
   // else: leave loopEnd unset — Web Audio treats 0/absent as "the end of the buffer."
@@ -270,6 +310,122 @@ function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume
     try { src.stop(now + releaseSec + 0.02); } catch { /* already stopped */ }
     setTimeout(() => {
       try { src.disconnect(); filter?.disconnect(); g.disconnect(); } catch { /* already gone */ }
+    }, (releaseSec + 0.05) * 1000);
+  };
+}
+
+// The crossfaded implementation (the actual #185 "robotic" fix). Schedules a chain of discrete,
+// NON-looping buffer-source segments instead of one native-looping source:
+//   - segment 0 (the "intro") plays once, from `offsetSec` (the #166 startMs) through
+//     `loopEndSec` — identical span to what the native version's first pass through would play.
+//   - segment 1, 2, 3… each play exactly one cycle of the repeat region (`loopStartSec` through
+//     `loopEndSec`, i.e. `loopDur` long).
+// Every segment is scheduled to START `LOOP_CROSSFADE_SEC` BEFORE the previous one's natural end,
+// and each segment's own gain node ramps 0->target over that same window at its start and
+// target->0 over that window at its end — so for the crossfade duration, the outgoing segment is
+// fading out at the exact moment the incoming one is fading in, and the ear hears a smooth blend
+// instead of a sample-accurate jump. This applies uniformly to the intro->first-loop transition
+// AND every loop->loop handoff after it, per the playtest ask for both to be smoothed.
+//
+// Since a held note can last indefinitely (however long the trigger stays down), segments are
+// scheduled a few at a time via a self-rearming `setTimeout` chain (mirrors the look-ahead
+// scheduling AudioEngine's own music clock uses in `_schedule`), always scheduling the NEXT
+// segment's Web-Audio `start()` well ahead of when it needs to sound.
+function playBufferLoopCrossfaded(e, bus, buffer, offsetSec, loopStartSec, loopEndSec, loopDur, proc, fadeOutMs, volume) {
+  const ctx = e.ctx;
+  const vol = volume != null ? volume : 1;
+  const target = vol > 0 ? vol : 0.0001;
+  const xfade = Math.min(LOOP_CROSSFADE_SEC, loopDur / 2);
+
+  function scheduleSegment(playOffsetSec, durSec, startAt, isIntro) {
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    if (proc?.detune && src.detune) src.detune.value = proc.detune;
+    let tail = src;
+    let filter = null;
+    if (proc?.filterType) {
+      filter = ctx.createBiquadFilter();
+      filter.type = proc.filterType;
+      if (proc.filterFreq != null) filter.frequency.value = proc.filterFreq;
+      if (proc.filterQ != null) filter.Q.value = proc.filterQ;
+      tail.connect(filter);
+      tail = filter;
+    }
+
+    const g = ctx.createGain();
+    // The very first segment (the intro) keeps the original tiny click-safety attack
+    // (LOOP_ATTACK_SEC, exponential — matches every pre-existing held-loop attack); every
+    // subsequent segment fades in over the crossfade window instead (linear, matching the
+    // fade-out it's blending against on the outgoing segment).
+    const fadeInSec = isIntro ? Math.min(LOOP_ATTACK_SEC, durSec / 2) : xfade;
+    const fadeOutSec = Math.min(xfade, durSec / 2);
+    g.gain.setValueAtTime(0.0001, startAt);
+    if (isIntro) g.gain.exponentialRampToValueAtTime(target, startAt + fadeInSec);
+    else g.gain.linearRampToValueAtTime(target, startAt + fadeInSec);
+    // Hold at full through the sustain, then crossfade OUT into whatever comes next. If stop()
+    // lands first, this scheduled tail gets cancelled and replaced by the release ramp instead
+    // (see stop() below) — same cancel-and-reschedule pattern the native path already used.
+    const fadeOutStart = startAt + durSec - fadeOutSec;
+    g.gain.setValueAtTime(target, fadeOutStart);
+    g.gain.linearRampToValueAtTime(0.0001, startAt + durSec);
+    tail.connect(g);
+    tail = g;
+
+    if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
+    else tail.connect(bus);
+
+    src.start(startAt, playOffsetSec, durSec);
+    return { src, filter, gain: g, startAt, endAt: startAt + durSec };
+  }
+
+  const startAt = e._now();
+  let segments = [scheduleSegment(offsetSec, loopEndSec - offsetSec, startAt, true)];
+  let stopped = false;
+  let timer = null;
+
+  function scheduleNext(atStart) {
+    const seg = scheduleSegment(loopStartSec, loopDur, atStart, false);
+    segments = [...segments.slice(-1), seg];   // keep only the two that can still be overlapping
+    return seg;
+  }
+
+  // Look-ahead scheduler: re-arms itself after every handoff, always computing the NEXT
+  // segment's start time from the last-scheduled segment's own end (not from "now"), so timer
+  // jitter never accumulates drift across a long held note.
+  function armNext() {
+    if (stopped) return;
+    const last = segments[segments.length - 1];
+    const nextStartAt = last.endAt - xfade;
+    const now = e.ctx ? e._now() : nextStartAt;
+    const delaySec = Math.max(0, nextStartAt - now - LOOP_SCHEDULE_LOOKAHEAD_SEC);
+    timer = setTimeout(() => {
+      if (stopped) return;
+      scheduleNext(nextStartAt);
+      armNext();
+    }, delaySec * 1000);
+  }
+  armNext();
+
+  return function stop() {
+    if (stopped) return;
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    const now = e.ctx ? e._now() : startAt;
+    const releaseSec = (fadeOutMs > 0 ? fadeOutMs : LOOP_RELEASE_DEFAULT_MS) / 1000;
+    // Release/fade out whichever segment(s) are still audible — normally just the current one,
+    // but during an in-flight crossfade handoff BOTH the outgoing and incoming segments are live
+    // and both need their own release ramp, not just the most recent.
+    for (const seg of segments) {
+      if (seg.endAt <= now) continue;
+      seg.gain.gain.cancelScheduledValues(now);
+      seg.gain.gain.setValueAtTime(Math.max(0.0001, seg.gain.gain.value), now);
+      seg.gain.gain.linearRampToValueAtTime(0, now + releaseSec);
+      try { seg.src.stop(now + releaseSec + 0.02); } catch { /* already stopped */ }
+    }
+    setTimeout(() => {
+      for (const seg of segments) {
+        try { seg.src.disconnect(); seg.filter?.disconnect(); seg.gain.disconnect(); } catch { /* already gone */ }
+      }
     }, (releaseSec + 0.05) * 1000);
   };
 }
