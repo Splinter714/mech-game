@@ -123,7 +123,8 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
 
     // #199: the UI domain's powerupPickupOverdrive cue (#196 split) — the full 2602ms file
     // (no actual trim, just the recorded played window) of
-    // "DSGNSynth_BUFF-Plus Damage_HY_PC-001.wav", no processing/fade/volume changes.
+    // "DSGNSynth_BUFF-Plus Damage_HY_PC-001.wav", no processing/fade changes.
+    // #204: reduced to 0.5x (50%) volume per playtest feedback.
     it('registers powerupPickupOverdrive/play with a bundled asset and a no-trim, no-processing recipe', () => {
       const entry = BAKED_SFX['powerupPickupOverdrive::play'];
       expect(entry).toBeTruthy();
@@ -132,6 +133,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.startMs).toBe(0);
       expect(entry.trimMs).toBe(2602);             // #166 trim — full file length, no actual trim
       expect(entry.processing).toBeNull();
+      expect(entry.volume).toBe(0.5);              // #204 volume
     });
   });
 
@@ -224,13 +226,14 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(overclock.processing).toBeNull();
 
     // #199: powerupPickupOverdrive/play decodes into its own slot carrying the plain no-trim,
-    // no-processing recipe.
+    // no-processing recipe. #204: now also carries a 0.5x volume adjustment.
     expect(hasBaked('powerupPickupOverdrive', 'play')).toBe(true);
     const overdrive = getBaked('powerupPickupOverdrive', 'play');
     expect(overdrive.buffer).toEqual({ __decodedFrom: 'PLUSDAMAGE' });
     expect(overdrive.startMs).toBe(0);
     expect(overdrive.trimMs).toBe(2602);
     expect(overdrive.processing).toBeNull();
+    expect(overdrive.volume).toBe(0.5);
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
