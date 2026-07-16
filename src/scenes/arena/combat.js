@@ -51,14 +51,18 @@ export const CombatMixin = {
     if (res.destroyed) reskinMech(this, 'playerMech', this.mech);
     // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
     // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
-    if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
+    // #201: a part breaking off now has its own SFX domain trigger (shared for player+enemy
+    // part loss — see sfxDomains.js) instead of the generic explosion cue.
+    if (res.destroyed) Audio.ui('partDestroyed');
     // #64: death feedback only — the run mixin (_updateRun, polled every frame) is what
     // actually ends the run and drives the delayed return to the garage, so there's exactly
     // one place owning that transition (and the run-over banner/currency banking with it).
     if (this.mech.isDestroyed() && !this._playerDead) {
       this._playerDead = true;
       this._floatText(this.px, this.py - 36, 'MECH DOWN', '#e2533a');
-      Audio.explosion(1.2);
+      // #201: the player's own mech going down gets its own dedicated, most-severe cue —
+      // distinct from an enemy's death (deathExplosionByCategory, #180/#184).
+      Audio.ui('mechDestroyed');
     }
   },
 
@@ -126,7 +130,8 @@ export const CombatMixin = {
     if (isMech && res.destroyed) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     // #83: no floating damage number on enemy hits either — damage still applies above (res),
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
-    if (res.destroyed) Audio.explosion(0.6);   // a part broke off (#36)
+    // #201: same shared part-loss cue as the player path above.
+    if (res.destroyed) Audio.ui('partDestroyed');
     if (e.mech.isDestroyed()) {
       // #87 (corrected per playtest 2026-07-10): a lingering, frozen corpse before cleanup read
       // as "horrible and looks dumb" — the corpse must vanish IMMEDIATELY on death, with the

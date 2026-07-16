@@ -15,6 +15,7 @@ import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
 import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
+import { Audio } from '../../audio/index.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -160,6 +161,11 @@ export const RunMixin = {
     const won = this.run.status === 'won';
     const label = won ? 'RUN COMPLETE' : 'RUN OVER';
     const color = won ? '#7bd17b' : '#e2533a';
+    // #201: a dedicated "run lost" cue, fired only on the losing run-over transition (not the
+    // win case) — a beat after mechDestroyed since this is the run-level defeat moment, not
+    // the death moment itself. No matching win cue added (not asked for, and this file has no
+    // existing win-cue path to mirror).
+    if (!won) Audio.ui('runLost');
     this._floatText(this.px, this.py - 50, label, color);
     this.registry.set('runOverBanner', { label, color, currency: this.run.currency });
 

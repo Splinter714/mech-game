@@ -395,6 +395,29 @@ function sprintOffCue(e) {
   e.noise(e.sfx, { dur: 0.14, gain: 0.12, type: 'bandpass', freq: 1200, freqEnd: 400, q: 0.6, attack: 0.005 });
   e.tone(e.sfx, { type: 'sawtooth', freq: 420, freqEnd: 160, dur: 0.12, gain: 0.05 });
 }
+// #201: three new independently-tunable cues replacing generic `Audio.explosion(...)` calls at
+// specific combat/run moments (see combat.js/run.js for the call sites). Each is deliberately
+// distinct in character/severity so the three read as different EVENTS, not the same boom at
+// different volumes:
+//   - partDestroyed: a small/light metallic break-off crack — quick, high-ish, no boom.
+//   - mechDestroyed: the most severe/final of the three — a low, sustained double-hit boom
+//     with a falling rumble tail, reading as "catastrophic and over."
+//   - runLost: a somber descending brass/drone-like defeat cue, distinct in TIMBRE (not another
+//     explosion) since it fires a beat later during the run-over transition, not at the kill.
+function partDestroyedCue(e) {                              // light metallic break-off crack
+  e.noise(e.sfx, { dur: 0.07, gain: 0.16, type: 'highpass', freq: 900, freqEnd: 1400, attack: 0.001 });
+  e.tone(e.sfx, { type: 'square', freq: 340, freqEnd: 160, dur: 0.09, gain: 0.13, attack: 0.001 });
+}
+function mechDestroyedCue(e) {                               // severe/final catastrophic boom
+  e.noise(e.sfx, { dur: 0.5, gain: 0.30, type: 'lowpass', freq: 500, freqEnd: 70, attack: 0.002 });
+  e.tone(e.sfx, { type: 'sawtooth', freq: 90, freqEnd: 30, dur: 0.6, gain: 0.24, attack: 0.005 });
+  e.tone(e.sfx, { type: 'sine', freq: 55, freqEnd: 22, dur: 0.75, gain: 0.20, attack: 0.05 });   // low rumble tail
+}
+function runLostCue(e) {                                     // somber descending defeat drone
+  e.tone(e.sfx, { type: 'sawtooth', freq: 220, freqEnd: 110, dur: 0.5, gain: 0.14, attack: 0.03 });
+  e.tone(e.sfx, { type: 'sine', freq: 165, freqEnd: 82, dur: 0.7, gain: 0.16, attack: 0.05 });
+  e.tone(e.sfx, { type: 'sine', freq: 110, freqEnd: 55, dur: 0.9, gain: 0.12, attack: 0.1 });
+}
 
 export const UI_CUES = {
   equip: equipCue,
@@ -408,6 +431,9 @@ export const UI_CUES = {
   powerupPickupShield: powerupPickupShieldCue,
   sprintOn: sprintOnCue,
   sprintOff: sprintOffCue,
+  partDestroyed: partDestroyedCue,
+  mechDestroyed: mechDestroyedCue,
+  runLost: runLostCue,
 };
 
 // Generic (id, stage) UI/pickup sound dispatch — file override/bake takes precedence (same

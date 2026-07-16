@@ -20,6 +20,17 @@
 // overridable/bakeable via the owner's tuner panel, instead of all five sharing one slider.
 // Naming follows the `powerupPickup<Id>` camelCase pattern (parallel to the existing
 // `scrapPickup`/`powerupPickup` sibling ids) so they sort together in the tuner list.
+//
+// #201: three more distinct, independently-tunable triggers, replacing generic shared cues
+// that used to piggyback on `Audio.explosion(...)`:
+//   - `partDestroyed` — any body part breaking off (player OR enemy — Jackson only asked for
+//     "losing mech parts" as one category, so this is a single shared trigger for both sides
+//     rather than splitting player-part-loss from enemy-part-loss).
+//   - `mechDestroyed` — specifically the PLAYER's own mech going down (MECH DOWN), distinct
+//     from an enemy dying (which already has its own death-explosion-by-category system, #180/#184).
+//   - `runLost` — fires only on the LOSING run-over transition (not the win case), a beat after
+//     mechDestroyed since it's the run-level "you're headed back to the garage" cue, not the
+//     death moment itself.
 export const SFX_DOMAINS = {
   ui: [
     { id: 'equip', label: 'Equip Weapon', stages: [['play', 'PLAY']] },
@@ -33,6 +44,9 @@ export const SFX_DOMAINS = {
     { id: 'powerupPickupShield', label: 'Pickup: Shield', stages: [['play', 'PLAY']] },
     { id: 'sprintOn', label: 'Sprint On', stages: [['play', 'PLAY']] },
     { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
+    { id: 'partDestroyed', label: 'Part Destroyed', stages: [['play', 'PLAY']] },
+    { id: 'mechDestroyed', label: 'Mech Destroyed', stages: [['play', 'PLAY']] },
+    { id: 'runLost', label: 'Run Lost', stages: [['play', 'PLAY']] },
   ],
 };
 
