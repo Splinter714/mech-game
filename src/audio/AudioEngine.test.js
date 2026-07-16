@@ -3,7 +3,7 @@ import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
   storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, setVolume,
-  setLoopStartMs, getLoopStartMs, _resetForTest, variantStage, removeOverrideVariant,
+  _resetForTest, variantStage, removeOverrideVariant,
 } from './sfxOverrides.js';
 import {
   BAKED_SFX, _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
@@ -852,11 +852,17 @@ describe('AudioEngine (mock context)', () => {
     });
   });
 
-  // #179: held-sustain (beamLaser/flamethrower) file override/baked support — previously
-  // startHeld() went straight to procedural startLoopLayers, completely blind to any
-  // override/bake stored for the weapon's `fire` stage. Reuses the `fire` (id,stage) key (same
-  // one the one-shot cue reads) rather than inventing a new held-stage id.
-  describe('held-sustain loop override/bake (#179)', () => {
+  // #179/#185: held-sustain (beamLaser/flamethrower) file override/baked support. #179 added
+  // override/bake lookup to startHeld() (which previously went straight to procedural
+  // startLoopLayers). The first #185 attempt then tried to LOOP the override/bake buffer itself
+  // (native `.loop`, then a crossfaded-segment-repeat scheme) to cover the whole held duration —
+  // Jackson's playtest feedback on that was "it sounds so robotic," and the crossfade follow-up
+  // still "feels like there's some oscillation happening." He confirmed there's no clean loop
+  // point in the recorded source files at all, so #185's REAL fix (tested below) is to stop
+  // looping the recording entirely: play it once as the "intro," then hand off to the game's
+  // existing PROCEDURAL sustain synth (startLoopLayers) for as long as the trigger is held —
+  // synthesis has no seam to click against, so there's nothing left to loop-point around.
+  describe('held-sustain: intro (baked/override) then procedural sustain (#179, #185)', () => {
     const fakeFile = (name, tag) => ({
       name, type: 'audio/wav', arrayBuffer: async () => new TextEncoder().encode(tag).buffer,
     });
@@ -864,167 +870,81 @@ describe('AudioEngine (mock context)', () => {
     beforeEach(() => { _resetForTest(); _resetBakedForTest(); setAudioContext(ctx); });
     afterEach(() => { _resetBakedForTest(); delete globalThis.indexedDB; });
 
-    it('(a) no override/bake present: startHeld still uses procedural startLoopLayers, unchanged', () => {
+    it('(a) no override/bake present: startHeld is 100% procedural start-to-finish, unchanged', () => {
       const before = ctx._counts();
       eng.startHeld('leftArm', 'beamLaser');
       const after = ctx._counts();
-      // Procedural voices (oscillator/noise buffer source) were created — no dedicated
-      // "loop buffer" source, since beamLaser's fire layers are tones/noise, not a decoded file.
+      // Procedural voices only (oscillator + a noise-layer buffer source, both from
+      // startLoopLayers) — nothing plays through the intro/sustain buffer machinery at all,
+      // since there's no override/bake file to play an intro from.
       expect(after.oscillators + after.sources).toBeGreaterThan(before.oscillators + before.sources);
       expect(() => eng.stopHeld('leftArm')).not.toThrow();
     });
 
-    it('(b) an override present for the held weapon\'s fire stage: startHeld schedules a LOOPING buffer source instead of procedural layers', async () => {
-      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-      const before = ctx._counts();
-      eng.startHeld('leftArm', 'beamLaser');
-      const after = ctx._counts();
-      expect(after.sources).toBe(before.sources + 1);          // exactly one buffer source: the override loop
-      expect(after.oscillators).toBe(before.oscillators);      // no procedural tone/noise layers ran
-      const src = ctx._lastBufferSource();
-      expect(src.loop).toBe(true);
-      expect(src.loopStart).toBeCloseTo(0, 5);
-      expect(src.loopEnd).toBeUndefined();                     // no trim set — loops the whole buffer
-      eng.stopHeld('leftArm');
-    });
-
-    // #185 crossfade fix: once a loop's length is knowable (trimMs set here), startHeld no
-    // longer uses a single native `.loop = true` source — it schedules a discrete, non-looping
-    // "intro" segment via the crossfaded scheduler (see sfx.js's playBufferLoopCrossfaded). The
-    // intro segment's own start(when, offset, duration) call still encodes the same
-    // startMs/trimMs window the native path used to express as loopStart/loopEnd: offset is the
-    // startMs-derived offset, and offset+duration is the trim end.
-    it('derives the intro segment\'s offset/duration from the existing startMs/trimMs override fields', async () => {
+    it('(b) an override present: the intro plays ONCE (non-looping) from the override\'s startMs/trimMs window', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
       await setStart('beamLaser', 'fire', 200);   // 200ms in
       await setTrim('beamLaser', 'fire', 500);    // 500ms window from there
+      const before = ctx._counts();
       eng.startHeld('leftArm', 'beamLaser');
+      const after = ctx._counts();
+      expect(after.sources).toBe(before.sources + 1);      // exactly one buffer source: the intro
       const src = ctx._lastBufferSource();
-      expect(src.loop).toBe(false);               // no longer a native loop — a scheduled segment
+      expect(src.loop).toBe(false);                        // never a native loop under the new model
       const [, offset, duration] = ctx._lastBufferSourceStart();
       expect(offset).toBeCloseTo(0.2, 5);
-      expect(offset + duration).toBeCloseTo(0.7, 5);   // 0.2 + 0.5 — same overall trim end as before
+      expect(offset + duration).toBeCloseTo(0.7, 5);        // 0.2 + 0.5 — the intro's own start/end window
       eng.stopHeld('leftArm');
     });
 
-    // #185: intro-once, then loop a SHORTER sustain region — loopStartMs is a distinct field
-    // from startMs, so the source plays startMs→(startMs+trimMs) ONCE, then wraps to
-    // loopStartMs→(startMs+trimMs) forever, never replaying the intro/attack transient.
-    describe('loop-start split (#185)', () => {
-      it('getLoopStartMs defaults to getStartMs when unset — no regression for existing overrides', async () => {
+    it('the procedural sustain (the weapon\'s own tunable `fire` layers) starts once the intro\'s played duration elapses', async () => {
+      vi.useFakeTimers();
+      try {
         await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();   // no startMs either yet
-        await setStart('beamLaser', 'fire', 200);
-        expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);    // falls back to startMs
-      });
-
-      it('loopStartMs unset: the intro segment\'s offset/duration matches pre-#185 semantics', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        await setStart('beamLaser', 'fire', 200);
-        await setTrim('beamLaser', 'fire', 500);
+        await setTrim('beamLaser', 'fire', 300);   // a short, known intro window
+        const beforeOsc = ctx._counts().oscillators;
         eng.startHeld('leftArm', 'beamLaser');
-        const [, offset, duration] = ctx._lastBufferSourceStart();
-        expect(offset).toBeCloseTo(0.2, 5);              // same as startMs/1000, exactly like before #185
-        expect(offset + duration).toBeCloseTo(0.7, 5);
+        expect(ctx._counts().oscillators).toBe(beforeOsc);   // nothing procedural yet — still in the intro
+        vi.advanceTimersByTime(1000);   // run past the scheduled intro->sustain handoff
+        expect(ctx._counts().oscillators).toBeGreaterThan(beforeOsc);   // procedural sustain voices now running
         eng.stopHeld('leftArm');
-      });
-
-      it('loopStartMs LATER than startMs: intro plays once from startMs, then the crossfade hands off into a segment starting at loopStartMs', async () => {
-        vi.useFakeTimers();
-        try {
-          await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-          await setStart('beamLaser', 'fire', 200);     // intro begins 200ms in
-          await setTrim('beamLaser', 'fire', 500);      // played window ends at 700ms
-          await setLoopStartMs('beamLaser', 'fire', 450);   // loop repeats from 450ms, not 200ms
-          eng.startHeld('leftArm', 'beamLaser');
-          // The FIRST (intro) segment still starts at the original startMs-derived offset.
-          const [, introOffset, introDur] = ctx._lastBufferSourceStart();
-          expect(introOffset).toBeCloseTo(0.2, 5);
-          expect(introOffset + introDur).toBeCloseTo(0.7, 5);
-          // Advance past the scheduled crossfade handoff — the NEXT segment repeats from the
-          // NEW, later loopStartMs value, not from startMs.
-          vi.advanceTimersByTime(1000);
-          const [, loopOffset, loopDur] = ctx._lastBufferSourceStart();
-          expect(loopOffset).toBeCloseTo(0.45, 5);
-          // The loop segment's own span stays anchored to the overall trim end (startMs +
-          // trimMs), unaffected by where the loop repeat point sits.
-          expect(loopOffset + loopDur).toBeCloseTo(0.7, 5);
-          eng.stopHeld('leftArm');
-        } finally {
-          vi.useRealTimers();
-        }
-      });
-
-      it('loop-start split composes with the #182 volume and #174/#179 release fade unaffected', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        await setStart('beamLaser', 'fire', 100);
-        await setTrim('beamLaser', 'fire', 600);
-        await setLoopStartMs('beamLaser', 'fire', 300);
-        await setVolume('beamLaser', 'fire', 1.4);
-        await setFadeOut('beamLaser', 'fire', 150);   // this is the RELEASE window on stop(), unaffected by loop split
-        eng.startHeld('leftArm', 'beamLaser');
-        const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
-        const expEvent = loopGain._events.find((e) => e[0] === 'exp');
-        expect(expEvent[1]).toBe(1.4);   // intro attack still ramps to the configured volume
-        eng.stopHeld('leftArm');
-        const rampEvent = loopGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
-        expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.15, 5);   // release fade still 150ms, on stop
-      });
-
-      it('setLoopStartMs(null) clears back to "loop start = startMs"', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        await setStart('beamLaser', 'fire', 200);
-        await setLoopStartMs('beamLaser', 'fire', 450);
-        expect(getLoopStartMs('beamLaser', 'fire')).toBe(450);
-        await setLoopStartMs('beamLaser', 'fire', null);
-        expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);   // back to startMs
-      });
-
-      it('clearOverride also clears the loop start, so a fresh file never inherits a stale one', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        await setStart('beamLaser', 'fire', 200);
-        await setLoopStartMs('beamLaser', 'fire', 450);
-        await clearOverride('beamLaser', 'fire');
-        expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();
-      });
-
-      it('a BAKED entry with loopStartMs plays the loop split too, defaulting to its own startMs when omitted', () => {
-        vi.useFakeTimers();
-        try {
-          BAKED_SFX['flamethrower::fire'] = {
-            startMs: 100, trimMs: 600, loopStartMs: 350, processing: null,
-          };
-          try {
-            _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
-            eng.startHeld('leftArm', 'flamethrower');
-            expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.1, 5);   // intro starts at startMs
-            vi.advanceTimersByTime(1000);   // advance past the intro->loop crossfade handoff
-            const [, loopOffset, loopDur] = ctx._lastBufferSourceStart();
-            expect(loopOffset).toBeCloseTo(0.35, 5);                    // loop repeats from loopStartMs
-            expect(loopOffset + loopDur).toBeCloseTo(0.7, 5);
-            eng.stopHeld('leftArm');
-          } finally {
-            delete BAKED_SFX['flamethrower::fire'];
-          }
-        } finally {
-          vi.useRealTimers();
-        }
-      });
-
-      it('a BAKED entry with NO loopStartMs defaults to its own startMs, unchanged from before #185', () => {
-        BAKED_SFX['flamethrower::fire'] = { startMs: 200, trimMs: 400, processing: null };
-        try {
-          _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
-          eng.startHeld('leftArm', 'flamethrower');
-          expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.2, 5);   // same as startMs — no separate loop region
-          eng.stopHeld('leftArm');
-        } finally {
-          delete BAKED_SFX['flamethrower::fire'];
-        }
-      });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('applies the detune/filter/reverb processing chain (#172) to the loop the same way the one-shot path does', async () => {
+    it('the intro->sustain handoff overlaps: the sustain starts before the intro\'s gain has fully reached silence', async () => {
+      vi.useFakeTimers();
+      try {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setTrim('beamLaser', 'fire', 300);
+        eng.startHeld('leftArm', 'beamLaser');
+        const introGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+        vi.advanceTimersByTime(1000);
+        // The intro's gain node was told to fade out (not an instant cut) at the handoff — a
+        // scheduled ramp-to-(near)zero, not a hard stop with no envelope.
+        const fadeOutRamp = introGain._events.find((e) => e[0] === 'ramp' && e[1] < 0.01);
+        expect(fadeOutRamp).toBeTruthy();
+        eng.stopHeld('leftArm');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('with no trim/known duration set, the sustain still picks up once the intro source reports onended (no scheduled overlap possible)', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      // No setTrim — the fake decoded buffer also has no `.duration`, so the played length is
+      // genuinely unknowable up front (mirrors a still-decoding real buffer).
+      eng.startHeld('leftArm', 'beamLaser');
+      const introSrc = ctx._lastBufferSource();
+      expect(typeof introSrc.onended).toBe('function');
+      const beforeOsc = ctx._counts().oscillators;
+      introSrc.onended();   // simulate the real Web Audio "source finished playing" event
+      expect(ctx._counts().oscillators).toBeGreaterThan(beforeOsc);   // sustain picked up immediately
+      eng.stopHeld('leftArm');
+    });
+
+    it('applies the detune/filter/reverb processing chain (#172) to the intro segment the same way the one-shot path does', async () => {
       await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
       await setProcessing('flamethrower', 'fire', {
         detune: 150, filterType: 'lowpass', filterFreq: 900, filterQ: 1, reverbMix: 0.3, reverbSize: 1.5,
@@ -1032,15 +952,16 @@ describe('AudioEngine (mock context)', () => {
       const beforeBq = ctx._counts().biquads;
       const beforeConv = ctx._counts().convolvers;
       eng.startHeld('rightArm', 'flamethrower');
-      expect(ctx._lastBufferSource().loop).toBe(true);
+      expect(ctx._lastBufferSource().loop).toBe(false);
       expect(ctx._lastBufferSource().detune.value).toBe(150);
       expect(ctx._counts().biquads).toBe(beforeBq + 1);
       expect(ctx._counts().convolvers).toBe(beforeConv + 1);
       eng.stopHeld('rightArm');
     });
 
-    it('(c) stopHeld ramps gain to 0 over the fade/release duration and stops the source — no error if called twice', async () => {
+    it('(c) stopHeld released DURING the intro fades it over the fade/release duration and stops the source cleanly — no error if called twice', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setTrim('beamLaser', 'fire', 500);
       await setFadeOut('beamLaser', 'fire', 150);   // 150ms release
       eng.startHeld('leftArm', 'beamLaser');
       const releaseGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
@@ -1055,6 +976,7 @@ describe('AudioEngine (mock context)', () => {
 
     it('falls back to the default release window when no fadeOutMs is set on the override', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setTrim('beamLaser', 'fire', 500);
       eng.startHeld('leftArm', 'beamLaser');
       const releaseGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
       eng.stopHeld('leftArm');
@@ -1062,42 +984,62 @@ describe('AudioEngine (mock context)', () => {
       expect(rampEvent[2]).toBeCloseTo(ctx.currentTime + 0.08, 5);   // 80ms default release
     });
 
-    // #182: the overall volume multiplier also applies to the held-sustain LOOP path — the
-    // attack ramps to `volume` instead of a hardcoded 1, and the release ramp still lands on 0
-    // (composing correctly, same as the one-shot path's fade-out).
-    it('applies the #182 volume to the held-loop attack ramp target', async () => {
+    it('(d) stopHeld called AFTER the handoff stops the procedural sustain (via its own stop()), not the (already silent) intro', async () => {
+      vi.useFakeTimers();
+      try {
+        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+        await setTrim('beamLaser', 'fire', 300);
+        eng.startHeld('leftArm', 'beamLaser');
+        vi.advanceTimersByTime(1000);   // past the handoff — now in the procedural sustain phase
+        const gainsBeforeStop = ctx._gainNodes().length;
+        expect(() => eng.stopHeld('leftArm')).not.toThrow();
+        // startLoopLayers' own stop() ran (its per-voice gain nodes got a release ramp) — proof
+        // the sustain's stop path fired, not just a no-op against an already-dead intro source.
+        const releaseRamps = ctx._gainNodes().slice(gainsBeforeStop === ctx._gainNodes().length ? 0 : gainsBeforeStop)
+          .concat(ctx._gainNodes())
+          .filter((g) => g._events.some((e) => e[0] === 'exp' && e[1] < 0.01));
+        expect(releaseRamps.length).toBeGreaterThan(0);
+        expect(() => eng.stopHeld('leftArm')).not.toThrow();   // still safe to call again
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // #182: the overall volume multiplier also applies to the intro's attack ramp target.
+    it('applies the #182 volume to the intro segment\'s attack ramp target', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setTrim('beamLaser', 'fire', 500);
       await setVolume('beamLaser', 'fire', 1.6);
       eng.startHeld('leftArm', 'beamLaser');
-      const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
-      const expEvent = loopGain._events.find((e) => e[0] === 'exp');
+      const introGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+      const expEvent = introGain._events.find((e) => e[0] === 'exp');
       expect(expEvent).toBeTruthy();
       expect(expEvent[1]).toBe(1.6);   // attack ramps to the volume, not unity
       eng.stopHeld('leftArm');
-      // Release still ramps cleanly to silence regardless of the volume level.
-      const rampEvent = loopGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
+      const rampEvent = introGain._events.find((e) => e[0] === 'ramp' && e[1] === 0);
       expect(rampEvent).toBeTruthy();
     });
 
-    it('held-loop volume unset/1.0 attacks to unity, unchanged from before #182', async () => {
+    it('intro volume unset/1.0 attacks to unity, unchanged from before #182', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setTrim('beamLaser', 'fire', 500);
       eng.startHeld('leftArm', 'beamLaser');
-      const loopGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
-      const expEvent = loopGain._events.find((e) => e[0] === 'exp');
+      const introGain = ctx._gainNodes()[ctx._gainNodes().length - 1];
+      const expEvent = introGain._events.find((e) => e[0] === 'exp');
       expect(expEvent[1]).toBe(1);
       eng.stopHeld('leftArm');
     });
 
-    it('a dev override still wins over a baked loop for the same held weapon+stage', async () => {
+    it('a dev override still wins over a baked intro for the same held weapon+stage', async () => {
       _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
       const overrideBuf = await storeOverride('flamethrower', 'fire', fakeFile('dev-roar.wav', 'DEVROAR'));
       eng.startHeld('leftArm', 'flamethrower');
       expect(ctx._lastBufferSource().buffer).toBe(overrideBuf);
-      expect(ctx._lastBufferSource().loop).toBe(true);
+      expect(ctx._lastBufferSource().loop).toBe(false);
       eng.stopHeld('leftArm');
     });
 
-    it('a baked loop plays when no dev override exists for the held weapon+stage', () => {
+    it('a baked intro plays when no dev override exists for the held weapon+stage', () => {
       // beamLaser has no shipped BAKED_SFX entry yet — temporarily add one (mirrors the existing
       // "applies a fade-out to a BAKED sound too" test's pattern of mutating+restoring a live
       // entry) so this exercises the real getBaked() data shape rather than a bespoke test-only one.
@@ -1106,91 +1048,33 @@ describe('AudioEngine (mock context)', () => {
         _setBakedBufferForTest('beamLaser', 'fire', { __baked: 'bakedHum' });
         eng.startHeld('leftArm', 'beamLaser');
         expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bakedHum' });
-        expect(ctx._lastBufferSource().loop).toBe(true);
+        expect(ctx._lastBufferSource().loop).toBe(false);
         eng.stopHeld('leftArm');
       } finally {
         delete BAKED_SFX['beamLaser::fire'];
       }
     });
 
-    // #185 follow-up: the actual crossfade fix for the "it sounds so robotic" playtest feedback.
-    // A native `AudioBufferSourceNode.loop` hard-cuts from loopEnd back to loopStart with no
-    // crossfade, which clicks audibly on most real waveforms. Once a loop's length is knowable
-    // (trimMs set, exercised here), startHeld now schedules a chain of overlapping, non-looping
-    // segments instead — each with its own gain envelope — that hand off to each other with a
-    // short crossfade rather than a hard jump.
-    describe('loop crossfade scheduling (#185 "robotic hard-cut" fix)', () => {
-      it('schedules the intro segment as a non-looping, gain-enveloped buffer source (not native .loop)', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        await setTrim('beamLaser', 'fire', 400);   // gives the loop a known, positive length
-        eng.startHeld('leftArm', 'beamLaser');
-        const src = ctx._lastBufferSource();
-        expect(src.loop).toBe(false);
-        const gain = ctx._gainNodes()[ctx._gainNodes().length - 1];
-        // Attack ramps up from near-silence to full — a real envelope, not an instant jump.
-        const setEvents = gain._events.filter((e) => e[0] === 'set');
-        expect(setEvents[0][1]).toBeCloseTo(0.0001, 4);
-        expect(gain._events.some((e) => (e[0] === 'exp' || e[0] === 'ramp') && e[1] > 0)).toBe(true);
+    // `loopStartMs` (sfxOverrides.js/bakedSfx.js) predates this rework — it used to mark where a
+    // REPEATED region of the buffer should wrap back to. Under the new intro-then-procedural-
+    // sustain model the buffer is never repeated at all, so a baked/override entry that still
+    // carries a loopStartMs (e.g. one authored before #185's rework, or seeded from an old bake)
+    // must have it silently ignored rather than misinterpreted as anything about the intro's own
+    // span — only startMs/trimMs (where the ONE-TIME intro starts/ends) matter now.
+    it('a stale loopStartMs on a baked/override entry has no effect — only startMs/trimMs shape the intro', () => {
+      BAKED_SFX['flamethrower::fire'] = {
+        startMs: 100, trimMs: 300, loopStartMs: 250, processing: null,
+      };
+      try {
+        _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
+        eng.startHeld('leftArm', 'flamethrower');
+        const [, offset, duration] = ctx._lastBufferSourceStart();
+        expect(offset).toBeCloseTo(0.1, 5);              // startMs, unaffected by loopStartMs
+        expect(offset + duration).toBeCloseTo(0.4, 5);   // startMs + trimMs
         eng.stopHeld('leftArm');
-      });
-
-      it('two overlapping sources are live during a crossfade handoff, each scheduled to start before the other ends', async () => {
-        vi.useFakeTimers();
-        try {
-          await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-          await setTrim('beamLaser', 'fire', 400);   // 400ms loop region, well over the ~50ms crossfade window
-          eng.startHeld('leftArm', 'beamLaser');
-          const beforeCount = ctx._bufferSources().length;
-          vi.advanceTimersByTime(1000);   // run past at least one scheduled handoff
-          const starts = ctx._bufferSourceStarts();
-          expect(starts.length).toBeGreaterThan(beforeCount);   // a second (handoff) segment was scheduled
-          // starts[i] = [when, offset, duration] for the i-th source, in creation order (the
-          // intro segment is starts[0]; the first handoff segment is starts[1]).
-          const [introWhen, , introDur] = starts[0];
-          const [loopWhen] = starts[1];
-          const introEnd = introWhen + introDur;
-          // The handoff segment starts strictly BEFORE the intro segment's natural end — a real
-          // overlap window, not a back-to-back (click-prone) handoff.
-          expect(loopWhen).toBeLessThan(introEnd);
-          expect(loopWhen).toBeGreaterThan(introWhen);
-          eng.stopHeld('leftArm');
-        } finally {
-          vi.useRealTimers();
-        }
-      });
-
-      it('stopHeld tears down BOTH the outgoing and incoming segments when called mid-crossfade, not just the latest', async () => {
-        vi.useFakeTimers();
-        try {
-          await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-          await setTrim('beamLaser', 'fire', 400);
-          eng.startHeld('leftArm', 'beamLaser');
-          vi.advanceTimersByTime(220);   // land inside the intro->first-loop crossfade overlap window
-          const sources = ctx._bufferSources();
-          expect(sources.length).toBeGreaterThanOrEqual(2);
-          const [outgoing, incoming] = sources.slice(-2);
-          expect(() => eng.stopHeld('leftArm')).not.toThrow();
-          // Both segments still in their overlap window at the moment of stop() got a release
-          // ramp AND a stop() call — a still-live older segment isn't left dangling just because
-          // a newer one has already started.
-          expect(outgoing._stopArgs).toBeTruthy();
-          expect(incoming._stopArgs).toBeTruthy();
-          const gains = ctx._gainNodes();
-          const releaseRamps = gains.filter((g) => g._events.some((e) => e[0] === 'ramp' && e[1] === 0));
-          expect(releaseRamps.length).toBeGreaterThanOrEqual(2);
-          // Calling stopHeld again is a safe no-op.
-          expect(() => eng.stopHeld('leftArm')).not.toThrow();
-        } finally {
-          vi.useRealTimers();
-        }
-      });
-
-      it('with no trim/known duration set, still falls back to a single native-looping source (no regression)', async () => {
-        await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
-        eng.startHeld('leftArm', 'beamLaser');
-        expect(ctx._lastBufferSource().loop).toBe(true);
-        eng.stopHeld('leftArm');
-      });
+      } finally {
+        delete BAKED_SFX['flamethrower::fire'];
+      }
     });
 
     it('an override/bake on a non-held weapon has no effect on startHeld (gated on hasHeldSfx first)', async () => {

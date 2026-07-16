@@ -61,19 +61,22 @@
 // Read via getVolume() (always returns a number, defaulting to 1); written (1.0 clears back to
 // the default) via setVolume().
 //
-// Loop start (#185): a non-destructive SECOND start-offset, `loopStartMs`, used ONLY by the
-// held-loop path (playBufferLoop/playOverrideLoop) — the ordinary #166 `startMs` still marks
-// where playback begins the FIRST time (the intro/attack transient), while `loopStartMs` marks
-// where the REPEATING loop region begins once the source wraps. Web Audio's
-// AudioBufferSourceNode.start(when, offset) natively supports offset < loopStart: it plays
-// offset→loopEnd once, then repeats loopStart→loopEnd forever, so this needs no custom
-// scheduling — just a second offset fed to `loopStart` instead of reusing `startMs`. Unset/null
-// (including every override stored before this feature existed) means "no separate loop start,"
-// and getLoopStartMs() falls back to getStartMs() in that case — i.e. today's exact behavior
-// (the whole intro-to-end clip re-loops every cycle) is the default, fully backward compatible.
-// Same synchronous no-await in-memory lifecycle as `_start`/`_trim`, persisted alongside the rest
-// of the override record, reset whenever a fresh file is loaded into the slot. Read via
-// getLoopStartMs(); written (null clears back to "= startMs") via setLoopStartMs().
+// Loop start (#185): a non-destructive SECOND start-offset, `loopStartMs`. Originally used by a
+// held-loop scheme that repeated a region of the buffer natively (`AudioBufferSourceNode.loop`
+// with `loopStart`/`loopEnd`) — `startMs` marked where playback began the first time and
+// `loopStartMs` marked where the REPEATING region began once the source wrapped.
+//
+// #185 REWORK: that scheme was scrapped after playtest feedback ("sounds so robotic," then, after
+// a crossfaded-segment-repeat attempt, "still feels like there's some oscillation happening") —
+// there's no clean loop point in the recorded source files, so no amount of crossfading a repeat
+// of the SAME recording avoids an artifact. A held weapon's override/bake now plays ONCE as the
+// intro and hands off to procedural synthesis for the sustain (sfx.js's startHeld/
+// startIntroThenSustain) — the buffer is never repeated, so `loopStartMs` is NOT read by playback
+// anymore. The field/getter/setter/persistence below are kept as-is purely so the Weapon Lab
+// panel's existing loop-region control (weaponSfxPanel.js) keeps round-tripping a value without a
+// UI rework, but nothing downstream of getLoopStartMs() currently exists — it's vestigial schema,
+// not a live playback parameter. Read via getLoopStartMs() (still falls back to getStartMs() when
+// unset); written (null clears back to "= startMs") via setLoopStartMs().
 
 // #195: RANDOMIZED VARIANTS — a stage can hold up to MAX_VARIANTS parallel override slots
 // instead of just one (e.g. 3 different explosion bangs for the same weapon+stage), so a
@@ -410,10 +413,10 @@ export function getVolume(weaponId, stage) {
   return v != null ? v : 1;
 }
 
-// #185: synchronous lookup for the held-loop path's own loop-start offset (milliseconds), used
-// at sfx.js's playBufferLoop choke point. Falls back to getStartMs() when unset — i.e. no
-// separate loop start means the loop region starts at the same place the intro does, which is
-// today's exact pre-#185 behavior (the whole clip re-loops from its own start every cycle).
+// #185: synchronous lookup for the (now vestigial — see the module header's #185 REWORK note)
+// held-loop loop-start offset. Falls back to getStartMs() when unset. No playback code reads this
+// anymore (sfx.js's startHeld plays the buffer once and never loops it); kept for the Weapon Lab
+// panel's existing control to keep persisting/round-tripping a value.
 export function getLoopStartMs(weaponId, stage) {
   const key = keyFor(weaponId, stage);
   const v = _loopStart.get(key);

@@ -3,6 +3,7 @@ import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
   setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
   getProcessing, setProcessing, getFadeOutMs, setFadeOut, getVolume, setVolume,
+  getLoopStartMs, setLoopStartMs,
   MAX_VARIANTS, variantStage, getOverrideVariantCount, pickOverrideStage, removeOverrideVariant,
 } from './sfxOverrides.js';
 
@@ -764,6 +765,55 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await removeOverrideVariant('autocannon', 'fire', 0);
       expect(getOverrideVariantCount('railgun', 'fire')).toBe(1);
       expect(getOverride('railgun', 'fire')).toEqual({ __decodedFrom: 'R' });
+    });
+  });
+
+  // Loop start (#185): this schema/storage was originally written for a held-loop scheme that
+  // repeated a region of the buffer. #185 was later reworked (playtest feedback: the repeat
+  // scheme "sounds so robotic"/has "oscillation") so a held weapon's buffer now plays once as an
+  // intro and hands off to procedural synthesis instead — sfx.js no longer reads loopStartMs at
+  // all (see its startHeld/startIntroThenSustain). The getter/setter/persistence contract here is
+  // otherwise untouched (kept for the Weapon Lab panel's existing loop-region control), so it's
+  // still exercised directly at the storage layer even though playback no longer consults it.
+  describe('loop start (#185, schema kept though no longer read by playback)', () => {
+    it('defaults to getStartMs when unset', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();   // no startMs either yet
+      await setStart('beamLaser', 'fire', 200);
+      expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);    // falls back to startMs
+    });
+
+    it('setLoopStartMs sets a value visible immediately via getLoopStartMs', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setStart('beamLaser', 'fire', 200);
+      await setLoopStartMs('beamLaser', 'fire', 450);
+      expect(getLoopStartMs('beamLaser', 'fire')).toBe(450);
+    });
+
+    it('setLoopStartMs(null) clears back to "loop start = startMs"', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setStart('beamLaser', 'fire', 200);
+      await setLoopStartMs('beamLaser', 'fire', 450);
+      await setLoopStartMs('beamLaser', 'fire', null);
+      expect(getLoopStartMs('beamLaser', 'fire')).toBe(200);
+    });
+
+    it('clearOverride also clears the loop start, so a fresh file never inherits a stale one', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setStart('beamLaser', 'fire', 200);
+      await setLoopStartMs('beamLaser', 'fire', 450);
+      await clearOverride('beamLaser', 'fire');
+      expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();
+    });
+
+    it('persists across a reload', async () => {
+      await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
+      await setStart('beamLaser', 'fire', 100);
+      await setLoopStartMs('beamLaser', 'fire', 300);
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getLoopStartMs('beamLaser', 'fire')).toBe(300);
     });
   });
 });

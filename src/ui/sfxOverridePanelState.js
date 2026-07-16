@@ -35,8 +35,9 @@ function proceduralControlsVisibleFor(id, stage) {
 // `fadeMs`/`fadeMax` (the fade-out duration and its cap, #174), `volume` (the overall gain
 // multiplier, #182 — always a number, defaults to 1/unity), and `proc` (the sparse pitch/filter/
 // reverb processing object, #172 — never null, defaults to `{}` so callers can read fields
-// directly). `loopStartSec` (#185) is the held-loop-only loop-start position, clamped to
-// `[startSec, endSec]`.
+// directly). `loopStartSec` (#185, VESTIGIAL since the #185 rework — playback no longer loops the
+// buffer at all; see sfxOverrides.js's module header) is the held-loop-only loop-start position,
+// clamped to `[startSec, endSec]`, kept only so the panel's existing control keeps rendering.
 //
 // #186: `source` distinguishes WHERE those values came from — `'override'` (a live runtime
 // override is loaded, same as before this issue), `'baked'` (no live override yet, but a
