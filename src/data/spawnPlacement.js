@@ -98,15 +98,30 @@ function meanOptRange(mech) {
 // distance below which a freshly-placed enemy of `typeId` would already be within its own
 // detection range of the player standing at the spawn point origin — callers clamp the actual
 // spawn distance to never land inside it (see `spawnDistance` below).
+// #203 (reopened after playtest — "safety zone doesn't feel quite big enough — enemies
+// (especially turret nests) still engage too soon after deploy"): landing EXACTLY at an
+// enemy's own detection-range boundary is the bare minimum, not a comfortable margin — the
+// player is deploying at roughly the centre of the safe zone and the enemy only has to close
+// a step (or the player takes one) before the two distances meet. A flat px buffer, not a
+// multiplier, is added on top of every type's detect-range floor: the per-type detect ranges
+// here span a huge spread (infantry ~240px / drone ~336px up to the turret nest's already-large
+// 2880px), and a multiplier applied uniformly would barely move the small, fast-closing types
+// (infantry/drone/mech) that need the extra room just as much, while ballooning the turret
+// nest's floor by hundreds more px than necessary (it's already the biggest number in the
+// table). A flat buffer instead gives every type the SAME extra breathing room in the units
+// that actually matter for "how many steps before I'm spotted" — proportionally huge for the
+// small-range types, a modest ~16% top-up for the turret nest, whose floor was already generous.
+export const SAFETY_MARGIN_PX = 450;
+
 export function minSafeSpawnDist(typeId) {
-  if (typeId === 'swarm') return detectionRangeFor(ENEMY_KINDS.drone.fireRange);
-  if (typeId === 'turretNest') return detectionRangeFor(ENEMY_KINDS.turret.fireRange);
-  if (typeId === 'infantryMob') return detectionRangeFor(ENEMY_KINDS.infantry.fireRange);
-  if (isEnemyKind(typeId)) return detectionRangeFor(ENEMY_KINDS[typeId].fireRange);
+  if (typeId === 'swarm') return detectionRangeFor(ENEMY_KINDS.drone.fireRange) + SAFETY_MARGIN_PX;
+  if (typeId === 'turretNest') return detectionRangeFor(ENEMY_KINDS.turret.fireRange) + SAFETY_MARGIN_PX;
+  if (typeId === 'infantryMob') return detectionRangeFor(ENEMY_KINDS.infantry.fireRange) + SAFETY_MARGIN_PX;
+  if (isEnemyKind(typeId)) return detectionRangeFor(ENEMY_KINDS[typeId].fireRange) + SAFETY_MARGIN_PX;
   const def = ENEMIES[typeId] ?? ENEMIES.raider;
   const opt = meanOptRange(new Mech(def));
   const standoff = clamp(opt * STANDOFF_FRAC, BRAWLER_STANDOFF_MIN, BRAWLER_STANDOFF_MAX);
-  return detectionRangeFor(standoff);
+  return detectionRangeFor(standoff) + SAFETY_MARGIN_PX;
 }
 
 // #203: the actual off-view spawn distance — never closer than `viewR` (the camera-derived
