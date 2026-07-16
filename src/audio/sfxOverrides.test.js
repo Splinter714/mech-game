@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
   setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
   getProcessing, setProcessing, getFadeOutMs, setFadeOut, getVolume, setVolume,
+  MAX_VARIANTS, variantStage, getOverrideVariantCount, pickOverrideStage, removeOverrideVariant,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -638,6 +639,131 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
       await expect(setVolume('autocannon', 'fire', 1.5)).resolves.toBeUndefined();
       expect(getVolume('autocannon', 'fire')).toBe(1.5);
+    });
+  });
+
+  // #195: RANDOMIZED VARIANTS — a stage can hold up to MAX_VARIANTS parallel override slots
+  // instead of just one, addressed via a synthetic `#v${n}` pseudo-stage (variant 0 = the
+  // stage's own original key). These tests exercise the pool machinery directly against the
+  // pseudo-stage keys — the SAME storeOverride/getOverride/etc. every other test above already
+  // exercises against a plain stage, proving zero special-casing was needed in this file.
+  describe('variant pools (#195)', () => {
+    it('a plain (untouched) stage has a variant count of 0, and pickOverrideStage returns null', () => {
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(0);
+      expect(pickOverrideStage('autocannon', 'fire')).toBeNull();
+    });
+
+    it('(a) a single-variant override behaves EXACTLY as before — variantStage(stage, 0) is the plain stage', async () => {
+      expect(variantStage('fire', 0)).toBe('fire');
+      await storeOverride('autocannon', 'fire', fakeFile('boom.wav', 'BOOM'));
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(1);
+      // A pool of exactly 1 always resolves to the plain stage itself, not a pseudo-stage —
+      // byte-identical to how every pre-#195 (weaponId, stage) override behaves.
+      expect(pickOverrideStage('autocannon', 'fire')).toBe('fire');
+      expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'BOOM' });
+    });
+
+    it('loading a second/third/fourth file under variantStage(stage, n) grows the pool up to MAX_VARIANTS', async () => {
+      expect(MAX_VARIANTS).toBe(4);
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(3);
+      await storeOverride('autocannon', variantStage('fire', 3), fakeFile('v3.wav', 'V3'));
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(4);
+      // Each variant slot is independently addressable through the ordinary getters.
+      expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'V0' });
+      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
+      expect(getOverride('autocannon', variantStage('fire', 2))).toEqual({ __decodedFrom: 'V2' });
+      expect(getOverride('autocannon', variantStage('fire', 3))).toEqual({ __decodedFrom: 'V3' });
+    });
+
+    // (b) statistical test — mock Math.random to prove pickOverrideStage genuinely walks the
+    // WHOLE pool (not just always variant 0), then a real-random pass over many trials to prove
+    // every variant gets hit with none starved out, without being flaky (200 trials, uniform
+    // over 3 outcomes — astronomically unlikely to miss one by chance).
+    it('(b) pickOverrideStage resolves deterministically for a mocked Math.random across the whole pool', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      const spy = vi.spyOn(Math, 'random');
+      try {
+        spy.mockReturnValue(0);
+        expect(pickOverrideStage('autocannon', 'fire')).toBe('fire');
+        spy.mockReturnValue(0.34); // floor(0.34*3) = 1
+        expect(pickOverrideStage('autocannon', 'fire')).toBe(variantStage('fire', 1));
+        spy.mockReturnValue(0.99); // floor(0.99*3) = 2
+        expect(pickOverrideStage('autocannon', 'fire')).toBe(variantStage('fire', 2));
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('(b) pickOverrideStage picks among ALL loaded variants over many trials (uniform, no weighting)', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      const seen = new Set();
+      for (let i = 0; i < 200; i++) seen.add(pickOverrideStage('autocannon', 'fire'));
+      expect(seen).toEqual(new Set(['fire', variantStage('fire', 1), variantStage('fire', 2)]));
+    });
+
+    it('(c) removeOverrideVariant on a single-variant pool behaves exactly like clearOverride', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('only.wav', 'ONLY'));
+      await setVolume('autocannon', 'fire', 1.5);
+      await removeOverrideVariant('autocannon', 'fire', 0);
+      expect(hasOverride('autocannon', 'fire')).toBe(false);
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(0);
+      expect(getVolume('autocannon', 'fire')).toBe(1); // volume reset too — same as clearOverride
+    });
+
+    it('removeOverrideVariant compacts a middle variant, shifting later ones down (persists across a reload)', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await setVolume('autocannon', 'fire', 1.1);
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await setVolume('autocannon', variantStage('fire', 1), 1.2);
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      await setVolume('autocannon', variantStage('fire', 2), 1.3);
+
+      await removeOverrideVariant('autocannon', 'fire', 1); // remove the MIDDLE variant
+
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(2);
+      // Variant 0 (untouched) still reads V0/1.1.
+      expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'V0' });
+      expect(getVolume('autocannon', 'fire')).toBe(1.1);
+      // Old variant 2 (V2/1.3) shifted down into slot 1.
+      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V2' });
+      expect(getVolume('autocannon', variantStage('fire', 1))).toBe(1.3);
+      // The vacated top slot is genuinely gone, not a stale duplicate.
+      expect(hasOverride('autocannon', variantStage('fire', 2))).toBe(false);
+
+      // Survives a reload — the compaction was actually persisted to IndexedDB, not just
+      // reflected in the in-memory maps.
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(2);
+      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V2' });
+      expect(getVolume('autocannon', variantStage('fire', 1))).toBe(1.3);
+      expect(hasOverride('autocannon', variantStage('fire', 2))).toBe(false);
+    });
+
+    it('removeOverrideVariant out of range is a no-op', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await removeOverrideVariant('autocannon', 'fire', 5);
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(1);
+      await removeOverrideVariant('autocannon', 'fire', -1);
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(1);
+    });
+
+    it('a totally different (id, stage) pool is unaffected by another one growing/shrinking', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('a.wav', 'A'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('a2.wav', 'A2'));
+      await storeOverride('railgun', 'fire', fakeFile('r.wav', 'R'));
+      expect(getOverrideVariantCount('railgun', 'fire')).toBe(1);
+      await removeOverrideVariant('autocannon', 'fire', 0);
+      expect(getOverrideVariantCount('railgun', 'fire')).toBe(1);
+      expect(getOverride('railgun', 'fire')).toEqual({ __decodedFrom: 'R' });
     });
   });
 });

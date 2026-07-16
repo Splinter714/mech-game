@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BAKED_SFX, loadAllBaked, getBaked, hasBaked, setAudioContext, _resetForTest,
+  getBakedVariantCount, pickBakedVariant, _setBakedBufferForTest,
 } from './bakedSfx.js';
 
 // A fake AudioContext mirroring sfxOverrides.test.js: decodeAudioData "decodes" by reading a
@@ -171,5 +172,98 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     setAudioContext(fakeCtx());
     await expect(loadAllBaked()).resolves.toBeUndefined();
     expect(getBaked('clusterRocket', 'fire')).toBeNull();
+  });
+
+  // #195: RANDOMIZED VARIANTS for a SHIPPED bake — a BAKED_SFX entry may be an ARRAY of recipe
+  // objects instead of a single one, and playback picks uniformly among however many decoded.
+  // Every test here temporarily installs a synthetic multi-variant entry under a made-up id
+  // (mirroring AudioEngine.test.js's pattern of mutating BAKED_SFX directly, then deleting it in
+  // a `finally`) so the REAL shipped table is never touched.
+  describe('variant pools (#195)', () => {
+    afterEach(() => { delete BAKED_SFX['bangTest::fire']; });
+
+    it('(a) a single-object entry (every existing bake) behaves EXACTLY as before', async () => {
+      installFakeFetch(new Map([[BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB']]));
+      setAudioContext(fakeCtx());
+      await loadAllBaked();
+      expect(getBakedVariantCount('clusterRocket', 'fire')).toBe(1);
+      expect(pickBakedVariant('clusterRocket', 'fire')).toEqual(getBaked('clusterRocket', 'fire'));
+    });
+
+    it('an untouched (weaponId, stage) has a variant count of 0, and pickBakedVariant returns null', () => {
+      expect(getBakedVariantCount('bangTest', 'fire')).toBe(0);
+      expect(pickBakedVariant('bangTest', 'fire')).toBeNull();
+    });
+
+    it('an ARRAY entry decodes each variant into its own cache slot, addressable via getBaked', async () => {
+      BAKED_SFX['bangTest::fire'] = [
+        { asset: 'bang0.m4a', startMs: 0, trimMs: 100, processing: null },
+        { asset: 'bang1.m4a', startMs: 10, trimMs: 200, processing: { detune: 50 } },
+        { asset: 'bang2.m4a', startMs: 20, trimMs: 300, fadeOutMs: 80 },
+      ];
+      installFakeFetch(new Map([
+        ['bang0.m4a', 'BANG0'], ['bang1.m4a', 'BANG1'], ['bang2.m4a', 'BANG2'],
+      ]));
+      setAudioContext(fakeCtx());
+      await loadAllBaked();
+
+      expect(getBakedVariantCount('bangTest', 'fire')).toBe(3);
+      expect(getBaked('bangTest', 'fire')).toMatchObject({ startMs: 0, trimMs: 100 });
+      expect(getBaked('bangTest', 'fire').buffer).toEqual({ __decodedFrom: 'BANG0' });
+      expect(getBaked('bangTest', 'fire#v1')).toMatchObject({ startMs: 10, trimMs: 200, processing: { detune: 50 } });
+      expect(getBaked('bangTest', 'fire#v1').buffer).toEqual({ __decodedFrom: 'BANG1' });
+      expect(getBaked('bangTest', 'fire#v2')).toMatchObject({ startMs: 20, trimMs: 300, fadeOutMs: 80 });
+      expect(getBaked('bangTest', 'fire#v2').buffer).toEqual({ __decodedFrom: 'BANG2' });
+      expect(hasBaked('bangTest', 'fire')).toBe(true);
+      expect(hasBaked('bangTest', 'fire#v1')).toBe(true);
+      expect(hasBaked('bangTest', 'fire#v2')).toBe(true);
+      expect(hasBaked('bangTest', 'fire#v3')).toBe(false); // only 3 variants defined
+    });
+
+    // (b) statistical test — mock Math.random to prove pickBakedVariant genuinely walks the
+    // whole pool, then a real-random pass proving every variant gets hit over many trials.
+    it('(b) pickBakedVariant resolves deterministically for a mocked Math.random across the whole pool', async () => {
+      BAKED_SFX['bangTest::fire'] = [
+        { asset: 'bang0.m4a', startMs: 0 }, { asset: 'bang1.m4a', startMs: 1 }, { asset: 'bang2.m4a', startMs: 2 },
+      ];
+      installFakeFetch(new Map([['bang0.m4a', 'B0'], ['bang1.m4a', 'B1'], ['bang2.m4a', 'B2']]));
+      setAudioContext(fakeCtx());
+      await loadAllBaked();
+
+      const spy = vi.spyOn(Math, 'random');
+      try {
+        spy.mockReturnValue(0);
+        expect(pickBakedVariant('bangTest', 'fire').buffer).toEqual({ __decodedFrom: 'B0' });
+        spy.mockReturnValue(0.34);
+        expect(pickBakedVariant('bangTest', 'fire').buffer).toEqual({ __decodedFrom: 'B1' });
+        spy.mockReturnValue(0.99);
+        expect(pickBakedVariant('bangTest', 'fire').buffer).toEqual({ __decodedFrom: 'B2' });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('(b) pickBakedVariant picks among ALL decoded variants over many trials (uniform, no weighting)', () => {
+      _setBakedBufferForTest('bangTest', 'fire', { __decodedFrom: 'B0' }, 0);
+      _setBakedBufferForTest('bangTest', 'fire', { __decodedFrom: 'B1' }, 1);
+      _setBakedBufferForTest('bangTest', 'fire', { __decodedFrom: 'B2' }, 2);
+      BAKED_SFX['bangTest::fire'] = [{ startMs: 0 }, { startMs: 1 }, { startMs: 2 }];
+      const seen = new Set();
+      for (let i = 0; i < 200; i++) seen.add(pickBakedVariant('bangTest', 'fire').buffer.__decodedFrom);
+      expect(seen).toEqual(new Set(['B0', 'B1', 'B2']));
+    });
+
+    it('a variant that fails to decode truncates the pool (breaks contiguity) rather than leaving a gap', async () => {
+      BAKED_SFX['bangTest::fire'] = [
+        { asset: 'bang0.m4a', startMs: 0 }, { asset: 'bang1.m4a', startMs: 1 }, { asset: 'bang2.m4a', startMs: 2 },
+      ];
+      installFakeFetch(new Map([['bang0.m4a', 'B0'], ['bang1.m4a', 'CORRUPT'], ['bang2.m4a', 'B2']]));
+      setAudioContext(fakeCtx());
+      await loadAllBaked();
+      // Variant 1 failed to decode — the contiguous-from-0 count stops there even though
+      // variant 2 DID decode (same "no gaps" contract as the live-override pool).
+      expect(getBakedVariantCount('bangTest', 'fire')).toBe(1);
+      expect(hasBaked('bangTest', 'fire#v2')).toBe(true); // still individually addressable
+    });
   });
 });

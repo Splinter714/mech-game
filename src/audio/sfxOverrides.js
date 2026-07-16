@@ -75,6 +75,80 @@
 // of the override record, reset whenever a fresh file is loaded into the slot. Read via
 // getLoopStartMs(); written (null clears back to "= startMs") via setLoopStartMs().
 
+// #195: RANDOMIZED VARIANTS — a stage can hold up to MAX_VARIANTS parallel override slots
+// instead of just one (e.g. 3 different explosion bangs for the same weapon+stage), so a
+// trigger picks uniformly at random among however many are loaded, each time it plays.
+//
+// Implementation: variant 0 is the stage's ORIGINAL (id, stage) key, unchanged — every override
+// ever saved before this feature existed lives there as an implicit single-variant pool, so
+// there is NOTHING to migrate and every existing getter/setter above needs NO changes at all.
+// Variants 1..3 are addressed through a synthetic PSEUDO-STAGE string, `${stage}#v${n}` — since
+// every getter/setter above is already generic over an arbitrary `stage` string (proven by #177's
+// non-weapon-domain plumbing), passing one of these pseudo-stages through them "just works": it
+// persists its own IndexedDB record, decodes/caches its own buffer, and reads back through the
+// exact same get*/set* functions as any real stage, with zero special-casing in this file below.
+// bakedSfx.js's shipped-bake pool uses the SAME `#v${n}` suffix convention (see its own header),
+// so a (weaponId, pseudoStage) pair resolves consistently whichever module reads it.
+export const MAX_VARIANTS = 4;
+
+// The (weaponId, stage) key for variant `index` of a stage's pool — index 0 is the stage's own
+// original key (today's exact single-variant behavior), 1..3 are the synthetic pseudo-stages.
+export function variantStage(stage, index) {
+  return index > 0 ? `${stage}#v${index}` : stage;
+}
+
+// How many contiguous variant slots (starting at 0) currently have a loaded LIVE override for
+// this (weaponId, stage). 0 means no override at all for this stage (any variant); 1 means
+// exactly today's single-override case. Contiguous by construction — addOverrideVariant/
+// removeOverrideVariant (below) always keep the pool packed from index 0 with no gaps.
+export function getOverrideVariantCount(weaponId, stage) {
+  let n = 0;
+  while (n < MAX_VARIANTS && hasOverride(weaponId, variantStage(stage, n))) n++;
+  return n;
+}
+
+// #195: the sole playback-time entry point for resolving WHICH variant to actually play this
+// trigger — picks uniformly at random among however many are loaded (Math.random(), no
+// weighting). Returns the (weaponId, stage)-shaped key to feed into every other getter
+// (getOverride/getStartMs/etc.), or null when there's no live override at all for this stage
+// (caller falls through to a shipped bake / procedural, unchanged #173 precedence). A pool of
+// exactly 1 always resolves to `stage` itself — byte-identical to every pre-#195 call site.
+export function pickOverrideStage(weaponId, stage) {
+  const n = getOverrideVariantCount(weaponId, stage);
+  if (n === 0) return null;
+  if (n === 1) return stage;
+  return variantStage(stage, Math.floor(Math.random() * n));
+}
+
+// Move every in-memory field (buffer, meta, blob, trim/start/processing/fadeOut/volume/loopStart)
+// from one (weaponId, stage) slot to another, in memory only — used by removeOverrideVariant to
+// compact the pool after a middle slot is deleted. A field absent at the source is left absent
+// at the destination (never carries over a stale value from whatever used to live there).
+function _moveSlotInMemory(weaponId, fromStage, toStage) {
+  const fromKey = keyFor(weaponId, fromStage);
+  const toKey = keyFor(weaponId, toStage);
+  for (const m of [_cache, _meta, _blobs, _trim, _start, _proc, _fadeOut, _volume, _loopStart]) {
+    if (m.has(fromKey)) m.set(toKey, m.get(fromKey)); else m.delete(toKey);
+    m.delete(fromKey);
+  }
+}
+
+// #195: remove variant `index` from the pool and compact everything above it down by one slot,
+// so the pool stays contiguous from 0 (e.g. removing variant 1 out of a 3-variant pool [0,1,2]
+// shifts variant 2 into slot 1, leaving a packed 2-variant pool [0,1]). A no-op if `index` is out
+// of range for the current pool. Each shifted slot is re-persisted to IndexedDB (mirroring every
+// other setter's persistence contract); the vacated top slot is cleared via clearOverride (drops
+// its stale IndexedDB record too).
+export async function removeOverrideVariant(weaponId, stage, index) {
+  const n = getOverrideVariantCount(weaponId, stage);
+  if (index < 0 || index >= n) return;
+  for (let i = index; i < n - 1; i++) {
+    _moveSlotInMemory(weaponId, variantStage(stage, i + 1), variantStage(stage, i));
+    await _persistParams(weaponId, variantStage(stage, i));
+  }
+  await clearOverride(weaponId, variantStage(stage, n - 1));
+}
+
 // #186: seeding a live override FROM a shipped bake (see seedOverrideFromBaked below) — the
 // bake only has a decoded AudioBuffer (bakedSfx.js's `_cache`), never the original file bytes,
 // so storeOverride (which persists raw bytes to IndexedDB) has nothing to write unless we
