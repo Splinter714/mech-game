@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  initialSprintState, toggleSprint, updateSprintFuel,
+  initialSprintState, toggleSprint, holdSprint, updateSprintFuel,
   SPRINT_FUEL_MAX, SPRINT_DRAIN_RATE, SPRINT_REGEN_RATE,
 } from './sprint.js';
 
@@ -63,6 +63,22 @@ describe('Sprint (#188) — press-to-toggle fuel state machine', () => {
     it('turning OFF always succeeds, regardless of remaining fuel', () => {
       expect(toggleSprint(true, 0)).toBe(false);
       expect(toggleSprint(true, SPRINT_FUEL_MAX)).toBe(false);
+    });
+  });
+
+  describe('holdSprint (#188 keyboard hold-to-sprint split)', () => {
+    it('active while held with fuel available', () => {
+      expect(holdSprint(true, SPRINT_FUEL_MAX)).toBe(true);
+      expect(holdSprint(true, 0.01)).toBe(true);
+    });
+
+    it('inactive the instant it is not held, regardless of fuel', () => {
+      expect(holdSprint(false, SPRINT_FUEL_MAX)).toBe(false);
+      expect(holdSprint(false, 0)).toBe(false);
+    });
+
+    it('cannot hold-sprint on an empty tank', () => {
+      expect(holdSprint(true, 0)).toBe(false);
     });
   });
 

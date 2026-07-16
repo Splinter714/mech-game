@@ -1,14 +1,18 @@
 // Sprint (#188) — a fixed, always-available movement ability every mech has, hardcoded to
 // L3/Space. It replaced the old mountable "ability" slot (jumpJet dash / bubbleShield):
 // Sprint is NOT mounted/equipped — no catalog entry, no loadout slot, nothing to choose.
-// Pure state machine here (no Phaser) so the drain/regen/toggle math is fully unit-tested;
-// the arena scene (arena/firing.js's sprint handling, arena/locomotion.js's speed multiplier)
-// just calls these.
+// Pure state machine here (no Phaser) so the drain/regen/toggle/hold math is fully
+// unit-tested; the arena scene (arena/firing.js's sprint handling, arena/locomotion.js's
+// speed multiplier) just calls these.
 //
-// Mechanic: press L3/Space to TOGGLE sprint on/off (not hold-to-sprint). While active, a
-// fuel resource drains and movement speed is boosted; while inactive, fuel regenerates.
-// Fuel hitting empty forces sprint off automatically, and it can't be toggled back on until
-// at least some fuel has regenerated (no minimum threshold beyond "more than zero").
+// Mechanic: while active, a fuel resource drains and movement speed is boosted; while
+// inactive, fuel regenerates. Fuel hitting empty forces sprint off automatically, and it
+// can't be re-engaged until at least some fuel has regenerated (no minimum threshold beyond
+// "more than zero"). Per playtest feedback, the two input devices trigger it with DIFFERENT
+// semantics (src/input/Controls.js, arena/firing.js `_handleSprint`):
+//   - gamepad L3 is press-to-TOGGLE — `toggleSprint` below flips the current state.
+//   - keyboard Space is HOLD-to-sprint — active only while held, off on release —
+//     `holdSprint` below resolves that every frame from the raw held state.
 
 // Speed multiplier while sprinting. #189: Overclock (the timed powerup, #60) no longer has
 // its own moveMult — it force-activates Sprint instead, so this is now the SOLE speed-boost
@@ -40,6 +44,14 @@ export function initialSprintState(cap = SPRINT_FUEL_MAX) {
 export function toggleSprint(active, fuel) {
   if (active) return false;
   return fuel > 0;
+}
+
+// Resolve a HOLD-to-sprint device's raw per-frame held state into the desired `active`
+// value: on exactly while held, refused (like `toggleSprint`'s ON case) on an empty tank —
+// there's no "turning off always succeeds" distinction to make here since releasing the key
+// already means "off" unambiguously, unlike a toggle's single discrete press.
+export function holdSprint(held, fuel) {
+  return !!held && fuel > 0;
 }
 
 // Advance `{ active, fuel }` by `dt` seconds: drains while active (forcing `active` false

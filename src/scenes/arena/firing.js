@@ -10,7 +10,7 @@ import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
-import { toggleSprint, updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
+import { toggleSprint, holdSprint, updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -48,33 +48,49 @@ export const FiringMixin = {
     }
   },
 
-  // ── Sprint (#188) ── a hardcoded, always-available press-to-TOGGLE on L3/Space — not
+  // ── Sprint (#188) ── a hardcoded, always-available ability on L3/Space — not
   // mounted/equipped (replaced the old centre-torso ability slot's jumpJet/bubbleShield). A
   // depleting/regenerating fuel bar drains while active and refills while inactive; hitting
-  // empty forces it off automatically. `intent.sprintPressed` is already rising-edge-detected
-  // by Controls.js, so a toggle only fires once per physical press, not every held frame.
+  // empty forces it off automatically.
+  //
+  // Per playtest feedback, the two devices trigger it with DIFFERENT semantics
+  // (`intent.mode` tells us which is active, from Controls.js):
+  //   - gamepad L3 is press-to-TOGGLE, as before: `intent.sprintPressed` is already
+  //     rising-edge-detected by Controls.js, so a toggle only fires once per physical press.
+  //   - keyboard Space is HOLD-to-sprint: `intent.sprintHeld` is the raw per-frame key-down
+  //     state, so Sprint tracks it directly every frame (via `holdSprint`, gated on fuel like
+  //     the toggle's ON case) — active only while held, off the instant it's released.
   //
   // #189: Overclock was redesigned from a flat moveMult/slewMult buff into forcing Sprint on,
   // fuel-free, for its whole duration — so this method also owns that handoff. State machine:
   // `this._sprintForcedByOverclock` tracks whether the mech's CURRENT sprint-active state is
-  // "because Overclock is holding it on" (as opposed to the player's own manual toggle), and
+  // "because Overclock is holding it on" (as opposed to the player's own manual input), and
   // `this._overclockWasActive` remembers last frame's buff state so activation is detected as
   // a genuine RISING EDGE (false→true) rather than "buff is active and flag happens to be
-  // false" — the latter would misfire every frame after a manual toggle-off reclaims the flag
-  // while the buff is still nominally running, immediately re-forcing Sprint back on.
+  // false" — the latter would misfire every frame after the player reclaims the flag while
+  // the buff is still nominally running, immediately re-forcing Sprint back on.
   //   - Rising edge of Overclock claims Sprint: force `active = true` and set the flag,
   //     REGARDLESS of prior state/fuel — Overclock ignores fuel entirely while it owns the
   //     state (fuel-free by design, see data/powerups.js).
   //   - While the flag is set and Sprint is active, fuel math is skipped entirely (not just
   //     zero-drain) — `updateSprintFuel` would otherwise force `active` back to false on a
   //     0-fuel mech via its own empty-tank floor check, even with drainRate 0.
-  //   - A manual toggle press ALWAYS wins, even mid-Overclock: `toggleSprint` flips the
-  //     CURRENT active state, so pressing while Overclock is forcing it on reads as "turn it
-  //     off" (true → false, always succeeds) exactly like the issue's spec asks. Either way,
-  //     the press immediately clears the flag — manual ownership resumes from that exact
-  //     frame, so normal drain/regen rules apply right away, not at Overclock's own expiry
-  //     (no discontinuity/free lunch — see sprintOverclock.test.js).
-  //   - If Overclock's duration ends while the flag is STILL set (no manual press reclaimed
+  //   - Manual input ALWAYS wins, even mid-Overclock, but "manual input" means something
+  //     different per device:
+  //       - gamepad: a toggle PRESS is the discrete moment the player asserts control —
+  //         `toggleSprint` flips the CURRENT active state, so pressing while Overclock is
+  //         forcing it on reads as "turn it off" (true → false, always succeeds) exactly
+  //         like the issue's spec asks.
+  //       - keyboard: there's no discrete press to wait for — holding is a continuous
+  //         signal, not an edge — so a CHANGE in the raw held state (press OR release) is
+  //         what reclaims manual control; while the held state hasn't changed since last
+  //         frame (player isn't touching Space either way), Overclock keeps ownership. This
+  //         is what makes releasing Space turn Sprint off immediately even mid-Overclock,
+  //         while simply not touching Space during Overclock doesn't cancel the forced ride.
+  //     Either way, the moment manual ownership is reclaimed, normal drain/regen rules apply
+  //     right away, not at Overclock's own expiry (no discontinuity/free lunch — see
+  //     sprintOverclock.test.js and sprintHoldToggle.test.js).
+  //   - If Overclock's duration ends while the flag is STILL set (no manual input reclaimed
   //     it in between), hand control back exactly as if Overclock had never touched Sprint:
   //     force it off, since the player never asked for it themselves.
   _handleSprint(intent, delta) {
@@ -88,7 +104,23 @@ export const FiringMixin = {
       this._sprintForcedByOverclock = true;
     }
 
-    if (intent.sprintPressed) {
+    if (intent.mode === 'kbm') {
+      // Hold-to-sprint: only a CHANGE in the raw held state (press or release) counts as
+      // the player asserting manual control — holding steady through an Overclock window
+      // (in either state) is not itself an assertion, since there's no discrete edge the
+      // way a toggle press has one. On the very first call there's no prior frame to compare
+      // against, so seed the baseline to the current state (mirrors PadEdges' first-poll
+      // handling, #79) rather than assuming "not held" and misreading an already-held key as
+      // a fresh press.
+      const heldNow = !!intent.sprintHeld;
+      const firstPoll = !('_prevKbSprintHeld' in this);
+      const heldBefore = firstPoll ? heldNow : !!this._prevKbSprintHeld;
+      this._prevKbSprintHeld = heldNow;
+      if (heldNow !== heldBefore) this._sprintForcedByOverclock = false;
+      if (!this._sprintForcedByOverclock) {
+        this.sprint.active = holdSprint(heldNow, this.sprint.fuel);
+      }
+    } else if (intent.sprintPressed) {
       this.sprint.active = toggleSprint(this.sprint.active, this.sprint.fuel);
       this._sprintForcedByOverclock = false;
     }

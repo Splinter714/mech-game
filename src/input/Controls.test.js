@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { Controls, PadEdges, PAD } from './Controls.js';
 
+function setKey(scene, name, isDown) {
+  scene._keys[name].isDown = isDown;
+}
+
 // Minimal fake scene: just enough for PadEdges.pad() to resolve a connected gamepad
 // with a mutable `buttons` array we can flip between polls.
 function fakeScene(buttons = {}) {
@@ -46,6 +50,8 @@ function fakeControlsScene({ pads = [] } = {}) {
         getAll: () => pads,
       },
     },
+    _keys: keys,
+    _pointer: pointer,
   };
 }
 
@@ -132,5 +138,50 @@ describe('Controls / PadEdges — resync a carried-over pad on scene transition 
     const scene = fakeControlsScene({ pads: [] });
     expect(() => new Controls(scene)).not.toThrow();
     expect(() => new PadEdges(scene)).not.toThrow();
+  });
+});
+
+// #188 device split: keyboard Space reports a raw HOLD state (`sprintHeld`), gamepad L3
+// still reports a rising-edge TOGGLE one-shot (`sprintPressed`) — both present every frame,
+// regardless of which scheme is currently active, so the arena's `_handleSprint` can pick
+// the one matching `intent.mode`.
+describe('Controls.read — sprint intent split by device (#188)', () => {
+  it('sprintHeld tracks the raw Space key state every frame, with no edge-detection', () => {
+    const scene = fakeControlsScene();
+    const controls = new Controls(scene);
+
+    expect(controls.read().sprintHeld).toBe(false);
+    setKey(scene, 'SPACE', true);
+    expect(controls.read().sprintHeld).toBe(true);
+    expect(controls.read().sprintHeld).toBe(true);   // still held: stays true, not a one-shot
+    expect(controls.read().sprintHeld).toBe(true);
+    setKey(scene, 'SPACE', false);
+    expect(controls.read().sprintHeld).toBe(false);
+  });
+
+  it('sprintPressed is a rising-edge one-shot on gamepad L3, unaffected by Space', () => {
+    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
+    const scene = fakeControlsScene({ pads: [pad] });
+    const controls = new Controls(scene);
+
+    pad.buttons[PAD.L3] = { pressed: true };
+    expect(controls.read().sprintPressed).toBe(true);   // fresh press
+    expect(controls.read().sprintPressed).toBe(false);  // still held, no repeat
+    pad.buttons[PAD.L3] = { pressed: false };
+    expect(controls.read().sprintPressed).toBe(false);  // released
+    pad.buttons[PAD.L3] = { pressed: true };
+    expect(controls.read().sprintPressed).toBe(true);   // press again
+  });
+
+  it('reports both signals in the same read() regardless of which device is active', () => {
+    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
+    const scene = fakeControlsScene({ pads: [pad] });
+    const controls = new Controls(scene);
+
+    setKey(scene, 'SPACE', true);          // keyboard held...
+    pad.buttons[PAD.L3] = { pressed: true }; // ...and a fresh pad press, same frame
+    const intent = controls.read();
+    expect(intent.sprintHeld).toBe(true);
+    expect(intent.sprintPressed).toBe(true);
   });
 });

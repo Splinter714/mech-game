@@ -13,9 +13,12 @@
 // (keyboard equivalent: T). Handled via PadEdges, not the per-frame fire intent.
 //
 // #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot is gone —
-// L3/Space is now a hardcoded, always-available Sprint TOGGLE (data/sprint.js), never routed
-// through mounts. `read()` reports it as `sprintPressed`, a rising-edge one-shot (not a held
-// flag like the weapon binds) since sprint is press-to-toggle, not hold-to-fire.
+// L3/Space is now a hardcoded, always-available Sprint ability (data/sprint.js), never routed
+// through mounts. Per playtest feedback, the two devices use DIFFERENT press semantics for
+// it: keyboard Space is HOLD-to-sprint (`read()` reports the raw down state as `sprintHeld`),
+// while gamepad L3 stays press-to-TOGGLE (`read()` reports a rising-edge one-shot as
+// `sprintPressed`, like before). Both are always present in the returned intent regardless of
+// which scheme is currently active; the arena picks the one matching `mode`.
 
 // Exported so other modules (e.g. arena/locomotion.js's instant-turning facing-angle gate,
 // #156) can reuse the same "is this raw input meaningful" threshold instead of inventing one.
@@ -181,13 +184,21 @@ export class Controls {
       };
     }
 
-    // ── Sprint toggle (#188) ── L3/Space, edge-detected here (not a held flag like the
-    // weapon binds above) since sprint is press-to-toggle, not hold-to-fire. Always resolves
-    // from the active scheme's own button regardless of loadout — it's never mounted.
-    const sprintDown = padMode ? !!(pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed) : k.SPACE.isDown;
-    const sprintPressed = sprintDown && !this._sprintDown;
-    this._sprintDown = sprintDown;
+    // ── Sprint (#188, split by device per playtest feedback) ── the two devices use
+    // DIFFERENT semantics for the same ability, so we report both raw signals every frame
+    // and let the arena's `_handleSprint` pick the one matching the active device:
+    //   - keyboard (Space): HOLD-to-sprint — `sprintHeld` is just the raw key-down state,
+    //     read fresh every frame, no edge detection. Sprint is only "on" while held.
+    //   - gamepad (L3): press-to-TOGGLE, unchanged from before — `sprintPressed` is a
+    //     rising-edge one-shot so a toggle fires once per physical press, not every held
+    //     frame. Computed from the pad's own button regardless of which scheme is currently
+    //     active, same as `sprintHeld` below, so a mode switch mid-press can't leave a stale
+    //     edge/hold value from the previously-active device.
+    const padSprintDown = !!(pad && pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed);
+    const sprintPressed = padSprintDown && !this._sprintDown;
+    this._sprintDown = padSprintDown;
+    const sprintHeld = k.SPACE.isDown;
 
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', sprintPressed };
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', sprintPressed, sprintHeld };
   }
 }
