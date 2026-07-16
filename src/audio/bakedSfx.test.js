@@ -105,6 +105,19 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.processing).toEqual({ detune: 80 }); // #172 chain
       expect(entry.volume).toBe(1.6);              // #182 volume
     });
+
+    // #199: the UI domain's powerupPickupOverdrive cue (#196 split) — the full 2602ms file
+    // (no actual trim, just the recorded played window) of
+    // "DSGNSynth_BUFF-Plus Damage_HY_PC-001.wav", no processing/fade/volume changes.
+    it('registers powerupPickupOverdrive/play with a bundled asset and a no-trim, no-processing recipe', () => {
+      const entry = BAKED_SFX['powerupPickupOverdrive::play'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
+      expect(entry.asset.length).toBeGreaterThan(0);
+      expect(entry.startMs).toBe(0);
+      expect(entry.trimMs).toBe(2602);             // #166 trim — full file length, no actual trim
+      expect(entry.processing).toBeNull();
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -120,6 +133,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
       [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
+      [BAKED_SFX['powerupPickupOverdrive::play'].asset, 'PLUSDAMAGE'],
     ]);
     installFakeFetch(tags);
     setAudioContext(fakeCtx());
@@ -182,6 +196,15 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(equip.trimMs).toBe(689);
     expect(equip.processing).toEqual({ detune: 80 });
     expect(equip.volume).toBe(1.6);
+
+    // #199: powerupPickupOverdrive/play decodes into its own slot carrying the plain no-trim,
+    // no-processing recipe.
+    expect(hasBaked('powerupPickupOverdrive', 'play')).toBe(true);
+    const overdrive = getBaked('powerupPickupOverdrive', 'play');
+    expect(overdrive.buffer).toEqual({ __decodedFrom: 'PLUSDAMAGE' });
+    expect(overdrive.startMs).toBe(0);
+    expect(overdrive.trimMs).toBe(2602);
+    expect(overdrive.processing).toBeNull();
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
@@ -192,6 +215,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
       [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
+      [BAKED_SFX['powerupPickupOverdrive::play'].asset, 'PLUSDAMAGE'],
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
@@ -201,6 +225,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
     expect(getBaked('deathExplosionMassive', 'impact')).toBeNull(); // #180: impact stays procedural — bake is fire-only
     expect(getBaked('deploy', 'showResult')).toBeNull();      // #192: other UI stages stay procedural — bake is deploy/play + equip/play only
+    expect(getBaked('powerupPickupOverclock', 'play')).toBeNull(); // #199: sibling powerup cue stays procedural — no bake for it (yet)
   });
 
   it('loadAllBaked is a safe no-op with no context set yet (nothing decodes, never throws)', async () => {
