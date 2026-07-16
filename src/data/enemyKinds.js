@@ -120,8 +120,16 @@ export const ENEMY_KINDS = {
       body: { x: 0, y: 0, w: 12, h: 12 },
     },
     muzzlePart: 'body',
-    weaponId: 'machineGun',
-    fireRange: 240,
+    // #117 (temporary test, owner's explicit ask): swapped from machineGun to pulseLaser so
+    // Jackson can playtest an ENEMY actually firing a hitscan weapon — no enemy in this table
+    // mounted one before, so hitscan enemy fire was untested in the live game even though #123
+    // already hardened `_fireVehicleWeapon` to dispatch hitscan/contact/projectile correctly
+    // (see scenes/arena/vehicleFire.test.js). May become permanent depending on how it plays;
+    // revert to machineGun if not. fireRange trimmed to sit inside pulseLaser's own falloff
+    // envelope (range.max 600, opt 340 — see weapons.js) while still reading as a short-range
+    // swarm engagement distance, in the same spirit as the drone's old 240.
+    weaponId: 'pulseLaser',
+    fireRange: 280,
     fireEveryMs: 260,
     swarmRadius: 200,       // px orbit radius the drone tries to hold around the player (#93: nudged out from 150 — playtest felt too close)
     flying: true,           // hovers — ignores ground cover, draws a small shadow

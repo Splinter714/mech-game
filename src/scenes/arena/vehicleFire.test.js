@@ -12,6 +12,9 @@
 // regression check exercises the genuine registry entry a live kind mounts), plus one synthetic
 // CONTACT weapon id — no `hit: 'contact'` weapon exists in WEAPONS yet, and the contact branch
 // still must be proven, exactly as #117's smoke test used a synthetic melee fixture for mechs.
+// (Note: as of #117's follow-up temporary test change, the `drone` kind now genuinely mounts
+// pulseLaser — a real hitscan weapon — so this proactive hardening is now also exercised live in
+// the actual game, not just by this synthetic fixture.)
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 
