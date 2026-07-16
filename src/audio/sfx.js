@@ -350,10 +350,22 @@ function scrapPickupCue(e) {                                // currency-ish coin
   e.tone(e.sfx, { type: 'square', freq: 1100, dur: 0.06, gain: 0.10, attack: 0.001 });
   e.tone(e.sfx, { type: 'sine', freq: 1650, freqEnd: 2200, dur: 0.14, gain: 0.09, attack: 0.005 });
 }
-function powerupPickupCue(e) {                              // single shared "buff acquired" cue
-  e.tone(e.sfx, { type: 'sine', freq: 500, freqEnd: 1000, dur: 0.22, gain: 0.12, attack: 0.01 });
-  e.tone(e.sfx, { type: 'sine', freq: 750, freqEnd: 1500, dur: 0.22, gain: 0.09, attack: 0.01 });
+// #196: the old single shared powerupPickupCue is now a shared BASE synth reused by 5
+// independently-tunable per-powerup cues (one per src/data/powerups.js POWERUP id), so the
+// owner's tuner panel can override/bake each buff's "acquired" cue separately. Each variant
+// just offsets the base's pitch (a `semitones` shift) so the five stay a recognizable family
+// while remaining distinct — a cheap way to give each powerup its own flavor without hand-
+// writing 5 unrelated synthesis recipes.
+function powerupPickupBaseCue(e, semitones = 0) {
+  const mult = Math.pow(2, semitones / 12);
+  e.tone(e.sfx, { type: 'sine', freq: 500 * mult, freqEnd: 1000 * mult, dur: 0.22, gain: 0.12, attack: 0.01 });
+  e.tone(e.sfx, { type: 'sine', freq: 750 * mult, freqEnd: 1500 * mult, dur: 0.22, gain: 0.09, attack: 0.01 });
 }
+function powerupPickupOverchargeCue(e) { powerupPickupBaseCue(e, 3); }    // brighter/urgent (unlimited ammo)
+function powerupPickupOverdriveCue(e) { powerupPickupBaseCue(e, 6); }     // higher still (faster fire rate)
+function powerupPickupOverclockCue(e) { powerupPickupBaseCue(e, -2); }    // slightly lower (speed/sprint)
+function powerupPickupArmorPatchCue(e) { powerupPickupBaseCue(e, -6); }   // lower/warmer (repair, defensive)
+function powerupPickupShieldCue(e) { powerupPickupBaseCue(e, -4); }       // lower (protective, defensive)
 // #188: Sprint engage/disengage — reuses the old jump-jet dash's "thruster burst" character
 // for engaging (a rising filtered-noise whoosh + pitch lift reads as "powering up"), with a
 // quick falling-pitch version for disengaging (mirrors equip's confident-vs-lighter
@@ -372,7 +384,11 @@ export const UI_CUES = {
   deploy: deployCue,
   menuNav: menuNavCue,
   scrapPickup: scrapPickupCue,
-  powerupPickup: powerupPickupCue,
+  powerupPickupOvercharge: powerupPickupOverchargeCue,
+  powerupPickupOverdrive: powerupPickupOverdriveCue,
+  powerupPickupOverclock: powerupPickupOverclockCue,
+  powerupPickupArmorPatch: powerupPickupArmorPatchCue,
+  powerupPickupShield: powerupPickupShieldCue,
   sprintOn: sprintOnCue,
   sprintOff: sprintOffCue,
 };

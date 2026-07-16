@@ -103,12 +103,17 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
-  // #178/#188: the generic UI/pickup cue dispatch (equip/deploy/menuNav/scrapPickup/
-  // powerupPickup/sprintOn/sprintOff) — every id registered in sfxDomains.js's `ui` domain
-  // plays a procedural stub without throwing, and an unregistered id is a safe no-op (mirrors
-  // the weapon fallback behavior above).
+  // #178/#188/#196: the generic UI/pickup cue dispatch (equip/deploy/menuNav/scrapPickup/
+  // the 5 per-powerup powerupPickup* ids/sprintOn/sprintOff) — every id registered in
+  // sfxDomains.js's `ui` domain plays a procedural stub without throwing, and an unregistered
+  // id is a safe no-op (mirrors the weapon fallback behavior above).
   it('plays a UI/pickup cue for every registered ui-domain id without throwing', () => {
-    for (const id of ['equip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup', 'sprintOn', 'sprintOff']) {
+    for (const id of [
+      'equip', 'deploy', 'menuNav', 'scrapPickup',
+      'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock',
+      'powerupPickupArmorPatch', 'powerupPickupShield',
+      'sprintOn', 'sprintOff',
+    ]) {
       expect(() => eng.ui(id)).not.toThrow();
     }
     expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(0);

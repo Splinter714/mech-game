@@ -41,10 +41,11 @@ const PANEL_W = 300;
 const PANEL_GAP = 14;
 const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
 const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
-// #178: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
-// menuNav/scrapPickup/powerupPickup) — mirrors the #107 explosion-category row immediately
-// above it, feeding the SAME WeaponSfxPanel via setTarget() so the owner can preview/trim/
-// bake a real file over each new UI/pickup cue exactly like a weapon or explosion category.
+// #178/#196: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
+// menuNav/scrapPickup/the 5 per-powerup powerupPickup* cues) — mirrors the #107
+// explosion-category row immediately above it, feeding the SAME WeaponSfxPanel via
+// setTarget() so the owner can preview/trim/bake a real file over each new UI/pickup cue
+// exactly like a weapon or explosion category.
 const UI_ROW_H = 46;
 const UI_GAP = 10;
 
@@ -437,7 +438,7 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  // #178: the `ui` sfxDomains row (equip/deploy/menuNav/scrapPickup/powerupPickup) —
+  // #178/#196: the `ui` sfxDomains row (equip/deploy/menuNav/scrapPickup/5x powerupPickup*) —
   // a fixed strip of buttons, one per registered UI/pickup sound, mirroring the #107 explosion
   // row directly above it. Picking one feeds its (id, stages) into the SAME WeaponSfxPanel a
   // weapon card or explosion category would, so the owner gets the identical slider/preview/
