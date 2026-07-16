@@ -39,6 +39,14 @@ import pulseLaserFire from '../assets/sfx/pulseLaser-fire-bassBuzz.m4a';
 // higher bitrate to preserve the explosion's low end. Played back as the first 1490ms of the
 // file (#166 start+trim: startMs 0, trimMs 1490) with a 550ms fade-out (#174).
 import deathExplosionFire from '../assets/sfx/deathExplosionMassive-fire-mechaDamaged2.m4a';
+// #194: the UI domain's `deploy` cue (Garage → Arena launch) — "Mecha TURN ON - OFF 8.wav" from
+// the same Helton Yan pack (STEREO 44.1kHz 16-bit, 3.429s). Converted with macOS `afconvert` to
+// 44.1kHz STEREO AAC/.m4a (~191kbps, ~85KB) — kept stereo like the #180 explosion bake. Played
+// back as the first 1620ms of the file (#166 start+trim: startMs 0, trimMs 1620) with a 930ms
+// fade-out (#174). No pitch/volume processing. Key is `deploy::play` (UI domain entries use the
+// (id, stage) pair from sfxDomains.js/sfx.js's uiCue, not a weaponId — same `weaponId::stage` key
+// shape either way).
+import deployPlay from '../assets/sfx/deploy-play-mechaTurnOn8.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -99,6 +107,16 @@ export const BAKED_SFX = {
     startMs: 0,
     trimMs: 1490,
     fadeOutMs: 550,
+    processing: null,
+  },
+  // Helton Yan's Pixel Combat pack — "Mecha TURN ON - OFF 8.wav" (stereo). The first 1620ms of
+  // the file (#166 start+trim: startMs 0, trimMs 1620) as the UI domain's deploy cue, with a
+  // 930ms fade-out (#174). No pitch/filter/reverb processing (#194).
+  'deploy::play': {
+    asset: deployPlay,
+    startMs: 0,
+    trimMs: 1620,
+    fadeOutMs: 930,
     processing: null,
   },
 };
