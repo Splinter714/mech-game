@@ -9,7 +9,7 @@ import {
   seedOverrideFromBaked,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState } from './sfxOverridePanelState.js';
-import { WEAPON_STAGES } from './weaponSfxStages.js';
+import { WEAPON_STAGES, testFirePlan } from './weaponSfxStages.js';
 import { buildSfxCopyText } from './sfxCopyText.js';
 
 // #107: the destruction-explosion size categories (deathExplosionSmall/Medium/Large/Massive)
@@ -823,14 +823,20 @@ export class WeaponSfxPanel {
     this._playStage(stage);
   }
 
-  // Fires the full sequence in context (fire -> trajectory -> impact), like a real shot. Each
-  // stage's mute override is applied/restored right around its own (possibly delayed) call —
-  // not all up front — since a stage's mute/solo state could only change via a full _build()
-  // rebuild anyway, but this keeps the override window as tight as possible per stage.
+  // Fires the full sequence in context (fire -> trajectory -> impact), like a real shot, for a
+  // weapon-shaped target — or, for a non-weapon domain target (#177/#178, e.g. a UI cue whose
+  // only stage is `play`), just plays each of its own stages once. #191: the plan is built from
+  // THIS target's own `this.stages` (via testFirePlan) rather than a hardcoded weapon triple —
+  // see weaponSfxStages.js's testFirePlan doc comment for why the old hardcoding silently played
+  // an unrelated procedural WEAPON sound when previewing a UI-domain target. Each stage's mute
+  // override is applied/restored right around its own (possibly delayed) call — not all up
+  // front — since a stage's mute/solo state could only change via a full _build() rebuild
+  // anyway, but this keeps the override window as tight as possible per stage.
   _testFire() {
-    this._playStage('fire');
-    this.scene.time.delayedCall(TRAJECTORY_DELAY, () => this._playStage('trajectory'));
-    this.scene.time.delayedCall(300, () => this._playStage('impact'));
+    for (const { stage, delay } of testFirePlan(this.stages, TRAJECTORY_DELAY)) {
+      if (delay > 0) this.scene.time.delayedCall(delay, () => this._playStage(stage));
+      else this._playStage(stage);
+    }
   }
 
   _reset() {
