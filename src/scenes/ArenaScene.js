@@ -43,6 +43,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.zoomFactor = GAMEPLAY_ZOOM;
     this.cameras.main.setZoom(dpr * this.zoomFactor);
     this.cameras.main.setBackgroundColor('#0d1014');
+    // #202: brief cosmetic fade-in on deploy, to match the deploy sfx cue (#194) instead of
+    // cutting straight into gameplay. Phaser's camera fade is a pure post-effect overlay on
+    // the render — it does not pause the scene, update loop, or input, so movement/firing/AI
+    // all start immediately underneath it exactly as before.
+    this.cameras.main.fadeIn(400, 13, 16, 20);   // ~0x0d1014, matches the background color above
 
     buildHexTextures(this);
     // Biome for this sortie (#67) — chosen by the garage per deploy; defaults to grassland.
