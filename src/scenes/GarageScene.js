@@ -48,6 +48,12 @@ const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog sta
 // exactly like a weapon or explosion category.
 const UI_ROW_H = 46;
 const UI_GAP = 10;
+// #197: a small toggle button for the weapon catalog's auto-fire demo SOUND (each card's
+// continuous live shot/beam animation always runs; this only mutes/unmutes the automatic
+// fire/trajectory/impact sound it would otherwise play) — sits in its own thin row between
+// the UI/pickup row and the catalog list, mirroring their button chrome.
+const AUTOFIRE_ROW_H = 24;
+const AUTOFIRE_GAP = 8;
 
 // The skill-tile row (order, layout, drawing) is shared with the arena HUD via
 // ../ui/skillTiles.js, so the two read identically. TILE_ORDER comes from there.
@@ -135,6 +141,7 @@ export default class GarageScene extends Phaser.Scene {
     this.panelEdge = this.add.rectangle(r.panel.x - PANEL_GAP / 2, r.panel.y, 1, r.panel.h, UI.panelEdge).setOrigin(0.5, 0);
     this._buildExplosionRow(r.explosion);
     this._buildUiRow(r.ui);
+    this._buildAutofireRow(r.autofire);
 
     this._buildPreview();
     this.doll = this.add.container(0, 0);
@@ -362,11 +369,13 @@ export default class GarageScene extends Phaser.Scene {
   _topRegion(top) {
     const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
     const uiTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
-    const listTop = uiTop + UI_ROW_H + UI_GAP;
+    const autofireTop = uiTop + UI_ROW_H + UI_GAP;
+    const listTop = autofireTop + AUTOFIRE_ROW_H + AUTOFIRE_GAP;
     const bottom = this.H - this.bottomH - 16;
     return {
       explosion: { x: 20, y: top, w: listW, h: EXPLOSION_ROW_H },
       ui: { x: 20, y: uiTop, w: listW, h: UI_ROW_H },
+      autofire: { x: 20, y: autofireTop, w: listW, h: AUTOFIRE_ROW_H },
       list: { x: 20, y: listTop, w: listW, h: bottom - listTop },
       panel: { x: 20 + listW + PANEL_GAP, y: top, w: PANEL_W - PANEL_GAP, h: bottom - top },
     };
@@ -490,6 +499,33 @@ export default class GarageScene extends Phaser.Scene {
       const on = b.entry.id === this.selectedUi;
       b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
     }
+  }
+
+  // #197: the catalog's auto-fire demo SOUND toggle — each weapon card auto-fires a live
+  // shot/beam preview on a loop regardless (that visual animation is unaffected), but it also
+  // plays its real fire/trajectory/impact sound automatically, which is noisy/distracting
+  // just browsing the catalog or tuning sounds in the adjacent panel. Defaults OFF (see
+  // WeaponCardList.loadAutoFireEnabled); this button flips it on the shared list instance,
+  // which owns both persistence and the actual audio gate (_isAudible).
+  _buildAutofireRow(region) {
+    this.autofireBtn = this.add.rectangle(region.x, region.y, region.w, region.h, UI.btn)
+      .setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+    this.autofireText = this.add.text(region.x + region.w / 2, region.y + region.h / 2, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.text,
+    }).setOrigin(0.5);
+    this.autofireBtn.on('pointerover', () => { if (!this.list.autoFireEnabled) this.autofireBtn.setFillStyle(UI.btnHover); });
+    this.autofireBtn.on('pointerout', () => this._paintAutofireRow());
+    this.autofireBtn.on('pointerdown', () => {
+      this.list.setAutoFireEnabled(!this.list.autoFireEnabled);
+      this._paintAutofireRow();
+    });
+    this._paintAutofireRow();
+  }
+
+  _paintAutofireRow() {
+    const on = this.list.autoFireEnabled;
+    this.autofireText.setText(on ? 'CATALOG DEMO SOUND: ON (click to mute)' : 'CATALOG DEMO SOUND: OFF (click to unmute)');
+    this.autofireBtn.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
   }
 
   // Pick a catalog item: mount it into the selected slot. With no slot selected, picking a card

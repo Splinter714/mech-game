@@ -33,6 +33,32 @@ const UI = {
 const CARD_H = 96;
 const CARD_GAP = 12;
 const LABEL_W = 200;     // left block: name + stats
+
+// #197 (re-scoped): every catalog card auto-fires a live shot/beam demo on a loop and plays
+// its real fire/trajectory/impact sound automatically — with no way to turn it off, that's
+// noisy/distracting just browsing the catalog or tuning sounds in the adjacent panel. This
+// gates only the automatic SOUND (Audio.fire/impact/trajectory/startHeld, all routed through
+// _isAudible) behind a toggle, OFF by default — the visual demo itself (each card's shot/beam
+// animation) keeps running regardless, muted or not. Same tiny try/catch localStorage pattern
+// as sfxParams.js's loadSfxParams/saveSfxParams and weaponSfxPanel.js's
+// loadAutoPreviewEnabled — a single flag doesn't warrant new persistence infrastructure.
+const AUTO_FIRE_STORAGE_KEY = 'mech-game-catalog-autofire-v1';
+
+export function loadAutoFireEnabled() {
+  try {
+    return localStorage.getItem(AUTO_FIRE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveAutoFireEnabled(enabled) {
+  try {
+    localStorage.setItem(AUTO_FIRE_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // localStorage blocked/unavailable — the toggle still works this session.
+  }
+}
 // The mount texture (see art/mounts/icons.js) is a DESIGN-px square (mechPrims CENTER=32)
 // with the weapon anchored at (centre-x, frontY). MOUNT_BASE_OY is that base as a normalised
 // origin so the emitter image pivots on the weapon's base. EMIT_SIZE is its on-card display
@@ -66,6 +92,11 @@ export class WeaponCardList {
     this._maxScroll = 0;
     this._focus = -1;      // pad focus cursor (#70); -1 = none (the Weapon Lab never sets one)
     this.cards = [];
+    // #197: gates the auto-fire demo's automatic SOUND only (the visual shot/beam animation
+    // always runs) — OFF by default. Loaded from localStorage so a returning session
+    // remembers the owner's last choice, but a fresh browser/session (no stored value yet)
+    // always starts muted until switched on.
+    this.autoFireEnabled = loadAutoFireEnabled();
 
     this.root = scene.add.container(x, y);
     this.scroller = scene.add.container(0, 0);
@@ -294,8 +325,30 @@ export class WeaponCardList {
   }
 
   update(_time, delta) {
+    // #197: the toggle only gates AUDIO (see _isAudible) — the visual demo (every card's
+    // shot/beam animation) keeps running unconditionally regardless of autoFireEnabled.
     const dt = Math.min(0.05, delta / 1000);
     for (const card of this.cards) this._updateCard(card, dt, delta);
+  }
+
+  // #197: flip the auto-fire demo's SOUND on/off, persisting the choice — the visual
+  // animation (every card's live shot/beam loop) is untouched either way; only the automatic
+  // Audio.fire/impact/trajectory/startHeld calls it triggers are gated (see _isAudible, the
+  // single choke point every such call goes through). Turning it off immediately mutes
+  // anything already mid-loop (a held weapon's loop, an in-flight projectile's trajectory
+  // loop) rather than waiting for it to end on its own.
+  setAutoFireEnabled(enabled) {
+    if (this.autoFireEnabled === enabled) return;
+    this.autoFireEnabled = enabled;
+    saveAutoFireEnabled(enabled);
+    if (!enabled) this._muteCards();
+  }
+
+  _muteCards() {
+    for (const card of this.cards) {
+      for (const p of card.projectiles) p.stopTrajectorySfx?.();
+      if (card._heldOn) { Audio.stopHeld(card.id); card._heldOn = false; }
+    }
   }
 
   // ── Per-card firing sim (identical to what the arena fires; see data/delivery.js) ──────
@@ -335,8 +388,11 @@ export class WeaponCardList {
 
   // Sound only plays for the SELECTED card — with every weapon auto-firing on its own
   // cadence, playing all of them at once would be noise; the selected one is what you're
-  // actually listening to (e.g. tuning in the Weapon Lab sound panel).
-  _isAudible(card) { return card.id === this.selectedId; }
+  // actually listening to (e.g. tuning in the Weapon Lab sound panel). #197: ALSO gated on
+  // the auto-fire demo's sound toggle — every Audio.fire/impact/trajectory/startHeld call in
+  // this file goes through this one check, so flipping autoFireEnabled mutes all of them at
+  // once without touching the (always-running) visual sim that calls into this.
+  _isAudible(card) { return this.autoFireEnabled && card.id === this.selectedId; }
 
   // Held/looping fire sound (#53), mirroring firing.js's edge-detected start/stop — a card
   // never gets a real button press, so "held" here just means "in its active duty-cycle
