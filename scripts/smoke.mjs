@@ -1610,6 +1610,35 @@ try {
   if (!arena.infantryWaterAvoidance.spawnOffWater) fail('#151 test setup: an infantry trooper spawned directly on the planted water terrain (test needs a bigger dry radius)');
   if (!arena.infantryWaterAvoidance.noneSettledOnWater) fail('#151 an UNAWARE infantry trooper idle-wandered onto/settled in water terrain');
 
+  // #190: Garage -> Arena -> Garage -> Arena must not crash/freeze on the SECOND arena session.
+  // ArenaScene is the same reused Scene instance across restarts (Phaser keeps one instance per
+  // scene key rather than recreating it), so any pooled/cached state that's only lazily
+  // initialized (`this._foo ??= ...`) instead of explicitly reset in create() silently carries
+  // stale references from the prior session into the new one. The concrete bug: the death-
+  // explosion debris pool (`combat.js` `_acquireDebrisChunk`, `this._debrisPool`) was never reset
+  // in `ArenaScene.create()` — unlike its sibling `_impactPool` a few lines above it — so a kill
+  // in a SECOND arena session recycled a `Rectangle` GameObject that belonged to the FIRST
+  // session and had already been destroyed on that session's shutdown, throwing
+  // "Cannot read properties of null (reading 'setSize')" the moment `.setSize()` ran on it.
+  // This step kills an enemy in the first arena session (already exercised above via `deathFx`,
+  // which populates the debris pool), backs out to the garage, redeploys into a fresh arena
+  // session, and kills another enemy there — the exact repro for #190.
+  await page.evaluate(() => window.__game.scene.getScene('ArenaScene').toGarage());
+  await page.waitForFunction(() => window.__game.scene.isActive('GarageScene'), { timeout: 20000 });
+  await page.evaluate(() => window.__game.scene.getScene('GarageScene').deploy());
+  await page.waitForFunction(() => {
+    const g = window.__game;
+    return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
+  }, { timeout: 20000 });
+  const secondDeploy = await page.evaluate(() => {
+    const a = window.__game.scene.getScene('ArenaScene');
+    const drone = a._spawnKind(-600, -600, 'drone');
+    a._damageEnemyAt(drone, drone.x, drone.y, 99999, 0xffffff);   // triggers _deathFx -> _deathDebris
+    return { droneKilled: drone.mech.isDestroyed() };
+  });
+  if (!secondDeploy.droneKilled) fail('#190 test setup: the drone in the second arena session was not killed');
+  if (errors.length) fail('#190 runtime errors after a Garage->Arena->Garage->Arena cycle with a kill in each session:\n' + errors.join('\n'));
+
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
   fail(e.message + (errors.length ? '\nerrors:\n' + errors.join('\n') : ''));
