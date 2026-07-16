@@ -47,6 +47,12 @@ import deathExplosionFire from '../assets/sfx/deathExplosionMassive-fire-mechaDa
 // (id, stage) pair from sfxDomains.js/sfx.js's uiCue, not a weaponId — same `weaponId::stage` key
 // shape either way).
 import deployPlay from '../assets/sfx/deploy-play-mechaTurnOn8.m4a';
+// #192: the UI domain's `equip` cue (Garage mount/swap click) — "Ting_Pitched_Up.wav" from the
+// same Helton Yan pack (STEREO 48kHz 24-bit, 0.689s). Converted with macOS `afconvert` to
+// 44.1kHz STEREO AAC/.m4a (~192kbps, ~9.5KB) — kept stereo like the #180/#194 stereo bakes.
+// Played back as the full file (startMs 0, trimMs 689 — the whole 689ms length, not an actual
+// trim), pitched up +80 cents (#172 processing) and boosted to 1.6x volume (#182).
+import equipPlay from '../assets/sfx/equip-play-tingPitchedUp.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -118,6 +124,17 @@ export const BAKED_SFX = {
     trimMs: 1620,
     fadeOutMs: 930,
     processing: null,
+  },
+  // Helton Yan's Pixel Combat pack — "Ting_Pitched_Up.wav" (stereo). The full 689ms file (#166
+  // start+trim: startMs 0, trimMs 689 — no actual trim, just the recorded played window) as the
+  // UI domain's equip cue, pitched up +80 cents (#172 processing) and boosted to 1.6x volume
+  // (#182). No fade-out.
+  'equip::play': {
+    asset: equipPlay,
+    startMs: 0,
+    trimMs: 689,
+    processing: { detune: 80 },
+    volume: 1.6,
   },
 };
 

@@ -92,6 +92,19 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.fadeOutMs).toBe(930);           // #174 fade
       expect(entry.processing).toBeNull();
     });
+
+    // #192: the UI domain's equip cue — the full 689ms file (no actual trim, just the recorded
+    // played window) of "Ting_Pitched_Up.wav", pitched up +80 cents and boosted to 1.6x volume.
+    it('registers equip/play with a bundled asset and the #172 processing + #182 volume recipe', () => {
+      const entry = BAKED_SFX['equip::play'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
+      expect(entry.asset.length).toBeGreaterThan(0);
+      expect(entry.startMs).toBe(0);
+      expect(entry.trimMs).toBe(689);              // #166 trim — full file length, no actual trim
+      expect(entry.processing).toEqual({ detune: 80 }); // #172 chain
+      expect(entry.volume).toBe(1.6);              // #182 volume
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -106,6 +119,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
+      [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
     ]);
     installFakeFetch(tags);
     setAudioContext(fakeCtx());
@@ -159,6 +173,15 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(deploy.trimMs).toBe(1620);
     expect(deploy.fadeOutMs).toBe(930);
     expect(deploy.processing).toBeNull();
+
+    // #192: equip/play decodes into its own slot carrying the #172 processing + #182 volume recipe.
+    expect(hasBaked('equip', 'play')).toBe(true);
+    const equip = getBaked('equip', 'play');
+    expect(equip.buffer).toEqual({ __decodedFrom: 'TINGPITCHEDUP' });
+    expect(equip.startMs).toBe(0);
+    expect(equip.trimMs).toBe(689);
+    expect(equip.processing).toEqual({ detune: 80 });
+    expect(equip.volume).toBe(1.6);
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
@@ -168,6 +191,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
+      [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
@@ -176,7 +200,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(getBaked('plasmaLance', 'impact')).toBeNull();     // #175: impact stays procedural — bake is fire-only
     expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
     expect(getBaked('deathExplosionMassive', 'impact')).toBeNull(); // #180: impact stays procedural — bake is fire-only
-    expect(getBaked('equip', 'play')).toBeNull();             // #194: other UI ids stay procedural — bake is deploy-only
+    expect(getBaked('deploy', 'showResult')).toBeNull();      // #192: other UI stages stay procedural — bake is deploy/play + equip/play only
   });
 
   it('loadAllBaked is a safe no-op with no context set yet (nothing decodes, never throws)', async () => {
