@@ -118,11 +118,13 @@ function variantCacheKey(baseKey, index) {
 //               before the scheduled stop (omit/null/0 = no fade, hard cut)
 //   volume      optional overall gain multiplier (#182) — 1.0 = unity (omit = unity, unchanged
 //               implicit gain); composes with fadeOutMs (the fade ramps FROM this level to 0)
-//   loopStartMs optional held-loop-only loop-start offset (#185), distinct from `startMs` — used
-//               ONLY by the held-sustain path (playBufferLoop). `startMs` is where the intro
-//               plays the first time; `loopStartMs` is where the REPEATING loop region begins.
-//               Omit = defaults to this entry's own `startMs` (no separate loop region, today's
-//               pre-#185 behavior: the whole intro-to-end clip re-loops every cycle).
+//   loopStartMs VESTIGIAL (#185 rework) — used by an earlier held-loop scheme that repeated a
+//               region of the buffer. A held weapon's bake now plays ONCE as the intro and hands
+//               off to procedural sustain synthesis (sfx.js's startHeld/startIntroThenSustain),
+//               so the buffer is never repeated and this field is not read by playback anymore.
+//               Left in the schema so an entry authored before the rework still round-trips
+//               (getBaked still returns it, defaulting to the entry's own `startMs`), but adding
+//               it to a new bake has no audible effect.
 export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Bit Bomb_HY_PC-001.wav". The full
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.

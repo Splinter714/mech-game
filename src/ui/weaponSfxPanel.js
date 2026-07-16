@@ -438,13 +438,14 @@ export class WeaponSfxPanel {
       this.sliders.push(endSlider);
       y += ROW_H + 4;
 
-      // #185: loop-start offset — HELD-LOOP-ONLY (beamLaser/flamethrower use the sustain path;
-      // see HELD_WEAPONS in sfxParams.js), but simplest/least-cluttered to always show it here
-      // next to the trim controls rather than branching UI per weapon — it's a harmless no-op
-      // for one-shot stages (nothing ever reads it outside playBufferLoop). Lets the intro/attack
-      // transient (start→end) play once, then loop just `loopStart→end` on every repeat instead
-      // of re-looping the WHOLE trimmed window. Range is the played window (start..end); dragging
-      // back to the start clears it (null = "loop start = start," today's pre-#185 behavior).
+      // #185 rework: this control predates the intro-then-procedural-sustain fix (see sfx.js's
+      // startHeld/startIntroThenSustain) — it used to mark where a REPEATED region of the held
+      // buffer should wrap back to. Playback no longer loops the buffer at all (a held weapon now
+      // plays its override/bake ONCE as the intro, then hands off to procedural synthesis for the
+      // sustain), so dragging this slider still persists loopStartMs via setLoopStartMs (harmless,
+      // and kept so a value saved by an older build round-trips), but it has NO audible effect
+      // anymore. Left in place rather than removed/hidden to avoid reworking this panel's layout
+      // as part of the #185 audio fix — flagged here so it isn't mistaken for a live control.
       const loopStartSlider = new Slider(this.scene, {
         x: ox + 6, y, w: w - 12, labelW: 64, valueW: 44, label: 'loop start', min: startSec, max: endSec, step: 0.01,
         value: state.loopStartSec,
@@ -700,8 +701,9 @@ export class WeaponSfxPanel {
   // #171 (re-fix): whether `stage` should play at all right now — see previewMuting.isStageAudible.
   // Needed because gain-zeroing (_applyPreviewMuting) only ever affects PROCEDURAL layers, but a
   // stage with a live override or a shipped bake bypasses those layers entirely (sfx.js's
-  // playOverride/playOverrideLoop). Muting/soloing that stage out has to skip the Audio.* call
-  // outright to have any audible effect at all.
+  // playOverride, and — for a held weapon's intro — resolveBufferSource/startIntroThenSustain).
+  // Muting/soloing that stage out has to skip the Audio.* call outright to have any audible
+  // effect at all.
   _isStageAudible(stage) {
     return isStageAudible(stage, this._components, this._mutedSet, this._soloedSet);
   }

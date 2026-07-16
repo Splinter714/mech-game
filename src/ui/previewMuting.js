@@ -13,9 +13,10 @@ export function isAudible(key, mutedSet, soloedSet) {
 
 // #171 (re-fix): whether a whole STAGE should play at all, given the current mute/solo state.
 // applyPreviewMuting only zeroes the `gain` of PROCEDURAL layers — but fire()/trajectory()/
-// impact()/uiCue() all check for a file override or a shipped bake FIRST (sfx.js's
-// playOverride/playOverrideLoop) and, when one exists, play that buffer and return WITHOUT ever
-// touching the procedural layers' gain. That's why mute/solo looked broken again after the
+// impact()/uiCue()/startHeld() all check for a file override or a shipped bake FIRST (sfx.js's
+// playOverride / resolveBufferSource) and, when one exists, play that buffer (for startHeld, just
+// the one-time intro — see sfx.js's startIntroThenSustain) and return WITHOUT ever touching the
+// procedural layers' gain. That's why mute/solo looked broken again after the
 // original #171 fix: once a weapon's stage has a live override or a baked sound (increasingly
 // the common case — plasmaLance/pulseLaser/clusterRocket/deathExplosionMassive already ship
 // baked fire cues), toggling Mute/Solo on that stage's mixer row rebuilt the panel and replayed
