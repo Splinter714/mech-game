@@ -150,6 +150,18 @@ export default class ArenaScene extends Phaser.Scene {
     this._impactRR = 0;
     this._impactSoundAt = {};
     this._lastBurst = null;
+    // #100/#190: the death-explosion debris pool (combat.js `_acquireDebrisChunk`) is the same
+    // kind of lazily-created, capped/recycled pool as `_impactPool` above, but was missed when
+    // that reset block was written — it stayed lazily-initialized via `??=` only, so ArenaScene
+    // being the SAME reused Scene instance across a Garage->Arena->Garage->Arena cycle meant a
+    // second (or later) arena session inherited the FIRST session's pool of `Rectangle` game
+    // objects. Those were destroyed along with everything else on the first Arena's shutdown, so
+    // the moment a kill in the second session recycled one of them, `_acquireDebrisChunk` called
+    // `.setSize()` on a destroyed (nulled-out) GameObject and threw ("Cannot read properties of
+    // null (reading 'setSize')") — reproducibly, the first death after the second deploy. Reset
+    // both here so every fresh arena session starts with its own live pool.
+    this._debrisPool = [];
+    this._debrisRR = 0;
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
     this._initSalvage();                  // #65: SCRAP pickups dropped by destroyed enemies
     this.scene.launch('HudScene');
