@@ -261,7 +261,7 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
 
   it('exposes the #178 UI/pickup sound-domain registry that round-trips through the same helpers', () => {
     expect(Array.isArray(SFX_DOMAINS.ui)).toBe(true);
-    const expectedIds = ['equip', 'unequip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup'];
+    const expectedIds = ['equip', 'deploy', 'menuNav', 'scrapPickup', 'powerupPickup'];
     for (const id of expectedIds) {
       const entry = SFX_DOMAINS.ui.find((e) => e.id === id);
       expect(entry).toBeTruthy();

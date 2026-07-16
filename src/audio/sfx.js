@@ -327,7 +327,7 @@ export function startTrajectory(e, weaponId) {
 }
 
 // ── UI/menu/pickup cues (#178) — small procedural stubs for events that had ZERO audio
-// before: equipping/unequipping a weapon into a garage slot, committing to Deploy, menu
+// before: equipping a weapon into a garage slot, committing to Deploy, menu
 // navigation (tab switching, catalog hover, skill-tile focus), the two arena pickup types
 // (SCRAP, POWERUP), and (#188) toggling Sprint on/off. Each is registered as an
 // `(id, 'play')` pair in sfxDomains.js's `ui` domain so the owner's generalized tuner panel
@@ -337,10 +337,6 @@ export function startTrajectory(e, weaponId) {
 function equipCue(e) {                                    // confident mechanical "clunk-click"
   e.noise(e.sfx, { dur: 0.05, gain: 0.22, type: 'lowpass', freq: 1600, freqEnd: 300, attack: 0.001 });
   e.tone(e.sfx, { type: 'square', freq: 220, freqEnd: 110, dur: 0.07, gain: 0.14, attack: 0.001 });
-}
-function unequipCue(e) {                                  // lighter/quicker "release" — reversed feel
-  e.noise(e.sfx, { dur: 0.035, gain: 0.16, type: 'highpass', freq: 900, freqEnd: 2400, attack: 0.001 });
-  e.tone(e.sfx, { type: 'square', freq: 320, freqEnd: 480, dur: 0.045, gain: 0.09, attack: 0.001 });
 }
 function deployCue(e) {                                    // weightier rising anticipation whoosh
   e.noise(e.sfx, { dur: 0.42, gain: 0.20, type: 'bandpass', freq: 250, freqEnd: 1400, q: 0.5, attack: 0.02 });
@@ -360,7 +356,7 @@ function powerupPickupCue(e) {                              // single shared "bu
 }
 // #188: Sprint engage/disengage — reuses the old jump-jet dash's "thruster burst" character
 // for engaging (a rising filtered-noise whoosh + pitch lift reads as "powering up"), with a
-// quick falling-pitch version for disengaging (mirrors equip/unequip's confident-vs-lighter
+// quick falling-pitch version for disengaging (mirrors equip's confident-vs-lighter
 // pairing).
 function sprintOnCue(e) {
   e.noise(e.sfx, { dur: 0.3, gain: 0.18, type: 'bandpass', freq: 400, freqEnd: 1800, q: 0.6, attack: 0.01 });
@@ -373,7 +369,6 @@ function sprintOffCue(e) {
 
 export const UI_CUES = {
   equip: equipCue,
-  unequip: unequipCue,
   deploy: deployCue,
   menuNav: menuNavCue,
   scrapPickup: scrapPickupCue,
