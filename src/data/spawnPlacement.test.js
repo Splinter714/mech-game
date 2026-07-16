@@ -6,9 +6,11 @@
 // helpers (extracted so they're testable without pulling in Phaser) are the fix: every unit's
 // FINAL position is snapped to the nearest passable, in-bounds hex before it's placed.
 import { describe, it, expect } from 'vitest';
-import { nearestValidHex, nearestValidPixel, turretClusterHexes } from './spawnPlacement.js';
+import { nearestValidHex, nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from './spawnPlacement.js';
 import { axialKey, hexToPixel, pixelToHex, distance } from './hexgrid.js';
 import { isPassable } from './terrain.js';
+import { ENEMY_KINDS } from './enemyKinds.js';
+import { detectionRangeFor } from './awareness.js';
 
 // A hex disc of RADIUS filled with passable ground, with an optional set of impassable
 // "lake" hexes carved out — mirrors real terrain generation, where anything outside the
@@ -111,5 +113,57 @@ describe('turretClusterHexes (#114)', () => {
         expect(isPassable(terrain.get(axialKey(h.q, h.r)))).toBe(true);
       }
     }
+  });
+});
+
+// #203 — enemies near the deploy point could already be AWARE (and, for a turret nest, already
+// firing) the instant the player deployed: the old offscreen-spawn distance was purely a
+// function of the camera viewport, with no floor tied to the enemy's OWN detection range. A
+// turret nest's 2400px fireRange (2880px detect range, distance-only, no LOS needed) dwarfed the
+// ~700-1000px "just off view" distance a normal viewport produces, so it was reliably AWARE and
+// shelling the player within the first second of every deploy regardless of window size.
+describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its own detect range)', () => {
+  it('a turretNest\'s safe distance is its siege-shell detect range — far beyond ordinary off-view distances', () => {
+    const expected = detectionRangeFor(ENEMY_KINDS.turret.fireRange);
+    expect(minSafeSpawnDist('turretNest')).toBeCloseTo(expected);
+    // #94: turret fireRange is INSANE (2400px) — its safe distance must dwarf a typical desktop
+    // "just off view" radius (roughly 700-900px for common window sizes) so the old viewport-only
+    // math could never have accidentally satisfied it.
+    expect(minSafeSpawnDist('turretNest')).toBeGreaterThan(2000);
+  });
+
+  it('derives the swarm/infantryMob cluster safe distance from the kind they actually expand into', () => {
+    expect(minSafeSpawnDist('swarm')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.drone.fireRange));
+    expect(minSafeSpawnDist('infantryMob')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.infantry.fireRange));
+  });
+
+  it('a plain non-mech kind (tank) uses its own fireRange', () => {
+    expect(minSafeSpawnDist('tank')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.tank.fireRange));
+  });
+
+  it('a mech typeId (e.g. raider/sniper) returns a finite, sane distance derived from its loadout', () => {
+    for (const typeId of ['raider', 'sniper']) {
+      const d = minSafeSpawnDist(typeId);
+      expect(Number.isFinite(d)).toBe(true);
+      expect(d).toBeGreaterThan(0);
+      // Every mech's detect range is capped by the standoff clamp (STANDOFF_MAX=520 in
+      // enemies.js) * DETECTION_RANGE_MULT (1.2) — 624px — so this never runs away unbounded.
+      expect(d).toBeLessThanOrEqual(detectionRangeFor(520) + 1e-6);
+    }
+  });
+
+  it('spawnDistance never lands inside minSafeDist, even when it exceeds the viewport-derived viewR', () => {
+    const d = spawnDistance({ viewR: 700, minSafeDist: 2880, maxR: 4864, jitter: 0 });
+    expect(d).toBeGreaterThanOrEqual(2880);
+  });
+
+  it('spawnDistance keeps the ordinary viewport-only behavior when minSafeDist is smaller (no regression)', () => {
+    const d = spawnDistance({ viewR: 700, minSafeDist: 200, maxR: 4864, jitter: 50 });
+    expect(d).toBe(750);
+  });
+
+  it('spawnDistance still respects the world-edge cap even when minSafeDist is huge', () => {
+    const d = spawnDistance({ viewR: 700, minSafeDist: 999999, maxR: 4864, jitter: 0 });
+    expect(d).toBe(4864);
   });
 });
