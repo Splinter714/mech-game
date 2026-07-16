@@ -42,6 +42,7 @@ vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn() }));
 import { EnemiesMixin } from './enemies.js';
 import { WEAPONS } from '../../data/weapons.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
+import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 
 // Referenced via WEAPONS.<id>.id (not string literals) so this file respects the architecture
 // guard's "arena/*.js never names a specific weapon id" rule (same convention as
@@ -49,6 +50,9 @@ import { scheduleFireCues } from '../../audio/fireCues.js';
 // weapon; siegeShell is a real projectile weapon a live kind (the turret) actually mounts.
 const HITSCAN_WEAPON_ID = WEAPONS.beamLaser.id;
 const PROJECTILE_WEAPON_ID = WEAPONS.siegeShell.id;
+// pulseLaser is the drone swarm's actual weapon (enemyKinds.js) and a genuine multi-pulse BURST
+// (5 pulses over ~300ms, see weapons.js) — exactly the shape that exposed the #200 reopen bug.
+const BURST_WEAPON_ID = WEAPONS.pulseLaser.id;
 
 // A minimal ArenaScene-shaped `this`: the REAL EnemiesMixin `_fireVehicleWeapon` runs, with the
 // three cross-mixin fire helpers (from firing.js/projectiles.js) spied so we can see WHICH one
@@ -169,6 +173,44 @@ describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired si
     scene.time.now += 100;
     e1.fireCd = 0;
     scene._fireVehicleWeapon(e1, {}, 0);
+    expect(scheduleFireCues).toHaveBeenCalledTimes(2);
+  });
+
+  // #200 reopened: Jackson's playtest report ("especially with drones... eventually sounds stop
+  // and never resume") traced to this gap — the throttle above only gates how often a NEW cue
+  // schedule can START, not how long a BURST weapon's own sub-shot retriggers keep emitting cues
+  // afterward (fireCues.js's scheduleFireCues retriggers Audio.fire for each later sub-shot in
+  // plan.shots). Pulse Laser (the drone swarm's weapon) bursts 5 pulses over ~300ms per trigger
+  // pull; two drones firing on their own ~260ms cadence, offset by more than SOUND_THROTTLE_MS
+  // (50ms) but less than the burst's own span, used to each pass the old gate and stack their
+  // own overlapping ~300ms trails — multiplying the actual fire-cue rate several times past the
+  // one-per-window the throttle promised. _allowEnemyFireCue now folds the weapon's own burst
+  // span into the busy window so this can't happen.
+  it('folds a BURST weapon\'s own sub-shot span into the throttle window (#200 reopen) — a second trigger inside that span is blocked even past SOUND_THROTTLE_MS', () => {
+    scheduleFireCues.mockClear();
+    const { scene } = makeScene();
+    const e1 = makeKindEnemy(BURST_WEAPON_ID);
+    const e2 = makeKindEnemy(BURST_WEAPON_ID);
+
+    scene._fireVehicleWeapon(e1, {}, 0);
+    expect(scheduleFireCues).toHaveBeenCalledTimes(1);
+    const [, , planArg] = scheduleFireCues.mock.calls[0];
+    const burstSpan = Math.max(0, ...planArg.shots.map((s) => s.delay));
+    expect(burstSpan).toBeGreaterThan(0);   // sanity: this weapon really is a multi-pulse burst
+
+    // Past SOUND_THROTTLE_MS (50ms) but well within the burst's own tail — the OLD throttle
+    // would have let this through and stacked a second overlapping retrigger trail.
+    scene.time.now += 60;
+    scene._fireVehicleWeapon(e2, {}, 0);
+    expect(scheduleFireCues).toHaveBeenCalledTimes(1);   // still just the one — blocked
+
+    // Once the first trigger's entire burst tail would have finished (+ the usual gap), a fresh
+    // trigger is accepted again. (Reset e2's own cooldown — _fireVehicleWeapon sets it on every
+    // attempt regardless of whether the fire-cue throttle above let the cue through, so the
+    // blocked attempt above still armed it.)
+    scene.time.now += burstSpan + SOUND_THROTTLE_MS;
+    e2.fireCd = 0;
+    scene._fireVehicleWeapon(e2, {}, 0);
     expect(scheduleFireCues).toHaveBeenCalledTimes(2);
   });
 });

@@ -18,6 +18,18 @@ import { duckGainAt, DUCK_DEFAULTS } from './duck.js';
 import { setAudioContext as setOverrideAudioContext } from './sfxOverrides.js';
 import { setAudioContext as setBakedAudioContext } from './bakedSfx.js';
 
+// #200 (reopen): a hard ceiling on concurrently in-flight one-shot voices (tone()/noise() below),
+// as a last line of defense against a runaway caller piling up Web Audio nodes faster than they
+// can finish/GC — e.g. many enemies retriggering fire cues in a tight window (see enemies.js's
+// _allowEnemyFireCue, the actual root-cause fix for that specific pile-up). A single fire cue is
+// only ever a handful of layers (2-4 voices); this cap sits far above anything ordinary play
+// needs — even a dozen simultaneous distinct weapons is well under it — so it only ever engages
+// under a genuine pathological pile-up, where silently dropping the newest voice is far better
+// than letting node creation grow unbounded and risking the audio graph falling permanently
+// behind (browsers can behave badly — dropped audio, or in the worst case a wedged/suspended
+// AudioContext — under sustained node-creation overload).
+const MAX_ACTIVE_VOICES = 128;
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -84,6 +96,9 @@ export class AudioEngine {
     // Combat music ducking (#108) — timestamps (ctx.currentTime) of recent weapon-fire/
     // impact/explosion cues; see duck.js's duckGainAt for how these shape the music gain.
     this._duckTriggers = [];
+    // #200 (reopen): count of one-shot voices currently in flight (started but not yet
+    // ended) — see MAX_ACTIVE_VOICES above and tone()/noise()'s guard.
+    this._activeVoices = 0;
   }
 
   // Adopt Phaser's AudioContext (scene.sound.context) and wire the bus graph once. Safe
@@ -349,6 +364,7 @@ export class AudioEngine {
   // (gain <= 0 is skipped — exponential ramps can't target 0, and a silent voice is a no-op.)
   tone(bus, { type = 'sine', freq = 440, freqEnd, dur = 0.15, gain = 0.4, attack = 0.004 }, at) {
     if (!this.ctx || gain <= 0) return;
+    if (this._activeVoices >= MAX_ACTIVE_VOICES) return;   // safety valve — see MAX_ACTIVE_VOICES
     const t = at ?? this._now();
     const o = this.ctx.createOscillator();
     o.type = type;
@@ -359,6 +375,7 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(gain, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g).connect(bus);
+    this._trackVoice(o);
     o.start(t); o.stop(t + dur + 0.03);
   }
 
@@ -366,6 +383,7 @@ export class AudioEngine {
   // (gain <= 0 is skipped — exponential ramps can't target 0.)
   noise(bus, { dur = 0.2, gain = 0.4, type = 'lowpass', freq = 1200, freqEnd, q = 0.8, attack = 0.002 }, at) {
     if (!this.ctx || gain <= 0) return;
+    if (this._activeVoices >= MAX_ACTIVE_VOICES) return;   // safety valve — see MAX_ACTIVE_VOICES
     const t = at ?? this._now();
     const src = this.ctx.createBufferSource(); src.buffer = this._noise();
     const f = this.ctx.createBiquadFilter(); f.type = type;
@@ -377,7 +395,18 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(gain, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(f).connect(g).connect(bus);
+    this._trackVoice(src);
     src.start(t); src.stop(t + dur + 0.03);
+  }
+
+  // #200 (reopen): bump the in-flight voice count and release it again once the node genuinely
+  // finishes — `onended` fires for both OscillatorNode and AudioBufferSourceNode once their
+  // scheduled stop() time passes. A plain self-cleaning counter, no separate free-list/pool to
+  // keep in sync. A minimal mock node (e.g. in tests) that never calls `onended` simply never
+  // decrements — harmless, since tests don't create anywhere near MAX_ACTIVE_VOICES.
+  _trackVoice(node) {
+    this._activeVoices++;
+    node.onended = () => { this._activeVoices = Math.max(0, this._activeVoices - 1); };
   }
 
   // ── SFX events ────────────────────────────────────────────────────────────────────

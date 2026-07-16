@@ -1639,6 +1639,54 @@ try {
   if (!secondDeploy.droneKilled) fail('#190 test setup: the drone in the second arena session was not killed');
   if (errors.length) fail('#190 runtime errors after a Garage->Arena->Garage->Arena cycle with a kill in each session:\n' + errors.join('\n'));
 
+  // #200 reopened: Jackson's playtest report — "especially with drones it seems to be
+  // overloading the game and eventually sounds stop and never resume" — pointed at a genuine
+  // Web Audio node pile-up under a large drone swarm firing its burst weapon (pulseLaser, a
+  // 5-pulse burst) faster than the old per-weapon-id throttle actually bounded (see
+  // enemies.js's _allowEnemyFireCue + scenes/arena/vehicleFire.test.js's regression case). This
+  // hammers the REAL AudioEngine/AudioContext in the live browser the way a sustained multi-
+  // drone-swarm fight would — many overlapping fire cues for the same weapon id, tighter than
+  // the old throttle's gap — and confirms the engine survives it: no thrown/uncaught error, the
+  // AudioContext stays 'running' (never gets wedged suspended), the in-flight voice count never
+  // exceeds AudioEngine's MAX_ACTIVE_VOICES safety valve, and — the actual proof sound doesn't
+  // "stop and never resume" — a fire cue AFTER the hammering still creates fresh audio nodes.
+  const audioStress = await page.evaluate(() => {
+    const eng = window.__audio;
+    if (!eng || !eng.ctx) return { skipped: true };
+    const weapon = { id: 'pulseLaser' };
+    const before = eng._activeVoices;
+    // Simulate ~a full drone swarm (SWARM_SIZE=18) each retriggering their 5-pulse burst several
+    // times over a sustained fight — far more concentrated than real gameplay would ever produce
+    // (those are throttled/staggered), specifically to stress-test the raw node-creation path.
+    for (let i = 0; i < 2000; i++) eng.fire(weapon);
+    const duringPeak = eng._activeVoices;
+    const stateAfterHammer = eng.ctx.state;
+    // Give any already-scheduled voices a moment to actually finish (their envelopes are all
+    // <0.2s) so we can also confirm the count drains back down again afterward, not just that
+    // it was bounded at the peak.
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const afterVoiceCount = eng._activeVoices;
+        // The real proof against "never resumes": fire one more cue afterward and confirm the
+        // engine is still live (running + ready), not silently wedged.
+        eng.fire(weapon);
+        resolve({
+          skipped: false, before, duringPeak, stateAfterHammer, afterVoiceCount,
+          stillRunning: eng.ctx.state === 'running', engineReady: eng.ready,
+        });
+      }, 400);
+    });
+  });
+  if (audioStress.skipped) fail('#200 test setup: window.__audio was not exposed (DEV-only hook) — cannot run the audio stress check');
+  else {
+    if (audioStress.duringPeak > 128) fail(`#200 the one-shot voice safety valve did not hold — _activeVoices peaked at ${audioStress.duringPeak}, expected <= 128`);
+    if (audioStress.stateAfterHammer !== 'running') fail(`#200 the AudioContext left the 'running' state during the drone-swarm stress hammer (state: ${audioStress.stateAfterHammer})`);
+    if (!audioStress.stillRunning) fail('#200 the AudioContext did not stay running after the drone-swarm stress hammer — sound would be silently dead for the rest of the run');
+    if (!audioStress.engineReady) fail('#200 AudioEngine.ready was false after the drone-swarm stress hammer — a real symptom of the reported "sounds stop and never resume" bug');
+    if (audioStress.afterVoiceCount >= audioStress.duringPeak && audioStress.duringPeak > 0) fail(`#200 in-flight voice count did not drain back down after the hammer stopped (peak ${audioStress.duringPeak}, still ${audioStress.afterVoiceCount} 400ms later) — voices may be leaking rather than finishing`);
+  }
+  if (errors.length) fail('#200 runtime errors during the drone-swarm audio stress hammer:\n' + errors.join('\n'));
+
   if (!process.exitCode) console.log('SMOKE OK ✔  (screenshots: /tmp/mech-garage.png, /tmp/mech-arena.png)');
 } catch (e) {
   fail(e.message + (errors.length ? '\nerrors:\n' + errors.join('\n') : ''));

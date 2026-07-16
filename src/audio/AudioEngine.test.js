@@ -1302,4 +1302,53 @@ describe('AudioEngine (mock context)', () => {
       }
     });
   });
+
+  // #200 reopened — Jackson's playtest report ("especially with drones... eventually sounds stop
+  // and never resume") pointed at a Web Audio node pile-up. The actual root cause turned out to
+  // be enemies.js's fire-cue throttle not accounting for a burst weapon's own retrigger tail (see
+  // scenes/arena/vehicleFire.test.js's new #200-reopen case), but this suite covers the second,
+  // defense-in-depth half of the fix: AudioEngine.tone()/noise() now refuse to create MORE than
+  // MAX_ACTIVE_VOICES concurrently in-flight one-shot voices, so no caller bug (this one, or a
+  // future one) can pile up Web Audio nodes without bound.
+  describe('one-shot voice safety valve (#200 reopen) — caps concurrent node creation', () => {
+    it('stops creating new oscillator nodes once the cap is reached, without breaking the engine', () => {
+      for (let i = 0; i < 500; i++) {
+        eng.tone(eng.sfx, { type: 'sine', freq: 440, dur: 0.05, gain: 0.3 });
+      }
+      const { oscillators } = ctx._counts();
+      // Bounded well below the 500 attempts — the mock context's nodes never fire `onended` (no
+      // real audio clock driving them), so every one of the 500 calls looks "still in flight" and
+      // the cap holds firm well before 500.
+      expect(oscillators).toBeGreaterThan(0);       // some genuinely got through before the cap
+      expect(oscillators).toBeLessThan(500);
+      expect(oscillators).toBeLessThanOrEqual(128);  // never exceeds MAX_ACTIVE_VOICES
+      // A silent drop, not a broken engine — the context/engine keep working normally.
+      expect(eng.ctx.state).toBe('running');
+      expect(eng.ready).toBe(true);
+    });
+
+    it('also caps noise-voice (buffer source) creation the same way', () => {
+      for (let i = 0; i < 500; i++) {
+        eng.noise(eng.sfx, { dur: 0.05, gain: 0.3 });
+      }
+      expect(ctx._counts().sources).toBeLessThanOrEqual(128);
+    });
+
+    it('frees a slot once a voice genuinely finishes, letting a subsequent voice through', () => {
+      for (let i = 0; i < 128; i++) eng.tone(eng.sfx, { type: 'sine', freq: 440, dur: 0.05, gain: 0.3 });
+      const atCap = ctx._counts().oscillators;
+      expect(atCap).toBe(128);
+      expect(eng._activeVoices).toBe(128);
+
+      eng.tone(eng.sfx, { type: 'sine', freq: 440, dur: 0.05, gain: 0.3 });
+      expect(ctx._counts().oscillators).toBe(atCap);   // still capped — nothing has ended yet
+
+      // Simulate a real AudioContext firing `onended` once the oldest voice's scheduled stop()
+      // time passes (AudioEngine._trackVoice wires exactly this decrement onto every voice it
+      // creates) — the mock context never drives this itself since it has no real audio clock.
+      eng._activeVoices -= 1;
+      eng.tone(eng.sfx, { type: 'sine', freq: 440, dur: 0.05, gain: 0.3 });
+      expect(ctx._counts().oscillators).toBe(atCap + 1);   // a slot freed up, so this one got through
+    });
+  });
 });

@@ -39,7 +39,7 @@ import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS }
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
-import { allowByKey, SOUND_THROTTLE_MS } from '../../data/hitFx.js';
+import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -558,6 +558,37 @@ export const EnemiesMixin = {
     this.registry.set('enemiesAlive', alive);
   },
 
+  // ── Fire-cue throttle (#200, extended by its reopen follow-up) ────────────────────────
+  // Per-weapon-id gate shared by both enemy fire paths below (the mech loop's readyWeapons
+  // firing + _fireVehicleWeapon). Keyed by weapon id, not per-enemy, so a turret cluster
+  // (#145) or drone swarm sharing one weapon collapses to a single fire-cue train instead of
+  // stacking simultaneous cues.
+  //
+  // The original #200 fix only gated how often a NEW cue schedule could START (SOUND_THROTTLE_MS
+  // apart) — it said nothing about how long that schedule's own tail of sub-shot retriggers
+  // keeps emitting cues afterward (scheduleFireCues/fireCues.js: a burst weapon like Pulse Laser
+  // retriggers Audio.fire for each of its 5 pulses, ~300ms total). Jackson's playtest report
+  // ("especially with drones... eventually sounds stop and never resume") traces to exactly
+  // this gap: 18 drones (enemyKinds.js SWARM_SIZE) all mount pulseLaser and fire on their own
+  // 260ms cadence, desynced — comfortably far enough apart to each pass the old 50ms gate, but
+  // close enough together that their ~300ms retrigger tails overlap and stack. That multiplies
+  // the ACTUAL audio-node creation rate for one weapon id several times past the one-cue-per-
+  // window the throttle promised, which is what was overwhelming the Web Audio graph under
+  // sustained swarm fire.
+  //
+  // Fix: fold the weapon's OWN burst span into the busy window — a fresh trigger is only
+  // accepted once the PREVIOUS one's last sub-shot would have finished playing, plus the usual
+  // gap, so at most one burst train per weapon id is ever in flight system-wide.
+  _allowEnemyFireCue(weaponId, plan) {
+    const at = (this._enemyFireSoundAt ??= {});
+    const now = this.time.now;
+    if ((at[weaponId] ?? -Infinity) > now) return false;
+    let span = 0;
+    for (const s of plan.shots) if (s.delay > span) span = s.delay;
+    at[weaponId] = now + span + SOUND_THROTTLE_MS;
+    return true;
+  },
+
   _updateEnemy(e, dt, delta) {
     // #87: a dead enemy is torn down and pruned out of `this.enemies` the same tick it dies (see
     // `_removeEnemy`), so in practice this guard is now belt-and-suspenders — nothing in
@@ -701,9 +732,10 @@ export const EnemiesMixin = {
         // played a FIRE cue of their own — scheduleFireCues was only ever called from the
         // player's fireWeapon (firing.js). Reuse the same shared scheduler here so enemy shots
         // get the same t=0 fire cue + burst retriggers + trajectory beat. Throttled per weapon
-        // id (same helper/window combat.js uses for impact sounds) so a turret cluster or drone
-        // swarm firing the same weapon in the same frame doesn't stack duplicate cues.
-        if (allowByKey((this._enemyFireSoundAt ??= {}), w.weapon.id, this.time.now, SOUND_THROTTLE_MS)) {
+        // id via _allowEnemyFireCue (see its comment above — folds the weapon's own burst span
+        // into the busy window) so a turret cluster or drone swarm sharing a weapon never stacks
+        // overlapping fire-cue trails.
+        if (this._allowEnemyFireCue(w.weapon.id, plan)) {
           scheduleFireCues(this, w.weapon, plan, true);
         }
         if (plan.mode === 'contact') {
@@ -854,10 +886,10 @@ export const EnemiesMixin = {
     const plan = planEmissions(weapon);
     // #200: same fire-cue gap as the mech enemy loop above — vehicle/non-mech kinds (turrets,
     // tanks, drones) never called scheduleFireCues, so they fired silently. Reuse the plan
-    // already computed here, throttled per weapon id (SOUND_THROTTLE_MS, same helper combat.js
-    // uses for impact sounds) so a turret cluster (#145) or drone swarm sharing a weapon id
-    // doesn't stack simultaneous fire cues.
-    if (allowByKey((this._enemyFireSoundAt ??= {}), weapon.id, this.time.now, SOUND_THROTTLE_MS)) {
+    // already computed here, throttled per weapon id via _allowEnemyFireCue (see its comment
+    // above the mech fire loop) so a turret cluster (#145) or drone swarm sharing a weapon id
+    // never stacks overlapping fire-cue trails.
+    if (this._allowEnemyFireCue(weapon.id, plan)) {
       scheduleFireCues(this, weapon, plan, true);
     }
     if (plan.mode === 'contact') {
