@@ -41,7 +41,7 @@ const PANEL_W = 300;
 const PANEL_GAP = 14;
 const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
 const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
-// #178: a small strip of buttons for the `ui` sfxDomains entries (equip/unequip/deploy/
+// #178: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
 // menuNav/scrapPickup/powerupPickup) — mirrors the #107 explosion-category row immediately
 // above it, feeding the SAME WeaponSfxPanel via setTarget() so the owner can preview/trim/
 // bake a real file over each new UI/pickup cue exactly like a weapon or explosion category.
@@ -437,7 +437,7 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  // #178: the `ui` sfxDomains row (equip/unequip/deploy/menuNav/scrapPickup/powerupPickup) —
+  // #178: the `ui` sfxDomains row (equip/deploy/menuNav/scrapPickup/powerupPickup) —
   // a fixed strip of buttons, one per registered UI/pickup sound, mirroring the #107 explosion
   // row directly above it. Picking one feeds its (id, stages) into the SAME WeaponSfxPanel a
   // weapon card or explosion category would, so the owner gets the identical slider/preview/
@@ -615,16 +615,6 @@ export default class GarageScene extends Phaser.Scene {
       return this.toast(res.reason);
     }
     Audio.ui('equip');   // #178: confident mechanical clunk-click — fresh mount or a swap
-    this.onChange();
-  }
-
-  // #178: the dedicated explicit-removal path (distinct from _mountInto's swap-and-replace) —
-  // plays the lighter "release" cue. No mouse/pad gesture calls this yet (pre-existing — this
-  // scene has no standalone "clear a slot" input today, only mount/replace), but it's wired
-  // and ready for whenever one is added.
-  unmount(loc, index) {
-    this.mech.unmount(loc, index);
-    Audio.ui('unequip');
     this.onChange();
   }
 

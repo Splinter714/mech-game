@@ -5,7 +5,7 @@
 // already uses for the weapon fire/trajectory/impact list.
 //
 // #178: real UI/pickup sound cues, wired into the actual moments (GarageScene's equip/
-// unequip/deploy, tabBar.js + weaponCardList.js's menu navigation, and the arena's SCRAP/
+// deploy, tabBar.js + weaponCardList.js's menu navigation, and the arena's SCRAP/
 // POWERUP pickups — see src/audio/sfx.js's UI_CUES for the procedural stubs and Audio.ui(id,
 // stage) for the playback entry point). Each is a single one-shot cue, so every entry has
 // exactly one stage, `play` — WeaponSfxPanel's generic (id, stage) override/bake plumbing
@@ -17,7 +17,6 @@
 export const SFX_DOMAINS = {
   ui: [
     { id: 'equip', label: 'Equip Weapon', stages: [['play', 'PLAY']] },
-    { id: 'unequip', label: 'Unequip Weapon', stages: [['play', 'PLAY']] },
     { id: 'deploy', label: 'Deploy', stages: [['play', 'PLAY']] },
     { id: 'menuNav', label: 'Menu Navigation', stages: [['play', 'PLAY']] },
     { id: 'scrapPickup', label: 'Scrap Pickup', stages: [['play', 'PLAY']] },

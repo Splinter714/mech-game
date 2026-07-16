@@ -453,7 +453,7 @@ export class AudioEngine {
     Sfx.footstep(this, foot);
   }
 
-  // Generic UI/pickup cue (#178) — equip/unequip/deploy/menu-nav/scrap/powerup/sprint, any (id,
+  // Generic UI/pickup cue (#178) — equip/deploy/menu-nav/scrap/powerup/sprint, any (id,
   // stage) pair registered in sfxDomains.js's `ui` domain. Same override/bake-first, then
   // procedural-fallback precedence every weapon stage uses (see Sfx.uiCue).
   ui(id, stage = 'play') {

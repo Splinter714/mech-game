@@ -89,7 +89,7 @@ describe('shared dispatchers route through a registry (no hardcoded variant)', (
     // the Weapon Lab sound panel) played back by the generic playLayers() — assert sfx.js
     // dispatches through that data lookup rather than branching on an archetype literal.
     // #188: the old ABILITY_CUES registry (dash/shield) is gone with equipment.js — Sprint's
-    // on/off cues (and every other non-weapon one-shot: equip/unequip/deploy/etc.) now route
+    // on/off cues (and every other non-weapon one-shot: equip/deploy/etc.) now route
     // through the generic UI_CUES[id] registry instead.
     const code = stripComments(read('audio/sfx.js'));
     expect(code, 'sfx must dispatch weapon cues via e.getSfxParams(...)').toMatch(/getSfxParams\s*\(/);
