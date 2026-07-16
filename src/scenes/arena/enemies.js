@@ -295,7 +295,10 @@ export const EnemiesMixin = {
     const { x: cx, y: cy } = hexToPixel(hexes[0].q, hexes[0].r);
     let last = null;
     for (let i = 0; i < hexes.length; i++) {
-      const a = (i / hexes.length) * Math.PI * 2;
+      // #145 (playtest 2026-07-15: liked the cluster, but wants it rotated 45° from an
+      // upright NSEW plus-shape to a diagonal NE/SE/SW/NW X-shape) — constant Math.PI / 4
+      // offset rotates every turret's placement angle by 45°.
+      const a = (i / hexes.length) * Math.PI * 2 + Math.PI / 4;
       const px = cx + Math.cos(a) * TURRET_HUDDLE_OFFSET;
       const py = cy + Math.sin(a) * TURRET_HUDDLE_OFFSET;
       last = this._spawnKind(px, py, 'turret');
