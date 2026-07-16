@@ -178,8 +178,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('cameraView', view);
     // #116: live player pose + enemy positions for the HUD corner minimap. Same "publish a plain
     // snapshot each frame" pattern as cameraView above — the HUD reads these to place the player
-    // marker (angle = hull heading), objective (from objectiveWorld), and enemy dots on the map.
-    this.registry.set('playerWorld', { x: this.px, y: this.py, angle: this.angle });
+    // marker. `angle` is the turret/aim heading (`this.turretAngle`, the same source of truth used
+    // for weapon convergence/firing), not the hull's movement heading (Refs #116 playtest feedback:
+    // the arrow should point where you're aiming, not where you're driving), objective (from
+    // objectiveWorld), and enemy dots on the map.
+    this.registry.set('playerWorld', { x: this.px, y: this.py, angle: this.turretAngle });
     const enemyPos = [];
     for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyPos.push({ x: e.x, y: e.y });
     this.registry.set('enemyPositions', enemyPos);

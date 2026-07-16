@@ -394,7 +394,9 @@ export default class HudScene extends Phaser.Scene {
       }
     }
 
-    // Player: a facing chevron in the shared accent colour, oriented to the hull heading.
+    // Player: a facing chevron in the shared accent colour, oriented to the turret/aim heading
+    // (Refs #116: playtest feedback was that it should point where the mech is aiming, not where
+    // it's driving — `player.angle` is now ArenaScene's `turretAngle`, not the hull heading).
     if (player) {
       const m = toMini(player.x, player.y);
       if (inBox(m)) drawChevron(g, m.x, m.y, player.angle, 6.5, MM.player, 1);
