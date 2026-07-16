@@ -35,8 +35,13 @@ vi.mock('../../data/weapons.js', async (importActual) => {
   };
 });
 
+// #200: spy on the shared fire-cue scheduler so we can prove _fireVehicleWeapon now calls it
+// (it never did before — enemies landed hits with an impact sound but fired silently).
+vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn() }));
+
 import { EnemiesMixin } from './enemies.js';
 import { WEAPONS } from '../../data/weapons.js';
+import { scheduleFireCues } from '../../audio/fireCues.js';
 
 // Referenced via WEAPONS.<id>.id (not string literals) so this file respects the architecture
 // guard's "arena/*.js never names a specific weapon id" rule (same convention as
@@ -50,7 +55,7 @@ const PROJECTILE_WEAPON_ID = WEAPONS.siegeShell.id;
 // the dispatch chose.
 function makeScene() {
   const calls = { melee: [], hitscan: [], projectile: [] };
-  const scene = {};
+  const scene = { time: { now: 0, delayedCall: () => {} } };
   Object.assign(scene, EnemiesMixin);
   scene._melee = vi.fn((w, mx, my, angle, owner) => calls.melee.push({ w, owner }));
   scene._fireHitscan = vi.fn((w, mx, my, angle, owner, key) => calls.hitscan.push({ w, owner, key }));
@@ -129,5 +134,41 @@ describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech f
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(1);
     expect(e.fireCd).toBe(1000);               // cadence reset from def.fireEveryMs
+  });
+});
+
+describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired silently before this)', () => {
+  it('calls scheduleFireCues once per shot, with the weapon and its emission plan', () => {
+    scheduleFireCues.mockClear();
+    const { scene } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(scheduleFireCues).toHaveBeenCalledTimes(1);
+    const [sceneArg, weaponArg, planArg, audibleArg] = scheduleFireCues.mock.calls[0];
+    expect(sceneArg).toBe(scene);
+    expect(weaponArg.id).toBe(PROJECTILE_WEAPON_ID);
+    expect(planArg).toBeTruthy();
+    expect(audibleArg).toBe(true);
+  });
+
+  it('throttles same-weapon-id fire cues (SOUND_THROTTLE_MS) so a turret cluster/drone swarm sharing a weapon does not stack cues', () => {
+    scheduleFireCues.mockClear();
+    const { scene } = makeScene();
+    // Two distinct enemies (a turret cluster, #145) sharing the same weapon id, firing in the
+    // same instant — only the first should schedule a cue.
+    const e1 = makeKindEnemy(PROJECTILE_WEAPON_ID);
+    const e2 = makeKindEnemy(PROJECTILE_WEAPON_ID);
+
+    scene._fireVehicleWeapon(e1, {}, 0);
+    scene._fireVehicleWeapon(e2, {}, 0);
+    expect(scheduleFireCues).toHaveBeenCalledTimes(1);
+
+    // Advance time past the throttle window — the next shot gets its own cue again.
+    scene.time.now += 100;
+    e1.fireCd = 0;
+    scene._fireVehicleWeapon(e1, {}, 0);
+    expect(scheduleFireCues).toHaveBeenCalledTimes(2);
   });
 });

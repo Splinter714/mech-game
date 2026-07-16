@@ -59,7 +59,7 @@ function makeScene({ px, py, vx = 0, vy = 0, blocked = false }) {
     enemyMove: false,   // skip the whole movement/goal state-machine — irrelevant to firing
     enemyFire: true,
     px, py, vx, vy,
-    time: { now: 0 },
+    time: { now: 0, delayedCall: () => {} },
   };
   Object.assign(scene, EnemiesMixin);
   scene._wallDistance = () => (blocked ? 1 : Infinity);   // finite => LOS blocked

@@ -38,6 +38,8 @@ import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
+import { scheduleFireCues } from '../../audio/fireCues.js';
+import { allowByKey, SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -682,6 +684,15 @@ export const EnemiesMixin = {
         // contact/melee weapon via _melee, both with owner: 'enemy' so damage lands on the
         // player. Only genuinely projectile weapons still spawn a travelling round.
         const plan = planEmissions(w.weapon);
+        // #200: enemies landed hits with an impact sound (combat.js, owner-agnostic) but never
+        // played a FIRE cue of their own — scheduleFireCues was only ever called from the
+        // player's fireWeapon (firing.js). Reuse the same shared scheduler here so enemy shots
+        // get the same t=0 fire cue + burst retriggers + trajectory beat. Throttled per weapon
+        // id (same helper/window combat.js uses for impact sounds) so a turret cluster or drone
+        // swarm firing the same weapon in the same frame doesn't stack duplicate cues.
+        if (allowByKey((this._enemyFireSoundAt ??= {}), w.weapon.id, this.time.now, SOUND_THROTTLE_MS)) {
+          scheduleFireCues(this, w.weapon, plan, true);
+        }
         if (plan.mode === 'contact') {
           this._melee(w, mx2, my2, fireAngle, 'enemy');
         } else if (plan.mode === 'hitscan') {
@@ -828,6 +839,14 @@ export const EnemiesMixin = {
     // round. No visible change today (every live kind loadout is hit: 'projectile') — proactive
     // hardening so a future hitscan/melee kind loadout renders correctly.
     const plan = planEmissions(weapon);
+    // #200: same fire-cue gap as the mech enemy loop above — vehicle/non-mech kinds (turrets,
+    // tanks, drones) never called scheduleFireCues, so they fired silently. Reuse the plan
+    // already computed here, throttled per weapon id (SOUND_THROTTLE_MS, same helper combat.js
+    // uses for impact sounds) so a turret cluster (#145) or drone swarm sharing a weapon id
+    // doesn't stack simultaneous fire cues.
+    if (allowByKey((this._enemyFireSoundAt ??= {}), weapon.id, this.time.now, SOUND_THROTTLE_MS)) {
+      scheduleFireCues(this, weapon, plan, true);
+    }
     if (plan.mode === 'contact') {
       this._melee(w, mx, my, fireAngle, 'enemy');
     } else if (plan.mode === 'hitscan') {
