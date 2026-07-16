@@ -105,6 +105,20 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.processing).toEqual({ detune: 80 }); // #172 chain
       expect(entry.volume).toBe(1.6);              // #182 volume
     });
+
+    // #198: the UI domain's powerupPickupOverclock cue — a trimmed (2590ms) + faded (660ms)
+    // bake of "DSGNSynth_CAST-Mecha Speeding_HY_PC-003.wav" (kept STEREO, same as the
+    // #180/#194/#192 stereo bakes).
+    it('registers powerupPickupOverclock/play with a bundled asset and the #166 trim + #174 fade recipe', () => {
+      const entry = BAKED_SFX['powerupPickupOverclock::play'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
+      expect(entry.asset.length).toBeGreaterThan(0);
+      expect(entry.startMs).toBe(0);
+      expect(entry.trimMs).toBe(2590);             // #166 trim
+      expect(entry.fadeOutMs).toBe(660);           // #174 fade
+      expect(entry.processing).toBeNull();
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -120,6 +134,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
       [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
+      [BAKED_SFX['powerupPickupOverclock::play'].asset, 'MECHASPEEDING'],
     ]);
     installFakeFetch(tags);
     setAudioContext(fakeCtx());
@@ -182,6 +197,16 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(equip.trimMs).toBe(689);
     expect(equip.processing).toEqual({ detune: 80 });
     expect(equip.volume).toBe(1.6);
+
+    // #198: powerupPickupOverclock/play decodes into its own slot carrying the trim + fade
+    // recipe — one of the 5 #196 per-powerup pickup ids getting its own independent bake.
+    expect(hasBaked('powerupPickupOverclock', 'play')).toBe(true);
+    const overclock = getBaked('powerupPickupOverclock', 'play');
+    expect(overclock.buffer).toEqual({ __decodedFrom: 'MECHASPEEDING' });
+    expect(overclock.startMs).toBe(0);
+    expect(overclock.trimMs).toBe(2590);
+    expect(overclock.fadeOutMs).toBe(660);
+    expect(overclock.processing).toBeNull();
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
@@ -192,6 +217,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
       [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
+      [BAKED_SFX['powerupPickupOverclock::play'].asset, 'MECHASPEEDING'],
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
@@ -201,6 +227,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
     expect(getBaked('deathExplosionMassive', 'impact')).toBeNull(); // #180: impact stays procedural — bake is fire-only
     expect(getBaked('deploy', 'showResult')).toBeNull();      // #192: other UI stages stay procedural — bake is deploy/play + equip/play only
+    expect(getBaked('powerupPickupOvercharge', 'play')).toBeNull(); // #198: sibling powerup ids stay procedural — bake is Overclock-only
   });
 
   it('loadAllBaked is a safe no-op with no context set yet (nothing decodes, never throws)', async () => {

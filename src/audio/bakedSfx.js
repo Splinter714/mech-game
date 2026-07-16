@@ -53,6 +53,14 @@ import deployPlay from '../assets/sfx/deploy-play-mechaTurnOn8.m4a';
 // Played back as the full file (startMs 0, trimMs 689 — the whole 689ms length, not an actual
 // trim), pitched up +80 cents (#172 processing) and boosted to 1.6x volume (#182).
 import equipPlay from '../assets/sfx/equip-play-tingPitchedUp.m4a';
+// #198: the UI domain's `powerupPickupOverclock` cue (one of the 5 #196 per-powerup pickup ids)
+// — "DSGNSynth_CAST-Mecha Speeding_HY_PC-003.wav" from the same Helton Yan pack (STEREO 96kHz
+// 24-bit, 3.488s). Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~93kbps, ~45KB;
+// VBR-encoded so bitrate follows content, unlike the flat ~191-224kbps of the earlier stereo
+// bakes) — kept stereo like the #180/#194/#192 stereo bakes. Played back as the first 2590ms of
+// the file (#166 start+trim: startMs 0, trimMs 2590) with a 660ms fade-out (#174). No pitch/
+// volume processing.
+import powerupPickupOverclockPlay from '../assets/sfx/powerupPickupOverclock-play-mechaSpeeding.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -135,6 +143,17 @@ export const BAKED_SFX = {
     trimMs: 689,
     processing: { detune: 80 },
     volume: 1.6,
+  },
+  // Helton Yan's Pixel Combat pack — "DSGNSynth_CAST-Mecha Speeding_HY_PC-003.wav" (stereo).
+  // The first 2590ms of the file (#166 start+trim: startMs 0, trimMs 2590) as the UI domain's
+  // powerupPickupOverclock cue, with a 660ms fade-out (#174). No pitch/filter/reverb/volume
+  // processing (#198).
+  'powerupPickupOverclock::play': {
+    asset: powerupPickupOverclockPlay,
+    startMs: 0,
+    trimMs: 2590,
+    fadeOutMs: 660,
+    processing: null,
   },
 };
 
