@@ -68,6 +68,16 @@ import powerupPickupOverclockPlay from '../assets/sfx/powerupPickupOverclock-pla
 // (startMs 0, trimMs 2602 — the whole 2602ms length, not an actual trim). No fade-out, no pitch
 // shift, no volume change — all defaults, per Jackson's copy-recipe.
 import powerupPickupOverdrivePlay from '../assets/sfx/powerupPickupOverdrive-play-plusDamage.m4a';
+// #206: the UI domain's `menuNav` cue — "UIClick_INTERFACE-Strong Click 1_HY_PC-001.wav" from
+// the same Helton Yan pack (STEREO 96kHz 24-bit, 2.5s). Converted with macOS `afconvert` to
+// 44.1kHz STEREO AAC/.m4a (~192kbps target) — kept stereo like the other UI-domain stereo bakes
+// (#180/#194/#192/#198/#199). Played back as the first 190ms of the file (#166 start+trim:
+// startMs 0, trimMs 190) with a lowpass filter at 1700Hz/Q9 (#172 processing) and a 1070ms
+// fade-out (#174) — the fade duration exceeds the 190ms played window, so it's clamped down to
+// the window at playback time (same precedent as #175's plasmaLance bake). Silenced entirely at
+// 0.00x (0%) volume (#182) — recorded literally per Jackson's copy-recipe, not "fixed" to
+// audible; this bakes the cue as authored-silent.
+import menuNavPlay from '../assets/sfx/menuNav-play-strongClick1.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -198,6 +208,20 @@ export const BAKED_SFX = {
     trimMs: 2602,
     processing: null,
     volume: 0.5,
+  },
+  // Helton Yan's Pixel Combat pack — "UIClick_INTERFACE-Strong Click 1_HY_PC-001.wav" (stereo).
+  // The first 190ms of the file (#166 start+trim: startMs 0, trimMs 190 — full file is 2500ms)
+  // as the UI domain's menuNav cue, with a lowpass filter at 1700Hz/Q9 (#172 processing) and a
+  // 1070ms fade-out (#174 — exceeds the 190ms played window; clamped to it at playback time,
+  // same as #175). Silenced at 0.00x volume (#182) — authored silent, per Jackson's literal
+  // copy-recipe (#206).
+  'menuNav::play': {
+    asset: menuNavPlay,
+    startMs: 0,
+    trimMs: 190,
+    processing: { filterType: 'lowpass', filterFreq: 1700, filterQ: 9 },
+    fadeOutMs: 1070,
+    volume: 0,
   },
 };
 

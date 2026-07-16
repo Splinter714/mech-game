@@ -135,6 +135,22 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.processing).toBeNull();
       expect(entry.volume).toBe(0.5);              // #204 volume
     });
+
+    // #206: the UI domain's menuNav cue — a 190ms-trimmed bake of "UIClick_INTERFACE-Strong
+    // Click 1_HY_PC-001.wav" (kept STEREO, same as the other UI-domain stereo bakes), with a
+    // lowpass filter processing chain and a fade-out longer than the played window (clamped at
+    // playback), silenced entirely via 0.00x volume per Jackson's literal copy-recipe.
+    it('registers menuNav/play with a bundled asset and the #206 lowpass-filter + fade + silent-volume recipe', () => {
+      const entry = BAKED_SFX['menuNav::play'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
+      expect(entry.asset.length).toBeGreaterThan(0);
+      expect(entry.startMs).toBe(0);
+      expect(entry.trimMs).toBe(190);              // #166 trim — full file is 2500ms
+      expect(entry.processing).toEqual({ filterType: 'lowpass', filterFreq: 1700, filterQ: 9 }); // #172 chain
+      expect(entry.fadeOutMs).toBe(1070);          // #174 fade — exceeds the 190ms window, clamped at playback
+      expect(entry.volume).toBe(0);                // #182 volume — authored silent, literal recipe
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -152,6 +168,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
       [BAKED_SFX['powerupPickupOverclock::play'].asset, 'MECHASPEEDING'],
       [BAKED_SFX['powerupPickupOverdrive::play'].asset, 'PLUSDAMAGE'],
+      [BAKED_SFX['menuNav::play'].asset, 'STRONGCLICK1'],
     ]);
     installFakeFetch(tags);
     setAudioContext(fakeCtx());
@@ -234,6 +251,17 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(overdrive.trimMs).toBe(2602);
     expect(overdrive.processing).toBeNull();
     expect(overdrive.volume).toBe(0.5);
+
+    // #206: menuNav/play decodes into its own slot carrying the lowpass-filter processing +
+    // fade + silent-volume recipe.
+    expect(hasBaked('menuNav', 'play')).toBe(true);
+    const menuNav = getBaked('menuNav', 'play');
+    expect(menuNav.buffer).toEqual({ __decodedFrom: 'STRONGCLICK1' });
+    expect(menuNav.startMs).toBe(0);
+    expect(menuNav.trimMs).toBe(190);
+    expect(menuNav.processing).toEqual({ filterType: 'lowpass', filterFreq: 1700, filterQ: 9 });
+    expect(menuNav.fadeOutMs).toBe(1070);
+    expect(menuNav.volume).toBe(0);
   });
 
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
@@ -246,6 +274,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       [BAKED_SFX['equip::play'].asset, 'TINGPITCHEDUP'],
       [BAKED_SFX['powerupPickupOverclock::play'].asset, 'MECHASPEEDING'],
       [BAKED_SFX['powerupPickupOverdrive::play'].asset, 'PLUSDAMAGE'],
+      [BAKED_SFX['menuNav::play'].asset, 'STRONGCLICK1'],
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
