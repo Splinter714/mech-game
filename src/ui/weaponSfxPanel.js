@@ -78,6 +78,29 @@ const FILTER_ABBR = { off: 'off', lowpass: 'low', highpass: 'high', bandpass: 'b
 // just visually inert, since nothing procedural is actually sounding for that stage any more).
 const OVERRIDDEN_ALPHA = 0.35;
 
+// #197: whether the tuner auto-plays a stage's live preview on every edit (dragging a slider,
+// picking a waveform/filter type, etc.) — as opposed to only via the explicit ▶ test fire
+// button. Defaults OFF (a fresh session/panel load starts silent-while-editing) but persists
+// whatever the owner last chose, same tiny try/catch localStorage pattern as sfxParams.js's
+// loadSfxParams/saveSfxParams — a single flag doesn't warrant new persistence infrastructure.
+const AUTO_PREVIEW_STORAGE_KEY = 'mech-game-sfx-auto-preview-v1';
+
+function loadAutoPreviewEnabled() {
+  try {
+    return localStorage.getItem(AUTO_PREVIEW_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveAutoPreviewEnabled(enabled) {
+  try {
+    localStorage.setItem(AUTO_PREVIEW_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // localStorage blocked/unavailable — the toggle still works this session.
+  }
+}
+
 // Copy `text` to the clipboard, resolving to whether it actually landed. The async
 // Clipboard API only exists in secure contexts (HTTPS/localhost); on plain-HTTP LAN
 // (how the game is reached on mobile) `navigator.clipboard` is undefined, so fall back
@@ -122,6 +145,11 @@ export class WeaponSfxPanel {
     this._soloedSet = new Set();
     this._components = [];   // flat [{stage, li, layer}] for the current weapon, rebuilt in _build()
     this._gainSliders = {};  // key -> top-mixer-strip gain Slider ref (#139: the only gain slider now)
+
+    // #197: gates the automatic per-edit preview (_previewThrottled) — OFF by default. Loaded
+    // from localStorage so a returning session remembers the owner's last choice, but a fresh
+    // browser/session (no stored value yet) always starts silent-while-editing.
+    this.autoPreviewEnabled = loadAutoPreviewEnabled();
 
     // #150: one shared hidden <input type="file"> reused across every "load sound file"
     // button (a file picker per weapon+stage would mean creating/destroying a DOM element on
@@ -699,14 +727,33 @@ export class WeaponSfxPanel {
     paint();
   }
 
+  // #197: the "Auto-preview" toggle — always shown at the top of the panel (even with no
+  // weapon selected yet) since it's a panel-wide session setting, not a per-weapon one. Reuses
+  // the same compact toggle-button look as the mixer strip's Mute/Solo (_toggleBtn).
+  _buildAutoPreviewToggle(ox, y, w) {
+    const label = this.autoPreviewEnabled
+      ? 'auto-preview: ON (edits play sound)'
+      : 'auto-preview: OFF (edits silent)';
+    this._toggleBtn(ox, y, w, 20, label, this.autoPreviewEnabled, UI.good, '#0b1a0b', () => this._toggleAutoPreview());
+    return y + 20 + 8;
+  }
+
+  _toggleAutoPreview() {
+    this.autoPreviewEnabled = !this.autoPreviewEnabled;
+    saveAutoPreviewEnabled(this.autoPreviewEnabled);
+    this._build();
+  }
+
   _build() {
     for (const s of this.sliders) s.destroy();
     this.sliders = [];
     this.scroller.removeAll(true);
     const { x: ox, y: oy, w } = this.region;   // origin to bake into every child below
 
+    let y = this._buildAutoPreviewToggle(ox, oy, w);
+
     if (!this.weaponId) {
-      this.scroller.add(this.scene.add.text(ox, oy, 'Select a weapon\nto tune its sound.', {
+      this.scroller.add(this.scene.add.text(ox, y, 'Select a weapon\nto tune its sound.', {
         fontFamily: 'monospace', fontSize: '12px', color: UI.dim, lineSpacing: 6,
       }));
       this._maxScroll = 0;
@@ -714,7 +761,6 @@ export class WeaponSfxPanel {
     }
 
     const isExplosion = this.weaponId.startsWith(EXPLOSION_ID_PREFIX);
-    let y = oy;
     this.scroller.add(this.scene.add.text(ox, y, this.weaponLabel ?? this.weaponId.toUpperCase(), { fontFamily: 'monospace', fontSize: '13px', color: UI.accent }));
     y += 4;
     const bw = Math.floor((w - 8) / 3);
@@ -816,7 +862,12 @@ export class WeaponSfxPanel {
     restore();
   }
 
+  // #197: gated by the Auto-preview toggle — every per-edit call site (sliders, waveform/filter
+  // pickers, etc.) routes through here rather than _playStage directly, so this single no-op
+  // check is enough to silence ALL of them at once when the toggle is off. The explicit ▶ test
+  // fire button (_testFire) and mute/solo toggles call _playStage directly and are unaffected.
   _previewThrottled(stage) {
+    if (!this.autoPreviewEnabled) return;
     const t = this.scene.time.now;
     if (t - this._lastPreviewAt[stage] < PREVIEW_THROTTLE) return;
     this._lastPreviewAt[stage] = t;
