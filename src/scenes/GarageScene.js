@@ -41,13 +41,25 @@ const PANEL_W = 300;
 const PANEL_GAP = 14;
 const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
 const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
-// #178/#196: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
-// menuNav/scrapPickup/the 5 per-powerup powerupPickup* cues) — mirrors the #107
-// explosion-category row immediately above it, feeding the SAME WeaponSfxPanel via
-// setTarget() so the owner can preview/trim/bake a real file over each new UI/pickup cue
-// exactly like a weapon or explosion category.
-const UI_ROW_H = 46;
-const UI_GAP = 10;
+// #178/#196/#207: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
+// menuNav/scrapPickup/the 5 per-powerup powerupPickup* cues/sprint on-off/the 3 death-and-
+// loss cues) — mirrors the #107 explosion-category row immediately above it, feeding the
+// SAME WeaponSfxPanel via setTarget() so the owner can preview/trim/bake a real file over
+// each new UI/pickup cue exactly like a weapon or explosion category. #207: 13 buttons
+// crammed under one "UI / PICKUP SOUNDS" header read as a wall of tiny text, so the row is
+// split into a few labeled subsections (UI_GROUPS below) — same button chrome/positioning
+// per subsection, just narrower (fewer buttons per row) and stacked with their own headers.
+const UI_ROW_H = 40;      // one subsection: its header line + one row of buttons
+const UI_ROW_GAP = 8;     // gap between stacked subsection rows
+const UI_GAP = 10;        // gap below the whole UI block before the autofire row
+// Purely a display grouping over SFX_DOMAINS.ui — ids/labels/stages there are unchanged.
+// Order within a group follows the id order below, not SFX_DOMAINS.ui's own order.
+const UI_GROUPS = [
+  { header: 'GENERAL UI', ids: ['equip', 'deploy', 'menuNav'] },
+  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield'] },
+  { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
+  { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed', 'runLost'] },
+];
 // #197: a small toggle button for the weapon catalog's auto-fire demo SOUND (each card's
 // continuous live shot/beam animation always runs; this only mutes/unmutes the automatic
 // fire/trajectory/impact sound it would otherwise play) — sits in its own thin row between
@@ -368,13 +380,16 @@ export default class GarageScene extends Phaser.Scene {
   // SFX panel + explosion-category row above it, mirroring the retired Weapon Lab's _region().
   _topRegion(top) {
     const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
+    // #207: the UI/pickup strip is now UI_GROUPS.length stacked subsection rows instead of
+    // one, so its total height is the sum of those rows plus the gaps between them.
+    const uiH = UI_GROUPS.length * UI_ROW_H + (UI_GROUPS.length - 1) * UI_ROW_GAP;
     const uiTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
-    const autofireTop = uiTop + UI_ROW_H + UI_GAP;
+    const autofireTop = uiTop + uiH + UI_GAP;
     const listTop = autofireTop + AUTOFIRE_ROW_H + AUTOFIRE_GAP;
     const bottom = this.H - this.bottomH - 16;
     return {
       explosion: { x: 20, y: top, w: listW, h: EXPLOSION_ROW_H },
-      ui: { x: 20, y: uiTop, w: listW, h: UI_ROW_H },
+      ui: { x: 20, y: uiTop, w: listW, h: uiH },
       autofire: { x: 20, y: autofireTop, w: listW, h: AUTOFIRE_ROW_H },
       list: { x: 20, y: listTop, w: listW, h: bottom - listTop },
       panel: { x: 20 + listW + PANEL_GAP, y: top, w: PANEL_W - PANEL_GAP, h: bottom - top },
@@ -447,38 +462,53 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  // #178/#196: the `ui` sfxDomains row (equip/deploy/menuNav/scrapPickup/5x powerupPickup*) —
-  // a fixed strip of buttons, one per registered UI/pickup sound, mirroring the #107 explosion
-  // row directly above it. Picking one feeds its (id, stages) into the SAME WeaponSfxPanel a
-  // weapon card or explosion category would, so the owner gets the identical slider/preview/
-  // reset/bake flow for these new stub cues.
+  // #178/#196: the `ui` sfxDomains buttons (equip/deploy/menuNav/scrapPickup/5x
+  // powerupPickup*/sprint on-off/3x death-and-loss) — one per registered UI/pickup sound,
+  // mirroring the #107 explosion row directly above it. Picking one feeds its (id, stages)
+  // into the SAME WeaponSfxPanel a weapon card or explosion category would, so the owner
+  // gets the identical slider/preview/reset/bake flow for these new stub cues.
+  // #207: one header + button row per UI_GROUPS entry, stacked top to bottom. this.uiButtons
+  // stays a single flat array (across all groups) since _paintUiRow/_selectUi/shutdown just
+  // need "every button", but each entry also remembers which group row it belongs to (`row`)
+  // and its index within that row (`i`) for layout.
   _buildUiRow(region) {
-    this.uiHeader = this.add.text(region.x, region.y, 'UI / PICKUP SOUNDS', {
+    const byId = new Map(SFX_DOMAINS.ui.map((entry) => [entry.id, entry]));
+    this.uiHeaders = UI_GROUPS.map((group) => this.add.text(region.x, region.y, group.header, {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
-    });
-    this.uiButtons = SFX_DOMAINS.ui.map((entry, i) => {
-      const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
-        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      const text = this.add.text(0, 0, entry.label, {
-        fontFamily: 'monospace', fontSize: '10px', color: UI.text,
-      }).setOrigin(0.5);
-      rect.on('pointerover', () => { if (this.selectedUi !== entry.id) rect.setFillStyle(UI.btnHover); });
-      rect.on('pointerout', () => this._paintUiRow());
-      rect.on('pointerdown', () => this._selectUi(entry));
-      return { entry, rect, text, i };
+    }));
+    this.uiButtons = [];
+    UI_GROUPS.forEach((group, row) => {
+      group.ids.forEach((id, i) => {
+        const entry = byId.get(id);
+        const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
+          .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+        const text = this.add.text(0, 0, entry.label, {
+          fontFamily: 'monospace', fontSize: '10px', color: UI.text,
+        }).setOrigin(0.5);
+        rect.on('pointerover', () => { if (this.selectedUi !== entry.id) rect.setFillStyle(UI.btnHover); });
+        rect.on('pointerout', () => this._paintUiRow());
+        rect.on('pointerdown', () => this._selectUi(entry));
+        this.uiButtons.push({ entry, rect, text, row, i });
+      });
     });
     this._layoutUiRow(region);
   }
 
   _layoutUiRow(region) {
-    this.uiHeader.setPosition(region.x, region.y);
     const gap = 6;
-    const bw = Math.floor((region.w - gap * (this.uiButtons.length - 1)) / this.uiButtons.length);
-    const by = region.y + 18;
-    for (const b of this.uiButtons) {
-      const bx = region.x + b.i * (bw + gap);
-      b.rect.setPosition(bx, by).setSize(bw, 22);
-      b.text.setPosition(bx + bw / 2, by + 11);
+    this.uiHeaders.forEach((header, row) => {
+      header.setPosition(region.x, region.y + row * (UI_ROW_H + UI_ROW_GAP));
+    });
+    for (const group of UI_GROUPS) {
+      const row = UI_GROUPS.indexOf(group);
+      const buttons = this.uiButtons.filter((b) => b.row === row);
+      const bw = Math.floor((region.w - gap * (buttons.length - 1)) / buttons.length);
+      const by = region.y + row * (UI_ROW_H + UI_ROW_GAP) + 18;
+      for (const b of buttons) {
+        const bx = region.x + b.i * (bw + gap);
+        b.rect.setPosition(bx, by).setSize(bw, 22);
+        b.text.setPosition(bx + bw / 2, by + 11);
+      }
     }
   }
 
