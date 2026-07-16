@@ -61,6 +61,13 @@ import equipPlay from '../assets/sfx/equip-play-tingPitchedUp.m4a';
 // the file (#166 start+trim: startMs 0, trimMs 2590) with a 660ms fade-out (#174). No pitch/
 // volume processing.
 import powerupPickupOverclockPlay from '../assets/sfx/powerupPickupOverclock-play-mechaSpeeding.m4a';
+// #199: the UI domain's `powerupPickupOverdrive` cue (#196 split of the powerup-pickup sfx) —
+// "DSGNSynth_BUFF-Plus Damage_HY_PC-001.wav" from the same Helton Yan pack (STEREO 96kHz 24-bit,
+// 2.602s). Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (target ~192kbps, ~28KB) —
+// kept stereo like the other UI-domain stereo bakes (#180/#194/#192). Played back as the full file
+// (startMs 0, trimMs 2602 — the whole 2602ms length, not an actual trim). No fade-out, no pitch
+// shift, no volume change — all defaults, per Jackson's copy-recipe.
+import powerupPickupOverdrivePlay from '../assets/sfx/powerupPickupOverdrive-play-plusDamage.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -153,6 +160,16 @@ export const BAKED_SFX = {
     startMs: 0,
     trimMs: 2590,
     fadeOutMs: 660,
+    processing: null,
+  },
+  // Helton Yan's Pixel Combat pack — "DSGNSynth_BUFF-Plus Damage_HY_PC-001.wav" (stereo). The full
+  // 2602ms file (#166 start+trim: startMs 0, trimMs 2602 — no actual trim, just the recorded played
+  // window) as the UI domain's powerupPickupOverdrive cue (#196 split). No fade-out, no
+  // pitch/filter/reverb processing, no volume change (#199).
+  'powerupPickupOverdrive::play': {
+    asset: powerupPickupOverdrivePlay,
+    startMs: 0,
+    trimMs: 2602,
     processing: null,
   },
 };
