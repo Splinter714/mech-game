@@ -6,7 +6,7 @@
 // helpers (extracted so they're testable without pulling in Phaser) are the fix: every unit's
 // FINAL position is snapped to the nearest passable, in-bounds hex before it's placed.
 import { describe, it, expect } from 'vitest';
-import { nearestValidHex, nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from './spawnPlacement.js';
+import { nearestValidHex, nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance, SAFETY_MARGIN_PX } from './spawnPlacement.js';
 import { axialKey, hexToPixel, pixelToHex, distance } from './hexgrid.js';
 import { isPassable } from './terrain.js';
 import { ENEMY_KINDS } from './enemyKinds.js';
@@ -123,8 +123,8 @@ describe('turretClusterHexes (#114)', () => {
 // ~700-1000px "just off view" distance a normal viewport produces, so it was reliably AWARE and
 // shelling the player within the first second of every deploy regardless of window size.
 describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its own detect range)', () => {
-  it('a turretNest\'s safe distance is its siege-shell detect range — far beyond ordinary off-view distances', () => {
-    const expected = detectionRangeFor(ENEMY_KINDS.turret.fireRange);
+  it('a turretNest\'s safe distance is its siege-shell detect range PLUS the flat safety margin — far beyond ordinary off-view distances', () => {
+    const expected = detectionRangeFor(ENEMY_KINDS.turret.fireRange) + SAFETY_MARGIN_PX;
     expect(minSafeSpawnDist('turretNest')).toBeCloseTo(expected);
     // #94: turret fireRange is INSANE (2400px) — its safe distance must dwarf a typical desktop
     // "just off view" radius (roughly 700-900px for common window sizes) so the old viewport-only
@@ -132,23 +132,24 @@ describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its 
     expect(minSafeSpawnDist('turretNest')).toBeGreaterThan(2000);
   });
 
-  it('derives the swarm/infantryMob cluster safe distance from the kind they actually expand into', () => {
-    expect(minSafeSpawnDist('swarm')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.drone.fireRange));
-    expect(minSafeSpawnDist('infantryMob')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.infantry.fireRange));
+  it('derives the swarm/infantryMob cluster safe distance from the kind they actually expand into, plus the margin', () => {
+    expect(minSafeSpawnDist('swarm')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.drone.fireRange) + SAFETY_MARGIN_PX);
+    expect(minSafeSpawnDist('infantryMob')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.infantry.fireRange) + SAFETY_MARGIN_PX);
   });
 
-  it('a plain non-mech kind (tank) uses its own fireRange', () => {
-    expect(minSafeSpawnDist('tank')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.tank.fireRange));
+  it('a plain non-mech kind (tank) uses its own fireRange plus the margin', () => {
+    expect(minSafeSpawnDist('tank')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.tank.fireRange) + SAFETY_MARGIN_PX);
   });
 
-  it('a mech typeId (e.g. raider/sniper) returns a finite, sane distance derived from its loadout', () => {
+  it('a mech typeId (e.g. raider/sniper) returns a finite, sane distance derived from its loadout, plus the margin', () => {
     for (const typeId of ['raider', 'sniper']) {
       const d = minSafeSpawnDist(typeId);
       expect(Number.isFinite(d)).toBe(true);
       expect(d).toBeGreaterThan(0);
       // Every mech's detect range is capped by the standoff clamp (STANDOFF_MAX=520 in
-      // enemies.js) * DETECTION_RANGE_MULT (1.2) — 624px — so this never runs away unbounded.
-      expect(d).toBeLessThanOrEqual(detectionRangeFor(520) + 1e-6);
+      // enemies.js) * DETECTION_RANGE_MULT (1.2) — 624px — plus the flat safety margin — so
+      // this never runs away unbounded.
+      expect(d).toBeLessThanOrEqual(detectionRangeFor(520) + SAFETY_MARGIN_PX + 1e-6);
     }
   });
 
