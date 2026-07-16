@@ -191,12 +191,13 @@ export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNSynth_BUFF-Plus Damage_HY_PC-001.wav" (stereo). The full
   // 2602ms file (#166 start+trim: startMs 0, trimMs 2602 — no actual trim, just the recorded played
   // window) as the UI domain's powerupPickupOverdrive cue (#196 split). No fade-out, no
-  // pitch/filter/reverb processing, no volume change (#199).
+  // pitch/filter/reverb processing (#199). Reduced to 0.5x (50%) volume (#204).
   'powerupPickupOverdrive::play': {
     asset: powerupPickupOverdrivePlay,
     startMs: 0,
     trimMs: 2602,
     processing: null,
+    volume: 0.5,
   },
 };
 
