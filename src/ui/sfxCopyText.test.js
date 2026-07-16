@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildSfxCopyText } from './sfxCopyText.js';
 import {
   storeOverride, setTrim, setStart, setProcessing, setFadeOut, setVolume, _resetForTest, setAudioContext,
+  variantStage,
 } from '../audio/sfxOverrides.js';
 
 // Same minimal fake IndexedDB + File + AudioContext used by sfxOverrides.test.js — just enough
@@ -269,5 +270,43 @@ describe('buildSfxCopyText (#170 per-stage copy)', () => {
     const out = buildSfxCopyText('autocannon', params);
     const expected = `  autocannon: ${JSON.stringify(params, null, 2).replace(/\n/g, '\n  ')},`;
     expect(out).toBe(expected);
+  });
+
+  // #195: a stage with more than one loaded variant emits ONE FILE block per variant, each
+  // clearly labeled — a single-variant stage (every stage before this feature) keeps emitting
+  // exactly one unlabeled block (proven by every test above, none of which touch a variant key).
+  describe('multi-variant stages (#195)', () => {
+    it('emits one labeled FILE block per loaded variant, each with its own file/trim data', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('bang0.wav', 'BANG0'));
+      await setTrim('autocannon', 'fire', 100);
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('bang1.wav', 'BANG1'));
+      await setStart('autocannon', variantStage('fire', 1), 50);
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('bang2.wav', 'BANG2'));
+
+      const out = buildSfxCopyText('autocannon', PARAMS());
+
+      expect(out).toContain('[fire (variant 1 of 3)] FILE OVERRIDE');
+      expect(out).toContain('[fire (variant 2 of 3)] FILE OVERRIDE');
+      expect(out).toContain('[fire (variant 3 of 3)] FILE OVERRIDE');
+      expect(out).toContain('bang0.wav');
+      expect(out).toContain('bang1.wav');
+      expect(out).toContain('bang2.wav');
+      // Each block reports the REAL stage name (not the internal pseudo-stage key) on its own line.
+      expect(out).toMatch(/stage:\s+fire\n/);
+      expect(out).not.toMatch(/fire#v/);
+      // Variant 1's own start offset (50ms) is scoped to that block, not leaked into variant 0/2.
+      expect(out).toContain('start:           50 ms');
+      expect(out).toContain('start:           0 ms');
+      // Sibling stages (trajectory/impact) are untouched, single-variant, still procedural.
+      expect(out).toContain('[trajectory] PROCEDURAL');
+      expect(out).toContain('[impact] PROCEDURAL');
+    });
+
+    it('a single-variant stage emits an unlabeled block — byte-identical to the pre-#195 shape', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('only.wav', 'ONLY'));
+      const out = buildSfxCopyText('autocannon', PARAMS());
+      expect(out).toContain('[fire] FILE OVERRIDE');
+      expect(out).not.toContain('variant');
+    });
   });
 });

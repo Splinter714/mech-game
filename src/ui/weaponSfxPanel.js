@@ -4,11 +4,11 @@ import { isAudible, isStageAudible, applyPreviewMuting } from './previewMuting.j
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
-  storeOverride, clearOverride, hasOverride,
+  storeOverride, hasOverride,
   setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
-  seedOverrideFromBaked,
+  seedOverrideFromBaked, variantStage, removeOverrideVariant, MAX_VARIANTS,
 } from '../audio/sfxOverrides.js';
-import { getOverrideRowState } from './sfxOverridePanelState.js';
+import { getOverrideRowState, getVariantSlotCount } from './sfxOverridePanelState.js';
 import { WEAPON_STAGES, testFirePlan } from './weaponSfxStages.js';
 import { buildSfxCopyText } from './sfxCopyText.js';
 
@@ -313,28 +313,74 @@ export class WeaponSfxPanel {
   // load/clear controls. `label` isn't a weapon-catalog concept, so this reads the same for a
   // real weapon or a destruction-explosion category (`setWeapon`'s `label` override already
   // handles the header text the same way).
+  //
+  // #195: RANDOMIZED VARIANTS — a stage can hold up to MAX_VARIANTS parallel override slots
+  // instead of just one; this now renders ONE slot per loaded variant (via `_buildOverrideSlot`)
+  // plus a trailing "+ add variant" control once there's room for another. A stage with exactly
+  // one variant (every stage before this feature) renders a SINGLE slot with no "variant N of M"
+  // labeling at all — identical output to the pre-#195 panel.
   _buildOverrideRow(ox, y, w, stage) {
     const weaponId = this.weaponId;
+    const n = getVariantSlotCount(weaponId, stage);
+    for (let i = 0; i < n; i++) {
+      y = this._buildOverrideSlot(ox, y, w, stage, i, n);
+    }
+    if (n < MAX_VARIANTS) {
+      this._button(ox + 6, y, w - 12, 20, '+ add variant', () => {
+        // Nothing is created until a file actually lands — clicking this just opens the picker
+        // targeted at the next pseudo-stage slot (variantStage(stage, n)); a cancelled dialog
+        // leaves the pool exactly as it was (getOverrideVariantCount only counts loaded slots).
+        this._pendingLoad = { weaponId, stage: variantStage(stage, n) };
+        this._fileInput.click();
+      }, { color: UI.dim });
+      y += 20 + 8;
+    }
+    return y;
+  }
+
+  // #195: renders ONE variant slot's controls — status/load/clear plus (once loaded) the full
+  // trim/loop/fade/volume/processing block, identical in shape to the pre-#195 single-slot body,
+  // just keyed on `keyStage` (the real `stage` for variant 0, a `#v${n}` pseudo-stage for n>0)
+  // instead of `stage` directly. `totalVariants` only affects labeling (the "variant N of M"
+  // sub-header, shown only when there's more than one) and whether "clear" reads as "clear
+  // override" (single variant) or "remove variant" (pool of 2+) — both call the SAME
+  // removeOverrideVariant, which collapses to a plain clearOverride when there's only one slot.
+  _buildOverrideSlot(ox, y, w, stage, variantIndex, totalVariants) {
+    const weaponId = this.weaponId;
+    const keyStage = variantStage(stage, variantIndex);
     // #177: the display/edit state (active?, status text, trim window, fade cap, processing)
     // is computed by a Phaser-free helper shared with tests (sfxOverridePanelState.js) — this
     // method now just renders whatever it returns, so the SAME code the panel draws from is
     // what gets unit-tested against a synthetic non-weapon (id, stage) target.
-    const state = getOverrideRowState(weaponId, stage);
+    const state = getOverrideRowState(weaponId, keyStage);
     const { active } = state;
+
+    if (totalVariants > 1) {
+      this.scroller.add(this.scene.add.text(ox + 6, y, `variant ${variantIndex + 1} of ${totalVariants}`, {
+        fontFamily: 'monospace', fontSize: '9px', color: UI.accent,
+      }));
+      y += 12;
+    }
+
     this.scroller.add(this.scene.add.text(ox + 6, y, state.statusText, {
       fontFamily: 'monospace', fontSize: '9px', color: active ? UI.good : UI.dim,
     }));
     y += 13;
     const gap = 4;
     const bw = Math.floor((w - 12 - gap) / 2);
-    this._button(ox + 6, y, bw, 20, 'load sound file…', () => {
-      this._pendingLoad = { weaponId, stage };
+    const loadLabel = totalVariants > 1 ? `load variant ${variantIndex + 1}…` : 'load sound file…';
+    const clearLabel = totalVariants > 1 ? `remove variant ${variantIndex + 1}` : 'clear override';
+    this._button(ox + 6, y, bw, 20, loadLabel, () => {
+      this._pendingLoad = { weaponId, stage: keyStage };
       this._fileInput.click();
     });
-    this._button(ox + 6 + bw + gap, y, bw, 20, 'clear override', () => {
-      clearOverride(weaponId, stage).then(() => {
+    this._button(ox + 6 + bw + gap, y, bw, 20, clearLabel, () => {
+      // #195: removeOverrideVariant(weaponId, stage, variantIndex) compacts the pool so later
+      // variants shift down and fill the gap — with only one variant loaded (the pre-#195 case)
+      // this is exactly clearOverride(weaponId, stage), byte-identical to the old button.
+      removeOverrideVariant(weaponId, stage, variantIndex).then(() => {
         if (this.weaponId !== weaponId) return;   // selection changed while this resolved
-        this._toast(`${stage}: reverted to procedural`);   // #166: clearOverride also resets its start/trim
+        this._toast(totalVariants > 1 ? `${stage}: removed variant ${variantIndex + 1}` : `${stage}: reverted to procedural`);
         this._build();
       });
     }, { color: active ? UI.good : UI.dim });
@@ -363,9 +409,9 @@ export class WeaponSfxPanel {
           const newEnd = Math.max(endSec, newStart); // never let end sit behind the new start
           const startMsOut = newStart <= 0.005 ? null : Math.round(newStart * 1000);
           const trimMsOut = newEnd >= fullSec - 0.005 ? null : Math.round((newEnd - newStart) * 1000);
-          this._editOverride(weaponId, stage, () => {
-            setStart(weaponId, stage, startMsOut);
-            setTrim(weaponId, stage, trimMsOut);
+          this._editOverride(weaponId, keyStage, () => {
+            setStart(weaponId, keyStage, startMsOut);
+            setTrim(weaponId, keyStage, trimMsOut);
             this._toast(startMsOut == null ? `${stage}: starts at 0s` : `${stage}: starts at ${newStart.toFixed(2)}s`);
             this._previewThrottled(stage);
             this._build(); // end slider's min/value depends on the new start
@@ -381,8 +427,8 @@ export class WeaponSfxPanel {
         onChange: (v) => {
           const newEnd = Phaser.Math.Clamp(v, startSec, fullSec);
           const ms = newEnd >= fullSec - 0.005 ? null : Math.round((newEnd - startSec) * 1000);
-          this._editOverride(weaponId, stage, () => {
-            setTrim(weaponId, stage, ms);
+          this._editOverride(weaponId, keyStage, () => {
+            setTrim(weaponId, keyStage, ms);
             this._toast(ms == null ? `${stage}: plays to end` : `${stage}: ends at ${newEnd.toFixed(2)}s`);
             this._previewThrottled(stage);
           });
@@ -405,8 +451,8 @@ export class WeaponSfxPanel {
         onChange: (v) => {
           const newLoopStart = Phaser.Math.Clamp(v, startSec, endSec);
           const startMsOut = newLoopStart <= startSec + 0.005 ? null : Math.round(newLoopStart * 1000);
-          this._editOverride(weaponId, stage, () => {
-            setLoopStartMs(weaponId, stage, startMsOut);
+          this._editOverride(weaponId, keyStage, () => {
+            setLoopStartMs(weaponId, keyStage, startMsOut);
             this._toast(startMsOut == null ? `${stage}: loop start = start` : `${stage}: loop starts at ${newLoopStart.toFixed(2)}s`);
             this._previewThrottled(stage);
           });
@@ -427,8 +473,8 @@ export class WeaponSfxPanel {
         value: fadeMs,
         onChange: (v) => {
           const ms = Math.round(v);
-          this._editOverride(weaponId, stage, () => {
-            setFadeOut(weaponId, stage, ms <= 0 ? null : ms);
+          this._editOverride(weaponId, keyStage, () => {
+            setFadeOut(weaponId, keyStage, ms <= 0 ? null : ms);
             this._toast(ms <= 0 ? `${stage}: no fade-out` : `${stage}: fade-out ${ms}ms`);
             this._previewThrottled(stage);
           });
@@ -448,8 +494,8 @@ export class WeaponSfxPanel {
         value: volumePct,
         onChange: (v) => {
           const pct = Math.round(v);
-          this._editOverride(weaponId, stage, () => {
-            setVolume(weaponId, stage, pct / 100);
+          this._editOverride(weaponId, keyStage, () => {
+            setVolume(weaponId, keyStage, pct / 100);
             this._toast(`${stage}: volume ${pct}%`);
             this._previewThrottled(stage);
           });
@@ -463,18 +509,21 @@ export class WeaponSfxPanel {
       // pattern as the start/end sliders (only shown once a file override is loaded). Grouped
       // under one header, reusing the Slider widget; each control is a merge-patch into the
       // processing object, and returning them all to neutral restores a clean passthrough.
-      y = this._buildProcessingControls(ox, y, w, stage);
+      y = this._buildProcessingControls(ox, y, w, keyStage, stage);
     }
     return y;
   }
 
   // #172: the pitch/filter/reverb controls for a loaded override (called only from within
-  // _buildOverrideRow's `active` branch). Reads the live processing object (null-safe) for its
+  // _buildOverrideSlot's `active` branch). Reads the live processing object (null-safe) for its
   // starting values and writes changes back via setProcessing (async persist; the in-memory
   // update is synchronous so preview + copy see it immediately). Neutral positions store nothing.
-  _buildProcessingControls(ox, y, w, stage) {
+  // #195: `keyStage` is the (weaponId, stage) key to read/write (variant 0's own `stage`, or a
+  // `#v${n}` pseudo-stage for a later variant); `displayStage` (defaults to `keyStage`, i.e. the
+  // pre-#195 call shape) is the real stage name used only for toast text and preview dispatch.
+  _buildProcessingControls(ox, y, w, keyStage, displayStage = keyStage) {
     const weaponId = this.weaponId;
-    const proc = getProcessing(weaponId, stage) || {};
+    const proc = getProcessing(weaponId, keyStage) || {};
     this.scroller.add(this.scene.add.text(ox + 6, y, 'PROCESSING (pitch / filter / reverb)', {
       fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
     }));
@@ -486,10 +535,10 @@ export class WeaponSfxPanel {
       value: proc.detune ?? 0,
       onChange: (v) => {
         const cents = Math.round(v);
-        this._editOverride(weaponId, stage, () => {
-          setProcessing(weaponId, stage, { detune: cents === 0 ? null : cents });
-          this._toast(cents === 0 ? `${stage}: pitch neutral` : `${stage}: pitch ${cents > 0 ? '+' : ''}${cents}¢`);
-          this._previewThrottled(stage);
+        this._editOverride(weaponId, keyStage, () => {
+          setProcessing(weaponId, keyStage, { detune: cents === 0 ? null : cents });
+          this._toast(cents === 0 ? `${displayStage}: pitch neutral` : `${displayStage}: pitch ${cents > 0 ? '+' : ''}${cents}¢`);
+          this._previewThrottled(displayStage);
         });
       },
     });
@@ -501,15 +550,15 @@ export class WeaponSfxPanel {
     // BiquadFilter node entirely; picking a shape seeds freq/Q defaults if none are set yet. ──
     this.scroller.add(this.scene.add.text(ox + 6, y, 'filter', { fontFamily: 'monospace', fontSize: '9px', color: UI.dim }));
     y += 12;
-    this._filterTypeRow(ox + 6, y, w - 12, weaponId, stage);
+    this._filterTypeRow(ox + 6, y, w - 12, weaponId, keyStage, displayStage);
     y += TYPE_ROW_H;
     const freqSlider = new Slider(this.scene, {
       x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'freq', min: 40, max: 16000, step: 20,
       value: proc.filterFreq ?? PROC_DEFAULT_FILTER_FREQ,
       onChange: (v) => {
-        this._editOverride(weaponId, stage, () => {
-          setProcessing(weaponId, stage, { filterFreq: Math.round(v) });
-          this._previewThrottled(stage);
+        this._editOverride(weaponId, keyStage, () => {
+          setProcessing(weaponId, keyStage, { filterFreq: Math.round(v) });
+          this._previewThrottled(displayStage);
         });
       },
     });
@@ -520,9 +569,9 @@ export class WeaponSfxPanel {
       x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'Q', min: 0.1, max: 12, step: 0.1,
       value: proc.filterQ ?? PROC_DEFAULT_FILTER_Q,
       onChange: (v) => {
-        this._editOverride(weaponId, stage, () => {
-          setProcessing(weaponId, stage, { filterQ: +v.toFixed(2) });
-          this._previewThrottled(stage);
+        this._editOverride(weaponId, keyStage, () => {
+          setProcessing(weaponId, keyStage, { filterQ: +v.toFixed(2) });
+          this._previewThrottled(displayStage);
         });
       },
     });
@@ -538,15 +587,15 @@ export class WeaponSfxPanel {
       value: proc.reverbMix ?? 0,
       onChange: (v) => {
         const mix = +v.toFixed(2);
-        this._editOverride(weaponId, stage, () => {
+        this._editOverride(weaponId, keyStage, () => {
           if (mix <= 0.005) {
-            setProcessing(weaponId, stage, { reverbMix: null, reverbSize: null });
-            this._toast(`${stage}: reverb off`);
+            setProcessing(weaponId, keyStage, { reverbMix: null, reverbSize: null });
+            this._toast(`${displayStage}: reverb off`);
           } else {
-            const size = getProcessing(weaponId, stage)?.reverbSize ?? PROC_DEFAULT_REVERB_SIZE;
-            setProcessing(weaponId, stage, { reverbMix: mix, reverbSize: size });
+            const size = getProcessing(weaponId, keyStage)?.reverbSize ?? PROC_DEFAULT_REVERB_SIZE;
+            setProcessing(weaponId, keyStage, { reverbMix: mix, reverbSize: size });
           }
-          this._previewThrottled(stage);
+          this._previewThrottled(displayStage);
         });
       },
     });
@@ -557,12 +606,12 @@ export class WeaponSfxPanel {
       x: ox + 6, y, w: w - 12, labelW: 48, valueW: 44, label: 'size s', min: 0.1, max: 3, step: 0.1,
       value: proc.reverbSize ?? PROC_DEFAULT_REVERB_SIZE,
       onChange: (v) => {
-        this._editOverride(weaponId, stage, () => {
+        this._editOverride(weaponId, keyStage, () => {
           // Only re-store size when reverb is actually on — a size change with mix 0 stays inert
           // (and mustn't resurrect a cleared reverb), so just remember it for when mix comes up.
-          if ((getProcessing(weaponId, stage)?.reverbMix ?? 0) > 0) {
-            setProcessing(weaponId, stage, { reverbSize: +v.toFixed(1) });
-            this._previewThrottled(stage);
+          if ((getProcessing(weaponId, keyStage)?.reverbMix ?? 0) > 0) {
+            setProcessing(weaponId, keyStage, { reverbSize: +v.toFixed(1) });
+            this._previewThrottled(displayStage);
           }
         });
       },
@@ -576,7 +625,9 @@ export class WeaponSfxPanel {
   // #172: the filter-shape picker row (off / low / high / band) for the processing chain.
   // Repaints in place (like _typeRow) so tuning other sliders isn't disturbed. 'off' clears the
   // filter field (no node inserted); any shape sets the type and seeds freq/Q defaults if unset.
-  _filterTypeRow(x, y, w, weaponId, stage) {
+  // #195: `stage` is the (weaponId, stage) key to read/write; `displayStage` (defaults to
+  // `stage`) is the real stage name for preview dispatch only.
+  _filterTypeRow(x, y, w, weaponId, stage, displayStage = stage) {
     const gap = 3;
     const bw = Math.floor((w - (FILTER_TYPES.length - 1) * gap) / FILTER_TYPES.length);
     const btns = [];
@@ -603,7 +654,7 @@ export class WeaponSfxPanel {
             });
           }
           paint();
-          this._previewThrottled(stage);
+          this._previewThrottled(displayStage);
         });
       });
       this.scroller.add([rect, text]);

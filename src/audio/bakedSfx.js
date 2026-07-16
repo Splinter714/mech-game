@@ -71,6 +71,32 @@ import powerupPickupOverdrivePlay from '../assets/sfx/powerupPickupOverdrive-pla
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
+// #195: RANDOMIZED VARIANTS — same pool concept as sfxOverrides.js's live-override pool, for a
+// SHIPPED bake. A BAKED_SFX entry may be either a single recipe object (today's shape, unchanged)
+// or an ARRAY of up to MAX_VARIANTS recipe objects — each with its own `asset`/start/trim/etc —
+// and playback picks uniformly at random among however many are decoded. `normalizeEntries`
+// treats a bare object as an implicit 1-entry array so every existing single-object bake needs
+// ZERO changes. Variant `i`'s decoded buffer is cached under the SAME `#v${i}` pseudo-stage
+// suffix sfxOverrides.js's live-override pool uses (index 0 = the plain key, unchanged) — so a
+// (weaponId, stage) pair passed through getBaked/hasBaked with a pseudo-stage suffix resolves
+// consistently whether it's actually a live-override pseudo-stage or a baked one.
+const MAX_VARIANTS = 4;
+function normalizeEntries(entry) {
+  if (Array.isArray(entry)) return entry;
+  return entry ? [entry] : [];
+}
+// Parses an incoming `stage` argument for a trailing `#v<n>` pseudo-stage suffix (added by the
+// variant pool machinery below, or forwarded straight through from sfxOverrides.js's
+// variantStage()) — returns the REAL stage name and the variant index (0 if no suffix).
+const VARIANT_STAGE_RE = /^(.*)#v(\d+)$/;
+function parseStage(stage) {
+  const m = VARIANT_STAGE_RE.exec(stage);
+  return m ? { realStage: m[1], index: Number(m[2]) } : { realStage: stage, index: 0 };
+}
+function variantCacheKey(baseKey, index) {
+  return index === 0 ? baseKey : `${baseKey}#v${index}`;
+}
+
 // The DATA table — the whole "add a bake = one entry" surface. Keyed by `weaponId::stage`
 // (same key shape as sfxOverrides). Each entry:
 //   asset       a Vite asset import of the file (bundled + content-hashed into the build)
@@ -190,17 +216,23 @@ export function setAudioContext(ctx) { _ctx = ctx; }
 // weapon+stage plays procedurally), never throwing or blocking the others.
 export async function loadAllBaked() {
   if (!_ctx) return;
-  await Promise.all(Object.entries(BAKED_SFX).map(async ([key, entry]) => {
-    if (!entry?.asset) return;
-    try {
-      const res = await fetch(entry.asset);
-      const bytes = await res.arrayBuffer();
-      const buffer = await _ctx.decodeAudioData(bytes);
-      _cache.set(key, buffer);
-    } catch {
-      // fetch/decode failed (missing asset, codec unsupported) — leave the slot empty so this
-      // weapon+stage plays procedurally, same as if no bake had ever been defined for it.
-    }
+  await Promise.all(Object.entries(BAKED_SFX).map(async ([key, rawEntry]) => {
+    const entries = normalizeEntries(rawEntry);
+    // #195: decode every variant independently (same fire-and-forget-per-asset contract as
+    // before) — a single-entry bake decodes exactly one buffer at the plain key, unchanged.
+    await Promise.all(entries.map(async (entry, i) => {
+      if (!entry?.asset) return;
+      try {
+        const res = await fetch(entry.asset);
+        const bytes = await res.arrayBuffer();
+        const buffer = await _ctx.decodeAudioData(bytes);
+        _cache.set(variantCacheKey(key, i), buffer);
+      } catch {
+        // fetch/decode failed (missing asset, codec unsupported) — leave the slot empty so this
+        // weapon+stage/variant plays procedurally (or falls back to a lower-index variant, if any
+        // decoded), same as if no bake had ever been defined for it.
+      }
+    }));
   }));
 }
 
@@ -212,11 +244,17 @@ export async function loadAllBaked() {
 // omits it (#182), same convention sfxOverrides.getVolume() uses. `loopStartMs` defaults to the
 // entry's own `startMs` when omitted (#185) — same "no separate loop region" fallback convention
 // as sfxOverrides.getLoopStartMs().
+// #195: `stage` may carry a `#v<n>` pseudo-stage suffix (see the header above) addressing one
+// variant of a multi-variant bake — a plain stage (no suffix) is variant 0, byte-identical to
+// every pre-#195 call site (including every existing single-object BAKED_SFX entry, which has
+// exactly one variant living at index 0).
 export function getBaked(weaponId, stage) {
-  const key = keyFor(weaponId, stage);
-  const buffer = _cache.get(key);
+  const { realStage, index } = parseStage(stage);
+  const baseKey = keyFor(weaponId, realStage);
+  const entry = normalizeEntries(BAKED_SFX[baseKey])[index];
+  if (!entry) return null;
+  const buffer = _cache.get(variantCacheKey(baseKey, index));
   if (!buffer) return null;
-  const entry = BAKED_SFX[key];
   return {
     buffer,
     startMs: entry.startMs ?? null,
@@ -228,7 +266,32 @@ export function getBaked(weaponId, stage) {
   };
 }
 
-export function hasBaked(weaponId, stage) { return _cache.has(keyFor(weaponId, stage)); }
+export function hasBaked(weaponId, stage) {
+  const { realStage, index } = parseStage(stage);
+  return _cache.has(variantCacheKey(keyFor(weaponId, realStage), index));
+}
+
+// #195: how many contiguous decoded variants exist for this (weaponId, REAL stage — no `#v`
+// suffix) bake. 0 = no bake at all (or not decoded yet); 1 = today's ordinary single-bake case.
+export function getBakedVariantCount(weaponId, stage) {
+  const baseKey = keyFor(weaponId, stage);
+  const entries = normalizeEntries(BAKED_SFX[baseKey]);
+  let n = 0;
+  while (n < MAX_VARIANTS && n < entries.length && _cache.has(variantCacheKey(baseKey, n))) n++;
+  return n;
+}
+
+// #195: the sole playback-time entry point for a BAKED pool — picks uniformly at random among
+// however many variants are decoded (Math.random(), no weighting), mirroring
+// sfxOverrides.js's pickOverrideStage. Returns the same shape as getBaked, or null if nothing is
+// decoded for this (weaponId, stage) at all. A pool of exactly 1 always resolves to variant 0 —
+// byte-identical to plain getBaked(weaponId, stage) for every existing single-bake entry.
+export function pickBakedVariant(weaponId, stage) {
+  const n = getBakedVariantCount(weaponId, stage);
+  if (n === 0) return null;
+  const idx = n === 1 ? 0 : Math.floor(Math.random() * n);
+  return getBaked(weaponId, idx === 0 ? stage : `${stage}#v${idx}`);
+}
 
 // Test-only reset (no production caller) — clears the decoded cache and the context handle so
 // each test starts clean, mirroring sfxOverrides._resetForTest.
@@ -239,6 +302,8 @@ export function _resetForTest() {
 
 // Test-only injector — seed a decoded buffer for a key without going through fetch/decode, so
 // unit tests (which can't fetch a bundled Vite URL in node) can exercise the playback path.
-export function _setBakedBufferForTest(weaponId, stage, buffer) {
-  _cache.set(keyFor(weaponId, stage), buffer);
+// #195: optional `variantIndex` (default 0, unchanged for every existing call site) seeds a
+// specific variant slot of a multi-variant bake.
+export function _setBakedBufferForTest(weaponId, stage, buffer, variantIndex = 0) {
+  _cache.set(variantCacheKey(keyFor(weaponId, stage), variantIndex), buffer);
 }

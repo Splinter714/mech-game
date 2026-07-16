@@ -15,19 +15,27 @@
 // A weapon with NO overrides at all emits the historical whole-params JSON block byte-for-byte
 // (see below), so pasting a fully-tuned procedural weapon back into DEFAULT_SFX is unchanged.
 
-import { hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing, getFadeOutMs, getVolume } from '../audio/sfxOverrides.js';
+import {
+  hasOverride, getOverrideMeta, getStartMs, getTrimMs, getOverride, getProcessing, getFadeOutMs, getVolume,
+  getOverrideVariantCount, variantStage,
+} from '../audio/sfxOverrides.js';
 import { WEAPON_STAGES } from './weaponSfxStages.js';
 
-// The FILE block for one overridden stage. `startMs`/`trimMs` come from #166 (null = "start at
-// 0" / "play to end"); we surface an explicit start and end in ms so the trim window is
-// unambiguous when pasted into chat. End = start + trim; when trim is null we fall back to the
-// decoded buffer's real length (if known) and label it "end of file".
-function overrideBlock(weaponId, stage) {
-  const meta = getOverrideMeta(weaponId, stage);
+// The FILE block for one overridden stage — or one VARIANT of a stage's pool (#195). `keyStage`
+// is the actual (weaponId, stage) key to read the override's params from — either the plain
+// `stage` (variant 0 / today's single-variant case) or a `#v${n}` pseudo-stage for variant n>0
+// (see sfxOverrides.js's variantStage). `label` is what's printed in the header/bake instruction
+// (the real stage name, plus a "variant N of M" suffix when the stage has more than one loaded).
+// `startMs`/`trimMs` come from #166 (null = "start at 0" / "play to end"); we surface an explicit
+// start and end in ms so the trim window is unambiguous when pasted into chat. End = start +
+// trim; when trim is null we fall back to the decoded buffer's real length (if known) and label
+// it "end of file".
+function overrideBlock(weaponId, keyStage, stage, label = stage) {
+  const meta = getOverrideMeta(weaponId, keyStage);
   const name = meta?.name || '(unnamed file)';
-  const startMs = getStartMs(weaponId, stage) ?? 0;
-  const trimMs = getTrimMs(weaponId, stage);
-  const buffer = getOverride(weaponId, stage);
+  const startMs = getStartMs(weaponId, keyStage) ?? 0;
+  const trimMs = getTrimMs(weaponId, keyStage);
+  const buffer = getOverride(weaponId, keyStage);
   const fullMs = buffer?.duration ? Math.round(buffer.duration * 1000) : null;
   const endMs = trimMs != null ? startMs + trimMs : fullMs;
 
@@ -42,7 +50,7 @@ function overrideBlock(weaponId, stage) {
     : `trimmed from ${startMs}ms to end of file`;
 
   const lines = [
-    `[${stage}] FILE OVERRIDE  (real audio file — NOT procedural)`,
+    `[${label}] FILE OVERRIDE  (real audio file — NOT procedural)`,
     `    weapon/category: ${weaponId}`,
     `    stage:           ${stage}`,
     `    file:            ${name}`,
@@ -55,7 +63,7 @@ function overrideBlock(weaponId, stage) {
   // set — so the copied recipe carries the full processing the owner tuned, not just the trim.
   // Each line is emitted only for a non-neutral param (a clean/unprocessed override adds none),
   // and the processing is summarised into the bake instruction too.
-  const proc = getProcessing(weaponId, stage);
+  const proc = getProcessing(weaponId, keyStage);
   const procNotes = [];
   if (proc?.detune) {
     lines.push(`    pitch:           ${proc.detune > 0 ? '+' : ''}${proc.detune} cents  (pitch+speed coupled)`);
@@ -76,7 +84,7 @@ function overrideBlock(weaponId, stage) {
   // #174: the fade-out duration, when set — so the copied recipe carries the fade the owner
   // tuned (fade to silence over the last N ms before the trim/end point). Emitted only when a
   // real fade is active (0/absent adds no line), and summarised into the bake instruction too.
-  const fadeOutMs = getFadeOutMs(weaponId, stage);
+  const fadeOutMs = getFadeOutMs(weaponId, keyStage);
   if (fadeOutMs > 0) {
     lines.push(`    fade-out:        ${fadeOutMs} ms  (ramp to silence before the end)`);
     procNotes.push(`fade-out ${fadeOutMs} ms`);
@@ -84,15 +92,30 @@ function overrideBlock(weaponId, stage) {
 
   // #182: the overall volume multiplier, when non-default — so the copied recipe carries the
   // gain the owner tuned. Emitted only when it differs from unity (1.0/absent adds no line).
-  const volume = getVolume(weaponId, stage);
+  const volume = getVolume(weaponId, keyStage);
   if (volume !== 1) {
     lines.push(`    volume:          ${volume.toFixed(2)}x  (${Math.round(volume * 100)}%)`);
     procNotes.push(`volume ${volume.toFixed(2)}x`);
   }
 
   const procBake = procNotes.length ? `, then apply ${procNotes.join(', ')}` : '';
-  lines.push(`    → bake "${name}" into the repo as ${weaponId}'s ${stage} sound, ${bake}${procBake}.`);
+  lines.push(`    → bake "${name}" into the repo as ${weaponId}'s ${label} sound, ${bake}${procBake}.`);
   return lines.join('\n');
+}
+
+// #195: emit one FILE block per loaded variant of `stage`'s pool — a pool of exactly 1 (every
+// stage before this feature, and any stage the owner hasn't added a second variant to) emits a
+// SINGLE block with no "variant" suffix at all, byte-identical to the pre-#195 output. A pool of
+// 2+ emits one block per variant, each labeled "stage (variant N of M)" so the export unambiguously
+// distinguishes them (and can be pasted to bake all N files in as the shipped variant pool).
+function overrideBlocksForStage(weaponId, stage) {
+  const n = getOverrideVariantCount(weaponId, stage);
+  if (n <= 1) return [overrideBlock(weaponId, stage, stage)];
+  const blocks = [];
+  for (let i = 0; i < n; i++) {
+    blocks.push(overrideBlock(weaponId, variantStage(stage, i), stage, `${stage} (variant ${i + 1} of ${n})`));
+  }
+  return blocks;
 }
 
 // The procedural block for one un-overridden stage — its synthesis-layer JSON, indented to sit
@@ -136,8 +159,8 @@ export function buildSfxCopyText(weaponId, params, stageList = WEAPON_STAGES) {
   // blocks and procedural blocks, each clearly marked so the two kinds can't be confused. Only
   // stages that either are overridden or have real procedural layers get a block.
   const stagesWithData = stageKeys.filter((s) => overridden.includes(s) || params?.[s]?.length);
-  const blocks = stagesWithData.map((stage) => (
-    hasOverride(weaponId, stage) ? overrideBlock(weaponId, stage) : proceduralBlock(stage, params[stage])
+  const blocks = stagesWithData.flatMap((stage) => (
+    hasOverride(weaponId, stage) ? overrideBlocksForStage(weaponId, stage) : [proceduralBlock(stage, params[stage])]
   ));
   const header = `${weaponId} — SFX export (file override + procedural mix)`;
   return `${header}\n\n${blocks.join('\n\n')}`;

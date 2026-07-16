@@ -7,9 +7,13 @@
 // display logic, not just the raw storage layer (sfxOverrides.js), which was already generic.
 import {
   hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing, getVolume,
-  getLoopStartMs,
+  getLoopStartMs, getOverrideVariantCount, variantStage, MAX_VARIANTS,
 } from '../audio/sfxOverrides.js';
-import { hasBaked, getBaked } from '../audio/bakedSfx.js';
+import { hasBaked, getBaked, getBakedVariantCount } from '../audio/bakedSfx.js';
+
+// Re-exported so weaponSfxPanel.js has one import source for both the variant-pool state helpers
+// below and the cap they're built against.
+export { MAX_VARIANTS };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -100,4 +104,29 @@ export function getOverrideRowState(id, stage) {
   return {
     active: false, source: 'none', statusText: 'file override: none (procedural)', meta: null, proceduralControlsVisible,
   };
+}
+
+// #195: how many variant SLOTS the tuner panel should render for this (id, stage) — at least 1
+// (the base slot, whether or not anything is loaded into it yet), up to however many are
+// actually loaded across the live-override pool AND the shipped-bake pool (whichever has more —
+// a stage with no live override at all but a shipped multi-variant bake still gets one row per
+// baked variant so the owner can see/audition each), capped at MAX_VARIANTS. Every existing
+// single-variant (id, stage) — which is the entire game before #195 — returns exactly 1, so a
+// caller that only ever renders slot 0 sees no change in behavior.
+export function getVariantSlotCount(id, stage) {
+  const overrideN = getOverrideVariantCount(id, stage);
+  const bakedN = getBakedVariantCount(id, stage);
+  return Math.max(1, overrideN, bakedN);
+}
+
+// #195: getOverrideRowState's shape, once per variant slot (index 0 is byte-identical to
+// getOverrideRowState(id, stage) — today's single-variant call, unchanged). Each further index
+// reads the `#v${i}` pseudo-stage key the variant pool machinery uses internally (see
+// sfxOverrides.js's variantStage) — WeaponSfxPanel renders one of these per row instead of a
+// single getOverrideRowState call once a stage's pool holds more than one variant.
+export function getVariantRowStates(id, stage) {
+  const n = getVariantSlotCount(id, stage);
+  const states = [];
+  for (let i = 0; i < n; i++) states.push(getOverrideRowState(id, variantStage(stage, i)));
+  return states;
 }

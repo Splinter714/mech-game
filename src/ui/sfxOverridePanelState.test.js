@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   storeOverride, setAudioContext, _resetForTest, setStart, setTrim, setFadeOut, setProcessing, setVolume,
-  clearOverride, hasOverride, seedOverrideFromBaked, getOverride,
+  clearOverride, hasOverride, seedOverrideFromBaked, getOverride, variantStage, removeOverrideVariant,
 } from '../audio/sfxOverrides.js';
-import { getOverrideRowState } from './sfxOverridePanelState.js';
+import { getOverrideRowState, getVariantSlotCount, getVariantRowStates } from './sfxOverridePanelState.js';
 import { SFX_DOMAINS, ALL_SFX_DOMAIN_ENTRIES, findSfxDomainEntry } from '../audio/sfxDomains.js';
 import { WEAPON_STAGES } from './weaponSfxStages.js';
 import { _resetForTest as _resetBakedForTest, _setBakedBufferForTest } from '../audio/bakedSfx.js';
@@ -287,5 +287,64 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     // A different domain entry's same stage name stays untouched — proves the lookup keys on
     // the full (id, stage) pair, not just the stage.
     expect(getOverrideRowState('deploy', stage).active).toBe(false);
+  });
+
+  // #195: the tuner panel's variant-pool state helpers — how many slots to render, and each
+  // slot's own display state (reusing getOverrideRowState per variant, unchanged per-slot shape).
+  describe('variant pool state (#195)', () => {
+    it('an untouched (id, stage) has exactly 1 slot (the empty base slot), same as every stage before #195', () => {
+      expect(getVariantSlotCount('autocannon', 'fire')).toBe(1);
+      const states = getVariantRowStates('autocannon', 'fire');
+      expect(states).toHaveLength(1);
+      expect(states[0]).toEqual(getOverrideRowState('autocannon', 'fire'));
+    });
+
+    it('a single loaded override still reports exactly 1 slot — byte-identical to pre-#195', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('only.wav', 'ONLY'));
+      expect(getVariantSlotCount('autocannon', 'fire')).toBe(1);
+      const states = getVariantRowStates('autocannon', 'fire');
+      expect(states).toHaveLength(1);
+      expect(states[0].active).toBe(true);
+      expect(states[0].statusText).toBe('file override: only.wav');
+    });
+
+    it('loading a second/third variant grows the slot count, and each slot reads its OWN state', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await setStart('autocannon', 'fire', 10);
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await setStart('autocannon', variantStage('fire', 1), 200);
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+
+      expect(getVariantSlotCount('autocannon', 'fire')).toBe(3);
+      const states = getVariantRowStates('autocannon', 'fire');
+      expect(states).toHaveLength(3);
+      expect(states[0].statusText).toBe('file override: v0.wav');
+      expect(states[0].startSec).toBeCloseTo(0.01);
+      expect(states[1].statusText).toBe('file override: v1.wav');
+      expect(states[1].startSec).toBeCloseTo(0.2);
+      expect(states[2].statusText).toBe('file override: v2.wav');
+      expect(states[2].startSec).toBe(0);
+    });
+
+    it('removeOverrideVariant shrinks the slot count and compacts the remaining states', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      await removeOverrideVariant('autocannon', 'fire', 1); // remove the middle one
+
+      expect(getVariantSlotCount('autocannon', 'fire')).toBe(2);
+      const states = getVariantRowStates('autocannon', 'fire');
+      expect(states.map((s) => s.statusText)).toEqual([
+        'file override: v0.wav',
+        'file override: v2.wav', // shifted down into slot 1
+      ]);
+    });
+
+    it('a different (id, stage) is unaffected by a sibling stage growing its own pool', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      expect(getVariantSlotCount('autocannon', 'impact')).toBe(1);
+      expect(getVariantSlotCount('deploy', 'play')).toBe(1);
+    });
   });
 });

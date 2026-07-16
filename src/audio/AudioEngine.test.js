@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
   storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, setVolume,
-  setLoopStartMs, getLoopStartMs, _resetForTest,
+  setLoopStartMs, getLoopStartMs, _resetForTest, variantStage, removeOverrideVariant,
 } from './sfxOverrides.js';
 import {
   BAKED_SFX, _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
@@ -1086,6 +1086,108 @@ describe('AudioEngine (mock context)', () => {
       const before = ctx._counts();
       eng.startHeld('leftArm', 'autocannon');
       expect(ctx._counts()).toEqual(before);   // no voice/source scheduled at all
+    });
+  });
+
+  // #195: RANDOMIZED VARIANTS — the real end-to-end playback paths (one-shot fire, the
+  // held-loop sustain, and the per-kill death-explosion category dispatch) must all resolve a
+  // random variant from a stage's pool instead of assuming exactly one override/bake exists.
+  describe('randomized variants (#195)', () => {
+    const fakeFile = (name, tag) => ({
+      name, type: 'audio/wav', arrayBuffer: async () => new TextEncoder().encode(tag).buffer,
+    });
+
+    beforeEach(() => { _resetForTest(); _resetBakedForTest(); setAudioContext(ctx); });
+    afterEach(() => { _resetBakedForTest(); delete globalThis.indexedDB; });
+
+    it('(c) a one-shot fire cue with a 3-variant override pool resolves EVERY variant across many trials', async () => {
+      const bufV0 = await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      const bufV1 = await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      const bufV2 = await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      const seenBuffers = new Set();
+      for (let i = 0; i < 200; i++) {
+        eng.fire(getWeapon('autocannon'));
+        seenBuffers.add(ctx._lastBufferSource().buffer);
+      }
+      expect(seenBuffers).toEqual(new Set([bufV0, bufV1, bufV2]));
+    });
+
+    it('a one-shot fire cue with only ONE variant always resolves that single buffer (byte-identical to pre-#195)', async () => {
+      const buf = await storeOverride('autocannon', 'fire', fakeFile('only.wav', 'ONLY'));
+      for (let i = 0; i < 10; i++) {
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._lastBufferSource().buffer).toBe(buf);
+      }
+    });
+
+    it('deterministic pick (mocked Math.random) resolves the exact variant slot, params and all', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await setStart('autocannon', variantStage('fire', 1), 42);
+      const spy = vi.spyOn(Math, 'random').mockReturnValue(0.9); // floor(0.9*2) = 1
+      try {
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._lastBufferSourceStart()[1]).toBeCloseTo(0.042, 5); // variant 1's own startMs
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('(c) the held-sustain loop also picks among a 3-variant override pool', async () => {
+      const bufV0 = await storeOverride('beamLaser', 'fire', fakeFile('v0.wav', 'V0'));
+      const bufV1 = await storeOverride('beamLaser', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      const bufV2 = await storeOverride('beamLaser', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      const seenBuffers = new Set();
+      for (let i = 0; i < 200; i++) {
+        eng.startHeld('leftArm', 'beamLaser');
+        seenBuffers.add(ctx._lastBufferSource().buffer);
+        eng.stopHeld('leftArm');
+      }
+      expect(seenBuffers).toEqual(new Set([bufV0, bufV1, bufV2]));
+    });
+
+    it('(c) a mech-kill death explosion picks among a multi-variant BAKED pool for that category', () => {
+      BAKED_SFX['deathExplosionMassive::fire'] = [
+        { startMs: 0, trimMs: 100, processing: null },
+        { startMs: 0, trimMs: 200, processing: null },
+      ];
+      try {
+        _setBakedBufferForTest('deathExplosionMassive', 'fire', { __baked: 'boomA' }, 0);
+        _setBakedBufferForTest('deathExplosionMassive', 'fire', { __baked: 'boomB' }, 1);
+        const seen = new Set();
+        for (let i = 0; i < 200; i++) {
+          eng.deathExplosion('massive');
+          seen.add(ctx._lastBufferSource().buffer.__baked);
+        }
+        expect(seen).toEqual(new Set(['boomA', 'boomB']));
+      } finally {
+        delete BAKED_SFX['deathExplosionMassive::fire'];
+      }
+    });
+
+    it('a live override pool takes precedence over a baked pool entirely (unchanged #173 precedence)', async () => {
+      BAKED_SFX['autocannon::fire'] = [{ startMs: 0 }, { startMs: 0 }];
+      try {
+        _setBakedBufferForTest('autocannon', 'fire', { __baked: 'bakeA' }, 0);
+        _setBakedBufferForTest('autocannon', 'fire', { __baked: 'bakeB' }, 1);
+        const overrideBuf = await storeOverride('autocannon', 'fire', fakeFile('dev.wav', 'DEV'));
+        for (let i = 0; i < 10; i++) {
+          eng.fire(getWeapon('autocannon'));
+          expect(ctx._lastBufferSource().buffer).toBe(overrideBuf);
+        }
+      } finally {
+        delete BAKED_SFX['autocannon::fire'];
+      }
+    });
+
+    it('removeOverrideVariant shrinks the pool that eng.fire draws from', async () => {
+      const bufV0 = await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await removeOverrideVariant('autocannon', 'fire', 1);
+      for (let i = 0; i < 10; i++) {
+        eng.fire(getWeapon('autocannon'));
+        expect(ctx._lastBufferSource().buffer).toBe(bufV0);
+      }
     });
   });
 });

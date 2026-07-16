@@ -7,8 +7,11 @@
 // facade (guards + `_resume`) and delegates here.
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
-import { getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume, getLoopStartMs } from './sfxOverrides.js';
-import { getBaked } from './bakedSfx.js';
+import {
+  getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume, getLoopStartMs,
+  pickOverrideStage,
+} from './sfxOverrides.js';
+import { pickBakedVariant } from './bakedSfx.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -153,12 +156,22 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
 // procedural fallback. Both buffer sources schedule through the shared playBuffer above, so the
 // #166 trim + #172 processing recipe applies identically to either. In a shipped build there
 // are no IndexedDB overrides, so this is effectively baked-then-procedural.
+// #195: RANDOMIZED VARIANTS — a stage's override/bake can hold up to 4 parallel variant slots
+// instead of just one (see sfxOverrides.js's/bakedSfx.js's module headers); every play resolves
+// WHICH one via pickOverrideStage/pickBakedVariant, uniform random among however many are
+// currently loaded. `pickOverrideStage` returns null when there's no live override at all for
+// this stage (any variant) — same "fall through to bake" behavior as before this feature. A
+// pool of exactly 1 (every stage that predates #195) always resolves to `stage` itself, so this
+// is byte-identical to the pre-#195 single-variant precedence/behavior in that case.
 function playOverride(e, bus, weaponId, stage) {
-  const override = getOverride(weaponId, stage);
-  if (override) {
-    return playBuffer(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage), getVolume(weaponId, stage));
+  const pickedStage = pickOverrideStage(weaponId, stage);
+  if (pickedStage != null) {
+    const override = getOverride(weaponId, pickedStage);
+    if (override) {
+      return playBuffer(e, bus, override, getStartMs(weaponId, pickedStage), getTrimMs(weaponId, pickedStage), getProcessing(weaponId, pickedStage), getFadeOutMs(weaponId, pickedStage), getVolume(weaponId, pickedStage));
+    }
   }
-  const baked = getBaked(weaponId, stage);
+  const baked = pickBakedVariant(weaponId, stage);
   if (baked) return playBuffer(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs, baked.volume);
   return false;
 }
@@ -265,12 +278,16 @@ function playBufferLoop(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume
 // (dev IndexedDB override first, then a shipped bake) but scheduling a genuine LOOP via
 // playBufferLoop instead of a fixed-duration one-shot. Returns the stop() closure, or null if
 // there's no override/bake for this weapon+stage (caller falls back to procedural loop layers).
+// #195: same variant-pool resolution as playOverride above, for the held-loop path.
 function playOverrideLoop(e, bus, weaponId, stage) {
-  const override = getOverride(weaponId, stage);
-  if (override) {
-    return playBufferLoop(e, bus, override, getStartMs(weaponId, stage), getTrimMs(weaponId, stage), getProcessing(weaponId, stage), getFadeOutMs(weaponId, stage), getVolume(weaponId, stage), getLoopStartMs(weaponId, stage));
+  const pickedStage = pickOverrideStage(weaponId, stage);
+  if (pickedStage != null) {
+    const override = getOverride(weaponId, pickedStage);
+    if (override) {
+      return playBufferLoop(e, bus, override, getStartMs(weaponId, pickedStage), getTrimMs(weaponId, pickedStage), getProcessing(weaponId, pickedStage), getFadeOutMs(weaponId, pickedStage), getVolume(weaponId, pickedStage), getLoopStartMs(weaponId, pickedStage));
+    }
   }
-  const baked = getBaked(weaponId, stage);
+  const baked = pickBakedVariant(weaponId, stage);
   if (baked) return playBufferLoop(e, bus, baked.buffer, baked.startMs, baked.trimMs, baked.processing, baked.fadeOutMs, baked.volume, baked.loopStartMs);
   return null;
 }
