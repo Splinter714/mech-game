@@ -173,7 +173,9 @@ export const PowerupsMixin = {
   _activatePowerup(typeId) {
     const p = POWERUPS[typeId];
     if (!p) return;
-    Audio.ui('powerupPickup');   // #178: distinct "buff acquired" cue — one shared cue per type
+    // #196: each powerup type now has its OWN independently-tunable pickup cue (was one
+    // shared 'powerupPickup' cue for all five) — dispatch keyed off the actual type picked up.
+    Audio.ui('powerupPickup' + typeId[0].toUpperCase() + typeId.slice(1));
     if (isInstant(typeId)) {
       this._applyInstantPowerup(typeId);
     } else if (p.effect === 'shield') {

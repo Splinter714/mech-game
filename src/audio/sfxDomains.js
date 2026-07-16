@@ -14,13 +14,23 @@
 // #188: sprintOn/sprintOff replaced the old ability-specific dash/shield cues (equipment.js
 // removed) — Sprint is a hardcoded toggle, not a mounted item, so its cues live here in the
 // generic UI domain instead of a bespoke ability-cue system.
+//
+// #196: the single shared `powerupPickup` entry was replaced with 5 per-powerup entries
+// (one per src/data/powerups.js POWERUPS id) so each buff's "acquired" cue is independently
+// overridable/bakeable via the owner's tuner panel, instead of all five sharing one slider.
+// Naming follows the `powerupPickup<Id>` camelCase pattern (parallel to the existing
+// `scrapPickup`/`powerupPickup` sibling ids) so they sort together in the tuner list.
 export const SFX_DOMAINS = {
   ui: [
     { id: 'equip', label: 'Equip Weapon', stages: [['play', 'PLAY']] },
     { id: 'deploy', label: 'Deploy', stages: [['play', 'PLAY']] },
     { id: 'menuNav', label: 'Menu Navigation', stages: [['play', 'PLAY']] },
     { id: 'scrapPickup', label: 'Scrap Pickup', stages: [['play', 'PLAY']] },
-    { id: 'powerupPickup', label: 'Powerup Pickup', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickupOvercharge', label: 'Pickup: Overcharge', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickupOverdrive', label: 'Pickup: Overdrive', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickupOverclock', label: 'Pickup: Overclock', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickupArmorPatch', label: 'Pickup: Armor Patch', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickupShield', label: 'Pickup: Shield', stages: [['play', 'PLAY']] },
     { id: 'sprintOn', label: 'Sprint On', stages: [['play', 'PLAY']] },
     { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
   ],
