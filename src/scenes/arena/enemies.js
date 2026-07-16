@@ -27,7 +27,7 @@ import { HpBody } from '../../data/HpBody.js';
 import { getWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
-import { nearestValidPixel, turretClusterHexes } from '../../data/spawnPlacement.js';
+import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
@@ -398,7 +398,7 @@ export const EnemiesMixin = {
   // closes, etc.). Called once from ArenaScene.create() in place of the old single fixed spawn.
   _spawnSquad(types = DEFAULT_SQUAD) {
     for (const typeId of types) {
-      const p = this._offscreenSpawnPoint();
+      const p = this._offscreenSpawnPoint(typeId);
       this._spawnEnemy(p.x, p.y, typeId);
     }
   },
@@ -415,20 +415,33 @@ export const EnemiesMixin = {
   // world-space viewport correctly (using the stale dpr alone would overestimate the true
   // viewport and spawn enemies farther out than actually necessary to stay off-screen). `dpr` is
   // kept only as the fallback for the (never-hit-in-practice) case zoom isn't set yet.
-  _offscreenSpawnPoint() {
+  //
+  // #203 (playtest report: enemies near the deploy point already actively engaging the instant
+  // the player drops in): being off-VIEW was never the same guarantee as being outside the
+  // enemy's own detection range — a turret nest's 2400px fireRange (2880px detect range, distance
+  // -only, no LOS needed) dwarfs the ~700-1000px this viewport math normally produces, so a
+  // turret nest was AWARE and shelling the player within the first second of every deploy
+  // regardless of window size (and a narrow/small browser window could shrink the off-view
+  // distance below even an ordinary mech's detection range too). `typeId` (optional — omitted
+  // for the debug free-spawn, which is meant to walk into view fast) looks up that enemy's own
+  // detection-range floor (`minSafeSpawnDist`, data/spawnPlacement.js) and the actual distance
+  // never lands inside it (`spawnDistance`, same file).
+  _offscreenSpawnPoint(typeId = null) {
     const zoom = this.cameras.main.zoom || this.registry.get('dpr') || 1;
     const vw = this.scale.width / zoom;   // world-space viewport width
     const vh = this.scale.height / zoom;  // world-space viewport height
     const viewR = 0.5 * Math.hypot(vw, vh) + OFFSCREEN_MARGIN;
     const maxR = (this.worldRadius - SPAWN_WORLD_INSET) * HEX_SIZE * SQRT3;   // ~world edge in px
+    const minSafeDist = typeId != null ? minSafeSpawnDist(typeId) : 0;
     // #102: bias the spawn bearing toward the objective's direction — enemies read as coming
     // from what you're attacking rather than scattering uniformly around the player. Falls back
     // to a uniform bearing (biasedSpawnAngle's own null handling) if there's no live objective.
     const objAngle = this._objectiveAngle();
     for (let tries = 0; tries < 24; tries++) {
       const ang = biasedSpawnAngle(objAngle);
-      // Distance from the player: just off-view, but never past the world edge.
-      const d = Math.min(viewR + Math.random() * 120, maxR);
+      // Distance from the player: just off-view (and never inside this enemy's own detection
+      // range), but never past the world edge.
+      const d = spawnDistance({ viewR, minSafeDist, maxR, jitter: Math.random() * 120 });
       let x = this.px + Math.cos(ang) * d, y = this.py + Math.sin(ang) * d;
       // Clamp inside the world disc, then nudge off any blocked terrain toward the centre.
       const fromC = Math.hypot(x, y);

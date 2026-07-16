@@ -12,6 +12,10 @@
 import { axialKey, hexToPixel, pixelToHex, nearestHex } from './hexgrid.js';
 import { isPassable } from './terrain.js';
 import { BOUNDARY_RING_WIDTH } from './worldgen.js';
+import { Mech } from './Mech.js';
+import { ENEMIES } from './enemies.js';
+import { ENEMY_KINDS, isEnemyKind } from './enemyKinds.js';
+import { detectionRangeFor } from './awareness.js';
 
 // Is (q, r) a hex this terrain map actually has AND that's passable ground? A hex outside the
 // generated playable area (organic boundary / world radius) is simply absent from the map, so
@@ -66,4 +70,51 @@ export function turretClusterHexes(terrain, worldRadius, x, y, count) {
   const hexes = [];
   for (let i = 0; i < count; i++) hexes.push(centerHex);
   return hexes;
+}
+
+// #203 — mirrors the mech-role tuning in scenes/arena/enemies.js (`meanOpt`/`roleFor`'s standoff
+// clamp) so this file's `minSafeSpawnDist` can derive the SAME detection range a mech enemy will
+// actually be spawned with, without duplicating the tuning constants in two places or importing
+// Phaser-dependent enemies.js into a unit test.
+const BRAWLER_STANDOFF_MIN = 90;   // mirrors STANDOFF_MIN, enemies.js
+const BRAWLER_STANDOFF_MAX = 520;  // mirrors STANDOFF_MAX, enemies.js
+const STANDOFF_FRAC = 0.85;        // mirrors STANDOFF_FRAC, enemies.js
+const DEFAULT_OPT = 220;           // mirrors DEFAULT_OPT, enemies.js
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+function meanOptRange(mech) {
+  const ws = mech.weapons().map((w) => w.weapon).filter(Boolean);
+  if (!ws.length) return DEFAULT_OPT;
+  return ws.reduce((a, w) => a + (w.range?.opt ?? DEFAULT_OPT), 0) / ws.length;
+}
+
+// #203 (playtest report: enemies near the deploy point already actively engaging the instant the
+// player drops in): a turret nest's siege-shell fireRange (2400px, ENEMY_KINDS.turret) is
+// distance-only-gated (no LOS needed) and dwarfs the ~700-1000px "just off view" distance the
+// camera-viewport-based offscreen spawn point (`_offscreenSpawnPoint`, scenes/arena/enemies.js)
+// normally produces — so a turret nest was AWARE and lobbing shells within the first second of
+// EVERY deploy, regardless of window size, and a narrow/small browser window could shrink the
+// off-view distance below even an ordinary mech's detection range too. This computes the
+// distance below which a freshly-placed enemy of `typeId` would already be within its own
+// detection range of the player standing at the spawn point origin — callers clamp the actual
+// spawn distance to never land inside it (see `spawnDistance` below).
+export function minSafeSpawnDist(typeId) {
+  if (typeId === 'swarm') return detectionRangeFor(ENEMY_KINDS.drone.fireRange);
+  if (typeId === 'turretNest') return detectionRangeFor(ENEMY_KINDS.turret.fireRange);
+  if (typeId === 'infantryMob') return detectionRangeFor(ENEMY_KINDS.infantry.fireRange);
+  if (isEnemyKind(typeId)) return detectionRangeFor(ENEMY_KINDS[typeId].fireRange);
+  const def = ENEMIES[typeId] ?? ENEMIES.raider;
+  const opt = meanOptRange(new Mech(def));
+  const standoff = clamp(opt * STANDOFF_FRAC, BRAWLER_STANDOFF_MIN, BRAWLER_STANDOFF_MAX);
+  return detectionRangeFor(standoff);
+}
+
+// #203: the actual off-view spawn distance — never closer than `viewR` (the camera-derived
+// "just off screen" radius) NOR closer than `minSafeDist` (the enemy's own detection range, see
+// `minSafeSpawnDist`), then jittered outward by `jitter` px and finally capped at `maxR` (the
+// world edge) so a huge detection range (e.g. the turret nest) still can't be pushed past the
+// playable map. Pure so the floor-enforcement itself is unit-testable without a Phaser scene.
+export function spawnDistance({ viewR, minSafeDist = 0, maxR, jitter = 0 }) {
+  const floor = Math.max(viewR, minSafeDist);
+  return Math.min(floor + jitter, maxR);
 }
