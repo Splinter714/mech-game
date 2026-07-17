@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END } from './delivery.js';
+import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -460,5 +460,71 @@ describe('rotateToward', () => {
     const moved = Math.atan2(Math.sin(out - 3.0), Math.cos(out - 3.0));
     expect(moved).toBeCloseTo(0.2);                  // stepped +0.2 in the short direction
     expect(Math.abs(out)).toBeGreaterThan(3.0);      // wrapped past π to ≈ −3.08
+  });
+});
+
+// #213: Plasma Lance's "very light" per-bolt tracking bias — a DELIBERATELY weak nudge, never
+// the real homing/lock-on model above. These tests pin down the steering math in isolation
+// (the arena owns finding "nearest enemy to the bolt" every frame; these tests just supply a
+// target position and check the bounded rotation).
+describe('weak seek (#213 — Plasma Lance)', () => {
+  it('is far weaker than the weakest real homing turn rate', () => {
+    // WEAK_SEEK_TURN_RATE must stay well under HOMING_TURN_MIN (3.2 rad/s) so this never
+    // reads as "real" homing, per Jackson's "very light"/"slight" framing.
+    expect(WEAK_SEEK_TURN_RATE).toBeLessThan(1.0);
+    expect(WEAK_SEEK_TURN_RATE).toBeLessThan(homingTurnRate(0));
+  });
+
+  it('plasmaLance opts in to weakSeek and NOT to real homing/lock-on guidance', () => {
+    expect(WEAPONS.plasmaLance.delivery.weakSeek).toBe(true);
+    expect(WEAPONS.plasmaLance.delivery.guidance).not.toBe('homing');
+    // Confirms scoping: no other current weapon accidentally opted in.
+    const weakSeekWeapons = Object.values(WEAPONS).filter((w) => w.delivery.weakSeek);
+    expect(weakSeekWeapons.map((w) => w.id)).toEqual(['plasmaLance']);
+  });
+
+  it('nudges heading a small, bounded amount toward the target each frame', () => {
+    const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 }); // facing +x (angle 0)
+    // Target is directly "above" (positive y) — a 90° correction needed.
+    stepWeakSeek(p, 0.1, 1000, 1000);
+    const expectedStep = WEAK_SEEK_TURN_RATE * 0.1;
+    expect(p.angle).toBeGreaterThan(0);                         // turned toward the target...
+    expect(p.angle).toBeCloseTo(expectedStep, 5);               // ...but only by the tiny bounded step
+    expect(p.angle).toBeLessThan(0.1);                          // nowhere near a hard turn-in
+  });
+
+  it('velocity is re-derived from the new heading at the round\'s original speed', () => {
+    const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+    const speed = p.speed;
+    stepWeakSeek(p, 0.1, 500, 500);
+    expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(speed, 5);
+  });
+
+  it('re-evaluates continuously as the nearest target changes — the SAME round steers toward ' +
+      'whichever point is passed this frame, not a target fixed at spawn', () => {
+    const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+    stepWeakSeek(p, 0.05, 0, 1000);           // "nearest enemy" this frame is above
+    const afterFirst = p.angle;
+    expect(afterFirst).toBeGreaterThan(0);
+    stepWeakSeek(p, 0.05, 0, -1000);          // the nearest enemy is now BELOW instead
+    expect(p.angle).toBeLessThan(afterFirst); // steers back the other way, no memory of the old target
+  });
+
+  it('a target far off the bolt\'s own axis gets barely corrected toward, never run down like a lock', () => {
+    // A target almost directly behind the bolt (~170° off-axis) — real homing would snap the
+    // full turn-rate-capped step toward it every frame and converge fast; weak seek should
+    // barely register over many frames of a short flight.
+    const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+    for (let i = 0; i < 10; i++) stepWeakSeek(p, 0.016, -1000, 50); // ~0.16s of flight, target behind+slightly off
+    // 10 frames * 0.016s * WEAK_SEEK_TURN_RATE is the hard ceiling on how far it could have turned.
+    const maxPossibleTurn = 10 * 0.016 * WEAK_SEEK_TURN_RATE;
+    expect(Math.abs(p.angle)).toBeLessThanOrEqual(maxPossibleTurn + 1e-6);
+    expect(Math.abs(p.angle)).toBeLessThan(0.15); // reads as "barely a wobble", not a run-down
+  });
+
+  it('withinWeakSeekRadius gates out targets beyond the notice radius', () => {
+    const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+    expect(withinWeakSeekRadius(p, WEAK_SEEK_RADIUS - 1, 0)).toBe(true);
+    expect(withinWeakSeekRadius(p, WEAK_SEEK_RADIUS + 50, 0)).toBe(false);
   });
 });

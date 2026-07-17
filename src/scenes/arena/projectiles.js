@@ -2,7 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
@@ -96,6 +96,19 @@ export const ProjectilesMixin = {
       let desiredAngle = null;
       if (homingActive) {
         desiredAngle = leadAngle(p.x, p.y, p.speed, hx, hy, seekVx, seekVy);
+      }
+      // Weak seek (#213 — Plasma Lance): a bolt with no lock at all still gets a tiny bias
+      // toward whatever living enemy is nearest to ITS OWN current position this frame — not
+      // the player's locked target (this fires even with no lock/hitEnemy scoped target) and
+      // not a target fixed at spawn. Reuses the same per-frame spatial index the hit-detection
+      // nearest-enemy lookup above already built, so this costs nothing extra to look up. Only
+      // applies to player-fired rounds — an enemy's only possible "nearest enemy" is the player
+      // itself, which its aim/targeting already handles.
+      if (p.weakSeek && !enemyShot) {
+        const seekEnemy = enemyIndex.nearest(p.x, p.y);
+        if (seekEnemy && withinWeakSeekRadius(p, seekEnemy.x, seekEnemy.y)) {
+          stepWeakSeek(p, dt, seekEnemy.x, seekEnemy.y);
+        }
       }
       const prevX = p.x, prevY = p.y;   // #77: for swept hit detection (fast rounds can tunnel)
       stepProjectile(p, dt, desiredAngle);
