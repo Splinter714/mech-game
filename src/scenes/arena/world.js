@@ -2,13 +2,13 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
-import { terrainFillColor } from '../../art/hexArt.js';
+import { terrainFillColor, isBoundaryTerrainId, flatBoundaryTexKey } from '../../art/hexArt.js';
 import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
   safeZoneKeys, CORRIDOR_LENGTH_PX, HEX_STEP_PX, MAX_WORLD_RADIUS,
@@ -131,7 +131,19 @@ export const WorldMixin = {
     for (const [k, id] of this.terrain) {
       const [q, r] = k.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
-      const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
+      let tex = getTerrain(id).tex;
+      // #222 (3rd playtest pass): the boundary ring's #211 sunken-shadow ring is baked per
+      // TEXTURE, so every tile of it painting the same ring independently reproduces the very
+      // hex-tiled look the earlier overdraw/bleed fixes targeted — just with dark rings instead
+      // of seams. Only a tile that actually borders something other than its own boundary
+      // terrain (playable ground, or the unbuilt edge of the generated map) needs the drop-off
+      // cue; a tile fully surrounded by the same boundary terrain gets the flat (non-sunken)
+      // companion texture instead, so the ring only ever shows once, at the true coastline.
+      if (isBoundaryTerrainId(tex)) {
+        const bordersOther = neighbors(q, r).some((n) => this.terrain.get(axialKey(n.q, n.r)) !== id);
+        if (!bordersOther) tex = flatBoundaryTexKey(tex);
+      }
+      const img = this.add.image(x, y, tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
     }
     // #155: culling state — see `_updateTileCulling` below. Every tile Image is actually

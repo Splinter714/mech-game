@@ -159,6 +159,26 @@ function isBoundaryTerrainId(key) {
   return BOUNDARY_ONLY_IDS.has(key.replace(/^hex_/, ''));
 }
 
+// #222 (3rd playtest pass): the #211 sunken-shadow ring is baked into the SAME texture every
+// boundary tile uses, so it gets painted independently by every single hex in the (up to
+// 35-hex-deep) boundary ring — not just the ones actually bordering playable ground. Since the
+// ring is one continuous field of identical terrain, that reproduces exactly the "obviously
+// tiled hex grid" look the overdraw/bleed fixes (above) were meant to erase: a dense lattice of
+// dark rings, one per tile, rather than a single drop-off only where the deep terrain truly
+// meets the playable corridor. The fix is per-INSTANCE, not per-texture: bake a second, flat
+// (non-sunken) texture for each boundary-only id, and have the placement code (world.js) choose
+// it for any boundary tile whose hex neighbours are ALL the same boundary terrain (a true
+// "interior" tile with no adjacent drop-off to depict) — only tiles that actually border
+// something else (playable ground, or the edge of the generated map) keep the sunken texture.
+// This needs neighbour-awareness at placement time, which a texture baked once per terrain id
+// can't have on its own — hence two textures per id and a per-hex choice, rather than trying to
+// make one texture context-sensitive.
+export function flatBoundaryTexKey(key) {
+  const id = key.replace(/^hex_/, '');
+  return `hex_${id}_flat`;
+}
+export { isBoundaryTerrainId, BOUNDARY_ONLY_IDS };
+
 // #222 (2nd playtest pass): even with identical fill and no per-hex decoration, the boundary
 // ring still read as an obviously-tiled hex grid rather than one continuous surface. Root cause
 // isn't the art content — it's that every hex is a SEPARATE baked texture stamped at its own
@@ -682,13 +702,22 @@ export function buildHexTextures(scene) {
       // an inset of >=1.0 (instead of 0.9) removes the darker inset border band entirely — the
       // fill now runs flush to (and slightly past, see BOUNDARY_OVERDRAW_INSET above) the tile's
       // true edge, so there's no per-hex grid line — and the terrain's DETAIL painter (the
-      // recognizable per-hex icon) is skipped. The #211 sunken-shadow depth cue is untouched
-      // (still driven by `isImpassableTerrainId`), so the boundary still reads as sitting below
-      // the playable ground around it.
+      // recognizable per-hex icon) is skipped. This texture ALSO carries the #211 sunken-shadow
+      // depth cue (`isImpassableTerrainId`) so it still reads as sitting below playable ground
+      // where it truly borders it — see `flatBoundaryTexKey` above for the 3rd-pass companion
+      // texture (no sunken ring) that world.js selects for interior boundary tiles instead, so
+      // the ring doesn't repeat across every tile of the whole boundary field.
       const boundary = isBoundaryTerrainId(key);
       drawHex(sg, pal.fill, pal.edge, boundary ? BOUNDARY_OVERDRAW_INSET : 0.9, isImpassableTerrainId(key));
       if (!boundary) DETAIL[key]?.(sg);
     });
+    if (isBoundaryTerrainId(key)) {
+      // The interior (non-coastline) variant: identical fill/overdraw, but no sunken ring.
+      gen(scene, flatBoundaryTexKey(key), HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
+        const sg = scaledGraphics(g);
+        drawHex(sg, pal.fill, pal.edge, BOUNDARY_OVERDRAW_INSET, false);
+      });
+    }
   }
   // The wall tile gets a raised top plate so cover reads as solid.
   gen(scene, 'hex_wall', HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
