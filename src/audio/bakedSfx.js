@@ -78,6 +78,18 @@ import powerupPickupOverdrivePlay from '../assets/sfx/powerupPickupOverdrive-pla
 // 0.00x (0%) volume (#182) — recorded literally per Jackson's copy-recipe, not "fixed" to
 // audible; this bakes the cue as authored-silent.
 import menuNavPlay from '../assets/sfx/menuNav-play-strongClick1.m4a';
+// #208: the UI domain's `mechDestroyed` cue (added #201) — the FIRST real 4-VARIANT bake using
+// the #195 randomized-pool feature (every earlier bake above is a single-object entry). Four
+// distinct files from the same Helton Yan pack, each "Mecha DAMAGED N.wav" (STEREO 44.1kHz
+// 16-bit, 3.429s) — variant 2 is a DIFFERENT source file than the one already baked as
+// deathExplosionMassive::fire (#180 trimmed "Mecha DAMAGED 2.wav" to 1490ms+550ms fade for a
+// different cue); this bake uses the FULL untrimmed file for all 4 variants, no fade/processing.
+// Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~154-194kbps, ~71-89KB each) —
+// kept stereo like the other Helton Yan stereo bakes (#180/#194/#192/#198/#199/#206).
+import mechDestroyed1 from '../assets/sfx/mechDestroyed-play-mechaDamaged1.m4a';
+import mechDestroyed2 from '../assets/sfx/mechDestroyed-play-mechaDamaged2.m4a';
+import mechDestroyed3 from '../assets/sfx/mechDestroyed-play-mechaDamaged3.m4a';
+import mechDestroyed4 from '../assets/sfx/mechDestroyed-play-mechaDamaged4.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -225,6 +237,16 @@ export const BAKED_SFX = {
     fadeOutMs: 1070,
     volume: 0,
   },
+  // #208: the UI domain's mechDestroyed cue — a 4-VARIANT pool (#195), one entry per
+  // "Mecha DAMAGED N.wav" (N=1..4) from the Helton Yan pack. Each variant plays the FULL
+  // 3429ms file, no trim, no fade, no pitch/filter/reverb processing — literal copy-recipe.
+  // Playback (pickBakedVariant) picks uniformly at random among the 4 decoded variants.
+  'mechDestroyed::play': [
+    { asset: mechDestroyed1, startMs: 0, trimMs: 3429, processing: null },
+    { asset: mechDestroyed2, startMs: 0, trimMs: 3429, processing: null },
+    { asset: mechDestroyed3, startMs: 0, trimMs: 3429, processing: null },
+    { asset: mechDestroyed4, startMs: 0, trimMs: 3429, processing: null },
+  ],
 };
 
 // Decoded AudioBuffer cache — the only thing playback (sfx.js) ever reads, synchronously.

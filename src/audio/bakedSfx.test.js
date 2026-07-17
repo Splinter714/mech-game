@@ -151,6 +151,25 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.fadeOutMs).toBe(1070);          // #174 fade — exceeds the 190ms window, clamped at playback
       expect(entry.volume).toBe(0);                // #182 volume — authored silent, literal recipe
     });
+
+    // #208: the UI domain's mechDestroyed cue — the FIRST real 4-VARIANT pool (#195) shipped in
+    // BAKED_SFX (every bake above is a single-object entry). Four "Mecha DAMAGED N.wav" files
+    // (N=1..4), each played as the full untrimmed 3429ms file, no processing.
+    it('registers mechDestroyed/play as a 4-element ARRAY of variant recipes (#195 pool)', () => {
+      const entry = BAKED_SFX['mechDestroyed::play'];
+      expect(Array.isArray(entry)).toBe(true);
+      expect(entry).toHaveLength(4);
+      const assets = new Set();
+      for (const variant of entry) {
+        expect(typeof variant.asset).toBe('string'); // Vite resolves the .m4a import to a URL string
+        expect(variant.asset.length).toBeGreaterThan(0);
+        assets.add(variant.asset);
+        expect(variant.startMs).toBe(0);
+        expect(variant.trimMs).toBe(3429);            // full file length, no actual trim
+        expect(variant.processing).toBeNull();
+      }
+      expect(assets.size).toBe(4);                    // each variant points at a distinct asset
+    });
   });
 
   it('has no baked buffer for a slot until loadAllBaked decodes it (pre-boot / strict no-op)', () => {
@@ -398,6 +417,37 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       // variant 2 DID decode (same "no gaps" contract as the live-override pool).
       expect(getBakedVariantCount('bangTest', 'fire')).toBe(1);
       expect(hasBaked('bangTest', 'fire#v2')).toBe(true); // still individually addressable
+    });
+
+    // #208: mechDestroyed/play is the first REAL (non-synthetic) 4-variant bake — exercise the
+    // whole decode → count → pick path against the actual shipped BAKED_SFX entry (not a
+    // made-up id), proving all 4 "Mecha DAMAGED N.wav" variants decode independently and
+    // pickBakedVariant genuinely walks the whole real pool.
+    it('mechDestroyed/play (#208) decodes all 4 real variants and pickBakedVariant walks the whole pool', async () => {
+      const entry = BAKED_SFX['mechDestroyed::play'];
+      installFakeFetch(new Map([
+        [entry[0].asset, 'DAMAGED1'],
+        [entry[1].asset, 'DAMAGED2'],
+        [entry[2].asset, 'DAMAGED3'],
+        [entry[3].asset, 'DAMAGED4'],
+      ]));
+      setAudioContext(fakeCtx());
+      await loadAllBaked();
+
+      expect(getBakedVariantCount('mechDestroyed', 'play')).toBe(4);
+      expect(hasBaked('mechDestroyed', 'play')).toBe(true);
+      expect(hasBaked('mechDestroyed', 'play#v1')).toBe(true);
+      expect(hasBaked('mechDestroyed', 'play#v2')).toBe(true);
+      expect(hasBaked('mechDestroyed', 'play#v3')).toBe(true);
+
+      const v0 = getBaked('mechDestroyed', 'play');
+      expect(v0.buffer).toEqual({ __decodedFrom: 'DAMAGED1' });
+      expect(v0.trimMs).toBe(3429);
+      expect(v0.processing).toBeNull();
+
+      const seen = new Set();
+      for (let i = 0; i < 200; i++) seen.add(pickBakedVariant('mechDestroyed', 'play').buffer.__decodedFrom);
+      expect(seen).toEqual(new Set(['DAMAGED1', 'DAMAGED2', 'DAMAGED3', 'DAMAGED4']));
     });
   });
 });
