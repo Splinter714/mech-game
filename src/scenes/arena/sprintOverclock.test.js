@@ -1,18 +1,16 @@
-// #189 — Overclock redesign: instead of a flat moveMult/slewMult buff, Overclock now
-// force-activates Sprint (fuel-free) for its whole duration. This exercises the state
-// machine in `FiringMixin._handleSprint` (arena/firing.js) directly against a minimal fake
-// scene (mirrors the pattern in crush.test.js/vehicleFire.test.js), since the real thing is
-// a Phaser-scene mixin method that reads `this.sprint`/`this._buffMods()`/`this.registry`.
+// #189 — Overclock redesign: instead of a flat moveMult/slewMult buff, Overclock
+// force-activates Sprint (fuel-free) for its whole duration. #261 removed the PLAYER's own
+// means of triggering Sprint (L3/Space now triggers a Dash instead, see dash.test.js /
+// dashTrigger.test.js) — Overclock's force-activation is now the ONLY way Sprint's `active`
+// flag is ever set, so this file is trimmed down to just that contract: does Overclock still
+// force it on, keep it fuel-free, and hand it back off cleanly at expiry. The manual-reclaim/
+// toggle-vs-hold cases from the old device-split test suite no longer apply — there's no
+// player input path left to reclaim control from Overclock.
 //
-// State-machine contract under test (see the comment above `_handleSprint` for the full
-// reasoning): `this._sprintForcedByOverclock` tracks whether the CURRENT sprint-active state
-// is "because Overclock is holding it on" vs. the player's own manual toggle.
-//   - Overclock's rising edge force-activates Sprint, fuel-free, regardless of prior state.
-//   - A manual toggle press ALWAYS wins immediately, even mid-Overclock (pressing while
-//     forced-on reads as "turn it off"), and hands back normal fuel rules from that exact
-//     frame — no waiting for Overclock's own expiry.
-//   - If Overclock expires while it still owns the state (no manual press reclaimed it),
-//     Sprint is handed back off, exactly as if Overclock had never touched it.
+// This exercises the state machine in `FiringMixin._handleSprint` (arena/firing.js) directly
+// against a minimal fake scene (mirrors the pattern in crush.test.js/vehicleFire.test.js), since
+// the real thing is a Phaser-scene mixin method that reads `this.sprint`/`this._buffMods()`/
+// `this.registry`.
 import { describe, it, expect } from 'vitest';
 import { FiringMixin } from './firing.js';
 import { initialSprintState } from '../../data/sprint.js';
@@ -34,14 +32,14 @@ function makeScene({ overclockActive = false } = {}) {
   return scene;
 }
 
-describe('#189 Overclock force-activates Sprint (FiringMixin._handleSprint)', () => {
+describe('#189 Overclock force-activates Sprint (FiringMixin._handleSprint), player-trigger removed by #261', () => {
   it('force-activates Sprint the instant Overclock goes active, even with an empty tank', () => {
     const scene = makeScene({ overclockActive: false });
-    scene.sprint.fuel = 0;   // player couldn't have manually toggled on right now
+    scene.sprint.fuel = 0;   // no player-manual path could have turned it on anyway (#261)
     expect(scene.sprint.active).toBe(false);
 
     scene._overclockActive = true;   // Overclock just picked up
-    scene._handleSprint({ sprintPressed: false }, 16);
+    scene._handleSprint({}, 16);
 
     expect(scene.sprint.active).toBe(true);
     expect(scene._sprintForcedByOverclock).toBe(true);
@@ -50,93 +48,56 @@ describe('#189 Overclock force-activates Sprint (FiringMixin._handleSprint)', ()
   it('does not drain fuel while Overclock is the one holding Sprint on', () => {
     const scene = makeScene({ overclockActive: true });
     const startFuel = scene.sprint.fuel;
-    scene._handleSprint({ sprintPressed: false }, 16);   // rising edge: force on
+    scene._handleSprint({}, 16);   // rising edge: force on
     expect(scene.sprint.active).toBe(true);
 
-    for (let i = 0; i < 60; i++) scene._handleSprint({ sprintPressed: false }, 1000);  // 60s of frames
+    for (let i = 0; i < 60; i++) scene._handleSprint({}, 1000);  // 60s of frames
     expect(scene.sprint.active).toBe(true);
     expect(scene.sprint.fuel).toBe(startFuel);   // untouched — free ride the whole time
   });
 
-  it('expiry with no manual toggle hands Sprint back OFF, exactly as if Overclock never touched it', () => {
+  it('expiry hands Sprint back OFF, exactly as if Overclock never touched it, and fuel resumes regenerating normally', () => {
     const scene = makeScene({ overclockActive: true });
     scene.sprint.fuel = 1;   // partial tank, so we can observe regen resuming below
-    scene._handleSprint({ sprintPressed: false }, 16);   // Overclock forces it on
+    scene._handleSprint({}, 16);   // Overclock forces it on
     expect(scene.sprint.active).toBe(true);
     expect(scene.sprint.fuel).toBe(1);   // frozen — Overclock's free ride, no drain
 
     scene._overclockActive = false;   // Overclock's duration ends
-    scene._handleSprint({ sprintPressed: false }, 16);
+    scene._handleSprint({}, 16);
 
     expect(scene.sprint.active).toBe(false);
     expect(scene._sprintForcedByOverclock).toBe(false);
     // Normal Sprint rules apply from here — fuel regenerates like it was never forced at all.
     const fuelAfter = scene.sprint.fuel;
-    scene._handleSprint({ sprintPressed: false }, 1000);
+    scene._handleSprint({}, 1000);
     expect(scene.sprint.fuel).toBeGreaterThan(fuelAfter);
   });
 
-  it('a manual toggle-OFF press mid-Overclock is respected — Sprint goes off and STAYS off even though the buff is still nominally active', () => {
+  it('re-activating Overclock later force-activates Sprint again from a clean, off state', () => {
     const scene = makeScene({ overclockActive: true });
-    scene._handleSprint({ sprintPressed: false }, 16);   // Overclock forces it on
+    scene._handleSprint({}, 16);
     expect(scene.sprint.active).toBe(true);
 
-    scene._handleSprint({ sprintPressed: true }, 16);    // player explicitly presses the toggle
-    expect(scene.sprint.active).toBe(false);
-    expect(scene._sprintForcedByOverclock).toBe(false);   // manual ownership reclaimed
-
-    // Overclock is STILL active (buff hasn't expired) but must not re-force Sprint back on.
-    scene._handleSprint({ sprintPressed: false }, 1000);
-    expect(scene.sprint.active).toBe(false);
-    scene._handleSprint({ sprintPressed: false }, 5000);
-    expect(scene.sprint.active).toBe(false);
-
-    // Even once Overclock's window later actually ends, nothing changes — it already lost
-    // ownership, so there's no forced-off transition left to apply.
     scene._overclockActive = false;
-    scene._handleSprint({ sprintPressed: false }, 16);
+    scene._handleSprint({}, 16);
     expect(scene.sprint.active).toBe(false);
-  });
 
-  it('manually keeping Sprint on past Overclock\'s expiry resumes normal fuel drain immediately — no free lunch', () => {
-    const scene = makeScene({ overclockActive: true });
-    scene._handleSprint({ sprintPressed: false }, 16);   // Overclock forces it on, fuel-free
-    // Player explicitly toggles: OFF then back ON — takes manual ownership while Overclock is
-    // still active, so from here Sprint is normal/fuel-costing, not free, even though the
-    // Overclock buff is still nominally running.
-    scene._handleSprint({ sprintPressed: true }, 16);   // manual off
-    expect(scene.sprint.active).toBe(false);
-    scene._handleSprint({ sprintPressed: true }, 16);   // manual back on (fuel is available)
-    expect(scene.sprint.active).toBe(true);
-    expect(scene._sprintForcedByOverclock).toBe(false);
-
-    const fuelBeforeDrain = scene.sprint.fuel;
-    scene._handleSprint({ sprintPressed: false }, 1000);   // 1s of sprinting, still "during" Overclock
-    expect(scene.sprint.fuel).toBeLessThan(fuelBeforeDrain);   // draining normally, no free ride
-
-    // Overclock's window ends later — no discontinuity, sprint was already fully manual.
-    scene._overclockActive = false;
-    const fuelAtExpiry = scene.sprint.fuel;
-    scene._handleSprint({ sprintPressed: false }, 1000);
-    expect(scene.sprint.active).toBe(true);           // still on — player's own choice, untouched
-    expect(scene.sprint.fuel).toBeLessThan(fuelAtExpiry);   // drain continues seamlessly
-  });
-
-  it('Overclock activating while the player was ALREADY manually sprinting just takes over as fuel-free (no interruption)', () => {
-    const scene = makeScene({ overclockActive: false });
-    scene._handleSprint({ sprintPressed: true }, 16);   // manual toggle on
-    expect(scene.sprint.active).toBe(true);
-    expect(scene._sprintForcedByOverclock).toBe(false);
-    const fuelBefore = scene.sprint.fuel;
-
-    scene._overclockActive = true;   // Overclock picked up mid-manual-sprint
-    scene._handleSprint({ sprintPressed: false }, 1000);
+    scene._overclockActive = true;   // picked up again later in the run
+    scene._handleSprint({}, 16);
     expect(scene.sprint.active).toBe(true);
     expect(scene._sprintForcedByOverclock).toBe(true);
-    expect(scene.sprint.fuel).toBe(fuelBefore);   // now free — Overclock owns it
+  });
 
-    scene._overclockActive = false;   // expires — player never re-pressed, so hand back off
-    scene._handleSprint({ sprintPressed: false }, 16);
+  it('does not re-force Sprint on merely because Overclock is still nominally active, once already handed off', () => {
+    const scene = makeScene({ overclockActive: true });
+    scene._handleSprint({}, 16);         // rising edge: force on
+    scene._overclockActive = false;
+    scene._handleSprint({}, 16);         // expiry: hand off
+    expect(scene.sprint.active).toBe(false);
+
+    // No new rising edge — Overclock never goes active again — so nothing should re-trigger it.
+    scene._handleSprint({}, 1000);
     expect(scene.sprint.active).toBe(false);
   });
 });
