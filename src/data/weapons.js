@@ -160,13 +160,13 @@ export const WEAPONS = {
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
-    // #256 playtest rebalance: damage 2 -> 1.5. Flamethrower's DPS is fireRate(18) x
-    // sprayCount-average(3, from {min:2,max:4}) x damage, so 18*3*2 = 108 dps — a ~40%+
-    // overshoot over Repeater's 72 dps (18 x streams(2) x damage(2)). Dropping damage to
-    // 1.5 lands it at 18*3*1.5 = 81 dps: still the highest-DPS weapon in the game (a modest
-    // ~13% premium over Repeater, appropriate for its close-range/no-cover-advantage risk)
-    // instead of the previous outsized lead.
-    damage: 1.5, range: { min: 0, opt: 338, max: 600 },
+    // #256 playtest rebalance: damage 2 -> 0.65 (revised target, see below). Flamethrower's
+    // DPS is fireRate(18) x sprayCount-average(3, from {min:2,max:4}) x damage, so
+    // 18*3*2 = 108 dps originally — a ~40%+ overshoot over Repeater's 72 dps (18 x
+    // streams(2) x damage(2)). A first pass dropped damage to 1.5 (81 dps), but the
+    // corrected target is ~35 dps — well below Repeater, not a near-miss of it — so damage
+    // came down further to 0.65: 18*3*0.65 = 35.1 dps.
+    damage: 0.65, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
