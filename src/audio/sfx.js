@@ -156,7 +156,8 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
 // fallback. Both buffer sources schedule through the shared playBuffer above, so the #166 trim +
 // #172 processing recipe applies identically to either. In a shipped build there are no
 // IndexedDB overrides, so this is effectively baked-then-procedural.
-// #195: RANDOMIZED VARIANTS — a stage's override/bake can hold up to 4 parallel variant slots
+// #195: RANDOMIZED VARIANTS — a stage's override/bake can hold up to MAX_VARIANTS (10, #209)
+// parallel variant slots
 // instead of just one (see sfxOverrides.js's/bakedSfx.js's module headers); every play resolves
 // WHICH one via pickOverrideStage/pickBakedVariant, uniform random among however many are
 // currently loaded. `pickOverrideStage` returns null when there's no live override at all for

@@ -85,14 +85,21 @@
 // Implementation: variant 0 is the stage's ORIGINAL (id, stage) key, unchanged — every override
 // ever saved before this feature existed lives there as an implicit single-variant pool, so
 // there is NOTHING to migrate and every existing getter/setter above needs NO changes at all.
-// Variants 1..3 are addressed through a synthetic PSEUDO-STAGE string, `${stage}#v${n}` — since
-// every getter/setter above is already generic over an arbitrary `stage` string (proven by #177's
-// non-weapon-domain plumbing), passing one of these pseudo-stages through them "just works": it
-// persists its own IndexedDB record, decodes/caches its own buffer, and reads back through the
-// exact same get*/set* functions as any real stage, with zero special-casing in this file below.
-// bakedSfx.js's shipped-bake pool uses the SAME `#v${n}` suffix convention (see its own header),
-// so a (weaponId, pseudoStage) pair resolves consistently whichever module reads it.
-export const MAX_VARIANTS = 4;
+// Variants 1..(MAX_VARIANTS-1) are addressed through a synthetic PSEUDO-STAGE string,
+// `${stage}#v${n}` — since every getter/setter above is already generic over an arbitrary
+// `stage` string (proven by #177's non-weapon-domain plumbing), passing one of these
+// pseudo-stages through them "just works": it persists its own IndexedDB record, decodes/caches
+// its own buffer, and reads back through the exact same get*/set* functions as any real stage,
+// with zero special-casing in this file below. bakedSfx.js's shipped-bake pool uses the SAME
+// `#v${n}` suffix convention (see its own header), so a (weaponId, pseudoStage) pair resolves
+// consistently whichever module reads it.
+//
+// #209: raised from 4 to 10 per playtest feedback — a pool of similar takes (explosion bangs,
+// footstep variants, etc) wants more headroom than 4 gave. Also as of #209 the tuner panel no
+// longer exposes N independent sets of tuning controls per variant — see
+// syncTuningToVariants/getSharedTuningSnapshot/applySharedTuningSnapshot below — but the
+// underlying pool/persistence model (this whole file) is unchanged.
+export const MAX_VARIANTS = 10;
 
 // The (weaponId, stage) key for variant `index` of a stage's pool — index 0 is the stage's own
 // original key (today's exact single-variant behavior), 1..3 are the synthetic pseudo-stages.
@@ -542,32 +549,29 @@ export async function clearOverride(weaponId, stage) {
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
 }
 
-// #209: copy variant `sourceIndex`'s non-file tuning (start/trim, processing, fade-out, volume,
-// loop-start) onto every OTHER loaded variant in the same (weaponId, stage) pool — a one-time
-// convenience for a pool of similar takes (e.g. 4 explosion bangs) that should all be tuned
-// alike, so the owner doesn't have to drag every slider N times. Deliberately does NOT touch
-// each variant's own file/blob/meta — every variant necessarily has its own distinct recording,
-// so `storeOverride` is never called here, only the trim/processing/fadeOut/volume/loopStart
-// setters (each of which already persists through `_persistParams`, so the copy survives a
-// reload exactly like a hand-tuned value would). The `processing` object is copied as a full
-// REPLACE, not a merge — any field the target had that the source lacks is explicitly cleared
-// (via the `null` convention `setProcessing` already understands) so a stray processing setting
-// from the target's own past tuning doesn't survive alongside the source's. A no-op if
-// `sourceIndex` is out of range for the current pool, or if the pool has only one variant (there
-// is nothing else to copy onto).
-export async function applyTuningToAllVariants(weaponId, stage, sourceIndex) {
+// #209: the tuner panel now shows exactly ONE set of tuning controls per stage (not one per
+// variant) — editing any control writes straight to variant 0's (weaponId, stage) record via the
+// ordinary setters above, then this propagates that SAME tuning onto every OTHER variant
+// currently loaded in the pool, continuously, on every edit — not a manual one-time "copy"
+// button (that was the prior, rejected #209 attempt). Deliberately does NOT touch any variant's
+// own file/blob/meta — every variant necessarily has its own distinct recording, so
+// `storeOverride` is never called here, only the trim/processing/fadeOut/volume/loopStart
+// setters (each of which already persists through `_persistParams`). The `processing` object is
+// copied as a full REPLACE, not a merge — any field a target had that variant 0 lacks is
+// explicitly cleared (via the `null` convention `setProcessing` already understands) so a stray
+// processing setting from a target's own past tuning doesn't survive alongside variant 0's. A
+// no-op if the pool has fewer than 2 variants (nothing else to sync onto).
+export async function syncTuningToVariants(weaponId, stage) {
   const n = getOverrideVariantCount(weaponId, stage);
-  if (sourceIndex < 0 || sourceIndex >= n || n < 2) return;
-  const sourceStage = variantStage(stage, sourceIndex);
-  const startMs = getStartMs(weaponId, sourceStage);
-  const trimMs = getTrimMs(weaponId, sourceStage);
-  const fadeOutMs = getFadeOutMs(weaponId, sourceStage);
-  const volume = getVolume(weaponId, sourceStage);
-  const loopStartMs = getLoopStartMs(weaponId, sourceStage);
-  const processing = getProcessing(weaponId, sourceStage) || {};
+  if (n < 2) return;
+  const startMs = getStartMs(weaponId, stage);
+  const trimMs = getTrimMs(weaponId, stage);
+  const fadeOutMs = getFadeOutMs(weaponId, stage);
+  const volume = getVolume(weaponId, stage);
+  const loopStartMs = getLoopStartMs(weaponId, stage);
+  const processing = getProcessing(weaponId, stage) || {};
 
-  for (let i = 0; i < n; i++) {
-    if (i === sourceIndex) continue;
+  for (let i = 1; i < n; i++) {
     const targetStage = variantStage(stage, i);
     await setStart(weaponId, targetStage, startMs);
     await setTrim(weaponId, targetStage, trimMs);
@@ -577,11 +581,45 @@ export async function applyTuningToAllVariants(weaponId, stage, sourceIndex) {
     const targetProcessing = getProcessing(weaponId, targetStage) || {};
     const patch = {};
     for (const key of Object.keys(targetProcessing)) {
-      if (!(key in processing)) patch[key] = null; // clear whatever the source doesn't have
+      if (!(key in processing)) patch[key] = null; // clear whatever variant 0 doesn't have
     }
     for (const [key, value] of Object.entries(processing)) patch[key] = value;
     if (Object.keys(patch).length > 0) await setProcessing(weaponId, targetStage, patch);
   }
+}
+
+// #209: snapshot the CURRENT shared tuning for a stage (its variant-0 record), so it can be
+// reapplied to a variant slot's file right after it (re)loads — see applySharedTuningSnapshot
+// below. storeOverride always resets a freshly-loaded key's trim/processing/etc back to
+// defaults (a sensible rule for a lone override, but wrong for a pool that's supposed to share
+// ONE tuning) — capturing the tuning before the load and reapplying it after keeps a
+// newly-added OR replaced variant in sync with the rest of the pool instead of reverting it to
+// untuned. Returns null if there's no live override yet for variant 0 to read a shared tuning
+// FROM (the very first file ever loaded into this stage correctly starts untuned).
+export function getSharedTuningSnapshot(weaponId, stage) {
+  if (!hasOverride(weaponId, stage)) return null;
+  return {
+    startMs: getStartMs(weaponId, stage),
+    trimMs: getTrimMs(weaponId, stage),
+    fadeOutMs: getFadeOutMs(weaponId, stage),
+    volume: getVolume(weaponId, stage),
+    loopStartMs: getLoopStartMs(weaponId, stage),
+    processing: getProcessing(weaponId, stage),
+  };
+}
+
+// #209: reapply a snapshot captured by getSharedTuningSnapshot onto a single (weaponId, stage)
+// key — called right after a variant slot's file finishes (re)loading. No-op if `snapshot` is
+// null (nothing to reapply).
+export async function applySharedTuningSnapshot(weaponId, stage, snapshot) {
+  if (!snapshot) return;
+  const { startMs, trimMs, fadeOutMs, volume, loopStartMs, processing } = snapshot;
+  await setStart(weaponId, stage, startMs);
+  await setTrim(weaponId, stage, trimMs);
+  await setFadeOut(weaponId, stage, fadeOutMs);
+  await setVolume(weaponId, stage, volume);
+  await setLoopStartMs(weaponId, stage, loopStartMs);
+  if (processing) await setProcessing(weaponId, stage, processing);
 }
 
 // #186: pre-load a shipped bake's settings into the live override slot for editing. Called by

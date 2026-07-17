@@ -5,7 +5,7 @@ import {
   getProcessing, setProcessing, getFadeOutMs, setFadeOut, getVolume, setVolume,
   getLoopStartMs, setLoopStartMs,
   MAX_VARIANTS, variantStage, getOverrideVariantCount, pickOverrideStage, removeOverrideVariant,
-  applyTuningToAllVariants,
+  syncTuningToVariants, getSharedTuningSnapshot, applySharedTuningSnapshot,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -665,19 +665,25 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'BOOM' });
     });
 
-    it('loading a second/third/fourth file under variantStage(stage, n) grows the pool up to MAX_VARIANTS', async () => {
-      expect(MAX_VARIANTS).toBe(4);
+    it('loading files under variantStage(stage, n) grows the pool up to MAX_VARIANTS (#209: raised 4 -> 10)', async () => {
+      expect(MAX_VARIANTS).toBe(10);
       await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
       await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
       await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
       expect(getOverrideVariantCount('autocannon', 'fire')).toBe(3);
-      await storeOverride('autocannon', variantStage('fire', 3), fakeFile('v3.wav', 'V3'));
-      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(4);
+      for (let i = 3; i < 10; i++) {
+        await storeOverride('autocannon', variantStage('fire', i), fakeFile(`v${i}.wav`, `V${i}`));
+      }
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(10);
       // Each variant slot is independently addressable through the ordinary getters.
       expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'V0' });
-      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
-      expect(getOverride('autocannon', variantStage('fire', 2))).toEqual({ __decodedFrom: 'V2' });
-      expect(getOverride('autocannon', variantStage('fire', 3))).toEqual({ __decodedFrom: 'V3' });
+      for (let i = 1; i < 10; i++) {
+        expect(getOverride('autocannon', variantStage('fire', i))).toEqual({ __decodedFrom: `V${i}` });
+      }
+      // The pool is capped at MAX_VARIANTS — an 11th slot is never counted even if something
+      // were somehow stored there.
+      await storeOverride('autocannon', variantStage('fire', 10), fakeFile('v10.wav', 'V10'));
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(10);
     });
 
     // (b) statistical test — mock Math.random to prove pickOverrideStage genuinely walks the
@@ -769,8 +775,13 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
     });
   });
 
-  describe('applyTuningToAllVariants (#209)', () => {
-    it('copies trim/processing/fade-out/volume/loop-start from the source variant onto every other variant, leaving the file untouched', async () => {
+  // #209: the tuner panel shows exactly ONE set of tuning controls per stage (not one per
+  // variant) — an edit writes straight to variant 0's record via the ordinary setters, then
+  // syncTuningToVariants propagates that SAME tuning onto every other loaded variant, on every
+  // edit (not a manual one-shot "copy" — that was the prior, rejected #209 attempt,
+  // applyTuningToAllVariants, which this replaces).
+  describe('syncTuningToVariants (#209)', () => {
+    it('propagates trim/processing/fade-out/volume/loop-start from variant 0 onto every other variant, leaving the file untouched', async () => {
       await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
       await setStart('autocannon', 'fire', 50);
       await setTrim('autocannon', 'fire', 900);
@@ -781,13 +792,13 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
 
       await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
       await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
-      // Give variant 2 its own distinct pre-existing tuning, including a processing field the
-      // source variant does NOT have — applying the source's tuning must clear that stray field
-      // rather than merge it in alongside the source's own fields.
+      // Give variant 2 its own distinct pre-existing tuning, including a processing field
+      // variant 0 does NOT have — syncing must clear that stray field rather than merge it in
+      // alongside variant 0's own fields.
       await setVolume('autocannon', variantStage('fire', 2), 0.5);
       await setProcessing('autocannon', variantStage('fire', 2), { reverbMix: 0.6, reverbSize: 1.2 });
 
-      await applyTuningToAllVariants('autocannon', 'fire', 0);
+      await syncTuningToVariants('autocannon', 'fire');
 
       for (const idx of [1, 2]) {
         const stage = variantStage('fire', idx);
@@ -801,25 +812,25 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
         });
       }
 
-      // The file/asset each variant points to is NEVER touched by the copy.
+      // The file/asset each variant points to is NEVER touched by the sync.
       expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'V0' });
       expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
       expect(getOverride('autocannon', variantStage('fire', 2))).toEqual({ __decodedFrom: 'V2' });
       expect(getOverrideMeta('autocannon', variantStage('fire', 1))).toEqual({ name: 'v1.wav', type: 'audio/wav' });
       expect(getOverrideMeta('autocannon', variantStage('fire', 2))).toEqual({ name: 'v2.wav', type: 'audio/wav' });
 
-      // The copy leaves the source variant itself alone.
+      // The sync leaves variant 0 (the source) itself alone.
       expect(getStartMs('autocannon', 'fire')).toBe(50);
       expect(getVolume('autocannon', 'fire')).toBe(1.4);
     });
 
-    it('persists the copy across a simulated reload', async () => {
+    it('persists the sync across a simulated reload', async () => {
       await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
       await setVolume('autocannon', 'fire', 1.6);
       await setProcessing('autocannon', 'fire', { detune: 150 });
       await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
 
-      await applyTuningToAllVariants('autocannon', 'fire', 0);
+      await syncTuningToVariants('autocannon', 'fire');
 
       _resetForTest();
       setAudioContext(fakeCtx());
@@ -830,19 +841,59 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
     });
 
-    it('is a no-op for a single-variant pool (nothing else to copy onto)', async () => {
+    it('is a no-op for a single-variant pool (nothing else to sync onto)', async () => {
       await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
       await setVolume('autocannon', 'fire', 1.4);
-      await applyTuningToAllVariants('autocannon', 'fire', 0);
+      await syncTuningToVariants('autocannon', 'fire');
       expect(getOverrideVariantCount('autocannon', 'fire')).toBe(1);
       expect(getVolume('autocannon', 'fire')).toBe(1.4);
     });
 
-    it('is a no-op when sourceIndex is out of range', async () => {
+    it('is a no-op for a stage with no override at all', async () => {
+      await expect(syncTuningToVariants('autocannon', 'fire')).resolves.toBeUndefined();
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(0);
+    });
+  });
+
+  // #209: a variant slot's file (re)load resets that key's own tuning to untuned defaults
+  // (storeOverride's ordinary behavior) — getSharedTuningSnapshot/applySharedTuningSnapshot let
+  // the panel capture the stage's current shared tuning before the load and reapply it after, so
+  // a freshly added OR replaced variant comes back already matching the rest of the pool instead
+  // of reverting to untrimmed/unprocessed.
+  describe('shared tuning snapshot (#209)', () => {
+    it('getSharedTuningSnapshot is null when the stage has no live override yet', () => {
+      expect(getSharedTuningSnapshot('autocannon', 'fire')).toBeNull();
+    });
+
+    it('captures the current tuning and reapplies it onto a freshly (re)loaded key', async () => {
       await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await setStart('autocannon', 'fire', 40);
+      await setTrim('autocannon', 'fire', 800);
+      await setFadeOut('autocannon', 'fire', 60);
+      await setVolume('autocannon', 'fire', 1.3);
+      await setProcessing('autocannon', 'fire', { detune: 80 });
+
+      const snapshot = getSharedTuningSnapshot('autocannon', 'fire');
+
+      // A brand-new variant slot loads in untuned by default (storeOverride's usual behavior)...
       await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
-      await applyTuningToAllVariants('autocannon', 'fire', 5);
-      expect(getVolume('autocannon', variantStage('fire', 1))).toBe(1); // untouched default
+      expect(getStartMs('autocannon', variantStage('fire', 1))).toBeNull();
+
+      // ...until the captured snapshot is reapplied onto it.
+      await applySharedTuningSnapshot('autocannon', variantStage('fire', 1), snapshot);
+      expect(getStartMs('autocannon', variantStage('fire', 1))).toBe(40);
+      expect(getTrimMs('autocannon', variantStage('fire', 1))).toBe(800);
+      expect(getFadeOutMs('autocannon', variantStage('fire', 1))).toBe(60);
+      expect(getVolume('autocannon', variantStage('fire', 1))).toBe(1.3);
+      expect(getProcessing('autocannon', variantStage('fire', 1))).toEqual({ detune: 80 });
+      // The file itself is unaffected.
+      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
+    });
+
+    it('applySharedTuningSnapshot is a no-op with a null snapshot', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await expect(applySharedTuningSnapshot('autocannon', 'fire', null)).resolves.toBeUndefined();
+      expect(getStartMs('autocannon', 'fire')).toBeNull();
     });
   });
 
