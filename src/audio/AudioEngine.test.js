@@ -677,49 +677,49 @@ describe('AudioEngine (mock context)', () => {
       expect(after.oscillators).toBeGreaterThan(before.oscillators);
     });
 
-    // #175: firing plasmaLance (no dev override) schedules exactly ONE baked buffer source, with
-    // the #166 trim applied via start(when, offset≈0, duration≈0.13s) and the #174 fade ramping
+    // #268: firing plasmaLance (no dev override) schedules exactly ONE baked buffer source, with
+    // the #166 trim applied via start(when, offset≈0, duration≈0.17s) and the #174 fade ramping
     // the gain to 0 within that played window — and NO procedural oscillators. Uses the shipped
-    // BAKED_SFX['plasmaLance::fire'] recipe (startMs 0, trimMs 130, fadeOutMs 420) as-is.
+    // BAKED_SFX['plasmaLance::fire'] recipe (startMs 0, trimMs 170, fadeOutMs 1800) as-is.
     it('plays plasmaLance/fire as a single trimmed+faded baked buffer source, no procedural tones', () => {
-      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'bassWave' });
+      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'mechaMultipleBangs' });
       const before = ctx._counts();
       eng.fire(getWeapon('plasmaLance'));
       const after = ctx._counts();
       expect(after.sources).toBe(before.sources + 1);        // exactly one buffer source: the bake
       expect(after.oscillators).toBe(before.oscillators);    // no procedural tone layers ran
-      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bassWave' });
+      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'mechaMultipleBangs' });
 
-      // #166 trim: start(when, offset, duration) — offset≈0s, duration≈0.13s (130ms trim).
+      // #166 trim: start(when, offset, duration) — offset≈0s, duration≈0.17s (170ms trim).
       const [, offset, duration] = ctx._lastBufferSourceStart();
       expect(offset).toBeCloseTo(0, 5);
-      expect(duration).toBeCloseTo(0.13, 5);
+      expect(duration).toBeCloseTo(0.17, 5);
 
-      // #174 fade: one gain node ramps to 0, landing on the end of the played 130ms window. The
-      // 420ms fadeOutMs is clamped to the 130ms played duration, so the ramp starts at the very
-      // beginning of the window (end - 0.13s) and lands exactly on the trim point (end).
+      // #174 fade: one gain node ramps to 0, landing on the end of the played 170ms window. The
+      // 1800ms fadeOutMs is clamped to the 170ms played duration, so the ramp starts at the very
+      // beginning of the window (end - 0.17s) and lands exactly on the trim point (end).
       const fades = ctx._fadeGains();
       expect(fades.length).toBe(1);
       const events = fades[0]._events;
-      const endTime = ctx.currentTime + 0.13;
-      expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.13, 5)]);
+      const endTime = ctx.currentTime + 0.17;
+      expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.17, 5)]);
       expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
     });
 
     it('plasmaLance impact is unbaked — never plays the baked fire buffer (bake is fire-only)', () => {
-      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'bassWave' });
+      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'mechaMultipleBangs' });
       const beforeFire = ctx._counts();
       // Sanity: firing DOES schedule the baked buffer, so the bake is loaded/reachable here...
       eng.fire(getWeapon('plasmaLance'));
       expect(ctx._counts().sources).toBe(beforeFire.sources + 1);
-      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bassWave' });
+      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'mechaMultipleBangs' });
 
       // ...but the impact stage (a separate, procedurally-silenced cue — its layers are gain:0
       // by design) never routes through the bake: no additional buffer source, no baked buffer.
       const afterFire = ctx._counts();
       eng.impact('plasmaLance');   // impact stage, no bake
       expect(ctx._counts().sources).toBe(afterFire.sources);        // impact scheduled no buffer source
-      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bassWave' }); // last source is still the FIRE bake
+      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'mechaMultipleBangs' }); // last source is still the FIRE bake
     });
 
     // #176: firing pulseLaser (no dev override) schedules exactly ONE baked buffer source with the
@@ -771,13 +771,13 @@ describe('AudioEngine (mock context)', () => {
     // bake — plasmaLance/fire still plays ITS baked buffer, and pulseLaser/impact stays procedural.
     it('leaves plasmaLance/fire and pulseLaser/impact unaffected by the pulseLaser/fire bake', () => {
       _setBakedBufferForTest('pulseLaser', 'fire', { __baked: 'bassBuzz' });
-      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'bassWave' });
+      _setBakedBufferForTest('plasmaLance', 'fire', { __baked: 'mechaMultipleBangs' });
 
       // plasmaLance/fire still routes to ITS own baked buffer, not pulseLaser's.
       const beforePlasma = ctx._counts();
       eng.fire(getWeapon('plasmaLance'));
       expect(ctx._counts().sources).toBe(beforePlasma.sources + 1);
-      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'bassWave' });
+      expect(ctx._lastBufferSource().buffer).toEqual({ __baked: 'mechaMultipleBangs' });
 
       // pulseLaser/impact has no bake → plays procedurally, never routing through the baked buffer.
       const beforeImpact = ctx._counts();

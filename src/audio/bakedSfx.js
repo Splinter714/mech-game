@@ -24,10 +24,12 @@
 // type, so this resolves to a hashed URL). The source WAV (96kHz/24-bit stereo, ~1.8MB) was
 // converted with macOS `afconvert` to 48kHz stereo AAC at ~192kbps (~64KB) for web delivery.
 import bitBombExplosion from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
-// #175: plasmaLance's FIRE cue — "Bass wave.wav" from the same Helton Yan pack (mono 44.1kHz
-// 16-bit, 1.199s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps (~24KB).
-// Played back with a 130ms trim (#166) and a 420ms fade-out (#174, clamped to the 130ms window).
-import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-bassWave.m4a';
+// #268: plasmaLance's FIRE cue — swapped from "Bass wave.wav" to "DSGNImpt_EXPLOSION-Mecha
+// Multiple Bangs_HY_PC-001.wav" from the same Helton Yan pack (stereo 44.1kHz, 2.826s full
+// length). Converted with macOS `afconvert` to 48kHz stereo AAC/.m4a (~38KB). Played back with a
+// 170ms trim (#166) and a 1800ms fade-out (#174, clamped to the 170ms window — same convention as
+// the prior bassWave bake this replaces).
+import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-mechaMultipleBangs.m4a';
 // #176: pulseLaser's FIRE cue — "Bass Buzz_warning sound.wav" from the same Helton Yan pack (mono
 // 44.1kHz 16-bit, 1.590s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps
 // (~30KB). Played back as a 60ms window starting 320ms into the file (#166 start+trim), pitched up
@@ -152,15 +154,16 @@ export const BAKED_SFX = {
     trimMs: null,
     processing: null,
   },
-  // Helton Yan's Pixel Combat pack — "Bass wave.wav". Trimmed to the first 130ms (#166) with a
-  // 420ms fade-out (#174) as plasmaLance's fire cue. The recipe's fadeOutMs (420) exceeds the
-  // 130ms played window on purpose — playBuffer clamps the fade to the played duration, so it
-  // fades across the whole 130ms; the literal owner recipe value is recorded here unclamped.
+  // #268: Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Mecha Multiple Bangs_HY_PC-001.wav"
+  // (replaces the prior "Bass wave.wav" bake). Trimmed to the first 170ms (#166) with a 1800ms
+  // fade-out (#174) as plasmaLance's fire cue. The recipe's fadeOutMs (1800) exceeds the 170ms
+  // played window on purpose — playBuffer clamps the fade to the played duration, so it fades
+  // across the whole 170ms; the literal owner recipe value is recorded here unclamped.
   'plasmaLance::fire': {
     asset: plasmaLanceFire,
     startMs: 0,
-    trimMs: 130,
-    fadeOutMs: 420,
+    trimMs: 170,
+    fadeOutMs: 1800,
     processing: null,
   },
   // Helton Yan's Pixel Combat pack — "Bass Buzz_warning sound.wav". A 60ms window starting 320ms
