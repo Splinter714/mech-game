@@ -124,12 +124,26 @@ export function minSafeSpawnDist(typeId) {
   return detectionRangeFor(standoff) + SAFETY_MARGIN_PX;
 }
 
+// #203 reopened (playtest 2026-07-15: "new enemy spawns should NEVER happen on screen" — an
+// absolute requirement, stricter than and distinct from the detection-range/awareness concern
+// above): `jitter` is normally `Math.random() * 120` at the one real call site
+// (`_offscreenSpawnPoint`, scenes/arena/enemies.js), which is ALMOST always > 0 but not
+// GUARANTEED to be — `Math.random()` can return exactly 0, which would leave `floor + jitter ===
+// floor === viewR` exactly: a spawn landing precisely on the camera-viewport-radius boundary,
+// which reads as "just barely visible at the edge of frame" rather than cleanly off-screen.
+// EDGE_BUFFER_PX is a small FIXED (non-random) push added to the floor before jitter, so the
+// guarantee holds deterministically regardless of what `jitter` rolls, instead of relying on
+// jitter almost-never landing on exactly 0.
+export const EDGE_BUFFER_PX = 40;
+
 // #203: the actual off-view spawn distance — never closer than `viewR` (the camera-derived
 // "just off screen" radius) NOR closer than `minSafeDist` (the enemy's own detection range, see
-// `minSafeSpawnDist`), then jittered outward by `jitter` px and finally capped at `maxR` (the
-// world edge) so a huge detection range (e.g. the turret nest) still can't be pushed past the
-// playable map. Pure so the floor-enforcement itself is unit-testable without a Phaser scene.
+// `minSafeSpawnDist`), plus the fixed `EDGE_BUFFER_PX` so the floor itself is a strict margin
+// past the viewport edge (not merely touching it), then jittered outward by `jitter` px and
+// finally capped at `maxR` (the world edge) so a huge detection range (e.g. the turret nest)
+// still can't be pushed past the playable map. Pure so the floor-enforcement itself is
+// unit-testable without a Phaser scene.
 export function spawnDistance({ viewR, minSafeDist = 0, maxR, jitter = 0 }) {
-  const floor = Math.max(viewR, minSafeDist);
+  const floor = Math.max(viewR, minSafeDist) + EDGE_BUFFER_PX;
   return Math.min(floor + jitter, maxR);
 }

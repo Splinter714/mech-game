@@ -6,7 +6,7 @@
 // helpers (extracted so they're testable without pulling in Phaser) are the fix: every unit's
 // FINAL position is snapped to the nearest passable, in-bounds hex before it's placed.
 import { describe, it, expect } from 'vitest';
-import { nearestValidHex, nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance, SAFETY_MARGIN_PX } from './spawnPlacement.js';
+import { nearestValidHex, nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance, SAFETY_MARGIN_PX, EDGE_BUFFER_PX } from './spawnPlacement.js';
 import { axialKey, hexToPixel, pixelToHex, distance } from './hexgrid.js';
 import { isPassable } from './terrain.js';
 import { ENEMY_KINDS } from './enemyKinds.js';
@@ -155,16 +155,36 @@ describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its 
 
   it('spawnDistance never lands inside minSafeDist, even when it exceeds the viewport-derived viewR', () => {
     const d = spawnDistance({ viewR: 700, minSafeDist: 2880, maxR: 4864, jitter: 0 });
-    expect(d).toBeGreaterThanOrEqual(2880);
+    expect(d).toBeGreaterThanOrEqual(2880 + EDGE_BUFFER_PX);
   });
 
   it('spawnDistance keeps the ordinary viewport-only behavior when minSafeDist is smaller (no regression)', () => {
     const d = spawnDistance({ viewR: 700, minSafeDist: 200, maxR: 4864, jitter: 50 });
-    expect(d).toBe(750);
+    expect(d).toBe(700 + EDGE_BUFFER_PX + 50);
   });
 
   it('spawnDistance still respects the world-edge cap even when minSafeDist is huge', () => {
     const d = spawnDistance({ viewR: 700, minSafeDist: 999999, maxR: 4864, jitter: 0 });
     expect(d).toBe(4864);
+  });
+
+  // #203 (playtest 2026-07-15: "new enemy spawns should NEVER happen on screen" — a stricter,
+  // absolute requirement than the detection-range/awareness floor above): even in the
+  // worst-case boundary condition — jitter rolling exactly 0 — the computed spawn distance must
+  // land STRICTLY beyond the camera's viewport radius, never exactly on it, so a spawn can never
+  // read as "just barely visible at the edge of frame."
+  it('never lands exactly on the viewport-radius boundary, even when jitter is exactly 0', () => {
+    const viewR = 900;   // a realistic camera-viewport-derived "just off view" radius
+    const d = spawnDistance({ viewR, minSafeDist: 0, maxR: 4864, jitter: 0 });
+    expect(d).toBeGreaterThan(viewR);
+    expect(d).toBeGreaterThanOrEqual(viewR + EDGE_BUFFER_PX);
+  });
+
+  it('stays strictly beyond the viewport radius across a spread of jitter rolls, not just at jitter=0', () => {
+    const viewR = 850;
+    for (const jitter of [0, 1, 30, 119.999]) {
+      const d = spawnDistance({ viewR, minSafeDist: 0, maxR: 100000, jitter });
+      expect(d).toBeGreaterThan(viewR);
+    }
   });
 });
