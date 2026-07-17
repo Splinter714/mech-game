@@ -1657,8 +1657,28 @@ try {
   // This step kills an enemy in the first arena session (already exercised above via `deathFx`,
   // which populates the debris pool), backs out to the garage, redeploys into a fresh arena
   // session, and kills another enemy there — the exact repro for #190.
+  //
+  // #249 (playtest: "the player mech icon bottom right in garage stays destroyed after a round;
+  // it should refresh when coming back to the garage") rides the same toGarage() transition:
+  // damage the player's mech right before backing out, then — BEFORE the next deploy() below —
+  // confirm the Garage's own `this.mech` (what the bottom-right preview/paper-doll read from)
+  // is already back at full armor/structure. The bug was that repair only ran at the START of
+  // the next deploy, so the mech read as damaged/destroyed for the whole time the player was
+  // back in the Garage after a loss.
+  const s249setup = await page.evaluate(() => {
+    const a = window.__game.scene.getScene('ArenaScene');
+    a.mech.applyDamage('leftArm', 9999);   // knocks leftArm to 0 armor/structure without reviving/needing a kill
+    const p = a.mech.parts.leftArm;
+    return { damagedBeforeReturn: p.armor === 0 && p.structure === 0 };
+  });
+  if (!s249setup.damagedBeforeReturn) fail('#249 test setup: the player mech was not actually damaged before returning to the garage');
   await page.evaluate(() => window.__game.scene.getScene('ArenaScene').toGarage());
   await page.waitForFunction(() => window.__game.scene.isActive('GarageScene'), { timeout: 20000 });
+  const s249 = await page.evaluate(() => {
+    const mech = window.__game.scene.getScene('GarageScene').mech;
+    return { allFullHealth: Object.values(mech.parts).every((p) => p.armor === p.maxArmor && p.structure === p.maxStructure) };
+  });
+  if (!s249.allFullHealth) fail('#249 the garage mech was not repaired to full health immediately on returning from a run — it still read damaged before the next deploy');
   await page.evaluate(() => window.__game.scene.getScene('GarageScene').deploy());
   await page.waitForFunction(() => {
     const g = window.__game;

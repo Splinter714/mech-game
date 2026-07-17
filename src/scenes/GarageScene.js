@@ -100,6 +100,15 @@ export default class GarageScene extends Phaser.Scene {
 
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
+    // #249: every entry into the Garage (fresh boot, ESC from the Music tab, or — the bug —
+    // returning from Arena after a run ends in a win OR a loss) must show a healthy mech. Damage
+    // used to only get healed at the START of the NEXT deploy (see deploy() below), so the
+    // bottom-right preview + paper-doll kept reading as destroyed for the whole time the player
+    // was back in the Garage after a loss. repairAll() is idempotent (a no-op on an already-healthy
+    // mech), so doing it unconditionally here — before textures are built below — is safe on every
+    // path, not just the post-run one; deploy()'s own repairAll() stays as a harmless belt-and-braces.
+    this.mech.repairAll();
+    saveAllMechs(this.allMechs);
     this.selected = null;   // the slot currently being edited (filters the catalog)
     this.catalogIds = [...WEAPON_IDS];
     // #65: the permanently-unlocked catalog (meta-progression, persists across runs). Loaded
