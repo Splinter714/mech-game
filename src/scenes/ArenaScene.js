@@ -267,7 +267,13 @@ export default class ArenaScene extends Phaser.Scene {
     this.mech.regenAmmo(dt);
   }
 
+  // #216: the sound cue lives HERE, not in any of the call sites, because this is the one
+  // method every return-to-garage path funnels through — the run-over transition (run.js's
+  // RUN_OVER_DELAY delayedCall), the G key, and the Select/B pad buttons. Firing it from a
+  // wrapper around toGarage() (as #210 originally did) missed the two manual early-exit paths
+  // entirely, since they call toGarage() directly.
   toGarage() {
+    Audio.ui('returnToGarage');
     this.scene.stop('HudScene');
     this.scene.start('GarageScene');
   }

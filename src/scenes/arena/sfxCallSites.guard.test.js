@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 const DIR = dirname(fileURLToPath(import.meta.url));
 const combat = readFileSync(join(DIR, 'combat.js'), 'utf8');
 const run = readFileSync(join(DIR, 'run.js'), 'utf8');
+const arenaScene = readFileSync(join(DIR, '..', 'ArenaScene.js'), 'utf8');
 
 describe('#201 SFX call-site wiring', () => {
   it('combat.js fires the shared partDestroyed cue for both player- and enemy-part loss', () => {
@@ -33,20 +34,36 @@ describe('#201 SFX call-site wiring', () => {
   });
 
   // #210: `runLost` (fired only on loss, right alongside mechDestroyed at the death moment)
-  // was replaced with `returnToGarage`, fired at the actual scene-transition moment inside the
-  // RUN_OVER_DELAY delayedCall, unconditional on win/loss.
+  // was replaced with `returnToGarage`. #216: that cue then moved again, off of run.js's
+  // RUN_OVER_DELAY delayedCall and into ArenaScene's `toGarage()` itself, because the manual
+  // G-key/Select-B exit paths call `toGarage()` directly and bypassed the delayedCall entirely
+  // — so the sound never played on those paths. `toGarage()` is the one method every
+  // return-to-garage path funnels through, so that's now the sole call site.
   it('run.js no longer fires the old runLost cue', () => {
     expect(run).not.toMatch(/Audio\.ui\('runLost'\)/);
   });
 
-  it('run.js fires returnToGarage at the scene-transition delayedCall, unconditional on win/loss', () => {
-    // Must appear inside the delayedCall callback, alongside the toGarage() transition, and
-    // NOT be gated by an `if (!won)`/`if (won)` guard immediately preceding it.
+  it('run.js no longer fires returnToGarage itself (moved to ArenaScene#toGarage)', () => {
+    expect(run).not.toMatch(/Audio\.ui\('returnToGarage'\)/);
+  });
+
+  it('run.js still transitions via this.toGarage() inside the RUN_OVER_DELAY delayedCall', () => {
     const delayedCallMatch = run.match(/delayedCall\(RUN_OVER_DELAY[\s\S]*?\}\);/);
     expect(delayedCallMatch).toBeTruthy();
-    const body = delayedCallMatch[0];
+    expect(delayedCallMatch[0]).toMatch(/this\.toGarage\(\)/);
+  });
+
+  it('ArenaScene#toGarage fires returnToGarage exactly once, ahead of the scene transition', () => {
+    const toGarageMatch = arenaScene.match(/toGarage\(\)\s*\{[\s\S]*?\n  \}/);
+    expect(toGarageMatch).toBeTruthy();
+    const body = toGarageMatch[0];
     expect(body).toMatch(/Audio\.ui\('returnToGarage'\)/);
-    expect(body).toMatch(/this\.toGarage\(\)/);
-    expect(body).not.toMatch(/if\s*\(\s*!?won\s*\)/);
+    expect(body).toMatch(/this\.scene\.start\('GarageScene'\)/);
+  });
+
+  it('returnToGarage is fired from exactly one place across run.js and ArenaScene.js', () => {
+    const runMatches = run.match(/Audio\.ui\('returnToGarage'\)/g) ?? [];
+    const arenaMatches = arenaScene.match(/Audio\.ui\('returnToGarage'\)/g) ?? [];
+    expect(runMatches.length + arenaMatches.length).toBe(1);
   });
 });
