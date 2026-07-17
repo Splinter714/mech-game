@@ -108,7 +108,7 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
 
   // #186: the core new behavior — a stage with a shipped bake but NO live override yet must show
   // as "loaded," populated from the bake's own recipe, not from "none (procedural)". Uses the REAL
-  // plasmaLance/fire bake config from #175 (startMs 0, trimMs 130, fadeOutMs 420, no processing).
+  // plasmaLance/fire bake config from #268 (startMs 0, trimMs 170, fadeOutMs 1800, no processing).
   it('populates getOverrideRowState from the BAKE recipe when a bake exists but no live override yet', () => {
     _setBakedBufferForTest('plasmaLance', 'fire', { duration: 1.199, numberOfChannels: 1, sampleRate: 44100 });
     const state = getOverrideRowState('plasmaLance', 'fire');
@@ -117,12 +117,12 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     expect(state.statusText).toMatch(/baked/i);
     expect(state.fullSec).toBeCloseTo(1.199);
     expect(state.startSec).toBe(0);           // bake's startMs: 0
-    expect(state.endSec).toBeCloseTo(0.13);   // bake's trimMs: 130
-    // The bake's own fadeOutMs (420) exceeds its 130ms played window on purpose (see bakedSfx.js's
+    expect(state.endSec).toBeCloseTo(0.17);   // bake's trimMs: 170
+    // The bake's own fadeOutMs (1800) exceeds its 170ms played window on purpose (see bakedSfx.js's
     // comment on this exact entry) — getOverrideRowState clamps it to the played window, same as
     // it already does for a live override's fadeMs.
-    expect(state.fadeMax).toBe(130);
-    expect(state.fadeMs).toBe(130);
+    expect(state.fadeMax).toBe(170);
+    expect(state.fadeMs).toBe(170);
     expect(state.volume).toBe(1);
     expect(state.proc).toEqual({});
     // No live runtime override exists yet — this is purely the bake's recipe on display.
@@ -226,8 +226,8 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     let state = getOverrideRowState(id, stage);
     expect(state.source).toBe('override');
     expect(state.startSec).toBe(0);
-    expect(state.endSec).toBeCloseTo(0.13);
-    expect(state.fadeMs).toBe(130); // clamped to the played window, same as the bake-only reading
+    expect(state.endSec).toBeCloseTo(0.17);
+    expect(state.fadeMs).toBe(170); // clamped to the played window, same as the bake-only reading
 
     // A second call is a no-op (already seeded) — doesn't stomp the override that's there.
     const bufferBeforeSecondSeed = getOverride(id, stage);

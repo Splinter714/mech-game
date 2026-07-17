@@ -7,7 +7,7 @@
 // display logic, not just the raw storage layer (sfxOverrides.js), which was already generic.
 import {
   hasOverride, getOverrideMeta, getOverride, getStartMs, getTrimMs, getFadeOutMs, getProcessing, getVolume,
-  getLoopStartMs, getOverrideVariantCount, variantStage, MAX_VARIANTS,
+  getLoopStartMs, getRetriggerMs, getOverrideVariantCount, variantStage, MAX_VARIANTS,
 } from '../audio/sfxOverrides.js';
 import { hasBaked, getBaked, getBakedVariantCount } from '../audio/bakedSfx.js';
 
@@ -72,9 +72,10 @@ export function getOverrideRowState(id, stage) {
     const proc = getProcessing(id, stage) || {};
     const loopStartMs = getLoopStartMs(id, stage);
     const loopStartSec = clamp(loopStartMs != null ? loopStartMs / 1000 : startSec, startSec, endSec);
+    const retriggerMs = getRetriggerMs(id, stage);
     return {
       active: true, source: 'override', statusText, meta, fullSec, startSec, endSec, fadeMs, fadeMax,
-      volume, proc, loopStartSec, proceduralControlsVisible,
+      volume, proc, loopStartSec, retriggerMs, proceduralControlsVisible,
     };
   }
 
@@ -96,9 +97,10 @@ export function getOverrideRowState(id, stage) {
     const proc = baked.processing || {};
     const loopStartMs = baked.loopStartMs ?? baked.startMs;
     const loopStartSec = clamp(loopStartMs != null ? loopStartMs / 1000 : startSec, startSec, endSec);
+    const retriggerMs = baked.retriggerMs ?? null;
     return {
       active: true, source: 'baked', statusText, meta: null, fullSec, startSec, endSec, fadeMs, fadeMax,
-      volume, proc, loopStartSec, proceduralControlsVisible,
+      volume, proc, loopStartSec, retriggerMs, proceduralControlsVisible,
     };
   }
 

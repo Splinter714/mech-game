@@ -414,30 +414,33 @@ export class AudioEngine {
   // Weapon firing (#32) — per-weapon tunable layers (Weapon Lab sound panel, see
   // sfxParams.js). Gameplay SFX dispatch lives in ./sfx.js; these facade methods keep the
   // public API + the resume/ready guards and delegate.
-  // #200: `gainScale` (default 1) is an optional uniform volume multiplier for this one cue —
-  // see sfx.js's fire() for why (enemy fire cues playing VERY slightly quieter than the
-  // player's own).
-  fire(weapon, gainScale = 1) {
+  // #200: `gainScale` (default 1) is an optional uniform volume multiplier for this one cue.
+  // #264: `pos` (default null) is an optional `{ x, y, listenerX, listenerY }` world-position
+  // pair for real distance falloff + stereo pan (see sfx.js's positionalBus) — this is what a
+  // caller passes to make enemy fire read as coming from where it actually is, replacing the
+  // old flat ENEMY_FIRE_GAIN_SCALE approximation (retired — see fireCues.js).
+  fire(weapon, gainScale = 1, pos = null) {
     this._resume();
     if (!this.ready || !weapon) return;
-    Sfx.fire(this, weapon, gainScale);
+    Sfx.fire(this, weapon, gainScale, pos);
     this._duckTrigger();
     this._logSfxTiming('fire');
   }
 
   // A brief in-flight flavor cue, fired a beat after launch — only weapons with a
   // noticeable flight time have one (see sfxParams.js); a no-op otherwise.
-  trajectory(weaponId, gainScale = 1) {
+  trajectory(weaponId, gainScale = 1, pos = null) {
     this._resume();
     if (!this.ready || !weaponId) return;
-    Sfx.trajectory(this, weaponId, gainScale);
+    Sfx.trajectory(this, weaponId, gainScale, pos);
   }
 
   // Weapon impact (#33) — per weapon (falls back to a generic clank for an unknown weaponId).
-  impact(weaponId) {
+  // #264: optional `pos` — see fire() above.
+  impact(weaponId, pos = null) {
     this._resume();
     if (!this.ready) return;
-    Sfx.impact(this, weaponId);
+    Sfx.impact(this, weaponId, pos);
     this._duckTrigger();
   }
 
@@ -496,10 +499,11 @@ export class AudioEngine {
 
   // Explosion (#36) — a broken-off part / player MECH DOWN. `scale` 0.4..1.2 sizes the blast.
   // NOT used for enemy-kill explosions any more — see deathExplosion below (#107).
-  explosion(scale = 1) {
+  // #264: optional `pos` — see fire() above.
+  explosion(scale = 1, pos = null) {
     this._resume();
     if (!this.ready) return;
-    Sfx.explosion(this, scale);
+    Sfx.explosion(this, scale, pos);
     this._duckTrigger();
   }
 
@@ -536,10 +540,11 @@ export class AudioEngine {
   // scenes/arena/shared.js's explosionCategoryFor), each independently tunable via the Weapon
   // Lab panel (same getSfxParams/setSfxParam/resetSfxParams plumbing, keyed by
   // `explosionSfxId(category)`) instead of one continuous scale.
-  deathExplosion(category = 'medium') {
+  // #264: optional `pos` — see fire() above.
+  deathExplosion(category = 'medium', pos = null) {
     this._resume();
     if (!this.ready) return;
-    Sfx.deathExplosionByCategory(this, category);
+    Sfx.deathExplosionByCategory(this, category, pos);
   }
 
   // ── Music (#38) ─────────────────────────────────────────────────────────────────────

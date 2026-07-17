@@ -450,7 +450,8 @@ export const WorldMixin = {
   // and a scatter of dust/rubble chunks flung outward, plus a heavy explosion cue. #72: soft cover
   // (a forest hex burning/chewed down) plays a lighter version — quieter cue, smaller flash/ring.
   _outpostCollapseFx(x, y, soft = false) {
-    Audio.explosion(soft ? 0.45 : 1.0);
+    // #264: real positional audio — the collapsing outpost's position vs. the player (listener).
+    Audio.explosion(soft ? 0.45 : 1.0, { x, y, listenerX: this.px, listenerY: this.py });
     // #99: explicit DEPTH.IMPACT_FX — same tier as combat.js's impact/death bursts, which this
     // is (a collapse explosion); previously unset, only reading "on top" by add-order accident.
     const flash = this.add.circle(x, y, 6, 0xffe6a0, soft ? 0.6 : 0.9).setDepth(DEPTH.IMPACT_FX);

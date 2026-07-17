@@ -6,6 +6,7 @@ import { TRAJECTORY_DELAY, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUND
 import {
   storeOverride, hasOverride,
   setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
+  setRetriggerMs,
   seedOverrideFromBaked, variantStage, removeOverrideVariant, MAX_VARIANTS,
   syncTuningToVariants, getSharedTuningSnapshot, applySharedTuningSnapshot,
 } from '../audio/sfxOverrides.js';
@@ -437,14 +438,14 @@ export class WeaponSfxPanel {
     this.sliders.push(endSlider);
     y += ROW_H + 4;
 
-    // #185 rework: this control predates the intro-then-procedural-sustain fix (see sfx.js's
-    // startHeld/startIntroThenSustain) — it used to mark where a REPEATED region of the held
-    // buffer should wrap back to. Playback no longer loops the buffer at all (a held weapon now
-    // plays its override/bake ONCE as the intro, then hands off to procedural synthesis for the
-    // sustain), so dragging this slider still persists loopStartMs via setLoopStartMs (harmless,
-    // and kept so a value saved by an older build round-trips), but it has NO audible effect
-    // anymore. Left in place rather than removed/hidden to avoid reworking this panel's layout
-    // as part of the #185 audio fix — flagged here so it isn't mistaken for a live control.
+    // #185/#267: this control marks where the REPEATING region of a held weapon's override/bake
+    // begins once native loop playback wraps (see sfx.js's startHeld/startOverrideLoop) — the
+    // buffer plays from `start` the first time (so a non-repeatable wind-up transient plays once),
+    // then on every wrap after that it jumps back to `loop start` instead of all the way to
+    // `start`. It was briefly vestigial between #185 and #267 (a one-shot-intro-then-procedural-
+    // handoff scheme that never read this field), but #267 restored real native-loop playback, so
+    // dragging this slider (persisted via setLoopStartMs) is live again — leaving it at `start`
+    // (its default) simply loops the whole trimmed window.
     const loopStartSlider = new Slider(this.scene, {
       x: ox + 6, y, w: w - 12, labelW: 64, valueW: 44, label: 'loop start', min: startSec, max: endSec, step: 0.01,
       value: state.loopStartSec,
@@ -460,6 +461,28 @@ export class WeaponSfxPanel {
     });
     this.scroller.add(loopStartSlider.container);
     this.sliders.push(loopStartSlider);
+    y += ROW_H + 4;
+
+    // #267 follow-up: opt-in OVERLAPPING RETRIGGER interval — an alternative to the single
+    // continuous native loop above, for a held weapon whose fire cue should retrigger a NEW
+    // overlapping instance every N ms instead of looping one continuous tone (sfx.js's
+    // startOverrideRetrigger). 0 (the default/left end of the slider) means "off" — persisted as
+    // null (setRetriggerMs's "clear" convention), which keeps today's single-loop behavior.
+    const retriggerMs = state.retriggerMs ?? 0;
+    const retriggerSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 64, valueW: 48, label: 'retrigger', min: 0, max: 1000, step: 10,
+      value: retriggerMs,
+      onChange: (v) => {
+        const ms = Math.round(v);
+        editShared(() => {
+          setRetriggerMs(weaponId, stage, ms <= 0 ? null : ms);
+          this._toast(ms <= 0 ? `${stage}: single continuous loop` : `${stage}: retrigger every ${ms}ms`);
+          this._previewThrottled(stage);
+        });
+      },
+    });
+    this.scroller.add(retriggerSlider.container);
+    this.sliders.push(retriggerSlider);
     y += ROW_H + 4;
 
     // #174: fade-out duration — smooths the click/pop from an early-trimmed cutoff by ramping
@@ -774,7 +797,7 @@ export class WeaponSfxPanel {
   // #171 (re-fix): whether `stage` should play at all right now — see previewMuting.isStageAudible.
   // Needed because gain-zeroing (_applyPreviewMuting) only ever affects PROCEDURAL layers, but a
   // stage with a live override or a shipped bake bypasses those layers entirely (sfx.js's
-  // playOverride, and — for a held weapon's intro — resolveBufferSource/startIntroThenSustain).
+  // playOverride, and — for a held weapon's native loop — resolveBufferSource/startOverrideLoop).
   // Muting/soloing that stage out has to skip the Audio.* call outright to have any audible
   // effect at all.
   _isStageAudible(stage) {

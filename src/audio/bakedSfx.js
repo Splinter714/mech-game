@@ -24,10 +24,12 @@
 // type, so this resolves to a hashed URL). The source WAV (96kHz/24-bit stereo, ~1.8MB) was
 // converted with macOS `afconvert` to 48kHz stereo AAC at ~192kbps (~64KB) for web delivery.
 import bitBombExplosion from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
-// #175: plasmaLance's FIRE cue — "Bass wave.wav" from the same Helton Yan pack (mono 44.1kHz
-// 16-bit, 1.199s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps (~24KB).
-// Played back with a 130ms trim (#166) and a 420ms fade-out (#174, clamped to the 130ms window).
-import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-bassWave.m4a';
+// #268: plasmaLance's FIRE cue — swapped from "Bass wave.wav" to "DSGNImpt_EXPLOSION-Mecha
+// Multiple Bangs_HY_PC-001.wav" from the same Helton Yan pack (stereo 44.1kHz, 2.826s full
+// length). Converted with macOS `afconvert` to 48kHz stereo AAC/.m4a (~38KB). Played back with a
+// 170ms trim (#166) and a 1800ms fade-out (#174, clamped to the 170ms window — same convention as
+// the prior bassWave bake this replaces).
+import plasmaLanceFire from '../assets/sfx/plasmaLance-fire-mechaMultipleBangs.m4a';
 // #176: pulseLaser's FIRE cue — "Bass Buzz_warning sound.wav" from the same Helton Yan pack (mono
 // 44.1kHz 16-bit, 1.590s). Converted with macOS `afconvert` to 44.1kHz mono AAC/.m4a at ~128kbps
 // (~30KB). Played back as a 60ms window starting 320ms into the file (#166 start+trim), pitched up
@@ -81,15 +83,22 @@ import menuNavPlay from '../assets/sfx/menuNav-play-strongClick1.m4a';
 // #208: the UI domain's `mechDestroyed` cue (added #201) — the FIRST real 4-VARIANT bake using
 // the #195 randomized-pool feature (every earlier bake above is a single-object entry). Four
 // distinct files from the same Helton Yan pack, each "Mecha DAMAGED N.wav" (STEREO 44.1kHz
-// 16-bit, 3.429s) — variant 2 is a DIFFERENT source file than the one already baked as
-// deathExplosionMassive::fire (#180 trimmed "Mecha DAMAGED 2.wav" to 1490ms+550ms fade for a
-// different cue); this bake uses the FULL untrimmed file for all 4 variants, no fade/processing.
-// Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~154-194kbps, ~71-89KB each) —
+// 16-bit, 3.429s). #265: re-trimmed from the original FULL untrimmed 3429ms/no-fade recipe to a
+// 2600ms window with a 990ms fade-out for all 4 variants, per Jackson's Weapon Lab copy-recipe.
+// #266: swapped the pool from variants 1/2/3/4 to 1/12/15/17 — dropping 2, 3, and 4 in favor of
+// three different "Mecha DAMAGED N.wav" files from the same pack (variant 1 is unchanged and
+// reused as-is). Variant 2's source file is still imported above (mechDestroyed2) because
+// autocannon::fire below independently reuses it with its own different start/trim/fade — that
+// import stays even though it's no longer part of this pool. Variants 3 and 4's imports/asset
+// files were removed entirely: nothing else in the codebase referenced them. Same start/trim/
+// fade recipe (startMs 0, trimMs 2600, fadeOutMs 990) applies to all 4 new-pool variants.
+// Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~154-194kbps, ~68-89KB each) —
 // kept stereo like the other Helton Yan stereo bakes (#180/#194/#192/#198/#199/#206).
 import mechDestroyed1 from '../assets/sfx/mechDestroyed-play-mechaDamaged1.m4a';
 import mechDestroyed2 from '../assets/sfx/mechDestroyed-play-mechaDamaged2.m4a';
-import mechDestroyed3 from '../assets/sfx/mechDestroyed-play-mechaDamaged3.m4a';
-import mechDestroyed4 from '../assets/sfx/mechDestroyed-play-mechaDamaged4.m4a';
+import mechDestroyed12 from '../assets/sfx/mechDestroyed-play-mechaDamaged12.m4a';
+import mechDestroyed15 from '../assets/sfx/mechDestroyed-play-mechaDamaged15.m4a';
+import mechDestroyed17 from '../assets/sfx/mechDestroyed-play-mechaDamaged17.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -132,13 +141,14 @@ function variantCacheKey(baseKey, index) {
 //               before the scheduled stop (omit/null/0 = no fade, hard cut)
 //   volume      optional overall gain multiplier (#182) — 1.0 = unity (omit = unity, unchanged
 //               implicit gain); composes with fadeOutMs (the fade ramps FROM this level to 0)
-//   loopStartMs VESTIGIAL (#185 rework) — used by an earlier held-loop scheme that repeated a
-//               region of the buffer. A held weapon's bake now plays ONCE as the intro and hands
-//               off to procedural sustain synthesis (sfx.js's startHeld/startIntroThenSustain),
-//               so the buffer is never repeated and this field is not read by playback anymore.
-//               Left in the schema so an entry authored before the rework still round-trips
-//               (getBaked still returns it, defaulting to the entry's own `startMs`), but adding
-//               it to a new bake has no audible effect.
+//   loopStartMs live again as of #267 — the native loop-region marker for a held weapon's bake
+//               (sfx.js's startHeld/startOverrideLoop): the buffer plays from `startMs` once, then
+//               on loop-wrap returns to `loopStartMs` (not `startMs`) instead of the whole clip
+//               repeating from the top. Omit/null = loops the entire startMs..trimMs window.
+//   retriggerMs opt-in (#267 follow-up) — when set, a held weapon's fire cue spawns a brand-new
+//               OVERLAPPING one-shot instance of the clip every `retriggerMs` instead of looping
+//               ONE continuous source (sfx.js's startOverrideRetrigger). Omit/null (every bake
+//               before this field existed) = the single continuous native loop, unchanged.
 export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Bit Bomb_HY_PC-001.wav". The full
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.
@@ -148,15 +158,16 @@ export const BAKED_SFX = {
     trimMs: null,
     processing: null,
   },
-  // Helton Yan's Pixel Combat pack — "Bass wave.wav". Trimmed to the first 130ms (#166) with a
-  // 420ms fade-out (#174) as plasmaLance's fire cue. The recipe's fadeOutMs (420) exceeds the
-  // 130ms played window on purpose — playBuffer clamps the fade to the played duration, so it
-  // fades across the whole 130ms; the literal owner recipe value is recorded here unclamped.
+  // #268: Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Mecha Multiple Bangs_HY_PC-001.wav"
+  // (replaces the prior "Bass wave.wav" bake). Trimmed to the first 170ms (#166) with a 1800ms
+  // fade-out (#174) as plasmaLance's fire cue. The recipe's fadeOutMs (1800) exceeds the 170ms
+  // played window on purpose — playBuffer clamps the fade to the played duration, so it fades
+  // across the whole 170ms; the literal owner recipe value is recorded here unclamped.
   'plasmaLance::fire': {
     asset: plasmaLanceFire,
     startMs: 0,
-    trimMs: 130,
-    fadeOutMs: 420,
+    trimMs: 170,
+    fadeOutMs: 1800,
     processing: null,
   },
   // Helton Yan's Pixel Combat pack — "Bass Buzz_warning sound.wav". A 60ms window starting 320ms
@@ -239,16 +250,31 @@ export const BAKED_SFX = {
     fadeOutMs: 1070,
     volume: 0,
   },
-  // #208: the UI domain's mechDestroyed cue — a 4-VARIANT pool (#195), one entry per
-  // "Mecha DAMAGED N.wav" (N=1..4) from the Helton Yan pack. Each variant plays the FULL
-  // 3429ms file, no trim, no fade, no pitch/filter/reverb processing — literal copy-recipe.
-  // Playback (pickBakedVariant) picks uniformly at random among the 4 decoded variants.
+  // #208/#266: the UI domain's mechDestroyed cue — a 4-VARIANT pool (#195), one entry per
+  // "Mecha DAMAGED N.wav" (N=1, 12, 15, 17) from the Helton Yan pack. #265: re-trimmed from the
+  // FULL untrimmed 3429ms file to a 2600ms window (#166 start+trim: startMs 0, trimMs 2600) with
+  // a 990ms fade-out (#174), per Jackson's Weapon Lab copy-recipe. #266: swapped variants 2/3/4
+  // out for 12/15/17 (same recipe carried over unchanged); variant 1 untouched. No pitch/filter/
+  // reverb processing. Playback (pickBakedVariant) picks uniformly at random among the 4 decoded
+  // variants.
   'mechDestroyed::play': [
-    { asset: mechDestroyed1, startMs: 0, trimMs: 3429, processing: null },
-    { asset: mechDestroyed2, startMs: 0, trimMs: 3429, processing: null },
-    { asset: mechDestroyed3, startMs: 0, trimMs: 3429, processing: null },
-    { asset: mechDestroyed4, startMs: 0, trimMs: 3429, processing: null },
+    { asset: mechDestroyed1, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed12, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed15, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed17, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
   ],
+  // #265: the Weapon Lab export's second piece — autocannon's FIRE cue, reusing the SAME
+  // "Mecha DAMAGED 2.wav" source file already imported above as mechDestroyed2 (no new asset
+  // file needed). Played back as a 630ms window starting 90ms into the file (#166 start+trim:
+  // startMs 90, trimMs 630 — a 90ms→720ms play window) with an 830ms fade-out (#174). No pitch/
+  // filter/reverb processing.
+  'autocannon::fire': {
+    asset: mechDestroyed2,
+    startMs: 90,
+    trimMs: 630,
+    fadeOutMs: 830,
+    processing: null,
+  },
 };
 
 // Decoded AudioBuffer cache — the only thing playback (sfx.js) ever reads, synchronously.
@@ -314,6 +340,9 @@ export function getBaked(weaponId, stage) {
     fadeOutMs: entry.fadeOutMs ?? null,
     volume: entry.volume ?? 1,
     loopStartMs: entry.loopStartMs ?? entry.startMs ?? null,
+    // #267 follow-up: opt-in overlapping-retrigger interval (milliseconds) — omitted/null (every
+    // bake before this field existed) means "single continuous native loop," unchanged.
+    retriggerMs: entry.retriggerMs ?? null,
   };
 }
 

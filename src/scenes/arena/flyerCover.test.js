@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 // Spy the shared fire-cue scheduler (audio) — irrelevant to cover mechanics.
-vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn(), ENEMY_FIRE_GAIN_SCALE: 0.85 }));
+vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn() }));
 
 import { ProjectilesMixin } from './projectiles.js';
 import { FiringMixin } from './firing.js';
