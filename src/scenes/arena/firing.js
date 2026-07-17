@@ -174,8 +174,13 @@ export const FiringMixin = {
     // weapons are unaffected).
     if (!canFireWeapon(w.weapon, this.lock)) return;
     const mods = this._buffMods?.() ?? {};
-    // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend one.
-    if (!mods.freeAmmo) this.mech.consumeAmmo(w.location, w.index, 1);
+    // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend a
+    // shot's worth, scaled by cycleMult (#235): Overdrive's cycleMult 0.5 halves the fire
+    // interval (shots go out ~2x as often), so scaling consumption by the same factor spends
+    // 0.5 ammo/shot — exactly offsetting the faster rate for a net-neutral ammo economy,
+    // distinct from Overcharge's true unlimited ammo. Outside Overdrive cycleMult is 1, so
+    // this is the same flat 1-ammo spend as before.
+    if (!mods.freeAmmo) this.mech.consumeAmmo(w.location, w.index, mods.cycleMult ?? 1);
     // #103 noise-aggro: a real shot just went off at the player's position — unaware enemies
     // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
     // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.

@@ -187,24 +187,23 @@ export class Mech {
   onlineWeapons() { return this.weapons().filter((w) => w.online); }
   readyWeapons() { return this.weapons().filter((w) => w.ready); }
 
-  // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons).
+  // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons). `n` need not be
+  // an integer — #235: Overdrive spends a fractional amount (cycleMult, e.g. 0.5) per shot to
+  // offset its faster fire rate, so this deliberately does plain subtraction with no
+  // rounding/truncation; magazines can sit at fractional values and still compare/display fine.
   consumeAmmo(loc, index, n = 1) {
     if (this.ammo[loc]?.[index] != null) {
       this.ammo[loc][index] = Math.max(0, this.ammo[loc][index] - n);
     }
   }
 
-  // Top every magazine back up over time at the weapon's regen rate. `regenMult` scales
-  // that rate (default 1 = unaffected); #235: Overdrive halves the fire interval (shots go
-  // out ~2x as often) but consumeAmmo still spends a flat 1 ammo/shot, so callers pass the
-  // inverse of the buff's cycleMult here (e.g. cycleMult 0.5 -> regenMult 2) to keep regen
-  // pace with the faster cycle instead of draining magazines twice as fast for free.
-  regenAmmo(dt, regenMult = 1) {
+  // Top every magazine back up over time at the weapon's regen rate.
+  regenAmmo(dt) {
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, i) => {
         if (this.ammo[loc][i] == null) return;
         const w = getWeapon(id);
-        this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt * regenMult);
+        this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt);
       });
     }
   }
