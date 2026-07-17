@@ -202,10 +202,11 @@ describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', 
   it('lands a medium mech (the likely most-common kill) close to the old flat 0.75 rate', () => {
     // #106 bent the curve concave specifically so this "typical kill" sanity check from #90
     // still holds even though the floor dropped from 0.35 to 0.05. #128 later moved the medium
-    // mech's real maxHp to 270 (was 416), but the floor/ceiling moved down in near-identical
-    // proportion, so this still lands in the same 0.7-0.8 band.
-    expect(dropChanceForMaxHp(270)).toBeGreaterThan(0.7);
-    expect(dropChanceForMaxHp(270)).toBeLessThan(0.8);
+    // mech's real maxHp to 270 (was 416), and #230's torso-HP bump (see chassis/index.js
+    // FACTORS) moved it again to 290, but the floor/ceiling moved down in near-identical
+    // proportion each time, so this still lands in the same 0.7-0.8 band.
+    expect(dropChanceForMaxHp(290)).toBeGreaterThan(0.7);
+    expect(dropChanceForMaxHp(290)).toBeLessThan(0.8);
   });
 
   it('agrees with the real Mech.maxHp getter for each chassis', () => {
@@ -213,10 +214,12 @@ describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', 
     const medium = new Mech({ chassisId: 'medium' }).maxHp;
     const heavy = new Mech({ chassisId: 'heavy' }).maxHp;
     // #128: head/cockpit/centerTorso no longer contribute armor/structure to maxHp, so these
-    // are lower than the pre-#128 values (266/416/616).
-    expect(light).toBe(172);
-    expect(medium).toBe(270);
-    expect(heavy).toBe(400);
+    // are lower than the pre-#128 values (266/416/616). #230: side-torso FACTORS bumped
+    // 0.75 -> 0.85 (arms unchanged at 0.6) to close the gap between a torso's health and how
+    // much more often it gets hit, raising these from 172/270/400 to 184/290/430.
+    expect(light).toBe(184);
+    expect(medium).toBe(290);
+    expect(heavy).toBe(430);
     expect(dropChanceForMaxHp(heavy)).toBeGreaterThan(dropChanceForMaxHp(medium));
     expect(dropChanceForMaxHp(medium)).toBeGreaterThan(dropChanceForMaxHp(light));
   });

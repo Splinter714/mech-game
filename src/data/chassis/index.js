@@ -11,8 +11,13 @@ import { HEAVY_CONFIG } from './heavy.js';
 // Relative bulk of each damage-tracked location, used to distribute armor + structure
 // from the chassis' baseline stats. #128: head/cockpit/centerTorso dropped out of
 // LOCATIONS (cosmetic only now, no armor/structure), so they no longer need a factor.
+// #230: torso factor bumped 0.75 -> 0.85 (arm left at 0.6, so the HP ratio moves from
+// ~1.25x to ~1.42x an arm's health). Paired with easing combat.js's player-hit weighting
+// from 2:1 to 1.5:1 torso:arm, the two changes together bring torsos' effective
+// destruction rate (hits-needed, factoring in how much more often they're hit) within
+// ~6% of an arm's instead of torsos dying ~1.6x faster — see _damagePlayerAt for the math.
 const FACTORS = {
-  leftTorso: 0.75, rightTorso: 0.75,
+  leftTorso: 0.85, rightTorso: 0.85,
   leftArm: 0.6, rightArm: 0.6,
 };
 

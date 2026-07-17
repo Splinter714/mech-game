@@ -46,13 +46,23 @@ export const CombatMixin = {
   // #128: head/centerTorso dropped out of this pool entirely — they're cosmetic only now
   // (no armor/structure, so a hit "on" them would silently no-op) — the side torsos pick up
   // the centre-mass weighting instead, so hits still lean toward the torsos over the arms.
+  // #230: was a flat 2:1 torso:arm weighting, which combined with the chassis' own armor+
+  // structure totals (side torsos had only ~1.25x an arm's health — see chassis/index.js
+  // FACTORS) to make torsos die roughly 1.6x faster than arms in expected-hits terms, so
+  // players almost never got to experience losing an arm before the attached torso (and its
+  // cascade, see DESTROY_CASCADE) took it anyway. Eased to 1.5:1 here, paired with a bump to
+  // FACTORS.leftTorso/rightTorso, so the two changes together land torsos and arms within
+  // ~6% of each other's effective destruction rate instead of 60%.
   _damagePlayerAt(dmg) {
-    const parts = ['leftTorso', 'leftTorso', 'rightTorso', 'rightTorso', 'leftArm', 'rightArm'];
-    // #231: same class of bug as the enemy-targeting fix below — a weighted-random pick can
-    // land on a location already destroyed (e.g. an arm that cascaded from its torso), which
-    // would otherwise waste the whole hit into nothing. `pickLiveWeighted` rerolls among the
-    // still-live entries of the same pool instead. (Weights themselves are untouched here —
-    // issue #230 owns torso-vs-arm balance separately.)
+    const parts = [
+      'leftTorso', 'leftTorso', 'leftTorso',
+      'rightTorso', 'rightTorso', 'rightTorso',
+      'leftArm', 'leftArm',
+      'rightArm', 'rightArm',
+    ];
+    // #231: a weighted-random pick can land on a location already destroyed (e.g. an arm that
+    // cascaded from its torso), which would otherwise waste the whole hit into nothing.
+    // `pickLiveWeighted` rerolls among the still-live entries of the same pool instead.
     const loc = pickLiveWeighted(parts, (p) => this.mech.isPartDestroyed(p));
     const res = this.damagePlayer(loc, dmg);
     // #205: pulse the on-mech shield bubble any time the shield actually absorbed part of this
