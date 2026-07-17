@@ -9,7 +9,7 @@ import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
 import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { MECH_DEPLOYED, RUN_CURRENCY_KEY } from '../data/events.js';
-import { BIOME_IDS } from '../data/biomes.js';
+import { RECENCY_WINDOW, pickNextBiome } from '../data/biomes.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
@@ -719,12 +719,26 @@ export default class GarageScene extends Phaser.Scene {
     Audio.ui('deploy');   // #178: weightier rising anticipation whoosh — committing to the run
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
-    // Pick the battlefield biome per deployment (#67). Deterministic: rotate through the roster
-    // so successive sorties visit each terrain set; the FIRST deploy of a session is grassland
-    // (BIOME_IDS[0]), which keeps the headless smoke test's origin/DUMMY-hex assumptions stable.
+    // Pick the battlefield biome per deployment (#67, reworked #217). The FIRST deploy of a
+    // session is uniformly random across every biome (no fixed grassland); every deploy after
+    // that weights AWAY from recently-seen biomes without ever making one impossible — the
+    // actual weighting/pick math is pure and unit-tested in data/biomes.js (`pickNextBiome`).
+    // `biomeHistory` is a short in-memory rolling log of the last few picks, purely used to
+    // compute those weights (reset every session, same as `deployCount`).
+    //
+    // Test hook (#217): `scripts/smoke.mjs` needs a DETERMINISTIC first biome (grassland) so its
+    // origin/DUMMY-hex terrain assumptions hold across runs. Rather than branching gameplay code
+    // on "are we in test mode," the smoke script can set `debugForceBiome` on the registry before
+    // calling deploy() to pin the very next pick; it's consumed once here and cleared, so it
+    // never affects any deploy after the one it was set for.
     const n = this.registry.get('deployCount') || 0;
     this.registry.set('deployCount', n + 1);
-    this.registry.set('arenaBiome', BIOME_IDS[n % BIOME_IDS.length]);
+    const forced = this.registry.get('debugForceBiome');
+    const history = this.registry.get('biomeHistory') || [];
+    const biome = forced || pickNextBiome(history, Math.random);
+    if (forced) this.registry.set('debugForceBiome', null);
+    this.registry.set('biomeHistory', [...history, biome].slice(-RECENCY_WINDOW));
+    this.registry.set('arenaBiome', biome);
     // #64: a fresh deploy always starts a NEW run at stage 0 — clear any leftover run state
     // (a prior run's `run` registry value would otherwise look "in progress" to
     // ArenaScene._initRun, which continues an existing run rather than starting fresh).

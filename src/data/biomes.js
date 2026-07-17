@@ -107,3 +107,44 @@ export const DEFAULT_BIOME = 'grassland';
 export function getBiome(id) {
   return BIOMES[id] ?? BIOMES[DEFAULT_BIOME];
 }
+
+// #217: per-deploy biome selection. The FIRST deploy of a session is uniformly random across
+// every biome (no fixed grassland) — call with an empty `history`. Every deploy after that
+// de-emphasizes recently-seen biomes (a repeat map back-to-back reads as repetitive) without
+// ever making one truly impossible to redraw, via a weighted random draw.
+//
+// `history` is a short rolling log of the last few biome ids actually picked, OLDEST FIRST
+// (caller just appends and keeps the last RECENCY_WINDOW entries — see GarageScene.deploy()).
+// Only the last RECENCY_WINDOW entries matter; anything picked longer ago than that is back to
+// full weight. `rng` is injectable (defaults to Math.random) so the weighting curve itself is
+// unit-testable without depending on real randomness.
+//
+// Weighting curve: a biome's weight ramps linearly from MIN_WEIGHT (just picked last deploy)
+// up to 1 (not seen in RECENCY_WINDOW+ deploys). MIN_WEIGHT is > 0 so a just-seen biome is
+// heavily de-emphasized, never excluded — "less likely, never impossible," per the design ask.
+export const RECENCY_WINDOW = 4;
+const MIN_WEIGHT = 0.15;
+
+export function pickNextBiome(history = [], rng = Math.random) {
+  if (!history.length) {
+    // First deploy of the session (or any time the caller has no history yet): plain uniform
+    // pick, no fixed starting biome.
+    return BIOME_IDS[Math.floor(rng() * BIOME_IDS.length)];
+  }
+  const recent = history.slice(-RECENCY_WINDOW);   // oldest-first; only the tail matters
+  const weights = BIOME_IDS.map((id) => {
+    // Index from the END of the recent window: 0 = picked last deploy, RECENCY_WINDOW-1 =
+    // picked as long ago as this window still tracks. Not found at all -> full weight.
+    const idxFromEnd = [...recent].reverse().indexOf(id);
+    if (idxFromEnd === -1 || idxFromEnd >= RECENCY_WINDOW) return 1;
+    const t = idxFromEnd / RECENCY_WINDOW;
+    return MIN_WEIGHT + (1 - MIN_WEIGHT) * t;
+  });
+  const total = weights.reduce((s, w) => s + w, 0);
+  let roll = rng() * total;
+  for (let i = 0; i < BIOME_IDS.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) return BIOME_IDS[i];
+  }
+  return BIOME_IDS[BIOME_IDS.length - 1];   // float-rounding fallback
+}
