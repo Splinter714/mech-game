@@ -257,11 +257,20 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   });
 
   it('#243 playtest follow-up: NO kind overrides damage — enemy rounds always match the player\'s weapon', () => {
+    // #244 exception: the turret. Its override isn't an enemy-side retune of a weapon the
+    // player also mounts — it's the old DEDICATED siegeShell entry (damage 10, a distinct
+    // weapon with its own damage identity) consolidated into a napalm override, preserved
+    // byte-identical. Every other kind fires its weapon at the player's own per-round damage.
     for (const id of ENEMY_KIND_IDS) {
+      if (id === 'turret') continue;
       const k = ENEMY_KINDS[id];
       expect(k.weaponOverride?.damage, id).toBeUndefined();
       const resolved = resolveWeapon(k.weaponId, k.weaponOverride);
       expect(resolved.damage, `${id} resolved damage`).toBe(WEAPONS[k.weaponId].damage);
     }
+    // The turret's consolidated artillery shell keeps the old siegeShell numbers exactly.
+    const t = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
+    expect(t.damage).toBe(10);
+    expect(WEAPONS.napalm.damage).toBe(6);   // the player's napalm is untouched
   });
 });

@@ -24,7 +24,11 @@
 //              delta instead of forking a whole near-duplicate weapon entry. See helicopter
 //              below for the live example. Per the #243 playtest follow-up, overrides tune
 //              cadence/stream/burst shape ONLY — never `damage`; enemy per-round damage always
-//              matches the player's version of the weapon.
+//              matches the player's version of the weapon. (#244 carve-out: the turret's
+//              override DOES set damage — it isn't an enemy-side retune of a shared weapon
+//              but the old dedicated siegeShell entry, a distinct weapon with its own damage
+//              identity, consolidated byte-identical into a napalm override. See the turret
+//              entry + the enemyKinds.test.js damage-rule test.)
 //              CADENCE lives here too (#243, superseding #241's transitional `fireEveryMs`
 //              field entirely — it no longer exists): a vehicle's cooldown is ALWAYS
 //              `_fireInterval` on the RESOLVED weapon (the same resolution the player/
