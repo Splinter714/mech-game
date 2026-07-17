@@ -4,7 +4,7 @@
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import {
-  ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor, explosionCategoryFor,
+  ARENA_MECH_SCALE, DAMAGEABLE, DEATH_SCALE_MAX, DEPTH, deathScaleFor, explosionCategoryFor,
   resolveHitLocation, pickLiveWeighted,
 } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
@@ -84,6 +84,31 @@ export const CombatMixin = {
     // one place owning that transition (and the run-over banner/currency banking with it).
     if (this.mech.isDestroyed() && !this._playerDead) {
       this._playerDead = true;
+      // #225 (playtest: "it needs to really be destroyed in a big explosion, not just have
+      // parts missing and still be able to walk around as a husk"): freeze velocity/speed so
+      // the stepped-gait animation (_stepGait, locomotion.js) stops dead on this frame's pose
+      // instead of continuing to "walk" on stale speed while input is gated off below (see
+      // ArenaScene.update()'s `!this._playerDead` guards around _handleSprint/_drive/
+      // _handleFiring — the actual input choke point).
+      this.vx = 0; this.vy = 0; this.speed = 0;
+      // The player's own kill gets the same catastrophic-kill treatment as an enemy death
+      // (_deathFx — burst flash, irregular fireball blobs, shock ring, smoke, flung debris —
+      // see the big comment above _deathFx) rather than nothing. Always the biggest scale/
+      // category regardless of the player's own chassis weight: this is the single most
+      // severe moment in a run, distinct from (and bigger than) even a heavy enemy mech's
+      // 'massive' kill, which is itself the ceiling `explosionCategoryFor`/`deathScaleFor`
+      // ever produce for an enemy — ties into the dedicated `deathExplosionMassive` bake
+      // (#180) as the biggest explosion SOUND category that already exists.
+      this._deathFx(this.px, this.py, DEATH_SCALE_MAX, 'massive');
+      // Mirrors the enemy-death lesson from #87 (corrected 2026-07-10: "a lingering, frozen
+      // corpse before cleanup read as horrible and looks dumb — the explosion IS the death
+      // feedback, not a delayed afterthought"): hide the player's own mech view the instant it
+      // dies rather than leaving the damaged husk standing (and now motionless, per the
+      // velocity freeze above) on screen for the whole RUN_OVER_DELAY before the run-over
+      // transition. Unlike `_removeEnemy`, this only HIDES (not destroys) the container — the
+      // camera's `startFollow(this.playerView, …)` (ArenaScene.create()) still needs a live
+      // object to anchor on while the run-over sequence plays out.
+      this.playerView.setVisible(false);
       this._floatText(this.px, this.py - 36, 'MECH DOWN', '#e2533a');
       // #201: the player's own mech going down gets its own dedicated, most-severe cue —
       // distinct from an enemy's death (deathExplosionByCategory, #180/#184).

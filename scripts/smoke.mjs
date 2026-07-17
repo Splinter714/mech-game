@@ -1170,10 +1170,33 @@ try {
     const runEndedOnDeath = a.run?.status === 'dead';
     const currencyBankedOnDeath = (g.registry.get('runCurrency') || 0) >= currencyBeforeDeath;
 
+    // #225 (playtest: "it needs to really be destroyed in a big explosion, not just have parts
+    // missing and still be able to walk around as a husk") — this SAME force-kill above is the
+    // real player-death path (`_damagePlayerAt`'s destroyed check, driven here via the normal
+    // `applyDamage` → `update()` route), so confirm its new behavior fired without throwing:
+    // `_playerDead` set, the mech's own view hidden (no lingering husk), and velocity frozen.
+    // Then prove control is actually gated: hold every input (drive + fire) for a few frames and
+    // confirm the "corpse" doesn't move — before this fix `_drive`/`_handleFiring` ran regardless
+    // of death, which is exactly the reported bug.
+    const s225 = { playerDeadFlag: a._playerDead === true, viewHidden: a.playerView.visible === false };
+    const posBeforeDeadInput = { x: a.px, y: a.py, angle: a.turretAngle };
+    a.controls.keys.D.isDown = true;
+    for (let i = 0; i < 30; i++) a.update(0, 16);
+    a.controls.keys.D.isDown = false;
+    s225.frozenWhileDead = a.px === posBeforeDeadInput.x && a.py === posBeforeDeadInput.y;
+
+    // Reset the player back to a healthy, controllable state before the movement-heavy checks
+    // below (#92 etc.) — otherwise #225's new control-gating would leave the player frozen for
+    // every subsequent test that drives it, which used to be harmless (`_drive` never used to
+    // gate on death) but is now the exact behavior being tested above.
+    a.mech.repairAll();
+    a._playerDead = false;
+    a.playerView.setVisible(true);
+    a.vx = 0; a.vy = 0; a.speed = 0;
+
     // #92: tank independent turret movement, player-vs-ground-enemy collision, and tank crush.
-    // Run LAST — these drive the player around a lot of real update() frames, and the player
-    // mech is already dead/run-ended by this point (harmless: `_drive` doesn't gate on mech
-    // death), so it can't perturb the mission/run assertions captured above.
+    // Run LAST among the movement-driven checks — the player mech is reset to alive/healthy
+    // just above specifically so these still work post-#225 (a dead player no longer drives).
     const s92 = {};
     {
       // (b) A ground unit (a stationary turret — won't itself relocate, isolating the collision
@@ -1370,6 +1393,7 @@ try {
       flyOverBoundary,
       runEndedOnDeath,
       currencyBankedOnDeath,
+      s225,
       salvagePickedUp,
       dropsDistinct,
       droneDropRate,
@@ -1533,6 +1557,9 @@ try {
   }
   if (!arena.runEndedOnDeath) fail('#64 player mech destruction did not end the run');
   if (!arena.currencyBankedOnDeath) fail('#64 run currency was not banked into the persistent registry value on run end');
+  if (!arena.s225.playerDeadFlag) fail('#225 _playerDead did not flip true when the player mech was destroyed');
+  if (!arena.s225.viewHidden) fail('#225 the player mech view was not hidden on destruction — a husk would still be visible');
+  if (!arena.s225.frozenWhileDead) fail('#225 the player kept moving on held input after being destroyed — control was not gated off');
   // #65: a salvage pickup adds straight into the live run currency total.
   if (!arena.salvagePickedUp) fail('#65 a salvage pickup did not increase the live run currency');
   // #88: a powerup and salvage dropped from the same kill point must scatter apart, not stack.
