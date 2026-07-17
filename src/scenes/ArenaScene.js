@@ -115,9 +115,12 @@ export default class ArenaScene extends Phaser.Scene {
     // Indirect-fire lock (#62): the always-available acquire-and-hold targeting for homing/arcing
     // weapons. `this.lock` is the pure state record (data/targetlock.js); `aimEnemy` is the live
     // most-aimed enemy used only by direct-fire convergence (kept separate so a blind lock behind
-    // cover never drags laser convergence). `lockEnemy`/`lockProgress` mirror the lock for readers.
+    // cover never drags laser convergence). #250: `convergeTarget` is the actual ranked pick fed to
+    // convergence (aimEnemy, or a fallback destructible hex, or null) — see shared.js
+    // `pickConvergeTarget`. `lockEnemy`/`lockProgress` mirror the lock for readers.
     this.lock = makeLock();
     this.aimEnemy = null;
+    this.convergeTarget = null;
     this.lockEnemy = null;
     this.lockProgress = 0;
     this._lockBlindAge = 0;
