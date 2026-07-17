@@ -19,6 +19,10 @@ export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 export const TILE_UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
   card: 0x131820, cardSel: 0x1b2430, edge: 0x2a333f, sel: 0xefc14a, slotEdge: 0x323c49, track: 0x0e1218,
+  // #238: a distinct cool color for the "empty + locked out" cooldown state — separates it
+  // visually from the plain warm/red "empty but actively regenerating" look so the player
+  // isn't left wondering why the bar isn't creeping back up.
+  cooldown: '#5e7ce0', cooldownHex: 0x5e7ce0,
 };
 
 // A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`.
@@ -66,7 +70,7 @@ export function drawSkillTile(scene, parent, rect, opts) {
 export function updateSkillTile(refs, opts) {
   const { rect, bg, bind, icon, plus, subtitle, barTrack, bar } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
-    iconAlpha = 1, ammoFrac = null } = opts;
+    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0 } = opts;
 
   bg.setFillStyle(selected ? TILE_UI.cardSel : TILE_UI.card).setStrokeStyle(selected ? 2 : 1, selected ? TILE_UI.sel : TILE_UI.edge);
   bind.setText(mode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key).setColor(selected ? '#efc14a' : TILE_UI.accent);
@@ -75,7 +79,15 @@ export function updateSkillTile(refs, opts) {
     icon.setTexture(itemFxKey(itemId)).setDisplaySize(rect.w * 0.46, rect.w * 0.46).setAlpha(iconAlpha).setVisible(true);
     plus.setVisible(false);
     subtitle.setText(sub).setColor(subtitleColor);
-    if (ammoFrac != null) {
+    if (onCooldown) {
+      // #238: the bar fills back up left-to-right as the lockout counts down (1 - remaining
+      // fraction), in the distinct cooldown blue — reads as "recharging," clearly different
+      // from the red "dry and just sitting there" look an out-of-cooldown empty magazine
+      // would otherwise share.
+      barTrack.setVisible(true);
+      bar.setVisible(true).setScale(Math.max(0, Math.min(1, 1 - cooldownFrac)), 1)
+        .setFillStyle(TILE_UI.cooldownHex);
+    } else if (ammoFrac != null) {
       barTrack.setVisible(true);
       bar.setVisible(true).setScale(Math.max(0, Math.min(1, ammoFrac)), 1)
         .setFillStyle(ammoFrac > 0.33 ? TILE_UI.good : ammoFrac > 0 ? 0xefc14a : TILE_UI.bad);

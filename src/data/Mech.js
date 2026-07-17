@@ -10,6 +10,12 @@ import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import * as loadout from './loadout.js';
 
+// #238: how long (seconds) a weapon slot is locked out after its magazine is fully
+// drained — a per-slot "empty click" penalty distinct from the old always-on trickle
+// regen. Tunable in one place; 3s sits in the middle of the 2-4s range the design asked
+// for (long enough to read as a real cost, short enough not to feel like a full stall).
+export const AMMO_EMPTY_COOLDOWN = 3;
+
 export class Mech {
   constructor(data = {}) {
     this.chassisId = data.chassisId ?? 'medium';
@@ -58,10 +64,16 @@ export class Mech {
     return w && w.ammoMax != null ? w.ammoMax : null;
   }
 
-  // (Re)build the ammo arrays so each weapon starts with a full magazine.
+  // (Re)build the ammo arrays so each weapon starts with a full magazine. `cooldown` is a
+  // parallel array (same shape/indexing as `ammo[loc]`) holding remaining lockout seconds
+  // per slot — 0 means "not on cooldown, regen proceeds normally." Runtime-only, like ammo.
   _initAmmo() {
     this.ammo = {};
-    for (const loc of MOUNT_LOCATIONS) this.ammo[loc] = this.mounts[loc].map((id) => this._ammoCap(id));
+    this.cooldown = {};
+    for (const loc of MOUNT_LOCATIONS) {
+      this.ammo[loc] = this.mounts[loc].map((id) => this._ammoCap(id));
+      this.cooldown[loc] = this.mounts[loc].map(() => 0);
+    }
   }
 
   get chassis() { return this._chassis; }
@@ -147,12 +159,14 @@ export class Mech {
       if (prevLoc && prevLoc !== loc) this.unmount(prevLoc, this.mounts[prevLoc].indexOf(itemId));
       this.mounts[loc].push(itemId);
       this.ammo[loc].push(this._ammoCap(itemId));
+      this.cooldown[loc].push(0);
     }
     return res;
   }
 
   unmount(loc, index) {
     this.ammo[loc].splice(index, 1);
+    this.cooldown[loc].splice(index, 1);
     return this.mounts[loc].splice(index, 1)[0];
   }
 
@@ -174,9 +188,13 @@ export class Mech {
         if (isWeapon(id)) {
           const online = !this.isPartDestroyed(loc);
           const ammo = this.ammo[loc][index];
+          // #238: a slot on cooldown can't fire even if ammo somehow reads >0 (it won't,
+          // since cooldown only starts on a drain-to-0), so this is really "cooldown
+          // supersedes the ammo check" — kept explicit for clarity.
+          const cooldown = this.cooldown[loc][index] ?? 0;
           out.push({
-            location: loc, index, id, weapon: getWeapon(id), online, ammo,
-            ready: online && (ammo == null || ammo >= 1),
+            location: loc, index, id, weapon: getWeapon(id), online, ammo, cooldown,
+            ready: online && cooldown <= 0 && (ammo == null || ammo >= 1),
           });
         }
       });
@@ -193,15 +211,27 @@ export class Mech {
   // rounding/truncation; magazines can sit at fractional values and still compare/display fine.
   consumeAmmo(loc, index, n = 1) {
     if (this.ammo[loc]?.[index] != null) {
-      this.ammo[loc][index] = Math.max(0, this.ammo[loc][index] - n);
+      const before = this.ammo[loc][index];
+      const after = Math.max(0, before - n);
+      this.ammo[loc][index] = after;
+      // #238: draining a slot to exactly empty starts its cooldown lockout. Guarded by
+      // `before > 0` so repeatedly firing an already-dry weapon (e.g. a trigger held past
+      // empty) doesn't keep resetting the timer back to full each frame.
+      if (after === 0 && before > 0) this.cooldown[loc][index] = AMMO_EMPTY_COOLDOWN;
     }
   }
 
-  // Top every magazine back up over time at the weapon's regen rate.
+  // Top every magazine back up over time at the weapon's regen rate — UNLESS that slot is
+  // on cooldown (#238), in which case this just counts the cooldown timer down instead;
+  // ammo stays pinned at 0 until the timer expires, then normal regen resumes next tick.
   regenAmmo(dt) {
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, i) => {
         if (this.ammo[loc][i] == null) return;
+        if (this.cooldown[loc][i] > 0) {
+          this.cooldown[loc][i] = Math.max(0, this.cooldown[loc][i] - dt);
+          return;
+        }
         const w = getWeapon(id);
         this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt);
       });

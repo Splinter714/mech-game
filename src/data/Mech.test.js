@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Mech } from './Mech.js';
+import { Mech, AMMO_EMPTY_COOLDOWN } from './Mech.js';
 import { LOCATIONS } from './anatomy.js';
 
 // Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
@@ -164,12 +164,13 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
     expect(m.readyWeapons()).toHaveLength(0);
   });
 
-  it('regenAmmo refills over time but never past the magazine size', () => {
+  it('regenAmmo refills over time but never past the magazine size (partial drain, no cooldown)', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon'); // ammoMax 4, regen 0.5/s
-    m.consumeAmmo('leftArm', 0, 4);
+    m.consumeAmmo('leftArm', 0, 3); // down to 1 — a partial drain, not a full empty, so
+    // #238's empty-cooldown never engages here; regen should proceed immediately.
     m.regenAmmo(2); // +1.0
-    expect(m.weapons()[0].ammo).toBeCloseTo(1, 5);
+    expect(m.weapons()[0].ammo).toBeCloseTo(2, 5);
     m.regenAmmo(100); // would overshoot
     expect(m.weapons()[0].ammo).toBe(4);
   });
@@ -232,6 +233,91 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
     expect(m.weapons()[0].ammo).toBe(0);
     m.repairAll();
     expect(m.weapons()[0].ammo).toBe(12);
+  });
+});
+
+// #238: a fully-drained weapon slot enters a cooldown lockout (AMMO_EMPTY_COOLDOWN
+// seconds) — it can't fire and doesn't regen until the timer expires, scoped to only
+// that one slot.
+describe('Mech per-slot ammo-empty cooldown (#238)', () => {
+  it('draining a magazine to exactly 0 starts that slot\'s cooldown', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
+    m.consumeAmmo('leftArm', 0, 4);
+    expect(m.weapons()[0].ammo).toBe(0);
+    expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN, 5);
+    expect(m.weapons()[0].ready).toBe(false);
+  });
+
+  it('firing is blocked while a slot is on cooldown (ready stays false even if ammo were topped up)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, 4);
+    // Still well inside the cooldown window.
+    m.regenAmmo(AMMO_EMPTY_COOLDOWN / 2);
+    expect(m.weapons()[0].ready).toBe(false);
+    expect(m.readyWeapons()).toHaveLength(0);
+  });
+
+  it('regenAmmo does not tick ammo up during the cooldown window — it only counts the timer down', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // regen 0.5/s
+    m.consumeAmmo('leftArm', 0, 4);
+    m.regenAmmo(2); // would be +1.0 ammo if regen applied, but cooldown blocks it
+    expect(m.weapons()[0].ammo).toBe(0);
+    expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN - 2, 5);
+  });
+
+  it('once the cooldown expires, normal regen resumes exactly as before', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4, regen 0.5/s
+    m.consumeAmmo('leftArm', 0, 4);
+    // Tick past the cooldown window in one call (dt exceeds AMMO_EMPTY_COOLDOWN): the
+    // remaining time after the timer hits 0 should NOT also count toward regen in the same
+    // tick (each regenAmmo call spends its dt on cooldown OR regen, never splits mid-call) —
+    // so drain it in two ticks: first clears the cooldown, second regenerates.
+    m.regenAmmo(AMMO_EMPTY_COOLDOWN);
+    expect(m.weapons()[0].cooldown).toBe(0);
+    expect(m.weapons()[0].ammo).toBe(0); // cooldown just expired, no regen yet this tick
+    expect(m.weapons()[0].ready).toBe(false); // still empty, but no longer on cooldown
+    m.regenAmmo(2); // +1.0, normal regen now applies
+    expect(m.weapons()[0].ammo).toBeCloseTo(1, 5);
+    expect(m.weapons()[0].ready).toBe(true);
+  });
+
+  it('cooldown is scoped to only the affected slot — other mounted weapons keep firing/regenerating normally', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');  // ammoMax 4, regen 0.5/s
+    m.mount('rightArm', 'autocannon');   // ammoMax 12, unaffected
+    m.consumeAmmo('leftArm', 0, 4); // drains leftArm to 0, starts ITS cooldown only
+    m.consumeAmmo('rightArm', 0, 3); // rightArm just fires normally, no cooldown
+    m.regenAmmo(2);
+
+    const left = m.weapons().find((w) => w.location === 'leftArm');
+    const right = m.weapons().find((w) => w.location === 'rightArm');
+    expect(left.ammo).toBe(0); // still locked out, regen suppressed
+    expect(left.ready).toBe(false);
+    expect(right.ammo).toBeCloseTo(11, 5); // 12 - 3 spent + 2s * 1.0/s regen ticking normally
+    expect(right.ready).toBe(true);
+  });
+
+  it('repeatedly firing an already-dry weapon does not keep resetting the cooldown timer', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, 4); // drains to 0, cooldown starts at full
+    m.regenAmmo(1); // cooldown ticks down
+    m.consumeAmmo('leftArm', 0, 1); // still 0 ammo, a no-op drain — must not reset the timer
+    expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN - 1, 5);
+  });
+
+  it('repairAll clears an active cooldown along with topping ammo back up', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, 4);
+    expect(m.weapons()[0].cooldown).toBeGreaterThan(0);
+    m.repairAll();
+    expect(m.weapons()[0].cooldown).toBe(0);
+    expect(m.weapons()[0].ready).toBe(true);
   });
 });
 
