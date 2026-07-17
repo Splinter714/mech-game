@@ -28,6 +28,8 @@ const PAL = {
   building: { fill: 0x3c4148, edge: 0x2a2e34 },
   // Rubble: the ashen debris a flattened outpost leaves behind.
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
+  // #227: a destroyed forest hex — charred plant debris, distinct from a building's rubble.
+  vegRubble:{ fill: 0x241f16, edge: 0x1a1610 },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -37,6 +39,8 @@ const PAL = {
   scrub:     { fill: 0xb1904f, edge: 0x8f7440 },
   adobe:     { fill: 0xc79a5c, edge: 0x8a6636 },
   sandRubble:{ fill: 0x9c8355, edge: 0x7d6741 },
+  // #227: a destroyed scrub hex — scattered dead brush, distinct from adobe's rubble.
+  scrubRubble:{ fill: 0x6b5738, edge: 0x513f28 },
   // #110: quicksand — a lesser desert hazard (mesa is now boundary-only).
   quicksand: { fill: 0x8a723e, edge: 0x6b5830 },
 
@@ -48,6 +52,8 @@ const PAL = {
   drift:     { fill: 0xe4eef5, edge: 0xc3d3e0 },
   iceRuin:   { fill: 0xaebfcc, edge: 0x8497a6 },
   snowRubble:{ fill: 0xb6c4cf, edge: 0x96a6b3 },
+  // #227: a destroyed snowdrift hex — shattered ice/snow chunks, distinct from iceRuin's rubble.
+  driftRubble:{ fill: 0x7f93a3, edge: 0x647a8c },
   // #110: broken ice — a lesser arctic hazard (solid ice is now boundary-only).
   brokenIce: { fill: 0x7f9cb0, edge: 0x678698 },
 
@@ -59,6 +65,8 @@ const PAL = {
   wreck:     { fill: 0x4a4640, edge: 0x35322d },
   tower:     { fill: 0x565b63, edge: 0x393d43 },
   cityRubble:{ fill: 0x3f4249, edge: 0x2c2f34 },
+  // #227: a destroyed wreck hex — burnt debris scraps, distinct from a tower's masonry rubble.
+  wreckRubble:{ fill: 0x2c2924, edge: 0x201d19 },
   // #110: debris field — a lesser urban hazard (the collapsed heap is now boundary-only).
   debris:    { fill: 0x4a4640, edge: 0x35322d },
 
@@ -70,6 +78,9 @@ const PAL = {
   fumarole:  { fill: 0x35302b, edge: 0x211d19 },
   obsidian:  { fill: 0x2a2530, edge: 0x171420 },
   ashRubble: { fill: 0x322d28, edge: 0x211d19 },
+  // #227: a destroyed fumarole hex — loose ash/cinder scatter, distinct from an obsidian
+  // outpost's rubble.
+  fumaroleRubble:{ fill: 0x2a2117, edge: 0x1c160f },
   // #110: cinder field — a lesser volcanic hazard, distinct from boundary-only 'lava'.
   cinderField: { fill: 0x4a2a18, edge: 0x341c0f },
 };
@@ -244,6 +255,60 @@ function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
   }
 }
 
+// #227: a scatter of organic charred/dead debris (elongated ellipse "stalks" + a few faint
+// ember/highlight flecks) over a scorched base — the remains of a destroyed SOFT-cover hex
+// (forest/scrub/wreck). Deliberately distinct from `rubbleScatter`'s rectangular masonry
+// slabs, since soft cover (vegetation/wreckage) doesn't leave square debris.
+function organicDebrisScatter(sg, baseCol, bitCol, litCol, seed, count = 8) {
+  sg.fillStyle(baseCol, 0.78); sg.fillEllipse(C.cx, C.cy, 26, 19);
+  const rnd = seeded(seed);
+  for (let i = 0; i < count; i++) {
+    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 16;
+    const len = 4 + rnd() * 5, wid = 1.3 + rnd() * 1.4;
+    const ang = rnd() * Math.PI;
+    sg.fillStyle(bitCol, 0.9);
+    // A thin oriented "stalk" of debris, approximated with a rotated ellipse via two overlapped
+    // narrow ellipses (scaledGraphics has no ellipse-rotation arg).
+    sg.fillEllipse(C.cx + dx, C.cy + dy, len * Math.abs(Math.cos(ang)) + wid, len * Math.abs(Math.sin(ang)) + wid);
+  }
+  sg.fillStyle(litCol, 0.45);
+  for (let i = 0; i < 3; i++) {
+    const dx = (rnd() - 0.5) * 18, dy = (rnd() - 0.5) * 12;
+    sg.fillCircle(C.cx + dx, C.cy + dy, 0.9 + rnd() * 1.1);
+  }
+}
+
+// #227: shattered angular ice/snow shard scatter — jagged triangular shards over a cold base,
+// the destroyed-snowdrift analog. Distinct from both `rubbleScatter`'s rectangular slabs and
+// `organicDebrisScatter`'s soft ellipse bits.
+function iceShardScatter(sg, baseCol, shardCol, litCol, seed, count = 7) {
+  sg.fillStyle(baseCol, 0.75); sg.fillEllipse(C.cx, C.cy, 26, 19);
+  const rnd = seeded(seed);
+  for (let i = 0; i < count; i++) {
+    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 15;
+    const s = 3 + rnd() * 3;
+    sg.fillStyle(shardCol, 0.95);
+    sg.fillTriangle(C.cx + dx, C.cy + dy - s, C.cx + dx - s * 0.7, C.cy + dy + s * 0.6, C.cx + dx + s * 0.8, C.cy + dy + s * 0.5);
+    sg.fillStyle(litCol, 0.7);
+    sg.fillTriangle(C.cx + dx, C.cy + dy - s, C.cx + dx - s * 0.3, C.cy + dy - s * 0.1, C.cx + dx + s * 0.3, C.cy + dy - s * 0.1);
+  }
+}
+
+// #227: loose ash/cinder scatter — small soft mounds + a few glowing ember flecks over a dark
+// bed, the destroyed-fumarole analog. Distinct from `rubbleScatter`'s masonry slabs.
+function cinderScatter(sg, baseCol, moundCol, emberCol, seed) {
+  sg.fillStyle(baseCol, 0.75); sg.fillEllipse(C.cx, C.cy, 26, 19);
+  const rnd = seeded(seed);
+  for (let i = 0; i < 8; i++) {
+    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 15;
+    sg.fillStyle(moundCol, 0.8); sg.fillCircle(C.cx + dx, C.cy + dy, 2 + rnd() * 2);
+  }
+  for (let i = 0; i < 4; i++) {
+    const dx = (rnd() - 0.5) * 20, dy = (rnd() - 0.5) * 14;
+    sg.fillStyle(emberCol, 0.8); sg.fillCircle(C.cx + dx, C.cy + dy, 0.8 + rnd() * 0.6);
+  }
+}
+
 // Is (dx,dy) — offset from the hex centre — inside a pointy-top hexagon of circumradius s?
 function inHex(dx, dy, s) {
   const hw = s * SQRT3 / 2;
@@ -323,6 +388,9 @@ const DETAIL = {
     sg.fillStyle(0x191b1f, 0.6);   // a couple of dark gaps between the debris
     sg.fillRect(C.cx - 2, C.cy + 1, 3, 3); sg.fillRect(C.cx + 5, C.cy - 5, 2, 3);
   },
+  // #227: destroyed forest — charred plant debris (organic ellipse bits), NOT the building's
+  // masonry-slab look.
+  hex_vegRubble: (sg) => organicDebrisScatter(sg, 0x1a1610, 0x33301c, 0x50492c, 0x91),
   hex_forest: (sg) => {
     // Shadowy forest floor under the canopy, filling the whole hex.
     sg.fillStyle(0x14290f, 0.7);
@@ -374,6 +442,8 @@ const DETAIL = {
   },
   hex_adobe: (sg) => outpostRoof(sg, 0x8a6636, 0xc79a5c, 0xd8b070, true, 0x6a4a24),
   hex_sandRubble: (sg) => rubbleScatter(sg, 0x7d6741, 0x9c8355, 0xb89b64, 0x51),
+  // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT adobe's masonry look.
+  hex_scrubRubble: (sg) => organicDebrisScatter(sg, 0x513f28, 0x8f7548, 0xb2955e, 0x59),
   // #110: quicksand — a sunken, rippled pit distinct from the dry-riverbed channel.
   hex_quicksand: (sg) => {
     sg.fillStyle(0x6b5830, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 14);
@@ -410,6 +480,8 @@ const DETAIL = {
   },
   hex_iceRuin: (sg) => outpostRoof(sg, 0x8497a6, 0xaebfcc, 0xd2e0ea, true, 0x6f8698),
   hex_snowRubble: (sg) => rubbleScatter(sg, 0x96a6b3, 0xb6c4cf, 0xdae6ee, 0x63),
+  // #227: destroyed snowdrift — jagged broken ice/snow shards, NOT iceRuin's masonry-slab look.
+  hex_driftRubble: (sg) => iceShardScatter(sg, 0x647a8c, 0xaebfcc, 0xe4eef5, 0x6b),
   // #110: broken ice — thin cracked plates over cold water, lighter/weaker read than solid ice.
   hex_brokenIce: (sg) => {
     sg.fillStyle(0x638094, 0.55); sg.fillEllipse(C.cx, C.cy, 20, 10);
@@ -453,6 +525,9 @@ const DETAIL = {
   },
   hex_tower: (sg) => outpostRoof(sg, 0x393d43, 0x565b63, 0x676d76, true, 0xc8a23a),
   hex_cityRubble: (sg) => rubbleScatter(sg, 0x2c2f34, 0x484c53, 0x5c626b, 0x77),
+  // #227: destroyed wreck — burnt debris scraps + a faint ember fleck, NOT the tower's
+  // masonry-slab look.
+  hex_wreckRubble: (sg) => organicDebrisScatter(sg, 0x201d19, 0x4a423a, 0xd8632a, 0x84),
   // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed tower heap.
   hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, 0x82),
 
@@ -485,6 +560,9 @@ const DETAIL = {
   },
   hex_obsidian: (sg) => outpostRoof(sg, 0x171420, 0x2a2530, 0x3f3848, true, 0xff5a14),
   hex_ashRubble: (sg) => rubbleScatter(sg, 0x211d19, 0x3a352f, 0x55504a, 0x88),
+  // #227: destroyed fumarole — loose ash/cinder scatter with glowing embers, NOT obsidian's
+  // masonry-slab look.
+  hex_fumaroleRubble: (sg) => cinderScatter(sg, 0x1c160f, 0x453a2c, 0xff6a1e, 0x9c),
   // #110: cinder field — a hot ash/ember patch, milder read than a full molten-lava pool.
   hex_cinderField: (sg) => {
     sg.fillStyle(0x341c0f, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 13);

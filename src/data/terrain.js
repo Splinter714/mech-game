@@ -37,11 +37,15 @@ export const TERRAIN = {
   // Deep water (lake/ocean): impassable; still shoot over it (no LOS block).
   deepWater: { id: 'deepWater', tex: 'hex_deepWater', passable: false, blocksLOS: false, water: true },
   // Forest: walk-through cover — passable but slowing, and it hides you (blocks LOS).
-  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 40, rubbleId: 'rubble' },
+  // #227: its OWN rubble (charred plant debris) distinct from a destroyed building's masonry.
+  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 40, rubbleId: 'vegRubble' },
   // Outpost building: hard cover you can DESTROY (weapon fire or a stomp) → collapses to rubble.
   building:  { id: 'building',  tex: 'hex_building',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'rubble' },
-  // Rubble: what a destroyed building leaves behind — passable, no cover, mild slow (debris).
+  // Rubble: what a destroyed building leaves behind — broken masonry chunks, passable, no cover, mild slow.
   rubble:    { id: 'rubble',    tex: 'hex_rubble',    passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #227: what a destroyed forest hex leaves behind — charred plant debris, visually distinct
+  // from the building's broken-masonry rubble even though both are passable/no-cover.
+  vegRubble: { id: 'vegRubble', tex: 'hex_vegRubble', passable: true,  blocksLOS: false, speedFactor: 0.8 },
 
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1 },
@@ -53,10 +57,13 @@ export const TERRAIN = {
   // world-edge ring, and shooting over the boundary should behave like the other 3 biomes).
   mesa:      { id: 'mesa',      tex: 'hex_mesa',      passable: false, blocksLOS: false },
   // Scrub: sparse desert brush — walk-through cover (passable + slowing + blocks LOS), like forest.
-  scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: 0.7,  destructible: true, hp: 30, rubbleId: 'sandRubble' },
+  // #227: its own rubble (scattered dead scrub) distinct from adobe's rubble.
+  scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: 0.7,  destructible: true, hp: 30, rubbleId: 'scrubRubble' },
   // Adobe outpost: destructible hard cover, the desert building.
   adobe:     { id: 'adobe',     tex: 'hex_adobe',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'sandRubble' },
   sandRubble:{ id: 'sandRubble',tex: 'hex_sandRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #227: what a destroyed scrub hex leaves behind — scattered dead brush, distinct from adobe's rubble.
+  scrubRubble:{ id: 'scrubRubble', tex: 'hex_scrubRubble', passable: true, blocksLOS: false, speedFactor: 0.8 },
   // #110: quicksand — the desert's LESSER in-map hazard, standing in for 'mesa' now that mesa
   // is reserved exclusively for the world boundary. Passable but heavily slowing; no LOS block
   // (you sink, you don't hide).
@@ -70,10 +77,14 @@ export const TERRAIN = {
   // Ice: solid frozen lake — the impassable deep-water analog (you can shoot over it).
   ice:       { id: 'ice',       tex: 'hex_ice',       passable: false, blocksLOS: false, water: true },
   // Snowdrift / frozen pines: walk-through cover (passable + slowing + LOS block).
-  drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 30, rubbleId: 'snowRubble' },
+  // #227: its own rubble (broken ice/snow drift chunks) distinct from iceRuin's rubble.
+  drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: 0.6,  destructible: true, hp: 30, rubbleId: 'driftRubble' },
   // Frozen outpost: destructible hard cover.
   iceRuin:   { id: 'iceRuin',   tex: 'hex_iceRuin',   passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'snowRubble' },
   snowRubble:{ id: 'snowRubble',tex: 'hex_snowRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #227: what a destroyed snowdrift hex leaves behind — shattered ice/snow chunks, distinct
+  // from iceRuin's rubble.
+  driftRubble:{ id: 'driftRubble', tex: 'hex_driftRubble', passable: true, blocksLOS: false, speedFactor: 0.8 },
   // #110: broken ice — the arctic's LESSER in-map hazard, standing in for solid 'ice' now that
   // ice is reserved exclusively for the world boundary. Passable but slow (thin/cracked ice);
   // no LOS block. #151: still reads as water (cold water visible through the cracks).
@@ -88,10 +99,14 @@ export const TERRAIN = {
   // (#221: no LOS block, matching deepWater/ice/lava — it never appears in-map).
   collapsed: { id: 'collapsed', tex: 'hex_collapsed', passable: false, blocksLOS: false },
   // Wreckage: burned-out vehicles / low wall — walk-through cover (passable + slow + LOS).
-  wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 40, rubbleId: 'cityRubble' },
+  // #227: its own rubble (burnt debris scraps) distinct from a tower's masonry rubble.
+  wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 40, rubbleId: 'wreckRubble' },
   // Intact building: destructible hard cover (dense in this biome).
   tower:     { id: 'tower',     tex: 'hex_tower',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'cityRubble' },
   cityRubble:{ id: 'cityRubble',tex: 'hex_cityRubble',passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #227: what a destroyed wreck hex leaves behind — burnt debris scraps, distinct from a
+  // collapsed tower's masonry rubble.
+  wreckRubble:{ id: 'wreckRubble', tex: 'hex_wreckRubble', passable: true, blocksLOS: false, speedFactor: 0.8 },
   // #110: debris field — the urban biome's LESSER in-map hazard, standing in for 'collapsed'
   // now that a collapsed heap is reserved exclusively for the world boundary. Passable but
   // slow (a rubble-strewn street); no LOS block.
@@ -105,10 +120,14 @@ export const TERRAIN = {
   // Molten lava: impassable hazard (the deep-water analog); you can shoot over it.
   lava:      { id: 'lava',      tex: 'hex_lava',      passable: false, blocksLOS: false },
   // Ash dunes / smoke plumes: walk-through cover (passable + slow + LOS block).
-  fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 30, rubbleId: 'ashRubble' },
+  // #227: its own rubble (loose ash/cinder scatter) distinct from an obsidian outpost's rubble.
+  fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 30, rubbleId: 'fumaroleRubble' },
   // Obsidian outpost: destructible hard cover.
   obsidian:  { id: 'obsidian',  tex: 'hex_obsidian',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'ashRubble' },
   ashRubble: { id: 'ashRubble', tex: 'hex_ashRubble', passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #227: what a destroyed fumarole hex leaves behind — loose ash/cinder scatter, distinct
+  // from an obsidian outpost's broken-obsidian rubble.
+  fumaroleRubble:{ id: 'fumaroleRubble', tex: 'hex_fumaroleRubble', passable: true, blocksLOS: false, speedFactor: 0.8 },
   // #110: cinder field — the volcanic biome's LESSER in-map hazard. Lava itself reads fine as
   // BOTH an occasional in-map pool AND the boundary (Jackson: "lava could work for lava map"),
   // but per-biome consistency (every other biome's severe hazard is boundary-only) this gives
