@@ -38,9 +38,17 @@ export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', '
 // during the fight, data/enemyKinds.js) is added ONCE to LATE_POOL only, at a similarly rare
 // tier to turretNest/infantryMob/sniper/artillery — a rarer, tougher escalation unit, not a
 // common draw.
+// #234: bumped from 1 copy to 2. Jackson played and said "those enemies that spawn drones are so
+// cool but I barely ever see them" — this pool (drawn per-unit by squadForStage, weighted purely
+// by how many times an id appears) was the actual gameplay-facing reason: at 1-of-11, and only
+// reachable once lateFraction has ramped up enough stages in, it was rarer than intended for a
+// unit this fun to fight. Matching turretNest/swarm's weight (2 copies) gives it "real
+// regularity" across the back half of a run without making it as common as helicopter/tank.
+// (ENEMY_ROTATION, the OTHER list touched by #234, only feeds the debug add-enemy control — this
+// pool is what actually drives a normal run's squad composition.)
 export const LATE_POOL = [
   'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
-  'turretNest', 'turretNest', 'infantryMob', 'quadruped',
+  'turretNest', 'turretNest', 'infantryMob', 'quadruped', 'quadruped',
 ];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has

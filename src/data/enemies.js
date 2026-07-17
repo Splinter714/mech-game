@@ -81,9 +81,21 @@ export const ENEMIES = {
 // #97: 'infantryMob' is appended to the rotation so the debug spawn-more control cycles through
 // it too (expands into INFANTRY_MOB_SIZE troopers — data/enemyKinds.js — mirroring 'swarm'/
 // 'turretNest').
+// #234: 'quadruped' (the Broodwalker) was fully built — art/behavior/weapon/260hp, plus its own
+// periodic drone-drop mechanic — but was never added here or to DEFAULT_SQUAD, so it had no path
+// into a normal run except one rare slot in run.js's LATE_POOL (reachable only in late-stage
+// squad draws). That's why Jackson had seen it, but rarely, per his playtest note ("those enemies
+// that spawn drones are so cool but I barely ever see them"). Appended once here — same tier as
+// turretNest/artillery/swarm/infantryMob, not doubled up like tank/helicopter — so the debug
+// spawn-more control (keydown-N / dpad-up) cycles through it too. This list is consumed by index
+// (`ENEMY_ROTATION[this._enemySeq % ENEMY_ROTATION.length]`, scenes/arena/enemies.js), i.e. a
+// straight round-robin cycle, NOT a weighted random draw — every id gets exactly 1-in-N of the
+// cycle regardless of position, so "how often" is controlled purely by how many times an id is
+// repeated in the array (see tank/helicopter's double entries elsewhere in this file's spirit),
+// not by where it sits.
 export const ENEMY_ROTATION = [
   'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest', 'artillery', 'swarm',
-  'infantryMob',
+  'infantryMob', 'quadruped',
 ];
 
 // The default opening squad (#44 / #68 / #75 / #89): a mix of mechs and non-mech units so the
@@ -97,6 +109,12 @@ export const ENEMY_ROTATION = [
 // alongside the drone swarm/turret nest. Profiled with the rest of the opening squad concurrent
 // (see #97 report) before landing on INFANTRY_MOB_SIZE; dial the mob size back if a future
 // profile run shows this combination doesn't hold ~60fps.
+// #234: 'quadruped' (the Broodwalker) is deliberately NOT added here. Per its own comments
+// (data/enemyKinds.js), it's framed as "tougher than a tank but well under a full mech's pool" —
+// a rarer, tougher escalation unit, not an opener. It got its real fix in ENEMY_ROTATION above
+// (regular-but-not-common cadence across a run) and its existing rare LATE_POOL slot
+// (data/run.js); every opening squad seeing it would overexpose a unit meant to read as a
+// mid/late-run surprise.
 export const DEFAULT_SQUAD = [
   'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper', 'infantryMob',
 ];
