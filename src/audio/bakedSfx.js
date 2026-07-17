@@ -102,7 +102,9 @@ const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 // suffix sfxOverrides.js's live-override pool uses (index 0 = the plain key, unchanged) — so a
 // (weaponId, stage) pair passed through getBaked/hasBaked with a pseudo-stage suffix resolves
 // consistently whether it's actually a live-override pseudo-stage or a baked one.
-const MAX_VARIANTS = 4;
+// #209: raised from 4 to 10, matching sfxOverrides.js's MAX_VARIANTS (must stay in sync — see
+// its own header for why).
+const MAX_VARIANTS = 10;
 function normalizeEntries(entry) {
   if (Array.isArray(entry)) return entry;
   return entry ? [entry] : [];
