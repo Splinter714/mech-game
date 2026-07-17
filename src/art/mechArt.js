@@ -59,7 +59,10 @@ export const ARM_LOCATIONS = ['leftArm', 'rightArm'];
 export const SIDE_TORSO_LOCATIONS = ['leftTorso', 'rightTorso'];
 // Every location that gets its own pivoting texture (drawn in this back-to-front order).
 export const PIVOT_LOCATIONS = [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS];
-const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, rightTorso: 0.30 };
+// Exported (not just a local const) so shared.js's muzzle geometry (`partMuzzle`'s `pivotFrac`)
+// can share the SAME joint fraction the sprite itself pivots around (#233 follow-up) — if this
+// ever gets retuned for visual reasons, the muzzle math moves with it instead of drifting.
+export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, rightTorso: 0.30 };
 
 // Where a `${key}_<part>` sprite must sit and how it pivots, for a mech aimed along `angle`
 // at display `scale`. `ox/oy` is the joint as an origin fraction (so setOrigin makes the

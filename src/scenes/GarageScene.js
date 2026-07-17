@@ -31,8 +31,9 @@ import { Audio } from '../audio/index.js';
 // its sound-tuning sliders in the persistent right-side WeaponSfxPanel (#121) — the two aren't
 // mutually exclusive, one click does both. A small strip above the catalog picks one of the
 // #107 destruction-explosion size categories instead of a weapon, feeding the SAME panel. A
-// small live mech preview + the chassis switch sit bottom-right. "Deploy" (greyed until every
-// slot is filled) enters the arena.
+// small live mech preview + a chassis label sit bottom-right (#248: the chassis switch is
+// disabled for now — light/heavy are off, every mech is locked to medium). "Deploy" (greyed
+// until every slot is filled) enters the arena.
 const UI = {
   text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', dim: '#7c8794',
   panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744, sel: 0xefc14a,
@@ -199,7 +200,8 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
-    this.input.keyboard.on('keydown-C', () => this.cycleChassis());
+    // #248: the keyboard 'C' cycle-chassis shortcut is disabled along with the rest of the
+    // chassis switcher (see cycleChassis + _buildPreview below) — light/heavy are off for now.
     this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));
     this.events.once('shutdown', () => {
       this.list.destroy();
@@ -262,9 +264,10 @@ export default class GarageScene extends Phaser.Scene {
   // Per-frame: tick the live catalog previews, then handle the gamepad (#70, catalog-first).
   // D-pad/left-stick up-down browse the full catalog with auto-scroll. A slot's own fire bind
   // (RT/LT/RB/LB) ASSIGNS the highlighted item into that slot, or CLEARS it if the slot
-  // already holds exactly that item; a locked item routes to purchase instead. X/Y cycle
-  // chassis, Start deploys, Select cycles tabs (attachPadTabCycle). The first pad press of a
-  // session just wakes the cursor (reveals it at the top of the catalog).
+  // already holds exactly that item; a locked item routes to purchase instead. Start deploys,
+  // Select cycles tabs (attachPadTabCycle). (#248: the X/Y chassis-cycle shortcut is disabled
+  // for now — see cycleChassis.) The first pad press of a session just wakes the cursor
+  // (reveals it at the top of the catalog).
   update(time, delta) {
     this.list.update(time, delta);
 
@@ -273,8 +276,7 @@ export default class GarageScene extends Phaser.Scene {
     if (!pad) return;
 
     if (e.pressed(PAD.START)) { this.deploy(); return; }
-    if (e.pressed(PAD.Y)) { this._setInputMode('pad'); this.cycleChassis(+1); return; }
-    if (e.pressed(PAD.X)) { this._setInputMode('pad'); this.cycleChassis(-1); return; }
+    // #248: X/Y chassis-cycle pad shortcut disabled along with the rest of the switcher.
 
     for (const loc of TILE_ORDER) {
       if (e.pressed(SLOT_BUTTON[loc])) {
@@ -350,6 +352,10 @@ export default class GarageScene extends Phaser.Scene {
 
   // Swap to the next chassis, carrying the loadout over (all chassis share the same four
   // weapon skill slots, so mounts stay valid).
+  // #248: unreachable from the UI for now — the keyboard/pad shortcuts and the chassis-switch
+  // button are all disabled (light/heavy chassis are off; every mech is locked to medium via
+  // rosters.js's `migrate` hook). Left in place, untouched, so re-wiring a control back to it
+  // is the entire job of re-enabling the switcher later.
   cycleChassis(dir = 1) {
     const i = CHASSIS_IDS.indexOf(this.mech.chassisId);
     const n = CHASSIS_IDS.length;
@@ -606,8 +612,12 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // A small live, top-down render of the actual mech (hull + turret), in the bottom strip's
-  // right slice with the chassis-switch button beneath it. The sprites reference fixed texture
-  // keys; onChange re-skins those textures in place.
+  // right slice with a chassis label beneath it. The sprites reference fixed texture keys;
+  // onChange re-skins those textures in place.
+  // #248: light/heavy chassis are disabled for now, so the clickable chassis-switch button is
+  // replaced with a plain, non-interactive label (no rect, no hover, no onClick) — just enough
+  // to still show which chassis is mounted. Swap this back to a `this.button(...)` call (see
+  // cycleChassis) to re-enable switching.
   _buildPreview() {
     const box = this.bottomH - 56;                              // square preview size
     const cx = this.W - this.previewW / 2 - 20;                 // centred in the right slice
@@ -625,8 +635,9 @@ export default class GarageScene extends Phaser.Scene {
     this.previewArmR = this.add.sprite(cx, cy + 8, 'garageMech_rightArm').setScale(scale);
     this.previewTurret = this.add.sprite(cx, cy + 8, 'garageMech_turret').setScale(scale);
     this._positionPreviewParts();
-    this._chassisBtn = this.button(cx - 80, this.H - 34, 160, 26,
-      `⟳ ${this.mech.chassis.name}`, () => this.cycleChassis(), UI.accent);
+    this.add.text(cx, this.H - 34 + 13, this.mech.chassis.name.toUpperCase(), {
+      fontFamily: 'monospace', fontSize: '13px', color: UI.dim,
+    }).setOrigin(0.5);
   }
 
   // Place + pivot the static preview side-torso + arm sprites at their joints (tilt 0). The
@@ -662,7 +673,8 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   _legendText() {
-    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   X/Y CHASSIS   SELECT TABS   START DEPLOY';
+    // #248: 'X/Y CHASSIS' dropped — the chassis switcher is disabled for now.
+    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   SELECT TABS   START DEPLOY';
   }
 
   _drawTile(rect) {

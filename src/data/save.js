@@ -7,7 +7,7 @@ import { ROSTERS } from './rosters.js';
 import { RUN_CURRENCY_KEY } from './events.js';
 import { STARTING_UNLOCKED } from './shop.js';
 
-export function makeRoster({ storageKey, Model, defaultRoster }) {
+export function makeRoster({ storageKey, Model, defaultRoster, migrate }) {
   function readSaved() {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -34,9 +34,13 @@ export function makeRoster({ storageKey, Model, defaultRoster }) {
     // Merge defaults UNDER saved data so an older save inherits any newly added field
     // while saved values still win.
     for (const key of Object.keys(roster)) {
-      all[key] = new Model({ ...roster[key], ...saved[key] });
+      let merged = { ...roster[key], ...saved[key] };
+      // Optional per-roster migration applied AFTER the merge, so it can override even an
+      // explicit saved value (e.g. #248's chassis lock forcing an old save's chassisId).
+      if (migrate) merged = migrate(merged);
+      all[key] = new Model(merged);
     }
-    save(all); // seed immediately so a first run writes the defaults
+    save(all); // seed immediately so a first run writes the defaults (or a migration change)
     return all;
   }
 
