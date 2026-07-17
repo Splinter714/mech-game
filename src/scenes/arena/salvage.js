@@ -10,7 +10,13 @@ import { Audio } from '../../audio/index.js';
 import { DEPTH } from './shared.js';
 
 const SALVAGE_COLOR = 0xf5c542;   // gold/amber — reads distinct from the powerup palette
-const PICKUP_RADIUS = 26;
+export const PICKUP_RADIUS = 26;
+// #226: a small magnetic pull — once the player gets this close, an uncollected drop drifts
+// toward them each frame instead of sitting still until touched. Deliberately modest ("a small
+// magnetic pick-up radius", not a vacuum): a bit more than 2x PICKUP_RADIUS, tuned by feel.
+export const MAGNET_RADIUS = 80;
+export const MAGNET_MIN_SPEED = 0.15;   // px/ms at the outer edge of the magnet radius
+export const MAGNET_MAX_SPEED = 0.5;    // px/ms right on top of the player — the drift accelerates in
 const PICKUP_TTL = 15000;
 const BOB_PERIOD = 1300;
 // #88: same small scatter radius as powerups.js (arena/powerups.js DROP_SCATTER_RADIUS) so a
@@ -59,8 +65,24 @@ export const SalvageMixin = {
       const s = this.salvage[i];
       s.age += delta;
       s.ttl -= delta;
+
+      // #226: magnetic drift — inside MAGNET_RADIUS (but before actual pickup range) the drop's
+      // world position (s.x/s.y) creeps toward the player each frame, accelerating as it closes
+      // in. This only moves the underlying position; the bob/spin below is layered on top of it
+      // each frame, so the two never fight — the drop bobs while it drifts, same as while still.
+      const dx = this.px - s.x, dy = this.py - s.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0 && dist <= MAGNET_RADIUS) {
+        const closeness = 1 - dist / MAGNET_RADIUS;   // 0 at the outer edge, →1 near the player
+        const speed = MAGNET_MIN_SPEED + (MAGNET_MAX_SPEED - MAGNET_MIN_SPEED) * closeness;
+        const step = Math.min(dist, speed * delta);
+        s.x += (dx / dist) * step;
+        s.y += (dy / dist) * step;
+      }
+
       const t = s.age / BOB_PERIOD;
       const v = s.view;
+      v.x = s.x;
       v.y = s.y + Math.sin(t * Math.PI * 2) * 3;
       v._gem.rotation += delta * 0.002;
       v._ring.rotation -= delta * 0.0015;
