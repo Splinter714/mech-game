@@ -3,7 +3,7 @@ import {
   storeOverride, getOverride, hasOverride, getOverrideMeta, clearOverride, loadAllOverrides,
   setAudioContext, _resetForTest, getTrimMs, setTrim, getStartMs, setStart,
   getProcessing, setProcessing, getFadeOutMs, setFadeOut, getVolume, setVolume,
-  getLoopStartMs, setLoopStartMs,
+  getLoopStartMs, setLoopStartMs, getRetriggerMs, setRetriggerMs,
   MAX_VARIANTS, variantStage, getOverrideVariantCount, pickOverrideStage, removeOverrideVariant,
   syncTuningToVariants, getSharedTuningSnapshot, applySharedTuningSnapshot,
 } from './sfxOverrides.js';
@@ -943,6 +943,77 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       setAudioContext(fakeCtx());
       await loadAllOverrides();
       expect(getLoopStartMs('beamLaser', 'fire')).toBe(300);
+    });
+  });
+
+  // Retrigger interval (#267 follow-up): opt-in alternative to the single continuous native loop
+  // — see sfx.js's startOverrideRetrigger for the playback-time mechanism this field drives.
+  // Storage-layer contract only; mirrors the loop-start describe block above.
+  describe('retrigger interval (#267 follow-up)', () => {
+    it('defaults to null (no retrigger — single continuous loop)', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      expect(getRetriggerMs('flamethrower', 'fire')).toBeNull();
+    });
+
+    it('setRetriggerMs sets a value visible immediately via getRetriggerMs', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 120);
+      expect(getRetriggerMs('flamethrower', 'fire')).toBe(120);
+    });
+
+    it('setRetriggerMs(null) clears back to "no retrigger"', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 120);
+      await setRetriggerMs('flamethrower', 'fire', null);
+      expect(getRetriggerMs('flamethrower', 'fire')).toBeNull();
+    });
+
+    it('setRetriggerMs(0) also clears back to "no retrigger" (0 is not a valid interval)', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 120);
+      await setRetriggerMs('flamethrower', 'fire', 0);
+      expect(getRetriggerMs('flamethrower', 'fire')).toBeNull();
+    });
+
+    it('clearOverride also clears the retrigger interval, so a fresh file never inherits a stale one', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 120);
+      await clearOverride('flamethrower', 'fire');
+      expect(getRetriggerMs('flamethrower', 'fire')).toBeNull();
+    });
+
+    it('storing a fresh file over an existing override clears any previously-tuned retrigger interval', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 120);
+      await storeOverride('flamethrower', 'fire', fakeFile('roar2.wav', 'ROAR2'));
+      expect(getRetriggerMs('flamethrower', 'fire')).toBeNull();
+    });
+
+    it('persists across a reload', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 90);
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+      expect(getRetriggerMs('flamethrower', 'fire')).toBe(90);
+    });
+
+    it('getSharedTuningSnapshot/applySharedTuningSnapshot round-trip the retrigger interval', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await setRetriggerMs('flamethrower', 'fire', 75);
+      const snap = getSharedTuningSnapshot('flamethrower', 'fire');
+      expect(snap.retriggerMs).toBe(75);
+      await storeOverride('flamethrower', variantStage('fire', 1), fakeFile('roar-v2.wav', 'ROAR2'));
+      await applySharedTuningSnapshot('flamethrower', variantStage('fire', 1), snap);
+      expect(getRetriggerMs('flamethrower', variantStage('fire', 1))).toBe(75);
+    });
+
+    it('syncTuningToVariants propagates the retrigger interval onto every other loaded variant', async () => {
+      await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+      await storeOverride('flamethrower', variantStage('fire', 1), fakeFile('roar-v2.wav', 'ROAR2'));
+      await setRetriggerMs('flamethrower', 'fire', 60);
+      await syncTuningToVariants('flamethrower', 'fire');
+      expect(getRetriggerMs('flamethrower', variantStage('fire', 1))).toBe(60);
     });
   });
 });

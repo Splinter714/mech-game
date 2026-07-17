@@ -9,7 +9,7 @@ import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
 import {
   getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume, getLoopStartMs,
-  pickOverrideStage,
+  getRetriggerMs, pickOverrideStage,
 } from './sfxOverrides.js';
 import { pickBakedVariant } from './bakedSfx.js';
 import { distanceGain, stereoPan } from '../data/positionalAudio.js';
@@ -214,6 +214,7 @@ function resolveBufferSource(weaponId, stage) {
         fadeOutMs: getFadeOutMs(weaponId, pickedStage),
         volume: getVolume(weaponId, pickedStage),
         loopStartMs: getLoopStartMs(weaponId, pickedStage),
+        retriggerMs: getRetriggerMs(weaponId, pickedStage),
       };
     }
   }
@@ -222,7 +223,7 @@ function resolveBufferSource(weaponId, stage) {
     return {
       buffer: baked.buffer, startMs: baked.startMs, trimMs: baked.trimMs,
       proc: baked.processing, fadeOutMs: baked.fadeOutMs, volume: baked.volume,
-      loopStartMs: baked.loopStartMs,
+      loopStartMs: baked.loopStartMs, retriggerMs: baked.retriggerMs,
     };
   }
   return null;
@@ -271,9 +272,44 @@ const LOOP_RELEASE_DEFAULT_MS = 80;
 // of a segment via manual re-triggering/crossfading, an artifact-prone scheme this function no
 // longer uses. A native loop of a properly-authored region (even the whole trimmed clip) has no
 // re-trigger boundary to click against.
+// #267 follow-up: opt-in OVERLAPPING RETRIGGER mode, keyed by `retriggerMs` on the resolved
+// override/bake recipe (sfxOverrides.js's getRetriggerMs / bakedSfx.js's per-entry field). #267's
+// single continuous native loop above reads as one seamless sustained tone — right for a beam
+// weapon, but playtest feedback specifically on the flamethrower (a rapid-fire spray, not a
+// sustained beam) was that the fire sound should retrigger MORE OFTEN while held, with each new
+// play OVERLAPPING the previous instance (layered), instead of one tone that just wraps at a loop
+// point. Rather than build a second competing lifecycle, this reuses the exact same playBuffer
+// chain every one-shot cue already uses — each retrigger is its own independent instance with its
+// own attack/gain/processing/fade, deliberately never stopped early (an instance still ringing
+// when the next one fires is exactly the "overlapping/layered" effect being asked for). Returns a
+// stop() closure like every other held-cue starter; on release it only stops SCHEDULING new
+// instances — whatever's already playing rings out on its own envelope (trim/fadeOutMs), since
+// with retriggering there's no single sustained tone that needs an explicit release fade.
+function startOverrideRetrigger(e, bus, resolved, retriggerMs) {
+  const { buffer, startMs, trimMs, proc, fadeOutMs, volume } = resolved;
+  if (!buffer || !e.ctx) return null;
+  let stopped = false;
+  const spawn = () => {
+    if (stopped || !e.ctx) return;
+    playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume);
+  };
+  spawn(); // the first instance plays immediately on trigger-down, same moment the single-loop path starts
+  const timer = setInterval(spawn, retriggerMs);
+  return function stop() {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
 function startOverrideLoop(e, bus, resolved, layers) {
-  const { buffer, startMs, trimMs, proc, fadeOutMs, volume, loopStartMs } = resolved;
+  const { buffer, startMs, trimMs, proc, fadeOutMs, volume, loopStartMs, retriggerMs } = resolved;
   if (!buffer || !e.ctx) return layers && layers.length ? startLoopLayers(e, bus, layers) : null;
+  // #267 follow-up: retriggerMs opts a weapon/bake OUT of the single continuous loop below and
+  // INTO the overlapping-retrigger mode instead. Unset/absent (every override/bake before this
+  // field existed, and every weapon that hasn't opted in) falls straight through to the exact
+  // #267 single-loop behavior beneath this check — a strict no-op for the common case.
+  if (retriggerMs > 0) return startOverrideRetrigger(e, bus, resolved, retriggerMs);
   const ctx = e.ctx;
   const offsetSec = (startMs ?? 0) / 1000;
   // Loop start: the authored loopStartMs (getLoopStartMs already falls back to startMs when

@@ -3,7 +3,7 @@ import { AudioEngine } from './AudioEngine.js';
 import { getWeapon, WEAPON_IDS } from '../data/weapons.js';
 import {
   storeOverride, clearOverride, setAudioContext, setTrim, setStart, setProcessing, setFadeOut, setVolume,
-  setLoopStartMs, _resetForTest, variantStage, removeOverrideVariant,
+  setLoopStartMs, setRetriggerMs, _resetForTest, variantStage, removeOverrideVariant,
 } from './sfxOverrides.js';
 import {
   BAKED_SFX, _resetForTest as _resetBakedForTest, _setBakedBufferForTest,
@@ -1048,6 +1048,83 @@ describe('AudioEngine (mock context)', () => {
       const before = ctx._counts();
       eng.startHeld('leftArm', 'autocannon');
       expect(ctx._counts()).toEqual(before);   // no voice/source scheduled at all
+    });
+
+    // #267 follow-up: opt-in OVERLAPPING RETRIGGER mode (`retriggerMs`) — playtest feedback
+    // specifically on the flamethrower asked for the fire sound to retrigger MORE OFTEN while
+    // held, each new play overlapping the previous one, instead of the single continuous native
+    // loop #267 shipped. `retriggerMs` unset/absent (every override/bake before this field
+    // existed, and every weapon that hasn't opted in) must keep the exact #267 single-loop
+    // behavior — that's covered by every test above, none of which set a retrigger interval.
+    describe('overlapping retrigger (#267 follow-up, opt-in via retriggerMs)', () => {
+      beforeEach(() => { vi.useFakeTimers(); });
+      afterEach(() => { vi.useRealTimers(); });
+
+      it('regression guard: with retriggerMs absent, startHeld still takes the single continuous native loop path', async () => {
+        await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+        await setTrim('flamethrower', 'fire', 500);
+        eng.startHeld('leftArm', 'flamethrower');
+        const src = ctx._lastBufferSource();
+        expect(src.loop).toBe(true);          // native loop, not a one-shot retrigger instance
+        expect(ctx._counts().sources).toBe(1); // exactly one buffer source scheduled
+        eng.stopHeld('leftArm');
+      });
+
+      it('a set retriggerMs spawns a NEW overlapping instance every interval instead of one continuous loop', async () => {
+        await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+        await setTrim('flamethrower', 'fire', 80);
+        await setRetriggerMs('flamethrower', 'fire', 100);
+        eng.startHeld('leftArm', 'flamethrower');
+        // The first instance plays immediately on trigger-down.
+        expect(ctx._counts().sources).toBe(1);
+        expect(ctx._lastBufferSource().loop).toBe(false); // a one-shot instance, not a native loop
+        vi.advanceTimersByTime(100);
+        expect(ctx._counts().sources).toBe(2);
+        vi.advanceTimersByTime(100);
+        expect(ctx._counts().sources).toBe(3);
+        // Every instance is independently scheduled — none of the earlier ones were stopped to
+        // make room for a new one (the "overlapping/layered" effect being asked for).
+        for (const src of ctx._bufferSources().slice(-3)) expect(src._stopArgs).toBeNull();
+        eng.stopHeld('leftArm');
+      });
+
+      it('release stops scheduling NEW instances but does not cut off ones already playing', async () => {
+        await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+        await setTrim('flamethrower', 'fire', 80);
+        await setRetriggerMs('flamethrower', 'fire', 50);
+        eng.startHeld('leftArm', 'flamethrower');
+        vi.advanceTimersByTime(150); // a few more instances scheduled
+        const countAtRelease = ctx._counts().sources;
+        expect(countAtRelease).toBeGreaterThan(1);
+        eng.stopHeld('leftArm');
+        // Nothing already playing was force-stopped by release.
+        for (const src of ctx._bufferSources()) expect(src._stopArgs).toBeNull();
+        // No further instances get scheduled once released, however long real/fake time advances.
+        vi.advanceTimersByTime(500);
+        expect(ctx._counts().sources).toBe(countAtRelease);
+      });
+
+      it('calling stopHeld twice after a retrigger is still a safe no-op', async () => {
+        await storeOverride('flamethrower', 'fire', fakeFile('roar.wav', 'ROAR'));
+        await setRetriggerMs('flamethrower', 'fire', 50);
+        eng.startHeld('leftArm', 'flamethrower');
+        expect(() => eng.stopHeld('leftArm')).not.toThrow();
+        expect(() => eng.stopHeld('leftArm')).not.toThrow();
+      });
+
+      it('a baked entry\'s own retriggerMs is honored the same way a live override\'s is', () => {
+        BAKED_SFX['flamethrower::fire'] = { startMs: 0, trimMs: 80, processing: null, retriggerMs: 40 };
+        try {
+          _setBakedBufferForTest('flamethrower', 'fire', { __baked: 'bakedRoar' });
+          eng.startHeld('leftArm', 'flamethrower');
+          expect(ctx._counts().sources).toBe(1);
+          vi.advanceTimersByTime(40);
+          expect(ctx._counts().sources).toBe(2);
+          eng.stopHeld('leftArm');
+        } finally {
+          delete BAKED_SFX['flamethrower::fire'];
+        }
+      });
     });
   });
 

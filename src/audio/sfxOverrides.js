@@ -79,6 +79,18 @@
 // loops the entire trimmed window (a reasonable default for the many overrides authored before
 // this field was resurrected). Read via getLoopStartMs() (falls back to getStartMs() when unset);
 // written (null clears back to "= startMs") via setLoopStartMs().
+//
+// Retrigger interval (#267 follow-up): a non-destructive OPT-IN alternative to the single
+// continuous native loop above, `retriggerMs`. Playtest feedback on the shipped #267 single-loop
+// model: for a rapid-fire spray weapon (flamethrower) Jackson wants the fire sound to retrigger
+// OFTEN while held, each new play OVERLAPPING the previous instance (layered), rather than one
+// continuous tone that just wraps seamlessly at a loop point — a sustained beam (beamLaser) still
+// wants the single continuous loop. When set, sfx.js's startHeld spawns a brand-new one-shot
+// instance of the clip every `retriggerMs`, allowed to overlap with still-ringing earlier
+// instances (see sfx.js's startOverrideRetrigger for the playback-time mechanism). Unset/null
+// (every override before this field existed) means "keep the single continuous native loop" — a
+// strict no-op, so this is opt-in per weapon/stage. Read via getRetriggerMs(); written (null
+// clears back to "single continuous loop") via setRetriggerMs().
 
 // #195: RANDOMIZED VARIANTS — a stage can hold up to MAX_VARIANTS parallel override slots
 // instead of just one (e.g. 3 different explosion bangs for the same weapon+stage), so a
@@ -139,7 +151,7 @@ export function pickOverrideStage(weaponId, stage) {
 function _moveSlotInMemory(weaponId, fromStage, toStage) {
   const fromKey = keyFor(weaponId, fromStage);
   const toKey = keyFor(weaponId, toStage);
-  for (const m of [_cache, _meta, _blobs, _trim, _start, _proc, _fadeOut, _volume, _loopStart]) {
+  for (const m of [_cache, _meta, _blobs, _trim, _start, _proc, _fadeOut, _volume, _loopStart, _retrigger]) {
     if (m.has(fromKey)) m.set(toKey, m.get(fromKey)); else m.delete(toKey);
     m.delete(fromKey);
   }
@@ -254,6 +266,12 @@ const _volume = new Map();
 // loop start," so getLoopStartMs() falls back to getStartMs() — same synchronous no-await
 // in-memory lifecycle as the rest of these maps, reset whenever a fresh file is loaded.
 const _loopStart = new Map();
+// #267 follow-up: non-destructive RETRIGGER interval (milliseconds) — the held-loop path's opt-in
+// "spawn a new overlapping instance every N ms" alternative to the single continuous native loop.
+// undefined/absent (never stored in this map) means "no retrigger — single continuous loop," same
+// synchronous no-await in-memory lifecycle as the rest of these maps, reset whenever a fresh file
+// is loaded into the slot.
+const _retrigger = new Map();
 // The raw Blob for each active override, cached purely so setTrim()/setStart() can persist a
 // full IDB record (key/weaponId/stage/blob/name/type/startMs/trimMs) without a
 // read-before-write round trip.
@@ -366,6 +384,9 @@ export async function storeOverride(weaponId, stage, fileBlob) {
     // #185: same reasoning for loop start — a loop region tuned against a previous file's length
     // must never carry over silently onto a fresh one.
     _loopStart.delete(key);
+    // #267 follow-up: same reasoning for the retrigger interval — a cadence tuned against a
+    // previous file must never carry over silently onto a fresh one.
+    _retrigger.delete(key);
   }
   return buffer;
 }
@@ -432,6 +453,13 @@ export function getLoopStartMs(weaponId, stage) {
   return v != null ? v : getStartMs(weaponId, stage);
 }
 
+// #267 follow-up: synchronous lookup for the active retrigger interval (milliseconds), used at
+// the sfx.js playback choke point. null means "no retrigger — single continuous loop," same
+// convention/lifecycle as getLoopStartMs.
+export function getRetriggerMs(weaponId, stage) {
+  return _retrigger.get(keyFor(weaponId, stage)) ?? null;
+}
+
 // Shared persistence for setTrim/setStart/setProcessing: writes a full IDB record combining
 // whatever's currently in the in-memory maps for this key, so any one setter alone keeps the
 // other fields intact.
@@ -449,12 +477,14 @@ async function _persistParams(weaponId, stage) {
   const fadeOutMs = _fadeOut.get(key);
   const volume = _volume.get(key);
   const loopStartMs = _loopStart.get(key);
+  const retriggerMs = _retrigger.get(key);
   if (trimMs != null) record.trimMs = trimMs;
   if (startMs != null) record.startMs = startMs;
   if (processing != null) record.processing = processing;
   if (fadeOutMs != null) record.fadeOutMs = fadeOutMs;
   if (volume != null) record.volume = volume;
   if (loopStartMs != null) record.loopStartMs = loopStartMs;
+  if (retriggerMs != null) record.retriggerMs = retriggerMs;
   try { await idbPut(db, record); } catch { /* storage full/blocked — in-memory value still applies this session */ }
 }
 
@@ -514,6 +544,16 @@ export async function setLoopStartMs(weaponId, stage, loopStartMs) {
   await _persistParams(weaponId, stage);
 }
 
+// #267 follow-up: set (or clear, with null/undefined/0) the non-destructive retrigger interval
+// for an active override's held-loop path. Purely a playback-time parameter — never touches the
+// decoded buffer or the stored bytes. Same persistence/lifecycle contract as setLoopStartMs (null
+// or a non-positive value restores "single continuous loop," today's default behavior).
+export async function setRetriggerMs(weaponId, stage, retriggerMs) {
+  const key = keyFor(weaponId, stage);
+  if (retriggerMs == null || retriggerMs <= 0) _retrigger.delete(key); else _retrigger.set(key, retriggerMs);
+  await _persistParams(weaponId, stage);
+}
+
 // #172: merge-patch the non-destructive processing chain (pitch/filter/reverb) for an active
 // override. `patch` is a partial of the processing object (see the module header) — each field
 // set to a real value updates it, each field set to null/undefined CLEARS it. Once every field
@@ -546,6 +586,7 @@ export async function clearOverride(weaponId, stage) {
   _fadeOut.delete(key); // #174: fade-out is meaningless without an override to apply to
   _volume.delete(key); // #182: volume is meaningless without an override to apply to
   _loopStart.delete(key); // #185: loop start is meaningless without an override to apply to
+  _retrigger.delete(key); // #267 follow-up: retrigger interval is meaningless without an override
   const db = await openDB();
   if (!db) return;
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
@@ -571,6 +612,7 @@ export async function syncTuningToVariants(weaponId, stage) {
   const fadeOutMs = getFadeOutMs(weaponId, stage);
   const volume = getVolume(weaponId, stage);
   const loopStartMs = getLoopStartMs(weaponId, stage);
+  const retriggerMs = getRetriggerMs(weaponId, stage);
   const processing = getProcessing(weaponId, stage) || {};
 
   for (let i = 1; i < n; i++) {
@@ -580,6 +622,7 @@ export async function syncTuningToVariants(weaponId, stage) {
     await setFadeOut(weaponId, targetStage, fadeOutMs);
     await setVolume(weaponId, targetStage, volume);
     await setLoopStartMs(weaponId, targetStage, loopStartMs);
+    await setRetriggerMs(weaponId, targetStage, retriggerMs);
     const targetProcessing = getProcessing(weaponId, targetStage) || {};
     const patch = {};
     for (const key of Object.keys(targetProcessing)) {
@@ -606,6 +649,7 @@ export function getSharedTuningSnapshot(weaponId, stage) {
     fadeOutMs: getFadeOutMs(weaponId, stage),
     volume: getVolume(weaponId, stage),
     loopStartMs: getLoopStartMs(weaponId, stage),
+    retriggerMs: getRetriggerMs(weaponId, stage),
     processing: getProcessing(weaponId, stage),
   };
 }
@@ -615,12 +659,13 @@ export function getSharedTuningSnapshot(weaponId, stage) {
 // null (nothing to reapply).
 export async function applySharedTuningSnapshot(weaponId, stage, snapshot) {
   if (!snapshot) return;
-  const { startMs, trimMs, fadeOutMs, volume, loopStartMs, processing } = snapshot;
+  const { startMs, trimMs, fadeOutMs, volume, loopStartMs, retriggerMs, processing } = snapshot;
   await setStart(weaponId, stage, startMs);
   await setTrim(weaponId, stage, trimMs);
   await setFadeOut(weaponId, stage, fadeOutMs);
   await setVolume(weaponId, stage, volume);
   await setLoopStartMs(weaponId, stage, loopStartMs);
+  await setRetriggerMs(weaponId, stage, retriggerMs);
   if (processing) await setProcessing(weaponId, stage, processing);
 }
 
@@ -652,6 +697,7 @@ export async function seedOverrideFromBaked(weaponId, stage) {
   if (baked.loopStartMs != null && baked.loopStartMs !== baked.startMs) {
     await setLoopStartMs(weaponId, stage, baked.loopStartMs);
   }
+  if (baked.retriggerMs != null) await setRetriggerMs(weaponId, stage, baked.retriggerMs);
   return true;
 }
 
@@ -687,6 +733,10 @@ export async function loadAllOverrides() {
       // simply has no `loopStartMs` field, which correctly leaves it "= startMs" (getLoopStartMs
       // falls back to getStartMs).
       if (rec.loopStartMs != null) _loopStart.set(rec.key, rec.loopStartMs);
+      // #267 follow-up: restore a persisted retrigger interval, if any — a record saved before
+      // this feature existed simply has no `retriggerMs` field, which correctly leaves it as
+      // "no retrigger" (single continuous loop, getRetriggerMs → null).
+      if (rec.retriggerMs != null) _retrigger.set(rec.key, rec.retriggerMs);
     } catch {
       // A stored file that no longer decodes (corrupt, or the browser dropped codec support)
       // just stays a no-op override — that weapon+stage plays procedurally, same as if
@@ -707,6 +757,7 @@ export function _resetForTest() {
   _fadeOut.clear();
   _volume.clear();
   _loopStart.clear();
+  _retrigger.clear();
   _dbPromise = null;
   _ctx = null;
 }

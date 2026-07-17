@@ -145,6 +145,10 @@ function variantCacheKey(baseKey, index) {
 //               (sfx.js's startHeld/startOverrideLoop): the buffer plays from `startMs` once, then
 //               on loop-wrap returns to `loopStartMs` (not `startMs`) instead of the whole clip
 //               repeating from the top. Omit/null = loops the entire startMs..trimMs window.
+//   retriggerMs opt-in (#267 follow-up) — when set, a held weapon's fire cue spawns a brand-new
+//               OVERLAPPING one-shot instance of the clip every `retriggerMs` instead of looping
+//               ONE continuous source (sfx.js's startOverrideRetrigger). Omit/null (every bake
+//               before this field existed) = the single continuous native loop, unchanged.
 export const BAKED_SFX = {
   // Helton Yan's Pixel Combat pack — "DSGNImpt_EXPLOSION-Bit Bomb_HY_PC-001.wav". The full
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.
@@ -336,6 +340,9 @@ export function getBaked(weaponId, stage) {
     fadeOutMs: entry.fadeOutMs ?? null,
     volume: entry.volume ?? 1,
     loopStartMs: entry.loopStartMs ?? entry.startMs ?? null,
+    // #267 follow-up: opt-in overlapping-retrigger interval (milliseconds) — omitted/null (every
+    // bake before this field existed) means "single continuous native loop," unchanged.
+    retriggerMs: entry.retriggerMs ?? null,
   };
 }
 

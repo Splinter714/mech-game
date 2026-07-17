@@ -6,6 +6,7 @@ import { TRAJECTORY_DELAY, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUND
 import {
   storeOverride, hasOverride,
   setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
+  setRetriggerMs,
   seedOverrideFromBaked, variantStage, removeOverrideVariant, MAX_VARIANTS,
   syncTuningToVariants, getSharedTuningSnapshot, applySharedTuningSnapshot,
 } from '../audio/sfxOverrides.js';
@@ -460,6 +461,28 @@ export class WeaponSfxPanel {
     });
     this.scroller.add(loopStartSlider.container);
     this.sliders.push(loopStartSlider);
+    y += ROW_H + 4;
+
+    // #267 follow-up: opt-in OVERLAPPING RETRIGGER interval — an alternative to the single
+    // continuous native loop above, for a held weapon whose fire cue should retrigger a NEW
+    // overlapping instance every N ms instead of looping one continuous tone (sfx.js's
+    // startOverrideRetrigger). 0 (the default/left end of the slider) means "off" — persisted as
+    // null (setRetriggerMs's "clear" convention), which keeps today's single-loop behavior.
+    const retriggerMs = state.retriggerMs ?? 0;
+    const retriggerSlider = new Slider(this.scene, {
+      x: ox + 6, y, w: w - 12, labelW: 64, valueW: 48, label: 'retrigger', min: 0, max: 1000, step: 10,
+      value: retriggerMs,
+      onChange: (v) => {
+        const ms = Math.round(v);
+        editShared(() => {
+          setRetriggerMs(weaponId, stage, ms <= 0 ? null : ms);
+          this._toast(ms <= 0 ? `${stage}: single continuous loop` : `${stage}: retrigger every ${ms}ms`);
+          this._previewThrottled(stage);
+        });
+      },
+    });
+    this.scroller.add(retriggerSlider.container);
+    this.sliders.push(retriggerSlider);
     y += ROW_H + 4;
 
     // #174: fade-out duration — smooths the click/pop from an early-trimmed cutoff by ramping
