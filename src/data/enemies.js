@@ -81,6 +81,10 @@ export const ENEMIES = {
 // #97: 'infantryMob' is appended to the rotation so the debug spawn-more control cycles through
 // it too (expands into INFANTRY_MOB_SIZE troopers — data/enemyKinds.js — mirroring 'swarm'/
 // 'turretNest').
+// #239 (temporary): 'infantryMob' pulled back OUT of this rotation while Jackson plans a redesign
+// of the kind — see enemyKinds.js's infantryMob/infantry definitions, which are left completely
+// intact (art + behavior untouched too), so restoring it here is a one-line add, not an
+// archaeology project.
 // #234: 'quadruped' (the Broodwalker) was fully built — art/behavior/weapon/260hp, plus its own
 // periodic drone-drop mechanic — but was never added here or to DEFAULT_SQUAD, so it had no path
 // into a normal run except one rare slot in run.js's LATE_POOL (reachable only in late-stage
@@ -95,7 +99,7 @@ export const ENEMIES = {
 // not by where it sits.
 export const ENEMY_ROTATION = [
   'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest', 'artillery', 'swarm',
-  'infantryMob', 'quadruped',
+  'quadruped',
 ];
 
 // The default opening squad (#44 / #68 / #75 / #89): a mix of mechs and non-mech units so the
@@ -109,6 +113,9 @@ export const ENEMY_ROTATION = [
 // alongside the drone swarm/turret nest. Profiled with the rest of the opening squad concurrent
 // (see #97 report) before landing on INFANTRY_MOB_SIZE; dial the mob size back if a future
 // profile run shows this combination doesn't hold ~60fps.
+// #239 (temporary): 'infantryMob' pulled back OUT of the opening squad while Jackson plans a
+// redesign of the kind — see the matching #239 note on ENEMY_ROTATION above. enemyKinds.js's
+// definition/art/behavior are untouched, so re-adding it here later is a one-line change.
 // #234: 'quadruped' (the Broodwalker) is deliberately NOT added here. Per its own comments
 // (data/enemyKinds.js), it's framed as "tougher than a tank but well under a full mech's pool" —
 // a rarer, tougher escalation unit, not an opener. It got its real fix in ENEMY_ROTATION above
@@ -116,5 +123,5 @@ export const ENEMY_ROTATION = [
 // (data/run.js); every opening squad seeing it would overexpose a unit meant to read as a
 // mid/late-run surprise.
 export const DEFAULT_SQUAD = [
-  'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper', 'infantryMob',
+  'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper',
 ];

@@ -151,6 +151,10 @@ function helicopterBehavior(scene, e, ctx) {
 // #152 (round-2 playtest): "deploy drones only" — DEPLOY_INFANTRY gates infantry back OUT of the
 // rotation (flag-disabled, not deleted — flip it back to `true` to restore the drone+infantry
 // mix from #147, same disable-not-delete pattern #144 used for the aim-line).
+// #239: confirmed this already stays `false`, so the Broodwalker's nest-deploy can't spawn
+// infantry even though infantryMob itself is separately pulled from ENEMY_ROTATION/DEFAULT_SQUAD/
+// LATE_POOL (data/enemies.js, data/run.js) pending a redesign — no change needed here for #239,
+// this flag already keeps the two consistent.
 const DEPLOY_INFANTRY = false;
 const QUADRUPED_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone'];
 
