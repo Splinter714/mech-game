@@ -84,7 +84,6 @@ export const TargetingMixin = {
     if (!this.lock.enemy) return;
     dropLock(this.lock);
     this.lockEnemy = null; this.lockProgress = 0; this._lockBlindAge = 0;
-    this._floatText(this.px, this.py - 30, 'LOCK DROPPED', '#7c8794');
   },
 
   // The point indirect (homing/arcing) player fire should seek this frame — only when the lock is

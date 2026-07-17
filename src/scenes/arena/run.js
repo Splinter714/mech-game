@@ -68,8 +68,6 @@ export const RunMixin = {
 
     this._pickNextStageObjective();
 
-    const label = stageDescriptor(this.run.stageIndex).label;
-    this._floatText(this.px, this.py - 60, `${label} INCOMING`, '#5ec8e0');
     this.time.delayedCall(STAGE_TRANSITION_DELAY, () => this._spawnNextStageSquad());
   },
 
@@ -139,7 +137,6 @@ export const RunMixin = {
     this._enemiesSpawnedThisStage = this.enemies.length;
     this._spawnSquad(desc.squad);
 
-    this._floatText(this.px, this.py - 40, desc.label, '#7bd17b');
     this._runAdvancing = false;
   },
 
@@ -160,7 +157,6 @@ export const RunMixin = {
     const won = this.run.status === 'won';
     const label = won ? 'RUN COMPLETE' : 'RUN OVER';
     const color = won ? '#7bd17b' : '#e2533a';
-    this._floatText(this.px, this.py - 50, label, color);
     this.registry.set('runOverBanner', { label, color, currency: this.run.currency });
 
     // #216: `returnToGarage` used to fire here (added by #210), but that missed the G-key and

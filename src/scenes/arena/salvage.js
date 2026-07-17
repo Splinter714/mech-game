@@ -111,6 +111,5 @@ export const SalvageMixin = {
       this.registry.set('run', this.run);
     }
     Audio.ui('scrapPickup');   // #178: distinct currency/coin-ish chime
-    this._floatText(this.px, this.py - 34, `+${s.amount} SCRAP`, '#f5c542');
   },
 };

@@ -69,7 +69,7 @@ export const CombatMixin = {
     // hit — covers both a fully-absorbed hit (shielded, below) and a hit that partially absorbed
     // then broke through (shieldAbsorbed > 0 but not `shielded`, see damagePlayer above).
     if (res.shieldAbsorbed) this._shieldHitFlash();
-    if (res.shielded) { this._floatText(this.px, this.py - 24, 'shielded', '#5ec8e0'); return; }
+    if (res.shielded) return;
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
     // weapons), not on continuous health — so only pay the 9-texture procedural rebuild when
     // this hit actually broke a part. Reskinning on every hit was the main combat lag source.
@@ -109,7 +109,7 @@ export const CombatMixin = {
       // camera's `startFollow(this.playerView, …)` (ArenaScene.create()) still needs a live
       // object to anchor on while the run-over sequence plays out.
       this.playerView.setVisible(false);
-      this._floatText(this.px, this.py - 36, 'MECH DOWN', '#e2533a');
+      // #236: no floating "MECH DOWN" text — the explosion + hidden mech IS the feedback.
       // #201: the player's own mech going down gets its own dedicated, most-severe cue —
       // distinct from an enemy's death (deathExplosionByCategory, #180/#184).
       Audio.ui('mechDestroyed');
