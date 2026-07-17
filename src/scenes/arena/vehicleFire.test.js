@@ -483,10 +483,10 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     // #243 playtest follow-up: 15-shot single-lane squeeze (~0.83s at 18/sec), 1.2s rest.
     expect(ENEMY_KINDS.helicopter.burstShots).toBe(15);
     expect(ENEMY_KINDS.helicopter.burstRestMs).toBe(1200);
-    // Drone (#243 further follow-up): 7 rapid Plasma Lance bolts at the native 50ms cadence
-    // (~350ms stutter), then a 700ms rest.
-    expect(ENEMY_KINDS.drone.burstShots).toBe(7);
-    expect(ENEMY_KINDS.drone.burstRestMs).toBe(700);
+    // Drone (#243 latest follow-up): fires one Plasma Lance bolt at a time, then a snappy
+    // 400ms rest before the next single bolt (was a 7-bolt stutter with a 700ms rest).
+    expect(ENEMY_KINDS.drone.burstShots).toBe(1);
+    expect(ENEMY_KINDS.drone.burstRestMs).toBe(400);
     // No other kind opts in yet — everything else keeps continuous fire.
     for (const [id, k] of Object.entries(ENEMY_KINDS)) {
       if (id === 'helicopter' || id === 'drone') continue;

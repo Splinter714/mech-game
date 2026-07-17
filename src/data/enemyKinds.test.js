@@ -205,8 +205,8 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   // #243 further playtest follow-up: the drone swapped off Pulse Laser onto Plasma Lance at
   // FULL player damage (no damage override) — Plasma Lance's own native cadence (a 20/sec
   // stream) already reads as rapid-fire-appropriate for a swarm unit, so no weaponOverride is
-  // needed at all; the shaping comes entirely from trigger discipline (7 quick bolts, then a
-  // 700ms rest).
+  // needed at all; the shaping comes entirely from trigger discipline. Latest playtest ask:
+  // fire one bolt at a time (was a 7-bolt stutter), with a short 400ms rest between shots.
   describe('drone Plasma Lance loadout (#243 further playtest follow-up)', () => {
     it('drone mounts the bare plasmaLance base entry (no weaponOverride, no damage delta)', () => {
       expect(ENEMY_KINDS.drone.weaponId).toBe('plasmaLance');
@@ -225,12 +225,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
       expect(resolved.id).toBe('plasmaLance');
     });
 
-    it('opts into trigger discipline: 7 rapid bolts (6-8 range) then a short rest', () => {
-      expect(ENEMY_KINDS.drone.burstShots).toBeGreaterThanOrEqual(6);
-      expect(ENEMY_KINDS.drone.burstShots).toBeLessThanOrEqual(8);
-      expect(ENEMY_KINDS.drone.burstShots).toBe(7);
+    it('opts into trigger discipline: 1 bolt at a time, then a short rest', () => {
+      expect(ENEMY_KINDS.drone.burstShots).toBe(1);
       expect(ENEMY_KINDS.drone.burstRestMs).toBeGreaterThan(0);
-      expect(ENEMY_KINDS.drone.burstRestMs).toBe(700);
+      expect(ENEMY_KINDS.drone.burstRestMs).toBe(400);
     });
 
     it('has NO per-kind cadence timer — cadence derives entirely from the resolved weapon (#241/#243)', () => {
