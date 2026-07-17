@@ -7,6 +7,7 @@ import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { SPRINT_BIND } from '../input/Controls.js';
+import { AMMO_EMPTY_COOLDOWN } from '../data/Mech.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -57,7 +58,12 @@ function drawChevronGlow(g, x, y, angle, size, color, alpha) {
 // cooldown) read right on its button. A compact per-part integrity column sits top-left.
 // Runs as its own scene so it lays out in logical screen space without fighting the arena's
 // follow camera; tiles are built once and updated in place each frame.
-const C = { text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a' };
+// #238: `cooldown` matches skillTiles.js's TILE_UI.cooldown so the subtitle text and the
+// ammo-bar tint read as the same visual language for the "locked out, recharging" state.
+const C = {
+  text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
+  cooldown: '#5e7ce0',
+};
 
 // #116: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is a
 // muted steel; the player rides the shared accent, the objective the shared amber wayfinding
@@ -212,7 +218,16 @@ export default class HudScene extends Phaser.Scene {
         opts.iconAlpha = w.online ? 1 : 0.3;
         if (!w.online) { opts.subtitle = 'OFFLINE'; opts.subtitleColor = C.bad; }
         else if (w.ammo == null) { opts.subtitle = '∞'; opts.subtitleColor = C.dim; }
-        else {
+        // #238: an empty slot on its post-drain cooldown gets its own readout (distinct from
+        // a plain "0/max" empty magazine that's actively regenerating) so the player isn't
+        // left wondering why nothing's ticking back up. Countdown shown to the nearest tenth
+        // of a second since AMMO_EMPTY_COOLDOWN is only a few seconds long.
+        else if (w.cooldown > 0) {
+          opts.subtitle = `COOLDOWN ${w.cooldown.toFixed(1)}s`;
+          opts.subtitleColor = C.cooldown;
+          opts.onCooldown = true;
+          opts.cooldownFrac = w.cooldown / AMMO_EMPTY_COOLDOWN;
+        } else {
           opts.subtitle = `${Math.floor(w.ammo)}/${w.weapon.ammoMax}`;
           opts.subtitleColor = w.ready ? C.good : C.warn;
           opts.ammoFrac = w.ammo / w.weapon.ammoMax;
