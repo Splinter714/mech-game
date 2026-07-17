@@ -29,11 +29,30 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   g.fillStyle(0xffd0e6, 1);
   g.fillCircle(tailX - ca * 1.6 * s, tailY - sa * 1.6 * s, 1.3 * s * flicker);
 
-  // Gunmetal warhead body, nose forward: dark blue-grey body with a darker nose tip.
-  // Three segments (nose, mid, rear) to read as a longer missile than a single body circle.
-  g.fillStyle(0x454c56, 1); g.fillCircle(x - ca * 1.6 * s, y - sa * 1.6 * s, 2.6 * s);
-  g.fillStyle(0x454c56, 1); g.fillCircle(x - ca * 3.6 * s, y - sa * 3.6 * s, 2.3 * s);
-  g.fillStyle(0x262a30, 1); g.fillCircle(x, y, 2 * s);
+  // Gunmetal warhead body, nose forward: a long, thin shaft ending in a pointed cone
+  // (not stacked circles — that read as too thick/round). Dark blue-grey shaft with a
+  // darker pointed nose tip.
+  const noseTipX = x + ca * 2 * s, noseTipY = y + sa * 2 * s;
+  const noseBaseX = x - ca * 1 * s, noseBaseY = y - sa * 1 * s;
+  const shaftBackX = x - ca * 6 * s, shaftBackY = y - sa * 6 * s;
+  const halfW = 1 * s;
+  // Thin rectangular shaft body, from the base of the nose cone back near the fins/flame.
+  g.fillStyle(0x454c56, 1);
+  g.beginPath();
+  g.moveTo(noseBaseX + sa * halfW, noseBaseY - ca * halfW);
+  g.lineTo(shaftBackX + sa * halfW, shaftBackY - ca * halfW);
+  g.lineTo(shaftBackX - sa * halfW, shaftBackY + ca * halfW);
+  g.lineTo(noseBaseX - sa * halfW, noseBaseY + ca * halfW);
+  g.closePath();
+  g.fillPath();
+  // Pointed nose cone, darker, tapering to an actual tip rather than a rounded blob.
+  g.fillStyle(0x262a30, 1);
+  g.beginPath();
+  g.moveTo(noseTipX, noseTipY);
+  g.lineTo(noseBaseX + sa * halfW, noseBaseY - ca * halfW);
+  g.lineTo(noseBaseX - sa * halfW, noseBaseY + ca * halfW);
+  g.closePath();
+  g.fillPath();
 
   // Small tail fins, one each side, where the body meets the exhaust.
   const finX = x - ca * 5 * s, finY = y - sa * 5 * s;
