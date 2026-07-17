@@ -3,8 +3,10 @@
 // systems remain, and #252 unified them further — indirect fire now simply follows whichever
 // target direct-fire convergence has already picked:
 //  • Convergence (direct fire: lasers, autocannons): _fireAngle angles off-centre muzzles inward
-//    to a forward point at `convergeTarget`'s range — the LIVE most-aimed enemy (`aimEnemy`), or,
-//    #250, a nearby standing destructible-terrain hex when no enemy is available, or CONVERGE_DIST
+//    to a forward point at `convergeTarget`'s range — the LIVE best-scoring enemy (`aimEnemy`,
+//    #250 playtest follow-up: angular offset dominant, blended with a proximity term so a
+//    meaningfully closer enemy can beat a marginally-better-aimed farther one), or, #250, a nearby
+//    standing destructible-terrain hex when no enemy is available, or CONVERGE_DIST
 //    when neither exists — so shots land where the turret points. Purely geometric (no LOS check
 //    at all); `convergeTarget` (shared.js `pickConvergeTarget`) is the ranked pick: an enemy
 //    always wins over a hex.
@@ -17,9 +19,8 @@
 //    cosmetic, it never affects what actually gets fired at. The pure lock/prediction/slide math
 //    lives in data/targetlock.js so it's unit-tested; here we feed it the live queries.
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
-import Phaser from 'phaser';
 import { stepLock, predictedTarget, stepReticlePosition } from '../../data/targetlock.js';
-import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget } from './shared.js';
+import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget, pickAimEnemy } from './shared.js';
 
 // #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
 // so the lock can still be held at the weapon's own new effective range — kept comfortably
@@ -34,25 +35,20 @@ export const TargetingMixin = {
   // Advance BOTH direct-fire convergence and the indirect-fire lock, which #252 made a direct
   // mirror of it:
   //  • `this.aimEnemy` / `this.convergeTarget` — the live convergence pick (shared.js
-  //    `pickConvergeTarget`): the enemy most-centred on the aim line right now (in range), or,
-  //    #250, a fallback destructible hex, or null. Purely geometric, no LOS gate.
+  //    `pickConvergeTarget`, fed by `pickAimEnemy`'s blended angle+proximity score, #250): the
+  //    best-scoring in-range enemy right now, or, #250, a fallback destructible hex, or null.
+  //    Purely geometric, no LOS gate.
   //  • `this.lock` (data/targetlock.js) — mirrors `convergeTarget` every frame, instantly (no
   //    charge, no maintain, no switch-dwell). Tracks last-known position/velocity so a target
   //    that's convergence's pick but currently out of LOS can still be fired at blind (dead
   //    reckoned), and drives the reticle-slide position for drawing.
   _updateLock(dt) {
-    // Angular offset of an enemy from the turret line (smaller = more centred on the aim).
-    const aimOff = (e) => Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - this.py, e.x - this.px) - this.turretAngle));
     const inRange = (e) => !e.mech.isDestroyed() && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE;
 
-    // aimEnemy (convergence): nearest the aim LINE, in range, no cone gate — direct fire (and now
-    // indirect fire too, #252) just wants "whatever I'm pointing closest to."
-    let aimE = null, aimOffBest = Infinity;
-    for (const e of this.enemies) {
-      if (!inRange(e)) continue;
-      const off = aimOff(e);
-      if (off < aimOffBest) { aimOffBest = off; aimE = e; }
-    }
+    // aimEnemy (convergence): the in-range enemy `pickAimEnemy` (shared.js) scores best — angular
+    // offset from the aim line dominates, but #250 playtest follow-up: a meaningfully closer
+    // enemy can outweigh a modest angular disadvantage, so it's not PURE angle-only any more.
+    const aimE = pickAimEnemy(this.px, this.py, this.turretAngle, this.enemies.filter(inRange), ASSIST_RANGE);
     this.aimEnemy = aimE;
     // #250 ("destroyable hexes should be potential convergence targets, but lower priority than
     // enemies"): only bother scanning for a fallback hex when there's no enemy to converge on —
