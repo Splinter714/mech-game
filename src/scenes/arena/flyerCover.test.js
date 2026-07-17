@@ -22,7 +22,9 @@ import { makeProjectile } from '../../data/delivery.js';
 
 // Referenced via WEAPONS.<id>.id (no string literals) per the architecture guard's convention
 // in this directory's other tests. machineGun (Repeater) is the helicopter's actual straight
-// projectile stream; pulseLaser is the drone's actual hitscan burst weapon.
+// projectile stream; pulseLaser is the registry's canonical hitscan burst weapon (no longer
+// the drone's own mount as of #243's further follow-up — the drone now fires plasmaLance, a
+// projectile stream — but still a real hitscan weapon a live kind's shots could plausibly use).
 const STRAIGHT_PROJECTILE = WEAPONS.machineGun;
 const HITSCAN_WEAPON = WEAPONS.pulseLaser;
 

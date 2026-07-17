@@ -874,7 +874,7 @@ export const EnemiesMixin = {
     const def = e.kindDef;
     // #243: the kind's weapon is the shared base entry with its optional per-kind
     // `weaponOverride` delta merged on top (see resolveWeapon in data/weapons.js and the
-    // field doc in enemyKinds.js) — the drone's weakened Repeater is the live example. The
+    // field doc in enemyKinds.js) — the helicopter's single-lane Repeater is the live example. The
     // resolved weapon flows through EVERYTHING below: the emission plan, the fire-cue key,
     // the damage the spawned round carries, and #241's `_fireInterval` cadence fallback.
     const weapon = resolveWeapon(def.weaponId, def.weaponOverride);
