@@ -45,15 +45,16 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(entry.processing).toBeNull();
     });
 
-    // #175: plasmaLance's fire cue — a trimmed (130ms) + faded (420ms) bake of "Bass wave.wav".
+    // #268: plasmaLance's fire cue — a trimmed (170ms) + faded (1800ms) bake of "DSGNImpt_EXPLOSION-
+    // Mecha Multiple Bangs_HY_PC-001.wav" (replaces the prior "Bass wave.wav" bake).
     it('registers plasmaLance/fire with a bundled asset and the #166 trim + #174 fade recipe', () => {
       const entry = BAKED_SFX['plasmaLance::fire'];
       expect(entry).toBeTruthy();
       expect(typeof entry.asset).toBe('string');   // Vite resolves the .m4a import to a URL string
       expect(entry.asset.length).toBeGreaterThan(0);
       expect(entry.startMs).toBe(0);
-      expect(entry.trimMs).toBe(130);              // #166 trim
-      expect(entry.fadeOutMs).toBe(420);           // #174 fade — literal recipe value (runtime clamps to the 130ms window)
+      expect(entry.trimMs).toBe(170);              // #166 trim
+      expect(entry.fadeOutMs).toBe(1800);          // #174 fade — literal recipe value (runtime clamps to the 170ms window)
       expect(entry.processing).toBeNull();
     });
 
@@ -204,7 +205,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
   it('loadAllBaked fetches + decodes every entry into the cache, exposed via getBaked', async () => {
     const tags = new Map([
       [BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB'],
-      [BAKED_SFX['plasmaLance::fire'].asset, 'BASSWAVE'],
+      [BAKED_SFX['plasmaLance::fire'].asset, 'MECHAMULTIPLEBANGS'],
       [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
@@ -226,13 +227,13 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(baked.trimMs).toBeNull();
     expect(baked.processing).toBeNull();
 
-    // #175: plasmaLance/fire decodes into its own slot carrying the trim + fade recipe.
+    // #268: plasmaLance/fire decodes into its own slot carrying the trim + fade recipe.
     expect(hasBaked('plasmaLance', 'fire')).toBe(true);
     const plasma = getBaked('plasmaLance', 'fire');
-    expect(plasma.buffer).toEqual({ __decodedFrom: 'BASSWAVE' });
+    expect(plasma.buffer).toEqual({ __decodedFrom: 'MECHAMULTIPLEBANGS' });
     expect(plasma.startMs).toBe(0);
-    expect(plasma.trimMs).toBe(130);
-    expect(plasma.fadeOutMs).toBe(420);
+    expect(plasma.trimMs).toBe(170);
+    expect(plasma.fadeOutMs).toBe(1800);
     expect(plasma.processing).toBeNull();
 
     // #176: pulseLaser/fire decodes into its own slot — getBaked must SURFACE the full recipe
@@ -310,7 +311,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
   it('getBaked is null for a weapon/stage with no baked entry (unaffected — plays procedurally)', async () => {
     installFakeFetch(new Map([
       [BAKED_SFX['clusterRocket::fire'].asset, 'BITBOMB'],
-      [BAKED_SFX['plasmaLance::fire'].asset, 'BASSWAVE'],
+      [BAKED_SFX['plasmaLance::fire'].asset, 'MECHAMULTIPLEBANGS'],
       [BAKED_SFX['pulseLaser::fire'].asset, 'BASSBUZZ'],
       [BAKED_SFX['deathExplosionMassive::fire'].asset, 'MECHADAMAGED'],
       [BAKED_SFX['deploy::play'].asset, 'MECHATURNON'],
