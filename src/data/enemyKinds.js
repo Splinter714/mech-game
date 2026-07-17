@@ -22,26 +22,24 @@
 //              `delivery` object also shallow-merges, and the base WEAPONS entry is never
 //              mutated — so a kind can mount "the Repeater, but weaker" as a two-line delta
 //              instead of forking a whole near-duplicate weapon entry. See drone below for the
-//              live example. Cadence note: an overridden `delivery.fireRate` flows through
-//              #241's fallback (`_fireInterval` on the RESOLVED weapon), so for a kind with no
-//              `fireEveryMs` the override also retunes how often it fires.
+//              live example.
+//              CADENCE lives here too (#243, superseding #241's transitional `fireEveryMs`
+//              field entirely — it no longer exists): a vehicle's cooldown is ALWAYS
+//              `_fireInterval` on the RESOLVED weapon (the same resolution the player/
+//              mech-enemy path uses), so a kind that wants a slower/faster cadence tunes it
+//              in the weapon's OWN terms — `weaponOverride: { cycleTime: 1500 }` for a
+//              single-shot weapon (tank/quadruped below), or
+//              `weaponOverride: { delivery: { fireRate: 9 } }` for a stream weapon (drone/
+//              infantry below). One cadence concept, no parallel per-kind timer vocabulary.
 //   fireRange  px at which it opens fire (falls back to the weapon's own max).
-//   fireEveryMs EXPLICIT per-kind cadence override (ms), independent of the mech pipeline.
-//              #241: when present it always wins (a deliberate choice to fire slower/faster
-//              than the mounted weapon's own design cadence — e.g. tank/quadruped intentionally
-//              firing autocannon slower than its own 1100ms cycle for a heavier feel). When
-//              ABSENT, `_fireVehicleWeapon` (scenes/arena/enemies.js) falls back to the weapon's
-//              own `delivery`-driven cadence via `_fireInterval` (the same resolution the
-//              player/mech-enemy path uses) — a stream weapon (fireRate-driven, e.g. machineGun)
-//              then actually streams at its own rate instead of being silently flattened to a
-//              single slow burst. See helicopter below for the first kind that omits this field
-//              on purpose.
 //   burstShots / burstRestMs  #243 trigger discipline (both optional): fire `burstShots` shots
 //              at the normal cadence, then rest `burstRestMs` before the next burst can start
 //              (the rest replaces the per-shot cooldown on the burst's last shot — see
-//              `_fireVehicleWeapon`). Orthogonal to fireEveryMs/#241, which space the shots
-//              WITHIN a burst. Both absent ⇒ continuous fire, byte-identical to before; only
-//              the helicopter opts in today. `burstRestMs` defaults to 1000 if only
+//              `_fireVehicleWeapon`). Orthogonal to the weapon-derived cadence above, which
+//              spaces the shots WITHIN a burst; deliberately KIND-level fields (not weapon
+//              stats) because trigger discipline is how the unit squeezes the trigger, not
+//              what the weapon is. Both absent ⇒ continuous fire, byte-identical to before;
+//              only the helicopter opts in today. `burstRestMs` defaults to 1000 if only
 //              `burstShots` is set.
 //   flying     true ⇒ ignores walls/forest/water (flies over) AND draws a drop shadow (elevated).
 //   move       { maxSpeed, accel, turnRate, turretSlew } px/s + rad/s locomotion tuning.
@@ -97,9 +95,10 @@ export const ENEMY_KINDS = {
     fireRange: 2400,       // #94: INSANE — well beyond the next-longest engagement range in the
                            // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
                            // threatens from far outside normal combat distance.
-    fireEveryMs: 2600,     // #94: slowed from 1100 — a deliberate artillery cadence, and offsets
-                           // the fact this now always has a shot (no LOS to break) in a nest of
-                           // TURRET_CLUSTER_SIZE turrets (4 as of #145's follow-up, was 3).
+    // #243: the old `fireEveryMs: 2600` (#94's "deliberate artillery cadence, slowed from
+    // 1100") was numerically identical to siegeShell's own cycleTime (2600), so with cadence
+    // now always derived from the resolved weapon it was pure redundancy — deleted, no
+    // override needed. The nest-of-4 pacing (#145) is unchanged.
     flying: false,
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
     art: 'turret',
@@ -129,8 +128,11 @@ export const ENEMY_KINDS = {
     // rendered tip — the hot-glow ellipse at y≈-31 in art/vehicles/tank.js's drawTurret.
     muzzleForward: 7,
     weaponId: 'autocannon',
+    // #243 (was `fireEveryMs: 1500`): the deliberate slower-than-weapon cadence — autocannon's
+    // own cycleTime is 1100 — now expressed in the weapon's OWN terms via the override merge,
+    // same 1500ms cooldown as before (`_fireInterval`'s cycleTime branch on the resolved weapon).
+    weaponOverride: { cycleTime: 1500 },
     fireRange: 420,
-    fireEveryMs: 1500,
     standoff: 300,          // px it wants to hold from the player
     flying: false,
     move: { maxSpeed: 52, accel: 120, turnRate: 1.4, turretSlew: 2.2 },   // #91: slowed further
@@ -168,9 +170,9 @@ export const ENEMY_KINDS = {
     // one drone deals ~1/4 of a player Repeater's dps, and the base WEAPONS.machineGun entry
     // (the player's mount) is untouched. fireRange kept at #117's 280 (machineGun's envelope,
     // opt 338 / max 600, comfortably covers it).
-    // NO fireEveryMs here (composes with #241): cadence falls back to `_fireInterval` on the
-    // RESOLVED weapon, so the override's fireRate 9 IS the cadence (~111ms/tick) — the
-    // fire-rate lever lives in one place instead of a weapon rate AND a kind timer fighting.
+    // Cadence comes from the RESOLVED weapon (`_fireInterval`, per #241/#243), so the
+    // override's fireRate 9 IS the cadence (~111ms/tick) — the fire-rate lever lives in one
+    // place instead of a weapon rate AND a kind timer fighting.
     weaponId: 'machineGun',
     weaponOverride: {
       damage: 1,                     // half the player Repeater's 2 per round
@@ -209,15 +211,15 @@ export const ENEMY_KINDS = {
     muzzleForward: -1,
     weaponId: 'machineGun',
     fireRange: 460,
-    // #241: NO fireEveryMs override here (was 1900, a flat single-burst cadence) — that
-    // completely ignored machineGun's own `delivery: { pattern: 'stream', fireRate: 18,
-    // streams: 2 }` design, so the gunship fired one shot every 1.9s instead of the sustained
-    // twin-lane 18/sec stream the weapon (and the "raking the ground with cannon fire on each
-    // pass" flavor above) is meant to be. Omitting this field lets `_fireVehicleWeapon` (see
-    // enemies.js) fall back to the weapon's own resolved cadence (~55.6ms/shot via
-    // `_fireInterval`) for the duration of each strafing pass — a real DPS/difficulty increase
-    // during that window, which is the point of the fix (owner: playtest and retune
-    // fireRange/strafeRange/hp if it reads as too much).
+    // #241: NO cadence override here (the pre-#241 flat `fireEveryMs: 1900` completely ignored
+    // machineGun's own `delivery: { pattern: 'stream', fireRate: 18, streams: 2 }` design, so
+    // the gunship fired one shot every 1.9s instead of the sustained twin-lane 18/sec stream
+    // the weapon — and the "raking the ground with cannon fire on each pass" flavor above — is
+    // meant to be). With no weaponOverride cadence field, `_fireVehicleWeapon` derives the
+    // weapon's own resolved cadence (~55.6ms/shot via `_fireInterval`) for the duration of
+    // each strafing pass — a real DPS/difficulty increase during that window, which is the
+    // point of the fix (owner: playtest and retune fireRange/strafeRange/hp if it reads as
+    // too much).
     // #243 trigger discipline: post-#241 the gunship hosed its full 18/sec twin stream for an
     // ENTIRE strafing pass — these bound each squeeze to 10 cadence ticks (~0.55s of fire, 20
     // rounds with streams: 2) followed by a 1s rest, so a pass reads as aggressive raking
@@ -262,8 +264,10 @@ export const ENEMY_KINDS = {
     // forward: shots were floating ~4 design units ahead of the barrel, not behind it.
     muzzleForward: -4,
     weaponId: 'autocannon',
+    // #243 (was `fireEveryMs: 1700`): a touch slower cadence than tank's 1500 — bulkier
+    // support gun. Same deliberate slower-than-weapon choice as tank, now via the override.
+    weaponOverride: { cycleTime: 1700 },
     fireRange: 380,
-    fireEveryMs: 1700,       // a touch slower cadence than tank's 1500 — bulkier support gun
     standoff: 320,           // px it wants to hold from the player
     flying: false,
     // #130 (owner: tune): "comparable to or slower than tank" — tank's maxSpeed is 52, this is
@@ -332,17 +336,15 @@ export const ENEMY_KINDS = {
     // (the rifle is drawn held forward across the body, reaching well past the torso box).
     muzzleForward: 12,
     weaponId: 'machineGun',   // cheap, short-range, already-mounted ballistic — fits a trooper
+    // #243 (was `fireEveryMs: 700`): the EXACT same 700ms cooldown, now expressed in the
+    // weapon's own terms — a slow popgun stream, fireRate 10/7 ≈ 1.43 shots/sec
+    // (`_fireInterval`: 1000 / (10/7) = 700ms). #241's balance flag carries over verbatim:
+    // this cadence has never been confirmed as a deliberate slower-than-weapon choice (unlike
+    // tank/quadruped's), but un-slowing it would let a 28-unit INFANTRY_MOB_SIZE mob each
+    // stream at the Repeater's full 18/sec — a huge DPS jump — so it's preserved byte-identical
+    // pending a deliberate playtest/tune pass.
+    weaponOverride: { delivery: { fireRate: 10 / 7 } },
     fireRange: 200,
-    // #241 (flagged, NOT changed here): machineGun is a stream weapon (`fireRate: 18` ⇒ a
-    // resolved ~55.6ms/shot cadence via `_fireInterval`), same as helicopter's mount below —
-    // this 700ms override has the identical "accidentally flattening a stream weapon's own
-    // cadence" shape as helicopter's old 1900ms did, and unlike tank/quadruped/turret's
-    // overrides has no comment ever justifying it as a deliberate slower-than-weapon choice.
-    // Left AS-IS pending owner confirmation: removing it would let a 28-unit INFANTRY_MOB_SIZE
-    // mob each stream at 18 rounds/sec (a large DPS jump), which is a bigger balance swing than
-    // the single-unit helicopter fix and wasn't part of the reported #241 bug — don't change
-    // without a deliberate playtest/tune pass.
-    fireEveryMs: 700,
     flying: false,           // ground troop — walks, collides with terrain and the player
     move: { maxSpeed: 48, accel: 260, turnRate: 5, turretSlew: 6 },  // #104: slowed noticeably
                                                                      // from 85 (playtest: "should

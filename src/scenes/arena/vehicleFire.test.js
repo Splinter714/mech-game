@@ -84,17 +84,17 @@ function makeScene() {
 
 // A non-mech KIND enemy record shaped like the ones the arena builds from ENEMY_KINDS — just
 // enough for `_fireVehicleWeapon`: a fireCd gate at 0 (ready to fire), a kindDef with a parts
-// layout + muzzlePart + weaponId, and a texture key. `fireEveryMs` defaults to 1000 (an explicit
-// override, matching every kind's data before #241) — pass `null` to omit it entirely and
-// exercise the #241 weapon-cadence fallback instead.
-function makeKindEnemy(weaponId, fireEveryMs = 1000) {
+// layout + muzzlePart + weaponId, and a texture key. #243: cadence always derives from the
+// RESOLVED weapon (`_fireInterval`) — the old per-kind `fireEveryMs` timer no longer exists —
+// so pass `weaponOverride` to retune cadence in the weapon's own terms (cycleTime / fireRate).
+function makeKindEnemy(weaponId, weaponOverride = null) {
   const kindDef = {
     name: 'Test Kind', kind: 'turret', scale: 0.5,
     parts: { base: { x: 0, y: 6, w: 26, h: 16 }, gun: { x: 0, y: -8, w: 12, h: 20 } },
     muzzlePart: 'gun',
     weaponId,
   };
-  if (fireEveryMs !== null) kindDef.fireEveryMs = fireEveryMs;
+  if (weaponOverride) kindDef.weaponOverride = weaponOverride;
   return { key: 'testKind', kind: 'turret', fireCd: 0, x: 100, y: 0, kindDef };
 }
 
@@ -151,20 +151,21 @@ describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech f
     e.fireCd = 0;
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(1);
-    expect(e.fireCd).toBe(1000);               // cadence reset from def.fireEveryMs
+    expect(e.fireCd).toBe(PROJECTILE_WEAPON.cycleTime);   // cadence from the resolved weapon (#241/#243)
   });
 });
 
-// #241 — vehicle-kind cadence used to be a flat `def.fireEveryMs ?? 1000` literal, completely
-// ignoring the mounted weapon's OWN `delivery` timing (the concrete bug: helicopter's machineGun
-// is a stream weapon meant to fire at 18 rounds/sec, but the old flat 1900ms override fired it
-// as a single burst instead). The fix: when a kind has NO `fireEveryMs`, fall back to the
-// weapon's own cadence via `_fireInterval` (the same resolution firing.js already uses for the
-// player/mech-enemy path) — an explicit `fireEveryMs` still always wins when present.
-describe('_fireVehicleWeapon resolves cadence from the weapon\'s own delivery when fireEveryMs is absent (#241)', () => {
-  it('a STREAM weapon (fireRate-driven) with no fireEveryMs override fires at the weapon\'s own resolved rate, matching _fireInterval', () => {
+// #241/#243 — vehicle-kind cadence used to be a flat `def.fireEveryMs ?? 1000` literal,
+// completely ignoring the mounted weapon's OWN `delivery` timing (the concrete bug:
+// helicopter's machineGun is a stream weapon meant to fire at 18 rounds/sec, but the old flat
+// 1900ms timer fired it as a single burst instead). #241 made the weapon's own cadence
+// (`_fireInterval`) the fallback; #243 then removed `fireEveryMs` entirely — cadence is ALWAYS
+// derived from the RESOLVED weapon, and a kind that wants a different cadence tunes it in the
+// weapon's own terms through `weaponOverride` (cycleTime / delivery.fireRate).
+describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own delivery (#241/#243)', () => {
+  it('a STREAM weapon (fireRate-driven) fires at the weapon\'s own resolved rate, matching _fireInterval', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(STREAM_WEAPON_ID, null);   // no fireEveryMs — the helicopter's new shape
+    const e = makeKindEnemy(STREAM_WEAPON_ID);   // no override — the helicopter's shape
 
     scene._fireVehicleWeapon(e, {}, 0);
 
@@ -172,41 +173,65 @@ describe('_fireVehicleWeapon resolves cadence from the weapon\'s own delivery wh
     const expected = scene._fireInterval(STREAM_WEAPON, {});
     expect(e.fireCd).toBeCloseTo(expected, 6);
     // Sanity: this is the actual bug fix — the resolved cadence is nowhere near the old flat
-    // 1900ms/1000ms defaults; machineGun's fireRate: 18 resolves to ~55.6ms/shot.
+    // 1900ms/1000ms timers; machineGun's fireRate: 18 resolves to ~55.6ms/shot.
     expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
     expect(e.fireCd).toBeLessThan(100);
   });
 
-  it('a non-stream (cycleTime-driven) weapon with no fireEveryMs override still resolves via _fireInterval\'s cycleTime branch', () => {
+  it('a non-stream (cycleTime-driven) weapon resolves via _fireInterval\'s cycleTime branch', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, null);   // siegeShell: pattern absent, cycleTime 2600
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // siegeShell: pattern absent, cycleTime 2600
 
     scene._fireVehicleWeapon(e, {}, 0);
 
     expect(calls.projectile.length).toBe(1);
     expect(e.fireCd).toBeCloseTo(scene._fireInterval(PROJECTILE_WEAPON, {}), 6);
-    expect(e.fireCd).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 2600ms, same as the turret's real override value
+    expect(e.fireCd).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 2600ms — the turret's cadence, no override needed
   });
 
-  it('an EXPLICIT fireEveryMs override still wins even for a stream weapon (e.g. a kind deliberately slowing it down)', () => {
+  it('a weaponOverride cycleTime slows a single-shot weapon\'s cadence in the weapon\'s own terms (tank/quadruped shape)', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(STREAM_WEAPON_ID, 1900);   // the helicopter's OLD shape, pre-#241
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, { cycleTime: 3100 });
 
     scene._fireVehicleWeapon(e, {}, 0);
 
     expect(calls.projectile.length).toBe(1);
-    expect(e.fireCd).toBe(1900);   // override wins, weapon's own ~55.6ms cadence is ignored
+    expect(e.fireCd).toBe(3100);   // the override's cadence, not the base 2600
   });
 
-  it('the live helicopter kind (enemyKinds.js) has no fireEveryMs override, so it resolves machineGun\'s true stream cadence', async () => {
+  it('a weaponOverride delivery.fireRate retunes a stream weapon\'s cadence (drone/infantry shape)', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(STREAM_WEAPON_ID, { delivery: { fireRate: 2 } });
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(calls.projectile.length).toBe(1);
+    expect(e.fireCd).toBeCloseTo(500, 6);   // 1000/2 — the override's rate, not the base 18/sec
+  });
+
+  it('the live helicopter kind (enemyKinds.js) resolves machineGun\'s true stream cadence', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
-    expect(ENEMY_KINDS.helicopter.fireEveryMs).toBeUndefined();
     expect(ENEMY_KINDS.helicopter.weaponId).toBe(STREAM_WEAPON_ID);
+    expect(ENEMY_KINDS.helicopter.weaponOverride).toBeUndefined();   // full 18/sec during a burst
 
     const { scene } = makeScene();
     const resolved = scene._fireInterval(STREAM_WEAPON, {});
     expect(resolved).toBeCloseTo(1000 / 18, 6);
     expect(resolved).toBeLessThan(100);   // nowhere near the old flat 1900ms
+  });
+
+  it('no ENEMY_KINDS entry carries the retired fireEveryMs field (#243 removed it entirely)', async () => {
+    const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
+    for (const [id, k] of Object.entries(ENEMY_KINDS)) {
+      expect(k.fireEveryMs, id).toBeUndefined();
+    }
+    // The kinds that used it now express the SAME cadence through weaponOverride:
+    expect(ENEMY_KINDS.tank.weaponOverride).toEqual({ cycleTime: 1500 });
+    expect(ENEMY_KINDS.quadruped.weaponOverride).toEqual({ cycleTime: 1700 });
+    // Infantry's old 700ms timer, byte-identical, in stream terms: 1000 / (10/7) = 700.
+    expect(1000 / ENEMY_KINDS.infantry.weaponOverride.delivery.fireRate).toBeCloseTo(700, 6);
+    // Turret's old 2600ms timer was redundant with siegeShell's own cycleTime — just deleted.
+    expect(ENEMY_KINDS.turret.weaponOverride).toBeUndefined();
   });
 });
 
@@ -332,14 +357,14 @@ describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired si
 });
 
 // #243: `_fireVehicleWeapon` resolves the kind's weapon through resolveWeapon(weaponId,
-// weaponOverride) — the fired weapon (damage on the spawned round, emission plan, #241 cadence
-// fallback) is the base entry with the kind's partial delta merged on, and the base WEAPONS
-// entry stays untouched for the player. The drone's weakened Repeater is the live example.
+// weaponOverride) — the fired weapon (damage on the spawned round, emission plan, and the
+// #241/#243 cadence derivation) is the base entry with the kind's partial delta merged on, and
+// the base WEAPONS entry stays untouched for the player. The drone's weakened Repeater is the
+// live example.
 describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => {
   it('fires the OVERRIDDEN weapon (merged damage/fireRate) and derives cadence from it', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(STREAM_WEAPON_ID, null);   // no fireEveryMs — cadence from the weapon
-    e.kindDef.weaponOverride = { damage: 1, delivery: { fireRate: 9 } };
+    const e = makeKindEnemy(STREAM_WEAPON_ID, { damage: 1, delivery: { fireRate: 9 } });
 
     scene._fireVehicleWeapon(e, {}, 0);
 
@@ -350,7 +375,7 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     // Identity/lanes untouched by the partial delta — still the same twin-lane stream weapon.
     expect(fired.id).toBe(STREAM_WEAPON_ID);
     expect(fired.delivery.streams).toBe(STREAM_WEAPON.delivery.streams);
-    // #241 composition: the cadence fallback runs on the RESOLVED weapon — 1000/9, not 1000/18.
+    // #241/#243 composition: cadence derives from the RESOLVED weapon — 1000/9, not 1000/18.
     expect(e.fireCd).toBeCloseTo(1000 / 9, 6);
     // The shared base entry the player mounts is unchanged.
     expect(STREAM_WEAPON.damage).toBe(2);
@@ -359,7 +384,7 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
 
   it('fires the plain base weapon when the kind has no weaponOverride (unchanged behavior)', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(STREAM_WEAPON_ID, null);
+    const e = makeKindEnemy(STREAM_WEAPON_ID);
 
     scene._fireVehicleWeapon(e, {}, 0);
 
@@ -373,7 +398,6 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     const { scene } = makeScene();
     const d = ENEMY_KINDS.drone;
     expect(d.weaponId).toBe(STREAM_WEAPON_ID);
-    expect(d.fireEveryMs).toBeUndefined();
     const resolved = resolveWeapon(d.weaponId, d.weaponOverride);
     expect(resolved.damage).toBeLessThan(STREAM_WEAPON.damage);
     expect(resolved.delivery.fireRate).toBeLessThan(STREAM_WEAPON.delivery.fireRate);
@@ -386,12 +410,12 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
 describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', () => {
   it('a kind with NO burst fields fires continuously at its cadence, exactly as before', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // fireEveryMs 1000, no burst fields
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // no burst fields
     for (let i = 0; i < 20; i++) {
       e.fireCd = 0;
       scene.time.now += 1000;
       scene._fireVehicleWeapon(e, {}, 0);
-      expect(e.fireCd).toBe(1000);                   // always the plain cadence, never a rest
+      expect(e.fireCd).toBe(PROJECTILE_WEAPON.cycleTime);   // always the plain cadence, never a rest
     }
     expect(calls.projectile.length).toBe(20);
     expect(e.burstShotsFired ?? 0).toBe(0);          // counter never engaged
@@ -399,7 +423,7 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
 
   it('a kind with burstShots stops after N shots — the Nth shot\'s cooldown becomes burstRestMs', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, 100);
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, { cycleTime: 200 });   // cadence via the weapon's own terms
     e.kindDef.burstShots = 3;
     e.kindDef.burstRestMs = 900;
 
@@ -407,7 +431,7 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
       e.fireCd = 0;
       scene.time.now += 1000;
       scene._fireVehicleWeapon(e, {}, 0);
-      expect(e.fireCd).toBe(100);                    // within-burst spacing = normal cadence
+      expect(e.fireCd).toBe(200);                    // within-burst spacing = normal cadence
     }
     e.fireCd = 0;
     scene.time.now += 1000;
@@ -423,12 +447,12 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     scene.time.now += 1000;
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(4);
-    expect(e.fireCd).toBe(100);                      // back to within-burst cadence
+    expect(e.fireCd).toBe(200);                      // back to within-burst cadence
   });
 
   it('burstRestMs defaults to 1000 when only burstShots is set', () => {
     const { scene } = makeScene();
-    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, 100);
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, { cycleTime: 200 });
     e.kindDef.burstShots = 1;
     scene._fireVehicleWeapon(e, {}, 0);
     expect(e.fireCd).toBe(1000);

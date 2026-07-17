@@ -865,7 +865,8 @@ export const EnemiesMixin = {
   // Fire a non-mech unit's weapon at `aim` (its turret angle). The weapon comes from data
   // (resolveWeapon(def.weaponId, def.weaponOverride), #243) — NO weapon-id literal in this
   // file — wrapped as the {weapon,
-  // location} shape _spawnProjectile expects. Enemy-owned round; cadence is the kind's fireEveryMs.
+  // location} shape _spawnProjectile expects. Enemy-owned round; cadence is the resolved
+  // weapon's own fire interval (#241/#243 — no per-kind timer field).
   _fireVehicleWeapon(e, ctx, aim) {
     if (e.fireCd > 0) return;
     const def = e.kindDef;
@@ -910,20 +911,18 @@ export const EnemiesMixin = {
     } else {
       this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null);
     }
-    // #241: cadence is the kind's `fireEveryMs` ONLY when the data explicitly sets it (a
-    // deliberate per-kind override — e.g. tank/quadruped deliberately firing autocannon
-    // slower than its own 1100ms cycle for a heavier feel, or turret's siegeShell override
-    // that just mirrors the weapon's own 2600ms cycle). When absent, fall back to the
-    // weapon's OWN delivery-driven cadence via `_fireInterval` (the same resolution the
-    // player/mech-enemy path uses) — `{}` mods since vehicles have no player buffs/Overdrive
-    // to apply. This is what makes a stream weapon (fireRate-driven) actually stream at its
-    // own rate for a vehicle that doesn't override it, instead of silently reverting to the
-    // old blanket 1000ms default a missing field used to fall through to.
-    e.fireCd = def.fireEveryMs ?? this._fireInterval(weapon, {});
+    // Cadence is ALWAYS the RESOLVED weapon's own `_fireInterval` (the same resolution the
+    // player/mech-enemy path uses; `{}` mods since vehicles have no player buffs/Overdrive) —
+    // #241 introduced this as the fallback behind a per-kind `fireEveryMs` timer, and #243
+    // removed that field entirely: a kind that wants a slower/faster cadence now tunes it in
+    // the weapon's own terms through `weaponOverride` (cycleTime for single-shot weapons,
+    // delivery.fireRate for streams — see enemyKinds.js's field docs), so one cadence concept
+    // serves every fire path.
+    e.fireCd = this._fireInterval(weapon, {});
     // #243 trigger discipline: a kind with `burstShots` fires N shots at the cadence above,
     // then RESTS — the shot that completes the burst swaps its cooldown for the (longer)
     // `burstRestMs` instead of the per-shot cadence, and the counter re-arms for the next
-    // burst. Orthogonal to the cadence resolution: fireEveryMs/#241 space the shots WITHIN a
+    // burst. Orthogonal to the cadence resolution above, which spaces the shots WITHIN a
     // burst; burstShots/burstRestMs bound how long a burst runs. Both fields absent (every
     // kind except helicopter today) ⇒ this whole block is a no-op and the unit fires
     // continuously exactly as before.

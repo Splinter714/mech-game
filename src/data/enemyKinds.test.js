@@ -227,7 +227,7 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
       expect(WEAPONS.machineGun.delivery.fireRate).toBe(18);
     });
 
-    it('has NO fireEveryMs — cadence composes with #241\'s fallback so the overridden fireRate IS the cadence lever', () => {
+    it('has NO per-kind cadence timer — the overridden fireRate IS the cadence lever (#241/#243)', () => {
       expect(ENEMY_KINDS.drone.fireEveryMs).toBeUndefined();
     });
 

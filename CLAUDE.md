@@ -41,7 +41,10 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     `WEAPONS`.** A non-player owner can mount a *tuned variant* of a base weapon without
     forking the entry: `resolveWeapon(baseId, override)` shallow-merges a partial override
     (nested `delivery` merged field-by-field, base never mutated) — enemy kinds opt in via
-    `weaponOverride` in `enemyKinds.js` (e.g. the drone's weakened Repeater). Fine-grained
+    `weaponOverride` in `enemyKinds.js` (e.g. the drone's weakened Repeater). Enemy-vehicle
+    fire cadence always derives from the resolved weapon's own timing (`_fireInterval` —
+    no per-kind fire timer; tune cadence via `weaponOverride` `cycleTime`/`fireRate`), with
+    optional kind-level trigger discipline (`burstShots`/`burstRestMs`). Fine-grained
     delivery feel (spread stagger, speed-jitter band, homing turn radius, weak-seek
     strength/radius, burst stagger) is per-weapon tunable via optional `delivery` fields
     that default to the shared constants in `delivery.js`.
