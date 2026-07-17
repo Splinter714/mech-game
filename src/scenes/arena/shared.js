@@ -244,12 +244,35 @@ export function pickLiveWeighted(pool, isPartDestroyed, rng = Math.random) {
 // Callers with real weapon art (mech mounts via `weaponMuzzleTip`, mounts/barrelSpec.js) pass
 // that length in; callers with no such art (or that predate #233) get the old front-edge
 // behaviour unchanged.
-export function partMuzzle(part, x, y, angle, disp, tipOffset = 0) {
-  const f = (-part.y + part.h / 2 + tipOffset) * disp;  // forward, to the muzzle's actual tip
-  const r = part.x * disp;                  // right of centre
+//
+// `tilt`/`pivotFrac` (#233 follow-up, playtest: "not matching up with the arm/torso tilt that
+// happens with convergence tuning"): a pivoting part (arm/side-torso) doesn't rotate around the
+// MECH CENTRE — it rotates around its own joint (see mechArt.js `partSpriteTransform`/
+// `PART_PIVOT`), `pivotFrac` of the way toward the part's rear. At tilt 0 the whole box still
+// behaves as if rigidly attached to the centre (rotating everything by the same `angle`
+// recovers the old single-rotation formula exactly, regardless of `pivotFrac` — the split below
+// is linear, so it only matters once tilt != 0). But once convergence tilts the part by `tilt`
+// on top of `angle`, only the JOINT stays fixed relative to the mech centre; everything from the
+// joint forward (including the muzzle tip) swings by the full `angle + tilt`. Computing the tip
+// as one rotation of the whole centre-to-tip vector by `angle` (the old formula, unconditionally)
+// silently assumed the part was still at its neutral/rest orientation, so the computed muzzle
+// drifted from the real rendered barrel tip any time the arm/torso was actually tilted for
+// convergence. Non-pivoting callers (centerTorso/head, or anything that predates convergence
+// tilt) simply never pass a non-zero `tilt`, so they're unaffected.
+export function partMuzzle(part, x, y, angle, disp, tipOffset = 0, tilt = 0, pivotFrac = 0) {
+  // Joint: `pivotFrac` of the part's height toward its rear (+y), same fraction the sprite
+  // itself pivots around — fixed relative to the mech centre, so it only ever rotates by the
+  // base `angle` (never the tilt).
+  const jointF = -(part.y + part.h * pivotFrac) * disp;
+  const jointR = part.x * disp;
+  const jointX = x + jointF * Math.cos(angle) - jointR * Math.sin(angle);
+  const jointY = y + jointF * Math.sin(angle) + jointR * Math.cos(angle);
+  // Tip: straight ahead of the joint (no lateral component — a barrel extends along the part's
+  // own forward axis), rotated by the part's LIVE orientation (`angle + tilt`).
+  const tipF = (part.h * (0.5 + pivotFrac) + tipOffset) * disp;
   return {
-    x: x + f * Math.cos(angle) - r * Math.sin(angle),
-    y: y + f * Math.sin(angle) + r * Math.cos(angle),
+    x: jointX + tipF * Math.cos(angle + tilt),
+    y: jointY + tipF * Math.sin(angle + tilt),
   };
 }
 

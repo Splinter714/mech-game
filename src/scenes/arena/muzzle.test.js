@@ -87,4 +87,60 @@ describe('partMuzzle (#109)', () => {
       expect(m.y).toBeCloseTo(50 + 16, 10);
     });
   });
+
+  // #233 follow-up — playtest: "projectiles coming from tip of barrel is mostly working, but
+  // it's not matching up with the arm/torso tilt that happens with convergence tuning." A
+  // pivoting part (arm/side-torso) rotates around its OWN joint (pivotFrac of the way toward
+  // the part's rear — mirrors mechArt.js's PART_PIVOT/partSpriteTransform), not the mech centre:
+  // the joint stays fixed relative to the centre (only ever rotated by the base `angle`), but
+  // the muzzle tip is out past the joint and swings with the part's LIVE orientation
+  // (`angle + tilt`). These cases pin that behaviour down; the earlier tests above all pass
+  // tilt 0 (or omit it), which — by construction — must still match the pre-#233-follow-up
+  // formula regardless of pivotFrac (proven by the first case below).
+  describe('tilt/pivotFrac (#233 follow-up)', () => {
+    const part = { x: 8, y: -10, w: 4, h: 20 }; // an off-centre (arm-like) mount
+    const disp = 2;
+
+    it('tilt 0 reproduces the untilted formula for ANY pivotFrac (the split is linear)', () => {
+      const untilted = partMuzzle(part, 0, 0, 0.3, disp, 5);
+      for (const pivotFrac of [0, 0.3, 0.42, 0.9]) {
+        const m = partMuzzle(part, 0, 0, 0.3, disp, 5, 0, pivotFrac);
+        expect(m.x).toBeCloseTo(untilted.x, 10);
+        expect(m.y).toBeCloseTo(untilted.y, 10);
+      }
+    });
+
+    it('a non-zero tilt rotates the tip AROUND THE JOINT, not the mech centre', () => {
+      const angle = 0.3, tilt = 0.5, pivotFrac = 0.42, tipOffset = 5;
+      const m = partMuzzle(part, 0, 0, angle, disp, tipOffset, tilt, pivotFrac);
+
+      // Hand-computed expected value from the joint/tip decomposition described above.
+      const jointF = -(part.y + part.h * pivotFrac) * disp;
+      const jointR = part.x * disp;
+      const jointX = jointF * Math.cos(angle) - jointR * Math.sin(angle);
+      const jointY = jointF * Math.sin(angle) + jointR * Math.cos(angle);
+      const tipF = (part.h * (0.5 + pivotFrac) + tipOffset) * disp;
+      const expected = {
+        x: jointX + tipF * Math.cos(angle + tilt),
+        y: jointY + tipF * Math.sin(angle + tilt),
+      };
+      expect(m.x).toBeCloseTo(expected.x, 10);
+      expect(m.y).toBeCloseTo(expected.y, 10);
+
+      // And it must differ meaningfully from just rotating the whole thing by `angle` alone
+      // (the bug: computing the tip as if the part were still at its neutral/rest orientation).
+      const neutral = partMuzzle(part, 0, 0, angle, disp, tipOffset);
+      expect(Math.hypot(m.x - neutral.x, m.y - neutral.y)).toBeGreaterThan(1);
+    });
+
+    it('the joint itself never moves with tilt — only rotates with the base angle', () => {
+      const angle = 1.1, pivotFrac = 0.3;
+      // tipOffset -> -(part.h*(0.5+pivotFrac)) makes tipF collapse to 0, isolating the joint.
+      const tipOffset = -(part.h * (0.5 + pivotFrac));
+      const atJointNoTilt = partMuzzle(part, 0, 0, angle, disp, tipOffset, 0, pivotFrac);
+      const atJointTilted = partMuzzle(part, 0, 0, angle, disp, tipOffset, 1.3, pivotFrac);
+      expect(atJointTilted.x).toBeCloseTo(atJointNoTilt.x, 10);
+      expect(atJointTilted.y).toBeCloseTo(atJointNoTilt.y, 10);
+    });
+  });
 });

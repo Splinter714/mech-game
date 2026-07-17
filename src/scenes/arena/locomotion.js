@@ -8,7 +8,7 @@ import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
-import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
+import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
@@ -148,11 +148,22 @@ export const LocomotionMixin = {
   // actual ART TIP — #233 — not just the front edge of the part) rotated by the turret
   // facing. So a left-arm shot leaves the tip of the left arm's gun, a right-torso shot the
   // tip of the right torso's, etc.
+  // #233 follow-up: a pivoting part (arm/side-torso) is currently sitting at its OWN live
+  // convergence tilt (`this.playerView._tilt[loc]`, eased in `_syncTilts`/`_stepGait`, which
+  // runs earlier in the same frame — see ArenaScene.update()'s `_stepGait` before
+  // `_handleFiring`), not necessarily its neutral/rest angle. Passing that live tilt (plus the
+  // matching `PART_PIVOT` joint fraction the sprite itself pivots around) into `partMuzzle`
+  // rotates the tip offset by the part's ACTUAL current orientation instead of assuming it's
+  // still square with the turret — otherwise the computed muzzle drifts from the real rendered
+  // barrel tip any time convergence has the part tilted. centerTorso/head never pivot, so their
+  // tilt/pivot stay at the defaults (0), same math as before.
   _muzzle(loc) {
     const disp = ARENA_MECH_SCALE * ART_SCALE;
     const part = mechLayout(this.mech)[loc];
     const tipOffset = mechMuzzleTipOffset(this.mech, loc, part);
-    return partMuzzle(part, this.px, this.py, this.turretAngle, disp, tipOffset);
+    const tilt = this.playerView?._tilt?.[loc] || 0;
+    const pivotFrac = PART_PIVOT[loc] ?? 0;
+    return partMuzzle(part, this.px, this.py, this.turretAngle, disp, tipOffset, tilt, pivotFrac);
   },
 
   // Twin-stick locomotion + turret aim. The left stick / WASD is a world-space move vector;
