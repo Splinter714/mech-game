@@ -9,6 +9,7 @@
 // NEVER a mutation of the Mech, so buffs expire cleanly. `_buffMods()` collapses it (via the
 // pure buffModifiers) into the multipliers/flags the other mixins read. Stacking is one-per-
 // type: a duplicate pickup of an active type just refreshes its remaining time.
+import Phaser from 'phaser';
 import {
   POWERUPS, dropChanceForMaxHp, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
@@ -20,10 +21,21 @@ import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../
 import { isPassable } from '../../data/terrain.js';
 import { BOUNDARY_RING_WIDTH } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
-import { DEPTH } from './shared.js';
+import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
+// #205 (playtest follow-up): how much bigger each shield "outline" duplicate sprite is drawn
+// than the real part it shadows — just enough for a bright glowing rim to peek out from behind
+// every edge of the actual mech silhouette (hull/torsos/arms/turret), not a separate floating
+// shape. See `_initShieldVisual` below for the full technique.
+const SHIELD_OUTLINE_SCALE_MULT = 1.14;
+const SHIELD_OUTLINE_BASE_SCALE = ARENA_MECH_SCALE * SHIELD_OUTLINE_SCALE_MULT;
+const SHIELD_HIT_FLASH_SCALE = ARENA_MECH_SCALE * SHIELD_OUTLINE_SCALE_MULT * 1.15;
+// Every part-sprite pair the outline technique shadows, keyed by name on `this.playerView`
+// (see locomotion.js `_makeMechView`). Read fresh each frame since torso/arm sprites pivot
+// (position + origin both change as they cant toward weapon convergence).
+const SHIELD_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
 // #88: small random scatter applied to a drop's kill-site spawn point before the #73
 // reachable-ground snap, so simultaneous/nearby drops don't stack on the exact same pixel.
 // ~30px keeps the scatter well inside "still clearly at this kill site" (a hex is 48px) while
@@ -42,40 +54,62 @@ export const PowerupsMixin = {
   },
 
   // #205 (playtest follow-up to #187): the Shield powerup had NO persistent visual on the
-  // player mech — only a per-hit 'shielded' floating text (combat.js). Draws a translucent
-  // bubble/ring, in the powerup's own colour (POWERUPS.shield.color), as CHILDREN of
-  // `this.playerView` — the player mech's container (locomotion.js `_makeMechView`) — so the
-  // bubble tracks the mech's position (and stompy bob) for free with zero per-frame position
-  // math of our own. Added after the mech's own sprites so it draws on top, like a shell around
-  // the hull. Starts fully hidden; `_updateShieldVisual` below is the only thing that toggles it.
+  // player mech — only a per-hit 'shielded' floating text (combat.js). A first pass drew a
+  // separate translucent bubble/ring floating around the mech's centre, but playtest feedback
+  // was that a shield should read as a glow on the mech ITSELF, not a floating overlay
+  // ("can we do a blue outline on the whole mech itself?"). This repo's Phaser build has no
+  // WebGL-only postFX glow pipeline dependency to lean on cleanly (the smoke/test harness can
+  // force the Canvas renderer via `?canvas`, where `postFX`/glow FX pipelines don't run), so
+  // instead this uses the classic cheap 2D "outline via duplicate" trick: for every sprite that
+  // makes up the mech (hull legs, both side torsos, both arms, the turret body — see
+  // locomotion.js `_makeMechView`), add a same-texture duplicate tinted solid shield-blue
+  // (`setTintFill`), scaled up slightly, and stacked BEHIND all the real parts. The real
+  // artwork fully covers each duplicate except for a thin rim at its silhouette edge, which
+  // reads as a glowing outline hugging the mech's actual shape. `_updateShieldVisual` below
+  // re-poses every outline sprite each frame to track its real counterpart (several of them —
+  // the arms/torsos — pivot toward weapon convergence, so a static child offset wouldn't track).
+  // Starts fully hidden; `_updateShieldVisual` is the only thing that toggles it.
   _initShieldVisual() {
     const color = POWERUPS.shield.color;
-    const fill = this.add.circle(0, 0, 36, color, 0.1).setVisible(false);
-    const ring = this.add.circle(0, 0, 36).setStrokeStyle(2.5, color, 0.8).setVisible(false);
-    const ringOuter = this.add.circle(0, 0, 41).setStrokeStyle(1.5, color, 0.3).setVisible(false);
-    this.playerView.add([fill, ring, ringOuter]);
-    this._shieldVisual = { fill, ring, ringOuter, active: false, t: 0 };
+    const view = this.playerView;
+    const outlines = {};
+    for (const key of SHIELD_PART_KEYS) {
+      const real = view[key];
+      const o = this.add.sprite(real.x, real.y, real.texture.key)
+        .setOrigin(real.originX, real.originY)
+        .setScale(SHIELD_OUTLINE_BASE_SCALE)
+        .setTintFill(color)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setVisible(false);
+      outlines[key] = o;
+      // Behind everything already in the container (the real parts) — order among the
+      // outlines themselves doesn't matter since they're additive-blended and fully hidden
+      // by the real art anyway.
+      view.addAt(o, 0);
+    }
+    this._shieldVisual = { outlines, active: false, t: 0 };
   },
 
-  // #205: per-frame bubble upkeep — called once from `_updatePowerups` below (same cadence as
-  // the shieldPool bookkeeping it reads). Shows/hides the bubble the instant shieldPool crosses
-  // 0↔>0 (pickup / break), and while active scales its opacity with the remaining FRACTION of
-  // the pool rather than a flat on/off, so the player gets an at-a-glance "how much is left" read
-  // — same spirit as the Sprint fuel bar (HudScene `_updateSprintBar`), just drawn in-world
-  // instead of on the HUD since this is a persistent-on-the-mech indicator, not a HUD meter.
-  // `this._shieldPeak` is the pool value at the moment of the MOST RECENT pickup (set in
-  // `_activatePowerup` below) — since the pool only ever counts down between pickups (never back
-  // up on its own), that's exactly the right denominator even when a duplicate pickup stacks the
-  // cap past the base `shieldCap` (#187's stacking rule).
+  // #205: per-frame outline upkeep — called once from `_updatePowerups` below (same cadence as
+  // the shieldPool bookkeeping it reads). Shows/hides the outline sprites the instant shieldPool
+  // crosses 0↔>0 (pickup / break); while active, re-poses each outline to match its real part
+  // (texture/position/rotation/origin — the hull's texture cycles through the walk-cycle frames,
+  // and the torso/arm sprites pivot toward weapon convergence, so this can't be a one-time copy)
+  // and fades its opacity with the remaining FRACTION of the pool rather than a flat on/off, so
+  // the player gets an at-a-glance "how much is left" read — same spirit as the Sprint fuel bar
+  // (HudScene `_updateSprintBar`), just drawn in-world instead of on the HUD since this is a
+  // persistent-on-the-mech indicator, not a HUD meter. `this._shieldPeak` is the pool value at
+  // the moment of the MOST RECENT pickup (set in `_activatePowerup` below) — since the pool only
+  // ever counts down between pickups (never back up on its own), that's exactly the right
+  // denominator even when a duplicate pickup stacks the cap past the base `shieldCap` (#187's
+  // stacking rule).
   _updateShieldVisual(delta) {
     const sv = this._shieldVisual;
     if (!sv) return;
     const pool = this.shieldPool || 0;
     const active = pool > 0;
     if (active !== sv.active) {
-      sv.fill.setVisible(active);
-      sv.ring.setVisible(active);
-      sv.ringOuter.setVisible(active);
+      for (const key of SHIELD_PART_KEYS) sv.outlines[key].setVisible(active);
       sv.active = active;
       if (!active) sv.t = 0;
     }
@@ -83,23 +117,35 @@ export const PowerupsMixin = {
     sv.t += delta;
     const cap = this._shieldPeak || POWERUPS.shield.shieldCap;
     const frac = Math.max(0.15, Math.min(1, pool / cap));
-    // Slow ambient hum so an idle bubble still reads as "live" rather than a flat decal.
+    // Slow ambient hum so an idle glow still reads as "live" rather than a flat decal.
     const pulse = 0.5 + 0.5 * Math.sin(sv.t * 0.0025);
-    sv.fill.setAlpha((0.05 + 0.12 * frac) * (0.85 + 0.3 * pulse));
-    sv.ring.setAlpha((0.35 + 0.5 * frac) * (0.85 + 0.2 * pulse));
-    sv.ringOuter.setAlpha((0.12 + 0.25 * frac) * (0.85 + 0.2 * pulse));
+    const alpha = (0.35 + 0.45 * frac) * (0.85 + 0.3 * pulse);
+    const view = this.playerView;
+    for (const key of SHIELD_PART_KEYS) {
+      const real = view[key];
+      const o = sv.outlines[key];
+      if (o.texture.key !== real.texture.key) o.setTexture(real.texture.key);
+      o.setPosition(real.x, real.y);
+      o.setOrigin(real.originX, real.originY);
+      o.rotation = real.rotation;
+      o.setAlpha(alpha);
+    }
   },
 
-  // #205: a brief outward pulse on the bubble the instant it actually absorbs a hit — reinforces
-  // the 'shielded' floating text (combat.js `_damagePlayerAt`) with something ON the mech itself.
-  // Mirrors the tween-driven feel of the existing impact `_burst` primitive (combat.js) without
-  // needing its pooled-circle machinery, since this reuses the bubble's own persistent shapes.
+  // #205: a brief outward pulse on the outline glow the instant it actually absorbs a hit —
+  // reinforces the 'shielded' floating text (combat.js `_damagePlayerAt`) with something ON the
+  // mech itself. Mirrors the tween-driven feel of the existing impact `_burst` primitive
+  // (combat.js) without needing its pooled-circle machinery, since this reuses the outline
+  // sprites' own persistent shapes.
   _shieldHitFlash() {
     const sv = this._shieldVisual;
     if (!sv || !sv.active) return;
-    sv.ring.setScale(1.3);
-    sv.fill.setScale(1.18);
-    this.tweens.add({ targets: [sv.ring, sv.fill], scale: 1, duration: 220, ease: 'Quad.out' });
+    const targets = Object.values(sv.outlines);
+    for (const o of targets) o.setScale(SHIELD_HIT_FLASH_SCALE);
+    this.tweens.add({
+      targets, scaleX: SHIELD_OUTLINE_BASE_SCALE, scaleY: SHIELD_OUTLINE_BASE_SCALE,
+      duration: 220, ease: 'Quad.out',
+    });
   },
 
   // Source-agnostic drop: place a world-space collectible of a weighted-random type at (x, y).
