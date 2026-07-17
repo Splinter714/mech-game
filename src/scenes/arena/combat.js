@@ -6,6 +6,9 @@ import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor, explosionCategoryFor } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 import { absorbShieldDamage } from '../../data/powerups.js';
+// #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
+// there for the full list of gated call sites and how to revert.
+import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -80,7 +83,8 @@ export const CombatMixin = {
     // weapon (e.g. four Repeaters into one target) collapses to a bounded ~20 triggers/sec
     // instead of flooding WebAudio with dozens of oscillators at once. Keyed per weapon so two
     // different weapons hitting together still each sound.
-    if (allowByKey((this._impactSoundAt ??= {}), weaponId ?? '_', now, SOUND_THROTTLE_MS)) Audio.impact(weaponId);
+    // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED above.
+    if (WEAPON_IMPACT_SOUNDS_ENABLED && allowByKey((this._impactSoundAt ??= {}), weaponId ?? '_', now, SOUND_THROTTLE_MS)) Audio.impact(weaponId);
     // #76: collapse near-simultaneous bursts at the same point — concentrated fire lands many
     // hits/frame at one spot, and the overlapping identical rings are indistinguishable, so keep
     // only the first and skip the rest (no extra circles/tweens) for one frame's worth of window.

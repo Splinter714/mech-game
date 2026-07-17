@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { Slider } from './slider.js';
 import { isAudible, isStageAudible, applyPreviewMuting } from './previewMuting.js';
 import { Audio } from '../audio/index.js';
-import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
+import { TRAJECTORY_DELAY, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUNDS_ENABLED } from '../audio/sfxParams.js';
 import {
   storeOverride, hasOverride,
   setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
@@ -262,8 +262,23 @@ export class WeaponSfxPanel {
 
   // Thin backward-compat wrapper over setTarget() for the weapon/explosion-category call sites
   // — same signature and behavior as before #177, just always passing the weapon stage list.
+  //
+  // #224 (temporary): while Jackson strips weapon trajectory/impact sound out of the game for
+  // sound-design work, also hide those two stages' tuning rows for a real WEAPON target — only
+  // 'fire' shows. Explosion categories (deathExplosionSmall/etc, id prefixed EXPLOSION_ID_PREFIX)
+  // are a separate cue category untouched by #224 and keep the full WEAPON_STAGES list they
+  // always used (their trajectory/impact rows are already inert — no procedural layers — so this
+  // doesn't change what's rendered for them). Flip WEAPON_TRAJECTORY_SOUNDS_ENABLED and
+  // WEAPON_IMPACT_SOUNDS_ENABLED (sfxParams.js) both back to `true` to restore the rows for
+  // weapons too.
   setWeapon(weaponId, label = null) {
-    this.setTarget(weaponId, { label, stages: WEAPON_STAGES });
+    const isExplosionCategory = weaponId.startsWith(EXPLOSION_ID_PREFIX);
+    const hideTrajectoryImpact = !isExplosionCategory
+      && !(WEAPON_TRAJECTORY_SOUNDS_ENABLED && WEAPON_IMPACT_SOUNDS_ENABLED);
+    const stages = hideTrajectoryImpact
+      ? WEAPON_STAGES.filter(([key]) => key === 'fire')
+      : WEAPON_STAGES;
+    this.setTarget(weaponId, { label, stages });
   }
 
   _button(x, y, w, h, label, onClick, { color = UI.text } = {}) {

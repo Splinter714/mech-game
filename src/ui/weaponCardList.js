@@ -5,7 +5,9 @@ import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
 import { catalogMaxRange, previewRangeFrac } from '../data/weapons.js';
 import { Audio } from '../audio/index.js';
-import { TRAJECTORY_DELAY, hasHeldSfx } from '../audio/sfxParams.js';
+import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUNDS_ENABLED } from '../audio/sfxParams.js';
+// #224 (temporary): both flags gate the Weapon Lab preview's trajectory/impact cues below —
+// see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../audio/fireCues.js';
 import { stepIndex, scrollToShow } from './padNav.js';
 import { orderByLock } from './catalogOrder.js';
@@ -429,14 +431,16 @@ export class WeaponCardList {
     const ax = card.muzzleX, ay = card.muzzleY, color = card.color;
     if (mode === 'contact') {
       card.slashes.push({ t: 0, ttl: 260, color });
-      if (this._isAudible(card)) Audio.impact(card.weapon.id);
+      // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED.
+      if (WEAPON_IMPACT_SOUNDS_ENABLED && this._isAudible(card)) Audio.impact(card.weapon.id);
       return;
     }
     if (mode === 'hitscan') {
       const len = this._rangeLen(card);
       const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
       card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: card.weapon.delivery.kind === 'rail' });
-      if (this._isAudible(card)) Audio.impact(card.weapon.id);
+      // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED.
+      if (WEAPON_IMPACT_SOUNDS_ENABLED && this._isAudible(card)) Audio.impact(card.weapon.id);
       return;
     }
     const angle = s.angleOffset;
@@ -446,7 +450,8 @@ export class WeaponCardList {
     card.projectiles.push(p);
     // Continuous in-flight loop (#56) — mirrors firing.js's _spawnProjectile: only weapons
     // with a `trajectory` stage get one, started a beat after launch.
-    if (this._isAudible(card) && Audio.getSfxParams(card.weapon.id).trajectory) {
+    // #224 (temporary): trajectory loop start disabled, see WEAPON_TRAJECTORY_SOUNDS_ENABLED.
+    if (WEAPON_TRAJECTORY_SOUNDS_ENABLED && this._isAudible(card) && Audio.getSfxParams(card.weapon.id).trajectory) {
       this.scene.time.delayedCall(TRAJECTORY_DELAY, () => {
         if (p.dead) return;
         p.stopTrajectorySfx = Audio.startTrajectoryLoop(card.weapon.id);
@@ -465,7 +470,8 @@ export class WeaponCardList {
       if (p.dist >= p.maxDist) {
         p.dead = true;
         p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
-        if (this._isAudible(card)) Audio.impact(p.weaponId);
+        // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED.
+        if (WEAPON_IMPACT_SOUNDS_ENABLED && this._isAudible(card)) Audio.impact(p.weaponId);
         if (p.ground) card.patches.push({ x: p.x, y: card.muzzleY, r: Math.min(p.ground.radius, 26), born: 0, ttl: p.ground.duration * 1000 });
         else card.bursts.push({ x: p.x, y: p.y, color: p.color, t: 0, ttl: 220 });
       }

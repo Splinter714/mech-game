@@ -315,6 +315,23 @@ export function hasHeldSfx(weaponId) {
 // the arena and the Weapon Lab preview so the timing feels identical in both.
 export const TRAJECTORY_DELAY = 90;
 
+// --- #224 (temporary) ------------------------------------------------------
+// Jackson asked to temporarily strip weapon TRAJECTORY and IMPACT sounds out
+// of the game entirely (not just mute — actual call sites disabled) while he
+// works on sound design, so they don't muddy the mix. This is the single
+// switch every call site below gates on — flip both back to `true` to
+// restore the old behavior (nothing else needs to change; the underlying
+// data/infra in this file, sfxDomains.js, sfxOverrides.js, and bakedSfx.js is
+// untouched). Gated call sites: audio/fireCues.js (scheduleFireCues),
+// scenes/arena/combat.js (_impactFx), scenes/arena/firing.js (in-flight
+// trajectory loop start), ui/weaponCardList.js (Lab preview's trajectory
+// loop + impact cues). The Weapon Lab's weaponSfxPanel.js also hides the
+// trajectory/impact tuning rows for weapon targets while this is off. See
+// GitHub issue #224.
+export const WEAPON_TRAJECTORY_SOUNDS_ENABLED = false;
+export const WEAPON_IMPACT_SOUNDS_ENABLED = false;
+// ----------------------------------------------------------------------------
+
 // localStorage persistence for the Weapon Lab sound panel's tuning, so a reload doesn't
 // lose it. Merges saved values UNDER the current defaults (field by field, layer by layer)
 // so a save from before a weapon/field was added still loads safely — anything the save
