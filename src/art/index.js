@@ -6,6 +6,7 @@ import { buildHexTextures } from './hexArt.js';
 import { buildIconTextures } from './iconArt.js';
 import { buildItemFxTextures } from './projectileArt.js';
 import { buildMountIconTextures } from './mounts/icons.js';
+import { buildHelipadTexture, HELIPAD_KEY } from './helipad.js';
 
 export { buildMechTextures, reskinMech, mechLayout, DESIGN, ART_SCALE, ARM_LOCATIONS, SIDE_TORSO_LOCATIONS, PIVOT_LOCATIONS, armSpriteTransform, partSpriteTransform } from './mechArt.js';
 // Non-mech unit textures (turret / tank / drone / helicopter), built per-unit on spawn.
@@ -15,6 +16,8 @@ export { HEX_TEX_W, HEX_TEX_H } from './hexArt.js';
 export { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind, itemFxKey } from './projectileArt.js';
 // Weapon-mount silhouette stills — the on-mech hardware, shown as the catalog card icon.
 export { mountIconKey, MOUNT_FRONT_Y } from './mounts/icons.js';
+// #251: the helipad ground decal — dropped by enemies.js at a helicopter's spawn point.
+export { HELIPAD_KEY } from './helipad.js';
 
 // Build every boot-time texture (everything that doesn't depend on a specific mech
 // build). Called once from BootScene.
@@ -23,4 +26,5 @@ export function buildBaseTextures(scene) {
   buildIconTextures(scene);
   buildItemFxTextures(scene);
   buildMountIconTextures(scene);
+  buildHelipadTexture(scene);
 }
