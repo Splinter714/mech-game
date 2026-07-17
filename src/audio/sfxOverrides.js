@@ -542,6 +542,48 @@ export async function clearOverride(weaponId, stage) {
   try { await idbDelete(db, key); } catch { /* blocked — in-memory clear still took effect */ }
 }
 
+// #209: copy variant `sourceIndex`'s non-file tuning (start/trim, processing, fade-out, volume,
+// loop-start) onto every OTHER loaded variant in the same (weaponId, stage) pool — a one-time
+// convenience for a pool of similar takes (e.g. 4 explosion bangs) that should all be tuned
+// alike, so the owner doesn't have to drag every slider N times. Deliberately does NOT touch
+// each variant's own file/blob/meta — every variant necessarily has its own distinct recording,
+// so `storeOverride` is never called here, only the trim/processing/fadeOut/volume/loopStart
+// setters (each of which already persists through `_persistParams`, so the copy survives a
+// reload exactly like a hand-tuned value would). The `processing` object is copied as a full
+// REPLACE, not a merge — any field the target had that the source lacks is explicitly cleared
+// (via the `null` convention `setProcessing` already understands) so a stray processing setting
+// from the target's own past tuning doesn't survive alongside the source's. A no-op if
+// `sourceIndex` is out of range for the current pool, or if the pool has only one variant (there
+// is nothing else to copy onto).
+export async function applyTuningToAllVariants(weaponId, stage, sourceIndex) {
+  const n = getOverrideVariantCount(weaponId, stage);
+  if (sourceIndex < 0 || sourceIndex >= n || n < 2) return;
+  const sourceStage = variantStage(stage, sourceIndex);
+  const startMs = getStartMs(weaponId, sourceStage);
+  const trimMs = getTrimMs(weaponId, sourceStage);
+  const fadeOutMs = getFadeOutMs(weaponId, sourceStage);
+  const volume = getVolume(weaponId, sourceStage);
+  const loopStartMs = getLoopStartMs(weaponId, sourceStage);
+  const processing = getProcessing(weaponId, sourceStage) || {};
+
+  for (let i = 0; i < n; i++) {
+    if (i === sourceIndex) continue;
+    const targetStage = variantStage(stage, i);
+    await setStart(weaponId, targetStage, startMs);
+    await setTrim(weaponId, targetStage, trimMs);
+    await setFadeOut(weaponId, targetStage, fadeOutMs);
+    await setVolume(weaponId, targetStage, volume);
+    await setLoopStartMs(weaponId, targetStage, loopStartMs);
+    const targetProcessing = getProcessing(weaponId, targetStage) || {};
+    const patch = {};
+    for (const key of Object.keys(targetProcessing)) {
+      if (!(key in processing)) patch[key] = null; // clear whatever the source doesn't have
+    }
+    for (const [key, value] of Object.entries(processing)) patch[key] = value;
+    if (Object.keys(patch).length > 0) await setProcessing(weaponId, targetStage, patch);
+  }
+}
+
 // #186: pre-load a shipped bake's settings into the live override slot for editing. Called by
 // the panel the moment the owner touches ANY slider for a stage that has a bake but no live
 // override yet (see WeaponSfxPanel._editOverride) — a no-op (returns true immediately) if a

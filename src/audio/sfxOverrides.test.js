@@ -5,6 +5,7 @@ import {
   getProcessing, setProcessing, getFadeOutMs, setFadeOut, getVolume, setVolume,
   getLoopStartMs, setLoopStartMs,
   MAX_VARIANTS, variantStage, getOverrideVariantCount, pickOverrideStage, removeOverrideVariant,
+  applyTuningToAllVariants,
 } from './sfxOverrides.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
@@ -765,6 +766,83 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await removeOverrideVariant('autocannon', 'fire', 0);
       expect(getOverrideVariantCount('railgun', 'fire')).toBe(1);
       expect(getOverride('railgun', 'fire')).toEqual({ __decodedFrom: 'R' });
+    });
+  });
+
+  describe('applyTuningToAllVariants (#209)', () => {
+    it('copies trim/processing/fade-out/volume/loop-start from the source variant onto every other variant, leaving the file untouched', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await setStart('autocannon', 'fire', 50);
+      await setTrim('autocannon', 'fire', 900);
+      await setFadeOut('autocannon', 'fire', 120);
+      await setVolume('autocannon', 'fire', 1.4);
+      await setLoopStartMs('autocannon', 'fire', 200);
+      await setProcessing('autocannon', 'fire', { detune: -300, filterType: 'lowpass', filterFreq: 2000, filterQ: 2.5 });
+
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await storeOverride('autocannon', variantStage('fire', 2), fakeFile('v2.wav', 'V2'));
+      // Give variant 2 its own distinct pre-existing tuning, including a processing field the
+      // source variant does NOT have — applying the source's tuning must clear that stray field
+      // rather than merge it in alongside the source's own fields.
+      await setVolume('autocannon', variantStage('fire', 2), 0.5);
+      await setProcessing('autocannon', variantStage('fire', 2), { reverbMix: 0.6, reverbSize: 1.2 });
+
+      await applyTuningToAllVariants('autocannon', 'fire', 0);
+
+      for (const idx of [1, 2]) {
+        const stage = variantStage('fire', idx);
+        expect(getStartMs('autocannon', stage)).toBe(50);
+        expect(getTrimMs('autocannon', stage)).toBe(900);
+        expect(getFadeOutMs('autocannon', stage)).toBe(120);
+        expect(getVolume('autocannon', stage)).toBe(1.4);
+        expect(getLoopStartMs('autocannon', stage)).toBe(200);
+        expect(getProcessing('autocannon', stage)).toEqual({
+          detune: -300, filterType: 'lowpass', filterFreq: 2000, filterQ: 2.5,
+        });
+      }
+
+      // The file/asset each variant points to is NEVER touched by the copy.
+      expect(getOverride('autocannon', 'fire')).toEqual({ __decodedFrom: 'V0' });
+      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
+      expect(getOverride('autocannon', variantStage('fire', 2))).toEqual({ __decodedFrom: 'V2' });
+      expect(getOverrideMeta('autocannon', variantStage('fire', 1))).toEqual({ name: 'v1.wav', type: 'audio/wav' });
+      expect(getOverrideMeta('autocannon', variantStage('fire', 2))).toEqual({ name: 'v2.wav', type: 'audio/wav' });
+
+      // The copy leaves the source variant itself alone.
+      expect(getStartMs('autocannon', 'fire')).toBe(50);
+      expect(getVolume('autocannon', 'fire')).toBe(1.4);
+    });
+
+    it('persists the copy across a simulated reload', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await setVolume('autocannon', 'fire', 1.6);
+      await setProcessing('autocannon', 'fire', { detune: 150 });
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+
+      await applyTuningToAllVariants('autocannon', 'fire', 0);
+
+      _resetForTest();
+      setAudioContext(fakeCtx());
+      await loadAllOverrides();
+
+      expect(getVolume('autocannon', variantStage('fire', 1))).toBe(1.6);
+      expect(getProcessing('autocannon', variantStage('fire', 1))).toEqual({ detune: 150 });
+      expect(getOverride('autocannon', variantStage('fire', 1))).toEqual({ __decodedFrom: 'V1' });
+    });
+
+    it('is a no-op for a single-variant pool (nothing else to copy onto)', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await setVolume('autocannon', 'fire', 1.4);
+      await applyTuningToAllVariants('autocannon', 'fire', 0);
+      expect(getOverrideVariantCount('autocannon', 'fire')).toBe(1);
+      expect(getVolume('autocannon', 'fire')).toBe(1.4);
+    });
+
+    it('is a no-op when sourceIndex is out of range', async () => {
+      await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
+      await storeOverride('autocannon', variantStage('fire', 1), fakeFile('v1.wav', 'V1'));
+      await applyTuningToAllVariants('autocannon', 'fire', 5);
+      expect(getVolume('autocannon', variantStage('fire', 1))).toBe(1); // untouched default
     });
   });
 
