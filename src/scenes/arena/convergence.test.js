@@ -93,6 +93,47 @@ describe('pickConvergeTarget — destructible terrain ranks below live enemies (
   });
 });
 
+// #262 ("targeting focus mode" toggle, R3/keyboard F): pickConvergeTarget takes an optional
+// `focusMode` ('enemy' | 'building'). Omitting it (every test above) must keep the exact #250
+// behavior — an enemy always wins over a hex — and passing 'enemy' explicitly must be identical.
+// 'building' inverts the ranking: a destructible hex wins over an enemy whenever one is available.
+describe('pickConvergeTarget — focusMode (#262)', () => {
+  it('defaults to enemy-priority when focusMode is omitted (unchanged #250 behavior)', () => {
+    const enemy = { x: 300, y: 20 };
+    const hexes = [{ x: 100, y: 0 }];   // closer AND better-aimed than the enemy
+    expect(pickConvergeTarget(0, 0, 0, enemy, hexes)).toBe(enemy);
+  });
+
+  it('explicit focusMode "enemy" matches the default exactly', () => {
+    const enemy = { x: 300, y: 20 };
+    const hexes = [{ x: 100, y: 0 }];
+    expect(pickConvergeTarget(0, 0, 0, enemy, hexes, Infinity, 'enemy')).toBe(enemy);
+  });
+
+  it('focusMode "building" prefers a destructible hex over an enemy, even a closer/better-aimed enemy', () => {
+    const hex = { x: 300, y: 20 };      // farther, slightly off-line
+    const enemy = { x: 100, y: 0 };     // closer AND dead-centre on the aim line
+    const picked = pickConvergeTarget(0, 0, 0, enemy, [hex], Infinity, 'building');
+    expect(picked).toBe(hex);
+  });
+
+  it('focusMode "building" falls back to the enemy when no hex candidate is available', () => {
+    const enemy = { x: 100, y: 0 };
+    expect(pickConvergeTarget(0, 0, 0, enemy, [], Infinity, 'building')).toBe(enemy);
+  });
+
+  it('focusMode "building" returns null when neither an enemy nor a hex exists', () => {
+    expect(pickConvergeTarget(0, 0, 0, null, [], Infinity, 'building')).toBeNull();
+  });
+
+  it('focusMode "building" still respects maxDist when scoring hex candidates', () => {
+    const enemy = { x: 100, y: 0 };
+    const farHex = { x: 1000, y: 0 };   // dead on-line but out of range
+    const picked = pickConvergeTarget(0, 0, 0, enemy, [farHex], 200, 'building');
+    expect(picked).toBe(enemy);   // hex out of range, so falls back to the enemy
+  });
+});
+
 // #250 playtest follow-up ("convergence/locking should somewhat prefer closer targets, not just
 // strictly follow pure aim precision") — pickAimEnemy blends angular offset (dominant) with
 // distance so a meaningfully closer enemy can beat a marginally-better-aimed farther one, while a
