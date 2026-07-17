@@ -17,7 +17,6 @@ export const PICKUP_RADIUS = 26;
 export const MAGNET_RADIUS = 80;
 export const MAGNET_MIN_SPEED = 0.15;   // px/ms at the outer edge of the magnet radius
 export const MAGNET_MAX_SPEED = 0.5;    // px/ms right on top of the player — the drift accelerates in
-const PICKUP_TTL = 15000;
 const BOB_PERIOD = 1300;
 const BOB_AMPLITUDE = 1.5;   // #228: smaller/calmer bounce than the powerup beacon's 4px
 // #88: same small scatter radius as powerups.js (arena/powerups.js DROP_SCATTER_RADIUS) so a
@@ -26,7 +25,7 @@ const DROP_SCATTER_RADIUS = 30;
 
 export const SalvageMixin = {
   _initSalvage() {
-    this.salvage = [];   // dropped SCRAP pickups awaiting pickup: { x, y, amount, ttl, age, view }
+    this.salvage = [];   // dropped SCRAP pickups awaiting pickup: { x, y, amount, age, view }
   },
 
   // Roll the drop chance and, on success, drop a SCRAP pickup at an enemy's death position.
@@ -42,7 +41,7 @@ export const SalvageMixin = {
     const scattered = scatterOffset(x, y, DROP_SCATTER_RADIUS);
     const pos = this._reachableDropPos ? this._reachableDropPos(scattered.x, scattered.y) : scattered;
     const view = this._makeSalvageView(pos.x, pos.y);
-    this.salvage.push({ x: pos.x, y: pos.y, amount, ttl: PICKUP_TTL, age: 0, view });
+    this.salvage.push({ x: pos.x, y: pos.y, amount, age: 0, view });
   },
 
   // A small spinning gold diamond over a ground glow — a lighter beacon than the powerup one
@@ -62,13 +61,13 @@ export const SalvageMixin = {
     return c;
   },
 
-  // Per-frame: bob/spin live drops, expire old ones, grab any the player touches.
+  // Per-frame: bob/spin live drops, grab any the player touches. Dropped SCRAP never
+  // expires (#229) — it persists until collected.
   _updateSalvage(delta) {
     if (!this.salvage) return;
     for (let i = this.salvage.length - 1; i >= 0; i--) {
       const s = this.salvage[i];
       s.age += delta;
-      s.ttl -= delta;
 
       // #226: magnetic drift — inside MAGNET_RADIUS (but before actual pickup range) the drop's
       // world position (s.x/s.y) creeps toward the player each frame, accelerating as it closes
@@ -90,7 +89,6 @@ export const SalvageMixin = {
       v.y = s.y + Math.sin(t * Math.PI * 2) * BOB_AMPLITUDE;
       v._gem.rotation += delta * 0.0014;
       v._ring.rotation -= delta * 0.001;
-      if (s.ttl < 1000) v.setAlpha(Math.max(0, s.ttl / 1000));
 
       if (Math.hypot(this.px - s.x, this.py - s.y) <= PICKUP_RADIUS) {
         this._collectSalvage(s);
@@ -98,7 +96,6 @@ export const SalvageMixin = {
         this.salvage.splice(i, 1);
         continue;
       }
-      if (s.ttl <= 0) { v.destroy(); this.salvage.splice(i, 1); }
     }
   },
 

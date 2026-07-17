@@ -32,7 +32,7 @@ function makeScene(px, py) {
 }
 
 function drop(x, y, overrides = {}) {
-  return { x, y, amount: 5, ttl: 15000, age: 0, view: fakeView(), ...overrides };
+  return { x, y, amount: 5, age: 0, view: fakeView(), ...overrides };
 }
 
 describe('_updateSalvage — magnetic pickup radius (#226)', () => {
@@ -87,13 +87,14 @@ describe('_updateSalvage — magnetic pickup radius (#226)', () => {
     expect(scene.run.currency).toBe(5);
   });
 
-  it('still expires via PICKUP_TTL when never pulled into pickup range (drop parked outside magnet radius)', () => {
+  // #229: dropped SCRAP no longer expires — it persists indefinitely until collected.
+  it('never expires or disappears when parked outside the magnet radius indefinitely', () => {
     const scene = makeScene(0, 0);
-    const s = drop(MAGNET_RADIUS + 200, 0, { ttl: 10 });   // outside magnet radius, ttl about to expire
+    const s = drop(MAGNET_RADIUS + 200, 0);   // outside magnet radius, never approached
     scene.salvage.push(s);
-    scene._updateSalvage(16);   // ttl goes to -6, drop never moved (outside magnet radius)
-    expect(scene.salvage.length).toBe(0);
-    expect(s.view.destroy).toHaveBeenCalled();
-    expect(scene.run.currency).toBe(0);   // expired, not collected
+    for (let i = 0; i < 1000; i++) scene._updateSalvage(16);   // ~16 seconds of frames
+    expect(scene.salvage.length).toBe(1);
+    expect(s.view.destroy).not.toHaveBeenCalled();
+    expect(scene.run.currency).toBe(0);   // not collected, still waiting
   });
 });

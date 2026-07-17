@@ -23,7 +23,6 @@ import { Audio } from '../../audio/index.js';
 import { DEPTH } from './shared.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
-const PICKUP_TTL = 15000;        // ms — a dropped collectible lingers this long, then fades
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
 // #88: small random scatter applied to a drop's kill-site spawn point before the #73
 // reachable-ground snap, so simultaneous/nearby drops don't stack on the exact same pixel.
@@ -37,7 +36,7 @@ export const PowerupsMixin = {
   _initPowerups() {
     this.activePowerups = {};        // typeId → remaining ms (only live buffs; expired pruned)
     this.shieldPool = 0;             // #187: remaining Shield absorb capacity (damage points), 0 = inactive
-    this.powerups = [];              // dropped collectibles awaiting pickup: { x, y, type, ttl, age, view }
+    this.powerups = [];              // dropped collectibles awaiting pickup: { x, y, type, age, view }
     this.powerupFx = this.add.graphics();   // (unused sink kept for symmetry; sprites are containers)
     this._initShieldVisual();        // #205: persistent bubble overlay while shieldPool > 0
   },
@@ -118,7 +117,7 @@ export const PowerupsMixin = {
     // always collectible; the drop stays as close to the (scattered) kill point as possible.
     const pos = this._reachableDropPos(scattered.x, scattered.y);
     const view = this._makePowerupView(pos.x, pos.y, p);
-    const pk = { x: pos.x, y: pos.y, type: typeId, ttl: PICKUP_TTL, age: 0, view };
+    const pk = { x: pos.x, y: pos.y, type: typeId, age: 0, view };
     this.powerups.push(pk);
     return pk;
   },
@@ -179,13 +178,13 @@ export const PowerupsMixin = {
     return c;
   },
 
-  // Per-frame: bob/pulse live collectibles, expire old ones, and grab any the player touches.
+  // Per-frame: bob/pulse live collectibles, and grab any the player touches. Dropped
+  // collectibles never expire (#229) — they persist until collected.
   _updatePowerups(delta) {
     if (!this.powerups) return;
     for (let i = this.powerups.length - 1; i >= 0; i--) {
       const pk = this.powerups[i];
       pk.age += delta;
-      pk.ttl -= delta;
       // Bob + pulse + spin. The container bobs; the ground glow is counter-offset so it stays
       // pooled on the floor while the beacon rises and falls above it.
       const t = pk.age / BOB_PERIOD;
@@ -203,8 +202,6 @@ export const PowerupsMixin = {
       v._beam.setScale(1, 0.9 + 0.25 * pulse).setAlpha(0.14 + 0.18 * pulse);
       // Ground glow stays on the floor (counter the bob) and shimmers with the pulse.
       for (const g of v._glow) { g.y = 6 - bob; g.setScale(0.9 + 0.2 * pulse); }
-      // Fade out in the last second before expiry.
-      if (pk.ttl < 1000) v.setAlpha(Math.max(0, pk.ttl / 1000));
 
       // Pickup: player within grab radius.
       if (Math.hypot(this.px - pk.x, this.py - pk.y) <= PICKUP_RADIUS) {
@@ -213,7 +210,6 @@ export const PowerupsMixin = {
         this.powerups.splice(i, 1);
         continue;
       }
-      if (pk.ttl <= 0) { pk.view.destroy(); this.powerups.splice(i, 1); }
     }
 
     // Count down every active timed buff; prune the expired.
