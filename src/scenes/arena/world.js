@@ -5,7 +5,7 @@ import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors, hexCorners } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
-  shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover, isMissionObjective,
+  shotBlockedAt, flameCoverDamage, coverBlocksForRay, isMissionObjective,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
@@ -16,7 +16,7 @@ import {
 import { Audio } from '../../audio/index.js';
 import {
   DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
-  CRUSHABLE_BEHAVIORS, crushTriggerRadius,
+  isSmallUnit, crushTriggerRadius,
 } from './shared.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
@@ -275,10 +275,12 @@ export const WorldMixin = {
   // open grass, river, and deep water do not (you can shoot over water and rubble).
   // #72: `transparent` (optional Set of hex keys) lists hexes that are see-through for THIS
   // ray — the shooter's muzzle hex and the target's own hex — so soft cover never protects its
-  // own occupant. Solid cover blocks regardless (the pure rule lives in terrain.js).
-  _isWall(x, y, transparent = null) {
+  // own occupant. Solid cover blocks regardless (the pure rule lives in terrain.js). #269:
+  // `smallUnitInvolved` (optional) threads to the soft-cover size-tier exemption — see
+  // `coverBlocksForRay` in terrain.js for why it's currently a no-op regardless of the value.
+  _isWall(x, y, transparent = null, smallUnitInvolved = false) {
     const k = this._hexKeyAt(x, y);
-    return shotBlockedAt(this.terrain.get(k), k, transparent);
+    return shotBlockedAt(this.terrain.get(k), k, transparent, smallUnitInvolved);
   },
 
   // #168: like `_isWall`, but the see-through set is the UNION of a shared per-frame Set (all
@@ -286,17 +288,16 @@ export const WorldMixin = {
   // once per frame and reused across every round of that owner) and this round's own tiny
   // `originHexes` array. Checked in place so no fresh combined Set is allocated per round per
   // frame. Behaviourally identical to `_isWall(x, y, new Set([...originHexes, ...shared]))`;
-  // only the allocation is removed. `shotBlockedAt`'s exact rule is mirrored here via the same
-  // terrain predicates it uses internally (blocksLOS / isSoftCover).
-  _isWallForRound(x, y, sharedTransparent, originHexes) {
+  // only the allocation is removed. Defers to `coverBlocksForRay` (terrain.js) — the same shared
+  // decision `shotBlockedAt`/`_wallDistanceLos` use — so the cover rule can't drift between the
+  // three call sites. #269: `smallUnitInvolved` — see `_isWall` above.
+  _isWallForRound(x, y, sharedTransparent, originHexes, smallUnitInvolved = false) {
     const k = this._hexKeyAt(x, y);
     const id = this.terrain.get(k);
-    if (!blocksLOS(id)) return false;
-    const transparent =
+    const ownHexExempt =
       (sharedTransparent != null && sharedTransparent.has(k)) ||
       (originHexes != null && originHexes.includes(k));
-    if (transparent && isSoftCover(id)) return false;
-    return true;
+    return coverBlocksForRay(id, ownHexExempt, smallUnitInvolved);
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's
@@ -332,8 +333,8 @@ export const WorldMixin = {
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying
   // kinds (helicopter/drone) narratively fly over ground obstacles, so they're excluded — only
   // mechs, tanks, turrets, and (#104) infantry can physically block the player. Returns the
-  // blocking enemy (so the caller can special-case a crushable one — see `CRUSHABLE_BEHAVIORS`
-  // — for instant-kill damage), or null if nothing there blocks.
+  // blocking enemy (so the caller can special-case a crushable one — see #269's `isSmallUnit`
+  // in shared.js — for instant-kill damage), or null if nothing there blocks.
   _blockedByGroundEnemy(x, y) {
     for (const e of this.enemies) {
       if (e.flying) continue;
@@ -343,16 +344,17 @@ export const WorldMixin = {
     return null;
   },
 
-  // #112: is a CRUSHABLE ground enemy (tank/infantry — see CRUSHABLE_BEHAVIORS) within the
-  // (larger) crush-trigger radius of world point (x, y)? Deliberately separate from
-  // `_blockedByGroundEnemy` above: that one still uses `groundEnemyRadius` alone (unchanged) so
-  // general movement-blocking against a mech/turret stays exactly as tight as before — only the
-  // crush trigger itself gets the player's extra reach (`crushTriggerRadius`, shared.js). Only
-  // scans crushable behaviors, so a nearby mech/turret can never satisfy this check.
+  // #112: is a CRUSHABLE ground enemy (tank/infantry — 'small' units, see #269's `isSmallUnit`
+  // in shared.js) within the (larger) crush-trigger radius of world point (x, y)? Deliberately
+  // separate from `_blockedByGroundEnemy` above: that one still uses `groundEnemyRadius` alone
+  // (unchanged) so general movement-blocking against a mech/turret stays exactly as tight as
+  // before — only the crush trigger itself gets the player's extra reach (`crushTriggerRadius`,
+  // shared.js). Only scans small units, so a nearby mech/turret (both 'large') can never satisfy
+  // this check.
   _crushTargetAt(x, y) {
     for (const e of this.enemies) {
       if (e.flying) continue;
-      if (!CRUSHABLE_BEHAVIORS.has(e.behavior)) continue;
+      if (!isSmallUnit(e)) continue;
       if (e.mech.isDestroyed()) continue;
       if (circleContains(x, y, e.x, e.y, crushTriggerRadius(e))) return e;
     }
@@ -363,13 +365,13 @@ export const WorldMixin = {
   // on contact, not a multi-second grind — the original gradual-DPS crush (mirroring the outpost
   // stomp below) read as "blocked/stuck" rather than "destroying the tank." #104 (playtest:
   // infantry, the weakest unit in the game, "should be stompable" too) extends the exact same
-  // instant-kill treatment to infantry — `CRUSHABLE_BEHAVIORS` below is the scope, checked by the
-  // caller (`_drive` in locomotion.js). One call dealing damage >= the enemy's entire remaining
-  // hp pool, so it dies THIS frame. Still goes through combat.js `_damageEnemyAt`, so the kill
-  // runs the normal death path unchanged (explosion FX, corpse teardown, powerup/salvage drop) —
-  // only the amount/pacing changed, not the destruction machinery. Other ground enemies (mechs,
-  // turrets) just BLOCK via `_blockedByGroundEnemy` above — no crush/instakill — per the
-  // explicit scope.
+  // instant-kill treatment to infantry — `isSmallUnit` (#269; formerly the CRUSHABLE_BEHAVIORS
+  // Set) below is the scope, checked by the caller (`_drive` in locomotion.js). One call dealing
+  // damage >= the enemy's entire remaining hp pool, so it dies THIS frame. Still goes through
+  // combat.js `_damageEnemyAt`, so the kill runs the normal death path unchanged (explosion FX,
+  // corpse teardown, powerup/salvage drop) — only the amount/pacing changed, not the destruction
+  // machinery. Other ground enemies (mechs, turrets) just BLOCK via `_blockedByGroundEnemy` above
+  // — no crush/instakill — per the explicit scope.
   _crushGroundEnemyAt(e) {
     if (e.mech.isDestroyed()) return;
     const dmg = (e.mech.hp ?? e.mech.maxHp) + 1;   // comfortably >= remaining hp: dies in one hit
@@ -474,10 +476,10 @@ export const WorldMixin = {
   // `maxT`. Used so beams/shots are blocked by cover. #72: pass a `transparent` hex-key Set
   // (usually `_losTransparency(shooter, target)`) so each endpoint's own soft-cover hex
   // doesn't block the ray.
-  _wallDistance(x0, y0, angle, maxT, transparent = null) {
+  _wallDistance(x0, y0, angle, maxT, transparent = null, smallUnitInvolved = false) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     for (let t = 8; t < maxT; t += 8) {
-      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent)) return t;
+      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent, smallUnitInvolved)) return t;
     }
     return Infinity;
   },
@@ -496,9 +498,11 @@ export const WorldMixin = {
   // The (x1,y1) endpoint is passed explicitly (not re-derived from `angle`/`maxT`) so its
   // transparency hex is bit-identical to the old `_losTransparency(x0,y0,x1,y1)` endpoint, and
   // `cx`/`cy` reuse the same `Math.cos/sin(angle)` the old loop used — the sampled points are
-  // therefore the same to the bit. Mirrors `shotBlockedAt`'s rule via the same `blocksLOS`/
-  // `isSoftCover` predicates it uses internally (verified equal in world.test.js).
-  _wallDistanceLos(x0, y0, angle, maxT, x1, y1) {
+  // therefore the same to the bit. Defers to `coverBlocksForRay` (terrain.js) — the same shared
+  // decision `shotBlockedAt`/`_isWallForRound` use. #269: `smallUnitInvolved` (optional) — see
+  // `_isWall` above; propagated through `_cachedLosToPlayer` so a caller with a live enemy handle
+  // can pass `isSmallUnit(e)`.
+  _wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved = false) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     const oh = pixelToHex(x0, y0);          // shooter/muzzle endpoint hex (soft-cover-transparent)
     const eh = pixelToHex(x1, y1);          // target endpoint hex (soft-cover-transparent)
@@ -508,12 +512,10 @@ export const WorldMixin = {
       if (h.q === lastQ && h.r === lastR) continue;   // same hex as last step ⇒ wall-ness unchanged
       lastQ = h.q; lastR = h.r;
       const id = this.terrain.get(axialKey(h.q, h.r));
-      if (!blocksLOS(id)) continue;
       // #72: soft cover on either endpoint's OWN hex is see-through for this ray; solid cover and
       // any non-endpoint soft cover between the two blocks (exactly shotBlockedAt's rule).
-      const transparent = (h.q === oh.q && h.r === oh.r) || (h.q === eh.q && h.r === eh.r);
-      if (transparent && isSoftCover(id)) continue;
-      return t;
+      const ownHexExempt = (h.q === oh.q && h.r === oh.r) || (h.q === eh.q && h.r === eh.r);
+      if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return t;
     }
     return Infinity;
   },
@@ -533,7 +535,10 @@ export const WorldMixin = {
   // directly), and (b) trivially staggered: the countdown is seeded to a RANDOM point in the
   // window on first use, so a batch spawned on one frame refreshes on spread-out frames rather
   // than all at once, and the offset persists across refreshes.
-  _cachedLosToPlayer(e, delta, x0, y0, angle, maxT, x1, y1) {
+  // #269: `smallUnitInvolved` (optional) — see `_isWall` above; a caller with a live enemy handle
+  // should pass `isSmallUnit(e)` (terrain.js) so the eventual size-tier wiring covers this cached
+  // path too, not just the uncached one.
+  _cachedLosToPlayer(e, delta, x0, y0, angle, maxT, x1, y1, smallUnitInvolved = false) {
     if (e._losCd === undefined) {
       // Seed the countdown at a random point in the window (stagger) and assume NO clear lane
       // until the first refresh fires — an enemy holds fire / stays unaware rather than acting on
@@ -545,7 +550,7 @@ export const WorldMixin = {
     if (e._losCd <= 0) {
       e._losCd += LOS_REFRESH_MS;                 // preserve sub-frame phase (keeps the stagger)
       if (e._losCd <= 0) e._losCd = LOS_REFRESH_MS;   // guard: a huge delta spike still recomputes once
-      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1) === Infinity;
+      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved) === Infinity;
     }
     return e._losClear;
   },

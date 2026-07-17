@@ -14,7 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
-import { rotateToward, hullTravelAngle } from './shared.js';
+import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -31,7 +31,7 @@ function aimAndFire(scene, e, ctx, { needLos }) {
   // transparency: the player's own soft-cover hex (and this unit's) doesn't block the lane.
   // #167: ground vehicles (tanks/infantry/quadrupeds, often 40+ at once) ran this raycast per
   // unit per frame — now a STAGGERED CACHE (~120ms per-enemy refresh), exact at each refresh.
-  const los = needLos ? scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py) : true;
+  const los = needLos ? scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py, isSmallUnit(e)) : true;
   // Only fire once the gun is roughly on target, so shots read as aimed.
   const onTarget = Math.abs(Phaser.Math.Angle.Wrap(e.turret - ctx.bearing)) < 0.35;
   if (inRange && los && onTarget) scene._fireVehicleWeapon(e, ctx, e.turret);

@@ -127,7 +127,7 @@ export const ProjectilesMixin = {
       // doesn't care which owner fired the round, only the flag, so no change was needed here.
       if (!p.arc && !p.ignoresCover) {
         const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
-        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes)) {
+        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes, p.smallUnitInvolved)) {
           p.dead = true;
           p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });

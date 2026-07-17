@@ -4,6 +4,8 @@ import {
   isDestructible, buildingHp, damageBuilding, RUBBLE, rubbleFor,
   isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
   isWaterTerrain, isMissionObjective,
+  SLOW_MOVEMENT_FACTOR, movementTier, coverTier, isBaseCategory,
+  softCoverBlocksLOS, coverBlocksForRay,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -160,15 +162,17 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
     expect(rubbleFor('fumarole')).toBe('fumaroleRubble');
   });
 
-  it('shotBlockedAt: soft cover is transparent for exempted hexes only', () => {
+  it('shotBlockedAt: soft cover is transparent for exempted hexes only (small unit involved)', () => {
+    // #269: soft cover only blocks a SMALL ground unit's LOS — pass smallUnitInvolved=true
+    // throughout so this test still exercises the #72 own-hex exemption it's actually about.
     const exempt = new Set(['3,-1']);
     // The target's own forest hex does not protect it...
-    expect(shotBlockedAt('forest', '3,-1', exempt)).toBe(false);
+    expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);
     // ...but another forest hex on the way still blocks ("deep woods").
-    expect(shotBlockedAt('forest', '2,-1', exempt)).toBe(true);
+    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);
     // No exemptions at all → forest blocks like before.
-    expect(shotBlockedAt('forest', '3,-1', null)).toBe(true);
-    expect(shotBlockedAt('forest', '3,-1', new Set())).toBe(true);
+    expect(shotBlockedAt('forest', '3,-1', null, true)).toBe(true);
+    expect(shotBlockedAt('forest', '3,-1', new Set(), true)).toBe(true);
   });
 
   it('shotBlockedAt: SOLID cover blocks even when exempted; open ground never blocks', () => {
@@ -325,5 +329,142 @@ describe('damageBuilding — HP → rubble transition (pure)', () => {
     }
     expect(destroyed).toBe(true);
     expect(hp).toBe(0);
+  });
+});
+
+// #269 §1: the additive category/movement/cover vocabulary layered on top of the raw fields.
+describe('#269 hex vocabulary — category/movement/cover fields', () => {
+  it('every TERRAIN entry carries all three fields, with valid values', () => {
+    for (const [id, t] of Object.entries(TERRAIN)) {
+      expect(['terrain', 'base'], id).toContain(t.category);
+      expect(['full', 'slow', 'none'], id).toContain(t.movement);
+      expect(['open', 'soft', 'hard'], id).toContain(t.cover);
+    }
+  });
+
+  it('an OPEN example (grass): full movement, open cover, ordinary terrain category', () => {
+    expect(movementTier('grass')).toBe('full');
+    expect(coverTier('grass')).toBe('open');
+    expect(isBaseCategory('grass')).toBe(false);
+    expect(blocksLOS('grass')).toBe(false);
+    expect(isSoftCover('grass')).toBe(false);
+  });
+
+  it('a SOFT-cover example (forest): passable, slow movement, soft cover', () => {
+    expect(movementTier('forest')).toBe('slow');
+    expect(coverTier('forest')).toBe('soft');
+    expect(isPassable('forest')).toBe(true);
+    expect(isSoftCover('forest')).toBe(true);
+    expect(blocksLOS('forest')).toBe(true);
+  });
+
+  it('a HARD-cover example (building): impassable, no movement, hard cover', () => {
+    expect(movementTier('building')).toBe('none');
+    expect(coverTier('building')).toBe('hard');
+    expect(isPassable('building')).toBe(false);
+    expect(isSoftCover('building')).toBe(false);
+    expect(blocksLOS('building')).toBe(true);
+  });
+
+  // #251/#269: helipad is the one `base`-category entry today. Its cover/movement fall out of
+  // its OWN raw fields (open/full), not from being `base` — category never drives cover/movement.
+  it('a BASE example (helipad): category base, but open cover + full movement like any ground', () => {
+    expect(isBaseCategory('helipad')).toBe(true);
+    expect(movementTier('helipad')).toBe('full');
+    expect(coverTier('helipad')).toBe('open');
+    expect(isPassable('helipad')).toBe(true);
+    expect(blocksLOS('helipad')).toBe(false);
+    expect(terrainSpeedFactor('helipad')).toBe(1);
+  });
+
+  it('everything else is `terrain` category, not `base`', () => {
+    for (const id of ['grass', 'forest', 'building', 'river', 'rubble', 'mesa', 'sand', 'tower']) {
+      expect(isBaseCategory(id), id).toBe(false);
+    }
+  });
+
+  it('unknown/off-map ids resolve every new helper to a safe default', () => {
+    for (const id of [undefined, 'nope']) {
+      expect(movementTier(id)).toBeUndefined();
+      expect(coverTier(id)).toBeUndefined();
+      expect(isBaseCategory(id)).toBe(false);
+      expect(isPassable(id)).toBe(false);
+      expect(blocksLOS(id)).toBe(false);
+      expect(isSoftCover(id)).toBe(false);
+    }
+  });
+});
+
+// #269 §1: consolidating ~15 hand-tuned speedFactors into ONE shared slow-movement value.
+describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one speed value', () => {
+  it('is a real slowdown (strictly between 0 and 1)', () => {
+    expect(SLOW_MOVEMENT_FACTOR).toBeGreaterThan(0);
+    expect(SLOW_MOVEMENT_FACTOR).toBeLessThan(1);
+  });
+
+  it('every entry tagged movement:"slow" uses exactly SLOW_MOVEMENT_FACTOR as its speedFactor', () => {
+    const slowIds = Object.values(TERRAIN).filter((t) => t.movement === 'slow').map((t) => t.id);
+    // Sanity: this consolidation actually covers a broad swath of terrain (rivers, soft cover,
+    // every rubble, desert/snow/urban/volcanic hazards) — not a trivially small/empty set.
+    expect(slowIds.length).toBeGreaterThan(20);
+    for (const id of slowIds) {
+      expect(TERRAIN[id].speedFactor, id).toBe(SLOW_MOVEMENT_FACTOR);
+      expect(terrainSpeedFactor(id), id).toBe(SLOW_MOVEMENT_FACTOR);
+    }
+  });
+
+  it('a representative slow example (river, previously 0.5) now reads the shared constant', () => {
+    expect(terrainSpeedFactor('river')).toBe(SLOW_MOVEMENT_FACTOR);
+  });
+
+  it('movement:"full" and movement:"none" entries are unaffected by the consolidation', () => {
+    for (const id of ['grass', 'sand', 'pavement', 'road', 'helipad']) {
+      expect(movementTier(id)).toBe('full');
+      expect(terrainSpeedFactor(id)).toBe(1);
+    }
+    // Impassable/boundary terrain is 'none', not 'slow' — the consolidation never touches it.
+    for (const id of ['deepWater', 'mesa', 'ice', 'collapsed', 'lava']) {
+      expect(movementTier(id)).toBe('none');
+      expect(isPassable(id)).toBe(false);
+    }
+  });
+});
+
+// #269 §1/§2: soft cover only blocks a SMALL ground unit's LOS — a large unit/mech sees over it.
+// The size tier lives in `scenes/arena/shared.js`'s `isSmallUnit`/`unitSize` (issue #269 §2);
+// these tests exercise the terrain-layer plumbing (`softCoverBlocksLOS`/`coverBlocksForRay`/
+// `shotBlockedAt`) directly against a `smallUnitInvolved` boolean, since that's the boundary this
+// module owns — callers compute the boolean via the real per-entity query.
+describe('#269 §1 soft-cover size-tier plumbing', () => {
+  it('softCoverBlocksLOS blocks only when a small unit is involved', () => {
+    expect(softCoverBlocksLOS(true)).toBe(true);
+    expect(softCoverBlocksLOS(false)).toBe(false);
+    expect(softCoverBlocksLOS(undefined)).toBeFalsy();
+  });
+
+  it('coverBlocksForRay: hard cover always blocks regardless of size-tier or own-hex exemption', () => {
+    expect(coverBlocksForRay('building', false, false)).toBe(true);
+    expect(coverBlocksForRay('building', false, true)).toBe(true);
+    expect(coverBlocksForRay('building', true, true)).toBe(true);   // even "own hex" doesn't exempt hard cover
+  });
+
+  it('coverBlocksForRay: soft cover blocks only a small unit (own-hex exemption still applies)', () => {
+    expect(coverBlocksForRay('forest', false, false)).toBe(false);  // large unit sees clean over it
+    expect(coverBlocksForRay('forest', false, true)).toBe(true);    // small unit's sightline is blocked
+    expect(coverBlocksForRay('forest', true, false)).toBe(false);   // #72 own-hex transparency still works
+    expect(coverBlocksForRay('forest', true, true)).toBe(false);
+  });
+
+  it('coverBlocksForRay: open terrain never blocks', () => {
+    expect(coverBlocksForRay('grass', false, false)).toBe(false);
+    expect(coverBlocksForRay('grass', true, true)).toBe(false);
+  });
+
+  it('shotBlockedAt threads smallUnitInvolved through to the soft-cover exemption', () => {
+    const exempt = new Set(['3,-1']);
+    expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);   // own-hex exemption wins
+    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);    // deep woods still blocks a small unit
+    expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(false);  // a large unit sees over deep woods
+    expect(shotBlockedAt('building', '3,-1', exempt, true)).toBe(true); // hard cover unaffected
   });
 });
