@@ -130,11 +130,13 @@ export const WEAPONS = {
     // This is a single-lane stream (no sprayCount/streams/cluster/spread), so in
     // delivery.js's planEmissions() this hits the "single continuously-streamed shot"
     // branch (n === 1, jitterRad truthy) — each bolt still gets exactly ONE shot per
-    // cadence tick, just with its own small random angleOffset (delivery.js also applies a
-    // matching small per-bolt speedJitter in makeProjectile). Deliberately much smaller
+    // cadence tick, just with its own small random angleOffset. Deliberately much smaller
     // than Flamethrower's 9° spray-cone jitter — this should read as a subtle sputter/
     // wobble on one bolt, not a fan; start conservative and go bigger only on playtest ask.
-    delivery: { hit: 'projectile', path: 'straight', velocity: 580, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true, spreadJitter: 2 },
+    // #223: playtest verdict was angle wobble only, no speed variance — `jitterSpeed: false`
+    // opts this weapon out of makeProjectile()'s paired speed-jitter branch (delivery.js),
+    // so every bolt still launches at the exact tuned 580 (#219) with zero velocity spread.
+    delivery: { hit: 'projectile', path: 'straight', velocity: 580, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true, spreadJitter: 2, jitterSpeed: false },
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',

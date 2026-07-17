@@ -311,7 +311,12 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
   const d = weapon.delivery || {};
   // A jittered-spread weapon (Flamethrower, #46) also gets a per-particle speed variance so
   // the flame front looks ragged/chaotic rather than a uniform wall advancing in lockstep.
-  const speedJitter = d.spreadJitter ? 0.82 + Math.random() * 0.36 : 1;
+  // `jitterSpeed` (default true) gates this independently of the angle jitter above — Plasma
+  // Lance (#220, #223) wants the angle wobble WITHOUT the paired speed variance, so it sets
+  // `jitterSpeed: false` to keep every bolt launching at its exact tuned velocity (#219) while
+  // still varying its launch angle.
+  const jitterSpeed = d.jitterSpeed ?? true;
+  const speedJitter = d.spreadJitter && jitterSpeed ? 0.82 + Math.random() * 0.36 : 1;
   const speed = (d.velocity || 480) * speedJitter;
   const wobble = wobbleKind(weapon);
   // Every wobble kind — including a cluster's 'sway' (#51) — rolls its OWN random phase, so

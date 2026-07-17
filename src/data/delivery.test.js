@@ -498,14 +498,27 @@ describe('weak seek (#213 — Plasma Lance)', () => {
     expect(WEAK_SEEK_TURN_RATE).toBeLessThan(homingTurnRate(0));
   });
 
-  // #220: spreadJitter also drives makeProjectile's paired per-bolt speed variance (see
-  // delivery.js speedJitter, 0.82x-1.18x of base velocity) — confirms the bolt's actual
-  // launch speed stays within that same bounded range rather than an unbounded random walk.
-  it('varies each Plasma Lance bolt\'s launch speed within the bounded jitter range', () => {
+  // #223: playtest verdict on #220's jitter was "angle wobble only, no speed jitter" — Plasma
+  // Lance now sets `jitterSpeed: false` so makeProjectile's paired speed-variance branch is
+  // gated off for it specifically, while its `spreadJitter` angle wobble (tested elsewhere)
+  // stays unconditional. Every bolt should now launch at the EXACT tuned velocity (#219: 580).
+  it('launches every Plasma Lance bolt at its exact base velocity — no speed jitter (#223)', () => {
     const { velocity } = WEAPONS.plasmaLance.delivery;
-    const speeds = [];
+    expect(WEAPONS.plasmaLance.delivery.jitterSpeed).toBe(false);
     for (let i = 0; i < 50; i++) {
       const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+      expect(p.speed).toBe(velocity);
+    }
+  });
+
+  // Flamethrower is the OTHER spreadJitter user (#46) and should keep its original paired
+  // angle+speed variance for the spray-cone feel — confirms the new `jitterSpeed` gate (which
+  // defaults to true) doesn't change its behaviour just because Plasma Lance opted out.
+  it('still varies each Flamethrower particle\'s launch speed within the bounded jitter range', () => {
+    const { velocity } = WEAPONS.flamethrower.delivery;
+    const speeds = [];
+    for (let i = 0; i < 50; i++) {
+      const p = makeProjectile(WEAPONS.flamethrower, 0, 0, 0, { maxDist: 9999 });
       expect(p.speed).toBeGreaterThanOrEqual(velocity * 0.82 - 1e-6);
       expect(p.speed).toBeLessThanOrEqual(velocity * 1.18 + 1e-6);
       speeds.push(p.speed);
