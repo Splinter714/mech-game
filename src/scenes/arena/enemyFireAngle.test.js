@@ -135,10 +135,10 @@ describe('enemy blind (indirect lock-based lob) fire is exempt from the turret-a
     // live-sighted shot, so (by design judgment, see #153 report) it is NOT gated by the
     // turret's current angle the way direct/LOS fire now is.
     const e = makeMechEnemy({ chassisId: 'heavy', mounts: { leftTorso: [INDIRECT_WEAPON] }, turret: 0 });
-    // A full (maintained) lock whose last-known position is well off the enemy's current
-    // turret facing (0) and off the player's actual live position too (simulating the player
-    // having since moved behind cover after the lock's last LOS refresh).
-    e.lock = { enemy: 'player', progress: 1, maintain: 3.5, blind: true, lastX: 300, lastY: 200, lastVx: 0, lastVy: 0 };
+    // A live (#252: convergence-mirroring) lock whose last-known position is well off the
+    // enemy's current turret facing (0) and off the player's actual live position too
+    // (simulating the player having since moved behind cover after the lock's last LOS refresh).
+    e.lock = { target: 'player', blind: true, lastX: 300, lastY: 200, lastVx: 0, lastVy: 0 };
     e.lockBlindAge = 0;
     // LOS currently blocked (behind cover) but close/in-range, so blindFire's gate is satisfied.
     const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: true });

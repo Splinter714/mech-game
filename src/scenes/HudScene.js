@@ -87,7 +87,7 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setOrigin(0, 0);
 
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
-    this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  T/R3: drop lock  ·  M: mute  ·  G/B: garage',
+    this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  M: mute  ·  G/B: garage',
       { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
       { fontFamily: 'monospace', fontSize: '11px', color: C.dim });

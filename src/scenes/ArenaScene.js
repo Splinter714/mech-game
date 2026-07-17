@@ -112,17 +112,16 @@ export default class ArenaScene extends Phaser.Scene {
     // for the full force/handoff state machine.
     this._sprintForcedByOverclock = false;
     this._overclockWasActive = false;
-    // Indirect-fire lock (#62): the always-available acquire-and-hold targeting for homing/arcing
-    // weapons. `this.lock` is the pure state record (data/targetlock.js); `aimEnemy` is the live
-    // most-aimed enemy used only by direct-fire convergence (kept separate so a blind lock behind
-    // cover never drags laser convergence). #250: `convergeTarget` is the actual ranked pick fed to
-    // convergence (aimEnemy, or a fallback destructible hex, or null) — see shared.js
-    // `pickConvergeTarget`. `lockEnemy`/`lockProgress` mirror the lock for readers.
+    // Indirect-fire lock (#62, rework #252): `this.lock` (data/targetlock.js) is the pure state
+    // record — it mirrors `this.convergeTarget` every frame, instantly, so homing/arcing weapons
+    // simply fire at whatever direct-fire convergence is currently aimed at. `aimEnemy` is the live
+    // most-aimed enemy; `convergeTarget` (shared.js `pickConvergeTarget`) is the ranked pick fed to
+    // convergence — aimEnemy, or, #250, a fallback destructible hex, or null. Both set each frame
+    // in `_updateLock` (targeting.js). `_reticlePos` is the reticle's eased (sliding) drawn position.
     this.lock = makeLock();
     this.aimEnemy = null;
     this.convergeTarget = null;
-    this.lockEnemy = null;
-    this.lockProgress = 0;
+    this._reticlePos = null;
     this._lockBlindAge = 0;
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
@@ -130,7 +129,6 @@ export default class ArenaScene extends Phaser.Scene {
     this.enemyFire = true;
 
     this.input.keyboard.on('keydown-G', () => this.toGarage());
-    this.input.keyboard.on('keydown-T', () => this._dropLock());   // #62: drop the current lock
     this.input.keyboard.on('keydown-M', () => {
       const muted = Audio.toggleMute();
       this._floatText(this.px, this.py - 30, muted ? 'MUTED' : 'SOUND ON', '#7c8794');
@@ -228,17 +226,19 @@ export default class ArenaScene extends Phaser.Scene {
       this._drive(intent, dt);
     }
 
-    // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #62 drop-lock). ──
-    if (this.padEdges.pressed(PAD.R3)) this._dropLock();   // #62: R3 drops the current lock (was assist)
+    // ── One-shot pad buttons (#28 AI toggles, #29 return to garage). #252: the manual R3/T
+    // drop-lock action is retired — the lock has no maintained state to escape any more, it
+    // simply follows convergence's live pick every frame, so there's nothing left to "drop." ──
     if (this.padEdges.pressed(PAD.SELECT) || this.padEdges.pressed(PAD.B)) this.toGarage();
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
     if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
 
-    // ── Indirect-fire lock (#62): acquire amber→red on the enemy nearest the aim line, then
-    // maintain it through cover (blind fire onto its last-known/predicted position). Homing/arcing
-    // weapons seek it; direct weapons converge on the live most-aimed enemy, no lock needed. ──
+    // ── Indirect-fire lock (#62, rework #252): mirrors direct-fire convergence's live pick
+    // instantly (no charge-up, no maintain timer) — blind fire onto the target's last-known/
+    // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
+    // weapons seek it; direct weapons converge on the same live pick directly. ──
     this._updateLock(dt);
     this._stepGait(dt);
     if (!this._playerDead) this._handleFiring(intent, delta);
@@ -265,13 +265,13 @@ export default class ArenaScene extends Phaser.Scene {
     // lock reticle, same graphics layer.
     this._drawAimLine();
 
-    // Lock reticle, drawn after projFx is cleared above so it isn't wiped. A maintained-but-blind
-    // lock (#62) draws at the last-known/predicted position in a distinct "firing blind" colour so
-    // the player sees they're lobbing from memory; otherwise it tracks the live locked enemy.
-    if (this.lock.enemy) {
-      const blind = this.lock.blind;
-      const pt = blind ? this._lockAimPoint() : { x: this.lock.enemy.x, y: this.lock.enemy.y };
-      if (pt) this._drawLockReticle(pt.x, pt.y, this.lock.progress, blind);
+    // Lock reticle (#62, rework #252), drawn after projFx is cleared above so it isn't wiped, at
+    // `_reticlePos` — the position eased toward the live aim point, so switching convergence
+    // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). A blind
+    // (LOS-broken enemy) target draws in a distinct "firing blind" colour so the player sees
+    // they're lobbing from memory.
+    if (this._reticlePos) {
+      this._drawLockReticle(this._reticlePos.x, this._reticlePos.y, this.lock.blind);
     }
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:

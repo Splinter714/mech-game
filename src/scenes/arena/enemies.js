@@ -32,7 +32,7 @@ import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
-import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
+import { makeLock, stepLock, hasLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
@@ -681,19 +681,20 @@ export const EnemiesMixin = {
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
-    // This enemy's maintained indirect-fire lock ON the player (#62) — only meaningful once
+    // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once
     // aware; an unaware enemy has no business tracking the player at all.
     if (aware) this._updateEnemyLock(e, dist, bearing, los, dt);
 
     // Fire ready weapons at the player (gated by #28, and by #103 awareness — an unaware enemy
     // never fires). Direct-fire weapons need current LOS. An indirect-fire weapon (homing/
-    // arcing) may also fire BLIND over cover (#62/#44) when this enemy holds a maintained lock —
-    // it lobs onto the player's last-known/predicted position.
+    // arcing) may also fire BLIND over cover (#62/#44, rework #252) whenever this enemy has a
+    // target at all (no more charge-up wait, no more maintain-timer expiry — see
+    // `_updateEnemyLock` below) — it lobs onto the player's last-known/predicted position.
     if (this.enemyFire && aware) for (const w of e.mech.readyWeapons()) {
       let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
       const indirect = isIndirectWeapon(w.weapon);
-      const blindFire = indirect && !los && isFullLock(e.lock);   // maintained lock, lobbing over cover
+      const blindFire = indirect && !los && hasLock(e.lock);   // has a target, lobbing over cover
       const canFire = inRange && (los || blindFire);
       // Blind indirect fire aims at the dead-reckoned last-known player position; otherwise
       // #153: fire along the turret's actual current rendered angle (`e.turret`), NOT the
@@ -1145,25 +1146,25 @@ export const EnemiesMixin = {
     return { mx: gx / gm, my: gy / gm };
   },
 
-  // Advance an enemy's indirect-fire lock ON the player (#62/#44). Mirrors the player's lock but
-  // the target is fixed (the player), so the "candidate" is simply the player whenever it's in
-  // range and this enemy currently has LOS — that's what lets an all-indirect mech get eyes on the
-  // player just long enough to lock, then retreat behind a wall and keep bombarding (blind) using
-  // the maintained window. Only enemies with at least one indirect weapon bother maintaining a lock.
+  // Advance an enemy's indirect-fire lock ON the player (#62/#44, rework #252). Mirrors the
+  // player's lock, which is simply whatever weapon convergence currently has selected — for an
+  // enemy there's only ever one possible target (the player), so its "convergence" is trivial:
+  // the player IS the target whenever in range, with no charge-up wait and no maintain-timer
+  // expiry (matching the player's own convergence, which has no LOS gate or decay in its
+  // selection either — see targeting.js `_updateLock`). LOS still gates whether the *current*
+  // fix gets refreshed vs. going blind (dead-reckoned) — that's what lets an all-indirect mech
+  // get eyes on the player just long enough to grab a fix, then retreat behind a wall and keep
+  // bombarding blind indefinitely (as long as it stays in range).
   _updateEnemyLock(e, dist, bearing, los, dt) {
-    const LOCK_RANGE = 700;   // px within which an enemy can acquire/hold a lock on the player
-    // The player as a STABLE target handle for the shared state machine (one per enemy, mutated in
-    // place — a fresh object each frame would keep resetting the charge, since the charge phase
-    // resets on target-identity change). Carries `.mech` (validity) + live position/velocity.
+    const LOCK_RANGE = 700;   // px within which an enemy can target the player at all
+    // The player as a STABLE target handle for the shared state machine (one per enemy, mutated
+    // in place so `target !== lock.target` correctly reads "no change" across frames rather than
+    // "a fresh acquisition" every frame). Carries `.mech` (destroyed check) + live position/velocity.
     const player = e.playerTarget ??= { mech: this.mech, x: 0, y: 0, vx: 0, vy: 0 };
     player.mech = this.mech; player.x = this.px; player.y = this.py;
     player.vx = this.vx || 0; player.vy = this.vy || 0;
-    const inRange = dist <= LOCK_RANGE;
-    // Acquire only while this enemy can actually see the player and is in range; the maintain
-    // window (targetlock.js) carries the lock through the subsequent LOS break behind cover.
-    const cand = (los && inRange) ? player : null;
-    const valid = inRange;   // the player never "dies" here; range is the only invalidator
-    stepLock(e.lock, { dt, cand, hasLos: los, targetPos: player, valid });
+    const target = dist <= LOCK_RANGE ? player : null;
+    stepLock(e.lock, { target, hasLos: los, targetPos: target ? player : null });
     e.lockBlindAge = e.lock.blind ? (e.lockBlindAge || 0) + dt : 0;
   },
 
