@@ -251,6 +251,13 @@ export default class ArenaScene extends Phaser.Scene {
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
     // weapons seek it; direct weapons converge on the same live pick directly. ──
     this._updateLock(dt);
+    // #260: live lock-target world position (or null), republished each frame so HudScene can
+    // draw a matching off-screen arrow for the CURRENT lock target — same channel pattern as
+    // `objectiveWorld` above. Reuses `_lockAimPoint()` (targeting.js), the same query the
+    // homing/reticle code already reads, so the arrow can never disagree with what's actually
+    // locked (hides itself the instant the target dies or there's no lock, same as that query).
+    const lockPt = this._lockAimPoint();
+    this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
     this._stepGait(dt);
     if (!this._playerDead) this._handleFiring(intent, delta);
     this._updateEnemies(dt, delta);

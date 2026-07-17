@@ -74,6 +74,10 @@ const MM = {
   player: 0x5ec8e0, enemy: 0xe2533a,
 };
 
+// #260: the lock-target off-screen arrow's color — matches targeting.js's `_drawLockReticle`
+// reticle red (0xe2533a) exactly, so the arrow reads as "that same reticle, now off-screen."
+const LOCK_RETICLE_COLOR = 0xe2533a;
+
 export default class HudScene extends Phaser.Scene {
   constructor() {
     super('HudScene');
@@ -139,6 +143,13 @@ export default class HudScene extends Phaser.Scene {
     this.wayPulse = { t: 0 };
     this.tweens.add({ targets: this.wayPulse, t: 1, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 
+    // #260: a second, independent off-screen indicator for the CURRENT lock target (mirrors the
+    // objective arrow above via the shared `_drawEdgeIndicator` helper, just a different Graphics
+    // layer/color/registry channel). Same depth as wayGfx so draw order between the two doesn't
+    // matter — they're only ever both visible when pointing in different directions anyway (see
+    // the inset-offset note on `lockWayMargins` below).
+    this.lockWayGfx = this.add.graphics().setDepth(20);
+
     // Per-part integrity column (player), top-left under the hints + stage/objective lines.
     this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.partTexts = {};
@@ -177,6 +188,14 @@ export default class HudScene extends Phaser.Scene {
     // block (INTEGRITY starts at y=112, so keep clear of that).
     const tileTop = tiles.length ? tiles[0].y : this.H - 10;
     this.wayMargins = { top: 116, right: 24, bottom: this.H - tileTop + 12, left: 24 };
+    // #260: the lock-target arrow uses the same margins, bumped out a further 16px on every edge —
+    // if the objective and the live lock target ever sit in the same off-screen direction at once,
+    // this keeps the two chevrons from landing exactly on top of each other (simplest fix: draw at
+    // slightly different insets rather than detecting/resolving the overlap explicitly).
+    this.lockWayMargins = {
+      top: this.wayMargins.top + 16, right: this.wayMargins.right + 16,
+      bottom: this.wayMargins.bottom + 16, left: this.wayMargins.left + 16,
+    };
 
     // #116: corner minimap — the deferred half of #80 (the edge-direction arrow was the other
     // half). A compact box in the RIGHT margin, sitting just ABOVE the skill-tile toolbar (so it
@@ -286,6 +305,7 @@ export default class HudScene extends Phaser.Scene {
 
     this._updateBuffHud();
     this._updateWayArrow();
+    this._updateLockArrow();
     this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
@@ -301,20 +321,39 @@ export default class HudScene extends Phaser.Scene {
   // double up on an indicator at that point.
   _updateWayArrow() {
     const objectiveWorld = this.registry.get('objectiveWorld');
+    this._drawEdgeIndicator(this.wayGfx, objectiveWorld, this.wayMargins, UI_HIGHLIGHT_COLOR);
+  }
+
+  // #260: the same off-screen edge-direction indicator as the objective arrow, but for the
+  // CURRENT lock target (`this.lock.target` in targeting.js, republished each frame by
+  // ArenaScene as the `lockWorld` registry channel via `_lockAimPoint()` — the same query the
+  // reticle/homing code reads, so this can never disagree with what's actually locked). Hidden
+  // entirely when there's no live lock target, and suppressed once the target is genuinely
+  // on-screen (the live reticle itself is visible there — no need to double up), exactly
+  // mirroring how the objective arrow behaves.
+  _updateLockArrow() {
+    const lockWorld = this.registry.get('lockWorld');
+    this._drawEdgeIndicator(this.lockWayGfx, lockWorld, this.lockWayMargins, LOCK_RETICLE_COLOR);
+  }
+
+  // #260: shared geometry + pulse/glow drawing for an off-screen edge-direction chevron, factored
+  // out of the original #80 objective-arrow code so the lock-target arrow can reuse it exactly
+  // rather than duplicating the shape/animation logic — only the Graphics layer, target world
+  // point, margin set, and color differ per caller.
+  _drawEdgeIndicator(g, worldPoint, margin, color) {
     const view = this.registry.get('cameraView');
-    const g = this.wayGfx;
     g.clear();
-    if (!objectiveWorld || !view) return;
-    if (isPointInView(view, objectiveWorld)) return;
-    const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, objectiveWorld, this.wayMargins);
+    if (!worldPoint || !view) return;
+    if (isPointInView(view, worldPoint)) return;
+    const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, worldPoint, margin);
     // #143: ride the pulse counter for both a scale bump (1.0 → 1.35x) and an alpha swell
     // (0.55 → 1.0), plus a glow halo behind the chevron whose own strength rides the same pulse —
     // combining both treatments read best in playtest vs. either alone.
     const pulse = this.wayPulse.t;
     const size = 16 * (1 + 0.35 * pulse);
     const alpha = 0.55 + 0.45 * pulse;
-    drawChevronGlow(g, x, y, angle, size, UI_HIGHLIGHT_COLOR, alpha);
-    drawChevron(g, x, y, angle, size, UI_HIGHLIGHT_COLOR, 0.92 * (0.7 + 0.3 * pulse));   // shared wayfinding highlight colour (#136)
+    drawChevronGlow(g, x, y, angle, size, color, alpha);
+    drawChevron(g, x, y, angle, size, color, 0.92 * (0.7 + 0.3 * pulse));
   }
 
   // #116: build the world→minimap fit and paint the static layer (panel + corridor silhouette).
