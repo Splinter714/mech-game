@@ -8,7 +8,9 @@ import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
 import { drawSlash } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { TRAJECTORY_DELAY, hasHeldSfx } from '../../audio/sfxParams.js';
+import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
+// #224 (temporary): WEAPON_TRAJECTORY_SOUNDS_ENABLED gates the in-flight trajectory loop
+// below — see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { toggleSprint, holdSprint, updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
 
@@ -212,7 +214,8 @@ export const FiringMixin = {
           // this.projectiles, so it's safe to attach the stop closure to it once the timer
           // fires; but the round may already have impacted/hit a wall by then (a very short/
           // close shot), so guard against starting an orphaned loop on a dead round.
-          if (Audio.getSfxParams(w.weapon.id).trajectory) {
+          // #224 (temporary): trajectory loop start disabled, see WEAPON_TRAJECTORY_SOUNDS_ENABLED.
+          if (WEAPON_TRAJECTORY_SOUNDS_ENABLED && Audio.getSfxParams(w.weapon.id).trajectory) {
             this.time.delayedCall(TRAJECTORY_DELAY, () => {
               if (round.dead) return;
               round.stopTrajectorySfx = Audio.startTrajectoryLoop(w.weapon.id);

@@ -19,7 +19,9 @@
 // only this one-shot fire+trajectory cue scheduling is shared here.
 
 import { Audio } from './index.js';
-import { TRAJECTORY_DELAY, hasHeldSfx } from './sfxParams.js';
+import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from './sfxParams.js';
+// #224 (temporary): WEAPON_TRAJECTORY_SOUNDS_ENABLED lives in sfxParams.js — see the
+// comment there for the full list of gated call sites and how to revert.
 
 // Schedule the one-shot fire + trajectory audio cues for a single trigger pull.
 //
@@ -45,7 +47,10 @@ export function scheduleFireCues(scene, weapon, plan, audible) {
   Audio.fire(weapon);
   // A brief "now it's airborne" flavor cue, a beat after the fire cue — a no-op for any
   // weapon with no trajectory layers defined (instant hitscan, short-range bullets, etc).
-  scene.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(weapon.id));
+  // #224 (temporary): trajectory cue disabled, see WEAPON_TRAJECTORY_SOUNDS_ENABLED above.
+  if (WEAPON_TRAJECTORY_SOUNDS_ENABLED) {
+    scene.time.delayedCall(TRAJECTORY_DELAY, () => Audio.trajectory(weapon.id));
+  }
 
   // Retrigger the fire cue for sub-shots that land LATER than the trigger pull (#55) — a
   // burst weapon's later pulses (Pulse Laser, Streak Pod) each need their own cue aligned to
