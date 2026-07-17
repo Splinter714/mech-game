@@ -1,12 +1,12 @@
 // #200 playtest follow-up ("enemy weapon fire should probably be VERY slightly quieter than
 // player fire?"): scheduleFireCues grew an optional `gainScale` param (default 1, i.e.
-// unchanged for the player's own call site in scenes/arena/firing.js) that the two enemy call
-// sites (scenes/arena/enemies.js) pass as ENEMY_FIRE_GAIN_SCALE. These tests verify the
-// mechanism end to end: the constant is a small-but-real reduction, scheduleFireCues threads
-// it through to Audio.fire/Audio.trajectory, and (lower down) it actually lands as a quieter
-// recorded gain envelope through both the procedural-layers path and the buffer-override path.
+// unchanged). #264: real positional audio superseded the flat ENEMY_FIRE_GAIN_SCALE stopgap
+// that param used to carry for enemy fire — see fireCues.js's header comment — so these tests
+// now cover the generic gainScale mechanism plus the new `pos` (world-position) threading that
+// replaced it, and (lower down) that gainScale still actually lands as a quieter recorded gain
+// envelope through the procedural-layers path.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { scheduleFireCues, ENEMY_FIRE_GAIN_SCALE } from './fireCues.js';
+import { scheduleFireCues } from './fireCues.js';
 import { Audio } from './index.js';
 import { AudioEngine } from './AudioEngine.js';
 import { planEmissions } from '../data/delivery.js';
@@ -23,14 +23,7 @@ function fakeScene() {
   };
 }
 
-describe('ENEMY_FIRE_GAIN_SCALE', () => {
-  it('is a small, real reduction — quieter but not muted, "VERY slightly" per playtest ask', () => {
-    expect(ENEMY_FIRE_GAIN_SCALE).toBeLessThan(1);
-    expect(ENEMY_FIRE_GAIN_SCALE).toBeGreaterThan(0.7); // not a heavy-handed cut
-  });
-});
-
-describe('scheduleFireCues gainScale threading', () => {
+describe('scheduleFireCues gainScale + pos threading', () => {
   let fireSpy, trajectorySpy;
   beforeEach(() => {
     fireSpy = vi.spyOn(Audio, 'fire').mockImplementation(() => {});
@@ -40,43 +33,53 @@ describe('scheduleFireCues gainScale threading', () => {
     vi.restoreAllMocks();
   });
 
-  it('defaults to gainScale 1 (player call sites are unaffected)', () => {
+  it('defaults to gainScale 1 and pos null (player call sites are unaffected)', () => {
     const w = getWeapon('machineGun');
     const plan = planEmissions(w);
     scheduleFireCues(fakeScene(), w, plan, true);
-    expect(fireSpy).toHaveBeenCalledWith(w, 1);
+    expect(fireSpy).toHaveBeenCalledWith(w, 1, null);
   });
 
-  it('passes ENEMY_FIRE_GAIN_SCALE straight through to Audio.fire for enemy-sourced calls', () => {
+  it('passes a gainScale straight through to Audio.fire', () => {
     const w = getWeapon('machineGun');
     const plan = planEmissions(w);
-    scheduleFireCues(fakeScene(), w, plan, true, ENEMY_FIRE_GAIN_SCALE);
-    expect(fireSpy).toHaveBeenCalledWith(w, ENEMY_FIRE_GAIN_SCALE);
+    scheduleFireCues(fakeScene(), w, plan, true, 0.85);
+    expect(fireSpy).toHaveBeenCalledWith(w, 0.85, null);
   });
 
-  it('retriggers burst sub-shots with the same gainScale', () => {
+  it('passes a world-position pair straight through to Audio.fire (#264, enemy call sites)', () => {
+    const w = getWeapon('machineGun');
+    const plan = planEmissions(w);
+    const pos = { x: 400, y: 120, listenerX: 0, listenerY: 0 };
+    scheduleFireCues(fakeScene(), w, plan, true, 1, pos);
+    expect(fireSpy).toHaveBeenCalledWith(w, 1, pos);
+  });
+
+  it('retriggers burst sub-shots with the same gainScale and pos', () => {
     // A weapon whose plan has a delay:0 shot AND at least one later shot exercises the
     // retrigger loop; fabricate a plan directly rather than depending on a specific weapon's
     // burst config remaining unchanged.
     const w = { id: 'burstTestWeapon' };
     const plan = { shots: [{ delay: 0 }, { delay: 50 }, { delay: 100 }] };
     const scene = fakeScene();
-    scheduleFireCues(scene, w, plan, true, ENEMY_FIRE_GAIN_SCALE);
-    expect(fireSpy).toHaveBeenCalledWith(w, ENEMY_FIRE_GAIN_SCALE);
+    const pos = { x: 200, y: -50, listenerX: 0, listenerY: 0 };
+    scheduleFireCues(scene, w, plan, true, 0.85, pos);
+    expect(fireSpy).toHaveBeenCalledWith(w, 0.85, pos);
     // Two later sub-shots (delay 50, 100) should each have scheduled a delayedCall retrigger.
     expect(scene.calls.filter((c) => c.delay > 0).length).toBeGreaterThanOrEqual(2);
     fireSpy.mockClear();
     for (const c of scene.calls) c.cb();
     for (const call of fireSpy.mock.calls) {
-      expect(call[1]).toBe(ENEMY_FIRE_GAIN_SCALE);
+      expect(call[1]).toBe(0.85);
+      expect(call[2]).toBe(pos);
     }
   });
 
-  it('no-ops for a held/looping weapon regardless of gainScale (flamethrower)', () => {
+  it('no-ops for a held/looping weapon regardless of gainScale/pos (flamethrower)', () => {
     const w = getWeapon('flamethrower');
     if (!w) return; // weapon id may differ; skip rather than false-fail if renamed
     const plan = planEmissions(w);
-    scheduleFireCues(fakeScene(), w, plan, true, ENEMY_FIRE_GAIN_SCALE);
+    scheduleFireCues(fakeScene(), w, plan, true, 0.85, { x: 1, y: 1, listenerX: 0, listenerY: 0 });
     expect(fireSpy).not.toHaveBeenCalled();
   });
 });
@@ -144,11 +147,11 @@ describe('sfx.fire gainScale end-to-end through a mock AudioEngine', () => {
     const eng2 = new AudioEngine();
     const ctx2 = mockContext();
     eng2.init(ctx2);
-    eng2.fire(weapon, ENEMY_FIRE_GAIN_SCALE);
+    eng2.fire(weapon, 0.85);
     const expEvents2 = ctx2._gainNodes().flatMap((g) => g._events.filter((e) => e[0] === 'exp'));
     const maxGain2 = Math.max(...expEvents2.map((e) => e[1]));
 
     expect(maxGain2).toBeLessThan(maxGain1);
-    expect(maxGain2).toBeCloseTo(maxGain1 * ENEMY_FIRE_GAIN_SCALE, 5);
+    expect(maxGain2).toBeCloseTo(maxGain1 * 0.85, 5);
   });
 });

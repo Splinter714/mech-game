@@ -15,7 +15,7 @@
 // scheduler are stubbed the same way flyerCover.test.js/vehicleFire.test.js do.
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
-vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn(), ENEMY_FIRE_GAIN_SCALE: 0.85 }));
+vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn() }));
 
 import { FiringMixin } from './firing.js';
 import { ProjectilesMixin } from './projectiles.js';

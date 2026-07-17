@@ -12,8 +12,37 @@ import {
   pickOverrideStage,
 } from './sfxOverrides.js';
 import { pickBakedVariant } from './bakedSfx.js';
+import { distanceGain, stereoPan } from '../data/positionalAudio.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// #264 — positional audio: given an optional `{ x, y, listenerX, listenerY }` world-position
+// pair, insert a per-cue GainNode (real distance falloff, data/positionalAudio.js's
+// distanceGain) + StereoPannerNode (left/right pan, stereoPan) between the cue's own nodes and
+// `bus`, and return that new head node for the caller to connect into INSTEAD of `bus`
+// directly. Any half of the pair missing (no pos passed at all, or a caller that only knows
+// its own position and not the listener's) is a strict no-op — returns `bus` unchanged, so
+// today's behavior (full volume, centered) is exactly preserved for every call site that
+// doesn't yet pass a position. `createStereoPanner` is guarded too, so a context that somehow
+// lacks it (very old browser, or a minimal test mock) still gets real distance falloff, just
+// without panning, rather than throwing.
+function positionalBus(e, bus, pos) {
+  if (!pos || !e.ctx || pos.x == null || pos.y == null || pos.listenerX == null || pos.listenerY == null) {
+    return bus;
+  }
+  const gain = distanceGain(pos.x, pos.y, pos.listenerX, pos.listenerY);
+  const pan = stereoPan(pos.x, pos.y, pos.listenerX, pos.listenerY);
+  const g = e.ctx.createGain();
+  g.gain.value = gain;
+  if (typeof e.ctx.createStereoPanner === 'function') {
+    const p = e.ctx.createStereoPanner();
+    p.pan.value = pan;
+    g.connect(p).connect(bus);
+  } else {
+    g.connect(bus);
+  }
+  return g;
+}
 
 // Dial the one-shot trajectory cue's gain down for the sustained loop — up to 6 can play at
 // once (Swarm Rack); tune here.
@@ -347,25 +376,29 @@ function startIntroThenSustain(e, bus, resolved, layers) {
   };
 }
 
-// #200: `gainScale` (default 1, i.e. unchanged) lets a caller uniformly quiet this cue —
-// currently used to make enemy-sourced fire cues VERY slightly quieter than the player's own
-// (see audio/fireCues.js's ENEMY_FIRE_GAIN_SCALE). Threads through both the buffer-override/
-// bake path and the procedural-layers fallback so the reduction applies no matter which one
-// actually plays.
-export function fire(e, weapon, gainScale = 1) {
-  if (playOverride(e, e.sfx, weapon.id, 'fire', gainScale)) return;
-  playLayers(e, e.sfx, e.getSfxParams(weapon.id).fire, gainScale);
+// #200: `gainScale` (default 1, i.e. unchanged) lets a caller uniformly quiet this cue.
+// #264: `pos` (default null, i.e. unchanged) is the optional `{ x, y, listenerX, listenerY }`
+// world-position pair for REAL distance falloff + stereo pan (see positionalBus above) —
+// this is what replaced the old flat ENEMY_FIRE_GAIN_SCALE approximation. Both threads through
+// the buffer-override/bake path and the procedural-layers fallback so they apply no matter
+// which one actually plays.
+export function fire(e, weapon, gainScale = 1, pos = null) {
+  const bus = positionalBus(e, e.sfx, pos);
+  if (playOverride(e, bus, weapon.id, 'fire', gainScale)) return;
+  playLayers(e, bus, e.getSfxParams(weapon.id).fire, gainScale);
 }
 
-export function trajectory(e, weaponId, gainScale = 1) {
-  if (playOverride(e, e.sfx, weaponId, 'trajectory', gainScale)) return;
+export function trajectory(e, weaponId, gainScale = 1, pos = null) {
+  const bus = positionalBus(e, e.sfx, pos);
+  if (playOverride(e, bus, weaponId, 'trajectory', gainScale)) return;
   const p = e.getSfxParams(weaponId);
-  if (p.trajectory) playLayers(e, e.sfx, p.trajectory, gainScale);
+  if (p.trajectory) playLayers(e, bus, p.trajectory, gainScale);
 }
 
-export function impact(e, weaponId) {
-  if (playOverride(e, e.sfx, weaponId, 'impact')) return;
-  playLayers(e, e.sfx, e.getSfxParams(weaponId).impact);
+export function impact(e, weaponId, pos = null) {
+  const bus = positionalBus(e, e.sfx, pos);
+  if (playOverride(e, bus, weaponId, 'impact')) return;
+  playLayers(e, bus, e.getSfxParams(weaponId).impact);
 }
 
 // ── Held/looping fire sound (#53) — flamethrower/beamLaser use ONE continuous source
@@ -530,10 +563,11 @@ export function footstep(e, foot = 0) {
 // getSfxParams/setSfxParam/resetSfxParams plumbing. `scale` additionally reshapes each layer at
 // trigger time via `scaleExplosionLayer` (sfxParams.js): louder, longer (more sustain = more
 // "boominess"), and pitched DOWN (lower frequency = more bass/boomy) for a bigger blast.
-export function explosion(e, scale = 1) {
+export function explosion(e, scale = 1, pos = null) {
   const s = clamp(scale, 0.3, 1.6);
+  const bus = positionalBus(e, e.sfx, pos);
   const layers = e.getSfxParams('deathExplosion').fire;
-  playLayers(e, e.sfx, layers.map((l) => scaleExplosionLayer(l, s)));
+  playLayers(e, bus, layers.map((l) => scaleExplosionLayer(l, s)));
 }
 
 // Destruction explosion (#100), made tunable per discrete SIZE CATEGORY by #107 — the per-kill
@@ -542,8 +576,9 @@ export function explosion(e, scale = 1) {
 // `explosionCategoryFor`, scenes/arena/shared.js); each has its OWN independently tunable
 // DEFAULT_SFX entry (`deathExplosionSmall` etc., sfxParams.js), so this is just the generic
 // layer player every weapon sound cue already uses, keyed by `explosionSfxId(category)`.
-export function deathExplosionByCategory(e, category) {
+export function deathExplosionByCategory(e, category, pos = null) {
   const id = explosionSfxId(category);
-  if (playOverride(e, e.sfx, id, 'fire')) return;
-  playLayers(e, e.sfx, e.getSfxParams(id).fire);
+  const bus = positionalBus(e, e.sfx, pos);
+  if (playOverride(e, bus, id, 'fire')) return;
+  playLayers(e, bus, e.getSfxParams(id).fire);
 }

@@ -120,7 +120,11 @@ export const CombatMixin = {
     // instead of flooding WebAudio with dozens of oscillators at once. Keyed per weapon so two
     // different weapons hitting together still each sound.
     // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED above.
-    if (WEAPON_IMPACT_SOUNDS_ENABLED && allowByKey((this._impactSoundAt ??= {}), weaponId ?? '_', now, SOUND_THROTTLE_MS)) Audio.impact(weaponId);
+    // #264: real positional audio — the impact's own world position vs. the player (listener)
+    // drives distance falloff + stereo pan, so a hit landing far from the player reads quieter.
+    if (WEAPON_IMPACT_SOUNDS_ENABLED && allowByKey((this._impactSoundAt ??= {}), weaponId ?? '_', now, SOUND_THROTTLE_MS)) {
+      Audio.impact(weaponId, { x, y, listenerX: this.px, listenerY: this.py });
+    }
     // #76: collapse near-simultaneous bursts at the same point — concentrated fire lands many
     // hits/frame at one spot, and the overlapping identical rings are indistinguishable, so keep
     // only the first and skip the rest (no extra circles/tweens) for one frame's worth of window.
@@ -230,7 +234,10 @@ export const CombatMixin = {
     this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.85, 340 * scale, true);   // shock ring
     this._smokePuff(x, y, scale);
     this._deathDebris(x, y, scale);
-    Audio.deathExplosion(category);
+    // #264: real positional audio — the kill site vs. the player (listener). The player's own
+    // MECH DOWN case (this._deathFx(this.px, this.py, ...) above) naturally resolves to
+    // distance 0 / centered pan, i.e. unaffected full volume, exactly as before.
+    Audio.deathExplosion(category, { x, y, listenerX: this.px, listenerY: this.py });
   },
 
   // Lingering smoke puff (#100): a soft grey blob that drifts a little and fades out much
