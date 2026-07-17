@@ -416,7 +416,10 @@ function wrapAngle(x) { return Math.atan2(Math.sin(x), Math.cos(x)); }
 //   • no lead/intercept (leadAngle) — just a raw bearing to the target's current position
 //   • a turn rate far below HOMING_TURN_MIN (3.2 rad/s) so a target that's dodging or far off
 //     the bolt's own axis is barely corrected toward, never run down like a real missile
-const WEAK_SEEK_TURN_RATE = 0.5; // rad/s — deliberately tiny; ~1/6 of the weakest real homing turn
+// #219: playtest tuning pass — bumped 0.5 -> 0.8 rad/s so the seek reads a bit more, while
+// staying comfortably under HOMING_TURN_MIN (3.2 rad/s) so it's still a light bias/wobble,
+// never a hard lock-on.
+const WEAK_SEEK_TURN_RATE = 0.8; // rad/s — deliberately small; ~1/4 of the weakest real homing turn
 const WEAK_SEEK_RADIUS = 260;    // px — a bolt only "notices" a target within this range of itself
 
 export { WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS };
