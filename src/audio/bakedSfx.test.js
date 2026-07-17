@@ -3,6 +3,10 @@ import {
   BAKED_SFX, loadAllBaked, getBaked, hasBaked, setAudioContext, _resetForTest,
   getBakedVariantCount, pickBakedVariant, _setBakedBufferForTest,
 } from './bakedSfx.js';
+// #266: mechDestroyed::play's pool no longer carries variant 2 (swapped for 12/15/17), but
+// autocannon::fire still reuses that same source file independently — import it directly here
+// so the reuse assertion below doesn't depend on the pool's current membership/ordering.
+import mechDestroyed2 from '../assets/sfx/mechDestroyed-play-mechaDamaged2.m4a';
 
 // A fake AudioContext mirroring sfxOverrides.test.js: decodeAudioData "decodes" by reading a
 // tag back out of the bytes, so we can assert the SAME content round-tripped through fetch,
@@ -154,8 +158,9 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
 
     // #208: the UI domain's mechDestroyed cue — the FIRST real 4-VARIANT pool (#195) shipped in
     // BAKED_SFX (every bake above is a single-object entry). Four "Mecha DAMAGED N.wav" files
-    // (N=1..4). #265: re-trimmed from the original full untrimmed 3429ms/no-fade recipe to a
-    // 2600ms window with a 990ms fade-out, per Jackson's Weapon Lab copy-recipe.
+    // (N=1, 12, 15, 17 as of #266; originally N=1..4). #265: re-trimmed from the original full
+    // untrimmed 3429ms/no-fade recipe to a 2600ms window with a 990ms fade-out, per Jackson's
+    // Weapon Lab copy-recipe.
     it('registers mechDestroyed/play as a 4-element ARRAY of variant recipes (#195 pool)', () => {
       const entry = BAKED_SFX['mechDestroyed::play'];
       expect(Array.isArray(entry)).toBe(true);
@@ -172,16 +177,18 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(assets.size).toBe(4);                    // each variant points at a distinct asset
     });
 
-    // #265: autocannon's fire cue — reuses the SAME "Mecha DAMAGED 2.wav" source file already
-    // imported for mechDestroyed::play's variant 2 (no new asset file), with its own different
-    // start/trim/fade recipe: a 630ms window starting 90ms into the file, 830ms fade-out.
-    it('registers autocannon/fire reusing the mechDestroyed variant-2 asset with its own #166/#174 recipe', () => {
+    // #265: autocannon's fire cue — reuses the SAME "Mecha DAMAGED 2.wav" source file that was
+    // (pre-#266) also mechDestroyed::play's variant 2 — with its own different start/trim/fade
+    // recipe: a 630ms window starting 90ms into the file, 830ms fade-out. #266 swapped that
+    // variant out of the mechDestroyed pool, but autocannon::fire's own independent import of
+    // the same file is unaffected.
+    it('registers autocannon/fire reusing the mechDestroyed-mechaDamaged2 asset with its own #166/#174 recipe', () => {
       const entry = BAKED_SFX['autocannon::fire'];
       expect(entry).toBeTruthy();
       expect(typeof entry.asset).toBe('string');
       expect(entry.asset.length).toBeGreaterThan(0);
-      // Same source file as mechDestroyed::play's variant 2 (index 1), reused with a different recipe.
-      expect(entry.asset).toBe(BAKED_SFX['mechDestroyed::play'][1].asset);
+      // Same source file as the mechaDamaged2 asset (no longer in the mechDestroyed pool as of #266).
+      expect(entry.asset).toBe(mechDestroyed2);
       expect(entry.startMs).toBe(90);
       expect(entry.trimMs).toBe(630);
       expect(entry.fadeOutMs).toBe(830);
@@ -438,8 +445,8 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
 
     // #208: mechDestroyed/play is the first REAL (non-synthetic) 4-variant bake — exercise the
     // whole decode → count → pick path against the actual shipped BAKED_SFX entry (not a
-    // made-up id), proving all 4 "Mecha DAMAGED N.wav" variants decode independently and
-    // pickBakedVariant genuinely walks the whole real pool.
+    // made-up id), proving all 4 "Mecha DAMAGED N.wav" variants (N=1/12/15/17 as of #266)
+    // decode independently and pickBakedVariant genuinely walks the whole real pool.
     it('mechDestroyed/play (#208) decodes all 4 real variants and pickBakedVariant walks the whole pool', async () => {
       const entry = BAKED_SFX['mechDestroyed::play'];
       installFakeFetch(new Map([

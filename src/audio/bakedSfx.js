@@ -81,18 +81,22 @@ import menuNavPlay from '../assets/sfx/menuNav-play-strongClick1.m4a';
 // #208: the UI domain's `mechDestroyed` cue (added #201) — the FIRST real 4-VARIANT bake using
 // the #195 randomized-pool feature (every earlier bake above is a single-object entry). Four
 // distinct files from the same Helton Yan pack, each "Mecha DAMAGED N.wav" (STEREO 44.1kHz
-// 16-bit, 3.429s) — variant 2 is a DIFFERENT source file than the one already baked as
-// deathExplosionMassive::fire (#180 trimmed "Mecha DAMAGED 2.wav" to 1490ms+550ms fade for a
-// different cue). #265: re-trimmed from the original FULL untrimmed 3429ms/no-fade recipe to a
-// 2600ms window with a 990ms fade-out for all 4 variants, per Jackson's Weapon Lab copy-recipe;
-// variant 2's source file is ALSO reused (with its own different start/trim/fade) as the new
-// autocannon::fire entry below.
-// Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~154-194kbps, ~71-89KB each) —
+// 16-bit, 3.429s). #265: re-trimmed from the original FULL untrimmed 3429ms/no-fade recipe to a
+// 2600ms window with a 990ms fade-out for all 4 variants, per Jackson's Weapon Lab copy-recipe.
+// #266: swapped the pool from variants 1/2/3/4 to 1/12/15/17 — dropping 2, 3, and 4 in favor of
+// three different "Mecha DAMAGED N.wav" files from the same pack (variant 1 is unchanged and
+// reused as-is). Variant 2's source file is still imported above (mechDestroyed2) because
+// autocannon::fire below independently reuses it with its own different start/trim/fade — that
+// import stays even though it's no longer part of this pool. Variants 3 and 4's imports/asset
+// files were removed entirely: nothing else in the codebase referenced them. Same start/trim/
+// fade recipe (startMs 0, trimMs 2600, fadeOutMs 990) applies to all 4 new-pool variants.
+// Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~154-194kbps, ~68-89KB each) —
 // kept stereo like the other Helton Yan stereo bakes (#180/#194/#192/#198/#199/#206).
 import mechDestroyed1 from '../assets/sfx/mechDestroyed-play-mechaDamaged1.m4a';
 import mechDestroyed2 from '../assets/sfx/mechDestroyed-play-mechaDamaged2.m4a';
-import mechDestroyed3 from '../assets/sfx/mechDestroyed-play-mechaDamaged3.m4a';
-import mechDestroyed4 from '../assets/sfx/mechDestroyed-play-mechaDamaged4.m4a';
+import mechDestroyed12 from '../assets/sfx/mechDestroyed-play-mechaDamaged12.m4a';
+import mechDestroyed15 from '../assets/sfx/mechDestroyed-play-mechaDamaged15.m4a';
+import mechDestroyed17 from '../assets/sfx/mechDestroyed-play-mechaDamaged17.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -242,17 +246,18 @@ export const BAKED_SFX = {
     fadeOutMs: 1070,
     volume: 0,
   },
-  // #208: the UI domain's mechDestroyed cue — a 4-VARIANT pool (#195), one entry per
-  // "Mecha DAMAGED N.wav" (N=1..4) from the Helton Yan pack. #265: re-trimmed from the FULL
-  // untrimmed 3429ms file to a 2600ms window (#166 start+trim: startMs 0, trimMs 2600) with a
-  // 990ms fade-out (#174), per Jackson's Weapon Lab copy-recipe. No pitch/filter/reverb
-  // processing. Playback (pickBakedVariant) picks uniformly at random among the 4 decoded
+  // #208/#266: the UI domain's mechDestroyed cue — a 4-VARIANT pool (#195), one entry per
+  // "Mecha DAMAGED N.wav" (N=1, 12, 15, 17) from the Helton Yan pack. #265: re-trimmed from the
+  // FULL untrimmed 3429ms file to a 2600ms window (#166 start+trim: startMs 0, trimMs 2600) with
+  // a 990ms fade-out (#174), per Jackson's Weapon Lab copy-recipe. #266: swapped variants 2/3/4
+  // out for 12/15/17 (same recipe carried over unchanged); variant 1 untouched. No pitch/filter/
+  // reverb processing. Playback (pickBakedVariant) picks uniformly at random among the 4 decoded
   // variants.
   'mechDestroyed::play': [
     { asset: mechDestroyed1, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
-    { asset: mechDestroyed2, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
-    { asset: mechDestroyed3, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
-    { asset: mechDestroyed4, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed12, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed15, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed17, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
   ],
   // #265: the Weapon Lab export's second piece — autocannon's FIRE cue, reusing the SAME
   // "Mecha DAMAGED 2.wav" source file already imported above as mechDestroyed2 (no new asset
