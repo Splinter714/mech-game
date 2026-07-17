@@ -154,7 +154,8 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
 
     // #208: the UI domain's mechDestroyed cue — the FIRST real 4-VARIANT pool (#195) shipped in
     // BAKED_SFX (every bake above is a single-object entry). Four "Mecha DAMAGED N.wav" files
-    // (N=1..4), each played as the full untrimmed 3429ms file, no processing.
+    // (N=1..4). #265: re-trimmed from the original full untrimmed 3429ms/no-fade recipe to a
+    // 2600ms window with a 990ms fade-out, per Jackson's Weapon Lab copy-recipe.
     it('registers mechDestroyed/play as a 4-element ARRAY of variant recipes (#195 pool)', () => {
       const entry = BAKED_SFX['mechDestroyed::play'];
       expect(Array.isArray(entry)).toBe(true);
@@ -165,10 +166,26 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
         expect(variant.asset.length).toBeGreaterThan(0);
         assets.add(variant.asset);
         expect(variant.startMs).toBe(0);
-        expect(variant.trimMs).toBe(3429);            // full file length, no actual trim
-        expect(variant.processing).toBeNull();
+        expect(variant.trimMs).toBe(2600);            // #265 re-trim
+        expect(variant.fadeOutMs).toBe(990);          // #265 fade
       }
       expect(assets.size).toBe(4);                    // each variant points at a distinct asset
+    });
+
+    // #265: autocannon's fire cue — reuses the SAME "Mecha DAMAGED 2.wav" source file already
+    // imported for mechDestroyed::play's variant 2 (no new asset file), with its own different
+    // start/trim/fade recipe: a 630ms window starting 90ms into the file, 830ms fade-out.
+    it('registers autocannon/fire reusing the mechDestroyed variant-2 asset with its own #166/#174 recipe', () => {
+      const entry = BAKED_SFX['autocannon::fire'];
+      expect(entry).toBeTruthy();
+      expect(typeof entry.asset).toBe('string');
+      expect(entry.asset.length).toBeGreaterThan(0);
+      // Same source file as mechDestroyed::play's variant 2 (index 1), reused with a different recipe.
+      expect(entry.asset).toBe(BAKED_SFX['mechDestroyed::play'][1].asset);
+      expect(entry.startMs).toBe(90);
+      expect(entry.trimMs).toBe(630);
+      expect(entry.fadeOutMs).toBe(830);
+      expect(entry.processing).toBeNull();
     });
   });
 
@@ -297,7 +314,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     ]));
     setAudioContext(fakeCtx());
     await loadAllBaked();
-    expect(getBaked('autocannon', 'fire')).toBeNull();
+    expect(getBaked('autocannon', 'impact')).toBeNull();      // #265: fire is baked, impact stays procedural
     expect(getBaked('clusterRocket', 'impact')).toBeNull();   // right weapon, wrong stage
     expect(getBaked('plasmaLance', 'impact')).toBeNull();     // #175: impact stays procedural — bake is fire-only
     expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
@@ -442,8 +459,8 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
 
       const v0 = getBaked('mechDestroyed', 'play');
       expect(v0.buffer).toEqual({ __decodedFrom: 'DAMAGED1' });
-      expect(v0.trimMs).toBe(3429);
-      expect(v0.processing).toBeNull();
+      expect(v0.trimMs).toBe(2600);           // #265 re-trim
+      expect(v0.fadeOutMs).toBe(990);         // #265 fade
 
       const seen = new Set();
       for (let i = 0; i < 200; i++) seen.add(pickBakedVariant('mechDestroyed', 'play').buffer.__decodedFrom);

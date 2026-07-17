@@ -83,7 +83,10 @@ import menuNavPlay from '../assets/sfx/menuNav-play-strongClick1.m4a';
 // distinct files from the same Helton Yan pack, each "Mecha DAMAGED N.wav" (STEREO 44.1kHz
 // 16-bit, 3.429s) — variant 2 is a DIFFERENT source file than the one already baked as
 // deathExplosionMassive::fire (#180 trimmed "Mecha DAMAGED 2.wav" to 1490ms+550ms fade for a
-// different cue); this bake uses the FULL untrimmed file for all 4 variants, no fade/processing.
+// different cue). #265: re-trimmed from the original FULL untrimmed 3429ms/no-fade recipe to a
+// 2600ms window with a 990ms fade-out for all 4 variants, per Jackson's Weapon Lab copy-recipe;
+// variant 2's source file is ALSO reused (with its own different start/trim/fade) as the new
+// autocannon::fire entry below.
 // Converted with macOS `afconvert` to 44.1kHz STEREO AAC/.m4a (~154-194kbps, ~71-89KB each) —
 // kept stereo like the other Helton Yan stereo bakes (#180/#194/#192/#198/#199/#206).
 import mechDestroyed1 from '../assets/sfx/mechDestroyed-play-mechaDamaged1.m4a';
@@ -240,15 +243,29 @@ export const BAKED_SFX = {
     volume: 0,
   },
   // #208: the UI domain's mechDestroyed cue — a 4-VARIANT pool (#195), one entry per
-  // "Mecha DAMAGED N.wav" (N=1..4) from the Helton Yan pack. Each variant plays the FULL
-  // 3429ms file, no trim, no fade, no pitch/filter/reverb processing — literal copy-recipe.
-  // Playback (pickBakedVariant) picks uniformly at random among the 4 decoded variants.
+  // "Mecha DAMAGED N.wav" (N=1..4) from the Helton Yan pack. #265: re-trimmed from the FULL
+  // untrimmed 3429ms file to a 2600ms window (#166 start+trim: startMs 0, trimMs 2600) with a
+  // 990ms fade-out (#174), per Jackson's Weapon Lab copy-recipe. No pitch/filter/reverb
+  // processing. Playback (pickBakedVariant) picks uniformly at random among the 4 decoded
+  // variants.
   'mechDestroyed::play': [
-    { asset: mechDestroyed1, startMs: 0, trimMs: 3429, processing: null },
-    { asset: mechDestroyed2, startMs: 0, trimMs: 3429, processing: null },
-    { asset: mechDestroyed3, startMs: 0, trimMs: 3429, processing: null },
-    { asset: mechDestroyed4, startMs: 0, trimMs: 3429, processing: null },
+    { asset: mechDestroyed1, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed2, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed3, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
+    { asset: mechDestroyed4, startMs: 0, trimMs: 2600, fadeOutMs: 990 },
   ],
+  // #265: the Weapon Lab export's second piece — autocannon's FIRE cue, reusing the SAME
+  // "Mecha DAMAGED 2.wav" source file already imported above as mechDestroyed2 (no new asset
+  // file needed). Played back as a 630ms window starting 90ms into the file (#166 start+trim:
+  // startMs 90, trimMs 630 — a 90ms→720ms play window) with an 830ms fade-out (#174). No pitch/
+  // filter/reverb processing.
+  'autocannon::fire': {
+    asset: mechDestroyed2,
+    startMs: 90,
+    trimMs: 630,
+    fadeOutMs: 830,
+    processing: null,
+  },
 };
 
 // Decoded AudioBuffer cache — the only thing playback (sfx.js) ever reads, synchronously.
