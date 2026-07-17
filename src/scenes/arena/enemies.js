@@ -29,9 +29,9 @@ import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SC
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
-import { isWaterTerrain, isSmallUnit } from '../../data/terrain.js';
+import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';

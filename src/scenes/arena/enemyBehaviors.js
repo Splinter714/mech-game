@@ -14,8 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
-import { rotateToward, hullTravelAngle } from './shared.js';
-import { isSmallUnit } from '../../data/terrain.js';
+import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);

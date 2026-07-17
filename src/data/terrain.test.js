@@ -5,7 +5,7 @@ import {
   isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
   isWaterTerrain, isMissionObjective,
   SLOW_MOVEMENT_FACTOR, movementTier, coverTier, isBaseCategory,
-  isSmallUnit, softCoverBlocksLOS, coverBlocksForRay,
+  softCoverBlocksLOS, coverBlocksForRay,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -162,15 +162,17 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
     expect(rubbleFor('fumarole')).toBe('fumaroleRubble');
   });
 
-  it('shotBlockedAt: soft cover is transparent for exempted hexes only', () => {
+  it('shotBlockedAt: soft cover is transparent for exempted hexes only (small unit involved)', () => {
+    // #269: soft cover only blocks a SMALL ground unit's LOS — pass smallUnitInvolved=true
+    // throughout so this test still exercises the #72 own-hex exemption it's actually about.
     const exempt = new Set(['3,-1']);
     // The target's own forest hex does not protect it...
-    expect(shotBlockedAt('forest', '3,-1', exempt)).toBe(false);
+    expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);
     // ...but another forest hex on the way still blocks ("deep woods").
-    expect(shotBlockedAt('forest', '2,-1', exempt)).toBe(true);
+    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);
     // No exemptions at all → forest blocks like before.
-    expect(shotBlockedAt('forest', '3,-1', null)).toBe(true);
-    expect(shotBlockedAt('forest', '3,-1', new Set())).toBe(true);
+    expect(shotBlockedAt('forest', '3,-1', null, true)).toBe(true);
+    expect(shotBlockedAt('forest', '3,-1', new Set(), true)).toBe(true);
   });
 
   it('shotBlockedAt: SOLID cover blocks even when exempted; open ground never blocks', () => {
@@ -428,23 +430,16 @@ describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one spe
   });
 });
 
-// #269 §1/§3: soft cover is only meant to block a SMALL ground unit's LOS once the ground-unit
-// size tier (issue #269 §2, built by a parallel pass) lands — a large unit/mech sees over it.
-// That tier hadn't landed on `main` as of this pass, so `isSmallUnit` is a stub and the
-// production behavior below is UNCHANGED (soft cover still blocks unconditionally, matching
-// every pre-existing test in this file) — these tests pin exactly that stubbed-safe default,
-// plus the internal plumbing (`coverBlocksForRay`) so a later wiring pass has something to flip.
-describe('#269 §1 soft-cover size-tier plumbing (stubbed pending the parallel size-tier work)', () => {
-  it('isSmallUnit is stubbed to always report false (no real size-tier field wired yet)', () => {
-    expect(isSmallUnit({})).toBe(false);
-    expect(isSmallUnit(undefined)).toBe(false);
-    expect(isSmallUnit({ kindDef: { size: 'small' } })).toBe(false);
-  });
-
-  it('softCoverBlocksLOS ignores its argument for now: always blocks (today\'s behavior)', () => {
+// #269 §1/§2: soft cover only blocks a SMALL ground unit's LOS — a large unit/mech sees over it.
+// The size tier lives in `scenes/arena/shared.js`'s `isSmallUnit`/`unitSize` (issue #269 §2);
+// these tests exercise the terrain-layer plumbing (`softCoverBlocksLOS`/`coverBlocksForRay`/
+// `shotBlockedAt`) directly against a `smallUnitInvolved` boolean, since that's the boundary this
+// module owns — callers compute the boolean via the real per-entity query.
+describe('#269 §1 soft-cover size-tier plumbing', () => {
+  it('softCoverBlocksLOS blocks only when a small unit is involved', () => {
     expect(softCoverBlocksLOS(true)).toBe(true);
-    expect(softCoverBlocksLOS(false)).toBe(true);
-    expect(softCoverBlocksLOS(undefined)).toBe(true);
+    expect(softCoverBlocksLOS(false)).toBe(false);
+    expect(softCoverBlocksLOS(undefined)).toBeFalsy();
   });
 
   it('coverBlocksForRay: hard cover always blocks regardless of size-tier or own-hex exemption', () => {
@@ -453,9 +448,9 @@ describe('#269 §1 soft-cover size-tier plumbing (stubbed pending the parallel s
     expect(coverBlocksForRay('building', true, true)).toBe(true);   // even "own hex" doesn't exempt hard cover
   });
 
-  it('coverBlocksForRay: soft cover still blocks by default (own-hex exemption still applies)', () => {
-    expect(coverBlocksForRay('forest', false, false)).toBe(true);   // #269: currently blocks regardless
-    expect(coverBlocksForRay('forest', false, true)).toBe(true);
+  it('coverBlocksForRay: soft cover blocks only a small unit (own-hex exemption still applies)', () => {
+    expect(coverBlocksForRay('forest', false, false)).toBe(false);  // large unit sees clean over it
+    expect(coverBlocksForRay('forest', false, true)).toBe(true);    // small unit's sightline is blocked
     expect(coverBlocksForRay('forest', true, false)).toBe(false);   // #72 own-hex transparency still works
     expect(coverBlocksForRay('forest', true, true)).toBe(false);
   });
@@ -465,11 +460,11 @@ describe('#269 §1 soft-cover size-tier plumbing (stubbed pending the parallel s
     expect(coverBlocksForRay('grass', true, true)).toBe(false);
   });
 
-  it('shotBlockedAt still passes a smallUnitInvolved arg through without changing today\'s result', () => {
+  it('shotBlockedAt threads smallUnitInvolved through to the soft-cover exemption', () => {
     const exempt = new Set(['3,-1']);
     expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);   // own-hex exemption wins
-    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);    // deep woods still blocks
-    expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(true);
+    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);    // deep woods still blocks a small unit
+    expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(false);  // a large unit sees over deep woods
     expect(shotBlockedAt('building', '3,-1', exempt, true)).toBe(true); // hard cover unaffected
   });
 });

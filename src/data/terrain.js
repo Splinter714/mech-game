@@ -47,10 +47,9 @@
 //              outposts: building/adobe/iceRuin/tower/obsidian), 'soft' when `blocksLOS` &&
 //              `passable` (the walk-through cover: forest/scrub/drift/wreck/fumarole). `hard`
 //              cover always blocks a ground unit's LOS; `soft` cover only blocks a SMALL ground
-//              unit's LOS — a mech/large unit sees clean over it (issue #269 §1; the small/large
-//              tier itself is added to enemy-kind data by a parallel pass, §2) — see
-//              `coverBlocksForRay`/`isSmallUnit` below for how that's wired (or stubbed, if that
-//              tier hasn't landed on `main` yet).
+//              unit's LOS — a mech/large unit sees clean over it (issue #269 §1, using the
+//              small/large tier added to enemy-kind data by §2) — see `coverBlocksForRay`/
+//              `softCoverBlocksLOS` below for how that's wired.
 // The raw fields remain the source of truth callers read via `isPassable`/`blocksLOS`/etc.
 // below; category/movement/cover are DERIVED from them per-entry (not the other way around) so
 // adding a new terrain type is still "one entry, all fields together" — no separate derivation
@@ -345,34 +344,15 @@ export function isSoftCover(id) {
   return coverTier(id) === 'soft';
 }
 
-// #269 §1/§2: does `entity` count as a SMALL ground unit for the soft-cover LOS exemption below
-// (small = tank/infantry, large = mech/quadruped, per the design doc's confirmed mapping)? The
-// real tier lives on enemy-kind data, added by a parallel pass (issue #269 §2) — as of this pass
-// it hadn't landed on `main` yet, so this is a STUB: it always reports "not confirmed small".
-// TODO(#269 §2): once that field lands, wire this to read it, e.g.:
-//   return entity?.kindDef?.size === 'small';
-// (the player is always a mech — implicitly large — so a caller never needs to call this for the
-// player side of a ray). Composable on purpose: every LOS call in world.js/firing.js already
-// threads an optional `smallUnitInvolved` boolean down to `coverBlocksForRay` below, computed at
-// each call site via `isSmallUnit(theLiveEnemy)` — so wiring this one function is the ONLY change
-// a later merge needs to make the whole feature go live.
-export function isSmallUnit(entity) {
-  return false;
-}
-
-// #269 §1: does SOFT cover block LOS, given whether a small ground unit is party to this
+// #269 §1/§2: does SOFT cover block LOS, given whether a small ground unit is party to this
 // particular ray? Final design: only a small unit's sightline is blocked by soft cover — a
-// mech/large unit sees clean over it. `smallUnitInvolved` is sourced by callers from
-// `isSmallUnit` above, which is currently stubbed to always return false — but flipping this
-// function to `return smallUnitInvolved;` the moment that stub goes live would silently make
-// soft cover stop blocking EVERYONE (false ⇒ never blocks) instead of the intended "we don't
-// know yet, so play it safe" default. Keeping this hardcoded `true` for now preserves today's
-// exact behavior (soft cover blocks unconditionally, matching every existing test) regardless of
-// whatever `smallUnitInvolved` value flows in. TODO(#269 §2): once `isSmallUnit` is wired to a
-// real per-entity field, flip the body below to `return smallUnitInvolved;` — that one-line
-// change is the entire remaining wiring; every caller already computes and passes a real boolean.
+// mech/large unit sees clean over it. `smallUnitInvolved` is computed by callers via
+// `isSmallUnit(theLiveEnemy)` (`scenes/arena/shared.js`, the real per-entity size-tier query —
+// small = tank/infantry, large = mech/quadruped, per the design doc's confirmed mapping; the
+// player is always a mech, implicitly large, so a caller never needs this for the player side
+// of a ray) and threaded down through `coverBlocksForRay` below.
 export function softCoverBlocksLOS(smallUnitInvolved) {
-  return true;
+  return smallUnitInvolved;
 }
 
 // #269: the single shared "does this terrain block THIS ray" decision — `shotBlockedAt`,
