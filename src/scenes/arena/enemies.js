@@ -29,7 +29,7 @@ import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SC
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
-import { isWaterTerrain } from '../../data/terrain.js';
+import { isWaterTerrain, isSmallUnit } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
@@ -605,7 +605,7 @@ export const EnemiesMixin = {
     // was the top game-logic CPU cost run raw per mech per frame — now a STAGGERED CACHE
     // (`_cachedLosToPlayer`, ~120ms per-enemy refresh) so the expensive raycast runs ~8x less
     // often; the value is exact at each refresh and feeds awareness, the lock, and firing alike.
-    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, this.px, this.py);
+    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, this.px, this.py, isSmallUnit(e));
 
     // #103 awareness: an UNAWARE enemy hasn't noticed the player yet — it idles near its spawn
     // point rather than engaging. It flips to AWARE (permanently, for the rest of the encounter)
@@ -737,7 +737,7 @@ export const EnemiesMixin = {
         if (plan.mode === 'contact') {
           this._melee(w, mx2, my2, fireAngle, 'enemy');
         } else if (plan.mode === 'hitscan') {
-          this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key, !!e.flying);
+          this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e));
         } else {
           // No explicit seek target needed here (playtest follow-up #252 dropped the old
           // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
@@ -746,7 +746,7 @@ export const EnemiesMixin = {
           // whether this shot had LOS or not. #245: a flying shooter's rounds also ignore terrain
           // cover in flight (last arg — no live flying MECH kind today, but keeps both fire paths
           // uniform).
-          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying);
+          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying, isSmallUnit(e));
         }
         cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
@@ -915,9 +915,9 @@ export const EnemiesMixin = {
       // above, so its shots ignore terrain cover entirely: the hitscan trace skips the wall
       // check and a spawned round is stamped `ignoresCover` (see firing.js/projectiles.js).
       // Ground kinds pass false and are blocked by cover exactly as before.
-      this._fireHitscan(w, mx, my, fireAngle, 'enemy', e.key, !!e.flying);
+      this._fireHitscan(w, mx, my, fireAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e));
     } else {
-      this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying);
+      this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying, isSmallUnit(e));
     }
     // Cadence is ALWAYS the RESOLVED weapon's own `_fireInterval` (the same resolution the
     // player/mech-enemy path uses; `{}` mods since vehicles have no player buffs/Overdrive) —
@@ -951,7 +951,7 @@ export const EnemiesMixin = {
     const tooFar = dist > e.standoff * TOO_FAR_FRAC;
     // #167: fresh (not cached) — state decisions run on the slow DECIDE_MIN/MAX cadence, not per
     // frame, so this wants a current read; still routed through the allocation-free raycast.
-    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, this.px, this.py) === Infinity;
+    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, this.px, this.py, isSmallUnit(e)) === Infinity;
     const hurt = hp < COVER_HEALTH_TRIGGER || this.time.now < e.hurtUntil;
     const now = this.time.now;
 
@@ -1074,7 +1074,7 @@ export const EnemiesMixin = {
       const ang = Math.atan2(p.y - this.py, p.x - this.px);
       // A spot is cover if the player's line of sight to it is broken by a wall before it
       // (own-hex transparency applied: neither endpoint's soft-cover hex counts, #72).
-      const losBlocked = this._wallDistanceLos(this.px, this.py, ang, d, p.x, p.y) < d - COVER_SEARCH_STEP;
+      const losBlocked = this._wallDistanceLos(this.px, this.py, ang, d, p.x, p.y, isSmallUnit(e)) < d - COVER_SEARCH_STEP;
       if (!losBlocked) continue;
       // Prefer near cover that keeps us in the fight (not driven to the map edge).
       const travel = Math.hypot(p.x - e.x, p.y - e.y);
