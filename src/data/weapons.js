@@ -156,7 +156,20 @@ export const WEAPONS = {
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
     damage: 18, range: { min: 0, opt: 480, max: 820 },
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40 },
+    // #252 playtest follow-up: "lobbed weapons should actually seek, not just fly to the spot
+    // targeted when the shot was initiated." NOT `guidance: 'homing'` — that would flip
+    // canFireWeapon's no-lock-no-fire gate on (targetlock.js only special-cases
+    // guidance === 'homing'), and this round is explicitly meant to keep firing unconditionally,
+    // lock or no lock, exactly like before. `tracksLock` is a separate opt-in (firing.js
+    // _spawnProjectile): the round still dumb-fires ballistically with no lock, but if the
+    // player DOES have one when the trigger's pulled, it steers live at the lock's target as it
+    // moves (the same arcing-homing-blend machinery Swarm Rack/Streak Pod already use — descent-
+    // phase-only steering, see arcHomingBlend). `homingTurnRadius` is deliberately wide (vs. the
+    // missile family's default 64px) so the turn rate lands near the engine's HOMING_TURN_MIN
+    // floor (3.2 rad/s) rather than up near HOMING_TURN_MAX (9.0) like Swarm Rack/Streak Pod —
+    // this should read as a heavy lobbed shell nudging itself onto a moving target, not a
+    // missile snapping onto it.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140 },
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
@@ -226,7 +239,13 @@ export const WEAPONS = {
     id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
     damage: 6, range: { min: 50, opt: 500, max: 780 },
     ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
+    // #252 playtest follow-up — see plasmaCannon's comment above for the full rationale:
+    // `tracksLock: true`, not `guidance: 'homing'`, so this still fires unconditionally with no
+    // lock (canFireWeapon is untouched), but steers at the lock's live target through the
+    // descent when the player does have one, same arcing-homing-blend as Swarm Rack/Streak Pod.
+    // `homingTurnRadius` widened the same way so it turns in lazily near the 3.2 rad/s floor,
+    // not the missile family's near-9 rad/s ceiling.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 }, tracksLock: true, homingTurnRadius: 140 },
   }),
   // #244: siegeShell (the #94 sentry-turret artillery round) was deleted from this registry —
   // it was mechanically identical to napalm (both arcing projectile + splash + groundFire

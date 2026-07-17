@@ -111,3 +111,32 @@ describe('resolveWeapon (#243)', () => {
     expect(resolveWeapon('machineGun', { damage: 1 }).id).toBe('machineGun');
   });
 });
+
+// #252 playtest follow-up: "lobbed weapons should actually seek, not just fly to the spot
+// targeted when the shot was initiated." Plasma Cannon and Napalm opt into `tracksLock`
+// (firing.js `_spawnProjectile` reads this) instead of `guidance: 'homing'` — the latter would
+// flip targetlock.js's `canFireWeapon` no-lock-no-fire gate on for them, which Jackson's design
+// call (data/targetlock.js's own comment) explicitly says should NOT happen: these are
+// "arcing-but-unguided lobs... fire unconditionally on trigger, lock or no lock."
+describe('lobbed-weapon live tracking (#252 follow-up)', () => {
+  it('plasmaCannon and napalm opt into tracksLock, NOT guidance: homing', () => {
+    expect(WEAPONS.plasmaCannon.delivery.tracksLock).toBe(true);
+    expect(WEAPONS.napalm.delivery.tracksLock).toBe(true);
+    expect(WEAPONS.plasmaCannon.delivery.guidance).not.toBe('homing');
+    expect(WEAPONS.napalm.delivery.guidance).not.toBe('homing');
+  });
+
+  it('both are still arcing lobs (the arc/apex flight logic is unchanged)', () => {
+    expect(WEAPONS.plasmaCannon.delivery.path).toBe('arcing');
+    expect(WEAPONS.napalm.delivery.path).toBe('arcing');
+  });
+
+  it('tunes a wider (lazier) turn radius than the missile family default, so seeking reads as ' +
+     'a heavy lob nudging in, not a missile snapping on', () => {
+    // Swarm Rack/Streak Pod (real homing missiles) rely on the shared 64px default.
+    expect(WEAPONS.swarmRack.delivery.homingTurnRadius).toBeUndefined();
+    expect(WEAPONS.streakPod.delivery.homingTurnRadius).toBeUndefined();
+    expect(WEAPONS.plasmaCannon.delivery.homingTurnRadius).toBeGreaterThan(64);
+    expect(WEAPONS.napalm.delivery.homingTurnRadius).toBeGreaterThan(64);
+  });
+});

@@ -454,9 +454,20 @@ export const FiringMixin = {
       // #77: turn rate follows speed (see makeProjectile) — re-derive it for the lob's real speed
       // so a fast far-range arc still corners onto the target instead of orbiting it. #243: pass
       // the weapon's own homingTurnRadius (if tuned) so the re-derive matches makeProjectile's.
-      if (round.homing) round.turn = homingTurnRate(round.speed, d.homingTurnRadius);
+      // #252 follow-up: also re-derive for a `tracksLock` lob (plasma cannon/napalm) — its base
+      // `round.homing` is false at this point (they're not `guidance: 'homing'`, on purpose — see
+      // weapons.js), so without this OR the recompute below would never touch `round.turn` and
+      // it'd fly with the pre-arc-adjustment turn rate makeProjectile stamped on it.
+      if (round.homing || d.tracksLock) round.turn = homingTurnRate(round.speed, d.homingTurnRadius);
     }
-    if (owner === 'player') round.homing = round.homing && !!seekTarget;
+    // #252 follow-up: a `tracksLock` lob (plasma cannon/napalm) opts INTO live tracking here,
+    // per-shot, only when the player actually has a lock right now — same gate a real
+    // `guidance: 'homing'` round already gets (`!!seekTarget`). This deliberately does NOT touch
+    // `canFireWeapon`/the weapon's own `guidance` field: those weapons still fire unconditionally
+    // with no lock (unchanged), they just fly ballistic-only in that case, exactly as before.
+    // Enemy-fired rounds (the artillery turret's napalm) are untouched — this whole branch is
+    // player-only, so the turret's shells keep their existing non-tracking ballistic arc.
+    if (owner === 'player') round.homing = (round.homing || !!d.tracksLock) && !!seekTarget;
     // Swarm Rack simultaneous-arrival (#49): nudge this shot's speed by how much farther
     // its fan angle makes its initial path vs. the centre shot, so the whole salvo (fired
     // from the same point at once) lands together instead of trickling in.
