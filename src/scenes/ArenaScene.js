@@ -211,10 +211,19 @@ export default class ArenaScene extends Phaser.Scene {
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();
 
-    // #188: resolve the Sprint toggle + fuel drain/regen BEFORE _drive so a same-frame press
-    // is reflected in this frame's speed multiplier, not delayed a frame.
-    this._handleSprint(intent, delta);
-    this._drive(intent, dt);
+    // #225: once the player's own mech is destroyed, it's a corpse, not a controllable husk —
+    // stop reading input for movement/aim/firing the instant `_playerDead` flips true (set by
+    // combat.js `_damagePlayerAt`). This is the single choke point for player control: every
+    // per-frame input consumer below (sprint, drive/turret-aim, per-slot firing) is gated here
+    // rather than each mixin re-checking the flag itself. `_updateRun` (run.js, still called
+    // unconditionally below) is what owns the delayed return-to-garage transition; this only
+    // freezes the player's own agency, not the run's bookkeeping.
+    if (!this._playerDead) {
+      // #188: resolve the Sprint toggle + fuel drain/regen BEFORE _drive so a same-frame press
+      // is reflected in this frame's speed multiplier, not delayed a frame.
+      this._handleSprint(intent, delta);
+      this._drive(intent, dt);
+    }
 
     // ── One-shot pad buttons (#28 AI toggles, #29 return to garage, #62 drop-lock). ──
     if (this.padEdges.pressed(PAD.R3)) this._dropLock();   // #62: R3 drops the current lock (was assist)
@@ -229,7 +238,7 @@ export default class ArenaScene extends Phaser.Scene {
     // weapons seek it; direct weapons converge on the live most-aimed enemy, no lock needed. ──
     this._updateLock(dt);
     this._stepGait(dt);
-    this._handleFiring(intent, delta);
+    if (!this._playerDead) this._handleFiring(intent, delta);
     this._updateEnemies(dt, delta);
 
     // ── Projectiles + burning ground ──

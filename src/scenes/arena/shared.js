@@ -117,7 +117,10 @@ export const DUMMY_HEX = { q: 3, r: -1 };
 const DEATH_HP_FLOOR = 14;    // maxHp at/below which a kill gets the smallest boom (a drone)
 const DEATH_HP_CEIL = 616;    // maxHp at/above which a kill gets the biggest boom (base heavy mech)
 const DEATH_SCALE_MIN = 0.5;
-const DEATH_SCALE_MAX = 1.3;
+// #225: exported (was module-private) so combat.js's player-death path can reuse the exact
+// same ceiling `deathScaleFor` ever produces for an enemy, instead of a second hardcoded
+// magic number drifting out of sync with it.
+export const DEATH_SCALE_MAX = 1.3;
 export function deathScaleFor(e) {
   const hp = Math.max(0, e.mech?.maxHp || 0);
   const span = DEATH_HP_CEIL - DEATH_HP_FLOOR;
