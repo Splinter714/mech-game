@@ -3,7 +3,10 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor, explosionCategoryFor } from './shared.js';
+import {
+  ARENA_MECH_SCALE, DAMAGEABLE, DEPTH, deathScaleFor, explosionCategoryFor,
+  resolveHitLocation, pickLiveWeighted,
+} from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 import { absorbShieldDamage } from '../../data/powerups.js';
 // #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
@@ -45,7 +48,12 @@ export const CombatMixin = {
   // the centre-mass weighting instead, so hits still lean toward the torsos over the arms.
   _damagePlayerAt(dmg) {
     const parts = ['leftTorso', 'leftTorso', 'rightTorso', 'rightTorso', 'leftArm', 'rightArm'];
-    const loc = parts[Math.floor(Math.random() * parts.length)];
+    // #231: same class of bug as the enemy-targeting fix below — a weighted-random pick can
+    // land on a location already destroyed (e.g. an arm that cascaded from its torso), which
+    // would otherwise waste the whole hit into nothing. `pickLiveWeighted` rerolls among the
+    // still-live entries of the same pool instead. (Weights themselves are untouched here —
+    // issue #230 owns torso-vs-arm balance separately.)
+    const loc = pickLiveWeighted(parts, (p) => this.mech.isPartDestroyed(p));
     const res = this.damagePlayer(loc, dmg);
     // #205: pulse the on-mech shield bubble any time the shield actually absorbed part of this
     // hit — covers both a fully-absorbed hit (shielded, below) and a hit that partially absorbed
@@ -126,12 +134,10 @@ export const CombatMixin = {
     const lx = x - e.x, ly = y - e.y;
     const lay = isMech ? mechLayout(e.mech) : e.mech.parts;
     const locs = isMech ? DAMAGEABLE : e.mech.locations();
-    let best = null, bestD = Infinity;
-    for (const loc of locs) {
-      const a = lay[loc];
-      const d = Math.hypot(lx - a.x * dispUnit, ly - a.y * dispUnit);
-      if (d < bestD) { bestD = d; best = loc; }
-    }
+    // #231: nearest part to the hit point, redirected to the nearest still-LIVE part if the
+    // geometrically-nearest one is already destroyed (see `resolveHitLocation` in shared.js
+    // for why that redirect matters — otherwise the hit silently wastes into a dead part).
+    const best = resolveHitLocation(lay, locs, lx, ly, dispUnit, (loc) => e.mech.isPartDestroyed(loc));
     const res = e.mech.applyDamage(best, damage);
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke
     // (that's the only damage state the art shows), not on every single hit.

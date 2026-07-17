@@ -175,6 +175,50 @@ export function rotateToward(cur, target, radPerSec, dt) {
 // hit), so no filtering is needed here any more.
 export const DAMAGEABLE = LOCATIONS;
 
+// #231: nearest of `locs` (each a key into `lay`, a {x,y} design-space layout) to local hit
+// point (lx, ly), in world px via `dispUnit`. PURE — factored out of combat.js `_damageEnemyAt`
+// so both the initial pick and the already-destroyed redirect below can share it, and so the
+// geometry is unit-testable without a Phaser scene.
+export function nearestLocation(lay, locs, lx, ly, dispUnit) {
+  let best = null, bestD = Infinity;
+  for (const loc of locs) {
+    const a = lay[loc];
+    const d = Math.hypot(lx - a.x * dispUnit, ly - a.y * dispUnit);
+    if (d < bestD) { bestD = d; best = loc; }
+  }
+  return best;
+}
+
+// #231 (real bug: "easy to destroy one side torso, then waaaaaay harder to destroy the
+// second" — reported 2026-07-15): a hit maps to the part nearest the world hit point, but
+// that part may already be destroyed (armor+structure both zeroed — directly, or cascaded,
+// e.g. a side torso takes its arm with it per DESTROY_CASCADE). Applying damage to an
+// already-dead part just wastes the hit into nothing, and since a kill needs BOTH side
+// torsos destroyed (LETHAL_GROUPS), every hit that geometrically lands on the now-empty side
+// silently did nothing instead of redirecting — making the second side (the actual kill)
+// feel far tankier than the first. Redirects to the nearest still-LIVE location instead,
+// falling back to the originally-nearest (dead) one only if every candidate is dead (should
+// be unreachable while the unit is alive, since a full-kill combination is caught by the
+// caller's `isDestroyed()` check first — kept as a safe no-op fallback regardless).
+export function resolveHitLocation(lay, locs, lx, ly, dispUnit, isPartDestroyed) {
+  const best = nearestLocation(lay, locs, lx, ly, dispUnit);
+  if (!isPartDestroyed(best)) return best;
+  const live = locs.filter((loc) => !isPartDestroyed(loc));
+  return live.length ? nearestLocation(lay, live, lx, ly, dispUnit) : best;
+}
+
+// #231: same redirect idea as `resolveHitLocation` above, for the player's weighted-random
+// hit-location roll (combat.js `_damagePlayerAt`) instead of nearest-part geometry. Rerolls
+// only among the LIVE entries of the same weighted pool (so relative weights among survivors
+// are preserved, e.g. losing one torso still leaves the other torso doubly-weighted against
+// the arms) rather than a plain uniform pick or a reroll loop. `rng` is injectable for tests.
+export function pickLiveWeighted(pool, isPartDestroyed, rng = Math.random) {
+  const loc = pool[Math.floor(rng() * pool.length)];
+  if (!isPartDestroyed(loc)) return loc;
+  const live = pool.filter((p) => !isPartDestroyed(p));
+  return live.length ? live[Math.floor(rng() * live.length)] : loc;
+}
+
 // #109: world position of a muzzle at a body part's front edge — the shared geometry behind
 // EVERY "where does this shot actually leave from" computation in the arena. `part` is a
 // {x, y, w, h} box in mech-local design coords (origin = unit centre, −y = forward): x is
