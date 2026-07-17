@@ -194,13 +194,17 @@ export class Mech {
     }
   }
 
-  // Top every magazine back up over time at the weapon's regen rate.
-  regenAmmo(dt) {
+  // Top every magazine back up over time at the weapon's regen rate. `regenMult` scales
+  // that rate (default 1 = unaffected); #235: Overdrive halves the fire interval (shots go
+  // out ~2x as often) but consumeAmmo still spends a flat 1 ammo/shot, so callers pass the
+  // inverse of the buff's cycleMult here (e.g. cycleMult 0.5 -> regenMult 2) to keep regen
+  // pace with the faster cycle instead of draining magazines twice as fast for free.
+  regenAmmo(dt, regenMult = 1) {
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, i) => {
         if (this.ammo[loc][i] == null) return;
         const w = getWeapon(id);
-        this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt);
+        this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt * regenMult);
       });
     }
   }

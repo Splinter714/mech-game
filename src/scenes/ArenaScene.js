@@ -264,7 +264,11 @@ export default class ArenaScene extends Phaser.Scene {
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
     // Surge, which used to multiply this rate, was removed as redundant with Overcharge.)
-    this.mech.regenAmmo(dt);
+    // #235: Overdrive's cycleMult < 1 makes weapons fire faster with no matching regen boost,
+    // so tight-ammo weapons could run dry mid-buff. Scale regen by the inverse of cycleMult
+    // (e.g. 0.5 -> 2x regen) so magazines refill at the same pace shots go out.
+    const cycleMult = this._buffMods?.().cycleMult ?? 1;
+    this.mech.regenAmmo(dt, cycleMult > 0 ? 1 / cycleMult : 1);
   }
 
   // #216: the sound cue lives HERE, not in any of the call sites, because this is the one
