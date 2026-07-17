@@ -24,7 +24,11 @@
 //              delta instead of forking a whole near-duplicate weapon entry. See helicopter
 //              below for the live example. Per the #243 playtest follow-up, overrides tune
 //              cadence/stream/burst shape ONLY — never `damage`; enemy per-round damage always
-//              matches the player's version of the weapon.
+//              matches the player's version of the weapon. (#244 carve-out: the turret's
+//              override DOES set damage — it isn't an enemy-side retune of a shared weapon
+//              but the old dedicated siegeShell entry, a distinct weapon with its own damage
+//              identity, consolidated byte-identical into a napalm override. See the turret
+//              entry + the enemyKinds.test.js damage-rule test.)
 //              CADENCE lives here too (#243, superseding #241's transitional `fireEveryMs`
 //              field entirely — it no longer exists): a vehicle's cooldown is ALWAYS
 //              `_fireInterval` on the RESOLVED weapon (the same resolution the player/
@@ -62,21 +66,22 @@ export const ENEMY_KINDS = {
   // 1) TURRET / emplacement — static objective defender. No locomotion. #94 (playtest: "turrets
   //    should have INSANE range and not be LOS, they should do some kind of artillery shit"):
   //    reworked from a short-range direct-fire autocannon sentry into a long-range artillery
-  //    emplacement — it lobs an arcing siege shell that never needs line-of-sight (arcing rounds
+  //    emplacement — it lobs an arcing artillery shell (napalm + the weaponOverride below, #244;
+  //    formerly the dedicated siegeShell entry) that never needs line-of-sight (arcing rounds
   //    skip wall collision entirely, see scenes/arena/projectiles.js) at a fireRange far beyond
   //    any other enemy's engagement envelope in the game. Tough, rooted, can't chase — but you
   //    can't just hide from it either; you have to hunt it down or leave its enormous range.
-  //    Per-shot damage/cadence are tuned down from the old autocannon numbers (see siegeShell in
-  //    data/weapons.js) since turrets now spawn in clusters (TURRET_CLUSTER_SIZE, currently 4 —
-  //    bumped up from 3 per #145's follow-up, alongside a further scale shrink, so the nest reads
-  //    as more/smaller sentries) with guaranteed uptime (no LOS to break) — several of the old
-  //    autocannon's 16-dmg/1.1s cadence firing constantly and unavoidably would be brutal;
-  //    siegeShell's 10 dmg (with range falloff further softening it near max range) on a slower
+  //    Per-shot damage/cadence are tuned down from the old autocannon numbers (see the
+  //    weaponOverride below) since turrets now spawn in clusters (TURRET_CLUSTER_SIZE, currently
+  //    4 — bumped up from 3 per #145's follow-up, alongside a further scale shrink, so the nest
+  //    reads as more/smaller sentries) with guaranteed uptime (no LOS to break) — several of the
+  //    old autocannon's 16-dmg/1.1s cadence firing constantly and unavoidably would be brutal;
+  //    the shell's 10 dmg (with range falloff further softening it near max range) on a slower
   //    2.6s cadence keeps a nest a real but survivable threat to actively deal with rather than an
   //    instant unavoidable shred. #145-followup: went from 3→4 turrets without raising per-shot
   //    damage/cadence, so a nest's total DPS rises ~33% — worth another playtest pass to confirm
-  //    a 4-turret nest doesn't tip into "unavoidable shred" territory; if it does, softening
-  //    siegeShell's damage or cadence a touch (rather than the turret count) is the likely lever.
+  //    a 4-turret nest doesn't tip into "unavoidable shred" territory; if it does, softening the
+  //    override's damage or cycleTime a touch (rather than the turret count) is the likely lever.
   turret: {
     name: 'Sentry Turret',
     kind: 'turret',
@@ -93,14 +98,41 @@ export const ENEMY_KINDS = {
     // distance) so vehicle-kind shots spawn from the real barrel tip, not the gun housing's
     // own box edge, same fix as the mech mount art (src/art/mounts/barrelSpec.js).
     muzzleForward: 4,
-    weaponId: 'siegeShell',
+    // #244: the dedicated `siegeShell` WEAPONS entry was mechanically identical to napalm
+    // (both arcing projectile + splash + groundFire lobs) and differed only in tuning, so it
+    // was consolidated away — the turret now mounts napalm with the FULL artillery tuning as
+    // a weaponOverride (#243 resolveWeapon: top-level + `delivery` merge field-by-field, but
+    // OTHER nested objects — `range`, `groundFire` — are replaced WHOLESALE, so both are
+    // restated complete). Numbers are byte-identical to the old siegeShell entry.
+    // #94's design intent carries over unchanged: a heavy mortar shell lobbed from EXTREME
+    // range ("turrets should have INSANE range and not be LOS, they should do some kind of
+    // artillery shit"). Arcing (never needs LOS — arcing rounds skip wall collision entirely,
+    // scenes/arena/projectiles.js), with a long, slow flight time (opt 1600 / velocity 550 ≈
+    // 2.9s) so an incoming shell reads as a telegraphed "incoming!" lob rather than an
+    // instant snipe; splash + a lingering burn patch reward hunting the emplacement down or
+    // leaving its enormous engagement envelope rather than trying to out-trade it.
+    // NOTE (SFX): per #243's resolver semantics the resolved weapon keeps the BASE id
+    // ('napalm'), so the turret's fire/impact cues now resolve as napalm's tuned sound
+    // (sfxParams.js) instead of the old siegeShell id (which had no DEFAULT_SFX entry of its
+    // own and fell back to FALLBACK_SFX) — an audible change, flagged in #244.
+    weaponId: 'napalm',
+    weaponOverride: {
+      damage: 10,                                     // vs napalm's base 6
+      range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
+      ammoMax: 20, ammoRegen: 0.6,                    // deep artillery magazine (base 6 / 0.7)
+      cycleTime: 2600,                                // #94's deliberate slow bombardment cadence (base 1500)
+      delivery: {
+        velocity: 550,                                // faster, flatter-feeling heavy shell (base 300)
+        splash: 55,                                   // bigger burst (base 30)
+        groundFire: { radius: 44, dps: 5, duration: 3 },  // wider but softer/shorter burn (base 46/8/4)
+      },
+    },
     fireRange: 2400,       // #94: INSANE — well beyond the next-longest engagement range in the
                            // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
-                           // threatens from far outside normal combat distance.
-    // #243: the old `fireEveryMs: 2600` (#94's "deliberate artillery cadence, slowed from
-    // 1100") was numerically identical to siegeShell's own cycleTime (2600), so with cadence
-    // now always derived from the resolved weapon it was pure redundancy — deleted, no
-    // override needed. The nest-of-4 pacing (#145) is unchanged.
+                           // threatens from far outside normal combat distance. Matches the
+                           // override's range.max above.
+    // #243: no separate fire timer — cadence always derives from the resolved weapon, i.e. the
+    // override's cycleTime 2600 above. The nest-of-4 pacing (#145) is unchanged.
     flying: false,
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
     art: 'turret',

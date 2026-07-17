@@ -24,7 +24,7 @@ export const SHOP_COSTS = {
   // flagship beamLaser (175) tier. #125: reworked to a rapid projectile stream (fireRate 20,
   // damage 2/bolt) still landing at ~20 sustained dps — price unchanged.
   plasmaLance: 150,
-  beamLaser: 175, railLance: 225, plasmaCannon: 250, siegeShell: 275,
+  beamLaser: 175, railLance: 225, plasmaCannon: 250,
 };
 
 const DEFAULT_COST = 100;

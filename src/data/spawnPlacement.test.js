@@ -123,7 +123,7 @@ describe('turretClusterHexes (#114)', () => {
 // ~700-1000px "just off view" distance a normal viewport produces, so it was reliably AWARE and
 // shelling the player within the first second of every deploy regardless of window size.
 describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its own detect range)', () => {
-  it('a turretNest\'s safe distance is its siege-shell detect range PLUS the flat safety margin — far beyond ordinary off-view distances', () => {
+  it('a turretNest\'s safe distance is its artillery detect range PLUS the flat safety margin — far beyond ordinary off-view distances', () => {
     const expected = detectionRangeFor(ENEMY_KINDS.turret.fireRange) + SAFETY_MARGIN_PX;
     expect(minSafeSpawnDist('turretNest')).toBeCloseTo(expected);
     // #94: turret fireRange is INSANE (2400px) — its safe distance must dwarf a typical desktop

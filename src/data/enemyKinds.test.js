@@ -102,7 +102,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
 
   it('#94: turret is an artillery emplacement — arcing indirect weapon at an insane range', () => {
     const t = ENEMY_KINDS.turret;
-    const weapon = getWeapon(t.weaponId);
+    // #244: the turret's artillery tuning lives in its weaponOverride on napalm (the dedicated
+    // siegeShell entry was consolidated away), so the RESOLVED weapon is what must satisfy the
+    // #94 envelope — the base napalm entry keeps its short player-facing range.
+    const weapon = resolveWeapon(t.weaponId, t.weaponOverride);
     // Indirect: arcing (or homing) delivery never needs line-of-sight (mirrors the "all-indirect"
     // detection in scenes/arena/enemies.js isIndirectWeapon).
     expect(weapon.delivery.path === 'arcing' || weapon.delivery.guidance === 'homing').toBe(true);
@@ -254,11 +257,20 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   });
 
   it('#243 playtest follow-up: NO kind overrides damage — enemy rounds always match the player\'s weapon', () => {
+    // #244 exception: the turret. Its override isn't an enemy-side retune of a weapon the
+    // player also mounts — it's the old DEDICATED siegeShell entry (damage 10, a distinct
+    // weapon with its own damage identity) consolidated into a napalm override, preserved
+    // byte-identical. Every other kind fires its weapon at the player's own per-round damage.
     for (const id of ENEMY_KIND_IDS) {
+      if (id === 'turret') continue;
       const k = ENEMY_KINDS[id];
       expect(k.weaponOverride?.damage, id).toBeUndefined();
       const resolved = resolveWeapon(k.weaponId, k.weaponOverride);
       expect(resolved.damage, `${id} resolved damage`).toBe(WEAPONS[k.weaponId].damage);
     }
+    // The turret's consolidated artillery shell keeps the old siegeShell numbers exactly.
+    const t = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
+    expect(t.damage).toBe(10);
+    expect(WEAPONS.napalm.damage).toBe(6);   // the player's napalm is untouched
   });
 });

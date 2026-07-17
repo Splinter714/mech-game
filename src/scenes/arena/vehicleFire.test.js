@@ -54,9 +54,10 @@ import { ART_SCALE } from '../../art/index.js';
 // Referenced via WEAPONS.<id>.id (not string literals) so this file respects the architecture
 // guard's "arena/*.js never names a specific weapon id" rule (same convention as
 // enemyFireAngle.test.js / projectiles.test.js). beamLaser is the registry's canonical hitscan
-// weapon; siegeShell is a real projectile weapon a live kind (the turret) actually mounts.
+// weapon; napalm is a real projectile weapon a live kind (the turret, via its #244 artillery
+// weaponOverride) actually mounts.
 const HITSCAN_WEAPON_ID = WEAPONS.beamLaser.id;
-const PROJECTILE_WEAPON_ID = WEAPONS.siegeShell.id;
+const PROJECTILE_WEAPON_ID = WEAPONS.napalm.id;
 // pulseLaser is the drone swarm's actual weapon (enemyKinds.js) and a genuine multi-pulse BURST
 // (5 pulses over ~300ms, see weapons.js) — exactly the shape that exposed the #200 reopen bug.
 const BURST_WEAPON_ID = WEAPONS.pulseLaser.id;
@@ -65,7 +66,7 @@ const BURST_WEAPON_ID = WEAPONS.pulseLaser.id;
 // is specifically about this shape of weapon.
 const STREAM_WEAPON = WEAPONS.machineGun;
 const STREAM_WEAPON_ID = STREAM_WEAPON.id;
-const PROJECTILE_WEAPON = WEAPONS.siegeShell;
+const PROJECTILE_WEAPON = WEAPONS.napalm;
 
 // A minimal ArenaScene-shaped `this`: the REAL EnemiesMixin `_fireVehicleWeapon` runs, with the
 // three cross-mixin fire helpers (from firing.js/projectiles.js) spied so we can see WHICH one
@@ -180,13 +181,13 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
 
   it('a non-stream (cycleTime-driven) weapon resolves via _fireInterval\'s cycleTime branch', () => {
     const { scene, calls } = makeScene();
-    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // siegeShell: pattern absent, cycleTime 2600
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // napalm: single-shot, cycleTime 1500
 
     scene._fireVehicleWeapon(e, {}, 0);
 
     expect(calls.projectile.length).toBe(1);
     expect(e.fireCd).toBeCloseTo(scene._fireInterval(PROJECTILE_WEAPON, {}), 6);
-    expect(e.fireCd).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 2600ms — the turret's cadence, no override needed
+    expect(e.fireCd).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 1500ms — the weapon's own cadence
   });
 
   it('a weaponOverride cycleTime slows a single-shot weapon\'s cadence in the weapon\'s own terms (tank/quadruped shape)', () => {
@@ -238,8 +239,9 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     expect(ENEMY_KINDS.quadruped.weaponOverride).toEqual({ cycleTime: 1700 });
     // Infantry's old 700ms timer, byte-identical, in stream terms: 1000 / (10/7) = 700.
     expect(1000 / ENEMY_KINDS.infantry.weaponOverride.delivery.fireRate).toBeCloseTo(700, 6);
-    // Turret's old 2600ms timer was redundant with siegeShell's own cycleTime — just deleted.
-    expect(ENEMY_KINDS.turret.weaponOverride).toBeUndefined();
+    // Turret (#244): the old dedicated siegeShell entry is gone — its full artillery tuning,
+    // including the deliberate 2600ms bombardment cadence, lives in the napalm weaponOverride.
+    expect(ENEMY_KINDS.turret.weaponOverride.cycleTime).toBe(2600);
   });
 });
 

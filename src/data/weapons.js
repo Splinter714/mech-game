@@ -220,19 +220,12 @@ export const WEAPONS = {
     ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
   }),
-  siegeShell: w({   // #94: heavy mortar shell lobbed from EXTREME range — the sentry turret's
-    // artillery-style bombardment round. Arcing (never needs LOS — see delivery.path/arcing
-    // handling in scenes/arena/projectiles.js, which skips wall collision entirely for arcing
-    // rounds), with a long, slow flight time (opt/velocity ≈ 2.9s) so an incoming shell reads as
-    // a telegraphed "incoming!" lob rather than an instant snipe. Splash + a lingering burn patch
-    // (like napalm) reward hunting the emplacement down or leaving its enormous engagement
-    // envelope rather than trying to out-trade it. Also player-mountable (any WEAPONS entry is
-    // catalog-visible, see data/shop.js) as a heavy, deliberate siege weapon.
-    id: 'siegeShell', name: 'Siege Shell', category: 'ballistic',
-    damage: 10, range: { min: 300, opt: 1600, max: 2400 },
-    ammoMax: 20, ammoRegen: 0.6, slots: 2, cycleTime: 2600,
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 550, splash: 55, kind: 'fire', groundFire: { radius: 44, dps: 5, duration: 3 } },
-  }),
+  // #244: siegeShell (the #94 sentry-turret artillery round) was deleted from this registry —
+  // it was mechanically identical to napalm (both arcing projectile + splash + groundFire
+  // lobbed rounds), differing only in tuning numbers. The turret now mounts napalm with a
+  // `weaponOverride` carrying the full artillery tuning (damage 10 / range 300-2400 / velocity
+  // 550 / etc.) — see ENEMY_KINDS.turret in data/enemyKinds.js, which also inherited #94's
+  // telegraphed-lob design commentary.
 
   // ── MISSILE ── three guidance archetypes: an all-at-once homing swarm, a rapid
   // stream of seekers, and a tight dumbfire cluster that flies straight as a clump. ──
@@ -274,23 +267,18 @@ export const WEAPONS = {
   }),
 };
 
-// #94/#95/#96: temporary shelve list — pared down to Jackson's curated keep-list (2026-07-10
-// weapon curation pass, #96): Beam Laser + Repeater (great, unchanged) and Pulse Laser,
-// Cluster Salvo, Autocannon, Scattergun (decent, kept active pending a future tuning pass).
-// Everything else is shelved, including the #95 homing/tracking pair (swarmRack/streakPod,
-// pending a lock/tracking rework), railLance/plasmaCannon/flamethrower/napalm (#96 — not
-// on the keep-list), and siegeShell (#94 — the sentry turret's artillery weapon; added on a
-// separate branch around the same time as the #96 curation pass so it never got evaluated
-// against the keep-list; it's enemy-only for now, not vetted for player use). Their WEAPONS
-// entries above stay fully intact (data, art, sfx, etc.) — only the player-facing catalog
-// (WEAPON_IDS, and anything derived from it: garage/weapon-lab lists, shop) excludes them.
-// The turret enemy still fires siegeShell normally — enemyKinds.js/enemies.js read WEAPONS
-// directly via getWeapon(), not the filtered WEAPON_IDS list. To re-enable a weapon, just
-// delete its id from this array — nothing else needs to change.
-// #118: plasmaLance graduated off this list — Jackson liked it enough (see #117) to want it
-// player-mountable too. Its ammo economy was retuned for that (see the comment on its WEAPONS
-// entry above); damage/range/velocity and the enemy sniper/artillery loadouts are unchanged.
-export const SHELVED_WEAPON_IDS = ['swarmRack', 'streakPod', 'railLance', 'plasmaCannon', 'flamethrower', 'napalm', 'siegeShell'];
+// Shelve list — weapon ids listed here stay fully intact in WEAPONS above (data, art, sfx,
+// enemy mounts) but are excluded from the player-facing catalog (WEAPON_IDS, and anything
+// derived from it: garage/weapon-lab lists, shop). Enemy kinds are unaffected either way —
+// enemyKinds.js/enemies.js resolve weapons directly via getWeapon()/resolveWeapon(), not the
+// filtered WEAPON_IDS list. To shelve a weapon, add its id here; to re-enable it, delete the
+// id — nothing else needs to change.
+// History: #94/#95/#96 shelved everything off Jackson's 2026-07-10 curated keep-list
+// (swarmRack/streakPod pending a lock/tracking rework, railLance/plasmaCannon/flamethrower/
+// napalm not on the keep-list, siegeShell enemy-only); #118 graduated plasmaLance back off.
+// #244 emptied the list entirely: every remaining weapon is player-mountable again
+// (siegeShell no longer exists — consolidated into napalm via the turret's weaponOverride).
+export const SHELVED_WEAPON_IDS = [];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 
@@ -331,8 +319,10 @@ export function resolveWeapon(baseId, override = null) {
 // instead of every card just maxing out its own pixel width. Pulled out here (pure, unit-
 // testable) rather than left inline in the Phaser-only UI file. Defaults to WEAPON_IDS (the
 // player-facing, non-shelved set both GarageScene and WeaponLabScene actually render as
-// cards) so a shelved weapon's huge range (e.g. Siege Shell's 2400) doesn't flatten the
-// visible spread among weapons nobody's looking at side by side.
+// cards) so a shelved weapon's huge range doesn't flatten the visible spread among weapons
+// nobody's looking at side by side. (#244: this only ever sees BASE registry entries — an
+// enemy kind's `weaponOverride` range, like the turret's 2400px artillery napalm, never
+// leaks into the catalog; napalm's card scales by its base 780 max / 500 opt.)
 export function catalogMaxRange(ids = WEAPON_IDS) {
   return Math.max(0, ...ids.map((id) => {
     const r = WEAPONS[id]?.range;
