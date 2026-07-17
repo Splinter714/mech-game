@@ -117,7 +117,13 @@ export const ENEMY_KINDS = {
     // own and fell back to FALLBACK_SFX) — an audible change, flagged in #244.
     weaponId: 'napalm',
     weaponOverride: {
-      damage: 10,                                     // vs napalm's base 6
+      // #259: this ABSOLUTE damage override is untouched by the DPS-squish base retune
+      // (napalm's direct-hit damage 6 -> 27) — it's the old dedicated siegeShell value,
+      // deliberately independent of the player's napalm tuning (see #244 above), and its own
+      // DPS (10/2.6s ≈ 3.85, x4 turrets in a nest ≈ 15.4 total) was already checked against
+      // the retuned roster and still reads as a reasonable long-range-artillery threat, not a
+      // trivial tickle or a one-shot — no change needed here.
+      damage: 10,                                     // vs napalm's base 27 (was 6 pre-#259)
       range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
       ammoMax: 20, ammoRegen: 0.6,                    // deep artillery magazine (base 6 / 0.7)
       cycleTime: 2600,                                // #94's deliberate slow bombardment cadence (base 1500)
@@ -197,7 +203,8 @@ export const ENEMY_KINDS = {
     // #243 further playtest follow-up: swapped off Pulse Laser onto Plasma Lance — the drone
     // now sprays plasma bolts instead of hitscan pulses. No damage override (per-owner
     // deltas stay cadence/burst-shape only, per the standing #243 rule): each bolt hits for the
-    // SAME 2 damage as the player's mount. Plasma Lance's own delivery is a fast stream
+    // SAME damage as the player's mount (#259 DPS-squish retuned that to 1.5, down from 2 —
+    // still shared verbatim, no override). Plasma Lance's own delivery is a fast stream
     // (`fireRate: 20`, i.e. a bolt every 50ms) — that native cadence is too machine-gun-fast to
     // read as single shots on its own, so no weaponOverride is needed for the bolt itself;
     // `_fireVehicleWeapon` resolves the bare base entry (resolveWeapon(id, null) === base).

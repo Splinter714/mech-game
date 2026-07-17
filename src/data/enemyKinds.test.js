@@ -266,6 +266,6 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     // The turret's consolidated artillery shell keeps the old siegeShell numbers exactly.
     const t = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
     expect(t.damage).toBe(10);
-    expect(WEAPONS.napalm.damage).toBe(6);   // the player's napalm is untouched
+    expect(WEAPONS.napalm.damage).toBe(27);   // the player's napalm (#259-retuned) is untouched by the override
   });
 });
