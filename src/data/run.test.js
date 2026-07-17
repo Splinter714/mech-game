@@ -1,56 +1,62 @@
 import { describe, it, expect } from 'vitest';
 import {
-  makeRun, advanceStage, endRunOnDeath, isRunOver,
-  stageDescriptor, squadForStage, currencyForStage, STAGE_COUNT,
-  EARLY_POOL, LATE_POOL, lateFraction,
+  makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver, currencyForObjective,
 } from './run.js';
 
-describe('run model', () => {
-  it('starts fresh: stage 0, no currency, active', () => {
+describe('run model (#269: retired stage/squad system — objectives + base-clear/death only)', () => {
+  it('starts fresh: no objectives cleared, no currency, active', () => {
     const r = makeRun();
-    expect(r.stageIndex).toBe(0);
+    expect(r.objectivesCleared).toBe(0);
     expect(r.currency).toBe(0);
     expect(r.status).toBe('active');
   });
 
-  it('advancing a stage banks currency and moves to the next stage', () => {
+  it('clearing an objective banks currency and counts it, staying active', () => {
     const r = makeRun();
-    const r1 = advanceStage(r);
-    expect(r1.stageIndex).toBe(1);
+    const r1 = advanceObjective(r);
+    expect(r1.objectivesCleared).toBe(1);
     expect(r1.status).toBe('active');
-    expect(r1.currency).toBe(currencyForStage(0));
+    expect(r1.currency).toBe(currencyForObjective(0));
   });
 
-  it('currency accrues across multiple stage clears', () => {
+  it('currency accrues across multiple objectives cleared', () => {
     let r = makeRun();
     let total = 0;
-    for (let i = 0; i < STAGE_COUNT - 1; i++) {
-      total += currencyForStage(r.stageIndex);
-      r = advanceStage(r);
+    for (let i = 0; i < 4; i++) {
+      total += currencyForObjective(r.objectivesCleared);
+      r = advanceObjective(r);
     }
     expect(r.currency).toBe(total);
     expect(r.status).toBe('active');
-    expect(r.stageIndex).toBe(STAGE_COUNT - 1);
+    expect(r.objectivesCleared).toBe(4);
   });
 
-  it('clearing the final stage WINS the run', () => {
+  it('clearing objectives alone never ends the run (only winRun/endRunOnDeath do)', () => {
     let r = makeRun();
-    for (let i = 0; i < STAGE_COUNT; i++) r = advanceStage(r);
-    expect(r.status).toBe('won');
-    expect(isRunOver(r)).toBe(true);
+    for (let i = 0; i < 20; i++) r = advanceObjective(r);
+    expect(r.status).toBe('active');
+    expect(isRunOver(r)).toBe(false);
   });
 
-  it('a terminal (won) run is sticky — advanceStage no-ops', () => {
+  it('winRun ends the run as won', () => {
     let r = makeRun();
-    for (let i = 0; i < STAGE_COUNT; i++) r = advanceStage(r);
-    const won = r;
-    const again = advanceStage(won);
-    expect(again).toEqual(won);
+    r = advanceObjective(r);
+    const won = winRun(r);
+    expect(won.status).toBe('won');
+    expect(won.currency).toBe(r.currency);   // currency earned so far is preserved
+    expect(isRunOver(won)).toBe(true);
   });
 
-  it('death ends the run regardless of stage/currency', () => {
+  it('a terminal (won) run is sticky — advanceObjective and winRun both no-op', () => {
     let r = makeRun();
-    r = advanceStage(r);   // stage 1, some currency banked
+    r = winRun(r);
+    expect(advanceObjective(r)).toEqual(r);
+    expect(winRun(r)).toEqual(r);
+  });
+
+  it('death ends the run regardless of objectives/currency', () => {
+    let r = makeRun();
+    r = advanceObjective(r);   // some currency banked
     const dead = endRunOnDeath(r);
     expect(dead.status).toBe('dead');
     expect(dead.currency).toBe(r.currency);   // currency earned so far is preserved
@@ -62,84 +68,14 @@ describe('run model', () => {
     r = endRunOnDeath(r);
     const again = endRunOnDeath(r);
     expect(again).toEqual(r);
-    // Also can't advance a dead run into 'won'.
-    const advanced = advanceStage(r);
-    expect(advanced).toEqual(r);
+    // Also can't advance a dead run, or win it after the fact.
+    expect(advanceObjective(r)).toEqual(r);
+    expect(winRun(r)).toEqual(r);
   });
 
-  it('squad size grows with stage index (more enemies later)', () => {
-    const sizes = Array.from({ length: STAGE_COUNT }, (_, i) => squadForStage(i).length);
-    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThanOrEqual(sizes[i - 1]);
-    expect(sizes[0]).toBeLessThan(sizes[sizes.length - 1]);
-  });
-
-  it('every squad entry is a non-empty type id string', () => {
-    for (let i = 0; i < STAGE_COUNT; i++) {
-      for (const id of squadForStage(i)) expect(typeof id).toBe('string');
+  it('currencyForObjective increases with objectives already cleared', () => {
+    for (let i = 1; i < 6; i++) {
+      expect(currencyForObjective(i)).toBeGreaterThan(currencyForObjective(i - 1));
     }
-  });
-
-  it('later stages skew toward the tougher unit pool (statistically)', () => {
-    // #75: helicopter is now in BOTH pools, so it can't discriminate the skew. Test each pool's
-    // EXCLUSIVE ids instead: at stage 0 (all EARLY_POOL) the LATE-exclusive ids never appear; at
-    // the final stage (all LATE_POOL) the EARLY-exclusive ids never appear.
-    const EARLY_EXCLUSIVE = new Set(EARLY_POOL.filter((id) => !LATE_POOL.includes(id)));
-    const LATE_EXCLUSIVE = new Set(LATE_POOL.filter((id) => !EARLY_POOL.includes(id)));
-    const fracIn = (stageIndex, set, trials) => {
-      let count = 0, total = 0;
-      for (let t = 0; t < trials; t++) {
-        for (const id of squadForStage(stageIndex)) { total++; if (set.has(id)) count++; }
-      }
-      return count / total;
-    };
-    // Stage 0 draws only EARLY_POOL → zero late-exclusive ids; final stage draws only LATE_POOL
-    // → zero early-exclusive ids. (Helicopter, the shared id, is excluded from both sets.)
-    expect(fracIn(0, LATE_EXCLUSIVE, 60)).toBeLessThan(0.05);
-    expect(fracIn(STAGE_COUNT - 1, EARLY_EXCLUSIVE, 60)).toBeLessThan(0.05);
-    // And the composition really does flip: early-exclusive dominates stage 0; late-exclusive the last.
-    expect(fracIn(0, EARLY_EXCLUSIVE, 60)).toBeGreaterThan(0.5);
-    expect(fracIn(STAGE_COUNT - 1, LATE_EXCLUSIVE, 60)).toBeGreaterThan(0.5);
-  });
-
-  it('#75: helicopters are in both stage pools so gunships appear across a whole run', () => {
-    expect(EARLY_POOL).toContain('helicopter');
-    expect(LATE_POOL).toContain('helicopter');
-    // Weighted heavier among the hard kinds (listed more than once in LATE_POOL).
-    expect(LATE_POOL.filter((id) => id === 'helicopter').length).toBeGreaterThan(1);
-  });
-
-  it('stageDescriptor bundles mission type, squad, and a display label', () => {
-    const d = stageDescriptor(2);
-    expect(d.stageIndex).toBe(2);
-    expect(d.missionTypeId).toBe('assault');
-    expect(Array.isArray(d.squad)).toBe(true);
-    expect(d.squad.length).toBeGreaterThan(0);
-    expect(d.label).toBe('STAGE 3/5');
-  });
-
-  it('currencyForStage increases with stage index', () => {
-    for (let i = 1; i < STAGE_COUNT; i++) {
-      expect(currencyForStage(i)).toBeGreaterThan(currencyForStage(i - 1));
-    }
-  });
-
-  // #138: `lateFraction` is now exported so data/worldgen.js's stage-aware objective-distance
-  // picker (`pickStageObjective`, wired in via scenes/arena/mission.js/run.js) can reuse the
-  // EXACT same 0→1 curve squad composition already escalates on, rather than a second curve
-  // that could drift out of sync with it.
-  describe('lateFraction (#138)', () => {
-    it('is 0 at stage 0 and 1 at the final stage', () => {
-      expect(lateFraction(0)).toBe(0);
-      expect(lateFraction(STAGE_COUNT - 1)).toBe(1);
-    });
-
-    it('increases monotonically across the run', () => {
-      let prev = lateFraction(0);
-      for (let i = 1; i < STAGE_COUNT; i++) {
-        const cur = lateFraction(i);
-        expect(cur).toBeGreaterThan(prev);
-        prev = cur;
-      }
-    });
   });
 });

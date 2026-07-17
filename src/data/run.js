@@ -1,133 +1,56 @@
-// Run model (#64) — pure roguelite run-loop state, no Phaser. A Run sequences a fixed
-// number of escalating STAGES: each stage is one mission (currently always 'assault', per
-// data/mission.js) fought against a squad that gets both BIGGER and TOUGHER as the run goes
-// on. The arena mixin (scenes/arena/run.js) owns the Phaser-side wiring (spawning the squad,
-// building the mission, timers for the transition banners); this file only computes WHAT
-// stage N looks like and tracks the run's status/currency, mirroring the mission.js style:
-// small, data-driven, fully unit-tested in isolation.
+// Run model (#64, reworked #269) — pure roguelite run-loop state, no Phaser.
+//
+// #269 (issue: base population rework) RETIRES the old fixed 5-stage squad-draw system
+// entirely: `squadForStage`/`DEFAULT_SQUAD`/`EARLY_POOL`/`LATE_POOL`/`STAGE_COUNT`/
+// `SQUAD_BASE`/`SQUAD_GROWTH`/`lateFraction`/`stageDescriptor`/`advanceStage` are all GONE.
+// Enemies are no longer squad-dropped off-camera near the player on mission-complete — they're
+// placed once, at world-gen time, dormant, inside real bases (data/worldgen.js `placeBases`),
+// woken by an alert tower's countdown (data/alertTower.js, scenes/arena/bases.js). There is no
+// more "next stage" event to sequence at all.
+//
+// What a run now IS, kept deliberately simple per the issue's own framing ("keep it SIMPLE...
+// rather than over-engineering a new progression system nobody asked for yet"): the player
+// clears standing outpost objectives (data/mission.js, unchanged — "destroy this outpost" still
+// works exactly as before, just fully decoupled from enemy spawning) one after another for
+// currency, while separately working toward the real win condition — every base's docked units
+// destroyed, dormant or awake (scenes/arena/bases.js `_allBasesCleared`) — or the run ends on
+// player death. A real multi-objective/base-gated progression curve (base walls, forced order,
+// etc.) is out of scope here — see issue #269 section 4, explicitly deferred.
 
-import { ENEMY_ROTATION } from './enemies.js';
+// Currency awarded per objective cleared, scaling up with how many have already been cleared
+// this run (a flat base plus a per-objective bonus, same simple curve the old per-stage payout
+// used) so a longer run keeps paying out more as it goes.
+export const CURRENCY_BASE = 50;
+export const CURRENCY_PER_OBJECTIVE = 25;
 
-// Total stages in one run. Completing the final stage's mission WINS the run. Kept modest
-// (a few minutes of play per stage) so a full run is a reasonably-sized session.
-export const STAGE_COUNT = 5;
-
-// ── Escalation curve ─────────────────────────────────────────────────────────────────────
-// "Both more AND tougher" (owner's call, #64): squad SIZE grows with stage, and the POOL of
-// unit ids a stage draws from skews toward harder kinds at higher stages. Rather than one
-// flat rotation (ENEMY_ROTATION, used by the debug spawn-more control), stages pull from a
-// tiered pool: easy stages draw mostly from EARLY_POOL (the softer raider/turret/drone-ish
-// openers), late stages draw mostly from LATE_POOL (snipers/artillery/tanks/helicopters/swarms
-// — the harder mech roles + toughest non-mech kinds). The mix is a straight lerp by stage
-// index so the curve is easy to eyeball and retune.
-// #75: gunships appear more often across a run. Helicopter is added to EARLY_POOL (so it can
-// show up even in early stages) AND listed twice in LATE_POOL (so it's weighted heavier among
-// the hard kinds). It's the only id shared by both pools — see run.test.js, which discriminates
-// the early/late skew on each pool's EXCLUSIVE ids, not on the shared helicopter.
-// #89: rebalanced per playtest feedback — mechs (raider/skirmisher/sniper/artillery) are now a
-// clear MINORITY of each pool, tanks/helicopters get extra copies (heavier weight), and the new
-// 'turretNest' cluster-spawn (data/enemyKinds.js TURRET_CLUSTER_SIZE) replaces solo 'turret' in
-// the harder LATE_POOL — a nest is the tougher escalation of a lone sentry. Helicopter remains
-// the only id shared between both pools (see run.test.js's shared-id assumption above).
-export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', 'tank', 'helicopter'];
-// #97: 'infantryMob' (a large ground-swarm expansion, data/enemyKinds.js INFANTRY_MOB_SIZE) is
-// added to LATE_POOL only, not EARLY_POOL — it's a bigger single-draw volume spike than 'swarm'
-// (28 vs 18 troopers), so it's reserved for the harder late-stage escalation rather than risking
-// an early-stage squad-size draw ballooning unexpectedly.
-// #239 (temporary): 'infantryMob' pulled back OUT of LATE_POOL while Jackson plans a redesign of
-// the kind — so it no longer draws into a real run's squad composition at all. The underlying
-// enemyKinds.js definition, its art, and its behavior are all left completely intact; restoring
-// it here is a one-line re-add, not an archaeology project.
-// #130: 'quadruped' (the Broodwalker — a tanky mobile "nest" that deploys drones/infantry
-// during the fight, data/enemyKinds.js) is added ONCE to LATE_POOL only, at a similarly rare
-// tier to turretNest/infantryMob/sniper/artillery — a rarer, tougher escalation unit, not a
-// common draw.
-// #234: bumped from 1 copy to 2. Jackson played and said "those enemies that spawn drones are so
-// cool but I barely ever see them" — this pool (drawn per-unit by squadForStage, weighted purely
-// by how many times an id appears) was the actual gameplay-facing reason: at 1-of-11, and only
-// reachable once lateFraction has ramped up enough stages in, it was rarer than intended for a
-// unit this fun to fight. Matching turretNest/swarm's weight (2 copies) gives it "real
-// regularity" across the back half of a run without making it as common as helicopter/tank.
-// (ENEMY_ROTATION, the OTHER list touched by #234, only feeds the debug add-enemy control — this
-// pool is what actually drives a normal run's squad composition.)
-export const LATE_POOL = [
-  'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
-  'turretNest', 'turretNest', 'quadruped', 'quadruped',
-];
-
-// Squad size at stage 0 and the growth per stage (rounded). Stage N has
-// `SQUAD_BASE + Math.round(N * SQUAD_GROWTH)` units. 3 → 3,4,5,6,7 across 5 stages.
-const SQUAD_BASE = 3;
-const SQUAD_GROWTH = 1;
-
-// Currency earned for CLEARING a stage (banked into the run total immediately on advance),
-// scaling up with stage index so later, harder stages pay out more. A flat base plus a
-// per-stage bonus keeps the curve simple and readable.
-const CURRENCY_BASE = 50;
-const CURRENCY_PER_STAGE = 25;
-
-// Fraction of the tiered pool draw taken from LATE_POOL at a given stage index (0-based),
-// ramping linearly from 0 (stage 0, all-early) to 1 (final stage, all-late).
-// #138: exported (not just an internal helper) so worldgen.js's stage-aware objective-distance
-// picker (data/worldgen.js `pickStageObjective`, wired in via scenes/arena/mission.js and
-// scenes/arena/run.js) can reuse the EXACT same 0→1 escalation curve squad composition already
-// uses, rather than inventing a second one that could drift out of sync with it.
-export function lateFraction(stageIndex) {
-  if (STAGE_COUNT <= 1) return 0;
-  return stageIndex / (STAGE_COUNT - 1);
-}
-
-// Deterministic-enough squad composition for a stage: pick `size` ids, each independently
-// drawn from LATE_POOL with probability `lateFraction(stageIndex)`, else EARLY_POOL. Uses
-// Math.random() (matches the rest of the arena's enemy-rotation/spawn-point randomness —
-// this is flavour, not something the smoke test needs to pin down) but always returns a
-// full-length array so the composition is exactly as escalating-in-SIZE as designed.
-export function squadForStage(stageIndex) {
-  const size = SQUAD_BASE + Math.round(stageIndex * SQUAD_GROWTH);
-  const frac = lateFraction(stageIndex);
-  const squad = [];
-  for (let i = 0; i < size; i++) {
-    const pool = Math.random() < frac ? LATE_POOL : EARLY_POOL;
-    squad.push(pool[Math.floor(Math.random() * pool.length)]);
-  }
-  return squad;
-}
-
-// Full descriptor for stage N: mission type + squad composition + a display label. Currently
-// every stage is an 'assault' (the only registered mission type, per data/mission.js); this
-// is the single seam a future mission-type rotation would extend.
-export function stageDescriptor(stageIndex) {
-  return {
-    stageIndex,
-    missionTypeId: 'assault',
-    squad: squadForStage(stageIndex),
-    label: `STAGE ${stageIndex + 1}/${STAGE_COUNT}`,
-  };
-}
-
-// Currency awarded for clearing `stageIndex`.
-export function currencyForStage(stageIndex) {
-  return CURRENCY_BASE + CURRENCY_PER_STAGE * stageIndex;
+export function currencyForObjective(objectivesCleared) {
+  return CURRENCY_BASE + CURRENCY_PER_OBJECTIVE * objectivesCleared;
 }
 
 // ── Run lifecycle ────────────────────────────────────────────────────────────────────────
-// A fresh run, stage 0, active, no currency banked yet.
+// A fresh run: no objectives cleared yet, no currency banked, active.
 export function makeRun() {
-  return { stageIndex: 0, currency: 0, status: 'active' };
+  return { objectivesCleared: 0, currency: 0, status: 'active' };
 }
 
-// Pure transition: clear the CURRENT stage — bank its currency and advance to the next
-// stage index, or WIN the run if that was the final stage. No-ops (returns the run
-// unchanged) if the run isn't active (sticky terminal status, mirrors mission.js).
-export function advanceStage(run) {
+// Pure transition: an objective was destroyed — bank its currency and count it. No-ops (returns
+// the run unchanged) if the run isn't active (sticky terminal status, mirrors mission.js). Never
+// ends the run by itself — winning is a separate signal (`winRun`, driven by "every base
+// cleared" — scenes/arena/bases.js `_allBasesCleared`), since objective-clearing and base-
+// clearing are now two independent tracks (mission objectives were always separate from enemy
+// squads even before #269; that separation just becomes explicit now that there's no more
+// "clear the stage" event to conflate them under).
+export function advanceObjective(run) {
   if (run.status !== 'active') return run;
-  const earned = currencyForStage(run.stageIndex);
-  const currency = run.currency + earned;
-  const nextIndex = run.stageIndex + 1;
-  if (nextIndex >= STAGE_COUNT) {
-    return { ...run, currency, status: 'won' };
-  }
-  return { ...run, currency, stageIndex: nextIndex, status: 'active' };
+  const earned = currencyForObjective(run.objectivesCleared);
+  return { ...run, currency: run.currency + earned, objectivesCleared: run.objectivesCleared + 1 };
+}
+
+// Pure transition: every base's docked units are destroyed — the run is WON. Sticky/no-op once
+// terminal.
+export function winRun(run) {
+  if (run.status !== 'active') return run;
+  return { ...run, status: 'won' };
 }
 
 // Pure transition: the player died — end the run as a loss. Sticky/no-op once terminal.
@@ -139,7 +62,3 @@ export function endRunOnDeath(run) {
 export function isRunOver(run) {
   return run.status === 'won' || run.status === 'dead';
 }
-
-// Reference export for callers that want the raw rotation the debug spawn control uses,
-// kept alongside the tiered pools above for discoverability (not used by this file itself).
-export const DEBUG_ROTATION = ENEMY_ROTATION;

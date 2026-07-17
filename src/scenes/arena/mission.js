@@ -8,8 +8,7 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
-import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
-import { lateFraction } from '../../data/run.js';
+import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR } from './shared.js';
 
 export const MissionMixin = {
@@ -26,21 +25,18 @@ export const MissionMixin = {
   // logic (and its `FAR_OBJECTIVE_MIN_DIST` floor) as every later stage, from the player's spawn
   // hex (world origin) — so the player always has to travel for the first objective too.
   //
-  // #138 follow-up (playtest: "the map still feels huge, especially on initial deploy"): stage 0
-  // is always THIS scene's very first objective, so it always uses `lateFraction(0)` — a NEAR
-  // objective (see data/worldgen.js `pickStageObjective`), not the always-farthest behavior
-  // `pickFarObjective` used to give it. Falls back to the strict farthest-candidate behavior only
-  // if the stage-aware pick comes back empty (e.g. no standing outposts at all).
+  // #269: retired the old 5-stage near→far escalation (`lateFraction`/`pickStageObjective`,
+  // data/run.js's now-gone stage-squad system) — every objective (this first one, and every
+  // later one picked by `_pickNextObjective` in run.js) now uses the same strict farthest-
+  // candidate pick, measured ALONG THE SPINE (progress down the corridor) so it's still a real
+  // trek from spawn, just without a stage-indexed near/far ramp.
   _initMission() {
     // #251: NOT all of `buildingHp` — that also holds atmospheric base-infrastructure
-    // set-dressing (e.g. `helipad`), which must never be picked as the objective (see
-    // world.js `_objectiveHexKeys` / data/terrain.js `isMissionObjective`).
+    // set-dressing (e.g. `helipad`/`alertTower`), which must never be picked as the objective
+    // (see world.js `_objectiveHexKeys` / data/terrain.js `isMissionObjective`).
     const hexKeys = this._objectiveHexKeys();
-    // #169: objective distance is measured ALONG THE SPINE (progress down the corridor), not
-    // straight-line from spawn — stage 0 (lateFraction 0) sits a short way down the corridor.
     const progressOf = (q, r) => spineProgressHexOf(this._spine, q, r);
-    this.objectiveHex = pickStageObjective(hexKeys, { q: 0, r: 0 }, lateFraction(0), FAR_OBJECTIVE_MIN_DIST, null, progressOf)
-      ?? pickFarObjective(hexKeys, { q: 0, r: 0 }, FAR_OBJECTIVE_MIN_DIST, null, progressOf);
+    this.objectiveHex = pickFarObjective(hexKeys, { q: 0, r: 0 }, FAR_OBJECTIVE_MIN_DIST, null, progressOf);
     this.mission = makeMission('assault');
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);

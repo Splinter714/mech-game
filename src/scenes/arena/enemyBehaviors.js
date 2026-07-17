@@ -60,6 +60,10 @@ function turretBehavior(scene, e, ctx) {
 // off if the player crowds it.
 function tankBehavior(scene, e, ctx) {
   const def = e.kindDef;
+  // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock holds its
+  // ground rather than grinding toward the player's standoff distance — see the top-level
+  // comment on `e.holdGround` in scenes/arena/bases.js `_wakeBase` for the full reasoning.
+  if (e.holdGround) { e.vx = 0; e.vy = 0; aimAndFire(scene, e, ctx, { needLos: true }); return; }
   const standoff = def.standoff ?? 300;
   const mv = def.move;
   // Desired radial move: close if beyond standoff, ease off inside it, back up if very close.
@@ -182,6 +186,15 @@ function deployNearby(scene, e, kindId) {
 
 function quadrupedBehavior(scene, e, ctx) {
   const def = e.kindDef;
+  // #269 §7: same hold-ground wake response as tankBehavior above — a woken defensive dock
+  // unit fights from where it stands rather than advancing. The deploy-drone mechanic below
+  // still runs regardless (it's a support ability, not locomotion).
+  if (e.holdGround) {
+    e.vx = 0; e.vy = 0;
+    aimAndFire(scene, e, ctx, { needLos: true });
+    quadrupedDeployTick(scene, e, def, ctx);
+    return;
+  }
   const standoff = def.standoff ?? 320;
   const mv = def.move;
   // Desired radial move: close if beyond standoff, ease off inside it, back up if very close —
@@ -201,9 +214,14 @@ function quadrupedBehavior(scene, e, ctx) {
   // (aimAndFire below sets e.turret on its own slew) — same hull-vs-turret decoupling as tank.
   e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
   aimAndFire(scene, e, ctx, { needLos: true });
+  quadrupedDeployTick(scene, e, def, ctx);
+}
 
-  // #130/#147 deploy mechanic — lazily initialize the per-enemy timer/count on first tick so
-  // the generic _spawnKind constructor never needs kind-specific bootstrapping.
+// #130/#147 deploy mechanic, split out so both the normal (advance-to-standoff) and #269
+// hold-ground wake-response paths above can call it — lazily initializes the per-enemy
+// timer/count on first tick so the generic _spawnKind constructor never needs kind-specific
+// bootstrapping.
+function quadrupedDeployTick(scene, e, def, ctx) {
   if (e.deployCd == null) e.deployCd = rand(def.deployEveryMs * 0.4, def.deployEveryMs);
   e.deployCount = e.deployCount ?? 0;
   e.deployCd -= ctx.delta;
@@ -232,6 +250,8 @@ function quadrupedBehavior(scene, e, ctx) {
 // ground unit (handled generically by the caller, same as tank/turret).
 function infantryBehavior(scene, e, ctx) {
   const def = e.kindDef;
+  // #269 §7: same hold-ground wake response as tank/quadruped above.
+  if (e.holdGround) { e.vx = 0; e.vy = 0; aimAndFire(scene, e, ctx, { needLos: true }); return; }
   const mv = def.move;
   const standoff = (def.fireRange ?? 200) * 0.75;
   e._jitterAt = (e._jitterAt ?? 0) - ctx.delta;

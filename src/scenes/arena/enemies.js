@@ -35,7 +35,7 @@ import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, pa
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
-import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
+import { UNAWARE, AWARE, DORMANT, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
@@ -591,6 +591,11 @@ export const EnemiesMixin = {
     // `this.enemies` should ever be destroyed-but-still-present. Kept for safety against any
     // caller that damages an enemy without going through the standard kill path.
     if (e.mech.isDestroyed()) return;
+    // #269 §4: a DORMANT docked unit (scenes/arena/bases.js `_spawnDormantUnits`) is genuinely
+    // inert until its base is woken (`_wakeBase`) — skip ALL per-frame AI/movement/firing, for
+    // both mech and non-mech kinds alike. Unlike UNAWARE (below), which still runs idle-wander,
+    // a dormant unit does nothing at all: no movement, no turret slew, no firing.
+    if (e.awareness === DORMANT) return;
     // #68: non-mech kinds run their own simple per-kind brain + integrate/render path.
     if (e.kind !== 'mech') { this._updateVehicle(e, dt, delta); return; }
     const mv = e.mech.movement;
