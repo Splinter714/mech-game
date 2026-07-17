@@ -93,10 +93,9 @@ describe('_damagePlayerAt — player death explosion + freeze (#225)', () => {
     expect(scene.playerView.setVisible).toHaveBeenCalledWith(false);
   });
 
-  it('still floats MECH DOWN and plays mechDestroyed exactly as before (additive, not replaced)', () => {
+  it('still plays mechDestroyed exactly as before (additive, not replaced) — #236 dropped the MECH DOWN floating text', () => {
     const scene = makeScene();
     scene._damagePlayerAt(999);
-    expect(scene._floatText).toHaveBeenCalledWith(123, 456 - 36, 'MECH DOWN', '#e2533a');
     expect(Audio.ui).toHaveBeenCalledWith('mechDestroyed');
   });
 
