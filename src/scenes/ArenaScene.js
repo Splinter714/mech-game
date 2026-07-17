@@ -21,6 +21,16 @@ import { RunMixin } from './arena/run.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
+// #246: the player's native full-mech shield baseline — a real trait present from the start of
+// every sortie, not something that only exists once a Shield powerup is picked up (most enemy
+// mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy kinds opt in).
+// `max`/`regenPerSec` are deliberately modest (a slow trickle, not a second health bar) so it
+// reads as "a little breathing room" rather than eclipsing armor/hp as the real defense layer;
+// the Shield POWERUP (data/powerups.js) is what makes the shield feel powerful for a while.
+// `pauseMs` is the brief (not shooter-style multi-second) regen interrupt on any hit that
+// reaches the shield, per the #246 decision.
+const PLAYER_SHIELD = { max: 50, regenPerSec: 2, pauseMs: 1200 };
+
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
 // within a limited arc and PUSHES the chassis to turn when you aim past it; the gait is
@@ -70,6 +80,10 @@ export default class ArenaScene extends Phaser.Scene {
     // 5-10x band — real damage across a run should threaten death (the run loop now ends the
     // run on player destruction), but a single bad opening shouldn't be instant-death.
     this.mech.boostHealth(7);
+    // #246: (re)establish the player's native shield baseline fresh each sortie — same
+    // redeploy-safe, idempotent spirit as boostHealth above (never compounds, always starts
+    // this deploy at full charge with no lingering powerup boost from a prior run).
+    this.mech.configureShield(PLAYER_SHIELD);
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
@@ -312,6 +326,9 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
     // Surge, which used to multiply this rate, was removed as redundant with Overcharge.)
     this.mech.regenAmmo(dt);
+    // #246: passive shield regen (with its brief post-hit pause) + counting down any active
+    // Shield-powerup boost — see Mech.tickShield/boostShield (data/Mech.js).
+    this.mech.tickShield(dt);
   }
 
   // #216: the sound cue lives HERE, not in any of the call sites, because this is the one

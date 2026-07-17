@@ -6,7 +6,7 @@ export const HEAVY_CONFIG = {
   name: 'Bulwark',
   weightClass: 'heavy',
   baseArmor: 96,
-  baseStructure: 52,
+  baseHp: 52,
   // Blocky bruiser silhouette (#24): a small head sunk BACK between huge shoulder
   // pauldrons, arms hung low/forward in a siege stance, broad torso, thick stubby limbs,
   // a narrow planted stance, with rear exhaust stacks — the immovable object.

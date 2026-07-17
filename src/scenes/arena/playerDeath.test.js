@@ -39,12 +39,11 @@ import { DEATH_SCALE_MAX } from './shared.js';
 // helpers (`_burst`/`_smokePuff`/`_deathDebris`/`_floatText`) stubbed so we can assert on their
 // call arguments without a live scene — same pattern as crush.test.js/vehicleFire.test.js use
 // for their own mixins.
-function makeScene({ hp = 10, structure = 10 } = {}) {
+function makeScene({ hp = 10 } = {}) {
   let destroyed = false;
   const scene = {
     px: 123, py: 456,
     vx: 40, vy: -15, speed: 42,
-    shieldPool: 0,
     playerView: { setVisible: vi.fn() },
     mech: {
       maxHp: 616,

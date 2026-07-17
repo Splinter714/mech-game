@@ -2,9 +2,10 @@
 // counts as a kill. This is pure data + small pure helpers (no Phaser), so it's fully
 // unit-tested (Mech.test.js) and shared by the model, the garage, and the arena alike.
 //
-// Each DAMAGE-TRACKED location has its own armor (outer) + internal structure (inner):
-// damage eats armor first, then structure; structure at 0 = the part is destroyed. This
-// is the BattleTech model and is what makes partial destruction read cleanly.
+// Each DAMAGE-TRACKED location has its own armor (outer) + internal HP (inner, formerly
+// called "structure" — #246 renamed the term throughout to plain language; the layering
+// itself is unchanged): damage eats armor first, then HP; HP at 0 = the part is destroyed.
+// This is the BattleTech model and is what makes partial destruction read cleanly.
 //
 // #128: "damage-tracked" and "mountable skill slot" are DELIBERATELY separate concepts,
 // not two views of one list. `head`/`cockpit`/`centerTorso` used to be both — the sole
@@ -77,9 +78,9 @@ export const DESTROY_CASCADE = {
   rightTorso: ['rightArm'],
 };
 
-// Is a part destroyed? Pure: a part with structure <= 0 (or that no longer exists).
+// Is a part destroyed? Pure: a part with hp <= 0 (or that no longer exists).
 export function partDestroyed(part) {
-  return !part || part.structure <= 0;
+  return !part || part.hp <= 0;
 }
 
 // Given a map of location id → part state, is the mech destroyed? Encodes the kill

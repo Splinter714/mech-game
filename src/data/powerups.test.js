@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   POWERUPS, POWERUP_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
-  dropChanceForMaxHp, MIN_DROP_CHANCE, MAX_DROP_CHANCE, absorbShieldDamage,
+  dropChanceForMaxHp, MIN_DROP_CHANCE, MAX_DROP_CHANCE,
 } from './powerups.js';
 import { Mech } from './Mech.js';
 
@@ -24,10 +24,10 @@ describe('powerup catalog', () => {
     expect(durationMs('armorPatch')).toBe(0);
   });
 
-  it('Shield is neither instant nor timed — no duration, and not marked instant (it is a damage-pool buff tracked separately)', () => {
+  it('#246: Shield is a timed boost (not instant) on top of its instant full-fill — has a real duration and a boostMult', () => {
     expect(isInstant('shield')).toBe(false);
-    expect(durationMs('shield')).toBe(0);
-    expect(POWERUPS.shield.shieldCap).toBeGreaterThan(0);
+    expect(durationMs('shield')).toBeGreaterThan(0);
+    expect(POWERUPS.shield.boostMult).toBeGreaterThan(1);
   });
 
   it('#189: Overclock carries no numeric magnitude fields — its effect is force-Sprint, not a multiplier', () => {
@@ -84,51 +84,8 @@ describe('buffModifiers — collapsing the active overlay', () => {
   });
 });
 
-describe('absorbShieldDamage — #187 Shield damage-pool math', () => {
-  it('fully blocks a hit smaller than the remaining pool', () => {
-    const r = absorbShieldDamage(60, 20);
-    expect(r).toEqual({ absorbed: 20, overflow: 0, remaining: 40 });
-  });
-
-  it('fully blocks a hit exactly equal to the remaining pool, clearing it to zero', () => {
-    const r = absorbShieldDamage(60, 60);
-    expect(r).toEqual({ absorbed: 60, overflow: 0, remaining: 0 });
-  });
-
-  it('breaks the shield when a hit exceeds the remaining pool, passing the overflow through', () => {
-    const r = absorbShieldDamage(20, 34);
-    expect(r.absorbed).toBe(20);
-    expect(r.overflow).toBe(14);
-    expect(r.remaining).toBe(0);
-  });
-
-  it('a zero or negative pool absorbs nothing — the whole hit passes through', () => {
-    expect(absorbShieldDamage(0, 25)).toEqual({ absorbed: 0, overflow: 25, remaining: 0 });
-    expect(absorbShieldDamage(-5, 25)).toEqual({ absorbed: 0, overflow: 25, remaining: 0 });
-  });
-
-  it('treats missing/falsy pool or damage as zero, never NaN or negative', () => {
-    expect(absorbShieldDamage(undefined, 10)).toEqual({ absorbed: 0, overflow: 10, remaining: 0 });
-    expect(absorbShieldDamage(30, undefined)).toEqual({ absorbed: 0, overflow: 0, remaining: 30 });
-    expect(absorbShieldDamage(30, -10)).toEqual({ absorbed: 0, overflow: 0, remaining: 30 });
-  });
-
-  it('sequential hits drain the pool cumulatively until it breaks', () => {
-    let pool = POWERUPS.shield.shieldCap;
-    let r = absorbShieldDamage(pool, 25);
-    expect(r.overflow).toBe(0);
-    pool = r.remaining;
-    r = absorbShieldDamage(pool, 25);
-    expect(r.overflow).toBe(0);
-    pool = r.remaining;
-    // Third hit of 25 exceeds whatever's left (60 - 25 - 25 = 10) — shield breaks, overflow passes.
-    r = absorbShieldDamage(pool, 25);
-    expect(pool).toBe(10);
-    expect(r.absorbed).toBe(10);
-    expect(r.overflow).toBe(15);
-    expect(r.remaining).toBe(0);
-  });
-});
+// #246: the old fixed damage-pool shield math (`absorbShieldDamage`) moved to data/shield.js —
+// see shield.test.js for its coverage (damageShield/tickShield/fillShield/boost lifecycle).
 
 describe('armorRepairPlan — whole-mech proportional repair (Armor Patch rework)', () => {
   it('restores a fraction of EACH damaged location\'s missing armor, skipping full ones', () => {

@@ -94,3 +94,79 @@ describe('HpBody — single-pool damageable body for non-mech enemies', () => {
     expect(b.locations().length).toBeGreaterThan(0);
   });
 });
+
+// #246: layered HpBody — a non-mech kind can be configured as HP-only (the pre-#246 default,
+// unchanged), HP+armor, HP+shield, or all three, purely via `def.armor`/`def.shield`. Mirrors
+// the four combinations enemyKinds.js actually exercises (turret/drone/infantry HP-only, tank
+// HP+armor, helicopter HP+shield, quadruped all three) with minimal fixtures so this file
+// covers the layering math independent of the real roster's tuning.
+describe('HpBody layered defense (#246: HP-only / HP+armor / HP+shield / all three)', () => {
+  const layout = { core: { x: 0, y: 0, w: 20, h: 20 } };
+
+  it('HP-only (no armor, no shield config) behaves exactly as before #246', () => {
+    const b = new HpBody({ hp: 50, parts: layout });
+    expect(b.hasShield()).toBe(false);
+    const res = b.applyDamage('core', 20);
+    expect(res.shielded).toBe(false);
+    expect(res.applied).toBe(20);
+    expect(b.hp).toBe(30);
+  });
+
+  it('HP+armor: armor absorbs before hp, and destruction still tracks hp only', () => {
+    const b = new HpBody({ hp: 50, armor: 20, parts: layout });
+    expect(b.armor).toBe(20);
+    const r1 = b.applyDamage('core', 15);
+    expect(r1.applied).toBe(15);
+    expect(b.armor).toBe(5);
+    expect(b.hp).toBe(50);           // hp untouched — armor absorbed it all
+    const r2 = b.applyDamage('core', 15);
+    expect(b.armor).toBe(0);
+    expect(b.hp).toBe(40);           // 5 armor left absorbed, 10 overflowed to hp
+    expect(r2.armorBrokeNow).toBe(true);
+    expect(b.isDestroyed()).toBe(false);
+  });
+
+  it('HP+shield: the shield absorbs first, in front of hp (no armor at all)', () => {
+    const b = new HpBody({ hp: 50, shield: { max: 30, regenPerSec: 0, pauseMs: 500 }, parts: layout });
+    expect(b.hasShield()).toBe(true);
+    const r1 = b.applyDamage('core', 20);
+    expect(r1.shielded).toBe(true);
+    expect(r1.shieldAbsorbed).toBe(20);
+    expect(b.hp).toBe(50);
+    expect(b.shield.hp).toBe(10);
+    const r2 = b.applyDamage('core', 25);   // breaks the remaining 10, 15 overflows to hp
+    expect(r2.shieldAbsorbed).toBe(10);
+    expect(r2.applied).toBe(15);
+    expect(b.hp).toBe(35);
+  });
+
+  it('all three layers: shield -> armor -> hp, in that order, on a single big hit', () => {
+    const b = new HpBody({
+      hp: 50, armor: 20, shield: { max: 30, regenPerSec: 0, pauseMs: 500 }, parts: layout,
+    });
+    const res = b.applyDamage('core', 70);   // 30 shield + 20 armor + 20 hp
+    expect(res.shieldAbsorbed).toBe(30);
+    expect(b.armor).toBe(0);
+    expect(b.hp).toBe(30);
+    expect(res.destroyed).toBe(false);
+  });
+
+  it('tickShield regens the unit-wide shield passively, same brief-pause behavior as Mech', () => {
+    const b = new HpBody({ hp: 50, shield: { max: 30, regenPerSec: 5, pauseMs: 400 }, parts: layout });
+    b.applyDamage('core', 10);       // shield -> 20, pause starts
+    b.tickShield(0.4);               // pause clears exactly here, no regen yet
+    expect(b.shield.hp).toBe(20);
+    b.tickShield(1);                 // +5
+    expect(b.shield.hp).toBe(25);
+  });
+
+  it('repairAll restores hp, armor, and shield all together', () => {
+    const b = new HpBody({ hp: 50, armor: 20, shield: { max: 30, regenPerSec: 1, pauseMs: 400 }, parts: layout });
+    b.applyDamage('core', 90);
+    b.repairAll();
+    expect(b.hp).toBe(50);
+    expect(b.armor).toBe(20);
+    expect(b.shield.hp).toBe(30);
+    expect(b.isDestroyed()).toBe(false);
+  });
+});

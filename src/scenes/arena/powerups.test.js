@@ -2,9 +2,10 @@
 // Shield powerup's floating bubble with a "duplicate every mech-part sprite, re-tint, re-pose
 // every frame" outline technique (see the big comment on `_initShieldVisual` in powerups.js).
 // The concern raised in #237: does `_updateShieldVisual` actually SKIP that per-part re-pose
-// work when the shield isn't active (`shieldPool <= 0`, i.e. the vast majority of play time —
-// most runs, most players never even pick up Shield), or does it silently do all 6 sprites'
-// worth of position/texture/rotation/alpha writes every single frame regardless of state?
+// work when the shield isn't active (#246: `this.mech.shield.hp <= 0` — the shield is now a
+// real layer living on the mech itself, not a scene-tracked `shieldPool`), or does it silently
+// do all 6 sprites' worth of position/texture/rotation/alpha writes every single frame
+// regardless of state?
 //
 // This locks in the correct (already-present) behavior: `_updateShieldVisual` must bail out
 // before touching any outline sprite's transform/texture when the pool is empty, only paying
@@ -21,7 +22,6 @@ vi.mock('../../audio/index.js', () => ({ Audio: { ui: vi.fn() } }));
 vi.mock('phaser', () => ({ default: {} }));
 
 import { PowerupsMixin } from './powerups.js';
-import { POWERUPS } from '../../data/powerups.js';
 
 const SHIELD_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
 
@@ -44,7 +44,9 @@ function fakeRealPart(key) {
   return { x: 10, y: 20, originX: 0.5, originY: 0.5, rotation: 0, texture: { key: `${key}_tex` } };
 }
 
-function makeScene({ shieldPool = 0 } = {}) {
+// #246: the shield now lives on `scene.mech.shield` (data/shield.js's plain state shape), not a
+// scene-level `shieldPool` number — this fake mirrors just enough of that shape (`hp`/`max`).
+function makeScene({ shieldHp = 0, shieldMax = 60 } = {}) {
   const outlines = {};
   const view = {};
   for (const key of SHIELD_PART_KEYS) {
@@ -53,7 +55,7 @@ function makeScene({ shieldPool = 0 } = {}) {
   }
   return Object.assign(
     {
-      shieldPool,
+      mech: { shield: { hp: shieldHp, max: shieldMax } },
       playerView: view,
       _shieldVisual: { outlines, active: false, t: 0 },
       registry: { set: vi.fn() },
@@ -63,8 +65,8 @@ function makeScene({ shieldPool = 0 } = {}) {
 }
 
 describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
-  it('does NOT touch any outline sprite transform/texture when shieldPool is 0 (inactive, steady state)', () => {
-    const scene = makeScene({ shieldPool: 0 });
+  it('does NOT touch any outline sprite transform/texture when the shield is empty (inactive, steady state)', () => {
+    const scene = makeScene({ shieldHp: 0 });
     // Prime it through one frame first so `sv.active` settles at false with no pending
     // visibility-edge transition, matching the steady-state "shield never picked up" case.
     scene._updateShieldVisual(16.67);
@@ -90,9 +92,8 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
     }
   });
 
-  it('DOES re-pose every outline sprite each frame while shieldPool > 0 (shield actually active)', () => {
-    const scene = makeScene({ shieldPool: POWERUPS.shield.shieldCap });
-    scene._shieldPeak = POWERUPS.shield.shieldCap;
+  it('DOES re-pose every outline sprite each frame while the shield is charged (shield actually active)', () => {
+    const scene = makeScene({ shieldHp: 60, shieldMax: 60 });
 
     scene._updateShieldVisual(16.67);   // first frame: visibility edge fires + full re-pose
 
@@ -105,12 +106,12 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
   });
 
   it('shows the outlines on the 0→>0 edge and hides them again on the >0→0 edge, exactly once each', () => {
-    const scene = makeScene({ shieldPool: 0 });
+    const scene = makeScene({ shieldHp: 0 });
     scene._updateShieldVisual(16.67);   // starts inactive, no edge
     for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).not.toHaveBeenCalled();
 
-    scene.shieldPool = 50;
-    scene._shieldPeak = 50;
+    scene.mech.shield.hp = 50;
+    scene.mech.shield.max = 50;
     scene._updateShieldVisual(16.67);   // 0 -> >0 edge: show
     for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).toHaveBeenCalledWith(true);
 
@@ -118,7 +119,7 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
     scene._updateShieldVisual(16.67);   // still active, no edge, no extra setVisible call
     for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).not.toHaveBeenCalled();
 
-    scene.shieldPool = 0;
+    scene.mech.shield.hp = 0;
     scene._updateShieldVisual(16.67);   // >0 -> 0 edge: hide
     for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).toHaveBeenCalledWith(false);
   });

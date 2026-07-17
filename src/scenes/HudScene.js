@@ -65,6 +65,18 @@ const C = {
   cooldown: '#5e7ce0',
 };
 
+// #246: per-location armor/hp split-bar geometry + colors. `ARMOR_BAR_COLOR` matches the mech-
+// ART armor-shell overlay's steel-blue (src/art/mechPrims.js `ARMOR_SHELL`, 0x9fe0ff) exactly,
+// so the HUD and the mech's own on-screen art read as the same "armor" visual language rather
+// than two unrelated color choices. `SHIELD_BAR_COLOR` matches the Shield powerup's own color
+// (data/powerups.js `POWERUPS.shield.color`) for the same reason.
+const PART_BAR_X = 26;          // px offset of the bar from the row's left edge (past the short label)
+const PART_BAR_W = 90;
+const PART_BAR_H = 7;
+const PART_ROW_H = 20;
+const ARMOR_BAR_COLOR = 0x9fe0ff;
+const SHIELD_BAR_COLOR = 0x5ec8e0;
+
 // #116: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is a
 // muted steel; the player rides the shared accent, the objective the shared amber wayfinding
 // highlight (so it matches the edge arrow / world marker), and enemies the danger red.
@@ -155,13 +167,47 @@ export default class HudScene extends Phaser.Scene {
     this.lockWayGfx = this.add.graphics().setDepth(20);
 
     // Per-part integrity column (player), top-left under the hints + stage/objective lines.
+    // #246: this used to be one collapsed armor+hp number per location — now a short label,
+    // then a two-segment BAR (armor first, then hp — see `_updatePartBars`) so the armor/hp
+    // split is actually visible, not just implied by a number. The mech-ART armor-shell overlay
+    // (mechArt.js) is the PRIMARY way this reads in the arena; this bar is a supporting HUD
+    // readout for players who want the exact numbers/proportions at a glance too.
     this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.partTexts = {};
+    this.partBarsGfx = this.add.graphics();
+    this._partRowY = {};
     let y = 130;
     for (const loc of LOCATIONS) {
-      this.partTexts[loc] = this.add.text(16, y, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text });
-      y += 14;
+      this._partRowY[loc] = y;
+      // Short location code (static — doesn't need a per-frame update).
+      this.add.text(16, y, LOCATION_INFO[loc].short.padEnd(2), {
+        fontFamily: 'monospace', fontSize: '11px', color: C.dim,
+      }).setOrigin(0, 0.15);
+      // Numbers sit to the right of the bar, on the same row.
+      this.partTexts[loc] = this.add.text(16 + PART_BAR_X + PART_BAR_W + 8, y, '', {
+        fontFamily: 'monospace', fontSize: '11px', color: C.text,
+      }).setOrigin(0, 0.15);
+      y += PART_ROW_H;
     }
+
+    // #246: full-mech SHIELD readout — its own row under the per-location bars. Hidden entirely
+    // (both bar and label) for a body with no native shield config at all (`mech.hasShield()`
+    // false), per the design decision that some enemies/loadouts simply have none; shown
+    // whenever a shield is present, whether that's the player's native baseline or a mid-run
+    // Shield-powerup boost — same bar, just a bigger max/faster fill while boosted.
+    this.shieldRowY = y + 4;
+    this.shieldLabel = this.add.text(16, this.shieldRowY, 'SHIELD', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.accent,
+    }).setVisible(false);
+    this.shieldBarTrack = this.add.rectangle(
+      16 + PART_BAR_X, this.shieldRowY + 6, PART_BAR_W, PART_BAR_H, 0x0e1218,
+    ).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f).setVisible(false);
+    this.shieldBarFill = this.add.rectangle(
+      16 + PART_BAR_X, this.shieldRowY + 6, PART_BAR_W, PART_BAR_H, SHIELD_BAR_COLOR,
+    ).setOrigin(0, 0.5).setVisible(false);
+    this.shieldText = this.add.text(16 + PART_BAR_X + PART_BAR_W + 8, this.shieldRowY, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.text,
+    }).setOrigin(0, 0.15).setVisible(false);
 
     // Skill bar — the shared garage tiles, centred along the bottom of the screen.
     this.skillBar = this.add.container(0, 0);
@@ -269,14 +315,8 @@ export default class HudScene extends Phaser.Scene {
     // tile's READY/cooldown text.
     this._updateDashBar();
 
-    for (const loc of LOCATIONS) {
-      const p = mech.parts[loc];
-      const frac = mech.partHealthFraction(loc);
-      const hp = Math.ceil(p.armor + p.structure);
-      const max = p.maxArmor + p.maxStructure;
-      const col = mech.isPartDestroyed(loc) ? C.bad : frac > 0.5 ? C.good : C.warn;
-      this.partTexts[loc].setText(`${LOCATION_INFO[loc].short.padEnd(2)} ${String(hp).padStart(3)}/${max}`).setColor(col);
-    }
+    this._updatePartBars(mech);
+    this._updateShieldBar(mech);
 
     const total = this.registry.get('enemyCount') || 0;
     const alive = this.registry.get('enemiesAlive') ?? total;
@@ -487,6 +527,78 @@ export default class HudScene extends Phaser.Scene {
     this.dashLabel.setText(`DASH (${bind})  ${state}`).setColor(color);
   }
 
+  // #246: per-location armor/hp split bar — TWO adjacent segments in one bar frame, armor
+  // first (left) then hp (right), each segment's own WIDTH proportional to that layer's share
+  // of the location's combined max (maxArmor + maxHp), each segment's FILL proportional to its
+  // own current/max. So a location with a bigger armor rating than hp rating (or vice versa)
+  // reads as a wider armor (or hp) segment, and within each segment the fill drains as that
+  // specific layer takes damage — armor drains first in play (it absorbs before hp), which
+  // reads here as the LEFT segment emptying before the right one starts to. This is the
+  // supporting HUD readout; the PRIMARY at-a-glance armor read is the mech-art armor-shell
+  // overlay on the mech itself (see mechArt.js).
+  _updatePartBars(mech) {
+    const g = this.partBarsGfx;
+    g.clear();
+    for (const loc of LOCATIONS) {
+      const p = mech.parts[loc];
+      const y = this._partRowY[loc];
+      const bx = 16 + PART_BAR_X;
+      const totalMax = p.maxArmor + p.maxHp;
+      const armorShare = totalMax > 0 ? p.maxArmor / totalMax : 0;
+      const armorW = PART_BAR_W * armorShare;
+      const hpW = PART_BAR_W - armorW;
+
+      // Track (dim full-width backing) so an empty segment still reads as "there" but spent.
+      g.fillStyle(0x0e1218, 1);
+      g.fillRect(bx, y - PART_BAR_H / 2, PART_BAR_W, PART_BAR_H);
+
+      // Armor segment (left): fills leftover-to-right within its own share of the bar width.
+      if (armorW > 0) {
+        const armorFrac = p.maxArmor > 0 ? p.armor / p.maxArmor : 0;
+        g.fillStyle(ARMOR_BAR_COLOR, 1);
+        g.fillRect(bx, y - PART_BAR_H / 2, Math.max(0, armorW * armorFrac), PART_BAR_H);
+      }
+      // HP segment (right): same idea, its own share/fraction, colored by remaining health.
+      if (hpW > 0) {
+        const hpFrac = p.maxHp > 0 ? p.hp / p.maxHp : 0;
+        const hpCol = mech.isPartDestroyed(loc) ? 0xe2533a : hpFrac > 0.5 ? 0x7bd17b : 0xefc14a;
+        g.fillStyle(hpCol, 1);
+        g.fillRect(bx + armorW, y - PART_BAR_H / 2, Math.max(0, hpW * hpFrac), PART_BAR_H);
+      }
+      // Thin divider between the two segments so they read as distinct, not one blended bar.
+      if (armorW > 0 && hpW > 0) {
+        g.fillStyle(0x0e1218, 1);
+        g.fillRect(bx + armorW - 0.5, y - PART_BAR_H / 2, 1, PART_BAR_H);
+      }
+      g.lineStyle(1, 0x2a333f, 0.9);
+      g.strokeRect(bx, y - PART_BAR_H / 2, PART_BAR_W, PART_BAR_H);
+
+      const destroyed = mech.isPartDestroyed(loc);
+      const col = destroyed ? C.bad : C.text;
+      this.partTexts[loc]
+        .setText(destroyed ? 'DESTROYED' : `${Math.ceil(p.armor)}+${Math.ceil(p.hp)}/${p.maxArmor}+${p.maxHp}`)
+        .setColor(col);
+    }
+  }
+
+  // #246: full-mech shield readout — a single bar (same visual language as the per-location
+  // bars above), hidden ENTIRELY (bar + label) when the mech has no native shield at all
+  // (`hasShield()` false — some enemy kinds and loadouts genuinely have none). Shown for the
+  // player's baseline shield and, indistinguishably to the readout, a boosted one mid-powerup
+  // (the bar's own max just grows/shrinks with `mech.shield.max`).
+  _updateShieldBar(mech) {
+    const has = mech.hasShield?.() ?? false;
+    this.shieldLabel.setVisible(has);
+    this.shieldBarTrack.setVisible(has);
+    this.shieldBarFill.setVisible(has);
+    this.shieldText.setVisible(has);
+    if (!has) return;
+    const { hp, max } = mech.shield;
+    const frac = max > 0 ? Phaser.Math.Clamp(hp / max, 0, 1) : 0;
+    this.shieldBarFill.setSize(Math.max(1, PART_BAR_W * frac), PART_BAR_H);
+    this.shieldText.setText(`${Math.ceil(hp)}/${Math.ceil(max)}`);
+  }
+
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
   // timer, tinted the buff colour, whose arc empties clockwise from full to zero over the buff's
   // duration — a cooldown-pie. The label + remaining seconds sit to the left so several buffs
@@ -547,45 +659,13 @@ export default class HudScene extends Phaser.Scene {
       y += rowH;
     });
 
-    // #187: Shield draws one extra row, same visual language (a ring + label) as the timed
-    // buffs above, but keyed off the remaining damage POOL instead of remaining time — a
-    // simple starting treatment, left for the owner to refine visually via playtest. Not part
-    // of `ids`/`activePowerups` (Shield isn't a timed buff), so it always lands in the next
-    // slot after them and is skipped entirely (row hidden) when the pool is empty.
-    const shieldPool = this.registry.get('shieldPool') || 0;
-    let rows = ids.length;
-    if (shieldPool > 0) {
-      const cap = this._shieldCapSeen = Math.max(this._shieldCapSeen || 0, shieldPool);
-      const p = POWERUPS.shield;
-      const color = p?.color ?? 0x5ec8e0;
-      const colStr = '#' + color.toString(16).padStart(6, '0');
-      const cy = y + R;
-      const frac = Math.max(0, Math.min(1, shieldPool / cap));
-
-      g.lineStyle(4, color, 0.22);
-      g.strokeCircle(cx, cy, R);
-      const start = -Math.PI / 2;
-      const end = start + frac * Math.PI * 2;
-      g.lineStyle(4, color, 1);
-      g.beginPath();
-      g.arc(cx, cy, R, start, end, false);
-      g.strokePath();
-      g.fillStyle(color, 0.10 + 0.14 * frac);
-      g.fillCircle(cx, cy, R - 3);
-
-      let t = this.buffTexts[rows];
-      if (!t) {
-        t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px' }).setOrigin(1, 0.5);
-        this.buffTexts[rows] = t;
-      }
-      t.setText(`${p?.label ?? 'SHIELD'}  ${Math.round(shieldPool)}`)
-        .setColor(colStr)
-        .setPosition(cx - R - 8, cy)
-        .setVisible(true);
-      rows += 1;
-    } else {
-      this._shieldCapSeen = 0;   // reset the "full" reference once the shield is gone
-    }
+    // #246: Shield used to draw one extra ring row here, keyed off a scene-tracked
+    // `shieldPool` that only ever existed while the powerup was active. The shield is now a
+    // real, always-present-or-absent layer on the mech itself, with its own dedicated bar in
+    // the INTEGRITY block (`_updateShieldBar`, right under the per-location armor/hp bars) —
+    // a steadier, always-in-the-same-place readout than a buff ring that only appeared mid-
+    // powerup, and it stays visible for the player's native baseline too, not just a boost.
+    const rows = ids.length;
     for (let i = rows; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
   }
 }

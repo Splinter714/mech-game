@@ -13,10 +13,10 @@ import Phaser from 'phaser';
 import {
   POWERUPS, dropChanceForMaxHp, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
-// #187: Shield is a damage-pool buff (see data/powerups.js's `absorbShieldDamage`), not a
-// timed one — it's tracked here as `this.shieldPool` (a remaining-damage number) in parallel
-// to `this.activePowerups` (remaining-ms). Kept out of `buffModifiers`/`activePowerups` since
-// its "is it active" question is "pool > 0", not "time remaining > 0".
+// #246: Shield is now a real layer living ON the Mech itself (this.mech.shield —
+// data/shield.js), not a scene-tracked pool — the powerup's job is just to tell the mech
+// "fill up, and boost yourself for a while" (Mech.boostShield). Kept out of
+// `buffModifiers`/`activePowerups` since its state lives on the mech, not a scene-level timer.
 import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
 import { BOUNDARY_RING_WIDTH } from '../../data/worldgen.js';
@@ -47,10 +47,9 @@ export const PowerupsMixin = {
   // are drawn on. Kept separate from the world so it can be cleared/redrawn each frame.
   _initPowerups() {
     this.activePowerups = {};        // typeId → remaining ms (only live buffs; expired pruned)
-    this.shieldPool = 0;             // #187: remaining Shield absorb capacity (damage points), 0 = inactive
     this.powerups = [];              // dropped collectibles awaiting pickup: { x, y, type, age, view }
     this.powerupFx = this.add.graphics();   // (unused sink kept for symmetry; sprites are containers)
-    this._initShieldVisual();        // #205: persistent bubble overlay while shieldPool > 0
+    this._initShieldVisual();        // #205: persistent bubble overlay while this.mech.shield.hp > 0
   },
 
   // #205 (playtest follow-up to #187): the Shield powerup had NO persistent visual on the
@@ -90,23 +89,22 @@ export const PowerupsMixin = {
     this._shieldVisual = { outlines, active: false, t: 0 };
   },
 
-  // #205: per-frame outline upkeep — called once from `_updatePowerups` below (same cadence as
-  // the shieldPool bookkeeping it reads). Shows/hides the outline sprites the instant shieldPool
-  // crosses 0↔>0 (pickup / break); while active, re-poses each outline to match its real part
-  // (texture/position/rotation/origin — the hull's texture cycles through the walk-cycle frames,
-  // and the torso/arm sprites pivot toward weapon convergence, so this can't be a one-time copy)
-  // and fades its opacity with the remaining FRACTION of the pool rather than a flat on/off, so
-  // the player gets an at-a-glance "how much is left" read — same spirit as the Sprint fuel bar
-  // (HudScene `_updateSprintBar`), just drawn in-world instead of on the HUD since this is a
-  // persistent-on-the-mech indicator, not a HUD meter. `this._shieldPeak` is the pool value at
-  // the moment of the MOST RECENT pickup (set in `_activatePowerup` below) — since the pool only
-  // ever counts down between pickups (never back up on its own), that's exactly the right
-  // denominator even when a duplicate pickup stacks the cap past the base `shieldCap` (#187's
-  // stacking rule).
+  // #246: per-frame outline upkeep — called once from `_updatePowerups` below (same cadence as
+  // the mech's own shield tick). Shows/hides the outline sprites the instant the mech's shield
+  // crosses 0↔>0 (pickup / regen-back-up / break); while active, re-poses each outline to match
+  // its real part (texture/position/rotation/origin — the hull's texture cycles through the
+  // walk-cycle frames, and the torso/arm sprites pivot toward weapon convergence, so this can't
+  // be a one-time copy) and fades its opacity with the remaining FRACTION of the shield rather
+  // than a flat on/off, so the player gets an at-a-glance "how much is left" read — same spirit
+  // as the Sprint fuel bar (HudScene `_updateSprintBar`), just drawn in-world instead of on the
+  // HUD since this is a persistent-on-the-mech indicator, not a HUD meter. Reads `this.mech.
+  // shield.max` directly as the denominator — that's already the CURRENT cap (boosted or not),
+  // so no separate "peak seen" bookkeeping is needed the way the old powerup-only pool required.
   _updateShieldVisual(delta) {
     const sv = this._shieldVisual;
     if (!sv) return;
-    const pool = this.shieldPool || 0;
+    const shield = this.mech?.shield;
+    const pool = shield?.hp || 0;
     const active = pool > 0;
     if (active !== sv.active) {
       for (const key of SHIELD_PART_KEYS) sv.outlines[key].setVisible(active);
@@ -115,7 +113,7 @@ export const PowerupsMixin = {
     }
     if (!active) return;
     sv.t += delta;
-    const cap = this._shieldPeak || POWERUPS.shield.shieldCap;
+    const cap = shield.max || pool;
     const frac = Math.max(0.15, Math.min(1, pool / cap));
     // Slow ambient hum so an idle glow still reads as "live" rather than a flat decal.
     const pulse = 0.5 + 0.5 * Math.sin(sv.t * 0.0025);
@@ -264,19 +262,18 @@ export const PowerupsMixin = {
       if (this.activePowerups[id] <= 0) delete this.activePowerups[id];
     }
     this.registry.set('activePowerups', { ...this.activePowerups });
-    // #187: Shield has no timer to count down — its pool only drains when damage actually
-    // lands (see combat.js `damagePlayer`), so just publish the current remaining pool for
-    // the HUD each frame.
-    this.registry.set('shieldPool', this.shieldPool || 0);
-    // #205: keep the on-mech bubble in sync with the pool every frame (show/hide on the
-    // 0↔>0 edge, fade with the remaining fraction).
+    // #246: keep the on-mech bubble in sync with the mech's own shield every frame (show/hide
+    // on the 0↔>0 edge, fade with the remaining fraction). The mech itself owns the shield
+    // state (this.mech.shield) and its passive regen tick (see ArenaScene's per-frame
+    // `this.mech.tickShield(dt)`, alongside regenAmmo) — nothing to publish/track here anymore.
     this._updateShieldVisual(delta);
   },
 
   // Apply a picked-up powerup. Instant types (Armor Patch) resolve immediately and never enter
-  // the active set; Shield ADDS to its remaining damage pool (its own "duplicate refreshes"
-  // rule, since it has no time to refresh); everything else is a timed buff that sets/refreshes
-  // its per-type countdown (one-per-type stacking).
+  // the active set; Shield (#246) is BOTH an instant full-fill AND a temporary capacity/regen
+  // boost on the mech's own native shield layer (Mech.boostShield) — a duplicate pickup mid-
+  // boost just refreshes the timer (see Mech.boostShield's idempotency note); everything else
+  // is a timed buff that sets/refreshes its per-type countdown (one-per-type stacking).
   _activatePowerup(typeId) {
     const p = POWERUPS[typeId];
     if (!p) return;
@@ -286,15 +283,7 @@ export const PowerupsMixin = {
     if (isInstant(typeId)) {
       this._applyInstantPowerup(typeId);
     } else if (p.effect === 'shield') {
-      // #187: duplicate pickup while already active ADDS to the remaining pool rather than
-      // replacing it — mirrors the timed-buff "duplicate refreshes remaining time" pattern,
-      // adapted to a damage-remaining pool (accumulate, no cap; the owner can add one via
-      // playtest if stacking turns out to be too strong).
-      this.shieldPool = (this.shieldPool || 0) + (p.shieldCap ?? 0);
-      // #205: remember the pool value at THIS pickup as the bubble's fraction denominator —
-      // see `_updateShieldVisual` above for why this (not the base shieldCap) is the right cap
-      // once stacking has pushed the pool past it.
-      this._shieldPeak = this.shieldPool;
+      this.mech.boostShield(p.boostMult ?? 1, durationMs(typeId));
     } else {
       this.activePowerups[typeId] = durationMs(typeId);   // set OR refresh
     }
