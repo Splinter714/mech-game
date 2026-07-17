@@ -210,15 +210,23 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     expect(e.fireCd).toBeCloseTo(500, 6);   // 1000/2 — the override's rate, not the base 18/sec
   });
 
-  it('the live helicopter kind (enemyKinds.js) resolves machineGun\'s true stream cadence', async () => {
+  it('the live helicopter kind (enemyKinds.js) resolves machineGun\'s true stream cadence, single-lane', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
+    const { resolveWeapon } = await import('../../data/weapons.js');
     expect(ENEMY_KINDS.helicopter.weaponId).toBe(STREAM_WEAPON_ID);
-    expect(ENEMY_KINDS.helicopter.weaponOverride).toBeUndefined();   // full 18/sec during a burst
+    // #243 playtest follow-up: single tracer lane (player's Repeater is streams: 2) — the
+    // ONLY delta; damage and fireRate stay the player's.
+    expect(ENEMY_KINDS.helicopter.weaponOverride).toEqual({ delivery: { streams: 1 } });
+
+    const resolved = resolveWeapon(ENEMY_KINDS.helicopter.weaponId, ENEMY_KINDS.helicopter.weaponOverride);
+    expect(resolved.delivery.streams).toBe(1);
+    expect(resolved.damage).toBe(STREAM_WEAPON.damage);
+    expect(resolved.delivery.fireRate).toBe(18);   // cadence untouched — full 18/sec during a burst
 
     const { scene } = makeScene();
-    const resolved = scene._fireInterval(STREAM_WEAPON, {});
-    expect(resolved).toBeCloseTo(1000 / 18, 6);
-    expect(resolved).toBeLessThan(100);   // nowhere near the old flat 1900ms
+    const interval = scene._fireInterval(resolved, {});
+    expect(interval).toBeCloseTo(1000 / 18, 6);
+    expect(interval).toBeLessThan(100);   // nowhere near the old flat 1900ms
   });
 
   it('no ENEMY_KINDS entry carries the retired fireEveryMs field (#243 removed it entirely)', async () => {
@@ -361,8 +369,8 @@ describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired si
 // #243: `_fireVehicleWeapon` resolves the kind's weapon through resolveWeapon(weaponId,
 // weaponOverride) — the fired weapon (damage on the spawned round, emission plan, and the
 // #241/#243 cadence derivation) is the base entry with the kind's partial delta merged on, and
-// the base WEAPONS entry stays untouched for the player. The drone's weakened Repeater is the
-// live example.
+// the base WEAPONS entry stays untouched for the player. The drone's rapid-cadence Pulse Laser
+// and the helicopter's single-lane Repeater are the live examples.
 describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => {
   it('fires the OVERRIDDEN weapon (merged damage/fireRate) and derives cadence from it', () => {
     const { scene, calls } = makeScene();
@@ -394,16 +402,21 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
   });
 
-  it('the live drone kind resolves a weakened Repeater whose fireRate drives its cadence', async () => {
+  it('the live drone kind resolves a rapid-cadence Pulse Laser (cycleTime override, full damage)', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
-    const { resolveWeapon } = await import('../../data/weapons.js');
+    const { resolveWeapon, WEAPONS } = await import('../../data/weapons.js');
     const { scene } = makeScene();
     const d = ENEMY_KINDS.drone;
-    expect(d.weaponId).toBe(STREAM_WEAPON_ID);
+    expect(d.weaponId).toBe(BURST_WEAPON_ID);
+    const base = WEAPONS[BURST_WEAPON_ID];
     const resolved = resolveWeapon(d.weaponId, d.weaponOverride);
-    expect(resolved.damage).toBeLessThan(STREAM_WEAPON.damage);
-    expect(resolved.delivery.fireRate).toBeLessThan(STREAM_WEAPON.delivery.fireRate);
-    expect(scene._fireInterval(resolved, {})).toBeCloseTo(1000 / resolved.delivery.fireRate, 6);
+    // #243 playtest follow-up: same per-pulse damage as the player's mount; only the
+    // shot-to-shot cadence is overridden (260ms vs the player's 3000ms cycleTime).
+    expect(resolved.damage).toBe(base.damage);
+    expect(resolved.cycleTime).toBe(260);
+    // pattern 'single' ⇒ _fireInterval is max(120, cycleTime) — the override IS the cadence.
+    expect(scene._fireInterval(resolved, {})).toBe(260);
+    expect(base.cycleTime).toBe(3000);   // player's entry untouched
   });
 });
 
@@ -460,14 +473,17 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     expect(e.fireCd).toBe(1000);
   });
 
-  it('the live helicopter kind opts in: bounded strafing bursts with a real rest', async () => {
+  it('the live helicopter and drone kinds opt in: bounded bursts with a real rest', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
-    const h = ENEMY_KINDS.helicopter;
-    expect(h.burstShots).toBe(10);
-    expect(h.burstRestMs).toBe(1000);
+    // #243 playtest follow-up: 15-shot single-lane squeeze (~0.83s at 18/sec), 1.2s rest.
+    expect(ENEMY_KINDS.helicopter.burstShots).toBe(15);
+    expect(ENEMY_KINDS.helicopter.burstRestMs).toBe(1200);
+    // Drone: 5 quick Pulse Laser shots (260ms cadence), then a ~2.5s rest.
+    expect(ENEMY_KINDS.drone.burstShots).toBe(5);
+    expect(ENEMY_KINDS.drone.burstRestMs).toBe(2500);
     // No other kind opts in yet — everything else keeps continuous fire.
     for (const [id, k] of Object.entries(ENEMY_KINDS)) {
-      if (id === 'helicopter') continue;
+      if (id === 'helicopter' || id === 'drone') continue;
       expect(k.burstShots, id).toBeUndefined();
       expect(k.burstRestMs, id).toBeUndefined();
     }
