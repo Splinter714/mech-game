@@ -32,7 +32,7 @@ import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
-import { makeLock, stepLock, hasLock, predictedTarget } from '../../data/targetlock.js';
+import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
@@ -385,7 +385,6 @@ export const EnemiesMixin = {
     e.recampAt = 0;               // ms until an all-indirect mech hunts a fresh camp spot
     e.coverSpot = null;           // #72 leash: {x, y, since} — the cover spot it's camped at
     e.lock = makeLock();          // #62: this enemy's indirect-fire lock ON THE PLAYER
-    e.lockBlindAge = 0;           // s since this enemy last had LOS to the player (blind lead)
     // #103: fresh spawn (or a debug reset) starts UNAWARE again — idle near spawn until it
     // detects the player. One-way per encounter, so a reset is the only thing that re-arms it.
     e.awareness = UNAWARE;
@@ -683,34 +682,28 @@ export const EnemiesMixin = {
 
     // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once
     // aware; an unaware enemy has no business tracking the player at all.
-    if (aware) this._updateEnemyLock(e, dist, bearing, los, dt);
+    if (aware) this._updateEnemyLock(e, dist, bearing);
 
     // Fire ready weapons at the player (gated by #28, and by #103 awareness — an unaware enemy
     // never fires). Direct-fire weapons need current LOS. An indirect-fire weapon (homing/
-    // arcing) may also fire BLIND over cover (#62/#44, rework #252) whenever this enemy has a
-    // target at all (no more charge-up wait, no more maintain-timer expiry — see
-    // `_updateEnemyLock` below) — it lobs onto the player's last-known/predicted position.
+    // arcing) fires straight through cover (#62/#44, rework #252; playtest follow-up #252 dropped
+    // the old dead-reckoned "blind fire" — it now just tracks the player's LIVE position, no LOS
+    // needed) whenever this enemy has a target at all (no charge-up wait, no maintain-timer
+    // expiry — see `_updateEnemyLock` below).
     if (this.enemyFire && aware) for (const w of e.mech.readyWeapons()) {
       let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
       const indirect = isIndirectWeapon(w.weapon);
-      const blindFire = indirect && !los && hasLock(e.lock);   // has a target, lobbing over cover
-      const canFire = inRange && (los || blindFire);
-      // Blind indirect fire aims at the dead-reckoned last-known player position; otherwise
+      const canFire = inRange && (los || (indirect && hasLock(e.lock)));
       // #153: fire along the turret's actual current rendered angle (`e.turret`), NOT the
       // idealized lead-the-player line `_enemyFireAngle` computes. `e.turret` only slews
-      // toward that (or the plain bearing, see above) at `turretSlew` rad/s, so a shot fired
-      // while it's still mid-rotation now travels where the gun art is actually pointing —
-      // matching the muzzle position math below (`partMuzzle` also keys off `e.turret`) — and
-      // can genuinely miss a target that out-turned it. `_enemyFireAngle`'s lead-prediction
-      // math is intentionally left uncalled here now; it no longer influences the fired shot.
-      let aim;
-      if (blindFire) {
-        const pt = predictedTarget(e.lock, e.lockBlindAge);
-        aim = Math.atan2(pt.y - e.y, pt.x - e.x);
-      } else {
-        aim = e.turret;
-      }
+      // toward the player's bearing (or the plain idle-travel direction, see above) at
+      // `turretSlew` rad/s regardless of LOS, so a shot fired while it's still mid-rotation now
+      // travels where the gun art is actually pointing — matching the muzzle position math below
+      // (`partMuzzle` also keys off `e.turret`) — and can genuinely miss a target that out-turned
+      // it. `_enemyFireAngle`'s lead-prediction math is intentionally left uncalled here now; it
+      // no longer influences the fired shot.
+      const aim = e.turret;
       if (cd <= 0 && canFire) {
         e.mech.consumeAmmo(w.location, w.index, 1);
         const aimErr = (Math.random() - 0.5) * 0.12;
@@ -745,12 +738,14 @@ export const EnemiesMixin = {
         } else if (plan.mode === 'hitscan') {
           this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key, !!e.flying);
         } else {
-          // Blind lobs pass the predicted point as the seek target so homing rounds arc onto
-          // it; direct/LOS shots keep the intrinsic chase-the-player behaviour (seekTarget
-          // undefined). #245: a flying shooter's rounds ignore terrain cover in flight
-          // (last arg — no live flying MECH kind today, but keeps both fire paths uniform).
-          const seek = blindFire ? predictedTarget(e.lock, e.lockBlindAge) : null;
-          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, seek, fireAngle, !!e.flying);
+          // No explicit seek target needed here (playtest follow-up #252 dropped the old
+          // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
+          // intrinsic chase-the-player behaviour in _updateProjectiles (it re-reads the player's
+          // LIVE position every frame), so it tracks straight through cover exactly the same
+          // whether this shot had LOS or not. #245: a flying shooter's rounds also ignore terrain
+          // cover in flight (last arg — no live flying MECH kind today, but keeps both fire paths
+          // uniform).
+          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying);
         }
         cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
@@ -1151,11 +1146,11 @@ export const EnemiesMixin = {
   // enemy there's only ever one possible target (the player), so its "convergence" is trivial:
   // the player IS the target whenever in range, with no charge-up wait and no maintain-timer
   // expiry (matching the player's own convergence, which has no LOS gate or decay in its
-  // selection either — see targeting.js `_updateLock`). LOS still gates whether the *current*
-  // fix gets refreshed vs. going blind (dead-reckoned) — that's what lets an all-indirect mech
-  // get eyes on the player just long enough to grab a fix, then retreat behind a wall and keep
-  // bombarding blind indefinitely (as long as it stays in range).
-  _updateEnemyLock(e, dist, bearing, los, dt) {
+  // selection either — see targeting.js `_updateLock`). Playtest follow-up (#252): LOS no longer
+  // gates anything here either — an all-indirect mech can camp behind cover and bombard the
+  // player's LIVE position indefinitely (as long as it stays in range), no need to peek for a
+  // fix first; the old dead-reckoned "blind fire" fallback is gone (see targetlock.js).
+  _updateEnemyLock(e, dist, bearing) {
     const LOCK_RANGE = 700;   // px within which an enemy can target the player at all
     // The player as a STABLE target handle for the shared state machine (one per enemy, mutated
     // in place so `target !== lock.target` correctly reads "no change" across frames rather than
@@ -1164,8 +1159,7 @@ export const EnemiesMixin = {
     player.mech = this.mech; player.x = this.px; player.y = this.py;
     player.vx = this.vx || 0; player.vy = this.vy || 0;
     const target = dist <= LOCK_RANGE ? player : null;
-    stepLock(e.lock, { target, hasLos: los, targetPos: target ? player : null });
-    e.lockBlindAge = e.lock.blind ? (e.lockBlindAge || 0) + dt : 0;
+    stepLock(e.lock, { target });
   },
 
   // Firing aim with a simple lead: aim where the player will be by the time a projectile
