@@ -169,7 +169,17 @@ export const WEAPONS = {
     // floor (3.2 rad/s) rather than up near HOMING_TURN_MAX (9.0) like Swarm Rack/Streak Pod —
     // this should read as a heavy lobbed shell nudging itself onto a moving target, not a
     // missile snapping onto it.
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140 },
+    // #252 playtest follow-up round 2: "the lob seeking should turn SOONER, it feels
+    // last-minute." The missile family (Swarm Rack/Streak Pod) engages its seeker at the
+    // shared ASCENT_END (40% of flight, curving in over the back 35%) — inherited wholesale
+    // when this weapon opted into the same arcHomingBlend machinery, but on a lobbed shell it
+    // read as flying dumb through basically the whole ascent and only correcting right before
+    // impact. `homingBlendStart` overrides just the engagement point for THIS weapon (see
+    // delivery.js's `blendStart`/arcHomingBlend) without touching the missile family's already-
+    // played timing: 0.15 starts the curve-in well before apex (full tracking by the 50% mark,
+    // i.e. around apex, instead of by 75%) — noticeably earlier without being an instant
+    // hard-turn off the muzzle, which would look wrong for a heavy lobbed round.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0.15 },
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
@@ -245,7 +255,11 @@ export const WEAPONS = {
     // descent when the player does have one, same arcing-homing-blend as Swarm Rack/Streak Pod.
     // `homingTurnRadius` widened the same way so it turns in lazily near the 3.2 rad/s floor,
     // not the missile family's near-9 rad/s ceiling.
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 }, tracksLock: true, homingTurnRadius: 140 },
+    // #252 playtest follow-up round 2 — see plasmaCannon's comment above for the full
+    // rationale: `homingBlendStart: 0.15` engages the seeker much earlier than the missile
+    // family's shared 0.4 default (full tracking by the ~50% mark, near apex, instead of 75%),
+    // so it reads as correcting well before the last stretch rather than last-minute.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 }, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0.15 },
   }),
   // #244: siegeShell (the #94 sentry-turret artillery round) was deleted from this registry —
   // it was mechanically identical to napalm (both arcing projectile + splash + groundFire

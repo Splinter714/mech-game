@@ -167,17 +167,26 @@ export function arcMaxDist(x, y, aimAngle, tgt, maxRange, opt) {
 // target during the back half of the arc. `ASCENT_END` is the fractional-flight-distance
 // (dist / maxDist) where the seeker starts blending in (0 = launch, 1 = impact); the blend then
 // ramps from 0→1 over `HOMING_BLEND_SPAN` so the turn-in reads as a smooth curve, not a snap.
+// This is the DEFAULT engagement point (the missile family — Swarm Rack/Streak Pod — has been
+// played and tuned against it, so it stays put); #252 playtest follow-up: `delivery.
+// homingBlendStart` lets an individual weapon override just the start point (see
+// `makeProjectile`'s `blendStart`, stamped per-round) without touching this shared default or
+// the ramp span, so a lobbed-shell weapon can engage its seeker earlier without changing how
+// Swarm Rack/Streak Pod already feel.
 export const ASCENT_END = 0.4;           // fraction of flight spent mostly ballistic before homing engages
 export const HOMING_BLEND_SPAN = 0.35;   // fraction of flight over which homing ramps from 0% to 100%
 
 // How strongly an arcing homing round should steer toward its target at flight-fraction `t`
-// (dist / maxDist): 0 during ascent, ramping smoothly up to 1 by the time it's well into its
-// descent. Getting `maxDist` right (arcMaxDist above) matters here too — a maxDist that's
-// artificially short compresses this whole ramp into much less real distance, so a round with
-// a large heading error has to correct it far more abruptly.
-export function arcHomingBlend(t) {
-  if (t <= ASCENT_END) return 0;
-  return Math.min(1, (t - ASCENT_END) / HOMING_BLEND_SPAN);
+// (dist / maxDist): 0 before `ascentEnd`, ramping smoothly up to 1 over `HOMING_BLEND_SPAN`
+// after that. `ascentEnd` defaults to the shared `ASCENT_END` (missile-family timing) but a
+// round stamped with its own `blendStart` (from `delivery.homingBlendStart`, #252 follow-up)
+// passes that instead, so a lobbed-shell weapon can start curving in earlier in its flight.
+// Getting `maxDist` right (arcMaxDist above) matters here too — a maxDist that's artificially
+// short compresses this whole ramp into much less real distance, so a round with a large
+// heading error has to correct it far more abruptly.
+export function arcHomingBlend(t, ascentEnd = ASCENT_END) {
+  if (t <= ascentEnd) return 0;
+  return Math.min(1, (t - ascentEnd) / HOMING_BLEND_SPAN);
 }
 
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
@@ -355,6 +364,13 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     // this (firing.js) and re-derive `turn` from the new speed (passing the same per-weapon
     // radius). #243: `delivery.homingTurnRadius` (px) tunes that radius per weapon.
     homing: d.guidance === 'homing', turn: homingTurnRate(speed, d.homingTurnRadius ?? HOMING_TURN_RADIUS),
+    // #252 playtest follow-up: "the seeker only correcting last-minute reads as flying dumb the
+    // whole way up." Per-weapon override of where arcHomingBlend starts engaging (fraction of
+    // flight, dist/maxDist) — defaults to the shared ASCENT_END (missile-family timing,
+    // untouched); a lobbed-shell weapon (plasmaCannon/napalm) sets `delivery.homingBlendStart`
+    // earlier so its seeker visibly curves in well before apex instead of only in the back
+    // stretch of descent.
+    blendStart: d.homingBlendStart ?? ASCENT_END,
     // #213: opt-in WEAK per-projectile seek (Plasma Lance) — see stepWeakSeek below. Distinct
     // flag from `homing` so it never touches the real lock-on steering/turn-rate/gating.
     // #243: the seek's turn rate + notice radius ride on the round so a weapon can tune its own

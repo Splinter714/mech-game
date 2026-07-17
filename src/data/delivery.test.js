@@ -401,6 +401,44 @@ describe('Swarm Rack wide-angle-offset flight (#77 follow-up regression guard)',
     expect(arcHomingBlend((ASCENT_END - 0.05) * p.maxDist / p.maxDist)).toBe(0);
     expect(arcHomingBlend((ASCENT_END + 0.05) * p.maxDist / p.maxDist)).toBeGreaterThan(0);
   });
+
+  // #252 playtest follow-up round 2: "the lob seeking should turn sooner, it feels last-minute."
+  // plasmaCannon/napalm now tune `delivery.homingBlendStart` to engage well before ASCENT_END,
+  // WITHOUT touching the shared default the missile family (swarmRack/streakPod) still relies on.
+  describe('per-weapon homing-blend engagement point (#252 follow-up round 2)', () => {
+    it('a weapon with no homingBlendStart stamps the shared ASCENT_END default onto its rounds', () => {
+      const p = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 400 });
+      expect(p.blendStart).toBe(ASCENT_END);
+    });
+
+    it('plasmaCannon/napalm stamp their own earlier homingBlendStart, not the shared default', () => {
+      for (const weapon of [WEAPONS.plasmaCannon, WEAPONS.napalm]) {
+        const p = makeProjectile(weapon, 0, 0, 0, { maxDist: 400 });
+        expect(p.blendStart).toBe(weapon.delivery.homingBlendStart);
+        expect(p.blendStart).toBeLessThan(ASCENT_END);
+      }
+    });
+
+    it('arcHomingBlend engages earlier when given an earlier ascentEnd, and unaffected weapons keep the default curve', () => {
+      const earlyStart = WEAPONS.plasmaCannon.delivery.homingBlendStart;
+      // Right after the earlier start point, an earlier-tuned round is already blending in...
+      expect(arcHomingBlend(earlyStart + 0.05, earlyStart)).toBeGreaterThan(0);
+      // ...while at that same flight-fraction, the shared default (missile family) is still dumb.
+      expect(arcHomingBlend(earlyStart + 0.05, ASCENT_END)).toBe(0);
+      // Calling with no override at all reproduces the exact ASCENT_END-gated default behavior.
+      expect(arcHomingBlend((ASCENT_END - 0.05))).toBe(0);
+      expect(arcHomingBlend((ASCENT_END + 0.05))).toBeGreaterThan(0);
+    });
+
+    it("swarmRack/streakPod's own engagement point is untouched by the lob weapons' tuning", () => {
+      expect(WEAPONS.swarmRack.delivery.homingBlendStart).toBeUndefined();
+      expect(WEAPONS.streakPod.delivery.homingBlendStart).toBeUndefined();
+      const swarm = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 400 });
+      const streak = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 400 });
+      expect(swarm.blendStart).toBe(ASCENT_END);
+      expect(streak.blendStart).toBe(ASCENT_END);
+    });
+  });
 });
 
 describe('resolveSeekPoint (#77 follow-up: live tracking, not a spawn-time snapshot)', () => {
