@@ -211,14 +211,15 @@ export const DEFAULT_SFX = withQDefaults({
     ],
   },
   machineGun: {
-    // Bespoke layers (kept — do not revert to gunCrackLayers). Muted 2nd noise/2nd tone
-    // slots added so this has the same 2-noise + 2-tone shape as autocannon/shotgun (#54);
-    // gain 0 until tuned, everything else untouched.
+    // Bespoke layers (kept — do not revert to gunCrackLayers). #263: hand-tuned via the
+    // Weapon Lab sound panel — gain/attack/q ported verbatim from the live tuner, freq/
+    // freqEnd/dur/type/kind unchanged. The 2nd noise (highpass) slot is no longer muted
+    // (now audibly part of the cue); the 2nd tone (square) slot stays muted at gain 0.
     fire: [
-      { kind: 'noise', type: 'bandpass', freq: 1300, freqEnd: 20, dur: 0.36, gain: 0.2, attack: 0, q: 0.45 },
-      { kind: 'noise', type: 'highpass', freq: 1600, freqEnd: 700, dur: 0.045, gain: 0, attack: 0.0008 },
-      { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.155, gain: 0.3, attack: 0.04 },
-      { kind: 'tone', type: 'square', freq: 440, freqEnd: 150, dur: 0.035, gain: 0, attack: 0.002 },
+      { kind: 'noise', type: 'bandpass', freq: 1300, freqEnd: 20, dur: 0.36, gain: 0.19, attack: 0, q: 0.45 },
+      { kind: 'noise', type: 'highpass', freq: 1600, freqEnd: 700, dur: 0.045, gain: 0.08, attack: 0.0008, q: 0.8 },
+      { kind: 'tone', type: 'sawtooth', freq: 45, freqEnd: 20, dur: 0.155, gain: 0.42, attack: 0.04 },
+      { kind: 'tone', type: 'square', freq: 440, freqEnd: 150, dur: 0.035, gain: 0, attack: 0 },
     ],
     impact: [
       { kind: 'noise', type: 'bandpass', freq: 1275, freqEnd: 20, dur: 0.005, gain: 0.05, attack: 0, q: 0.1 },
