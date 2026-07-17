@@ -6,7 +6,7 @@ import { TRAJECTORY_DELAY } from '../audio/sfxParams.js';
 import {
   storeOverride, hasOverride,
   setTrim, setStart, getProcessing, setProcessing, setFadeOut, setVolume, setLoopStartMs,
-  seedOverrideFromBaked, variantStage, removeOverrideVariant, MAX_VARIANTS,
+  seedOverrideFromBaked, variantStage, removeOverrideVariant, MAX_VARIANTS, applyTuningToAllVariants,
 } from '../audio/sfxOverrides.js';
 import { getOverrideRowState, getVariantSlotCount } from './sfxOverridePanelState.js';
 import { WEAPON_STAGES, testFirePlan } from './weaponSfxStages.js';
@@ -385,6 +385,21 @@ export class WeaponSfxPanel {
       });
     }, { color: active ? UI.good : UI.dim });
     y += 20 + 8;
+
+    // #209: one-time copy of THIS variant's tuning (trim/processing/fade-out/volume/loop-start —
+    // never the file itself, since every variant necessarily has its own distinct recording) onto
+    // every other loaded variant in the pool. Only meaningful once there's a real pool (2+ loaded
+    // variants) and this slot itself has something loaded to copy from.
+    if (active && totalVariants > 1) {
+      this._button(ox + 6, y, w - 12, 18, `apply variant ${variantIndex + 1}'s tuning to all`, () => {
+        applyTuningToAllVariants(weaponId, stage, variantIndex).then(() => {
+          if (this.weaponId !== weaponId) return; // selection changed while this resolved
+          this._toast(`${stage}: variant ${variantIndex + 1}'s tuning applied to all variants`);
+          this._build();
+        });
+      }, { color: UI.accent });
+      y += 18 + 8;
+    }
 
     // #166: non-destructive start/end pair — only shown once this stage actually has a file
     // override loaded (mirrors the load/clear controls above and the #150 grey-out convention:
