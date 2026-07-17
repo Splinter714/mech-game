@@ -43,6 +43,8 @@ import { EnemiesMixin } from './enemies.js';
 import { WEAPONS } from '../../data/weapons.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
+import { ARENA_MECH_SCALE, partMuzzle } from './shared.js';
+import { ART_SCALE } from '../../art/index.js';
 
 // Referenced via WEAPONS.<id>.id (not string literals) so this file respects the architecture
 // guard's "arena/*.js never names a specific weapon id" rule (same convention as
@@ -138,6 +140,53 @@ describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech f
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(1);
     expect(e.fireCd).toBe(1000);               // cadence reset from def.fireEveryMs
+  });
+});
+
+// #233 ("projectiles should originate from the tip of the weapon muzzle art"): non-mech KIND
+// enemies (turret/tank/drone/…) spawn shots via this same `_fireVehicleWeapon` path, keyed off
+// `def.muzzlePart`'s box — but that box's own front edge sits behind (or, for the quadruped,
+// past) the kind's hand-drawn gun/barrel art. `def.muzzleForward` (enemyKinds.js) closes that
+// gap; these tests prove `_fireVehicleWeapon` actually applies it.
+describe('_fireVehicleWeapon applies muzzleForward to the spawn point (#233)', () => {
+  function expectedMuzzle(e, muzzleForward) {
+    const part = e.kindDef.parts[e.kindDef.muzzlePart];
+    const disp = ARENA_MECH_SCALE * (e.kindDef.scale ?? 1) * ART_SCALE;
+    return partMuzzle(part, e.x, e.y, 0, disp, muzzleForward ?? 0);
+  }
+
+  it('spawns at the bare front edge when muzzleForward is absent (unchanged legacy behaviour)', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // no muzzleForward field
+    scene._fireVehicleWeapon(e, {}, 0);
+    const want = expectedMuzzle(e, 0);
+    expect(scene._spawnProjectile.mock.calls[0][1]).toBeCloseTo(want.x, 6);
+    expect(scene._spawnProjectile.mock.calls[0][2]).toBeCloseTo(want.y, 6);
+  });
+
+  it('pushes the spawn point forward by muzzleForward when the kind def sets it (e.g. the turret\'s +4)', () => {
+    const { scene } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
+    e.kindDef.muzzleForward = 4;
+    scene._fireVehicleWeapon(e, {}, 0);
+    const want = expectedMuzzle(e, 4);
+    const withoutForward = expectedMuzzle(e, 0);
+    expect(scene._spawnProjectile.mock.calls[0][1]).toBeCloseTo(want.x, 6);
+    expect(scene._spawnProjectile.mock.calls[0][2]).toBeCloseTo(want.y, 6);
+    // Sanity: the offset actually moved the point, proving muzzleForward isn't a no-op.
+    expect(Math.abs(want.x - withoutForward.x) + Math.abs(want.y - withoutForward.y)).toBeGreaterThan(0.01);
+  });
+
+  it('pulls the spawn point BACK for a negative muzzleForward (the quadruped kind\'s -4 case)', () => {
+    const { scene } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
+    e.kindDef.muzzleForward = -4;
+    scene._fireVehicleWeapon(e, {}, 0);
+    const want = expectedMuzzle(e, -4);
+    const withoutForward = expectedMuzzle(e, 0);
+    expect(scene._spawnProjectile.mock.calls[0][1]).toBeCloseTo(want.x, 6);
+    expect(scene._spawnProjectile.mock.calls[0][2]).toBeCloseTo(want.y, 6);
+    expect(Math.abs(want.x - withoutForward.x) + Math.abs(want.y - withoutForward.y)).toBeGreaterThan(0.01);
   });
 });
 

@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, partMuzzle, rotateToward, unitDepth } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
@@ -144,13 +144,15 @@ export const LocomotionMixin = {
     return Phaser.Math.Angle.Wrap(fireAngle - this.turretAngle);
   },
 
-  // World position of a weapon's muzzle: its body-location offset (front edge of the
-  // part, in design coords where -y is forward) rotated by the turret facing. So a
-  // left-arm shot leaves the left arm, a right-torso shot the right torso, etc.
+  // World position of a weapon's muzzle: its body-location offset (the mounted weapon's
+  // actual ART TIP — #233 — not just the front edge of the part) rotated by the turret
+  // facing. So a left-arm shot leaves the tip of the left arm's gun, a right-torso shot the
+  // tip of the right torso's, etc.
   _muzzle(loc) {
     const disp = ARENA_MECH_SCALE * ART_SCALE;
     const part = mechLayout(this.mech)[loc];
-    return partMuzzle(part, this.px, this.py, this.turretAngle, disp);
+    const tipOffset = mechMuzzleTipOffset(this.mech, loc, part);
+    return partMuzzle(part, this.px, this.py, this.turretAngle, disp, tipOffset);
   },
 
   // Twin-stick locomotion + turret aim. The left stick / WASD is a world-space move vector;

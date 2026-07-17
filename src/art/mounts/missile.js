@@ -1,8 +1,9 @@
 // Missile mount — a launch box with a 2×2 grid of glowing cells.
 import { ellipseC, roundC, poly, chamfer, rectC } from '../mechPrims.js';
+import { barrelLen } from './barrelSpec.js';
 
 export function draw(sg, T, bx, frontY, s, n, cap) {
-  const w = 5.4 * s, h = Math.min(6.5 * s, cap), cy = frontY - h / 2;
+  const w = 5.4 * s, h = barrelLen('missile', s, cap), cy = frontY - h / 2;
   if (T.bubbly) ellipseC(sg, bx, cy, w * 1.1, h, T.faceDk);
   else if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.6);
   else { poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), T.outline); poly(sg, chamfer(bx, cy, w, h, 1), T.faceDk); }

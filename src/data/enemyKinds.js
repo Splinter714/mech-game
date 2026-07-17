@@ -62,6 +62,13 @@ export const ENEMY_KINDS = {
       gun: { x: 0, y: -8, w: 12, h: 20 },
     },
     muzzlePart: 'gun',
+    // #233 ("shots should originate from the muzzle art's tip"): `gun`'s own front edge
+    // (y:-8, h:20 ⇒ front at y=-18 in art/vehicles/turret.js's drawGun coords) sits well
+    // BEHIND the barrel's actual rendered tip — the muzzle-glow ellipse at y=-22 in that
+    // file. `muzzleForward` is that gap (design units, added to partMuzzle's forward
+    // distance) so vehicle-kind shots spawn from the real barrel tip, not the gun housing's
+    // own box edge, same fix as the mech mount art (src/art/mounts/barrelSpec.js).
+    muzzleForward: 4,
     weaponId: 'siegeShell',
     fireRange: 2400,       // #94: INSANE — well beyond the next-longest engagement range in the
                            // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
@@ -94,6 +101,9 @@ export const ENEMY_KINDS = {
       barrel: { x: 0, y: -16, w: 6, h: 16 },
     },
     muzzlePart: 'barrel',
+    // #233: `barrel`'s own front edge (y:-16, h:16 ⇒ y=-24) sits behind the gun's actual
+    // rendered tip — the hot-glow ellipse at y≈-31 in art/vehicles/tank.js's drawTurret.
+    muzzleForward: 7,
     weaponId: 'autocannon',
     fireRange: 420,
     fireEveryMs: 1500,
@@ -120,6 +130,10 @@ export const ENEMY_KINDS = {
       body: { x: 0, y: 0, w: 12, h: 12 },
     },
     muzzlePart: 'body',
+    // #233: `body`'s own front edge (y:0, h:12 ⇒ y=-6) sits behind the under-slung barrel's
+    // rendered tip (art/vehicles/drone.js drawFrame's `rectC(0, -6, 1.4, 4, ...)` ⇒ far edge
+    // y=-8, no glow beyond it).
+    muzzleForward: 2,
     // #117 (temporary test, owner's explicit ask): swapped from machineGun to pulseLaser so
     // Jackson can playtest an ENEMY actually firing a hitscan weapon — no enemy in this table
     // mounted one before, so hitscan enemy fire was untested in the live game even though #123
@@ -157,6 +171,10 @@ export const ENEMY_KINDS = {
       tail: { x: 0, y: 18, w: 6, h: 14 },
     },
     muzzlePart: 'cockpit',   // nose-mounted gun — cockpit is the most-forward part
+    // #233: `cockpit`'s own front edge (y:-18) already sits almost exactly at the chin gun's
+    // hot-glow tip (y=-17 in art/vehicles/helicopter.js drawAirframe) — within ~1 design unit,
+    // negligible at world scale, but included for consistency with every other kind.
+    muzzleForward: -1,
     weaponId: 'machineGun',
     fireRange: 460,
     fireEveryMs: 1900,
@@ -191,6 +209,11 @@ export const ENEMY_KINDS = {
       barrel: { x: 0, y: -22, w: 6, h: 20 },
     },
     muzzlePart: 'barrel',
+    // #233: `barrel`'s own front edge (y:-22, h:20 ⇒ y=-32) actually sits PAST the gun's real
+    // rendered tip — the muzzle-glow ellipse at y=-28 in art/vehicles/quadruped.js drawTurret
+    // — so this is the one kind where the fix pulls the spawn point BACK (negative), not
+    // forward: shots were floating ~4 design units ahead of the barrel, not behind it.
+    muzzleForward: -4,
     weaponId: 'autocannon',
     fireRange: 380,
     fireEveryMs: 1700,       // a touch slower cadence than tank's 1500 — bulkier support gun
@@ -257,6 +280,10 @@ export const ENEMY_KINDS = {
       body: { x: 0, y: 0, w: 8, h: 12 },
     },
     muzzlePart: 'body',
+    // #233: `body`'s own front edge (y:0, h:12 ⇒ y=-6) sits well behind the held rifle's
+    // rendered tip — the muzzle-glow ellipse at y=-18 in art/vehicles/infantry.js drawRifle
+    // (the rifle is drawn held forward across the body, reaching well past the torso box).
+    muzzleForward: 12,
     weaponId: 'machineGun',   // cheap, short-range, already-mounted ballistic — fits a trooper
     fireRange: 200,
     fireEveryMs: 700,
