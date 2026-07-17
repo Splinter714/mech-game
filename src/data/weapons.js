@@ -123,7 +123,9 @@ export const WEAPONS = {
     // #213: very light per-bolt tracking bias (Halo Needler-style) — see `weakSeek` above.
     // NOT `guidance: 'homing'` — these bolts never lock on and never gate firing on a lock
     // (targetlock.js only checks `guidance === 'homing'`).
-    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true },
+    // #219: playtest tuning pass — velocity nudged down slightly (620 -> 580, ~6%) and
+    // WEAK_SEEK_TURN_RATE (see delivery.js) nudged up so the seek reads a bit more.
+    delivery: { hit: 'projectile', path: 'straight', velocity: 580, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true },
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',
