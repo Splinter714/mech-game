@@ -950,7 +950,14 @@ export const EnemiesMixin = {
     // 1) Hurt / under fire → break contact behind cover if any exists; else kite out. #72 leash:
     //    once it's sat at the same cover spot past COVER_LEASH_MS, that spot is excluded — it
     //    must displace to a DIFFERENT spot (or kite/advance if none is reachable).
-    if (hurt) {
+    //    #212: but only while still IN the fight. Hp doesn't regenerate, so once an enemy is
+    //    hurt it's hurt for the rest of the encounter — without this override it would commit
+    //    to cover/kite forever and never re-close, so a hurt-but-still-AWARE enemy would look
+    //    like it gave up pursuing the player entirely the moment the player moved on to
+    //    something else. Cover/kite is the right call at engagement range; once the player has
+    //    actually left it behind (tooFar), it needs to catch back up first, same as a healthy
+    //    enemy would — it'll resume being cautious the next time it's back in range and hurt.
+    if (hurt && !tooFar) {
       const mustMove = coverLeashExpired(e.coverSpot, now);
       const cover = this._findCoverSpot(e, bearing, mustMove ? e.coverSpot : null);
       if (cover) {
