@@ -199,40 +199,47 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(INFANTRY_MOB_SIZE).toBeLessThan(50);
   });
 
-  // #243: the drone mounts a WEAKENED Repeater via the new per-kind `weaponOverride` mechanism
-  // (resolveWeapon) — retiring #117's temporary pulseLaser test assignment. A light swarm unit
-  // spawned SWARM_SIZE at a time must be meaningfully weaker per-unit than the player's own
-  // Repeater, and the shared base entry must stay untouched for the player.
-  describe('drone weakened Repeater override (#243)', () => {
-    it('drone mounts machineGun with an override; pulseLaser test assignment is retired', () => {
-      expect(ENEMY_KINDS.drone.weaponId).toBe('machineGun');
-      expect(ENEMY_KINDS.drone.weaponOverride).toBeTruthy();
+  // #243 playtest follow-up: the drone is back on the Pulse Laser (the weakened-Repeater
+  // interlude is retired) at FULL player damage — the only per-kind delta is cadence
+  // (cycleTime 260 instead of the player's 3000) plus trigger discipline (5 quick shots,
+  // then a ~2.5s rest). The shared base entry must stay untouched for the player.
+  describe('drone Pulse Laser loadout (#243 playtest follow-up)', () => {
+    it('drone mounts pulseLaser with a cadence-only override (no damage delta)', () => {
+      expect(ENEMY_KINDS.drone.weaponId).toBe('pulseLaser');
+      expect(ENEMY_KINDS.drone.weaponOverride).toEqual({ cycleTime: 260 });
+      expect(ENEMY_KINDS.drone.weaponOverride.damage).toBeUndefined();
     });
 
-    it('resolves to half the player Repeater\'s per-round damage and half its stream rate', () => {
+    it('resolves to the SAME per-pulse damage as the player\'s Pulse Laser, rapid cadence', () => {
       const resolved = resolveWeapon(ENEMY_KINDS.drone.weaponId, ENEMY_KINDS.drone.weaponOverride);
-      const base = WEAPONS.machineGun;
-      expect(resolved.damage).toBe(base.damage / 2);
-      expect(resolved.delivery.fireRate).toBe(base.delivery.fireRate / 2);
-      // Everything not overridden is still the Repeater — same twin-lane stream identity.
-      expect(resolved.delivery.pattern).toBe('stream');
-      expect(resolved.delivery.streams).toBe(base.delivery.streams);
-      expect(resolved.delivery.velocity).toBe(base.delivery.velocity);
-      expect(resolved.id).toBe('machineGun');
+      const base = WEAPONS.pulseLaser;
+      expect(resolved.damage).toBe(base.damage);
+      expect(resolved.cycleTime).toBe(260);
+      // Everything not overridden is still the Pulse Laser — same 5-pulse hitscan burst identity.
+      expect(resolved.delivery.hit).toBe('hitscan');
+      expect(resolved.delivery.pattern).toBe('single');
+      expect(resolved.delivery.burst).toEqual(base.delivery.burst);
+      expect(resolved.id).toBe('pulseLaser');
     });
 
-    it('leaves the player\'s base machineGun entry untouched (damage 2, fireRate 18)', () => {
+    it('leaves the player\'s base pulseLaser entry untouched (cycleTime 3000)', () => {
       resolveWeapon(ENEMY_KINDS.drone.weaponId, ENEMY_KINDS.drone.weaponOverride);
-      expect(WEAPONS.machineGun.damage).toBe(2);
-      expect(WEAPONS.machineGun.delivery.fireRate).toBe(18);
+      expect(WEAPONS.pulseLaser.cycleTime).toBe(3000);
+      expect(WEAPONS.pulseLaser.damage).toBe(16 / 5);   // totalDamage 16 over the 5-pulse burst
     });
 
-    it('has NO per-kind cadence timer — the overridden fireRate IS the cadence lever (#241/#243)', () => {
+    it('opts into trigger discipline: 5 quick shots then a multi-second rest', () => {
+      expect(ENEMY_KINDS.drone.burstShots).toBe(5);
+      expect(ENEMY_KINDS.drone.burstRestMs).toBe(2500);
+    });
+
+    it('has NO per-kind cadence timer — the overridden cycleTime IS the cadence lever (#241/#243)', () => {
       expect(ENEMY_KINDS.drone.fireEveryMs).toBeUndefined();
     });
 
-    it('drone fireRange stays inside the Repeater\'s own envelope', () => {
-      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.machineGun.range.max);
+    it('drone fireRange stays inside the Pulse Laser\'s own envelope (280 ≤ opt 340)', () => {
+      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.pulseLaser.range.opt);
+      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.pulseLaser.range.max);
     });
   });
 
@@ -243,6 +250,15 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
       expect(resolved, `${id} resolved weapon`).toBeTruthy();
       expect(resolved.delivery, `${id} resolved delivery`).toBeTruthy();
       expect(resolved.damage, `${id} resolved damage`).toBeGreaterThan(0);
+    }
+  });
+
+  it('#243 playtest follow-up: NO kind overrides damage — enemy rounds always match the player\'s weapon', () => {
+    for (const id of ENEMY_KIND_IDS) {
+      const k = ENEMY_KINDS[id];
+      expect(k.weaponOverride?.damage, id).toBeUndefined();
+      const resolved = resolveWeapon(k.weaponId, k.weaponOverride);
+      expect(resolved.damage, `${id} resolved damage`).toBe(WEAPONS[k.weaponId].damage);
     }
   });
 });

@@ -20,17 +20,19 @@
 //   weaponOverride  #243: optional PARTIAL override merged onto the base weapon for THIS kind
 //              only (resolveWeapon, data/weapons.js): top-level fields shallow-merge, the nested
 //              `delivery` object also shallow-merges, and the base WEAPONS entry is never
-//              mutated — so a kind can mount "the Repeater, but weaker" as a two-line delta
-//              instead of forking a whole near-duplicate weapon entry. See drone below for the
-//              live example.
+//              mutated — so a kind can mount "the Repeater, but single-lane" as a one-line
+//              delta instead of forking a whole near-duplicate weapon entry. See helicopter
+//              below for the live example. Per the #243 playtest follow-up, overrides tune
+//              cadence/stream/burst shape ONLY — never `damage`; enemy per-round damage always
+//              matches the player's version of the weapon.
 //              CADENCE lives here too (#243, superseding #241's transitional `fireEveryMs`
 //              field entirely — it no longer exists): a vehicle's cooldown is ALWAYS
 //              `_fireInterval` on the RESOLVED weapon (the same resolution the player/
 //              mech-enemy path uses), so a kind that wants a slower/faster cadence tunes it
-//              in the weapon's OWN terms — `weaponOverride: { cycleTime: 1500 }` for a
-//              single-shot weapon (tank/quadruped below), or
-//              `weaponOverride: { delivery: { fireRate: 9 } }` for a stream weapon (drone/
-//              infantry below). One cadence concept, no parallel per-kind timer vocabulary.
+//              in the weapon's OWN terms — `weaponOverride: { cycleTime: 260 }` for a
+//              single-shot weapon (drone/tank/quadruped below), or
+//              `weaponOverride: { delivery: { fireRate: 10/7 } }` for a stream weapon
+//              (infantry below). One cadence concept, no parallel per-kind timer vocabulary.
 //   fireRange  px at which it opens fire (falls back to the weapon's own max).
 //   burstShots / burstRestMs  #243 trigger discipline (both optional): fire `burstShots` shots
 //              at the normal cadence, then rest `burstRestMs` before the next burst can start
@@ -39,7 +41,7 @@
 //              spaces the shots WITHIN a burst; deliberately KIND-level fields (not weapon
 //              stats) because trigger discipline is how the unit squeezes the trigger, not
 //              what the weapon is. Both absent ⇒ continuous fire, byte-identical to before;
-//              only the helicopter opts in today. `burstRestMs` defaults to 1000 if only
+//              the drone and helicopter opt in today. `burstRestMs` defaults to 1000 if only
 //              `burstShots` is set.
 //   flying     true ⇒ ignores walls/forest/water (flies over) AND draws a drop shadow (elevated).
 //   move       { maxSpeed, accel, turnRate, turretSlew } px/s + rad/s locomotion tuning.
@@ -160,24 +162,23 @@ export const ENEMY_KINDS = {
     // rendered tip (art/vehicles/drone.js drawFrame's `rectC(0, -6, 1.4, 4, ...)` ⇒ far edge
     // y=-8, no glow beyond it).
     muzzleForward: 2,
-    // #243: back on machineGun (the Repeater), retiring #117's temporary pulseLaser test
-    // assignment (that was the enemy-hitscan playtest fixture, explicitly "may become
-    // permanent depending on how it plays" — superseded by this) — but as a WEAKENED variant
-    // via the new `weaponOverride` mechanism (resolveWeapon, data/weapons.js), the flagship
-    // example of a per-owner weapon delta: the drone is a light swarm unit spawned 18 at a
-    // time (SWARM_SIZE), so it fires the same twin-lane tracer stream the player's Repeater
-    // does, just at HALF the per-round damage (2 → 1) and HALF the stream rate (18 → 9/sec) —
-    // one drone deals ~1/4 of a player Repeater's dps, and the base WEAPONS.machineGun entry
-    // (the player's mount) is untouched. fireRange kept at #117's 280 (machineGun's envelope,
-    // opt 338 / max 600, comfortably covers it).
-    // Cadence comes from the RESOLVED weapon (`_fireInterval`, per #241/#243), so the
-    // override's fireRate 9 IS the cadence (~111ms/tick) — the fire-rate lever lives in one
-    // place instead of a weapon rate AND a kind timer fighting.
-    weaponId: 'machineGun',
+    // #243 playtest follow-up: back to the Pulse Laser (reinstating #117's assignment — the
+    // weakened-Repeater interlude is retired), at the SAME damage as the player's mount (no
+    // damage override — per-owner deltas are cadence/burst-shape only for now). The only
+    // override is cadence: pulseLaser's natural cycleTime is 3000ms (a deliberate player-side
+    // pace), which would stretch 5 shots over ~15s — nothing like rapid fire — so the drone
+    // runs it at #117's proven 260ms shot-to-shot cadence. Trigger discipline (`burstShots`/
+    // `burstRestMs`) then shapes that into character: 5 quick trigger pulls (~1.3s of fire;
+    // each pull is itself a 5-pulse visual burst per the weapon's delivery.burst — burstShots
+    // counts pulls, not pulses), then a ~2.5s rest before the next salvo. fireRange kept at
+    // #117's 280 — it was tuned for exactly this weapon (opt 340 / max 600 comfortably cover
+    // it).
+    weaponId: 'pulseLaser',
     weaponOverride: {
-      damage: 1,                     // half the player Repeater's 2 per round
-      delivery: { fireRate: 9 },     // half the player Repeater's 18/sec stream cadence
+      cycleTime: 260,        // rapid-fire feel (#117's cadence); base 3000 is the player pace
     },
+    burstShots: 5,           // 5 quick shots…
+    burstRestMs: 2500,       // …then rest a few seconds before the next salvo
     fireRange: 280,
     swarmRadius: 200,       // px orbit radius the drone tries to hold around the player (#93: nudged out from 150 — playtest felt too close)
     flying: true,           // hovers — ignores ground cover, draws a small shadow
@@ -210,23 +211,24 @@ export const ENEMY_KINDS = {
     // negligible at world scale, but included for consistency with every other kind.
     muzzleForward: -1,
     weaponId: 'machineGun',
+    // #243 playtest follow-up: single-lane stream — the player's Repeater fires a twin-lane
+    // (`streams: 2`) tracer stream; the gunship runs the same gun at the same per-round damage
+    // (no damage override) but with ONE lane, so each pass reads lighter than the player's
+    // mount. Cadence itself is unchanged (machineGun's own fireRate 18 ⇒ ~55.6ms/tick via
+    // `_fireInterval`, per #241).
+    weaponOverride: {
+      delivery: { streams: 1 },   // player's Repeater is streams: 2
+    },
     fireRange: 460,
-    // #241: NO cadence override here (the pre-#241 flat `fireEveryMs: 1900` completely ignored
-    // machineGun's own `delivery: { pattern: 'stream', fireRate: 18, streams: 2 }` design, so
-    // the gunship fired one shot every 1.9s instead of the sustained twin-lane 18/sec stream
-    // the weapon — and the "raking the ground with cannon fire on each pass" flavor above — is
-    // meant to be). With no weaponOverride cadence field, `_fireVehicleWeapon` derives the
-    // weapon's own resolved cadence (~55.6ms/shot via `_fireInterval`) for the duration of
-    // each strafing pass — a real DPS/difficulty increase during that window, which is the
-    // point of the fix (owner: playtest and retune fireRange/strafeRange/hp if it reads as
-    // too much).
-    // #243 trigger discipline: post-#241 the gunship hosed its full 18/sec twin stream for an
-    // ENTIRE strafing pass — these bound each squeeze to 10 cadence ticks (~0.55s of fire, 20
-    // rounds with streams: 2) followed by a 1s rest, so a pass reads as aggressive raking
-    // BURSTS of cannon fire rather than one continuous hose. First (and only) kind to opt in;
-    // owner: tune via playtest.
-    burstShots: 10,
-    burstRestMs: 1000,
+    // #243 trigger discipline (retuned in the playtest follow-up): post-#241 the gunship hosed
+    // its full stream for an ENTIRE strafing pass — these bound each squeeze to 15 cadence
+    // ticks (~0.83s of fire, 15 rounds single-lane) followed by a 1.2s rest, so a pass reads
+    // as aggressive raking BURSTS of cannon fire rather than one continuous hose. Was 10
+    // shots / 1000ms rest when the stream was still twin-lane; the longer squeeze + slightly
+    // longer rest keep the burst reading substantial now that it's half the rounds per tick.
+    // Owner: tune via playtest.
+    burstShots: 15,
+    burstRestMs: 1200,
     strafeRange: 320,       // px offset of the pass line from the player
     flying: true,
     move: { maxSpeed: 210, accel: 260, turnRate: 3.2, turretSlew: 4 },
