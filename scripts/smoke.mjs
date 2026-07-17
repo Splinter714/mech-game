@@ -267,7 +267,7 @@ try {
       e0.vx = Math.cos(bearing + Math.PI / 2) * 70;   // strafe across the missile's path
       e0.vy = Math.sin(bearing + Math.PI / 2) * 70;
       a.projectiles.length = 0;
-      a.lock.enemy = e0; a.lock.progress = 1; a.lock.maintain = 3; a.lock.blind = false;
+      a.lock.target = e0; a.lock.blind = false;
       const m = a._spawnProjectile({ weapon: homingWeapon }, a.px, a.py, bearing, 'player');
       m.arc = false; m.maxDist = 6000;
       // seekTarget must be the LIVE enemy handle (carries `.mech`), never a detached {x,y} copy —
@@ -279,7 +279,7 @@ try {
         a._updateProjectiles(0.016);
       }
       homingHit = seekIsLiveHandle && totalHp() < hp0;
-      a._dropLock();
+      a.lock.target = null;
       e0.x = px; e0.y = py; e0.vx = 0; e0.vy = 0;      // restore the dummy for the tests below
       a.projectiles.length = 0;
     }
@@ -290,7 +290,7 @@ try {
     // not `_spawnProjectile` directly, so this exercises the fire gate itself.
     let noLockNoFire = false;
     {
-      a._dropLock();
+      a.lock.target = null;
       const mount = a.mech.weapons()[0];
       const fakeSlot = { ...mount, weapon: homingWeapon };
       const ammoBefore = a.mech.ammo[fakeSlot.location][fakeSlot.index];
