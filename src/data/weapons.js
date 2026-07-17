@@ -197,7 +197,9 @@ export const WEAPONS = {
   }),
   machineGun: w({   // sustained stream of small fast tracer rounds
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
-    damage: 2, range: { min: 0, opt: 338, max: 600 },
+    // #256 playtest round 2: damage 2 -> 1.667 to bring DPS down from 72 to ~60.
+    // DPS = damage x streams(2) x fireRate(18): 2*2*18 = 72 -> 1.667*2*18 = 60.
+    damage: 1.667, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
     // streams: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
     // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
@@ -246,7 +248,8 @@ export const WEAPONS = {
     // so 6*4/1.6 = 15 dps pre-rebalance -> 6*8/1.6 = 30 dps, meaningfully above the old
     // ~15-23 missile band but still under Flamethrower (81) and Repeater (72) since the
     // homing guidance is itself a strong utility advantage over straight DPS.
-    damage: 8, range: { min: 280, opt: 1050, max: 1750 },
+    // #256 playtest round 2: damage 8 -> 10.667 to land at ~40 dps (6*10.667/1.6 = 40).
+    damage: 10.667, range: { min: 280, opt: 1050, max: 1750 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
@@ -259,7 +262,8 @@ export const WEAPONS = {
     // same 3.5x (see swarmRack comment above) to hold flight time constant.
     // #256 playtest rebalance: damage 5 -> 9. One trigger pull dumps the whole 6-missile
     // burst over cycleTime(1.8s): 5*6/1.8 = 16.7 dps pre-rebalance -> 9*6/1.8 = 30 dps.
-    damage: 9, range: { min: 210, opt: 910, max: 1540 },
+    // #256 playtest round 2: damage 9 -> 12 to land at ~40 dps (12*6/1.8 = 40).
+    damage: 12, range: { min: 210, opt: 910, max: 1540 },
     ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
@@ -274,7 +278,8 @@ export const WEAPONS = {
     // #256 playtest rebalance: damage 5 -> 7. DPS = spreadCount(5) x damage / cycleTime(1.1s),
     // so 5*5/1.1 = 22.7 dps pre-rebalance -> 5*7/1.1 = 31.8 dps, landing this dumbfire
     // cluster in the same ~30 dps missile band as its two homing siblings above.
-    damage: 7, range: { min: 0, opt: 660, max: 960 },
+    // #256 playtest round 2: damage 7 -> 8.8 to land at ~40 dps (5*8.8/1.1 = 40).
+    damage: 8.8, range: { min: 0, opt: 660, max: 960 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.

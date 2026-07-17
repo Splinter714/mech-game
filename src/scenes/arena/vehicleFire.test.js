@@ -388,7 +388,7 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     // #241/#243 composition: cadence derives from the RESOLVED weapon — 1000/9, not 1000/18.
     expect(e.fireCd).toBeCloseTo(1000 / 9, 6);
     // The shared base entry the player mounts is unchanged.
-    expect(STREAM_WEAPON.damage).toBe(2);
+    expect(STREAM_WEAPON.damage).toBe(1.667);
     expect(STREAM_WEAPON.delivery.fireRate).toBe(18);
   });
 
