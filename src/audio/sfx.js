@@ -452,8 +452,12 @@ function sprintOffCue(e) {
 //   - partDestroyed: a small/light metallic break-off crack — quick, high-ish, no boom.
 //   - mechDestroyed: the most severe/final of the three — a low, sustained double-hit boom
 //     with a falling rumble tail, reading as "catastrophic and over."
-//   - runLost: a somber descending brass/drone-like defeat cue, distinct in TIMBRE (not another
-//     explosion) since it fires a beat later during the run-over transition, not at the kill.
+//
+// #210: `runLost` (a beat-later, losing-only defeat drone) was removed as redundant with
+// mechDestroyed. In its place, `returnToGarage` fires at the actual scene-transition moment,
+// for BOTH win and loss — a neutral "coming home" beat, deliberately NOT another severity cue
+// (mechDestroyed already owns that) and distinct from deploy's outbound departure-energy
+// (this is the inverse, settling motion rather than a rising launch).
 function partDestroyedCue(e) {                              // light metallic break-off crack
   e.noise(e.sfx, { dur: 0.07, gain: 0.16, type: 'highpass', freq: 900, freqEnd: 1400, attack: 0.001 });
   e.tone(e.sfx, { type: 'square', freq: 340, freqEnd: 160, dur: 0.09, gain: 0.13, attack: 0.001 });
@@ -463,15 +467,19 @@ function mechDestroyedCue(e) {                               // severe/final cat
   e.tone(e.sfx, { type: 'sawtooth', freq: 90, freqEnd: 30, dur: 0.6, gain: 0.24, attack: 0.005 });
   e.tone(e.sfx, { type: 'sine', freq: 55, freqEnd: 22, dur: 0.75, gain: 0.20, attack: 0.05 });   // low rumble tail
 }
-function runLostCue(e) {                                     // somber descending defeat drone
-  e.tone(e.sfx, { type: 'sawtooth', freq: 220, freqEnd: 110, dur: 0.5, gain: 0.14, attack: 0.03 });
-  e.tone(e.sfx, { type: 'sine', freq: 165, freqEnd: 82, dur: 0.7, gain: 0.16, attack: 0.05 });
-  e.tone(e.sfx, { type: 'sine', freq: 110, freqEnd: 55, dur: 0.9, gain: 0.12, attack: 0.1 });
+// #210: neutral "returning home" transition beat — a gentle settling descent (falling pitch,
+// soft landing) rather than a defeat drone or a rising launch whoosh, since it fires for a
+// win just as much as a loss.
+function returnToGarageCue(e) {
+  e.noise(e.sfx, { dur: 0.24, gain: 0.10, type: 'lowpass', freq: 900, freqEnd: 300, attack: 0.01 });
+  e.tone(e.sfx, { type: 'sine', freq: 340, freqEnd: 220, dur: 0.28, gain: 0.13, attack: 0.01 });
+  e.tone(e.sfx, { type: 'sine', freq: 500, freqEnd: 330, dur: 0.2, gain: 0.07, attack: 0.02 }); // soft settling chime
 }
 
 export const UI_CUES = {
   equip: equipCue,
   deploy: deployCue,
+  returnToGarage: returnToGarageCue,
   menuNav: menuNavCue,
   scrapPickup: scrapPickupCue,
   powerupPickupOvercharge: powerupPickupOverchargeCue,
@@ -483,7 +491,6 @@ export const UI_CUES = {
   sprintOff: sprintOffCue,
   partDestroyed: partDestroyedCue,
   mechDestroyed: mechDestroyedCue,
-  runLost: runLostCue,
 };
 
 // Generic (id, stage) UI/pickup sound dispatch — file override/bake takes precedence (same

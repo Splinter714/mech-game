@@ -106,28 +106,29 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
-  // #178/#188/#196/#201: the generic UI/pickup cue dispatch (equip/deploy/menuNav/scrapPickup/
-  // the 5 per-powerup powerupPickup* ids/sprintOn/sprintOff/partDestroyed/mechDestroyed/runLost)
-  // — every id registered in sfxDomains.js's `ui` domain plays a procedural stub without
-  // throwing, and an unregistered id is a safe no-op (mirrors the weapon fallback behavior above).
+  // #178/#188/#196/#201/#210: the generic UI/pickup cue dispatch (equip/deploy/returnToGarage/
+  // menuNav/scrapPickup/the 5 per-powerup powerupPickup* ids/sprintOn/sprintOff/partDestroyed/
+  // mechDestroyed) — every id registered in sfxDomains.js's `ui` domain plays a procedural stub
+  // without throwing, and an unregistered id is a safe no-op (mirrors the weapon fallback
+  // behavior above).
   it('plays a UI/pickup cue for every registered ui-domain id without throwing', () => {
     for (const id of [
-      'equip', 'deploy', 'menuNav', 'scrapPickup',
+      'equip', 'deploy', 'returnToGarage', 'menuNav', 'scrapPickup',
       'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock',
       'powerupPickupArmorPatch', 'powerupPickupShield',
       'sprintOn', 'sprintOff',
-      'partDestroyed', 'mechDestroyed', 'runLost',
+      'partDestroyed', 'mechDestroyed',
     ]) {
       expect(() => eng.ui(id)).not.toThrow();
     }
     expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(0);
   });
 
-  // #201: the 3 new triggers must each be independently registered in sfxDomains.js's `ui`
+  // #201/#210: these triggers must each be independently registered in sfxDomains.js's `ui`
   // array (mirroring #192/#194/#196's equip/deploy/powerup-pickup entries) so the owner's
   // generalized tuner panel can override/bake each one separately.
-  it('registers partDestroyed/mechDestroyed/runLost as their own SFX domain entries (#201)', () => {
-    for (const id of ['partDestroyed', 'mechDestroyed', 'runLost']) {
+  it('registers partDestroyed/mechDestroyed/returnToGarage as their own SFX domain entries (#201/#210)', () => {
+    for (const id of ['partDestroyed', 'mechDestroyed', 'returnToGarage']) {
       const entry = findSfxDomainEntry(id);
       expect(entry).toBeTruthy();
       expect(entry.stages).toEqual([['play', 'PLAY']]);

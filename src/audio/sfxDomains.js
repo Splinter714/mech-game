@@ -28,13 +28,18 @@
 //     rather than splitting player-part-loss from enemy-part-loss).
 //   - `mechDestroyed` — specifically the PLAYER's own mech going down (MECH DOWN), distinct
 //     from an enemy dying (which already has its own death-explosion-by-category system, #180/#184).
-//   - `runLost` — fires only on the LOSING run-over transition (not the win case), a beat after
-//     mechDestroyed since it's the run-level "you're headed back to the garage" cue, not the
-//     death moment itself.
+//
+// #210: `runLost` was removed — Jackson felt it was basically redundant with mechDestroyed,
+// fired right alongside it at the death moment. In its place, `returnToGarage` fires at the
+// ACTUAL scene-transition moment (the delayed call back to GarageScene) and covers BOTH the
+// win and loss outcomes — it's a cue for the transition itself ("heading back to the
+// garage"), not a defeat-specific cue, so it pairs with `deploy` (the outbound trip) rather
+// than living alongside the death/loss cues.
 export const SFX_DOMAINS = {
   ui: [
     { id: 'equip', label: 'Equip Weapon', stages: [['play', 'PLAY']] },
     { id: 'deploy', label: 'Deploy', stages: [['play', 'PLAY']] },
+    { id: 'returnToGarage', label: 'Return To Garage', stages: [['play', 'PLAY']] },
     { id: 'menuNav', label: 'Menu Navigation', stages: [['play', 'PLAY']] },
     { id: 'scrapPickup', label: 'Scrap Pickup', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupOvercharge', label: 'Pickup: Overcharge', stages: [['play', 'PLAY']] },
@@ -46,7 +51,6 @@ export const SFX_DOMAINS = {
     { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
     { id: 'partDestroyed', label: 'Part Destroyed', stages: [['play', 'PLAY']] },
     { id: 'mechDestroyed', label: 'Mech Destroyed', stages: [['play', 'PLAY']] },
-    { id: 'runLost', label: 'Run Lost', stages: [['play', 'PLAY']] },
   ],
 };
 

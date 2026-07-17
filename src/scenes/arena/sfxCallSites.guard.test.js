@@ -32,7 +32,21 @@ describe('#201 SFX call-site wiring', () => {
     expect(combat).not.toMatch(/Audio\.explosion\(1\.2\)/);
   });
 
-  it('run.js fires runLost only on the losing run-over transition, not the win case', () => {
-    expect(run).toMatch(/if \(!won\) Audio\.ui\('runLost'\)/);
+  // #210: `runLost` (fired only on loss, right alongside mechDestroyed at the death moment)
+  // was replaced with `returnToGarage`, fired at the actual scene-transition moment inside the
+  // RUN_OVER_DELAY delayedCall, unconditional on win/loss.
+  it('run.js no longer fires the old runLost cue', () => {
+    expect(run).not.toMatch(/Audio\.ui\('runLost'\)/);
+  });
+
+  it('run.js fires returnToGarage at the scene-transition delayedCall, unconditional on win/loss', () => {
+    // Must appear inside the delayedCall callback, alongside the toGarage() transition, and
+    // NOT be gated by an `if (!won)`/`if (won)` guard immediately preceding it.
+    const delayedCallMatch = run.match(/delayedCall\(RUN_OVER_DELAY[\s\S]*?\}\);/);
+    expect(delayedCallMatch).toBeTruthy();
+    const body = delayedCallMatch[0];
+    expect(body).toMatch(/Audio\.ui\('returnToGarage'\)/);
+    expect(body).toMatch(/this\.toGarage\(\)/);
+    expect(body).not.toMatch(/if\s*\(\s*!?won\s*\)/);
   });
 });

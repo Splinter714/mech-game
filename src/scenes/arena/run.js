@@ -161,17 +161,18 @@ export const RunMixin = {
     const won = this.run.status === 'won';
     const label = won ? 'RUN COMPLETE' : 'RUN OVER';
     const color = won ? '#7bd17b' : '#e2533a';
-    // #201: a dedicated "run lost" cue, fired only on the losing run-over transition (not the
-    // win case) — a beat after mechDestroyed since this is the run-level defeat moment, not
-    // the death moment itself. No matching win cue added (not asked for, and this file has no
-    // existing win-cue path to mirror).
-    if (!won) Audio.ui('runLost');
     this._floatText(this.px, this.py - 50, label, color);
     this.registry.set('runOverBanner', { label, color, currency: this.run.currency });
 
+    // #210: `returnToGarage` fires here, at the actual scene-transition moment, for BOTH win
+    // and loss — it's a cue for the transition itself (heading back to the garage), not a
+    // defeat-specific beat, so it's unconditional on `won`. (Replaces #201's `runLost`, which
+    // fired only on loss, right alongside mechDestroyed at the death moment — redundant with
+    // that cue per playtest feedback.)
     this.time.delayedCall(RUN_OVER_DELAY, () => {
       this.registry.set('run', null);
       this.registry.set('runOverBanner', null);
+      Audio.ui('returnToGarage');
       this.toGarage();
     });
   },

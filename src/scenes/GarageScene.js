@@ -41,9 +41,9 @@ const PANEL_W = 300;
 const PANEL_GAP = 14;
 const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
 const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
-// #178/#196/#207: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
-// menuNav/scrapPickup/the 5 per-powerup powerupPickup* cues/sprint on-off/the 3 death-and-
-// loss cues) — mirrors the #107 explosion-category row immediately above it, feeding the
+// #178/#196/#207/#210: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
+// returnToGarage/menuNav/scrapPickup/the 5 per-powerup powerupPickup* cues/sprint on-off/the
+// death-and-loss cues) — mirrors the #107 explosion-category row immediately above it, feeding the
 // SAME WeaponSfxPanel via setTarget() so the owner can preview/trim/bake a real file over
 // each new UI/pickup cue exactly like a weapon or explosion category. #207: 13 buttons
 // crammed under one "UI / PICKUP SOUNDS" header read as a wall of tiny text, so the row is
@@ -55,10 +55,10 @@ const UI_GAP = 10;        // gap below the whole UI block before the autofire ro
 // Purely a display grouping over SFX_DOMAINS.ui — ids/labels/stages there are unchanged.
 // Order within a group follows the id order below, not SFX_DOMAINS.ui's own order.
 const UI_GROUPS = [
-  { header: 'GENERAL UI', ids: ['equip', 'deploy', 'menuNav'] },
+  { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
   { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield'] },
   { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
-  { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed', 'runLost'] },
+  { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
 ];
 // #197: a small toggle button for the weapon catalog's auto-fire demo SOUND (each card's
 // continuous live shot/beam animation always runs; this only mutes/unmutes the automatic
