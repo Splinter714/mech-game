@@ -2,13 +2,13 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
-import { terrainFillColor, isBoundaryTerrainId, flatBoundaryTexKey } from '../../art/hexArt.js';
+import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
 import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
   safeZoneKeys, CORRIDOR_LENGTH_PX, HEX_STEP_PX, MAX_WORLD_RADIUS,
@@ -128,21 +128,28 @@ export const WorldMixin = {
     // designates a tree as an assault target. `_damageBuildingAt` chips/flattens both alike.
     this.coverHp = coverHp;      // hexKey → remaining HP for destructible soft-cover hexes
     this.tileImages = new Map();   // hexKey → the tile Image, so a hex can be re-textured in place
+    // #222 (4th playtest pass): three rounds of per-tile treatment (dropping the inset border,
+    // overdrawing/bleeding the fill, scoping the #211 sunken-shadow ring to true coastline-only
+    // tiles) all still read as "an obviously tiled hex grid" once seen in motion — because it
+    // structurally IS one: ~30 hexes deep of individually-placed, individually-textured Image
+    // objects, no matter how seamless each one's edges are made to look. Per Jackson's direction,
+    // stop placing hex tiles for the boundary ring at all. `this.terrain` keeps every boundary
+    // hex's id (so passability/`_blocked`, `blocksLOS`/LOS rays, `_terrainAt`, pathing — anything
+    // that reads the data map — is completely unaffected); we simply never call `this.add.image`
+    // for one. With no tile drawn there, the camera's own background colour shows through instead
+    // — and that's already set a few lines up (`this.cameras.main.setBackgroundColor(deepFill)`)
+    // to this exact biome's `deep` fill colour (blue-ish for water/ice, black-red for lava, etc.)
+    // as the #126 far-view backstop. Reusing it as the ACTUAL boundary rendering (rather than a
+    // backstop past the ring) turns the whole boundary into one continuous flat-coloured fill —
+    // structurally seamless, since there is no longer a tile edge to seam — exactly matching how
+    // impassable terrain looked before hex-terrain rendering existed for it, just biome-tinted
+    // instead of flat black. Only the passable interior (never a boundary-only id) still gets
+    // individual hex Image tiles, unchanged.
     for (const [k, id] of this.terrain) {
+      if (isBoundaryTerrainId(getTerrain(id).tex)) continue;
       const [q, r] = k.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
-      let tex = getTerrain(id).tex;
-      // #222 (3rd playtest pass): the boundary ring's #211 sunken-shadow ring is baked per
-      // TEXTURE, so every tile of it painting the same ring independently reproduces the very
-      // hex-tiled look the earlier overdraw/bleed fixes targeted — just with dark rings instead
-      // of seams. Only a tile that actually borders something other than its own boundary
-      // terrain (playable ground, or the unbuilt edge of the generated map) needs the drop-off
-      // cue; a tile fully surrounded by the same boundary terrain gets the flat (non-sunken)
-      // companion texture instead, so the ring only ever shows once, at the true coastline.
-      if (isBoundaryTerrainId(tex)) {
-        const bordersOther = neighbors(q, r).some((n) => this.terrain.get(axialKey(n.q, n.r)) !== id);
-        if (!bordersOther) tex = flatBoundaryTexKey(tex);
-      }
+      const tex = getTerrain(id).tex;
       const img = this.add.image(x, y, tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
     }
