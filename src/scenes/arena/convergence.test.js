@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   convergedFireAngle, MIN_CONVERGE_DIST, CONVERGE_DIST,
-  pickConvergeTarget, nearestToAimLine, aimAngleOffset,
+  pickConvergeTarget, nearestToAimLine, aimAngleOffset, pickAimEnemy,
 } from './shared.js';
 
 // The worst-case real muzzle: the heavy chassis' arm. Lateral offset r and forward offset f
@@ -90,6 +90,83 @@ describe('pickConvergeTarget — destructible terrain ranks below live enemies (
     const far = { x: 1000, y: 0 };   // dead on-line but out of range
     const picked = pickConvergeTarget(0, 0, 0, null, [near, far], 200);
     expect(picked).toBe(near);
+  });
+});
+
+// #250 playtest follow-up ("convergence/locking should somewhat prefer closer targets, not just
+// strictly follow pure aim precision") — pickAimEnemy blends angular offset (dominant) with
+// distance so a meaningfully closer enemy can beat a marginally-better-aimed farther one, while a
+// large angular gap still wins regardless of proximity. The mech sits at the origin facing +x
+// (turretAngle = 0) for every case below; ASSIST_RANGE (2200) stands in for the real caller's
+// maxDist.
+describe('pickAimEnemy — blended angle+proximity convergence scoring (#250 follow-up)', () => {
+  const ASSIST_RANGE = 2200;
+  const at = (dist, angle) => ({ x: dist * Math.cos(angle), y: dist * Math.sin(angle) });
+
+  it('prefers the closer enemy when both share the same angular offset', () => {
+    const near = at(300, 0.2);
+    const far = at(2000, 0.2);
+    expect(pickAimEnemy(0, 0, 0, [near, far], ASSIST_RANGE)).toBe(near);
+    // Order-independent.
+    expect(pickAimEnemy(0, 0, 0, [far, near], ASSIST_RANGE)).toBe(near);
+  });
+
+  it('prefers the better-aimed enemy when both are the same distance away', () => {
+    const onAim = at(500, 0.05);
+    const offAim = at(500, 0.3);
+    expect(pickAimEnemy(0, 0, 0, [onAim, offAim], ASSIST_RANGE)).toBe(onAim);
+    expect(pickAimEnemy(0, 0, 0, [offAim, onAim], ASSIST_RANGE)).toBe(onAim);
+  });
+
+  it('lets a meaningfully closer target win over a modest angular disadvantage', () => {
+    // Far enemy is very precisely aimed (0.05 rad ≈ 2.9°) but at max range; close enemy is only
+    // modestly worse-aimed (0.15 rad ≈ 8.6°) but adjacent to the mech. The old pure-angle rule
+    // always picked the far, better-aimed enemy — the whole point of this follow-up is that
+    // proximity now flips this particular case.
+    const farPrecise = at(ASSIST_RANGE, 0.05);
+    const closeModest = at(100, 0.15);
+    expect(pickAimEnemy(0, 0, 0, [farPrecise, closeModest], ASSIST_RANGE)).toBe(closeModest);
+  });
+
+  it('still lets a large angular gap win over proximity — angle stays the dominant factor', () => {
+    // Dead-on-aim enemy at max range vs. a wildly off-aim (80°) enemy standing right next to the
+    // mech: aim precision must still win here — proximity only breaks MODEST angular gaps, not
+    // gaps this large.
+    const deadOnFar = at(ASSIST_RANGE, 0);
+    const wildOffClose = at(10, 1.4);
+    expect(pickAimEnemy(0, 0, 0, [deadOnFar, wildOffClose], ASSIST_RANGE)).toBe(deadOnFar);
+  });
+
+  it('respects maxDist, excluding out-of-range candidates entirely', () => {
+    const inRange = at(500, 0.4);
+    const outOfRange = at(3000, 0);
+    expect(pickAimEnemy(0, 0, 0, [outOfRange, inRange], ASSIST_RANGE)).toBe(inRange);
+  });
+
+  it('returns null for an empty candidate list', () => {
+    expect(pickAimEnemy(0, 0, 0, [], ASSIST_RANGE)).toBeNull();
+  });
+});
+
+// #250 follow-up integration check: pickConvergeTarget's "enemy always beats a destructible hex"
+// ranking (the original #250 behavior, tested above under its own describe block) is structural —
+// `if (aimEnemy) return aimEnemy` — so it holds no matter HOW aimEnemy itself was chosen upstream.
+// Feed it a blended pickAimEnemy pick (rather than a raw enemy object) to confirm the #252/#250
+// wiring is unaffected by this follow-up's change to the enemy-selection scoring itself.
+describe('pickAimEnemy -> pickConvergeTarget — enemy still always beats a hex (#250)', () => {
+  it('an enemy chosen by the blended score still outranks a closer, better-aimed hex', () => {
+    const ASSIST_RANGE = 2200;
+    const at = (dist, angle) => ({ x: dist * Math.cos(angle), y: dist * Math.sin(angle) });
+    // Two candidate enemies feed pickAimEnemy first (the close one wins on the blended score);
+    // a destructible hex sits dead-centre on the aim line, closer than either enemy.
+    const farPrecise = at(2000, 0.05);
+    const closeModest = at(150, 0.15);
+    const aimE = pickAimEnemy(0, 0, 0, [farPrecise, closeModest], ASSIST_RANGE);
+    expect(aimE).toBe(closeModest);
+
+    const hex = { x: 50, y: 0 };   // closer AND perfectly on-line — still must lose to the enemy.
+    const picked = pickConvergeTarget(0, 0, 0, aimE, [hex]);
+    expect(picked).toBe(aimE);
   });
 });
 
