@@ -19,6 +19,7 @@ export const MAGNET_MIN_SPEED = 0.15;   // px/ms at the outer edge of the magnet
 export const MAGNET_MAX_SPEED = 0.5;    // px/ms right on top of the player — the drift accelerates in
 const PICKUP_TTL = 15000;
 const BOB_PERIOD = 1300;
+const BOB_AMPLITUDE = 1.5;   // #228: smaller/calmer bounce than the powerup beacon's 4px
 // #88: same small scatter radius as powerups.js (arena/powerups.js DROP_SCATTER_RADIUS) so a
 // kill that drops both a powerup AND salvage spreads them apart rather than stacking.
 const DROP_SCATTER_RADIUS = 30;
@@ -46,10 +47,13 @@ export const SalvageMixin = {
 
   // A small spinning gold diamond over a ground glow — a lighter beacon than the powerup one
   // (a passive currency trickle, not a big timed-buff moment) but still readable at a glance.
+  // #228 (playtest feedback): pushed clearly below the powerup beacon's size/brightness/bounce
+  // rather than just marginally under it — scrap should read as a quiet currency trickle, not
+  // another "big pickup" beacon.
   _makeSalvageView(x, y) {
-    const glow = this.add.ellipse(0, 6, 30, 12, SALVAGE_COLOR, 0.22);
-    const ring = this.add.circle(0, 0, 10, SALVAGE_COLOR, 0.16).setStrokeStyle(2, SALVAGE_COLOR, 0.9);
-    const gem = this.add.rectangle(0, 0, 9, 9, SALVAGE_COLOR, 1).setAngle(45).setStrokeStyle(1, 0xffffff, 0.8);
+    const glow = this.add.ellipse(0, 6, 20, 8, SALVAGE_COLOR, 0.14);
+    const ring = this.add.circle(0, 0, 7, SALVAGE_COLOR, 0.1).setStrokeStyle(2, SALVAGE_COLOR, 0.6);
+    const gem = this.add.rectangle(0, 0, 6, 6, SALVAGE_COLOR, 1).setAngle(45).setStrokeStyle(1, 0xffffff, 0.7);
     const c = this.add.container(x, y, [glow, ring, gem]);
     // #99: same WORLD_UI tier as the objective/powerup beacons — a pickup should always read
     // clearly, not get buried under whichever unit happens to walk near it.
@@ -83,9 +87,9 @@ export const SalvageMixin = {
       const t = s.age / BOB_PERIOD;
       const v = s.view;
       v.x = s.x;
-      v.y = s.y + Math.sin(t * Math.PI * 2) * 3;
-      v._gem.rotation += delta * 0.002;
-      v._ring.rotation -= delta * 0.0015;
+      v.y = s.y + Math.sin(t * Math.PI * 2) * BOB_AMPLITUDE;
+      v._gem.rotation += delta * 0.0014;
+      v._ring.rotation -= delta * 0.001;
       if (s.ttl < 1000) v.setAlpha(Math.max(0, s.ttl / 1000));
 
       if (Math.hypot(this.px - s.x, this.py - s.y) <= PICKUP_RADIUS) {
