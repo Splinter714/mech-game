@@ -31,7 +31,7 @@ import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance 
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, partMuzzle, rotateToward, unitDepth } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { makeLock, stepLock, isFullLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -720,7 +720,9 @@ export const EnemiesMixin = {
         // which body location actually mounts this weapon — not a fixed near-centre offset.
         const disp = ARENA_MECH_SCALE * ART_SCALE;
         const part = mechLayout(e.mech)[w.location];
-        const { x: mx2, y: my2 } = partMuzzle(part, e.x, e.y, e.turret, disp);
+        // #233: spawn from the weapon art's actual muzzle tip, not the part's bare front edge.
+        const tipOffset = mechMuzzleTipOffset(e.mech, w.location, part);
+        const { x: mx2, y: my2 } = partMuzzle(part, e.x, e.y, e.turret, disp, tipOffset);
         const fireAngle = aim + aimErr;
         // #117: route through the SAME delivery-type decision the player's fireWeapon makes
         // (planEmissions), instead of unconditionally spawning a travelling projectile — a
@@ -875,7 +877,10 @@ export const EnemiesMixin = {
     // fixed 18px offset from the unit's centre — same real-muzzle math as mechs (partMuzzle).
     const part = def.parts[def.muzzlePart] ?? Object.values(def.parts)[0];
     const disp = vehicleScale(def) * ART_SCALE;
-    const { x: mx, y: my } = partMuzzle(part, e.x, e.y, aim, disp);
+    // #233: `muzzleForward` (enemyKinds.js, design units) corrects for the gap between the
+    // muzzle PART's own box edge and where that kind's hand-drawn gun/barrel art actually
+    // ends, same fix as the mech mount art below.
+    const { x: mx, y: my } = partMuzzle(part, e.x, e.y, aim, disp, def.muzzleForward ?? 0);
     const fireAngle = aim + aimErr;
     // #123: route through the SAME delivery-type decision the mech fire loop uses (#117), rather
     // than unconditionally spawning a travelling projectile — a hitscan weapon resolves as an

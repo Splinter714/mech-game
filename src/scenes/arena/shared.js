@@ -2,6 +2,10 @@
 // OWN single-use constants local to its file; only the genuinely cross-cutting ones live
 // here so they can't drift between concerns.
 import { LOCATIONS } from '../../data/anatomy.js';
+import { isWeapon } from '../../data/items.js';
+import { getWeapon } from '../../data/weapons.js';
+import { CENTER } from '../../art/mechPrims.js';
+import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
 // and combat (mapping a hit point back to the nearest body part).
@@ -230,13 +234,34 @@ export function pickLiveWeighted(pool, isPartDestroyed, rng = Math.random) {
 // via mechLayout) and non-mech KIND fire (enemies.js `_fireVehicleWeapon`, keyed off the kind's
 // gun/barrel/etc. part in enemyKinds.js) compute the same real muzzle instead of each using its
 // own fixed near-centre offset (#109).
-export function partMuzzle(part, x, y, angle, disp) {
-  const f = (-part.y + part.h / 2) * disp;  // forward, to the part's front edge
+// `tipOffset` (#233, design units, same scale as `part`): how much further forward the
+// weapon's actual drawn muzzle art reaches PAST the part's own front edge — e.g. a Rail
+// Lance's barrel juts well beyond its arm/torso box, so spawning at the bare front edge (the
+// old default of 0) visibly started every shot inside the mech instead of at the barrel tip.
+// Callers with real weapon art (mech mounts via `weaponMuzzleTip`, mounts/barrelSpec.js) pass
+// that length in; callers with no such art (or that predate #233) get the old front-edge
+// behaviour unchanged.
+export function partMuzzle(part, x, y, angle, disp, tipOffset = 0) {
+  const f = (-part.y + part.h / 2 + tipOffset) * disp;  // forward, to the muzzle's actual tip
   const r = part.x * disp;                  // right of centre
   return {
     x: x + f * Math.cos(angle) - r * Math.sin(angle),
     y: y + f * Math.sin(angle) + r * Math.cos(angle),
   };
+}
+
+// #233: the tipOffset partMuzzle needs for a MECH's mounted weapon at `loc` — shared by the
+// player's locomotion `_muzzle(loc)` and an enemy mech's fire loop (enemies.js), so both spawn
+// shots at the same real muzzle-art tip instead of the front edge. `part` is `mechLayout(mech)
+// [loc]` (already computed by both callers); returns 0 for an empty/unweaponed location so a
+// bare mount (or the tilt-preview call on a location with no gun) still resolves to the front
+// edge, same as before this fix.
+export function mechMuzzleTipOffset(mech, loc, part) {
+  const ids = mech.mounts[loc]?.filter(isWeapon) ?? [];
+  if (!ids.length) return 0;
+  const wpn = getWeapon(ids[0]);
+  if (!wpn) return 0;
+  return weaponMuzzleTip(wpn.id, wpn.category, part, mech.chassis.art.bodyLen, CENTER);
 }
 
 // ── Direct-fire convergence (#40, #31, #74) ──────────────────────────────────────────

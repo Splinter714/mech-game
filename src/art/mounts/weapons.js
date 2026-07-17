@@ -11,13 +11,14 @@
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
 import { barrel, rectC, roundC, ellipseC, poly, chamfer, glowDot, glowBar } from '../mechPrims.js';
+import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
 
 // Pulse Laser — a SHORT twin-emitter block: a compact housing with two stubby little barrels
 // and two small glowing eyes, reading as a rapid-fire pulse array (not one long beam).
 function pulseLaser(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(6 * s, cap), w = 5.4 * s, off = 1.2 * s;
+  const L = barrelLen('pulseLaser', s, cap), w = 5.4 * s, off = 1.2 * s;
   rectC(sg, bx, frontY - L * 0.5, w, L, T.deep);                     // squat housing
   for (const dx of [-1, 1]) {
     barrel(sg, T, bx + dx * off, frontY - L * 0.5, 1.5 * s, L * 0.9);
@@ -28,7 +29,7 @@ function pulseLaser(sg, T, bx, frontY, s, n, cap) {
 // Beam Laser — a LONG slim barrel with a big focusing LENS at the muzzle: reads as a
 // continuous-beam projector. Bright edge light runs the whole length.
 function beamLaser(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(13 * s, cap), w = 2.2 * s;
+  const L = barrelLen('beamLaser', s, cap), w = 2.2 * s;
   barrel(sg, T, bx, frontY - L / 2, w, L);
   rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7);  // edge light down the barrel
   ellipseC(sg, bx, frontY - L * 0.9, w * 1.8, w * 1.1, T.deep);        // lens collar
@@ -38,7 +39,7 @@ function beamLaser(sg, T, bx, frontY, s, n, cap) {
 // Rail Lance — a HEAVY long rail rod: a thick barrel flanked by twin accelerator rails, a
 // blocky breech at the base and a bright charge glow at the tip. The sniper of the set.
 function railLance(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(15 * s, cap), w = 2.8 * s, rail = 1.1 * s, off = 2.1 * s;
+  const L = barrelLen('railLance', s, cap), w = 2.8 * s, rail = 1.1 * s, off = 2.1 * s;
   rectC(sg, bx, frontY - L * 0.14, w * 2.8, 3 * s, T.deep);           // blocky breech
   for (const dx of [-1, 1]) {                                        // twin accelerator rails
     rectC(sg, bx + dx * off, frontY - L * 0.52, rail, L * 0.9, T.faceDk);
@@ -52,7 +53,7 @@ function railLance(sg, T, bx, frontY, s, n, cap) {
 // Plasma Arc — a wide-mouthed mortar-ish emitter that lobs a bolt: a flared cup on a short
 // neck with a fat plasma ball glowing at the mouth.
 function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(8 * s, cap), w = 3.2 * s;
+  const L = barrelLen('plasmaCannon', s, cap), w = 3.2 * s;
   rectC(sg, bx, frontY - L * 0.35, w, L * 0.7, T.deep);              // short neck
   poly(sg, [[bx - w * 1.1, frontY - L], [bx + w * 1.1, frontY - L],
             [bx + w * 0.5, frontY - L * 0.6], [bx - w * 0.5, frontY - L * 0.6]], T.faceDk);  // flared cup
@@ -63,7 +64,7 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
 // Flamethrower — a stubby fuel-tank body with a flared FLAME NOZZLE at the tip and a pilot
 // glow. Squat and wide, reading as a close-range gout gun.
 function flamethrower(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(7 * s, cap), w = 3.4 * s;
+  const L = barrelLen('flamethrower', s, cap), w = 3.4 * s;
   ellipseC(sg, bx, frontY - L * 0.28, w * 1.3, L * 0.6, T.deep);     // rounded fuel body
   rectC(sg, bx, frontY - L * 0.62, w * 0.5, L * 0.5, T.faceDk);      // neck
   poly(sg, [[bx - w * 0.75, frontY - L], [bx + w * 0.75, frontY - L],
@@ -76,7 +77,7 @@ function flamethrower(sg, T, bx, frontY, s, n, cap) {
 // Autocannon — one BIG single barrel with a chunky muzzle brake and a base housing: a heavy
 // direct-fire shell gun (contrasts the repeater's many small barrels).
 function autocannon(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(12 * s, cap), w = 3.2 * s;
+  const L = barrelLen('autocannon', s, cap), w = 3.2 * s;
   rectC(sg, bx, frontY - L * 0.16, w * 1.9, 3 * s, T.deep);          // base housing
   barrel(sg, T, bx, frontY - L / 2, w, L);                          // fat barrel
   rectC(sg, bx, frontY - L * 0.82, w * 1.5, L * 0.18, T.faceDk);     // muzzle brake
@@ -86,7 +87,7 @@ function autocannon(sg, T, bx, frontY, s, n, cap) {
 // Repeater — a MULTI-barrel gatling: three thin barrels in a row over a wide housing, each
 // with its own small muzzle glow. Reads as a rapid tracer stream.
 function machineGun(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(10 * s, cap), w = 1.2 * s, off = 1.7 * s;
+  const L = barrelLen('machineGun', s, cap), w = 1.2 * s, off = 1.7 * s;
   rectC(sg, bx, frontY - L * 0.4, (off * 2 + w) * 1.5, L * 0.8, T.deep);  // gatling housing
   for (const dx of [-1, 0, 1]) {
     barrel(sg, T, bx + dx * off, frontY - L / 2, w, L);
@@ -97,7 +98,7 @@ function machineGun(sg, T, bx, frontY, s, n, cap) {
 // Scatter Gun — a WIDE flared shotgun muzzle: a short barrel opening into a broad cone with
 // pellet glints across the mouth. Reads as a spread weapon.
 function shotgun(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(8 * s, cap), w = 2.2 * s, mouth = 5.6 * s;
+  const L = barrelLen('shotgun', s, cap), w = 2.2 * s, mouth = 5.6 * s;
   rectC(sg, bx, frontY - L * 0.35, w, L * 0.7, T.deep);             // stubby barrel
   poly(sg, [[bx - mouth / 2, frontY - L], [bx + mouth / 2, frontY - L],
             [bx + w * 0.6, frontY - L * 0.55], [bx - w * 0.6, frontY - L * 0.55]], T.faceDk);  // wide funnel
@@ -107,7 +108,7 @@ function shotgun(sg, T, bx, frontY, s, n, cap) {
 // Napalm Lobber — a fat upward-angled MORTAR tube: a short stout barrel with a thick collar
 // and a canister glow in the mouth. Reads as a lobbed incendiary.
 function napalm(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(8 * s, cap), w = 4 * s;
+  const L = barrelLen('napalm', s, cap), w = 4 * s;
   rectC(sg, bx, frontY - L * 0.4, w * 0.5, L * 0.8, T.deep);        // base
   barrel(sg, T, bx, frontY - L * 0.55, w, L * 0.7);                // stout tube
   ellipseC(sg, bx, frontY - L * 0.9, w * 0.9, w * 0.55, T.faceDk);  // thick rim collar
@@ -119,7 +120,7 @@ function napalm(sg, T, bx, frontY, s, n, cap) {
 // Swarm Rack — a TALL stacked launch rack: a 2×3 grid of glowing tubes in a boxy frame,
 // reading as a big all-at-once salvo.
 function swarmRack(sg, T, bx, frontY, s, n, cap) {
-  const w = 5.6 * s, h = Math.min(7.5 * s, cap), cy = frontY - h / 2;
+  const w = 5.6 * s, h = barrelLen('swarmRack', s, cap), cy = frontY - h / 2;
   boxFrame(sg, T, bx, cy, w, h);
   for (const dx of [-1, 1]) for (const dy of [0, 1, 2]) {           // 2×3 launch cells
     const cxx = bx + dx * w * 0.22, cyy = frontY - h * (0.2 + dy * 0.28);
@@ -131,7 +132,7 @@ function swarmRack(sg, T, bx, frontY, s, n, cap) {
 // Streak Pod — a SLIM twin-tube pod: two long narrow tubes side by side, each with a bright
 // seeker glow at the tip. Reads as a precise pair of seekers, not a box.
 function streakPod(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(9 * s, cap), w = 1.9 * s, off = 1.7 * s;
+  const L = barrelLen('streakPod', s, cap), w = 1.9 * s, off = 1.7 * s;
   for (const dx of [-1, 1]) {
     if (T.bubbly) ellipseC(sg, bx + dx * off, frontY - L / 2, w * 1.4, L, T.faceDk);
     else roundC(sg, bx + dx * off, frontY - L / 2, w, L, T.faceDk, w * 0.5);
@@ -143,7 +144,7 @@ function streakPod(sg, T, bx, frontY, s, n, cap) {
 // Cluster Salvo — a single FAT dumbfire tube: one wide short launch barrel with a cluster of
 // small warhead glints packed in the mouth. Reads as a tight clump, not a rack.
 function clusterRocket(sg, T, bx, frontY, s, n, cap) {
-  const L = Math.min(8 * s, cap), w = 5 * s;
+  const L = barrelLen('clusterRocket', s, cap), w = 5 * s;
   if (T.bubbly) ellipseC(sg, bx, frontY - L / 2, w * 1.2, L, T.faceDk);
   else roundC(sg, bx, frontY - L / 2, w, L, T.faceDk, w * 0.3);     // fat tube
   rectC(sg, bx, frontY - L * 0.85, w * 0.86, L * 0.14, T.deep);     // muzzle lip
