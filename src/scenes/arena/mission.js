@@ -106,7 +106,6 @@ export const MissionMixin = {
   // and a banner (drawn by HudScene, reading `mission.status`) announcing it. This avoids
   // any surprising freeze/stop behaviour before the run loop exists to make that call well.
   _onMissionComplete() {
-    this._floatText(this.px, this.py - 40, 'MISSION COMPLETE', '#7bd17b');
     if (this._objectiveMarker) {
       // #129: index 2 — the amber ring is now the third child (after the halo + outline
       // legibility rings added around it; see `_makeObjectiveMarker`).

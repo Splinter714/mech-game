@@ -466,8 +466,7 @@ export const EnemiesMixin = {
   _spawnEnemyDebug() {
     const typeId = ENEMY_ROTATION[this._enemySeq % ENEMY_ROTATION.length];
     const p = this._offscreenSpawnPoint();
-    const e = this._spawnEnemy(p.x, p.y, typeId);
-    this._floatText(this.px, this.py - 34, `${e.mech.name || 'ENEMY'} INBOUND`, '#efc14a');
+    this._spawnEnemy(p.x, p.y, typeId);
   },
 
   // Restore every enemy to full health at its spawn point (in place, no re-deploy). Mech and
@@ -487,7 +486,6 @@ export const EnemiesMixin = {
         e.fireCd = 0;            // vehicles use a single numeric cooldown
       }
     }
-    this._floatText(this.px, this.py - 40, 'ENEMIES RESET', '#5ec8e0');
   },
 
   // #71: tear down one enemy's scene-side resources — its sprite container and the procedural
@@ -540,8 +538,6 @@ export const EnemiesMixin = {
   _toggleAi(which) {
     if (which === 'move') this.enemyMove = !this.enemyMove;
     else this.enemyFire = !this.enemyFire;
-    const label = which === 'move' ? `AI MOVE ${this.enemyMove ? 'ON' : 'OFF'}` : `AI FIRE ${this.enemyFire ? 'ON' : 'OFF'}`;
-    this._floatText(this.px, this.py - 40, label, '#efc14a');
   },
 
   // ── Enemy AI update loop ────────────────────────────────────────────────────────────
