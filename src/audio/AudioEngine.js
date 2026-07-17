@@ -414,20 +414,23 @@ export class AudioEngine {
   // Weapon firing (#32) — per-weapon tunable layers (Weapon Lab sound panel, see
   // sfxParams.js). Gameplay SFX dispatch lives in ./sfx.js; these facade methods keep the
   // public API + the resume/ready guards and delegate.
-  fire(weapon) {
+  // #200: `gainScale` (default 1) is an optional uniform volume multiplier for this one cue —
+  // see sfx.js's fire() for why (enemy fire cues playing VERY slightly quieter than the
+  // player's own).
+  fire(weapon, gainScale = 1) {
     this._resume();
     if (!this.ready || !weapon) return;
-    Sfx.fire(this, weapon);
+    Sfx.fire(this, weapon, gainScale);
     this._duckTrigger();
     this._logSfxTiming('fire');
   }
 
   // A brief in-flight flavor cue, fired a beat after launch — only weapons with a
   // noticeable flight time have one (see sfxParams.js); a no-op otherwise.
-  trajectory(weaponId) {
+  trajectory(weaponId, gainScale = 1) {
     this._resume();
     if (!this.ready || !weaponId) return;
-    Sfx.trajectory(this, weaponId);
+    Sfx.trajectory(this, weaponId, gainScale);
   }
 
   // Weapon impact (#33) — per weapon (falls back to a generic clank for an unknown weaponId).

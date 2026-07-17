@@ -195,10 +195,15 @@ function resolveBufferSource(weaponId, stage) {
   return null;
 }
 
-function playOverride(e, bus, weaponId, stage) {
+// #200: `gainScale` (default 1) multiplies the resolved override/bake's own volume — same
+// uniform-reduction knob playLayers grew for the procedural path, applied here so a buffer-
+// backed cue (a dev override or a shipped bake) gets quieted down identically instead of only
+// affecting weapons that still fall through to procedural synthesis.
+function playOverride(e, bus, weaponId, stage, gainScale = 1) {
   const resolved = resolveBufferSource(weaponId, stage);
   if (!resolved) return false;
-  return playBuffer(e, bus, resolved.buffer, resolved.startMs, resolved.trimMs, resolved.proc, resolved.fadeOutMs, resolved.volume);
+  const vol = (resolved.volume != null ? resolved.volume : 1) * gainScale;
+  return playBuffer(e, bus, resolved.buffer, resolved.startMs, resolved.trimMs, resolved.proc, resolved.fadeOutMs, vol);
 }
 
 // #179: a small attack ramp for the intro segment's start, mirroring startLoopLayers' click-safety
@@ -342,15 +347,20 @@ function startIntroThenSustain(e, bus, resolved, layers) {
   };
 }
 
-export function fire(e, weapon) {
-  if (playOverride(e, e.sfx, weapon.id, 'fire')) return;
-  playLayers(e, e.sfx, e.getSfxParams(weapon.id).fire);
+// #200: `gainScale` (default 1, i.e. unchanged) lets a caller uniformly quiet this cue —
+// currently used to make enemy-sourced fire cues VERY slightly quieter than the player's own
+// (see audio/fireCues.js's ENEMY_FIRE_GAIN_SCALE). Threads through both the buffer-override/
+// bake path and the procedural-layers fallback so the reduction applies no matter which one
+// actually plays.
+export function fire(e, weapon, gainScale = 1) {
+  if (playOverride(e, e.sfx, weapon.id, 'fire', gainScale)) return;
+  playLayers(e, e.sfx, e.getSfxParams(weapon.id).fire, gainScale);
 }
 
-export function trajectory(e, weaponId) {
-  if (playOverride(e, e.sfx, weaponId, 'trajectory')) return;
+export function trajectory(e, weaponId, gainScale = 1) {
+  if (playOverride(e, e.sfx, weaponId, 'trajectory', gainScale)) return;
   const p = e.getSfxParams(weaponId);
-  if (p.trajectory) playLayers(e, e.sfx, p.trajectory);
+  if (p.trajectory) playLayers(e, e.sfx, p.trajectory, gainScale);
 }
 
 export function impact(e, weaponId) {
