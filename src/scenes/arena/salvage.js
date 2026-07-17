@@ -12,11 +12,15 @@ import { DEPTH } from './shared.js';
 const SALVAGE_COLOR = 0xf5c542;   // gold/amber — reads distinct from the powerup palette
 export const PICKUP_RADIUS = 26;
 // #226: a small magnetic pull — once the player gets this close, an uncollected drop drifts
-// toward them each frame instead of sitting still until touched. Deliberately modest ("a small
-// magnetic pick-up radius", not a vacuum): a bit more than 2x PICKUP_RADIUS, tuned by feel.
-export const MAGNET_RADIUS = 80;
-export const MAGNET_MIN_SPEED = 0.15;   // px/ms at the outer edge of the magnet radius
-export const MAGNET_MAX_SPEED = 0.5;    // px/ms right on top of the player — the drift accelerates in
+// toward them each frame instead of sitting still until touched.
+// Playtest follow-up (#226): the original 80px radius felt too tight — Jackson asked for
+// 2-4x; landed on 3x (240px) as the middle-ground default. At that larger radius the old
+// edge speed (0.15px/ms) took ~3x longer to close the full distance (same absolute speed,
+// 3x the distance), so both speeds are bumped up proportionally-ish to keep the drift feeling
+// snappy rather than sluggish over the wider capture area.
+export const MAGNET_RADIUS = 240;
+export const MAGNET_MIN_SPEED = 0.25;   // px/ms at the outer edge of the magnet radius
+export const MAGNET_MAX_SPEED = 0.6;    // px/ms right on top of the player — the drift accelerates in
 const BOB_PERIOD = 1300;
 const BOB_AMPLITUDE = 1.5;   // #228: smaller/calmer bounce than the powerup beacon's 4px
 // #88: same small scatter radius as powerups.js (arena/powerups.js DROP_SCATTER_RADIUS) so a
