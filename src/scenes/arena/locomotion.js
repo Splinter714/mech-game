@@ -220,7 +220,7 @@ export const LocomotionMixin = {
       // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
       // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
       // teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same tick). #104
-      // extends the same instant-crush treatment to INFANTRY (see `CRUSHABLE_BEHAVIORS`) — and
+      // extends the same instant-crush treatment to INFANTRY (see #269's `isSmallUnit`, shared.js) — and
       // loops rather than crushing just once, so driving into a packed infantry cluster crushes
       // every trooper the mech is actually touching this frame, not only the first one found (a
       // tight mob can have several troopers overlapping the same contact point at once). #112: the

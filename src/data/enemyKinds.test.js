@@ -53,6 +53,25 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     }
   });
 
+  // #269 (ground-unit size-tier design doc, section 2): every kind carries a formal 'small' |
+  // 'large' size tier, queried in gameplay code via shared.js's `unitSize`/`isSmallUnit` rather
+  // than read directly off this table.
+  it('#269: every kind has a size field that is small or large', () => {
+    for (const id of ENEMY_KIND_IDS) {
+      expect(['small', 'large']).toContain(ENEMY_KINDS[id].size);
+    }
+  });
+
+  it('#269: small is exactly tank + infantry (the pre-#269 crushable-on-contact scope); '
+    + 'turret/drone/helicopter/quadruped are large', () => {
+    expect(ENEMY_KINDS.tank.size).toBe('small');
+    expect(ENEMY_KINDS.infantry.size).toBe('small');
+    expect(ENEMY_KINDS.turret.size).toBe('large');
+    expect(ENEMY_KINDS.drone.size).toBe('large');
+    expect(ENEMY_KINDS.helicopter.size).toBe('large');
+    expect(ENEMY_KINDS.quadruped.size).toBe('large');
+  });
+
   it('each kind wires an art + behavior registry key', () => {
     for (const id of ENEMY_KIND_IDS) {
       expect(typeof ENEMY_KINDS[id].art).toBe('string');

@@ -441,9 +441,9 @@ export function groundEnemyRadius(e) {
 // (world.js `_crushTargetAt`, called from locomotion.js `_drive`) used to test the player's
 // point position against `groundEnemyRadius(e)` alone — i.e. the PLAYER contributed zero radius
 // of its own, so triggering a stomp required the player's exact centre to land inside the
-// enemy's (often tiny) footprint. That's especially punishing for the two crushable kinds:
-// CRUSHABLE_BEHAVIORS are tank (scale 0.48 ⇒ ENEMY_COLLIDE_RADIUS_VEHICLE*0.48 ≈ 11.5px) and
-// infantry (scale 0.38 ⇒ ≈ 9.1px) — both well under half the player mech's own on-screen
+// enemy's (often tiny) footprint. That's especially punishing for the two crushable ('small',
+// per #269's `isSmallUnit` below) kinds: tank (scale 0.48 ⇒ ENEMY_COLLIDE_RADIUS_VEHICLE*0.48 ≈
+// 11.5px) and infantry (scale 0.38 ⇒ ≈ 9.1px) — both well under half the player mech's own on-screen
 // footprint (drawn at the same ARENA_MECH_SCALE as an enemy mech, whose flat collision radius is
 // ENEMY_COLLIDE_RADIUS_MECH = 28px), so "lining up" meant threading a target roughly a third the
 // size of the mech doing the stomping. This constant is the player's own contribution to the
@@ -464,12 +464,34 @@ export function crushTriggerRadius(e) {
   return groundEnemyRadius(e) + PLAYER_CRUSH_RADIUS_BONUS;
 }
 
-// #92/#104: which `behavior` keys get the instant-crush-on-contact treatment (world.js
+// #269 (ground-unit size-tier design doc, section 2): canonical query for a ground unit's SIZE
+// TIER — 'small' or 'large'. Every ENEMY_KINDS vehicle entry (data/enemyKinds.js) now carries an
+// explicit `size` field; a MECH enemy (data/enemies.js — raider/skirmisher/sniper/artillery) has
+// no kind-registry entry at all (`e.kind` is `'mech'` or, for the oldest call sites, simply
+// undefined) and is architecturally uniform in size across the whole roster, so it's always
+// 'large' regardless of chassis weight class. This is the single place either signal should be
+// read from — both the crush-eligibility check below (`_crushTargetAt`/`_crushGroundEnemyAt`,
+// world.js) and the hex-vocabulary cover/LOS work (#269's other half) call `isSmallUnit`/
+// `unitSize` instead of re-deriving "how big is this thing" from `behavior`/`kind` themselves.
+export function unitSize(e) {
+  if (e.kind === 'mech' || e.kind === undefined) return 'large';
+  return e.kindDef?.size ?? 'large';
+}
+// #269: convenience boolean wrapper around `unitSize` for the common "is this crushable/small"
+// call site — reads better than `unitSize(e) === 'small'` at each use.
+export function isSmallUnit(e) {
+  return unitSize(e) === 'small';
+}
+
+// #92/#104: which ground units get the instant-crush-on-contact treatment (world.js
 // `_crushGroundEnemyAt`, called from locomotion.js `_drive`) instead of just blocking the player
 // like a normal ground enemy. Originally tank-only (#92 correction); #104 extends it to infantry
 // — the weakest unit in the game (hp 6) — since a single stomp destroying one trooper as the
 // player drives through a cluster is the natural read of "infantry should be stompable."
-export const CRUSHABLE_BEHAVIORS = new Set(['tank', 'infantry']);
+// #269: the scope check itself moved from a hardcoded `behavior`-keyed Set (the old
+// CRUSHABLE_BEHAVIORS, now removed) to the formal size tier above — `isSmallUnit(e)` is true for
+// exactly tank and infantry (both now `size: 'small'` in enemyKinds.js), so the crush-eligible
+// set is unchanged; this is a pure refactor of HOW the scope is expressed, not what's in it.
 
 // #41: crush/stomp damage for ONE frame of the player leaning into a destructible outpost — DPS
 // scaled by how hard the player is driving in (speedFrac, clamped 0..1), with a floor (0.35) so

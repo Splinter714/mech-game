@@ -16,7 +16,7 @@ import {
 import { Audio } from '../../audio/index.js';
 import {
   DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
-  CRUSHABLE_BEHAVIORS, crushTriggerRadius,
+  isSmallUnit, crushTriggerRadius,
 } from './shared.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
@@ -332,8 +332,8 @@ export const WorldMixin = {
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying
   // kinds (helicopter/drone) narratively fly over ground obstacles, so they're excluded — only
   // mechs, tanks, turrets, and (#104) infantry can physically block the player. Returns the
-  // blocking enemy (so the caller can special-case a crushable one — see `CRUSHABLE_BEHAVIORS`
-  // — for instant-kill damage), or null if nothing there blocks.
+  // blocking enemy (so the caller can special-case a crushable one — see #269's `isSmallUnit`
+  // in shared.js — for instant-kill damage), or null if nothing there blocks.
   _blockedByGroundEnemy(x, y) {
     for (const e of this.enemies) {
       if (e.flying) continue;
@@ -343,16 +343,17 @@ export const WorldMixin = {
     return null;
   },
 
-  // #112: is a CRUSHABLE ground enemy (tank/infantry — see CRUSHABLE_BEHAVIORS) within the
-  // (larger) crush-trigger radius of world point (x, y)? Deliberately separate from
-  // `_blockedByGroundEnemy` above: that one still uses `groundEnemyRadius` alone (unchanged) so
-  // general movement-blocking against a mech/turret stays exactly as tight as before — only the
-  // crush trigger itself gets the player's extra reach (`crushTriggerRadius`, shared.js). Only
-  // scans crushable behaviors, so a nearby mech/turret can never satisfy this check.
+  // #112: is a CRUSHABLE ground enemy (tank/infantry — 'small' units, see #269's `isSmallUnit`
+  // in shared.js) within the (larger) crush-trigger radius of world point (x, y)? Deliberately
+  // separate from `_blockedByGroundEnemy` above: that one still uses `groundEnemyRadius` alone
+  // (unchanged) so general movement-blocking against a mech/turret stays exactly as tight as
+  // before — only the crush trigger itself gets the player's extra reach (`crushTriggerRadius`,
+  // shared.js). Only scans small units, so a nearby mech/turret (both 'large') can never satisfy
+  // this check.
   _crushTargetAt(x, y) {
     for (const e of this.enemies) {
       if (e.flying) continue;
-      if (!CRUSHABLE_BEHAVIORS.has(e.behavior)) continue;
+      if (!isSmallUnit(e)) continue;
       if (e.mech.isDestroyed()) continue;
       if (circleContains(x, y, e.x, e.y, crushTriggerRadius(e))) return e;
     }
@@ -363,13 +364,13 @@ export const WorldMixin = {
   // on contact, not a multi-second grind — the original gradual-DPS crush (mirroring the outpost
   // stomp below) read as "blocked/stuck" rather than "destroying the tank." #104 (playtest:
   // infantry, the weakest unit in the game, "should be stompable" too) extends the exact same
-  // instant-kill treatment to infantry — `CRUSHABLE_BEHAVIORS` below is the scope, checked by the
-  // caller (`_drive` in locomotion.js). One call dealing damage >= the enemy's entire remaining
-  // hp pool, so it dies THIS frame. Still goes through combat.js `_damageEnemyAt`, so the kill
-  // runs the normal death path unchanged (explosion FX, corpse teardown, powerup/salvage drop) —
-  // only the amount/pacing changed, not the destruction machinery. Other ground enemies (mechs,
-  // turrets) just BLOCK via `_blockedByGroundEnemy` above — no crush/instakill — per the
-  // explicit scope.
+  // instant-kill treatment to infantry — `isSmallUnit` (#269; formerly the CRUSHABLE_BEHAVIORS
+  // Set) below is the scope, checked by the caller (`_drive` in locomotion.js). One call dealing
+  // damage >= the enemy's entire remaining hp pool, so it dies THIS frame. Still goes through
+  // combat.js `_damageEnemyAt`, so the kill runs the normal death path unchanged (explosion FX,
+  // corpse teardown, powerup/salvage drop) — only the amount/pacing changed, not the destruction
+  // machinery. Other ground enemies (mechs, turrets) just BLOCK via `_blockedByGroundEnemy` above
+  // — no crush/instakill — per the explicit scope.
   _crushGroundEnemyAt(e) {
     if (e.mech.isDestroyed()) return;
     const dmg = (e.mech.hp ?? e.mech.maxHp) + 1;   // comfortably >= remaining hp: dies in one hit

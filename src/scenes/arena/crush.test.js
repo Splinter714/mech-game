@@ -18,14 +18,14 @@ import { WorldMixin } from './world.js';
 // unchanged).
 function makeTank(hp) {
   return {
-    x: 10, y: 10, behavior: 'tank', kind: 'tank',
+    x: 10, y: 10, behavior: 'tank', kind: 'tank', kindDef: { size: 'small' },
     mech: { hp, maxHp: 160, isDestroyed: () => hp <= 0 },
   };
 }
 
 function makeInfantry(hp) {
   return {
-    x: 10, y: 10, behavior: 'infantry', kind: 'infantry',
+    x: 10, y: 10, behavior: 'infantry', kind: 'infantry', kindDef: { size: 'small' },
     mech: { hp, maxHp: 6, isDestroyed: () => hp <= 0 },
   };
 }
@@ -111,13 +111,35 @@ describe('_crushGroundEnemyAt — extended to infantry, the weakest unit in the 
   });
 });
 
-describe('CRUSHABLE_BEHAVIORS — the #104 scope for instant-crush-on-contact', () => {
-  it('includes tank and infantry, and excludes other ground behaviors', async () => {
-    const { CRUSHABLE_BEHAVIORS } = await import('./shared.js');
-    expect(CRUSHABLE_BEHAVIORS.has('tank')).toBe(true);
-    expect(CRUSHABLE_BEHAVIORS.has('infantry')).toBe(true);
-    expect(CRUSHABLE_BEHAVIORS.has('turret')).toBe(false);
-    expect(CRUSHABLE_BEHAVIORS.has(undefined)).toBe(false); // mech enemies (behavior undefined)
+// #269: the #104 crush-eligibility scope moved from a hardcoded `behavior`-keyed Set
+// (CRUSHABLE_BEHAVIORS, now removed) to the formal 'small'/'large' size tier, queried via
+// shared.js's `isSmallUnit`/`unitSize`. Same real-world scope (tank + infantry, nothing else) —
+// this is a pure refactor of HOW it's expressed, verified identical here.
+describe('isSmallUnit/unitSize (#269) — same #104 scope for instant-crush-on-contact', () => {
+  it('is true for tank and infantry (size: small), false for other vehicle kinds', async () => {
+    const { isSmallUnit, unitSize } = await import('./shared.js');
+    const tank = { kind: 'tank', kindDef: { size: 'small' } };
+    const infantry = { kind: 'infantry', kindDef: { size: 'small' } };
+    const turret = { kind: 'turret', kindDef: { size: 'large' } };
+    const drone = { kind: 'drone', kindDef: { size: 'large' } };
+    const helicopter = { kind: 'helicopter', kindDef: { size: 'large' } };
+    const quadruped = { kind: 'quadruped', kindDef: { size: 'large' } };
+    expect(isSmallUnit(tank)).toBe(true);
+    expect(isSmallUnit(infantry)).toBe(true);
+    expect(isSmallUnit(turret)).toBe(false);
+    expect(isSmallUnit(drone)).toBe(false);
+    expect(isSmallUnit(helicopter)).toBe(false);
+    expect(isSmallUnit(quadruped)).toBe(false);
+    expect(unitSize(tank)).toBe('small');
+    expect(unitSize(turret)).toBe('large');
+  });
+
+  it('is always false/large for a mech enemy (kind "mech" or undefined — no kindDef at all)', async () => {
+    const { isSmallUnit, unitSize } = await import('./shared.js');
+    expect(isSmallUnit({ kind: 'mech' })).toBe(false);
+    expect(isSmallUnit({ kind: undefined })).toBe(false);
+    expect(unitSize({ kind: 'mech' })).toBe('large');
+    expect(unitSize({})).toBe('large');
   });
 });
 
@@ -134,7 +156,7 @@ describe('_crushTargetAt — the #112 looser crush-trigger scan (bigger than pla
 
   it('finds a crushable tank from farther away than `_blockedByGroundEnemy` would', async () => {
     const { groundEnemyRadius } = await import('./shared.js');
-    const tank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', kindDef: { scale: 0.48 },
+    const tank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', kindDef: { scale: 0.48, size: 'small' },
       mech: { isDestroyed: () => false } };
     const r = groundEnemyRadius(tank);
     const scene = makeSceneWithEnemies([tank]);
@@ -145,7 +167,7 @@ describe('_crushTargetAt — the #112 looser crush-trigger scan (bigger than pla
   });
 
   it('ignores a non-crushable ground enemy (mech/turret) even within the bigger crush radius', () => {
-    const turret = { x: 0, y: 0, behavior: 'turret', kind: 'turret', kindDef: {},
+    const turret = { x: 0, y: 0, behavior: 'turret', kind: 'turret', kindDef: { size: 'large' },
       mech: { isDestroyed: () => false } };
     const scene = makeSceneWithEnemies([turret]);
     expect(scene._crushTargetAt(5, 0)).toBeNull();
@@ -154,9 +176,9 @@ describe('_crushTargetAt — the #112 looser crush-trigger scan (bigger than pla
   });
 
   it('ignores a flying kind and an already-destroyed enemy', () => {
-    const flyingTank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', flying: true, kindDef: {},
+    const flyingTank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', flying: true, kindDef: { size: 'small' },
       mech: { isDestroyed: () => false } };
-    const deadTank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', kindDef: {},
+    const deadTank = { x: 0, y: 0, behavior: 'tank', kind: 'tank', kindDef: { size: 'small' },
       mech: { isDestroyed: () => true } };
     const scene = makeSceneWithEnemies([flyingTank, deadTank]);
     expect(scene._crushTargetAt(0, 0)).toBeNull();

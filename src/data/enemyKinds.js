@@ -52,6 +52,14 @@
 //   art        key into the vehicle-art registry (src/art/vehicles/) — builds this unit's textures.
 //   behavior   key into the AI-behavior registry (scenes/arena/enemyBehaviors.js) — its update fn.
 //   themeColor accent colour for its procedural art (the kind's "danger" glow on a WHITE body).
+//   size       #269 (ground-unit size-tier design doc, section 2): formal 'small' | 'large' size
+//              tier, queried via shared.js's `unitSize`/`isSmallUnit` rather than read directly
+//              off this table — that's the one canonical query point both the crush-eligibility
+//              check (world.js `_crushTargetAt`) and the hex-vocabulary cover/LOS work go
+//              through. 'small': tank, infantry (the two kinds already crushable on contact,
+//              pre-#269 gated by the now-superseded CRUSHABLE_BEHAVIORS Set). 'large': turret,
+//              drone, helicopter, quadruped. A mech enemy (data/enemies.js) has no entry in this
+//              table at all and is always 'large' — `unitSize` special-cases that.
 //   scale      on-screen sprite size as a MULTIPLE of the arena mech scale (data-driven per #75;
 //              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
 //              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75,
@@ -143,6 +151,11 @@ export const ENEMY_KINDS = {
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
     art: 'turret',
     behavior: 'turret',
+    // #269 (ground-unit size-tier section): the formal size-tier field — 'small' | 'large' —
+    // read by shared.js's `unitSize`/`isSmallUnit` (the canonical query point for "how big is
+    // this ground unit," used by both the crush-eligibility check below and the hex-vocabulary
+    // cover/LOS work). A rooted emplacement reads as a large, hard-to-miss target.
+    size: 'large',
     themeColor: 0xd66a3a,
     scale: 0.42,           // #145-followup: shrunk further (was 0.55) — playtest feedback
                            // "turrets are too large" alongside bumping TURRET_CLUSTER_SIZE up
@@ -186,6 +199,11 @@ export const ENEMY_KINDS = {
                                                                           // slower ("tanks slower").
     art: 'tank',
     behavior: 'tank',
+    // #269: 'small' — this is one of the two kinds already crushable on contact (see
+    // `CRUSHABLE_BEHAVIORS`'s pre-#269 history, now superseded by `unitSize`/`isSmallUnit` in
+    // shared.js), so its size tier matches that gameplay reality: a battle tank low to the
+    // ground and stompable.
+    size: 'small',
     themeColor: 0xc65a34,
     scale: 0.48,           // #91: shrunk further (was 0.6) — "tanks smaller".
   },
@@ -230,6 +248,10 @@ export const ENEMY_KINDS = {
     move: { maxSpeed: 150, accel: 420, turnRate: 6, turretSlew: 9 },
     art: 'drone',
     behavior: 'drone',
+    // #269: 'large' — never in the pre-#269 CRUSHABLE_BEHAVIORS scope, and it flies (hovers
+    // over ground obstacles) rather than being a squat, low target, so it doesn't fit the
+    // 'small' tier the way tank/infantry do.
+    size: 'large',
     themeColor: 0xe0b13a,
     scale: 0.52,           // #91: nudged down further (was 0.62) — "drones slightly smaller
                            // again", now that the swarm (SWARM_SIZE below) reads even fuller.
@@ -285,6 +307,8 @@ export const ENEMY_KINDS = {
     move: { maxSpeed: 210, accel: 260, turnRate: 3.2, turretSlew: 4 },
     art: 'helicopter',
     behavior: 'helicopter',
+    // #269: 'large' — an elevated flyer, never crushable, not a small ground target.
+    size: 'large',
     themeColor: 0xcf4d4d,
     scale: 0.75,           // #89: shrunk further (was 1.0) — more gunships spawn now, so each
                            // one reads smaller and the sky feels busier rather than crowded-big.
@@ -365,6 +389,10 @@ export const ENEMY_KINDS = {
     deployCap: 24,
     art: 'quadruped',
     behavior: 'quadruped',
+    // #269: 'large' — the toughest non-mech kind, deliberately bulked up to read "on par with a
+    // full player mech's effective on-screen scale" (see the scale comment below); not crushable
+    // pre-#269 either.
+    size: 'large',
     themeColor: 0x8a4fc9,    // distinct violet accent — reads as a different "danger" bit
                              // from tank's orange / turret's orange / drone's yellow / etc.
     // #147: playtest said the #130 0.6 (already "bigger footprint than tank's 0.48") still read
@@ -421,6 +449,9 @@ export const ENEMY_KINDS = {
     avoidWater: true,
     art: 'infantry',
     behavior: 'infantry',
+    // #269: 'small' — the other pre-#269 CRUSHABLE_BEHAVIORS entry, and literally the smallest
+    // unit in the game (scale 0.38, the lowest of any kind).
+    size: 'small',
     themeColor: 0x8fae4a,
     scale: 0.38,            // noticeably smaller than drone's 0.52 (#97 ask: "smaller than drones")
   },
