@@ -12,7 +12,8 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 // #224 (temporary): WEAPON_TRAJECTORY_SOUNDS_ENABLED gates the in-flight trajectory loop
 // below — see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../../audio/fireCues.js';
-import { toggleSprint, holdSprint, updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
+import { updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
+import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -50,52 +51,29 @@ export const FiringMixin = {
     }
   },
 
-  // ── Sprint (#188) ── a hardcoded, always-available ability on L3/Space — not
-  // mounted/equipped (replaced the old centre-torso ability slot's jumpJet/bubbleShield). A
-  // depleting/regenerating fuel bar drains while active and refills while inactive; hitting
-  // empty forces it off automatically.
+  // ── Sprint (#188, player-trigger removed by #261) ── the Sprint state machine
+  // (data/sprint.js) itself is UNCHANGED — it's still a depleting/regenerating fuel bar that
+  // drains while active and refills while inactive, hitting empty forces it off. What's gone is
+  // the player's own means of turning it on: #261 replaced L3/Space's player-facing ability with
+  // a Dash (see `_handleDash` below and data/dash.js) and removed manual Sprint entirely. The
+  // ONLY thing that can still set `this.sprint.active` is Overclock's force-activation, so this
+  // method now purely owns that handoff — no more per-device toggle/hold branches driven by
+  // player input.
   //
-  // Per playtest feedback, the two devices trigger it with DIFFERENT semantics
-  // (`intent.mode` tells us which is active, from Controls.js):
-  //   - gamepad L3 is press-to-TOGGLE, as before: `intent.sprintPressed` is already
-  //     rising-edge-detected by Controls.js, so a toggle only fires once per physical press.
-  //   - keyboard Space is HOLD-to-sprint: `intent.sprintHeld` is the raw per-frame key-down
-  //     state, so Sprint tracks it directly every frame (via `holdSprint`, gated on fuel like
-  //     the toggle's ON case) — active only while held, off the instant it's released.
-  //
-  // #189: Overclock was redesigned from a flat moveMult/slewMult buff into forcing Sprint on,
-  // fuel-free, for its whole duration — so this method also owns that handoff. State machine:
+  // #189: Overclock force-activates Sprint, fuel-free, for its whole duration. State machine:
   // `this._sprintForcedByOverclock` tracks whether the mech's CURRENT sprint-active state is
-  // "because Overclock is holding it on" (as opposed to the player's own manual input), and
-  // `this._overclockWasActive` remembers last frame's buff state so activation is detected as
-  // a genuine RISING EDGE (false→true) rather than "buff is active and flag happens to be
-  // false" — the latter would misfire every frame after the player reclaims the flag while
-  // the buff is still nominally running, immediately re-forcing Sprint back on.
+  // "because Overclock is holding it on", and `this._overclockWasActive` remembers last frame's
+  // buff state so activation is detected as a genuine RISING EDGE (false→true).
   //   - Rising edge of Overclock claims Sprint: force `active = true` and set the flag,
   //     REGARDLESS of prior state/fuel — Overclock ignores fuel entirely while it owns the
   //     state (fuel-free by design, see data/powerups.js).
   //   - While the flag is set and Sprint is active, fuel math is skipped entirely (not just
   //     zero-drain) — `updateSprintFuel` would otherwise force `active` back to false on a
   //     0-fuel mech via its own empty-tank floor check, even with drainRate 0.
-  //   - Manual input ALWAYS wins, even mid-Overclock, but "manual input" means something
-  //     different per device:
-  //       - gamepad: a toggle PRESS is the discrete moment the player asserts control —
-  //         `toggleSprint` flips the CURRENT active state, so pressing while Overclock is
-  //         forcing it on reads as "turn it off" (true → false, always succeeds) exactly
-  //         like the issue's spec asks.
-  //       - keyboard: there's no discrete press to wait for — holding is a continuous
-  //         signal, not an edge — so a CHANGE in the raw held state (press OR release) is
-  //         what reclaims manual control; while the held state hasn't changed since last
-  //         frame (player isn't touching Space either way), Overclock keeps ownership. This
-  //         is what makes releasing Space turn Sprint off immediately even mid-Overclock,
-  //         while simply not touching Space during Overclock doesn't cancel the forced ride.
-  //     Either way, the moment manual ownership is reclaimed, normal drain/regen rules apply
-  //     right away, not at Overclock's own expiry (no discontinuity/free lunch — see
-  //     sprintOverclock.test.js and sprintHoldToggle.test.js).
-  //   - If Overclock's duration ends while the flag is STILL set (no manual input reclaimed
-  //     it in between), hand control back exactly as if Overclock had never touched Sprint:
-  //     force it off, since the player never asked for it themselves.
-  _handleSprint(intent, delta) {
+  //   - If Overclock's duration ends while the flag is STILL set, hand control back exactly as
+  //     if Overclock had never touched Sprint: force it off (there's no player-manual state to
+  //     fall back to any more — see sprintOverclock.test.js for the coverage that remains).
+  _handleSprint(_intent, delta) {
     const dt = delta / 1000;
     const overclockActive = !!this._buffMods?.().overclockActive;
     const overclockRisingEdge = overclockActive && !this._overclockWasActive;
@@ -106,27 +84,6 @@ export const FiringMixin = {
       this._sprintForcedByOverclock = true;
     }
 
-    if (intent.mode === 'kbm') {
-      // Hold-to-sprint: only a CHANGE in the raw held state (press or release) counts as
-      // the player asserting manual control — holding steady through an Overclock window
-      // (in either state) is not itself an assertion, since there's no discrete edge the
-      // way a toggle press has one. On the very first call there's no prior frame to compare
-      // against, so seed the baseline to the current state (mirrors PadEdges' first-poll
-      // handling, #79) rather than assuming "not held" and misreading an already-held key as
-      // a fresh press.
-      const heldNow = !!intent.sprintHeld;
-      const firstPoll = !('_prevKbSprintHeld' in this);
-      const heldBefore = firstPoll ? heldNow : !!this._prevKbSprintHeld;
-      this._prevKbSprintHeld = heldNow;
-      if (heldNow !== heldBefore) this._sprintForcedByOverclock = false;
-      if (!this._sprintForcedByOverclock) {
-        this.sprint.active = holdSprint(heldNow, this.sprint.fuel);
-      }
-    } else if (intent.sprintPressed) {
-      this.sprint.active = toggleSprint(this.sprint.active, this.sprint.fuel);
-      this._sprintForcedByOverclock = false;
-    }
-
     // Free ride only while Overclock is the reason Sprint is currently on — skip the fuel
     // state machine entirely rather than passing drainRate: 0, since updateSprintFuel's
     // empty-tank check (`fuel <= 0 ⇒ active = false`) fires independent of drain rate.
@@ -135,19 +92,42 @@ export const FiringMixin = {
       this.sprint = updateSprintFuel(this.sprint, dt);
     }
 
-    // Overclock's window closed without the player ever taking the wheel — hand it back off.
+    // Overclock's window closed — hand it back off (no player-manual sprint left to defer to).
     if (!overclockActive && this._sprintForcedByOverclock) {
       this.sprint.active = false;
       this._sprintForcedByOverclock = false;
     }
 
-    // A cue on every real active/inactive transition — a manual toggle, the forced-off at
-    // empty fuel, Overclock's auto-activation, or its expiry handoff all count.
+    // A cue on every real active/inactive transition — Overclock's auto-activation or its
+    // expiry handoff.
     if (this.sprint.active && !wasActive) Audio.ui('sprintOn');
     else if (!this.sprint.active && wasActive) Audio.ui('sprintOff');
     this.registry.set('sprintActive', this.sprint.active);
     this.registry.set('sprintFuel', this.sprint.fuel);
     this.registry.set('sprintFuelMax', SPRINT_FUEL_MAX);
+  },
+
+  // ── Dash (#261) ── a hardcoded, always-available ability on L3/Space — replaces the old
+  // player-facing Sprint. `intent.dashPressed` is already rising-edge-detected by Controls.js
+  // (one edge per physical press, on whichever device is currently active), so a single press
+  // triggers one burst; pressing again mid-burst or mid-cooldown is a no-op (`triggerDash`
+  // itself is a no-op in that case — see data/dash.js). The pure state machine
+  // (active/burstRemaining/cooldown) lives entirely in data/dash.js; this just wires the press
+  // + per-frame tick and publishes the live state for the HUD's cooldown indicator.
+  _handleDash(intent, delta) {
+    const dt = delta / 1000;
+    const wasActive = this.dash.active;
+    if (intent.dashPressed) this.dash = triggerDash(this.dash);
+    this.dash = updateDash(this.dash, dt);
+
+    // Reuse the existing sprint-on/off cues for the dash's start/end — same "movement ability
+    // just engaged/disengaged" cue language, no new SFX plumbing needed for a ~0.2s burst.
+    if (this.dash.active && !wasActive) Audio.ui('sprintOn');
+    else if (!this.dash.active && wasActive) Audio.ui('sprintOff');
+
+    this.registry.set('dashActive', this.dash.active);
+    this.registry.set('dashCooldown', this.dash.cooldown);
+    this.registry.set('dashCooldownMax', DASH_COOLDOWN);
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the

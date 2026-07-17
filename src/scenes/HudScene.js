@@ -6,7 +6,7 @@ import { STAGE_COUNT } from '../data/run.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
-import { SPRINT_BIND } from '../input/Controls.js';
+import { DASH_BIND } from '../input/Controls.js';
 import { AMMO_EMPTY_COOLDOWN } from '../data/Mech.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
@@ -169,18 +169,20 @@ export default class HudScene extends Phaser.Scene {
       this.skillRefs[r.loc] = drawSkillTile(this, this.skillBar, r, { loc: r.loc, itemId: id });
     }
 
-    // #188: Sprint fuel bar — a simple track+fill bar centred just above the skill-tile row,
-    // showing remaining fuel (drains while active, refills while not) and whether sprint is
-    // currently engaged. Mirrors the tile row's own ammo-bar visual language (a dim track
-    // rectangle behind a colored fill), same as the per-weapon ammo bars in skillTiles.js.
+    // #188/#261: Dash cooldown bar — a simple track+fill bar centred just above the skill-tile
+    // row (was Sprint's fuel bar; Sprint itself is Overclock-only now, see data/sprint.js and
+    // arena/firing.js's `_handleSprint`). Shows how close the next Dash is to being ready:
+    // empty/dim while on cooldown, filling back up, full + bright the instant it's ready again.
+    // Mirrors the tile row's own ammo-bar visual language (a dim track rectangle behind a
+    // colored fill), same as the per-weapon ammo bars in skillTiles.js.
     const barW = Math.min(260, this.W * 0.32), barH = 8;
     const barX = this.W / 2 - barW / 2, barY = tiles.length ? tiles[0].y - 22 : this.H - 32;
-    this.sprintBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
-    this.sprintBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
-    this.sprintLabel = this.add.text(barX + barW / 2, barY - 12, '', {
+    this.dashBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
+    this.dashBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
+    this.dashLabel = this.add.text(barX + barW / 2, barY - 12, '', {
       fontFamily: 'monospace', fontSize: '10px', color: C.dim,
     }).setOrigin(0.5, 1);
-    this._sprintBarW = barW;
+    this._dashBarW = barW;
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
@@ -255,9 +257,10 @@ export default class HudScene extends Phaser.Scene {
       updateSkillTile(this.skillRefs[loc], opts);
     }
 
-    // #188: Sprint fuel bar — fill fraction + color track remaining fuel; the label shows
-    // the bind + ACTIVE/READY/EMPTY state, mirroring the old ability tile's READY/cooldown text.
-    this._updateSprintBar();
+    // #188/#261: Dash cooldown bar — fill fraction + color track how close the next dash is to
+    // ready; the label shows the bind + READY/ACTIVE/COOLDOWN state, mirroring the old ability
+    // tile's READY/cooldown text.
+    this._updateDashBar();
 
     for (const loc of LOCATIONS) {
       const p = mech.parts[loc];
@@ -457,22 +460,24 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
-  // #188: Sprint fuel bar — fill width tracks the live fuel fraction (registry-published by
-  // arena/firing.js's _handleSprint each frame); color/label reflect ACTIVE/READY/EMPTY so
-  // the owner can read at a glance both how much fuel is left and whether it's draining or
-  // regenerating right now.
-  _updateSprintBar() {
-    const fuel = this.registry.get('sprintFuel');
-    if (fuel == null) return;   // no player mech / sprint state published yet
-    const cap = this.registry.get('sprintFuelMax') || 1;
-    const active = !!this.registry.get('sprintActive');
-    const frac = Phaser.Math.Clamp(fuel / cap, 0, 1);
-    this.sprintBarFill.setSize(Math.max(1, this._sprintBarW * frac), this.sprintBarFill.height);
-    const color = active ? C.accent : frac > 0.25 ? C.good : frac > 0 ? C.warn : C.bad;
-    this.sprintBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
-    const bind = this.registry.get('inputMode') === 'pad' ? SPRINT_BIND.pad : SPRINT_BIND.key;
-    const state = active ? 'ACTIVE' : frac <= 0 ? 'EMPTY' : 'READY';
-    this.sprintLabel.setText(`SPRINT (${bind})  ${state}`).setColor(color);
+  // #188/#261: Dash cooldown bar — fill width tracks how much of the cooldown has ELAPSED
+  // (registry-published by arena/firing.js's `_handleDash` each frame) — empty right after a
+  // dash, filling back up to full as it becomes ready again; color/label reflect
+  // ACTIVE/READY/COOLDOWN so the owner can read at a glance whether a dash is mid-burst, ready
+  // to fire, or still recharging (and roughly how long is left).
+  _updateDashBar() {
+    const cooldown = this.registry.get('dashCooldown');
+    if (cooldown == null) return;   // no player mech / dash state published yet
+    const max = this.registry.get('dashCooldownMax') || 1;
+    const active = !!this.registry.get('dashActive');
+    const frac = Phaser.Math.Clamp(1 - cooldown / max, 0, 1);   // 0 = just used, 1 = ready
+    this.dashBarFill.setSize(Math.max(1, this._dashBarW * frac), this.dashBarFill.height);
+    const ready = cooldown <= 0;
+    const color = active ? C.accent : ready ? C.good : C.warn;
+    this.dashBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
+    const bind = this.registry.get('inputMode') === 'pad' ? DASH_BIND.pad : DASH_BIND.key;
+    const state = active ? 'DASHING' : ready ? 'READY' : `COOLDOWN ${cooldown.toFixed(1)}s`;
+    this.dashLabel.setText(`DASH (${bind})  ${state}`).setColor(color);
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular

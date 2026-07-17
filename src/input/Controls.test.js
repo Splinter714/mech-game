@@ -141,47 +141,66 @@ describe('Controls / PadEdges — resync a carried-over pad on scene transition 
   });
 });
 
-// #188 device split: keyboard Space reports a raw HOLD state (`sprintHeld`), gamepad L3
-// still reports a rising-edge TOGGLE one-shot (`sprintPressed`) — both present every frame,
-// regardless of which scheme is currently active, so the arena's `_handleSprint` can pick
-// the one matching `intent.mode`.
-describe('Controls.read — sprint intent split by device (#188)', () => {
-  it('sprintHeld tracks the raw Space key state every frame, with no edge-detection', () => {
+// #261: Dash replaced player-facing Sprint — both devices now report the SAME press-to-trigger
+// semantics via a single `dashPressed` rising-edge one-shot, picked from whichever device is
+// currently the active scheme (unlike #188's old device split, sprintHeld vs. sprintPressed).
+describe('Controls.read — dash intent, press-to-trigger on both devices (#261)', () => {
+  it('dashPressed is a rising-edge one-shot on keyboard Space (kbm mode)', () => {
     const scene = fakeControlsScene();
     const controls = new Controls(scene);
 
-    expect(controls.read().sprintHeld).toBe(false);
+    expect(controls.read().dashPressed).toBe(false);
     setKey(scene, 'SPACE', true);
-    expect(controls.read().sprintHeld).toBe(true);
-    expect(controls.read().sprintHeld).toBe(true);   // still held: stays true, not a one-shot
-    expect(controls.read().sprintHeld).toBe(true);
+    expect(controls.read().dashPressed).toBe(true);    // fresh press
+    expect(controls.read().dashPressed).toBe(false);   // still held, no repeat
     setKey(scene, 'SPACE', false);
-    expect(controls.read().sprintHeld).toBe(false);
+    expect(controls.read().dashPressed).toBe(false);   // released
+    setKey(scene, 'SPACE', true);
+    expect(controls.read().dashPressed).toBe(true);    // press again
   });
 
-  it('sprintPressed is a rising-edge one-shot on gamepad L3, unaffected by Space', () => {
+  it('dashPressed is a rising-edge one-shot on gamepad L3 (pad mode)', () => {
     const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
     const scene = fakeControlsScene({ pads: [pad] });
     const controls = new Controls(scene);
 
     pad.buttons[PAD.L3] = { pressed: true };
-    expect(controls.read().sprintPressed).toBe(true);   // fresh press
-    expect(controls.read().sprintPressed).toBe(false);  // still held, no repeat
+    expect(controls.read().dashPressed).toBe(true);    // fresh press (also switches mode to pad)
+    expect(controls.read().dashPressed).toBe(false);   // still held, no repeat
     pad.buttons[PAD.L3] = { pressed: false };
-    expect(controls.read().sprintPressed).toBe(false);  // released
+    expect(controls.read().dashPressed).toBe(false);   // released
     pad.buttons[PAD.L3] = { pressed: true };
-    expect(controls.read().sprintPressed).toBe(true);   // press again
+    expect(controls.read().dashPressed).toBe(true);    // press again
   });
 
-  it('reports both signals in the same read() regardless of which device is active', () => {
+  it('only reports the edge from the currently-active device, even if the other device also has a fresh press the same frame', () => {
+    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
+    const scene = fakeControlsScene({ pads: [pad] });
+    const controls = new Controls(scene);
+    // Establish kbm as the active scheme first (no pad input yet).
+    expect(controls.read().mode).toBe('kbm');
+
+    setKey(scene, 'SPACE', true);            // fresh press on the ACTIVE device (kbm)...
+    pad.buttons[PAD.L3] = { pressed: true };  // ...and a fresh pad press too, same frame — but
+                                               // that pad press also switches mode to 'pad'.
+    const intent = controls.read();
+    expect(intent.mode).toBe('pad');          // pad activity wins mode arbitration this frame
+    expect(intent.dashPressed).toBe(true);    // reports the PAD edge, since pad is now active
+  });
+
+  it('a mode switch mid-press does not leave a stale edge from the previously-active device', () => {
     const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
     const scene = fakeControlsScene({ pads: [pad] });
     const controls = new Controls(scene);
 
-    setKey(scene, 'SPACE', true);          // keyboard held...
-    pad.buttons[PAD.L3] = { pressed: true }; // ...and a fresh pad press, same frame
-    const intent = controls.read();
-    expect(intent.sprintHeld).toBe(true);
-    expect(intent.sprintPressed).toBe(true);
+    setKey(scene, 'SPACE', true);
+    expect(controls.read().dashPressed).toBe(true);   // kbm edge fires
+    expect(controls.read().dashPressed).toBe(false);  // still held, no repeat
+
+    // Switch to pad by moving the stick (not the dash button) — kbm's Space is still held.
+    pad.leftStick = { x: 1, y: 0, length: () => 1 };
+    expect(controls.read().mode).toBe('pad');
+    // Pad's L3 was never pressed, so no dash edge leaks through from the stale kbm hold.
+    expect(controls.read().dashPressed).toBe(false);
   });
 });

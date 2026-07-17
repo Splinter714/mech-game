@@ -12,6 +12,7 @@ import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
+import { DASH_SPEED_MULT } from '../../data/dash.js';
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
 // snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
@@ -178,13 +179,17 @@ export const LocomotionMixin = {
     // #41: the terrain UNDER the mech scales its top speed — a shallow river or forest bogs it
     // down (rubble mildly), open grass is normal.
     const terrainScale = this._speedFactorAt(this.px, this.py);
-    // #188/#189: Sprint (the hardcoded L3/Space toggle) is the ONLY movement-speed buff now —
-    // Overclock no longer applies its own moveMult; instead it force-activates Sprint itself
-    // (see arena/firing.js `_handleSprint`), so this reads as the single source of truth for
-    // "is the mech currently sprinting," whoever caused it.
+    // #188/#189: Sprint (SPRINT_SPEED_MULT) is no longer player-triggered (#261) — it's now
+    // Overclock-only, force-activated fuel-free for the powerup's duration (see arena/firing.js
+    // `_handleSprint`). #261: Dash (DASH_SPEED_MULT) is the new player-facing L3/Space ability —
+    // a short, much stronger burst gated by `_handleDash`'s cooldown state machine
+    // (data/dash.js). The two are independent sources and simply multiply together if both
+    // happen to be active at once (e.g. the player dashes while Overclock's forced Sprint is
+    // also running) — there's no special-casing needed, each just contributes its own factor.
     const sprintMult = this.sprint?.active ? SPRINT_SPEED_MULT : 1;
+    const dashMult = this.dash?.active ? DASH_SPEED_MULT : 1;
     // #3 weight inertia drives the accel curve.
-    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * sprintMult;
+    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * sprintMult * dashMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
     // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that

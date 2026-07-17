@@ -6,6 +6,7 @@ import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
 import { makeLock } from '../data/targetlock.js';
 import { initialSprintState } from '../data/sprint.js';
+import { initialDashState } from '../data/dash.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
 import { CombatMixin } from './arena/combat.js';
@@ -133,13 +134,14 @@ export default class ArenaScene extends Phaser.Scene {
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
-    this.sprint = initialSprintState();   // #188: hardcoded L3/Space toggle + fuel, see data/sprint.js
-    // #189: whether the CURRENT sprint-active state is because Overclock is forcing it (vs.
-    // the player's own manual toggle), and last frame's Overclock-active reading (so
-    // activation is detected as a true rising edge) — see arena/firing.js `_handleSprint`
-    // for the full force/handoff state machine.
+    this.sprint = initialSprintState();   // #188: Overclock-only now (#261), see data/sprint.js
+    // #189: whether the CURRENT sprint-active state is because Overclock is forcing it, and
+    // last frame's Overclock-active reading (so activation is detected as a true rising edge)
+    // — see arena/firing.js `_handleSprint` for the full force/handoff state machine. #261:
+    // there's no more player-manual sprint state to reclaim it, only Overclock ever sets this.
     this._sprintForcedByOverclock = false;
     this._overclockWasActive = false;
+    this.dash = initialDashState();   // #261: hardcoded L3/Space burst + cooldown, see data/dash.js
     // Indirect-fire lock (#62, rework #252): `this.lock` (data/targetlock.js) is the pure state
     // record — it mirrors `this.convergeTarget` every frame, instantly, so homing/arcing weapons
     // simply fire at whatever direct-fire convergence is currently aimed at. `aimEnemy` is the live
@@ -231,9 +233,10 @@ export default class ArenaScene extends Phaser.Scene {
     // unconditionally below) is what owns the delayed return-to-garage transition; this only
     // freezes the player's own agency, not the run's bookkeeping.
     if (!this._playerDead) {
-      // #188: resolve the Sprint toggle + fuel drain/regen BEFORE _drive so a same-frame press
-      // is reflected in this frame's speed multiplier, not delayed a frame.
+      // #188/#261: resolve Sprint (Overclock-only now) and Dash's burst/cooldown BEFORE _drive
+      // so a same-frame press is reflected in this frame's speed multiplier, not delayed a frame.
       this._handleSprint(intent, delta);
+      this._handleDash(intent, delta);
       this._drive(intent, dt);
     }
 

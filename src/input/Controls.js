@@ -13,12 +13,18 @@
 // (keyboard equivalent: T). Handled via PadEdges, not the per-frame fire intent.
 //
 // #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot is gone —
-// L3/Space is now a hardcoded, always-available Sprint ability (data/sprint.js), never routed
-// through mounts. Per playtest feedback, the two devices use DIFFERENT press semantics for
-// it: keyboard Space is HOLD-to-sprint (`read()` reports the raw down state as `sprintHeld`),
-// while gamepad L3 stays press-to-TOGGLE (`read()` reports a rising-edge one-shot as
-// `sprintPressed`, like before). Both are always present in the returned intent regardless of
-// which scheme is currently active; the arena picks the one matching `mode`.
+// L3/Space was a hardcoded, always-available Sprint ability (data/sprint.js), never routed
+// through mounts. #261: player-initiated Sprint is gone too — L3/Space now triggers a Dash (a
+// single-shot burst on a cooldown, data/dash.js) instead. A dash is inherently a discrete
+// one-shot activation (not a sustained hold-vs-toggle state), so BOTH devices now use the same
+// press-to-trigger semantics: `read()` reports one rising-edge one-shot, `dashPressed`, picked
+// from whichever device is currently active. Unlike Sprint's old hold-to-sprint keyboard path
+// (which just read the raw down state every frame, no edge needed), a discrete trigger needs an
+// actual edge on keyboard too — Space is polled every frame like any other key, it doesn't
+// naturally arrive pre-edge-detected the way a Phaser `keydown-*` event would — so keyboard gets
+// its own rising-edge tracker here, mirroring the one already used for the pad's L3 button.
+// (The old Sprint mechanic itself, data/sprint.js, is untouched — Overclock still force-activates
+// it; only the player's own trigger for it is gone, replaced by this Dash bind.)
 
 // Exported so other modules (e.g. arena/locomotion.js's instant-turning facing-angle gate,
 // #156) can reuse the same "is this raw input meaningful" threshold instead of inventing one.
@@ -36,8 +42,8 @@ const PAD_L3 = PAD.L3;
 
 // location → { key (keyboard/mouse label), pad (controller label) }. Order here is the
 // display order used by the garage/HUD. #188: four weapon skill slots — the fifth
-// (centerTorso, the old ability slot) is gone; Sprint's bind lives in SPRINT_BIND below,
-// separate from this table since it's not a mountable location at all.
+// (centerTorso, the old ability slot) is gone; Dash's bind (#261, was Sprint's) lives in
+// DASH_BIND below, separate from this table since it's not a mountable location at all.
 export const SKILL_BINDS = {
   rightArm:    { key: 'RMB',   pad: 'RT' },
   leftArm:     { key: 'LMB',   pad: 'LT' },
@@ -45,9 +51,9 @@ export const SKILL_BINDS = {
   leftTorso:   { key: 'Q',     pad: 'LB' },
 };
 
-// Sprint's fixed bind (#188) — always available, never mounted, so it isn't keyed by a
-// body location like SKILL_BINDS. Exported for the HUD's fuel-bar label.
-export const SPRINT_BIND = { key: 'Space', pad: 'L3' };
+// Dash's fixed bind (#261, was Sprint's bind under #188) — always available, never mounted, so
+// it isn't keyed by a body location like SKILL_BINDS. Exported for the HUD's cooldown label.
+export const DASH_BIND = { key: 'Space', pad: 'L3' };
 
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
@@ -108,7 +114,8 @@ export class Controls {
     this.mode = 'kbm';
     this.aimAngle = -Math.PI / 2;  // remembered turret aim, so a centred stick holds it
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
-    this._sprintDown = false;      // previous frame's raw L3/Space state, for edge-detecting the toggle
+    this._padDashDown = false;     // previous frame's raw L3 state, for edge-detecting the dash trigger
+    this._kbDashDown = false;      // previous frame's raw Space state, for edge-detecting the dash trigger
   }
 
   pad() {
@@ -184,21 +191,19 @@ export class Controls {
       };
     }
 
-    // ── Sprint (#188, split by device per playtest feedback) ── the two devices use
-    // DIFFERENT semantics for the same ability, so we report both raw signals every frame
-    // and let the arena's `_handleSprint` pick the one matching the active device:
-    //   - keyboard (Space): HOLD-to-sprint — `sprintHeld` is just the raw key-down state,
-    //     read fresh every frame, no edge detection. Sprint is only "on" while held.
-    //   - gamepad (L3): press-to-TOGGLE, unchanged from before — `sprintPressed` is a
-    //     rising-edge one-shot so a toggle fires once per physical press, not every held
-    //     frame. Computed from the pad's own button regardless of which scheme is currently
-    //     active, same as `sprintHeld` below, so a mode switch mid-press can't leave a stale
-    //     edge/hold value from the previously-active device.
-    const padSprintDown = !!(pad && pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed);
-    const sprintPressed = padSprintDown && !this._sprintDown;
-    this._sprintDown = padSprintDown;
-    const sprintHeld = k.SPACE.isDown;
+    // ── Dash (#261) ── press-to-trigger on BOTH devices now (was Sprint's hold-vs-toggle
+    // split, #188). Edge-detect each device's raw button independently every frame (regardless
+    // of which scheme is currently active, so a mode switch mid-press can't leave a stale edge
+    // from the previously-active device), then report just the ONE edge that matches the
+    // currently-active scheme as `dashPressed`.
+    const padDashDown = !!(pad && pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed);
+    const padDashPressed = padDashDown && !this._padDashDown;
+    this._padDashDown = padDashDown;
+    const kbDashDown = k.SPACE.isDown;
+    const kbDashPressed = kbDashDown && !this._kbDashDown;
+    this._kbDashDown = kbDashDown;
+    const dashPressed = padMode ? padDashPressed : kbDashPressed;
 
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', sprintPressed, sprintHeld };
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', dashPressed };
   }
 }
