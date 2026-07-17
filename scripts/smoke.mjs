@@ -249,8 +249,9 @@ try {
 
     // #77 / #77-followup: a homing missile CONNECTS with a MOVING target AND keeps tracking it
     // live rather than steering at where it was when fired. Fire through the REAL lock system —
-    // a full (red), non-blind lock on e0, exactly what `_lockAimPoint()` reads in real play —
-    // instead of handing `_spawnProjectile` the live enemy object directly via `seekOverride`;
+    // `a.lock.target = e0`, exactly what `_lockAimPoint()` reads in real play (#252: the lock is
+    // just a live mirror of the convergence pick, no charge/blind states any more) — instead of
+    // handing `_spawnProjectile` the live enemy object directly via `seekOverride`;
     // that shortcut would exercise the round's tracking machinery but never the lock→seekTarget
     // wiring where the actual bug lived (`_lockAimPoint()` was returning a frozen `{x,y}` snapshot
     // taken at spawn instead of the live enemy handle, so every homing round flew at the target's
@@ -267,7 +268,7 @@ try {
       e0.vx = Math.cos(bearing + Math.PI / 2) * 70;   // strafe across the missile's path
       e0.vy = Math.sin(bearing + Math.PI / 2) * 70;
       a.projectiles.length = 0;
-      a.lock.target = e0; a.lock.blind = false;
+      a.lock.target = e0;
       const m = a._spawnProjectile({ weapon: homingWeapon }, a.px, a.py, bearing, 'player');
       m.arc = false; m.maxDist = 6000;
       // seekTarget must be the LIVE enemy handle (carries `.mech`), never a detached {x,y} copy —
