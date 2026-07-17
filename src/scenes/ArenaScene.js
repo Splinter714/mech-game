@@ -72,6 +72,34 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
+    // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
+    // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
+    // #254: moved here (was previously reset much later in create(), after `_spawnSquad()`
+    // below) — #251's helipad flourish (`_spawnHelipadFx`, called from `_spawnKind` for every
+    // gunship in the opening squad) calls `_burst`/`_acquireImpactCircle` DURING `_spawnSquad()`,
+    // so on a Garage->Arena->Garage->Arena second deploy (ArenaScene is the same reused Scene
+    // instance — see the #190 comment on `_debrisPool` below) that first burst was still reading
+    // the FIRST session's stale `_impactPool`, recycling one of its destroyed Arc/Circle game
+    // objects and throwing "Cannot set properties of null (setting 'radius')" the moment
+    // `.setRadius()` touched its nulled-out internals. The reset must happen before anything in
+    // create() can call `_burst`, and `_spawnSquad()` is the earliest such call.
+    this._impactPool = [];
+    this._impactRR = 0;
+    this._impactSoundAt = {};
+    this._lastBurst = null;
+    // #100/#190: the death-explosion debris pool (combat.js `_acquireDebrisChunk`) is the same
+    // kind of lazily-created, capped/recycled pool as `_impactPool` above, but was missed when
+    // that reset block was written — it stayed lazily-initialized via `??=` only, so ArenaScene
+    // being the SAME reused Scene instance across a Garage->Arena->Garage->Arena cycle meant a
+    // second (or later) arena session inherited the FIRST session's pool of `Rectangle` game
+    // objects. Those were destroyed along with everything else on the first Arena's shutdown, so
+    // the moment a kill in the second session recycled one of them, `_acquireDebrisChunk` called
+    // `.setSize()` on a destroyed (nulled-out) GameObject and threw ("Cannot read properties of
+    // null (reading 'setSize')") — reproducibly, the first death after the second deploy. Reset
+    // both here so every fresh arena session starts with its own live pool.
+    this._debrisPool = [];
+    this._debrisRR = 0;
+
     // Enemies — armed, mobile, shoot back. Each is a self-contained object with its own mech,
     // textures, view, and per-mech AI state, so the arena handles N enemies. The default opening
     // squad (one of each type) is spawned below, AFTER the player + camera are set, so the
@@ -152,24 +180,8 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
-    // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
-    // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
-    this._impactPool = [];
-    this._impactRR = 0;
-    this._impactSoundAt = {};
-    this._lastBurst = null;
-    // #100/#190: the death-explosion debris pool (combat.js `_acquireDebrisChunk`) is the same
-    // kind of lazily-created, capped/recycled pool as `_impactPool` above, but was missed when
-    // that reset block was written — it stayed lazily-initialized via `??=` only, so ArenaScene
-    // being the SAME reused Scene instance across a Garage->Arena->Garage->Arena cycle meant a
-    // second (or later) arena session inherited the FIRST session's pool of `Rectangle` game
-    // objects. Those were destroyed along with everything else on the first Arena's shutdown, so
-    // the moment a kill in the second session recycled one of them, `_acquireDebrisChunk` called
-    // `.setSize()` on a destroyed (nulled-out) GameObject and threw ("Cannot read properties of
-    // null (reading 'setSize')") — reproducibly, the first death after the second deploy. Reset
-    // both here so every fresh arena session starts with its own live pool.
-    this._debrisPool = [];
-    this._debrisRR = 0;
+    // #254: the `_impactPool`/`_debrisPool` reset moved up above (before `_spawnSquad()`) — see
+    // the comment there for why. Nothing left to reset in this spot.
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
     this._initSalvage();                  // #65: SCRAP pickups dropped by destroyed enemies
     this.scene.launch('HudScene');

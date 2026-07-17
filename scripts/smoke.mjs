@@ -1164,8 +1164,23 @@ try {
 
     // #64: run loop — player death ends the run and banks currency. Force-kill the player mech
     // (same overkill path used on the dummy above) and drive one update() so _updateRun notices.
+    // #254: the actual "an enemy's shot lands the killing blow" moment is `_damagePlayerAt`
+    // (combat.js) noticing `this.mech.isDestroyed()` right after applying damage — it's what
+    // flips `_playerDead`/fires the death FX/hides the view (see #225 below), NOT this raw
+    // `applyDamage` loop, which only zeroes the parts directly and bypasses that method entirely.
+    // Before this fix the #225 checks below relied on some AI enemy incidentally landing a real
+    // hit on the player within the SINGLE next `a.update(0, 16)` tick to trigger that same check
+    // — which depends on an enemy's weapon cooldown happening to be at/near zero at this exact
+    // moment in the script, and reliably was NOT (repro via `npm run smoke`: the one nearby aware
+    // mech's cooldown read ~1050ms here, so no enemy fired that tick and `_playerDead` never
+    // flipped — a smoke-test-only false negative, not a real gameplay regression: the underlying
+    // `_damagePlayerAt` logic is directly unit-tested in playerDeath.test.js and passes there).
+    // Call the real method directly instead, exactly as an enemy's finishing shot would (0 extra
+    // damage needed — the parts are already zeroed above, so `this.mech.isDestroyed()` is already
+    // true; `_damagePlayerAt` reads that off `this.mech`, not off its own `dmg` argument).
     const currencyBeforeDeath = a.run.currency;
     for (const loc of Object.keys(a.mech.parts)) a.mech.applyDamage(loc, 9999);
+    a._damagePlayerAt(0);
     a.update(0, 16);
     const runEndedOnDeath = a.run?.status === 'dead';
     const currencyBankedOnDeath = (g.registry.get('runCurrency') || 0) >= currencyBeforeDeath;
