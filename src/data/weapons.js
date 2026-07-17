@@ -77,13 +77,18 @@ export const WEAPONS = {
   // arcing plasma lob, and a close-range flame cone. No ammo (battery recharge). ──
   pulseLaser: w({   // every trigger pull = a rapid burst of light beam pulses
     id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
-    totalDamage: 16, range: { min: 0, opt: 340, max: 600 },
+    // #259 DPS-squish: totalDamage 16 -> 66 to bring raw DPS up from ~5.33 to the ~22 band.
+    // DPS = damage(totalDamage/burst.count) x count / cycleTime(s): pre-retune
+    // (16/5)*5/3 = 5.33 dps -> (66/5)*5/3 = 22.0 dps.
+    totalDamage: 66, range: { min: 0, opt: 340, max: 600 },
     ammoMax: 24, ammoRegen: 3.0, slots: 1, cycleTime: 3000,
     delivery: { hit: 'hitscan', pattern: 'single', burst: { count: 5, wubOn: 25, wubOff: 50 } },
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
     id: 'beamLaser', name: 'Beam Laser', category: 'energy',
-    damage: 2, range: { min: 0, opt: 500, max: 640 },
+    // #259 DPS-squish: damage 2 -> 1.5 to bring raw DPS down from 40 to the ~30 band.
+    // DPS = damage x fireRate: 2*20 = 40 dps -> 1.5*20 = 30 dps.
+    damage: 1.5, range: { min: 0, opt: 500, max: 640 },
     ammoMax: 120, ammoRegen: 18, slots: 2, cycleTime: 0,
     delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true },
   }),
@@ -115,18 +120,16 @@ export const WEAPONS = {
     // outpacing its fire rate and giving de facto unlimited ammo — holding the trigger always
     // drains the magazine net 10 ammo/s. ammoMax: 60 gives a real ~6s full-rate burst (60 /
     // (20-10)) before the mag empties and fire throttles down to whatever the 10/s regen can
-    // support; steady-state that's damage(2) × regen(10) = 20 sustained dps — same ballpark as
-    // #118's original ~20 sustained dps target, so Plasma Lance keeps its spot above Autocannon
-    // (~14.6 dps) and Scatter Gun (~16.8 dps) but well below Beam Laser's (~36+ dps) flagship
-    // tier, while the initial burst (damage × fireRate = 40 raw dps) reads as a genuinely punchy
-    // rapid stream, not a trickle. Full recharge from empty takes ~6s (60 / 10), symmetric with
-    // the burst window. cycleTime is unused for a stream pattern (see _fireInterval in
-    // firing.js), left at 0 like every other stream weapon (beamLaser/machineGun/flamethrower).
+    // support. Full recharge from empty takes ~6s (60 / 10), symmetric with the burst window.
+    // cycleTime is unused for a stream pattern (see _fireInterval in firing.js), left at 0 like
+    // every other stream weapon (beamLaser/machineGun/flamethrower).
+    // #259 DPS-squish: damage 2 -> 1.5 (in step with beamLaser, still mirrored 1:1) to bring raw
+    // DPS down from 40 to the ~30 band: damage x fireRate = 2*20 = 40 dps -> 1.5*20 = 30 dps.
     // The enemy sniper/artillery fire loop (src/scenes/arena/enemies.js) already drives cadence
     // generically off `_fireInterval`, which already branches on `pattern === 'stream'` — no
     // enemy-side code changes were needed for this to work as an enemy-fired projectile stream.
     id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
-    damage: 2, range: { min: 0, opt: 460, max: 620 },
+    damage: 1.5, range: { min: 0, opt: 460, max: 620 },
     ammoMax: 60, ammoRegen: 10, slots: 2, cycleTime: 0,
     // #213: very light per-bolt tracking bias (Halo Needler-style) — see `weakSeek` above.
     // NOT `guidance: 'homing'` — these bolts never lock on and never gate firing on a lock
@@ -148,13 +151,17 @@ export const WEAPONS = {
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',
-    damage: 34, range: { min: 120, opt: 400, max: 640 },
+    // #259 DPS-squish: damage 34 -> 52.8 to bring raw DPS up from ~15.45 to the ~24 band.
+    // DPS = damage / cycleTime(s): 34/2.2 = 15.45 dps -> 52.8/2.2 = 24.0 dps.
+    damage: 52.8, range: { min: 120, opt: 400, max: 640 },
     ammoMax: 3, ammoRegen: 0.4, slots: 2, cycleTime: 2200,
     delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
-    damage: 18, range: { min: 0, opt: 480, max: 820 },
+    // #259 DPS-squish: damage 18 -> 32 to bring raw DPS up from 11.25 to the ~20 band.
+    // DPS = damage / cycleTime(s): 18/1.6 = 11.25 dps -> 32/1.6 = 20.0 dps.
+    damage: 32, range: { min: 0, opt: 480, max: 820 },
     ammoMax: 4, ammoRegen: 0.5, slots: 2, cycleTime: 1600,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40 },
   }),
@@ -166,7 +173,9 @@ export const WEAPONS = {
     // streams(2) x damage(2)). A first pass dropped damage to 1.5 (81 dps), but the
     // corrected target is ~35 dps — well below Repeater, not a near-miss of it — so damage
     // came down further to 0.65: 18*3*0.65 = 35.1 dps.
-    damage: 0.65, range: { min: 0, opt: 338, max: 600 },
+    // #259 DPS-squish: damage 0.65 -> 0.5185 to bring raw DPS down from 35.1 to the ~28 band.
+    // DPS = fireRate(18) x sprayCount-average(3) x damage: 18*3*0.5185 = 28.0 dps.
+    damage: 0.5185, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
@@ -191,7 +200,9 @@ export const WEAPONS = {
   // tight fast pellet burst, and a lobbed incendiary that paints the ground. ──
   autocannon: w({   // one heavy, very fast direct-fire shell — punchy single hits
     id: 'autocannon', name: 'Autocannon', category: 'ballistic',
-    damage: 16, range: { min: 0, opt: 347, max: 600 },
+    // #259 DPS-squish: damage 16 -> 24.2 to bring raw DPS up from ~14.55 to the ~22 band.
+    // DPS = damage / cycleTime(s): 16/1.1 = 14.55 dps -> 24.2/1.1 = 22.0 dps.
+    damage: 24.2, range: { min: 0, opt: 347, max: 600 },
     ammoMax: 12, ammoRegen: 1.0, slots: 2, cycleTime: 1100,
     delivery: { hit: 'projectile', path: 'straight', velocity: 760, pattern: 'single', kind: 'slug' },
   }),
@@ -199,7 +210,9 @@ export const WEAPONS = {
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
     // #256 playtest round 2: damage 2 -> 1.667 to bring DPS down from 72 to ~60.
     // DPS = damage x streams(2) x fireRate(18): 2*2*18 = 72 -> 1.667*2*18 = 60.
-    damage: 1.667, range: { min: 0, opt: 338, max: 600 },
+    // #259 DPS-squish: damage 1.667 -> 0.889 to bring raw DPS down from ~60 to the ~32 band.
+    // DPS = damage x streams(2) x fireRate(18): 1.667*2*18 = 60.01 -> 0.889*2*18 = 32.0 dps.
+    damage: 0.889, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
     // streams: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
     // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
@@ -208,7 +221,9 @@ export const WEAPONS = {
   }),
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
-    damage: 3, range: { min: 0, opt: 338, max: 600 },
+    // #259 DPS-squish: damage 3 -> 4.457 to bring raw DPS up from 17.5 to the ~26 band.
+    // DPS = damage x spreadCount(7) / cycleTime(s): 3*7/1.2 = 17.5 dps -> 4.457*7/1.2 = 26.0 dps.
+    damage: 4.457, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
     // #101 correction: an earlier pass jittered each pellet's LAUNCH angle for an "organic"
     // feel, but the owner wants the fan itself perfectly even/deterministic every trigger
@@ -224,7 +239,12 @@ export const WEAPONS = {
   }),
   napalm: w({       // lobbed canister that bursts into a burning ground patch
     id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
-    damage: 6, range: { min: 50, opt: 500, max: 780 },
+    // #259 DPS-squish: damage 6 -> 27 to bring the DIRECT-HIT raw DPS up from 4.0 to the ~18
+    // band. DPS = damage / cycleTime(s): 6/1.5 = 4.0 dps -> 27/1.5 = 18.0 dps. This is
+    // direct-hit only, same as the original 4.0 figure — the groundFire DOT (radius/dps/
+    // duration below) stays a separate bonus, untouched by this retune, per the #259 audit's
+    // explicit call-out that napalm's low headline DPS undercounted its splash/burn utility.
+    damage: 27, range: { min: 50, opt: 500, max: 780 },
     ammoMax: 6, ammoRegen: 0.7, slots: 2, cycleTime: 1500,
     delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 } },
   }),
@@ -249,7 +269,9 @@ export const WEAPONS = {
     // ~15-23 missile band but still under Flamethrower (81) and Repeater (72) since the
     // homing guidance is itself a strong utility advantage over straight DPS.
     // #256 playtest round 2: damage 8 -> 10.667 to land at ~40 dps (6*10.667/1.6 = 40).
-    damage: 10.667, range: { min: 280, opt: 1050, max: 1750 },
+    // #259 DPS-squish: damage 10.667 -> 6.933 to bring raw DPS down from ~40 to the ~26 band.
+    // DPS = spreadCount(6) x damage / cycleTime(s): 6*10.667/1.6 = 40.0 -> 6*6.933/1.6 = 26.0.
+    damage: 6.933, range: { min: 280, opt: 1050, max: 1750 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
@@ -263,7 +285,9 @@ export const WEAPONS = {
     // #256 playtest rebalance: damage 5 -> 9. One trigger pull dumps the whole 6-missile
     // burst over cycleTime(1.8s): 5*6/1.8 = 16.7 dps pre-rebalance -> 9*6/1.8 = 30 dps.
     // #256 playtest round 2: damage 9 -> 12 to land at ~40 dps (12*6/1.8 = 40).
-    damage: 12, range: { min: 210, opt: 910, max: 1540 },
+    // #259 DPS-squish: damage 12 -> 7.8 to bring raw DPS down from 40 to the ~26 band.
+    // DPS = burst.count(6) x damage / cycleTime(s): 12*6/1.8 = 40.0 -> 7.8*6/1.8 = 26.0.
+    damage: 7.8, range: { min: 210, opt: 910, max: 1540 },
     ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
@@ -279,7 +303,9 @@ export const WEAPONS = {
     // so 5*5/1.1 = 22.7 dps pre-rebalance -> 5*7/1.1 = 31.8 dps, landing this dumbfire
     // cluster in the same ~30 dps missile band as its two homing siblings above.
     // #256 playtest round 2: damage 7 -> 8.8 to land at ~40 dps (5*8.8/1.1 = 40).
-    damage: 8.8, range: { min: 0, opt: 660, max: 960 },
+    // #259 DPS-squish: damage 8.8 -> 6.16 to bring raw DPS down from 40 to the ~28 band.
+    // DPS = spreadCount(5) x damage / cycleTime(s): 8.8*5/1.1 = 40.0 -> 6.16*5/1.1 = 28.0.
+    damage: 6.16, range: { min: 0, opt: 660, max: 960 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
