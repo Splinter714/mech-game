@@ -173,6 +173,17 @@ export const FiringMixin = {
     // `canFireWeapon` for exactly which deliveries this gates (only guidance: 'homing' —
     // direct-fire and dumbfire/arcing-lob weapons are unaffected).
     if (!canFireWeapon(w.weapon, this.lock)) return;
+    // #257 follow-up to #245: that fix made a FLYING enemy's own shots ignore terrain cover
+    // (it's shooting from above), but left the reverse asymmetric — the player's shots still
+    // stopped dead on a wall even when aiming at a flyer sitting over/behind that same terrain,
+    // making it unhittable from the ground despite being freely able to shoot the player through
+    // it. Mirror the mechanism: when the player's current convergence pick (`this.convergeTarget`
+    // — the same live target `_fireAngle` already aims muzzles at, set each frame in
+    // `_updateLock`) is a flying enemy (`.flying`, enemyKinds.js), the player's own shot ignores
+    // cover too, exactly like a flyer's shot does. A destructible-hex convergence target (#250)
+    // has no `.flying` property, so it's untouched (stays cover-respecting); a non-flying
+    // (ground) enemy target is likewise unaffected.
+    const ignoreCover = !!this.convergeTarget?.flying;
     const mods = this._buffMods?.() ?? {};
     // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend a
     // shot's worth, scaled by cycleMult (#235): Overdrive's cycleMult 0.5 halves the fire
@@ -207,12 +218,12 @@ export const FiringMixin = {
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle);
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', 'player', ignoreCover);
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle);
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, ignoreCover);
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in

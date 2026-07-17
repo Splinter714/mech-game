@@ -221,3 +221,84 @@ describe('#245 _spawnProjectile stamps ignoresCover onto the spawned round', () 
     expect(player.ignoresCover).toBe(false);
   });
 });
+
+// ── #257: the PLAYER's own shots ignore cover when aimed at a flying enemy ─────────────────
+// #245 made a flyer's OWN shots ignore cover; that fix's report flagged the reverse asymmetry
+// unaddressed — a flyer sitting over/behind terrain the player can't shoot through was
+// effectively unhittable from the ground, even though it could freely shoot back through that
+// same terrain. Fix: `fireWeapon` (firing.js) reads `this.convergeTarget` — the same live pick
+// `_fireAngle` already aims muzzles at, set every frame by `_updateLock` (targeting.js) with NO
+// LOS gate of its own — and threads `ignoreCover: true` into both fire paths whenever that
+// target is a flying enemy (`.flying`, enemyKinds.js). A non-flying enemy or a #250
+// destructible-hex convergence target (no `.flying` property) leaves `ignoreCover: false`,
+// unchanged from before.
+//
+// Real `fireWeapon` runs end-to-end against a minimal scene; `_fireHitscan`/`_spawnProjectile`
+// are spied (same pattern as `makeVehicleScene` above) so we can read the exact `ignoreCover`
+// arg the dispatch computed, without needing a full muzzle/aim/ammo/audio rig.
+function makeFireWeaponScene({ convergeTarget = null } = {}) {
+  const scene = {
+    scene: { isActive: () => true },
+    lock: {},
+    mech: { consumeAmmo: vi.fn() },
+    time: { now: 0, delayedCall: vi.fn() },
+    px: 0, py: 0,
+    convergeTarget,
+  };
+  Object.assign(scene, FiringMixin);
+  scene._muzzle = () => ({ x: 0, y: 0 });
+  scene._fireAngle = () => 0;
+  scene._fireHitscan = vi.fn();
+  scene._spawnProjectile = vi.fn(() => ({}));
+  scene._melee = vi.fn();
+  return scene;
+}
+
+const PLAYER_HITSCAN_W = { weapon: HITSCAN_WEAPON, location: 'rightArm', index: 0 };
+const PLAYER_PROJECTILE_W = { weapon: STRAIGHT_PROJECTILE, location: 'leftArm', index: 0 };
+
+describe('#257 fireWeapon: the player\'s own shot ignores cover when aimed at a flying enemy', () => {
+  it('no convergence target ⇒ ignoreCover: false (unchanged)', () => {
+    const scene = makeFireWeaponScene({ convergeTarget: null });
+    scene.fireWeapon(PLAYER_HITSCAN_W);
+    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false);
+  });
+
+  it('converged on a GROUND enemy ⇒ ignoreCover: false (unchanged)', () => {
+    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
+    scene.fireWeapon(PLAYER_HITSCAN_W);
+    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false);
+  });
+
+  it('converged on a #250 destructible hex (no .flying) ⇒ ignoreCover: false (unchanged)', () => {
+    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0 } });
+    scene.fireWeapon(PLAYER_HITSCAN_W);
+    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false);
+  });
+
+  it('converged on a FLYING enemy ⇒ the hitscan beam gets ignoreCover: true', () => {
+    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: true, mech: {} } });
+    scene.fireWeapon(PLAYER_HITSCAN_W);
+    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', true);
+  });
+
+  it('converged on a FLYING enemy ⇒ the spawned projectile gets ignoreCover: true', () => {
+    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: true, mech: {} } });
+    scene.fireWeapon(PLAYER_PROJECTILE_W);
+    // machineGun (STRAIGHT_PROJECTILE) is a 2-stream weapon, so each shot's muzzle x/y is offset
+    // laterally (a real, non-zero float) — only the trailing `ignoreCover` arg matters here.
+    for (const call of scene._spawnProjectile.mock.calls) {
+      expect(call[4]).toBe('player');
+      expect(call[8]).toBe(true);
+    }
+  });
+
+  it('converged on a GROUND enemy ⇒ the spawned projectile keeps ignoreCover: false (unchanged)', () => {
+    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
+    scene.fireWeapon(PLAYER_PROJECTILE_W);
+    for (const call of scene._spawnProjectile.mock.calls) {
+      expect(call[4]).toBe('player');
+      expect(call[8]).toBe(false);
+    }
+  });
+});

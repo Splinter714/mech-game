@@ -121,7 +121,10 @@ export const ProjectilesMixin = {
       // firing OUT of forest doesn't detonate its own shot at the muzzle. #245: a round fired
       // by a FLYING enemy (drone/helicopter — `ignoresCover`, set in _spawnProjectile from the
       // shooter's kindDef) is narratively fired from above, so it never collides with terrain
-      // cover at all — same total exemption an arcing round gets, without the lob visuals.
+      // cover at all — same total exemption an arcing round gets, without the lob visuals. #257:
+      // the same `ignoresCover` stamp now also covers the PLAYER'S own round when it was aimed at
+      // a flying enemy (firing.js `fireWeapon` reads `this.convergeTarget.flying`) — this check
+      // doesn't care which owner fired the round, only the flag, so no change was needed here.
       if (!p.arc && !p.ignoresCover) {
         const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
         if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes)) {
