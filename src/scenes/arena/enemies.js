@@ -38,7 +38,7 @@ import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
-import { scheduleFireCues } from '../../audio/fireCues.js';
+import { scheduleFireCues, ENEMY_FIRE_GAIN_SCALE } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
@@ -736,7 +736,9 @@ export const EnemiesMixin = {
         // into the busy window) so a turret cluster or drone swarm sharing a weapon never stacks
         // overlapping fire-cue trails.
         if (this._allowEnemyFireCue(w.weapon.id, plan)) {
-          scheduleFireCues(this, w.weapon, plan, true);
+          // #200 playtest follow-up: enemy fire plays VERY slightly quieter than the
+          // player's own identical weapon (see fireCues.js's ENEMY_FIRE_GAIN_SCALE).
+          scheduleFireCues(this, w.weapon, plan, true, ENEMY_FIRE_GAIN_SCALE);
         }
         if (plan.mode === 'contact') {
           this._melee(w, mx2, my2, fireAngle, 'enemy');
@@ -890,7 +892,8 @@ export const EnemiesMixin = {
     // above the mech fire loop) so a turret cluster (#145) or drone swarm sharing a weapon id
     // never stacks overlapping fire-cue trails.
     if (this._allowEnemyFireCue(weapon.id, plan)) {
-      scheduleFireCues(this, weapon, plan, true);
+      // #200 playtest follow-up: same slight-quieter reduction as the mech enemy loop above.
+      scheduleFireCues(this, weapon, plan, true, ENEMY_FIRE_GAIN_SCALE);
     }
     if (plan.mode === 'contact') {
       this._melee(w, mx, my, fireAngle, 'enemy');

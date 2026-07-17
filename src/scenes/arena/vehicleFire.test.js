@@ -37,7 +37,7 @@ vi.mock('../../data/weapons.js', async (importActual) => {
 
 // #200: spy on the shared fire-cue scheduler so we can prove _fireVehicleWeapon now calls it
 // (it never did before — enemies landed hits with an impact sound but fired silently).
-vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn() }));
+vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn(), ENEMY_FIRE_GAIN_SCALE: 0.85 }));
 
 import { EnemiesMixin } from './enemies.js';
 import { WEAPONS } from '../../data/weapons.js';

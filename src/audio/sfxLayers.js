@@ -3,11 +3,18 @@
 // tunable data table) is what makes a weapon's sound editable: tune a layer's fields instead
 // of hand-editing a hardcoded function. Add/change a sound = edit its layer array.
 
-export function playLayers(e, bus, layers) {
+// #200: optional overall gain multiplier (default 1 = untouched) — lets a caller quiet down
+// an entire cue's layers uniformly (e.g. enemy-sourced fire cues, VERY slightly reduced vs.
+// the player's own) without retuning each layer's own `gain` field, which stays the shared
+// tunable data every weapon/UI cue (and the Weapon Lab panel) reads. gainScale === 1 skips
+// the per-layer object spread entirely, so untouched callers build the exact same layer
+// objects as before this param existed.
+export function playLayers(e, bus, layers, gainScale = 1) {
   for (const l of layers || []) {
     if (!l) continue;
-    if (l.kind === 'noise') e.noise(bus, l);
-    else e.tone(bus, l);
+    const layer = gainScale === 1 ? l : { ...l, gain: (l.gain ?? 0.15) * gainScale };
+    if (layer.kind === 'noise') e.noise(bus, layer);
+    else e.tone(bus, layer);
   }
 }
 
