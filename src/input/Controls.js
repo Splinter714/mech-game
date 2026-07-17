@@ -8,9 +8,13 @@
 // torso-twist arc). Skill slots are body locations, each on a fixed button (SKILL_BINDS):
 //   right arm    RT / right-mouse        left arm     LT / left-mouse
 //   right torso  RB / E                  left torso   LB / Q
-// R3 is no longer a fire bind — the head stopped being a skill slot (#31); R3 now DROPS the
-// current indirect-fire lock (#62) so a fresh amber→red re-lock can be re-acquired by re-aiming
-// (keyboard equivalent: T). Handled via PadEdges, not the per-frame fire intent.
+// R3 is no longer a fire bind — the head stopped being a skill slot (#31). #62's R3 "drop the
+// current indirect-fire lock" action was removed by #252, which replaced the lock with a live
+// mirror of convergence that has no maintained state left to drop. #262: R3 now TOGGLES
+// convergence/lock's enemy-vs-building targeting focus — 'enemy' (default, #250's behavior: an
+// enemy always wins over a destructible-terrain hex) vs. 'building' (a hex wins instead, so the
+// player can intentionally target terrain even with an enemy in view). Keyboard equivalent: F.
+// Handled via PadEdges (pad) / a keydown listener (keyboard), not the per-frame fire intent.
 //
 // #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot is gone —
 // L3/Space is now a hardcoded, always-available Sprint ability (data/sprint.js), never routed

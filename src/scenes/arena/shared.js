@@ -388,7 +388,19 @@ export function pickAimEnemy(px, py, turretAngle, candidates, maxDist = Infinity
 // preferred — while any enemy is available, regardless of which is closer or better-aimed. Only
 // when there is no enemy at all does a hex get scored via `nearestToAimLine`. Returns null (the
 // pre-#250 "nothing to converge on" case) when neither exists, matching prior behavior exactly.
-export function pickConvergeTarget(px, py, turretAngle, aimEnemy, hexCandidates, maxDist = Infinity) {
+//
+// #262: `focusMode` ('enemy' | 'building', default 'enemy' — preserves the #250 behavior exactly
+// for any caller/test that doesn't know about this parameter) lets the player flip which side of
+// the ranking wins. 'enemy' is the untouched #250 rule above. 'building' inverts it: a destructible
+// hex is preferred over an enemy whenever one is in range/on-line, so the player can intentionally
+// target terrain (clear cover, break a wall) even with an enemy also in view — falling back to the
+// enemy only when no hex candidate is available, so aiming never goes fully idle just because
+// focus mode is on terrain.
+export function pickConvergeTarget(px, py, turretAngle, aimEnemy, hexCandidates, maxDist = Infinity, focusMode = 'enemy') {
+  if (focusMode === 'building') {
+    const hex = nearestToAimLine(px, py, turretAngle, hexCandidates, maxDist);
+    return hex || aimEnemy || null;
+  }
   if (aimEnemy) return aimEnemy;
   return nearestToAimLine(px, py, turretAngle, hexCandidates, maxDist);
 }
