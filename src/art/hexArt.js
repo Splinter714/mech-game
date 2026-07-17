@@ -105,6 +105,16 @@ function isImpassableTerrainId(key) {
   return !!t && t.passable === false;
 }
 
+// #222: the five terrain ids reserved EXCLUSIVELY for a biome's `deep` world-boundary ring
+// (data/biomes.js — never placed as an in-map feature, see worldgen.js `boundaryRingKeys`).
+// Distinct from `isImpassableTerrainId` above, which is broader (also true for destructible
+// buildings/outposts like `building`/`adobe`/`tower` — those keep their normal bordered,
+// detailed look). Only these five get the seamless boundary treatment below.
+const BOUNDARY_ONLY_IDS = new Set(['deepWater', 'mesa', 'ice', 'collapsed', 'lava']);
+function isBoundaryTerrainId(key) {
+  return BOUNDARY_ONLY_IDS.has(key.replace(/^hex_/, ''));
+}
+
 // A top-down tree: a soft drop shadow, then a canopy built from several overlapping
 // blobs (so the silhouette reads as foliage, not a flat disc), shaded dark->light from
 // the lower-right shadow side to the upper-left sun side, with a couple of bright
@@ -512,8 +522,21 @@ export function buildHexTextures(scene) {
   for (const [key, pal] of Object.entries(tiles)) {
     gen(scene, key, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
       const sg = scaledGraphics(g);
-      drawHex(sg, pal.fill, pal.edge, 0.9, isImpassableTerrainId(key));
-      DETAIL[key]?.(sg);
+      // #222: the world-boundary-only terrain ids (deep water / mesa / ice / collapsed / lava)
+      // are stamped edge-to-edge across a very wide ring (worldgen.js BOUNDARY_RING_WIDTH) with
+      // this SAME baked texture — previously that meant every hex showed the identical bordered
+      // tile PLUS an identical "icon" (a wave swell, a rock butte, a rubble heap, a lava pool),
+      // which reads as an obviously-repeating tiled pattern rather than one continuous surface.
+      // Two changes make adjacent boundary tiles visually indistinguishable from one another (so
+      // the seam between them disappears and the whole ring reads as one continuous sea/wasteland):
+      // an inset of 1.0 (instead of 0.9) removes the darker inset border band entirely — the fill
+      // now runs flush to the tile's true edge, so there's no per-hex grid line — and the
+      // terrain's DETAIL painter (the recognizable per-hex icon) is skipped. The #211 sunken-shadow
+      // depth cue is untouched (still driven by `isImpassableTerrainId`), so the boundary still
+      // reads as sitting below the playable ground around it.
+      const boundary = isBoundaryTerrainId(key);
+      drawHex(sg, pal.fill, pal.edge, boundary ? 1.0 : 0.9, isImpassableTerrainId(key));
+      if (!boundary) DETAIL[key]?.(sg);
     });
   }
   // The wall tile gets a raised top plate so cover reads as solid.
