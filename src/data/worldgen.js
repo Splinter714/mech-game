@@ -29,6 +29,99 @@ import { buildingHp as buildingHpOf, isSoftCover } from './terrain.js';
 // of the corridor plausibly passes one without turning every map into a helipad showcase.
 export const HELIPAD_COUNT = 2;
 
+// #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
+// stage/squad system, data/run.js's now-retired `squadForStage`/`DEFAULT_SQUAD`): enemies are no
+// longer squad-dropped off-camera near the player on mission-complete — they're placed once,
+// here, at world-gen time, dormant, inside a handful of real bases.
+//
+// BASE_COUNT: how many bases a generated map gets. 3 is a first-pass pick that mirrors the old
+// system's shape at a coarser grain — 5 escalating stages compressed into a handful of real
+// encampments spread down the corridor, each a meaningfully-sized fight rather than one-per-
+// stage. Small enough to keep this pass simple (per the issue's own "keep it SIMPLE" framing);
+// tune via playtest once the core loop is felt out.
+export const BASE_COUNT = 3;
+
+// Docks per base: a small cluster (not a wall of enemies) — mirrors the old SQUAD_BASE/GROWTH
+// escalation's spirit (more, tougher units later) via `baseLateFraction` below rather than a
+// flat per-base count.
+export const DOCKS_PER_BASE_MIN = 3;
+export const DOCKS_PER_BASE_MAX = 5;
+
+// Alert towers scattered as connective tissue BETWEEN bases (never owned by one ahead of time —
+// see data/bases.js `nearestBaseTo`, resolved at wake time). One per base plus a couple of extra
+// roamers so the corridor has more sensor coverage than raw base count alone would give.
+export const ALERT_TOWERS_PER_BASE_MIN = 1;
+export const ALERT_TOWERS_PER_BASE_MAX = 2;
+
+// #269 §3: replaces run.js's retired EARLY_POOL/LATE_POOL (which drew a STAGE's squad
+// composition) with an analogous pair for DOCK composition — same "softer openers vs. tougher
+// lategame kinds" idea, just drawn per-BASE now via `baseLateFraction` (index of the base along
+// the run, 0→1) instead of per-stage. Restricted to the non-mech ENEMY_KINDS roster (turret/
+// tank/drone/helicopter/quadruped/infantry) — deliberately NOT full mech loadouts (data/
+// enemies.js `ENEMIES`), since the wake-response split (data/bases.js `isFastWakeKind`) and the
+// "hold ground" dock behaviour (scenes/arena/enemyBehaviors.js `e.holdGround`) are both built
+// against the simpler non-mech kind AI, not the mech tactical-AI state machine — a reasonable
+// scope line for this pass (see the issue's own base-wall/layout deferral for the analogous
+// "don't over-build this pass" spirit). `swarm`/`turretNest`/`infantryMob` (multi-unit cluster
+// EXPANSIONS, not single kinds) are excluded too — a dock hosts exactly one dormant unit.
+export const BASE_EARLY_KIND_POOL = ['turret', 'tank', 'drone', 'drone'];
+export const BASE_LATE_KIND_POOL = ['helicopter', 'helicopter', 'quadruped', 'tank', 'turret'];
+
+// Same 0→1 escalation shape as the old (now-retired) run.js `lateFraction`, just indexed by
+// BASE rather than stage — base 0 draws only from BASE_EARLY_KIND_POOL, the last base skews
+// fully toward BASE_LATE_KIND_POOL.
+export function baseLateFraction(baseIndex, baseCount) {
+  if (baseCount <= 1) return 0;
+  return baseIndex / (baseCount - 1);
+}
+
+// Place `baseCount` bases into the terrain map `T` (mutated in place, same style as the
+// outpost/helipad loops above): each base is a small cluster of `dock` hexes (one dormant enemy
+// kind pre-assigned per dock — world-gen PLACEMENT DATA, not a new terrain entry per kind, per
+// the issue) around a random ground hex, plus a couple of `alertTower` hexes scattered nearby as
+// connective tissue. Returns the array of base descriptors: `{ id, center: {q,r}, docks: [{q,
+// r, kindId}] }` — `alertTowers` (flat `{q,r}` list, NOT nested per base — see the file-header
+// comment on why they're never base-owned) is returned separately. Every hex actually used is
+// stamped into `T` only if it's still plain open ground (`isGround`) at the time its turn comes
+// up, exactly like the outpost/helipad loops — never overwriting cover/an outpost/another dock.
+export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT) {
+  const bases = [];
+  const alertTowers = [];
+  for (let i = 0; i < baseCount; i++) {
+    const center = all[Math.floor(rng() * all.length)];
+    const frac = baseLateFraction(i, baseCount);
+    const dockCount = DOCKS_PER_BASE_MIN + Math.floor(rng() * (DOCKS_PER_BASE_MAX - DOCKS_PER_BASE_MIN + 1));
+    // Candidate hexes for this base's docks: the centre, then successive rings out from it —
+    // mirrors the outpost cluster's "centre + neighbours" shape but wider, since a base needs
+    // more hexes than a single building footprint.
+    const candidates = [center, ...neighbors(center.q, center.r), ...range(center, 2)];
+    const docks = [];
+    for (const h of candidates) {
+      if (docks.length >= dockCount) break;
+      const k = axialKey(h.q, h.r);
+      if (!T.has(k) || !isGround(k)) continue;
+      const pool = rng() < frac ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
+      const kindId = pool[Math.floor(rng() * pool.length)];
+      T.set(k, 'dock');
+      docks.push({ q: h.q, r: h.r, kindId });
+    }
+    // Alert towers: connective tissue placed a bit further out (rings 3-5) than the dock
+    // cluster itself, so they read as separate roaming sentries rather than part of the base.
+    const towerCount = ALERT_TOWERS_PER_BASE_MIN
+      + Math.floor(rng() * (ALERT_TOWERS_PER_BASE_MAX - ALERT_TOWERS_PER_BASE_MIN + 1));
+    for (let t = 0; t < towerCount; t++) {
+      const ring = range(center, 3 + Math.floor(rng() * 3));
+      for (let tries = 0; tries < 10; tries++) {
+        const h = ring[Math.floor(rng() * ring.length)];
+        const k = axialKey(h.q, h.r);
+        if (T.has(k) && isGround(k)) { T.set(k, 'alertTower'); alertTowers.push({ q: h.q, r: h.r }); break; }
+      }
+    }
+    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks });
+  }
+  return { bases, alertTowers };
+}
+
 // Small seeded PRNG (mulberry32) — deterministic given `a`, so the same seed always yields
 // the same terrain layout.
 export function mulberry32(a) {
@@ -68,7 +161,7 @@ export function safeZoneKeys(center, radius = 3) {
 // — the live game scales it up with corridor length so objectives can march the whole way down.
 export function generateTerrain({
   seed, worldRadius, biome, safeCenter = { q: 0, r: 0 }, extraClear = [],
-  included = null, includedKeys = null, boundaryRing = null, outposts = null,
+  included = null, includedKeys = null, boundaryRing = null, outposts = null, baseCount = BASE_COUNT,
 }) {
   const R = worldRadius;
   const rng = mulberry32(seed);
@@ -158,6 +251,12 @@ export function generateTerrain({
     if (isGround(k)) T.set(k, 'helipad');
   }
 
+  // #269 §3: place the run's bases (dormant docks + connective-tissue alert towers) — same
+  // "random valid ground hex" style as the outpost/helipad loops above, AFTER them so a base
+  // never overwrites an outpost/cover cluster, BEFORE the safe-zone clear so anything that lands
+  // inside it is reset back to open ground exactly like an outpost or helipad would be.
+  const { bases, alertTowers } = placeBases(rng, all, T, isGround, baseCount);
+
   // Clear the safe zone (spawn point + line of fire) back to open ground.
   for (const h of range(safeCenter, 3)) { const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, groundAt(h)); }
   // Force-clear any extra hexes (e.g. the debug DUMMY_HEX) regardless of the RNG.
@@ -165,6 +264,18 @@ export function generateTerrain({
     if (!T.has(k)) continue;
     T.set(k, B.groundA);
   }
+
+  // #269: unlike the outpost/helipad loops (which bake straight into `T` with nothing else ever
+  // tracking their positions separately), `bases`/`alertTowers` are returned as their OWN data —
+  // the scene spawns a real dormant enemy record at each dock's exact position, so a dock/tower
+  // whose hex the safe-zone clear just reset back to open ground must be dropped from these
+  // lists too, or the scene would spawn a "dormant unit" standing on plain grass with no matching
+  // terrain marker under it. Re-validated against the now-final `T` (cheap — base/tower counts
+  // are small), same "landing in the safe zone is fine, it just gets cleared" spirit as helipad.
+  for (const base of bases) {
+    base.docks = base.docks.filter((d) => T.get(axialKey(d.q, d.r)) === 'dock');
+  }
+  const finalAlertTowers = alertTowers.filter((t) => T.get(axialKey(t.q, t.r)) === 'alertTower');
 
   // #110: stamp the boundary ring LAST (and unconditionally) — these hexes sit just OUTSIDE
   // the playable shape, so nothing above ever touched them; this is the one and only place
@@ -179,7 +290,7 @@ export function generateTerrain({
     const hp = buildingHpOf(id);
     if (hp > 0) (isSoftCover(id) ? coverHp : buildingHp).set(k, hp);
   }
-  return { terrain: T, buildingHp, coverHp };
+  return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

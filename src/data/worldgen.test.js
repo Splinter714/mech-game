@@ -10,8 +10,10 @@ import {
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
   generateSpine, corridorHexSet, spineProgressHexOf,
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, HELIPAD_COUNT,
+  BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX, ALERT_TOWERS_PER_BASE_MIN,
+  ALERT_TOWERS_PER_BASE_MAX, BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
+  placeBases,
 } from './worldgen.js';
-import { lateFraction as runLateFraction, STAGE_COUNT } from './run.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN } from './terrain.js';
 import { axialKey, range, neighbors, distance, hexToPixel } from './hexgrid.js';
@@ -195,12 +197,14 @@ describe('generateTerrain', () => {
     expect(terrain.get(dummy)).toBe(GRASSLAND.groundA);
   });
 
-  it('buildingHp only holds destructible solid hexes (outposts + base infra like helipad), never soft cover', () => {
+  it('buildingHp only holds destructible solid hexes (outposts + base infra like helipad/alertTower), never soft cover', () => {
     const { terrain, buildingHp, coverHp } = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND });
     // #251: helipad is now destructible too, so buildingHp legitimately holds it alongside the
     // biome's real outpost — both are "solid" (non-soft-cover) destructibles; only outposts are
-    // ever picked as the mission objective (isMissionObjective, exercised elsewhere).
-    for (const k of buildingHp.keys()) expect([GRASSLAND.outpost, 'helipad']).toContain(terrain.get(k));
+    // ever picked as the mission objective (isMissionObjective, exercised elsewhere). #269: the
+    // alertTower base-infra hex is the same kind of destructible-but-not-a-mission-objective
+    // set-dressing.
+    for (const k of buildingHp.keys()) expect([GRASSLAND.outpost, 'helipad', 'alertTower']).toContain(terrain.get(k));
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
 
@@ -269,7 +273,9 @@ describe('generateTerrain', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: GRASSLAND });
       const validIds = new Set([
         // #251: `helipad` is a normal stamped role now too — static set-dressing, not a hazard.
-        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost, 'helipad',
+        // #269: `dock`/`alertTower` are the base-population system's own normal stamped roles.
+        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost,
+        'helipad', 'dock', 'alertTower',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });
@@ -566,9 +572,15 @@ describe('pickStageObjective (#138)', () => {
     expect(STAGE_OBJECTIVE_FAR_FRACTION).toBe(1);
   });
 
-  // #169: measured ALONG THE SPINE via a `distanceOf` metric, objectives march monotonically down
-  // the corridor across the real run curve — stage 0 near the spawn end, final near the far end.
-  it('across the real run curve, objectives progress monotonically DOWN THE SPINE end-to-end', () => {
+  // #169/#269: measured ALONG THE SPINE via a `distanceOf` metric, objectives march
+  // monotonically down the corridor across a 0→1 escalation curve. #269 retired run.js's
+  // `lateFraction`/`STAGE_COUNT` (the old fixed-5-stage squad system) — this test now supplies
+  // its own local N-step 0→1 curve (`pickStageObjective` itself is generic over any 0..1
+  // `lateFrac` input, so it doesn't care where the fraction comes from) rather than depending on
+  // the now-retired run.js exports, so this stays a pure worldgen.js-only test.
+  it('across a 0→1 escalation curve, objectives progress monotonically DOWN THE SPINE end-to-end', () => {
+    const N_STEPS = 5;
+    const stepFraction = (i) => (N_STEPS <= 1 ? 0 : i / (N_STEPS - 1));
     let allMonotonic = true, checked = 0;
     for (let seed = 0; seed < 60; seed++) {
       const { spine, includedKeys } = buildCorridor(seed);
@@ -576,19 +588,91 @@ describe('pickStageObjective (#138)', () => {
       // A realistic candidate spread: every ~5th corridor hex stands in for a generated outpost.
       const candidates = [...includedKeys].filter((_, i) => i % 5 === 0);
       const progOf = (k) => { const [q, r] = k.split(',').map(Number); return progressOf(q, r); };
-      const stages = [];
-      for (let s = 0; s < STAGE_COUNT; s++) {
-        const k = pickStageObjective(candidates, from, runLateFraction(s), FAR_OBJECTIVE_MIN_DIST, null, progressOf);
-        stages.push(progOf(k));
+      const steps = [];
+      for (let s = 0; s < N_STEPS; s++) {
+        const k = pickStageObjective(candidates, from, stepFraction(s), FAR_OBJECTIVE_MIN_DIST, null, progressOf);
+        steps.push(progOf(k));
       }
       checked++;
-      for (let s = 1; s < stages.length; s++) if (stages[s] < stages[s - 1]) allMonotonic = false;
-      // Stage 0 is near the spawn end; the final stage reaches well down the corridor.
+      for (let s = 1; s < steps.length; s++) if (steps[s] < steps[s - 1]) allMonotonic = false;
+      // Step 0 is near the spawn end; the final step reaches well down the corridor.
       const maxProg = Math.max(...candidates.map(progOf));
-      expect(stages[0]).toBeLessThan(maxProg * 0.5);
-      expect(stages[STAGE_COUNT - 1]).toBeGreaterThan(stages[0] * 1.5);
+      expect(steps[0]).toBeLessThan(maxProg * 0.5);
+      expect(steps[N_STEPS - 1]).toBeGreaterThan(steps[0] * 1.5);
     }
     expect(checked).toBeGreaterThan(50);
     expect(allMonotonic).toBe(true);
+  });
+});
+
+describe('placeBases (#269 §3: base population world-gen placement)', () => {
+  const B = GRASSLAND;
+  function buildAllRing(radius = 12) {
+    return range({ q: 0, r: 0 }, radius);
+  }
+
+  it('places BASE_COUNT bases, each with docks in range and a pre-assigned kindId', () => {
+    const rng = mulberry32(777);
+    const all = buildAllRing();
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const { bases, alertTowers } = placeBases(rng, all, T, isGround, BASE_COUNT);
+
+    expect(bases.length).toBe(BASE_COUNT);
+    for (const base of bases) {
+      expect(base.docks.length).toBeGreaterThanOrEqual(1);
+      expect(base.docks.length).toBeLessThanOrEqual(DOCKS_PER_BASE_MAX);
+      for (const d of base.docks) {
+        expect(T.get(axialKey(d.q, d.r))).toBe('dock');
+        expect(typeof d.kindId).toBe('string');
+        expect([...BASE_EARLY_KIND_POOL, ...BASE_LATE_KIND_POOL]).toContain(d.kindId);
+      }
+    }
+    for (const t of alertTowers) {
+      expect(T.get(axialKey(t.q, t.r))).toBe('alertTower');
+    }
+    // Total alert towers is within the expected per-base band (best-effort — placement can miss
+    // a candidate hex on a crowded map, so this is an upper bound, not an exact count).
+    expect(alertTowers.length).toBeLessThanOrEqual(BASE_COUNT * ALERT_TOWERS_PER_BASE_MAX);
+  });
+
+  it('never overwrites a hex that is no longer plain ground', () => {
+    const rng = mulberry32(42);
+    const all = buildAllRing();
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    // Pre-mark a chunk of the map as an outpost so placeBases must route around it.
+    const preMarked = new Set();
+    for (const h of range({ q: 0, r: 0 }, 3)) { T.set(axialKey(h.q, h.r), 'building'); preMarked.add(axialKey(h.q, h.r)); }
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
+    for (const base of bases) {
+      for (const d of base.docks) expect(preMarked.has(axialKey(d.q, d.r))).toBe(false);
+    }
+  });
+
+  it('baseLateFraction ramps 0→1 across the bases, escalating dock composition', () => {
+    expect(baseLateFraction(0, BASE_COUNT)).toBe(0);
+    expect(baseLateFraction(BASE_COUNT - 1, BASE_COUNT)).toBe(1);
+    expect(baseLateFraction(0, 1)).toBe(0);   // guards the /0 edge case
+  });
+
+  it('BASE_EARLY_KIND_POOL/BASE_LATE_KIND_POOL are non-mech ENEMY_KINDS ids, never cluster expansions', () => {
+    const disallowed = new Set(['swarm', 'turretNest', 'infantryMob']);
+    for (const id of [...BASE_EARLY_KIND_POOL, ...BASE_LATE_KIND_POOL]) {
+      expect(disallowed.has(id)).toBe(false);
+    }
+  });
+
+  it('generateTerrain returns bases/alertTowers consistent with the final terrain map', () => {
+    const { terrain, bases, alertTowers } = generateTerrain({
+      seed: 123, worldRadius: 14, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
+    });
+    expect(bases.length).toBe(BASE_COUNT);
+    for (const base of bases) {
+      for (const d of base.docks) expect(terrain.get(axialKey(d.q, d.r))).toBe('dock');
+    }
+    for (const t of alertTowers) expect(terrain.get(axialKey(t.q, t.r))).toBe('alertTower');
   });
 });

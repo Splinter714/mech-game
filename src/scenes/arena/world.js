@@ -128,10 +128,16 @@ export const WorldMixin = {
     const outposts = Math.max(B.outposts, Math.round(lengthHex / 3));
 
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
-    const { terrain, buildingHp, coverHp } = generateTerrain({
+    const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
       includedKeys, boundaryRing, outposts,
     });
+    // #269 §3: the run's bases (dormant docks + connective-tissue alert towers), placed once
+    // here at world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase`
+    // (scenes/arena/bases.js); `this.alertTowerHexes` feeds `_initAlertTowers`/
+    // `_updateAlertTowers` (same file).
+    this.bases = bases;
+    this.alertTowerHexes = alertTowers;
 
     this.terrain = terrain;
     this.buildingHp = buildingHp;   // hexKey → remaining HP for destructible OUTPOST (solid) hexes

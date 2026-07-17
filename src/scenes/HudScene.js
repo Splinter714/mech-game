@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 import { POWERUPS, durationMs } from '../data/powerups.js';
-import { STAGE_COUNT } from '../data/run.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
@@ -324,10 +323,12 @@ export default class HudScene extends Phaser.Scene {
       this.dummyText.setText(`ENEMIES ${alive}/${total}`).setColor(alive ? C.dim : C.bad);
     }
 
-    // #64: run/stage readout, driven by the Run the arena publishes each frame.
+    // #64/#269: run readout, driven by the Run the arena publishes each frame. Retired the old
+    // fixed-stage-count display (the stage/squad system is gone) in favor of the objectives
+    // cleared so far this run.
     const run = this.registry.get('run');
     if (run) {
-      this.stageText.setText(`STAGE ${run.stageIndex + 1}/${STAGE_COUNT}   SCRAP ${run.currency}`);
+      this.stageText.setText(`OBJECTIVES ${run.objectivesCleared}   SCRAP ${run.currency}`);
     }
 
     // #66: objective line + win banner, driven by the Mission the arena publishes each frame.

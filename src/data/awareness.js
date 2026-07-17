@@ -10,6 +10,15 @@
 
 export const UNAWARE = 'unaware';
 export const AWARE = 'aware';
+// #269 §3 (base population rework): a THIRD state, distinct from both of the above — a docked
+// unit spawned at a base (data/worldgen.js `placeBases`) starts DORMANT: genuinely inert, not
+// merely unaware. Unlike UNAWARE (which still runs idle-wander/loitering AI, `pickWanderGoal`),
+// a DORMANT enemy skips ALL per-frame AI ticking entirely — no movement, no turret slew, no
+// firing, nothing (see scenes/arena/enemies.js `_updateEnemy`'s early-return on this state). It
+// transitions directly to AWARE (never through UNAWARE) the moment its base is woken by an
+// alert tower's completed countdown (scenes/arena/bases.js `_wakeBase`) — a one-way transition,
+// same spirit as UNAWARE→AWARE above, just with a real "asleep" state in front of it.
+export const DORMANT = 'dormant';
 
 // An enemy's detection range is its own engagement range (weapon opt-derived standoff for a
 // mech, or `fireRange` for a non-mech kind — the range concept each already tracks) widened a

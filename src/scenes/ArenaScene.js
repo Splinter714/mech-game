@@ -18,6 +18,7 @@ import { LocomotionMixin } from './arena/locomotion.js';
 import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
+import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
@@ -140,10 +141,13 @@ export default class ArenaScene extends Phaser.Scene {
 
     this.cameras.main.startFollow(this.playerView, true, 0.12, 0.12);
 
-    // Default opening squad (#44): one of each mech type — brawler, skirmisher, sniper, and the
-    // cover-camping bombardier — dropped OFF-SCREEN so they march into view and engage per their
-    // AI. Spawned here (after px/py + camera follow) so off-screen positions are computed right.
-    this._spawnSquad();
+    // #269: the old off-screen opening squad (#44) is retired — every base's docked units are
+    // placed HERE, at deploy time, dormant, at their fixed dock positions (no camera/player-
+    // relative placement needed, unlike the old off-screen spawn). Alert-tower countdown state
+    // is initialized alongside so `_updateAlertTowers` (update(), below) can start ticking
+    // immediately.
+    this._spawnDormantUnits();
+    this._initAlertTowers();
 
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
@@ -292,6 +296,8 @@ export default class ArenaScene extends Phaser.Scene {
     this._stepGait(dt);
     if (!this._playerDead) this._handleFiring(intent, delta);
     this._updateEnemies(dt, delta);
+    // #269 §5: tick every standing alert tower's wake-countdown sensor.
+    this._updateAlertTowers(dt);
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
@@ -358,5 +364,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin,
 );

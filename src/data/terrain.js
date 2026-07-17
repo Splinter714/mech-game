@@ -115,6 +115,37 @@ export const TERRAIN = {
                // movement, same as bare ground.
                category: 'base', movement: 'full', cover: 'open' },
 
+  // #269 §3 (issue: base population rework — dormant docks + alert towers): a GENERIC dock/bay
+  // hex — a pure PLACEMENT MARKER for a dormant docked unit (data/worldgen.js `placeBases`), not
+  // a structure of its own. Per the issue's explicit call ("NOT rendered as a distinctive
+  // structure itself... the docked unit's own art is what shows what's there"), this reuses the
+  // helipad's existing ground-marking texture rather than baking new per-kind hex art — the
+  // SPECIFIC enemy kind stationed at a given dock is world-gen PLACEMENT DATA (`placeBases`'
+  // returned `docks` list), never a new terrain entry per kind. A mech can freely walk on/off the
+  // pad (the docked unit is a separate enemy record, not the hex itself), so full movement + open
+  // cover, same as bare ground. Deliberately NOT destructible: the issue calls out that a dock
+  // hex having its own HP separate from the unit docked on it is unnecessary complexity — only
+  // the docked UNIT (an ordinary enemy record with its own hp) can be killed; the hex itself
+  // just persists as a landing marking whether or not anything is currently standing on it.
+  dock:      { id: 'dock',      tex: 'hex_helipad',   passable: true,  blocksLOS: false, speedFactor: 1,
+               category: 'base', movement: 'full', cover: 'open' },
+  // #269 §3: a small, cheap, DESTRUCTIBLE sensor tower — the wake TRIGGER for the base-population
+  // system (data/alertTower.js's pure countdown state machine + scenes/arena/bases.js's per-frame
+  // tick/wake routing). It's connective tissue SCATTERED BETWEEN bases (data/worldgen.js
+  // `placeBases`), not owned by or part of any one base — the nearest base is resolved at wake
+  // time, once its countdown actually completes. While standing, a player who lingers in its
+  // detection radius starts a countdown ("radioing it in"); destroying the tower first cancels
+  // it — a real stealth/tension window, not just flavor. Reads as a small emplacement — the same
+  // cover/movement profile as the existing `tower` hard-cover outpost (hard cover, no movement,
+  // reusing its texture too) since it should feel like a genuine destructible objective-of-
+  // opportunity for a stealthy player — just cheaper (hp 25 vs. an outpost's 60) since it's a
+  // slim sensor mast, not a whole building. `setDressing: true` (same precedent as `helipad`)
+  // keeps it OUT of the mission-objective pool (`isMissionObjective`) — it's a stealth/wake
+  // mechanic, never the assault-objective hex.
+  alertTower:{ id: 'alertTower',tex: 'hex_tower',      passable: false, blocksLOS: true,
+               destructible: true, hp: 25, rubbleId: 'rubble', setDressing: true,
+               category: 'base', movement: 'none', cover: 'hard' },
+
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'terrain', movement: 'full', cover: 'open' },
