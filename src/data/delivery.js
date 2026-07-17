@@ -333,6 +333,9 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     // instead of orbiting a target it's too fast to turn onto. Arcing lobs override `speed` after
     // this (firing.js) and re-derive `turn` from the new speed.
     homing: d.guidance === 'homing', turn: homingTurnRate(speed),
+    // #213: opt-in WEAK per-projectile seek (Plasma Lance) — see stepWeakSeek below. Distinct
+    // flag from `homing` so it never touches the real lock-on steering/turn-rate/gating.
+    weakSeek: !!d.weakSeek,
     // Flight-personality wobble — see wobbleKind(). `wobbleOffset` is the last-applied
     // lateral nudge (kept so the trail/art can read where the round visually is).
     // `wobbleAmplitude`/`wobbleFrequency` are per-round so a weapon can scale its wobble
@@ -399,3 +402,39 @@ export function rotateToward(a, target, maxStep) {
 }
 
 function wrapAngle(x) { return Math.atan2(Math.sin(x), Math.cos(x)); }
+
+// ── Weak seek (Plasma Lance, #213) ───────────────────────────────────────────────────────
+// A Halo-Needler-style "these bolts have a mind of their own, a little" bias — deliberately
+// its OWN tiny model, not a reuse of the real homing/lock-on system above:
+//   • no lock at all — never gates firing (targetlock.js's canFireWeapon only special-cases
+//     `guidance === 'homing'`; a weakSeek round is `guidance: null` and fires like any
+//     dumbfire round)
+//   • no fixed target — every frame (or period) the caller re-resolves whichever LIVING
+//     enemy is nearest to the ROUND'S OWN current (x,y), not the player's locked target and
+//     not whatever was nearest at spawn, so it naturally retargets as the round travels and
+//     as enemies move/die
+//   • no lead/intercept (leadAngle) — just a raw bearing to the target's current position
+//   • a turn rate far below HOMING_TURN_MIN (3.2 rad/s) so a target that's dodging or far off
+//     the bolt's own axis is barely corrected toward, never run down like a real missile
+const WEAK_SEEK_TURN_RATE = 0.5; // rad/s — deliberately tiny; ~1/6 of the weakest real homing turn
+const WEAK_SEEK_RADIUS = 260;    // px — a bolt only "notices" a target within this range of itself
+
+export { WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS };
+
+// Nudge a weak-seek round's heading a small, bounded amount toward (tx,ty), then re-derive its
+// velocity at its existing speed. Pure + testable: given the round's own position/heading/speed
+// and a candidate target position, this is the entire steering-math contract — the caller
+// (arena) owns finding the nearest living enemy and the every-frame re-evaluation.
+export function stepWeakSeek(p, dt, tx, ty) {
+  const desired = Math.atan2(ty - p.y, tx - p.x);
+  p.angle = rotateToward(p.angle, desired, WEAK_SEEK_TURN_RATE * dt);
+  p.vx = Math.cos(p.angle) * p.speed;
+  p.vy = Math.sin(p.angle) * p.speed;
+}
+
+// Is a candidate target within weak-seek "notice" range of the round's own current position?
+// Kept as a pure predicate so the caller can cheaply gate the (already-computed) nearest-enemy
+// lookup without duplicating the radius constant.
+export function withinWeakSeekRadius(p, tx, ty) {
+  return Math.hypot(tx - p.x, ty - p.y) <= WEAK_SEEK_RADIUS;
+}

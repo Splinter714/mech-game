@@ -23,6 +23,13 @@
 //             `interval` ms apart. For a hitscan, that's `count` light pulses (pulse
 //             laser); for a projectile, `count` travelling rounds (streak pod)
 //   wobble    'jostle' | 'weave' — cosmetic lateral wiggle on a homing round's flight path
+//   weakSeek  #213: a DELIBERATELY WEAK per-projectile tracking bias — distinct from
+//             `guidance: 'homing'` (a real lock-on that steers hard at a maintained target
+//             lock). A weakSeek round has no lock at all: each frame it independently finds
+//             whatever living enemy is nearest to ITS OWN current position and nudges its
+//             heading a small amount that way (data/delivery.js `stepWeakSeek`/
+//             `WEAK_SEEK_TURN_RATE`). Reads as "this bolt has a mind of its own, a little" —
+//             not a mini-missile. Currently only Plasma Lance.
 //   sustained a `stream` hitscan held as ONE continuous beam, not a flicker (beam laser)
 //   splash    blast radius in px (plasma/explosive)
 //   groundFire { radius, dps, duration } — leaves a burning patch on impact (napalm)
@@ -113,7 +120,10 @@ export const WEAPONS = {
     id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
     damage: 2, range: { min: 0, opt: 460, max: 620 },
     ammoMax: 60, ammoRegen: 10, slots: 2, cycleTime: 0,
-    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'stream', fireRate: 20, kind: 'plasma' },
+    // #213: very light per-bolt tracking bias (Halo Needler-style) — see `weakSeek` above.
+    // NOT `guidance: 'homing'` — these bolts never lock on and never gate firing on a lock
+    // (targetlock.js only checks `guidance === 'homing'`).
+    delivery: { hit: 'projectile', path: 'straight', velocity: 620, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true },
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',
