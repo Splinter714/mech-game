@@ -13,6 +13,12 @@ export const ROSTERS = {
     storageKey: 'mech-game-mechs-v1',
     registryKey: 'allMechs',
     Model: Mech,
+    // #248: the light/heavy chassis options are disabled for now (owner: "just roll with
+    // the medium one and disable the switcher") — force every mech, including pre-existing
+    // saves that picked light/heavy before this change, onto medium. This is a UI-level
+    // restriction: the light/heavy chassis data (chassis/light.js, chassis/heavy.js) is
+    // untouched, so removing this one-line migrate hook fully re-enables them later.
+    migrate: (data) => ({ ...data, chassisId: 'medium' }),
     defaultRoster: () => ({
       [ACTIVE_MECH_KEY]: {
         chassisId: 'medium',

@@ -29,6 +29,16 @@ describe('garage persistence', () => {
     expect(reloaded.mech1.mounts.leftTorso).toContain('pulseLaser');
     expect(reloaded.mech1.parts.rightTorso.armor).toBe(woundedArmor);
   });
+
+  // #248: light/heavy chassis are disabled for now — every mech, including one saved before
+  // this change with a non-medium chassisId, is forced onto medium on load.
+  it('force-migrates a pre-existing non-medium save onto medium', () => {
+    globalThis.localStorage.setItem('mech-game-mechs-v1', JSON.stringify({
+      mech1: { chassisId: 'heavy', name: 'Old Save', mounts: {} },
+    }));
+    const all = loadAllMechs();
+    expect(all.mech1.chassisId).toBe('medium');
+  });
 });
 
 describe('unlocked-catalog persistence (#65)', () => {
