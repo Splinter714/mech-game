@@ -13,6 +13,7 @@ import {
 } from './worldgen.js';
 import { lateFraction as runLateFraction, STAGE_COUNT } from './run.js';
 import { getBiome } from './biomes.js';
+import { TERRAIN } from './terrain.js';
 import { axialKey, range, neighbors, distance, hexToPixel } from './hexgrid.js';
 import { GAMEPLAY_ZOOM } from '../scenes/arena/shared.js';
 
@@ -194,9 +195,12 @@ describe('generateTerrain', () => {
     expect(terrain.get(dummy)).toBe(GRASSLAND.groundA);
   });
 
-  it('buildingHp only holds destructible outpost hexes, never soft cover', () => {
+  it('buildingHp only holds destructible solid hexes (outposts + base infra like helipad), never soft cover', () => {
     const { terrain, buildingHp, coverHp } = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND });
-    for (const k of buildingHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.outpost);
+    // #251: helipad is now destructible too, so buildingHp legitimately holds it alongside the
+    // biome's real outpost — both are "solid" (non-soft-cover) destructibles; only outposts are
+    // ever picked as the mission objective (isMissionObjective, exercised elsewhere).
+    for (const k of buildingHp.keys()) expect([GRASSLAND.outpost, 'helipad']).toContain(terrain.get(k));
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
 
@@ -227,12 +231,19 @@ describe('generateTerrain', () => {
       expect(helipadsOf(a.terrain)).toEqual(helipadsOf(b.terrain));
     });
 
-    it('is not destructible — never seeded into buildingHp or coverHp', () => {
+    // #251 (playtest follow-up): helipad is now destructible like any other base-infrastructure
+    // hex — it's seeded into `buildingHp` (the "solid destructible" bucket; it isn't soft cover)
+    // with its own hp so weapon fire/stomps can flatten it into rubble, same generic machinery
+    // as a real outpost. It's excluded from ever being picked as THE mission objective via a
+    // separate mechanism (`isMissionObjective`, exercised in terrain.test.js/mission-arena code),
+    // not by staying out of `buildingHp` — see world.js `_objectiveHexKeys`.
+    it('is destructible — seeded into buildingHp (never coverHp) with its own hp', () => {
       for (let seed = 0; seed < 10; seed++) {
         const { terrain, buildingHp, coverHp } = generateTerrain({ seed, worldRadius: 20, biome: GRASSLAND });
         for (const [k, id] of terrain) {
           if (id !== 'helipad') continue;
-          expect(buildingHp.has(k)).toBe(false);
+          expect(buildingHp.has(k)).toBe(true);
+          expect(buildingHp.get(k)).toBe(TERRAIN.helipad.hp);
           expect(coverHp.has(k)).toBe(false);
         }
       }

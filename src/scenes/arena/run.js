@@ -97,7 +97,9 @@ export const RunMixin = {
     // far from the player rather than leaving the stage without an objective. The strict
     // farthest-candidate fallback (`pickFarObjective`) is kept for that edge case (and the case
     // where the stage-aware pick comes back empty) rather than leaving a stage without one.
-    const hexKeys = [...this.buildingHp.keys()];
+    // #251: filtered through `_objectiveHexKeys()` — `buildingHp` also holds atmospheric
+    // base-infrastructure set-dressing (e.g. `helipad`), which must never become the objective.
+    const hexKeys = this._objectiveHexKeys();
     const frac = lateFraction(this.run.stageIndex);
     // #169: objective distance is measured ALONG THE SPINE (progress down the corridor), so later
     // stages' objectives march progressively toward the far end — the run traverses the whole spine.

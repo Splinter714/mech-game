@@ -5,7 +5,7 @@ import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
-  shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover,
+  shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover, isMissionObjective,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId, flatBoundaryTexKey } from '../../art/hexArt.js';
@@ -371,6 +371,16 @@ export const WorldMixin = {
       if (this.buildingHp.has(k) || this.coverHp.has(k)) pts.push(hexToPixel(h.q, h.r));
     }
     return pts;
+  },
+
+  // #251: every standing hex key eligible to be picked as THE mission objective. `buildingHp`
+  // holds every standing solid destructible (outposts AND atmospheric base-infrastructure
+  // set-dressing like `helipad` alike — see world.js `buildingHp` comment above), but only
+  // genuine outposts should ever become the assault target; `isMissionObjective` (data/terrain.js)
+  // filters out anything marked `setDressing: true`. Shared by mission.js's initial pick and
+  // run.js's stage-advance pick so both stay in sync with zero duplicated filtering logic.
+  _objectiveHexKeys() {
+    return [...this.buildingHp.keys()].filter((k) => isMissionObjective(this.terrain.get(k)));
   },
 
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush

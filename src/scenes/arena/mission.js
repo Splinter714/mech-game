@@ -32,7 +32,10 @@ export const MissionMixin = {
   // `pickFarObjective` used to give it. Falls back to the strict farthest-candidate behavior only
   // if the stage-aware pick comes back empty (e.g. no standing outposts at all).
   _initMission() {
-    const hexKeys = [...this.buildingHp.keys()];
+    // #251: NOT all of `buildingHp` — that also holds atmospheric base-infrastructure
+    // set-dressing (e.g. `helipad`), which must never be picked as the objective (see
+    // world.js `_objectiveHexKeys` / data/terrain.js `isMissionObjective`).
+    const hexKeys = this._objectiveHexKeys();
     // #169: objective distance is measured ALONG THE SPINE (progress down the corridor), not
     // straight-line from spawn — stage 0 (lateFraction 0) sits a short way down the corridor.
     const progressOf = (q, r) => spineProgressHexOf(this._spine, q, r);
