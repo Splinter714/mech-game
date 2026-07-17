@@ -1,9 +1,11 @@
 // Arena targeting mixin (#31, #62) — the two always-on aiming systems and the queries they need.
 // Aim-assist as a toggle is retired (#62): the lock is always available. Two clean systems remain:
 //  • Convergence (direct fire: lasers, autocannons): _fireAngle angles off-centre muzzles inward
-//    to a forward point at the LIVE most-aimed enemy's range (`aimEnemy`) — or CONVERGE_DIST when
-//    none — so shots land where the turret points. Purely geometric; decoupled from the lock so a
-//    blind lock behind cover never drags laser convergence around.
+//    to a forward point at the LIVE most-aimed enemy's range (`aimEnemy`) — or, #250, a nearby
+//    standing destructible-terrain hex when no enemy is available — or CONVERGE_DIST when
+//    neither exists — so shots land where the turret points. Purely geometric; decoupled from
+//    the lock so a blind lock behind cover never drags laser convergence around. `convergeTarget`
+//    (shared.js `pickConvergeTarget`) is the ranked pick between the two: an enemy always wins.
 //  • Indirect-fire lock (missiles, lobs): the enemy the player clearly MEANS (pickLockCandidate:
 //    angular offset blended with proximity, plus stickiness) is charged amber→red over LOCK_TIME;
 //    once red the lock MAINTAINS — it survives the target leaving the cone / LOS
@@ -13,7 +15,7 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import Phaser from 'phaser';
 import { stepLock, dropLock, isFullLock, predictedTarget, pickLockCandidate } from '../../data/targetlock.js';
-import { CONVERGE_DIST, convergedFireAngle } from './shared.js';
+import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget } from './shared.js';
 
 // #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
 // so the lock can still be held at the weapon's own new effective range — kept comfortably
@@ -51,6 +53,15 @@ export const TargetingMixin = {
       cands.push({ handle: e, ang: off, dist: Math.hypot(e.x - this.px, e.y - this.py) });
     }
     this.aimEnemy = aimE;
+    // #250 ("destroyable hexes should be potential convergence targets, but lower priority than
+    // enemies"): only bother scanning for a fallback hex when there's no enemy to converge on —
+    // pickConvergeTarget returns aimEnemy immediately whenever one exists, so a populated hex
+    // list would never even be consulted, let alone preferred. Scoped to CONVERGE_DIST (the same
+    // "no target" convergence range, and comfortably past direct-fire's actual optimal ranges) via
+    // world.js `_destructibleHexesNear`, which bounds the scan to a local ring rather than
+    // walking the whole buildingHp/coverHp maps.
+    const hexCandidates = aimE ? [] : this._destructibleHexesNear(this.px, this.py, CONVERGE_DIST);
+    this.convergeTarget = pickConvergeTarget(this.px, this.py, this.turretAngle, aimE, hexCandidates);
     const cand = pickLockCandidate(cands, this.lock.enemy, ASSIST_RANGE);
 
     // Feed the pure lock state machine. The current locked target's validity + LOS + live position
@@ -168,14 +179,18 @@ export const TargetingMixin = {
   //  • Indirect (homing/lob) & melee: fire straight along the turret facing — their targeting
   //    happens downrange (homing seek / lob lead), not by bending the launch angle.
   //  • Direct (lasers, autocannons): converge — aim the (off-centre) muzzle at a forward point on
-  //    the turret line at the LIVE most-aimed enemy's range (`aimEnemy`, or CONVERGE_DIST), so
+  //    the turret line at `convergeTarget`'s range (the live most-aimed enemy, or, #250, a nearby
+  //    standing destructible hex when no enemy is available, or CONVERGE_DIST when neither), so
   //    shots land where the turret points. Purely geometric; decoupled from the maintained lock.
   _fireAngle(w, m) {
     const d = w.weapon.delivery;
     if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') return this.turretAngle;
-    // Converge on a point at the aimed enemy's range (or CONVERGE_DIST when none), but floored
-    // to MIN_CONVERGE_DIST inside convergedFireAngle so point-blank can't cross the muzzles (#74).
-    const dist = this.aimEnemy ? Math.hypot(this.aimEnemy.x - this.px, this.aimEnemy.y - this.py) : CONVERGE_DIST;
+    // Converge on a point at the picked target's range (or CONVERGE_DIST when there's none at
+    // all), but floored to MIN_CONVERGE_DIST inside convergedFireAngle so point-blank can't cross
+    // the muzzles (#74). `convergeTarget` (shared.js `pickConvergeTarget`, set in _updateLock) is
+    // already ranked: an enemy always wins over a destructible hex (#250).
+    const t = this.convergeTarget;
+    const dist = t ? Math.hypot(t.x - this.px, t.y - this.py) : CONVERGE_DIST;
     return convergedFireAngle(this.px, this.py, this.turretAngle, dist, m.x, m.y);
   },
 };

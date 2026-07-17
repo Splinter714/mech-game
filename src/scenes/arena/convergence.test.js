@@ -3,7 +3,10 @@
 // rotated the off-centre muzzles until they nearly crossed. convergedFireAngle() floors the
 // distance at MIN_CONVERGE_DIST so the toe-in stays modest. Pure math, no Phaser/scene.
 import { describe, it, expect } from 'vitest';
-import { convergedFireAngle, MIN_CONVERGE_DIST, CONVERGE_DIST } from './shared.js';
+import {
+  convergedFireAngle, MIN_CONVERGE_DIST, CONVERGE_DIST,
+  pickConvergeTarget, nearestToAimLine, aimAngleOffset,
+} from './shared.js';
 
 // The worst-case real muzzle: the heavy chassis' arm. Lateral offset r and forward offset f
 // in world px, derived from mechLayout arm.x/ y × ARENA_MECH_SCALE(0.34) × ART_SCALE(4):
@@ -55,5 +58,56 @@ describe('convergedFireAngle — point-blank convergence clamp (#74)', () => {
     const a = convergedFireAngle(0, 0, 0, 10, F, R, 300);
     const b = convergedFireAngle(0, 0, 0, 300, F, R);
     expect(a).toBeCloseTo(b, 10);
+  });
+});
+
+// #250 (issue: "destroyable hexes should be potential convergence targets, but lower priority
+// than enemies") — pickConvergeTarget is the ranked pick fed to _fireAngle. The mech sits at the
+// origin facing +x (turretAngle = 0) for every case below.
+describe('pickConvergeTarget — destructible terrain ranks below live enemies (#250)', () => {
+  it('picks the enemy over a closer, better-aimed destructible hex when both exist', () => {
+    // Hex sits dead-centre on the aim line at 100px (perfectly aimed AND much closer); the enemy
+    // is farther and slightly off-line. An enemy must still win regardless.
+    const enemy = { x: 300, y: 20 };
+    const hexes = [{ x: 100, y: 0 }];
+    const picked = pickConvergeTarget(0, 0, 0, enemy, hexes);
+    expect(picked).toBe(enemy);
+  });
+
+  it('falls back to the nearest-to-aim-line destructible hex when no enemy is available', () => {
+    const offLine = { x: 200, y: 150 };     // far off the aim line
+    const onLine = { x: 200, y: 5 };        // nearly dead-centre
+    const picked = pickConvergeTarget(0, 0, 0, null, [offLine, onLine]);
+    expect(picked).toBe(onLine);
+  });
+
+  it('returns null when neither an enemy nor a destructible hex is available (prior behavior)', () => {
+    expect(pickConvergeTarget(0, 0, 0, null, [])).toBeNull();
+  });
+
+  it('respects maxDist when scoring hex fallback candidates', () => {
+    const near = { x: 50, y: 30 };   // within range but off-line
+    const far = { x: 1000, y: 0 };   // dead on-line but out of range
+    const picked = pickConvergeTarget(0, 0, 0, null, [near, far], 200);
+    expect(picked).toBe(near);
+  });
+});
+
+describe('nearestToAimLine + aimAngleOffset — shared convergence scoring primitives', () => {
+  it('aimAngleOffset is 0 for a point straight down the turret line', () => {
+    expect(aimAngleOffset(0, 0, 0, 100, 0)).toBeCloseTo(0, 10);
+  });
+
+  it('nearestToAimLine ignores candidates beyond maxDist', () => {
+    const inRange = { x: 50, y: 10 };
+    const outOfRange = { x: 5, y: 0 };   // perfectly aimed but excluded by a tiny maxDist
+    const picked = nearestToAimLine(0, 0, 0, [outOfRange, inRange], 1);
+    // Neither passes a 1px maxDist, so null.
+    expect(picked).toBeNull();
+    expect(nearestToAimLine(0, 0, 0, [outOfRange, inRange], 60)).toBe(outOfRange);
+  });
+
+  it('nearestToAimLine returns null for an empty candidate list', () => {
+    expect(nearestToAimLine(0, 0, 0, [])).toBeNull();
   });
 });

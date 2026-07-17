@@ -343,6 +343,24 @@ export const WorldMixin = {
     return true;
   },
 
+  // #250: world-space centres of every currently-STANDING destructible terrain hex within
+  // `maxDist` of (x, y) — outposts (`buildingHp`) and soft cover (`coverHp`) alike. Both maps
+  // delete a hex's key the instant `_damageBuildingAt` collapses it to rubble, so membership in
+  // EITHER map already means "still standing" — no separate live/dead bookkeeping needed. Bounded
+  // to a local ring scan (`hexesWithinPixelRadius`, same trick `_updateTileCulling` above uses)
+  // rather than walking either full map, so cost stays independent of how much destructible
+  // terrain the map has overall. Feeds the direct-fire convergence fallback (#250: destructible
+  // terrain is a convergence target, but only below any live enemy — see shared.js
+  // `pickConvergeTarget`, called from targeting.js `_updateLock`).
+  _destructibleHexesNear(x, y, maxDist) {
+    const pts = [];
+    for (const h of hexesWithinPixelRadius(x, y, maxDist)) {
+      const k = axialKey(h.q, h.r);
+      if (this.buildingHp.has(k) || this.coverHp.has(k)) pts.push(hexToPixel(h.q, h.r));
+    }
+    return pts;
+  },
+
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush
   // damage (a fixed per-second rate scaled by how fast the mech is driving into it) so leaning
   // on an outpost flattens it in a beat or two rather than instantly. No-op off buildings.

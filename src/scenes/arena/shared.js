@@ -300,6 +300,43 @@ export function convergedFireAngle(px, py, turretAngle, dist, mx, my, minDist = 
   return Math.atan2(cy - my, cx - mx);
 }
 
+// #250: signed angular offset of world point (x, y) from (px, py), relative to `turretAngle`,
+// wrapped to (−π, π]. PURE reimplementation of `Phaser.Math.Angle.Wrap(atan2(...) - turretAngle)`
+// (no Phaser import — see `rotateToward` above for why that crashes under vitest) so the
+// convergence-candidate scoring below is unit-testable.
+export function aimAngleOffset(px, py, turretAngle, x, y) {
+  const raw = Math.atan2(y - py, x - px) - turretAngle;
+  return Math.atan2(Math.sin(raw), Math.cos(raw));
+}
+
+// #250: of `candidates` (each a {x, y, ...}) within `maxDist` px of (px, py), the one most
+// centred on the aim line (smallest |aimAngleOffset|) — no cone gate, "whatever I'm pointing
+// closest to." PURE; mirrors the enemy convergence pick in targeting.js `_updateLock` exactly,
+// so destructible-terrain candidates are scored by the identical rule.
+export function nearestToAimLine(px, py, turretAngle, candidates, maxDist = Infinity) {
+  let best = null, bestOff = Infinity;
+  for (const c of candidates) {
+    if (Math.hypot(c.x - px, c.y - py) > maxDist) continue;
+    const off = Math.abs(aimAngleOffset(px, py, turretAngle, c.x, c.y));
+    if (off < bestOff) { bestOff = off; best = c; }
+  }
+  return best;
+}
+
+// #250 (issue: "destroyable hexes should be potential convergence targets, but lower priority
+// than enemies"): what direct-fire convergence should aim at this frame. `aimEnemy` is whatever
+// targeting.js `_updateLock` already picked as the live most-aimed enemy (or null); `hexCandidates`
+// is a list of standing destructible-terrain points (world.js `_destructibleHexesNear`) to fall
+// back on. The ordering is enforced structurally, not by comparing scores: an enemy is returned
+// immediately whenever one exists, so a destructible hex is NEVER even considered — let alone
+// preferred — while any enemy is available, regardless of which is closer or better-aimed. Only
+// when there is no enemy at all does a hex get scored via `nearestToAimLine`. Returns null (the
+// pre-#250 "nothing to converge on" case) when neither exists, matching prior behavior exactly.
+export function pickConvergeTarget(px, py, turretAngle, aimEnemy, hexCandidates, maxDist = Infinity) {
+  if (aimEnemy) return aimEnemy;
+  return nearestToAimLine(px, py, turretAngle, hexCandidates, maxDist);
+}
+
 // #92: the tank's HULL turns to face its direction of TRAVEL (like a real tank driving),
 // completely independent of its turret (which separately tracks the player — see aimAndFire
 // in enemyBehaviors.js, which drives e.turret). PURE + testable: only turns while actually
