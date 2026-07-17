@@ -310,7 +310,8 @@ export function getWeapon(id) {
 // WEAPONS entry with an optional partial `override` merged on top. This is how a non-player
 // unit mounts "the Repeater, but weaker" without forking a whole near-duplicate WEAPONS entry
 // that would drift from the base over time: the base stays the single source of truth and the
-// override is only the delta (see ENEMY_KINDS.drone's `weaponOverride` for the live example).
+// override is only the delta (see ENEMY_KINDS.helicopter's `weaponOverride` for the live
+// example — its single-lane Repeater delta).
 //
 // Merge semantics (deliberately simple — a data tool, not a deep-merge library):
 //   • top-level fields shallow-merge (override wins): damage, cycleTime, ammoMax, range, …

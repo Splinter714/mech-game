@@ -194,23 +194,26 @@ export const ENEMY_KINDS = {
     // rendered tip (art/vehicles/drone.js drawFrame's `rectC(0, -6, 1.4, 4, ...)` ⇒ far edge
     // y=-8, no glow beyond it).
     muzzleForward: 2,
-    // #243 playtest follow-up: back to the Pulse Laser (reinstating #117's assignment — the
-    // weakened-Repeater interlude is retired), at the SAME damage as the player's mount (no
-    // damage override — per-owner deltas are cadence/burst-shape only for now). The only
-    // override is cadence: pulseLaser's natural cycleTime is 3000ms (a deliberate player-side
-    // pace), which would stretch 5 shots over ~15s — nothing like rapid fire — so the drone
-    // runs it at #117's proven 260ms shot-to-shot cadence. Trigger discipline (`burstShots`/
-    // `burstRestMs`) then shapes that into character: 5 quick trigger pulls (~1.3s of fire;
-    // each pull is itself a 5-pulse visual burst per the weapon's delivery.burst — burstShots
-    // counts pulls, not pulses), then a ~2.5s rest before the next salvo. fireRange kept at
-    // #117's 280 — it was tuned for exactly this weapon (opt 340 / max 600 comfortably cover
-    // it).
-    weaponId: 'pulseLaser',
-    weaponOverride: {
-      cycleTime: 260,        // rapid-fire feel (#117's cadence); base 3000 is the player pace
-    },
-    burstShots: 5,           // 5 quick shots…
-    burstRestMs: 2500,       // …then rest a few seconds before the next salvo
+    // #243 further playtest follow-up: swapped off Pulse Laser onto Plasma Lance — the drone
+    // now sprays rapid plasma bolts instead of hitscan pulses. No damage override (per-owner
+    // deltas stay cadence/burst-shape only, per the standing #243 rule): each bolt hits for the
+    // SAME 2 damage as the player's mount. Unlike Pulse Laser (whose 3000ms player-pace
+    // cycleTime needed overriding down to 260ms to read as rapid fire), Plasma Lance's own
+    // delivery is ALREADY a fast stream (`fireRate: 20`, i.e. a bolt every 50ms) — that native
+    // cadence already fits a short-range swarm unit, so no weaponOverride is needed here at all;
+    // `_fireVehicleWeapon` resolves the bare base entry (resolveWeapon(id, null) === base).
+    // Trigger discipline (`burstShots`/`burstRestMs`) does the shaping instead: burstShots
+    // counts individual bolts for a stream weapon (unlike Pulse Laser's "counts pulls, each
+    // pull itself a 5-pulse hitscan burst"), so 7 bolts at the native 50ms spacing is a ~350ms
+    // stutter of plasma fire — squarely in the requested 6-8 shot range, short enough to read as
+    // one quick stutter rather than a held stream. burstRestMs 700 is a deliberate few-hundred-ms
+    // breather between stutters (shorter than the gunship's 1200ms — the drone is a small,
+    // erratic swarmer, not a strafing gunship, so its rest reads snappier). fireRange kept at
+    // #117's 280 — well inside Plasma Lance's `opt: 460` (firing.js's falloff is full damage out
+    // to `opt`, so every drone shot at this range lands at full damage) and its `max: 620`.
+    weaponId: 'plasmaLance',
+    burstShots: 7,           // 7 rapid bolts (6-8 requested range)…
+    burstRestMs: 700,        // …then a short breather before the next stutter
     fireRange: 280,
     swarmRadius: 200,       // px orbit radius the drone tries to hold around the player (#93: nudged out from 150 — playtest felt too close)
     flying: true,           // hovers — ignores ground cover, draws a small shadow

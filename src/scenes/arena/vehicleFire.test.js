@@ -12,9 +12,10 @@
 // regression check exercises the genuine registry entry a live kind mounts), plus one synthetic
 // CONTACT weapon id — no `hit: 'contact'` weapon exists in WEAPONS yet, and the contact branch
 // still must be proven, exactly as #117's smoke test used a synthetic melee fixture for mechs.
-// (Note: as of #117's follow-up temporary test change, the `drone` kind now genuinely mounts
-// pulseLaser — a real hitscan weapon — so this proactive hardening is now also exercised live in
-// the actual game, not just by this synthetic fixture.)
+// (Note: as of #117's follow-up temporary test change, a live KIND genuinely mounted a real
+// hitscan weapon — so this proactive hardening was also exercised live in the actual game, not
+// just by this synthetic fixture. As of #243's further follow-up the drone itself moved off
+// that hitscan mount onto plasmaLance, a projectile stream — see the drone-specific tests below.)
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 
@@ -58,8 +59,10 @@ import { ART_SCALE } from '../../art/index.js';
 // weaponOverride) actually mounts.
 const HITSCAN_WEAPON_ID = WEAPONS.beamLaser.id;
 const PROJECTILE_WEAPON_ID = WEAPONS.napalm.id;
-// pulseLaser is the drone swarm's actual weapon (enemyKinds.js) and a genuine multi-pulse BURST
-// (5 pulses over ~300ms, see weapons.js) — exactly the shape that exposed the #200 reopen bug.
+// pulseLaser is a genuine multi-pulse BURST (5 pulses over ~300ms, see weapons.js) — exactly
+// the shape that exposed the #200 reopen bug. (No longer the drone's live weapon as of #243's
+// further follow-up — the drone now mounts plasmaLance, see below — but still the registry's
+// canonical burst fixture for this file's synthetic exercises.)
 const BURST_WEAPON_ID = WEAPONS.pulseLaser.id;
 // machineGun (the Repeater — helicopter/infantry's mount) is the registry's canonical STREAM
 // weapon (`delivery: { pattern: 'stream', fireRate: 18, ... }`) — #241's cadence-fallback fix
@@ -402,21 +405,23 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
   });
 
-  it('the live drone kind resolves a rapid-cadence Pulse Laser (cycleTime override, full damage)', async () => {
+  it('the live drone kind resolves the bare Plasma Lance stream (no override, full damage)', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
     const { resolveWeapon, WEAPONS } = await import('../../data/weapons.js');
     const { scene } = makeScene();
     const d = ENEMY_KINDS.drone;
-    expect(d.weaponId).toBe(BURST_WEAPON_ID);
-    const base = WEAPONS[BURST_WEAPON_ID];
+    expect(d.weaponId).toBe(WEAPONS.plasmaLance.id);
+    expect(d.weaponOverride).toBeUndefined();
+    const base = WEAPONS.plasmaLance;
     const resolved = resolveWeapon(d.weaponId, d.weaponOverride);
-    // #243 playtest follow-up: same per-pulse damage as the player's mount; only the
-    // shot-to-shot cadence is overridden (260ms vs the player's 3000ms cycleTime).
+    // #243 further playtest follow-up: same per-bolt damage as the player's mount; Plasma
+    // Lance's own native fireRate (20/sec) is already rapid-fire-appropriate, so nothing needs
+    // overriding — the drone shape comes entirely from burstShots/burstRestMs (see below).
     expect(resolved.damage).toBe(base.damage);
-    expect(resolved.cycleTime).toBe(260);
-    // pattern 'single' ⇒ _fireInterval is max(120, cycleTime) — the override IS the cadence.
-    expect(scene._fireInterval(resolved, {})).toBe(260);
-    expect(base.cycleTime).toBe(3000);   // player's entry untouched
+    expect(resolved.delivery.fireRate).toBe(20);
+    // pattern 'stream' ⇒ _fireInterval is 1000/fireRate.
+    expect(scene._fireInterval(resolved, {})).toBeCloseTo(1000 / 20, 6);
+    expect(base.delivery.fireRate).toBe(20);   // player's entry untouched
   });
 });
 
@@ -478,9 +483,10 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     // #243 playtest follow-up: 15-shot single-lane squeeze (~0.83s at 18/sec), 1.2s rest.
     expect(ENEMY_KINDS.helicopter.burstShots).toBe(15);
     expect(ENEMY_KINDS.helicopter.burstRestMs).toBe(1200);
-    // Drone: 5 quick Pulse Laser shots (260ms cadence), then a ~2.5s rest.
-    expect(ENEMY_KINDS.drone.burstShots).toBe(5);
-    expect(ENEMY_KINDS.drone.burstRestMs).toBe(2500);
+    // Drone (#243 further follow-up): 7 rapid Plasma Lance bolts at the native 50ms cadence
+    // (~350ms stutter), then a 700ms rest.
+    expect(ENEMY_KINDS.drone.burstShots).toBe(7);
+    expect(ENEMY_KINDS.drone.burstRestMs).toBe(700);
     // No other kind opts in yet — everything else keeps continuous fire.
     for (const [id, k] of Object.entries(ENEMY_KINDS)) {
       if (id === 'helicopter' || id === 'drone') continue;
