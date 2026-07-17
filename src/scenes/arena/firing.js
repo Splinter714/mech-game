@@ -303,10 +303,12 @@ export const FiringMixin = {
   // #72 own-hex transparency: the muzzle's own hex (firing OUT of forest) and any living
   // enemy's hex (a target standing IN forest) don't block the beam — only deeper soft cover
   // and solid walls do.
-  _hitscanReach(muzzleX, muzzleY, angle, endDist) {
+  // #269: `smallUnitInvolved` (optional) — see world.js `_isWall`; a caller shooting FOR a live
+  // enemy should pass `isSmallUnit(e)` so this hot path is ready once the size tier lands.
+  _hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved = false) {
     const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY), this._hexKeyAt(this.px, this.py)]);
     for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
-    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent);
+    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent, smallUnitInvolved);
   },
 
   // Re-aim a held continuous beam's existing line at the current muzzle/angle, every render
@@ -339,7 +341,9 @@ export const FiringMixin = {
   // `ignoreCover` (#245): a FLYING enemy (drone/helicopter) shoots from above, so its beam is
   // never blocked by terrain cover — the wall trace below is skipped entirely. The player and
   // ground enemies never pass this, so their beams stop at cover exactly as before.
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', ignoreCover = false) {
+  // `smallUnitInvolved` (#269, optional): threads to the soft-cover size-tier exemption — see
+  // world.js `_isWall`. Enemy callers pass `isSmallUnit(e)`; the player never does (always large).
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', ignoreCover = false, smallUnitInvolved = false) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -353,7 +357,7 @@ export const FiringMixin = {
     let endDist = trace.endDist;
     // Cover: a wall between muzzle and target stops the beam short — unless the shooter flies
     // over it (#245, `ignoreCover` above).
-    const wallT = ignoreCover ? Infinity : this._hitscanReach(muzzleX, muzzleY, angle, endDist);
+    const wallT = ignoreCover ? Infinity : this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved);
     const blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
@@ -394,7 +398,10 @@ export const FiringMixin = {
   // `ignoreCover` (#245): true only for a round fired by a FLYING enemy (kindDef.flying —
   // drone/helicopter) — the round is stamped `ignoresCover` so the in-flight wall check
   // (projectiles.js) never detonates it on terrain cover; it flies over, same as its shooter.
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, ignoreCover = false) {
+  // `smallUnitInvolved` (#269, optional): stamped onto the round so projectiles.js's in-flight
+  // cover check can pass it to `_isWallForRound` — see world.js `_isWall`. Enemy callers pass
+  // `isSmallUnit(e)`; the player never does (always large).
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, ignoreCover = false, smallUnitInvolved = false) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -463,7 +470,7 @@ export const FiringMixin = {
     // mech's centre, so back-project along the fire angle). A unit standing inside soft cover
     // can then fire OUT without its own round detonating on its own hex.
     const originHexes = [this._hexKeyAt(x, y), this._hexKeyAt(x - Math.cos(angle) * 24, y - Math.sin(angle) * 24)];
-    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, ignoresCover: !!ignoreCover };
+    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, ignoresCover: !!ignoreCover, smallUnitInvolved: !!smallUnitInvolved };
     this.projectiles.push(pushed);
     return pushed;
   },
