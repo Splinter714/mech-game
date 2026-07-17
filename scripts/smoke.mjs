@@ -149,8 +149,15 @@ try {
   }, { runCurrencyKey: RUN_CURRENCY_KEY, weaponIds: WEAPON_IDS });
   await page.screenshot({ path: '/tmp/mech-garage.png' });
 
-  // Deploy → arena.
-  await page.evaluate(() => window.__game.scene.getScene('GarageScene').deploy());
+  // Deploy → arena. #217: biome selection is now randomized (uniform on the first deploy, then
+  // recency-weighted), so pin it to grassland via the `debugForceBiome` test hook — this smoke
+  // run's DUMMY_HEX/origin/river-terrain assumptions below were written against grassland-shaped
+  // ground and don't need to be re-verified against every biome on every run.
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.registry.set('debugForceBiome', 'grassland');
+    g.scene.getScene('GarageScene').deploy();
+  });
   await page.waitForFunction(() => {
     const g = window.__game;
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');
