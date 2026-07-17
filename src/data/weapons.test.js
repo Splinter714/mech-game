@@ -17,22 +17,33 @@ describe('catalogMaxRange', () => {
     expect(max).toBe(expected);
   });
 
-  it('defaults to the player-facing WEAPON_IDS set, not every shelved weapon', () => {
-    // Siege Shell is shelved (enemy-only) with a much longer range than anything on the
-    // player-facing catalog — it must not be allowed to flatten the visible spread among the
-    // weapons players actually see side by side in the garage/weapon lab.
-    expect(WEAPON_IDS).not.toContain('siegeShell');
-    expect(catalogMaxRange()).toBeLessThan(WEAPONS.siegeShell.range.opt);
+  it('defaults to the player-facing WEAPON_IDS set (#244: the shelve list is empty — every weapon is mountable)', () => {
+    // #244 un-shelved everything: WEAPON_IDS is the whole registry, so the garage/weapon-lab
+    // catalog and the shop see every weapon.
+    expect(WEAPON_IDS).toEqual(Object.keys(WEAPONS));
+    expect(catalogMaxRange()).toBe(catalogMaxRange(WEAPON_IDS));
+  });
+
+  it('#244: only BASE registry ranges feed the catalog — the turret\'s artillery napalm override never leaks in', async () => {
+    // The old siegeShell entry (range.opt 1600 / max 2400) now lives only as the turret kind's
+    // weaponOverride on napalm. The catalog scales cards by base entries, so napalm reads as
+    // its base 500-opt lobber, and nothing in the catalog reaches the override's 1600/2400.
+    const { ENEMY_KINDS } = await import('./enemyKinds.js');
+    const turretWeapon = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
+    expect(turretWeapon.id).toBe('napalm');           // base id preserved (SFX keys off it)
+    expect(turretWeapon.range).toEqual({ min: 300, opt: 1600, max: 2400 });
+    expect(WEAPONS.napalm.range).toEqual({ min: 50, opt: 500, max: 780 });   // base untouched
+    expect(catalogMaxRange()).toBeLessThan(turretWeapon.range.opt);
   });
 });
 
 describe('previewRangeFrac', () => {
   it('gives a short-range weapon a visibly smaller fraction than a long-range one', () => {
     const catalogMax = catalogMaxRange(WEAPON_IDS);
-    // Repeater (opt 338) is much shorter-range than Cluster Salvo (opt 660), the farthest
-    // weapon on the player-facing catalog.
+    // Repeater (opt 338) is much shorter-range than Swarm Rack (opt 1050), the farthest
+    // weapon on the player-facing catalog (#244: the homing missiles are un-shelved).
     const shortFrac = previewRangeFrac(WEAPONS.machineGun, catalogMax);
-    const longFrac = previewRangeFrac(WEAPONS.clusterRocket, catalogMax);
+    const longFrac = previewRangeFrac(WEAPONS.swarmRack, catalogMax);
     expect(shortFrac).toBeLessThan(longFrac);
     expect(longFrac).toBeCloseTo(1, 5);
   });

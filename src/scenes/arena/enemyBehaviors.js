@@ -38,7 +38,8 @@ function aimAndFire(scene, e, ctx, { needLos }) {
 }
 
 // TURRET — static artillery emplacement. No locomotion at all; just track + fire. #94: fires an
-// arcing siege shell (data/enemyKinds.js weaponId) at insane range, so — unlike the tank, which
+// arcing artillery shell (napalm + the turret's weaponOverride, data/enemyKinds.js; #244
+// consolidated the old siegeShell entry into it) at insane range, so — unlike the tank, which
 // still needs a direct-fire lane — it never needs LOS: needLos: false here (same as the flyers)
 // even though the turret itself doesn't fly. It's the arcing DELIVERY, not flight, that lets the
 // round skip wall collision (see scenes/arena/projectiles.js `if (!p.arc)`); a stationary

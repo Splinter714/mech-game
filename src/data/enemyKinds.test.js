@@ -102,7 +102,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
 
   it('#94: turret is an artillery emplacement — arcing indirect weapon at an insane range', () => {
     const t = ENEMY_KINDS.turret;
-    const weapon = getWeapon(t.weaponId);
+    // #244: the turret's artillery tuning lives in its weaponOverride on napalm (the dedicated
+    // siegeShell entry was consolidated away), so the RESOLVED weapon is what must satisfy the
+    // #94 envelope — the base napalm entry keeps its short player-facing range.
+    const weapon = resolveWeapon(t.weaponId, t.weaponOverride);
     // Indirect: arcing (or homing) delivery never needs line-of-sight (mirrors the "all-indirect"
     // detection in scenes/arena/enemies.js isIndirectWeapon).
     expect(weapon.delivery.path === 'arcing' || weapon.delivery.guidance === 'homing').toBe(true);

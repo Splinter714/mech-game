@@ -89,7 +89,7 @@ function meanOptRange(mech) {
 }
 
 // #203 (playtest report: enemies near the deploy point already actively engaging the instant the
-// player drops in): a turret nest's siege-shell fireRange (2400px, ENEMY_KINDS.turret) is
+// player drops in): a turret nest's artillery fireRange (2400px, ENEMY_KINDS.turret) is
 // distance-only-gated (no LOS needed) and dwarfs the ~700-1000px "just off view" distance the
 // camera-viewport-based offscreen spawn point (`_offscreenSpawnPoint`, scenes/arena/enemies.js)
 // normally produces — so a turret nest was AWARE and lobbing shells within the first second of
