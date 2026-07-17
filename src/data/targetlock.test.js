@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
-  makeLock, stepLock, hasLock, predictedTarget, canFireWeapon, stepReticlePosition,
-  LOCK_PREDICT_MAX, LOCK_PREDICT_MAX_SPEED, LOCK_PREDICT_MAX_DRIFT,
+  makeLock, stepLock, hasLock, canFireWeapon, stepReticlePosition,
 } from './targetlock.js';
 
 const A = { mech: { isDestroyed: () => false }, id: 'a' };
 const B = { mech: { isDestroyed: () => false }, id: 'b' };
 const hexA = { x: 300, y: 0 };   // a static (destructible-hex, #250) convergence target — no `.mech`
-const pos = (x, y, vx = 0, vy = 0) => ({ x, y, vx, vy });
 
 describe('targetlock (#252) — the lock mirrors the live target instantly', () => {
   it('has no target and cannot fire a homing weapon on a fresh lock', () => {
@@ -18,134 +16,62 @@ describe('targetlock (#252) — the lock mirrors the live target instantly', () 
 
   it('acquires a target the SAME frame it appears — no charge delay', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0) });
+    stepLock(lock, { target: A });
     expect(lock.target).toBe(A);
     expect(hasLock(lock)).toBe(true);
   });
 
   it('switches targets immediately (no dwell/hand-over delay) when the live pick changes', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(0, 0) });
-    stepLock(lock, { target: B, hasLos: true, targetPos: pos(50, 50) });
+    stepLock(lock, { target: A });
+    stepLock(lock, { target: B });
     expect(lock.target).toBe(B);
   });
 
   it('drops to no-target the instant the live pick goes null (no maintain grace period)', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(0, 0) });
-    stepLock(lock, { target: null, hasLos: false, targetPos: null });
+    stepLock(lock, { target: A });
+    stepLock(lock, { target: null });
     expect(lock.target).toBe(null);
     expect(hasLock(lock)).toBe(false);
-    expect(lock.blind).toBe(false);   // no target ⇒ not "blind", just nothing
   });
 
   it('re-acquiring the same target after a drop is instant too (no re-charge)', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(0, 0) });
-    stepLock(lock, { target: null, hasLos: false, targetPos: null });
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(0, 0) });
+    stepLock(lock, { target: A });
+    stepLock(lock, { target: null });
+    stepLock(lock, { target: A });
     expect(hasLock(lock)).toBe(true);
   });
 });
 
-describe('targetlock (#252) — blind fire (LOS-less enemy target)', () => {
-  it('is not blind while the holder has LOS', () => {
+// Playtest follow-up (#252): the old "blind fire" state (dead-reckoned last-known position while
+// the picked target had no LOS) is gone entirely — the lock has no LOS concept at all any more,
+// it purely mirrors whatever target convergence handed it, live, always. There is no `lock.blind`
+// and no last-known/prediction bookkeeping left to test.
+describe('targetlock (#252) — no LOS gate, no blind-fire state (playtest follow-up)', () => {
+  it('keeps tracking the same enemy target with no LOS concept involved at all', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0) });
-    expect(lock.blind).toBe(false);
-    expect(lock.lastX).toBe(100);
-  });
-
-  it('goes blind the instant LOS breaks, freezing the last-known position', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0, 10, 0) });
-    stepLock(lock, { target: A, hasLos: false, targetPos: pos(999, 999) });
-    expect(lock.blind).toBe(true);
+    stepLock(lock, { target: A });
+    stepLock(lock, { target: A });
+    stepLock(lock, { target: A });
     expect(lock.target).toBe(A);
-    // Blind: last-known position is NOT refreshed to the (unseen) live position.
-    expect(lock.lastX).toBe(100);
+    expect(hasLock(lock)).toBe(true);
+    expect(lock.blind).toBeUndefined();
   });
 
-  it('regaining LOS clears blind and refreshes the last-known position', () => {
+  it('a static (hex) target behaves identically to an enemy target — just mirrored', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0) });
-    stepLock(lock, { target: A, hasLos: false, targetPos: pos(999, 999) });
-    expect(lock.blind).toBe(true);
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(50, 50, 1, 1) });
-    expect(lock.blind).toBe(false);
-    expect(lock.lastX).toBe(50);
-  });
-
-  it('never goes blind while the target stays the same but simply keeps having LOS', () => {
-    const lock = makeLock();
-    for (let i = 0; i < 5; i++) stepLock(lock, { target: A, hasLos: true, targetPos: pos(i, 0) });
-    expect(lock.blind).toBe(false);
-  });
-
-  it('seeds a last-known fix the instant a NEW target is acquired even without LOS that frame — a freshly picked target still has somewhere to lob at (mirrors the pre-#252 seed-on-lock behavior)', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: false, targetPos: pos(200, 40) });
-    expect(lock.blind).toBe(false);   // just-acquired: treated as a fresh fix, not stale memory
-    expect(lock.lastX).toBe(200);
-    expect(lock.lastY).toBe(40);
-  });
-
-  it('switching directly from a blind target to a fresh one seeds the NEW target immediately', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(0, 0) });
-    stepLock(lock, { target: A, hasLos: false, targetPos: pos(999, 999) });   // A now blind
-    stepLock(lock, { target: B, hasLos: false, targetPos: pos(300, 300) });  // switch to B, still no LOS
-    expect(lock.target).toBe(B);
-    expect(lock.blind).toBe(false);   // fresh acquisition, not stale from A
-    expect(lock.lastX).toBe(300);
-  });
-});
-
-describe('targetlock (#252) — static (destructible-hex, #250) targets are never blind', () => {
-  it('a hex target (no `.mech`) is always treated as fully known, LOS or not', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: hexA, hasLos: true, targetPos: { x: hexA.x, y: hexA.y, vx: 0, vy: 0 } });
-    expect(lock.blind).toBe(false);
-    expect(lock.lastX).toBe(300);
+    stepLock(lock, { target: hexA });
+    expect(lock.target).toBe(hexA);
+    expect(hasLock(lock)).toBe(true);
   });
 
   it('a homing weapon can fire at a hex target — hasLock only cares whether SOMETHING is targeted', () => {
     const lock = makeLock();
-    stepLock(lock, { target: hexA, hasLos: true, targetPos: { x: hexA.x, y: hexA.y, vx: 0, vy: 0 } });
+    stepLock(lock, { target: hexA });
     const homing = { delivery: { guidance: 'homing' } };
     expect(canFireWeapon(homing, lock)).toBe(true);
-  });
-});
-
-describe('targetlock — dead-reckoned blind fire prediction (unchanged math)', () => {
-  it('predicts the target ahead by last-known velocity, capped', () => {
-    const lock = makeLock();
-    lock.lastX = 100; lock.lastY = 0; lock.lastVx = 20; lock.lastVy = 0;
-    expect(predictedTarget(lock, 0)).toEqual({ x: 100, y: 0 });
-    expect(predictedTarget(lock, 0.5)).toEqual({ x: 110, y: 0 });
-    const capped = predictedTarget(lock, 999);
-    expect(capped.x).toBeCloseTo(100 + 20 * LOCK_PREDICT_MAX, 5);
-  });
-
-  it('clamps the reckoned velocity to a sane mech speed', () => {
-    const lock = makeLock();
-    lock.lastX = 0; lock.lastY = 0; lock.lastVx = 4000; lock.lastVy = 0;   // absurd velocity
-    const p = predictedTarget(lock, LOCK_PREDICT_MAX);
-    expect(p.x).toBeLessThanOrEqual(LOCK_PREDICT_MAX_SPEED * LOCK_PREDICT_MAX + 1e-6);
-  });
-
-  it('caps how far the predicted point may drift from last-known', () => {
-    const lock = makeLock();
-    lock.lastX = 0; lock.lastY = 0; lock.lastVx = LOCK_PREDICT_MAX_SPEED; lock.lastVy = 0;
-    const p = predictedTarget(lock, LOCK_PREDICT_MAX);
-    const drift = Math.hypot(p.x - lock.lastX, p.y - lock.lastY);
-    expect(drift).toBeLessThanOrEqual(LOCK_PREDICT_MAX_DRIFT + 1e-6);
-  });
-
-  it('a modest, in-bounds prediction is unchanged', () => {
-    const lock = makeLock();
-    lock.lastX = 100; lock.lastY = 0; lock.lastVx = 40; lock.lastVy = 0;
-    expect(predictedTarget(lock, 0.5)).toEqual({ x: 120, y: 0 });
   });
 });
 
@@ -163,22 +89,20 @@ describe('targetlock — canFireWeapon (no-lock-no-fire gate)', () => {
 
   it('allows a homing weapon the instant a target is acquired — no charge-up wait', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0) });
+    stepLock(lock, { target: A });
     expect(canFireWeapon(homing, lock)).toBe(true);
   });
 
   it('blocks again once the target is gone', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0) });
-    stepLock(lock, { target: null, hasLos: false, targetPos: null });
+    stepLock(lock, { target: A });
+    stepLock(lock, { target: null });
     expect(canFireWeapon(homing, lock)).toBe(false);
   });
 
-  it('a homing weapon can fire blind (target acquired, currently no LOS)', () => {
+  it('a homing weapon can fire with no LOS on its target — indirect fire has no LOS requirement', () => {
     const lock = makeLock();
-    stepLock(lock, { target: A, hasLos: true, targetPos: pos(100, 0) });
-    stepLock(lock, { target: A, hasLos: false, targetPos: pos(999, 999) });
-    expect(lock.blind).toBe(true);
+    stepLock(lock, { target: A });
     expect(canFireWeapon(homing, lock)).toBe(true);
   });
 

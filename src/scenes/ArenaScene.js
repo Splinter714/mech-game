@@ -122,7 +122,6 @@ export default class ArenaScene extends Phaser.Scene {
     this.aimEnemy = null;
     this.convergeTarget = null;
     this._reticlePos = null;
-    this._lockBlindAge = 0;
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
     this.enemyMove = true;
@@ -267,11 +266,11 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Lock reticle (#62, rework #252), drawn after projFx is cleared above so it isn't wiped, at
     // `_reticlePos` — the position eased toward the live aim point, so switching convergence
-    // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). A blind
-    // (LOS-broken enemy) target draws in a distinct "firing blind" colour so the player sees
-    // they're lobbing from memory.
+    // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). Playtest
+    // follow-up (#252): indirect fire now always tracks the live target through cover, so there's
+    // no more distinct "firing blind" state/colour — always drawn "locked."
     if (this._reticlePos) {
-      this._drawLockReticle(this._reticlePos.x, this._reticlePos.y, this.lock.blind);
+      this._drawLockReticle(this._reticlePos.x, this._reticlePos.y);
     }
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
