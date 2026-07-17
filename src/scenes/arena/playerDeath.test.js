@@ -53,6 +53,10 @@ function makeScene({ hp = 10, structure = 10 } = {}) {
         return { destroyed: true, applied: hp };
       }),
       isDestroyed: () => destroyed,
+      // #231 (merged in after this test was first written): _damagePlayerAt now picks the hit
+      // location via `pickLiveWeighted`, which rerolls among still-live pool entries using this
+      // — a fixture with nothing ever destroyed (this test isn't exercising the redirect logic).
+      isPartDestroyed: () => false,
     },
   };
   Object.assign(scene, CombatMixin);
