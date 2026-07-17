@@ -110,7 +110,7 @@ describe('resolveHitLocation (#231 — redirect a hit off an already-destroyed p
     + 'side again applies real damage to the surviving side instead of wasting the hit', () => {
     const m = new Mech({ chassisId: 'light' });
     // Overkill the left torso (cascades the left arm too, per DESTROY_CASCADE).
-    m.applyDamage('leftTorso', m.parts.leftTorso.maxArmor + m.parts.leftTorso.maxStructure + 999);
+    m.applyDamage('leftTorso', m.parts.leftTorso.maxArmor + m.parts.leftTorso.maxHp + 999);
     expect(m.isPartDestroyed('leftTorso')).toBe(true);
     expect(m.isPartDestroyed('leftArm')).toBe(true);
     expect(m.isDestroyed()).toBe(false); // needs BOTH side torsos, not just one
@@ -119,10 +119,10 @@ describe('resolveHitLocation (#231 — redirect a hit off an already-destroyed p
     const loc = resolveHitLocation(lay, locs, -10, 0, 1, (l) => m.isPartDestroyed(l));
     expect(m.isPartDestroyed(loc)).toBe(false);
     expect(loc === 'rightTorso' || loc === 'rightArm').toBe(true);
-    const before = m.parts[loc].structure + m.parts[loc].armor;
+    const before = m.parts[loc].hp + m.parts[loc].armor;
     const res = m.applyDamage(loc, 15);
     expect(res.applied).toBe(15); // damage actually applied, not wasted on the dead leftTorso
-    const after = m.parts[loc].structure + m.parts[loc].armor;
+    const after = m.parts[loc].hp + m.parts[loc].armor;
     expect(after).toBe(before - 15);
   });
 

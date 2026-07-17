@@ -6,7 +6,7 @@ import { STAGE_COUNT } from '../data/run.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
-import { SPRINT_BIND } from '../input/Controls.js';
+import { DASH_BIND } from '../input/Controls.js';
 import { AMMO_EMPTY_COOLDOWN } from '../data/Mech.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
@@ -64,6 +64,18 @@ const C = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
   cooldown: '#5e7ce0',
 };
+
+// #246: per-location armor/hp split-bar geometry + colors. `ARMOR_BAR_COLOR` matches the mech-
+// ART armor-shell overlay's steel-blue (src/art/mechPrims.js `ARMOR_SHELL`, 0x9fe0ff) exactly,
+// so the HUD and the mech's own on-screen art read as the same "armor" visual language rather
+// than two unrelated color choices. `SHIELD_BAR_COLOR` matches the Shield powerup's own color
+// (data/powerups.js `POWERUPS.shield.color`) for the same reason.
+const PART_BAR_X = 26;          // px offset of the bar from the row's left edge (past the short label)
+const PART_BAR_W = 90;
+const PART_BAR_H = 7;
+const PART_ROW_H = 20;
+const ARMOR_BAR_COLOR = 0x9fe0ff;
+const SHIELD_BAR_COLOR = 0x5ec8e0;
 
 // #116: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is a
 // muted steel; the player rides the shared accent, the objective the shared amber wayfinding
@@ -155,13 +167,47 @@ export default class HudScene extends Phaser.Scene {
     this.lockWayGfx = this.add.graphics().setDepth(20);
 
     // Per-part integrity column (player), top-left under the hints + stage/objective lines.
+    // #246: this used to be one collapsed armor+hp number per location — now a short label,
+    // then a two-segment BAR (armor first, then hp — see `_updatePartBars`) so the armor/hp
+    // split is actually visible, not just implied by a number. The mech-ART armor-shell overlay
+    // (mechArt.js) is the PRIMARY way this reads in the arena; this bar is a supporting HUD
+    // readout for players who want the exact numbers/proportions at a glance too.
     this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
     this.partTexts = {};
+    this.partBarsGfx = this.add.graphics();
+    this._partRowY = {};
     let y = 130;
     for (const loc of LOCATIONS) {
-      this.partTexts[loc] = this.add.text(16, y, '', { fontFamily: 'monospace', fontSize: '12px', color: C.text });
-      y += 14;
+      this._partRowY[loc] = y;
+      // Short location code (static — doesn't need a per-frame update).
+      this.add.text(16, y, LOCATION_INFO[loc].short.padEnd(2), {
+        fontFamily: 'monospace', fontSize: '11px', color: C.dim,
+      }).setOrigin(0, 0.15);
+      // Numbers sit to the right of the bar, on the same row.
+      this.partTexts[loc] = this.add.text(16 + PART_BAR_X + PART_BAR_W + 8, y, '', {
+        fontFamily: 'monospace', fontSize: '11px', color: C.text,
+      }).setOrigin(0, 0.15);
+      y += PART_ROW_H;
     }
+
+    // #246: full-mech SHIELD readout — its own row under the per-location bars. Hidden entirely
+    // (both bar and label) for a body with no native shield config at all (`mech.hasShield()`
+    // false), per the design decision that some enemies/loadouts simply have none; shown
+    // whenever a shield is present, whether that's the player's native baseline or a mid-run
+    // Shield-powerup boost — same bar, just a bigger max/faster fill while boosted.
+    this.shieldRowY = y + 4;
+    this.shieldLabel = this.add.text(16, this.shieldRowY, 'SHIELD', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.accent,
+    }).setVisible(false);
+    this.shieldBarTrack = this.add.rectangle(
+      16 + PART_BAR_X, this.shieldRowY + 6, PART_BAR_W, PART_BAR_H, 0x0e1218,
+    ).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f).setVisible(false);
+    this.shieldBarFill = this.add.rectangle(
+      16 + PART_BAR_X, this.shieldRowY + 6, PART_BAR_W, PART_BAR_H, SHIELD_BAR_COLOR,
+    ).setOrigin(0, 0.5).setVisible(false);
+    this.shieldText = this.add.text(16 + PART_BAR_X + PART_BAR_W + 8, this.shieldRowY, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.text,
+    }).setOrigin(0, 0.15).setVisible(false);
 
     // Skill bar — the shared garage tiles, centred along the bottom of the screen.
     this.skillBar = this.add.container(0, 0);
@@ -173,18 +219,20 @@ export default class HudScene extends Phaser.Scene {
       this.skillRefs[r.loc] = drawSkillTile(this, this.skillBar, r, { loc: r.loc, itemId: id });
     }
 
-    // #188: Sprint fuel bar — a simple track+fill bar centred just above the skill-tile row,
-    // showing remaining fuel (drains while active, refills while not) and whether sprint is
-    // currently engaged. Mirrors the tile row's own ammo-bar visual language (a dim track
-    // rectangle behind a colored fill), same as the per-weapon ammo bars in skillTiles.js.
+    // #188/#261: Dash cooldown bar — a simple track+fill bar centred just above the skill-tile
+    // row (was Sprint's fuel bar; Sprint itself is Overclock-only now, see data/sprint.js and
+    // arena/firing.js's `_handleSprint`). Shows how close the next Dash is to being ready:
+    // empty/dim while on cooldown, filling back up, full + bright the instant it's ready again.
+    // Mirrors the tile row's own ammo-bar visual language (a dim track rectangle behind a
+    // colored fill), same as the per-weapon ammo bars in skillTiles.js.
     const barW = Math.min(260, this.W * 0.32), barH = 8;
     const barX = this.W / 2 - barW / 2, barY = tiles.length ? tiles[0].y - 22 : this.H - 32;
-    this.sprintBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
-    this.sprintBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
-    this.sprintLabel = this.add.text(barX + barW / 2, barY - 12, '', {
+    this.dashBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
+    this.dashBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
+    this.dashLabel = this.add.text(barX + barW / 2, barY - 12, '', {
       fontFamily: 'monospace', fontSize: '10px', color: C.dim,
     }).setOrigin(0.5, 1);
-    this._sprintBarW = barW;
+    this._dashBarW = barW;
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
@@ -262,18 +310,13 @@ export default class HudScene extends Phaser.Scene {
       updateSkillTile(this.skillRefs[loc], opts);
     }
 
-    // #188: Sprint fuel bar — fill fraction + color track remaining fuel; the label shows
-    // the bind + ACTIVE/READY/EMPTY state, mirroring the old ability tile's READY/cooldown text.
-    this._updateSprintBar();
+    // #188/#261: Dash cooldown bar — fill fraction + color track how close the next dash is to
+    // ready; the label shows the bind + READY/ACTIVE/COOLDOWN state, mirroring the old ability
+    // tile's READY/cooldown text.
+    this._updateDashBar();
 
-    for (const loc of LOCATIONS) {
-      const p = mech.parts[loc];
-      const frac = mech.partHealthFraction(loc);
-      const hp = Math.ceil(p.armor + p.structure);
-      const max = p.maxArmor + p.maxStructure;
-      const col = mech.isPartDestroyed(loc) ? C.bad : frac > 0.5 ? C.good : C.warn;
-      this.partTexts[loc].setText(`${LOCATION_INFO[loc].short.padEnd(2)} ${String(hp).padStart(3)}/${max}`).setColor(col);
-    }
+    this._updatePartBars(mech);
+    this._updateShieldBar(mech);
 
     const total = this.registry.get('enemyCount') || 0;
     const alive = this.registry.get('enemiesAlive') ?? total;
@@ -464,22 +507,96 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
-  // #188: Sprint fuel bar — fill width tracks the live fuel fraction (registry-published by
-  // arena/firing.js's _handleSprint each frame); color/label reflect ACTIVE/READY/EMPTY so
-  // the owner can read at a glance both how much fuel is left and whether it's draining or
-  // regenerating right now.
-  _updateSprintBar() {
-    const fuel = this.registry.get('sprintFuel');
-    if (fuel == null) return;   // no player mech / sprint state published yet
-    const cap = this.registry.get('sprintFuelMax') || 1;
-    const active = !!this.registry.get('sprintActive');
-    const frac = Phaser.Math.Clamp(fuel / cap, 0, 1);
-    this.sprintBarFill.setSize(Math.max(1, this._sprintBarW * frac), this.sprintBarFill.height);
-    const color = active ? C.accent : frac > 0.25 ? C.good : frac > 0 ? C.warn : C.bad;
-    this.sprintBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
-    const bind = this.registry.get('inputMode') === 'pad' ? SPRINT_BIND.pad : SPRINT_BIND.key;
-    const state = active ? 'ACTIVE' : frac <= 0 ? 'EMPTY' : 'READY';
-    this.sprintLabel.setText(`SPRINT (${bind})  ${state}`).setColor(color);
+  // #188/#261: Dash cooldown bar — fill width tracks how much of the cooldown has ELAPSED
+  // (registry-published by arena/firing.js's `_handleDash` each frame) — empty right after a
+  // dash, filling back up to full as it becomes ready again; color/label reflect
+  // ACTIVE/READY/COOLDOWN so the owner can read at a glance whether a dash is mid-burst, ready
+  // to fire, or still recharging (and roughly how long is left).
+  _updateDashBar() {
+    const cooldown = this.registry.get('dashCooldown');
+    if (cooldown == null) return;   // no player mech / dash state published yet
+    const max = this.registry.get('dashCooldownMax') || 1;
+    const active = !!this.registry.get('dashActive');
+    const frac = Phaser.Math.Clamp(1 - cooldown / max, 0, 1);   // 0 = just used, 1 = ready
+    this.dashBarFill.setSize(Math.max(1, this._dashBarW * frac), this.dashBarFill.height);
+    const ready = cooldown <= 0;
+    const color = active ? C.accent : ready ? C.good : C.warn;
+    this.dashBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
+    const bind = this.registry.get('inputMode') === 'pad' ? DASH_BIND.pad : DASH_BIND.key;
+    const state = active ? 'DASHING' : ready ? 'READY' : `COOLDOWN ${cooldown.toFixed(1)}s`;
+    this.dashLabel.setText(`DASH (${bind})  ${state}`).setColor(color);
+  }
+
+  // #246: per-location armor/hp split bar — TWO adjacent segments in one bar frame, armor
+  // first (left) then hp (right), each segment's own WIDTH proportional to that layer's share
+  // of the location's combined max (maxArmor + maxHp), each segment's FILL proportional to its
+  // own current/max. So a location with a bigger armor rating than hp rating (or vice versa)
+  // reads as a wider armor (or hp) segment, and within each segment the fill drains as that
+  // specific layer takes damage — armor drains first in play (it absorbs before hp), which
+  // reads here as the LEFT segment emptying before the right one starts to. This is the
+  // supporting HUD readout; the PRIMARY at-a-glance armor read is the mech-art armor-shell
+  // overlay on the mech itself (see mechArt.js).
+  _updatePartBars(mech) {
+    const g = this.partBarsGfx;
+    g.clear();
+    for (const loc of LOCATIONS) {
+      const p = mech.parts[loc];
+      const y = this._partRowY[loc];
+      const bx = 16 + PART_BAR_X;
+      const totalMax = p.maxArmor + p.maxHp;
+      const armorShare = totalMax > 0 ? p.maxArmor / totalMax : 0;
+      const armorW = PART_BAR_W * armorShare;
+      const hpW = PART_BAR_W - armorW;
+
+      // Track (dim full-width backing) so an empty segment still reads as "there" but spent.
+      g.fillStyle(0x0e1218, 1);
+      g.fillRect(bx, y - PART_BAR_H / 2, PART_BAR_W, PART_BAR_H);
+
+      // Armor segment (left): fills leftover-to-right within its own share of the bar width.
+      if (armorW > 0) {
+        const armorFrac = p.maxArmor > 0 ? p.armor / p.maxArmor : 0;
+        g.fillStyle(ARMOR_BAR_COLOR, 1);
+        g.fillRect(bx, y - PART_BAR_H / 2, Math.max(0, armorW * armorFrac), PART_BAR_H);
+      }
+      // HP segment (right): same idea, its own share/fraction, colored by remaining health.
+      if (hpW > 0) {
+        const hpFrac = p.maxHp > 0 ? p.hp / p.maxHp : 0;
+        const hpCol = mech.isPartDestroyed(loc) ? 0xe2533a : hpFrac > 0.5 ? 0x7bd17b : 0xefc14a;
+        g.fillStyle(hpCol, 1);
+        g.fillRect(bx + armorW, y - PART_BAR_H / 2, Math.max(0, hpW * hpFrac), PART_BAR_H);
+      }
+      // Thin divider between the two segments so they read as distinct, not one blended bar.
+      if (armorW > 0 && hpW > 0) {
+        g.fillStyle(0x0e1218, 1);
+        g.fillRect(bx + armorW - 0.5, y - PART_BAR_H / 2, 1, PART_BAR_H);
+      }
+      g.lineStyle(1, 0x2a333f, 0.9);
+      g.strokeRect(bx, y - PART_BAR_H / 2, PART_BAR_W, PART_BAR_H);
+
+      const destroyed = mech.isPartDestroyed(loc);
+      const col = destroyed ? C.bad : C.text;
+      this.partTexts[loc]
+        .setText(destroyed ? 'DESTROYED' : `${Math.ceil(p.armor)}+${Math.ceil(p.hp)}/${p.maxArmor}+${p.maxHp}`)
+        .setColor(col);
+    }
+  }
+
+  // #246: full-mech shield readout — a single bar (same visual language as the per-location
+  // bars above), hidden ENTIRELY (bar + label) when the mech has no native shield at all
+  // (`hasShield()` false — some enemy kinds and loadouts genuinely have none). Shown for the
+  // player's baseline shield and, indistinguishably to the readout, a boosted one mid-powerup
+  // (the bar's own max just grows/shrinks with `mech.shield.max`).
+  _updateShieldBar(mech) {
+    const has = mech.hasShield?.() ?? false;
+    this.shieldLabel.setVisible(has);
+    this.shieldBarTrack.setVisible(has);
+    this.shieldBarFill.setVisible(has);
+    this.shieldText.setVisible(has);
+    if (!has) return;
+    const { hp, max } = mech.shield;
+    const frac = max > 0 ? Phaser.Math.Clamp(hp / max, 0, 1) : 0;
+    this.shieldBarFill.setSize(Math.max(1, PART_BAR_W * frac), PART_BAR_H);
+    this.shieldText.setText(`${Math.ceil(hp)}/${Math.ceil(max)}`);
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
@@ -542,45 +659,13 @@ export default class HudScene extends Phaser.Scene {
       y += rowH;
     });
 
-    // #187: Shield draws one extra row, same visual language (a ring + label) as the timed
-    // buffs above, but keyed off the remaining damage POOL instead of remaining time — a
-    // simple starting treatment, left for the owner to refine visually via playtest. Not part
-    // of `ids`/`activePowerups` (Shield isn't a timed buff), so it always lands in the next
-    // slot after them and is skipped entirely (row hidden) when the pool is empty.
-    const shieldPool = this.registry.get('shieldPool') || 0;
-    let rows = ids.length;
-    if (shieldPool > 0) {
-      const cap = this._shieldCapSeen = Math.max(this._shieldCapSeen || 0, shieldPool);
-      const p = POWERUPS.shield;
-      const color = p?.color ?? 0x5ec8e0;
-      const colStr = '#' + color.toString(16).padStart(6, '0');
-      const cy = y + R;
-      const frac = Math.max(0, Math.min(1, shieldPool / cap));
-
-      g.lineStyle(4, color, 0.22);
-      g.strokeCircle(cx, cy, R);
-      const start = -Math.PI / 2;
-      const end = start + frac * Math.PI * 2;
-      g.lineStyle(4, color, 1);
-      g.beginPath();
-      g.arc(cx, cy, R, start, end, false);
-      g.strokePath();
-      g.fillStyle(color, 0.10 + 0.14 * frac);
-      g.fillCircle(cx, cy, R - 3);
-
-      let t = this.buffTexts[rows];
-      if (!t) {
-        t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px' }).setOrigin(1, 0.5);
-        this.buffTexts[rows] = t;
-      }
-      t.setText(`${p?.label ?? 'SHIELD'}  ${Math.round(shieldPool)}`)
-        .setColor(colStr)
-        .setPosition(cx - R - 8, cy)
-        .setVisible(true);
-      rows += 1;
-    } else {
-      this._shieldCapSeen = 0;   // reset the "full" reference once the shield is gone
-    }
+    // #246: Shield used to draw one extra ring row here, keyed off a scene-tracked
+    // `shieldPool` that only ever existed while the powerup was active. The shield is now a
+    // real, always-present-or-absent layer on the mech itself, with its own dedicated bar in
+    // the INTEGRITY block (`_updateShieldBar`, right under the per-location armor/hp bars) —
+    // a steadier, always-in-the-same-place readout than a buff ring that only appeared mid-
+    // powerup, and it stays visible for the player's native baseline too, not just a boost.
+    const rows = ids.length;
     for (let i = rows; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
   }
 }

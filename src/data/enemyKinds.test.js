@@ -22,9 +22,12 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
       expect(body.hp).toBe(k.hp);
       expect(body.locations().length).toBeGreaterThan(0);
       expect(body.isDestroyed()).toBe(false);
-      // Damaging any part draws down the pool.
+      // Damaging any part draws down the pool. #246: some kinds now layer a shield/armor pool
+      // in FRONT of hp (tank/helicopter/quadruped — see enemyKinds.js), so a killing blow must
+      // clear those layers too, not just k.hp — one hit for the full stack plus a margin.
       const loc = body.locations()[0];
-      body.applyDamage(loc, k.hp + 1);
+      const overkill = (k.hp || 0) + (k.armor || 0) + (k.shield?.max || 0) + 1;
+      body.applyDamage(loc, overkill);
       expect(body.isDestroyed()).toBe(true);
     }
   });

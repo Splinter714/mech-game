@@ -8,9 +8,10 @@ import { LIGHT_CONFIG } from './light.js';
 import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
 
-// Relative bulk of each damage-tracked location, used to distribute armor + structure
-// from the chassis' baseline stats. #128: head/cockpit/centerTorso dropped out of
-// LOCATIONS (cosmetic only now, no armor/structure), so they no longer need a factor.
+// Relative bulk of each damage-tracked location, used to distribute armor + HP (#246:
+// renamed from "structure" — plain language, same layering) from the chassis' baseline
+// stats. #128: head/cockpit/centerTorso dropped out of LOCATIONS (cosmetic only now, no
+// armor/HP), so they no longer need a factor.
 // #230: torso factor bumped 0.75 -> 0.85 (arm left at 0.6, so the HP ratio moves from
 // ~1.25x to ~1.42x an arm's health). Paired with easing combat.js's player-hit weighting
 // from 2:1 to 1.5:1 torso:arm, the two changes together bring torsos' effective
@@ -21,8 +22,8 @@ const FACTORS = {
   leftArm: 0.6, rightArm: 0.6,
 };
 
-// Expand a chassis config into a full definition with per-location slots/armor/
-// structure and movement tuning (radians precomputed from the human-friendly degrees).
+// Expand a chassis config into a full definition with per-location slots/armor/HP
+// and movement tuning (radians precomputed from the human-friendly degrees).
 export function makeChassis(cfg) {
   const locations = {};
   for (const id of LOCATIONS) {
@@ -30,7 +31,7 @@ export function makeChassis(cfg) {
     const f = FACTORS[id];
     locations[id] = {
       maxArmor: info.internal ? 0 : Math.round(cfg.baseArmor * f),
-      maxStructure: Math.max(1, Math.round(cfg.baseStructure * f)),
+      maxHp: Math.max(1, Math.round(cfg.baseHp * f)),
     };
   }
   const m = cfg.movement;

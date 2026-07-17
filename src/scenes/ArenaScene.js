@@ -6,6 +6,7 @@ import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
 import { makeLock } from '../data/targetlock.js';
 import { initialSprintState } from '../data/sprint.js';
+import { initialDashState } from '../data/dash.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
 import { CombatMixin } from './arena/combat.js';
@@ -19,6 +20,16 @@ import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
+
+// #246: the player's native full-mech shield baseline — a real trait present from the start of
+// every sortie, not something that only exists once a Shield powerup is picked up (most enemy
+// mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy kinds opt in).
+// `max`/`regenPerSec` are deliberately modest (a slow trickle, not a second health bar) so it
+// reads as "a little breathing room" rather than eclipsing armor/hp as the real defense layer;
+// the Shield POWERUP (data/powerups.js) is what makes the shield feel powerful for a while.
+// `pauseMs` is the brief (not shooter-style multi-second) regen interrupt on any hit that
+// reaches the shield, per the #246 decision.
+const PLAYER_SHIELD = { max: 50, regenPerSec: 2, pauseMs: 1200 };
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -69,6 +80,10 @@ export default class ArenaScene extends Phaser.Scene {
     // 5-10x band — real damage across a run should threaten death (the run loop now ends the
     // run on player destruction), but a single bad opening shouldn't be instant-death.
     this.mech.boostHealth(7);
+    // #246: (re)establish the player's native shield baseline fresh each sortie — same
+    // redeploy-safe, idempotent spirit as boostHealth above (never compounds, always starts
+    // this deploy at full charge with no lingering powerup boost from a prior run).
+    this.mech.configureShield(PLAYER_SHIELD);
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
@@ -133,13 +148,14 @@ export default class ArenaScene extends Phaser.Scene {
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
-    this.sprint = initialSprintState();   // #188: hardcoded L3/Space toggle + fuel, see data/sprint.js
-    // #189: whether the CURRENT sprint-active state is because Overclock is forcing it (vs.
-    // the player's own manual toggle), and last frame's Overclock-active reading (so
-    // activation is detected as a true rising edge) — see arena/firing.js `_handleSprint`
-    // for the full force/handoff state machine.
+    this.sprint = initialSprintState();   // #188: Overclock-only now (#261), see data/sprint.js
+    // #189: whether the CURRENT sprint-active state is because Overclock is forcing it, and
+    // last frame's Overclock-active reading (so activation is detected as a true rising edge)
+    // — see arena/firing.js `_handleSprint` for the full force/handoff state machine. #261:
+    // there's no more player-manual sprint state to reclaim it, only Overclock ever sets this.
     this._sprintForcedByOverclock = false;
     this._overclockWasActive = false;
+    this.dash = initialDashState();   // #261: hardcoded L3/Space burst + cooldown, see data/dash.js
     // Indirect-fire lock (#62, rework #252): `this.lock` (data/targetlock.js) is the pure state
     // record — it mirrors `this.convergeTarget` every frame, instantly, so homing/arcing weapons
     // simply fire at whatever direct-fire convergence is currently aimed at. `aimEnemy` is the live
@@ -241,9 +257,10 @@ export default class ArenaScene extends Phaser.Scene {
     // unconditionally below) is what owns the delayed return-to-garage transition; this only
     // freezes the player's own agency, not the run's bookkeeping.
     if (!this._playerDead) {
-      // #188: resolve the Sprint toggle + fuel drain/regen BEFORE _drive so a same-frame press
-      // is reflected in this frame's speed multiplier, not delayed a frame.
+      // #188/#261: resolve Sprint (Overclock-only now) and Dash's burst/cooldown BEFORE _drive
+      // so a same-frame press is reflected in this frame's speed multiplier, not delayed a frame.
       this._handleSprint(intent, delta);
+      this._handleDash(intent, delta);
       this._drive(intent, dt);
     }
 
@@ -309,6 +326,9 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
     // Surge, which used to multiply this rate, was removed as redundant with Overcharge.)
     this.mech.regenAmmo(dt);
+    // #246: passive shield regen (with its brief post-hit pause) + counting down any active
+    // Shield-powerup boost — see Mech.tickShield/boostShield (data/Mech.js).
+    this.mech.tickShield(dt);
   }
 
   // #216: the sound cue lives HERE, not in any of the call sites, because this is the one

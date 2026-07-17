@@ -14,12 +14,14 @@
 //    own countdown); picking up a duplicate of an active type just refreshes that type's time.
 //  - Armor Patch is INSTANT (no timer) — it applies its repair on pickup and never enters the
 //    active set.
-//  - Shield (#187) is a THIRD kind, alongside timed buffs and instants: a damage-POOL buff.
-//    It doesn't expire on a timer and isn't instant either — it stays active until a
-//    cumulative damage total is absorbed. It never enters `active`/`buffModifiers`; the arena
-//    mixin tracks its remaining pool in a separate `shieldPool` number, and a duplicate pickup
-//    ADDS to that pool (mirroring how a duplicate timed buff refreshes remaining time). See
-//    `absorbShieldDamage` below for the pure math.
+//  - Shield (#246, reworked from #187) is a THIRD kind, alongside timed buffs and instants: it
+//    acts on the mech's own NATIVE shield layer (Mech.shield / HpBody.shield — data/shield.js),
+//    which is now a real trait every body can be configured with (chassis baseline for the
+//    player, per-kind data for enemies — see enemyKinds.js), not a powerup-only pool. Picking
+//    this up does BOTH things at once: instantly fills the shield to 100%, AND multiplies its
+//    max capacity + regen rate by `boostMult` for `duration` seconds (Mech.boostShield). It
+//    never enters `active`/`buffModifiers` — the arena mixin just calls `mech.boostShield`
+//    directly (scenes/arena/powerups.js `_activatePowerup`).
 
 // ── The powerup catalog (owner: tune) ───────────────────────────────────────────────────
 // Each entry: id, label (HUD), color (collectible + HUD), weight (relative drop odds), and
@@ -53,17 +55,17 @@ export const POWERUPS = {
     id: 'armorPatch', label: 'ARMOR PATCH', color: 0x8ad0ff, weight: 1.2,
     instant: true, effect: 'armorPatch', repairFrac: 0.5,
   },
-  // 5) #187: full damage absorption up to a fixed CUMULATIVE total — NOT time-based (distinct
-  //    from the timed-buff model above). #188: the old equipment `bubbleShield` ability (a
-  //    separate, duration-based full absorb) is gone — this powerup pool is the only shield
-  //    mechanic now. `shieldCap` is the starting absorb pool in damage points. Picked
-  //    by looking at src/data/weapons.js `damage` fields: single-shot weapons land ~2-34 per hit
-  //    (the heaviest, a projectile launcher, hits for 34), so 60 absorbs a bit under two of the
-  //    hardest single hits, or several ticks of a stream weapon — "1-2 solid exchanges, not a
-  //    full fight" per the owner's brief. Starting value, tune via playtest like the rest.
+  // 5) #246 (reworked from #187's fixed damage-absorb pool): the mech's own native shield
+  //    layer (see ArenaScene's PLAYER_SHIELD baseline config) gets instantly filled to full AND
+  //    boosted — both max capacity and regen rate multiplied by `boostMult` — for `duration`
+  //    seconds, the "strongest version" of the effect per the #246 decision. `duration` mirrors
+  //    the other timed buffs' ~9-10s range, a touch longer since a capacity/regen boost is felt
+  //    more gradually than an instant fill alone. `boostMult` 2.5x is a big, clearly-felt spike
+  //    (a 50-cap/2-per-sec baseline becomes 125-cap/5-per-sec for the duration) without being
+  //    effectively invincible. Tune via playtest like the rest.
   shield: {
     id: 'shield', label: 'SHIELD', color: 0x5ec8e0, weight: 1,
-    effect: 'shield', shieldCap: 60,
+    duration: 12, effect: 'shield', boostMult: 2.5,
   },
 };
 
@@ -164,9 +166,9 @@ export function durationMs(id) {
 // Collapse the ACTIVE set of timed buffs into the plain multiplier/flag object the arena's
 // firing/movement/turret code reads each frame. `active` is a map: type id → remaining ms
 // (only positive-remaining entries should be present; the arena prunes expired ones). Shield
-// is NOT part of this — it's a damage-pool buff, tracked/applied separately (see
-// `absorbShieldDamage` below and the arena mixin's parallel `shieldPool` tracking). The
-// returned shape is the single contract between this data layer and the scene:
+// is NOT part of this — it acts directly on the mech's own native shield layer (#246,
+// Mech.boostShield/data/shield.js), not a scene-tracked overlay. The returned shape is the
+// single contract between this data layer and the scene:
 //   freeAmmo        — true ⇒ don't spend ammo (Overcharge)
 //   cycleMult       — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
 //   overclockActive — true ⇒ Overclock is live (#189): the arena's Sprint handling
@@ -194,21 +196,9 @@ export function buffModifiers(active) {
   return mods;
 }
 
-// ── Shield damage-pool math ──────────────────────────────────────────────────────────────
-// Shield (#187) is NOT a timed buff — it's a damage-pool buff: incoming damage is fully
-// absorbed (zero armor/structure loss) until a cumulative total (the pool) is exhausted, at
-// which point the shield breaks and any excess in that same hit passes through normally.
-// Pure — no Phaser, no live Mech — so it's unit-tested in isolation. `pool` is the remaining
-// absorb capacity (>0 while the shield is active); `damage` is one hit's raw amount. Returns:
-//   absorbed  — how much of this hit the shield blocked (<= pool, <= damage)
-//   overflow  — how much passes through to armor/structure (damage - absorbed)
-//   remaining — pool left after this hit; 0 means the shield just broke
-export function absorbShieldDamage(pool, damage) {
-  const p = Math.max(0, pool || 0);
-  const d = Math.max(0, damage || 0);
-  const absorbed = Math.min(p, d);
-  return { absorbed, overflow: d - absorbed, remaining: p - absorbed };
-}
+// #246: the old fixed damage-pool shield math (`absorbShieldDamage`) moved to data/shield.js
+// as `damageShield`/`tickShield`/etc. — the shield is now a real regenerating layer living on
+// the Mech/HpBody itself (see that file), not a powerup-only one-shot pool computed here.
 
 // ── Instant Armor Patch: whole-mech proportional repair ──────────────────────────────────
 // Compute how much armor to restore to each location: `frac` of that location's MISSING

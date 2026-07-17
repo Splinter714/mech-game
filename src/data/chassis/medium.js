@@ -5,7 +5,7 @@ export const MEDIUM_CONFIG = {
   name: 'Trooper',
   weightClass: 'medium',
   baseArmor: 64,
-  baseStructure: 36,
+  baseHp: 36,
   art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },
   movement: {
     // #3 MechWarrior-feel pass. The workhorse: noticeably more ponderous than a light —

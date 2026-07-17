@@ -140,6 +140,31 @@ export function barrel(sg, T, cx, cy, w, h) {
     : rectC(sg, cx, cy, w, h, T.faceDk);
 }
 
+// #246: a bright plating-shell overlay drawn OVER a part's base plate — four corner brackets
+// (a circuit-board/bolted-plating read) in a fixed steel-blue tone, deliberately NOT a faction
+// color so it reads as the same "still armored" language on both the player's dark gunmetal
+// theme and the enemy's light rounded theme. This is what makes armor a VISIBLE trait on the
+// mech itself (not just a HUD number): the caller only invokes this while the location's armor
+// pool is > 0 (see mechArt.js drawArm/drawSideTorso) — once armor hits 0 the caller simply stops
+// drawing it, and the bare plate underneath (no brackets) reads as "armor stripped." Binary
+// present/absent (not a continuous fade) deliberately mirrors `stump`'s own all-or-nothing
+// visual state and the existing "only rebuild the texture when a discrete state crosses"
+// performance rule (see combat.js's `armorBrokeNow` reskin trigger) — a per-hit fade would
+// require rebuilding this texture on every single hit instead of only when armor actually
+// breaks/returns.
+const ARMOR_SHELL = 0x9fe0ff;
+export function armorShell(sg, cx, cy, w, h) {
+  const bw = Math.max(1.1, Math.min(w, h) * 0.09);   // bracket arm thickness
+  const len = Math.min(w, h) * 0.32;                  // bracket arm length
+  const x0 = cx - w / 2 + bw / 2, x1 = cx + w / 2 - bw / 2;
+  const y0 = cy - h / 2 + bw / 2, y1 = cy + h / 2 - bw / 2;
+  const corners = [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]];
+  for (const [sx, sy, dx, dy] of corners) {
+    rectC(sg, sx + (dx * len) / 2, sy, len, bw, ARMOR_SHELL, 0.8);
+    rectC(sg, sx, sy + (dy * len) / 2, bw, len, ARMOR_SHELL, 0.8);
+  }
+}
+
 // A destroyed location: a charred lump with faint embers.
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
