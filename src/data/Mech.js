@@ -187,7 +187,10 @@ export class Mech {
   onlineWeapons() { return this.weapons().filter((w) => w.online); }
   readyWeapons() { return this.weapons().filter((w) => w.ready); }
 
-  // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons).
+  // Spend `n` rounds from a weapon's magazine (no-op for unlimited weapons). `n` need not be
+  // an integer — #235: Overdrive spends a fractional amount (cycleMult, e.g. 0.5) per shot to
+  // offset its faster fire rate, so this deliberately does plain subtraction with no
+  // rounding/truncation; magazines can sit at fractional values and still compare/display fine.
   consumeAmmo(loc, index, n = 1) {
     if (this.ammo[loc]?.[index] != null) {
       this.ammo[loc][index] = Math.max(0, this.ammo[loc][index] - n);

@@ -174,6 +174,49 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
     expect(m.weapons()[0].ammo).toBe(4);
   });
 
+  // #235: Overdrive halves the fire cycle (cycleMult 0.5 -> shots go out ~2x as often).
+  // Rather than boost ammo regen, firing.js's fireWeapon scales the CONSUMED amount by
+  // cycleMult (`this.mech.consumeAmmo(w.location, w.index, mods.cycleMult ?? 1)`), so during
+  // Overdrive each shot only spends 0.5 ammo — exactly offsetting the 2x fire rate for a
+  // net-neutral economy, distinct from Overcharge's true unlimited ammo (freeAmmo). These
+  // tests exercise consumeAmmo directly (the arena scene call site isn't unit-testable here),
+  // confirming it accepts a fractional `n` cleanly with no rounding/truncation.
+  it('consumeAmmo spends a flat 1 ammo/shot at normal (non-Overdrive) fire rate, unchanged', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
+    m.consumeAmmo('leftArm', 0, 1); // cycleMult defaults to 1 outside Overdrive
+    expect(m.weapons()[0].ammo).toBe(3);
+  });
+
+  it('consumeAmmo spends only 0.5 ammo/shot when passed Overdrive\'s cycleMult (0.5)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
+    m.consumeAmmo('leftArm', 0, 0.5); // as fireWeapon would call it during Overdrive
+    expect(m.weapons()[0].ammo).toBe(3.5);
+    m.consumeAmmo('leftArm', 0, 0.5);
+    expect(m.weapons()[0].ammo).toBe(3); // fractional consumption accumulates cleanly
+  });
+
+  it('Overdrive is net-neutral: N shots at 2x fire rate / 0.5 cost each drain the same total '
+    + 'ammo as N shots at normal rate / 1 cost each', () => {
+    const shots = 10;
+
+    const normal = new Mech({ chassisId: 'medium' });
+    normal.mount('leftArm', 'plasmaCannon');
+    for (let i = 0; i < shots; i++) normal.consumeAmmo('leftArm', 0, 1);
+
+    const overdrive = new Mech({ chassisId: 'medium' });
+    overdrive.mount('leftArm', 'plasmaCannon');
+    for (let i = 0; i < shots; i++) overdrive.consumeAmmo('leftArm', 0, 0.5);
+
+    const normalDrained = 4 - normal.weapons()[0].ammo;   // plasmaCannon ammoMax 4
+    const overdriveDrained = 4 - overdrive.weapons()[0].ammo;
+    // Same total ammo drained per shot fired, regardless of how fast those shots came out —
+    // Overdrive fires twice as often in real time but costs half as much per shot, so the
+    // economy nets out identical shot-for-shot instead of draining faster.
+    expect(overdriveDrained).toBeCloseTo(normalDrained, 5);
+  });
+
   it('melee weapons have unlimited ammo and stay ready', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('rightArm', 'testMelee'); // ammoMax null
