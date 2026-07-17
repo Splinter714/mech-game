@@ -40,6 +40,24 @@ describe('terrain table (#41 full model)', () => {
     }
   });
 
+  // #251: helipad is a genuine first-class TERRAIN entry (same shape/rigor as grass/sand/snow/
+  // pavement — a real tex + passable/blocksLOS/speedFactor), not a special-cased runtime-only
+  // construct. It's placed as static base-infrastructure set dressing at world-gen time
+  // (worldgen.js `HELIPAD_COUNT`), fully independent of any enemy spawn.
+  it('makes the helipad ground marking normal, walkable, non-cover terrain', () => {
+    expect(TERRAIN.helipad).toBeDefined();
+    expect(TERRAIN.helipad.id).toBe('helipad');
+    expect(typeof TERRAIN.helipad.tex).toBe('string');
+    expect(TERRAIN.helipad.passable).toBe(true);
+    expect(TERRAIN.helipad.blocksLOS).toBe(false);
+    expect(terrainSpeedFactor('helipad')).toBe(1);
+    expect(isPassable('helipad')).toBe(true);
+    expect(blocksLOS('helipad')).toBe(false);
+    expect(isDestructible('helipad')).toBe(false);
+    expect(isSoftCover('helipad')).toBe(false);
+    expect(isWaterTerrain('helipad')).toBe(false);
+  });
+
   it('leaves rubble passable, no cover, mildly slowing', () => {
     expect(TERRAIN.rubble.passable).toBe(true);
     expect(TERRAIN.rubble.blocksLOS).toBe(false);

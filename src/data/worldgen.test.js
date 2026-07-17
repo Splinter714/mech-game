@@ -9,7 +9,7 @@ import {
   boundaryRingKeys, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH, MIN_SPAWN_BOUNDARY_HEX_DIST,
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
   generateSpine, corridorHexSet, spineProgressHexOf,
-  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX,
+  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, HELIPAD_COUNT,
 } from './worldgen.js';
 import { lateFraction as runLateFraction, STAGE_COUNT } from './run.js';
 import { getBiome } from './biomes.js';
@@ -200,6 +200,45 @@ describe('generateTerrain', () => {
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
 
+  describe('#251 helipad — static set-dressing stamped at world-gen time, decoupled from any spawn', () => {
+    // The candidate hex for each of the HELIPAD_COUNT draws only actually becomes a helipad if
+    // it's still plain ground by then (`isGround`) — same "best-effort, may occasionally skip a
+    // draw" shape `_spawnOutpostAt` (world.js) already tolerates — so the count is a ceiling, not
+    // a guarantee, but across a spread of seeds it should usually hit the full count and never
+    // exceed it.
+    it('stamps at most HELIPAD_COUNT helipad hexes, usually hitting the full count, biome-independent', () => {
+      for (const biome of [GRASSLAND, DESERT]) {
+        let sawFullCount = false;
+        for (let seed = 0; seed < 30; seed++) {
+          const { terrain } = generateTerrain({ seed, worldRadius: 25, biome });
+          const count = [...terrain.values()].filter((id) => id === 'helipad').length;
+          expect(count).toBeLessThanOrEqual(HELIPAD_COUNT);
+          if (count === HELIPAD_COUNT) sawFullCount = true;
+        }
+        expect(sawFullCount).toBe(true);
+      }
+    });
+
+    it('is reproducible for a given seed, same as every other feature', () => {
+      const opts = { seed: 0x5eed, worldRadius: 20, biome: GRASSLAND };
+      const a = generateTerrain(opts);
+      const b = generateTerrain(opts);
+      const helipadsOf = (t) => [...t].filter(([, id]) => id === 'helipad').map(([k]) => k).sort();
+      expect(helipadsOf(a.terrain)).toEqual(helipadsOf(b.terrain));
+    });
+
+    it('is not destructible — never seeded into buildingHp or coverHp', () => {
+      for (let seed = 0; seed < 10; seed++) {
+        const { terrain, buildingHp, coverHp } = generateTerrain({ seed, worldRadius: 20, biome: GRASSLAND });
+        for (const [k, id] of terrain) {
+          if (id !== 'helipad') continue;
+          expect(buildingHp.has(k)).toBe(false);
+          expect(coverHp.has(k)).toBe(false);
+        }
+      }
+    });
+  });
+
   describe('#110 deep is boundary-only; hazard is the in-map feature', () => {
     it('never stamps a biome\'s `deep` terrain id without an explicit boundaryRing', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: DESERT });
@@ -218,7 +257,8 @@ describe('generateTerrain', () => {
     it('grassland (no hazard) never stamps anything but its normal roles', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: GRASSLAND });
       const validIds = new Set([
-        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost,
+        // #251: `helipad` is a normal stamped role now too — static set-dressing, not a hazard.
+        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost, 'helipad',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });

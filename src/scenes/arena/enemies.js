@@ -25,13 +25,13 @@ import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
-import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE, HELIPAD_KEY } from '../../art/index.js';
+import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, DEPTH } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { makeLock, stepLock, hasLock, predictedTarget } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -267,24 +267,7 @@ export const EnemiesMixin = {
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);
-    // #251: a helipad is purely cosmetic set-dressing — drop one at the gunship's actual spawn
-    // point (wherever `_offscreenSpawnPoint` happened to roll) with a brief spin-up flourish, so
-    // the world visibly reads "a helicopter launches from here" without gating real spawn logic.
-    if (def.kind === 'helicopter') this._spawnHelipadFx(x, y);
     return e;
-  },
-
-  // #251: cosmetic helipad decal + a one-time "rotor spin-up" dust flourish at (x, y) — called
-  // once per gunship spawn from `_spawnKind` above. The pad itself is a static ground sprite (like
-  // a hex tile's detail, just independent of the hex grid so it can sit at the exact dynamic spawn
-  // point); it never gets torn down, so pads accumulate harmlessly across a run the same way spent
-  // rubble/terrain does. The flourish reuses the existing pooled burst-circle primitive
-  // (combat.js `_burst`) rather than inventing a new FX system — two soft dust rings that expand
-  // and fade, reading as rotor-wash kicking up as the gunship lifts off.
-  _spawnHelipadFx(x, y) {
-    (this.helipads ??= []).push(this.add.sprite(x, y, HELIPAD_KEY).setDepth(DEPTH.GROUND_FX));
-    this._burst(x, y, 18, 50, 0x9a8f7a, 0.32, 520, false);
-    this._burst(x, y, 22, 58, 0xc9c2b0, 0.42, 680, true);
   },
 
   // Expand a 'swarm' request into SWARM_SIZE drones dropped in a tight cluster around (x,y), so

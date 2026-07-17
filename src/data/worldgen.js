@@ -22,6 +22,13 @@
 import { axialKey, range, neighbors, hexToPixel, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isSoftCover } from './terrain.js';
 
+// #251: how many static `helipad` ground markings (data/terrain.js) get stamped into a
+// generated map — pure base-infrastructure set-dressing, not a gameplay objective, so this is a
+// small flat count rather than something scaled up like `outposts` (which needs to keep pace
+// with a long corridor so every stage has an assault target). 2 is enough that a full traversal
+// of the corridor plausibly passes one without turning every map into a helipad showcase.
+export const HELIPAD_COUNT = 2;
+
 // Small seeded PRNG (mulberry32) — deterministic given `a`, so the same seed always yields
 // the same terrain layout.
 export function mulberry32(a) {
@@ -131,6 +138,22 @@ export function generateTerrain({
     for (const h of [c, ...neighbors(c.q, c.r).filter(() => rng() < 0.55)]) {
       const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, B.outpost);
     }
+  }
+
+  // #251: a couple of static helipad ground markings — base-infrastructure SET DRESSING
+  // (data/terrain.js `helipad`: passable, no LOS block, not destructible/no HP), placed as a
+  // normal part of the generated layout exactly like the outposts/cover above, NOT tied to any
+  // enemy's spawn moment (helicopters keep using their own independent offscreen spawn logic —
+  // there is no requirement a helicopter spawn near one, or vice versa). `HELIPAD_COUNT` is
+  // deliberately tiny (flavor, not a repeated hazard/cover density like the loops above) — each
+  // candidate hex only actually becomes a helipad if it's still plain open ground by the time
+  // its turn comes up (`isGround`), so a helipad never overwrites cover/an outpost placed just
+  // above; landing inside the spawn safe zone is fine too, since the safe-zone clear right below
+  // already resets anything there back to open ground the same way it would an outpost.
+  for (let i = 0; i < HELIPAD_COUNT; i++) {
+    const c = all[Math.floor(rng() * all.length)];
+    const k = axialKey(c.q, c.r);
+    if (isGround(k)) T.set(k, 'helipad');
   }
 
   // Clear the safe zone (spawn point + line of fire) back to open ground.

@@ -46,6 +46,13 @@ export const TERRAIN = {
   // #227: what a destroyed forest hex leaves behind — charred plant debris, visually distinct
   // from the building's broken-masonry rubble even though both are passable/no-cover.
   vegRubble: { id: 'vegRubble', tex: 'hex_vegRubble', passable: true,  blocksLOS: false, speedFactor: 0.8 },
+  // #251: helipad ground marking — static base-infrastructure set-dressing, stamped into the
+  // map like any other feature (a couple per generated layout — see worldgen.js `HELIPAD_COUNT`)
+  // at world-gen time, biome-independent. NOT tied to any enemy spawn: a helicopter kind's own
+  // offscreen spawn logic is completely independent of where a helipad happens to sit. Fully
+  // walkable/flyable — a subtle ground detail, not an obstacle or cover — so it never blocks
+  // movement or LOS and never slows a mech crossing it, and it isn't destructible (no HP).
+  helipad:   { id: 'helipad',   tex: 'hex_helipad',   passable: true,  blocksLOS: false, speedFactor: 1 },
 
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1 },

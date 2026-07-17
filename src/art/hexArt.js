@@ -57,6 +57,9 @@ const PAL = {
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
   // #227: a destroyed forest hex — charred plant debris, distinct from a building's rubble.
   vegRubble:{ fill: 0x241f16, edge: 0x1a1610 },
+  // #251: helipad ground marking — same base ground fill as grass (it's stamped over whatever
+  // was already there); the DETAIL painter below adds the small landing mark on top.
+  helipad:  { fill: 0x2f5230, edge: 0x24401f },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -455,6 +458,24 @@ const DETAIL = {
     sg.fillStyle(0x565d66, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 5);     // top-light strip
     sg.fillStyle(0x2a2e34, 1); sg.fillRect(C.cx - 7, C.cy - 1, 6, 6); sg.fillRect(C.cx + 3, C.cy + 4, 5, 5); // vents
     sg.fillStyle(0xc8a23a, 0.85); sg.fillRect(C.cx + 6, C.cy - 9, 3, 3);     // a warning light
+  },
+  // #251: helipad ground marking — a SMALL landing-pad detail for the static `helipad` terrain
+  // (data/terrain.js — stamped into the map at world-gen time, worldgen.js `HELIPAD_COUNT`).
+  // Deliberately subtle: a tarmac disc well inside the hex's own footprint (r=13 vs the hex's
+  // ~24px half-width), a thin painted ring, and a small "H" mark — reads as ground detail, not a
+  // structure. The prior standalone decal (src/art/helipad.js, since removed) baked a
+  // ~92px-diameter pad that dwarfed a single hex tile; this one is roughly a third that diameter.
+  hex_helipad: (sg) => {
+    const r = 13;
+    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, r * 2.05, r * 1.5);   // soft ground shadow
+    sg.fillStyle(0x22262c, 0.85); sg.fillCircle(C.cx, C.cy, r);                                 // tarmac disc
+    sg.fillStyle(0xcfa93a, 0.75); sg.fillCircle(C.cx, C.cy, r * 0.86);                          // painted boundary ring
+    sg.fillStyle(0x22262c, 0.9);  sg.fillCircle(C.cx, C.cy, r * 0.78);                          // inner disc
+    const hw = r * 0.3, hh = r * 0.5, barW = r * 0.16;                                          // small "H" landing mark
+    sg.fillStyle(0xd8cba0, 0.85);
+    sg.fillRect(C.cx - hw, C.cy - hh, barW, hh * 2);
+    sg.fillRect(C.cx + hw - barW, C.cy - hh, barW, hh * 2);
+    sg.fillRect(C.cx - hw, C.cy - barW / 2, hw * 2, barW);
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────
