@@ -8,7 +8,7 @@
 import { playLayers, startLoopLayers } from './sfxLayers.js';
 import { hasHeldSfx, scaleExplosionLayer, explosionSfxId } from './sfxParams.js';
 import {
-  getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume,
+  getOverride, getTrimMs, getStartMs, getProcessing, getFadeOutMs, getVolume, getLoopStartMs,
   pickOverrideStage,
 } from './sfxOverrides.js';
 import { pickBakedVariant } from './bakedSfx.js';
@@ -195,10 +195,12 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
 // is byte-identical to the pre-#195 single-variant precedence/behavior in that case.
 //
 // #185 rework: this used to be duplicated between the one-shot path (playOverride) and the
-// held-loop path (playOverrideLoop). Now that a held weapon's file is only ever played ONCE (the
-// intro — see startHeld below), both paths want the exact same resolved recipe, so the
-// lookup/precedence logic lives here once. Returns null when neither an override nor a bake
-// exists for this (weaponId, stage) — caller falls back to procedural.
+// held-loop path (playOverrideLoop). Both paths (one-shot and #267's real held loop) want the
+// exact same resolved recipe, so the lookup/precedence logic lives here once. Returns null when
+// neither an override nor a bake exists for this (weaponId, stage) — caller falls back to
+// procedural. `loopStartMs` (via getLoopStartMs — falls back to `startMs` when unset) is only
+// meaningful to the held-loop path (startOverrideLoop below); the one-shot path (playOverride)
+// simply ignores the extra field.
 function resolveBufferSource(weaponId, stage) {
   const pickedStage = pickOverrideStage(weaponId, stage);
   if (pickedStage != null) {
@@ -211,6 +213,7 @@ function resolveBufferSource(weaponId, stage) {
         proc: getProcessing(weaponId, pickedStage),
         fadeOutMs: getFadeOutMs(weaponId, pickedStage),
         volume: getVolume(weaponId, pickedStage),
+        loopStartMs: getLoopStartMs(weaponId, pickedStage),
       };
     }
   }
@@ -219,6 +222,7 @@ function resolveBufferSource(weaponId, stage) {
     return {
       buffer: baked.buffer, startMs: baked.startMs, trimMs: baked.trimMs,
       proc: baked.processing, fadeOutMs: baked.fadeOutMs, volume: baked.volume,
+      loopStartMs: baked.loopStartMs,
     };
   }
   return null;
@@ -235,67 +239,51 @@ function playOverride(e, bus, weaponId, stage, gainScale = 1) {
   return playBuffer(e, bus, resolved.buffer, resolved.startMs, resolved.trimMs, resolved.proc, resolved.fadeOutMs, vol);
 }
 
-// #179: a small attack ramp for the intro segment's start, mirroring startLoopLayers' click-safety
-// floor (sfxLayers.js's MIN_ATTACK) — an instant 0->gain jump on a continuous source pops.
-const INTRO_ATTACK_SEC = 0.01;
-// #179: fallback release length (ms) when an intro segment with no fadeOutMs set is cut short by
-// an early stopHeld() (released before the intro finishes) — same window sfxLayers.js's
-// HELD_RELEASE uses for the procedural held path, so an untuned intro still ramps down cleanly
-// instead of clicking.
-const INTRO_RELEASE_DEFAULT_MS = 80;
+// #267: a small attack ramp for the loop's start, mirroring startLoopLayers' click-safety floor
+// (sfxLayers.js's MIN_ATTACK) — an instant 0->gain jump on a continuous source pops.
+const LOOP_ATTACK_SEC = 0.01;
+// #267: fallback release length (ms) when a loop with no fadeOutMs set is released via stopHeld —
+// same window sfxLayers.js's HELD_RELEASE uses for the procedural held path, so an untuned loop
+// still ramps down cleanly instead of clicking.
+const LOOP_RELEASE_DEFAULT_MS = 80;
 
-// #185 rework ("it sounds so robotic" — playtest feedback, then "still feels like there's some
-// oscillation happening" after a first attempt at crossfaded segment-looping): Jackson confirmed
-// there's no clean loop point in the recorded source files at all, so no amount of crossfading a
-// repeated segment of the SAME recording avoids an audible artifact — every handoff, however
-// short, still pulses. The fix is to stop looping the recording entirely: a held weapon's
-// override/bake now plays its buffer exactly ONCE as the "intro" (the attack transient — pick,
-// pluck, spin-up, whatever the recording actually captured), then hands off to the game's existing
-// PROCEDURAL sustain synthesis (startLoopLayers, sfxLayers.js) for as long as the trigger stays
-// down. Procedural synthesis has no seam to click against — an oscillator/noise loop is
-// continuous by construction — so there is no loop point to solve for anymore.
+// #267 (supersedes the #185 rework below): playtest feedback on the shipped #185 behavior — "it
+// plays it once instead of for each flare or whatever, and then it keeps playing the procedural
+// sound afterward" (#267) — was that a one-shot intro handing off to a DIFFERENT, procedurally
+// synthesized sustain reads as broken, not as a fix. The genuine problem #185 was solving (a
+// crossfaded REPEAT of the same recording has an audible seam) doesn't apply to a native
+// AudioBufferSourceNode loop with a real loop POINT — `.loopStart`/`.loopEnd` wrap the source
+// back into the middle of its own already-playing waveform with no re-trigger at all, so there's
+// no seam to click against as long as the loop region itself doesn't start/end on a transient
+// (the whole reason `loopStartMs` exists: skip past a non-repeatable "wind-up" attack into a
+// steady middle region before the wraps begin).
 //
-// This supersedes the crossfaded-segment-repeat machinery from the first #185 attempt
-// (playBufferLoopCrossfaded/playBufferLoopNative/playBufferLoop/playOverrideLoop, plus the native
-// `.loop=true` fallback they leaned on) — none of it is needed once the buffer is never repeated.
-// `loopStartMs` (sfxOverrides.js/bakedSfx.js) is consequently NOT read here anymore: it existed to
-// mark where a REPEATED region of the buffer should wrap back to, and there is no repeated region
-// of the buffer at all under this model. The field/schema/dev-panel control are left in place
-// (removing them would also mean reworking the Weapon Lab panel's loop-region UI, out of scope
-// here), but they're vestigial for playback purposes now — only `startMs`/`trimMs` (where the
-// one-time intro starts/ends) still matter to startHeld.
-const INTRO_TO_SUSTAIN_XFADE_SEC = 0.05;   // handoff overlap between the intro's tail and the procedural sustain's onset
-
-// #185: plays a held weapon's override/bake buffer ONCE (non-looping) as the intro, then starts
-// the procedural sustain (`layers`, via startLoopLayers) for as long as the note is held. Returns
-// a stop() closure with the same shape/contract startLoopLayers' does.
+// The model: the buffer plays from `startMs` (offset) same as before; if `.loop` is set, once
+// playback reaches `loopEnd` it wraps back to `loopStart` (NOT to `startMs`) and keeps going
+// indefinitely — so a "wind-up" intro from `startMs` to `loopStart` plays exactly once, then only
+// the `loopStart`..`loopEnd` region repeats, for as long as the trigger is held. `loopStartMs`
+// unset (the common case — most existing overrides predate this field's revival) falls back to
+// `startMs` via getLoopStartMs(), so the ENTIRE trimmed window becomes the loop region — a
+// reasonable default, and strictly better than #185's one-shot-then-procedural-handoff.
 //
-// Timing: when the intro's played duration is knowable (`trimMs`, or the buffer's own `.duration`
-// once decoded) the sustain is scheduled to start `INTRO_TO_SUSTAIN_XFADE_SEC` BEFORE the intro's
-// natural end — the intro's gain ramps down over that same window while the procedural layers ramp
-// up over their own attack (sfxLayers.js's MIN_ATTACK/per-layer `attack`), so for that brief overlap
-// real audio and synthesis are sounding together instead of one cutting hard into the other. This is
-// a different kind of crossfade than the one #185 tried and rejected: it blends REAL audio into
-// SYNTHESIS (which has no seam of its own), not a recording into a repeat of itself (which does).
-// When the duration isn't knowable yet (e.g. still-decoding buffer in a test), there's no natural
-// end to schedule the handoff against, so this falls back to the source's own `onended` event —
-// the intro plays to whatever its actual end turns out to be, then the sustain picks up immediately
-// (no overlap possible without a known duration to anticipate it against).
-//
-// Release (stopHeld): if the trigger is released while still in the intro, the intro's gain fades
-// out over `fadeOutMs` (or the default release above) exactly like the old held-loop release did.
-// If released after the handoff, the procedural sustain's own stop() (startLoopLayers') handles the
-// release — nothing further to do to the (already silent) intro.
-function startIntroThenSustain(e, bus, resolved, layers) {
-  const { buffer, startMs, trimMs, proc, fadeOutMs, volume } = resolved;
+// #185's older rework note (superseded): "there's no clean loop point in the recorded source
+// files at all... every handoff, however short, still pulses" — that was about looping a REPEAT
+// of a segment via manual re-triggering/crossfading, an artifact-prone scheme this function no
+// longer uses. A native loop of a properly-authored region (even the whole trimmed clip) has no
+// re-trigger boundary to click against.
+function startOverrideLoop(e, bus, resolved, layers) {
+  const { buffer, startMs, trimMs, proc, fadeOutMs, volume, loopStartMs } = resolved;
   if (!buffer || !e.ctx) return layers && layers.length ? startLoopLayers(e, bus, layers) : null;
   const ctx = e.ctx;
   const offsetSec = (startMs ?? 0) / 1000;
-  // Same #166 played-duration convention as playBuffer: trimMs wins; otherwise the buffer's own
-  // known duration minus the start offset; null if neither is knowable yet.
-  const playedSec = trimMs != null
-    ? trimMs / 1000
-    : (buffer.duration != null ? Math.max(0, buffer.duration - offsetSec) : null);
+  // Loop start: the authored loopStartMs (getLoopStartMs already falls back to startMs when
+  // unset), so an unconfigured loop point loops the whole startMs..loopEnd window (item 2's
+  // fallback). Loop end: startMs + trimMs (the trimmed window's own end) when trimMs is set,
+  // otherwise 0 — the Web Audio spec treats a loopEnd of 0 (or <= loopStart) as "the buffer's own
+  // end," so an untrimmed override/bake loops to its natural end, same convention playBuffer's
+  // own trim/no-trim distinction uses.
+  const loopStartSec = (loopStartMs ?? startMs ?? 0) / 1000;
+  const loopEndSec = trimMs != null ? ((startMs ?? 0) + trimMs) / 1000 : 0;
 
   const vol = volume != null ? volume : 1;
   const target = vol > 0 ? vol : 0.0001;
@@ -314,58 +302,33 @@ function startIntroThenSustain(e, bus, resolved, layers) {
     tail = filter;
   }
 
-  // Gain node carries the intro's start attack, the intro->sustain handoff fade-out, and (if
-  // released early) the release ramp — one node, three uses, same role playBufferLoopNative's
-  // gain node used to serve for the old held-loop path.
+  // Gain node carries the loop's start attack and (on release) the fade-out ramp — same role
+  // playBuffer's own fade-out node serves for the one-shot path.
   const g = ctx.createGain();
   const startAt = e._now();
   g.gain.setValueAtTime(0.0001, startAt);
-  g.gain.exponentialRampToValueAtTime(target, startAt + INTRO_ATTACK_SEC);
+  g.gain.exponentialRampToValueAtTime(target, startAt + LOOP_ATTACK_SEC);
   tail.connect(g);
   tail = g;
 
   if (proc?.reverbMix > 0) connectReverb(ctx, tail, bus, proc.reverbMix, proc.reverbSize);
   else tail.connect(bus);
 
-  if (playedSec != null && playedSec > 0) src.start(startAt, offsetSec, playedSec);
-  else src.start(startAt, offsetSec);
+  // Native looping (#267): set loop + loop-region BEFORE start() so the very first playthrough
+  // already knows where to wrap. No `duration` arg to start() — passing one would schedule a
+  // hard stop at that time regardless of `.loop`, defeating the whole point. Playback keeps going
+  // until this cue's own stop() below calls src.stop() explicitly (on release).
+  src.loop = true;
+  src.loopStart = loopStartSec;
+  src.loopEnd = loopEndSec;
+  src.start(startAt, offsetSec);
 
-  let sustainStop = null;
   let stopped = false;
-  let timer = null;
-
-  function beginSustain() {
-    if (stopped || sustainStop) return;
-    const now = e._now();
-    // Fade the intro's tail out while the procedural sustain fades itself in (its own attack) —
-    // the overlap that makes this handoff a genuine crossfade rather than a cut.
-    g.gain.cancelScheduledValues(now);
-    g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), now);
-    g.gain.linearRampToValueAtTime(0.0001, now + INTRO_TO_SUSTAIN_XFADE_SEC);
-    try { src.stop(now + INTRO_TO_SUSTAIN_XFADE_SEC + 0.02); } catch { /* already stopped */ }
-    sustainStop = (layers && layers.length ? startLoopLayers(e, bus, layers) : null) || (() => {});
-  }
-
-  if (playedSec != null && playedSec > 0) {
-    const xfade = Math.min(INTRO_TO_SUSTAIN_XFADE_SEC, playedSec / 2);
-    const delaySec = Math.max(0, playedSec - xfade);
-    timer = setTimeout(beginSustain, delaySec * 1000);
-  } else {
-    // Unknown intro length — no natural-end time to schedule a handoff against, so hand off the
-    // instant the buffer actually finishes playing instead (no overlap in this fallback case).
-    src.onended = () => { if (!stopped) beginSustain(); };
-  }
-
   return function stop() {
     if (stopped) return;
     stopped = true;
-    if (timer) clearTimeout(timer);
-    src.onended = null;
-    if (sustainStop) { sustainStop(); return; }
-    // Still in the intro — release it the same way the old held-loop path did: fade over
-    // fadeOutMs (or the shared default) instead of a hard stop.
     const now = e.ctx ? e._now() : startAt;
-    const releaseSec = (fadeOutMs > 0 ? fadeOutMs : INTRO_RELEASE_DEFAULT_MS) / 1000;
+    const releaseSec = (fadeOutMs > 0 ? fadeOutMs : LOOP_RELEASE_DEFAULT_MS) / 1000;
     g.gain.cancelScheduledValues(now);
     g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), now);
     g.gain.linearRampToValueAtTime(0, now + releaseSec);
@@ -409,20 +372,20 @@ export function impact(e, weaponId, pos = null) {
 // Gated on hasHeldSfx — every weapon has `fire` layers now, but only flamethrower/beamLaser
 // actually use the held/loop dispatch; everyone else fires one-shots.
 //
-// #179: before falling back to procedural layers, check for a file override/bake at the
+// #179/#267: before falling back to procedural layers, check for a file override/bake at the
 // weapon's `fire` stage (same (id,stage) key `fire()` already reads for its one-shot cue —
-// reusing it means no new stage taxonomy, and tuning a weapon's `fire` override/bake retunes
-// both the one-shot AND the held sustain together). If one exists, it plays ONCE as the intro
-// (startIntroThenSustain above) and hands off to the SAME procedural `layers` this weapon would
-// otherwise loop from scratch (#185 rework — see startIntroThenSustain's header for why). With no
-// override/bake present (every weapon before #179, and still most weapons today),
-// resolveBufferSource returns null and this falls through to the exact same startLoopLayers call
-// as before — byte-for-byte unchanged procedural behavior.
+// reusing it means no new stage taxonomy, and tuning a weapon's `fire` override/bake retunes both
+// the one-shot AND the held loop together). If one exists, it plays for the ENTIRE held duration
+// via a genuine native loop (startOverrideLoop above — see its header for the #267 rework this
+// replaced #185's one-shot-intro-then-procedural-handoff with). With no override/bake present
+// (every weapon before #179, and still most weapons today), resolveBufferSource returns null and
+// this falls through to the exact same startLoopLayers call as before — byte-for-byte unchanged
+// procedural behavior.
 export function startHeld(e, weaponId) {
   if (!hasHeldSfx(weaponId) || !e.ready) return null;
   const layers = e.getSfxParams(weaponId).fire;
   const resolved = resolveBufferSource(weaponId, 'fire');
-  if (resolved) return startIntroThenSustain(e, e.sfx, resolved, layers);
+  if (resolved) return startOverrideLoop(e, e.sfx, resolved, layers);
   if (!layers || !layers.length) return null;
   return startLoopLayers(e, e.sfx, layers);
 }

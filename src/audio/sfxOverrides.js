@@ -61,22 +61,24 @@
 // Read via getVolume() (always returns a number, defaulting to 1); written (1.0 clears back to
 // the default) via setVolume().
 //
-// Loop start (#185): a non-destructive SECOND start-offset, `loopStartMs`. Originally used by a
-// held-loop scheme that repeated a region of the buffer natively (`AudioBufferSourceNode.loop`
-// with `loopStart`/`loopEnd`) — `startMs` marked where playback began the first time and
-// `loopStartMs` marked where the REPEATING region began once the source wrapped.
+// Loop start (#185, revived #267): a non-destructive SECOND start-offset, `loopStartMs`. Used by
+// the held-loop playback path (`AudioBufferSourceNode.loop` with `loopStart`/`loopEnd`, sfx.js's
+// startOverrideLoop) — `startMs` marks where playback begins the FIRST time (so a "wind-up" intro
+// the recording captured plays once), and `loopStartMs` marks where the REPEATING region begins
+// once the native loop wraps back from `startMs + trimMs` (the loop end).
 //
-// #185 REWORK: that scheme was scrapped after playtest feedback ("sounds so robotic," then, after
-// a crossfaded-segment-repeat attempt, "still feels like there's some oscillation happening") —
-// there's no clean loop point in the recorded source files, so no amount of crossfading a repeat
-// of the SAME recording avoids an artifact. A held weapon's override/bake now plays ONCE as the
-// intro and hands off to procedural synthesis for the sustain (sfx.js's startHeld/
-// startIntroThenSustain) — the buffer is never repeated, so `loopStartMs` is NOT read by playback
-// anymore. The field/getter/setter/persistence below are kept as-is purely so the Weapon Lab
-// panel's existing loop-region control (weaponSfxPanel.js) keeps round-tripping a value without a
-// UI rework, but nothing downstream of getLoopStartMs() currently exists — it's vestigial schema,
-// not a live playback parameter. Read via getLoopStartMs() (still falls back to getStartMs() when
-// unset); written (null clears back to "= startMs") via setLoopStartMs().
+// #185 REWORK (superseded by #267): between #185 and #267 this scheme was scrapped after playtest
+// feedback ("sounds so robotic," then "still feels like there's some oscillation happening") on a
+// scheme that manually re-triggered/crossfaded a REPEATED segment — that has an audible seam no
+// crossfade fully hides. The #185 rework's fix was to stop looping the buffer at all (play once as
+// an "intro," hand off to procedural synthesis) — but that read as broken in practice ("it plays it
+// once... then keeps playing the procedural sound afterward," #267 playtest report). #267 restores
+// real held-loop playback using NATIVE `.loop`/`.loopStart`/`.loopEnd` (seamless, sample-accurate,
+// no manual re-triggering) instead of either scheme — `loopStartMs` is exactly the loop-region
+// marker this needs, so it's live again. Unset falls back to `startMs` via getLoopStartMs(), which
+// loops the entire trimmed window (a reasonable default for the many overrides authored before
+// this field was resurrected). Read via getLoopStartMs() (falls back to getStartMs() when unset);
+// written (null clears back to "= startMs") via setLoopStartMs().
 
 // #195: RANDOMIZED VARIANTS — a stage can hold up to MAX_VARIANTS parallel override slots
 // instead of just one (e.g. 3 different explosion bangs for the same weapon+stage), so a

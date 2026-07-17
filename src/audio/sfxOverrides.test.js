@@ -897,14 +897,14 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
     });
   });
 
-  // Loop start (#185): this schema/storage was originally written for a held-loop scheme that
-  // repeated a region of the buffer. #185 was later reworked (playtest feedback: the repeat
-  // scheme "sounds so robotic"/has "oscillation") so a held weapon's buffer now plays once as an
-  // intro and hands off to procedural synthesis instead — sfx.js no longer reads loopStartMs at
-  // all (see its startHeld/startIntroThenSustain). The getter/setter/persistence contract here is
-  // otherwise untouched (kept for the Weapon Lab panel's existing loop-region control), so it's
-  // still exercised directly at the storage layer even though playback no longer consults it.
-  describe('loop start (#185, schema kept though no longer read by playback)', () => {
+  // Loop start (#185, revived #267): this schema/storage was originally written for a held-loop
+  // scheme that repeated a region of the buffer; #185's rework then briefly stopped reading it at
+  // all (a held weapon's buffer played once as an "intro" and handed off to procedural synthesis),
+  // but that read as broken in practice ("it plays it once... then keeps playing the procedural
+  // sound afterward" — #267 playtest report). #267 restored genuine native-loop playback, which
+  // reads loopStartMs again as the loop-region marker (sfx.js's startHeld/startOverrideLoop). The
+  // getter/setter/persistence contract here (storage-layer only) is unchanged by that rework.
+  describe('loop start (#185, revived as a live playback parameter by #267)', () => {
     it('defaults to getStartMs when unset', async () => {
       await storeOverride('beamLaser', 'fire', fakeFile('hum.wav', 'HUM'));
       expect(getLoopStartMs('beamLaser', 'fire')).toBeNull();   // no startMs either yet
