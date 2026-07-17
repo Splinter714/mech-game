@@ -8,9 +8,36 @@ import { HEX_SIZE, hexCorners } from '../data/hexgrid.js';
 import { TERRAIN } from '../data/terrain.js';
 
 const SQRT3 = Math.sqrt(3);
+
+// #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
+// (hexgrid.hexToPixel, e.g. HEX_SIZE*SQRT3 for same-row neighbours) — but that spacing is
+// IRRATIONAL, so on-screen it never lands on a whole device pixel. Phaser's `pixelArt: true`
+// (main.js) forces `roundPixels: true`, which independently snaps each tile sprite's
+// rendered position to the nearest whole device pixel every frame. As the camera scrolls
+// continuously, the rounding residual at any two neighbouring tiles' shared edge drifts in
+// and out of alignment — sometimes the two roundings cancel (no visible seam), sometimes
+// they don't (a hairline gap of background colour shows through the tiles' anti-aliased
+// edge, which — by construction — fades fully to transparent exactly AT the true
+// mathematical hex boundary and not a pixel further). This can't be fixed by "rounding the
+// placement math more consistently": the camera transform re-introduces a fresh fractional
+// device-pixel offset every frame regardless of what the source hexToPixel value was, so no
+// amount of pre-rounding at generation time survives a smoothly-scrolling camera.
+// The fix is standard texture-atlas tile BLEED: draw each tile's outer boundary polygon
+// `HEX_BLEED` design px past the true hex radius, so the polygon's opaque interior already
+// covers the true tile boundary and the anti-alias fade-to-transparent happens further out,
+// inside the footprint the neighbouring tile independently paints over. Whichever way a
+// given frame's rounding jitters, at least one of the two tiles has opaque paint at the seam
+// pixel, so the background never shows through. `HEX_BLEED` is chosen so the bled polygon's
+// apothem (centre-to-flat-side distance) exceeds half the same-row neighbour spacing (see
+// hexArt.test.js) — i.e. genuine geometric overlap, not just a hopeful nudge — while still
+// leaving margin inside the texture bounds below for the bled edge's own AA ring.
+export const HEX_BLEED = 1;
+
 // Texture footprint (true on-screen px); displayed at 1/ART_SCALE after super-sampling.
-export const HEX_TEX_W = Math.ceil(SQRT3 * HEX_SIZE) + 2;
-export const HEX_TEX_H = Math.ceil(2 * HEX_SIZE) + 2;
+// Padding is bumped (+2 → +6) to keep comfortable margin around the now-larger (HEX_SIZE +
+// HEX_BLEED) outer polygon plus its own anti-aliasing ring.
+export const HEX_TEX_W = Math.ceil(SQRT3 * (HEX_SIZE + HEX_BLEED)) + 6;
+export const HEX_TEX_H = Math.ceil(2 * (HEX_SIZE + HEX_BLEED)) + 6;
 
 const PAL = {
   // Abstract arena (kept).
@@ -87,7 +114,10 @@ const PAL = {
 
 function drawHex(sg, fill, edge, inset = 0.9, sunken = false) {
   const cx = HEX_TEX_W / 2, cy = HEX_TEX_H / 2;
-  const outer = hexCorners(HEX_SIZE).map((p) => ({ x: cx + p.x, y: cy + p.y }));
+  // #255: the OUTER polygon is the one that meets the neighbouring tile at the true hex
+  // boundary, so it's the one that needs the seam-hiding bleed (see HEX_BLEED above). The
+  // inset "grid line" ring stays at the exact, un-bled size — it's a purely interior detail.
+  const outer = hexCorners(HEX_SIZE + HEX_BLEED).map((p) => ({ x: cx + p.x, y: cy + p.y }));
   const inner = hexCorners(HEX_SIZE * inset).map((p) => ({ x: cx + p.x, y: cy + p.y }));
   sg.fillStyle(edge, 1);
   sg.fillPoints(outer, true);
