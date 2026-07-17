@@ -160,7 +160,13 @@ export const WEAPONS = {
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
-    damage: 2, range: { min: 0, opt: 338, max: 600 },
+    // #256 playtest rebalance: damage 2 -> 1.5. Flamethrower's DPS is fireRate(18) x
+    // sprayCount-average(3, from {min:2,max:4}) x damage, so 18*3*2 = 108 dps — a ~40%+
+    // overshoot over Repeater's 72 dps (18 x streams(2) x damage(2)). Dropping damage to
+    // 1.5 lands it at 18*3*1.5 = 81 dps: still the highest-DPS weapon in the game (a modest
+    // ~13% premium over Repeater, appropriate for its close-range/no-cover-advantage risk)
+    // instead of the previous outsized lead.
+    damage: 1.5, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
@@ -236,7 +242,11 @@ export const WEAPONS = {
     // by the SAME factor so the constant-apex lob flight time (opt/velocity, firing.js
     // _spawnProjectile) stays unchanged — only the distance covered per second grows, not how
     // long a shot hangs in the air.
-    damage: 4, range: { min: 280, opt: 1050, max: 1750 },
+    // #256 playtest rebalance: damage 4 -> 8. DPS = spreadCount(6) x damage / cycleTime(1.6s),
+    // so 6*4/1.6 = 15 dps pre-rebalance -> 6*8/1.6 = 30 dps, meaningfully above the old
+    // ~15-23 missile band but still under Flamethrower (81) and Repeater (72) since the
+    // homing guidance is itself a strong utility advantage over straight DPS.
+    damage: 8, range: { min: 280, opt: 1050, max: 1750 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
@@ -247,7 +257,9 @@ export const WEAPONS = {
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
     // #77 tuning follow-up: range 3.5x'd (60/260/440 → 210/910/1540); velocity scaled by the
     // same 3.5x (see swarmRack comment above) to hold flight time constant.
-    damage: 5, range: { min: 210, opt: 910, max: 1540 },
+    // #256 playtest rebalance: damage 5 -> 9. One trigger pull dumps the whole 6-missile
+    // burst over cycleTime(1.8s): 5*6/1.8 = 16.7 dps pre-rebalance -> 9*6/1.8 = 30 dps.
+    damage: 9, range: { min: 210, opt: 910, max: 1540 },
     ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
@@ -259,7 +271,10 @@ export const WEAPONS = {
     // #77 tuning follow-up: range 3x'd (0/220/320 → 0/660/960, kept at the low end of the 3-4x
     // band since this one's a tight-clump dumbfire weapon, not a seeker); velocity scaled by the
     // same 3x so its (straight, non-arcing) travel time to max range doesn't balloon.
-    damage: 5, range: { min: 0, opt: 660, max: 960 },
+    // #256 playtest rebalance: damage 5 -> 7. DPS = spreadCount(5) x damage / cycleTime(1.1s),
+    // so 5*5/1.1 = 22.7 dps pre-rebalance -> 5*7/1.1 = 31.8 dps, landing this dumbfire
+    // cluster in the same ~30 dps missile band as its two homing siblings above.
+    damage: 7, range: { min: 0, opt: 660, max: 960 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
