@@ -18,7 +18,16 @@
 //              not the unit's centre. Falls back to the first `parts` entry if omitted.
 //   weaponId   which WEAPONS entry this unit fires (its delivery drives the projectile).
 //   fireRange  px at which it opens fire (falls back to the weapon's own max).
-//   fireEveryMs cadence between shots (ms) — simple, per-kind, independent of the mech pipeline.
+//   fireEveryMs EXPLICIT per-kind cadence override (ms), independent of the mech pipeline.
+//              #241: when present it always wins (a deliberate choice to fire slower/faster
+//              than the mounted weapon's own design cadence — e.g. tank/quadruped intentionally
+//              firing autocannon slower than its own 1100ms cycle for a heavier feel). When
+//              ABSENT, `_fireVehicleWeapon` (scenes/arena/enemies.js) falls back to the weapon's
+//              own `delivery`-driven cadence via `_fireInterval` (the same resolution the
+//              player/mech-enemy path uses) — a stream weapon (fireRate-driven, e.g. machineGun)
+//              then actually streams at its own rate instead of being silently flattened to a
+//              single slow burst. See helicopter below for the first kind that omits this field
+//              on purpose.
 //   flying     true ⇒ ignores walls/forest/water (flies over) AND draws a drop shadow (elevated).
 //   move       { maxSpeed, accel, turnRate, turretSlew } px/s + rad/s locomotion tuning.
 //   art        key into the vehicle-art registry (src/art/vehicles/) — builds this unit's textures.
@@ -177,7 +186,15 @@ export const ENEMY_KINDS = {
     muzzleForward: -1,
     weaponId: 'machineGun',
     fireRange: 460,
-    fireEveryMs: 1900,
+    // #241: NO fireEveryMs override here (was 1900, a flat single-burst cadence) — that
+    // completely ignored machineGun's own `delivery: { pattern: 'stream', fireRate: 18,
+    // streams: 2 }` design, so the gunship fired one shot every 1.9s instead of the sustained
+    // twin-lane 18/sec stream the weapon (and the "raking the ground with cannon fire on each
+    // pass" flavor above) is meant to be. Omitting this field lets `_fireVehicleWeapon` (see
+    // enemies.js) fall back to the weapon's own resolved cadence (~55.6ms/shot via
+    // `_fireInterval`) for the duration of each strafing pass — a real DPS/difficulty increase
+    // during that window, which is the point of the fix (owner: playtest and retune
+    // fireRange/strafeRange/hp if it reads as too much).
     strafeRange: 320,       // px offset of the pass line from the player
     flying: true,
     move: { maxSpeed: 210, accel: 260, turnRate: 3.2, turretSlew: 4 },
@@ -286,6 +303,15 @@ export const ENEMY_KINDS = {
     muzzleForward: 12,
     weaponId: 'machineGun',   // cheap, short-range, already-mounted ballistic — fits a trooper
     fireRange: 200,
+    // #241 (flagged, NOT changed here): machineGun is a stream weapon (`fireRate: 18` ⇒ a
+    // resolved ~55.6ms/shot cadence via `_fireInterval`), same as helicopter's mount below —
+    // this 700ms override has the identical "accidentally flattening a stream weapon's own
+    // cadence" shape as helicopter's old 1900ms did, and unlike tank/quadruped/turret's
+    // overrides has no comment ever justifying it as a deliberate slower-than-weapon choice.
+    // Left AS-IS pending owner confirmation: removing it would let a 28-unit INFANTRY_MOB_SIZE
+    // mob each stream at 18 rounds/sec (a large DPS jump), which is a bigger balance swing than
+    // the single-unit helicopter fix and wasn't part of the reported #241 bug — don't change
+    // without a deliberate playtest/tune pass.
     fireEveryMs: 700,
     flying: false,           // ground troop — walks, collides with terrain and the player
     move: { maxSpeed: 48, accel: 260, turnRate: 5, turretSlew: 6 },  // #104: slowed noticeably

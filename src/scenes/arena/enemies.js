@@ -903,7 +903,16 @@ export const EnemiesMixin = {
     } else {
       this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null);
     }
-    e.fireCd = def.fireEveryMs ?? 1000;
+    // #241: cadence is the kind's `fireEveryMs` ONLY when the data explicitly sets it (a
+    // deliberate per-kind override — e.g. tank/quadruped deliberately firing autocannon
+    // slower than its own 1100ms cycle for a heavier feel, or turret's siegeShell override
+    // that just mirrors the weapon's own 2600ms cycle). When absent, fall back to the
+    // weapon's OWN delivery-driven cadence via `_fireInterval` (the same resolution the
+    // player/mech-enemy path uses) — `{}` mods since vehicles have no player buffs/Overdrive
+    // to apply. This is what makes a stream weapon (fireRate-driven) actually stream at its
+    // own rate for a vehicle that doesn't override it, instead of silently reverting to the
+    // old blanket 1000ms default a missing field used to fall through to.
+    e.fireCd = def.fireEveryMs ?? this._fireInterval(weapon, {});
   },
 
   // ── State selection ─────────────────────────────────────────────────────────────────

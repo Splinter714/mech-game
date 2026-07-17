@@ -40,6 +40,7 @@ vi.mock('../../data/weapons.js', async (importActual) => {
 vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn(), ENEMY_FIRE_GAIN_SCALE: 0.85 }));
 
 import { EnemiesMixin } from './enemies.js';
+import { FiringMixin } from './firing.js';
 import { WEAPONS } from '../../data/weapons.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
@@ -55,14 +56,22 @@ const PROJECTILE_WEAPON_ID = WEAPONS.siegeShell.id;
 // pulseLaser is the drone swarm's actual weapon (enemyKinds.js) and a genuine multi-pulse BURST
 // (5 pulses over ~300ms, see weapons.js) — exactly the shape that exposed the #200 reopen bug.
 const BURST_WEAPON_ID = WEAPONS.pulseLaser.id;
+// machineGun (the Repeater — helicopter/infantry's mount) is the registry's canonical STREAM
+// weapon (`delivery: { pattern: 'stream', fireRate: 18, ... }`) — #241's cadence-fallback fix
+// is specifically about this shape of weapon.
+const STREAM_WEAPON = WEAPONS.machineGun;
+const STREAM_WEAPON_ID = STREAM_WEAPON.id;
+const PROJECTILE_WEAPON = WEAPONS.siegeShell;
 
 // A minimal ArenaScene-shaped `this`: the REAL EnemiesMixin `_fireVehicleWeapon` runs, with the
 // three cross-mixin fire helpers (from firing.js/projectiles.js) spied so we can see WHICH one
-// the dispatch chose.
+// the dispatch chose. FiringMixin is mixed in for real (not stubbed) so `_fireInterval` — the
+// #241 cadence fallback — is the actual production logic, not a hand-rolled re-implementation
+// that could silently drift from it.
 function makeScene() {
   const calls = { melee: [], hitscan: [], projectile: [] };
   const scene = { time: { now: 0, delayedCall: () => {} } };
-  Object.assign(scene, EnemiesMixin);
+  Object.assign(scene, EnemiesMixin, FiringMixin);
   scene._melee = vi.fn((w, mx, my, angle, owner) => calls.melee.push({ w, owner }));
   scene._fireHitscan = vi.fn((w, mx, my, angle, owner, key) => calls.hitscan.push({ w, owner, key }));
   scene._spawnProjectile = vi.fn((w, mx, my, angle, owner) => calls.projectile.push({ w, owner }));
@@ -71,19 +80,18 @@ function makeScene() {
 
 // A non-mech KIND enemy record shaped like the ones the arena builds from ENEMY_KINDS — just
 // enough for `_fireVehicleWeapon`: a fireCd gate at 0 (ready to fire), a kindDef with a parts
-// layout + muzzlePart + weaponId, and a texture key.
-function makeKindEnemy(weaponId) {
-  return {
-    key: 'testKind', kind: 'turret', fireCd: 0,
-    x: 100, y: 0,
-    kindDef: {
-      name: 'Test Kind', kind: 'turret', scale: 0.5,
-      parts: { base: { x: 0, y: 6, w: 26, h: 16 }, gun: { x: 0, y: -8, w: 12, h: 20 } },
-      muzzlePart: 'gun',
-      weaponId,
-      fireEveryMs: 1000,
-    },
+// layout + muzzlePart + weaponId, and a texture key. `fireEveryMs` defaults to 1000 (an explicit
+// override, matching every kind's data before #241) — pass `null` to omit it entirely and
+// exercise the #241 weapon-cadence fallback instead.
+function makeKindEnemy(weaponId, fireEveryMs = 1000) {
+  const kindDef = {
+    name: 'Test Kind', kind: 'turret', scale: 0.5,
+    parts: { base: { x: 0, y: 6, w: 26, h: 16 }, gun: { x: 0, y: -8, w: 12, h: 20 } },
+    muzzlePart: 'gun',
+    weaponId,
   };
+  if (fireEveryMs !== null) kindDef.fireEveryMs = fireEveryMs;
+  return { key: 'testKind', kind: 'turret', fireCd: 0, x: 100, y: 0, kindDef };
 }
 
 describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech fix (#123)', () => {
@@ -140,6 +148,61 @@ describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech f
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(1);
     expect(e.fireCd).toBe(1000);               // cadence reset from def.fireEveryMs
+  });
+});
+
+// #241 — vehicle-kind cadence used to be a flat `def.fireEveryMs ?? 1000` literal, completely
+// ignoring the mounted weapon's OWN `delivery` timing (the concrete bug: helicopter's machineGun
+// is a stream weapon meant to fire at 18 rounds/sec, but the old flat 1900ms override fired it
+// as a single burst instead). The fix: when a kind has NO `fireEveryMs`, fall back to the
+// weapon's own cadence via `_fireInterval` (the same resolution firing.js already uses for the
+// player/mech-enemy path) — an explicit `fireEveryMs` still always wins when present.
+describe('_fireVehicleWeapon resolves cadence from the weapon\'s own delivery when fireEveryMs is absent (#241)', () => {
+  it('a STREAM weapon (fireRate-driven) with no fireEveryMs override fires at the weapon\'s own resolved rate, matching _fireInterval', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(STREAM_WEAPON_ID, null);   // no fireEveryMs — the helicopter's new shape
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(calls.projectile.length).toBe(1);
+    const expected = scene._fireInterval(STREAM_WEAPON, {});
+    expect(e.fireCd).toBeCloseTo(expected, 6);
+    // Sanity: this is the actual bug fix — the resolved cadence is nowhere near the old flat
+    // 1900ms/1000ms defaults; machineGun's fireRate: 18 resolves to ~55.6ms/shot.
+    expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
+    expect(e.fireCd).toBeLessThan(100);
+  });
+
+  it('a non-stream (cycleTime-driven) weapon with no fireEveryMs override still resolves via _fireInterval\'s cycleTime branch', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, null);   // siegeShell: pattern absent, cycleTime 2600
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(calls.projectile.length).toBe(1);
+    expect(e.fireCd).toBeCloseTo(scene._fireInterval(PROJECTILE_WEAPON, {}), 6);
+    expect(e.fireCd).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 2600ms, same as the turret's real override value
+  });
+
+  it('an EXPLICIT fireEveryMs override still wins even for a stream weapon (e.g. a kind deliberately slowing it down)', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(STREAM_WEAPON_ID, 1900);   // the helicopter's OLD shape, pre-#241
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(calls.projectile.length).toBe(1);
+    expect(e.fireCd).toBe(1900);   // override wins, weapon's own ~55.6ms cadence is ignored
+  });
+
+  it('the live helicopter kind (enemyKinds.js) has no fireEveryMs override, so it resolves machineGun\'s true stream cadence', async () => {
+    const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
+    expect(ENEMY_KINDS.helicopter.fireEveryMs).toBeUndefined();
+    expect(ENEMY_KINDS.helicopter.weaponId).toBe(STREAM_WEAPON_ID);
+
+    const { scene } = makeScene();
+    const resolved = scene._fireInterval(STREAM_WEAPON, {});
+    expect(resolved).toBeCloseTo(1000 / 18, 6);
+    expect(resolved).toBeLessThan(100);   // nowhere near the old flat 1900ms
   });
 });
 
