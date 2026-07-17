@@ -138,10 +138,12 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
 
   it('shotBlockedAt: SOLID cover blocks even when exempted; open ground never blocks', () => {
     const exempt = new Set(['3,-1']);
-    for (const id of ['building', 'mesa', 'adobe', 'iceRuin', 'tower', 'obsidian', 'collapsed']) {
+    for (const id of ['building', 'adobe', 'iceRuin', 'tower', 'obsidian']) {
       expect(shotBlockedAt(id, '3,-1', exempt)).toBe(true);
     }
-    for (const id of ['grass', 'river', 'deepWater', 'rubble', undefined]) {
+    // #221: mesa/collapsed are boundary-only impassable terrain (like deepWater/lava) — they
+    // never block LOS, matching the other biomes' boundary-only terrain (ice, deepWater, lava).
+    for (const id of ['grass', 'river', 'deepWater', 'rubble', 'mesa', 'collapsed', undefined]) {
       expect(shotBlockedAt(id, '3,-1', exempt)).toBe(false);
       expect(shotBlockedAt(id, '9,9', null)).toBe(false);
     }

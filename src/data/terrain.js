@@ -48,8 +48,10 @@ export const TERRAIN = {
   sandB:     { id: 'sandB',     tex: 'hex_sandB',     passable: true,  blocksLOS: false, speedFactor: 1 },
   // Dry riverbed: the "shallow river" analog — cracked bed, drive-through but slowing.
   dryRiver:  { id: 'dryRiver',  tex: 'hex_dryRiver',  passable: true,  blocksLOS: false, speedFactor: 0.7 },
-  // Mesa: a natural rock butte — the impassable deep-water analog, but it ALSO blocks LOS (tall).
-  mesa:      { id: 'mesa',      tex: 'hex_mesa',      passable: false, blocksLOS: true },
+  // Mesa: a natural rock butte — the impassable deep-water analog, boundary-only (#221: no LOS
+  // block, matching deepWater/ice/lava — it never appears in-map so this only affects the
+  // world-edge ring, and shooting over the boundary should behave like the other 3 biomes).
+  mesa:      { id: 'mesa',      tex: 'hex_mesa',      passable: false, blocksLOS: false },
   // Scrub: sparse desert brush — walk-through cover (passable + slowing + blocks LOS), like forest.
   scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: 0.7,  destructible: true, hp: 30, rubbleId: 'sandRubble' },
   // Adobe outpost: destructible hard cover, the desert building.
@@ -82,8 +84,9 @@ export const TERRAIN = {
   pavementB: { id: 'pavementB', tex: 'hex_pavementB', passable: true,  blocksLOS: false, speedFactor: 1 },
   // Road: a fast lane — the "river channel" analog, but open (no slow); reads as a paved strip.
   road:      { id: 'road',      tex: 'hex_road',      passable: true,  blocksLOS: false, speedFactor: 1 },
-  // Collapsed tower: an impassable+LOS-blocking heap (the deep-water/mesa analog for the city).
-  collapsed: { id: 'collapsed', tex: 'hex_collapsed', passable: false, blocksLOS: true },
+  // Collapsed tower: an impassable heap (the deep-water/mesa analog for the city), boundary-only
+  // (#221: no LOS block, matching deepWater/ice/lava — it never appears in-map).
+  collapsed: { id: 'collapsed', tex: 'hex_collapsed', passable: false, blocksLOS: false },
   // Wreckage: burned-out vehicles / low wall — walk-through cover (passable + slow + LOS).
   wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: 0.65, destructible: true, hp: 40, rubbleId: 'cityRubble' },
   // Intact building: destructible hard cover (dense in this biome).
@@ -186,8 +189,10 @@ export function isSoftCover(id) {
 // #72 own-hex transparency: does terrain `id` at hex `key` stop a shot, given a Set of hex
 // keys treated as see-through for THIS shot (the shooter's muzzle hex + the target's own hex)?
 // Soft cover doesn't protect its own occupant — a shot may enter/impact within an exempted
-// soft-cover hex — but SOLID cover (buildings, mesa) blocks regardless of exemption, and
-// non-exempted soft-cover hexes between shooter and target still block ("deep woods").
+// soft-cover hex — but SOLID cover (buildings, adobe, towers) blocks regardless of exemption,
+// and non-exempted soft-cover hexes between shooter and target still block ("deep woods"). The
+// boundary-only impassable terrains (mesa/collapsed/deepWater/ice/lava) never block LOS at all
+// (#221 — they're stamped only at the world's outer edge, never used as an in-map obstacle).
 export function shotBlockedAt(id, key, transparent = null) {
   if (!blocksLOS(id)) return false;
   if (transparent && transparent.has(key) && isSoftCover(id)) return false;
