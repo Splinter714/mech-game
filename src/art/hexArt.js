@@ -126,6 +126,27 @@ function isBoundaryTerrainId(key) {
   return BOUNDARY_ONLY_IDS.has(key.replace(/^hex_/, ''));
 }
 
+// #222 (2nd playtest pass): even with identical fill and no per-hex decoration, the boundary
+// ring still read as an obviously-tiled hex grid rather than one continuous surface. Root cause
+// isn't the art content — it's that every hex is a SEPARATE baked texture stamped at its own
+// centre (world.js `hexToPixel`), rendered with `pixelArt: true` (nearest-filtering, main.js) and
+// the arena's fractional `dpr * zoomFactor` camera zoom (main.js `applySize`). Adjacent tiles'
+// polygons meet at a mathematically-exact shared edge in "design space", but once that boundary
+// gets projected through a non-integer zoom and rounded to device pixels, each tile's quad rounds
+// independently — a classic tile-seam/bleed problem, visible as a hairline gap (or double-thick
+// line) at every hex edge, same-color fill or not. The standard fix is overdraw: make each boundary
+// tile's fill polygon slightly LARGER than its true hex footprint so neighbours' opaque fills
+// physically overlap at the seam instead of exactly abutting, hiding any rounding gap regardless of
+// zoom/subpixel placement. `HEX_TEX_W/H` already carry a small margin around the true hex bounds
+// (added for supersampling headroom), which conveniently doubles as overdraw room: neighbouring
+// hex images' texture RECTS already overlap by exactly that margin (their centres are spaced by the
+// true hex width/height, while each texture is slightly wider/taller than that), so growing the
+// fill polygon into that margin is safe — it can't spill past either tile's own texture bounds.
+// 1.015 pushes the fill ~0.7px past the true edge on every side, comfortably inside the tightest
+// margin (the vertical one, ~1px each side) with headroom to spare, while every other terrain's
+// normal (non-boundary) inset is untouched.
+const BOUNDARY_OVERDRAW_INSET = 1.015;
+
 // A top-down tree: a soft drop shadow, then a canopy built from several overlapping
 // blobs (so the silhouette reads as foliage, not a flat disc), shaded dark->light from
 // the lower-right shadow side to the upper-left sun side, with a couple of bright
@@ -607,13 +628,14 @@ export function buildHexTextures(scene) {
       // which reads as an obviously-repeating tiled pattern rather than one continuous surface.
       // Two changes make adjacent boundary tiles visually indistinguishable from one another (so
       // the seam between them disappears and the whole ring reads as one continuous sea/wasteland):
-      // an inset of 1.0 (instead of 0.9) removes the darker inset border band entirely — the fill
-      // now runs flush to the tile's true edge, so there's no per-hex grid line — and the
-      // terrain's DETAIL painter (the recognizable per-hex icon) is skipped. The #211 sunken-shadow
-      // depth cue is untouched (still driven by `isImpassableTerrainId`), so the boundary still
-      // reads as sitting below the playable ground around it.
+      // an inset of >=1.0 (instead of 0.9) removes the darker inset border band entirely — the
+      // fill now runs flush to (and slightly past, see BOUNDARY_OVERDRAW_INSET above) the tile's
+      // true edge, so there's no per-hex grid line — and the terrain's DETAIL painter (the
+      // recognizable per-hex icon) is skipped. The #211 sunken-shadow depth cue is untouched
+      // (still driven by `isImpassableTerrainId`), so the boundary still reads as sitting below
+      // the playable ground around it.
       const boundary = isBoundaryTerrainId(key);
-      drawHex(sg, pal.fill, pal.edge, boundary ? 1.0 : 0.9, isImpassableTerrainId(key));
+      drawHex(sg, pal.fill, pal.edge, boundary ? BOUNDARY_OVERDRAW_INSET : 0.9, isImpassableTerrainId(key));
       if (!boundary) DETAIL[key]?.(sg);
     });
   }
