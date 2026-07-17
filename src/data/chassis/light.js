@@ -5,7 +5,7 @@ export const LIGHT_CONFIG = {
   name: 'Scout',
   weightClass: 'light',
   baseArmor: 40,       // center-torso armor baseline; other parts scale from it
-  baseStructure: 24,
+  baseHp: 24,
   // Insectoid recon silhouette (#24): a tiny head thrust well FORWARD on a tall sensor
   // mast, long thin arms reaching forward, a slim torso flanked by swept-back vanes, and a
   // wide splayed light-footed stance — nothing like the upright trooper or the squat bruiser.

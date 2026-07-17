@@ -9,6 +9,9 @@ import { LOCATIONS, MOUNT_LOCATIONS, DESTROY_CASCADE, partDestroyed, mechDestroy
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import * as loadout from './loadout.js';
+import {
+  createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
+} from './shield.js';
 
 // #238: how long (seconds) a weapon slot is locked out after its magazine is fully
 // drained — a per-slot "empty click" penalty distinct from the old always-on trickle
@@ -36,26 +39,38 @@ export class Mech {
     // serialized — it starts full and tops back up over time (see regenAmmo).
     this._initAmmo();
 
-    // Per-location health: armor (outer) + structure (inner). Restored from saved
-    // `damage` if present, else full from the chassis. Only LOCATIONS (the damage-
-    // tracked set) get an entry — head/cockpit/centerTorso are cosmetic-only (#128) and
-    // never appear in `parts`.
+    // Per-location health: armor (outer) + HP (inner — #246 renamed from "structure",
+    // plain language, same layering). Restored from saved `damage` if present, else full
+    // from the chassis. Only LOCATIONS (the damage-tracked set) get an entry —
+    // head/cockpit/centerTorso are cosmetic-only (#128) and never appear in `parts`.
     this.parts = {};
     for (const loc of LOCATIONS) {
       const def = this._chassis.locations[loc];
       const saved = data.damage?.[loc];
       this.parts[loc] = {
         maxArmor: def.maxArmor,
-        maxStructure: def.maxStructure,
+        maxHp: def.maxHp,
         // True chassis base, captured once and never touched again — boostHealth
         // always multiplies FROM this, so re-applying a buffer is idempotent instead
-        // of compounding on whatever maxArmor/maxStructure currently holds.
+        // of compounding on whatever maxArmor/maxHp currently holds.
         baseMaxArmor: def.maxArmor,
-        baseMaxStructure: def.maxStructure,
+        baseMaxHp: def.maxHp,
         armor: saved?.armor ?? def.maxArmor,
-        structure: saved?.structure ?? def.maxStructure,
+        hp: saved?.hp ?? def.maxHp,
       };
     }
+
+    // #246: full-MECH shield — one pool for the whole mech (not per location), sitting in
+    // front of the per-location armor+hp stack above. `data.shield` is the chassis-baseline
+    // (or per-enemy) config: { max, regenPerSec, pauseMs }; absent/zero `max` means this mech
+    // has no native shield at all (most enemy mechs — see data/enemies.js). The arena gives
+    // the PLAYER a real baseline (see ArenaScene's deploy path) and the Shield powerup
+    // (data/powerups.js) instantly fills + temporarily boosts whatever's configured here.
+    this.shield = createShield(data.shield);
+    // Set only while a timed Shield-powerup boost is active (see boostShield/_clearShieldBoost
+    // below) — remembers the PRE-boost base so reverting on expiry is exact, never compounding
+    // across repeated pickups (mirrors boostHealth's baseMaxArmor/baseMaxHp idempotency above).
+    this._shieldBoost = null;
   }
 
   // Magazine capacity for an item id (null = unlimited or non-weapon).
@@ -86,35 +101,63 @@ export class Mech {
   // with the non-mech `HpBody.maxHp`, so difficulty-scaled logic doesn't need to branch on
   // enemy kind.
   get maxHp() {
-    return LOCATIONS.reduce((sum, loc) => sum + this.parts[loc].maxArmor + this.parts[loc].maxStructure, 0);
+    return LOCATIONS.reduce((sum, loc) => sum + this.parts[loc].maxArmor + this.parts[loc].maxHp, 0);
   }
 
   // ── Damage & destruction ──────────────────────────────────────────────────
-  // Apply `amount` damage to a location: armor absorbs first, the rest cuts into
-  // structure. Structure at 0 = the part is destroyed; destroying the head also
-  // destroys the cockpit inside it. Returns a small result for feedback/FX.
-  applyDamage(locationId, amount) {
+  // Apply `amount` damage to a location, through the FULL layer stack in order (#246):
+  //   1) the full-mech SHIELD (this.shield) absorbs first, if present and > 0 — a shield hit
+  //      never touches armor/hp at all unless it breaks mid-hit (overflow).
+  //   2) the location's ARMOR absorbs next.
+  //   3) the location's HP takes whatever's left; HP at 0 destroys the part (cascading to
+  //      dependent locations — a side torso takes its arm with it).
+  // `weaponCategory` is an optional forward-compat seam (#246 decision: architect for a future
+  // category-vs-layer bonus — e.g. energy strong vs shields — WITHOUT implementing one now).
+  // Every category currently resolves to a 1.0 multiplier at every layer (see data/shield.js
+  // `layerMultiplier`), so passing it (or not) has no behavioral effect yet.
+  applyDamage(locationId, amount, weaponCategory) {
     const p = this.parts[locationId];
-    if (!p || amount <= 0) return { applied: 0, destroyed: false, location: locationId };
-    const before = p.structure;
-    const armorHit = Math.min(p.armor, amount);
+    if (!p || amount <= 0) {
+      return {
+        applied: 0, destroyed: false, location: locationId,
+        partDestroyedNow: p ? partDestroyed(p) : false, shieldAbsorbed: 0, shielded: false,
+      };
+    }
+    const shieldRes = damageShield(this.shield, amount);
+    const overflow = shieldRes.overflow;
+    if (overflow <= 0) {
+      return {
+        applied: 0, destroyed: false, location: locationId, partDestroyedNow: partDestroyed(p),
+        shieldAbsorbed: shieldRes.absorbed, shielded: true, armorBrokeNow: false,
+      };
+    }
+    const beforeHp = p.hp;
+    const armorBefore = p.armor;
+    const armorHit = Math.min(p.armor, overflow);
     p.armor -= armorHit;
-    const toStructure = amount - armorHit;
-    p.structure = Math.max(0, p.structure - toStructure);
-    const destroyed = p.structure <= 0 && before > 0;
+    const toHp = overflow - armorHit;
+    p.hp = Math.max(0, p.hp - toHp);
+    const destroyed = p.hp <= 0 && beforeHp > 0;
     if (destroyed) this._cascadeDestroy(locationId);
-    return { applied: amount, destroyed, location: locationId, partDestroyedNow: p.structure <= 0 };
+    // #246 (mech-art armor overlay): did THIS hit strip the location's last armor? Distinct from
+    // `destroyed` (which tracks HP) — a part can lose its armor plating well before it's
+    // actually destroyed, and the art wants to reskin exactly on that crossing (see combat.js).
+    const armorBrokeNow = armorBefore > 0 && p.armor <= 0;
+    return {
+      applied: overflow, destroyed, location: locationId, partDestroyedNow: p.hp <= 0,
+      shieldAbsorbed: shieldRes.absorbed, shielded: false, armorBrokeNow,
+    };
   }
 
   // Destroy the locations that depend on `loc` (a side torso takes its arm, the head
-  // takes the cockpit), recursively, zeroing their armor + structure so their mounts go
+  // takes the cockpit), recursively, zeroing their armor + hp so their mounts go
   // offline too.
   _cascadeDestroy(loc) {
     for (const dep of DESTROY_CASCADE[loc] ?? []) {
       const dp = this.parts[dep];
-      if (dp && dp.structure > 0) {
+      if (dp && dp.hp > 0) {
         dp.armor = 0;
-        dp.structure = 0;
+        dp.hp = 0;
         this._cascadeDestroy(dep);
       }
     }
@@ -134,13 +177,79 @@ export class Mech {
     return 1;
   }
 
-  // Fraction of a part's total health remaining (armor + structure), 0..1 — used for
+  // Fraction of a part's total health remaining (armor + hp), 0..1 — used for
   // damage visuals (a part swaps to a battered/destroyed drawing as this drops).
   partHealthFraction(locationId) {
     const p = this.parts[locationId];
     if (!p) return 0;
-    const max = p.maxArmor + p.maxStructure;
-    return max > 0 ? (p.armor + p.structure) / max : 0;
+    const max = p.maxArmor + p.maxHp;
+    return max > 0 ? (p.armor + p.hp) / max : 0;
+  }
+
+  // Does this location still have its armor plating (> 0), armor-only — independent of
+  // hp/destroyed state? #246: drives the mech-art armor-shell overlay (mechArt.js) so the
+  // player can SEE at a glance which segments have been stripped of armor, even though the
+  // part still has hp left and isn't destroyed. False for untracked/unknown locations.
+  hasArmor(locationId) {
+    const p = this.parts[locationId];
+    return !!p && p.armor > 0;
+  }
+
+  // ── Full-mech shield (#246) ────────────────────────────────────────────────
+  // Apply damage straight to the shield only (used by callers that already resolved which
+  // layer a hit should hit — kept for symmetry/tests; normal combat goes through applyDamage,
+  // which already checks the shield first).
+  applyShieldDamage(amount) { return damageShield(this.shield, amount); }
+  shieldFraction() { return shieldFraction(this.shield); }
+  hasShield() { return shieldPresent(this.shield); }
+
+  // Passive per-frame upkeep: shield regen (with its brief post-hit pause) and, if a timed
+  // Shield-powerup boost is active, counting its remaining duration down. Called once per
+  // frame alongside regenAmmo (dt in seconds, same convention).
+  tickShield(dt) {
+    tickShieldState(this.shield, dt);
+    if (this._shieldBoost) {
+      this._shieldBoost.remainingMs -= dt * 1000;
+      if (this._shieldBoost.remainingMs <= 0) this._clearShieldBoost();
+    }
+  }
+
+  // Shield powerup pickup (#246 decision: BOTH effects, the strongest version) — instantly
+  // fills the shield to 100% of its (possibly boosted) capacity AND multiplies max capacity +
+  // regen rate by `mult` for `durationMs`. A duplicate pickup mid-boost just refreshes the
+  // timer against the SAME captured pre-boost base (mirrors boostHealth's idempotency: never
+  // compounds across repeated pickups). No-op on a mech with no native shield at all.
+  boostShield(mult, durationMs) {
+    if (!shieldPresent(this.shield)) return;
+    if (!this._shieldBoost) {
+      this._shieldBoost = {
+        mult, remainingMs: durationMs,
+        baseMax: this.shield.max, baseRegenPerSec: this.shield.regenPerSec,
+      };
+    } else {
+      this._shieldBoost.remainingMs = durationMs;
+    }
+    this.shield.max = Math.round(this._shieldBoost.baseMax * mult);
+    this.shield.regenPerSec = this._shieldBoost.baseRegenPerSec * mult;
+    fillShield(this.shield);
+  }
+
+  _clearShieldBoost() {
+    this.shield.max = this._shieldBoost.baseMax;
+    this.shield.regenPerSec = this._shieldBoost.baseRegenPerSec;
+    this.shield.hp = Math.min(this.shield.hp, this.shield.max);
+    this._shieldBoost = null;
+  }
+
+  // Set/replace this mech's native shield config at runtime (fresh, full, no lingering boost).
+  // Opt-in and applied outside the shared chassis/enemy data, same spirit as `boostHealth` —
+  // the arena uses this to give the PLAYER a baseline shield (see ArenaScene's PLAYER_SHIELD)
+  // without touching the constructor-time `data.shield` every mech (including enemy mechs) is
+  // built from. Idempotent: calling it again (e.g. once per redeploy) just re-establishes the
+  // same config from scratch, matching boostHealth's own redeploy-safe pattern.
+  configureShield(config) {
+    this.shield = createShield(config);
+    this._shieldBoost = null;
   }
 
   // ── Mounting / build ──────────────────────────────────────────────────────
@@ -238,7 +347,7 @@ export class Mech {
     }
   }
 
-  // Scale every location's max armor + structure by `mult` of the chassis BASE (and
+  // Scale every location's max armor + hp by `mult` of the chassis BASE (and
   // refill to the new max). Opt-in and applied at instantiation time — NOT in the shared
   // chassis data — so it affects only the mech it's called on. The arena uses this to give
   // the PLAYER a large survivability buffer without touching enemies (who share the same
@@ -248,15 +357,15 @@ export class Mech {
     for (const loc of LOCATIONS) {
       const p = this.parts[loc];
       p.maxArmor = Math.round(p.baseMaxArmor * mult);
-      p.maxStructure = Math.round(p.baseMaxStructure * mult);
+      p.maxHp = Math.round(p.baseMaxHp * mult);
       p.armor = p.maxArmor;
-      p.structure = p.maxStructure;
+      p.hp = p.maxHp;
     }
   }
 
   // Instant proportional armor repair (#60 Armor Patch powerup): restore a fraction of
   // EACH damaged location's MISSING armor (maxArmor - armor), so every location that has
-  // lost armor gets some back scaled to what it's missing. Structure is untouched (this
+  // lost armor gets some back scaled to what it's missing. HP is untouched (this
   // patches the outer plating only). Returns the total armor restored, for feedback.
   repairArmor(frac) {
     let restored = 0;
@@ -272,13 +381,17 @@ export class Mech {
   }
 
   // Restore a mech to pristine condition (used when deploying a fresh build): full
-  // health and full magazines.
+  // health, full shield (any lingering timed boost from a prior sortie is cleared first so
+  // it can't leak across a redeploy), and full magazines.
   repairAll() {
     for (const loc of LOCATIONS) {
       const p = this.parts[loc];
       p.armor = p.maxArmor;
-      p.structure = p.maxStructure;
+      p.hp = p.maxHp;
     }
+    if (this._shieldBoost) this._clearShieldBoost();
+    this.shield.pauseRemaining = 0;
+    fillShield(this.shield);
     this._initAmmo();
   }
 
@@ -286,7 +399,7 @@ export class Mech {
     const mounts = {};
     const damage = {};
     for (const loc of MOUNT_LOCATIONS) mounts[loc] = [...this.mounts[loc]];
-    for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, structure: this.parts[loc].structure };
+    for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, hp: this.parts[loc].hp };
     return { chassisId: this.chassisId, name: this.name, mounts, damage };
   }
 }

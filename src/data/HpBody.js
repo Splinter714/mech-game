@@ -9,34 +9,48 @@
 // does this. Backing a non-mech unit with an HpBody therefore lets `_damageEnemyAt`, the
 // hitscan/projectile hit loops, `_resetEnemies`, and the HUD alive-count all work UNCHANGED.
 //
-// The model is deliberately simple: ONE hit-point pool. But it presents that pool as a small
-// map of named "parts" (each a {armor, structure, ...} record like a Mech part) so the arena's
-// nearest-part damage mapping still has locations to iterate over — every part shares the one
-// underlying pool, so a hit anywhere chips the whole unit and zeroing it kills the unit. The
-// caller supplies the part layout (positions in mech-local design coords) so art + hit mapping
-// line up; `partHealthFraction` returns the whole-unit health for every part (they're one pool),
-// which is exactly what the damage-visual code wants (the unit greys out uniformly as it dies).
+// #246: the model is ONE hp pool, but now optionally layered like a Mech — a flat ARMOR pool
+// (absorbs before hp) and a full-unit SHIELD (absorbs before armor), both purely data-driven
+// per enemy kind (`enemyKinds.js`'s `armor`/`shield` fields), so a kind can be configured as
+// HP-only, HP+armor, HP+shield, or all three with no per-kind branching in this file. Both
+// default to "absent" (armor 0, shield max 0) so every existing kind that doesn't opt in is
+// byte-for-byte unchanged. The body still presents its pool as a small map of named "parts"
+// (each a {armor, hp, ...} record like a Mech part) so the arena's nearest-part damage mapping
+// still has locations to iterate over — every part shares the one underlying pool, so a hit
+// anywhere chips the whole unit and zeroing its hp kills the unit. The caller supplies the part
+// layout (positions in mech-local design coords) so art + hit mapping line up;
+// `partHealthFraction` returns the whole-unit health for every part (they're one pool), which
+// is exactly what the damage-visual code wants (the unit greys out uniformly as it dies).
+import { createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent } from './shield.js';
 
 // Build the parts map from a layout spec: { locId: { x, y, w, h } }. Each part carries the
 // FULL unit hp as its max so a single part's health fraction reads the whole-unit health.
 function makeParts(layout, hp) {
   const parts = {};
   for (const loc of Object.keys(layout)) {
-    parts[loc] = { maxArmor: 0, maxStructure: hp, armor: 0, structure: hp, ...layout[loc] };
+    parts[loc] = { maxArmor: 0, maxHp: hp, armor: 0, hp, ...layout[loc] };
   }
   return parts;
 }
 
 export class HpBody {
   // `def` is one entry from the enemy-kind registry:
-  //   { name, hp, parts: { locId: {x,y,w,h} } }  (x/y/w/h in mech-local design coords)
+  //   { name, hp, armor, shield, parts: { locId: {x,y,w,h} } }  (x/y/w/h in mech-local design
+  //   coords). `armor` (#246, optional, default 0) is a flat pool that absorbs damage before
+  //   hp — the non-mech analogue of a Mech's per-location armor, but a single unit-wide pool
+  //   since HpBody has no separate per-location tracking. `shield` (optional) is
+  //   { max, regenPerSec, pauseMs } — absent/zero `max` means this kind has no shield at all.
   constructor(def = {}) {
     this.kind = 'body';
     this.name = def.name ?? 'Contact';
     this.maxHp = def.hp ?? 40;
     this.hp = this.maxHp;
+    this.maxArmor = Math.max(0, def.armor ?? 0);
+    this.armor = this.maxArmor;
+    this.shield = createShield(def.shield);
     this._layout = def.parts ?? { core: { x: 0, y: 0, w: 20, h: 20 } };
     this.parts = makeParts(this._layout, this.maxHp);
+    this._syncParts();
   }
 
   // The location ids this body exposes (what the arena's damage mapper iterates).
@@ -45,38 +59,75 @@ export class HpBody {
   // ── Body interface (mirrors Mech) ──────────────────────────────────────────
   isDestroyed() { return this.hp <= 0; }
 
-  // Any hit chips the single shared pool. `locationId` is accepted (for interface parity /
-  // future per-part armour) but every part draws from the one pool, so where you hit doesn't
-  // change the total — it just changes where the damage number floats up. Returns a Mech-shaped
-  // result so combat.js feedback code (destroyed? part broke?) works without a special case.
-  applyDamage(locationId, amount) {
+  // Any hit chips the single shared pool, through the SAME layer order as Mech (#246):
+  // shield -> armor -> hp. `locationId` is accepted (for interface parity / nearest-part FX
+  // placement) but every part draws from the one pool, so where you hit doesn't change the
+  // total — it just changes where the damage number floats up. Returns a Mech-shaped result
+  // so combat.js feedback code (destroyed? shielded? armor just broke?) works without a
+  // special case. `weaponCategory` is the same forward-compat seam as Mech.applyDamage — see
+  // data/shield.js `layerMultiplier` (not implemented this pass, every category = 1.0x).
+  applyDamage(locationId, amount, weaponCategory) {
     if (amount <= 0 || this.hp <= 0) {
-      return { applied: 0, destroyed: false, location: locationId, partDestroyedNow: this.hp <= 0 };
+      return {
+        applied: 0, destroyed: false, location: locationId, partDestroyedNow: this.hp <= 0,
+        shieldAbsorbed: 0, shielded: false, armorBrokeNow: false,
+      };
+    }
+    const shieldRes = damageShield(this.shield, amount);
+    const overflow = shieldRes.overflow;
+    if (overflow <= 0) {
+      this._syncParts();
+      return {
+        applied: 0, destroyed: false, location: locationId, partDestroyedNow: false,
+        shieldAbsorbed: shieldRes.absorbed, shielded: true, armorBrokeNow: false,
+      };
     }
     const before = this.hp;
-    this.hp = Math.max(0, this.hp - amount);
+    const armorBefore = this.armor;
+    const armorHit = Math.min(this.armor, overflow);
+    this.armor -= armorHit;
+    const toHp = overflow - armorHit;
+    this.hp = Math.max(0, this.hp - toHp);
     this._syncParts();
     const destroyed = this.hp <= 0 && before > 0;   // this hit is what killed it
-    return { applied: amount, destroyed, location: locationId, partDestroyedNow: this.hp <= 0 };
+    const armorBrokeNow = armorBefore > 0 && this.armor <= 0;
+    return {
+      applied: overflow, destroyed, location: locationId, partDestroyedNow: this.hp <= 0,
+      shieldAbsorbed: shieldRes.absorbed, shielded: false, armorBrokeNow,
+    };
   }
 
-  // Whole-unit health fraction (0..1). Same for every location — it's one pool — which makes
-  // the unit fade/battered-swap uniformly as it dies (the mech art keys off this per part).
+  // Whole-unit health fraction (0..1), armor + hp combined — same for every location — it's
+  // one pool — which makes the unit fade/battered-swap uniformly as it dies (the mech art keys
+  // off this per part).
   partHealthFraction() {
-    return this.maxHp > 0 ? this.hp / this.maxHp : 0;
+    const max = this.maxArmor + this.maxHp;
+    return max > 0 ? (this.armor + this.hp) / max : 0;
   }
 
   isPartDestroyed() { return this.hp <= 0; }
 
-  // Push the current pool value into every part's `structure` so any reader that inspects the
+  // ── Full-unit shield (#246, mirrors Mech) ──────────────────────────────────
+  shieldFraction() { return shieldFraction(this.shield); }
+  hasShield() { return shieldPresent(this.shield); }
+  tickShield(dt) { tickShieldState(this.shield, dt); }
+
+  // Push the current pool values into every part's `armor`/`hp` so any reader that inspects the
   // raw part records (rather than partHealthFraction) still sees the live health.
   _syncParts() {
-    for (const loc of Object.keys(this.parts)) this.parts[loc].structure = this.hp;
+    for (const loc of Object.keys(this.parts)) {
+      this.parts[loc].armor = this.armor;
+      this.parts[loc].hp = this.hp;
+    }
   }
 
-  // Restore to full (used by the arena's reset control).
+  // Restore to full (used by the arena's reset control): hp, armor, and shield (clearing any
+  // post-hit regen pause) all top back up.
   repairAll() {
     this.hp = this.maxHp;
+    this.armor = this.maxArmor;
+    this.shield.pauseRemaining = 0;
+    fillShield(this.shield);
     this._syncParts();
   }
 

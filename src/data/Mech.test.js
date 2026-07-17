@@ -30,15 +30,15 @@ describe('Mech damage: armor then structure', () => {
     const ct = m.parts.leftTorso;
     m.applyDamage('leftTorso', ct.maxArmor + 5);
     expect(ct.armor).toBe(0);
-    expect(ct.structure).toBe(ct.maxStructure - 5);
+    expect(ct.hp).toBe(ct.maxHp - 5);
     expect(m.isPartDestroyed('leftTorso')).toBe(false);
   });
 
   it('destroys a part once structure reaches 0', () => {
     const m = new Mech({ chassisId: 'light' });
     const arm = m.parts.leftArm;
-    const res = m.applyDamage('leftArm', arm.maxArmor + arm.maxStructure + 10);
-    expect(arm.structure).toBe(0);
+    const res = m.applyDamage('leftArm', arm.maxArmor + arm.maxHp + 10);
+    expect(arm.hp).toBe(0);
     expect(res.destroyed).toBe(true);
     expect(m.isPartDestroyed('leftArm')).toBe(true);
   });
@@ -58,7 +58,7 @@ describe('Mech build completeness (deploy gating)', () => {
 });
 
 describe('Mech kill rule (#128: both side torsos destroyed = kill)', () => {
-  const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxStructure + 50);
+  const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxHp + 50);
 
   it('destroying both side torsos is lethal', () => {
     const m = new Mech({ chassisId: 'medium' });
@@ -102,7 +102,7 @@ describe('Mech kill rule (#128: both side torsos destroyed = kill)', () => {
 });
 
 describe('Mech damage propagation (cascade)', () => {
-  const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxStructure + 50);
+  const overkill = (m, loc) => m.applyDamage(loc, m.parts[loc].maxArmor + m.parts[loc].maxHp + 50);
 
   it('destroying a side torso also destroys the attached arm', () => {
     const m = new Mech({ chassisId: 'medium' });
@@ -141,7 +141,7 @@ describe('Mech weapons go offline with their part', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'pulseLaser');
     expect(m.onlineWeapons()).toHaveLength(1);
-    m.applyDamage('leftArm', m.parts.leftArm.maxArmor + m.parts.leftArm.maxStructure + 10);
+    m.applyDamage('leftArm', m.parts.leftArm.maxArmor + m.parts.leftArm.maxHp + 10);
     expect(m.onlineWeapons()).toHaveLength(0);
     expect(m.weapons()[0].online).toBe(false);
   });
@@ -328,10 +328,10 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
     // Knock armor down (stay within armor so structure is untouched).
     m.applyDamage('leftTorso', Math.min(ct.maxArmor, 20));
     const missing = ct.maxArmor - ct.armor;
-    const structureBefore = ct.structure;
+    const hpBefore = ct.hp;
     const restored = m.repairArmor(0.5);
     expect(ct.armor).toBeCloseTo(ct.maxArmor - missing + missing * 0.5);
-    expect(ct.structure).toBe(structureBefore);   // patches plating only
+    expect(ct.hp).toBe(hpBefore);   // patches plating only
     expect(restored).toBeGreaterThan(0);
   });
 
@@ -348,28 +348,28 @@ describe('Mech.boostHealth (#69 deploy survivability buffer — must not compoun
   it('multiplies chassis base max armor/structure by exactly mult', () => {
     const m = new Mech({ chassisId: 'medium' });
     const baseArmor = m.parts.leftTorso.maxArmor;
-    const baseStructure = m.parts.leftTorso.maxStructure;
+    const baseHp = m.parts.leftTorso.maxHp;
     m.boostHealth(100);
     expect(m.parts.leftTorso.maxArmor).toBe(Math.round(baseArmor * 100));
-    expect(m.parts.leftTorso.maxStructure).toBe(Math.round(baseStructure * 100));
+    expect(m.parts.leftTorso.maxHp).toBe(Math.round(baseHp * 100));
     expect(m.parts.leftTorso.armor).toBe(m.parts.leftTorso.maxArmor);
-    expect(m.parts.leftTorso.structure).toBe(m.parts.leftTorso.maxStructure);
+    expect(m.parts.leftTorso.hp).toBe(m.parts.leftTorso.maxHp);
   });
 
   it('calling boostHealth twice in a row (simulating repeated redeploys) is idempotent, not compounding', () => {
     const m = new Mech({ chassisId: 'medium' });
     const baseArmor = m.parts.leftTorso.maxArmor;
-    const baseStructure = m.parts.leftTorso.maxStructure;
+    const baseHp = m.parts.leftTorso.maxHp;
 
     m.boostHealth(100);
-    const afterFirst = { armor: m.parts.leftTorso.maxArmor, structure: m.parts.leftTorso.maxStructure };
+    const afterFirst = { armor: m.parts.leftTorso.maxArmor, hp: m.parts.leftTorso.maxHp };
 
     m.boostHealth(100);
-    const afterSecond = { armor: m.parts.leftTorso.maxArmor, structure: m.parts.leftTorso.maxStructure };
+    const afterSecond = { armor: m.parts.leftTorso.maxArmor, hp: m.parts.leftTorso.maxHp };
 
     expect(afterSecond).toEqual(afterFirst);
     expect(afterSecond.armor).toBe(Math.round(baseArmor * 100));
-    expect(afterSecond.structure).toBe(Math.round(baseStructure * 100));
+    expect(afterSecond.hp).toBe(Math.round(baseHp * 100));
   });
 
   it('repairAll (deploy refill) between boosts does not cause boostHealth to compound', () => {
@@ -448,5 +448,96 @@ describe('Mech serialization', () => {
     expect(restored.name).toBe('Old Faithful');
     expect(restored.mounts.rightArm).toEqual(['autocannon']);
     expect(restored.parts.rightTorso.armor).toBe(m.parts.rightTorso.armor);
+  });
+});
+
+// #246: full-mech shield — one pool covering the whole mech, absorbing BEFORE any per-location
+// armor/hp is touched. A mech built with no `data.shield` at all (every existing enemy mech
+// entry in data/enemies.js) has no shield — these tests are the config-driven opt-in path.
+describe('Mech full-mech shield (#246)', () => {
+  it('a mech with no shield config has none — applyDamage behaves exactly as before (no shield fields active)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    expect(m.hasShield()).toBe(false);
+    const res = m.applyDamage('leftArm', 10);
+    expect(res.shielded).toBe(false);
+    expect(res.shieldAbsorbed).toBe(0);
+    expect(res.applied).toBe(10);
+  });
+
+  it('a configured shield absorbs an entire hit before armor/hp are touched at all', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 0, pauseMs: 500 } });
+    const arm = m.parts.leftArm;
+    const armorBefore = arm.armor, hpBefore = arm.hp;
+    const res = m.applyDamage('leftArm', 20);
+    expect(res.shielded).toBe(true);
+    expect(res.shieldAbsorbed).toBe(20);
+    expect(res.applied).toBe(0);
+    expect(arm.armor).toBe(armorBefore);
+    expect(arm.hp).toBe(hpBefore);
+    expect(m.shield.hp).toBe(30);
+  });
+
+  it('a hit exceeding the shield breaks it and the OVERFLOW lands on armor/hp normally', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 20, regenPerSec: 0, pauseMs: 500 } });
+    const arm = m.parts.leftArm;
+    const armorBefore = arm.armor;
+    const res = m.applyDamage('leftArm', 34);
+    expect(res.shielded).toBe(false);          // broke through, not a full-absorb hit
+    expect(res.shieldAbsorbed).toBe(20);
+    expect(res.applied).toBe(14);              // the overflow, same semantics as before shields
+    expect(m.shield.hp).toBe(0);
+    expect(arm.armor).toBe(armorBefore - 14);  // overflow ate armor, exactly like a normal hit
+  });
+
+  it('tickShield regenerates passively but pauses briefly right after a hit', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 10, pauseMs: 1000 } });
+    m.applyDamage('leftArm', 10);        // shield -> 40, pause starts at 1000ms
+    m.tickShield(0.5);                   // 500ms of pause burned, no regen yet
+    expect(m.shield.hp).toBe(40);
+    m.tickShield(0.5);                   // pause clears exactly here
+    expect(m.shield.hp).toBe(40);
+    m.tickShield(1);                     // regen now applies: +10
+    expect(m.shield.hp).toBeCloseTo(50, 5);
+  });
+
+  it('boostShield is a no-op on a mech with no native shield at all', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.boostShield(2, 5000);
+    expect(m.hasShield()).toBe(false);
+  });
+
+  it('boostShield (#246 Shield powerup): instantly fills AND multiplies max/regen for the duration', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.applyDamage('leftArm', 30);   // shield -> 10
+    m.boostShield(2.5, 8000);
+    expect(m.shield.max).toBe(100);          // 40 * 2.5
+    expect(m.shield.regenPerSec).toBe(5);    // 2 * 2.5
+    expect(m.shield.hp).toBe(100);           // instantly filled to the BOOSTED max
+
+    m.tickShield(7.999);            // just under the boost duration — still boosted
+    expect(m.shield.max).toBe(100);
+
+    m.tickShield(0.002);            // now past 8s total — boost expires, reverts to base
+    expect(m.shield.max).toBe(40);
+    expect(m.shield.regenPerSec).toBe(2);
+    expect(m.shield.hp).toBeLessThanOrEqual(40);   // clamped down to the reverted max
+  });
+
+  it('a duplicate boostShield pickup mid-boost refreshes the timer against the SAME pre-boost base (no compounding)', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.boostShield(2.5, 5000);
+    expect(m.shield.max).toBe(100);
+    m.boostShield(2.5, 5000);       // duplicate pickup — must NOT compound to 40*2.5*2.5
+    expect(m.shield.max).toBe(100);
+  });
+
+  it('repairAll refills the shield to full and clears any lingering boost/pause from a prior sortie', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.boostShield(2.5, 5000);
+    m.applyDamage('leftArm', 10);
+    m.repairAll();
+    expect(m.shield.max).toBe(40);    // boost cleared, back to base config
+    expect(m.shield.hp).toBe(40);     // full
+    expect(m.shield.pauseRemaining).toBe(0);
   });
 });

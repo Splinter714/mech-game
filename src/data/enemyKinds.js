@@ -158,6 +158,11 @@ export const ENEMY_KINDS = {
     name: 'Battle Tank',
     kind: 'tank',
     hp: 160,
+    // #246: HP+ARMOR (no shield) — an armored ground vehicle is the natural "has plating, no
+    // energy shielding" profile, and exercises the HpBody armor layer (data/HpBody.js/
+    // data/shield.js): its 40-point armor pool absorbs hits before hp same as a mech's
+    // per-location armor, just as one flat unit-wide pool (HpBody has no per-location split).
+    armor: 40,
     parts: {
       hull: { x: 0, y: 7, w: 30, h: 26 },
       turret: { x: 0, y: -4, w: 18, h: 16 },
@@ -240,6 +245,12 @@ export const ENEMY_KINDS = {
     name: 'Gunship',
     kind: 'helicopter',
     hp: 70,
+    // #246: HP+SHIELD (no armor) — a thin-skinned aerial unit with a small deflector rather
+    // than plating; regens fast (it's evasive and often out of the fight between passes) but
+    // the pool itself is modest, so a sustained pass still breaks through it quickly. Exercises
+    // the HpBody shield layer (data/shield.js) with a DIFFERENT tuning than the player/
+    // Broodwalker below, showing the config is genuinely per-kind.
+    shield: { max: 30, regenPerSec: 3, pauseMs: 900 },
     parts: {
       fuselage: { x: 0, y: 2, w: 14, h: 30 },
       cockpit: { x: 0, y: -12, w: 12, h: 12 },
@@ -294,6 +305,13 @@ export const ENEMY_KINDS = {
     hp: 260,                // #130 (owner: tune): tougher than tank's 160, but well under a
                              // heavy mech's ~616-hp pool (sniper/artillery's 'heavy' chassis) —
                              // a real but beatable objective target, not a brick wall.
+    // #246: ALL THREE layers (shield + armor + hp) — the toughest non-mech kind gets the full
+    // stack, a deliberately different combination from tank's (armor-only) and helicopter's
+    // (shield-only) so the roster exercises every layer-combo the design calls for. Slower
+    // shield regen than the helicopter's (it's a ground brawler that stays in the fight, not
+    // an evasive flyer) but a bigger pool and a longer post-hit pause.
+    armor: 60,
+    shield: { max: 50, regenPerSec: 1.5, pauseMs: 1500 },
     parts: {
       hull: { x: 0, y: 2, w: 34, h: 30 },
       turret: { x: 0, y: -8, w: 20, h: 18 },

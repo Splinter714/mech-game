@@ -752,6 +752,9 @@ export const EnemiesMixin = {
       e.fireCd[w.location] = Math.max(0, cd);
     }
     e.mech.regenAmmo(dt);
+    // #246: mech-kind enemies with no `shield` config in data/enemies.js are a no-op tick
+    // (shield.max stays 0) — same as the vehicle path above.
+    e.mech.tickShield(dt);
 
     e.view.setPosition(e.x, e.y);
     e.view.hull.rotation = e.angle + Math.PI / 2;
@@ -766,6 +769,9 @@ export const EnemiesMixin = {
   // then sync the hull/turret/shadow sprites. The behavior registry keeps this free of any
   // `=== 'tank'` branching — the brain is chosen by def.behavior.
   _updateVehicle(e, dt, delta) {
+    // #246: passive shield regen (with its brief post-hit pause) for kinds configured with one
+    // (enemyKinds.js `shield`) — a no-op for the majority that have none (shield.max stays 0).
+    e.mech.tickShield(dt);
     // #115: a ground unit (infantry/tank/turret) should never be sitting on off-map/impassable
     // terrain to begin with — the per-frame integration below already blocks it from MOVING
     // there, but this recovers one that somehow ended up there anyway (a bad spawn placement

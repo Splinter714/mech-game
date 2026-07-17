@@ -8,7 +8,6 @@ import {
   resolveHitLocation, pickLiveWeighted,
 } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
-import { absorbShieldDamage } from '../../data/powerups.js';
 // #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
@@ -25,29 +24,21 @@ const IMPACT_CIRCLE_CAP = 48;
 const DEBRIS_CAP = 60;
 
 export const CombatMixin = {
-  // Incoming damage to the player (used once enemies fire) — gated through the Shield
-  // POWERUP's damage pool (#187) if one is active: fully absorbs up to the remaining pool,
-  // and any overflow beyond it (the shield breaking mid-hit) passes through to the mech
-  // normally. #188: the old equipment bubble-shield ability (a separate, time-based full
-  // absorb that used to take priority over this) is gone — the powerup pool is the only
-  // shield mechanic now.
+  // Incoming damage to the player (used once enemies fire). #246: the shield is now a real
+  // layer living ON the Mech itself (this.mech.shield — a native trait, not just a powerup
+  // bolt-on) — Mech.applyDamage already runs the full shield -> armor -> hp pipeline
+  // internally, so this is just a thin pass-through (kept as its own method for the arena's
+  // other call sites / tests that hang off `damagePlayer`).
   damagePlayer(locationId, amount) {
-    if (this.shieldPool > 0) {
-      const { absorbed, overflow, remaining } = absorbShieldDamage(this.shieldPool, amount);
-      this.shieldPool = remaining;
-      if (overflow <= 0) return { applied: 0, shielded: true, shieldAbsorbed: absorbed };
-      const res = this.mech.applyDamage(locationId, overflow);
-      return { ...res, shieldAbsorbed: absorbed };
-    }
     return this.mech.applyDamage(locationId, amount);
   },
 
   // Enemy round hits the player: damage a (torso-weighted) random part through the shield.
   // #128: head/centerTorso dropped out of this pool entirely — they're cosmetic only now
-  // (no armor/structure, so a hit "on" them would silently no-op) — the side torsos pick up
+  // (no armor/hp, so a hit "on" them would silently no-op) — the side torsos pick up
   // the centre-mass weighting instead, so hits still lean toward the torsos over the arms.
   // #230: was a flat 2:1 torso:arm weighting, which combined with the chassis' own armor+
-  // structure totals (side torsos had only ~1.25x an arm's health — see chassis/index.js
+  // hp totals (side torsos had only ~1.25x an arm's health — see chassis/index.js
   // FACTORS) to make torsos die roughly 1.6x faster than arms in expected-hits terms, so
   // players almost never got to experience losing an arm before the attached torso (and its
   // cascade, see DESTROY_CASCADE) took it anyway. Eased to 1.5:1 here, paired with a bump to
@@ -71,9 +62,11 @@ export const CombatMixin = {
     if (res.shieldAbsorbed) this._shieldHitFlash();
     if (res.shielded) return;
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
-    // weapons), not on continuous health — so only pay the 9-texture procedural rebuild when
-    // this hit actually broke a part. Reskinning on every hit was the main combat lag source.
-    if (res.destroyed) reskinMech(this, 'playerMech', this.mech);
+    // weapons) or which segments have lost their ARMOR plating (#246's armor-shell overlay —
+    // see mechArt.js), not on continuous health — so only pay the 9-texture procedural rebuild
+    // when this hit actually changed one of those two discrete visual states. Reskinning on
+    // every hit was the main combat lag source.
+    if (res.destroyed || res.armorBrokeNow) reskinMech(this, 'playerMech', this.mech);
     // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
     // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
     // #201: a part breaking off now has its own SFX domain trigger (shared for player+enemy
@@ -175,8 +168,9 @@ export const CombatMixin = {
     const best = resolveHitLocation(lay, locs, lx, ly, dispUnit, (loc) => e.mech.isPartDestroyed(loc));
     const res = e.mech.applyDamage(best, damage);
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke
-    // (that's the only damage state the art shows), not on every single hit.
-    if (isMech && res.destroyed) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+    // or lost its armor plating (#246 armor-shell overlay), not on every single hit. Vehicle
+    // (non-mech) kinds have static textures regardless (no reskin path at all).
+    if (isMech && (res.destroyed || res.armorBrokeNow)) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     // #83: no floating damage number on enemy hits either — damage still applies above (res),
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     // #201: same shared part-loss cue as the player path above.
