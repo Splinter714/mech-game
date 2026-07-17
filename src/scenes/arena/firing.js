@@ -345,7 +345,10 @@ export const FiringMixin = {
   // `shooterKey` disambiguates the "one live continuous beam per shooter+location" lookup below
   // so two different enemies (or an enemy and the player) mounting the same weapon in the same
   // body location don't stomp each other's beam object.
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player') {
+  // `ignoreCover` (#245): a FLYING enemy (drone/helicopter) shoots from above, so its beam is
+  // never blocked by terrain cover — the wall trace below is skipped entirely. The player and
+  // ground enemies never pass this, so their beams stop at cover exactly as before.
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', ignoreCover = false) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -357,8 +360,9 @@ export const FiringMixin = {
     let t = trace.t;
     let hit = !!target;
     let endDist = trace.endDist;
-    // Cover: a wall between muzzle and target stops the beam short.
-    const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist);
+    // Cover: a wall between muzzle and target stops the beam short — unless the shooter flies
+    // over it (#245, `ignoreCover` above).
+    const wallT = ignoreCover ? Infinity : this._hitscanReach(muzzleX, muzzleY, angle, endDist);
     const blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
@@ -396,7 +400,10 @@ export const FiringMixin = {
   // maxDist comment below for why this must be the centre bearing, not `angle` (this shot's own
   // launch heading). Defaults to `angle` for every single-shot caller (enemies, non-spread
   // weapons), where the two are identical anyway.
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle) {
+  // `ignoreCover` (#245): true only for a round fired by a FLYING enemy (kindDef.flying —
+  // drone/helicopter) — the round is stamped `ignoresCover` so the in-flight wall check
+  // (projectiles.js) never detonates it on terrain cover; it flies over, same as its shooter.
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, ignoreCover = false) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -454,7 +461,7 @@ export const FiringMixin = {
     // mech's centre, so back-project along the fire angle). A unit standing inside soft cover
     // can then fire OUT without its own round detonating on its own hex.
     const originHexes = [this._hexKeyAt(x, y), this._hexKeyAt(x - Math.cos(angle) * 24, y - Math.sin(angle) * 24)];
-    const pushed = { ...round, owner, trail: [], seekTarget, originHexes };
+    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, ignoresCover: !!ignoreCover };
     this.projectiles.push(pushed);
     return pushed;
   },

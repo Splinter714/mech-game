@@ -742,13 +742,14 @@ export const EnemiesMixin = {
         if (plan.mode === 'contact') {
           this._melee(w, mx2, my2, fireAngle, 'enemy');
         } else if (plan.mode === 'hitscan') {
-          this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key);
+          this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key, !!e.flying);
         } else {
           // Blind lobs pass the predicted point as the seek target so homing rounds arc onto
           // it; direct/LOS shots keep the intrinsic chase-the-player behaviour (seekTarget
-          // undefined).
+          // undefined). #245: a flying shooter's rounds ignore terrain cover in flight
+          // (last arg — no live flying MECH kind today, but keeps both fire paths uniform).
           const seek = blindFire ? predictedTarget(e.lock, e.lockBlindAge) : null;
-          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, seek);
+          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, seek, fireAngle, !!e.flying);
         }
         cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
@@ -907,9 +908,13 @@ export const EnemiesMixin = {
     if (plan.mode === 'contact') {
       this._melee(w, mx, my, fireAngle, 'enemy');
     } else if (plan.mode === 'hitscan') {
-      this._fireHitscan(w, mx, my, fireAngle, 'enemy', e.key);
+      // #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`) shoots from
+      // above, so its shots ignore terrain cover entirely: the hitscan trace skips the wall
+      // check and a spawned round is stamped `ignoresCover` (see firing.js/projectiles.js).
+      // Ground kinds pass false and are blocked by cover exactly as before.
+      this._fireHitscan(w, mx, my, fireAngle, 'enemy', e.key, !!e.flying);
     } else {
-      this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null);
+      this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying);
     }
     // Cadence is ALWAYS the RESOLVED weapon's own `_fireInterval` (the same resolution the
     // player/mech-enemy path uses; `{}` mods since vehicles have no player buffs/Overdrive) —

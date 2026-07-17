@@ -118,8 +118,11 @@ export const ProjectilesMixin = {
       // (and may flatten it to rubble; flame rounds chew soft cover extra fast). #72 own-hex
       // transparency: hexes holding something this round can hit, plus the round's own origin
       // hexes, don't count as walls — so a unit standing in forest is hittable, and a unit
-      // firing OUT of forest doesn't detonate its own shot at the muzzle.
-      if (!p.arc) {
+      // firing OUT of forest doesn't detonate its own shot at the muzzle. #245: a round fired
+      // by a FLYING enemy (drone/helicopter — `ignoresCover`, set in _spawnProjectile from the
+      // shooter's kindDef) is narratively fired from above, so it never collides with terrain
+      // cover at all — same total exemption an arcing round gets, without the lob visuals.
+      if (!p.arc && !p.ignoresCover) {
         const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
         if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes)) {
           p.dead = true;
