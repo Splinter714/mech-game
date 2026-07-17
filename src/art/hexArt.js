@@ -5,6 +5,7 @@
 
 import { gen, scaledGraphics, ART_SCALE } from './_frames.js';
 import { HEX_SIZE, hexCorners } from '../data/hexgrid.js';
+import { TERRAIN } from '../data/terrain.js';
 
 const SQRT3 = Math.sqrt(3);
 // Texture footprint (true on-screen px); displayed at 1/ART_SCALE after super-sampling.
@@ -73,7 +74,7 @@ const PAL = {
   cinderField: { fill: 0x4a2a18, edge: 0x341c0f },
 };
 
-function drawHex(sg, fill, edge, inset = 0.9) {
+function drawHex(sg, fill, edge, inset = 0.9, sunken = false) {
   const cx = HEX_TEX_W / 2, cy = HEX_TEX_H / 2;
   const outer = hexCorners(HEX_SIZE).map((p) => ({ x: cx + p.x, y: cy + p.y }));
   const inner = hexCorners(HEX_SIZE * inset).map((p) => ({ x: cx + p.x, y: cy + p.y }));
@@ -81,6 +82,27 @@ function drawHex(sg, fill, edge, inset = 0.9) {
   sg.fillPoints(outer, true);
   sg.fillStyle(fill, 1);
   sg.fillPoints(inner, true);
+  if (sunken) {
+    // #211: impassable terrain (deep water, mesa, lava, …) should read as sitting BELOW the
+    // walkable ground around it rather than a flat same-level tile — a soft inset shadow band
+    // just inside the tile's own edge, like light not quite reaching the base of a drop-off.
+    // Drawn as a darker ring (full-inset fill at low alpha) with the tile's normal fill
+    // re-painted over its centre, so only a border band actually darkens.
+    sg.fillStyle(0x000000, 0.3);
+    sg.fillPoints(inner, true);
+    const core = hexCorners(HEX_SIZE * inset * 0.72).map((p) => ({ x: cx + p.x, y: cy + p.y }));
+    sg.fillStyle(fill, 1);
+    sg.fillPoints(core, true);
+  }
+}
+
+// #211: does this PAL/tile key (with or without its `hex_` texture prefix) name a terrain the
+// mech cannot drive onto? Drives the sunken-shadow depth cue above. Legacy abstract-arena keys
+// (`ground`/`groundB`/`wall`) aren't real TERRAIN ids, so this is false for them (unaffected).
+function isImpassableTerrainId(key) {
+  const id = key.replace(/^hex_/, '');
+  const t = TERRAIN[id];
+  return !!t && t.passable === false;
 }
 
 // A top-down tree: a soft drop shadow, then a canopy built from several overlapping
@@ -490,7 +512,7 @@ export function buildHexTextures(scene) {
   for (const [key, pal] of Object.entries(tiles)) {
     gen(scene, key, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
       const sg = scaledGraphics(g);
-      drawHex(sg, pal.fill, pal.edge);
+      drawHex(sg, pal.fill, pal.edge, 0.9, isImpassableTerrainId(key));
       DETAIL[key]?.(sg);
     });
   }
