@@ -93,6 +93,29 @@ describe('planEmissions', () => {
     expect(planEmissions(WEAPONS.plasmaLance).mode).toBe('projectile');
   });
 
+  // #220: a small spreadJitter was added so the single-lane bolt stream sputters slightly
+  // off a perfectly straight line. plasmaLance has no sprayCount/streams>1/cluster/spread,
+  // so this must land on the "single continuously-streamed shot" branch of planEmissions —
+  // exactly ONE bolt per cadence tick, just with a small random angleOffset — never an
+  // accidental multi-pellet spray or fan.
+  it('jitters Plasma Lance bolts slightly without spawning extra pellets per shot', () => {
+    const { spreadJitter } = WEAPONS.plasmaLance.delivery;
+    expect(spreadJitter).toBeGreaterThan(0);
+    expect(spreadJitter).toBeLessThanOrEqual(5); // subtle sputter, not a Flamethrower-style cone
+    const jitterRad = (spreadJitter * Math.PI) / 180;
+    const angles = [];
+    for (let i = 0; i < 50; i++) {
+      const p = planEmissions(WEAPONS.plasmaLance);
+      expect(p.mode).toBe('projectile');
+      expect(p.shots).toHaveLength(1); // exactly one bolt per shot, never a spray
+      const [s] = p.shots;
+      expect(s.lateral).toBe(0); // single lane, no stream offset
+      expect(Math.abs(s.angleOffset)).toBeLessThanOrEqual(jitterRad + 1e-9);
+      angles.push(s.angleOffset);
+    }
+    expect(new Set(angles).size).toBeGreaterThan(1); // actually varies shot to shot
+  });
+
   it('emits parallel lanes for a multi-stream weapon — offset laterally, no fan (Repeater)', () => {
     const p = planEmissions(WEAPONS.machineGun);
     const { streams, streamSpacing } = WEAPONS.machineGun.delivery;
@@ -473,6 +496,21 @@ describe('weak seek (#213 — Plasma Lance)', () => {
     // reads as "real" homing, per Jackson's "very light"/"slight" framing.
     expect(WEAK_SEEK_TURN_RATE).toBeLessThan(1.0);
     expect(WEAK_SEEK_TURN_RATE).toBeLessThan(homingTurnRate(0));
+  });
+
+  // #220: spreadJitter also drives makeProjectile's paired per-bolt speed variance (see
+  // delivery.js speedJitter, 0.82x-1.18x of base velocity) — confirms the bolt's actual
+  // launch speed stays within that same bounded range rather than an unbounded random walk.
+  it('varies each Plasma Lance bolt\'s launch speed within the bounded jitter range', () => {
+    const { velocity } = WEAPONS.plasmaLance.delivery;
+    const speeds = [];
+    for (let i = 0; i < 50; i++) {
+      const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+      expect(p.speed).toBeGreaterThanOrEqual(velocity * 0.82 - 1e-6);
+      expect(p.speed).toBeLessThanOrEqual(velocity * 1.18 + 1e-6);
+      speeds.push(p.speed);
+    }
+    expect(new Set(speeds).size).toBeGreaterThan(1); // actually varies, not fixed at base velocity
   });
 
   it('plasmaLance opts in to weakSeek and NOT to real homing/lock-on guidance', () => {

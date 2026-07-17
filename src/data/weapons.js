@@ -125,7 +125,16 @@ export const WEAPONS = {
     // (targetlock.js only checks `guidance === 'homing'`).
     // #219: playtest tuning pass — velocity nudged down slightly (620 -> 580, ~6%) and
     // WEAK_SEEK_TURN_RATE (see delivery.js) nudged up so the seek reads a bit more.
-    delivery: { hit: 'projectile', path: 'straight', velocity: 580, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true },
+    // #220: a small spreadJitter (2°) so the single-lane bolt stream sputters a little off
+    // its perfectly straight line instead of every bolt tracking the exact same trajectory.
+    // This is a single-lane stream (no sprayCount/streams/cluster/spread), so in
+    // delivery.js's planEmissions() this hits the "single continuously-streamed shot"
+    // branch (n === 1, jitterRad truthy) — each bolt still gets exactly ONE shot per
+    // cadence tick, just with its own small random angleOffset (delivery.js also applies a
+    // matching small per-bolt speedJitter in makeProjectile). Deliberately much smaller
+    // than Flamethrower's 9° spray-cone jitter — this should read as a subtle sputter/
+    // wobble on one bolt, not a fan; start conservative and go bigger only on playtest ask.
+    delivery: { hit: 'projectile', path: 'straight', velocity: 580, pattern: 'stream', fireRate: 20, kind: 'plasma', weakSeek: true, spreadJitter: 2 },
   }),
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',
