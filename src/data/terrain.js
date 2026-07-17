@@ -51,8 +51,21 @@ export const TERRAIN = {
   // at world-gen time, biome-independent. NOT tied to any enemy spawn: a helicopter kind's own
   // offscreen spawn logic is completely independent of where a helipad happens to sit. Fully
   // walkable/flyable — a subtle ground detail, not an obstacle or cover — so it never blocks
-  // movement or LOS and never slows a mech crossing it, and it isn't destructible (no HP).
-  helipad:   { id: 'helipad',   tex: 'hex_helipad',   passable: true,  blocksLOS: false, speedFactor: 1 },
+  // movement or LOS and never slows a mech crossing it.
+  // #251 (playtest follow-up): base infrastructure should be destructible like any other
+  // outpost. hp:50 sits between soft cover (30-40, forest/scrub/drift/wreck/fumarole — flimsy)
+  // and a hard-cover outpost (60, building/adobe/iceRuin/tower/obsidian — a whole structure) —
+  // a landing pad is built infrastructure but a thin flat surface, not a full building. It
+  // collapses to the generic `rubble` (broken masonry/debris, itself passable/non-cover) rather
+  // than a bespoke rubble id, matching the "one uniform base-infra look" ask — destroyed base
+  // infrastructure reads as the same kind of wreckage everywhere, same as its standing fill.
+  // Stays passable (and its rubble stays passable too) both before and after destruction — a
+  // mech can always drive over it. `setDressing: true` keeps it destructible/damageable (HP,
+  // rubble collapse, stomp, convergence-fallback targeting) without ever letting it be picked
+  // as THE mission objective (`isMissionObjective` below) — it's atmospheric, not an assault
+  // target, unlike the genuine outposts it shares the `buildingHp` bucket with.
+  helipad:   { id: 'helipad',   tex: 'hex_helipad',   passable: true,  blocksLOS: false, speedFactor: 1,
+               destructible: true, hp: 50, rubbleId: 'rubble', setDressing: true },
 
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1 },
@@ -203,6 +216,16 @@ export const RUBBLE = 'rubble';
 export function rubbleFor(id) {
   const t = id && TERRAIN[id];
   return (t && t.rubbleId) || RUBBLE;
+}
+
+// #251: is this destructible hex a genuine assault objective/outpost (may be picked as THE
+// mission objective, world.js `buildingHp` bucket) rather than atmospheric base-infrastructure
+// set-dressing (e.g. `helipad`)? Purely the `destructible && !setDressing` combination — a
+// destructible entry opts OUT of objective-eligibility with `setDressing: true` rather than
+// outposts opting in, so nothing else needs to change as new outpost terrain is added.
+export function isMissionObjective(id) {
+  const t = id && TERRAIN[id];
+  return !!t && !!t.destructible && !t.setDressing;
 }
 
 // #72: soft cover — walk-through concealment (forest/scrub/drift/wreck/fumarole). Purely the

@@ -3,7 +3,7 @@ import {
   TERRAIN, getTerrain, terrainSpeedFactor, isPassable, blocksLOS,
   isDestructible, buildingHp, damageBuilding, RUBBLE, rubbleFor,
   isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
-  isWaterTerrain,
+  isWaterTerrain, isMissionObjective,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -53,9 +53,24 @@ describe('terrain table (#41 full model)', () => {
     expect(terrainSpeedFactor('helipad')).toBe(1);
     expect(isPassable('helipad')).toBe(true);
     expect(blocksLOS('helipad')).toBe(false);
-    expect(isDestructible('helipad')).toBe(false);
     expect(isSoftCover('helipad')).toBe(false);
     expect(isWaterTerrain('helipad')).toBe(false);
+  });
+
+  // #251 (playtest follow-up): base infrastructure is destructible like any other outpost —
+  // hp:50 (between soft cover's 30-40 and a hard outpost's 60) collapsing to the generic
+  // `rubble` id, and it stays passable throughout (standing AND once collapsed) since a mech
+  // must always be able to drive over it. It's still excluded from ever being picked as THE
+  // mission objective (`isMissionObjective`) because it's atmospheric set-dressing, not a
+  // genuine assault target.
+  it('makes helipad destructible, collapsing to passable rubble, but never a mission objective', () => {
+    expect(isDestructible('helipad')).toBe(true);
+    expect(TERRAIN.helipad.hp).toBe(50);
+    expect(TERRAIN.helipad.rubbleId).toBe('rubble');
+    expect(TERRAIN.rubble.passable).toBe(true);
+    expect(isMissionObjective('helipad')).toBe(false);
+    // Sanity: a genuine outpost IS still objective-eligible (the exclusion is helipad-specific).
+    expect(isMissionObjective('building')).toBe(true);
   });
 
   it('leaves rubble passable, no cover, mildly slowing', () => {

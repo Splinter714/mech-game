@@ -141,8 +141,10 @@ export function generateTerrain({
   }
 
   // #251: a couple of static helipad ground markings — base-infrastructure SET DRESSING
-  // (data/terrain.js `helipad`: passable, no LOS block, not destructible/no HP), placed as a
-  // normal part of the generated layout exactly like the outposts/cover above, NOT tied to any
+  // (data/terrain.js `helipad`: passable, no LOS block; destructible with its own hp, same as a
+  // real outpost, but excluded from ever being picked as the mission objective via
+  // `setDressing: true`/`isMissionObjective`), placed as a normal part of the generated layout
+  // exactly like the outposts/cover above, NOT tied to any
   // enemy's spawn moment (helicopters keep using their own independent offscreen spawn logic —
   // there is no requirement a helicopter spawn near one, or vice versa). `HELIPAD_COUNT` is
   // deliberately tiny (flavor, not a repeated hazard/cover density like the loops above) — each
