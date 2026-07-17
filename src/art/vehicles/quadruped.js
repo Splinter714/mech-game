@@ -18,6 +18,14 @@
 //      quadruped's natural gait moves DIAGONAL leg pairs together (front-left+rear-right vs
 //      front-right+rear-left), not left/right in unison like the biped mech, so the swing here
 //      is keyed by diagonal pair rather than by side.
+//
+// #247 (playtest): "legs should read like it's walking 90° off from how it looks now" — the
+// per-leg reach + stride were originally drawn along the fore/aft (y) axis, so the Broodwalker
+// read as striding straight ahead like a dog/spider. drawLeg's knee/foot offsets and the SWING
+// term now run along the SIDEWAYS (x) axis instead, so the same diagonal-pair gait reads as a
+// crab-like sideways scuttle. The hip anchors (hipX, hipY) — and therefore the hull/turret's
+// actual facing and movement direction — are untouched; only the leg's own drawn reach/stride
+// axis rotated.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, poly } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
@@ -48,20 +56,24 @@ function legSegment(sg, x1, y1, x2, y2, w1, w2) {
 // tread, not a walking leg — this replaces it with two thinner tapered segments meeting at an
 // angled knee joint, which is what actually reads as "leg" rather than "tread." #152: the HIP
 // (hipX, hipY) always stays exactly where the body anchors it (never offset) so the leg reads
-// as firmly attached; `swing` shifts only the knee+foot fore/aft along the leg's own stride
-// axis, for the walk-cycle animation.
+// as firmly attached; `swing` shifts only the knee+foot along the leg's own stride axis, for
+// the walk-cycle animation. #247: that stride axis is now SIDEWAYS (x) instead of fore/aft (y)
+// — `side` (±1, left/right) drives the leg's main reach + swing, `dir` (±1, front/rear) is now
+// just a minor knee-bend offset — so the whole limb reads as reaching/striding to the side,
+// crab-style, while the hip position itself (and the body it's anchored to) is unchanged.
 function drawLeg(sg, hipX, hipY, side, swing = 0) {
-  const dir = Math.sign(hipY) || 1;   // front legs (-y) bend the knee forward/up; rear (+y) back/down
-  const kneeX = hipX + side * 5, kneeY = hipY + dir * 9 + swing;
-  const footX = hipX, footY = hipY + dir * 20 + swing * 1.6;   // the foot swings further than the knee
+  const dir = Math.sign(hipY) || 1;   // front legs kick the knee slightly forward, rear slightly back
+  const kneeX = hipX + side * 7 + swing, kneeY = hipY + dir * 5;
+  const footX = hipX + side * 15 + swing * 1.6, footY = hipY;   // the foot swings further than the knee
   legSegment(sg, hipX, hipY, kneeX, kneeY, 3.4, 2.6);   // upper leg — thicker at the hip
   legSegment(sg, kneeX, kneeY, footX, footY, 2.4, 1.7); // lower leg — thinner still
   ellipseC(sg, kneeX, kneeY, 2.4, 2.4, V.treadHi, 0.9);   // knee joint accent
   ellipseC(sg, kneeX, kneeY, 1.3, 1.3, V.outline);
-  ellipseC(sg, footX, footY, 4, 2.8, V.deep, 0.65);       // foot pad
+  ellipseC(sg, footX, footY, 2.8, 4, V.deep, 0.65);       // foot pad — now wider across the stride axis
 }
 
-// #152: how far (px) a leg's knee+foot swing fore/aft on the two mid-stride frames (1 and 3);
+// #152: how far (px) a leg's knee+foot swing on the two mid-stride frames (1 and 3) — #247:
+// sideways now, not fore/aft, per drawLeg's rotated stride axis.
 // frames 0/2 are fully planted (swing 0). Big enough to visibly read as a walk cycle at gameplay
 // scale (a too-subtle swing was the first draft's mistake), but the SLOW cadence (stepInterval,
 // enemyKinds.js) is what actually sells "heavy lurch" — amplitude alone doesn't need to be tiny
