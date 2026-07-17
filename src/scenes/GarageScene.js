@@ -90,6 +90,7 @@ export default class GarageScene extends Phaser.Scene {
     this.cameras.main.setZoom(dpr);
     this.cameras.main.setOrigin(0, 0);
     this.cameras.main.setBackgroundColor('#0d1014');
+    this.cameras.main.fadeIn(400, 13, 16, 20);   // ~0x0d1014, matches the background color above (#215, mirrors #202's Arena fade)
 
     // Wire the shared pointermove/pointerup listeners that Slider._applyPointer needs to
     // track an in-progress drag (see slider.js) — the SFX panel's sliders live in this scene
