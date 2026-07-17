@@ -17,17 +17,18 @@
 
 // Speed multiplier during the burst. Meaningfully higher than Sprint's 1.5x (SPRINT_SPEED_MULT,
 // data/sprint.js) so a dash reads as a distinct, punchier tool rather than "sprint but shorter" —
-// 2.75x sits in the middle of the 2.5-3x band that still feels like a decisive burst without
-// being a teleport.
-export const DASH_SPEED_MULT = 2.75;
+// 3.0x (bumped from 2.75x per #261 playtest feedback: the dash should go a bit further/faster)
+// sits at the top of the original 2.5-3x "decisive burst, not a teleport" band.
+export const DASH_SPEED_MULT = 3.0;
 
 // Burst duration, in seconds. Short enough to read as a snap of momentum, not a sustained
-// speed-up: at a medium chassis' 195px/s base speed this covers 195 * 2.75 * 0.2 ≈ 107px
-// (~2.2 hexes, HEX_SIZE=48) in one press — a light chassis (268px/s) covers ~147px (~3 hexes),
-// a heavy (135px/s) ~74px (~1.5 hexes) — scaling naturally with each chassis' own top speed
+// speed-up: at a medium chassis' 195px/s base speed this covers 195 * 3.0 * 0.25 ≈ 146px
+// (~3 hexes, HEX_SIZE=48) in one press — a light chassis (268px/s) covers ~201px (~4.2 hexes),
+// a heavy (135px/s) ~101px (~2.1 hexes) — scaling naturally with each chassis' own top speed
 // exactly like Sprint's multiplier already does, so heavier mechs still dash a shorter absolute
-// distance than light ones, matching their overall mobility identity.
-export const DASH_BURST_DURATION = 0.2;
+// distance than light ones, matching their overall mobility identity. Bumped from 0.2s per #261
+// playtest feedback alongside the multiplier, for a combined ~36% longer dash distance overall.
+export const DASH_BURST_DURATION = 0.25;
 
 // Cooldown, in seconds, from the moment a dash is triggered until it can be triggered again.
 // Picked to read as "an occasional escape/reposition tool" — long enough that it's a deliberate
