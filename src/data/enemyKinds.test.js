@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE, isEnemyKind } from './enemyKinds.js';
-import { getWeapon, WEAPONS } from './weapons.js';
+import { getWeapon, resolveWeapon, WEAPONS } from './weapons.js';
 import { HpBody } from './HpBody.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
@@ -197,5 +197,52 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('#97: INFANTRY_MOB_SIZE is a bigger volume than the drone SWARM_SIZE ("large volumes")', () => {
     expect(INFANTRY_MOB_SIZE).toBeGreaterThan(SWARM_SIZE);
     expect(INFANTRY_MOB_SIZE).toBeLessThan(50);
+  });
+
+  // #243: the drone mounts a WEAKENED Repeater via the new per-kind `weaponOverride` mechanism
+  // (resolveWeapon) — retiring #117's temporary pulseLaser test assignment. A light swarm unit
+  // spawned SWARM_SIZE at a time must be meaningfully weaker per-unit than the player's own
+  // Repeater, and the shared base entry must stay untouched for the player.
+  describe('drone weakened Repeater override (#243)', () => {
+    it('drone mounts machineGun with an override; pulseLaser test assignment is retired', () => {
+      expect(ENEMY_KINDS.drone.weaponId).toBe('machineGun');
+      expect(ENEMY_KINDS.drone.weaponOverride).toBeTruthy();
+    });
+
+    it('resolves to half the player Repeater\'s per-round damage and half its stream rate', () => {
+      const resolved = resolveWeapon(ENEMY_KINDS.drone.weaponId, ENEMY_KINDS.drone.weaponOverride);
+      const base = WEAPONS.machineGun;
+      expect(resolved.damage).toBe(base.damage / 2);
+      expect(resolved.delivery.fireRate).toBe(base.delivery.fireRate / 2);
+      // Everything not overridden is still the Repeater — same twin-lane stream identity.
+      expect(resolved.delivery.pattern).toBe('stream');
+      expect(resolved.delivery.streams).toBe(base.delivery.streams);
+      expect(resolved.delivery.velocity).toBe(base.delivery.velocity);
+      expect(resolved.id).toBe('machineGun');
+    });
+
+    it('leaves the player\'s base machineGun entry untouched (damage 2, fireRate 18)', () => {
+      resolveWeapon(ENEMY_KINDS.drone.weaponId, ENEMY_KINDS.drone.weaponOverride);
+      expect(WEAPONS.machineGun.damage).toBe(2);
+      expect(WEAPONS.machineGun.delivery.fireRate).toBe(18);
+    });
+
+    it('has NO fireEveryMs — cadence composes with #241\'s fallback so the overridden fireRate IS the cadence lever', () => {
+      expect(ENEMY_KINDS.drone.fireEveryMs).toBeUndefined();
+    });
+
+    it('drone fireRange stays inside the Repeater\'s own envelope', () => {
+      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.machineGun.range.max);
+    });
+  });
+
+  it('#243: every kind\'s weaponOverride (when present) resolves to a valid weapon', () => {
+    for (const id of ENEMY_KIND_IDS) {
+      const k = ENEMY_KINDS[id];
+      const resolved = resolveWeapon(k.weaponId, k.weaponOverride);
+      expect(resolved, `${id} resolved weapon`).toBeTruthy();
+      expect(resolved.delivery, `${id} resolved delivery`).toBeTruthy();
+      expect(resolved.damage, `${id} resolved damage`).toBeGreaterThan(0);
+    }
   });
 });

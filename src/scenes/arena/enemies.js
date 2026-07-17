@@ -24,7 +24,7 @@ import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { HpBody } from '../../data/HpBody.js';
-import { getWeapon } from '../../data/weapons.js';
+import { resolveWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
@@ -484,6 +484,7 @@ export const EnemiesMixin = {
         reskinMech(this, e.key, e.mech, { theme: 'enemy' });
       } else {
         e.fireCd = 0;            // vehicles use a single numeric cooldown
+        e.burstShotsFired = 0;   // #243: fresh burst window (trigger discipline, _fireVehicleWeapon)
       }
     }
   },
@@ -862,12 +863,18 @@ export const EnemiesMixin = {
   },
 
   // Fire a non-mech unit's weapon at `aim` (its turret angle). The weapon comes from data
-  // (getWeapon(def.weaponId)) — NO weapon-id literal in this file — wrapped as the {weapon,
+  // (resolveWeapon(def.weaponId, def.weaponOverride), #243) — NO weapon-id literal in this
+  // file — wrapped as the {weapon,
   // location} shape _spawnProjectile expects. Enemy-owned round; cadence is the kind's fireEveryMs.
   _fireVehicleWeapon(e, ctx, aim) {
     if (e.fireCd > 0) return;
     const def = e.kindDef;
-    const weapon = getWeapon(def.weaponId);
+    // #243: the kind's weapon is the shared base entry with its optional per-kind
+    // `weaponOverride` delta merged on top (see resolveWeapon in data/weapons.js and the
+    // field doc in enemyKinds.js) — the drone's weakened Repeater is the live example. The
+    // resolved weapon flows through EVERYTHING below: the emission plan, the fire-cue key,
+    // the damage the spawned round carries, and #241's `_fireInterval` cadence fallback.
+    const weapon = resolveWeapon(def.weaponId, def.weaponOverride);
     if (!weapon) return;
     const w = { weapon, location: e.kind, index: 0 };
     const aimErr = (Math.random() - 0.5) * 0.1;
@@ -913,6 +920,20 @@ export const EnemiesMixin = {
     // own rate for a vehicle that doesn't override it, instead of silently reverting to the
     // old blanket 1000ms default a missing field used to fall through to.
     e.fireCd = def.fireEveryMs ?? this._fireInterval(weapon, {});
+    // #243 trigger discipline: a kind with `burstShots` fires N shots at the cadence above,
+    // then RESTS — the shot that completes the burst swaps its cooldown for the (longer)
+    // `burstRestMs` instead of the per-shot cadence, and the counter re-arms for the next
+    // burst. Orthogonal to the cadence resolution: fireEveryMs/#241 space the shots WITHIN a
+    // burst; burstShots/burstRestMs bound how long a burst runs. Both fields absent (every
+    // kind except helicopter today) ⇒ this whole block is a no-op and the unit fires
+    // continuously exactly as before.
+    if (def.burstShots > 0) {
+      e.burstShotsFired = (e.burstShotsFired ?? 0) + 1;
+      if (e.burstShotsFired >= def.burstShots) {
+        e.burstShotsFired = 0;
+        e.fireCd = def.burstRestMs ?? 1000;
+      }
+    }
   },
 
   // ── State selection ─────────────────────────────────────────────────────────────────

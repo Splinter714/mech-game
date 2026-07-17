@@ -25,13 +25,17 @@ const SYNTH_CONTACT_WEAPON = {
   delivery: { hit: 'contact', pattern: 'single' },
 };
 
-// Partial mock: keep every real export (WEAPONS, SHELVED_WEAPON_IDS, …) and the real getWeapon
-// for real ids, but resolve the one synthetic contact id to the fixture above.
+// Partial mock: keep every real export (WEAPONS, SHELVED_WEAPON_IDS, …) and the real
+// getWeapon/resolveWeapon for real ids, but resolve the one synthetic contact id to the fixture
+// above. `resolveWeapon` (#243) is what `_fireVehicleWeapon` actually calls now, so it needs the
+// same synthetic-id routing the old getWeapon mock had.
 vi.mock('../../data/weapons.js', async (importActual) => {
   const actual = await importActual();
   return {
     ...actual,
     getWeapon: (id) => (id === SYNTH_CONTACT_ID ? SYNTH_CONTACT_WEAPON : actual.getWeapon(id)),
+    resolveWeapon: (id, override) =>
+      (id === SYNTH_CONTACT_ID ? SYNTH_CONTACT_WEAPON : actual.resolveWeapon(id, override)),
   };
 });
 
@@ -324,5 +328,122 @@ describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired si
     e2.fireCd = 0;
     scene._fireVehicleWeapon(e2, {}, 0);
     expect(scheduleFireCues).toHaveBeenCalledTimes(2);
+  });
+});
+
+// #243: `_fireVehicleWeapon` resolves the kind's weapon through resolveWeapon(weaponId,
+// weaponOverride) — the fired weapon (damage on the spawned round, emission plan, #241 cadence
+// fallback) is the base entry with the kind's partial delta merged on, and the base WEAPONS
+// entry stays untouched for the player. The drone's weakened Repeater is the live example.
+describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => {
+  it('fires the OVERRIDDEN weapon (merged damage/fireRate) and derives cadence from it', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(STREAM_WEAPON_ID, null);   // no fireEveryMs — cadence from the weapon
+    e.kindDef.weaponOverride = { damage: 1, delivery: { fireRate: 9 } };
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(calls.projectile.length).toBe(1);
+    const fired = calls.projectile[0].w.weapon;
+    expect(fired.damage).toBe(1);
+    expect(fired.delivery.fireRate).toBe(9);
+    // Identity/lanes untouched by the partial delta — still the same twin-lane stream weapon.
+    expect(fired.id).toBe(STREAM_WEAPON_ID);
+    expect(fired.delivery.streams).toBe(STREAM_WEAPON.delivery.streams);
+    // #241 composition: the cadence fallback runs on the RESOLVED weapon — 1000/9, not 1000/18.
+    expect(e.fireCd).toBeCloseTo(1000 / 9, 6);
+    // The shared base entry the player mounts is unchanged.
+    expect(STREAM_WEAPON.damage).toBe(2);
+    expect(STREAM_WEAPON.delivery.fireRate).toBe(18);
+  });
+
+  it('fires the plain base weapon when the kind has no weaponOverride (unchanged behavior)', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(STREAM_WEAPON_ID, null);
+
+    scene._fireVehicleWeapon(e, {}, 0);
+
+    expect(calls.projectile[0].w.weapon).toBe(STREAM_WEAPON);   // the very same registry object
+    expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
+  });
+
+  it('the live drone kind resolves a weakened Repeater whose fireRate drives its cadence', async () => {
+    const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
+    const { resolveWeapon } = await import('../../data/weapons.js');
+    const { scene } = makeScene();
+    const d = ENEMY_KINDS.drone;
+    expect(d.weaponId).toBe(STREAM_WEAPON_ID);
+    expect(d.fireEveryMs).toBeUndefined();
+    const resolved = resolveWeapon(d.weaponId, d.weaponOverride);
+    expect(resolved.damage).toBeLessThan(STREAM_WEAPON.damage);
+    expect(resolved.delivery.fireRate).toBeLessThan(STREAM_WEAPON.delivery.fireRate);
+    expect(scene._fireInterval(resolved, {})).toBeCloseTo(1000 / resolved.delivery.fireRate, 6);
+  });
+});
+
+// #243 trigger discipline: optional per-kind `burstShots`/`burstRestMs` — fire N shots at the
+// normal cadence, then rest. Both absent ⇒ continuous fire, byte-identical to before.
+describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', () => {
+  it('a kind with NO burst fields fires continuously at its cadence, exactly as before', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // fireEveryMs 1000, no burst fields
+    for (let i = 0; i < 20; i++) {
+      e.fireCd = 0;
+      scene.time.now += 1000;
+      scene._fireVehicleWeapon(e, {}, 0);
+      expect(e.fireCd).toBe(1000);                   // always the plain cadence, never a rest
+    }
+    expect(calls.projectile.length).toBe(20);
+    expect(e.burstShotsFired ?? 0).toBe(0);          // counter never engaged
+  });
+
+  it('a kind with burstShots stops after N shots — the Nth shot\'s cooldown becomes burstRestMs', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, 100);
+    e.kindDef.burstShots = 3;
+    e.kindDef.burstRestMs = 900;
+
+    for (let i = 0; i < 2; i++) {
+      e.fireCd = 0;
+      scene.time.now += 1000;
+      scene._fireVehicleWeapon(e, {}, 0);
+      expect(e.fireCd).toBe(100);                    // within-burst spacing = normal cadence
+    }
+    e.fireCd = 0;
+    scene.time.now += 1000;
+    scene._fireVehicleWeapon(e, {}, 0);              // 3rd shot completes the burst
+    expect(calls.projectile.length).toBe(3);
+    expect(e.fireCd).toBe(900);                      // rest replaces the per-shot cadence
+    expect(e.burstShotsFired).toBe(0);               // re-armed for the next burst
+
+    // Still on rest cooldown — no shot; once it elapses, the next burst starts normally.
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(3);
+    e.fireCd = 0;                                    // rest elapsed
+    scene.time.now += 1000;
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(4);
+    expect(e.fireCd).toBe(100);                      // back to within-burst cadence
+  });
+
+  it('burstRestMs defaults to 1000 when only burstShots is set', () => {
+    const { scene } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, 100);
+    e.kindDef.burstShots = 1;
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(e.fireCd).toBe(1000);
+  });
+
+  it('the live helicopter kind opts in: bounded strafing bursts with a real rest', async () => {
+    const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
+    const h = ENEMY_KINDS.helicopter;
+    expect(h.burstShots).toBe(10);
+    expect(h.burstRestMs).toBe(1000);
+    // No other kind opts in yet — everything else keeps continuous fire.
+    for (const [id, k] of Object.entries(ENEMY_KINDS)) {
+      if (id === 'helicopter') continue;
+      expect(k.burstShots, id).toBeUndefined();
+      expect(k.burstRestMs, id).toBeUndefined();
+    }
   });
 });

@@ -31,6 +31,14 @@
 //             `WEAK_SEEK_TURN_RATE`). Reads as "this bolt has a mind of its own, a little" —
 //             not a mini-missile. Currently only Plasma Lance.
 //   sustained a `stream` hitscan held as ONE continuous beam, not a flicker (beam laser)
+//   #243 optional fine-tuning fields (each defaults to the shared constant in delivery.js —
+//   set only to deviate from it):
+//     spreadJitterDelay  ms — max random emission stagger of a jittered spread (default 35)
+//     speedJitterFrac    ±fraction of velocity a jittered particle's speed varies (default 0.18)
+//     burstStaggerDeg    ° alternating angular stagger between weave-burst sub-shots (default 0.3)
+//     homingTurnRadius   px — the turn radius a homing round corners within (default 64)
+//     weakSeekTurnRate   rad/s — a weakSeek round's steering-bias strength (default 0.8)
+//     weakSeekRadius     px — how far a weakSeek round "notices" targets (default 260)
 //   splash    blast radius in px (plasma/explosive)
 //   groundFire { radius, dps, duration } — leaves a burning patch on impact (napalm)
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
@@ -288,6 +296,33 @@ export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_ID
 
 export function getWeapon(id) {
   return WEAPONS[id];
+}
+
+// #243 (absorbing #242's design): resolve a weapon for a specific OWNER — the shared base
+// WEAPONS entry with an optional partial `override` merged on top. This is how a non-player
+// unit mounts "the Repeater, but weaker" without forking a whole near-duplicate WEAPONS entry
+// that would drift from the base over time: the base stays the single source of truth and the
+// override is only the delta (see ENEMY_KINDS.drone's `weaponOverride` for the live example).
+//
+// Merge semantics (deliberately simple — a data tool, not a deep-merge library):
+//   • top-level fields shallow-merge (override wins): damage, cycleTime, ammoMax, range, …
+//   • the nested `delivery` object ALSO shallow-merges (field by field), so an override can
+//     retune just `fireRate` without restating the weapon's whole delivery profile;
+//   • every other nested object (range, burst, sprayCount, groundFire…) is replaced WHOLESALE
+//     when overridden — restate all of its fields;
+//   • override values are FINAL values on the already-normalized weapon — the `w()` shorthand
+//     (totalDamage, burst wubOn/wubOff) is not re-run;
+//   • the returned object is fresh — the base WEAPONS entry (and its delivery) is never mutated;
+//   • no/empty override returns the base entry itself (the common case stays allocation-free).
+// `id` is intentionally left at the base weapon's id unless explicitly overridden, so per-id
+// systems (SFX params/bakes, fire-cue throttling, impact sounds) treat an overridden mount as
+// the same weapon it sounds and looks like.
+export function resolveWeapon(baseId, override = null) {
+  const base = WEAPONS[baseId];
+  if (!base || !override) return base;
+  const merged = { ...base, ...override };
+  if (override.delivery) merged.delivery = { ...base.delivery, ...override.delivery };
+  return merged;
 }
 
 // #120: the weapon catalog's card preview (src/ui/weaponCardList.js) draws each weapon's live

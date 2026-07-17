@@ -17,6 +17,14 @@
 //   muzzlePart which entry in `parts` a shot actually spawns from (#109) — the gun/barrel/nose,
 //              not the unit's centre. Falls back to the first `parts` entry if omitted.
 //   weaponId   which WEAPONS entry this unit fires (its delivery drives the projectile).
+//   weaponOverride  #243: optional PARTIAL override merged onto the base weapon for THIS kind
+//              only (resolveWeapon, data/weapons.js): top-level fields shallow-merge, the nested
+//              `delivery` object also shallow-merges, and the base WEAPONS entry is never
+//              mutated — so a kind can mount "the Repeater, but weaker" as a two-line delta
+//              instead of forking a whole near-duplicate weapon entry. See drone below for the
+//              live example. Cadence note: an overridden `delivery.fireRate` flows through
+//              #241's fallback (`_fireInterval` on the RESOLVED weapon), so for a kind with no
+//              `fireEveryMs` the override also retunes how often it fires.
 //   fireRange  px at which it opens fire (falls back to the weapon's own max).
 //   fireEveryMs EXPLICIT per-kind cadence override (ms), independent of the mech pipeline.
 //              #241: when present it always wins (a deliberate choice to fire slower/faster
@@ -28,6 +36,13 @@
 //              then actually streams at its own rate instead of being silently flattened to a
 //              single slow burst. See helicopter below for the first kind that omits this field
 //              on purpose.
+//   burstShots / burstRestMs  #243 trigger discipline (both optional): fire `burstShots` shots
+//              at the normal cadence, then rest `burstRestMs` before the next burst can start
+//              (the rest replaces the per-shot cooldown on the burst's last shot — see
+//              `_fireVehicleWeapon`). Orthogonal to fireEveryMs/#241, which space the shots
+//              WITHIN a burst. Both absent ⇒ continuous fire, byte-identical to before; only
+//              the helicopter opts in today. `burstRestMs` defaults to 1000 if only
+//              `burstShots` is set.
 //   flying     true ⇒ ignores walls/forest/water (flies over) AND draws a drop shadow (elevated).
 //   move       { maxSpeed, accel, turnRate, turretSlew } px/s + rad/s locomotion tuning.
 //   art        key into the vehicle-art registry (src/art/vehicles/) — builds this unit's textures.
@@ -143,17 +158,25 @@ export const ENEMY_KINDS = {
     // rendered tip (art/vehicles/drone.js drawFrame's `rectC(0, -6, 1.4, 4, ...)` ⇒ far edge
     // y=-8, no glow beyond it).
     muzzleForward: 2,
-    // #117 (temporary test, owner's explicit ask): swapped from machineGun to pulseLaser so
-    // Jackson can playtest an ENEMY actually firing a hitscan weapon — no enemy in this table
-    // mounted one before, so hitscan enemy fire was untested in the live game even though #123
-    // already hardened `_fireVehicleWeapon` to dispatch hitscan/contact/projectile correctly
-    // (see scenes/arena/vehicleFire.test.js). May become permanent depending on how it plays;
-    // revert to machineGun if not. fireRange trimmed to sit inside pulseLaser's own falloff
-    // envelope (range.max 600, opt 340 — see weapons.js) while still reading as a short-range
-    // swarm engagement distance, in the same spirit as the drone's old 240.
-    weaponId: 'pulseLaser',
+    // #243: back on machineGun (the Repeater), retiring #117's temporary pulseLaser test
+    // assignment (that was the enemy-hitscan playtest fixture, explicitly "may become
+    // permanent depending on how it plays" — superseded by this) — but as a WEAKENED variant
+    // via the new `weaponOverride` mechanism (resolveWeapon, data/weapons.js), the flagship
+    // example of a per-owner weapon delta: the drone is a light swarm unit spawned 18 at a
+    // time (SWARM_SIZE), so it fires the same twin-lane tracer stream the player's Repeater
+    // does, just at HALF the per-round damage (2 → 1) and HALF the stream rate (18 → 9/sec) —
+    // one drone deals ~1/4 of a player Repeater's dps, and the base WEAPONS.machineGun entry
+    // (the player's mount) is untouched. fireRange kept at #117's 280 (machineGun's envelope,
+    // opt 338 / max 600, comfortably covers it).
+    // NO fireEveryMs here (composes with #241): cadence falls back to `_fireInterval` on the
+    // RESOLVED weapon, so the override's fireRate 9 IS the cadence (~111ms/tick) — the
+    // fire-rate lever lives in one place instead of a weapon rate AND a kind timer fighting.
+    weaponId: 'machineGun',
+    weaponOverride: {
+      damage: 1,                     // half the player Repeater's 2 per round
+      delivery: { fireRate: 9 },     // half the player Repeater's 18/sec stream cadence
+    },
     fireRange: 280,
-    fireEveryMs: 260,
     swarmRadius: 200,       // px orbit radius the drone tries to hold around the player (#93: nudged out from 150 — playtest felt too close)
     flying: true,           // hovers — ignores ground cover, draws a small shadow
     move: { maxSpeed: 150, accel: 420, turnRate: 6, turretSlew: 9 },
@@ -195,6 +218,13 @@ export const ENEMY_KINDS = {
     // `_fireInterval`) for the duration of each strafing pass — a real DPS/difficulty increase
     // during that window, which is the point of the fix (owner: playtest and retune
     // fireRange/strafeRange/hp if it reads as too much).
+    // #243 trigger discipline: post-#241 the gunship hosed its full 18/sec twin stream for an
+    // ENTIRE strafing pass — these bound each squeeze to 10 cadence ticks (~0.55s of fire, 20
+    // rounds with streams: 2) followed by a 1s rest, so a pass reads as aggressive raking
+    // BURSTS of cannon fire rather than one continuous hose. First (and only) kind to opt in;
+    // owner: tune via playtest.
+    burstShots: 10,
+    burstRestMs: 1000,
     strafeRange: 320,       // px offset of the pass line from the player
     flying: true,
     move: { maxSpeed: 210, accel: 260, turnRate: 3.2, turretSlew: 4 },

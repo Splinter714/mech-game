@@ -579,3 +579,97 @@ describe('weak seek (#213 — Plasma Lance)', () => {
     expect(withinWeakSeekRadius(p, WEAK_SEEK_RADIUS + 50, 0)).toBe(false);
   });
 });
+
+// #243 tunability pass: constants that a single weapon could plausibly want to vary are now
+// optional per-weapon `delivery` fields, each defaulting to the shared constant — so every
+// existing weapon behaves EXACTLY as before (zero-behavior-change refactor), and a weapon that
+// sets the field genuinely deviates.
+describe('per-weapon delivery tunables default to the shared constants (#243)', () => {
+  it('spreadJitterDelay: default emission stagger stays within the old 35ms cap; an override widens it', () => {
+    // Flamethrower (spreadJitter, sprayCount) — its multi-pellet sibling path: use a synthetic
+    // jittered SPREAD so the delay branch is exercised deterministically.
+    const jittered = { ...WEAPONS.shotgun, delivery: { ...WEAPONS.shotgun.delivery, spreadJitter: 5, wobble: null } };
+    for (let i = 0; i < 40; i++) {
+      for (const s of planEmissions(jittered).shots) {
+        expect(s.delay).toBeGreaterThanOrEqual(0);
+        expect(s.delay).toBeLessThanOrEqual(35);
+      }
+    }
+    const wide = { ...jittered, delivery: { ...jittered.delivery, spreadJitterDelay: 500 } };
+    let sawPastOldCap = false;
+    for (let i = 0; i < 60 && !sawPastOldCap; i++) {
+      sawPastOldCap = planEmissions(wide).shots.some((s) => s.delay > 35);
+    }
+    expect(sawPastOldCap).toBe(true);
+  });
+
+  it('speedJitterFrac: default reproduces the exact 0.82–1.18 band; an override narrows it', () => {
+    const { velocity } = WEAPONS.flamethrower.delivery;
+    for (let i = 0; i < 60; i++) {
+      const p = makeProjectile(WEAPONS.flamethrower, 0, 0, 0, { maxDist: 9999 });
+      expect(p.speed).toBeGreaterThanOrEqual(velocity * 0.82 - 1e-6);
+      expect(p.speed).toBeLessThanOrEqual(velocity * 1.18 + 1e-6);
+    }
+    const tight = { ...WEAPONS.flamethrower, delivery: { ...WEAPONS.flamethrower.delivery, speedJitterFrac: 0.02 } };
+    for (let i = 0; i < 60; i++) {
+      const p = makeProjectile(tight, 0, 0, 0, { maxDist: 9999 });
+      expect(p.speed).toBeGreaterThanOrEqual(velocity * 0.98 - 1e-6);
+      expect(p.speed).toBeLessThanOrEqual(velocity * 1.02 + 1e-6);
+    }
+  });
+
+  it('burstStaggerDeg: default alternating stagger is exactly the old ±0.3°; an override rescales it', () => {
+    const base = planEmissions(WEAPONS.streakPod);
+    const oldStaggerRad = (0.3 * Math.PI) / 180;
+    base.shots.forEach((s, i) => {
+      expect(s.angleOffset).toBeCloseTo(oldStaggerRad * (i % 2 === 0 ? 1 : -1), 10);
+    });
+    const wide = { ...WEAPONS.streakPod, delivery: { ...WEAPONS.streakPod.delivery, burstStaggerDeg: 3 } };
+    const widePlan = planEmissions(wide);
+    const wideRad = (3 * Math.PI) / 180;
+    widePlan.shots.forEach((s, i) => {
+      expect(s.angleOffset).toBeCloseTo(wideRad * (i % 2 === 0 ? 1 : -1), 10);
+    });
+  });
+
+  it('homingTurnRadius: default turn derives from the old 64px radius; an override changes cornering', () => {
+    // homingTurnRate default second arg must equal speed/64 (clamped) — the pre-#243 constant.
+    expect(homingTurnRate(320)).toBeCloseTo(320 / 64, 10);
+    expect(homingTurnRate(320, 64)).toBe(homingTurnRate(320));
+    // A per-weapon radius flows into the round's stamped turn rate.
+    const p = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 9999 });
+    expect(p.turn).toBeCloseTo(homingTurnRate(p.speed), 10);
+    const lazy = { ...WEAPONS.swarmRack, delivery: { ...WEAPONS.swarmRack.delivery, homingTurnRadius: 200 } };
+    const pl = makeProjectile(lazy, 0, 0, 0, { maxDist: 9999 });
+    expect(pl.turn).toBeCloseTo(homingTurnRate(pl.speed, 200), 10);
+    expect(pl.turn).toBeLessThan(p.turn);   // wider radius ⇒ lazier cornering at the same speed
+  });
+
+  it('weakSeekTurnRate/weakSeekRadius: rounds default to the shared constants exactly', () => {
+    const p = makeProjectile(WEAPONS.plasmaLance, 0, 0, 0, { maxDist: 9999 });
+    expect(p.weakSeekTurnRate).toBe(WEAK_SEEK_TURN_RATE);
+    expect(p.weakSeekRadius).toBe(WEAK_SEEK_RADIUS);
+  });
+
+  it('weakSeekTurnRate: a per-weapon value drives stepWeakSeek\'s bounded step', () => {
+    const strong = { ...WEAPONS.plasmaLance, delivery: { ...WEAPONS.plasmaLance.delivery, weakSeekTurnRate: 1.6 } };
+    const p = makeProjectile(strong, 0, 0, 0, { maxDist: 9999 });
+    stepWeakSeek(p, 0.1, 1000, 1000);   // 90° correction wanted; step is turnRate-capped
+    expect(p.angle).toBeCloseTo(1.6 * 0.1, 5);
+    // A raw round with no stamped rate still falls back to the shared constant (old behavior).
+    const bare = { x: 0, y: 0, angle: 0, speed: 100, vx: 100, vy: 0 };
+    stepWeakSeek(bare, 0.1, 1000, 1000);
+    expect(bare.angle).toBeCloseTo(WEAK_SEEK_TURN_RATE * 0.1, 5);
+  });
+
+  it('weakSeekRadius: a per-weapon value widens/narrows the notice gate', () => {
+    const wide = { ...WEAPONS.plasmaLance, delivery: { ...WEAPONS.plasmaLance.delivery, weakSeekRadius: 500 } };
+    const p = makeProjectile(wide, 0, 0, 0, { maxDist: 9999 });
+    expect(withinWeakSeekRadius(p, 480, 0)).toBe(true);        // past the old 260 default
+    expect(withinWeakSeekRadius(p, 520, 0)).toBe(false);
+    // A raw round with no stamped radius keeps the shared-constant gate (old behavior).
+    const bare = { x: 0, y: 0 };
+    expect(withinWeakSeekRadius(bare, WEAK_SEEK_RADIUS - 1, 0)).toBe(true);
+    expect(withinWeakSeekRadius(bare, WEAK_SEEK_RADIUS + 1, 0)).toBe(false);
+  });
+});
