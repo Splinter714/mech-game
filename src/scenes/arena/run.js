@@ -15,7 +15,6 @@ import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
 import { pixelToHex } from '../../data/hexgrid.js';
 import { pickStageObjective, pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
-import { Audio } from '../../audio/index.js';
 
 const STAGE_TRANSITION_DELAY = 3000;   // ms after mission-complete before the next stage loads
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -164,15 +163,14 @@ export const RunMixin = {
     this._floatText(this.px, this.py - 50, label, color);
     this.registry.set('runOverBanner', { label, color, currency: this.run.currency });
 
-    // #210: `returnToGarage` fires here, at the actual scene-transition moment, for BOTH win
-    // and loss — it's a cue for the transition itself (heading back to the garage), not a
-    // defeat-specific beat, so it's unconditional on `won`. (Replaces #201's `runLost`, which
-    // fired only on loss, right alongside mechDestroyed at the death moment — redundant with
-    // that cue per playtest feedback.)
+    // #216: `returnToGarage` used to fire here (added by #210), but that missed the G-key and
+    // Select/B manual-exit paths, which call `toGarage()` directly and bypass this delayedCall
+    // entirely. The cue now lives inside `toGarage()` itself (ArenaScene.js) so it fires exactly
+    // once regardless of which path triggers the return — this delayedCall still owns the
+    // RUN_OVER_DELAY beat before the transition happens, it just no longer plays the sound.
     this.time.delayedCall(RUN_OVER_DELAY, () => {
       this.registry.set('run', null);
       this.registry.set('runOverBanner', null);
-      Audio.ui('returnToGarage');
       this.toGarage();
     });
   },
