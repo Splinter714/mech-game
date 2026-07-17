@@ -9,6 +9,11 @@ import { TERRAIN } from '../data/terrain.js';
 
 const SQRT3 = Math.sqrt(3);
 
+// #251 (playtest follow-up): the ONE fixed fill/edge every base-infrastructure hex type uses,
+// regardless of biome — see the PAL.helipad comment below for why. Exported so future
+// mech-bay/wall/tower base-infra terrain entries can reuse it instead of re-deriving a color.
+export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x40444a };
+
 // #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
 // (hexgrid.hexToPixel, e.g. HEX_SIZE*SQRT3 for same-row neighbours) — but that spacing is
 // IRRATIONAL, so on-screen it never lands on a whole device pixel. Phaser's `pixelArt: true`
@@ -57,9 +62,15 @@ const PAL = {
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
   // #227: a destroyed forest hex — charred plant debris, distinct from a building's rubble.
   vegRubble:{ fill: 0x241f16, edge: 0x1a1610 },
-  // #251: helipad ground marking — same base ground fill as grass (it's stamped over whatever
-  // was already there); the DETAIL painter below adds the small landing mark on top.
-  helipad:  { fill: 0x2f5230, edge: 0x24401f },
+  // #251 (playtest follow-up): base-infrastructure hex types (helipad, and future mech-bay/
+  // wall/tower entries under the same design issue) render with ONE fixed neutral colour
+  // regardless of which biome they're stamped into — a helipad must look like a helipad on
+  // grass, desert, ice, or ash alike. Previously this reused the CURRENT biome's ground fill
+  // (grass green), which made it read as biome-tinted grass rather than a distinct man-made
+  // surface. A cool neutral concrete/tarmac tone reads as "built", not "natural", against
+  // every biome's warm/cold palette; per-TYPE distinction (helipad vs a future mech-bay etc.)
+  // comes from the DETAIL painter's icon/shape, never from the fill colour.
+  helipad:  BASE_INFRA_COLOR,
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },

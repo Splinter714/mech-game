@@ -81,7 +81,7 @@ export const ProjectilesMixin = {
       const homingActive = p.homing && !targetGone;
       let restoreTurn = null;
       if (homingActive && p.arc) {
-        const blend = arcHomingBlend(p.dist / p.maxDist);
+        const blend = arcHomingBlend(p.dist / p.maxDist, p.blendStart);
         if (blend <= 0) {
           restoreTurn = p.turn;
           p.turn = 0;

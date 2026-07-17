@@ -117,7 +117,13 @@ export const ENEMY_KINDS = {
     // own and fell back to FALLBACK_SFX) — an audible change, flagged in #244.
     weaponId: 'napalm',
     weaponOverride: {
-      damage: 10,                                     // vs napalm's base 6
+      // #259: this ABSOLUTE damage override is untouched by the DPS-squish base retune
+      // (napalm's direct-hit damage 6 -> 27) — it's the old dedicated siegeShell value,
+      // deliberately independent of the player's napalm tuning (see #244 above), and its own
+      // DPS (10/2.6s ≈ 3.85, x4 turrets in a nest ≈ 15.4 total) was already checked against
+      // the retuned roster and still reads as a reasonable long-range-artillery threat, not a
+      // trivial tickle or a one-shot — no change needed here.
+      damage: 10,                                     // vs napalm's base 27 (was 6 pre-#259)
       range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
       ammoMax: 20, ammoRegen: 0.6,                    // deep artillery magazine (base 6 / 0.7)
       cycleTime: 2600,                                // #94's deliberate slow bombardment cadence (base 1500)
@@ -194,23 +200,25 @@ export const ENEMY_KINDS = {
     // rendered tip (art/vehicles/drone.js drawFrame's `rectC(0, -6, 1.4, 4, ...)` ⇒ far edge
     // y=-8, no glow beyond it).
     muzzleForward: 2,
-    // #243 playtest follow-up: back to the Pulse Laser (reinstating #117's assignment — the
-    // weakened-Repeater interlude is retired), at the SAME damage as the player's mount (no
-    // damage override — per-owner deltas are cadence/burst-shape only for now). The only
-    // override is cadence: pulseLaser's natural cycleTime is 3000ms (a deliberate player-side
-    // pace), which would stretch 5 shots over ~15s — nothing like rapid fire — so the drone
-    // runs it at #117's proven 260ms shot-to-shot cadence. Trigger discipline (`burstShots`/
-    // `burstRestMs`) then shapes that into character: 5 quick trigger pulls (~1.3s of fire;
-    // each pull is itself a 5-pulse visual burst per the weapon's delivery.burst — burstShots
-    // counts pulls, not pulses), then a ~2.5s rest before the next salvo. fireRange kept at
-    // #117's 280 — it was tuned for exactly this weapon (opt 340 / max 600 comfortably cover
-    // it).
-    weaponId: 'pulseLaser',
-    weaponOverride: {
-      cycleTime: 260,        // rapid-fire feel (#117's cadence); base 3000 is the player pace
-    },
-    burstShots: 5,           // 5 quick shots…
-    burstRestMs: 2500,       // …then rest a few seconds before the next salvo
+    // #243 further playtest follow-up: swapped off Pulse Laser onto Plasma Lance — the drone
+    // now sprays plasma bolts instead of hitscan pulses. No damage override (per-owner
+    // deltas stay cadence/burst-shape only, per the standing #243 rule): each bolt hits for the
+    // SAME damage as the player's mount (#259 DPS-squish retuned that to 1.5, down from 2 —
+    // still shared verbatim, no override). Plasma Lance's own delivery is a fast stream
+    // (`fireRate: 20`, i.e. a bolt every 50ms) — that native cadence is too machine-gun-fast to
+    // read as single shots on its own, so no weaponOverride is needed for the bolt itself;
+    // `_fireVehicleWeapon` resolves the bare base entry (resolveWeapon(id, null) === base).
+    // Trigger discipline (`burstShots`/`burstRestMs`) does the shaping instead. #243 latest
+    // playtest ask: fire 1 shot at a time instead of the prior 7-bolt stutter (was
+    // burstShots: 7 / burstRestMs: 700). burstShots: 1 fires a single bolt then rests
+    // burstRestMs before the next — burstRestMs: 400 is a deliberate pause (not the weapon's
+    // native 50ms) but still snappy/erratic to match the drone's small-swarmer role, not a slow
+    // deliberate cadence like the gunship's 1200ms rest. fireRange kept at #117's 280 — well
+    // inside Plasma Lance's `opt: 460` (firing.js's falloff is full damage out to `opt`, so
+    // every drone shot at this range lands at full damage) and its `max: 620`.
+    weaponId: 'plasmaLance',
+    burstShots: 1,           // one bolt at a time…
+    burstRestMs: 400,        // …then a short, snappy pause before the next single shot
     fireRange: 280,
     swarmRadius: 200,       // px orbit radius the drone tries to hold around the player (#93: nudged out from 150 — playtest felt too close)
     flying: true,           // hovers — ignores ground cover, draws a small shadow

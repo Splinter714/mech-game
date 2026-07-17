@@ -2,10 +2,10 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors, hexCorners } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
-  shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover,
+  shotBlockedAt, flameCoverDamage, blocksLOS, isSoftCover, isMissionObjective,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
@@ -47,6 +47,18 @@ const CULL_RECHECK_PX = 300;
 // lane opens (a shot cadence is itself ≥120ms), yet long enough to cut the recompute rate ~8x.
 export const LOS_REFRESH_MS = 120;
 
+// #222 (5th playtest pass): maps a neighbour-direction index (as returned by hexgrid.js's
+// `neighbors(q, r)`, which iterates its internal DIRECTIONS array in a fixed order) to the
+// `hexCorners()` edge index that geometrically faces that same neighbour — edge `e` is the
+// segment from `corners[e]` to `corners[(e + 1) % 6]`. Derived analytically (not empirically)
+// from the two independent angle conventions already in hexgrid.js: `hexToPixel`'s pointy-top
+// axial formula gives each of the 6 DIRECTIONS entries a real-world bearing (0°, -60°, -120°,
+// 180°, 120°, 60°, in DIRECTIONS order), and `hexCorners`' `60*i - 90` puts corner i at -90°,
+// -30°, 30°, 90°, 150°, 210° — so edge i (the corners[i]..corners[i+1] midpoint) sits at
+// bearing `60*i - 60`. Matching each direction's bearing to the edge with the same bearing
+// gives this fixed table; neither hexgrid.js function exposes the mapping directly since edges
+// are a rendering-only concept it otherwise has no reason to know about.
+const NEIGHBOR_EDGE = [1, 0, 5, 4, 3, 2];
 
 export const WorldMixin = {
   // Generate a natural battlefield (#41): a grass area with a winding SHALLOW river, walk-through
@@ -163,6 +175,41 @@ export const WorldMixin = {
     this._visibleTiles = new Set(this.terrain.keys());
     this._cullCenterX = null;
     this._cullCenterY = null;
+
+    // #222 (5th playtest pass): "that's looking decent, but can we make some kind of subtle
+    // outline of the map portion?" — the flat per-biome fill above reads clean but now gives the
+    // playable corridor's silhouette NO visible edge at all; it just fades into a solid colour.
+    // Trace a subtle line along the actual boundary: for every PLAYABLE hex (never a boundary-
+    // only id — same `isBoundaryTerrainId` skip the tile loop above uses), walk its 6 neighbours
+    // via `neighbors` (hexgrid.js — the same neighbour-adjacency check the #222 3rd-pass sunken-
+    // shadow ring used to find true coastline tiles, before the 4th pass replaced per-tile
+    // shadow art with this flat camera-colour fill and dropped the `neighbors` import). Any
+    // neighbour that's boundary-only terrain, OR isn't in `this.terrain` at all (the corridor's
+    // own outer rim, past the generated map entirely), means THIS hex edge faces the fill — so
+    // stroke only that one edge (`hexCorners` + `NEIGHBOR_EDGE` above pick the exact corner pair
+    // facing that neighbour), never the hex's other edges, which face playable ground and need
+    // no cue. One Graphics object, drawn once here since the layout is static after generation
+    // (#111) — never redrawn per-frame, and purely visual: it reads `this.terrain` but writes
+    // nothing back, so passability/LOS/pathing are completely unaffected.
+    const outline = this.add.graphics().setDepth(DEPTH.GROUND_FX);
+    outline.lineStyle(2, 0xf4f1e6, 0.14);
+    const corners = hexCorners();
+    for (const [k, id] of this.terrain) {
+      if (isBoundaryTerrainId(getTerrain(id).tex)) continue;
+      const [q, r] = k.split(',').map(Number);
+      const { x, y } = hexToPixel(q, r);
+      const nbrs = neighbors(q, r);
+      for (let i = 0; i < 6; i++) {
+        const n = nbrs[i];
+        const nId = this.terrain.get(axialKey(n.q, n.r));
+        const facesBoundary = nId === undefined || isBoundaryTerrainId(getTerrain(nId).tex);
+        if (!facesBoundary) continue;
+        const e = NEIGHBOR_EDGE[i];
+        const c0 = corners[e];
+        const c1 = corners[(e + 1) % 6];
+        outline.lineBetween(x + c0.x, y + c0.y, x + c1.x, y + c1.y);
+      }
+    }
   },
 
   // #155: hide every tile GameObject outside the camera's current view (+ margin), show every
@@ -378,6 +425,16 @@ export const WorldMixin = {
       if (this.buildingHp.has(k) || this.coverHp.has(k)) pts.push(hexToPixel(h.q, h.r));
     }
     return pts;
+  },
+
+  // #251: every standing hex key eligible to be picked as THE mission objective. `buildingHp`
+  // holds every standing solid destructible (outposts AND atmospheric base-infrastructure
+  // set-dressing like `helipad` alike — see world.js `buildingHp` comment above), but only
+  // genuine outposts should ever become the assault target; `isMissionObjective` (data/terrain.js)
+  // filters out anything marked `setDressing: true`. Shared by mission.js's initial pick and
+  // run.js's stage-advance pick so both stay in sync with zero duplicated filtering logic.
+  _objectiveHexKeys() {
+    return [...this.buildingHp.keys()].filter((k) => isMissionObjective(this.terrain.get(k)));
   },
 
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush

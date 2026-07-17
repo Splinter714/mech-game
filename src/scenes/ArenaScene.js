@@ -72,6 +72,34 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);
 
+    // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
+    // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
+    // #254: moved here (was previously reset much later in create(), after `_spawnSquad()`
+    // below) — #251's helipad flourish (`_spawnHelipadFx`, called from `_spawnKind` for every
+    // gunship in the opening squad) calls `_burst`/`_acquireImpactCircle` DURING `_spawnSquad()`,
+    // so on a Garage->Arena->Garage->Arena second deploy (ArenaScene is the same reused Scene
+    // instance — see the #190 comment on `_debrisPool` below) that first burst was still reading
+    // the FIRST session's stale `_impactPool`, recycling one of its destroyed Arc/Circle game
+    // objects and throwing "Cannot set properties of null (setting 'radius')" the moment
+    // `.setRadius()` touched its nulled-out internals. The reset must happen before anything in
+    // create() can call `_burst`, and `_spawnSquad()` is the earliest such call.
+    this._impactPool = [];
+    this._impactRR = 0;
+    this._impactSoundAt = {};
+    this._lastBurst = null;
+    // #100/#190: the death-explosion debris pool (combat.js `_acquireDebrisChunk`) is the same
+    // kind of lazily-created, capped/recycled pool as `_impactPool` above, but was missed when
+    // that reset block was written — it stayed lazily-initialized via `??=` only, so ArenaScene
+    // being the SAME reused Scene instance across a Garage->Arena->Garage->Arena cycle meant a
+    // second (or later) arena session inherited the FIRST session's pool of `Rectangle` game
+    // objects. Those were destroyed along with everything else on the first Arena's shutdown, so
+    // the moment a kill in the second session recycled one of them, `_acquireDebrisChunk` called
+    // `.setSize()` on a destroyed (nulled-out) GameObject and threw ("Cannot read properties of
+    // null (reading 'setSize')") — reproducibly, the first death after the second deploy. Reset
+    // both here so every fresh arena session starts with its own live pool.
+    this._debrisPool = [];
+    this._debrisRR = 0;
+
     // Enemies — armed, mobile, shoot back. Each is a self-contained object with its own mech,
     // textures, view, and per-mech AI state, so the arena handles N enemies. The default opening
     // squad (one of each type) is spawned below, AFTER the player + camera are set, so the
@@ -122,7 +150,6 @@ export default class ArenaScene extends Phaser.Scene {
     this.aimEnemy = null;
     this.convergeTarget = null;
     this._reticlePos = null;
-    this._lockBlindAge = 0;
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
     this.enemyMove = true;
@@ -150,24 +177,8 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
-    // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
-    // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
-    this._impactPool = [];
-    this._impactRR = 0;
-    this._impactSoundAt = {};
-    this._lastBurst = null;
-    // #100/#190: the death-explosion debris pool (combat.js `_acquireDebrisChunk`) is the same
-    // kind of lazily-created, capped/recycled pool as `_impactPool` above, but was missed when
-    // that reset block was written — it stayed lazily-initialized via `??=` only, so ArenaScene
-    // being the SAME reused Scene instance across a Garage->Arena->Garage->Arena cycle meant a
-    // second (or later) arena session inherited the FIRST session's pool of `Rectangle` game
-    // objects. Those were destroyed along with everything else on the first Arena's shutdown, so
-    // the moment a kill in the second session recycled one of them, `_acquireDebrisChunk` called
-    // `.setSize()` on a destroyed (nulled-out) GameObject and threw ("Cannot read properties of
-    // null (reading 'setSize')") — reproducibly, the first death after the second deploy. Reset
-    // both here so every fresh arena session starts with its own live pool.
-    this._debrisPool = [];
-    this._debrisRR = 0;
+    // #254: the `_impactPool`/`_debrisPool` reset moved up above (before `_spawnSquad()`) — see
+    // the comment there for why. Nothing left to reset in this spot.
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
     this._initSalvage();                  // #65: SCRAP pickups dropped by destroyed enemies
     this.scene.launch('HudScene');
@@ -240,6 +251,13 @@ export default class ArenaScene extends Phaser.Scene {
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
     // weapons seek it; direct weapons converge on the same live pick directly. ──
     this._updateLock(dt);
+    // #260: live lock-target world position (or null), republished each frame so HudScene can
+    // draw a matching off-screen arrow for the CURRENT lock target — same channel pattern as
+    // `objectiveWorld` above. Reuses `_lockAimPoint()` (targeting.js), the same query the
+    // homing/reticle code already reads, so the arrow can never disagree with what's actually
+    // locked (hides itself the instant the target dies or there's no lock, same as that query).
+    const lockPt = this._lockAimPoint();
+    this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
     this._stepGait(dt);
     if (!this._playerDead) this._handleFiring(intent, delta);
     this._updateEnemies(dt, delta);
@@ -267,11 +285,11 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Lock reticle (#62, rework #252), drawn after projFx is cleared above so it isn't wiped, at
     // `_reticlePos` — the position eased toward the live aim point, so switching convergence
-    // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). A blind
-    // (LOS-broken enemy) target draws in a distinct "firing blind" colour so the player sees
-    // they're lobbing from memory.
+    // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). Playtest
+    // follow-up (#252): indirect fire now always tracks the live target through cover, so there's
+    // no more distinct "firing blind" state/colour — always drawn "locked."
     if (this._reticlePos) {
-      this._drawLockReticle(this._reticlePos.x, this._reticlePos.y, this.lock.blind);
+      this._drawLockReticle(this._reticlePos.x, this._reticlePos.y);
     }
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:

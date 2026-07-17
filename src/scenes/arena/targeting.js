@@ -3,23 +3,26 @@
 // systems remain, and #252 unified them further — indirect fire now simply follows whichever
 // target direct-fire convergence has already picked:
 //  • Convergence (direct fire: lasers, autocannons): _fireAngle angles off-centre muzzles inward
-//    to a forward point at `convergeTarget`'s range — the LIVE most-aimed enemy (`aimEnemy`), or,
-//    #250, a nearby standing destructible-terrain hex when no enemy is available, or CONVERGE_DIST
+//    to a forward point at `convergeTarget`'s range — the LIVE best-scoring enemy (`aimEnemy`,
+//    #250 playtest follow-up: angular offset dominant, blended with a proximity term so a
+//    meaningfully closer enemy can beat a marginally-better-aimed farther one), or, #250, a nearby
+//    standing destructible-terrain hex when no enemy is available, or CONVERGE_DIST
 //    when neither exists — so shots land where the turret points. Purely geometric (no LOS check
 //    at all); `convergeTarget` (shared.js `pickConvergeTarget`) is the ranked pick: an enemy
 //    always wins over a hex.
 //  • Indirect-fire lock (missiles, lobs, #252 rework): the lock IS `convergeTarget`, mirrored
 //    instantly every frame — no amber→red charge-up, no maintain timer that outlives convergence,
 //    no deliberate-switch dwell. Because convergence itself has no LOS gate, its live pick can be
-//    a real enemy currently hidden behind cover; when that happens indirect rounds arc onto the
-//    target's last-known + dead-reckoned predicted position (blind fire) instead of homing through
-//    the wall. The reticle SLIDES toward the live aim point each frame rather than snapping — purely
-//    cosmetic, it never affects what actually gets fired at. The pure lock/prediction/slide math
-//    lives in data/targetlock.js so it's unit-tested; here we feed it the live queries.
+//    a real enemy currently hidden behind cover — playtest follow-up (#252): indirect fire now
+//    just tracks and fires at that LIVE target straight through cover (mirrors #245/#257's
+//    flying-enemy cover-piercing exception elsewhere in this scene), no more dead-reckoned
+//    "blind fire" guess and no more distinct reticle colour for it. The reticle SLIDES toward the
+//    live aim point each frame rather than snapping — purely cosmetic, it never affects what
+//    actually gets fired at. The pure lock/slide math lives in data/targetlock.js so it's
+//    unit-tested; here we feed it the live queries.
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
-import Phaser from 'phaser';
-import { stepLock, predictedTarget, stepReticlePosition } from '../../data/targetlock.js';
-import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget } from './shared.js';
+import { stepLock, stepReticlePosition } from '../../data/targetlock.js';
+import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget, pickAimEnemy } from './shared.js';
 
 // #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
 // so the lock can still be held at the weapon's own new effective range — kept comfortably
@@ -34,25 +37,19 @@ export const TargetingMixin = {
   // Advance BOTH direct-fire convergence and the indirect-fire lock, which #252 made a direct
   // mirror of it:
   //  • `this.aimEnemy` / `this.convergeTarget` — the live convergence pick (shared.js
-  //    `pickConvergeTarget`): the enemy most-centred on the aim line right now (in range), or,
-  //    #250, a fallback destructible hex, or null. Purely geometric, no LOS gate.
+  //    `pickConvergeTarget`, fed by `pickAimEnemy`'s blended angle+proximity score, #250): the
+  //    best-scoring in-range enemy right now, or, #250, a fallback destructible hex, or null.
+  //    Purely geometric, no LOS gate.
   //  • `this.lock` (data/targetlock.js) — mirrors `convergeTarget` every frame, instantly (no
-  //    charge, no maintain, no switch-dwell). Tracks last-known position/velocity so a target
-  //    that's convergence's pick but currently out of LOS can still be fired at blind (dead
-  //    reckoned), and drives the reticle-slide position for drawing.
+  //    charge, no maintain, no switch-dwell, and, per the #252 playtest follow-up, no LOS gate
+  //    or blind/dead-reckoning state either) — it drives the reticle-slide position for drawing.
   _updateLock(dt) {
-    // Angular offset of an enemy from the turret line (smaller = more centred on the aim).
-    const aimOff = (e) => Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(e.y - this.py, e.x - this.px) - this.turretAngle));
     const inRange = (e) => !e.mech.isDestroyed() && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE;
 
-    // aimEnemy (convergence): nearest the aim LINE, in range, no cone gate — direct fire (and now
-    // indirect fire too, #252) just wants "whatever I'm pointing closest to."
-    let aimE = null, aimOffBest = Infinity;
-    for (const e of this.enemies) {
-      if (!inRange(e)) continue;
-      const off = aimOff(e);
-      if (off < aimOffBest) { aimOffBest = off; aimE = e; }
-    }
+    // aimEnemy (convergence): the in-range enemy `pickAimEnemy` (shared.js) scores best — angular
+    // offset from the aim line dominates, but #250 playtest follow-up: a meaningfully closer
+    // enemy can outweigh a modest angular disadvantage, so it's not PURE angle-only any more.
+    const aimE = pickAimEnemy(this.px, this.py, this.turretAngle, this.enemies.filter(inRange), ASSIST_RANGE);
     this.aimEnemy = aimE;
     // #250 ("destroyable hexes should be potential convergence targets, but lower priority than
     // enemies"): only bother scanning for a fallback hex when there's no enemy to converge on —
@@ -64,31 +61,12 @@ export const TargetingMixin = {
     const hexCandidates = aimE ? [] : this._destructibleHexesNear(this.px, this.py, CONVERGE_DIST);
     this.convergeTarget = pickConvergeTarget(this.px, this.py, this.turretAngle, aimE, hexCandidates);
 
-    // #252: the lock is simply `convergeTarget`, mirrored every frame. Only an ENEMY target needs
-    // an LOS check (for blind-fire dead reckoning) — a destructible hex has no `.mech`, never
-    // moves, and is always exactly where it is, so it's always treated as "seen."
+    // #252: the lock is simply `convergeTarget`, mirrored every frame — no LOS gate on the pick
+    // (convergence itself never had one) and, per the playtest follow-up, no LOS gate on what the
+    // lock aims at either. `_wallDistanceLos` used to be raycast here purely to feed the now-
+    // removed blind-fire dead reckoning; that's gone, so the lock is just a straight mirror.
     const target = this.convergeTarget;
-    let hasLos = true, targetPos = null;
-    if (target?.mech) {
-      if (!target.mech.isDestroyed()) {
-        const d = Math.hypot(target.x - this.px, target.y - this.py);
-        const ang = Math.atan2(target.y - this.py, target.x - this.px);
-        // #72 own-hex transparency: the target's own soft-cover hex (and the player's) doesn't
-        // break the lock's LOS — an enemy standing in forest is visible and lockable. #167: a
-        // single PLAYER-side raycast per frame (not per-enemy), so it stays fresh — just routed
-        // through the allocation-free raycast to drop its per-call Set + per-step key strings.
-        hasLos = this._wallDistanceLos(this.px, this.py, ang, d, target.x, target.y) === Infinity;
-        targetPos = { x: target.x, y: target.y, vx: target.vx || 0, vy: target.vy || 0 };
-      } else {
-        hasLos = false;   // defensive — convergeTarget already filters out destroyed enemies
-      }
-    } else if (target) {
-      targetPos = { x: target.x, y: target.y, vx: 0, vy: 0 };   // static hex: always fully known
-    }
-    stepLock(this.lock, { target, hasLos, targetPos });
-
-    // Track seconds-since-LOS so blind fire can dead-reckon the target the right distance ahead.
-    this._lockBlindAge = this.lock.blind ? (this._lockBlindAge || 0) + dt : 0;
+    stepLock(this.lock, { target });
 
     // Reticle slide (#252): ease the drawn position toward the live aim point each frame rather
     // than snapping. Null when there's nothing to lock onto (nothing drawn); a fresh acquisition
@@ -98,23 +76,22 @@ export const TargetingMixin = {
   },
 
   // The point indirect (homing/arcing) player fire should seek this frame — whenever the lock has
-  // a target (#252: no charge gate any more). While an enemy target has LOS it's the live target;
-  // while blind it's the dead-reckoned last-known + predicted position, so rounds arc over cover
-  // onto it. A static (hex) target is just its point. Null = no target at all.
+  // a target (#252: no charge gate any more). Playtest follow-up (#252): this is now ALWAYS the
+  // live target, LOS or not — no more dead-reckoned "blind fire" branch. A static (hex) target is
+  // just its point. Null = no target at all.
   //
-  // IMPORTANT: with LOS this returns the LIVE enemy handle itself (`e`, carrying `.mech`/`.x`/`.y`/
-  // `.vx`/`.vy`), not a `{x,y}` copy taken right now. A round's `seekTarget` is stashed once at
-  // spawn (firing.js) and then re-read every frame in _updateProjectiles (projectiles.js) — the
-  // `.mech` presence is exactly how that per-frame code tells "live enemy, keep following it" apart
-  // from "fixed point, a blind-fire dead-reckoned guess." Returning a fresh `{x,y}` snapshot here
-  // used to make every homing round steer at the target's spawn-instant position forever, even
-  // with a full unbroken LOS lock — the round would fly to where the target WAS, not where it IS.
+  // IMPORTANT: for an enemy target this returns the LIVE enemy handle itself (`t`, carrying
+  // `.mech`/`.x`/`.y`/`.vx`/`.vy`), not a `{x,y}` copy taken right now. A round's `seekTarget` is
+  // stashed once at spawn (firing.js) and then re-read every frame in _updateProjectiles
+  // (projectiles.js) — the `.mech` presence is exactly how that per-frame code tells "live enemy,
+  // keep following it" apart from "fixed point." Returning a fresh `{x,y}` snapshot here would make
+  // every homing round steer at the target's spawn-instant position forever instead of following
+  // it as it moves.
   _lockAimPoint() {
     const t = this.lock.target;
     if (!t) return null;
-    if (!t.mech) return { x: t.x, y: t.y };   // static hex point — always current, never blind
-    if (this.lock.blind) return predictedTarget(this.lock, this._lockBlindAge || 0);
-    return !t.mech.isDestroyed() ? t : predictedTarget(this.lock, this._lockBlindAge || 0);
+    if (!t.mech) return { x: t.x, y: t.y };   // static hex point — always current
+    return t.mech.isDestroyed() ? null : t;
   },
 
   // The closest living enemy to a point, within `maxDist` (default: any). Used for homing/hitscan
@@ -131,12 +108,12 @@ export const TargetingMixin = {
 
   // Lock reticle (#31, #62, rework #252): corner brackets + a ring, drawn at `this._reticlePos`
   // (which eases toward the live aim point rather than snapping — see `stepReticlePosition`).
-  // There's no more charge phase to show (#252 dropped the amber climb), so this always draws at
-  // full "locked" strength; the only state left to distinguish is BLIND (a maintained-through-
-  // convergence enemy target currently without LOS), drawn in a distinct colour so the player sees
-  // they're lobbing from memory. Drawn each frame.
-  _drawLockReticle(x, y, blind = false) {
-    const col = blind ? 0x9a6cff : 0xe2533a;   // blind = violet, locked = red
+  // There's no more charge phase to show (#252 dropped the amber climb), and the playtest
+  // follow-up (#252) dropped the distinct "blind fire" violet colour too (see targetlock.js's
+  // file header) — indirect fire always tracks the live target now, so this always draws at
+  // full "locked" (red) strength. Drawn each frame.
+  _drawLockReticle(x, y) {
+    const col = 0xe2533a;   // locked = red
     const r = 20, len = 8;
     const g = this.projFx.lineStyle(2, col, 1);
     for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {

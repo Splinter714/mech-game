@@ -346,6 +346,39 @@ export function nearestToAimLine(px, py, turretAngle, candidates, maxDist = Infi
   return best;
 }
 
+// #250 playtest follow-up ("convergence/locking should somewhat prefer closer targets, not just
+// strictly follow pure aim precision"): which in-range enemy `_updateLock` converges/locks onto
+// this frame. Previously this was a pure angular-offset minimization — whoever's most centred on
+// the aim line won outright, with zero weight for distance short of the hard ASSIST_RANGE cutoff,
+// so a far-off enemy dead-centre on the crosshair always beat a nearby enemy just slightly
+// off-centre. This blends angular offset (still the dominant term) with distance so proximity can
+// break near-ties and tip genuinely close calls, without turning into "just pick the nearest
+// enemy."
+//
+// Score = (off / AIM_ANGLE_SCALE) + AIM_DIST_WEIGHT * (dist / maxDist) — both terms normalized to
+// roughly [0, 1] within the relevant range, lower wins. AIM_ANGLE_SCALE (60°) is the "clearly
+// off-aim" reference: a candidate offset by a full 60° scores a full 1.0 on the angle term, the
+// same order of magnitude as the distance term's OWN maximum (AIM_DIST_WEIGHT * 1.0, at maxDist).
+// AIM_DIST_WEIGHT = 0.3 keeps distance a minority contributor: for a farther-but-better-aimed
+// candidate to lose to a closer-but-worse-aimed one, the angular gap between them has to be under
+// AIM_DIST_WEIGHT * AIM_ANGLE_SCALE = 18° at the extreme (one candidate at maxDist, the other
+// adjacent to the mech) — and proportionally less than that for any smaller distance gap. So
+// proximity can only ever flip a genuinely modest angular disadvantage, never a large one; aim
+// precision remains the dominant factor overall.
+export const AIM_ANGLE_SCALE = Math.PI / 3;   // 60°: angular offset that scores a full 1.0
+export const AIM_DIST_WEIGHT = 0.3;           // distance's max share of the blended score
+export function pickAimEnemy(px, py, turretAngle, candidates, maxDist = Infinity) {
+  let best = null, bestScore = Infinity;
+  for (const c of candidates) {
+    const dist = Math.hypot(c.x - px, c.y - py);
+    if (dist > maxDist) continue;
+    const off = Math.abs(aimAngleOffset(px, py, turretAngle, c.x, c.y));
+    const score = (off / AIM_ANGLE_SCALE) + AIM_DIST_WEIGHT * (dist / maxDist);
+    if (score < bestScore) { bestScore = score; best = c; }
+  }
+  return best;
+}
+
 // #250 (issue: "destroyable hexes should be potential convergence targets, but lower priority
 // than enemies"): what direct-fire convergence should aim at this frame. `aimEnemy` is whatever
 // targeting.js `_updateLock` already picked as the live most-aimed enemy (or null); `hexCandidates`

@@ -202,47 +202,42 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(INFANTRY_MOB_SIZE).toBeLessThan(50);
   });
 
-  // #243 playtest follow-up: the drone is back on the Pulse Laser (the weakened-Repeater
-  // interlude is retired) at FULL player damage — the only per-kind delta is cadence
-  // (cycleTime 260 instead of the player's 3000) plus trigger discipline (5 quick shots,
-  // then a ~2.5s rest). The shared base entry must stay untouched for the player.
-  describe('drone Pulse Laser loadout (#243 playtest follow-up)', () => {
-    it('drone mounts pulseLaser with a cadence-only override (no damage delta)', () => {
-      expect(ENEMY_KINDS.drone.weaponId).toBe('pulseLaser');
-      expect(ENEMY_KINDS.drone.weaponOverride).toEqual({ cycleTime: 260 });
-      expect(ENEMY_KINDS.drone.weaponOverride.damage).toBeUndefined();
+  // #243 further playtest follow-up: the drone swapped off Pulse Laser onto Plasma Lance at
+  // FULL player damage (no damage override) — Plasma Lance's own native cadence (a 20/sec
+  // stream) already reads as rapid-fire-appropriate for a swarm unit, so no weaponOverride is
+  // needed at all; the shaping comes entirely from trigger discipline. Latest playtest ask:
+  // fire one bolt at a time (was a 7-bolt stutter), with a short 400ms rest between shots.
+  describe('drone Plasma Lance loadout (#243 further playtest follow-up)', () => {
+    it('drone mounts the bare plasmaLance base entry (no weaponOverride, no damage delta)', () => {
+      expect(ENEMY_KINDS.drone.weaponId).toBe('plasmaLance');
+      expect(ENEMY_KINDS.drone.weaponOverride).toBeUndefined();
     });
 
-    it('resolves to the SAME per-pulse damage as the player\'s Pulse Laser, rapid cadence', () => {
+    it('resolves to the SAME per-bolt damage and cadence as the player\'s Plasma Lance', () => {
       const resolved = resolveWeapon(ENEMY_KINDS.drone.weaponId, ENEMY_KINDS.drone.weaponOverride);
-      const base = WEAPONS.pulseLaser;
+      const base = WEAPONS.plasmaLance;
+      expect(resolved).toBe(base);   // no override ⇒ resolveWeapon returns the base object itself
       expect(resolved.damage).toBe(base.damage);
-      expect(resolved.cycleTime).toBe(260);
-      // Everything not overridden is still the Pulse Laser — same 5-pulse hitscan burst identity.
-      expect(resolved.delivery.hit).toBe('hitscan');
-      expect(resolved.delivery.pattern).toBe('single');
-      expect(resolved.delivery.burst).toEqual(base.delivery.burst);
-      expect(resolved.id).toBe('pulseLaser');
+      // Still a genuine plasma projectile stream — same identity as the player's mount.
+      expect(resolved.delivery.hit).toBe('projectile');
+      expect(resolved.delivery.pattern).toBe('stream');
+      expect(resolved.delivery.fireRate).toBe(20);
+      expect(resolved.id).toBe('plasmaLance');
     });
 
-    it('leaves the player\'s base pulseLaser entry untouched (cycleTime 3000)', () => {
-      resolveWeapon(ENEMY_KINDS.drone.weaponId, ENEMY_KINDS.drone.weaponOverride);
-      expect(WEAPONS.pulseLaser.cycleTime).toBe(3000);
-      expect(WEAPONS.pulseLaser.damage).toBe(16 / 5);   // totalDamage 16 over the 5-pulse burst
+    it('opts into trigger discipline: 1 bolt at a time, then a short rest', () => {
+      expect(ENEMY_KINDS.drone.burstShots).toBe(1);
+      expect(ENEMY_KINDS.drone.burstRestMs).toBeGreaterThan(0);
+      expect(ENEMY_KINDS.drone.burstRestMs).toBe(400);
     });
 
-    it('opts into trigger discipline: 5 quick shots then a multi-second rest', () => {
-      expect(ENEMY_KINDS.drone.burstShots).toBe(5);
-      expect(ENEMY_KINDS.drone.burstRestMs).toBe(2500);
-    });
-
-    it('has NO per-kind cadence timer — the overridden cycleTime IS the cadence lever (#241/#243)', () => {
+    it('has NO per-kind cadence timer — cadence derives entirely from the resolved weapon (#241/#243)', () => {
       expect(ENEMY_KINDS.drone.fireEveryMs).toBeUndefined();
     });
 
-    it('drone fireRange stays inside the Pulse Laser\'s own envelope (280 ≤ opt 340)', () => {
-      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.pulseLaser.range.opt);
-      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.pulseLaser.range.max);
+    it('drone fireRange stays inside the Plasma Lance\'s own envelope (280 ≤ opt 460 ≤ max 620)', () => {
+      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.plasmaLance.range.opt);
+      expect(ENEMY_KINDS.drone.fireRange).toBeLessThanOrEqual(WEAPONS.plasmaLance.range.max);
     });
   });
 
@@ -271,6 +266,6 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     // The turret's consolidated artillery shell keeps the old siegeShell numbers exactly.
     const t = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
     expect(t.damage).toBe(10);
-    expect(WEAPONS.napalm.damage).toBe(6);   // the player's napalm is untouched
+    expect(WEAPONS.napalm.damage).toBe(27);   // the player's napalm (#259-retuned) is untouched by the override
   });
 });
