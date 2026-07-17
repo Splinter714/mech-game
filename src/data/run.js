@@ -34,6 +34,10 @@ export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', '
 // added to LATE_POOL only, not EARLY_POOL — it's a bigger single-draw volume spike than 'swarm'
 // (28 vs 18 troopers), so it's reserved for the harder late-stage escalation rather than risking
 // an early-stage squad-size draw ballooning unexpectedly.
+// #239 (temporary): 'infantryMob' pulled back OUT of LATE_POOL while Jackson plans a redesign of
+// the kind — so it no longer draws into a real run's squad composition at all. The underlying
+// enemyKinds.js definition, its art, and its behavior are all left completely intact; restoring
+// it here is a one-line re-add, not an archaeology project.
 // #130: 'quadruped' (the Broodwalker — a tanky mobile "nest" that deploys drones/infantry
 // during the fight, data/enemyKinds.js) is added ONCE to LATE_POOL only, at a similarly rare
 // tier to turretNest/infantryMob/sniper/artillery — a rarer, tougher escalation unit, not a
@@ -48,7 +52,7 @@ export const EARLY_POOL = ['raider', 'skirmisher', 'turret', 'turret', 'tank', '
 // pool is what actually drives a normal run's squad composition.)
 export const LATE_POOL = [
   'sniper', 'artillery', 'helicopter', 'helicopter', 'helicopter', 'swarm', 'swarm',
-  'turretNest', 'turretNest', 'infantryMob', 'quadruped', 'quadruped',
+  'turretNest', 'turretNest', 'quadruped', 'quadruped',
 ];
 
 // Squad size at stage 0 and the growth per stage (rounded). Stage N has
