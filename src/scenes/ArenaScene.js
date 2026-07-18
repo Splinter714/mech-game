@@ -71,6 +71,14 @@ export default class ArenaScene extends Phaser.Scene {
     this._initMission();
     // #64: continue the in-progress run (set by a prior stage advance) or start a fresh one.
     this._initRun();
+    // Refs #281: reset the player-corpse flag fresh every deploy. Phaser reuses the SAME
+    // ArenaScene instance across scene.start('ArenaScene') calls, so a `this.*` property set by
+    // a previous sortie (here, combat.js `_damagePlayerAt` flipping this true on death) survives
+    // into the next one unless explicitly reset here — same "reset per-deploy scene state in
+    // create()" pattern as `_initRun`/`_initMission` above. Without this, the first death of a
+    // session permanently disabled movement/firing (update()'s `!this._playerDead` gate) on
+    // every subsequent deploy, with no way to recover short of reloading the page.
+    this._playerDead = false;
 
     // Player mech (repaired fresh for the sortie).
     this.allMechs = this.registry.get('allMechs');
@@ -382,6 +390,17 @@ export default class ArenaScene extends Phaser.Scene {
   // wrapper around toGarage() (as #210 originally did) missed the two manual early-exit paths
   // entirely, since they call toGarage() directly.
   toGarage() {
+    // Refs #281: unconditionally clear the run-over banner and cancel any still-pending
+    // RUN_OVER_DELAY auto-return timer (run.js `_endRun`) — this is the single funnel every
+    // return-to-garage path goes through (see the comment above), so it's the right place to
+    // guarantee both regardless of WHY the player is leaving. Previously the banner was only
+    // cleared inside that delayed callback, so a manual return (G key / Select-B) before the
+    // 3.2s timer fired left the stale banner in the registry and it re-displayed instantly on
+    // the next deploy; leaving the timer alive also meant it could fire later — after a new run
+    // had already started — and clobber that fresh state with a second, unwanted toGarage() call.
+    this._runOverTimer?.remove(false);
+    this._runOverTimer = null;
+    this.registry.set('runOverBanner', null);
     Audio.ui('returnToGarage');
     this.scene.stop('HudScene');
     this.scene.start('GarageScene');

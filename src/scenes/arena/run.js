@@ -102,9 +102,14 @@ export const RunMixin = {
     const color = won ? '#7bd17b' : '#e2533a';
     this.registry.set('runOverBanner', { label, color, currency: this.run.currency });
 
-    this.time.delayedCall(RUN_OVER_DELAY, () => {
+    // Refs #281: keep a handle on this timer so a manual return-to-garage (toGarage(), called
+    // directly by the G key / Select-B pad exit — see toGarage()'s own comment) can cancel it.
+    // Without this, a manual exit before the timer fires left it dangling: it would go off
+    // later — after the player had already started a new run — and clobber that fresh state by
+    // nulling `run`/`runOverBanner` and forcing a second, unwanted toGarage() transition.
+    this._runOverTimer = this.time.delayedCall(RUN_OVER_DELAY, () => {
+      this._runOverTimer = null;
       this.registry.set('run', null);
-      this.registry.set('runOverBanner', null);
       this.toGarage();
     });
   },

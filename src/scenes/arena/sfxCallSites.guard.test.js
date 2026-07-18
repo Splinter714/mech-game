@@ -70,3 +70,31 @@ describe('#201 SFX call-site wiring', () => {
     expect(runMatches.length + arenaMatches.length).toBe(1);
   });
 });
+
+// Refs #281 (playtest: "manually returning to garage before the WIN/DEAD banner timed out left
+// it showing again on the next deploy"). Root cause: `_endRun`'s RUN_OVER_DELAY delayedCall was
+// the ONLY place `runOverBanner` ever got cleared — a manual return via toGarage() (G key /
+// Select-B pad, same funnel the tests above exercise) skipped that entirely, leaving the stale
+// banner in the registry for HudScene to redisplay on the next sortie. Fix: toGarage() itself now
+// always clears the banner and cancels any still-pending delayedCall (`_runOverTimer`) so it can't
+// fire later — after a new run has already started — and force a second, unwanted transition.
+describe('#281 toGarage() always clears the stale run-over banner', () => {
+  it('toGarage() unconditionally clears runOverBanner', () => {
+    const toGarageMatch = arenaScene.match(/toGarage\(\)\s*\{[\s\S]*?\n  \}/);
+    expect(toGarageMatch).toBeTruthy();
+    expect(toGarageMatch[0]).toMatch(/this\.registry\.set\('runOverBanner', null\);/);
+  });
+
+  it('toGarage() cancels any pending RUN_OVER_DELAY timer so it cannot fire again later', () => {
+    const toGarageMatch = arenaScene.match(/toGarage\(\)\s*\{[\s\S]*?\n  \}/);
+    expect(toGarageMatch[0]).toMatch(/this\._runOverTimer\?\.remove\(false\);/);
+  });
+
+  it('run.js no longer clears runOverBanner itself — toGarage() is the single source of truth', () => {
+    expect(run).not.toMatch(/registry\.set\('runOverBanner', null\)/);
+  });
+
+  it('run.js keeps a handle on the delayedCall so it can be cancelled from toGarage()', () => {
+    expect(run).toMatch(/this\._runOverTimer = this\.time\.delayedCall\(RUN_OVER_DELAY/);
+  });
+});
