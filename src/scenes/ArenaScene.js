@@ -20,6 +20,7 @@ import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
 import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
+import { TerrainLabelsMixin } from './arena/terrainLabels.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -156,6 +157,9 @@ export default class ArenaScene extends Phaser.Scene {
     // #269 playtest follow-up (hex legibility): persistent red text tags over every dock/
     // alertTower/turretEmplacement hex, so the new hex types are unambiguous during playtest.
     this._spawnHexLabels();
+    // #270: a second, quieter labelling layer for every OTHER hex's real terrain id — camera-
+    // culled/pooled (see terrainLabels.js), unlike the fixed handful spawned just above.
+    this._initTerrainLabels();
 
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
@@ -257,6 +261,9 @@ export default class ArenaScene extends Phaser.Scene {
     // the single biggest FPS cost in the game. Reuses this same view rect, not a second camera-
     // bounds computation.
     this._updateTileCulling(view);
+    // #270: general terrain-id hex labels — same view rect, own coarse recompute cadence (see
+    // terrainLabels.js for the interval/margin reasoning).
+    this._updateTerrainLabels(view, dt);
 
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();
@@ -374,5 +381,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin,
 );
