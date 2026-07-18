@@ -19,7 +19,7 @@
 // is decoupled from length — the half-width is kept narrow (so #126's boundary ring is reliably
 // visible on the SIDES at the real GAMEPLAY_ZOOM=1.3, see below), while the length is long and
 // independent, so the corridor's far end is NOT visible from spawn and a run traverses it end-to-end.
-import { axialKey, range, neighbors, hexToPixel, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
+import { axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf } from './terrain.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
@@ -152,6 +152,19 @@ export function baseLateFraction(baseIndex, baseCount) {
 // used elsewhere in `generateTerrain`); callers with a real corridor spine pass
 // `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, since a curving spine's "progress along
 // the run" is NOT the same as straight-line distance from origin once the corridor bends.
+// #269 (spawn rear-pad fix): `prevProgress` below starts at literal `0`, not the player's actual
+// spawn position — investigated whether it needed to change now that the player spawns behind
+// origin (`spineSpawnHex`, negative `u`/progress) instead of exactly at it. It does not: `0` was
+// always just the FLOOR ANCHOR for gap 0 ("base 0 must land at least `minGapProgress` past this
+// value"), never a literal claim about where the player stands. Every real `progressOf` in play
+// (`spineProgressHexOf`, or this file's own straight-line-distance default) returns >= 0 for any
+// hex reachable by `placeBases`'/`placeGapTowers`' own candidate sets, so the `0` floor anchor was
+// already the true minimum either way — moving spawn to a negative `u` only ADDS unused-but-real
+// travel distance behind that floor (the rear-pad stretch), it never changes where base 0 or gap
+// 0's tower are allowed to land (`floor = prevProgress(0) + minGapProgress`, always > 0). Confirmed
+// by the existing '#283 minimum calm-gap spacing' suite in worldgen.test.js, which still asserts
+// this floor holds unchanged. If a future change ever lets `progressOf` return negative values for
+// in-bounds hexes, this anchor would need revisiting — it does not today.
 export function placeBases(
   rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
 ) {
@@ -595,6 +608,21 @@ export function generateSpine(rng, {
     points.push({ x: dirX * u + perpX * v, y: dirY * u + perpY * v, u });
   }
   return { points, startAngle, length, rearPad };
+}
+
+// #269 (spawn rear-pad fix, playtest follow-up): the hex the player should actually SPAWN at —
+// the spine's own first sample, `spine.points[0]` (u = -rearPad, snapped out to the same
+// u=0-aligned sample grid `generateSpine` builds on), converted to its nearest hex centre. The
+// spine — and the corridor carved around it, `corridorHexSet` — already extends
+// CORRIDOR_REAR_PAD_PX behind world origin (u=0); previously the player spawned exactly at
+// origin anyway, leaving that whole already-generated, already-safe rear-pad stretch behind them
+// and never walked. Spawning here instead means the player walks FORWARD through it on the way
+// to u=0 and then on to the first gap tower/base, using space that's already there. Exported so
+// both the live scene (`scenes/arena/world.js` `_buildWorld`) and tests derive the exact same
+// spawn hex from a spine, with no duplicated "which spine sample is spawn" logic.
+export function spineSpawnHex(spine) {
+  const p = spine.points[0];
+  return pixelToHex(p.x, p.y);
 }
 
 // The set of playable hex keys for a spine: every hex within `halfWidth` (perpendicular pixel
