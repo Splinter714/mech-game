@@ -675,4 +675,60 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     }
     for (const t of alertTowers) expect(terrain.get(axialKey(t.q, t.r))).toBe('alertTower');
   });
+
+  // #269 playtest follow-up: is an alert tower's placement (rings 3-5 out from its base centre)
+  // actually reachable on the corridor's natural path, or could it land off to the side the
+  // player would never drive near? `placeBases` only ever stamps a candidate hex that's already
+  // IN `T` (built from the live corridor's own hex set, scenes/arena/world.js `_buildWorld`) —
+  // so every placed tower is, by construction, already inside the drivable corridor. This test
+  // exercises the REAL corridor-carving path (buildCorridor, same as world.js) across many seeds
+  // and confirms every placed alert tower's pixel position sits within CORRIDOR_HALF_WIDTH_PX of
+  // the corridor's own spine — i.e. never further from the driving path than any other in-map
+  // feature can be, not stranded off to one side.
+  it('places alert towers only within the corridor\'s own half-width of its spine (never off-path)', () => {
+    function perpDistToSpine(points, x, y) {
+      let best = Infinity;
+      for (let i = 0; i < points.length - 1; i++) {
+        const x0 = points[i].x, y0 = points[i].y, x1 = points[i + 1].x, y1 = points[i + 1].y;
+        const dx = x1 - x0, dy = y1 - y0;
+        const len2 = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / len2));
+        const d = Math.hypot(x - (x0 + t * dx), y - (y0 + t * dy));
+        if (d < best) best = d;
+      }
+      return best;
+    }
+    let checked = 0;
+    for (let seed = 1; seed <= 25; seed++) {
+      const { spine, includedKeys } = buildCorridor(seed * 101 + 3);
+      const { alertTowers } = generateTerrain({
+        seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys,
+      });
+      for (const t of alertTowers) {
+        const { x, y } = hexToPixel(t.q, t.r);
+        // A small slack (+HEX_STEP_PX) accounts for the hex being counted "in" the corridor if
+        // its centre is within reach even when its exact centre sits a fraction past the strict
+        // half-width (corridorHexSet includes a hex if ANY part of it is close enough).
+        expect(perpDistToSpine(spine.points, x, y)).toBeLessThanOrEqual(CORRIDOR_HALF_WIDTH_PX + HEX_STEP_PX);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(30);   // sanity: the sweep actually placed towers to check
+  });
+
+  // #269 playtest follow-up: confirms placement isn't wildly unreliable — most requested towers
+  // (ALERT_TOWERS_PER_BASE_MIN..MAX per base) actually land somewhere, even though the 10-try
+  // rejection sampling against a real corridor can occasionally miss a candidate ring entirely.
+  it('places most of the requested alert towers across a sweep of real corridors (not a rare fluke)', () => {
+    let totalMaxPossible = 0, totalPlaced = 0;
+    for (let seed = 1; seed <= 25; seed++) {
+      const { includedKeys } = buildCorridor(seed * 101 + 3);
+      const { bases, alertTowers } = generateTerrain({
+        seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys,
+      });
+      totalMaxPossible += bases.length * ALERT_TOWERS_PER_BASE_MAX;
+      totalPlaced += alertTowers.length;
+    }
+    expect(totalPlaced).toBeGreaterThan(totalMaxPossible * 0.5);
+  });
 });
