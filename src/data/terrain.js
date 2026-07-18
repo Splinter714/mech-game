@@ -78,17 +78,11 @@ export const TERRAIN = {
                category: 'terrain', movement: 'none', cover: 'open' },
   // Forest: walk-through cover — passable but slowing, and it hides you (blocks LOS).
   // #227: its OWN rubble (charred plant debris) distinct from a destroyed building's masonry.
-  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 40, rubbleId: 'vegRubble',
+  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 40, rubbleId: 'forestRubble',
                category: 'terrain', movement: 'slow', cover: 'soft' },
-  // Rubble: what a destroyed building leaves behind — broken masonry chunks, passable, no cover, mild slow.
-  // #275: the biome-independent generic fallback (`RUBBLE` below) — still produced by the
-  // base-infra destructibles (alertTower/objective/dockClosed) even though the grassland
-  // `building` outpost that originally used it is gone.
-  rubble:    { id: 'rubble',    tex: 'hex_rubble',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
   // #227: what a destroyed forest hex leaves behind — charred plant debris, visually distinct
   // from the generic rubble's broken-masonry look even though both are passable/no-cover.
-  vegRubble: { id: 'vegRubble', tex: 'hex_vegRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
+  forestRubble: { id: 'forestRubble', tex: 'hex_forestRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
   // #269 §3 (issue: base population rework — dormant docks + alert towers): a GENERIC dock/bay
   // hex — a pure PLACEMENT MARKER for a dormant docked unit (data/worldgen.js `placeBases`), not
@@ -157,6 +151,14 @@ export const TERRAIN = {
   alertTower:{ id: 'alertTower',tex: 'hex_alertTower', passable: false, blocksLOS: true,
                destructible: true, hp: 25, rubbleId: 'rubble', setDressing: true,
                category: 'base', movement: 'none', cover: 'hard' },
+
+  // Rubble: what a destroyed base-infra structure leaves behind — broken masonry chunks,
+  // passable, no cover, mild slow. #275: the biome-independent generic fallback (`RUBBLE`
+  // below) produced by alertTower/objective/dockClosed when destroyed — no longer tied to any
+  // specific biome's own outpost (the grassland `building` outpost that originally produced
+  // this has been removed).
+  rubble:    { id: 'rubble',    tex: 'hex_rubble',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
+               category: 'terrain', movement: 'slow', cover: 'open' },
 
   // #269 playtest follow-up (dock composition): turrets get their OWN dedicated base hex type
   // instead of being just another kind drawn from the generic dock pool (worldgen.js

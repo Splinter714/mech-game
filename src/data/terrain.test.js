@@ -191,7 +191,7 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
   it('soft cover flattens to its own biome rubble (data-driven)', () => {
     // #227: each soft-cover destructible now has its OWN rubble id, distinct from its biome's
     // hard-destructible (outpost) rubble.
-    expect(rubbleFor('forest')).toBe('vegRubble');
+    expect(rubbleFor('forest')).toBe('forestRubble');
     expect(rubbleFor('scrub')).toBe('scrubRubble');
     expect(rubbleFor('drift')).toBe('driftRubble');
     expect(rubbleFor('wreck')).toBe('wreckRubble');
@@ -254,7 +254,7 @@ describe('isWaterTerrain (#151) — reads as actual water, not just slow terrain
 
   it('does NOT flag other slow-but-not-water terrain (dry riverbeds, sand, ash, rubble, debris)', () => {
     for (const id of [
-      'grass', 'grassB', 'forest', 'rubble', 'vegRubble',
+      'grass', 'grassB', 'forest', 'rubble', 'forestRubble',
       'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'scrubRubble', 'quicksand',
       'snow', 'snowB', 'drift', 'driftRubble',
       'pavement', 'pavementB', 'collapsed', 'wreck', 'wreckRubble', 'debris',
@@ -314,12 +314,12 @@ describe('#227 — destroyed soft cover leaves DIFFERENT rubble than the generic
   });
 
   it('names the 5 new soft-destructible rubble ids', () => {
-    expect(TERRAIN.vegRubble).toBeDefined();
+    expect(TERRAIN.forestRubble).toBeDefined();
     expect(TERRAIN.scrubRubble).toBeDefined();
     expect(TERRAIN.driftRubble).toBeDefined();
     expect(TERRAIN.wreckRubble).toBeDefined();
     expect(TERRAIN.fumaroleRubble).toBeDefined();
-    for (const id of ['vegRubble', 'scrubRubble', 'driftRubble', 'wreckRubble', 'fumaroleRubble']) {
+    for (const id of ['forestRubble', 'scrubRubble', 'driftRubble', 'wreckRubble', 'fumaroleRubble']) {
       expect(TERRAIN[id].passable).toBe(true);
       expect(TERRAIN[id].blocksLOS).toBe(false);
     }

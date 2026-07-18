@@ -60,7 +60,7 @@ const PAL = {
   // Rubble: the ashen debris a flattened destructible hex leaves behind.
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
   // #227: a destroyed forest hex — charred plant debris, distinct from the generic rubble.
-  vegRubble:{ fill: 0x241f16, edge: 0x1a1610 },
+  forestRubble:{ fill: 0x241f16, edge: 0x1a1610 },
   // #251 (playtest follow-up): base-infrastructure hex types (dock/alertTower/turretEmplacement/
   // objective) render with ONE fixed neutral colour regardless of which biome they're stamped
   // into — a dock must look like a dock on grass, desert, ice, or ash alike. Reusing the CURRENT
@@ -480,7 +480,7 @@ const DETAIL = {
   },
   // #227: destroyed forest — charred plant debris (organic ellipse bits), NOT the building's
   // masonry-slab look.
-  hex_vegRubble: (sg) => organicDebrisScatter(sg, 0x1a1610, 0x33301c, 0x50492c, 0x91),
+  hex_forestRubble: (sg) => organicDebrisScatter(sg, 0x1a1610, 0x33301c, 0x50492c, 0x91),
   hex_forest: (sg) => {
     // Shadowy forest floor under the canopy, filling the whole hex.
     sg.fillStyle(0x14290f, 0.7);
