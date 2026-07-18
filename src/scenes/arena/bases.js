@@ -9,7 +9,7 @@
 // between successive bases along the corridor's progression, not anchored to any base or
 // "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
-import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
+import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
@@ -148,6 +148,12 @@ export const BasesMixin = {
           // uses this to stay near its dock instead of freezing OR chasing the player unbounded.
           // Stashed on every unit in the cluster (not just one), same as `dockKey`.
           e.homeX = x; e.homeY = y;
+          // #283 audit: cap the DORMANT proximity-wake radius (data/awareness.js
+          // `PROXIMITY_WAKE_RANGE_CAP`'s own comment has the full reasoning) — a no-op for every
+          // kind whose `detectRange` was already below the cap (tank/helicopter/quadruped/mech),
+          // only actually tightens the turret emplacement's wildly larger combat-range-derived
+          // value below.
+          e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
         }
       }
       for (const turret of base.turrets ?? []) {
@@ -157,6 +163,11 @@ export const BasesMixin = {
         e.baseId = base.id;
         e.dockKey = axialKey(turret.q, turret.r);
         e.homeX = x; e.homeY = y;
+        // #283 audit: see the matching comment on the dock loop above — the turret emplacement
+        // is the biggest beneficiary of this cap (2880px -> 320px), though every dormant kind's
+        // proximity-wake radius now shares this same 320px envelope (awareness.js
+        // `PROXIMITY_WAKE_RANGE_CAP`'s own comment has the full reasoning).
+        e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
       }
     }
   },
