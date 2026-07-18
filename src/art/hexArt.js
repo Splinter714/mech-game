@@ -101,6 +101,12 @@ const PAL = {
   // player can tell open vs. closed apart at a glance even before the DETAIL painter's dome icon
   // registers.
   dockClosed: { fill: 0x33383e, edge: 0x22262c },
+  // #288 (base front-wall design): the wall SEGMENT hex (terrain.js `wallSegment`) — a genuine
+  // barrier/barricade, so it gets its own darker steel-plate tone rather than the neutral
+  // BASE_INFRA_COLOR every passable/marker base-infra hex shares — distinct enough at a glance
+  // (even before the DETAIL painter's rib/hazard-stripe shape registers) from dock/objective's
+  // lighter concrete and dockClosed's own dark-blue-grey dome tone.
+  wallSegment: { fill: 0x34383e, edge: 0x212429 },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -626,6 +632,48 @@ const DETAIL = {
     sg.fillStyle(0xd8342a, 0.95); sg.fillCircle(C.cx, C.cy - 13, 4.2);                          // target ring (outer)
     sg.fillStyle(0x25282e, 1);    sg.fillCircle(C.cx, C.cy - 13, 2.8);                          // target ring (punch-through)
     sg.fillStyle(0xff5a3a, 1); sg.fillCircle(C.cx, C.cy - 13, 1.6);                            // beacon core
+  },
+
+  // #288 (base front-wall design): one SEGMENT of a base's approach-edge wall row
+  // (data/worldgen.js `placeBaseWalls`) — needs to read as a genuine defensive barrier/barricade,
+  // distinct from every other base-infra hex's shape (dock's flat pad, dockClosed's domed hatch,
+  // turretEmplacement's round gun platform, alertTower's slim mast, objective's squat bunker).
+  // The wall's own ROW can run in ANY direction relative to the hex grid (perpendicular to
+  // whatever the local spine tangent happens to be at that base — #288's whole geometry point),
+  // and hex art has no per-instance rotation hook (every fn draws in a fixed local frame, tiled
+  // with no per-hex transform) — so this is drawn close to hex-radially-symmetric (a big
+  // HESCO/blast-wall slab nearly filling the tile via `hexCorners`, ringed by upright armor ribs
+  // rather than a single directional rectangle) so a row of these reads as one continuous
+  // barrier no matter which way the row actually runs across the grid.
+  hex_wallSegment: (sg) => {
+    sg.fillStyle(0x000000, 0.32); sg.fillEllipse(C.cx + 1.5, C.cy + 3, 34, 20);                 // ground shadow
+    sg.fillStyle(0x2a2d32, 1);                                                                    // outer slab (near-full hex footprint)
+    sg.fillPoints(hexCorners(HEX_SIZE * 0.92).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
+    sg.fillStyle(0x3a3f46, 1);                                                                    // top-lit inset face
+    sg.fillPoints(hexCorners(HEX_SIZE * 0.78).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y - 1.5 })), true);
+    // Corrugated vertical armor ribs across the face — alternating tone plates, upright (a wall,
+    // not a bunker roof), shortening toward the tile's pointed left/right ends so they stay
+    // inside the hex silhouette.
+    const ribCount = 7;
+    for (let i = 0; i < ribCount; i++) {
+      const t = (i / (ribCount - 1)) - 0.5;
+      const rx = C.cx + t * HEX_SIZE * 1.25;
+      const rh = 25 - Math.abs(t) * 14;
+      if (rh <= 4) continue;
+      sg.fillStyle(i % 2 === 0 ? 0x454b53 : 0x333840, 0.92);
+      sg.fillRect(rx - 2.4, C.cy - rh / 2, 4.8, rh);
+    }
+    // Black/amber hazard stripe band across the upper face — the "defensive gate" read.
+    sg.fillStyle(0x18191d, 0.92); sg.fillRect(C.cx - HEX_SIZE * 0.7, C.cy - 15.5, HEX_SIZE * 1.4, 6);
+    for (let i = 0; i < 6; i++) {
+      sg.fillStyle(0xc99a2c, 0.85);
+      sg.fillRect(C.cx - HEX_SIZE * 0.7 + i * (HEX_SIZE * 1.4 / 6) + 1.5, C.cy - 15.5, 4, 6);
+    }
+    // Corner buttress bolts pinning the slab down.
+    for (const [dx, dy] of [[-15, -6], [15, -6], [-15, 9], [15, 9]]) {
+      sg.fillStyle(0x121317, 0.9); sg.fillCircle(C.cx + dx, C.cy + dy, 2.1);
+      sg.fillStyle(0x6a7078, 0.8); sg.fillCircle(C.cx + dx - 0.4, C.cy + dy - 0.4, 0.9);
+    }
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────
