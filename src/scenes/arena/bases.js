@@ -9,7 +9,7 @@
 // between successive bases along the corridor's progression, not anchored to any base or
 // "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
-import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WINDOW_MS } from '../../data/awareness.js';
+import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WINDOW_MS, NOISE_AGGRO_RANGE } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
@@ -21,17 +21,28 @@ import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './he
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp } from '../../data/terrain.js';
 
-// #269 playtest follow-up ("sensor towers need a visual AND a noise to indicate they are
-// spooling up") — the live escalating ring drawn over a counting-down alert tower. Colour
-// mirrors the baked beacon light itself (hexArt.js `hex_alertTower`'s 0xff6a3a beacon), so the
-// live FX reads as "the same light, now agitated" rather than an unrelated UI colour.
-const ALERT_RING_COLOR = 0xff6a3a;
+// #269 overhaul ("a pulsing red ring of some kind once it's activated") — the live ring drawn
+// over a counting-down alert tower. Was the beacon's own orange (0xff6a3a); Jackson asked for a
+// clearly RED, urgent read once a tower is committed, so it's now a saturated alarm red distinct
+// from the calm orange beacon light — "this tower is actively calling in reinforcements RIGHT NOW"
+// rather than "there is a tower here". Since the countdown is sticky (data/alertTower.js), this
+// ring persists the whole activated duration, not just while the player loiters.
+const ALERT_RING_COLOR = 0xff2a2a;
 // Ring radius/alpha at fraction 0 (just started) and fraction 1 (about to trigger) — grows and
-// brightens as the countdown nears completion, same "escalating" idea the issue asks for.
+// brightens as the countdown nears completion, same "escalating" idea the issue asks for. The
+// PULSE below is layered on top of this baseline escalation.
 const ALERT_RING_RADIUS_MIN = 14;
 const ALERT_RING_RADIUS_MAX = 34;
 const ALERT_RING_ALPHA_MIN = 0.35;
 const ALERT_RING_ALPHA_MAX = 0.95;
+// #269 overhaul: the throbbing PULSE layered on top of the escalation above — an oscillating
+// sine over an accumulated per-tower timer, so the ring visibly BEATS (grows/shrinks + fades in/
+// out) on a fixed cadence rather than only smoothly swelling with the countdown. Period ~640ms
+// reads as an urgent recurring alarm pulse; the swings are added to the escalation baseline so a
+// near-complete countdown still both throbs AND sits at its larger/brighter escalated size.
+const ALERT_RING_PULSE_PERIOD_MS = 640;
+const ALERT_RING_PULSE_RADIUS = 6;    // +/- px the radius throbs around its escalated baseline
+const ALERT_RING_PULSE_ALPHA = 0.3;   // +/- alpha the ring throbs around its escalated baseline
 
 // #269 playtest follow-up — the audio pulse's re-trigger interval (ms) shrinks from
 // ALERT_PULSE_INTERVAL_MIN..MAX as `fraction` climbs, so the BEEP RATE itself quickens on top
@@ -286,9 +297,24 @@ export const BasesMixin = {
     this._wokenBases = new Set();
     // #269 playtest follow-up: live escalating-ring FX + periodic warning-beep state, one entry
     // per tower key, created lazily the instant a countdown actually starts and torn down the
-    // instant it cancels/completes — see `_updateAlertTowers` below. Never pre-populated here
-    // (an idle tower has nothing to show yet).
+    // instant it completes / the tower dies — see `_updateAlertTowers` below. Never pre-populated
+    // here (an idle tower has nothing to show yet).
     this._alertTowerFx = new Map();
+    // #269 overhaul Part 1: keys of towers that took damage-but-survived since the last tick — a
+    // one-frame activation signal set by `_onAlertTowerDamaged` (called from world.js
+    // `_damageBuildingAt`) and consumed by the next `_updateAlertTowers`. Because the countdown is
+    // sticky, a single frame in this set is enough to commit the tower forever; the entry is
+    // cleared as soon as it's consumed (and when the tower's state is dropped on destruction).
+    this._alertTowerDamaged = new Set();
+  },
+
+  // #269 overhaul Part 1: a standing alert-tower hex just took damage (world.js `_damageBuildingAt`,
+  // only called through here when the hex survived — a killing blow collapses it to rubble and the
+  // per-tick `terrain.get(key) !== 'alertTower'` check drops the state instead). Flag it so the
+  // next `_updateAlertTowers` tick treats this as an activation trigger — shooting a tower commits
+  // it to calling reinforcements (unless you finish destroying it before the countdown completes).
+  _onAlertTowerDamaged(key) {
+    this._alertTowerDamaged?.add(key);
   },
 
   // §5: per-frame tick for every standing alert tower — called from ArenaScene.update(). A
@@ -297,17 +323,31 @@ export const BasesMixin = {
   // the tower is gone; that's the whole "destroy it before the call completes" stealth window.
   _updateAlertTowers(dt) {
     if (!this._alertTowerStates || !this._alertTowerStates.size) return;
+    // #269 overhaul Part 1: is there a "live" player gunshot this frame (within NOISE_WINDOW_MS)?
+    // Computed once per frame here — same `_lastFireAt` recency test `_maybeProximityWake`/
+    // enemies.js `_updateVehicle` use — then each tower checks its own distance to that shot below.
+    const noiseLive = this._lastFireAt != null && this.time.now - this._lastFireAt < NOISE_WINDOW_MS;
     for (const [key, state] of [...this._alertTowerStates]) {
       if (this.terrain.get(key) !== 'alertTower') {
         this._alertTowerStates.delete(key);
         this._alertTowerBaseId?.delete(key);   // #284: no tower left to link, drop its baseId lookup too
+        this._alertTowerDamaged?.delete(key);  // #269 overhaul: tower gone — drop any pending damage flag
         this._freeAlertFx(key);   // #269 playtest follow-up: tower destroyed mid-countdown — kill its FX too
         continue;
       }
       const [q, r] = key.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
+      // #269 overhaul Part 1: the tower activates on ANY of three triggers, not just proximity —
+      //   (a) player within the (now larger, sticky) detection radius,
+      //   (b) a recent player gunshot within NOISE_AGGRO_RANGE of the tower (heard it), or
+      //   (c) the tower took damage this frame (flagged by `_onAlertTowerDamaged`).
+      // Because the countdown is sticky (data/alertTower.js), any single true frame commits it.
       const inRange = Math.hypot(this.px - x, this.py - y) <= ALERT_DETECT_RADIUS;
-      const next = tickAlertTower(state, { inRange, dt });
+      const heardShot = noiseLive && Math.hypot(this._lastFireX - x, this._lastFireY - y) <= NOISE_AGGRO_RANGE;
+      const wasDamaged = this._alertTowerDamaged?.has(key) ?? false;
+      if (wasDamaged) this._alertTowerDamaged.delete(key);   // one-frame signal — consume it now
+      const activate = inRange || heardShot || wasDamaged;
+      const next = tickAlertTower(state, { activate, dt });
       if (next.triggered) {
         this._alertTowerStates.delete(key);   // one-shot — nothing left to tick once it fires
         this._freeAlertFx(key);               // #269 playtest follow-up: countdown complete — swap FX for the real alert
@@ -319,13 +359,13 @@ export const BasesMixin = {
     }
   },
 
-  // #269 playtest follow-up ("sensor towers need a visual AND a noise to indicate they are
-  // spooling up") — per-frame escalating ring + periodic warning beep for one tower's live
-  // countdown state. `next.countingDown` is the sole authority on whether FX should exist right
-  // now: true while `inRange` has been held long enough to start counting, false the instant the
-  // player leaves range (tickAlertTower's cancel path) — so simply mirroring it here (create on
-  // the rising edge, free on the falling edge) keeps the FX's lifetime exactly matched to the
-  // countdown's own, no separate tracking needed.
+  // #269 overhaul ("a pulsing red ring of some kind once it's activated") — per-frame pulsing red
+  // ring + periodic warning beep for one tower's live countdown state. `next.countingDown` is the
+  // sole authority on whether FX should exist right now: true the instant any activation trigger
+  // starts the countdown, and — since the countdown is now STICKY (data/alertTower.js) — it stays
+  // true for the whole activated duration until the tower fires or is destroyed (both of which
+  // free the FX from `_updateAlertTowers` directly, not through here). So this method effectively
+  // only ever runs with `countingDown === true`; the guard below is kept purely defensively.
   _updateAlertFx(key, x, y, next, dt) {
     if (!next.countingDown) { this._freeAlertFx(key); return; }
     let fx = this._alertTowerFx.get(key);
@@ -347,16 +387,26 @@ export const BasesMixin = {
       // fixed world position `(x, y)` set once here via `setPosition`.
       const ring = this.add.graphics().setPosition(x, y).setDepth(DEPTH.WORLD_UI);
       strokeHexRing(ring, ALERT_RING_RADIUS_MIN, 3, ALERT_RING_COLOR, ALERT_RING_ALPHA_MIN);
-      fx = { ring, pulseTimerMs: 0 };
+      fx = { ring, pulseTimerMs: 0, throbMs: 0 };
       this._alertTowerFx.set(key, fx);
     }
     const f = next.fraction ?? 0;
+    // #269 overhaul: a throbbing PULSE layered on top of the countdown-fraction escalation. An
+    // accumulated timer (framerate-independent, unlike keying off `this.time.now` which some test
+    // harnesses don't advance) drives a sine so the ring visibly beats — radius and alpha swing
+    // +/- around their escalated baseline on a fixed ~640ms cadence, reading as an urgent recurring
+    // alarm rather than a smoothly-growing ring. Baseline still climbs with `f`, so a near-complete
+    // countdown throbs around a larger, brighter ring than a just-started one.
+    fx.throbMs += Math.max(0, dt) * 1000;
+    const throb = Math.sin((fx.throbMs / ALERT_RING_PULSE_PERIOD_MS) * Math.PI * 2);   // -1..1
+    const baseRadius = ALERT_RING_RADIUS_MIN + (ALERT_RING_RADIUS_MAX - ALERT_RING_RADIUS_MIN) * f;
+    const baseAlpha = ALERT_RING_ALPHA_MIN + (ALERT_RING_ALPHA_MAX - ALERT_RING_ALPHA_MIN) * f;
     strokeHexRing(
       fx.ring,
-      ALERT_RING_RADIUS_MIN + (ALERT_RING_RADIUS_MAX - ALERT_RING_RADIUS_MIN) * f,
+      Math.max(1, baseRadius + ALERT_RING_PULSE_RADIUS * throb),
       3,
       ALERT_RING_COLOR,
-      ALERT_RING_ALPHA_MIN + (ALERT_RING_ALPHA_MAX - ALERT_RING_ALPHA_MIN) * f,
+      Math.max(0, Math.min(1, baseAlpha + ALERT_RING_PULSE_ALPHA * throb)),
     );
     // Periodic warning beep, re-triggered on an interval that shrinks as `f` climbs (see
     // ALERT_PULSE_INTERVAL_MIN/MAX_MS above) — a simple countdown timer accumulated in ms,
@@ -368,8 +418,10 @@ export const BasesMixin = {
     }
   },
 
-  // Tear down one tower's live FX immediately — countdown cancelled (player left range / tower
-  // destroyed) or completed (alert fired). No held/looping sound to explicitly stop (alertPulse
+  // Tear down one tower's live FX immediately — the countdown ended, which (post-#269-overhaul,
+  // now that there's no cancel-on-leave path) means only one of two things: the tower was
+  // DESTROYED mid-countdown, or the countdown COMPLETED and the alert fired. No held/looping
+  // sound to explicitly stop (alertPulse
   // is a one-shot cue re-triggered by `_updateAlertFx`'s own timer above, not a sustained node —
   // simply no longer being called IS it stopping cleanly); the only live object is the ring,
   // destroyed here rather than left for scene shutdown to sweep up.

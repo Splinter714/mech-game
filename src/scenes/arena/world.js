@@ -483,7 +483,17 @@ export const WorldMixin = {
     const soft = store === this.coverHp;
     if (soft && opts.flame) amount = flameCoverDamage(amount);
     const { hp, destroyed } = damageBuilding(store.get(k), amount);
-    if (!destroyed) { store.set(k, hp); return false; }
+    if (!destroyed) {
+      store.set(k, hp);
+      // #269 overhaul Part 1: a damaged-but-surviving alert tower commits to calling reinforcements
+      // — flag it so the next `_updateAlertTowers` tick treats this hit as an activation trigger.
+      // A KILLING blow instead collapses the hex to rubble below (destroyed branch), where the
+      // per-tick `terrain.get(key) !== 'alertTower'` check drops the tower's state and it never
+      // fires — the existing "destroy it before the countdown completes" stealth window. Optional
+      // chaining: most tests/scenes never wire the alert-tower system at all.
+      if (this.terrain.get(k) === 'alertTower') this._onAlertTowerDamaged?.(k);
+      return false;
+    }
     // Collapse to rubble: swap the terrain data (movement + LOS now read the biome's rubble) and
     // texture. `rubbleFor` maps this outpost to its biome-appropriate debris (data-driven).
     store.delete(k);

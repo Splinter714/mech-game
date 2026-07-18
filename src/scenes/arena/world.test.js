@@ -15,7 +15,7 @@
 // hexgrid/terrain helpers), so it's exercised against a minimal fake ArenaScene `this`.
 import { describe, it, expect, vi } from 'vitest';
 import { WorldMixin, LOS_REFRESH_MS } from './world.js';
-import { hexToPixel, axialKey } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey } from '../../data/hexgrid.js';
 
 // A tiny deterministic PRNG so the random sweep is reproducible (no flaky test).
 function lcg(seed) {
@@ -156,5 +156,59 @@ describe('_cachedLosToPlayer — delta-driven staggered cache returns stale-then
     // the NEXT frame doesn't immediately recompute again.
     expect(ray(scene, e, 5000)).toBe(true);   // recomputed once → clear lane
     expect(e._losCd).toBe(LOS_REFRESH_MS);     // reset to a fresh full window, not left negative
+  });
+});
+
+// #269 overhaul Part 1: `_damageBuildingAt` fires the `_onAlertTowerDamaged` activation hook when
+// the damaged hex is a STANDING alert tower (survives the hit) — the "shooting a tower commits it
+// to calling reinforcements" trigger. A killing blow instead collapses the hex (destroyed branch),
+// which never calls the hook — the tower is gone and its countdown is dropped scene-side instead.
+describe('_damageBuildingAt — alert-tower damage activation hook (#269)', () => {
+  // Minimal scene: an alertTower hex at the origin with plenty of building HP, empty cover map,
+  // and stubs for the collapse-path side effects (only reached on a destroying hit).
+  function makeDamageScene(hp = 100) {
+    const k = axialKey(0, 0);
+    const terrain = new Map([[k, 'alertTower']]);
+    // Stubs assigned AFTER WorldMixin so they override the mixin's real (Phaser-dependent) versions
+    // — `_outpostCollapseFx` in particular calls `this.add.circle`/`this.tweens` on the collapse path.
+    const scene = Object.assign({}, WorldMixin);
+    return Object.assign(scene, {
+      terrain,
+      buildingHp: new Map([[k, hp]]),
+      coverHp: new Map(),
+      tileImages: new Map(),
+      canopyImages: new Map(),
+      time: { now: 0 },
+      _outpostCollapseFx: () => {},
+      _onTerrainCollapsed: () => {},
+      _onAlertTowerDamaged: vi.fn(),
+    });
+  }
+
+  it('a non-destroying hit on a standing alert tower calls _onAlertTowerDamaged with its hex key', () => {
+    const scene = makeDamageScene(100);
+    const { x, y } = hexToPixel(0, 0);
+    const collapsed = scene._damageBuildingAt(x, y, 10);   // 10 dmg vs 100 hp — survives
+    expect(collapsed).toBe(false);
+    expect(scene._onAlertTowerDamaged).toHaveBeenCalledTimes(1);
+    expect(scene._onAlertTowerDamaged).toHaveBeenCalledWith(axialKey(0, 0));
+  });
+
+  it('a killing hit collapses the tower and does NOT call the activation hook (it is being destroyed)', () => {
+    const scene = makeDamageScene(20);
+    const { x, y } = hexToPixel(0, 0);
+    const collapsed = scene._damageBuildingAt(x, y, 100000);   // overkill — destroys it
+    expect(collapsed).toBe(true);
+    expect(scene._onAlertTowerDamaged).not.toHaveBeenCalled();
+    // Hex is now rubble, no longer an alertTower — the scene-side state drop path takes over.
+    expect(scene.terrain.get(axialKey(0, 0))).not.toBe('alertTower');
+  });
+
+  it('damaging a NON-tower building never calls the alert hook', () => {
+    const scene = makeDamageScene(100);
+    scene.terrain.set(axialKey(0, 0), 'wall');   // not an alert tower
+    const { x, y } = hexToPixel(0, 0);
+    scene._damageBuildingAt(x, y, 10);
+    expect(scene._onAlertTowerDamaged).not.toHaveBeenCalled();
   });
 });
