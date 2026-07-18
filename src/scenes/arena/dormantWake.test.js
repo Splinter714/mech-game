@@ -12,9 +12,12 @@ vi.mock('phaser', () => ({
 import { EnemiesMixin } from './enemies.js';
 import { BasesMixin } from './bases.js';
 import { HpBody } from '../../data/HpBody.js';
+import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
+import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE, UNAWARE, detectionRangeFor } from '../../data/awareness.js';
 import { hexToPixel } from '../../data/hexgrid.js';
+import { makeLock } from '../../data/targetlock.js';
 
 function makeScene() {
   const scene = { time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [] };
@@ -234,6 +237,157 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     scene._wakeBase('base0');
     expect(scene.enemies.length).toBe(2);
     expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
+  });
+});
+
+// #269 playtest follow-up ("fold mechs into the dock system"): a dock's kindId can now be a full
+// mech loadout id (data/enemies.js ENEMIES), not just a non-mech ENEMY_KINDS id. `_spawnDormantUnits`
+// must dispatch to `_spawnMech` (not `_spawnKind`) for one of these, while applying the exact same
+// DORMANT/baseId/dockKey tagging — and every woken mech defaults to `holdGround: true` regardless
+// of chassis (scenes/arena/bases.js `_wakeBase`'s comment explains why: a chassis-derived "fast/
+// slow" split isn't meaningful for mechs, and a mech reads better as a dock-defending boss anyway).
+describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches to _spawnMech)', () => {
+  // A lightweight `_spawnMech` stand-in mirroring the real one's shape (enemies.js `_spawnMech`)
+  // closely enough for the dock/wake logic under test: kind: 'mech', a real Mech instance (so
+  // .movement/.readyWeapons/.isDestroyed etc. all work), no Phaser textures/view.
+  function makeSceneWithSpawnStubs() {
+    const scene = makeScene();
+    scene._spawnKind = (x, y, kindId) => {
+      const def = ENEMY_KINDS[kindId];
+      const e = {
+        key: `${kindId}Test`, mech: new HpBody(def), kind: def.kind, kindDef: def,
+        x, y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, typeId: kindId,
+      };
+      scene.enemies.push(e);
+      return e;
+    };
+    scene._spawnMech = (x, y, typeId) => {
+      const def = ENEMIES[typeId];
+      const mech = new Mech(def);
+      mech.repairAll();
+      const e = {
+        key: `${typeId}Test`, mech, kind: 'mech', x, y, vx: 0, vy: 0,
+        angle: Math.PI / 2, turret: Math.PI / 2, fireCd: {}, typeId,
+        // Minimal #44 tactical-AI state a real `_spawnMech` also sets (via `_resetAiState`) —
+        // needed for `_updateEnemy`'s mech dispatch (lock/decide/goal bookkeeping) to run cleanly.
+        role: 'skirmisher', standoff: 200, handed: 1, allIndirect: false,
+        state: 'flank', decideAt: 0, goal: null, lastHealth: 1, hurtUntil: 0, recampAt: 0,
+        coverSpot: null, lock: makeLock(), idleGoal: null, idleAt: 0,
+      };
+      scene.enemies.push(e);
+      return e;
+    };
+    return scene;
+  }
+
+  it('a mech-kind dock (e.g. raider) spawns via _spawnMech, not _spawnKind', () => {
+    const scene = makeSceneWithSpawnStubs();
+    scene._spawnKind = vi.fn(scene._spawnKind);
+    scene._spawnMech = vi.fn(scene._spawnMech);
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+
+    expect(scene._spawnMech).toHaveBeenCalledTimes(1);
+    expect(scene._spawnKind).not.toHaveBeenCalled();
+    expect(scene.enemies.length).toBe(1);
+    expect(scene.enemies[0].kind).toBe('mech');
+    expect(scene.enemies[0].typeId).toBe('raider');
+  });
+
+  it('a mixed base (vehicle-kind dock + mech-kind dock) dispatches each to the right constructor', () => {
+    const scene = makeSceneWithSpawnStubs();
+    scene._spawnKind = vi.fn(scene._spawnKind);
+    scene._spawnMech = vi.fn(scene._spawnMech);
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [
+        { q: 0, r: 0, kindId: 'tank', count: 1 },
+        { q: 1, r: 0, kindId: 'sniper', count: 1 },
+      ],
+      turrets: [],
+    }];
+    scene._spawnDormantUnits();
+
+    expect(scene._spawnKind).toHaveBeenCalledTimes(1);
+    expect(scene._spawnMech).toHaveBeenCalledTimes(1);
+    expect(scene.enemies.find((e) => e.typeId === 'tank').kind).not.toBe('mech');
+    expect(scene.enemies.find((e) => e.typeId === 'sniper').kind).toBe('mech');
+  });
+
+  it('the mech gets the same DORMANT/baseId/dockKey tagging a vehicle-kind unit gets', () => {
+    const scene = makeSceneWithSpawnStubs();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+
+    const e = scene.enemies[0];
+    expect(e.awareness).toBe(DORMANT);
+    expect(e.baseId).toBe('base0');
+    expect(e.dockKey).toBeDefined();
+  });
+
+  it('a mech-kind dock defaults dockCountFor to 1 (mechs are not tank/helicopter)', () => {
+    const scene = makeSceneWithSpawnStubs();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'artillery', count: 1 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(1);
+  });
+
+  it('_wakeBase flips a docked mech to AWARE and unconditionally sets holdGround, for every archetype', () => {
+    for (const typeId of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+      const scene = makeSceneWithSpawnStubs();
+      scene.bases = [{
+        id: 'base0', center: { q: 0, r: 0 },
+        docks: [{ q: 0, r: 0, kindId: typeId, count: 1 }], turrets: [],
+      }];
+      scene._spawnDormantUnits();
+      scene._wakeBase('base0');
+      const e = scene.enemies[0];
+      expect(e.awareness).toBe(AWARE);
+      expect(e.holdGround).toBe(true);
+    }
+  });
+
+  it('a held-ground mech never translates but its hull turns to track the player, turret slews too', () => {
+    const scene = makeSceneWithSpawnStubs();
+    scene.enemyMove = true;
+    scene.enemyFire = false;   // out of scope here: firing needs a full art/weapon-plumbing stub
+    scene._blocked = () => false;
+    scene._speedFactorAt = () => 1;
+    scene._cachedLosToPlayer = () => true;
+    scene._syncTilts = () => {};
+    scene.px = 900; scene.py = 300;
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const e = scene.enemies[0];
+    e.view = { setPosition() {}, hull: { rotation: 0 }, turret: { rotation: 0 } };
+    const spawnAngle = e.angle;
+    const spawnX = e.x, spawnY = e.y;
+
+    for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
+
+    expect(e.state).toBe('hold');
+    expect(e.x).toBe(spawnX);
+    expect(e.y).toBe(spawnY);
+    expect(e.vx).toBe(0);
+    expect(e.vy).toBe(0);
+    // Root-cause parity with the non-mech holdGround bug-1 fix below: the hull must actually
+    // turn to face the player even though it never moves, not stay frozen at its spawn facing.
+    expect(e.angle).not.toBe(spawnAngle);
+    // The turret independently tracks the player too (unchanged pre-existing behavior).
+    expect(e.turret).not.toBe(Math.PI / 2);
   });
 });
 

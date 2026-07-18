@@ -390,6 +390,10 @@ export const EnemiesMixin = {
     e.awareness = UNAWARE;
     e.idleGoal = null;            // {x, y} current idle-wander waypoint near spawnX/spawnY
     e.idleAt = 0;                 // ms until the idle waypoint is re-picked
+    // #269: a docked mech's wake-response flag (scenes/arena/bases.js `_wakeBase`) is transient
+    // AI state same as everything else here — clear it so a debug reset doesn't leave a
+    // previously-woken mech permanently pinned to 'hold' with no dock/base left to explain why.
+    e.holdGround = false;
   },
 
   // #44 follow-up: the default opening squad — one of each mech type — dropped OFF-SCREEN so
@@ -637,6 +641,17 @@ export const EnemiesMixin = {
       if (!aware) {
         // Idle/patrol: loiter near the spawn point instead of running the tactical brain.
         ({ mx, my } = this._idleMoveIntent(e, delta));
+      } else if (e.holdGround) {
+        // #269 playtest follow-up ("fold mechs into the dock system"): a woken docked mech
+        // defends its position instead of sortieing (see scenes/arena/bases.js `_wakeBase`'s
+        // comment on why EVERY mech defaults to holdGround, regardless of chassis/role). This
+        // skips the whole PRESS/KITE/FLANK/COVER/HOLD decision machine (_decideEnemyState)
+        // entirely — state is pinned to 'hold' and it never moves — mirroring the non-mech
+        // kinds' own `e.holdGround` branch (enemyBehaviors.js tankBehavior etc: vx=vy=0, only
+        // the turret/aim keeps tracking). The turret-slew/fire logic below is untouched and
+        // still runs normally, so a held mech tracks and shoots the player exactly as before.
+        e.state = 'hold'; e.goal = null; e.coverSpot = null;
+        mx = 0; my = 0;
       } else {
         // Re-decide on a cadence timer (or immediately after arriving at a goal). Between
         // decisions the enemy commits to its current state, so behaviour reads deliberately.
@@ -686,7 +701,13 @@ export const EnemiesMixin = {
     // rather than watching the player it hasn't spotted yet.
     if (aware) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
-    if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
+    // #269 playtest follow-up: a held-ground mech never moves, so the ordinary "turn to face
+    // travel direction" hull rule below would freeze it facing whatever way it happened to spawn
+    // — same "reads as dead" bug the tank kind's own holdGround branch already fixed
+    // (enemyBehaviors.js tankBehavior). Mirror that fix here: the hull turns to face the player
+    // directly while holding ground, even though it never translates.
+    if (e.holdGround) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
+    else if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
     // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once
     // aware; an unaware enemy has no business tracking the player at all.

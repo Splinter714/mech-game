@@ -9,6 +9,7 @@ import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
+import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
@@ -65,9 +66,19 @@ const DOCK_HUDDLE_OFFSET = 16;
 export const BasesMixin = {
   // §4: spawn every base's docked units NOW, at deploy time, dormant — not lazily, not via the
   // old off-camera `_offscreenSpawnPoint`/squad system. Called once from ArenaScene.create(),
-  // in place of the old `_spawnSquad()` opening-squad call. Restricted to non-mech kinds (see
-  // data/worldgen.js's BASE_EARLY_KIND_POOL/BASE_LATE_KIND_POOL comment for why), so this calls
-  // `_spawnKind` directly rather than the more general `_spawnEnemy` dispatcher.
+  // in place of the old `_spawnSquad()` opening-squad call.
+  //
+  // #269 playtest follow-up ("fold mechs into the dock system"): a dock's `kindId` can now be
+  // EITHER a non-mech ENEMY_KINDS id or a full mech loadout id (data/enemies.js `ENEMIES` — see
+  // data/worldgen.js's BASE_LATE_KIND_POOL comment). `isEnemyKind` (data/enemyKinds.js — "is
+  // this id in the non-mech kind table") is the SAME predicate `_spawnEnemy`'s own dispatcher
+  // already uses to tell the two apart, reused here rather than invented fresh, so a dock
+  // branches to `_spawnMech` (the full Mech + tactical-AI-state constructor) instead of
+  // `_spawnKind` (HpBody + simple per-kind behavior) exactly when `_spawnEnemy` would have.
+  // Whichever constructor built it, the SAME DORMANT/baseId/dockKey tagging below applies
+  // uniformly — `_updateEnemy`'s DORMANT early-return and `_wakeBase`'s wake loop both key off
+  // `e.awareness`/`e.baseId`/`e.dockKey`, never off `e.kind`, so nothing downstream needs to care
+  // which path built a given docked unit.
   //
   // #269 playtest follow-up (dock composition): a dock is now a KIND + COUNT
   // (`dock.count`, data/worldgen.js `dockCountFor`) — 2-3 tanks or 2 helicopters can share ONE
@@ -102,7 +113,10 @@ export const BasesMixin = {
           const a = (i / count) * Math.PI * 2 + Math.PI / 4;
           const px = count > 1 ? x + Math.cos(a) * DOCK_HUDDLE_OFFSET : x;
           const py = count > 1 ? y + Math.sin(a) * DOCK_HUDDLE_OFFSET : y;
-          const e = this._spawnKind(px, py, dock.kindId);
+          // #269 playtest follow-up: a mech-kind dock (dockCountFor always returns 1 for a mech
+          // id — the default branch, since mechs aren't tank/helicopter) goes through
+          // `_spawnMech`; every other kind keeps using `_spawnKind` exactly as before.
+          const e = isEnemyKind(dock.kindId) ? this._spawnKind(px, py, dock.kindId) : this._spawnMech(px, py, dock.kindId);
           // A DORMANT unit is genuinely inert (see enemies.js `_updateEnemy`'s early return on
           // this state) — never through UNAWARE's idle-wander first. `baseId`/`dockKey` are
           // how `_wakeBase` finds "every unit belonging to this base/dock" and are otherwise
@@ -301,13 +315,30 @@ export const BasesMixin = {
   // tank/quadruped/infantry's behavior fns check to skip their normal "advance to standoff"
   // movement and just fight from where they're standing (turret already has maxSpeed 0, so it
   // needs no flag at all to "hold ground").
+  //
+  // #269 playtest follow-up ("fold mechs into the dock system"): a docked MECH (e.kind ===
+  // 'mech') has no `kindDef` at all (that field only exists on non-mech kinds — see `_spawnKind`)
+  // so `isFastWakeKind` was never reachable for one, and its own chassis-based movement stats
+  // (data/chassis/*) aren't even the same shape `isFastWakeKind`'s `move.maxSpeed` check expects.
+  // Rather than derive an equivalent "effective speed" from chassis weight class and feed it
+  // through the same threshold (light 268px/s and even heavy 135px/s both clear
+  // FAST_WAKE_SPEED_THRESHOLD=100 — that comparison would call EVERY mech "fast" regardless of
+  // chassis, which reads wrong), every mech defaults to `holdGround = true` unconditionally: a
+  // mech is the toughest, most dangerous thing the dock system can field, so it reads better as
+  // "the boss that holds the objective and makes you come to it" than "the thing that rushes
+  // you across the map." This also sidesteps wiring `holdGround` support into all four mech
+  // roles individually — the mech tactical AI (enemies.js `_updateEnemy`) checks this ONE flag
+  // and skips its whole PRESS/KITE/FLANK/COVER/HOLD decision machine outright when set (forcing
+  // state 'hold', see the comment there), so every archetype — brawler, skirmisher, sniper, and
+  // even the normally cover-seeking all-indirect artillery — uniformly just stands its ground and
+  // fights, no per-role special-casing needed.
   _wakeBase(baseId) {
     if (this._wokenBases.has(baseId)) return;
     this._wokenBases.add(baseId);
     for (const e of this.enemies) {
       if (e.baseId !== baseId || e.awareness !== DORMANT) continue;
       e.awareness = AWARE;
-      if (e.kindDef && !isFastWakeKind(e.kindDef)) e.holdGround = true;
+      if (e.kind === 'mech' || (e.kindDef && !isFastWakeKind(e.kindDef))) e.holdGround = true;
     }
   },
 
@@ -342,6 +373,10 @@ export const BasesMixin = {
   // (AWARE, no `holdGround`/wake-response split needed — its base is already awake and fighting,
   // matched to the mechanic's design intent that a resupply unit doesn't sit inert like an
   // original dormant one) and is scattered like a fresh dock spawn.
+  //
+  // #269 playtest follow-up ("fold mechs into the dock system"): `meta.kindId` mirrors
+  // `_spawnDormantUnits`'s own branch — a mech-kind dock resupplies through `_spawnMech`, every
+  // other kind through `_spawnKind`, both via the same `isEnemyKind` predicate.
   _resupplyDock(dockKey, meta) {
     const { x, y, kindId } = meta;
     const doorHalfW = 15, doorH = 4, shaftHalfW = 15, riseFrom = 22;
@@ -370,7 +405,7 @@ export const BasesMixin = {
         // ACTIVE — no dormant/wake step, matching "the base is already fighting."
         this.tweens.add({ targets: [platform, glow], y: `-=${riseFrom}`, duration: 450, ease: 'Sine.easeOut' });
         this.time.delayedCall(220, () => {
-          const e = this._spawnKind(x, y, kindId);
+          const e = isEnemyKind(kindId) ? this._spawnKind(x, y, kindId) : this._spawnMech(x, y, kindId);
           e.awareness = AWARE;
           e.baseId = meta.baseId;
           e.dockKey = dockKey;

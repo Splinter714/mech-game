@@ -11,7 +11,9 @@ vi.mock('phaser', () => ({ default: {} }));
 import { EnemiesMixin } from './enemies.js';
 import { BasesMixin } from './bases.js';
 import { HpBody } from '../../data/HpBody.js';
+import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
+import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE } from '../../data/awareness.js';
 import { DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
 
@@ -43,6 +45,19 @@ function makeScene() {
     const e = {
       key: `${kindId}Test`, mech: new HpBody(def), kind: def.kind, kindDef: def,
       x, y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, typeId: kindId,
+    };
+    scene.enemies.push(e);
+    return e;
+  };
+  // #269 playtest follow-up ("fold mechs into the dock system"): a mech-kind dock's resupply
+  // dispatches to `_spawnMech`, not `_spawnKind` — see scenes/arena/bases.js `_resupplyDock`.
+  scene._spawnMech = (x, y, typeId) => {
+    const def = ENEMIES[typeId];
+    const mech = new Mech(def);
+    mech.repairAll();
+    const e = {
+      key: `${typeId}Test`, mech, kind: 'mech', x, y, vx: 0, vy: 0,
+      angle: 0, turret: 0, fireCd: {}, typeId,
     };
     scene.enemies.push(e);
     return e;
@@ -138,6 +153,28 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     expect(scene.enemies[0].awareness).not.toBe(DORMANT);
     expect(scene.enemies[0].baseId).toBe('base0');
     expect(scene.enemies[0].dockKey).toBe(dockKey);
+  });
+});
+
+describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
+  it('a mech-kind dock (e.g. sniper) resupplies via _spawnMech, spawned directly AWARE', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'sniper' })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    clearDock(scene, dockKey);
+
+    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._runScheduled();
+
+    expect(scene.enemies.length).toBe(1);
+    const e = scene.enemies[0];
+    expect(e.kind).toBe('mech');
+    expect(e.typeId).toBe('sniper');
+    expect(e.awareness).toBe(AWARE);
+    expect(e.baseId).toBe('base0');
+    expect(e.dockKey).toBe(dockKey);
   });
 });
 
