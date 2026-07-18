@@ -49,11 +49,11 @@ function makeTickableScene({ px = 900, py = 300 } = {}) {
     time: { now: 0 }, enemies: [], px, py, bases: [], alertTowerHexes: [],
     enemyMove: true, enemyFire: true,
     _blocked: () => false,
-    // #282: mutual large-unit/flyer collision — not under test here, so stub both to "never
-    // blocks" (mirrors `_blocked` above) so these pre-existing wake-behavior tests keep
-    // exercising only what they already covered.
+    // #282: mutual ground-unit collision — not under test here, so stub to "never blocks"
+    // (mirrors `_blocked` above) so these pre-existing wake-behavior tests keep exercising only
+    // what they already covered. (Flyer-vs-flyer is now soft separation in the behaviours, no
+    // scene-level gate to stub — see enemyBehaviors.js `flyerSeparation`.)
     _blockedByOtherGroundUnit: () => false,
-    _blockedByOtherFlyer: () => false,
     _speedFactorAt: () => 1,
     _cachedLosToPlayer: () => true,
     _fireVehicleWeapon: () => {},
@@ -374,9 +374,9 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     scene.enemyMove = true;
     scene.enemyFire = false;   // out of scope here: firing needs a full art/weapon-plumbing stub
     scene._blocked = () => false;
-    // #282: not under test here — stub to "never blocks" like `_blocked` above.
+    // #282: not under test here — stub to "never blocks" like `_blocked` above. (Flyer-vs-flyer
+    // is now soft separation in the behaviours, no scene-level gate to stub.)
     scene._blockedByOtherGroundUnit = () => false;
-    scene._blockedByOtherFlyer = () => false;
     scene._speedFactorAt = () => 1;
     scene._cachedLosToPlayer = () => true;
     scene._wallDistanceLos = () => Infinity;   // no cover in this stub world — always clear LOS

@@ -886,17 +886,13 @@ export const EnemiesMixin = {
     // player (unchanged); a SMALL unit (tank/infantry) now ALSO can't walk into another small
     // unit, or into a large one/the player — see `_blockedByOtherGroundUnit`'s comment (world.js)
     // for the full tier rule and the playtest report ("tanks nearly on top of one another") that
-    // prompted extending small-vs-small collision. A flyer instead checks ONLY other flyers
-    // (`_blockedByOtherFlyer`) so two flyers can't overlap, while still ignoring terrain and
-    // every ground unit exactly as before.
+    // prompted extending small-vs-small collision. A flyer has NO movement gate at all: it moves
+    // freely (ignoring terrain and ground units exactly as before), and flyer-vs-flyer overlap is
+    // now handled as SOFT separation inside the flyer behaviours (enemyBehaviors.js
+    // `flyerSeparation`) instead of a hard positional block — the old `_blockedByOtherFlyer` gate
+    // gridlocked dense swarms, see #282's follow-up and that method's removed-comment in world.js.
     let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
-    if (e.flying) {
-      if (this._blockedByOtherFlyer(e, nx, ny)) {
-        if (!this._blockedByOtherFlyer(e, e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
-        else if (!this._blockedByOtherFlyer(e, e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
-        else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
-      }
-    } else {
+    if (!e.flying) {
       const blocked = (x, y) => this._blocked(x, y) || this._blockedByOtherGroundUnit(e, x, y);
       if (blocked(nx, ny)) {
         if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }

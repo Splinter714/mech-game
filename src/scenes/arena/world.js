@@ -420,20 +420,14 @@ export const WorldMixin = {
     return false;
   },
 
-  // #282: mutual FLYER collision — flying units (drone/helicopter) already ignore terrain and
-  // ground units entirely (narratively elevated, see `_blockedByGroundEnemy`'s flying exclusion
-  // and #92); this adds ONLY flyer-vs-flyer separation so two flyers can't overlap/fly through
-  // each other, without touching their existing ground/terrain immunity. Reuses the same
-  // `groundEnemyRadius` footprint (a non-mech vehicle kind's own data-driven `scale`) as the
-  // collision circle — flyers don't get a special radius of their own.
-  _blockedByOtherFlyer(self, x, y) {
-    for (const o of this.enemies) {
-      if (o === self || !o.flying) continue;
-      if (o.mech.isDestroyed()) continue;
-      if (circleContains(x, y, o.x, o.y, groundEnemyRadius(o))) return true;
-    }
-    return false;
-  },
+  // #282 (follow-up: "piles of drones are stuck on each other"): flyer-vs-flyer collision used to
+  // live here as `_blockedByOtherFlyer` — a HARD positional block that rejected any flyer move
+  // overlapping another flyer's circle. That gridlocked a dense swarm (every drone in a spawn pile
+  // overlaps its neighbours, so every candidate move was rejected and nothing could separate). It
+  // was replaced by SOFT boids separation in the flyer behaviours themselves (enemyBehaviors.js
+  // `flyerSeparation`, blended into `droneBehavior`/`helicopterBehavior`), which is always
+  // resolvable — an overlapping flyer is pushed apart rather than frozen — so this method was
+  // removed entirely (no movement gate remains on the flyer integration path in enemies.js).
 
   // #112: is a CRUSHABLE ground enemy (tank/infantry — 'small' units, see #269's `isSmallUnit`
   // in shared.js) within the (larger) crush-trigger radius of world point (x, y)? Deliberately
