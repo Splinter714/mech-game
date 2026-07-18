@@ -286,18 +286,56 @@ export function placeGapTowers(
   let prevProgress = 0;   // the corridor start (spawn sits at spine u=0 / distance 0 from origin)
   for (const base of bases ?? []) {
     const baseProgress = progress(base.center);
-    // #283: same floor `placeBases` enforces on the base itself — a tower can't land within
-    // `minGapProgress` of wherever the PREVIOUS base (or spawn, for gap 0) sits. Since
-    // `placeBases` already guarantees `baseProgress >= prevProgress + minGapProgress` (barring
-    // its own rare total-fallback case), `lo` here is never past `hi` in practice — the gap
-    // always has at least `minGapProgress` of room for the tower to land in, so this rarely
-    // starves the gap of a tower the way it might if the floor were tuned much larger.
-    const lo = Math.min(prevProgress, baseProgress) + minGapProgress;
-    const hi = Math.max(prevProgress, baseProgress);
-    const candidates = all.filter((h) => {
+    // #269 playtest follow-up ("alert towers are too close to their linked base"): the floor used
+    // to apply ONLY to the tower's distance from the PREVIOUS base/spawn (`lo`), leaving `hi`
+    // (the ceiling before the linked base) completely unbuffered — a tower could land right on
+    // top of its own base with zero calm space before it. Fix: apply the SAME `minGapProgress`
+    // floor symmetrically on both sides — at least `minGapProgress` past the previous segment
+    // AND at least `minGapProgress` before the linked base's own position — so "spawn -> tower0"
+    // and "tower(i) -> base(i)" read as the same size of calm gap (Jackson's framing: "there
+    // should be a similar amount of safe space between all segments").
+    //
+    // Graceful degradation: if the gap is too short to fit BOTH full floors (a short/curvy
+    // corridor segment), a naive `lo = lower + minGapProgress` / `hi = upper - minGapProgress`
+    // can invert (lo > hi), leaving an empty candidate window and silently dropping the tower —
+    // exactly the "skip it silently" outcome the issue asks to avoid where possible. Instead,
+    // shrink the buffer PROPORTIONALLY to fit: `buffer = min(minGapProgress, width / 2)`. This
+    // still gives the full floor whenever the gap is wide enough (buffer == minGapProgress, the
+    // common case), and as the gap narrows the buffer shrinks in lockstep so `lo` and `hi`
+    // converge smoothly on the gap's own midpoint (`buffer == width / 2` implies `lo == hi ==
+    // (lower + upper) / 2`) rather than ever crossing — the tower still gets *some* space on
+    // both sides (proportional to what the gap can actually offer) and, in the fully-degenerate
+    // case, lands exactly at the midpoint, mirroring `placeBases`' own "split the difference
+    // rather than skip" fallback spirit for a too-tight corridor.
+    const lower = Math.min(prevProgress, baseProgress);
+    const upper = Math.max(prevProgress, baseProgress);
+    const buffer = Math.min(minGapProgress, (upper - lower) / 2);
+    const lo = lower + buffer;
+    const hi = upper - buffer;
+    let candidates = all.filter((h) => {
       const p = progress(h);
       return p >= lo && p <= hi && isGround(axialKey(h.q, h.r));
     });
+    // Second-layer fallback: on a genuinely tight/sparse gap, even the proportionally-shrunk
+    // `[lo, hi]` window can come up EMPTY — e.g. it's shrunk to a single floating-point progress
+    // value that no real hex's progress exactly equals, or the narrow window just has no ground
+    // candidate (cover/hazard ate it). Rather than skip the tower, widen back out to the gap's
+    // FULL bounds `[lower, upper]` and take whichever ground hex's progress lands closest to the
+    // buffered window's own centre — still "as close to the intended calm midpoint as this gap's
+    // actual ground allows," just not constrained to the (possibly empty) exact window.
+    if (!candidates.length) {
+      const target = (lo + hi) / 2;
+      const inGap = all.filter((h) => progress(h) >= lower && progress(h) <= upper && isGround(axialKey(h.q, h.r)));
+      if (inGap.length) {
+        let best = inGap[0];
+        let bestDiff = Math.abs(progress(best) - target);
+        for (const h of inGap) {
+          const diff = Math.abs(progress(h) - target);
+          if (diff < bestDiff) { best = h; bestDiff = diff; }
+        }
+        candidates = [best];
+      }
+    }
     if (candidates.length) {
       const h = candidates[Math.floor(rng() * candidates.length)];
       T.set(axialKey(h.q, h.r), 'alertTower');
