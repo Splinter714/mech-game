@@ -231,10 +231,10 @@ export const TERRAIN = {
                category: 'terrain', movement: 'slow', cover: 'open' },
 
   // ── Snow / arctic (#67) — cold white/blue palette. ──
-  snow:      { id: 'snow',      tex: 'hex_snow',      passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
-  snowB:     { id: 'snowB',     tex: 'hex_snowB',     passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+  snow:      { id: 'snow',      tex: 'hex_snow',      passable: true,  blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
+  snowB:     { id: 'snowB',     tex: 'hex_snowB',     passable: true,  blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // Slush: half-frozen melt — the shallow-water analog (passable, slowing, shoot over).
   slush:     { id: 'slush',     tex: 'hex_slush',     passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR, water: true,
                category: 'terrain', movement: 'slow', cover: 'open' },
@@ -292,10 +292,10 @@ export const TERRAIN = {
                category: 'terrain', movement: 'slow', cover: 'open' },
 
   // ── Volcanic wasteland (#67) — dark/ember palette; lava hazards + ash fields. ──
-  ash:       { id: 'ash',       tex: 'hex_ash',       passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
-  ashB:      { id: 'ashB',      tex: 'hex_ashB',      passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+  ash:       { id: 'ash',       tex: 'hex_ash',       passable: true,  blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
+  ashB:      { id: 'ashB',      tex: 'hex_ashB',      passable: true,  blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // Cooling lava crust: a hot crackled flow — passable but slowing (the shallow analog).
   crust:     { id: 'crust',     tex: 'hex_crust',     passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
