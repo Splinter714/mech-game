@@ -1013,6 +1013,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         const { all, T, isGround, progressOf } = buildSpaciousLine();
         const rng = mulberry32(seed);
         const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        // Pass the real base descriptors (not just their centres) — `placeGapTowers` reads
+        // `base.center`/`base.id` off each entry.
         const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
         expect(alertTowers.length).toBe(BASE_COUNT);   // spacious corridor: every gap gets a tower
         let prev = 0;
@@ -1020,6 +1022,26 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
           const p = progressOf(alertTowers[i]);
           expect(p).toBeGreaterThanOrEqual(prev + MIN_GAP_PROGRESS_HEX);
           prev = progressOf(bases[i].center);
+        }
+      }
+    });
+
+    // #269 playtest follow-up ("alert towers are too close to their linked base"): the symmetric
+    // half of the floor — a tower must ALSO sit at least `MIN_GAP_PROGRESS_HEX` BEFORE its own
+    // linked base, not just past whatever came before it. On a spacious corridor (plenty of room
+    // for both floors) this should hold exactly, same as the "past spawn/previous base" floor
+    // above.
+    it('every gap tower also sits at least MIN_GAP_PROGRESS_HEX before its own linked base', () => {
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const { all, T, isGround, progressOf } = buildSpaciousLine();
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
+        expect(alertTowers.length).toBe(BASE_COUNT);
+        for (let i = 0; i < alertTowers.length; i++) {
+          const towerP = progressOf(alertTowers[i]);
+          const baseP = progressOf(bases[i].center);
+          expect(baseP - towerP).toBeGreaterThanOrEqual(MIN_GAP_PROGRESS_HEX - 1e-6);
         }
       }
     });
@@ -1033,6 +1055,52 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         expect(bases.length).toBe(BASE_COUNT);
         expect(alertTowers.length).toBe(BASE_COUNT);
       }
+    });
+
+    // #269 playtest follow-up: graceful degradation when a gap is too short to fit BOTH floors —
+    // a synthetic gap of width `MIN_GAP_PROGRESS_HEX` (i.e. exactly ONE floor's worth, not two)
+    // between the previous position and the linked base. The tower must still place (never
+    // silently skipped when ground exists), and — since the buffer shrinks proportionally to
+    // `width / 2` — it should land within the gap, roughly centred rather than jammed against
+    // either edge.
+    it('gracefully degrades toward the gap\'s midpoint (still places a tower) when a gap is too short for both full floors', () => {
+      const all = [];
+      for (let q = 0; q <= 20; q++) all.push({ q, r: 0 });
+      const T = new Map();
+      for (const h of all) T.set(axialKey(h.q, h.r), GRASSLAND.groundA);
+      const isGround = (k) => { const t = T.get(k); return t === GRASSLAND.groundA || t === GRASSLAND.groundB; };
+      const progressOf = (h) => h.q;
+      // A single base whose gap-from-spawn is only 10 wide — well under 2x MIN_GAP_PROGRESS_HEX
+      // (~14.4) needed to fit a full floor on both sides.
+      const bases = [{ id: 'base0', center: { q: 10, r: 0 } }];
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const rng = mulberry32(seed);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
+        expect(alertTowers.length).toBe(1);   // never silently skipped just because the floor can't fully fit
+        const p = progressOf(alertTowers[0]);
+        expect(p).toBeGreaterThanOrEqual(0);
+        expect(p).toBeLessThanOrEqual(10);
+        // Degraded placement still leans toward the midpoint (5), not jammed at either edge.
+        expect(Math.abs(p - 5)).toBeLessThanOrEqual(2);
+      }
+    });
+
+    it('never inverts (lo <= hi) even on a zero-width gap (base landing exactly at the previous position)', () => {
+      const all = [];
+      for (let q = 0; q <= 10; q++) all.push({ q, r: 0 });
+      const T = new Map();
+      for (const h of all) T.set(axialKey(h.q, h.r), GRASSLAND.groundA);
+      const isGround = (k) => { const t = T.get(k); return t === GRASSLAND.groundA || t === GRASSLAND.groundB; };
+      const progressOf = (h) => h.q;
+      // Degenerate: the base's own progress is 0, same as the corridor start — a zero-width gap.
+      // `T` is mutated in place by `placeGapTowers` (a placed tower's hex is stamped 'alertTower',
+      // no longer ground), so call it exactly once and assert against that single result rather
+      // than calling it twice against the same `T`.
+      const bases = [{ id: 'base0', center: { q: 0, r: 0 } }];
+      let alertTowers;
+      expect(() => { alertTowers = placeGapTowers(mulberry32(1), all, T, isGround, bases, progressOf); }).not.toThrow();
+      expect(alertTowers.length).toBe(1);
+      expect(progressOf(alertTowers[0])).toBe(0);
     });
 
     it('a tiny/degenerate candidate set never places a base BEHIND the one before it, even when the floor can\'t be fully reached', () => {
