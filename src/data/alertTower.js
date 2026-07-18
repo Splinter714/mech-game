@@ -47,8 +47,13 @@ export const ALERT_DETECT_RADIUS = 320;
 export const ALERT_COUNTDOWN_MS = 3000;
 
 // Fresh, idle alert-tower state: not counting down, full countdown remaining, not yet triggered.
+// `fraction` is how close the countdown is to completion — 0 (just started/idle) -> 1 (about to
+// trigger) — kept as a derived-but-stored field (rather than making every caller recompute
+// `1 - remainingMs/countdownMs`) so the scene-side visual/audio escalation (bases.js
+// `_updateAlertTowers`) has a single ready-made "how urgent is this right now" number, and so
+// it's directly assertable in tests without reaching into remainingMs/countdownMs math.
 export function makeAlertState(countdownMs = ALERT_COUNTDOWN_MS) {
-  return { countingDown: false, remainingMs: countdownMs, triggered: false };
+  return { countingDown: false, remainingMs: countdownMs, triggered: false, fraction: 0 };
 }
 
 // Advance one tick. `inRange` — is the player currently within the tower's detection radius this
@@ -61,10 +66,13 @@ export function tickAlertTower(state, { inRange, dt }, countdownMs = ALERT_COUNT
   if (!inRange) {
     // Leaving range before completion resets the countdown — no partial credit carried over
     // (kept simple per the issue: a stealth/tension window, not a persistent suspicion meter).
+    // This is also the cancel signal the scene-side visual/audio escalation watches for
+    // (`countingDown` false again) — resetting `fraction` to 0 alongside it tears the FX down.
     if (!state.countingDown && state.remainingMs === countdownMs) return state;
-    return { countingDown: false, remainingMs: countdownMs, triggered: false };
+    return { countingDown: false, remainingMs: countdownMs, triggered: false, fraction: 0 };
   }
   const remainingMs = Math.max(0, state.remainingMs - Math.max(0, dt) * 1000);
-  if (remainingMs <= 0) return { countingDown: true, remainingMs: 0, triggered: true };
-  return { countingDown: true, remainingMs, triggered: false };
+  const fraction = countdownMs > 0 ? Math.min(1, 1 - remainingMs / countdownMs) : 1;
+  if (remainingMs <= 0) return { countingDown: true, remainingMs: 0, triggered: true, fraction: 1 };
+  return { countingDown: true, remainingMs, triggered: false, fraction };
 }

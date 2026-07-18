@@ -444,6 +444,18 @@ export class AudioEngine {
     this._duckTrigger();
   }
 
+  // #269 playtest follow-up — alert tower spool-up warning pulse (see Sfx.alertPulse for the
+  // recipe). `fraction` 0..1 is the countdown's own progress (data/alertTower.js
+  // `tickAlertTower`'s returned `fraction`); the caller (scenes/arena/bases.js
+  // `_updateAlertTowers`) re-triggers this on a shrinking interval as fraction climbs, so the
+  // pulse RATE quickens on top of this cue's own per-call pitch/brightness rise. `pos` is the
+  // usual `{ x, y, listenerX, listenerY }` world-position pair for distance falloff + pan.
+  alertPulse(fraction, pos = null) {
+    this._resume();
+    if (!this.ready) return;
+    Sfx.alertPulse(this, fraction, pos);
+  }
+
   // ── Held/looping fire sound (#53) ──────────────────────────────────────────────────────
   // Start a continuous fire sound for a held weapon (flamethrower roar / beam laser hum) at
   // mount location `location`. Guards against double-starting the same location (a stray
