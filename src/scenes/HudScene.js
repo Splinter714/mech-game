@@ -102,10 +102,16 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setOrigin(0, 0);
 
     this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
-    this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  M: mute  ·  G/B: garage  ·  F/R3: focus',
-      { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
-    this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
-      { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
+    // #296: the control-hints line and the debug d-pad/keys cheat sheet are dev-only playtest
+    // aids, never a shipped HUD feature — gated behind `import.meta.env.DEV` (Vite's build-time
+    // flag, stripped/dead-code-eliminated in `npm run build`; same pattern as the hex labels in
+    // ArenaScene.js and the shop-unlock skip in GarageScene.js).
+    if (import.meta.env.DEV) {
+      this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  M: mute  ·  G/B: garage  ·  F/R3: focus',
+        { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
+      this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
+        { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
+    }
 
     // #64: run/stage readout, sitting right next to the objective line.
     this.stageText = this.add.text(16, 70, '', { fontFamily: 'monospace', fontSize: '13px', color: C.accent });
@@ -122,8 +128,13 @@ export default class HudScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '32px', color: C.bad, fontStyle: 'bold',
     }).setOrigin(0.5).setVisible(false);
 
-    this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
-    this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
+    // #296: the control-method indicator (CONTROLLER / MOUSE + KB) and the AI move/fire debug
+    // readout are dev-only overlays — created only under `import.meta.env.DEV` and updated behind
+    // the same guard below, so they're absent from a production build entirely.
+    if (import.meta.env.DEV) {
+      this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
+      this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
+    }
     // #262: convergence/lock targeting-focus indicator (R3/F toggle) — hidden while at the
     // 'enemy' default (same "only show when off the default" pattern as aiText above), so a
     // playtester who never touches the toggle sees no new HUD clutter at all.
@@ -135,7 +146,11 @@ export default class HudScene extends Phaser.Scene {
     // has mode/AI text, bottom-centre has the skill bar). Phaser's own `game.loop.actualFps` is
     // already an EMA (25% new / 75% old, see TimeStep.js) refreshed once a second — plenty stable
     // frame-to-frame on its own, so no extra rolling-average layer is needed on top of it.
-    this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '12px', color: C.dim }).setOrigin(0, 1);
+    // #296: dev-only — created (and updated, see update()) behind `import.meta.env.DEV` so the
+    // FPS readout never ships in a production build.
+    if (import.meta.env.DEV) {
+      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '12px', color: C.dim }).setOrigin(0, 1);
+    }
 
     // #60: active timed-buff readout, top-right under the enemy count. One radial "cooldown-pie"
     // per active buff — a ring tinted the buff colour that drains clockwise as it runs out, with
@@ -270,10 +285,14 @@ export default class HudScene extends Phaser.Scene {
     const mech = this.registry.get('playerMech');
     if (!mech) return;
 
-    this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
-    const aiMove = this.registry.get('aiMove') !== false;
-    const aiFire = this.registry.get('aiFire') !== false;
-    this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
+    // #296: dev-only overlays — the objects only exist under DEV (see create()), so their
+    // per-frame updates are gated behind the same flag (stripped from the production build).
+    if (import.meta.env.DEV) {
+      this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
+      const aiMove = this.registry.get('aiMove') !== false;
+      const aiFire = this.registry.get('aiFire') !== false;
+      this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
+    }
     // #262: targeting-focus indicator — only shown once the player has actually toggled off the
     // 'enemy' default, so it doesn't clutter the HUD for anyone who never touches R3/F.
     this.focusText.setText(this.registry.get('focusMode') === 'building' ? 'FOCUS: BUILDING' : '');
@@ -360,7 +379,10 @@ export default class HudScene extends Phaser.Scene {
     this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
-    this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
+    // #296: dev-only — the readout object only exists under DEV, so its update is gated to match.
+    if (import.meta.env.DEV) {
+      this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
+    }
   }
 
   // #80: point at the current objective whenever it's off-camera. Reads the SAME live source
