@@ -11,7 +11,7 @@ import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
 import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
-  safeZoneKeys, CORRIDOR_LENGTH_PX, HEX_STEP_PX, MAX_WORLD_RADIUS,
+  safeZoneKeys, MAX_WORLD_RADIUS,
 } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import {
@@ -122,15 +122,15 @@ export const WorldMixin = {
     const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke
 
-    // Scale outpost count with corridor length so standing objectives exist the whole way down the
-    // spine — a flat biome count would leave the far end (where late stages aim) without a target.
-    const lengthHex = CORRIDOR_LENGTH_PX / HEX_STEP_PX;
-    const outposts = Math.max(B.outposts, Math.round(lengthHex / 3));
-
+    // #269 playtest follow-up: outposts are occasional destructible flavor/cover, not a
+    // standing-objective supply — objectives now sequence through BASES (see below), so
+    // outpost count no longer needs to scale with corridor length. Use the biome's flat
+    // count directly (`generateTerrain` falls back to `B.outposts` when `outposts` is
+    // omitted, but passing it explicitly keeps this call site's intent legible).
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
-      includedKeys, boundaryRing, outposts, spine,
+      includedKeys, boundaryRing, outposts: B.outposts, spine,
     });
     // #269 §3: the run's bases (dormant docks + connective-tissue alert towers), placed once
     // here at world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase`
