@@ -124,6 +124,7 @@ export class Mech {
       };
     }
     const shieldRes = damageShield(this.shield, amount);
+    this._maybeFinalizeExpiredShieldBoost();
     const overflow = shieldRes.overflow;
     if (overflow <= 0) {
       return {
@@ -199,18 +200,33 @@ export class Mech {
   // Apply damage straight to the shield only (used by callers that already resolved which
   // layer a hit should hit — kept for symmetry/tests; normal combat goes through applyDamage,
   // which already checks the shield first).
-  applyShieldDamage(amount) { return damageShield(this.shield, amount); }
+  applyShieldDamage(amount) {
+    const res = damageShield(this.shield, amount);
+    this._maybeFinalizeExpiredShieldBoost();
+    return res;
+  }
   shieldFraction() { return shieldFraction(this.shield); }
   hasShield() { return shieldPresent(this.shield); }
 
   // Passive per-frame upkeep: shield regen (with its brief post-hit pause) and, if a timed
   // Shield-powerup boost is active, counting its remaining duration down. Called once per
   // frame alongside regenAmmo (dt in seconds, same convention).
+  //
+  // #271: when the boost timer runs out, the elevated capacity does NOT snap back to base
+  // instantly — it persists as a depleting-only buffer (`_shieldBoost.expired = true`) until
+  // damage brings `shield.hp` down to (or below) the pre-boost base max. Only then does it
+  // actually clamp `shield.max`/`regenPerSec` back to base and clear `_shieldBoost`. While
+  // expired-but-not-yet-decayed, regen is capped at base max (never regens back into the
+  // decaying extra) — see `_tickExpiredShieldBoost`.
   tickShield(dt) {
-    tickShieldState(this.shield, dt);
-    if (this._shieldBoost) {
+    if (this._shieldBoost && !this._shieldBoost.expired) {
       this._shieldBoost.remainingMs -= dt * 1000;
-      if (this._shieldBoost.remainingMs <= 0) this._clearShieldBoost();
+      if (this._shieldBoost.remainingMs <= 0) this._shieldBoost.expired = true;
+    }
+    if (this._shieldBoost && this._shieldBoost.expired) {
+      this._tickExpiredShieldBoost(dt);
+    } else {
+      tickShieldState(this.shield, dt);
     }
   }
 
@@ -219,19 +235,55 @@ export class Mech {
   // regen rate by `mult` for `durationMs`. A duplicate pickup mid-boost just refreshes the
   // timer against the SAME captured pre-boost base (mirrors boostHealth's idempotency: never
   // compounds across repeated pickups). No-op on a mech with no native shield at all.
+  //
+  // #271: this also covers a duplicate pickup mid-decay (after the previous boost's timer
+  // expired but `shield.hp` hasn't drained back to base yet) — `_shieldBoost` is still around
+  // in its "expired" sub-state at that point, so this just un-expires it and refreshes the
+  // timer against the SAME original `baseMax`/`baseRegenPerSec`, same as the still-active case.
   boostShield(mult, durationMs) {
     if (!shieldPresent(this.shield)) return;
     if (!this._shieldBoost) {
       this._shieldBoost = {
-        mult, remainingMs: durationMs,
+        mult, remainingMs: durationMs, expired: false,
         baseMax: this.shield.max, baseRegenPerSec: this.shield.regenPerSec,
       };
     } else {
       this._shieldBoost.remainingMs = durationMs;
+      this._shieldBoost.expired = false;
     }
     this.shield.max = Math.round(this._shieldBoost.baseMax * mult);
     this.shield.regenPerSec = this._shieldBoost.baseRegenPerSec * mult;
     fillShield(this.shield);
+  }
+
+  // Depleting-only buffer tick, once the boost timer has expired but `shield.hp` is still above
+  // the pre-boost base max. Mirrors `tickShield`'s hit-pause handling from shield.js, but caps
+  // any regen at `baseMax` (never regens into the decaying extra) and only actually regens once
+  // hp has already dropped to base or below.
+  _tickExpiredShieldBoost(dt) {
+    const { baseMax, baseRegenPerSec } = this._shieldBoost;
+    if (this.shield.pauseRemaining > 0) {
+      this.shield.pauseRemaining = Math.max(0, this.shield.pauseRemaining - dt * 1000);
+    } else if (this.shield.hp <= baseMax) {
+      this.shield.hp = Math.min(baseMax, this.shield.hp + baseRegenPerSec * dt);
+    }
+    this._maybeFinalizeExpiredShieldBoost();
+  }
+
+  // If a shield boost has expired and `shield.hp` has (now) drained down to its pre-boost base
+  // max or below, finalize the clamp back to base max/base regen and clear `_shieldBoost`
+  // entirely — same end state as the old instant-snap `_clearShieldBoost`, just reached only
+  // once the extra capacity has actually been used up (#271), rather than the instant the timer
+  // ran out. Called both from the passive tick (regen/pause path) and right after any hit that
+  // damages the shield, so a hit that drains straight through the buffer in one shot finalizes
+  // immediately rather than waiting for the next frame's tick.
+  _maybeFinalizeExpiredShieldBoost() {
+    if (!this._shieldBoost?.expired) return;
+    const { baseMax, baseRegenPerSec } = this._shieldBoost;
+    if (this.shield.hp > baseMax) return;
+    this.shield.max = baseMax;
+    this.shield.regenPerSec = baseRegenPerSec;
+    this._shieldBoost = null;
   }
 
   _clearShieldBoost() {
