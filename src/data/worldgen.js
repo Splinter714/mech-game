@@ -68,15 +68,17 @@ export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 // #269 §3: replaces run.js's retired EARLY_POOL/LATE_POOL (which drew a STAGE's squad
 // composition) with an analogous pair for DOCK composition — same "softer openers vs. tougher
 // lategame kinds" idea, just drawn per-BASE now via `baseLateFraction` (index of the base along
-// the run, 0→1) instead of per-stage. Restricted to the non-mech ENEMY_KINDS roster (turret/
-// tank/drone/helicopter/quadruped/infantry) — deliberately NOT full mech loadouts (data/
-// enemies.js `ENEMIES`), since the wake-response split (data/bases.js `isFastWakeKind`) and the
-// "hold ground" dock behaviour (scenes/arena/enemyBehaviors.js `e.holdGround`) are both built
-// against the simpler non-mech kind AI, not the mech tactical-AI state machine — a reasonable
-// scope line for this pass (see the issue's own base-wall/layout deferral for the analogous
-// "don't over-build this pass" spirit). `swarm`/`turretNest`/`infantryMob` (multi-unit cluster
-// EXPANSIONS, not single kinds) are excluded too — a dock hosts a KIND, spawned in the COUNT
-// `dockCountFor` below assigns for that kind, not a bespoke cluster-expansion typeId.
+// the run, 0→1) instead of per-stage.
+//
+// #269 playtest follow-up ("fold mechs into the dock system"): the pool now mixes the non-mech
+// ENEMY_KINDS roster (turret/tank/drone/helicopter/quadruped/infantry) WITH full mech loadouts
+// (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery), late-pool only — see
+// `BASE_LATE_KIND_POOL`'s own comment for the full reasoning (mechs are the toughest kind, they
+// belong in the hard tier; `holdGround` now applies to mechs too, see scenes/arena/bases.js
+// `_wakeBase`, so their heavier tactical AI reads fine as a stationary defender). `swarm`/
+// `turretNest`/`infantryMob` (multi-unit cluster EXPANSIONS, not single kinds) are excluded too —
+// a dock hosts a KIND, spawned in the COUNT `dockCountFor` below assigns for that kind, not a
+// bespoke cluster-expansion typeId.
 //
 // #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — quadrupeds already
 // have their own independent drone-deploy mechanic (enemyBehaviors.js `quadrupedBehavior`'s
@@ -87,7 +89,27 @@ export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 // is left as the single remaining entry (`'tank'`) rather than padded back out with other
 // kinds — not asked for by the issue, and an easy follow-up tune once playtested.
 export const BASE_EARLY_KIND_POOL = ['tank'];
-export const BASE_LATE_KIND_POOL = ['helicopter', 'helicopter', 'quadruped', 'tank'];
+// #269 playtest follow-up ("where did all the enemy mechs go?" / "fold mechs into the dock
+// system"): mechs (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery, the full
+// tactical-AI Mech roster) are now dockable too, but ONLY in the LATE pool — they're the
+// toughest thing in the game, so they read as the hard/late-run tier, never an early-base
+// opener. `_spawnDormantUnits` (scenes/arena/bases.js) tells a mech id apart from a vehicle-kind
+// id via `isEnemyKind` (data/enemyKinds.js) and constructs it through `_spawnMech` instead of
+// `_spawnKind`; every woken mech defaults to `holdGround` regardless of chassis (see
+// scenes/arena/bases.js `_wakeBase` and its comment) — it defends its dock rather than
+// sortieing, so ALL FOUR archetypes (brawler/skirmisher/sniper/artillery) read fine as
+// stationary defenders, unlike the old off-screen-squad system where a slow heavy chassis
+// sniper/artillery would otherwise never catch up to the player. `raider` is weighted 2x (a
+// mid-range brawler/skirmisher hybid — the most generic, always-reads-right defender) over the
+// three specialists (each 1x): `skirmisher` (an aggressive brawler, presses in even while
+// holding ground via its firing-range weapons), `sniper` (kites/holds at long range — a natural
+// dock sentry), and `artillery` (every weapon indirect-fire — normally camps behind cover, but
+// with holdGround forcing it to just stand and shell, it reads PERFECTLY as a stationary base
+// defender lobbing shells over the wall — the exact "camping siege unit" its design already
+// wants, no `allIndirect` cover-seeking even needed once it's rooted at a dock).
+export const BASE_LATE_KIND_POOL = [
+  'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+];
 
 // #269 playtest follow-up (dock composition): "2-3 tanks should dock on ONE dock hex" / "2
 // helicopters should dock on ONE dock hex" — a dock is now a KIND + COUNT, not just a kind
