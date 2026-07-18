@@ -567,6 +567,106 @@ describe('#284: alert tower wake-trigger uses its own linked baseId, not geometr
   });
 });
 
+// #269 overhaul: an alert tower now activates on ANY of — player in its (larger) detection
+// radius, a nearby player gunshot, or the tower itself being damaged — and once started the
+// countdown is STICKY (leaving range no longer cancels it; only destroying the tower stops it).
+describe('#269 overhaul: alert-tower activation triggers + sticky countdown (_updateAlertTowers)', () => {
+  const TOWER = { q: 0, r: 0 };
+  const KEY = axialKey(TOWER.q, TOWER.r);
+
+  // A scene wired with one alert tower at the origin linked to base0, plus one dormant base0 unit
+  // parked far away (so ONLY the tower's own completion can wake it — never proximity to the unit).
+  function makeTowerScene() {
+    const scene = makeScene();
+    scene.bases = [{ id: 'base0', center: { q: 40, r: 0 }, docks: [], turrets: [] }];
+    scene.alertTowerHexes = [{ ...TOWER, baseId: 'base0' }];
+    scene.terrain = new Map([[KEY, 'alertTower']]);
+    scene._initAlertTowers();
+    // The live pulsing-ring FX (`_updateAlertFx`) needs real Phaser `this.add.graphics`/Audio —
+    // it's purely visual and out of scope for these activation/countdown-logic tests, so stub it
+    // to a no-op (the #284 completion test avoided it by finishing the countdown in a single tick).
+    scene._updateAlertFx = () => {};
+    const unit = makeDockedUnit('turret', { baseId: 'base0' });
+    unit.x = 99999; unit.y = 99999;   // nowhere near the tower or the player
+    scene.enemies.push(unit);
+    // Default: player and any gunshot far away — each test opts INTO exactly one trigger.
+    scene.px = 88888; scene.py = 88888;
+    scene._lastFireAt = null;
+    return { scene, unit };
+  }
+
+  it('a nearby player GUNSHOT (no proximity) starts + completes the countdown, waking the base', () => {
+    const { scene, unit } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    // A live shot (time.now within NOISE_WINDOW_MS of _lastFireAt) landing right on the tower.
+    scene.time.now = 0; scene._lastFireAt = 0;
+    scene._lastFireX = x; scene._lastFireY = y;
+    scene._updateAlertTowers(30);   // one big tick past the full countdown
+    expect(unit.awareness).toBe(AWARE);
+    expect(scene._wokenBases.has('base0')).toBe(true);
+  });
+
+  it('a gunshot OUTSIDE the tower\'s noise range does NOT start the countdown', () => {
+    const { scene, unit } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    scene.time.now = 0; scene._lastFireAt = 0;
+    scene._lastFireX = x + 2000; scene._lastFireY = y;   // way past NOISE_AGGRO_RANGE
+    scene._updateAlertTowers(30);
+    expect(unit.awareness).toBe(DORMANT);
+    expect(scene._alertTowerStates.get(KEY).countingDown).toBe(false);
+  });
+
+  it('DAMAGING the tower (via _onAlertTowerDamaged) starts + completes the countdown, waking the base', () => {
+    const { scene, unit } = makeTowerScene();
+    scene._onAlertTowerDamaged(KEY);   // world.js calls this when a standing alert tower is hit
+    scene._updateAlertTowers(30);
+    expect(unit.awareness).toBe(AWARE);
+    expect(scene._wokenBases.has('base0')).toBe(true);
+  });
+
+  it('the damage flag is a one-frame signal — it is consumed on the tick it activates', () => {
+    const { scene } = makeTowerScene();
+    scene._onAlertTowerDamaged(KEY);
+    expect(scene._alertTowerDamaged.has(KEY)).toBe(true);
+    scene._updateAlertTowers(0.1);   // small tick: starts the countdown but doesn't complete it
+    expect(scene._alertTowerDamaged.has(KEY)).toBe(false);   // consumed
+    expect(scene._alertTowerStates.get(KEY).countingDown).toBe(true);   // ...but it's committed now
+  });
+
+  it('STICKY: a countdown started by proximity completes even after the player leaves range', () => {
+    const { scene, unit } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    scene.px = x; scene.py = y;                 // player on the tower — starts the countdown...
+    scene._updateAlertTowers(0.1);              // ...partway (0.1s of a 3s countdown)
+    expect(scene._alertTowerStates.get(KEY).countingDown).toBe(true);
+    scene.px = 88888; scene.py = 88888;         // player flees far out of range
+    scene._updateAlertTowers(30);               // old behavior: reset to idle; new: completes anyway
+    expect(unit.awareness).toBe(AWARE);
+    expect(scene._wokenBases.has('base0')).toBe(true);
+  });
+
+  it('a tower DESTROYED mid-countdown never fires — its state is dropped, base stays dormant', () => {
+    const { scene, unit } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    scene.px = x; scene.py = y;
+    scene._updateAlertTowers(0.1);              // countdown started
+    expect(scene._alertTowerStates.get(KEY).countingDown).toBe(true);
+    scene.terrain.set(KEY, 'rubble');           // tower collapses to rubble (as _damageBuildingAt does)
+    scene._updateAlertTowers(30);               // notices the hex is gone, drops the state
+    expect(scene._alertTowerStates.has(KEY)).toBe(false);
+    expect(unit.awareness).toBe(DORMANT);       // never woke — destroyed before completing
+    expect(scene._wokenBases.has('base0')).toBe(false);
+  });
+
+  it('the larger detection radius: a player past the OLD 320px radius but inside the new one activates it', () => {
+    const { scene } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    scene.px = x + 400; scene.py = y;   // 400px: outside old 320 radius, inside new 480 radius
+    scene._updateAlertTowers(0.1);
+    expect(scene._alertTowerStates.get(KEY).countingDown).toBe(true);
+  });
+});
+
 describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/alertTower/turretEmplacement', () => {
   // `_spawnHexLabels`/`_addHexLabel` only need `this.add.text` (a real ArenaScene always has
   // it) -- stub it the same chainable-fake style as mission.test.js so this stays a pure logic

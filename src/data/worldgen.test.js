@@ -1243,22 +1243,32 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       }
     });
 
-    // Audit: confirm the detection radii that could reach into a gap (the tower's own tripwire,
-    // ALERT_DETECT_RADIUS, and a dormant unit's proximity-wake radius, PROXIMITY_WAKE_RANGE_CAP)
-    // stay comfortably inside MIN_GAP_PROGRESS_PX, so a player travelling the calm middle of a
-    // minimum-sized gap genuinely can't trigger either — even in the worst-case placement (a
-    // gap-tower landing with zero slack against the far base, `placeGapTowers`'s candidate filter
-    // technically allows this).
-    it('audit: ALERT_DETECT_RADIUS and PROXIMITY_WAKE_RANGE_CAP are both well inside MIN_GAP_PROGRESS_PX, leaving a genuine calm middle even in the worst case', () => {
-      // Both audited radii are unified at the same value on purpose (awareness.js
-      // `PROXIMITY_WAKE_RANGE_CAP`'s own comment) so their worst-case overlap doesn't compound.
-      expect(PROXIMITY_WAKE_RANGE_CAP).toBe(ALERT_DETECT_RADIUS);
-      expect(ALERT_DETECT_RADIUS).toBeLessThan(MIN_GAP_PROGRESS_PX);
-      const worstCaseCalmPx = MIN_GAP_PROGRESS_PX - Math.max(ALERT_DETECT_RADIUS, PROXIMITY_WAKE_RANGE_CAP);
+    // Audit: a dormant unit's proximity-wake radius (PROXIMITY_WAKE_RANGE_CAP) stays comfortably
+    // inside MIN_GAP_PROGRESS_PX, so a player travelling the calm middle of a minimum-sized gap
+    // genuinely can't wake a base's units just by passing through — even in the worst-case
+    // placement (a gap-tower landing with little slack against the far base).
+    //
+    // #269 overhaul: ALERT_DETECT_RADIUS is NO LONGER unified with PROXIMITY_WAKE_RANGE_CAP. The
+    // alert tower was deliberately given a LARGER, sticky detection envelope (its whole job is to
+    // be a hard-to-avoid tripwire that commits the moment you touch it), so it is intentionally
+    // allowed to reach further into the gap than the proximity-wake cap does. The "genuine calm
+    // middle" guarantee therefore now protects the PROXIMITY wake (walking the middle doesn't stir
+    // a base's own units), not the tower's tripwire — dodging the tower is now about killing it or
+    // routing wide, not slipping through an untriggerable centre lane.
+    it('audit: PROXIMITY_WAKE_RANGE_CAP stays well inside MIN_GAP_PROGRESS_PX, leaving a genuine calm middle even in the worst case', () => {
+      expect(PROXIMITY_WAKE_RANGE_CAP).toBeLessThan(MIN_GAP_PROGRESS_PX);
+      const worstCaseCalmPx = MIN_GAP_PROGRESS_PX - PROXIMITY_WAKE_RANGE_CAP;
       expect(worstCaseCalmPx).toBeGreaterThan(0);
       // A real, non-trivial calm stretch — not just barely positive — even for the fastest
       // (light, 268px/s) chassis in the worst RNG case.
       expect(worstCaseCalmPx).toBeGreaterThanOrEqual(250);
+    });
+
+    // #269 overhaul: the alert tower's larger, sticky envelope is intentionally decoupled from
+    // (and larger than) the proximity-wake cap — pin that relationship so an accidental re-unify
+    // or a revert to the old tight radius fails loudly.
+    it('audit: ALERT_DETECT_RADIUS is intentionally larger than PROXIMITY_WAKE_RANGE_CAP (decoupled tripwire, #269)', () => {
+      expect(ALERT_DETECT_RADIUS).toBeGreaterThan(PROXIMITY_WAKE_RANGE_CAP);
     });
   });
 });
