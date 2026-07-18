@@ -123,15 +123,15 @@ export const BASE_LATE_KIND_POOL = [
 // (`{ q, r, kindId, count }`, see `placeBases` below). `dockCountFor` is the one place that
 // count is decided, keyed off the kind.
 //
-// #269 playtest follow-up ("too many fuckin' tanks; only 2 per dock at most"): tanks were
-// rolling a 2-3 cluster, which — combined with the early pool being 100% tanks (see below) —
-// made the run read as wall-to-wall tanks. Tank is now a FLAT 2, matching helicopter: still a
-// "a few of them" pair, but never the 3-body pile that pushed the count over. `rng` is retained
-// in the signature (callers pass it) even though no kind currently rolls a range, so re-adding a
-// randomized count later is a one-line change without touching the call sites.
+// #269 playtest follow-up ("tone it down to 1 tank per dock and 1 helicopter per dock"): even a
+// flat 2 read as too dense once every dock hex filled, so EVERY dockable kind is now a single
+// unit — a dock hosts exactly one body regardless of kind. The per-kind structure is retained
+// (rather than collapsing to a bare `return 1`) as explicit re-tuning seams: bumping tanks or
+// helicopters back to a cluster later is a one-line change on its own branch. `rng` likewise
+// stays in the signature (callers pass it) so re-adding a randomized count is drop-in.
 export function dockCountFor(kindId, rng) {
-  if (kindId === 'tank') return 2;         // #269: capped at 2 (was 2-3) — "only 2 per dock at most"
-  if (kindId === 'helicopter') return 2;   // a gunship pair reads as a natural wingman formation
+  if (kindId === 'tank') return 1;         // #269: "1 tank per dock" — a lone tank, no cluster
+  if (kindId === 'helicopter') return 1;   // #269: "1 helicopter per dock" — a single gunship
   return 1;                                // every other dockable kind (quadruped, mechs) is a single unit
 }
 

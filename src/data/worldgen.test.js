@@ -795,14 +795,14 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(BASE_LATE_KIND_POOL).not.toContain('turret');
   });
 
-  it('#269 playtest follow-up: dockCountFor caps tanks at a flat 2, helicopters exactly 2, everything else 1', () => {
+  it('#269 playtest follow-up: dockCountFor is a flat 1 per dock for every kind (1 tank / 1 helicopter)', () => {
     const lowRng = () => 0;      // floors every roll to its minimum
     const highRng = () => 0.999; // ceilings every roll to just under its max
-    // "only 2 per dock at most" — tank is a flat 2 now (was 2-3), never rolling to 3.
-    expect(dockCountFor('tank', lowRng)).toBe(2);
-    expect(dockCountFor('tank', highRng)).toBe(2);
-    expect(dockCountFor('helicopter', lowRng)).toBe(2);
-    expect(dockCountFor('helicopter', highRng)).toBe(2);
+    // "tone it down to 1 tank per dock and 1 helicopter per dock" — every dock hosts one body.
+    expect(dockCountFor('tank', lowRng)).toBe(1);
+    expect(dockCountFor('tank', highRng)).toBe(1);
+    expect(dockCountFor('helicopter', lowRng)).toBe(1);
+    expect(dockCountFor('helicopter', highRng)).toBe(1);
     expect(dockCountFor('quadruped', lowRng)).toBe(1);
     expect(dockCountFor('quadruped', highRng)).toBe(1);
   });
