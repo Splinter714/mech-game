@@ -82,6 +82,11 @@ const PAL = {
   // from `tower`, and from each other comes entirely from each one's own DETAIL painter shape.
   dock:       BASE_INFRA_COLOR,
   alertTower: BASE_INFRA_COLOR,
+  // #269 playtest follow-up (dock composition): turrets get their own dedicated placement-marker
+  // hex (data/terrain.js `turretEmplacement`), same neutral base-infra fill as the other
+  // category:'base' entries — the DETAIL painter below (a red weapon-pad ring + crosshair) is
+  // what makes it read as visually distinct from `dock`'s amber "H" landing-pad marking.
+  turretEmplacement: BASE_INFRA_COLOR,
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -555,6 +560,26 @@ const DETAIL = {
     sg.fillStyle(0x676d76, 0.9);  sg.fillEllipse(C.cx + 5.5, C.cy - 15, 3.2, 1.8);
     sg.fillStyle(0xd8462a, 0.35); sg.fillCircle(C.cx, C.cy - 17.5, 4.2);         // beacon glow halo
     sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
+  },
+  // #269 playtest follow-up: the turret-emplacement placement marker (data/terrain.js
+  // `turretEmplacement`) — deliberately a near-clone of `hex_helipad`'s ground-marking layout
+  // (same disc/ring/inner-disc structure) so it reads as "the same FAMILY of base-infra ground
+  // marking," but with a warning-red ring (vs. helipad's amber) and a crosshair/gun-mount mark
+  // instead of an "H", so the two are still clearly distinguishable at a glance — a weapon pad,
+  // not a landing pad. This is a reasonable placeholder look reusing the existing base-infra
+  // palette (BASE_INFRA_COLOR); a more bespoke turret-pad visual may still be worth a follow-up
+  // pass once this is playtested (parallel #269 art work is covering dock/alertTower distinctness).
+  hex_turretEmplacement: (sg) => {
+    const r = 13;
+    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, r * 2.05, r * 1.5);   // soft ground shadow
+    sg.fillStyle(0x22262c, 0.85); sg.fillCircle(C.cx, C.cy, r);                                 // tarmac disc
+    sg.fillStyle(0xb3392a, 0.75); sg.fillCircle(C.cx, C.cy, r * 0.86);                          // warning-red ring
+    sg.fillStyle(0x22262c, 0.9);  sg.fillCircle(C.cx, C.cy, r * 0.78);                          // inner disc
+    const arm = r * 0.5, barW = r * 0.16;                                                        // crosshair / gun-mount mark
+    sg.fillStyle(0xd8cba0, 0.85);
+    sg.fillRect(C.cx - arm, C.cy - barW / 2, arm * 2, barW);
+    sg.fillRect(C.cx - barW / 2, C.cy - arm, barW, arm * 2);
+    sg.fillStyle(0x22262c, 1); sg.fillCircle(C.cx, C.cy, r * 0.16);                             // hub
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────

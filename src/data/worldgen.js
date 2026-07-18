@@ -53,6 +53,13 @@ export const DOCKS_PER_BASE_MAX = 5;
 export const ALERT_TOWERS_PER_BASE_MIN = 1;
 export const ALERT_TOWERS_PER_BASE_MAX = 2;
 
+// #269 playtest follow-up (dock composition, point 4): turret emplacements per base — placed via
+// their OWN loop (below, mirroring the dock/alert-tower loops' style), never drawn from the
+// generic dock kind pools. Small count, similar spirit to `ALERT_TOWERS_PER_BASE_MIN/MAX` — a
+// base gets 1-2 defensive turret emplacements guarding it, not a wall of them.
+export const TURRET_EMPLACEMENTS_PER_BASE_MIN = 1;
+export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
+
 // #269 §3: replaces run.js's retired EARLY_POOL/LATE_POOL (which drew a STAGE's squad
 // composition) with an analogous pair for DOCK composition — same "softer openers vs. tougher
 // lategame kinds" idea, just drawn per-BASE now via `baseLateFraction` (index of the base along
@@ -63,9 +70,33 @@ export const ALERT_TOWERS_PER_BASE_MAX = 2;
 // against the simpler non-mech kind AI, not the mech tactical-AI state machine — a reasonable
 // scope line for this pass (see the issue's own base-wall/layout deferral for the analogous
 // "don't over-build this pass" spirit). `swarm`/`turretNest`/`infantryMob` (multi-unit cluster
-// EXPANSIONS, not single kinds) are excluded too — a dock hosts exactly one dormant unit.
-export const BASE_EARLY_KIND_POOL = ['turret', 'tank', 'drone', 'drone'];
-export const BASE_LATE_KIND_POOL = ['helicopter', 'helicopter', 'quadruped', 'tank', 'turret'];
+// EXPANSIONS, not single kinds) are excluded too — a dock hosts a KIND, spawned in the COUNT
+// `dockCountFor` below assigns for that kind, not a bespoke cluster-expansion typeId.
+//
+// #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — quadrupeds already
+// have their own independent drone-deploy mechanic (enemyBehaviors.js `quadrupedBehavior`'s
+// `deployEveryMs`/`deployBatchMin/Max`/`deployCap`), so a dock ALSO producing standalone drones
+// was redundant with that. `'turret'` is REMOVED entirely too — turrets now get their own
+// dedicated `turretEmplacement` terrain hex, placed via a separate loop below
+// (`placeTurretEmplacements`), never mixed into the generic dock pool. `BASE_EARLY_KIND_POOL`
+// is left as the single remaining entry (`'tank'`) rather than padded back out with other
+// kinds — not asked for by the issue, and an easy follow-up tune once playtested.
+export const BASE_EARLY_KIND_POOL = ['tank'];
+export const BASE_LATE_KIND_POOL = ['helicopter', 'helicopter', 'quadruped', 'tank'];
+
+// #269 playtest follow-up (dock composition): "2-3 tanks should dock on ONE dock hex" / "2
+// helicopters should dock on ONE dock hex" — a dock is now a KIND + COUNT, not just a kind
+// (`{ q, r, kindId, count }`, see `placeBases` below). `dockCountFor` is the one place that
+// count is decided, keyed off the kind: tank rolls a small 2-3 cluster (mirrors the old
+// SQUAD_BASE-style "a few of them" escalation spirit), helicopter is a flat paired 2 (the issue
+// asked for "2 helicopters" literally, and a gunship pair reads as a natural wingman formation
+// rather than needing a randomized range), every other still-dockable kind (today just
+// `quadruped`, per the pools above) stays a single dormant unit — not asked to extend further.
+export function dockCountFor(kindId, rng) {
+  if (kindId === 'tank') return 2 + Math.floor(rng() * 2);   // 2 or 3
+  if (kindId === 'helicopter') return 2;
+  return 1;
+}
 
 // Same 0→1 escalation shape as the old (now-retired) run.js `lateFraction`, just indexed by
 // BASE rather than stage — base 0 draws only from BASE_EARLY_KIND_POOL, the last base skews
@@ -77,13 +108,15 @@ export function baseLateFraction(baseIndex, baseCount) {
 
 // Place `baseCount` bases into the terrain map `T` (mutated in place, same style as the
 // outpost/helipad loops above): each base is a small cluster of `dock` hexes (one dormant enemy
-// kind pre-assigned per dock — world-gen PLACEMENT DATA, not a new terrain entry per kind, per
-// the issue) around a random ground hex, plus a couple of `alertTower` hexes scattered nearby as
-// connective tissue. Returns the array of base descriptors: `{ id, center: {q,r}, docks: [{q,
-// r, kindId}] }` — `alertTowers` (flat `{q,r}` list, NOT nested per base — see the file-header
-// comment on why they're never base-owned) is returned separately. Every hex actually used is
-// stamped into `T` only if it's still plain open ground (`isGround`) at the time its turn comes
-// up, exactly like the outpost/helipad loops — never overwriting cover/an outpost/another dock.
+// KIND+COUNT pre-assigned per dock — world-gen PLACEMENT DATA, not a new terrain entry per kind,
+// per the issue), a small cluster of `turretEmplacement` hexes (its own dedicated placement,
+// #269 playtest follow-up point 4 — never drawn from the dock kind pools), plus a couple of
+// `alertTower` hexes scattered nearby as connective tissue. Returns the array of base
+// descriptors: `{ id, center: {q,r}, docks: [{q, r, kindId, count}], turrets: [{q,r}] }` —
+// `alertTowers` (flat `{q,r}` list, NOT nested per base — see the file-header comment on why
+// they're never base-owned) is returned separately. Every hex actually used is stamped into `T`
+// only if it's still plain open ground (`isGround`) at the time its turn comes up, exactly like
+// the outpost/helipad loops — never overwriting cover/an outpost/another dock/turret.
 //
 // #269 playtest follow-up: base CENTRES are stratified along the run instead of drawn by pure
 // uniform-random pick across the whole candidate list. With only `baseCount` (3) draws, a pure
@@ -126,7 +159,21 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
       const pool = rng() < frac ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
       const kindId = pool[Math.floor(rng() * pool.length)];
       T.set(k, 'dock');
-      docks.push({ q: h.q, r: h.r, kindId });
+      docks.push({ q: h.q, r: h.r, kindId, count: dockCountFor(kindId, rng) });
+    }
+    // #269 playtest follow-up: turret emplacements — their OWN dedicated placement, drawn from
+    // the same near-centre candidate ring the docks use (a turret emplacement is base defense,
+    // so it belongs close in), but stamped AFTER the dock loop above so it only ever lands on
+    // whatever ground the docks didn't already claim.
+    const turretCount = TURRET_EMPLACEMENTS_PER_BASE_MIN
+      + Math.floor(rng() * (TURRET_EMPLACEMENTS_PER_BASE_MAX - TURRET_EMPLACEMENTS_PER_BASE_MIN + 1));
+    const turrets = [];
+    for (const h of candidates) {
+      if (turrets.length >= turretCount) break;
+      const k = axialKey(h.q, h.r);
+      if (!T.has(k) || !isGround(k)) continue;
+      T.set(k, 'turretEmplacement');
+      turrets.push({ q: h.q, r: h.r });
     }
     // Alert towers: connective tissue placed a bit further out (rings 3-5) than the dock
     // cluster itself, so they read as separate roaming sentries rather than part of the base.
@@ -140,7 +187,7 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
         if (T.has(k) && isGround(k)) { T.set(k, 'alertTower'); alertTowers.push({ q: h.q, r: h.r }); break; }
       }
     }
-    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks });
+    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets });
   }
   return { bases, alertTowers };
 }
@@ -303,6 +350,7 @@ export function generateTerrain({
   // are small), same "landing in the safe zone is fine, it just gets cleared" spirit as helipad.
   for (const base of bases) {
     base.docks = base.docks.filter((d) => T.get(axialKey(d.q, d.r)) === 'dock');
+    base.turrets = (base.turrets ?? []).filter((t) => T.get(axialKey(t.q, t.r)) === 'turretEmplacement');
   }
   const finalAlertTowers = alertTowers.filter((t) => T.get(axialKey(t.q, t.r)) === 'alertTower');
 

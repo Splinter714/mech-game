@@ -157,6 +157,26 @@ export const TERRAIN = {
                destructible: true, hp: 25, rubbleId: 'rubble', setDressing: true,
                category: 'base', movement: 'none', cover: 'hard' },
 
+  // #269 playtest follow-up (dock composition): turrets get their OWN dedicated base hex type
+  // instead of being just another kind drawn from the generic dock pool (worldgen.js
+  // `BASE_EARLY_KIND_POOL`/`BASE_LATE_KIND_POOL` no longer include `'turret'` at all —
+  // `placeBases` places `turretEmplacement` hexes via a separate loop). Same reasoning as
+  // `dock` above (and the same shape): a pure PLACEMENT MARKER for the dormant `turret` kind
+  // stationed there, not a structure of its own — the turret enemy's own body/hp is what you
+  // actually fight (it already reads as a stationary "emplacement" via its own zero-locomotion
+  // kind def, enemyKinds.js), and every existing turret-cluster spawn path
+  // (`_spawnTurretCluster`/`turretClusterHexes`) already assumes turrets sit on ordinary
+  // PASSABLE ground — making this hex impassable/hard-cover would be inconsistent with that.
+  // Deliberately NOT destructible either, same "a placement marker doesn't need its own HP
+  // separate from the unit standing on it" reasoning as `dock` — which also means it's
+  // automatically excluded from `isMissionObjective` (that check requires `destructible`), so
+  // no `setDressing` flag is needed here (unlike `alertTower`/`helipad`, which ARE genuine
+  // destructible structures and need the flag to opt out). Its own texture (`hex_turretEmplacement`,
+  // art/hexArt.js) is what makes it read as visually distinct from a plain `dock` — a "weapon
+  // pad" marking (red ring + crosshair) vs. the dock's landing-pad "H" marking.
+  turretEmplacement: { id: 'turretEmplacement', tex: 'hex_turretEmplacement', passable: true, blocksLOS: false, speedFactor: 1,
+               category: 'base', movement: 'full', cover: 'open' },
+
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'terrain', movement: 'full', cover: 'open' },

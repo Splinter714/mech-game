@@ -10,23 +10,61 @@ import { DORMANT, AWARE } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
 
+// #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
+// tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
+// dock hex's centre pixel, so they don't all render exactly on top of one another. Mirrors
+// enemies.js's `TURRET_HUDDLE_OFFSET` (10px) for the same "huddle, don't stack" idea, just a
+// bit wider — tank/helicopter sprites (scale 0.4/0.6, both shrunk for this exact reason, see
+// enemyKinds.js) read bigger on screen than a turret (scale 0.42), so they need more room to
+// stay visually distinct as several units rather than reading as one blob.
+const DOCK_HUDDLE_OFFSET = 16;
+
 export const BasesMixin = {
   // §4: spawn every base's docked units NOW, at deploy time, dormant — not lazily, not via the
   // old off-camera `_offscreenSpawnPoint`/squad system. Called once from ArenaScene.create(),
   // in place of the old `_spawnSquad()` opening-squad call. Restricted to non-mech kinds (see
   // data/worldgen.js's BASE_EARLY_KIND_POOL/BASE_LATE_KIND_POOL comment for why), so this calls
   // `_spawnKind` directly rather than the more general `_spawnEnemy` dispatcher.
+  //
+  // #269 playtest follow-up (dock composition): a dock is now a KIND + COUNT
+  // (`dock.count`, data/worldgen.js `dockCountFor`) — 2-3 tanks or 2 helicopters can share ONE
+  // dock hex. Each unit in that cluster is scattered a small `DOCK_HUDDLE_OFFSET` around the
+  // dock's centre pixel (same "huddle around one validated point" idea as enemies.js's
+  // `_spawnTurretCluster`/`_spawnInfantryMob`, just inlined here since a dock cluster shares
+  // one already-terrain-validated hex — no fresh nearest-passable-hex lookup needed). Every
+  // unit in the cluster shares the SAME `baseId`/`dockKey` so `_wakeBase` wakes them together
+  // as one group.
+  //
+  // Turret emplacements (`base.turrets`, their own dedicated `turretEmplacement` terrain hex —
+  // never drawn from the dock kind pools) are spawned the same DORMANT way, one `turret` per
+  // emplacement hex, tagged with the SAME base's `baseId` so they wake alongside that base's
+  // docks and count toward the win condition (`_allBasesCleared`) exactly like a dock unit does.
   _spawnDormantUnits() {
     for (const base of this.bases ?? []) {
       for (const dock of base.docks) {
         const { x, y } = hexToPixel(dock.q, dock.r);
-        const e = this._spawnKind(x, y, dock.kindId);
-        // A DORMANT unit is genuinely inert (see enemies.js `_updateEnemy`'s early return on
-        // this state) — never through UNAWARE's idle-wander first. `baseId`/`dockKey` are how
-        // `_wakeBase` finds "every unit belonging to this base" and are otherwise unused.
+        const count = dock.count ?? 1;
+        const dockKey = axialKey(dock.q, dock.r);
+        for (let i = 0; i < count; i++) {
+          const a = (i / count) * Math.PI * 2 + Math.PI / 4;
+          const px = count > 1 ? x + Math.cos(a) * DOCK_HUDDLE_OFFSET : x;
+          const py = count > 1 ? y + Math.sin(a) * DOCK_HUDDLE_OFFSET : y;
+          const e = this._spawnKind(px, py, dock.kindId);
+          // A DORMANT unit is genuinely inert (see enemies.js `_updateEnemy`'s early return on
+          // this state) — never through UNAWARE's idle-wander first. `baseId`/`dockKey` are
+          // how `_wakeBase` finds "every unit belonging to this base/dock" and are otherwise
+          // unused.
+          e.awareness = DORMANT;
+          e.baseId = base.id;
+          e.dockKey = dockKey;
+        }
+      }
+      for (const turret of base.turrets ?? []) {
+        const { x, y } = hexToPixel(turret.q, turret.r);
+        const e = this._spawnKind(x, y, 'turret');
         e.awareness = DORMANT;
         e.baseId = base.id;
-        e.dockKey = axialKey(dock.q, dock.r);
+        e.dockKey = axialKey(turret.q, turret.r);
       }
     }
   },
