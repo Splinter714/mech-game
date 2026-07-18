@@ -12,9 +12,9 @@
 // rather than over-engineering a new progression system nobody asked for yet"): the player
 // clears standing outpost objectives (data/mission.js, unchanged — "destroy this outpost" still
 // works exactly as before, just fully decoupled from enemy spawning) one after another for
-// currency, while separately working toward the real win condition — every base's docked units
-// destroyed, dormant or awake (scenes/arena/bases.js `_allBasesCleared`) — or the run ends on
-// player death. A real multi-objective/base-gated progression curve (base walls, forced order,
+// currency, while separately working toward the real win condition — every base's objective hex
+// destroyed (#269 playtest follow-up — scenes/arena/bases.js `_allObjectivesDestroyed`) — or the
+// run ends on player death. A real multi-objective/base-gated progression curve (base walls, forced order,
 // etc.) is out of scope here — see issue #269 section 4, explicitly deferred.
 
 // Currency awarded per objective cleared, scaling up with how many have already been cleared
@@ -35,11 +35,11 @@ export function makeRun() {
 
 // Pure transition: an objective was destroyed — bank its currency and count it. No-ops (returns
 // the run unchanged) if the run isn't active (sticky terminal status, mirrors mission.js). Never
-// ends the run by itself — winning is a separate signal (`winRun`, driven by "every base
-// cleared" — scenes/arena/bases.js `_allBasesCleared`), since objective-clearing and base-
-// clearing are now two independent tracks (mission objectives were always separate from enemy
-// squads even before #269; that separation just becomes explicit now that there's no more
-// "clear the stage" event to conflate them under).
+// ends the run by itself — winning is a separate signal (`winRun`, driven by "every base's
+// objective hex destroyed" — scenes/arena/bases.js `_allObjectivesDestroyed`), since objective-
+// clearing and base-clearing are now two independent tracks (mission objectives were always
+// separate from enemy squads even before #269; that separation just becomes explicit now that
+// there's no more "clear the stage" event to conflate them under).
 export function advanceObjective(run) {
   if (run.status !== 'active') return run;
   const earned = currencyForObjective(run.objectivesCleared);

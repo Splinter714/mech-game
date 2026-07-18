@@ -663,3 +663,59 @@ describe('#269 §8: _allBasesCleared — the run\'s simplified win condition', (
     expect(scene._allBasesCleared()).toBe(true);
   });
 });
+
+// #269 playtest report ("objectives aren't clearing until I kill all units at the base"): the
+// run's REAL win condition, distinct from `_allBasesCleared` above — every base's own objective
+// hex must be destroyed (or, for a base with no real objective hex, its enemy-count fallback),
+// not just every enemy everywhere dead.
+describe('#269 playtest follow-up: _allObjectivesDestroyed — objective-hex-based run win condition', () => {
+  it('false when no bases exist at all', () => {
+    const scene = makeScene();
+    scene.bases = [];
+    scene.buildingHp = new Map();
+    expect(scene._allObjectivesDestroyed()).toBe(false);
+  });
+
+  it('false while a base\'s objective hex is still standing in buildingHp, even if every enemy is dead', () => {
+    const scene = makeScene();
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, objectiveHex: { q: 0, r: 0 } }];
+    scene.buildingHp = new Map([['0,0', 40]]);   // still standing
+    scene.enemies = [];   // every enemy already dead — must NOT be enough on its own
+    expect(scene._allObjectivesDestroyed()).toBe(false);
+  });
+
+  it('true once the objective hex has collapsed to rubble (removed from buildingHp), regardless of enemies', () => {
+    const scene = makeScene();
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, objectiveHex: { q: 0, r: 0 } }];
+    scene.buildingHp = new Map();   // key deleted — this is what `_damageBuildingAt` does on collapse
+    scene.enemies = [makeDockedUnit('turret', { baseId: 'base0' })];   // defenders still alive
+    expect(scene._allObjectivesDestroyed()).toBe(true);
+  });
+
+  it('falls back to the enemy-count rule for a base with no real objectiveHex', () => {
+    const scene = makeScene();
+    scene.bases = [{ id: 'base0', center: { q: 5, r: 5 } }];   // no objectiveHex field
+    scene.buildingHp = new Map();
+    scene.enemies = [makeDockedUnit('turret', { baseId: 'base0' })];
+    expect(scene._allObjectivesDestroyed()).toBe(false);
+
+    scene.enemies = [];
+    expect(scene._allObjectivesDestroyed()).toBe(true);
+  });
+
+  it('requires every base\'s objective destroyed, not just one, when there are multiple bases', () => {
+    const scene = makeScene();
+    scene.bases = [
+      { id: 'base0', center: { q: 0, r: 0 }, objectiveHex: { q: 0, r: 0 } },
+      { id: 'base1', center: { q: 10, r: 0 }, objectiveHex: { q: 10, r: 0 } },
+    ];
+    scene.enemies = [];
+    // Only base0's objective hex destroyed so far.
+    scene.buildingHp = new Map([['10,0', 40]]);
+    expect(scene._allObjectivesDestroyed()).toBe(false);
+
+    // Both destroyed.
+    scene.buildingHp = new Map();
+    expect(scene._allObjectivesDestroyed()).toBe(true);
+  });
+});

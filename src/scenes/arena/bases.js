@@ -16,6 +16,7 @@ import { DEPTH } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { makeDockResupplyState, tickDockResupply } from '../../data/dockResupply.js';
+import { isBaseObjectiveDestroyed } from './mission.js';
 
 // #269 playtest follow-up ("sensor towers need a visual AND a noise to indicate they are
 // spooling up") — the live escalating ring drawn over a counting-down alert tower. Colour
@@ -430,13 +431,27 @@ export const BasesMixin = {
     });
   },
 
-  // #269 §8: the run's simplified win condition — every base's docked units (dormant or
-  // awakened, doesn't matter) are destroyed. Dead enemies are pruned out of `this.enemies` the
-  // same tick they die (#87 `_removeEnemy`), so "no enemy left with a baseId" is already the
-  // exact right check — no separate per-base HP bookkeeping needed. False if there are no
-  // bases at all (nothing to clear yet — guards a pre-`_buildWorld` call).
+  // #269 §8: "every base's docked units (dormant or awakened, doesn't matter) are destroyed" —
+  // kept as its own distinct concept (still exercised directly by dormantWake.test.js) even
+  // though it's no longer what decides the run's win/lose. Dead enemies are pruned out of
+  // `this.enemies` the same tick they die (#87 `_removeEnemy`), so "no enemy left with a baseId"
+  // is already the exact right check for THIS concept — no separate per-base HP bookkeeping
+  // needed. False if there are no bases at all (nothing to clear yet — guards a pre-`_buildWorld`
+  // call).
   _allBasesCleared() {
     if (!this.bases || !this.bases.length) return false;
     return !this.enemies.some((e) => e.baseId != null);
+  },
+
+  // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"):
+  // the run's REAL win condition, consistent with the per-base mission check in mission.js
+  // `_updateMission` — every base's own objective hex (or, for the rare base with no real
+  // objective hex, its enemy-count fallback) must be destroyed, not just "every enemy
+  // everywhere is dead". Reuses `isBaseObjectiveDestroyed` so both checks agree on the exact
+  // same rule. False if there are no bases at all (nothing to clear yet — guards a
+  // pre-`_buildWorld` call), same as `_allBasesCleared` above.
+  _allObjectivesDestroyed() {
+    if (!this.bases || !this.bases.length) return false;
+    return this.bases.every((base) => isBaseObjectiveDestroyed(base, this.buildingHp, this.enemies));
   },
 };
