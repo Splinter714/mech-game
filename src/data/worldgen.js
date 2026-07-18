@@ -47,16 +47,21 @@ export const BASE_COUNT = 3;
 export const DOCKS_PER_BASE_MIN = 3;
 export const DOCKS_PER_BASE_MAX = 5;
 
-// Alert towers scattered as connective tissue BETWEEN bases (never owned by one ahead of time —
-// see data/bases.js `nearestBaseTo`, resolved at wake time). One per base plus a couple of extra
-// roamers so the corridor has more sensor coverage than raw base count alone would give.
-export const ALERT_TOWERS_PER_BASE_MIN = 1;
-export const ALERT_TOWERS_PER_BASE_MAX = 2;
+// #269 playtest follow-up (bases/outposts role swap): alert towers are NO LONGER placed as
+// connective tissue between bases — they're now OWNED by outposts (the separate, old,
+// plain-destructible-building system; see `placeOutpostTowers` below and the `outpostCount`
+// loop in `generateTerrain`). A base itself gets no dedicated tower anymore: it's already the
+// dense, obviously-dangerous encounter (docks + turretEmplacements), while an outpost — a
+// single unassuming building with nothing guarding it — is the one that needed a sentry. The
+// tower's own trigger behaviour (detect → countdown → wake the NEAREST base, `nearestBaseTo`)
+// is unchanged; only where it gets planted moved.
+export const ALERT_TOWERS_PER_OUTPOST_MIN = 1;
+export const ALERT_TOWERS_PER_OUTPOST_MAX = 1;
 
 // #269 playtest follow-up (dock composition, point 4): turret emplacements per base — placed via
 // their OWN loop (below, mirroring the dock/alert-tower loops' style), never drawn from the
-// generic dock kind pools. Small count, similar spirit to `ALERT_TOWERS_PER_BASE_MIN/MAX` — a
-// base gets 1-2 defensive turret emplacements guarding it, not a wall of them.
+// generic dock kind pools. Small count, similar spirit to `ALERT_TOWERS_PER_OUTPOST_MIN/MAX` —
+// a base gets 1-2 defensive turret emplacements guarding it, not a wall of them.
 export const TURRET_EMPLACEMENTS_PER_BASE_MIN = 1;
 export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 
@@ -109,14 +114,16 @@ export function baseLateFraction(baseIndex, baseCount) {
 // Place `baseCount` bases into the terrain map `T` (mutated in place, same style as the
 // outpost/helipad loops above): each base is a small cluster of `dock` hexes (one dormant enemy
 // KIND+COUNT pre-assigned per dock — world-gen PLACEMENT DATA, not a new terrain entry per kind,
-// per the issue), a small cluster of `turretEmplacement` hexes (its own dedicated placement,
-// #269 playtest follow-up point 4 — never drawn from the dock kind pools), plus a couple of
-// `alertTower` hexes scattered nearby as connective tissue. Returns the array of base
-// descriptors: `{ id, center: {q,r}, docks: [{q, r, kindId, count}], turrets: [{q,r}] }` —
-// `alertTowers` (flat `{q,r}` list, NOT nested per base — see the file-header comment on why
-// they're never base-owned) is returned separately. Every hex actually used is stamped into `T`
-// only if it's still plain open ground (`isGround`) at the time its turn comes up, exactly like
-// the outpost/helipad loops — never overwriting cover/an outpost/another dock/turret.
+// per the issue), plus a small cluster of `turretEmplacement` hexes (its own dedicated placement,
+// #269 playtest follow-up point 4 — never drawn from the dock kind pools). Returns the array of
+// base descriptors: `{ id, center: {q,r}, docks: [{q, r, kindId, count}], turrets: [{q,r}] }`.
+// Every hex actually used is stamped into `T` only if it's still plain open ground (`isGround`)
+// at the time its turn comes up, exactly like the outpost/helipad loops — never overwriting
+// cover/an outpost/another dock/turret.
+//
+// #269 playtest follow-up (bases/outposts role swap): bases no longer place their own alert
+// towers — see `placeOutpostTowers` below, which anchors towers (+ the roaming patrols they
+// imply via `scenes/arena/bases.js` `_spawnTowerPatrols`, unchanged) to OUTPOSTS instead.
 //
 // #269 playtest follow-up: base CENTRES are stratified along the run instead of drawn by pure
 // uniform-random pick across the whole candidate list. With only `baseCount` (3) draws, a pure
@@ -136,7 +143,6 @@ export function baseLateFraction(baseIndex, baseCount) {
 // the run" is NOT the same as straight-line distance from origin once the corridor bends.
 export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null) {
   const bases = [];
-  const alertTowers = [];
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   const sorted = [...all].sort((a, b) => progress(a) - progress(b));
   const segSize = Math.max(1, Math.floor(sorted.length / baseCount));
@@ -175,10 +181,28 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
       T.set(k, 'turretEmplacement');
       turrets.push({ q: h.q, r: h.r });
     }
-    // Alert towers: connective tissue placed a bit further out (rings 3-5) than the dock
-    // cluster itself, so they read as separate roaming sentries rather than part of the base.
-    const towerCount = ALERT_TOWERS_PER_BASE_MIN
-      + Math.floor(rng() * (ALERT_TOWERS_PER_BASE_MAX - ALERT_TOWERS_PER_BASE_MIN + 1));
+    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets });
+  }
+  return { bases };
+}
+
+// #269 playtest follow-up (bases/outposts role swap): alert towers (+ the roaming patrols
+// `scenes/arena/bases.js` `_spawnTowerPatrols` stations at each tower's position, unchanged) now
+// belong to OUTPOSTS instead of bases — a base is already the dense, obviously-dangerous
+// encounter; an outpost is the unassuming lone building that needed a sentry watching it. Same
+// "pick a nearby ring hex, snap to the first valid ground hex" placement shape the old per-base
+// loop used (rings 3-5 out, 10 rejection-sample tries), just anchored to each outpost centre in
+// `outpostCenters` (the positions `generateTerrain`'s outpost loop actually stamped) instead of a
+// base centre. `ALERT_TOWERS_PER_OUTPOST_MIN/MAX` are both 1 — the issue reads "each outpost"
+// literally (1:1), and a biome's flat outpost count (3-8, data/biomes.js) is small enough that
+// 1:1 doesn't create the "towers everywhere" density the old per-base loop risked (up to
+// BASE_COUNT(3) * 2 = 6 towers before, vs. up to 8 now on the densest biome — same order of
+// magnitude, not an explosion). Returns the flat `{q,r}` alert-tower list, same shape as before.
+export function placeOutpostTowers(rng, outpostCenters, T, isGround) {
+  const alertTowers = [];
+  for (const center of outpostCenters ?? []) {
+    const towerCount = ALERT_TOWERS_PER_OUTPOST_MIN
+      + Math.floor(rng() * (ALERT_TOWERS_PER_OUTPOST_MAX - ALERT_TOWERS_PER_OUTPOST_MIN + 1));
     for (let t = 0; t < towerCount; t++) {
       const ring = range(center, 3 + Math.floor(rng() * 3));
       for (let tries = 0; tries < 10; tries++) {
@@ -187,9 +211,8 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
         if (T.has(k) && isGround(k)) { T.set(k, 'alertTower'); alertTowers.push({ q: h.q, r: h.r }); break; }
       }
     }
-    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets });
   }
-  return { bases, alertTowers };
+  return alertTowers;
 }
 
 // Small seeded PRNG (mulberry32) — deterministic given `a`, so the same seed always yields
@@ -296,9 +319,19 @@ export function generateTerrain({
   // (from the caller) overrides the biome default so a long corridor gets outposts spread along
   // its whole length — otherwise late stages, whose objective sits near the far end, would have
   // no standing outpost to target there.
+  //
+  // #269 playtest follow-up (bases/outposts role swap): each cluster's centre `c` is now also
+  // collected into `outpostCenters`, so `placeOutpostTowers` below has something to anchor an
+  // alert tower (+ roaming patrol) to. Collected regardless of whether `c`'s own hex ends up
+  // actually stamped `B.outpost` (this loop, unlike the dock/turret/tower loops, doesn't check
+  // `isGround` before writing) — a tower planted near "roughly where an outpost cluster is" is
+  // the right anchor even on the rare hex where `c` itself got overwritten by a neighbour draw
+  // elsewhere; it's re-validated against the final `T` below anyway, same as bases/towers are.
   const outpostCount = outposts ?? B.outposts;
+  const outpostCenters = [];
   for (let i = 0; i < outpostCount; i++) {
     const c = all[Math.floor(rng() * all.length)];
+    outpostCenters.push({ q: c.q, r: c.r });
     for (const h of [c, ...neighbors(c.q, c.r).filter(() => rng() < 0.55)]) {
       const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, B.outpost);
     }
@@ -322,16 +355,21 @@ export function generateTerrain({
     if (isGround(k)) T.set(k, 'helipad');
   }
 
-  // #269 §3: place the run's bases (dormant docks + connective-tissue alert towers) — same
-  // "random valid ground hex" style as the outpost/helipad loops above, AFTER them so a base
-  // never overwrites an outpost/cover cluster, BEFORE the safe-zone clear so anything that lands
-  // inside it is reset back to open ground exactly like an outpost or helipad would be.
+  // #269 §3: place the run's bases (dormant docks + turret emplacements) — same "random valid
+  // ground hex" style as the outpost/helipad loops above, AFTER them so a base never overwrites
+  // an outpost/cover cluster, BEFORE the safe-zone clear so anything that lands inside it is
+  // reset back to open ground exactly like an outpost or helipad would be.
   // #269 playtest follow-up: prefer real progress-along-the-spine over straight-line distance
   // from origin when a spine is available — the corridor curves, so distance-from-origin alone
   // can rank a hex that's actually far down a bend as "early" (falls back to the distance proxy,
   // matching the pattern used elsewhere in this function, when no spine is passed).
   const progressOf = spine ? (h) => spineProgressHexOf(spine, h.q, h.r) : null;
-  const { bases, alertTowers } = placeBases(rng, all, T, isGround, baseCount, progressOf);
+  const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf);
+  // #269 playtest follow-up (bases/outposts role swap): alert towers (+ the roaming patrols they
+  // imply) are now anchored to OUTPOSTS instead of bases — see `placeOutpostTowers` above.
+  // Placed after bases for the same "never overwrite a base's docks/turrets" reason, still
+  // before the safe-zone clear below.
+  const alertTowers = placeOutpostTowers(rng, outpostCenters, T, isGround);
 
   // Clear the safe zone (spawn point + line of fire) back to open ground.
   for (const h of range(safeCenter, 3)) { const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, groundAt(h)); }
@@ -353,6 +391,13 @@ export function generateTerrain({
     base.turrets = (base.turrets ?? []).filter((t) => T.get(axialKey(t.q, t.r)) === 'turretEmplacement');
   }
   const finalAlertTowers = alertTowers.filter((t) => T.get(axialKey(t.q, t.r)) === 'alertTower');
+  // #269 playtest follow-up (bases/outposts role swap): `outpostCenters` is re-validated the same
+  // way — only centres whose own hex is still the biome's `outpost` id in the final map (not
+  // reset by the safe-zone clear, not overwritten by a later base/helipad draw) are returned, so
+  // a caller anchoring UI/analytics to "where the outposts are" never sees a stale/cleared one.
+  // `placeOutpostTowers` above already ran against the pre-clear centres (matching how bases run
+  // against pre-clear candidates too) — this filtered list is for callers, not re-fed into it.
+  const finalOutposts = outpostCenters.filter((c) => T.get(axialKey(c.q, c.r)) === B.outpost);
 
   // #110: stamp the boundary ring LAST (and unconditionally) — these hexes sit just OUTSIDE
   // the playable shape, so nothing above ever touched them; this is the one and only place
@@ -367,7 +412,7 @@ export function generateTerrain({
     const hp = buildingHpOf(id);
     if (hp > 0) (isSoftCover(id) ? coverHp : buildingHp).set(k, hp);
   }
-  return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers };
+  return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers, outposts: finalOutposts };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

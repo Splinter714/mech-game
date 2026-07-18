@@ -135,9 +135,10 @@ export const TERRAIN = {
                category: 'base', movement: 'full', cover: 'open' },
   // #269 §3: a small, cheap, DESTRUCTIBLE sensor tower — the wake TRIGGER for the base-population
   // system (data/alertTower.js's pure countdown state machine + scenes/arena/bases.js's per-frame
-  // tick/wake routing). It's connective tissue SCATTERED BETWEEN bases (data/worldgen.js
-  // `placeBases`), not owned by or part of any one base — the nearest base is resolved at wake
-  // time, once its countdown actually completes. While standing, a player who lingers in its
+  // tick/wake routing). #269 playtest follow-up (bases/outposts role swap): it's placed at/near
+  // an OUTPOST (data/worldgen.js `placeOutpostTowers`), not owned by or part of any base — the
+  // nearest base is still resolved at wake time, once its countdown actually completes. While
+  // standing, a player who lingers in its
   // detection radius starts a countdown ("radioing it in"); destroying the tower first cancels
   // it — a real stealth/tension window, not just flavor. Reads as a small emplacement — the same
   // cover/movement profile as the existing `tower` hard-cover outpost (hard cover, no movement)
