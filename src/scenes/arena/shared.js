@@ -80,19 +80,27 @@ export const UI_HIGHLIGHT_COLOR = 0xffb84a;
 export const DEPTH = {
   TERRAIN: 0,         // terrain tiles (world.js) — the floor, always lowest, explicit every time.
   GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
-  GROUND_UNITS: 2,    // #113: non-flying enemy views (mech, tank, turret, infantry) — always
-                      // below the player so a ground unit standing under/near the player can
-                      // never obscure it.
+  GROUND_UNITS: 2,    // #113: SMALL non-flying enemy views (tank, infantry — #289 size-split) —
+                      // always below the player, and (per #289) below the cover canopy so a small
+                      // unit standing in cover peeks out from UNDER the foliage.
   // #289: cover terrain's foliage/canopy overlay (world.js's per-cover-hex second Image, art
-  // from hexArt.js's CANOPY_DETAIL) — sits strictly between GROUND_UNITS and UNITS so a small
-  // ground unit standing in cover renders BELOW the canopy (visible from the waist down under
-  // the tree/foliage silhouette, not fully obscured) while the player/large units still render
-  // above it, unaffected. A non-integer value (2.5) is used deliberately instead of renumbering
+  // from hexArt.js's CANOPY_DETAIL) — sits strictly between GROUND_UNITS and LARGE_GROUND_UNITS
+  // so a SMALL ground unit standing in cover renders BELOW the canopy (visible from the waist
+  // down under the tree/foliage silhouette, not fully obscured) while LARGE ground units and the
+  // player render ABOVE it. A non-integer value (2.5) is used deliberately instead of renumbering
   // every existing tier below/above it: Phaser's depth sort only needs correct RELATIVE
   // ordering, so slotting a fractional value between 2 and 3 is exactly as valid as an integer
   // and avoids a shotgun rename of GROUND_UNITS/UNITS/PROJECTILES/etc. across every call site
   // that already hardcodes/imports those names.
   COVER_CANOPY: 2.5,
+  // #289 follow-up (playtest: "light mechs should not sort below the tops of trees/cover"): LARGE
+  // ground enemy views (enemy mech, quadruped, turret) are tall enough to tower OVER the tree/
+  // foliage canopy, so they render ABOVE COVER_CANOPY (2.5) — but still strictly BELOW the player
+  // (UNITS = 3), preserving #113's invariant that no ground unit ever obscures the player. Only
+  // SMALL ground units (tank/infantry) stay at GROUND_UNITS (2), below the canopy, per #289's
+  // peek-out-from-under intent. Another fractional slot (2.75) between COVER_CANOPY and UNITS, for
+  // the same "no renumbering" reason COVER_CANOPY uses 2.5.
+  LARGE_GROUND_UNITS: 2.75,
   UNITS: 3,           // the player, and flying enemy views (helicopter, drone) — elevated units
                       // that don't have the same "who's actually closer to the ground" ambiguity
                       // ground units do, so they keep the original flat #99 tier alongside the
@@ -105,14 +113,20 @@ export const DEPTH = {
                       // beacons — always legible above units and FX.
 };
 
-// #113: which DEPTH tier a unit's view belongs at. The player and any FLYING enemy (helicopter,
-// drone) stay at DEPTH.UNITS; every other (ground) unit — enemy mech, tank, turret, infantry —
-// renders one tier lower at DEPTH.GROUND_UNITS so it can never stand over/obscure the player.
-// PURE so the actual tier-SELECTION logic is unit-testable without touching Phaser; the two real
-// call sites (locomotion.js `_makeMechView`, enemies.js `_makeVehicleView`) just feed this and
-// call `setDepth()` with the result, and are covered by the arena smoke test instead.
-export function unitDepth(isPlayer, flying) {
-  return (isPlayer || flying) ? DEPTH.UNITS : DEPTH.GROUND_UNITS;
+// #113/#289: which DEPTH tier a unit's view belongs at. The player and any FLYING enemy
+// (helicopter, drone) stay at DEPTH.UNITS. Every non-flying (ground) ENEMY unit renders below the
+// player, but #289 splits ground units by SIZE tier so they sort correctly against the cover
+// canopy (COVER_CANOPY = 2.5): SMALL ground units (tank/infantry — `small === true`) stay at
+// DEPTH.GROUND_UNITS (2, below the canopy, so they peek out from UNDER foliage), while LARGE
+// ground units (enemy mech/quadruped/turret) render at DEPTH.LARGE_GROUND_UNITS (2.75, above the
+// canopy so they tower over tree tops) — still below the player. `small` is the caller's size-tier
+// signal (isSmallUnit / `def.size === 'small'`); it's ignored for the player and flyers, which the
+// isPlayer/flying branch handles first. PURE so the tier-SELECTION logic is unit-testable without
+// touching Phaser; the two real call sites (locomotion.js `_makeMechView`, enemies.js
+// `_makeVehicleView`) feed this and call `setDepth()` with the result.
+export function unitDepth(isPlayer, flying, small = false) {
+  if (isPlayer || flying) return DEPTH.UNITS;
+  return small ? DEPTH.GROUND_UNITS : DEPTH.LARGE_GROUND_UNITS;
 }
 
 // The starting enemy's hex (world build clears it; create() spawns the first enemy there).

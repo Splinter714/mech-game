@@ -276,9 +276,9 @@ describe('generateTerrain', () => {
     // objective (isMissionObjective, exercised elsewhere); alertTower is destructible set-dressing.
     // (`dockClosed` is a live RUNTIME state swap — scenes/arena/bases.js — never stamped by
     // world-gen itself, so it can't appear here.)
-    // #279: the buildingHp/coverHp split now keys off `isPassable`, not the LOS cover tier —
-    // forest (GRASSLAND.cover) is HARD cover now but stays passable, so it still lands in
-    // `coverHp`, not `buildingHp`, exactly as before.
+    // #279: the buildingHp/coverHp split keys off `isPassable`, not the LOS cover tier — forest
+    // (GRASSLAND.cover) is soft, passable walk-through cover, so it lands in `coverHp`, not
+    // `buildingHp`. (Keying off passability is robust regardless of the soft/hard tier.)
     for (const k of buildingHp.keys()) {
       expect(['alertTower', 'objective']).toContain(terrain.get(k));
     }

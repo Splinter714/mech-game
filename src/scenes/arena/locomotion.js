@@ -71,9 +71,10 @@ export const LocomotionMixin = {
   // occlude them — the top-down read at tilt 0, and what keeps an inward-canted part tucked
   // under the body. Each off-centre part pivots at its own joint (arms at the shoulder, side
   // torsos nearer their centre — see partSpriteTransform).
-  // #113: `isPlayer` picks the depth tier — the player mech (ArenaScene.create()) passes true and
-  // stays at DEPTH.UNITS; every enemy mech (enemies.js `_spawnMech`) leaves it false and renders
-  // at the lower DEPTH.GROUND_UNITS, so a ground unit can never stand over/hide the player.
+  // #113/#289: `isPlayer` picks the depth tier — the player mech (ArenaScene.create()) passes true
+  // and stays at DEPTH.UNITS; every enemy mech (enemies.js `_spawnMech`) leaves it false. A mech is
+  // always a LARGE ground unit (`small=false`), so an enemy mech renders at DEPTH.LARGE_GROUND_UNITS
+  // — below the player but ABOVE the cover canopy, so it towers over tree tops (see `unitDepth`).
   _makeMechView(key, x, y, angle, isPlayer = false) {
     const hull = this.add.sprite(0, 0, `${key}_hull_0`).setScale(ARENA_MECH_SCALE);
     const torL = this.add.sprite(0, 0, `${key}_leftTorso`).setScale(ARENA_MECH_SCALE);
@@ -86,10 +87,10 @@ export const LocomotionMixin = {
     const c = this.add.container(x, y, [hull, torL, torR, armL, armR, turret]);
     // #99: explicit depth — was relying on scene add-order, which put whichever mech view got
     // created LAST (any enemy spawned after the player) on top regardless of actual position.
-    // #113: enemy mechs are GROUND units and now render one tier below the player (DEPTH.UNITS)
-    // instead of sharing it — see `unitDepth` / the tier comment in shared.js. An enemy mech is
-    // never a flying kind, so `flying` is always false here.
-    c.setDepth(unitDepth(isPlayer, false));
+    // #113/#289: enemy mechs are LARGE GROUND units — below the player (DEPTH.UNITS) but above the
+    // cover canopy (DEPTH.LARGE_GROUND_UNITS) — see `unitDepth` / the tier comment in shared.js. An
+    // enemy mech is never flying (`flying=false`) and is never small (`small=false`).
+    c.setDepth(unitDepth(isPlayer, false, false));
     c.hull = hull; c.torL = torL; c.torR = torR; c.armL = armL; c.armR = armR; c.turret = turret;
     // Per-view smoothing state: the CURRENTLY-APPLIED convergence tilt of each pivoting part,
     // eased toward its target each frame (see _syncTilts). Starts at the resting tilt (0) so a

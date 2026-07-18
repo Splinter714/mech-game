@@ -85,22 +85,41 @@ describe('crushTriggerRadius — the #112 player crush-trigger contribution', ()
   });
 });
 
-describe('unitDepth — the #113 ground-unit-below-player depth tier selection', () => {
+describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
   it('puts the player at DEPTH.UNITS', () => {
-    expect(unitDepth(true, false)).toBe(DEPTH.UNITS);
+    expect(unitDepth(true, false, false)).toBe(DEPTH.UNITS);
+    // #289: size is ignored for the player — isPlayer wins even if `small` is passed true.
+    expect(unitDepth(true, false, true)).toBe(DEPTH.UNITS);
   });
 
-  it('puts a flying enemy (helicopter/drone) at DEPTH.UNITS, same as the player', () => {
-    expect(unitDepth(false, true)).toBe(DEPTH.UNITS);
+  it('puts a flying enemy (helicopter/drone) at DEPTH.UNITS, same as the player, regardless of size', () => {
+    expect(unitDepth(false, true, false)).toBe(DEPTH.UNITS);
+    expect(unitDepth(false, true, true)).toBe(DEPTH.UNITS);
   });
 
-  it('puts a ground enemy (mech/tank/turret/infantry) at DEPTH.GROUND_UNITS, below the player', () => {
-    expect(unitDepth(false, false)).toBe(DEPTH.GROUND_UNITS);
+  it('#289: puts a SMALL ground enemy (tank/infantry) at DEPTH.GROUND_UNITS, below the cover canopy', () => {
+    expect(unitDepth(false, false, true)).toBe(DEPTH.GROUND_UNITS);
+    expect(DEPTH.GROUND_UNITS).toBeLessThan(DEPTH.COVER_CANOPY);
     expect(DEPTH.GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
   });
 
+  it('#289: puts a LARGE ground enemy (mech/quadruped/turret) at DEPTH.LARGE_GROUND_UNITS — above the cover canopy but below the player', () => {
+    expect(unitDepth(false, false, false)).toBe(DEPTH.LARGE_GROUND_UNITS);
+    expect(DEPTH.LARGE_GROUND_UNITS).toBeGreaterThan(DEPTH.COVER_CANOPY);
+    expect(DEPTH.LARGE_GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
+  });
+
+  it('#289: the full ground layering is small (2) < canopy (2.5) < large (2.75) < player/flyers (3)', () => {
+    expect(DEPTH.GROUND_UNITS)
+      .toBeLessThan(DEPTH.COVER_CANOPY);
+    expect(DEPTH.COVER_CANOPY)
+      .toBeLessThan(DEPTH.LARGE_GROUND_UNITS);
+    expect(DEPTH.LARGE_GROUND_UNITS)
+      .toBeLessThan(DEPTH.UNITS);
+  });
+
   it('a hypothetical flying player still resolves to DEPTH.UNITS (isPlayer wins either way)', () => {
-    expect(unitDepth(true, true)).toBe(DEPTH.UNITS);
+    expect(unitDepth(true, true, false)).toBe(DEPTH.UNITS);
   });
 });
 
