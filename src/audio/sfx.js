@@ -554,6 +554,26 @@ export function footstep(e, foot = 0) {
   e.noise(e.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
 }
 
+// #269 playtest follow-up — alert tower "spooling up" warning: a periodic radar-style beep,
+// re-triggered by the caller (scenes/arena/bases.js `_updateAlertTowers`) on an interval that
+// SHRINKS as the countdown nears completion, so the pulse rate itself reads as "quickening,"
+// not just a fixed metronome. `fraction` (0 at countdown start -> 1 at completion, see
+// data/alertTower.js `tickAlertTower`) also brightens/raises the pitch and adds a touch more
+// bite on each successive beep, so a beep heard right before the tower fires reads
+// unmistakably more urgent than the first one. No loop/held state here at all — each call is a
+// single one-shot cue (like footstep above), so there's nothing to explicitly stop: the caller
+// simply stops CALLING this once the countdown cancels or completes (see bases.js), which is
+// what "stops cleanly" means for a one-shot-pulse cue instead of a held drone.
+// Positional via `pos` (the tower's own world position vs. the player/listener) like every
+// other world-anchored cue — see positionalBus above / data/positionalAudio.js.
+export function alertPulse(e, fraction, pos = null) {
+  const f = clamp(fraction, 0, 1);
+  const bus = positionalBus(e, e.sfx, pos);
+  const freq = 640 + f * 480;              // rising pitch as it nears completion
+  e.tone(bus, { type: 'square', freq, freqEnd: freq * 0.82, dur: 0.085, gain: 0.20 + f * 0.16, attack: 0.002 });
+  e.noise(bus, { dur: 0.045, gain: 0.05 + f * 0.09, type: 'highpass', freq: 3400 }); // digital "chirp" edge
+}
+
 // Explosion (#36, tunable data per #100) — a broken-off part / the player's own MECH DOWN.
 // `scale` 0.3..1.6 sizes the blast (a couple of fixed intensities — #107 moved the actual
 // per-KILL boom, which used to drive this via `deathScaleFor`, onto the discrete category path

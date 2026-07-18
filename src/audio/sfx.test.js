@@ -101,4 +101,30 @@ describe('positional audio wiring in sfx.js', () => {
       expect(p.pan.value).toBeCloseTo(stereoPan(pos.x, pos.y, pos.listenerX, pos.listenerY), 6);
     }
   });
+
+  // #269 playtest follow-up — alert tower spool-up warning pulse: same positional treatment as
+  // every other world-anchored cue above, and safe to call across the full 0..1 fraction range
+  // (bases.js `_updateAlertTowers` drives it straight from the countdown's own progress).
+  it('alertPulse is positional like the other world-anchored cues, and never throws across the fraction range', () => {
+    const eng = new AudioEngine();
+    const ctx = mockContext();
+    eng.init(ctx);
+    const pos = { x: 250, y: 0, listenerX: 0, listenerY: 0 };
+    for (const fraction of [0, 0.25, 0.5, 0.99, 1]) {
+      expect(() => eng.alertPulse(fraction, pos)).not.toThrow();
+    }
+    expect(ctx._panners().length).toBeGreaterThan(0);
+    for (const p of ctx._panners()) {
+      expect(p.pan.value).toBeCloseTo(stereoPan(pos.x, pos.y, pos.listenerX, pos.listenerY), 6);
+    }
+  });
+
+  it('alertPulse is a strict no-op (no positional nodes) with no position passed', () => {
+    const eng = new AudioEngine();
+    const ctx = mockContext();
+    eng.init(ctx);
+    const panCountBefore = ctx._panners().length;
+    expect(() => eng.alertPulse(0.5)).not.toThrow();
+    expect(ctx._panners().length).toBe(panCountBefore);
+  });
 });
