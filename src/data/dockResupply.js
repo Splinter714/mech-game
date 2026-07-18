@@ -9,21 +9,30 @@
 // Explicitly scoped to DOCK hexes only (never `turretEmplacement` — a stationary turret
 // refilling itself doesn't fit "reinforcements rolling out of a bay").
 
-// Cooldown once a dock becomes eligible (cleared + base awake) before it resupplies. The
-// original design language calls this a RARE exception ("not the common case... most docks are
-// one dormant unit, one wake, done") that should read as "occasionally," not a respawn timer —
-// so this sits in the tens-of-seconds range, long enough that a player clearing a dock's units
-// and moving on to fight the rest of the base will likely be well into that fight (or have
-// mopped up the whole base) before anything rolls back out of the bay. 45s: short enough to
-// plausibly show up within a single base assault, long enough it reads as an occasional surprise
-// rather than a ticking regen clock. Owner: tunable via playtest.
-export const DOCK_RESUPPLY_COOLDOWN_MS = 45000;
+// Cooldown once a dock becomes eligible (cleared + base awake) before it resupplies. #269
+// playtest follow-up: the original 45s "rare exception" cadence read as a one-off surprise
+// rather than something felt during an assault — Jackson explicitly asked for resupply to
+// feel "more frequent/present during a base assault, not a rare one-off." 18s: still long
+// enough that clearing a dock and immediately re-engaging its base doesn't feel like an
+// instant respawn in your face, but short enough that a multi-dock base fight (which
+// realistically runs well past 18s once you're fighting through several docks + a turret)
+// will plausibly see a dock reopen and cycle a fresh unit more than once. Paired with the
+// higher `DOCK_RESUPPLY_MAX_PER_DOCK` below so the faster cadence isn't wasted hitting a cap
+// of 1. Owner: tunable via playtest.
+export const DOCK_RESUPPLY_COOLDOWN_MS = 18000;
 
 // How many extra units a single dock can ever produce over its lifetime, beyond its original
-// assignment. The issue calls this a RARE exception, not a fountain — capped at 1 so a cleared
-// dock can surprise the player with reinforcements exactly once, never becomes a repeatable
-// grind point. Owner: tunable via playtest (issue explicitly allows 1-2).
-export const DOCK_RESUPPLY_MAX_PER_DOCK = 1;
+// assignment. #269 playtest follow-up: with the cooldown above cut roughly in half, keeping
+// this at 1 would still cap the whole mechanic at exactly one bonus unit ever — the shorter
+// cooldown would never actually matter beyond the first reopen. Raised to 3 so a dock that
+// stays contested (player keeps clearing it, base stays awake) can meaningfully escalate
+// across a sustained assault instead of going quiet after a single extra unit. Not raised
+// further: a dock is also destructible once closed (see `spendDockResupply` below) and gets
+// permanently retired if destroyed mid-cycle, so in practice most docks won't ever reach a
+// high cap anyway — 3 gives "escalating" room without turning an uncontested dock into an
+// infinite farm spot. Owner: tunable via playtest (issue explicitly allows 1-2, judgement
+// call to go slightly above that given the cooldown change).
+export const DOCK_RESUPPLY_MAX_PER_DOCK = 3;
 
 // Fresh per-dock resupply state: full cooldown remaining, no resupplies spent yet.
 export function makeDockResupplyState(cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS) {

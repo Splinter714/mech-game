@@ -38,10 +38,15 @@ describe('#269 §3 "rare multi-spawn exception": tickDockResupply', () => {
     expect(state.ready).toBeFalsy();
   });
 
-  it('is capped at DOCK_RESUPPLY_MAX_PER_DOCK — never fires `ready` a second time once spent', () => {
+  it('is capped at DOCK_RESUPPLY_MAX_PER_DOCK — never fires `ready` beyond that many times', () => {
     let state = makeDockResupplyState();
-    state = tickDockResupply(state, { eligible: true, dt: DOCK_RESUPPLY_COOLDOWN_MS / 1000 });
-    expect(state.ready).toBe(true);
+    // Drive the cooldown to elapse exactly `DOCK_RESUPPLY_MAX_PER_DOCK` times — each elapse
+    // should report `ready: true` and bump `count`, up to (but never past) the cap.
+    for (let i = 1; i <= DOCK_RESUPPLY_MAX_PER_DOCK; i++) {
+      state = tickDockResupply(state, { eligible: true, dt: DOCK_RESUPPLY_COOLDOWN_MS / 1000 });
+      expect(state.ready).toBe(true);
+      expect(state.count).toBe(i);
+    }
     expect(state.count).toBe(DOCK_RESUPPLY_MAX_PER_DOCK);
 
     // Further ticks, even fully eligible and well past cooldown again, never report ready again,

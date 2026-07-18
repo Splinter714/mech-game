@@ -15,7 +15,7 @@ import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE } from '../../data/awareness.js';
-import { DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
+import { DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK } from '../../data/dockResupply.js';
 
 // A minimal Phaser-shaped stand-in: `add.rectangle`/`add.circle` return a chainable fake game
 // object (setDepth returns itself, destroy is a no-op spy); `tweens.add` and `time.delayedCall`
@@ -190,20 +190,24 @@ describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
 });
 
 describe('#269 §3 dock resupply: per-dock cap', () => {
-  it('a dock resupplies at most once over its lifetime (DOCK_RESUPPLY_MAX_PER_DOCK)', () => {
+  it('a dock resupplies at most DOCK_RESUPPLY_MAX_PER_DOCK times over its lifetime, never more', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
-    clearDock(scene, dockKey);
 
-    // First resupply.
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
-    scene._runScheduled();
-    expect(scene.enemies.length).toBe(1);
+    // Drain the cap: clear the dock and wait past cooldown, `DOCK_RESUPPLY_MAX_PER_DOCK` times —
+    // each one should produce exactly one fresh unit.
+    for (let i = 0; i < DOCK_RESUPPLY_MAX_PER_DOCK; i++) {
+      clearDock(scene, dockKey);
+      scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+      scene._runScheduled();
+      expect(scene.enemies.length).toBe(1);
+    }
 
-    // Clear it again and wait well past another full cooldown — must NOT resupply a second time.
+    // Clear it once more and wait well past another full cooldown — the cap is spent, must NOT
+    // resupply again.
     clearDock(scene, dockKey);
     scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 5);
     scene._runScheduled();
@@ -338,9 +342,9 @@ describe('#269 Part 2: dock open/closed states', () => {
     expect(scene.buildingHp.has(dockKey)).toBe(false);
     expect(scene.enemies.length).toBe(1);
 
-    // 3) That fresh unit walks off / dies too → closes again (DOCK_RESUPPLY_MAX_PER_DOCK is 1,
-    // so this is the dock's last occupant ever, but the OPEN/CLOSED visual cycle itself has no
-    // cap — it just tracks physical occupancy).
+    // 3) That fresh unit walks off / dies too → closes again. The OPEN/CLOSED visual cycle has
+    // no cap of its own — it just tracks physical occupancy — independent of
+    // `DOCK_RESUPPLY_MAX_PER_DOCK`, which only limits how many more times resupply can refill it.
     clearDock(scene, dockKey);
     scene._updateDockOpenClose();
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');
