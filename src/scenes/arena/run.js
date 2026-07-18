@@ -7,11 +7,12 @@
 //   - Mission objectives now sequence through bases in index order ("clear base N" — see
 //     mission.js `_targetCurrentBase`), fully decoupled from enemy spawning — clearing one banks
 //     currency and immediately advances to the next base (`_pickNextObjective`, this file).
-//   - The run's real win condition is now "every base's docked units destroyed" (dormant or
-//     awakened — scenes/arena/bases.js `_allBasesCleared`), checked every frame. Reaching the
-//     last base's objective and clearing it necessarily satisfies this too, so in practice the
-//     win check below (`_allBasesCleared`) fires before `_pickNextObjective` ever runs off the
-//     end of `this.bases`.
+//   - The run's real win condition is now "every base's objective hex destroyed" (#269 playtest
+//     follow-up — scenes/arena/bases.js `_allObjectivesDestroyed`, mirroring the same per-base
+//     rule mission.js's `_updateMission` uses), checked every frame. Reaching the last base's
+//     objective and clearing it necessarily satisfies this too, so in practice the win check
+//     below (`_allObjectivesDestroyed`) fires before `_pickNextObjective` ever runs off the end
+//     of `this.bases`.
 //   - Player death still ends the run as a loss, same as before.
 import {
   makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver,
@@ -51,9 +52,13 @@ export const RunMixin = {
       return;
     }
 
-    // #269 §8: the real win condition — every base's docked units destroyed. Checked every
+    // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"):
+    // the real win condition is every base's OBJECTIVE HEX destroyed (mission.js
+    // `isBaseObjectiveDestroyed` — same rule the per-base mission check uses, via
+    // `_allObjectivesDestroyed`), not just every enemy dead (`_allBasesCleared`, kept around as
+    // a distinct, separately-tested concept but no longer what ends the run). Checked every
     // frame regardless of mission state (an outpost objective and a base are independent).
-    if (this._allBasesCleared()) { this._endRun('won'); return; }
+    if (this._allObjectivesDestroyed()) { this._endRun('won'); return; }
 
     if (this.mission && this.mission.status === 'complete') this._advanceObjective();
   },
@@ -72,8 +77,8 @@ export const RunMixin = {
   // pick entirely — the next objective is just "the next base by index." `_targetCurrentBase`
   // (mission.js) does the actual work (marker, mission, registry publish) and already handles
   // running off the end of `this.bases` (every base cleared) by clearing the objective/marker,
-  // which is correct here too — `_updateRun`'s `_allBasesCleared()` check ends the run as a win
-  // before this can ever be reached with no bases left anyway.
+  // which is correct here too — `_updateRun`'s `_allObjectivesDestroyed()` check ends the run as
+  // a win before this can ever be reached with no bases left anyway.
   _pickNextObjective() {
     this._objectiveBaseIndex += 1;
     this._targetCurrentBase();

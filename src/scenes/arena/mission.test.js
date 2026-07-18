@@ -160,3 +160,55 @@ describe('the mission marker targets the base objective hex, not the arbitrary c
     expect(scene.objectiveHex).toBe(axialKey(5, 5));
   });
 });
+
+// #269 playtest report ("objectives aren't clearing until I kill all units at the base"): the
+// win condition must key off the objective hex's own destroyed state (removed from
+// `this.buildingHp` — the same "collapsed to rubble" signal `_damageBuildingAt`, world.js, uses),
+// not off `isBaseCleared`'s enemy count.
+describe('mission completion is driven by the objective hex\'s destroyed state, not enemy death alone (#269 playtest follow-up)', () => {
+  it('killing every enemy at the base does NOT complete the mission while the objective hex still stands', () => {
+    const bases = [makeBaseWithObjective('base0', 0, 0, 3, -1)];
+    const scene = fakeScene({
+      bases,
+      enemies: [{ baseId: 'base0' }],
+      buildingHp: new Map([[axialKey(3, -1), 40]]),   // objective hex still standing
+    });
+    scene._initMission();
+
+    // Kill the only enemy tagged to this base.
+    scene.enemies = [];
+    scene._updateMission();
+    expect(scene.mission.status).toBe('active');   // still active — the hex, not the enemies, gates this
+  });
+
+  it('destroying the objective hex (removed from buildingHp) completes the mission even with live defenders', () => {
+    const bases = [makeBaseWithObjective('base0', 0, 0, 3, -1)];
+    const scene = fakeScene({
+      bases,
+      enemies: [{ baseId: 'base0' }],   // a defender is still alive
+      buildingHp: new Map([[axialKey(3, -1), 40]]),
+    });
+    scene._initMission();
+
+    scene._updateMission();
+    expect(scene.mission.status).toBe('active');
+
+    // Simulate `_damageBuildingAt` collapsing the objective hex to rubble: its key is deleted
+    // from `buildingHp`, enemies untouched.
+    scene.buildingHp.delete(axialKey(3, -1));
+    scene._updateMission();
+    expect(scene.mission.status).toBe('complete');
+  });
+
+  it('a base with no real objectiveHex still falls back to the enemy-count rule', () => {
+    const bases = [makeBase('base0', 5, 5)];   // no objectiveHex field
+    const scene = fakeScene({ bases, enemies: [{ baseId: 'base0' }], buildingHp: new Map() });
+    scene._initMission();
+    scene._updateMission();
+    expect(scene.mission.status).toBe('active');
+
+    scene.enemies = [];
+    scene._updateMission();
+    expect(scene.mission.status).toBe('complete');
+  });
+});

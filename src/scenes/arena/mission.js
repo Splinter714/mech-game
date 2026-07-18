@@ -16,6 +16,30 @@ import { axialKey, hexToPixel } from '../../data/hexgrid.js';
 import { isBaseCleared } from '../../data/bases.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR } from './shared.js';
 
+// #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"): the
+// previous round added a real, destructible `objective` hex per base and pointed the marker at
+// it, but left the actual win-condition check keyed off `isBaseCleared` (every enemy tagged with
+// the base's id dead) — completely unrelated to whether the objective hex itself was destroyed.
+// Jackson's original framing was explicit: the objective hex's own destruction should BE the
+// completion trigger, not a decoration next to a separate enemy-count check. `_damageBuildingAt`
+// (world.js) deletes a destructible hex's key from `this.buildingHp` the instant it collapses to
+// rubble — same "membership means still standing" convention `_isMissionObjective`'s neighbours
+// already rely on (world.js #250) — so "no longer in `buildingHp`" is the idiomatic destroyed
+// check, reused as-is rather than inventing a parallel signal.
+//
+// Falls back to `isBaseCleared` (all enemies tagged with this base dead) for the rare base whose
+// `objectiveHex` is null (worldgen.js's safe-zone re-validation pass can clear it back to open
+// ground) — every base still needs SOME way to be completed even without a real objective hex.
+// `isBaseCleared` itself is kept as a distinct, still-meaningful concept ("all this base's
+// enemies dead") rather than deleted — it remains the fallback here, and dormantWake.test.js's
+// `_allBasesCleared` still legitimately means "all docked enemies across every base are dead".
+export function isBaseObjectiveDestroyed(base, buildingHp, enemies) {
+  if (!base) return true;
+  const hex = base.objectiveHex;
+  if (!hex) return isBaseCleared(base.id, enemies);
+  return !(buildingHp ?? new Map()).has(axialKey(hex.q, hex.r));
+}
+
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated `this.bases`.
   // Targets base 0 (the lowest-index/earliest base — see file header) as the very first
@@ -90,16 +114,17 @@ export const MissionMixin = {
     this._objectiveMarker = marker;
   },
 
-  // Per-frame: is the current objective base cleared (every enemy tagged with its baseId dead —
-  // data/bases.js `isBaseCleared`)? Feed that into the pure `evaluateMission` and publish the
-  // resulting mission to the registry so HudScene can read it. A terminal status is sticky (the
-  // model itself won't re-open it), so once complete this just keeps republishing the same
-  // status. No-ops once every base has been cleared (`this.mission` is null — see
-  // `_targetCurrentBase`); `_allBasesCleared()` (run.js `_updateRun`) ends the run as a win at
-  // that point regardless, so there's nothing left for this to watch.
+  // Per-frame: has the current objective base's real payoff — its own objective hex, or the
+  // enemy-count fallback when it has none (see `isBaseObjectiveDestroyed` above) — been
+  // destroyed? Feed that into the pure `evaluateMission` and publish the resulting mission to
+  // the registry so HudScene can read it. A terminal status is sticky (the model itself won't
+  // re-open it), so once complete this just keeps republishing the same status. No-ops once
+  // every base has been cleared (`this.mission` is null — see `_targetCurrentBase`);
+  // `_allObjectivesDestroyed()` (run.js `_updateRun`) ends the run as a win at that point
+  // regardless, so there's nothing left for this to watch.
   _updateMission() {
     if (!this.mission) return;
-    const objectiveDestroyed = isBaseCleared(this._objectiveBase?.id, this.enemies);
+    const objectiveDestroyed = isBaseObjectiveDestroyed(this._objectiveBase, this.buildingHp, this.enemies);
     const wasActive = this.mission.status === 'active';
     // #66: fail path deferred to #64 (the run loop) — no real playerDead signal yet, so this
     // always passes false and the mission can only ever go active → complete for now.
