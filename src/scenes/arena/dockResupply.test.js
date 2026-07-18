@@ -105,7 +105,7 @@ describe('#269 §3 dock resupply: trigger gating', () => {
     expect(scene._dockResupplyStates.get(dockKey).count).toBe(0);
   });
 
-  it('does NOT resupply while the dock still has a live unit, even on an awake base', () => {
+  it('does NOT resupply while the dock still has a live unit, even on an awake base, even once the cooldown has fully elapsed', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ count: 1 })];
     scene._spawnDormantUnits();
@@ -115,6 +115,52 @@ describe('#269 §3 dock resupply: trigger gating', () => {
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(1);   // still just the original unit, no resupply
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    expect(scene._dockResupplyStates.get(dockKey).count).toBe(0);   // never spent
+  });
+});
+
+// #269 playtest follow-up: "cooldown timer should start ticking as soon as the dock's unit is
+// spawned, not wait for the dock to actually become vacated/close" — the countdown's PROGRESS is
+// decoupled from `cleared`; only actually FIRING a resupply still requires the dock to be clear.
+describe('#269 playtest follow-up: resupply cooldown progress is decoupled from cleared', () => {
+  it('the cooldown ticks down while the base is awake even though the original unit is still alive', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ count: 1 })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');   // awake, original unit still alive/occupying the dock
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+
+    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 / 2);   // halfway through cooldown
+    scene._runScheduled();
+
+    expect(scene.enemies.length).toBe(1);   // still just the original unit
+    const state = scene._dockResupplyStates.get(dockKey);
+    expect(state.remainingMs).toBeLessThan(DOCK_RESUPPLY_COOLDOWN_MS);
+    expect(state.remainingMs).toBeGreaterThan(0);
+  });
+
+  it('once the cooldown elapses while still occupied, resupply fires immediately (no extra wait) the instant the unit dies/leaves — does not restart a fresh cooldown', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ count: 1 })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+
+    // Cooldown fully elapses while the original unit is still alive — must not fire yet.
+    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._runScheduled();
+    expect(scene.enemies.length).toBe(1);
+    expect(scene._dockResupplyStates.get(dockKey).count).toBe(0);
+
+    // The original unit now dies/leaves. A single, tiny subsequent tick (well short of another
+    // full cooldown) should fire right away, proving progress wasn't reset while occupied.
+    clearDock(scene, dockKey);
+    scene._updateDockResupply(0.016);
+    scene._runScheduled();
+
+    expect(scene.enemies.length).toBe(1);   // the resupplied unit
+    expect(scene._dockResupplyStates.get(dockKey).count).toBe(1);
   });
 });
 

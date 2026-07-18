@@ -388,15 +388,19 @@ export const BasesMixin = {
   },
 
   // #269 §3 "rare multi-spawn exception" (playtest follow-up) — per-frame tick for every dock's
-  // resupply cooldown, called from ArenaScene.update() alongside `_updateAlertTowers`. A dock is
-  // ELIGIBLE (the cooldown counts down) only once BOTH hold: its base has actually been woken
-  // (`this._wokenBases` — §2 of the mechanic: a still-fully-dormant base's cleared dock must
-  // never resupply, this is tied to "under active assault," not a background timer) AND the
-  // dock is currently CLEARED (no live enemy — original assignment or an earlier resupply —
+  // resupply cooldown, called from ArenaScene.update() alongside `_updateAlertTowers`. `awake`
+  // and `cleared` are tracked as two SEPARATE signals, not combined into one gate: `awake`
+  // (`this._wokenBases` — §2 of the mechanic: a still-fully-dormant base's docks must not be
+  // quietly counting down before the player has even discovered it) gates whether the cooldown
+  // TICKS at all, while `cleared` (no live enemy — original assignment or an earlier resupply —
   // still carries its `dockKey`; #87's "a killed enemy is pruned from `this.enemies` the same
   // tick it dies" convention, already relied on by `_allBasesCleared` above, makes that a plain
-  // `.some()` scan). `tickDockResupply` (data/dockResupply.js) is the pure state machine; this
-  // is just the glue feeding it real per-frame eligibility and reacting to `ready: true`.
+  // `.some()` scan) only gates whether a fully-elapsed cooldown can actually FIRE — you can't
+  // spawn a fresh unit into a hex that's still occupied. #269 playtest follow-up: the cooldown's
+  // PROGRESS must start as soon as the dock's unit is spawned (base awake), not wait for that
+  // unit to actually leave/die — `tickDockResupply` (data/dockResupply.js) is the pure state
+  // machine encoding that split; this is just the glue feeding it real per-frame `awake`/
+  // `cleared` and reacting to `ready: true`.
   _updateDockResupply(dt) {
     if (!this._dockResupplyStates || !this._dockResupplyStates.size) return;
     for (const [dockKey, meta] of this._dockResupplyMeta) {
@@ -404,7 +408,7 @@ export const BasesMixin = {
       if (!state) continue;
       const awake = this._wokenBases.has(meta.baseId);
       const cleared = !this.enemies.some((e) => e.dockKey === dockKey);
-      const next = tickDockResupply(state, { eligible: awake && cleared, dt });
+      const next = tickDockResupply(state, { awake, cleared, dt });
       this._dockResupplyStates.set(dockKey, next);
       if (next.ready) this._resupplyDock(dockKey, meta);
     }
