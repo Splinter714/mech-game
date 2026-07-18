@@ -51,7 +51,7 @@ function makeTickableScene({ px = 900, py = 300 } = {}) {
     // #282: mutual large-unit/flyer collision — not under test here, so stub both to "never
     // blocks" (mirrors `_blocked` above) so these pre-existing wake-behavior tests keep
     // exercising only what they already covered.
-    _blockedByOtherLargeUnit: () => false,
+    _blockedByOtherGroundUnit: () => false,
     _blockedByOtherFlyer: () => false,
     _speedFactorAt: () => 1,
     _cachedLosToPlayer: () => true,
@@ -374,7 +374,7 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     scene.enemyFire = false;   // out of scope here: firing needs a full art/weapon-plumbing stub
     scene._blocked = () => false;
     // #282: not under test here — stub to "never blocks" like `_blocked` above.
-    scene._blockedByOtherLargeUnit = () => false;
+    scene._blockedByOtherGroundUnit = () => false;
     scene._blockedByOtherFlyer = () => false;
     scene._speedFactorAt = () => 1;
     scene._cachedLosToPlayer = () => true;

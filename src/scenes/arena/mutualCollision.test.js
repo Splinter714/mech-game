@@ -1,12 +1,19 @@
-// #282 — mutual large-ground-unit collision and mutual flyer collision. Before this, the ONLY
-// collision involving an enemy was one-directional: the PLAYER's own movement blocked against
-// every live ground enemy (`world.js` `_blockedByGroundEnemy`), but an enemy's own per-frame
-// movement integration (`enemies.js` `_updateEnemy`/`_updateVehicle`) only ever checked terrain
-// (`_blocked`) — enemies could freely overlap each other and the player, and flying units
-// (drone/helicopter) ignored ALL collision, including each other. This adds two NEW world.js
-// checks (`_blockedByOtherLargeUnit`, `_blockedByOtherFlyer`) that an enemy's own movement now
-// also respects, alongside the pre-existing terrain check — see the #282 comments in world.js/
-// enemies.js for the full reasoning.
+// #282 — mutual ground-unit collision (both size tiers) and mutual flyer collision. Before the
+// original #282 landed, the ONLY collision involving an enemy was one-directional: the PLAYER's
+// own movement blocked against every live ground enemy (`world.js` `_blockedByGroundEnemy`), but
+// an enemy's own per-frame movement integration (`enemies.js` `_updateEnemy`/`_updateVehicle`)
+// only ever checked terrain (`_blocked`) — enemies could freely overlap each other and the
+// player, and flying units (drone/helicopter) ignored ALL collision, including each other. That
+// first pass added `_blockedByOtherLargeUnit` (LARGE-vs-LARGE + vs player only) and
+// `_blockedByOtherFlyer`, deliberately leaving SMALL-vs-SMALL uncollided on the assumption that
+// "small units are walkable, so probably fine to leave uncollided unless it reads obviously
+// wrong" — playtest confirmed it reads obviously wrong ("tanks nearly on top of one another").
+//
+// This follow-up generalizes `_blockedByOtherLargeUnit` into `_blockedByOtherGroundUnit`, which
+// now handles BOTH size tiers via one consistent rule (see its comment in world.js): a LARGE
+// obstacle blocks any other ground unit; a SMALL obstacle only blocks other SMALL units. So a
+// small unit's own movement now also respects large obstacles and the player (previously it
+// skipped this check entirely), and two small units now push apart from each other too.
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection
 // throws under vitest's node env, so it's stubbed (same convention as dormantWake.test.js).
@@ -23,7 +30,7 @@ import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { groundEnemyRadius, ENEMY_COLLIDE_RADIUS_MECH, ENEMY_COLLIDE_RADIUS_VEHICLE } from './shared.js';
 import { AWARE } from '../../data/awareness.js';
 
-// ── Part 1: pure geometry on the two new WorldMixin methods ──────────────────────────────────
+// ── Part 1: pure geometry on the two WorldMixin collision-check methods ──────────────────────
 function makeWorldScene({ enemies = [], px = 0, py = 0 } = {}) {
   return Object.assign({ enemies, px, py }, WorldMixin);
 }
@@ -35,39 +42,64 @@ function makeUnit(x, y, { flying = false, size = 'large', scale = 1, dead = fals
   };
 }
 
-describe('_blockedByOtherLargeUnit (#282) — mutual large-ground-unit + player collision geometry', () => {
-  it('blocks against another LARGE ground unit\'s collision circle', () => {
+describe('_blockedByOtherGroundUnit (#282) — mutual ground-unit + player collision geometry', () => {
+  it('self LARGE: blocks against another LARGE ground unit\'s collision circle', () => {
+    const self = makeUnit(-9999, -9999, { size: 'large' });
     const other = makeUnit(10, 0, { size: 'large' });
-    const scene = makeWorldScene({ enemies: [other], px: 9999, py: 9999 });
+    const scene = makeWorldScene({ enemies: [self, other], px: 9999, py: 9999 });
     const r = groundEnemyRadius(other);
-    expect(scene._blockedByOtherLargeUnit(null, 10 + r - 1, 0)).toBe(true);
-    expect(scene._blockedByOtherLargeUnit(null, 10 + r + 5, 0)).toBe(false);
+    expect(scene._blockedByOtherGroundUnit(self, 10 + r - 1, 0)).toBe(true);
+    expect(scene._blockedByOtherGroundUnit(self, 10 + r + 5, 0)).toBe(false);
   });
 
-  it('never blocks against a SMALL ground unit — small units are walkable by everyone', () => {
+  it('self LARGE: never blocks against a SMALL ground unit — a small obstacle isn\'t an obstacle to large units', () => {
+    const self = makeUnit(-9999, -9999, { size: 'large' });
     const small = makeUnit(10, 0, { size: 'small' });
-    const scene = makeWorldScene({ enemies: [small], px: 9999, py: 9999 });
-    expect(scene._blockedByOtherLargeUnit(null, 10, 0)).toBe(false); // dead centre of it
+    const scene = makeWorldScene({ enemies: [self, small], px: 9999, py: 9999 });
+    expect(scene._blockedByOtherGroundUnit(self, 10, 0)).toBe(false); // dead centre of it
+  });
+
+  it('self SMALL: blocks against another SMALL ground unit (#282 fix)', () => {
+    const self = makeUnit(-9999, -9999, { size: 'small' });
+    const other = makeUnit(10, 0, { size: 'small' });
+    const scene = makeWorldScene({ enemies: [self, other], px: 9999, py: 9999 });
+    const r = groundEnemyRadius(other);
+    expect(scene._blockedByOtherGroundUnit(self, 10 + r - 1, 0)).toBe(true);
+    expect(scene._blockedByOtherGroundUnit(self, 10 + r + 5, 0)).toBe(false);
+  });
+
+  it('self SMALL: also blocks against a LARGE ground unit (#282 fix — small units used to skip this check entirely)', () => {
+    const self = makeUnit(-9999, -9999, { size: 'small' });
+    const large = makeUnit(10, 0, { size: 'large' });
+    const scene = makeWorldScene({ enemies: [self, large], px: 9999, py: 9999 });
+    const r = groundEnemyRadius(large);
+    expect(scene._blockedByOtherGroundUnit(self, 10 + r - 1, 0)).toBe(true);
+    expect(scene._blockedByOtherGroundUnit(self, 10 + r + 5, 0)).toBe(false);
   });
 
   it('excludes `self` from the scan — a unit never blocks against its own circle', () => {
     const self = makeUnit(0, 0, { size: 'large' });
     const scene = makeWorldScene({ enemies: [self], px: 9999, py: 9999 });
-    expect(scene._blockedByOtherLargeUnit(self, 0, 0)).toBe(false);
+    expect(scene._blockedByOtherGroundUnit(self, 0, 0)).toBe(false);
   });
 
-  it('ignores a flying unit and an already-destroyed unit', () => {
+  it('ignores a flying unit and an already-destroyed unit, regardless of self tier', () => {
+    const self = makeUnit(-9999, -9999, { size: 'small' });
     const flyer = makeUnit(10, 0, { size: 'large', flying: true });
     const dead = makeUnit(-10, 0, { size: 'large', dead: true });
-    const scene = makeWorldScene({ enemies: [flyer, dead], px: 9999, py: 9999 });
-    expect(scene._blockedByOtherLargeUnit(null, 10, 0)).toBe(false);
-    expect(scene._blockedByOtherLargeUnit(null, -10, 0)).toBe(false);
+    const scene = makeWorldScene({ enemies: [self, flyer, dead], px: 9999, py: 9999 });
+    expect(scene._blockedByOtherGroundUnit(self, 10, 0)).toBe(false);
+    expect(scene._blockedByOtherGroundUnit(self, -10, 0)).toBe(false);
   });
 
-  it('also blocks against the PLAYER\'s own collision circle', () => {
-    const scene = makeWorldScene({ enemies: [], px: 0, py: 0 });
-    expect(scene._blockedByOtherLargeUnit(null, ENEMY_COLLIDE_RADIUS_MECH - 1, 0)).toBe(true);
-    expect(scene._blockedByOtherLargeUnit(null, ENEMY_COLLIDE_RADIUS_MECH + 5, 0)).toBe(false);
+  it('also blocks against the PLAYER\'s own collision circle, for either self tier', () => {
+    const large = makeUnit(-9999, -9999, { size: 'large' });
+    const small = makeUnit(-9999, -9999, { size: 'small' });
+    const scene = makeWorldScene({ enemies: [large, small], px: 0, py: 0 });
+    expect(scene._blockedByOtherGroundUnit(large, ENEMY_COLLIDE_RADIUS_MECH - 1, 0)).toBe(true);
+    expect(scene._blockedByOtherGroundUnit(large, ENEMY_COLLIDE_RADIUS_MECH + 5, 0)).toBe(false);
+    expect(scene._blockedByOtherGroundUnit(small, ENEMY_COLLIDE_RADIUS_MECH - 1, 0)).toBe(true);
+    expect(scene._blockedByOtherGroundUnit(small, ENEMY_COLLIDE_RADIUS_MECH + 5, 0)).toBe(false);
   });
 });
 
@@ -157,7 +189,7 @@ describe('_updateVehicle movement resolution (#282) — LARGE ground units', () 
     expect(dist).toBeGreaterThanOrEqual(ENEMY_COLLIDE_RADIUS_MECH - 0.001);
   });
 
-  it('a SMALL ground unit does NOT block another unit\'s movement — freely walkable', () => {
+  it('a SMALL ground unit does NOT block a LARGE unit\'s movement — large units still walk through small ones', () => {
     const scene = makeVehicleScene();
     const small = makeVehicleUnit(200, 0, { size: 'small' });
     const mover = makeVehicleUnit(0, 0, { size: 'large', vx: 5000 });
@@ -168,8 +200,34 @@ describe('_updateVehicle movement resolution (#282) — LARGE ground units', () 
     // Unblocked: the mover sailed straight through/past the small unit's position.
     expect(mover.x).toBeGreaterThan(200);
   });
+});
 
-  it('a SMALL unit\'s own movement is likewise not blocked by a large unit in its way', () => {
+describe('_updateVehicle movement resolution (#282 follow-up) — SMALL ground units', () => {
+  it('two SMALL ground units (e.g. two tanks) cannot end up overlapping after movement resolution', () => {
+    const scene = makeVehicleScene();
+    const target = makeVehicleUnit(200, 0, { size: 'small' });
+    const mover = makeVehicleUnit(0, 0, { size: 'small', vx: 5000 }); // would tunnel through in one tick
+    scene.enemies.push(target, mover);
+
+    scene._updateVehicle(mover, 1, 1000); // big dt: unblocked, this would land well past `target`
+
+    const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
+    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(target) - 0.001);
+  });
+
+  it('a tank and infantry (both SMALL, different kinds) also push apart from each other', () => {
+    const scene = makeVehicleScene();
+    const infantry = makeVehicleUnit(200, 0, { size: 'small', scale: 0.38 });
+    const tank = makeVehicleUnit(0, 0, { size: 'small', scale: 0.48, vx: 5000 });
+    scene.enemies.push(infantry, tank);
+
+    scene._updateVehicle(tank, 1, 1000);
+
+    const dist = Math.hypot(tank.x - infantry.x, tank.y - infantry.y);
+    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(infantry) - 0.001);
+  });
+
+  it('a SMALL unit\'s own movement IS now blocked by a LARGE unit in its way (#282 fix)', () => {
     const scene = makeVehicleScene();
     const large = makeVehicleUnit(200, 0, { size: 'large' });
     const mover = makeVehicleUnit(0, 0, { size: 'small', vx: 5000 });
@@ -177,9 +235,19 @@ describe('_updateVehicle movement resolution (#282) — LARGE ground units', () 
 
     scene._updateVehicle(mover, 1, 1000);
 
-    // #282 explicit scope: only LARGE-vs-LARGE (and vs player) collides; a small unit's own
-    // movement stays exempt from the new unit-collision check entirely (terrain only).
-    expect(mover.x).toBeGreaterThan(200);
+    const dist = Math.hypot(mover.x - large.x, mover.y - large.y);
+    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(large) - 0.001);
+  });
+
+  it('a SMALL unit\'s own movement is also blocked by the player', () => {
+    const scene = makeVehicleScene({ px: 200, py: 0 });
+    const mover = makeVehicleUnit(0, 0, { size: 'small', vx: 5000 });
+    scene.enemies.push(mover);
+
+    scene._updateVehicle(mover, 1, 1000);
+
+    const dist = Math.hypot(mover.x - scene.px, mover.y - scene.py);
+    expect(dist).toBeGreaterThanOrEqual(ENEMY_COLLIDE_RADIUS_MECH - 0.001);
   });
 });
 

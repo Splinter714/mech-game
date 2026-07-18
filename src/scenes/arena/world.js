@@ -352,24 +352,39 @@ export const WorldMixin = {
 
   // #282: mutual ground-unit collision — the counterpart to `_blockedByGroundEnemy` above, but
   // called from an ENEMY's own movement integration (enemies.js `_updateEnemy`/`_updateVehicle`)
-  // instead of only the player's. Only LARGE ground units (mech/quadruped/turret — #269's
-  // `isSmallUnit`) ever block: a small unit (tank/infantry) is walkable by everyone, so it's
-  // skipped entirely here, matching the existing player-side crush behavior's "small units
-  // aren't obstacles" spirit — this function is simply never called for a small unit's OWN
-  // movement either (see the `isSmallUnit(e)` gate at each call site), so small-vs-large and
-  // small-vs-small both stay uncollided, unchanged from before this issue.
+  // instead of only the player's. (Formerly `_blockedByOtherLargeUnit`, which only ever handled
+  // a LARGE `self` — renamed + generalized for #282's follow-up: playtest found tanks visibly
+  // overlapping each other, "seems like tanks can nearly be on top of one another," because
+  // small-vs-small was deliberately left uncollided in the original scope.)
+  //
+  // Tier rule (kept deliberately simple/consistent with how the player already treats these
+  // tiers, rather than inventing a new one): a LARGE obstacle (mech/quadruped/turret) blocks
+  // ANY other ground unit's movement, small or large — a tank/infantry unit shouldn't be able
+  // to drive through a standing mech/turret any more than the player can (`_blockedByGroundEnemy`
+  // already blocks the player against every ground enemy regardless of size). A SMALL obstacle
+  // (tank/infantry) only blocks OTHER SMALL units — it stays a non-obstacle to large units,
+  // unchanged from before this fix (large enemies still walk through tanks/infantry; only the
+  // player gets the special instant-crush treatment for those, via `_crushGroundEnemyAt` — see
+  // its comment). So:
+  //   • self LARGE — blocked by the player + other LARGE units. (unchanged from before #282)
+  //   • self SMALL — blocked by the player + LARGE units + other SMALL units (the fix: small
+  //     units used to skip this check entirely and pass through everything for their own
+  //     movement; now they respect both tiers, matching the player's own treatment of large
+  //     obstacles while still not being obstacles to large units themselves).
   //
   // Checks the PLAYER's own collision circle too (`ENEMY_COLLIDE_RADIUS_MECH` — the player is
   // drawn at the same ARENA_MECH_SCALE as an enemy mech, so it shares that radius) so a large
-  // enemy can't walk through the player any more than the player can already walk through it.
+  // enemy can't walk through the player any more than the player can already walk through it —
+  // this stays unconditional (not tier-gated) since the player is always effectively "large."
   // `self` is excluded from the enemy scan so a unit never blocks against its own circle.
-  _blockedByOtherLargeUnit(self, x, y) {
+  _blockedByOtherGroundUnit(self, x, y) {
     if (circleContains(x, y, this.px, this.py, ENEMY_COLLIDE_RADIUS_MECH)) return true;
+    const selfSmall = isSmallUnit(self);
     for (const o of this.enemies) {
       if (o === self) continue;
       if (o.flying) continue;
       if (o.mech.isDestroyed()) continue;
-      if (isSmallUnit(o)) continue;
+      if (isSmallUnit(o) && !selfSmall) continue;   // a small obstacle only blocks other SMALL units
       if (circleContains(x, y, o.x, o.y, groundEnemyRadius(o))) return true;
     }
     return false;
