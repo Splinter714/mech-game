@@ -54,7 +54,7 @@ export const TOWER_PATROL_COUNT = 1;
 // objective marker (mission.js `_makeObjectiveMarker`) — these are a debug-readable tag, not a
 // wayfinding beacon, so they shouldn't compete visually with the real objective marker.
 const HEX_LABEL_COLOR = '#ff4444';
-const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacement: 'TURRET' };
+const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacement: 'TURRET', objective: 'OBJECTIVE' };
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
@@ -175,6 +175,10 @@ export const BasesMixin = {
     for (const base of this.bases ?? []) {
       for (const dock of base.docks) this._addHexLabel(dock.q, dock.r, 'dock');
       for (const turret of base.turrets ?? []) this._addHexLabel(turret.q, turret.r, 'turretEmplacement');
+      // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"):
+      // tag the base's dedicated objective hex too, same red-text legibility treatment as the
+      // other base-population hex types.
+      if (base.objectiveHex) this._addHexLabel(base.objectiveHex.q, base.objectiveHex.r, 'objective');
     }
     for (const t of this.alertTowerHexes ?? []) this._addHexLabel(t.q, t.r, 'alertTower');
   },

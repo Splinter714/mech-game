@@ -69,9 +69,17 @@ describe('biome registry (#67)', () => {
   it('every biome declares generation knobs', () => {
     for (const b of Object.values(BIOMES)) {
       expect(typeof b.coverClusters).toBe('number');
-      expect(Number.isInteger(b.outposts)).toBe(true);
       expect(typeof b.hasChannel).toBe('boolean');
       expect(typeof b.hasHazard).toBe('boolean');
+    }
+  });
+
+  // #269 playtest follow-up ("outpost:base ratio should be 1:1"): a biome no longer declares its
+  // own flat outpost count — that knob moved to data/worldgen.js (`outpostCount` defaults to
+  // `baseCount`), so this asserts the field is genuinely gone rather than silently unused.
+  it('biomes no longer declare a per-biome outpost count', () => {
+    for (const b of Object.values(BIOMES)) {
+      expect(b.outposts).toBeUndefined();
     }
   });
 

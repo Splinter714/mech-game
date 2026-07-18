@@ -122,15 +122,15 @@ export const WorldMixin = {
     const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke
 
-    // #269 playtest follow-up: outposts are occasional destructible flavor/cover, not a
-    // standing-objective supply — objectives now sequence through BASES (see below), so
-    // outpost count no longer needs to scale with corridor length. Use the biome's flat
-    // count directly (`generateTerrain` falls back to `B.outposts` when `outposts` is
-    // omitted, but passing it explicitly keeps this call site's intent legible).
+    // #269 playtest follow-up ("outpost:base ratio should be 1:1"): outpost count is no longer a
+    // biome-tuned flat number (that's been removed from biomes.js entirely) — `generateTerrain`
+    // defaults `outpostCount` to `baseCount` (BASE_COUNT here, since this call site doesn't
+    // override it either), so the map gets exactly one outpost per base, each anchoring its own
+    // alert tower (`placeOutpostTowers`).
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
-      includedKeys, boundaryRing, outposts: B.outposts, spine,
+      includedKeys, boundaryRing, spine,
     });
     // #269 §3: the run's bases (dormant docks + turret emplacements), placed once here at
     // world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase` (scenes/arena/

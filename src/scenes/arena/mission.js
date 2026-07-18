@@ -34,7 +34,15 @@ export const MissionMixin = {
   _targetCurrentBase() {
     const base = (this.bases ?? [])[this._objectiveBaseIndex] ?? null;
     this._objectiveBase = base;
-    this.objectiveHex = base ? axialKey(base.center.q, base.center.r) : null;
+    // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): the
+    // marker targets the base's dedicated, destructible `objective` hex (data/worldgen.js
+    // `placeBases`) instead of `base.center` — the geometric centroid of the dock cluster, which
+    // isn't necessarily even a real placed hex. Falls back to `base.center` on the rare case a
+    // base's objective hex got invalidated (e.g. landed in the spawn safe zone and was cleared
+    // back to open ground, see `generateTerrain`'s re-validation pass) so the marker always has
+    // SOMETHING to point at.
+    const targetHex = base ? (base.objectiveHex ?? base.center) : null;
+    this.objectiveHex = targetHex ? axialKey(targetHex.q, targetHex.r) : null;
     this.mission = base ? makeMission('assault') : null;
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);

@@ -203,7 +203,29 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
       T.set(k, 'turretEmplacement');
       turrets.push({ q: h.q, r: h.r });
     }
-    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets });
+    // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): one
+    // dedicated, DESTRUCTIBLE `objective` hex per base — the same near-centre candidate ring the
+    // docks/turrets above draw from (already-claimed candidates fail `isGround` naturally, so this
+    // only ever lands on whatever ground neither loop already took), stamped LAST so it never
+    // steals a dock/turret's spot. `_targetCurrentBase` (scenes/arena/mission.js) points the
+    // mission marker at this instead of the old `base.center` (just a geometric centroid, not
+    // necessarily even a real placed hex). Falls back to forcing it onto the base's own `center`
+    // hex if every candidate is already claimed — a base must always have a real objective hex for
+    // the marker to target; the centre is the best fallback since it's the base's own anchor point
+    // regardless of what else is on it.
+    let objectiveHex = null;
+    for (const h of candidates) {
+      const k = axialKey(h.q, h.r);
+      if (!T.has(k) || !isGround(k)) continue;
+      T.set(k, 'objective');
+      objectiveHex = { q: h.q, r: h.r };
+      break;
+    }
+    if (!objectiveHex) {
+      T.set(axialKey(center.q, center.r), 'objective');
+      objectiveHex = { q: center.q, r: center.r };
+    }
+    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets, objectiveHex });
   }
   return { bases };
 }
@@ -272,8 +294,9 @@ export function safeZoneKeys(center, radius = 3) {
 // hex it contains with the biome's `deep` terrain id — the world's outer boundary — regardless
 // of membership (these hexes are, by construction, just OUTSIDE the playable shape). This is
 // the ONLY place `biome.deep` is ever stamped now; the old in-map "deep blob" is gone (see
-// `hasHazard`/`hazard` below). `outposts` (optional) overrides the biome's default outpost count
-// — the live game scales it up with corridor length so objectives can march the whole way down.
+// `hasHazard`/`hazard` below). `outposts` (optional) overrides the outpost count, which
+// otherwise defaults to `baseCount` (#269 playtest follow-up — one outpost per base, see the
+// `outpostCount` line below for the full reasoning).
 export function generateTerrain({
   seed, worldRadius, biome, safeCenter = { q: 0, r: 0 }, extraClear = [],
   included = null, includedKeys = null, boundaryRing = null, outposts = null, baseCount = BASE_COUNT,
@@ -294,6 +317,14 @@ export function generateTerrain({
   const groundAt = (h) => ((h.q + h.r) % 2 ? B.groundB : B.groundA);
   const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
 
+  // #269 playtest follow-up ("outpost:base ratio should be 1:1"): outpost count now DEFAULTS to
+  // `baseCount` (the same parameter threaded through this function for `placeBases`) instead of
+  // the biome's own flat `outposts` field — each outpost anchors exactly one alert tower
+  // (`placeOutpostTowers` below), and the issue wants exactly one outpost per base, not an
+  // independent biome-tuned count (previously 3-8, unrelated to `BASE_COUNT`). The biome no
+  // longer carries an `outposts` field at all (data/biomes.js) since nothing reads it anymore;
+  // the explicit `outposts` override param is untouched and still wins when a caller (tests, or
+  // any future tuning) passes it directly.
   // Base: a checkered open floor (grass / sand / snow / pavement / ash by biome).
   for (const h of all) T.set(axialKey(h.q, h.r), groundAt(h));
 
@@ -349,7 +380,7 @@ export function generateTerrain({
   // `isGround` before writing) — a tower planted near "roughly where an outpost cluster is" is
   // the right anchor even on the rare hex where `c` itself got overwritten by a neighbour draw
   // elsewhere; it's re-validated against the final `T` below anyway, same as bases/towers are.
-  const outpostCount = outposts ?? B.outposts;
+  const outpostCount = outposts ?? baseCount;
   const outpostCenters = [];
   for (let i = 0; i < outpostCount; i++) {
     const c = all[Math.floor(rng() * all.length)];
@@ -411,6 +442,13 @@ export function generateTerrain({
   for (const base of bases) {
     base.docks = base.docks.filter((d) => T.get(axialKey(d.q, d.r)) === 'dock');
     base.turrets = (base.turrets ?? []).filter((t) => T.get(axialKey(t.q, t.r)) === 'turretEmplacement');
+    // #269 playtest follow-up: same re-validation as docks/turrets above — if the safe-zone clear
+    // (or a debug extraClear hex) reset this base's objective hex back to open ground, drop it
+    // rather than leaving a stale position; `_targetCurrentBase` (mission.js) falls back to
+    // `base.center` when `objectiveHex` is null.
+    if (base.objectiveHex && T.get(axialKey(base.objectiveHex.q, base.objectiveHex.r)) !== 'objective') {
+      base.objectiveHex = null;
+    }
   }
   const finalAlertTowers = alertTowers.filter((t) => T.get(axialKey(t.q, t.r)) === 'alertTower');
   // #269 playtest follow-up (bases/outposts role swap): `outpostCenters` is re-validated the same
