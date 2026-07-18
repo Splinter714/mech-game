@@ -8,7 +8,7 @@ import {
   pickStageObjective, STAGE_OBJECTIVE_NEAR_FRACTION, STAGE_OBJECTIVE_FAR_FRACTION,
   boundaryRingKeys, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH, MIN_SPAWN_BOUNDARY_HEX_DIST,
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
-  generateSpine, corridorHexSet, spineProgressHexOf,
+  generateSpine, corridorHexSet, spineProgressHexOf, spineSpawnHex,
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX,
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
@@ -17,8 +17,8 @@ import {
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
-import { TERRAIN } from './terrain.js';
-import { axialKey, range, neighbors, distance, hexToPixel } from './hexgrid.js';
+import { TERRAIN, isPassable } from './terrain.js';
+import { axialKey, range, neighbors, distance, hexToPixel, pixelToHex } from './hexgrid.js';
 import { ALERT_DETECT_RADIUS } from './alertTower.js';
 import { PROXIMITY_WAKE_RANGE_CAP } from './awareness.js';
 import { GAMEPLAY_ZOOM } from '../scenes/arena/shared.js';
@@ -31,12 +31,16 @@ const DESERT = getBiome('desert');
 const disc = (radius) => (q, r) => distance({ q, r }, { q: 0, r: 0 }) <= radius;
 
 // Build the live corridor exactly the way scenes/arena/world.js `_buildWorld` does, for a seed.
+// #269 (spawn rear-pad fix): the real scene now force-includes the safe zone around the ACTUAL
+// spawn hex (`spineSpawnHex`), not world origin — mirrored here so this helper's `includedKeys`
+// matches production exactly, and `spawnHex` is returned for tests that need it.
 function buildCorridor(seed, halfWidth = CORRIDOR_HALF_WIDTH_PX) {
   const shapeRng = mulberry32(seed);
   const startAngle = shapeRng() * Math.PI * 2;
   const spine = generateSpine(shapeRng, { startAngle });
-  const includedKeys = corridorHexSet(spine.points, halfWidth, safeZoneKeys({ q: 0, r: 0 }, 3));
-  return { spine, includedKeys, startAngle };
+  const spawnHex = spineSpawnHex(spine);
+  const includedKeys = corridorHexSet(spine.points, halfWidth, safeZoneKeys(spawnHex, 3));
+  return { spine, includedKeys, startAngle, spawnHex };
 }
 
 describe('mulberry32', () => {
@@ -119,8 +123,8 @@ describe('generateSpine (#169)', () => {
 
 describe('corridorHexSet (#169)', () => {
   it('always contains the spawn safe zone (force-included)', () => {
-    const { includedKeys } = buildCorridor(5);
-    for (const k of safeZoneKeys({ q: 0, r: 0 }, 3)) expect(includedKeys.has(k)).toBe(true);
+    const { includedKeys, spawnHex } = buildCorridor(5);
+    for (const k of safeZoneKeys(spawnHex, 3)) expect(includedKeys.has(k)).toBe(true);
   });
 
   it('is a single connected component (one continuous corridor, no islands)', () => {
@@ -150,6 +154,69 @@ describe('corridorHexSet (#169)', () => {
     }
     const discArea = 3 * reach * reach; // ~hex count of a filled disc of that radius
     expect(includedKeys.size).toBeLessThan(discArea * 0.5);
+  });
+});
+
+// #269 (spawn rear-pad fix, playtest follow-up): the player now spawns at the spine's own
+// rear-pad starting sample instead of world origin, so real-already-generated corridor terrain
+// behind origin actually gets walked instead of sitting unused. This suite pins the three
+// concrete claims from that fix: the spawn hex genuinely sits back in the rear-pad stretch (not
+// at/past origin), a real generated world's terrain at that hex is safe/clear/passable (the
+// safe-zone-clear disc followed the moved spawn point), and the shifted spawn point doesn't
+// disturb the #283 gap-spacing floor (covered by the unchanged '#283 minimum calm-gap spacing'
+// suite below, which still measures every floor from progress 0, not the spawn hex's own
+// negative progress — see the comment on `placeBases` in worldgen.js for why that's correct).
+describe('spineSpawnHex (#269 spawn rear-pad fix)', () => {
+  it('sits within the spine\'s own rear-pad stretch, strictly behind world origin (u < 0)', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const { spine } = buildCorridor(seed);
+      const spawnHex = spineSpawnHex(spine);
+      // The nearest spine sample to the spawn hex's own pixel centre should read a solidly
+      // negative progress — i.e. genuinely behind u=0, not just barely, and no farther back than
+      // the spine's own first sample (u = -rearPad, snapped to the sample grid).
+      const p = spineProgressHexOf(spine, spawnHex.q, spawnHex.r);
+      expect(p).toBeLessThan(0);
+      expect(p).toBeGreaterThanOrEqual(-(CORRIDOR_REAR_PAD_PX + HEX_STEP_PX) / HEX_STEP_PX);
+    }
+  });
+
+  it('equals the hex nearest the spine\'s literal first sample (points[0], u = -rearPad)', () => {
+    for (let seed = 0; seed < 10; seed++) {
+      const shapeRng = mulberry32(seed);
+      const startAngle = shapeRng() * Math.PI * 2;
+      const spine = generateSpine(shapeRng, { startAngle });
+      const expected = pixelToHex(spine.points[0].x, spine.points[0].y);
+      expect(spineSpawnHex(spine)).toEqual(expected);
+    }
+  });
+
+  it('is deterministic given the same seed', () => {
+    const spine = generateSpine(mulberry32(99), { startAngle: 1.4 });
+    expect(spineSpawnHex(spine)).toEqual(spineSpawnHex(spine));
+  });
+
+  it('on a real generated world, the terrain at the moved spawn hex is safe/clear/passable ground', () => {
+    // Mirrors exactly what scenes/arena/world.js `_buildWorld` does: safeCenter follows the
+    // spawn hex, so the guaranteed-clear radius-3 disc is centred on where the player actually
+    // stands, not generically somewhere inside the corridor.
+    for (let seed = 0; seed < 15; seed++) {
+      const { spine, includedKeys, spawnHex } = buildCorridor(seed * 31 + 7);
+      const { terrain } = generateTerrain({
+        seed: seed * 31 + 7, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND,
+        includedKeys, spine, safeCenter: spawnHex,
+      });
+      const id = terrain.get(axialKey(spawnHex.q, spawnHex.r));
+      expect(id).toBeDefined();
+      expect([GRASSLAND.groundA, GRASSLAND.groundB]).toContain(id);
+      expect(isPassable(id)).toBe(true);
+      // The whole radius-3 disc around spawn, not just the centre hex — same guarantee the old
+      // origin-anchored safe zone gave, just re-centred.
+      for (const h of range(spawnHex, 3)) {
+        const hk = axialKey(h.q, h.r);
+        if (!terrain.has(hk)) continue;   // outside the corridor's own hex set — not a spawn concern
+        expect([GRASSLAND.groundA, GRASSLAND.groundB]).toContain(terrain.get(hk));
+      }
+    }
   });
 });
 
@@ -326,12 +393,15 @@ describe('#169 corridor sizing (boundary visible on the narrow sides; safe zone 
   }
 
   it('at spawn, the boundary ring is on screen (inside the real 1280x720 @1.3x rectangle), across many seeds', () => {
+    // #269 (spawn rear-pad fix): the camera starts centred on the ACTUAL spawn point
+    // (`spawnHex`'s pixel centre), not world origin — re-anchored here to match.
     let onScreen = 0;
     const seeds = 500;
     for (let seed = 0; seed < seeds; seed++) {
-      const { includedKeys } = buildCorridor(seed);
+      const { includedKeys, spawnHex } = buildCorridor(seed);
       const ring = boundaryRingKeys(null, { insideKeys: includedKeys, ringWidth: 6 });
-      if (boundaryOnScreen(ring, 0, 0)) onScreen++;
+      const { x: sx, y: sy } = hexToPixel(spawnHex.q, spawnHex.r);
+      if (boundaryOnScreen(ring, sx, sy)) onScreen++;
     }
     // The 4000-seed sweep (scripts/corridor-sim.mjs) lands at ~99.8%; threshold set well under to
     // absorb this smaller sample. Far more reliable than #158's blob (90.6%) — a corridor is
@@ -340,14 +410,17 @@ describe('#169 corridor sizing (boundary visible on the narrow sides; safe zone 
   }, 30000);
 
   it('the safe zone is never encroached: `deep` boundary stays clear of MIN_SPAWN_BOUNDARY_HEX_DIST of spawn', () => {
+    // #269 (spawn rear-pad fix): "spawn" is now `spawnHex` (the spine's rear-pad start), not
+    // world origin — the invariant under test (boundary can't encroach the safe zone AROUND
+    // SPAWN) is unchanged, only where spawn itself sits moved.
     let anyTooClose = false;
     for (let seed = 0; seed < 500 && !anyTooClose; seed++) {
-      const { includedKeys } = buildCorridor(seed);
+      const { includedKeys, spawnHex } = buildCorridor(seed);
       const ring = boundaryRingKeys(null, { insideKeys: includedKeys, ringWidth: 4 });
       const D = MIN_SPAWN_BOUNDARY_HEX_DIST;
       for (const k of ring) {
         const [q, r] = k.split(',').map(Number);
-        if ((Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2 <= D) { anyTooClose = true; break; }
+        if (distance({ q, r }, spawnHex) <= D) { anyTooClose = true; break; }
       }
     }
     expect(anyTooClose).toBe(false);
@@ -1013,7 +1086,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         const { all, T, isGround, progressOf } = buildSpaciousLine();
         const rng = mulberry32(seed);
         const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
-        const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
         expect(alertTowers.length).toBe(BASE_COUNT);   // spacious corridor: every gap gets a tower
         let prev = 0;
         for (let i = 0; i < alertTowers.length; i++) {
@@ -1029,7 +1102,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         const { all, T, isGround, progressOf } = buildSpaciousLine();
         const rng = mulberry32(seed);
         const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
-        const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
         expect(bases.length).toBe(BASE_COUNT);
         expect(alertTowers.length).toBe(BASE_COUNT);
       }

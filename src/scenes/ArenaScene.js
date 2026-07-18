@@ -138,7 +138,11 @@ export default class ArenaScene extends Phaser.Scene {
     this._enemiesSpawnedThisStage = 0;
 
     // Player state.
-    this.px = 0; this.py = 0;
+    // #269 (spawn rear-pad fix): spawn at the spine's own rear-pad starting point
+    // (`this._spawnPoint`, set by `_buildWorld()` above from `spineSpawnHex`) instead of world
+    // origin — real corridor terrain is already carved back to there, so the player now walks
+    // FORWARD through that stretch instead of it sitting unused behind them.
+    this.px = this._spawnPoint.x; this.py = this._spawnPoint.y;
     this.angle = -Math.PI / 2;     // legs facing up
     this.turretAngle = -Math.PI / 2;
     this.aimX = 0; this.aimY = -200;   // world aim point weapons converge on
