@@ -11,6 +11,7 @@ vi.mock('phaser', () => ({
 
 import { EnemiesMixin } from './enemies.js';
 import { BasesMixin, TOWER_PATROL_COUNT } from './bases.js';
+import { CombatMixin } from './combat.js';
 import { HpBody } from '../../data/HpBody.js';
 import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
@@ -849,6 +850,131 @@ describe('#269 playtest follow-up: DORMANT units wake on player proximity, no al
     expect(e.awareness).toBe(DORMANT);
     expect(e.x).toBe(0);
     expect(e.y).toBe(0);
+  });
+});
+
+// #269 playtest follow-up ("wake upon being shot at or NEAR, not just when getting close"):
+// gunfire NOISE near a DORMANT unit wakes its whole base, independent of player proximity —
+// threading the same `noiseDist` check the UNAWARE path (enemies.js `_updateVehicle`) already
+// uses (`_lastFireAt`/`_lastFireX`/`_lastFireY` + NOISE_WINDOW_MS) into `_maybeProximityWake`.
+describe('#269 playtest follow-up: DORMANT units wake on nearby gunfire noise, no proximity needed', () => {
+  it('a DORMANT unit within noise-aggro range of a recent player shot wakes its whole base', () => {
+    const scene = makeScene();
+    const near = makeDockedUnit('tank', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    scene.enemies.push(near, dockmate);
+    // Player physically FAR away — the proximity branch must not be what wakes anyone here.
+    scene.px = near.x + 100000; scene.py = near.y;
+    // A live shot (fired at time.now, inside NOISE_WINDOW_MS) landing 200px away — inside
+    // NOISE_AGGRO_RANGE (260).
+    scene.time.now = 0;
+    scene._lastFireAt = 0;
+    scene._lastFireX = near.x + 200; scene._lastFireY = near.y;
+    scene._maybeProximityWake(near);
+    expect(near.awareness).toBe(AWARE);
+    expect(dockmate.awareness).toBe(AWARE);   // whole base wakes, same as the proximity path
+  });
+
+  it('a DORMANT unit OUTSIDE noise-aggro range of the shot stays dormant', () => {
+    const scene = makeScene();
+    const e = makeDockedUnit('tank', { baseId: 'base0' });
+    scene.enemies.push(e);
+    scene.px = e.x + 100000; scene.py = e.y;   // no proximity wake either
+    scene.time.now = 0;
+    scene._lastFireAt = 0;
+    scene._lastFireX = e.x + 400; scene._lastFireY = e.y;   // 400px > NOISE_AGGRO_RANGE (260)
+    scene._maybeProximityWake(e);
+    expect(e.awareness).toBe(DORMANT);
+  });
+
+  it('a stale shot (older than NOISE_WINDOW_MS) no longer wakes anyone', () => {
+    const scene = makeScene();
+    const e = makeDockedUnit('tank', { baseId: 'base0' });
+    scene.enemies.push(e);
+    scene.px = e.x + 100000; scene.py = e.y;
+    // Shot was close (would-be in-range) but fired long ago — outside the noise window, so it's
+    // no longer "live" and contributes no noiseDist.
+    scene.time.now = 5000;
+    scene._lastFireAt = 0;   // 5000ms ago, well past NOISE_WINDOW_MS (200)
+    scene._lastFireX = e.x + 50; scene._lastFireY = e.y;
+    scene._maybeProximityWake(e);
+    expect(e.awareness).toBe(DORMANT);
+  });
+
+  it('no shot ever fired (_lastFireAt null) is a safe no-op — proximity path still works alone', () => {
+    const scene = makeScene();
+    const e = makeDockedUnit('tank', { baseId: 'base0' });
+    scene.enemies.push(e);
+    scene._lastFireAt = null;   // never fired
+    scene.px = e.x + 100000; scene.py = e.y;   // and player is far — nothing should wake it
+    expect(() => scene._maybeProximityWake(e)).not.toThrow();
+    expect(e.awareness).toBe(DORMANT);
+  });
+});
+
+// #269 playtest follow-up ("wake upon being SHOT"): a DORMANT unit taking damage via
+// combat.js `_damageEnemyAt` wakes its whole base — being hit is the most unambiguous "you've
+// been noticed" signal there is. Composes the real CombatMixin alongside BasesMixin (both are
+// Object.assign'd onto the same ArenaScene in production) so `this._wakeBase` is directly
+// reachable from `_damageEnemyAt`. The death-pipeline side effects (`_deathFx`/drops/removal)
+// are stubbed — only the wake hook + damage application are under test.
+describe('#269 playtest follow-up: DORMANT units wake when directly shot (_damageEnemyAt)', () => {
+  function makeCombatScene() {
+    const scene = { time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [] };
+    Object.assign(scene, EnemiesMixin, BasesMixin, CombatMixin);
+    scene._initAlertTowers();
+    // Death-pipeline stubs (only fire when a hit destroys the unit) — irrelevant to the wake hook.
+    scene._deathFx = () => {};
+    scene._maybeDropPowerup = () => {};
+    scene._maybeDropSalvage = () => {};
+    scene._removeEnemy = (e) => { const i = scene.enemies.indexOf(e); if (i >= 0) scene.enemies.splice(i, 1); };
+    return scene;
+  }
+
+  it('a non-lethal hit on a DORMANT unit wakes its whole base', () => {
+    const scene = makeCombatScene();
+    const hit = makeDockedUnit('tank', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    scene.enemies.push(hit, dockmate);
+    // Small damage relative to the tank's hp pool — survives the hit, still gets its base woken.
+    scene._damageEnemyAt(hit, hit.x, hit.y, 1, 0xffffff);
+    expect(hit.mech.isDestroyed()).toBe(false);
+    expect(hit.awareness).toBe(AWARE);
+    expect(dockmate.awareness).toBe(AWARE);
+  });
+
+  it('a hit that DESTROYS the DORMANT unit still wakes its base (its dockmates notice)', () => {
+    const scene = makeCombatScene();
+    const hit = makeDockedUnit('infantry', { baseId: 'base0' });   // fragile — one big hit kills it
+    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    scene.enemies.push(hit, dockmate);
+    scene._damageEnemyAt(hit, hit.x, hit.y, 100000, 0xffffff);   // overkill — destroys it outright
+    expect(hit.mech.isDestroyed()).toBe(true);
+    expect(scene.enemies.includes(hit)).toBe(false);   // removed from the roster this same tick
+    // The wake fired BEFORE teardown, so the surviving dockmate still gets stirred by the kill.
+    expect(dockmate.awareness).toBe(AWARE);
+  });
+
+  it('a hit on a unit with no baseId (e.g. a lone patrol unit) wakes nothing, no error', () => {
+    const scene = makeCombatScene();
+    const patrol = makeDockedUnit('tank');
+    patrol.baseId = null;   // a lone patrol unit carries no base tag (makeDockedUnit's default forces one)
+    patrol.awareness = DORMANT;
+    scene.enemies.push(patrol);
+    expect(() => scene._damageEnemyAt(patrol, patrol.x, patrol.y, 1, 0xffffff)).not.toThrow();
+    // No baseId → nothing to group-wake; the unit itself is untouched by the wake hook.
+    expect(patrol.awareness).toBe(DORMANT);
+  });
+
+  it('an already-AWARE unit taking a hit is a no-op for the wake hook (no re-wake)', () => {
+    const scene = makeCombatScene();
+    const e = makeDockedUnit('tank', { baseId: 'base0' });
+    e.awareness = AWARE;
+    scene.enemies.push(e);
+    scene._wakeBase('base0');   // base already woken
+    e.awareness = UNAWARE;      // simulate a later transition
+    scene._damageEnemyAt(e, e.x, e.y, 1, 0xffffff);
+    expect(e.awareness).toBe(UNAWARE);   // NOT stomped back to AWARE by a hit
   });
 });
 
