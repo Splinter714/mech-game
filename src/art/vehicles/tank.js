@@ -8,33 +8,40 @@ import { VEHICLE as V, accentGlow } from './palette.js';
 
 // Hull + two tracks, drawn pointing "up" (−y = forward). The front is a sloped glacis (tough
 // frontal facing); the tracks are dark ribbed bands down each side.
+// #294 (playtest: "tanks need to be less wide so they're more rectangular, less square"): the
+// old silhouette was ~36.6px wide by ~35.6px tall (near-1:1) once the tracks' outer edges were
+// counted — that read as squat/square rather than a tank's long low profile. Narrowed the track
+// offset/width and the hull tub's x-extent, and lengthened both the tracks and hull tub's
+// y-extent, so the outer silhouette is now ~29px wide by ~44px tall (~1:1.5, clearly
+// longer-than-wide) while keeping the same visual language (tracks down each side, sloped
+// glacis front, rear engine deck) — a proportion tweak, not a redesign.
 function drawHull(sg, accent) {
   // Ground shadow.
-  ellipseC(sg, 0, 4, 34, 30, V.deep, 0.35);
+  ellipseC(sg, 0, 5, 28, 38, V.deep, 0.35);
 
   // Tracks (left + right dark ribbed bands running fore-aft).
-  for (const sx of [-13, 13]) {
-    roundC(sg, sx, 2, 10.6, 35.6, V.halo, 3.8);   // #129: legibility halo (outer ring)
-    roundC(sg, sx, 2, 9, 34, V.outline, 3);
-    roundC(sg, sx, 2, 6.5, 32, V.tread, 2.5);
+  for (const sx of [-10, 10]) {
+    roundC(sg, sx, 2, 9, 44, V.halo, 3.8);   // #129: legibility halo (outer ring)
+    roundC(sg, sx, 2, 7.6, 42.4, V.outline, 3);
+    roundC(sg, sx, 2, 5.4, 40, V.tread, 2.5);
     // Track lugs (rungs) — a stack of light ticks so it reads as a moving belt.
-    for (let y = -13; y <= 15; y += 4) rectC(sg, sx, y, 6.5, 1.6, V.treadHi, 0.9);
+    for (let y = -17; y <= 19; y += 4) rectC(sg, sx, y, 5.4, 1.6, V.treadHi, 0.9);
     // Road wheels hint (darker circles under the lugs).
-    for (const y of [-9, -1, 7]) ellipseC(sg, sx, y, 3, 3, V.deep, 0.7);
+    for (const y of [-11, 1, 13]) ellipseC(sg, sx, y, 2.6, 2.6, V.deep, 0.7);
   }
 
   // Central hull tub between the tracks.
-  poly(sg, [[-10.6, -14.6], [10.6, -14.6], [11.6, 15.6], [-11.6, 15.6]], V.halo);   // #129
-  poly(sg, [[-9, -13], [9, -13], [10, 14], [-10, 14]], V.outline);
-  poly(sg, [[-8, -12], [8, -12], [9, 13], [-9, 13]], V.bodyDk);
+  poly(sg, [[-8.6, -18], [8.6, -18], [9.6, 20], [-9.6, 20]], V.halo);   // #129
+  poly(sg, [[-7.4, -16], [7.4, -16], [8.2, 17], [-8.2, 17]], V.outline);
+  poly(sg, [[-6.6, -15], [6.6, -15], [7.2, 16], [-7.2, 16]], V.bodyDk);
   // Sloped glacis plate at the FRONT (tough frontal facing) — a lighter trapezoid up top.
-  poly(sg, [[-7, -13], [7, -13], [8, -4], [-8, -4]], V.body);
-  poly(sg, [[-6, -13], [6, -13], [6.5, -8], [-6.5, -8]], V.bodyHi);
+  poly(sg, [[-6, -16], [6, -16], [6.6, -7], [-6.6, -7]], V.body);
+  poly(sg, [[-5, -16], [5, -16], [5.4, -11], [-5.4, -11]], V.bodyHi);
   // Rear engine deck with grilles.
-  rectC(sg, 0, 9, 14, 8, V.bodyDk);
-  for (const y of [7, 9, 11]) rectC(sg, 0, y, 12, 1, V.tread, 0.8);
+  rectC(sg, 0, 13, 12, 9, V.bodyDk);
+  for (const y of [11, 13, 15]) rectC(sg, 0, y, 10, 1, V.tread, 0.8);
   // A hazard accent stripe on the glacis.
-  rectC(sg, 0, -11, 10, 1.4, accent, 0.7);
+  rectC(sg, 0, -13, 8, 1.4, accent, 0.7);
 }
 
 // Rotating turret: a rounded cast body, a mantlet, a long forward gun, and a commander hatch.
