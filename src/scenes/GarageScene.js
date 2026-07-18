@@ -160,11 +160,21 @@ export default class GarageScene extends Phaser.Scene {
       isLocked: (id) => !this.unlocked.has(id),
       costOf: (id) => costOf(id),
     });
-    this.panel = new WeaponSfxPanel(this, r.panel);
-    this.panelEdge = this.add.rectangle(r.panel.x - PANEL_GAP / 2, r.panel.y, 1, r.panel.h, UI.panelEdge).setOrigin(0.5, 0);
-    this._buildExplosionRow(r.explosion);
-    this._buildUiRow(r.ui);
-    this._buildAutofireRow(r.autofire);
+    // #296: the whole sound-authoring surface — the WeaponSfxPanel (per-weapon SFX sliders/
+    // preview/bake) plus the explosion-category / UI-sound / catalog-demo-sound trigger rows that
+    // feed it — is a dev-only tool. Built only under `import.meta.env.DEV` (Vite's build-time flag,
+    // stripped/dead-code-eliminated in `npm run build`), so a production garage shows none of it and
+    // the weapon catalog takes the whole region (see _topRegion). Every call site that touches
+    // `this.panel` / the row state (_onCardSelect, shutdown) is guarded to match. The catalog cards'
+    // own auto-fire demo SOUND stays silent in prod for free: its toggle (the gated autofire row)
+    // never turns on, and WeaponCardList defaults `autoFireEnabled` to false.
+    if (import.meta.env.DEV) {
+      this.panel = new WeaponSfxPanel(this, r.panel);
+      this.panelEdge = this.add.rectangle(r.panel.x - PANEL_GAP / 2, r.panel.y, 1, r.panel.h, UI.panelEdge).setOrigin(0.5, 0);
+      this._buildExplosionRow(r.explosion);
+      this._buildUiRow(r.ui);
+      this._buildAutofireRow(r.autofire);
+    }
 
     this._buildPreview();
     this.doll = this.add.container(0, 0);
@@ -205,9 +215,12 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));
     this.events.once('shutdown', () => {
       this.list.destroy();
-      this.panel.destroy();
-      this.explosionHeader.destroy();
-      for (const b of this.explosionButtons) { b.rect.destroy(); b.text.destroy(); }
+      // #296: the SFX panel + explosion row only exist in dev builds — guard their teardown.
+      if (import.meta.env.DEV) {
+        this.panel.destroy();
+        this.explosionHeader.destroy();
+        for (const b of this.explosionButtons) { b.rect.destroy(); b.text.destroy(); }
+      }
     });
 
     // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
@@ -395,6 +408,13 @@ export default class GarageScene extends Phaser.Scene {
   // #121: split the top catalog area into a list region (remaining width) and a fixed-width
   // SFX panel + explosion-category row above it, mirroring the retired Weapon Lab's _region().
   _topRegion(top) {
+    const bottom = this.H - this.bottomH - 16;
+    // #296: production has no SFX panel or sound-trigger rows (see create()), so the weapon
+    // catalog spans the whole region — full width, starting right at `top`. Only the dev build
+    // reserves space for the panel/rows below.
+    if (!import.meta.env.DEV) {
+      return { list: { x: 20, y: top, w: this.W - 40, h: bottom - top } };
+    }
     const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
     // #207: the UI/pickup strip is now UI_GROUPS.length stacked subsection rows instead of
     // one, so its total height is the sum of those rows plus the gaps between them.
@@ -402,7 +422,6 @@ export default class GarageScene extends Phaser.Scene {
     const uiTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
     const autofireTop = uiTop + uiH + UI_GAP;
     const listTop = autofireTop + AUTOFIRE_ROW_H + AUTOFIRE_GAP;
-    const bottom = this.H - this.bottomH - 16;
     return {
       explosion: { x: 20, y: top, w: listW, h: EXPLOSION_ROW_H },
       ui: { x: 20, y: uiTop, w: listW, h: uiH },
@@ -419,9 +438,13 @@ export default class GarageScene extends Phaser.Scene {
   _onCardSelect(id) {
     this.selectedExplosion = null;
     this.selectedUi = null;
-    this.panel.setWeapon(id);
-    this._paintExplosionRow();
-    this._paintUiRow();
+    // #296: the SFX panel + its category/UI trigger rows only exist in dev builds — in production
+    // a card click just mounts the item (below). Guarded so a null panel/absent rows can't throw.
+    if (import.meta.env.DEV) {
+      this.panel.setWeapon(id);
+      this._paintExplosionRow();
+      this._paintUiRow();
+    }
     this._pickItem(id);
   }
 

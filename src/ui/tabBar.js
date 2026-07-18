@@ -25,9 +25,15 @@ const TAB_UI = {
 export const TAB_BAR_H = 52;   // logical px
 
 // The tabs, in order. `scene` is the Phaser scene key each one navigates to.
+// #296: the MUSIC tab (→ MusicScene, the global music/mix tuner) is a dev-only authoring tool —
+// included only under `import.meta.env.DEV` (Vite's build-time flag, stripped/dead-code-eliminated
+// in `npm run build`), so a production garage shows no MUSIC tab and MusicScene is unreachable via
+// the UI. The scene itself stays registered (main.js) — there's just no tab/nav pointing at it.
+// nextTabScene()/attachPadTabCycle() below both derive from TABS, so in production the single
+// remaining tab makes SELECT a harmless no-op cycle back to the garage.
 const TABS = [
   { key: 'MECH LAB', scene: 'GarageScene' },
-  { key: 'MUSIC', scene: 'MusicScene' },
+  ...(import.meta.env.DEV ? [{ key: 'MUSIC', scene: 'MusicScene' }] : []),
 ];
 
 // The scene key SELECT moves to from `active` (wrapping through TABS in order).
