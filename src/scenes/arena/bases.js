@@ -9,7 +9,7 @@
 // between successive bases along the corridor's progression, not anchored to any base or
 // "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
-import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP } from '../../data/awareness.js';
+import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
@@ -407,7 +407,16 @@ export const BasesMixin = {
   _maybeProximityWake(e) {
     if (e.baseId == null) return;
     const dist = Math.hypot(this.px - e.x, this.py - e.y);
-    if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange })) this._wakeBase(e.baseId);
+    // #269: also wake on nearby gunfire noise, not just physical proximity — a player shooting
+    // up a base's front units should stir the rest, even before walking into them. Same
+    // `noiseDist` computation the UNAWARE path uses (enemies.js `_updateVehicle`): distance from
+    // the most recent still-"live" player gunshot (within NOISE_WINDOW_MS), or null if no shot is
+    // currently live. `shouldBecomeAware` compares it against NOISE_AGGRO_RANGE internally. The
+    // existing `dist`/`detectRange` proximity check (capped at PROXIMITY_WAKE_RANGE_CAP upstream)
+    // is unchanged — this ADDS the noise trigger.
+    const noiseLive = this._lastFireAt != null && this.time.now - this._lastFireAt < NOISE_WINDOW_MS;
+    const noiseDist = noiseLive ? Math.hypot(this._lastFireX - e.x, this._lastFireY - e.y) : null;
+    if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange, noiseDist })) this._wakeBase(e.baseId);
   },
 
   // §6/§7: wake every still-dormant unit belonging to `baseId`. Idempotent — waking an

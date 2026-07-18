@@ -8,6 +8,7 @@ import {
   resolveHitLocation, pickLiveWeighted,
 } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
+import { DORMANT } from '../../data/awareness.js';
 // #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
@@ -161,6 +162,12 @@ export const CombatMixin = {
   // damage number floats — the whole unit shares the hp — and its textures are static, no reskin).
   _damageEnemyAt(e, x, y, damage, color) {
     if (e.mech.isDestroyed()) return;
+    // #269: being shot is the most unambiguous "you've been noticed" signal there is — a dormant
+    // unit taking a hit wakes its whole base (via the BasesMixin `_wakeBase`, composed onto the
+    // same scene). Done up front, before applyDamage/teardown below, so it fires even when THIS
+    // hit destroys the unit (the destroyed unit is removed from `this.enemies`, but its still-
+    // dormant basemates get woken). `_wakeBase` is idempotent, so an already-woken base is a no-op.
+    if (e.awareness === DORMANT && e.baseId != null) this._wakeBase(e.baseId);
     const isMech = e.kind === 'mech' || e.kind === undefined;
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
     const lx = x - e.x, ly = y - e.y;
