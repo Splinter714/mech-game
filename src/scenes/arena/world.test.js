@@ -24,8 +24,9 @@ function lcg(seed) {
 }
 
 // Build a terrain Map over the hex disc |q|,|r| <= radius, each hex assigned an id by `pick(q,r)`.
-// Ids used: 'grass' (clear), 'alertTower' (SOLID wall — blocks even at an endpoint), 'forest' (SOFT
-// cover — passable+blocksLOS, so it's see-through only at a ray's own endpoint hex, #72).
+// Ids used: 'grass' (clear), 'alertTower' (impassable hard cover — no living occupant, so its own-
+// hex exemption never fires in practice), 'forest' (#279: passable HARD cover — passable+
+// blocksLOS, so it's see-through only at a ray's own endpoint hex, #72's generalized exemption).
 function gridTerrain(pick, radius = 7) {
   const t = new Map();
   for (let q = -radius; q <= radius; q++) {
@@ -54,7 +55,7 @@ function newWallDistance(scene, x0, y0, x1, y1) {
 
 describe('_wallDistanceLos — allocation-free raycast is bit-identical to the old _wallDistance (#167)', () => {
   it('matches on a hand-built lane with a solid wall, a soft-cover screen, and an endpoint in cover', () => {
-    // A clear row with one alertTower (solid) at q=2 and one forest (soft) at q=4, on r=0.
+    // A clear row with one alertTower (solid) at q=2 and one forest (hard, #279) at q=4, on r=0.
     const terrain = gridTerrain((q, r) => {
       if (r !== 0) return 'grass';
       if (q === 2) return 'alertTower';
