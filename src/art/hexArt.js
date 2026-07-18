@@ -505,12 +505,13 @@ const DETAIL = {
   // #227: destroyed forest — charred plant debris (organic ellipse bits), NOT the building's
   // masonry-slab look.
   hex_forestRubble: (sg) => organicDebrisScatter(sg, 0x1a1610, 0x33301c, 0x50492c, 0x91),
+  // #289: ground layer only — the shadowy forest floor. The tree canopy itself now renders as
+  // a SEPARATE overlay image (see CANOPY_DETAIL.forest below + `buildHexTextures`'s canopy pass)
+  // so a small ground unit standing in cover can render between the floor and the canopy sprites
+  // instead of being fully hidden under (or drawn flat on top of) one combined texture.
   hex_forest: (sg) => {
-    // Shadowy forest floor under the canopy, filling the whole hex.
     sg.fillStyle(0x14290f, 0.7);
     sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
-    // A grove of trees covering the entire tile, drawn back-to-front.
-    for (const [dx, dy, r] of FOREST_TREES) tree(sg, C.cx + dx, C.cy + dy, r);
   },
   // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad. Reads as a loading bay: a
   // squared-off deck with a painted border frame, two corner bollard studs, and a chevron "lane"
@@ -655,12 +656,10 @@ const DETAIL = {
     sg.fillStyle(0xc08a5c, 0.9); sg.fillEllipse(C.cx - 3, C.cy - 6, 9, 4);    // sun-lit cap
     sg.fillStyle(0x4a2c1c, 0.5); sg.fillRect(C.cx + 4, C.cy - 2, 2, 8);       // strata shadow
   },
+  // #289: ground layer only — see the hex_forest comment above. Canopy clumps moved to
+  // CANOPY_DETAIL.scrub.
   hex_scrub: (sg) => {   // sparse desert brush cover
     coverFloor(sg, 0x8f7440, 0.55);
-    for (const [dx, dy, r] of CLUMP_SPOTS) {
-      if ((dx + dy) % 2 === 0) continue;   // sparse: skip ~half the lattice
-      coverClump(sg, C.cx + dx, C.cy + dy, r * 0.8, 0x5c4a24, 0x7d6a34, 0xa89150);
-    }
   },
   // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT the generic
   // rubble's masonry look.
@@ -703,9 +702,10 @@ const DETAIL = {
     crackLine(sg, [[C.cx - 2, C.cy - 1], [C.cx + 3, C.cy + 7]], 0x76a3c4, 0.8, 1);
     sg.fillStyle(0xffffff, 0.5); sg.fillEllipse(C.cx + 4, C.cy + 2, 8, 2);   // glare
   },
+  // #289: ground layer only — see the hex_forest comment above. Canopy clumps moved to
+  // CANOPY_DETAIL.drift.
   hex_drift: (sg) => {   // snowdrifts / frosted pines cover
     coverFloor(sg, 0xb2c3d3, 0.6);
-    for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r, 0xa9bccb, 0xcfe0ec, 0xffffff);
   },
   // #227: destroyed snowdrift — jagged broken ice/snow shards, NOT the generic rubble's
   // masonry-slab look.
@@ -737,12 +737,11 @@ const DETAIL = {
     }
     sg.fillStyle(0x6d7480, 0.8); sg.fillRect(C.cx - 3, C.cy - 8, 4, 14);   // a leaning girder
   },
+  // #289: ground layer only — the floor + a ground-level smoulder glow (a flat decal, not part
+  // of the obstructing silhouette a unit peeks out from under). Canopy clumps moved to
+  // CANOPY_DETAIL.wreck.
   hex_wreck: (sg) => {   // burned-out wreckage / low walls cover
     coverFloor(sg, 0x35322d, 0.6);
-    for (const [dx, dy, r] of CLUMP_SPOTS) {
-      if ((dx + 2 * dy) % 3 === 0) continue;
-      coverClump(sg, C.cx + dx, C.cy + dy, r * 0.85, 0x2a2723, 0x4a453d, 0x6a6258, 0.4);
-    }
     sg.fillStyle(0xd8632a, 0.35); sg.fillCircle(C.cx + 3, C.cy - 2, 5);   // a faint smoulder glow
   },
   // #227: destroyed wreck — burnt debris scraps + a faint ember fleck, NOT the generic
@@ -785,9 +784,10 @@ const DETAIL = {
     sg.fillStyle(0xfff0a0, 0.85); sg.fillEllipse(C.cx - 4, C.cy - 3, 7, 3);   // white-hot core
     sg.fillStyle(0x2a1108, 0.7); sg.fillEllipse(C.cx + 7, C.cy + 4, 8, 3); sg.fillEllipse(C.cx - 8, C.cy + 5, 6, 2); // cooling skin islands
   },
+  // #289: ground layer only — the floor + the vent's ember glow (ground-level, not part of the
+  // obstructing silhouette). Canopy clumps moved to CANOPY_DETAIL.fumarole.
   hex_fumarole: (sg) => {   // ash mounds / smoke plumes cover
     coverFloor(sg, 0x211d19, 0.6);
-    for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r * 0.9, 0x1e1a17, 0x3a352f, 0x55504a);
     sg.fillStyle(0xff6a1e, 0.3); sg.fillCircle(C.cx, C.cy, 6);   // ember glow at the vent
   },
   // #227: destroyed fumarole — loose ash/cinder scatter with glowing embers, NOT the generic
@@ -801,6 +801,50 @@ const DETAIL = {
     sg.fillStyle(0xff6a1e, 0.6); sg.fillCircle(C.cx + 6, C.cy - 3, 1);
   },
 };
+
+// #289: the "canopy" pass — the foliage/obstruction silhouette that used to be baked directly
+// into each cover terrain's single combined texture (see the DETAIL.hex_forest/scrub/drift/
+// wreck/fumarole comments above), now rendered as its OWN transparent-background texture so
+// world.js can place it as a separate Image at a depth ABOVE ground units but BELOW the player/
+// large units — a small unit standing in cover then reads as peeking out from under the canopy
+// instead of being fully hidden beneath (or drawn flat on top of) one flat tile. Keyed by the
+// bare terrain id (not the `hex_`-prefixed texture key) since `buildHexTextures` below drives
+// this off `COVER_CANOPY_IDS`, not the PAL/tiles loop.
+const CANOPY_DETAIL = {
+  forest: (sg) => {
+    for (const [dx, dy, r] of FOREST_TREES) tree(sg, C.cx + dx, C.cy + dy, r);
+  },
+  scrub: (sg) => {
+    for (const [dx, dy, r] of CLUMP_SPOTS) {
+      if ((dx + dy) % 2 === 0) continue;   // sparse: skip ~half the lattice (matches the old combined art)
+      coverClump(sg, C.cx + dx, C.cy + dy, r * 0.8, 0x5c4a24, 0x7d6a34, 0xa89150);
+    }
+  },
+  drift: (sg) => {
+    for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r, 0xa9bccb, 0xcfe0ec, 0xffffff);
+  },
+  wreck: (sg) => {
+    for (const [dx, dy, r] of CLUMP_SPOTS) {
+      if ((dx + 2 * dy) % 3 === 0) continue;
+      coverClump(sg, C.cx + dx, C.cy + dy, r * 0.85, 0x2a2723, 0x4a453d, 0x6a6258, 0.4);
+    }
+  },
+  fumarole: (sg) => {
+    for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r * 0.9, 0x1e1a17, 0x3a352f, 0x55504a);
+  },
+};
+// The 5 cover terrain ids that get a separate canopy overlay texture (#289). Exported so
+// world.js can iterate/check membership without re-deriving the list.
+export const COVER_CANOPY_IDS = Object.keys(CANOPY_DETAIL);
+// The canopy overlay texture key for a cover terrain id (bare id, or a `hex_`-prefixed tex key —
+// same tolerant pattern as `flatBoundaryTexKey` above).
+export function canopyTexKey(key) {
+  const id = key.replace(/^hex_/, '');
+  return `hex_${id}_canopy`;
+}
+export function isCoverCanopyId(key) {
+  return CANOPY_DETAIL.hasOwnProperty(key.replace(/^hex_/, ''));
+}
 
 // #126: the flat base fill colour behind a terrain id's hex texture (e.g. a biome's `deep`
 // boundary terrain) — exposed so the arena can paint the CAMERA BACKGROUND to match instead of
@@ -863,4 +907,16 @@ export function buildHexTextures(scene) {
     drawHex(sg, PAL.wall.fill, PAL.wall.edge, 0.92);
     drawHex(sg, 0x4a5564, 0x39414d, 0.6);
   });
+
+  // #289: a SECOND, separate texture-build pass for each cover terrain's canopy overlay — a
+  // transparent-background image containing ONLY the tree/foliage silhouette (`CANOPY_DETAIL`
+  // above), no ground fill. `gen()` starts every texture's backing canvas fully transparent, and
+  // nothing here paints outside the silhouette shapes, so the unpainted background stays see-
+  // through. world.js places this as a second Image per cover hex, above the ground tile.
+  for (const id of COVER_CANOPY_IDS) {
+    gen(scene, canopyTexKey(id), HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
+      const sg = scaledGraphics(g);
+      CANOPY_DETAIL[id](sg);
+    });
+  }
 }

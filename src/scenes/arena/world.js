@@ -8,7 +8,7 @@ import {
   shotBlockedAt, flameCoverDamage, coverBlocksForRay,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
-import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
+import { terrainFillColor, isBoundaryTerrainId, isCoverCanopyId, canopyTexKey } from '../../art/hexArt.js';
 import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
   safeZoneKeys, MAX_WORLD_RADIUS, spineSpawnHex,
@@ -175,6 +175,13 @@ export const WorldMixin = {
     // impassable terrain looked before hex-terrain rendering existed for it, just biome-tinted
     // instead of flat black. Only the passable interior (never a boundary-only id) still gets
     // individual hex Image tiles, unchanged.
+    // #289: cover terrain (forest/scrub/drift/wreck/fumarole) gets a SECOND Image — the tree/
+    // foliage canopy overlay (hexArt.js's separate canopy texture pass), placed at the same hex
+    // centre but at DEPTH.COVER_CANOPY (above ground units, below the player/large units) so a
+    // small ground unit standing in cover renders between the two: visible under the canopy
+    // instead of fully hidden beneath, or drawn flat on top of, one combined tile. Non-cover
+    // hexes are completely unaffected — still exactly one Image, unchanged.
+    this.canopyImages = new Map();   // hexKey → the canopy overlay Image, cover hexes only
     for (const [k, id] of this.terrain) {
       if (isBoundaryTerrainId(getTerrain(id).tex)) continue;
       const [q, r] = k.split(',').map(Number);
@@ -182,6 +189,10 @@ export const WorldMixin = {
       const tex = getTerrain(id).tex;
       const img = this.add.image(x, y, tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
+      if (isCoverCanopyId(tex)) {
+        const canopy = this.add.image(x, y, canopyTexKey(tex)).setScale(1 / ART_SCALE).setDepth(DEPTH.COVER_CANOPY);
+        this.canopyImages.set(k, canopy);
+      }
     }
     // #155: culling state — see `_updateTileCulling` below. Every tile Image is actually
     // visible right now (Phaser default), so `_visibleTiles` starts as the FULL key set to
@@ -268,11 +279,18 @@ export const WorldMixin = {
       if (this._visibleTiles.has(k)) continue;
       const img = this.tileImages.get(k);
       if (img) img.setVisible(true);
+      // #289: the cover canopy overlay (if any) follows its ground tile's visibility exactly —
+      // same culling ring, same on/off transitions — so it's never left visible over a culled-out
+      // ground tile or vice versa.
+      const canopy = this.canopyImages?.get(k);
+      if (canopy) canopy.setVisible(true);
     }
     for (const k of this._visibleTiles) {
       if (nextVisible.has(k)) continue;
       const img = this.tileImages.get(k);
       if (img) img.setVisible(false);
+      const canopy = this.canopyImages?.get(k);
+      if (canopy) canopy.setVisible(false);
     }
     this._visibleTiles = nextVisible;
   },
@@ -479,6 +497,11 @@ export const WorldMixin = {
     this.terrain.set(k, rub);
     const img = this.tileImages.get(k);
     if (img) img.setTexture(getTerrain(rub).tex);
+    // #289: a collapsed cover hex's rubble terrain has no canopy of its own — destroy the now-
+    // orphaned foliage overlay (if this hex had one) so a burned-down forest/scrub/etc. tile
+    // doesn't keep showing an intact tree/foliage silhouette floating over its rubble.
+    const canopy = this.canopyImages?.get(k);
+    if (canopy) { canopy.destroy(); this.canopyImages.delete(k); }
     const { x: cx, y: cy } = hexToPixel(h.q, h.r);
     this._outpostCollapseFx(cx, cy, soft);
     // #269 Part 2: generic hook for anything that needs to react to a SPECIFIC hex collapsing

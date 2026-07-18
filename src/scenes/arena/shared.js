@@ -83,6 +83,16 @@ export const DEPTH = {
   GROUND_UNITS: 2,    // #113: non-flying enemy views (mech, tank, turret, infantry) — always
                       // below the player so a ground unit standing under/near the player can
                       // never obscure it.
+  // #289: cover terrain's foliage/canopy overlay (world.js's per-cover-hex second Image, art
+  // from hexArt.js's CANOPY_DETAIL) — sits strictly between GROUND_UNITS and UNITS so a small
+  // ground unit standing in cover renders BELOW the canopy (visible from the waist down under
+  // the tree/foliage silhouette, not fully obscured) while the player/large units still render
+  // above it, unaffected. A non-integer value (2.5) is used deliberately instead of renumbering
+  // every existing tier below/above it: Phaser's depth sort only needs correct RELATIVE
+  // ordering, so slotting a fractional value between 2 and 3 is exactly as valid as an integer
+  // and avoids a shotgun rename of GROUND_UNITS/UNITS/PROJECTILES/etc. across every call site
+  // that already hardcodes/imports those names.
+  COVER_CANOPY: 2.5,
   UNITS: 3,           // the player, and flying enemy views (helicopter, drone) — elevated units
                       // that don't have the same "who's actually closer to the ground" ambiguity
                       // ground units do, so they keep the original flat #99 tier alongside the
