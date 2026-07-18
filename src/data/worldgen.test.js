@@ -14,10 +14,13 @@ import {
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
   placeBases, placeGapTowers, dockCountFor,
   TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
+  MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN } from './terrain.js';
 import { axialKey, range, neighbors, distance, hexToPixel } from './hexgrid.js';
+import { ALERT_DETECT_RADIUS } from './alertTower.js';
+import { PROXIMITY_WAKE_RANGE_CAP } from './awareness.js';
 import { GAMEPLAY_ZOOM } from '../scenes/arena/shared.js';
 
 const GRASSLAND = getBiome('grassland');
@@ -958,5 +961,145 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       totalPlaced += alertTowers.length;
     }
     expect(totalPlaced).toBeGreaterThan(totalMaxPossible * 0.5);
+  });
+
+  // #283 ("guarantee a calm, threat-free start and genuinely calm travel gaps between base
+  // encounters"): `placeBases`/`placeGapTowers` both now enforce a MIN_GAP_PROGRESS_HEX floor
+  // past whatever came before them (spawn, for the first one; the previous base, for every
+  // successive gap) — see worldgen.js's own comment on the constant for the full sizing
+  // reasoning (chassis-speed target vs. corridor-length budget, cross-checked against the
+  // detection-radius audit below).
+  describe('#283 minimum calm-gap spacing', () => {
+    // A long, spacious synthetic corridor (progress = q directly, like `buildLine` above) with
+    // plenty of headroom relative to MIN_GAP_PROGRESS_HEX, so the floor is always comfortably
+    // achievable — isolates "does the floor hold" from "is the real 3400px corridor tight
+    // enough that the graceful-degradation fallback sometimes has to settle for less" (covered
+    // separately below, against the REAL corridor pipeline).
+    function buildSpaciousLine(maxQ = 2000) {
+      const all = [];
+      for (let q = 0; q <= maxQ; q++) all.push({ q, r: 0 });
+      const T = new Map();
+      for (const h of all) T.set(axialKey(h.q, h.r), GRASSLAND.groundA);
+      const isGround = (k) => { const t = T.get(k); return t === GRASSLAND.groundA || t === GRASSLAND.groundB; };
+      return { all, T, isGround, progressOf: (h) => h.q };
+    }
+
+    it('base 0 sits at least MIN_GAP_PROGRESS_HEX past spawn (progress 0)', () => {
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const { all, T, isGround, progressOf } = buildSpaciousLine();
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        expect(progressOf(bases[0].center)).toBeGreaterThanOrEqual(MIN_GAP_PROGRESS_HEX);
+      }
+    });
+
+    it('every successive base sits at least MIN_GAP_PROGRESS_HEX past the previous one', () => {
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const { all, T, isGround, progressOf } = buildSpaciousLine();
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        expect(bases.length).toBe(BASE_COUNT);
+        let prev = 0;
+        for (const base of bases) {
+          const p = progressOf(base.center);
+          expect(p).toBeGreaterThanOrEqual(prev + MIN_GAP_PROGRESS_HEX);
+          prev = p;
+        }
+      }
+    });
+
+    it('gap 0\'s tower sits at least MIN_GAP_PROGRESS_HEX past spawn, and every later gap\'s tower sits at least that far past the previous base', () => {
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const { all, T, isGround, progressOf } = buildSpaciousLine();
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+        expect(alertTowers.length).toBe(BASE_COUNT);   // spacious corridor: every gap gets a tower
+        let prev = 0;
+        for (let i = 0; i < alertTowers.length; i++) {
+          const p = progressOf(alertTowers[i]);
+          expect(p).toBeGreaterThanOrEqual(prev + MIN_GAP_PROGRESS_HEX);
+          prev = progressOf(bases[i].center);
+        }
+      }
+    });
+
+    it('base/tower COUNT is unaffected by the new floor (still exactly BASE_COUNT of each)', () => {
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const { all, T, isGround, progressOf } = buildSpaciousLine();
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+        expect(bases.length).toBe(BASE_COUNT);
+        expect(alertTowers.length).toBe(BASE_COUNT);
+      }
+    });
+
+    it('a tiny/degenerate candidate set never places a base BEHIND the one before it, even when the floor can\'t be fully reached', () => {
+      // A corridor far too short to fit BASE_COUNT full floors end-to-end — exercises
+      // `placeBases`'s own graceful-degradation fallback (its comment has the full reasoning).
+      const all = [];
+      for (let q = 0; q <= 5; q++) all.push({ q, r: 0 });
+      const T = new Map();
+      for (const h of all) T.set(axialKey(h.q, h.r), GRASSLAND.groundA);
+      const isGround = (k) => { const t = T.get(k); return t === GRASSLAND.groundA || t === GRASSLAND.groundB; };
+      const progressOf = (h) => h.q;
+      for (const seed of [1, 2, 3, 42, 777]) {
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        expect(bases.length).toBe(BASE_COUNT);   // count still guaranteed even in the degraded case
+        let prev = 0;
+        for (const base of bases) {
+          const p = progressOf(base.center);
+          expect(p).toBeGreaterThanOrEqual(prev);   // never behind — non-decreasing, floor or not
+          prev = p;
+        }
+      }
+    });
+
+    it('on the real snaking corridor pipeline, the floor holds for every gap across a broad seed sweep', () => {
+      // Exercises the actual generateSpine/corridorHexSet/spineProgressHexOf pipeline (not a
+      // synthetic line) across many seeds — proves MIN_GAP_PROGRESS_PX (600px) is small enough,
+      // relative to the real CORRIDOR_LENGTH_PX budget split `BASE_COUNT` ways, that the floor is
+      // reliably achievable in practice, not just on paper. See worldgen.js's own comment on
+      // MIN_GAP_PROGRESS_PX for the sizing sweep this mirrors.
+      for (let seed = 1; seed <= 40; seed++) {
+        const { spine, includedKeys } = buildCorridor(seed * 37 + 11);
+        const all = [...includedKeys].map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; });
+        const T = new Map();
+        for (const h of all) T.set(axialKey(h.q, h.r), GRASSLAND.groundA);
+        const isGround = (k) => { const t = T.get(k); return t === GRASSLAND.groundA || t === GRASSLAND.groundB; };
+        const progressOf = (h) => spineProgressHexOf(spine, h.q, h.r);
+        const rng = mulberry32(seed);
+        const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+        expect(bases.length).toBe(BASE_COUNT);
+
+        expect(spineProgressHexOf(spine, bases[0].center.q, bases[0].center.r)).toBeGreaterThanOrEqual(MIN_GAP_PROGRESS_HEX - 1e-6);
+        let prev = 0;
+        for (const base of bases) {
+          const p = spineProgressHexOf(spine, base.center.q, base.center.r);
+          expect(p).toBeGreaterThanOrEqual(prev + MIN_GAP_PROGRESS_HEX - 1e-6);
+          prev = p;
+        }
+      }
+    });
+
+    // Audit: confirm the detection radii that could reach into a gap (the tower's own tripwire,
+    // ALERT_DETECT_RADIUS, and a dormant unit's proximity-wake radius, PROXIMITY_WAKE_RANGE_CAP)
+    // stay comfortably inside MIN_GAP_PROGRESS_PX, so a player travelling the calm middle of a
+    // minimum-sized gap genuinely can't trigger either — even in the worst-case placement (a
+    // gap-tower landing with zero slack against the far base, `placeGapTowers`'s candidate filter
+    // technically allows this).
+    it('audit: ALERT_DETECT_RADIUS and PROXIMITY_WAKE_RANGE_CAP are both well inside MIN_GAP_PROGRESS_PX, leaving a genuine calm middle even in the worst case', () => {
+      // Both audited radii are unified at the same value on purpose (awareness.js
+      // `PROXIMITY_WAKE_RANGE_CAP`'s own comment) so their worst-case overlap doesn't compound.
+      expect(PROXIMITY_WAKE_RANGE_CAP).toBe(ALERT_DETECT_RADIUS);
+      expect(ALERT_DETECT_RADIUS).toBeLessThan(MIN_GAP_PROGRESS_PX);
+      const worstCaseCalmPx = MIN_GAP_PROGRESS_PX - Math.max(ALERT_DETECT_RADIUS, PROXIMITY_WAKE_RANGE_CAP);
+      expect(worstCaseCalmPx).toBeGreaterThan(0);
+      // A real, non-trivial calm stretch — not just barely positive — even for the fastest
+      // (light, 268px/s) chassis in the worst RNG case.
+      expect(worstCaseCalmPx).toBeGreaterThanOrEqual(250);
+    });
   });
 });

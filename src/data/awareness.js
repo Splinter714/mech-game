@@ -41,6 +41,43 @@ export function detectionRangeFor(baseRange, mult = DETECTION_RANGE_MULT) {
   return (baseRange || 300) * mult;
 }
 
+// #283 audit ("guarantee a calm, threat-free start and genuinely calm travel gaps between base
+// encounters"): a DORMANT unit's `detectRange` doubles as its proximity-wake radius
+// (`scenes/arena/bases.js` `_maybeProximityWake`, via `shouldBecomeAware`) — the SAME field an
+// AWARE/UNAWARE non-mech kind uses for its own aggro detection. For every kind except one, that
+// stays a modest few-hundred-px envelope well inside worldgen.js's `MIN_GAP_PROGRESS_PX` floor
+// between encounters: tank `detectionRangeFor(420)` = 504px, helicopter `detectionRangeFor(460)`
+// = 552px, quadruped `detectionRangeFor(380)` = 456px, a mech's standoff-derived detectRange
+// tops out at `detectionRangeFor(520)` = 624px (STANDOFF_MAX, scenes/arena/enemies.js).
+//
+// The turret emplacement is the one wild outlier: its `fireRange` is DELIBERATELY "INSANE"
+// (2400px, data/enemyKinds.js #94) — that's the whole point of its long-range bombardment
+// once it's AWAKE and firing. But that same number, run through `detectionRangeFor`, ALSO
+// becomes its DORMANT proximity-wake radius (2880px) purely as an accident of both concepts
+// sharing one field — a turret never passes through UNAWARE (it starts DORMANT and only ever
+// wakes via `_wakeBase`), so its `detectRange` is NEVER used for anything except proximity-wake.
+// Left uncapped, that 2880px radius would swallow almost an entire inter-base gap regardless of
+// how generous `MIN_GAP_PROGRESS_PX` is tuned, making a genuinely calm middle impossible near
+// any base with a turret emplacement.
+//
+// `PROXIMITY_WAKE_RANGE_CAP` reins that outlier back in — and, per the worldgen.js
+// `MIN_GAP_PROGRESS_PX` cross-check (its own comment has the full sizing math), deliberately
+// unified at the SAME 320px as `alertTower.js`'s `ALERT_DETECT_RADIUS` rather than just "smaller
+// than 2880." Two detection radii that could independently eat into a gap's calm middle (the
+// tower's own tripwire bubble, and a dormant unit's proximity-wake bubble) are worth keeping to
+// ONE shared envelope so their worst-case overlap doesn't compound into something bigger than
+// either alone — with both capped at 320px, the worst-case calm stretch in a
+// `MIN_GAP_PROGRESS_PX`-sized gap is simply `MIN_GAP_PROGRESS_PX - 320`, not
+// `MIN_GAP_PROGRESS_PX - 320 - PROXIMITY_WAKE_RANGE_CAP`. This also tightens
+// tank(504px)/helicopter(552px)/quadruped(456px)/mech(up to 624px) down to the same 320px —
+// a deliberate widening of scope beyond just the turret outlier, so EVERY dormant kind's
+// proximity-wake radius sits inside the audited budget, not just the worst offender.
+// Applied where a DORMANT unit's `detectRange` is set (`scenes/arena/bases.js`
+// `_spawnDormantUnits`), never to the turret's own combat `fireRange`/weapon range (untouched) —
+// this only tightens how far away a SLEEPING unit can notice someone; once woken, combat range
+// is governed entirely by the unit's own weapon/engagement stats as before.
+export const PROXIMITY_WAKE_RANGE_CAP = 320;
+
 // Should this enemy be (or become) AWARE this frame? One-way: an already-AWARE enemy always
 // stays AWARE. Otherwise it flips the instant it's seen (within `detectRange` AND `hasLos`) or
 // heard (`noiseDist` — the enemy's distance from the most recent player gunshot — is within

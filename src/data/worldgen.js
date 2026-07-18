@@ -152,16 +152,51 @@ export function baseLateFraction(baseIndex, baseCount) {
 // used elsewhere in `generateTerrain`); callers with a real corridor spine pass
 // `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, since a curving spine's "progress along
 // the run" is NOT the same as straight-line distance from origin once the corridor bends.
-export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null) {
+export function placeBases(
+  rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
+) {
   const bases = [];
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   const sorted = [...all].sort((a, b) => progress(a) - progress(b));
   const segSize = Math.max(1, Math.floor(sorted.length / baseCount));
+  // #283: `prevProgress` chains forward from spawn (progress 0) through each placed base in
+  // turn — the floor for base `i` is "at least `minGapProgress` past wherever base `i-1` (or
+  // spawn, for base 0) actually landed," not just "somewhere in this segment."
+  let prevProgress = 0;
   for (let i = 0; i < baseCount; i++) {
     const segStart = i * segSize;
     const segEnd = i === baseCount - 1 ? sorted.length : segStart + segSize;
     const segment = segEnd > segStart ? sorted.slice(segStart, segEnd) : all;
-    const center = segment[Math.floor(rng() * segment.length)];
+    // #283: an exclusion zone at the START of this segment — filter out any candidate whose own
+    // progress doesn't clear the floor. This is layered ON TOP of the existing stratified-slice
+    // logic (still exactly one random pick within `segment`), not a replacement for it: on a
+    // typical corridor the segment itself extends well past the floor, so this just trims its
+    // early edge. If the floor eats the WHOLE segment (a short/curvy corridor, or a large floor
+    // relative to segment width — expected sometimes since `minGapProgress` is sized off travel
+    // TIME, not off "1/`baseCount`th of the corridor"), fall back to the nearest ground hexes
+    // ANYWHERE past the floor (still ordered by progress, so this stays "as close to the
+    // segment's intended position as the floor allows," not a random jump down the corridor).
+    // If literally nothing anywhere clears the FULL floor (corridor too short/curvy to fit
+    // `baseCount` full floors — a real possibility since `minGapProgress` is sized off travel
+    // TIME, not off "1/`baseCount`th of the corridor"), fall back to whichever candidates sit
+    // farthest along the corridor while still AT LEAST matching `prevProgress` (never less) —
+    // guarantees `prevProgress` only ever moves forward (or stays put, on a maximally-degenerate
+    // corridor with a single hex of headroom left) and a base can never land BEHIND the one
+    // before it, even in this doubly-degraded case. Base COUNT is unaffected either way — this
+    // only changes WHERE within the corridor a base lands, never whether one gets placed.
+    const floor = prevProgress + minGapProgress;
+    let pool = segment.filter((h) => progress(h) >= floor);
+    if (!pool.length) {
+      const beyond = sorted.filter((h) => progress(h) >= floor);
+      if (beyond.length) {
+        pool = beyond.slice(0, Math.max(1, segSize));
+      } else {
+        const forward = sorted.filter((h) => progress(h) >= prevProgress);
+        pool = (forward.length ? forward : sorted).slice(-Math.max(1, segSize));
+      }
+    }
+    const center = pool[Math.floor(rng() * pool.length)];
+    prevProgress = progress(center);
     const frac = baseLateFraction(i, baseCount);
     const dockCount = DOCKS_PER_BASE_MIN + Math.floor(rng() * (DOCKS_PER_BASE_MAX - DOCKS_PER_BASE_MIN + 1));
     // Candidate hexes for this base's docks: the centre, then successive rings out from it.
@@ -243,13 +278,21 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
 // `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, same as `placeBases`. Roaming patrols
 // (`scenes/arena/bases.js` `_spawnTowerPatrols`) still anchor to wherever the tower ends up,
 // unaffected by this redesign — they're just fed a different tower-position source now.
-export function placeGapTowers(rng, all, T, isGround, bases, progressOf = null) {
+export function placeGapTowers(
+  rng, all, T, isGround, bases, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
+) {
   const alertTowers = [];
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   let prevProgress = 0;   // the corridor start (spawn sits at spine u=0 / distance 0 from origin)
   for (const base of bases ?? []) {
     const baseProgress = progress(base.center);
-    const lo = Math.min(prevProgress, baseProgress);
+    // #283: same floor `placeBases` enforces on the base itself — a tower can't land within
+    // `minGapProgress` of wherever the PREVIOUS base (or spawn, for gap 0) sits. Since
+    // `placeBases` already guarantees `baseProgress >= prevProgress + minGapProgress` (barring
+    // its own rare total-fallback case), `lo` here is never past `hi` in practice — the gap
+    // always has at least `minGapProgress` of room for the tower to land in, so this rarely
+    // starves the gap of a tower the way it might if the floor were tuned much larger.
+    const lo = Math.min(prevProgress, baseProgress) + minGapProgress;
     const hi = Math.max(prevProgress, baseProgress);
     const candidates = all.filter((h) => {
       const p = progress(h);
@@ -589,6 +632,50 @@ export const HEX_STEP_PX = HEX_SIZE * Math.sqrt(3); // ≈83.14px for HEX_SIZE=4
 // BOUNDARY_RING_WIDTH: how many hexes thick the impassable boundary ring is, just outside the
 // pre-built area's own edge. Derived (not guessed) from the camera math above.
 export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_PX); // = 35
+
+// #283 ("guarantee a calm, threat-free start and genuinely calm travel gaps between base
+// encounters"): the enforced MINIMUM spine-progress distance a base/tower must sit past
+// whatever came before it (spawn, for the very first one; the previous base, for every
+// successive gap) — see `placeBases`/`placeGapTowers` below, which both chain a `prevProgress`
+// floor from this constant instead of picking a fully unconstrained random hex within their
+// stratified slice.
+//
+// SIZING: two competing constraints, both checked empirically (scripts-style sweep against the
+// REAL `generateSpine`/`corridorHexSet` pipeline, 2000 seeds, mirrored in worldgen.test.js) not
+// just guessed:
+//   - Bigger is more "calm" — sized against the FASTEST chassis (light, 268px/s,
+//     chassis/light.js `maxSpeed`) as the binding case, since a slower chassis only gets MORE
+//     calm seconds out of the same px floor.
+//   - But `baseCount` (3) floors have to fit end-to-end inside ONE corridor
+//     (CORRIDOR_LENGTH_PX = 3400px) alongside the existing stratified-slice segmentation, which
+//     itself only gives each base ~1/3 of the corridor (~1130px) to work with. Push the floor
+//     too high and `placeBases`'s own fallback (see its comment) increasingly can't reach the
+//     full target — the 2000-seed sweep showed ZERO shortfalls up to 600px, but a fast-growing
+//     tail of shortfalls from ~700px on (14/2000 short at 700px, worsening from there), so 600px
+//     is the largest value that reliably holds the FULL floor on every gap of every seed, not
+//     just "most of the time."
+// 600px / 268px/s ≈ 2.2s for light, ≈3.1s for medium (195px/s), ≈4.4s for heavy (135px/s) — a
+// real, if not enormous, calm stretch for every chassis, and reliably ENFORCED (not just
+// probable) given the corridor's own length budget. Comfortably longer than the alert tower's
+// own "a few seconds" countdown (ALERT_COUNTDOWN_MS = 3000ms, data/alertTower.js) once its own
+// 320px detect bubble is subtracted off the far end (600 - 320 = 280px genuinely calm even in
+// the worst-case RNG placement — see the cross-check below and awareness.js
+// `PROXIMITY_WAKE_RANGE_CAP`'s own comment for the matching audit).
+//
+// Cross-checked against the audit in awareness.js (`PROXIMITY_WAKE_RANGE_CAP`, unified at 320px
+// — the SAME value as alertTower.js's `ALERT_DETECT_RADIUS`, so the two audited radii don't
+// compound) — even in the WORST case (a gap-tower's own random placement landing right at the
+// far base's position, zero slack between tower and base — `placeGapTowers`'s candidate filter
+// technically allows this), the calm stretch before ANY detection envelope kicks in is
+// MIN_GAP_PROGRESS_PX minus that one shared 320px radius: 600 - 320 = 280px, still a real calm
+// buffer even for the fastest chassis in the worst RNG case, and larger (up to the full 600px)
+// whenever the tower doesn't land flush against the base. Playtest-tunable like every other
+// placement constant in this file.
+export const MIN_GAP_PROGRESS_PX = 600;
+// Converted to the same hex-progress unit `spineProgressHexOf`/the straight-line-distance
+// fallback both already use, so `placeBases`/`placeGapTowers` can compare it directly against
+// `progressOf(...)` results without a separate px<->hex conversion at every call site.
+export const MIN_GAP_PROGRESS_HEX = MIN_GAP_PROGRESS_PX / HEX_STEP_PX; // ≈7.22
 
 // #110/#169: the Set of hex keys forming a ring `ringWidth` hexes thick immediately OUTSIDE the
 // playable shape — the world's impassable outer boundary. Found by BFS-expanding outward from the
