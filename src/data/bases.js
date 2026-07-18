@@ -34,3 +34,17 @@ export const FAST_WAKE_SPEED_THRESHOLD = 100;
 export function isFastWakeKind(kindDef, threshold = FAST_WAKE_SPEED_THRESHOLD) {
   return (kindDef?.move?.maxSpeed ?? 0) >= threshold;
 }
+
+// #269 playtest follow-up (objective sequencing): a base is "cleared" once every enemy tagged
+// with its `baseId` (dormant or awakened, doesn't matter — same rule `_allBasesCleared` uses run-
+// wide) is dead. Dead enemies are pruned out of the live `enemies` array the same tick they die
+// (#87 `_removeEnemy`), so "no enemy left with this baseId" is already the right check, no
+// separate per-base HP bookkeeping needed. `baseId == null` (no base at all, or a bad id) reads
+// as cleared — nothing left to wait on. Mirrors `_allBasesCleared` in scenes/arena/bases.js but
+// scoped to ONE base instead of every base, so the mission objective can sequence through bases
+// one at a time (see scenes/arena/mission.js `_targetCurrentBase`).
+export function isBaseCleared(baseId, enemies) {
+  if (baseId == null) return true;
+  if (!enemies || !enemies.length) return true;
+  return !enemies.some((e) => e.baseId === baseId);
+}

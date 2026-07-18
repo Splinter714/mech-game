@@ -153,6 +153,9 @@ export default class ArenaScene extends Phaser.Scene {
     // freshly-built `this.terrain`/`this.bases`/`this.alertTowerHexes`.
     this._spawnTowerPatrols();
     this._initAlertTowers();
+    // #269 playtest follow-up (hex legibility): persistent red text tags over every dock/
+    // alertTower/turretEmplacement hex, so the new hex types are unambiguous during playtest.
+    this._spawnHexLabels();
 
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions

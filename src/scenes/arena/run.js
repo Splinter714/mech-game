@@ -4,20 +4,20 @@
 // #269 (issue: base population rework) retires the old fixed-5-stage squad-draw system
 // entirely: there is no more "stage advance" event, no squad respawn on mission-complete, and
 // no per-stage escalation. What's left, kept deliberately simple per the issue's own framing:
-//   - Mission objectives ("destroy this outpost") still work exactly as before, fully decoupled
-//     from enemy spawning — clearing one banks currency and immediately picks a fresh one
-//     (`_pickNextObjective`, this file), same as always, just with no squad attached.
+//   - Mission objectives now sequence through bases in index order ("clear base N" — see
+//     mission.js `_targetCurrentBase`), fully decoupled from enemy spawning — clearing one banks
+//     currency and immediately advances to the next base (`_pickNextObjective`, this file).
 //   - The run's real win condition is now "every base's docked units destroyed" (dormant or
-//     awakened — scenes/arena/bases.js `_allBasesCleared`), checked every frame.
+//     awakened — scenes/arena/bases.js `_allBasesCleared`), checked every frame. Reaching the
+//     last base's objective and clearing it necessarily satisfies this too, so in practice the
+//     win check below (`_allBasesCleared`) fires before `_pickNextObjective` ever runs off the
+//     end of `this.bases`.
 //   - Player death still ends the run as a loss, same as before.
 import {
   makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver,
 } from '../../data/run.js';
-import { makeMission } from '../../data/mission.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
-import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
-import { pixelToHex } from '../../data/hexgrid.js';
 
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
 
@@ -68,23 +68,15 @@ export const RunMixin = {
     this._pickNextObjective();
   },
 
-  // #269: retired the old near→far, stage-indexed escalation (`lateFraction`/
-  // `pickStageObjective`) — every later objective now uses the SAME strict farthest-candidate
-  // pick `_initMission` (mission.js) uses for the first one, measured along the spine so it's
-  // still a real trek down the corridor, just without a stage-indexed ramp.
+  // #269 playtest follow-up (objective sequencing): retired the old arbitrary-farthest-outpost
+  // pick entirely — the next objective is just "the next base by index." `_targetCurrentBase`
+  // (mission.js) does the actual work (marker, mission, registry publish) and already handles
+  // running off the end of `this.bases` (every base cleared) by clearing the objective/marker,
+  // which is correct here too — `_updateRun`'s `_allBasesCleared()` check ends the run as a win
+  // before this can ever be reached with no bases left anyway.
   _pickNextObjective() {
-    const hexKeys = this._objectiveHexKeys();
-    const progressOf = (q, r) => spineProgressHexOf(this._spine, q, r);
-    const playerHex = pixelToHex(this.px, this.py);
-    // If every outpost in the whole map has already been destroyed, seed a fresh one somewhere
-    // far from the player rather than leaving the run without an objective (mirrors the old
-    // #81 fallback, `_spawnOutpostAt`).
-    this.objectiveHex = pickFarObjective(hexKeys, playerHex, FAR_OBJECTIVE_MIN_DIST, null, progressOf)
-      ?? this._spawnOutpostAt(playerHex.q, playerHex.r);
-    this.mission = makeMission('assault');
-    this.registry.set('mission', this.mission);
-    if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
-    if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
+    this._objectiveBaseIndex += 1;
+    this._targetCurrentBase();
   },
 
   // Terminal run state (win or death): republish, bank the run's currency into the persistent
