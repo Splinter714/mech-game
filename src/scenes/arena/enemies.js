@@ -682,11 +682,16 @@ export const EnemiesMixin = {
       e.vx = approach(e.vx, mx * spd, mv.accel * dt);
       e.vy = approach(e.vy, my * spd, mv.accel * dt);
       let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
-      if (this._blocked(nx, ny)) {
-        if (!this._blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
-        else if (!this._blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
+      // #282: an enemy mech is always a LARGE ground unit (isSmallUnit(e) is false for the
+      // 'mech' kind — see #269's unitSize), so it always also respects the mutual large-unit
+      // collision check below, alongside the existing terrain `_blocked` check — an enemy mech
+      // can no longer walk through another large enemy (mech/quadruped/turret) or the player.
+      const blocked = (x, y) => this._blocked(x, y) || this._blockedByOtherLargeUnit(e, x, y);
+      if (blocked(nx, ny)) {
+        if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
+        else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
         else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
-        // Bumped a wall while pathing to a goal — abandon it so we re-plan promptly.
+        // Bumped a wall (or another unit) while pathing to a goal — abandon it so we re-plan promptly.
         if (aware && e.goal) e.decideAt = Math.min(e.decideAt, 200);
       }
       e.x = nx; e.y = ny;
@@ -838,12 +843,28 @@ export const EnemiesMixin = {
       behavior(this, e, ctx);
     } else { e.vx = approach(e.vx, 0, (e.kindDef.move.accel || 200) * dt); e.vy = approach(e.vy, 0, (e.kindDef.move.accel || 200) * dt); }
 
-    // Integrate. Flyers pass over walls/water/forest; ground units collide + slide like a mech.
+    // Integrate. Flyers pass over walls/water/forest/ground-units (unchanged, #92); ground units
+    // collide + slide like a mech. #282: mutual unit collision layers on top of the existing
+    // terrain `_blocked` check — a LARGE ground unit (isSmallUnit(e) false: quadruped/turret)
+    // also can't walk into another large enemy or the player, while a SMALL unit (tank/
+    // infantry) is deliberately exempt (`isSmallUnit(e)` short-circuits the check away) so it
+    // stays freely walkable by everyone, matching the existing player-side crush spirit. A
+    // flyer instead checks ONLY other flyers (`_blockedByOtherFlyer`) so two flyers can't
+    // overlap, while still ignoring terrain and every ground unit exactly as before.
     let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
-    if (!e.flying && this._blocked(nx, ny)) {
-      if (!this._blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
-      else if (!this._blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
-      else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
+    if (e.flying) {
+      if (this._blockedByOtherFlyer(e, nx, ny)) {
+        if (!this._blockedByOtherFlyer(e, e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
+        else if (!this._blockedByOtherFlyer(e, e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
+        else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
+      }
+    } else {
+      const blocked = (x, y) => this._blocked(x, y) || (!isSmallUnit(e) && this._blockedByOtherLargeUnit(e, x, y));
+      if (blocked(nx, ny)) {
+        if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
+        else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
+        else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
+      }
     }
     // #41: ground units are slowed by rough terrain underfoot (same data-driven factor as mechs).
     if (!e.flying) {
