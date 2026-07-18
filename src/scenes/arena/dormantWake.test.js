@@ -3,13 +3,17 @@
 // 'phaser'` whose top-level device detection throws under vitest's node env, so it's stubbed
 // out (same convention as enemyFireAngle.test.js/vehicleFire.test.js).
 import { describe, it, expect, vi } from 'vitest';
-vi.mock('phaser', () => ({ default: {} }));
+vi.mock('phaser', () => ({
+  default: {
+    Math: { Angle: { Wrap: (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; } } },
+  },
+}));
 
 import { EnemiesMixin } from './enemies.js';
 import { BasesMixin } from './bases.js';
 import { HpBody } from '../../data/HpBody.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
-import { DORMANT, AWARE, UNAWARE } from '../../data/awareness.js';
+import { DORMANT, AWARE, UNAWARE, detectionRangeFor } from '../../data/awareness.js';
 
 function makeScene() {
   const scene = { time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [] };
@@ -26,6 +30,37 @@ function makeDockedUnit(kindId, { baseId = 'base0' } = {}) {
   return {
     key: `${kindId}Test`, mech, kind: def.kind, kindDef: def, x: 0, y: 0, vx: 0, vy: 0,
     angle: 0, turret: 0, fireCd: 0, awareness: DORMANT, baseId,
+    detectRange: detectionRangeFor(def.fireRange),   // same computation `_spawnKind` uses
+  };
+}
+
+// A scene with just enough real-ish stubs (view/`_blocked`/LOS/fire) for a woken unit's FULL
+// `_updateEnemy` → `_updateVehicle` → behavior fn tick to actually run end to end, unlike the
+// lighter `makeScene` above (whose tests stub `_updateVehicle` itself away). This is what lets
+// the bug-1 regression tests below observe REAL post-wake velocity/angle changes, not just the
+// awareness/holdGround flag flip.
+function makeTickableScene({ px = 900, py = 300 } = {}) {
+  const scene = {
+    time: { now: 0 }, enemies: [], px, py, bases: [], alertTowerHexes: [],
+    enemyMove: true, enemyFire: true,
+    _blocked: () => false,
+    _speedFactorAt: () => 1,
+    _cachedLosToPlayer: () => true,
+    _fireVehicleWeapon: () => {},
+  };
+  Object.assign(scene, EnemiesMixin, BasesMixin);
+  scene._initAlertTowers();
+  return scene;
+}
+
+function makeTickableUnit(kindId, { baseId = 'base0' } = {}) {
+  const def = ENEMY_KINDS[kindId];
+  const mech = new HpBody(def);
+  const view = { setPosition() {}, hull: { setTexture() {}, rotation: 0 }, turret: { rotation: 0 }, shadow: null };
+  return {
+    key: `${kindId}Test`, mech, view, kind: def.kind, kindDef: def, behavior: def.behavior,
+    x: 0, y: 0, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, handed: 1,
+    awareness: DORMANT, baseId, detectRange: detectionRangeFor(def.fireRange),
   };
 }
 
@@ -198,6 +233,129 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     scene._wakeBase('base0');
     expect(scene.enemies.length).toBe(2);
     expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
+  });
+});
+
+// #269 playtest follow-up bug 1 — ROOT CAUSE regression: waking a base flipped DORMANT→AWARE and
+// (correctly) set `holdGround` on slow/defensive kinds, but the holdGround branches in
+// enemyBehaviors.js only ever zeroed velocity — they never touched `e.angle`, so a holdGround
+// unit's HULL stayed frozen at whatever fixed angle it spawned with (`Math.PI/2`, straight down)
+// FOREVER, regardless of where the player was. Only its turret (independently slewed) tracked the
+// player, so from most approach angles a "woken" tank/quadruped/infantry read as a completely
+// static, lifeless prop — exactly the "ground units still don't move" playtest report. Fast
+// (non-holdGround) kinds were never affected — they were already getting real velocity via their
+// normal advance-to-standoff movement. Fixed by having each holdGround branch also rotate `e.angle`
+// toward the player's bearing (mirrors the turret's own tracking), while still leaving velocity at
+// zero (holdGround units still don't translate — that part of the design is intentional).
+describe('#269 bug 1 regression: a woken unit actually reacts on its next tick', () => {
+  it('a fast kind (drone, no holdGround) gets real non-zero velocity the tick after waking', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('drone');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.holdGround).toBeUndefined();
+    scene._updateEnemy(e, 0.016, 16);
+    expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
+  });
+
+  it('a slow/holdGround kind (tank) never gets velocity, but its hull turns to face the player', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.holdGround).toBe(true);
+    const spawnAngle = e.angle;
+    for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
+    // Root-cause assertion: BEFORE the fix this stayed pinned at `spawnAngle` forever (the actual
+    // bug). It still never translates (holdGround is a real "stand and fight" design choice), but
+    // it must visibly turn to track the player.
+    expect(e.angle).not.toBe(spawnAngle);
+    expect(e.vx).toBe(0);
+    expect(e.vy).toBe(0);
+    expect(e.x).toBe(0);
+    expect(e.y).toBe(0);
+  });
+
+  it('a slow/holdGround kind (infantry) also turns its hull instead of staying frozen', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('infantry');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    const spawnAngle = e.angle;
+    for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
+    expect(e.angle).not.toBe(spawnAngle);
+  });
+});
+
+// #269 playtest follow-up ask 2 — DORMANT units should also wake on player proximity, independent
+// of any alert tower. Reuses `shouldBecomeAware`/`detectionRangeFor` (data/awareness.js), the same
+// proximity mechanism an UNAWARE unit already uses to notice the player — the only difference is
+// the RESPONSE: the whole base wakes together via `_wakeBase`, not just the one unit that noticed.
+describe('#269 playtest follow-up: DORMANT units wake on player proximity, no alert tower needed', () => {
+  it('a DORMANT unit\'s whole base wakes once the player enters its own detection range', () => {
+    const scene = makeScene();
+    const near = makeDockedUnit('tank', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    scene.enemies.push(near, dockmate);
+    // Tank's detectRange is detectionRangeFor(fireRange=420) = 504 — put the player just inside it.
+    scene.px = near.x + near.detectRange - 1;
+    scene.py = near.y;
+    scene._maybeProximityWake(near);
+    expect(near.awareness).toBe(AWARE);
+    expect(dockmate.awareness).toBe(AWARE);   // whole base, not just the unit that noticed
+  });
+
+  it('a base far from the player stays dormant — no proximity, no alert tower', () => {
+    const scene = makeScene();
+    const far = makeDockedUnit('tank', { baseId: 'base0' });
+    scene.enemies.push(far);
+    scene.px = far.x + far.detectRange * 10;   // way outside detection range
+    scene.py = far.y;
+    scene._maybeProximityWake(far);
+    expect(far.awareness).toBe(DORMANT);
+  });
+
+  it('is a no-op once the base is already woken (idempotent, same as the tower path)', () => {
+    const scene = makeScene();
+    const e = makeDockedUnit('tank', { baseId: 'base0' });
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    e.awareness = UNAWARE;   // simulate some other transition after wake
+    scene.px = e.x; scene.py = e.y;   // right on top of it
+    scene._maybeProximityWake(e);
+    expect(e.awareness).toBe(UNAWARE);   // must NOT get stomped back to AWARE
+  });
+
+  it('the DORMANT per-frame tick itself triggers proximity wake (not just direct calls)', () => {
+    const scene = makeTickableScene({ px: 0, py: 0 });
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    // Player sits right on top of the still-dormant unit — well within its detection range.
+    scene._updateEnemy(e, 0.016, 16);
+    expect(e.awareness).toBe(AWARE);
+  });
+
+  it('the DORMANT per-frame tick stays a cheap distance check — no movement/firing runs that tick', () => {
+    const scene = makeTickableScene({ px: 0, py: 0 });
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    scene._updateEnemy(e, 0.016, 16);
+    // Woken THIS tick, but the early-return fires before any behavior dispatch runs — no movement/
+    // turret slew/firing happens until the NEXT tick (matches DORMANT's "cheap check, not full AI"
+    // contract; the bug-1 tests above cover what happens starting next tick).
+    expect(e.vx).toBe(0);
+    expect(e.vy).toBe(0);
+    expect(e.turret).toBe(0);
+  });
+
+  it('a genuinely still-dormant unit (player far away) stays untouched by the tick', () => {
+    const scene = makeTickableScene({ px: 5000, py: 5000 });
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    scene._updateEnemy(e, 0.016, 16);
+    expect(e.awareness).toBe(DORMANT);
+    expect(e.x).toBe(0);
+    expect(e.y).toBe(0);
   });
 });
 
