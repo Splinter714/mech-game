@@ -53,21 +53,19 @@ export const ENEMIES = {
   // and bombards over it, only shifting to a fresh cover spot, essentially never exposing
   // itself. On a heavy chassis (slow, tanky) it reads as an entrenched siege unit. Keep BOTH
   // weapons indirect (arcing/homing) or it loses its camp-cover behaviour.
-  // #96 CONFLICT: plasmaCannon and napalm (both arcing) were shelved per Jackson's weapon
-  // curation pass, and NONE of the 6 kept weapons are indirect (arcing/homing) — so this
-  // mech's whole "camp behind cover and bombard" design can no longer be preserved with an
-  // active weapon. Swapped to the two longest-range keepers (beamLaser opt 500/max 640,
-  // clusterRocket opt 660/max 960) so it still reads as a long-range unit, but isIndirectWeapon
-  // will now be false for both mounts, so the AI will fall back to its normal (non-camping)
-  // posture instead of hugging cover. Flagging this clearly rather than silently — an
-  // artillery-specific indirect weapon may need to be added to the keep-list, or this enemy's
-  // "camp cover" behaviour may need its own follow-up once Jackson weighs in.
-  // #117: beamLaser swapped to plasmaLance (same reasoning as the sniper above — direct, not
-  // indirect, so this doesn't change the isIndirectWeapon/camping situation already flagged).
+  // #272: #244 emptied SHELVED_WEAPON_IDS (see weapons.js), un-shelving plasmaCannon and napalm
+  // — both still real, live, arcing (indirect) weapons — so the #96 stopgap that had artillery
+  // reusing the sniper's direct-fire plasmaLance/clusterRocket loadout (and, as a side effect,
+  // made isAllIndirect false and killed the camp-cover AI posture) is no longer needed. Restored
+  // to its own distinct siege loadout: plasmaCannon (arcing splash energy lob, opt 480/max 820)
+  // + napalm (arcing splash + burning ground patch, opt 500/max 780) — both indirect, both
+  // long-range, and thematically an entrenched bombardier that lobs shells and burning canisters
+  // over cover rather than trading direct shots like the sniper. This restores isAllIndirect ===
+  // true for artillery, so the tactical AI's cover-camping posture actually triggers again.
   artillery: {
     chassisId: 'heavy',
     name: 'Mortarhead',
-    mounts: { rightTorso: ['plasmaLance'], leftTorso: ['clusterRocket'] },
+    mounts: { rightTorso: ['plasmaCannon'], leftTorso: ['napalm'] },
   },
 };
 
