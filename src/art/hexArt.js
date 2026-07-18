@@ -71,6 +71,17 @@ const PAL = {
   // every biome's warm/cold palette; per-TYPE distinction (helipad vs a future mech-bay etc.)
   // comes from the DETAIL painter's icon/shape, never from the fill colour.
   helipad:  BASE_INFRA_COLOR,
+  // #269 playtest follow-up: `dock` and `alertTower` PREVIOUSLY reused `hex_helipad`/`hex_tower`
+  // verbatim (see their terrain.js comments at the time) — in play this made docks
+  // indistinguishable from helipads, and alert towers indistinguishable from ordinary
+  // destructible outpost buildings, so a player fighting through a base would destroy an alert
+  // tower incidentally without ever realizing it (canceling its wake countdown before it could
+  // complete). Both now get their own PAL/DETAIL entries below. Both stay on the shared
+  // BASE_INFRA_COLOR fill (same neutral concrete/tarmac tone as helipad) so they still read as
+  // "part of the base-infrastructure family" regardless of biome — the distinction from helipad,
+  // from `tower`, and from each other comes entirely from each one's own DETAIL painter shape.
+  dock:       BASE_INFRA_COLOR,
+  alertTower: BASE_INFRA_COLOR,
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -507,6 +518,43 @@ const DETAIL = {
     sg.fillRect(C.cx - hw, C.cy - hh, barW, hh * 2);
     sg.fillRect(C.cx + hw - barW, C.cy - hh, barW, hh * 2);
     sg.fillRect(C.cx - hw, C.cy - barW / 2, hw * 2, barW);
+  },
+  // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad, distinct from helipad's
+  // round disc+H mark. Reads as a loading bay: a squared-off deck with a painted border frame,
+  // two corner bollard studs, and a chevron "lane" marking down the middle pointing toward the
+  // bay's mouth — a docked unit backs/parks into this, unlike a helicopter landing on a circle.
+  hex_dock: (sg) => {
+    const hw = 14, hh = 10;
+    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, hw * 2.1, hh * 1.7);   // ground shadow
+    sg.fillStyle(0x22262c, 0.85); sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, hh * 2);           // deck base plate
+    sg.fillStyle(0xcfa93a, 0.7);                                                                // painted border frame
+    sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, 1.6);
+    sg.fillRect(C.cx - hw, C.cy + hh - 1.6, hw * 2, 1.6);
+    sg.fillRect(C.cx - hw, C.cy - hh, 1.6, hh * 2);
+    sg.fillRect(C.cx + hw - 1.6, C.cy - hh, 1.6, hh * 2);
+    sg.fillStyle(0x22262c, 0.9); sg.fillRect(C.cx - hw + 2, C.cy - hh + 2, hw * 2 - 4, hh * 2 - 4); // inner deck
+    sg.fillStyle(0xd8cba0, 0.85);                                                               // corner mooring bollards
+    sg.fillCircle(C.cx - hw + 3, C.cy - hh + 3, 1.6);
+    sg.fillCircle(C.cx + hw - 3, C.cy - hh + 3, 1.6);
+    sg.fillStyle(0xcfa93a, 0.8);                                                                // chevron lane marking
+    sg.fillTriangle(C.cx, C.cy - 5, C.cx - 4.5, C.cy + 2, C.cx + 4.5, C.cy + 2);
+    sg.fillTriangle(C.cx, C.cy + 0.5, C.cx - 4.5, C.cy + 7.5, C.cx + 4.5, C.cy + 7.5);
+  },
+  // #269 playtest follow-up: `alertTower` — a slim sensor/beacon mast, distinct from the regular
+  // `tower` outpost's blocky building roof so it reads as a DETECTOR to avoid/snipe, not another
+  // structure. A short plinth base, a thin mast rising well above a normal roofline, an angled
+  // dish near the top (the "listening" element), and a pulsing amber warning light at the very
+  // tip with a soft glow halo — the light is the loudest visual cue, deliberately unlike
+  // anything in the building/outpost family.
+  hex_alertTower: (sg) => {
+    sg.fillStyle(0x2c2f34, 1); sg.fillRect(C.cx - 6, C.cy + 6, 12, 6);           // plinth base
+    sg.fillStyle(0x3f444c, 1); sg.fillRect(C.cx - 5, C.cy + 6, 10, 2);           // plinth top-light edge
+    sg.fillStyle(0x565b63, 1); sg.fillRect(C.cx - 1.6, C.cy - 14, 3.2, 20);      // thin vertical mast
+    sg.fillStyle(0x676d76, 1); sg.fillRect(C.cx - 8, C.cy - 12, 16, 2.2);        // sensor crossbar
+    sg.fillStyle(0x9098a3, 0.95); sg.fillEllipse(C.cx + 5.5, C.cy - 15, 6, 3.6); // angled dish
+    sg.fillStyle(0x676d76, 0.9);  sg.fillEllipse(C.cx + 5.5, C.cy - 15, 3.2, 1.8);
+    sg.fillStyle(0xd8462a, 0.35); sg.fillCircle(C.cx, C.cy - 17.5, 4.2);         // beacon glow halo
+    sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────

@@ -14,18 +14,37 @@
 // has collapsed to rubble, so a destroyed tower can never complete an already-running countdown.
 
 // Detection radius (px) — a real "the player is loitering close enough to be noticed" envelope.
-// Picked in the same ballpark as awareness.js's NOISE_AGGRO_RANGE (260px, "a gunshot nearby
-// alerts an unaware enemy") since both are "is the player doing something conspicuous nearby"
-// checks — this one keys off proximity alone (no noise event needed) since a sensor tower is
-// always "listening", not just reacting to gunfire. Owner: tunable via playtest.
-export const ALERT_DETECT_RADIUS = 260;
+// Originally 260px (the same ballpark as awareness.js's NOISE_AGGRO_RANGE, "a gunshot nearby
+// alerts an unaware enemy") paired with a 4000ms countdown — but #269 playtest follow-up found
+// that combination was too tight to ever trigger from a normal drive-by. The longest possible
+// chord through a 260px-radius circle is its 520px diameter; crossing that dead-centre, in a
+// straight line, at each chassis's own top speed (chassis/*.js maxSpeed) took:
+//   light (268px/s) 1.94s, medium (195px/s) 2.67s, heavy (135px/s, the SLOWEST/most generous
+//   case) 3.85s — i.e. even the slowest chassis driving flat-out straight through the tower's
+//   exact centre fell short of a 4000ms countdown. Any real, non-dead-centre pass (a shorter
+//   chord) failed by a wider margin, so in practice only a player who stopped or circled near
+//   the tower could ever complete it — not "driving past at normal speed" as intended.
+// Bumped to 320px alongside the 3000ms countdown below (see its comment for the matching math)
+// so a medium/heavy chassis crossing anywhere near the tower's centre — not just a dead-on
+// diametric line — has a real chance to complete it, while light's higher top speed still lets
+// it evade more reliably (an intentional emergent trade: light is the nimble, hard-to-snare
+// chassis; heavy is slow but easy to detect). Owner: tunable via playtest.
+export const ALERT_DETECT_RADIUS = 320;
 
 // Countdown duration (ms) once the player is in range — "a few seconds" per the issue's own
 // spec: long enough that simply passing through the radius briefly (a drive-by) doesn't
 // automatically complete it, short enough that a player who doesn't notice/prioritize the tower
-// genuinely risks the wake completing. 4s gives a stealthy player a real (but not generous)
-// window to spot and destroy the tower first. Owner: tunable via playtest.
-export const ALERT_COUNTDOWN_MS = 4000;
+// genuinely risks the wake completing. #269 playtest follow-up: paired with the 320px radius
+// above, a straight-line pass through the tower takes (at each chassis's top speed):
+//   full 640px diameter — light 2.39s, medium 3.28s, heavy 4.74s;
+//   average 503px chord (mean chord length of a circle, ~1.571×radius) — light 1.88s,
+//   medium 2.58s, heavy 3.72s.
+// 3000ms sits so medium/heavy complete the countdown on a typical (average-chord) pass, and
+// comfortably on a more central one, while light needs to slow down or loiter near the centre
+// to trigger it — still "a few seconds", still skippable by a fast/careful player, but no longer
+// requiring the player to stop dead near the tower the way 4000ms@260px effectively did.
+// Owner: tunable via playtest.
+export const ALERT_COUNTDOWN_MS = 3000;
 
 // Fresh, idle alert-tower state: not counting down, full countdown remaining, not yet triggered.
 export function makeAlertState(countdownMs = ALERT_COUNTDOWN_MS) {

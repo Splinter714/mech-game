@@ -75,6 +75,35 @@ describe('terrain table (#41 full model)', () => {
     expect(isMissionObjective('building')).toBe(true);
   });
 
+  // #269 playtest follow-up: dock/alertTower previously reused hex_helipad/hex_tower verbatim,
+  // making them visually indistinguishable from a real helipad and from an ordinary destructible
+  // outpost building respectively — a player couldn't tell an alert tower apart from a building
+  // it was fine to demolish, so it kept getting destroyed incidentally and never woke a base.
+  // Each now has its own dedicated texture key (art/hexArt.js).
+  it('gives dock its own texture, distinct from helipad', () => {
+    expect(TERRAIN.dock).toBeDefined();
+    expect(typeof TERRAIN.dock.tex).toBe('string');
+    expect(TERRAIN.dock.tex).not.toBe(TERRAIN.helipad.tex);
+    expect(TERRAIN.dock.passable).toBe(true);
+    expect(TERRAIN.dock.blocksLOS).toBe(false);
+    expect(TERRAIN.dock.destructible).toBeFalsy();
+    expect(isBaseCategory('dock')).toBe(true);
+  });
+
+  it('gives alertTower its own texture, distinct from BOTH the regular tower outpost and helipad', () => {
+    expect(TERRAIN.alertTower).toBeDefined();
+    expect(typeof TERRAIN.alertTower.tex).toBe('string');
+    expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.tower.tex);
+    expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.helipad.tex);
+    expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.dock.tex);
+    expect(TERRAIN.alertTower.passable).toBe(false);
+    expect(TERRAIN.alertTower.blocksLOS).toBe(true);
+    expect(isDestructible('alertTower')).toBe(true);
+    expect(TERRAIN.alertTower.hp).toBe(25);
+    expect(isMissionObjective('alertTower')).toBe(false);
+    expect(isBaseCategory('alertTower')).toBe(true);
+  });
+
   it('leaves rubble passable, no cover, mildly slowing', () => {
     expect(TERRAIN.rubble.passable).toBe(true);
     expect(TERRAIN.rubble.blocksLOS).toBe(false);
