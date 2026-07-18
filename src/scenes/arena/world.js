@@ -132,10 +132,13 @@ export const WorldMixin = {
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
       includedKeys, boundaryRing, outposts: B.outposts, spine,
     });
-    // #269 §3: the run's bases (dormant docks + connective-tissue alert towers), placed once
-    // here at world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase`
-    // (scenes/arena/bases.js); `this.alertTowerHexes` feeds `_initAlertTowers`/
-    // `_updateAlertTowers` (same file).
+    // #269 §3: the run's bases (dormant docks + turret emplacements), placed once here at
+    // world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase` (scenes/arena/
+    // bases.js). #269 playtest follow-up (bases/outposts role swap): alert towers are now
+    // OUTPOST-anchored (`placeOutpostTowers`, data/worldgen.js), not base-anchored — same
+    // `generateTerrain` result field, `this.alertTowerHexes`, feeds `_initAlertTowers`/
+    // `_updateAlertTowers`/`_spawnTowerPatrols` (same file) completely unchanged; only WHERE
+    // the positions in that list came from moved.
     this.bases = bases;
     this.alertTowerHexes = alertTowers;
 

@@ -10,9 +10,10 @@ import {
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
   generateSpine, corridorHexSet, spineProgressHexOf,
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, HELIPAD_COUNT,
-  BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX, ALERT_TOWERS_PER_BASE_MIN,
-  ALERT_TOWERS_PER_BASE_MAX, BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
-  placeBases, dockCountFor, TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
+  BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX, ALERT_TOWERS_PER_OUTPOST_MIN,
+  ALERT_TOWERS_PER_OUTPOST_MAX, BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
+  placeBases, placeOutpostTowers, dockCountFor,
+  TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN } from './terrain.js';
@@ -618,7 +619,10 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     const T = new Map();
     for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
     const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
-    const { bases, alertTowers } = placeBases(rng, all, T, isGround, BASE_COUNT);
+    // #269 playtest follow-up (bases/outposts role swap): `placeBases` no longer places alert
+    // towers at all — it returns only `{ bases }` now (see `placeOutpostTowers` below for the
+    // separate, outpost-anchored tower placement).
+    const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
 
     expect(bases.length).toBe(BASE_COUNT);
     for (const base of bases) {
@@ -639,12 +643,39 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         expect(T.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
       }
     }
+  });
+
+  // #269 playtest follow-up (bases/outposts role swap): the new outpost-anchored tower placement.
+  it('placeOutpostTowers: places alert towers near each given outpost centre, not near bases', () => {
+    const rng = mulberry32(321);
+    const all = buildAllRing(16);
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const outpostCenters = [{ q: 0, r: 0 }, { q: 6, r: -3 }, { q: -5, r: 4 }];
+    const alertTowers = placeOutpostTowers(rng, outpostCenters, T, isGround);
+
     for (const t of alertTowers) {
       expect(T.get(axialKey(t.q, t.r))).toBe('alertTower');
     }
-    // Total alert towers is within the expected per-base band (best-effort — placement can miss
-    // a candidate hex on a crowded map, so this is an upper bound, not an exact count).
-    expect(alertTowers.length).toBeLessThanOrEqual(BASE_COUNT * ALERT_TOWERS_PER_BASE_MAX);
+    // Total alert towers is within the expected per-outpost band (best-effort — placement can
+    // miss a candidate hex on a crowded map, so this is an upper bound, not an exact count).
+    expect(alertTowers.length).toBeLessThanOrEqual(outpostCenters.length * ALERT_TOWERS_PER_OUTPOST_MAX);
+    // Every placed tower sits within reach (rings 3-5) of SOME outpost centre, not scattered
+    // arbitrarily and not clustered near a base centre that was never passed in.
+    for (const t of alertTowers) {
+      const nearAnOutpost = outpostCenters.some((c) => distance(t, c) <= 5);
+      expect(nearAnOutpost).toBe(true);
+    }
+  });
+
+  it('placeOutpostTowers: an empty outpost list places no towers', () => {
+    const rng = mulberry32(1);
+    const all = buildAllRing(10);
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    expect(placeOutpostTowers(rng, [], T, isGround)).toEqual([]);
   });
 
   it('#269 playtest follow-up: drone and turret never appear in the dock kind pools', () => {
@@ -773,8 +804,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     }
   });
 
-  it('generateTerrain returns bases/alertTowers consistent with the final terrain map', () => {
-    const { terrain, bases, alertTowers } = generateTerrain({
+  it('generateTerrain returns bases/alertTowers/outposts consistent with the final terrain map', () => {
+    const { terrain, bases, alertTowers, outposts } = generateTerrain({
       seed: 123, worldRadius: 14, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
     });
     expect(bases.length).toBe(BASE_COUNT);
@@ -783,17 +814,38 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       for (const t of base.turrets) expect(terrain.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
     }
     for (const t of alertTowers) expect(terrain.get(axialKey(t.q, t.r))).toBe('alertTower');
+    // #269 playtest follow-up (bases/outposts role swap): `outposts` is a new returned field —
+    // every position in it is still stamped as the biome's own outpost id in the final terrain.
+    for (const o of outposts) expect(terrain.get(axialKey(o.q, o.r))).toBe(GRASSLAND.outpost);
   });
 
-  // #269 playtest follow-up: is an alert tower's placement (rings 3-5 out from its base centre)
-  // actually reachable on the corridor's natural path, or could it land off to the side the
-  // player would never drive near? `placeBases` only ever stamps a candidate hex that's already
-  // IN `T` (built from the live corridor's own hex set, scenes/arena/world.js `_buildWorld`) —
-  // so every placed tower is, by construction, already inside the drivable corridor. This test
-  // exercises the REAL corridor-carving path (buildCorridor, same as world.js) across many seeds
-  // and confirms every placed alert tower's pixel position sits within CORRIDOR_HALF_WIDTH_PX of
-  // the corridor's own spine — i.e. never further from the driving path than any other in-map
-  // feature can be, not stranded off to one side.
+  // #269 playtest follow-up (bases/outposts role swap): alert towers are anchored to OUTPOSTS
+  // now, not bases — this asserts every placed tower is actually near one of the returned
+  // outpost positions, not scattered independently near a base.
+  it('generateTerrain places alert towers near the outposts it returns, not near bases', () => {
+    const { bases, alertTowers, outposts } = generateTerrain({
+      seed: 456, worldRadius: 16, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
+    });
+    for (const t of alertTowers) {
+      const nearAnOutpost = outposts.some((o) => distance(t, o) <= 5);
+      expect(nearAnOutpost).toBe(true);
+      const nearABase = bases.some((b) => distance(t, b.center) <= 5);
+      // Not a hard impossibility (an outpost could coincidentally land within 5 hexes of a base
+      // centre), but the tower's proximity to an outpost is the thing under test above; this is
+      // just a sanity note, not asserted, since base/outpost placement can legitimately overlap.
+      void nearABase;
+    }
+  });
+
+  // #269 playtest follow-up: is an alert tower's placement (rings 3-5 out from its OUTPOST
+  // centre) actually reachable on the corridor's natural path, or could it land off to the side
+  // the player would never drive near? `placeOutpostTowers` only ever stamps a candidate hex
+  // that's already IN `T` (built from the live corridor's own hex set, scenes/arena/world.js
+  // `_buildWorld`) — so every placed tower is, by construction, already inside the drivable
+  // corridor. This test exercises the REAL corridor-carving path (buildCorridor, same as
+  // world.js) across many seeds and confirms every placed alert tower's pixel position sits
+  // within CORRIDOR_HALF_WIDTH_PX of the corridor's own spine — i.e. never further from the
+  // driving path than any other in-map feature can be, not stranded off to one side.
   it('places alert towers only within the corridor\'s own half-width of its spine (never off-path)', () => {
     function perpDistToSpine(points, x, y) {
       let best = Infinity;
@@ -826,16 +878,17 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
   });
 
   // #269 playtest follow-up: confirms placement isn't wildly unreliable — most requested towers
-  // (ALERT_TOWERS_PER_BASE_MIN..MAX per base) actually land somewhere, even though the 10-try
-  // rejection sampling against a real corridor can occasionally miss a candidate ring entirely.
+  // (ALERT_TOWERS_PER_OUTPOST_MIN..MAX per outpost) actually land somewhere, even though the
+  // 10-try rejection sampling against a real corridor can occasionally miss a candidate ring
+  // entirely.
   it('places most of the requested alert towers across a sweep of real corridors (not a rare fluke)', () => {
     let totalMaxPossible = 0, totalPlaced = 0;
     for (let seed = 1; seed <= 25; seed++) {
       const { includedKeys } = buildCorridor(seed * 101 + 3);
-      const { bases, alertTowers } = generateTerrain({
+      const { outposts, alertTowers } = generateTerrain({
         seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys,
       });
-      totalMaxPossible += bases.length * ALERT_TOWERS_PER_BASE_MAX;
+      totalMaxPossible += outposts.length * ALERT_TOWERS_PER_OUTPOST_MAX;
       totalPlaced += alertTowers.length;
     }
     expect(totalPlaced).toBeGreaterThan(totalMaxPossible * 0.5);

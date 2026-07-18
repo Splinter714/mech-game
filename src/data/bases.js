@@ -7,9 +7,11 @@
 import { hexToPixel } from './hexgrid.js';
 
 // The single nearest base to a world point (an alert tower's own position), by straight-line
-// distance between the point and each base's centre hex. Bases are "connective tissue" the
-// towers sit BETWEEN (never owned by one ahead of time, per the issue) — nearest-base is
-// resolved at WAKE time, not at placement time. Returns null if `bases` is empty.
+// distance between the point and each base's centre hex. #269 playtest follow-up (bases/
+// outposts role swap): a tower is now placed at/near an OUTPOST, not a base, so it has no base
+// of its own to belong to — nearest-base is resolved at WAKE time exactly as before, purely
+// geometrically off the tower's own position, regardless of what it happens to sit next to.
+// Returns null if `bases` is empty.
 export function nearestBaseTo(point, bases) {
   if (!bases || !bases.length) return null;
   let best = null, bestD = Infinity;
