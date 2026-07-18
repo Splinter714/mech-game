@@ -130,7 +130,7 @@ export const WorldMixin = {
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
-      includedKeys, boundaryRing, outposts,
+      includedKeys, boundaryRing, outposts, spine,
     });
     // #269 §3: the run's bases (dormant docks + connective-tissue alert towers), placed once
     // here at world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase`

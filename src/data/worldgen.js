@@ -84,11 +84,34 @@ export function baseLateFraction(baseIndex, baseCount) {
 // comment on why they're never base-owned) is returned separately. Every hex actually used is
 // stamped into `T` only if it's still plain open ground (`isGround`) at the time its turn comes
 // up, exactly like the outpost/helipad loops — never overwriting cover/an outpost/another dock.
-export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT) {
+//
+// #269 playtest follow-up: base CENTRES are stratified along the run instead of drawn by pure
+// uniform-random pick across the whole candidate list. With only `baseCount` (3) draws, a pure
+// random pick can (and did, in play) cluster every base toward the far end of the ~3400px
+// corridor by sheer chance — unlike the outpost loop above, which also draws uniformly at
+// random but does so MANY times (`outpostCount` scales with corridor length), so it blankets the
+// corridor evenly by volume alone. Bases don't have that luxury with only 3 draws, so instead we
+// sort candidates by `progressOf` ("how far down the run" a hex sits) and place base `i` inside
+// the `i`-th of `baseCount` roughly-equal slices of that ordering — base 0 is guaranteed to land
+// in the first slice, the last base in the final slice — while still picking a RANDOM hex within
+// its assigned slice (not a fully deterministic position). This also makes placement position
+// correlate with `baseLateFraction`'s difficulty ramp (also indexed 0→baseCount-1), so the
+// hardest base can no longer land next to spawn. `progressOf(hex)` defaults to straight-line
+// distance from the world origin (mirrors the `effR`/hazard-placement distance-from-origin proxy
+// used elsewhere in `generateTerrain`); callers with a real corridor spine pass
+// `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, since a curving spine's "progress along
+// the run" is NOT the same as straight-line distance from origin once the corridor bends.
+export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null) {
   const bases = [];
   const alertTowers = [];
+  const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
+  const sorted = [...all].sort((a, b) => progress(a) - progress(b));
+  const segSize = Math.max(1, Math.floor(sorted.length / baseCount));
   for (let i = 0; i < baseCount; i++) {
-    const center = all[Math.floor(rng() * all.length)];
+    const segStart = i * segSize;
+    const segEnd = i === baseCount - 1 ? sorted.length : segStart + segSize;
+    const segment = segEnd > segStart ? sorted.slice(segStart, segEnd) : all;
+    const center = segment[Math.floor(rng() * segment.length)];
     const frac = baseLateFraction(i, baseCount);
     const dockCount = DOCKS_PER_BASE_MIN + Math.floor(rng() * (DOCKS_PER_BASE_MAX - DOCKS_PER_BASE_MIN + 1));
     // Candidate hexes for this base's docks: the centre, then successive rings out from it —
@@ -162,6 +185,7 @@ export function safeZoneKeys(center, radius = 3) {
 export function generateTerrain({
   seed, worldRadius, biome, safeCenter = { q: 0, r: 0 }, extraClear = [],
   included = null, includedKeys = null, boundaryRing = null, outposts = null, baseCount = BASE_COUNT,
+  spine = null,
 }) {
   const R = worldRadius;
   const rng = mulberry32(seed);
@@ -255,7 +279,12 @@ export function generateTerrain({
   // "random valid ground hex" style as the outpost/helipad loops above, AFTER them so a base
   // never overwrites an outpost/cover cluster, BEFORE the safe-zone clear so anything that lands
   // inside it is reset back to open ground exactly like an outpost or helipad would be.
-  const { bases, alertTowers } = placeBases(rng, all, T, isGround, baseCount);
+  // #269 playtest follow-up: prefer real progress-along-the-spine over straight-line distance
+  // from origin when a spine is available — the corridor curves, so distance-from-origin alone
+  // can rank a hex that's actually far down a bend as "early" (falls back to the distance proxy,
+  // matching the pattern used elsewhere in this function, when no spine is passed).
+  const progressOf = spine ? (h) => spineProgressHexOf(spine, h.q, h.r) : null;
+  const { bases, alertTowers } = placeBases(rng, all, T, isGround, baseCount, progressOf);
 
   // Clear the safe zone (spawn point + line of fire) back to open ground.
   for (const h of range(safeCenter, 3)) { const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, groundAt(h)); }

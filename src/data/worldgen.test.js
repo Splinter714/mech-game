@@ -652,6 +652,85 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     }
   });
 
+  it('stratifies base centres along progress-of-run instead of drawing uniformly across the whole map (playtest follow-up)', () => {
+    // A long, thin "corridor" of hexes ordered along q (progress proxy = q itself via distance
+    // from origin along a line), so we can assert base i's centre progress falls in the i-th
+    // roughly-equal third of the range, matching an intentionally adversarial seed.
+    const all = [];
+    for (let q = 0; q <= 300; q++) all.push({ q, r: 0 });
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const progressOf = (h) => h.q;   // straight line, so q IS the progress metric exactly
+
+    for (const seed of [1, 2, 3, 42, 777, 99999]) {
+      const rng = mulberry32(seed);
+      const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+      expect(bases.length).toBe(BASE_COUNT);
+      const centreQs = bases.map((b) => b.center.q);
+      const segSize = Math.floor(all.length / BASE_COUNT);
+      // Base 0 lands in the first segment, the last base in the final segment.
+      expect(centreQs[0]).toBeLessThan(segSize);
+      expect(centreQs[BASE_COUNT - 1]).toBeGreaterThanOrEqual(segSize * (BASE_COUNT - 1));
+      // Bases are ordered by progress matching their index (monotonic non-decreasing).
+      for (let i = 1; i < centreQs.length; i++) {
+        expect(centreQs[i]).toBeGreaterThanOrEqual(centreQs[i - 1]);
+      }
+    }
+  });
+
+  it('falls back to distance-from-origin as the progress proxy when no progressOf is given, still stratifying', () => {
+    const rng = mulberry32(555);
+    const all = buildAllRing(20);
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
+    const dists = bases.map((b) => distance(b.center, { q: 0, r: 0 }));
+    for (let i = 1; i < dists.length; i++) {
+      expect(dists[i]).toBeGreaterThanOrEqual(dists[i - 1]);
+    }
+  });
+
+  it('on the real snaking corridor, base centres are stratified by spine progress (not just raw distance from origin)', () => {
+    const { spine, includedKeys } = buildCorridor(4242);
+    const all = [...includedKeys].map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; });
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const rng = mulberry32(4242);
+    const progressOf = (h) => spineProgressHexOf(spine, h.q, h.r);
+    const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+
+    expect(bases.length).toBe(BASE_COUNT);
+    const progresses = bases.map((b) => spineProgressHexOf(spine, b.center.q, b.center.r));
+    const allProgress = all.map((h) => spineProgressHexOf(spine, h.q, h.r));
+    const minP = Math.min(...allProgress), maxP = Math.max(...allProgress);
+    const span = maxP - minP;
+    // Base 0's centre sits in the first third of the corridor's progress range; the last base's
+    // centre sits in the final third — not scattered anywhere, per the playtest complaint.
+    expect(progresses[0]).toBeLessThan(minP + span / 3);
+    expect(progresses[BASE_COUNT - 1]).toBeGreaterThan(maxP - span / 3);
+    // Ordered by progress, matching index (and thus matching baseLateFraction's difficulty ramp).
+    for (let i = 1; i < progresses.length; i++) {
+      expect(progresses[i]).toBeGreaterThanOrEqual(progresses[i - 1]);
+    }
+  });
+
+  it('generateTerrain passes the corridor spine through so bases stratify along the real curving run', () => {
+    const { spine, includedKeys } = buildCorridor(8080);
+    const includedSet = includedKeys;
+    const included = (q, r) => includedSet.has(axialKey(q, r));
+    const { bases } = generateTerrain({
+      seed: 8080, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, included, includedKeys, spine,
+    });
+    expect(bases.length).toBe(BASE_COUNT);
+    const progresses = bases.map((b) => spineProgressHexOf(spine, b.center.q, b.center.r));
+    for (let i = 1; i < progresses.length; i++) {
+      expect(progresses[i]).toBeGreaterThanOrEqual(progresses[i - 1]);
+    }
+  });
+
   it('baseLateFraction ramps 0→1 across the bases, escalating dock composition', () => {
     expect(baseLateFraction(0, BASE_COUNT)).toBe(0);
     expect(baseLateFraction(BASE_COUNT - 1, BASE_COUNT)).toBe(1);
