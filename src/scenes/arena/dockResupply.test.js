@@ -249,7 +249,8 @@ describe('#269 Part 2: dock open/closed states', () => {
 
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');
     expect(scene.buildingHp.get(dockKey)).toBe(TERRAIN.dockClosed.hp);
-    expect(isPassable('dockClosed')).toBe(false);
+    // #286: a sealed dock stays passable-but-slow, not a full blockade — only blocksLOS.
+    expect(isPassable('dockClosed')).toBe(true);
     expect(blocksLOS('dockClosed')).toBe(true);
   });
 

@@ -91,16 +91,19 @@ describe('terrain table (#41 full model)', () => {
   // #269 playtest follow-up (dock open/closed states): `dockClosed` is the sealed, destructible
   // runtime state a `dock` hex swaps into once vacated (scenes/arena/bases.js `_closeDock`) —
   // unlike the open `dock` marker (deliberately non-destructible), this is a genuine structure:
-  // impassable, blocks LOS, has real HP, and collapses to the same uniform base-infra rubble
-  // every other destructible base hex uses. Excluded from the mission-objective pool since it's
-  // a dynamic occupancy state, not a placed assault objective.
+  // blocks LOS, has real HP, and collapses to the same uniform base-infra rubble every other
+  // destructible base hex uses. Excluded from the mission-objective pool since it's a dynamic
+  // occupancy state, not a placed assault objective. #286: unlike alertTower/objective, a sealed
+  // dock stays PASSABLE (just slow) — a mech can walk over/around a closed dome, it just can't
+  // resupply there until it reopens.
   it('gives dockClosed its own texture and makes it a genuine destructible structure, unlike the open dock marker', () => {
     expect(TERRAIN.dockClosed).toBeDefined();
     expect(typeof TERRAIN.dockClosed.tex).toBe('string');
     expect(TERRAIN.dockClosed.tex).not.toBe(TERRAIN.dock.tex);
-    expect(TERRAIN.dockClosed.passable).toBe(false);
+    expect(TERRAIN.dockClosed.passable).toBe(true);
     expect(TERRAIN.dockClosed.blocksLOS).toBe(true);
-    expect(isPassable('dockClosed')).toBe(false);
+    expect(TERRAIN.dockClosed.speedFactor).toBe(SLOW_MOVEMENT_FACTOR);
+    expect(isPassable('dockClosed')).toBe(true);
     expect(blocksLOS('dockClosed')).toBe(true);
     expect(isDestructible('dockClosed')).toBe(true);
     expect(TERRAIN.dockClosed.hp).toBeGreaterThan(0);
@@ -229,8 +232,9 @@ describe('#279 cover terrain (forest/scrub/drift/wreck/fumarole) — hard cover 
   it('shotBlockedAt: the own-hex exemption generalizes to base-infra hard cover too; a different hex of the same terrain still blocks; open ground never blocks', () => {
     const exempt = new Set(['3,-1']);
     for (const id of ['alertTower', 'dockClosed', 'objective']) {
-      // #279: the exemption is now tier-agnostic — it would apply here too, though in practice
-      // no living unit ever occupies these impassable hexes, so this never fires in real play.
+      // #279: the exemption is now tier-agnostic — it would apply here too. For alertTower/
+      // objective (impassable) no living unit ever occupies the hex in real play; #286 made
+      // dockClosed passable-but-slow, so a unit COULD stand there and the exemption is live.
       expect(shotBlockedAt(id, '3,-1', exempt)).toBe(false);
       expect(shotBlockedAt(id, '9,9', exempt)).toBe(true);
       expect(shotBlockedAt(id, '9,9', null)).toBe(true);

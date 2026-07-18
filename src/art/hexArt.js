@@ -95,7 +95,8 @@ const PAL = {
   // distinct — specifically as "THE thing to punch through."
   objective: BASE_INFRA_COLOR,
   // #269 playtest follow-up (dock open/closed states): the CLOSED state of a dock hex (terrain.js
-  // `dockClosed`) — a genuine sealed structure (impassable, destructible), so it gets its own
+  // `dockClosed`) — a genuine sealed structure (destructible, LOS-blocking; #286: passable-but-
+  // slow, not a blockade), so it gets its own
   // darker/heavier base-infra tone rather than the open `dock`'s neutral BASE_INFRA_COLOR, so a
   // player can tell open vs. closed apart at a glance even before the DETAIL painter's dome icon
   // registers.
