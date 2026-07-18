@@ -123,3 +123,27 @@ describe('#225 player-input gating in ArenaScene#update', () => {
     expect(arenaScene).toMatch(/if \(!this\._playerDead\) this\._handleFiring\(intent, delta\);/);
   });
 });
+
+// Refs #281 (playtest: "after my mech died once, every later deploy started permanently frozen
+// — no movement, no firing"). Root cause: `_playerDead` is only ever set to `true` (combat.js
+// `_damagePlayerAt`, above) and never reset — Phaser reuses the SAME ArenaScene instance across
+// scene.start('ArenaScene') calls, so the flag survived from the sortie that killed the player
+// into every sortie after it. Fix: explicitly reset it in create(), same "reset per-deploy scene
+// state" pattern `_initRun`/`_initMission` already use. Source-text guard, same technique as the
+// gating tests above — create() is Phaser-API-heavy so a live instance isn't practical here.
+describe('#281 ArenaScene#create resets _playerDead every deploy', () => {
+  it('create() explicitly resets this._playerDead to false', () => {
+    const create = arenaScene.match(/create\(\)\s*\{[\s\S]*?\n  \}/);
+    expect(create).toBeTruthy();
+    expect(create[0]).toMatch(/this\._playerDead = false;/);
+  });
+
+  it('resets it after _initRun(), following the existing per-deploy-reset ordering', () => {
+    const create = arenaScene.match(/create\(\)\s*\{[\s\S]*?\n  \}/)[0];
+    const initRunIdx = create.indexOf('this._initRun();');
+    const resetIdx = create.indexOf('this._playerDead = false;');
+    expect(initRunIdx).toBeGreaterThan(-1);
+    expect(resetIdx).toBeGreaterThan(-1);
+    expect(resetIdx).toBeGreaterThan(initRunIdx);
+  });
+});
