@@ -1,43 +1,42 @@
-// Arena mission mixin (#66) — wires the pure Mission model (data/mission.js) into the
-// live arena: designates one of the world's destructible outposts as THE objective,
-// watches for it leaving `this.buildingHp` (i.e. destroyed — see world.js
-// `_damageBuildingAt`), and evaluates the mission each frame. Methods use `this` (the
-// ArenaScene); composed onto the prototype via Object.assign, same as the other mixins.
+// Arena mission mixin (#66, reworked #269 playtest follow-up: objective sequencing) — wires the
+// pure Mission model (data/mission.js) into the live arena. The objective is no longer an
+// arbitrary "farthest destructible outpost hex" (that system was totally disconnected from
+// where the real bases/dormant-enemy fights actually are) — it now walks through `this.bases`
+// IN ORDER: base 0 first, then base 1 once base 0's docked units are all dead, etc. Bases are
+// already placed in index order by `placeBases` (data/worldgen.js), stratified along the
+// corridor so index also correlates with distance-from-spawn AND difficulty
+// (`baseLateFraction`) — so following index is automatically forward, non-backtracking
+// progression with no separate "direction" logic needed. Methods use `this` (the ArenaScene);
+// composed onto the prototype via Object.assign, same as the other mixins.
 //
 // #66 is objective-only: the arena never feeds `playerDead` (that's the run-loop's job,
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
-import { pickFarObjective, FAR_OBJECTIVE_MIN_DIST, spineProgressHexOf } from '../../data/worldgen.js';
+import { isBaseCleared } from '../../data/bases.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR } from './shared.js';
 
 export const MissionMixin = {
-  // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated
-  // `this.buildingHp`. Picks the objective DETERMINISTICALLY (not randomly) so the smoke test
-  // can rely on it — `pickStageObjective`/`pickFarObjective` are themselves pure/deterministic
-  // (no RNG, just distance + the tie-breaking sorted-hex-key order), so the same seed always
-  // yields the same objective.
-  //
-  // #81 follow-up (playtest 2026-07-10 point 4): this used to just take the sorted-hex-key-first
-  // outpost with NO distance consideration, unlike every later stage-advance objective (run.js
-  // `_startNextStage`), which already biases toward a candidate far from the player. That could
-  // land the very first objective right next to spawn. Now shares the exact same far-objective
-  // logic (and its `FAR_OBJECTIVE_MIN_DIST` floor) as every later stage, from the player's spawn
-  // hex (world origin) — so the player always has to travel for the first objective too.
-  //
-  // #269: retired the old 5-stage near→far escalation (`lateFraction`/`pickStageObjective`,
-  // data/run.js's now-gone stage-squad system) — every objective (this first one, and every
-  // later one picked by `_pickNextObjective` in run.js) now uses the same strict farthest-
-  // candidate pick, measured ALONG THE SPINE (progress down the corridor) so it's still a real
-  // trek from spawn, just without a stage-indexed near/far ramp.
+  // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated `this.bases`.
+  // Targets base 0 (the lowest-index/earliest base — see file header) as the very first
+  // objective. `_targetCurrentBase` (below) does the actual work and is reused by run.js
+  // `_pickNextObjective` for every later base-advance too.
   _initMission() {
-    // #251: NOT all of `buildingHp` — that also holds atmospheric base-infrastructure
-    // set-dressing (e.g. `helipad`/`alertTower`), which must never be picked as the objective
-    // (see world.js `_objectiveHexKeys` / data/terrain.js `isMissionObjective`).
-    const hexKeys = this._objectiveHexKeys();
-    const progressOf = (q, r) => spineProgressHexOf(this._spine, q, r);
-    this.objectiveHex = pickFarObjective(hexKeys, { q: 0, r: 0 }, FAR_OBJECTIVE_MIN_DIST, null, progressOf);
-    this.mission = makeMission('assault');
+    this._objectiveBaseIndex = 0;
+    this._targetCurrentBase();
+  },
+
+  // Points the mission/marker/wayfinding at whatever base sits at `this._objectiveBaseIndex`,
+  // or clears everything if that index has run past the end of `this.bases` (every base has
+  // been cleared — see run.js `_pickNextObjective`, which only ever advances the index after a
+  // base-clear). No new marker is made when there's nothing left to target — the run is about
+  // to end as a win via `_allBasesCleared()` (run.js `_updateRun`) at that point anyway.
+  _targetCurrentBase() {
+    const base = (this.bases ?? [])[this._objectiveBaseIndex] ?? null;
+    this._objectiveBase = base;
+    this.objectiveHex = base ? axialKey(base.center.q, base.center.r) : null;
+    this.mission = base ? makeMission('assault') : null;
+    if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);
     this._publishObjectiveWorld();
@@ -83,13 +82,16 @@ export const MissionMixin = {
     this._objectiveMarker = marker;
   },
 
-  // Per-frame: has the objective hex left `buildingHp` (destroyed, per `_damageBuildingAt`)?
-  // Feed that into the pure `evaluateMission` and publish the resulting mission to the
-  // registry so HudScene can read it. A terminal status is sticky (the model itself won't
-  // re-open it), so once complete this just keeps republishing the same status.
+  // Per-frame: is the current objective base cleared (every enemy tagged with its baseId dead —
+  // data/bases.js `isBaseCleared`)? Feed that into the pure `evaluateMission` and publish the
+  // resulting mission to the registry so HudScene can read it. A terminal status is sticky (the
+  // model itself won't re-open it), so once complete this just keeps republishing the same
+  // status. No-ops once every base has been cleared (`this.mission` is null — see
+  // `_targetCurrentBase`); `_allBasesCleared()` (run.js `_updateRun`) ends the run as a win at
+  // that point regardless, so there's nothing left for this to watch.
   _updateMission() {
     if (!this.mission) return;
-    const objectiveDestroyed = this.objectiveHex ? !this.buildingHp.has(this.objectiveHex) : false;
+    const objectiveDestroyed = isBaseCleared(this._objectiveBase?.id, this.enemies);
     const wasActive = this.mission.status === 'active';
     // #66: fail path deferred to #64 (the run loop) — no real playerDead signal yet, so this
     // always passes false and the mission can only ever go active → complete for now.

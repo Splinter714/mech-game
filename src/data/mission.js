@@ -4,12 +4,17 @@
 // arena decides how to fill the state snapshot each type reads.
 
 export const MISSION_TYPES = {
-  // #66: destroy a designated enemy structure (one of the world's destructible outposts).
+  // #66: originally "destroy a designated enemy outpost hex." #269 playtest follow-up
+  // (objective sequencing) repointed this at bases instead — the arena now feeds
+  // `objectiveDestroyed` from "is the current target base cleared" (every enemy tagged with its
+  // baseId dead, data/bases.js `isBaseCleared`) rather than from a single hex leaving
+  // `buildingHp`. The model itself doesn't care what "the objective" concretely is — it just
+  // reads one boolean flag — so no field rename was needed to make this switch.
   assault: {
     id: 'assault',
     name: 'Assault',
-    objective: 'Destroy the enemy outpost',
-    // Won the moment the objective structure is rubble.
+    objective: 'Clear the enemy base',
+    // Won the moment the current objective base is cleared.
     isComplete: (s) => !!s.objectiveDestroyed,
   },
   // Future entries (each is one object here + the arena filling its state fields):

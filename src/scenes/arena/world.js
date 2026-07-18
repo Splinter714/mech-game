@@ -4,8 +4,8 @@
 import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors, hexCorners } from '../../data/hexgrid.js';
 import {
-  getTerrain, terrainSpeedFactor, isPassable, buildingHp, damageBuilding, rubbleFor,
-  shotBlockedAt, flameCoverDamage, coverBlocksForRay, isMissionObjective,
+  getTerrain, terrainSpeedFactor, isPassable, damageBuilding, rubbleFor,
+  shotBlockedAt, flameCoverDamage, coverBlocksForRay,
 } from '../../data/terrain.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
@@ -435,16 +435,6 @@ export const WorldMixin = {
     return pts;
   },
 
-  // #251: every standing hex key eligible to be picked as THE mission objective. `buildingHp`
-  // holds every standing solid destructible (outposts AND atmospheric base-infrastructure
-  // set-dressing like `helipad` alike — see world.js `buildingHp` comment above), but only
-  // genuine outposts should ever become the assault target; `isMissionObjective` (data/terrain.js)
-  // filters out anything marked `setDressing: true`. Shared by mission.js's initial pick and
-  // run.js's stage-advance pick so both stay in sync with zero duplicated filtering logic.
-  _objectiveHexKeys() {
-    return [...this.buildingHp.keys()].filter((k) => isMissionObjective(this.terrain.get(k)));
-  },
-
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush
   // damage (a fixed per-second rate scaled by how fast the mech is driving into it) so leaning
   // on an outpost flattens it in a beat or two rather than instantly. No-op off buildings.
@@ -561,38 +551,4 @@ export const WorldMixin = {
     return e._losClear;
   },
 
-  // #64: seed ONE fresh destructible outpost hex, converting a nearby passable ground tile back
-  // into `biome.outpost` terrain with full HP and re-texturing it in place. Every outpost a
-  // biome starts with is eventually destroyed permanently (collapses to rubble, no repair — see
-  // `_damageBuildingAt`), so a run whose stage count exceeds a biome's outpost count needs a way
-  // to keep producing assault objectives; the run mixin calls this as a fallback once
-  // `buildingHp` runs dry. Picks a random ground hex within a modest ring of `nearQ,nearR`
-  // (clear of the permanent spawn-safe zone) so it doesn't land on top of the player or another
-  // outpost. #81 follow-up: an optional `reveal` predicate (`(q, r) => boolean`) restricts the
-  // candidate hex to the freshly-opened reveal region, so a stage-advance fallback objective
-  // still lands somewhere the player has to walk into the new area to reach — when `reveal` is
-  // given, the search ring is capped to roughly the size of one growth lobe (not the much
-  // larger `worldRadius` bounding cap #81's organic growth introduced), so tries actually land
-  // near the lobe instead of mostly missing it. Returns the new outpost's hex key, or null if no
-  // eligible ground hex was found.
-  _spawnOutpostAt(nearQ = 0, nearR = 0, reveal = null) {
-    const B = this.biome;
-    const ringCap = reveal ? 24 : (this.worldRadius - 6);
-    for (let tries = 0; tries < 40; tries++) {
-      const ring = 4 + Math.floor(Math.random() * ringCap);
-      const ang = Math.random() * Math.PI * 2;
-      const q = Math.round(nearQ + ring * Math.cos(ang));
-      const r = Math.round(nearR + ring * Math.sin(ang) * (2 / Math.sqrt(3)) - (ring * Math.cos(ang)) / 2);
-      if (reveal && !reveal(q, r)) continue;
-      const k = axialKey(q, r);
-      const t = this.terrain.get(k);
-      if (t !== B.groundA && t !== B.groundB) continue;
-      this.terrain.set(k, B.outpost);
-      this.buildingHp.set(k, buildingHp(B.outpost));
-      const img = this.tileImages.get(k);
-      if (img) img.setTexture(getTerrain(B.outpost).tex);
-      return k;
-    }
-    return null;
-  },
 };

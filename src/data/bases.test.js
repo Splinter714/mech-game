@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nearestBaseTo, isFastWakeKind, FAST_WAKE_SPEED_THRESHOLD } from './bases.js';
+import { nearestBaseTo, isFastWakeKind, FAST_WAKE_SPEED_THRESHOLD, isBaseCleared } from './bases.js';
 import { ENEMY_KINDS } from './enemyKinds.js';
 import { hexToPixel } from './hexgrid.js';
 
@@ -60,5 +60,34 @@ describe('isFastWakeKind (#269 §7: wake-response split by speed)', () => {
     const fastMin = Math.min(ENEMY_KINDS.drone.move.maxSpeed, ENEMY_KINDS.helicopter.move.maxSpeed);
     expect(FAST_WAKE_SPEED_THRESHOLD).toBeGreaterThan(slowMax);
     expect(FAST_WAKE_SPEED_THRESHOLD).toBeLessThanOrEqual(fastMin);
+  });
+});
+
+describe('isBaseCleared (#269 playtest follow-up: objective sequencing)', () => {
+  it('a base with live enemies still tagged to it is NOT cleared', () => {
+    const enemies = [{ baseId: 'base0' }, { baseId: 'base1' }];
+    expect(isBaseCleared('base0', enemies)).toBe(false);
+  });
+
+  it('a base with no remaining enemies tagged to it IS cleared', () => {
+    const enemies = [{ baseId: 'base1' }];
+    expect(isBaseCleared('base0', enemies)).toBe(true);
+  });
+
+  it('an empty/missing enemies list reads as cleared', () => {
+    expect(isBaseCleared('base0', [])).toBe(true);
+    expect(isBaseCleared('base0', null)).toBe(true);
+    expect(isBaseCleared('base0', undefined)).toBe(true);
+  });
+
+  it('a null/undefined baseId (no target base) reads as cleared', () => {
+    expect(isBaseCleared(null, [{ baseId: 'base0' }])).toBe(true);
+    expect(isBaseCleared(undefined, [{ baseId: 'base0' }])).toBe(true);
+  });
+
+  it('only counts enemies tagged with the exact baseId — other bases don\'t interfere', () => {
+    const enemies = [{ baseId: 'base0' }, { baseId: 'base0' }, { baseId: 'base1' }];
+    expect(isBaseCleared('base1', enemies)).toBe(false);
+    expect(isBaseCleared('base2', enemies)).toBe(true);
   });
 });

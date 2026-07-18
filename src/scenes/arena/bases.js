@@ -9,6 +9,17 @@ import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
+import { DEPTH } from './shared.js';
+
+// #269 playtest follow-up (hex legibility): a base/tower hex's dormant unit or small art icon
+// alone doesn't read clearly as "this is a dock/alert tower/turret emplacement" during playtest
+// — a persistent red text tag above the hex makes it unambiguous at a glance. Always-on for now
+// (an explicit playtest/legibility aid Jackson asked for directly, not gated behind a debug
+// flag). Deliberately plain/loud (bright red, monospace) rather than styled like the amber
+// objective marker (mission.js `_makeObjectiveMarker`) — these are a debug-readable tag, not a
+// wayfinding beacon, so they shouldn't compete visually with the real objective marker.
+const HEX_LABEL_COLOR = '#ff4444';
+const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacement: 'TURRET' };
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
@@ -67,6 +78,30 @@ export const BasesMixin = {
         e.dockKey = axialKey(turret.q, turret.r);
       }
     }
+  },
+
+  // #269 playtest follow-up (hex legibility): one persistent red text tag per dock/alertTower/
+  // turretEmplacement hex, positioned via `hexToPixel` — a STATIC world-space label (unlike
+  // combat.js's `_floatText`, which fades/floats for hit numbers; this stays up the whole run,
+  // same "persistent world-space thing pinned over a fixed hex" shape as mission.js's
+  // `_makeObjectiveMarker`, just far simpler — no ring/tween, just the text). Called once from
+  // ArenaScene.create(), alongside `_spawnDormantUnits`/`_initAlertTowers` above — all three run
+  // right after `_buildWorld()` has populated `this.bases`/`this.alertTowerHexes`.
+  _spawnHexLabels() {
+    this._hexLabels = [];
+    for (const base of this.bases ?? []) {
+      for (const dock of base.docks) this._addHexLabel(dock.q, dock.r, 'dock');
+      for (const turret of base.turrets ?? []) this._addHexLabel(turret.q, turret.r, 'turretEmplacement');
+    }
+    for (const t of this.alertTowerHexes ?? []) this._addHexLabel(t.q, t.r, 'alertTower');
+  },
+
+  _addHexLabel(q, r, kindId) {
+    const { x, y } = hexToPixel(q, r);
+    const label = this.add.text(x, y - 34, HEX_LABEL_TEXT[kindId], {
+      fontFamily: 'monospace', fontSize: '11px', color: HEX_LABEL_COLOR, fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(DEPTH.WORLD_UI);
+    this._hexLabels.push(label);
   },
 
   // §5: one alert-tower countdown state per standing `alertTower` hex, keyed by hex key.

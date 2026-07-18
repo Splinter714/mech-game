@@ -10,6 +10,7 @@ import { BasesMixin } from './bases.js';
 import { HpBody } from '../../data/HpBody.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { DORMANT, AWARE, UNAWARE } from '../../data/awareness.js';
+import { hexToPixel } from '../../data/hexgrid.js';
 
 function makeScene() {
   const scene = { time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [] };
@@ -198,6 +199,63 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     scene._wakeBase('base0');
     expect(scene.enemies.length).toBe(2);
     expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
+  });
+});
+
+describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/alertTower/turretEmplacement', () => {
+  // `_spawnHexLabels`/`_addHexLabel` only need `this.add.text` (a real ArenaScene always has
+  // it) — stub it the same chainable-fake style as mission.test.js so this stays a pure logic
+  // test with no real Phaser dependency.
+  function makeSceneWithAdd() {
+    const scene = makeScene();
+    scene.add = {
+      text: (x, y, s, style) => ({
+        x, y, text: s, style,
+        setOrigin() { return this; }, setDepth() { return this; },
+      }),
+    };
+    return scene;
+  }
+
+  it('creates one label per dock hex, per turret emplacement hex, and per alert tower hex', () => {
+    const scene = makeSceneWithAdd();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'tank', count: 2 }, { q: 1, r: 0, kindId: 'helicopter', count: 2 }],
+      turrets: [{ q: -1, r: 0 }],
+    }];
+    scene.alertTowerHexes = [{ q: 3, r: -1 }, { q: -3, r: 2 }];
+
+    scene._spawnHexLabels();
+
+    // 2 docks + 1 turret + 2 alert towers = 5 labels, regardless of dock unit COUNT (one label
+    // per HEX, not per docked unit).
+    expect(scene._hexLabels.length).toBe(5);
+    const texts = scene._hexLabels.map((l) => l.text);
+    expect(texts.filter((t) => t === 'DOCK').length).toBe(2);
+    expect(texts.filter((t) => t === 'TURRET').length).toBe(1);
+    expect(texts.filter((t) => t === 'ALERT TOWER').length).toBe(2);
+  });
+
+  it('every label is red and positioned above its hex\'s pixel centre', () => {
+    const scene = makeSceneWithAdd();
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 2, r: 0, kindId: 'quadruped', count: 1 }], turrets: [] }];
+    scene.alertTowerHexes = [];
+    scene._spawnHexLabels();
+
+    const { x, y } = hexToPixel(2, 0);
+    const label = scene._hexLabels[0];
+    expect(label.style.color).toBe('#ff4444');
+    expect(label.x).toBe(x);
+    expect(label.y).toBeLessThan(y);   // offset upward, above the hex
+  });
+
+  it('no bases/alert towers at all ⇒ no labels, no error', () => {
+    const scene = makeSceneWithAdd();
+    scene.bases = [];
+    scene.alertTowerHexes = [];
+    expect(() => scene._spawnHexLabels()).not.toThrow();
+    expect(scene._hexLabels).toEqual([]);
   });
 });
 
