@@ -39,17 +39,28 @@ function aimAndFire(scene, e, ctx, { needLos }) {
 
 // TURRET — static artillery emplacement. No locomotion at all; just track + fire. #94: fires an
 // arcing artillery shell (napalm + the turret's weaponOverride, data/enemyKinds.js; #244
-// consolidated the old siegeShell entry into it) at insane range, so — unlike the tank, which
-// still needs a direct-fire lane — it never needs LOS: needLos: false here (same as the flyers)
-// even though the turret itself doesn't fly. It's the arcing DELIVERY, not flight, that lets the
-// round skip wall collision (see scenes/arena/projectiles.js `if (!p.arc)`); a stationary
-// emplacement lobbing shells over any cover in between is exactly the artillery-bombardment
-// posture the mech AI's "all-indirect" mechs already camp behind cover to achieve (enemies.js
-// isAllIndirect) — the turret gets the same never-needs-LOS behavior for free just by dropping
-// the LOS gate, since it's already rooted in place.
+// consolidated the old siegeShell entry into it) at insane range. The SHELL's flight is still
+// completely unaffected by LOS — it's the arcing DELIVERY (data/delivery.js `path: 'arcing'`,
+// consumed by projectiles.js) that lets the round skip wall collision, nothing in `aimAndFire`
+// touches that — so it still lobs over/through cover exactly as before once fired.
+// #293: `needLos` here gates a SEPARATE thing — the DECISION to open fire — and per #94 that used
+// to be dropped entirely (`needLos: false`) on the theory that "the shell doesn't need LOS to
+// reach the target, so the turret doesn't either." That conflated the two: the shell's physics
+// not needing LOS says nothing about whether the turret should be able to see the player before
+// deciding to shoot at them. Result was a turret blasting the player through solid walls from
+// anywhere in its (huge, 2400px) range the instant it woke, which read as omniscient rather than
+// alert ("base alert vibes" playtest note). Now `needLos: true`, same as tank/quadruped — the
+// turret must actually have line of sight (via the shared staggered `_cachedLosToPlayer`, same
+// cache every other needLos:true kind already uses) before it opens fire; once it does fire, the
+// shell itself still ignores walls in flight exactly as before. Awareness itself (`_updateVehicle`
+// non-mech kinds — see its own comment) stays the existing distance+noise-only check, deliberately
+// NOT given an LOS requirement: that's a separate, pre-existing design choice (kept cheap since
+// vehicle kinds spawn in large numbers) about when a unit *wakes up*, not about the buggy "blind
+// fire" behavior actually reported — gating just the fire decision fixes the reported issue
+// without touching that cheaper wake path.
 function turretBehavior(scene, e, ctx) {
   e.vx = 0; e.vy = 0;
-  aimAndFire(scene, e, ctx, { needLos: false });
+  aimAndFire(scene, e, ctx, { needLos: true });
 }
 
 // TANK — grinds to a firing standoff and holds. #92: the HULL drives like a real tank — it
