@@ -8,7 +8,7 @@
 // `this.alertTowerHexes` from `placeGapTowers`, #275 redesign: one tower placed solo per gap
 // between successive bases along the corridor's progression, not anchored to any base or
 // "outpost" concept).
-import { hexToPixel, axialKey } from '../../data/hexgrid.js';
+import { hexToPixel, axialKey, hexCorners } from '../../data/hexgrid.js';
 import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
@@ -279,14 +279,20 @@ export const BasesMixin = {
       // duration/easing of its own, which would fight with "the countdown itself controls
       // exactly how far along this is" (and a tower whose countdown resets partway through a
       // tween would leave the tween instantly out of sync).
-      const ring = this.add.circle(x, y, ALERT_RING_RADIUS_MIN)
+      // #280: hexagon outline (stroke-only Polygon, matching the real grid's pointy-top
+      // orientation via the same `hexCorners` helper hexArt.js uses for terrain hexes) instead
+      // of a circle. Unlike `Circle`, `Polygon` has no `setRadius` — this ring is resized live
+      // every tick as the countdown's `fraction` climbs, so its geometry is recomputed from
+      // scratch each tick via `setTo` rather than scaled, which would also scale (and thus
+      // distort) the stroke width.
+      const ring = this.add.polygon(x, y, hexCorners(ALERT_RING_RADIUS_MIN))
         .setStrokeStyle(3, ALERT_RING_COLOR, ALERT_RING_ALPHA_MIN)
         .setDepth(DEPTH.WORLD_UI);
       fx = { ring, pulseTimerMs: 0 };
       this._alertTowerFx.set(key, fx);
     }
     const f = next.fraction ?? 0;
-    fx.ring.setRadius(ALERT_RING_RADIUS_MIN + (ALERT_RING_RADIUS_MAX - ALERT_RING_RADIUS_MIN) * f);
+    fx.ring.setTo(hexCorners(ALERT_RING_RADIUS_MIN + (ALERT_RING_RADIUS_MAX - ALERT_RING_RADIUS_MIN) * f));
     fx.ring.setStrokeStyle(3, ALERT_RING_COLOR, ALERT_RING_ALPHA_MIN + (ALERT_RING_ALPHA_MAX - ALERT_RING_ALPHA_MIN) * f);
     // Periodic warning beep, re-triggered on an interval that shrinks as `f` climbs (see
     // ALERT_PULSE_INTERVAL_MIN/MAX_MS above) — a simple countdown timer accumulated in ms,

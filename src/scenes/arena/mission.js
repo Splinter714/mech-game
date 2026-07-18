@@ -12,7 +12,7 @@
 // #66 is objective-only: the arena never feeds `playerDead` (that's the run-loop's job,
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
-import { axialKey, hexToPixel } from '../../data/hexgrid.js';
+import { axialKey, hexToPixel, hexCorners } from '../../data/hexgrid.js';
 import { isBaseCleared } from '../../data/bases.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR } from './shared.js';
 
@@ -99,9 +99,12 @@ export const MissionMixin = {
     // `HALO`): the dark ring reads against light terrain, the light ring reads against dark
     // terrain, so together they carry the marker's edge against every biome without touching
     // the amber "this is the objective" colour itself.
-    const haloRing = this.add.circle(0, 0, 33).setStrokeStyle(3, 0xfbfdff, 0.9);
-    const outlineRing = this.add.circle(0, 0, 31.5).setStrokeStyle(2, 0x0b0e14, 0.9);
-    const ring = this.add.circle(0, 0, 30).setStrokeStyle(3, UI_HIGHLIGHT_COLOR, 0.9);
+    // #280: hexagon outlines (matching the real hex grid's pointy-top orientation, via the
+    // same `hexCorners` helper hexArt.js uses to draw actual terrain hexes) instead of circles
+    // — stroke-only Polygon shapes, same three radii/stroke widths/colors/alpha as before.
+    const haloRing = this.add.polygon(0, 0, hexCorners(33)).setStrokeStyle(3, 0xfbfdff, 0.9);
+    const outlineRing = this.add.polygon(0, 0, hexCorners(31.5)).setStrokeStyle(2, 0x0b0e14, 0.9);
+    const ring = this.add.polygon(0, 0, hexCorners(30)).setStrokeStyle(3, UI_HIGHLIGHT_COLOR, 0.9);
     const label = this.add.text(0, -46, 'OBJECTIVE', {
       fontFamily: 'monospace', fontSize: '12px', color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
     }).setOrigin(0.5);

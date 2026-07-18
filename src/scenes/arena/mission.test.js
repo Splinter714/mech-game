@@ -26,6 +26,7 @@ function fakeScene(overrides = {}) {
   const scene = Object.assign({
     add: {
       circle: () => fakeGraphic(),
+      polygon: () => fakeGraphic(),
       text: () => fakeGraphic(),
       container: (x, y, list) => Object.assign({ x, y, list }, {
         setDepth() { return this; }, destroy() {},
