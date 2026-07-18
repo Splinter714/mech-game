@@ -24,7 +24,7 @@ function lcg(seed) {
 }
 
 // Build a terrain Map over the hex disc |q|,|r| <= radius, each hex assigned an id by `pick(q,r)`.
-// Ids used: 'grass' (clear), 'building' (SOLID wall — blocks even at an endpoint), 'forest' (SOFT
+// Ids used: 'grass' (clear), 'alertTower' (SOLID wall — blocks even at an endpoint), 'forest' (SOFT
 // cover — passable+blocksLOS, so it's see-through only at a ray's own endpoint hex, #72).
 function gridTerrain(pick, radius = 7) {
   const t = new Map();
@@ -54,21 +54,21 @@ function newWallDistance(scene, x0, y0, x1, y1) {
 
 describe('_wallDistanceLos — allocation-free raycast is bit-identical to the old _wallDistance (#167)', () => {
   it('matches on a hand-built lane with a solid wall, a soft-cover screen, and an endpoint in cover', () => {
-    // A clear row with one building (solid) at q=2 and one forest (soft) at q=4, on r=0.
+    // A clear row with one alertTower (solid) at q=2 and one forest (soft) at q=4, on r=0.
     const terrain = gridTerrain((q, r) => {
       if (r !== 0) return 'grass';
-      if (q === 2) return 'building';
+      if (q === 2) return 'alertTower';
       if (q === 4) return 'forest';
       return 'grass';
     });
     const scene = makeScene(terrain);
     const origin = hexToPixel(0, 0);
-    // Ray straight along r=0 toward q=6: should stop at the building (q=2), well before the forest.
+    // Ray straight along r=0 toward q=6: should stop at the alertTower (q=2), well before the forest.
     const far = hexToPixel(6, 0);
     expect(newWallDistance(scene, origin.x, origin.y, far.x, far.y))
       .toBe(refWallDistance(scene, origin.x, origin.y, far.x, far.y));
-    // Ray to a target STANDING in the forest hex (q=4): with no building between, the forest is
-    // the target's own endpoint hex → transparent (#72), so the lane is clear. Remove the building.
+    // Ray to a target STANDING in the forest hex (q=4): with no alertTower between, the forest is
+    // the target's own endpoint hex → transparent (#72), so the lane is clear. Remove the alertTower.
     const t2 = gridTerrain((q, r) => (r === 0 && q === 4 ? 'forest' : 'grass'));
     const s2 = makeScene(t2);
     const tgt = hexToPixel(4, 0);
@@ -79,7 +79,7 @@ describe('_wallDistanceLos — allocation-free raycast is bit-identical to the o
 
   it('matches the oracle across a large random sweep of terrains, origins, and ray endpoints', () => {
     const rng = lcg(0xC0FFEE);
-    const kinds = ['grass', 'grass', 'grass', 'forest', 'building'];   // weighted toward clear
+    const kinds = ['grass', 'grass', 'grass', 'forest', 'alertTower'];   // weighted toward clear
     let checked = 0;
     for (let trial = 0; trial < 60; trial++) {
       const terrain = gridTerrain(() => kinds[Math.floor(rng() * kinds.length)]);
@@ -136,8 +136,8 @@ describe('_cachedLosToPlayer — delta-driven staggered cache returns stale-then
     const e = {};
     ray(scene, e, 0);                         // seed
     e._losCd = LOS_REFRESH_MS; e._losClear = true;   // pin: cache currently says "clear"
-    // A building slams down squarely in the lane (hex (2,0) ≈166px out, inside the 300px ray).
-    terrain.set(axialKey(2, 0), 'building');
+    // An alertTower slams down squarely in the lane (hex (2,0) ≈166px out, inside the 300px ray).
+    terrain.set(axialKey(2, 0), 'alertTower');
     // Same window: still reports the STALE "clear", hasn't re-raycast.
     expect(ray(scene, e, 16)).toBe(true);     // 16ms in
     expect(ray(scene, e, 16)).toBe(true);     // 32ms in

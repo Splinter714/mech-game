@@ -5,8 +5,9 @@
 // fast/slow wake-response split) — this file is just the thin per-frame glue: real world
 // positions, the live `this.enemies` array, and `this.bases`/`this.alertTowerHexes` (both set
 // by `_buildWorld`, world.js, from `generateTerrain`'s result — `this.bases` from `placeBases`,
-// `this.alertTowerHexes` from `placeOutpostTowers`, #269 playtest follow-up: bases/outposts
-// role swap — towers are outpost-anchored now, not base-anchored).
+// `this.alertTowerHexes` from `placeGapTowers`, #275 redesign: one tower placed solo per gap
+// between successive bases along the corridor's progression, not anchored to any base or
+// "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';

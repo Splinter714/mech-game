@@ -92,8 +92,9 @@ export default class ArenaScene extends Phaser.Scene {
     // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
     // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
     // #254: moved here (was previously reset much later in create(), after `_spawnSquad()`
-    // below) — #251's helipad flourish (`_spawnHelipadFx`, called from `_spawnKind` for every
-    // gunship in the opening squad) calls `_burst`/`_acquireImpactCircle` DURING `_spawnSquad()`,
+    // below) — a spawn-time FX flourish (called from `_spawnKind` for every gunship in the
+    // opening squad, #251-era; the helipad terrain that flourish was themed around has since
+    // been removed, #275) calls `_burst`/`_acquireImpactCircle` DURING `_spawnSquad()`,
     // so on a Garage->Arena->Garage->Arena second deploy (ArenaScene is the same reused Scene
     // instance — see the #190 comment on `_debrisPool` below) that first burst was still reading
     // the FIRST session's stale `_impactPool`, recycling one of its destroyed Arc/Circle game

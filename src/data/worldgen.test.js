@@ -9,10 +9,10 @@ import {
   boundaryRingKeys, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH, MIN_SPAWN_BOUNDARY_HEX_DIST,
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
   generateSpine, corridorHexSet, spineProgressHexOf,
-  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, HELIPAD_COUNT,
-  BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX, ALERT_TOWERS_PER_OUTPOST_MIN,
-  ALERT_TOWERS_PER_OUTPOST_MAX, BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
-  placeBases, placeOutpostTowers, dockCountFor,
+  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX,
+  BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
+  BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
+  placeBases, placeGapTowers, dockCountFor,
   TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
@@ -198,64 +198,18 @@ describe('generateTerrain', () => {
     expect(terrain.get(dummy)).toBe(GRASSLAND.groundA);
   });
 
-  it('buildingHp only holds destructible solid hexes (outposts + base infra like helipad/alertTower), never soft cover', () => {
+  it('buildingHp only holds destructible solid hexes (base infra like alertTower/objective), never soft cover', () => {
     const { terrain, buildingHp, coverHp } = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND });
-    // #251: helipad is now destructible too, so buildingHp legitimately holds it alongside the
-    // biome's real outpost — both are "solid" (non-soft-cover) destructibles; only outposts are
-    // ever picked as the mission objective (isMissionObjective, exercised elsewhere). #269: the
-    // alertTower base-infra hex is the same kind of destructible-but-not-a-mission-objective
-    // set-dressing. #269 playtest follow-up: `objective` is a new destructible base-infra hex too
-    // (the real target `_targetCurrentBase` now points the mission marker at).
+    // #275: the destructible outposts (building/adobe/iceRuin/tower/obsidian) and `helipad` were
+    // removed — `alertTower`/`objective` (world-gen stamped) are the only "solid" (non-soft-cover)
+    // destructibles generateTerrain can produce. Only `objective` is ever picked as the mission
+    // objective (isMissionObjective, exercised elsewhere); alertTower is destructible set-dressing.
+    // (`dockClosed` is a live RUNTIME state swap — scenes/arena/bases.js — never stamped by
+    // world-gen itself, so it can't appear here.)
     for (const k of buildingHp.keys()) {
-      expect([GRASSLAND.outpost, 'helipad', 'alertTower', 'objective']).toContain(terrain.get(k));
+      expect(['alertTower', 'objective']).toContain(terrain.get(k));
     }
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
-  });
-
-  describe('#251 helipad — static set-dressing stamped at world-gen time, decoupled from any spawn', () => {
-    // The candidate hex for each of the HELIPAD_COUNT draws only actually becomes a helipad if
-    // it's still plain ground by then (`isGround`) — same "best-effort, may occasionally skip a
-    // draw" shape `_spawnOutpostAt` (world.js) already tolerates — so the count is a ceiling, not
-    // a guarantee, but across a spread of seeds it should usually hit the full count and never
-    // exceed it.
-    it('stamps at most HELIPAD_COUNT helipad hexes, usually hitting the full count, biome-independent', () => {
-      for (const biome of [GRASSLAND, DESERT]) {
-        let sawFullCount = false;
-        for (let seed = 0; seed < 30; seed++) {
-          const { terrain } = generateTerrain({ seed, worldRadius: 25, biome });
-          const count = [...terrain.values()].filter((id) => id === 'helipad').length;
-          expect(count).toBeLessThanOrEqual(HELIPAD_COUNT);
-          if (count === HELIPAD_COUNT) sawFullCount = true;
-        }
-        expect(sawFullCount).toBe(true);
-      }
-    });
-
-    it('is reproducible for a given seed, same as every other feature', () => {
-      const opts = { seed: 0x5eed, worldRadius: 20, biome: GRASSLAND };
-      const a = generateTerrain(opts);
-      const b = generateTerrain(opts);
-      const helipadsOf = (t) => [...t].filter(([, id]) => id === 'helipad').map(([k]) => k).sort();
-      expect(helipadsOf(a.terrain)).toEqual(helipadsOf(b.terrain));
-    });
-
-    // #251 (playtest follow-up): helipad is now destructible like any other base-infrastructure
-    // hex — it's seeded into `buildingHp` (the "solid destructible" bucket; it isn't soft cover)
-    // with its own hp so weapon fire/stomps can flatten it into rubble, same generic machinery
-    // as a real outpost. It's excluded from ever being picked as THE mission objective via a
-    // separate mechanism (`isMissionObjective`, exercised in terrain.test.js/mission-arena code),
-    // not by staying out of `buildingHp` — see world.js `_objectiveHexKeys`.
-    it('is destructible — seeded into buildingHp (never coverHp) with its own hp', () => {
-      for (let seed = 0; seed < 10; seed++) {
-        const { terrain, buildingHp, coverHp } = generateTerrain({ seed, worldRadius: 20, biome: GRASSLAND });
-        for (const [k, id] of terrain) {
-          if (id !== 'helipad') continue;
-          expect(buildingHp.has(k)).toBe(true);
-          expect(buildingHp.get(k)).toBe(TERRAIN.helipad.hp);
-          expect(coverHp.has(k)).toBe(false);
-        }
-      }
-    });
   });
 
   describe('#110 deep is boundary-only; hazard is the in-map feature', () => {
@@ -276,12 +230,13 @@ describe('generateTerrain', () => {
     it('grassland (no hazard) never stamps anything but its normal roles', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: GRASSLAND });
       const validIds = new Set([
-        // #251: `helipad` is a normal stamped role now too — static set-dressing, not a hazard.
         // #269: `dock`/`alertTower` are the base-population system's own normal stamped roles.
         // `turretEmplacement` (playtest follow-up) is the same kind of normal stamped role.
         // `objective` (playtest follow-up) is the base's dedicated destructible-target hex.
-        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost,
-        'helipad', 'dock', 'alertTower', 'turretEmplacement', 'objective',
+        // #275: the outpost-cluster loop and `helipad` were removed — there's no longer a
+        // biome-specific "outpost" role or a stamped helipad id to allow here.
+        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover,
+        'dock', 'alertTower', 'turretEmplacement', 'objective',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });
@@ -327,33 +282,18 @@ describe('generateTerrain', () => {
       expect([...a.terrain.entries()]).toEqual([...b.terrain.entries()]);
     });
 
-    it('the `outposts` override controls how many outpost seeds are placed', () => {
-      const { includedKeys } = buildCorridor(9);
-      const few = generateTerrain({ seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, outposts: 1 });
-      const many = generateTerrain({ seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, outposts: 20 });
-      expect(many.buildingHp.size).toBeGreaterThan(few.buildingHp.size);
-    });
-
-    // #269 playtest follow-up ("outpost:base ratio should be 1:1"): with no explicit `outposts`
-    // override, outpost count now DEFAULTS to `baseCount` (not a biome-tuned flat number — that
-    // field was removed from biomes.js entirely) — so a map's outpost seed count always tracks
-    // its base count 1:1, whatever `baseCount` is asked for.
-    it('outpost seed count defaults to baseCount (1:1), not a biome-specific number', () => {
+    // #275 (redesign): the number of alert towers a map gets always tracks `baseCount` 1:1 (one
+    // tower per gap between successive bases) — there's no separate "outpost" count to override
+    // anymore.
+    it('gap tower count tracks baseCount (up to best-effort placement), whatever baseCount is asked for', () => {
       const { includedKeys } = buildCorridor(9);
       for (const baseCount of [1, 3, 5]) {
-        const { outposts } = generateTerrain({
+        const { bases, alertTowers } = generateTerrain({
           seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, baseCount,
         });
-        expect(outposts.length).toBe(baseCount);
+        expect(bases.length).toBe(baseCount);
+        expect(alertTowers.length).toBeLessThanOrEqual(baseCount);
       }
-    });
-
-    it('an explicit `outposts` override still wins over the baseCount default', () => {
-      const { includedKeys } = buildCorridor(9);
-      const { outposts } = generateTerrain({
-        seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, baseCount: 3, outposts: 7,
-      });
-      expect(outposts.length).toBe(7);
     });
   });
 });
@@ -646,8 +586,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
     const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
     // #269 playtest follow-up (bases/outposts role swap): `placeBases` no longer places alert
-    // towers at all — it returns only `{ bases }` now (see `placeOutpostTowers` below for the
-    // separate, outpost-anchored tower placement).
+    // towers at all — it returns only `{ bases }` now (see `placeGapTowers` below for the
+    // separate, gap-anchored tower placement, #275 redesign).
     const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
 
     expect(bases.length).toBe(BASE_COUNT);
@@ -697,37 +637,53 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     }
   });
 
-  // #269 playtest follow-up (bases/outposts role swap): the new outpost-anchored tower placement.
-  it('placeOutpostTowers: places alert towers near each given outpost centre, not near bases', () => {
-    const rng = mulberry32(321);
-    const all = buildAllRing(16);
-    const T = new Map();
-    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
-    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
-    const outpostCenters = [{ q: 0, r: 0 }, { q: 6, r: -3 }, { q: -5, r: 4 }];
-    const alertTowers = placeOutpostTowers(rng, outpostCenters, T, isGround);
+  // #275 (redesign): alert towers are no longer anchored to an "outpost" concept — they place
+  // solo, one per GAP between successive bases along progress-of-run (gap 0 = spawn/start to
+  // base 0, gap i = base i-1 to base i).
+  describe('placeGapTowers (#275: one tower per gap between successive bases)', () => {
+    // Straight line of hexes ordered along q, so q IS the progress metric exactly — lets us
+    // assert precisely which gap each tower's progress value falls into.
+    const buildLine = (maxQ = 300) => {
+      const all = [];
+      for (let q = 0; q <= maxQ; q++) all.push({ q, r: 0 });
+      const T = new Map();
+      for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+      const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+      return { all, T, isGround, progressOf: (h) => h.q };
+    };
 
-    for (const t of alertTowers) {
-      expect(T.get(axialKey(t.q, t.r))).toBe('alertTower');
-    }
-    // Total alert towers is within the expected per-outpost band (best-effort — placement can
-    // miss a candidate hex on a crowded map, so this is an upper bound, not an exact count).
-    expect(alertTowers.length).toBeLessThanOrEqual(outpostCenters.length * ALERT_TOWERS_PER_OUTPOST_MAX);
-    // Every placed tower sits within reach (rings 3-5) of SOME outpost centre, not scattered
-    // arbitrarily and not clustered near a base centre that was never passed in.
-    for (const t of alertTowers) {
-      const nearAnOutpost = outpostCenters.some((c) => distance(t, c) <= 5);
-      expect(nearAnOutpost).toBe(true);
-    }
-  });
+    it('places exactly one tower per gap, each landing strictly within its own gap\'s progress bounds', () => {
+      const { all, T, isGround, progressOf } = buildLine();
+      const baseCenters = [{ q: 50, r: 0 }, { q: 150, r: 0 }, { q: 250, r: 0 }];
+      const rng = mulberry32(321);
+      const alertTowers = placeGapTowers(rng, all, T, isGround, baseCenters, progressOf);
 
-  it('placeOutpostTowers: an empty outpost list places no towers', () => {
-    const rng = mulberry32(1);
-    const all = buildAllRing(10);
-    const T = new Map();
-    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
-    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
-    expect(placeOutpostTowers(rng, [], T, isGround)).toEqual([]);
+      expect(alertTowers.length).toBe(baseCenters.length);
+      for (const t of alertTowers) expect(T.get(axialKey(t.q, t.r))).toBe('alertTower');
+
+      let prev = 0;   // gap 0 starts at the corridor's start (progress 0), not a base
+      for (let i = 0; i < baseCenters.length; i++) {
+        const hi = baseCenters[i].q;
+        const p = progressOf(alertTowers[i]);
+        expect(p).toBeGreaterThanOrEqual(Math.min(prev, hi));
+        expect(p).toBeLessThanOrEqual(Math.max(prev, hi));
+        prev = hi;
+      }
+    });
+
+    it('is deterministic given the same seed', () => {
+      const baseCenters = [{ q: 50, r: 0 }, { q: 150, r: 0 }, { q: 250, r: 0 }];
+      const runA = buildLine();
+      const runB = buildLine();
+      const a = placeGapTowers(mulberry32(7), runA.all, runA.T, runA.isGround, baseCenters, runA.progressOf);
+      const b = placeGapTowers(mulberry32(7), runB.all, runB.T, runB.isGround, baseCenters, runB.progressOf);
+      expect(a).toEqual(b);
+    });
+
+    it('no bases means no gaps means no towers', () => {
+      const { all, T, isGround } = buildLine(10);
+      expect(placeGapTowers(mulberry32(1), all, T, isGround, [])).toEqual([]);
+    });
   });
 
   it('#269 playtest follow-up: drone and turret never appear in the dock kind pools', () => {
@@ -753,9 +709,10 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     const all = buildAllRing();
     const T = new Map();
     for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
-    // Pre-mark a chunk of the map as an outpost so placeBases must route around it.
+    // Pre-mark a chunk of the map as non-ground (any id other than groundA/groundB) so
+    // placeBases must route around it.
     const preMarked = new Set();
-    for (const h of range({ q: 0, r: 0 }, 3)) { T.set(axialKey(h.q, h.r), 'building'); preMarked.add(axialKey(h.q, h.r)); }
+    for (const h of range({ q: 0, r: 0 }, 3)) { T.set(axialKey(h.q, h.r), 'rubble'); preMarked.add(axialKey(h.q, h.r)); }
     const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
     const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
     for (const base of bases) {
@@ -856,8 +813,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     }
   });
 
-  it('generateTerrain returns bases/alertTowers/outposts consistent with the final terrain map', () => {
-    const { terrain, bases, alertTowers, outposts } = generateTerrain({
+  it('generateTerrain returns bases/alertTowers consistent with the final terrain map', () => {
+    const { terrain, bases, alertTowers } = generateTerrain({
       seed: 123, worldRadius: 14, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
     });
     expect(bases.length).toBe(BASE_COUNT);
@@ -866,38 +823,40 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       for (const t of base.turrets) expect(terrain.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
     }
     for (const t of alertTowers) expect(terrain.get(axialKey(t.q, t.r))).toBe('alertTower');
-    // #269 playtest follow-up (bases/outposts role swap): `outposts` is a new returned field —
-    // every position in it is still stamped as the biome's own outpost id in the final terrain.
-    for (const o of outposts) expect(terrain.get(axialKey(o.q, o.r))).toBe(GRASSLAND.outpost);
   });
 
-  // #269 playtest follow-up (bases/outposts role swap): alert towers are anchored to OUTPOSTS
-  // now, not bases — this asserts every placed tower is actually near one of the returned
-  // outpost positions, not scattered independently near a base.
-  it('generateTerrain places alert towers near the outposts it returns, not near bases', () => {
-    const { bases, alertTowers, outposts } = generateTerrain({
-      seed: 456, worldRadius: 16, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
+  // #275 (redesign): alert towers are placed one per gap between successive bases, not anchored
+  // to any "outpost" concept — this asserts each tower's spine-progress position falls between
+  // the previous base's position (or the corridor start, for gap 0) and the next base's, in the
+  // same order as the bases themselves (base index order == progress order, per `placeBases`).
+  it('generateTerrain places alert towers one per gap, ordered along the bases\' own progress', () => {
+    const { spine, includedKeys } = buildCorridor(456);
+    const { bases, alertTowers } = generateTerrain({
+      seed: 456, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys, spine,
     });
-    for (const t of alertTowers) {
-      const nearAnOutpost = outposts.some((o) => distance(t, o) <= 5);
-      expect(nearAnOutpost).toBe(true);
-      const nearABase = bases.some((b) => distance(t, b.center) <= 5);
-      // Not a hard impossibility (an outpost could coincidentally land within 5 hexes of a base
-      // centre), but the tower's proximity to an outpost is the thing under test above; this is
-      // just a sanity note, not asserted, since base/outpost placement can legitimately overlap.
-      void nearABase;
+    expect(bases.length).toBe(BASE_COUNT);
+    // Best-effort placement (a gap can rarely miss if it has no ground candidate) — but on a
+    // normal corridor every gap should place.
+    expect(alertTowers.length).toBe(BASE_COUNT);
+    const baseProgresses = bases.map((b) => spineProgressHexOf(spine, b.center.q, b.center.r));
+    let prev = 0;
+    for (let i = 0; i < alertTowers.length; i++) {
+      const p = spineProgressHexOf(spine, alertTowers[i].q, alertTowers[i].r);
+      const hi = baseProgresses[i];
+      expect(p).toBeGreaterThanOrEqual(Math.min(prev, hi) - 1e-6);
+      expect(p).toBeLessThanOrEqual(Math.max(prev, hi) + 1e-6);
+      prev = hi;
     }
   });
 
-  // #269 playtest follow-up: is an alert tower's placement (rings 3-5 out from its OUTPOST
-  // centre) actually reachable on the corridor's natural path, or could it land off to the side
-  // the player would never drive near? `placeOutpostTowers` only ever stamps a candidate hex
-  // that's already IN `T` (built from the live corridor's own hex set, scenes/arena/world.js
-  // `_buildWorld`) — so every placed tower is, by construction, already inside the drivable
-  // corridor. This test exercises the REAL corridor-carving path (buildCorridor, same as
-  // world.js) across many seeds and confirms every placed alert tower's pixel position sits
-  // within CORRIDOR_HALF_WIDTH_PX of the corridor's own spine — i.e. never further from the
-  // driving path than any other in-map feature can be, not stranded off to one side.
+  // #275: is an alert tower's placement actually reachable on the corridor's natural path, or
+  // could it land off to the side the player would never drive near? `placeGapTowers` only ever
+  // stamps a candidate hex that's already IN `T` (built from the live corridor's own hex set,
+  // scenes/arena/world.js `_buildWorld`) — so every placed tower is, by construction, already
+  // inside the drivable corridor. This test exercises the REAL corridor-carving path
+  // (buildCorridor, same as world.js) across many seeds and confirms every placed alert tower's
+  // pixel position sits within CORRIDOR_HALF_WIDTH_PX of the corridor's own spine — i.e. never
+  // further from the driving path than any other in-map feature can be, not stranded off to one side.
   it('places alert towers only within the corridor\'s own half-width of its spine (never off-path)', () => {
     function perpDistToSpine(points, x, y) {
       let best = Infinity;
@@ -929,18 +888,16 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(checked).toBeGreaterThan(30);   // sanity: the sweep actually placed towers to check
   });
 
-  // #269 playtest follow-up: confirms placement isn't wildly unreliable — most requested towers
-  // (ALERT_TOWERS_PER_OUTPOST_MIN..MAX per outpost) actually land somewhere, even though the
-  // 10-try rejection sampling against a real corridor can occasionally miss a candidate ring
-  // entirely.
-  it('places most of the requested alert towers across a sweep of real corridors (not a rare fluke)', () => {
+  // #275: confirms placement isn't wildly unreliable — most of the `BASE_COUNT` gaps actually
+  // get a tower, even though a gap can rarely have no valid ground candidate at all.
+  it('places most of the requested gap towers across a sweep of real corridors (not a rare fluke)', () => {
     let totalMaxPossible = 0, totalPlaced = 0;
     for (let seed = 1; seed <= 25; seed++) {
       const { includedKeys } = buildCorridor(seed * 101 + 3);
-      const { outposts, alertTowers } = generateTerrain({
+      const { bases, alertTowers } = generateTerrain({
         seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys,
       });
-      totalMaxPossible += outposts.length * ALERT_TOWERS_PER_OUTPOST_MAX;
+      totalMaxPossible += bases.length;
       totalPlaced += alertTowers.length;
     }
     expect(totalPlaced).toBeGreaterThan(totalMaxPossible * 0.5);

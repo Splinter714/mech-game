@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { BIOMES, BIOME_IDS, DEFAULT_BIOME, getBiome, pickNextBiome, RECENCY_WINDOW } from './biomes.js';
 import { TERRAIN, isPassable, blocksLOS, isDestructible, rubbleFor } from './terrain.js';
 
-const ROLE_FIELDS = ['groundA', 'groundB', 'channel', 'deep', 'cover', 'outpost'];
+const ROLE_FIELDS = ['groundA', 'groundB', 'channel', 'deep', 'cover'];
 
 describe('biome registry (#67)', () => {
   it('has the four new biomes plus grassland', () => {
@@ -34,14 +34,13 @@ describe('biome registry (#67)', () => {
       expect(blocksLOS(b.channel)).toBe(false);
       // Deep: impassable (the lake analog) — #110: boundary-ring-only, never in-map.
       expect(isPassable(b.deep)).toBe(false);
-      // Cover: walk-through cover — passable AND blocks LOS.
+      // Cover: walk-through cover — passable AND blocks LOS. #275: also destructible, and its
+      // rubble is passable/non-cover (the biomes' `outpost` role/terrain was removed, but cover
+      // is still a real destructible with its own rubble collapse).
       expect(isPassable(b.cover)).toBe(true);
       expect(blocksLOS(b.cover)).toBe(true);
-      // Outpost: destructible hard cover — impassable, blocks LOS, has HP, collapses to rubble.
-      expect(isPassable(b.outpost)).toBe(false);
-      expect(blocksLOS(b.outpost)).toBe(true);
-      expect(isDestructible(b.outpost)).toBe(true);
-      const rub = rubbleFor(b.outpost);
+      expect(isDestructible(b.cover)).toBe(true);
+      const rub = rubbleFor(b.cover);
       expect(TERRAIN[rub]).toBeDefined();
       expect(isPassable(rub)).toBe(true);     // you can drive over the debris
       expect(blocksLOS(rub)).toBe(false);
@@ -74,11 +73,13 @@ describe('biome registry (#67)', () => {
     }
   });
 
-  // #269 playtest follow-up ("outpost:base ratio should be 1:1"): a biome no longer declares its
-  // own flat outpost count — that knob moved to data/worldgen.js (`outpostCount` defaults to
-  // `baseCount`), so this asserts the field is genuinely gone rather than silently unused.
-  it('biomes no longer declare a per-biome outpost count', () => {
+  // #275: a biome no longer declares an `outpost` role (or a per-biome outpost count) at all —
+  // the destructible outpost terrain types were removed, and alert towers no longer anchor to
+  // any outpost concept (data/worldgen.js `placeGapTowers`), so this asserts both fields are
+  // genuinely gone rather than silently unused.
+  it('biomes no longer declare an outpost role or a per-biome outpost count', () => {
     for (const b of Object.values(BIOMES)) {
+      expect(b.outpost).toBeUndefined();
       expect(b.outposts).toBeUndefined();
     }
   });

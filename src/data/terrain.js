@@ -4,7 +4,7 @@
 //   blocksLOS   — does it stop shots / break line-of-sight (cover)
 //   speedFactor — max-speed multiplier for a mech standing on it (1 = normal; <1 = slow;
 //                 only meaningful for passable terrain)
-//   destructible — outposts have HP and turn into `rubble` when destroyed (weapon fire or a
+//   destructible — some terrain has HP and turns into `rubble` when destroyed (weapon fire or a
 //                 mech stomp). `hp` is the starting hit points seeded per building hex.
 //   water        — #151: reads visually as actual water (or its frozen/melt equivalent) — NOT
 //                 just "slow terrain in general" (forest/scrub/debris/dryRiver/quicksand/crust/
@@ -31,10 +31,10 @@
 //
 // #269 (issue, section 1): an additive orthogonal vocabulary layered on TOP of the raw fields
 // above — every entry ALSO carries:
-//   category — 'terrain' (natural ground) vs. 'base' (fabricated structures — helipad today,
-//              wall/tower/dock/alert-tower later). Purely an art-palette/objective-eligibility
+//   category — 'terrain' (natural ground) vs. 'base' (fabricated structures — dock/alertTower/
+//              turretEmplacement/objective today). Purely an art-palette/objective-eligibility
 //              signal (BASE_INFRA_COLOR, hexArt.js); it does NOT drive cover/movement — those
-//              still key off each entry's own raw fields (see `helipad` below: `category: 'base'`
+//              still key off each entry's own raw fields (see `dock` below: `category: 'base'`
 //              but `movement: 'full'`/`cover: 'open'`, exactly like any other open ground).
 //   movement — 'full' | 'slow' | 'none', mapped straight from `passable`/`speedFactor`: 'none'
 //              for `passable: false`, 'slow' for `speedFactor < 1`, 'full' otherwise. Every
@@ -43,8 +43,9 @@
 //              and reasoning. Impassable/boundary terrain (deepWater/mesa/ice/collapsed/lava) is
 //              'none', so the consolidation never touches it.
 //   cover    — 'open' | 'soft' | 'hard', mapped from `blocksLOS`+`passable`: 'open' when
-//              `blocksLOS` is false, 'hard' when `blocksLOS` && `!passable` (the destructible
-//              outposts: building/adobe/iceRuin/tower/obsidian), 'soft' when `blocksLOS` &&
+//              `blocksLOS` is false, 'hard' when `blocksLOS` && `!passable` (destructible hard
+//              cover — the base-infra structures: alertTower/dockClosed/objective), 'soft' when
+//              `blocksLOS` &&
 //              `passable` (the walk-through cover: forest/scrub/drift/wreck/fumarole). `hard`
 //              cover always blocks a ground unit's LOS; `soft` cover only blocks a SMALL ground
 //              unit's LOS — a mech/large unit sees clean over it (issue #269 §1, using the
@@ -79,53 +80,27 @@ export const TERRAIN = {
   // #227: its OWN rubble (charred plant debris) distinct from a destroyed building's masonry.
   forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 40, rubbleId: 'vegRubble',
                category: 'terrain', movement: 'slow', cover: 'soft' },
-  // Outpost building: hard cover you can DESTROY (weapon fire or a stomp) → collapses to rubble.
-  building:  { id: 'building',  tex: 'hex_building',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'rubble',
-               category: 'terrain', movement: 'none', cover: 'hard' },
   // Rubble: what a destroyed building leaves behind — broken masonry chunks, passable, no cover, mild slow.
+  // #275: the biome-independent generic fallback (`RUBBLE` below) — still produced by the
+  // base-infra destructibles (alertTower/objective/dockClosed) even though the grassland
+  // `building` outpost that originally used it is gone.
   rubble:    { id: 'rubble',    tex: 'hex_rubble',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
   // #227: what a destroyed forest hex leaves behind — charred plant debris, visually distinct
-  // from the building's broken-masonry rubble even though both are passable/no-cover.
+  // from the generic rubble's broken-masonry look even though both are passable/no-cover.
   vegRubble: { id: 'vegRubble', tex: 'hex_vegRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
-  // #251: helipad ground marking — static base-infrastructure set-dressing, stamped into the
-  // map like any other feature (a couple per generated layout — see worldgen.js `HELIPAD_COUNT`)
-  // at world-gen time, biome-independent. NOT tied to any enemy spawn: a helicopter kind's own
-  // offscreen spawn logic is completely independent of where a helipad happens to sit. Fully
-  // walkable/flyable — a subtle ground detail, not an obstacle or cover — so it never blocks
-  // movement or LOS and never slows a mech crossing it.
-  // #251 (playtest follow-up): base infrastructure should be destructible like any other
-  // outpost. hp:50 sits between soft cover (30-40, forest/scrub/drift/wreck/fumarole — flimsy)
-  // and a hard-cover outpost (60, building/adobe/iceRuin/tower/obsidian — a whole structure) —
-  // a landing pad is built infrastructure but a thin flat surface, not a full building. It
-  // collapses to the generic `rubble` (broken masonry/debris, itself passable/non-cover) rather
-  // than a bespoke rubble id, matching the "one uniform base-infra look" ask — destroyed base
-  // infrastructure reads as the same kind of wreckage everywhere, same as its standing fill.
-  // Stays passable (and its rubble stays passable too) both before and after destruction — a
-  // mech can always drive over it. `setDressing: true` keeps it destructible/damageable (HP,
-  // rubble collapse, stomp, convergence-fallback targeting) without ever letting it be picked
-  // as THE mission objective (`isMissionObjective` below) — it's atmospheric, not an assault
-  // target, unlike the genuine outposts it shares the `buildingHp` bucket with.
-  helipad:   { id: 'helipad',   tex: 'hex_helipad',   passable: true,  blocksLOS: false, speedFactor: 1,
-               destructible: true, hp: 50, rubbleId: 'rubble', setDressing: true,
-               // #269: `category: 'base'` (the only base-category entry today) — but its
-               // cover/movement fall out of ITS OWN raw fields exactly like any terrain entry,
-               // NOT from being `base` (see the file-header comment above): open cover, full
-               // movement, same as bare ground.
-               category: 'base', movement: 'full', cover: 'open' },
-
   // #269 §3 (issue: base population rework — dormant docks + alert towers): a GENERIC dock/bay
   // hex — a pure PLACEMENT MARKER for a dormant docked unit (data/worldgen.js `placeBases`), not
   // a structure of its own. Per the issue's explicit call ("NOT rendered as a distinctive
   // structure itself... the docked unit's own art is what shows what's there"), this stays a
   // small ground-level marking rather than a full structure — the SPECIFIC enemy kind stationed
   // at a given dock is world-gen PLACEMENT DATA (`placeBases`' returned `docks` list), never a
-  // new terrain entry per kind. #269 playtest follow-up: originally reused `hex_helipad`
-  // verbatim, which in play made every dock read as "just another helipad" — now has its own
-  // `hex_dock` texture (art/hexArt.js — a rectangular bay pad with a chevron lane marking,
-  // distinct from helipad's round disc+H mark), while remaining the same kind of subtle ground
-  // detail, not an obstacle. A mech can freely walk on/off the pad (the docked unit is a
+  // new terrain entry per kind. #269 playtest follow-up: originally reused the now-removed
+  // `helipad`'s texture verbatim (#275), which in play made every dock read as "just another
+  // helipad" — now has its own `hex_dock` texture (art/hexArt.js — a rectangular bay pad with a
+  // chevron lane marking, distinct from a landing pad's round disc+H mark), while remaining the
+  // same kind of subtle ground detail, not an obstacle. A mech can freely walk on/off the pad (the docked unit is a
   // separate enemy record, not the hex itself), so full movement + open cover, same as bare
   // ground. Deliberately NOT destructible: the issue calls out that a dock hex having its own HP
   // separate from the unit docked on it is unnecessary complexity — only the docked UNIT (an
@@ -148,35 +123,36 @@ export const TERRAIN = {
   // reinforcement (bases.js hooks `_onTerrainCollapsed` into world.js's generic
   // `_damageBuildingAt` collapse path to permanently retire that dock's resupply state the
   // instant this hex is destroyed, even if it hadn't used up its one resupply yet).
-  // `hp: 30` sits between alertTower's slim sensor mast (25) and a full outpost building (60) —
-  // a sealed bay door is sturdier than a thin mast but still not a whole building. Collapses to
-  // the same uniform `rubble` every other base-infra hex uses (helipad/alertTower/building) so
-  // destroyed base infrastructure reads consistently. `setDressing: true` (same precedent as
-  // `alertTower`/`helipad`) keeps it OUT of the mission-objective pool — it's a dynamic
+  // `hp: 30` sits between alertTower's slim sensor mast (25) and objective's 40 — a sealed bay
+  // door is sturdier than a thin mast but still not the real assault target. Collapses to
+  // the same uniform `rubble` every other base-infra hex uses (alertTower/objective/dockClosed)
+  // so destroyed base infrastructure reads consistently. `setDressing: true` (same precedent as
+  // `alertTower`) keeps it OUT of the mission-objective pool — it's a dynamic
   // occupancy state, never a placed assault objective. Owner: hp tunable via playtest.
   dockClosed:{ id: 'dockClosed',tex: 'hex_dockClosed', passable: false, blocksLOS: true,
                destructible: true, hp: 30, rubbleId: 'rubble', setDressing: true,
                category: 'base', movement: 'none', cover: 'hard' },
   // #269 §3: a small, cheap, DESTRUCTIBLE sensor tower — the wake TRIGGER for the base-population
   // system (data/alertTower.js's pure countdown state machine + scenes/arena/bases.js's per-frame
-  // tick/wake routing). #269 playtest follow-up (bases/outposts role swap): it's placed at/near
-  // an OUTPOST (data/worldgen.js `placeOutpostTowers`), not owned by or part of any base — the
-  // nearest base is still resolved at wake time, once its countdown actually completes. While
-  // standing, a player who lingers in its
+  // tick/wake routing). #275 (redesign): placed solo, one per GAP between successive bases along
+  // the corridor's spine progression (data/worldgen.js `placeGapTowers`) — not anchored to any
+  // "outpost" concept at all (that terrain/idea was removed entirely). Not owned by or part of any
+  // base — the nearest base is still resolved at wake time, once its countdown actually completes.
+  // While standing, a player who lingers in its
   // detection radius starts a countdown ("radioing it in"); destroying the tower first cancels
-  // it — a real stealth/tension window, not just flavor. Reads as a small emplacement — the same
-  // cover/movement profile as the existing `tower` hard-cover outpost (hard cover, no movement)
+  // it — a real stealth/tension window, not just flavor. Reads as a small emplacement — hard
+  // cover, no movement, same shape as the other base-infra structures (dockClosed/objective)
   // since it should feel like a genuine destructible objective-of-opportunity for a stealthy
-  // player — just cheaper (hp 25 vs. an outpost's 60) since it's a slim sensor mast, not a whole
-  // building. #269 playtest follow-up: originally reused `hex_tower` verbatim — the EXACT same
-  // texture as the ordinary destructible outpost building — so in play it was indistinguishable
-  // from a regular building; players fighting through/near a base destroyed alert towers
-  // incidentally without ever noticing, canceling the wake countdown before it could complete.
-  // Now has its own `hex_alertTower` texture (art/hexArt.js — a thin sensor mast with an angled
-  // dish and a pulsing amber beacon light, deliberately unlike either helipad's ground disc or
-  // tower's blocky building roof) so a player can actually recognize it as a distinct thing
-  // worth noticing, either to avoid triggering it or to snipe it before its countdown completes.
-  // `setDressing: true` (same precedent as `helipad`) keeps it OUT of the mission-objective pool
+  // player — just cheaper (hp 25) since it's a slim sensor mast, not a whole structure. #269
+  // playtest follow-up: originally reused the removed `tower` outpost's texture verbatim — the
+  // EXACT same texture as an ordinary destructible outpost building — so in play it was
+  // indistinguishable from a regular building; players fighting through/near a base destroyed
+  // alert towers incidentally without ever noticing, canceling the wake countdown before it
+  // could complete. Now has its own `hex_alertTower` texture (art/hexArt.js — a thin sensor mast
+  // with an angled dish and a pulsing amber beacon light, deliberately unlike any other base-infra
+  // structure's shape) so a player can actually recognize it as a distinct thing worth noticing,
+  // either to avoid triggering it or to snipe it before its countdown completes.
+  // `setDressing: true` (same precedent as `dockClosed`) keeps it OUT of the mission-objective pool
   // (`isMissionObjective`) — it's a stealth/wake mechanic, never the assault-objective hex.
   alertTower:{ id: 'alertTower',tex: 'hex_alertTower', passable: false, blocksLOS: true,
                destructible: true, hp: 25, rubbleId: 'rubble', setDressing: true,
@@ -195,7 +171,7 @@ export const TERRAIN = {
   // Deliberately NOT destructible either, same "a placement marker doesn't need its own HP
   // separate from the unit standing on it" reasoning as `dock` — which also means it's
   // automatically excluded from `isMissionObjective` (that check requires `destructible`), so
-  // no `setDressing` flag is needed here (unlike `alertTower`/`helipad`, which ARE genuine
+  // no `setDressing` flag is needed here (unlike `alertTower`/`dockClosed`, which ARE genuine
   // destructible structures and need the flag to opt out). Its own texture (`hex_turretEmplacement`,
   // art/hexArt.js) is what makes it read as visually distinct from a plain `dock` — a "weapon
   // pad" marking (red ring + crosshair) vs. the dock's landing-pad "H" marking.
@@ -210,14 +186,14 @@ export const TERRAIN = {
   // alertTower, and reads as "the real thing to punch through" for that base — a proper structure,
   // not a placement marker, so it's a genuine hard-cover building (mirrors `alertTower`'s shape as
   // a real structure: impassable, blocks LOS) rather than the passable ground markings dock/
-  // turretEmplacement use. hp 40 sits between the alert tower's slim-mast 25 and a full outpost's
-  // 60 — substantial enough to read as a real objective, not a one-shot. `setDressing` is
-  // deliberately OMITTED (unlike alertTower/helipad) — this hex IS meant to be `isMissionObjective`-
+  // turretEmplacement use. hp 40 sits above the alert tower's slim-mast 25 and dockClosed's 30 —
+  // substantial enough to read as a real objective, not a one-shot. `setDressing` is
+  // deliberately OMITTED (unlike alertTower/dockClosed) — this hex IS meant to be `isMissionObjective`-
   // eligible in spirit (it's what the marker targets), though nothing currently drives
   // `isBaseCleared`/win-condition off it directly (kill-all-docked-enemies stays the actual win
   // condition, per the issue's explicit scoping call — this hex only fixes what the marker visually
   // points at). Collapses to the same generic biome-independent `rubble` as the other base-infra
-  // structures (dock/alertTower/helipad) — a destroyed objective reads as the same kind of
+  // structures (alertTower/dockClosed) — a destroyed objective reads as the same kind of
   // wreckage everywhere, not a biome-specific rubble.
   objective: { id: 'objective', tex: 'hex_objective', passable: false, blocksLOS: true,
                destructible: true, hp: 40, rubbleId: 'rubble',
@@ -237,15 +213,12 @@ export const TERRAIN = {
   mesa:      { id: 'mesa',      tex: 'hex_mesa',      passable: false, blocksLOS: false,
                category: 'terrain', movement: 'none', cover: 'open' },
   // Scrub: sparse desert brush — walk-through cover (passable + slowing + blocks LOS), like forest.
-  // #227: its own rubble (scattered dead scrub) distinct from adobe's rubble.
+  // #227: its own rubble (scattered dead scrub) distinct from the generic rubble's masonry look.
   scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'scrubRubble',
                category: 'terrain', movement: 'slow', cover: 'soft' },
-  // Adobe outpost: destructible hard cover, the desert building.
-  adobe:     { id: 'adobe',     tex: 'hex_adobe',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'sandRubble',
-               category: 'terrain', movement: 'none', cover: 'hard' },
-  sandRubble:{ id: 'sandRubble',tex: 'hex_sandRubble',passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
-  // #227: what a destroyed scrub hex leaves behind — scattered dead brush, distinct from adobe's rubble.
+  // #227: what a destroyed scrub hex leaves behind — scattered dead brush, distinct from the
+  // generic rubble's masonry look (#275: was originally distinguished from the desert's own
+  // `adobe` outpost rubble; that outpost/rubble pair has since been removed).
   scrubRubble:{ id: 'scrubRubble', tex: 'hex_scrubRubble', passable: true, blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
   // #110: quicksand — the desert's LESSER in-map hazard, standing in for 'mesa' now that mesa
@@ -266,16 +239,13 @@ export const TERRAIN = {
   ice:       { id: 'ice',       tex: 'hex_ice',       passable: false, blocksLOS: false, water: true,
                category: 'terrain', movement: 'none', cover: 'open' },
   // Snowdrift / frozen pines: walk-through cover (passable + slowing + LOS block).
-  // #227: its own rubble (broken ice/snow drift chunks) distinct from iceRuin's rubble.
+  // #227: its own rubble (broken ice/snow drift chunks) distinct from the generic rubble's
+  // masonry look.
   drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'driftRubble',
                category: 'terrain', movement: 'slow', cover: 'soft' },
-  // Frozen outpost: destructible hard cover.
-  iceRuin:   { id: 'iceRuin',   tex: 'hex_iceRuin',   passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'snowRubble',
-               category: 'terrain', movement: 'none', cover: 'hard' },
-  snowRubble:{ id: 'snowRubble',tex: 'hex_snowRubble',passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
   // #227: what a destroyed snowdrift hex leaves behind — shattered ice/snow chunks, distinct
-  // from iceRuin's rubble.
+  // from the generic rubble's masonry look (#275: was originally distinguished from the arctic's
+  // own `iceRuin` outpost rubble; that outpost/rubble pair has since been removed).
   driftRubble:{ id: 'driftRubble', tex: 'hex_driftRubble', passable: true, blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
   // #110: broken ice — the arctic's LESSER in-map hazard, standing in for solid 'ice' now that
@@ -284,34 +254,30 @@ export const TERRAIN = {
   brokenIce: { id: 'brokenIce', tex: 'hex_brokenIce', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR, water: true,
                category: 'terrain', movement: 'slow', cover: 'open' },
 
-  // ── Urban ruins (#67) — grey industrial palette; dense destructible cover + roads. ──
+  // ── Urban ruins (#67) — grey industrial palette; dense destructible cover. ──
   pavement:  { id: 'pavement',  tex: 'hex_pavement',  passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'terrain', movement: 'full', cover: 'open' },
   pavementB: { id: 'pavementB', tex: 'hex_pavementB', passable: true,  blocksLOS: false, speedFactor: 1,
-               category: 'terrain', movement: 'full', cover: 'open' },
-  // Road: a fast lane — the "river channel" analog, but open (no slow); reads as a paved strip.
-  road:      { id: 'road',      tex: 'hex_road',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'terrain', movement: 'full', cover: 'open' },
   // Collapsed tower: an impassable heap (the deep-water/mesa analog for the city), boundary-only
   // (#221: no LOS block, matching deepWater/ice/lava — it never appears in-map).
   collapsed: { id: 'collapsed', tex: 'hex_collapsed', passable: false, blocksLOS: false,
                category: 'terrain', movement: 'none', cover: 'open' },
   // Wreckage: burned-out vehicles / low wall — walk-through cover (passable + slow + LOS).
-  // #227: its own rubble (burnt debris scraps) distinct from a tower's masonry rubble.
+  // #227: its own rubble (burnt debris scraps) distinct from the generic rubble's masonry look.
   wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 40, rubbleId: 'wreckRubble',
                category: 'terrain', movement: 'slow', cover: 'soft' },
-  // Intact building: destructible hard cover (dense in this biome).
-  tower:     { id: 'tower',     tex: 'hex_tower',     passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'cityRubble',
-               category: 'terrain', movement: 'none', cover: 'hard' },
-  cityRubble:{ id: 'cityRubble',tex: 'hex_cityRubble',passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
-  // #227: what a destroyed wreck hex leaves behind — burnt debris scraps, distinct from a
-  // collapsed tower's masonry rubble.
+  // #227: what a destroyed wreck hex leaves behind — burnt debris scraps, distinct from the
+  // generic rubble's masonry look (#275: was originally distinguished from urban's own `tower`
+  // outpost rubble; that outpost/rubble pair has since been removed).
   wreckRubble:{ id: 'wreckRubble', tex: 'hex_wreckRubble', passable: true, blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
   // #110: debris field — the urban biome's LESSER in-map hazard, standing in for 'collapsed'
   // now that a collapsed heap is reserved exclusively for the world boundary. Passable but
-  // slow (a rubble-strewn street); no LOS block.
+  // slow (a rubble-strewn street); no LOS block. #275: also urban's `channel` role now (the
+  // `road` terrain type was removed — see biomes.js for the reasoning) — a paved lane and a
+  // rubble-strewn street both read as "urban hazard/street" well enough to share one id rather
+  // than inventing a new distinct paved-road identity for a role that's otherwise gone.
   debris:    { id: 'debris',    tex: 'hex_debris',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
 
@@ -327,16 +293,12 @@ export const TERRAIN = {
   lava:      { id: 'lava',      tex: 'hex_lava',      passable: false, blocksLOS: false,
                category: 'terrain', movement: 'none', cover: 'open' },
   // Ash dunes / smoke plumes: walk-through cover (passable + slow + LOS block).
-  // #227: its own rubble (loose ash/cinder scatter) distinct from an obsidian outpost's rubble.
+  // #227: its own rubble (loose ash/cinder scatter) distinct from the generic rubble's masonry look.
   fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 30, rubbleId: 'fumaroleRubble',
                category: 'terrain', movement: 'slow', cover: 'soft' },
-  // Obsidian outpost: destructible hard cover.
-  obsidian:  { id: 'obsidian',  tex: 'hex_obsidian',  passable: false, blocksLOS: true,  destructible: true, hp: 60, rubbleId: 'ashRubble',
-               category: 'terrain', movement: 'none', cover: 'hard' },
-  ashRubble: { id: 'ashRubble', tex: 'hex_ashRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
   // #227: what a destroyed fumarole hex leaves behind — loose ash/cinder scatter, distinct
-  // from an obsidian outpost's broken-obsidian rubble.
+  // from the generic rubble's masonry look (#275: was originally distinguished from volcanic's
+  // own `obsidian` outpost rubble; that outpost/rubble pair has since been removed).
   fumaroleRubble:{ id: 'fumaroleRubble', tex: 'hex_fumaroleRubble', passable: true, blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
   // #110: cinder field — the volcanic biome's LESSER in-map hazard. Lava itself reads fine as
@@ -365,9 +327,9 @@ export function coverTier(id) {
   const t = id && TERRAIN[id];
   return t ? t.cover : undefined;
 }
-// #269: is this a fabricated `base`-category hex (helipad today; wall/tower/dock/alert-tower
-// later)? Purely an art-palette/objective-eligibility signal — does NOT drive cover/movement,
-// see the TERRAIN header comment and `helipad`'s own entry above.
+// #269: is this a fabricated `base`-category hex (dock/dockClosed/alertTower/turretEmplacement/
+// objective today)? Purely an art-palette/objective-eligibility signal — does NOT drive
+// cover/movement, see the TERRAIN header comment and `dock`'s own entry above.
 export function isBaseCategory(id) {
   const t = id && TERRAIN[id];
   return !!t && t.category === 'base';
@@ -435,11 +397,12 @@ export function rubbleFor(id) {
   return (t && t.rubbleId) || RUBBLE;
 }
 
-// #251: is this destructible hex a genuine assault objective/outpost (may be picked as THE
-// mission objective, world.js `buildingHp` bucket) rather than atmospheric base-infrastructure
-// set-dressing (e.g. `helipad`)? Purely the `destructible && !setDressing` combination — a
-// destructible entry opts OUT of objective-eligibility with `setDressing: true` rather than
-// outposts opting in, so nothing else needs to change as new outpost terrain is added.
+// #251: is this destructible hex a genuine assault objective (may be picked as THE mission
+// objective, world.js `buildingHp` bucket) rather than atmospheric base-infrastructure
+// set-dressing (e.g. `dockClosed`/`alertTower`)? Purely the `destructible && !setDressing`
+// combination — a destructible entry opts OUT of objective-eligibility with `setDressing: true`
+// rather than objectives opting in, so nothing else needs to change as new destructible terrain
+// is added.
 export function isMissionObjective(id) {
   const t = id && TERRAIN[id];
   return !!t && !!t.destructible && !t.setDressing;
@@ -483,8 +446,9 @@ export function coverBlocksForRay(id, ownHexExempt, smallUnitInvolved = false) {
 // #72 own-hex transparency: does terrain `id` at hex `key` stop a shot, given a Set of hex
 // keys treated as see-through for THIS shot (the shooter's muzzle hex + the target's own hex)?
 // Soft cover doesn't protect its own occupant — a shot may enter/impact within an exempted
-// soft-cover hex — but SOLID cover (buildings, adobe, towers) blocks regardless of exemption,
-// and non-exempted soft-cover hexes between shooter and target still block ("deep woods"). The
+// soft-cover hex — but SOLID cover (alertTower, dockClosed, objective) blocks regardless of
+// exemption, and non-exempted soft-cover hexes between shooter and target still block ("deep
+// woods"). The
 // boundary-only impassable terrains (mesa/collapsed/deepWater/ice/lava) never block LOS at all
 // (#221 — they're stamped only at the world's outer edge, never used as an in-map obstacle).
 // #269: `smallUnitInvolved` (optional, default false) threads through to the soft-cover size-tier

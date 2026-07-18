@@ -122,11 +122,9 @@ export const WorldMixin = {
     const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke
 
-    // #269 playtest follow-up ("outpost:base ratio should be 1:1"): outpost count is no longer a
-    // biome-tuned flat number (that's been removed from biomes.js entirely) — `generateTerrain`
-    // defaults `outpostCount` to `baseCount` (BASE_COUNT here, since this call site doesn't
-    // override it either), so the map gets exactly one outpost per base, each anchoring its own
-    // alert tower (`placeOutpostTowers`).
+    // #275 (redesign): the map gets exactly `BASE_COUNT` alert towers, one placed solo per GAP
+    // between successive bases along the corridor's spine progression (`placeGapTowers`,
+    // data/worldgen.js) — no "outpost" concept or biome-tuned count involved anymore.
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
     const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
@@ -134,11 +132,10 @@ export const WorldMixin = {
     });
     // #269 §3: the run's bases (dormant docks + turret emplacements), placed once here at
     // world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase` (scenes/arena/
-    // bases.js). #269 playtest follow-up (bases/outposts role swap): alert towers are now
-    // OUTPOST-anchored (`placeOutpostTowers`, data/worldgen.js), not base-anchored — same
-    // `generateTerrain` result field, `this.alertTowerHexes`, feeds `_initAlertTowers`/
-    // `_updateAlertTowers`/`_spawnTowerPatrols` (same file) completely unchanged; only WHERE
-    // the positions in that list came from moved.
+    // bases.js). #275: alert towers are now placed one per gap between bases
+    // (`placeGapTowers`, data/worldgen.js) — same `generateTerrain` result field,
+    // `this.alertTowerHexes`, feeds `_initAlertTowers`/`_updateAlertTowers`/`_spawnTowerPatrols`
+    // (same file) completely unchanged; only WHERE the positions in that list came from moved.
     this.bases = bases;
     this.alertTowerHexes = alertTowers;
 

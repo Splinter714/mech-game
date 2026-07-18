@@ -10,8 +10,8 @@ import { TERRAIN } from '../data/terrain.js';
 const SQRT3 = Math.sqrt(3);
 
 // #251 (playtest follow-up): the ONE fixed fill/edge every base-infrastructure hex type uses,
-// regardless of biome — see the PAL.helipad comment below for why. Exported so future
-// mech-bay/wall/tower base-infra terrain entries can reuse it instead of re-deriving a color.
+// regardless of biome — see the PAL.dock comment below for why. Exported so future base-infra
+// terrain entries can reuse it instead of re-deriving a color.
 export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x40444a };
 
 // #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
@@ -57,29 +57,26 @@ const PAL = {
   // Deep water: darker, colder navy.
   deepWater:{ fill: 0x163a58, edge: 0x0f2c45 },
   forest:   { fill: 0x223f20, edge: 0x18311a },
-  building: { fill: 0x3c4148, edge: 0x2a2e34 },
-  // Rubble: the ashen debris a flattened outpost leaves behind.
+  // Rubble: the ashen debris a flattened destructible hex leaves behind.
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
-  // #227: a destroyed forest hex — charred plant debris, distinct from a building's rubble.
+  // #227: a destroyed forest hex — charred plant debris, distinct from the generic rubble.
   vegRubble:{ fill: 0x241f16, edge: 0x1a1610 },
-  // #251 (playtest follow-up): base-infrastructure hex types (helipad, and future mech-bay/
-  // wall/tower entries under the same design issue) render with ONE fixed neutral colour
-  // regardless of which biome they're stamped into — a helipad must look like a helipad on
-  // grass, desert, ice, or ash alike. Previously this reused the CURRENT biome's ground fill
-  // (grass green), which made it read as biome-tinted grass rather than a distinct man-made
-  // surface. A cool neutral concrete/tarmac tone reads as "built", not "natural", against
-  // every biome's warm/cold palette; per-TYPE distinction (helipad vs a future mech-bay etc.)
-  // comes from the DETAIL painter's icon/shape, never from the fill colour.
-  helipad:  BASE_INFRA_COLOR,
-  // #269 playtest follow-up: `dock` and `alertTower` PREVIOUSLY reused `hex_helipad`/`hex_tower`
-  // verbatim (see their terrain.js comments at the time) — in play this made docks
-  // indistinguishable from helipads, and alert towers indistinguishable from ordinary
-  // destructible outpost buildings, so a player fighting through a base would destroy an alert
-  // tower incidentally without ever realizing it (canceling its wake countdown before it could
-  // complete). Both now get their own PAL/DETAIL entries below. Both stay on the shared
-  // BASE_INFRA_COLOR fill (same neutral concrete/tarmac tone as helipad) so they still read as
-  // "part of the base-infrastructure family" regardless of biome — the distinction from helipad,
-  // from `tower`, and from each other comes entirely from each one's own DETAIL painter shape.
+  // #251 (playtest follow-up): base-infrastructure hex types (dock/alertTower/turretEmplacement/
+  // objective) render with ONE fixed neutral colour regardless of which biome they're stamped
+  // into — a dock must look like a dock on grass, desert, ice, or ash alike. Reusing the CURRENT
+  // biome's ground fill (grass green) would make it read as biome-tinted grass rather than a
+  // distinct man-made surface. A cool neutral concrete/tarmac tone reads as "built", not
+  // "natural", against every biome's warm/cold palette; per-TYPE distinction comes from the
+  // DETAIL painter's icon/shape, never from the fill colour.
+  // #269 playtest follow-up: `dock` and `alertTower` originally reused the now-removed `helipad`/
+  // `tower` outpost textures verbatim (#275) — in play this made docks indistinguishable from
+  // helipads, and alert towers indistinguishable from ordinary destructible outpost buildings, so
+  // a player fighting through a base would destroy an alert tower incidentally without ever
+  // realizing it (canceling its wake countdown before it could complete). Both now get their own
+  // PAL/DETAIL entries below. Both stay on the shared BASE_INFRA_COLOR fill (same neutral
+  // concrete/tarmac tone) so they still read as "part of the base-infrastructure family"
+  // regardless of biome — the distinction between them comes entirely from each one's own DETAIL
+  // painter shape.
   dock:       BASE_INFRA_COLOR,
   alertTower: BASE_INFRA_COLOR,
   // #269 playtest follow-up (dock composition): turrets get their own dedicated placement-marker
@@ -91,7 +88,7 @@ const PAL = {
   // dedicated destructible `objective` base hex (data/terrain.js) each base's mission marker now
   // points at. Same shared base-infra fill as its siblings — the DETAIL painter below (a squared
   // bunker silhouette with a bold red target-ring beacon) is what makes it read as visually
-  // distinct — specifically as "THE thing to punch through," unlike a background outpost.
+  // distinct — specifically as "THE thing to punch through."
   objective: BASE_INFRA_COLOR,
   // #269 playtest follow-up (dock open/closed states): the CLOSED state of a dock hex (terrain.js
   // `dockClosed`) — a genuine sealed structure (impassable, destructible), so it gets its own
@@ -106,9 +103,7 @@ const PAL = {
   dryRiver:  { fill: 0x9c7f4a, edge: 0x836838 },
   mesa:      { fill: 0x8a5a3a, edge: 0x633c26 },
   scrub:     { fill: 0xb1904f, edge: 0x8f7440 },
-  adobe:     { fill: 0xc79a5c, edge: 0x8a6636 },
-  sandRubble:{ fill: 0x9c8355, edge: 0x7d6741 },
-  // #227: a destroyed scrub hex — scattered dead brush, distinct from adobe's rubble.
+  // #227: a destroyed scrub hex — scattered dead brush, distinct from the generic rubble.
   scrubRubble:{ fill: 0x6b5738, edge: 0x513f28 },
   // #110: quicksand — a lesser desert hazard (mesa is now boundary-only).
   quicksand: { fill: 0x8a723e, edge: 0x6b5830 },
@@ -119,9 +114,7 @@ const PAL = {
   slush:     { fill: 0x9db6c6, edge: 0x84a0b3 },
   ice:       { fill: 0x9fc4dd, edge: 0x76a3c4 },
   drift:     { fill: 0xe4eef5, edge: 0xc3d3e0 },
-  iceRuin:   { fill: 0xaebfcc, edge: 0x8497a6 },
-  snowRubble:{ fill: 0xb6c4cf, edge: 0x96a6b3 },
-  // #227: a destroyed snowdrift hex — shattered ice/snow chunks, distinct from iceRuin's rubble.
+  // #227: a destroyed snowdrift hex — shattered ice/snow chunks, distinct from the generic rubble.
   driftRubble:{ fill: 0x7f93a3, edge: 0x647a8c },
   // #110: broken ice — a lesser arctic hazard (solid ice is now boundary-only).
   brokenIce: { fill: 0x7f9cb0, edge: 0x678698 },
@@ -129,12 +122,9 @@ const PAL = {
   // ── Urban ruins (#67) — grey industrial palette. ──
   pavement:  { fill: 0x4b4f56, edge: 0x3a3e44 },
   pavementB: { fill: 0x53575e, edge: 0x40444a },
-  road:      { fill: 0x36393f, edge: 0x2a2c31 },
   collapsed: { fill: 0x44484f, edge: 0x2f3238 },
   wreck:     { fill: 0x4a4640, edge: 0x35322d },
-  tower:     { fill: 0x565b63, edge: 0x393d43 },
-  cityRubble:{ fill: 0x3f4249, edge: 0x2c2f34 },
-  // #227: a destroyed wreck hex — burnt debris scraps, distinct from a tower's masonry rubble.
+  // #227: a destroyed wreck hex — burnt debris scraps, distinct from the generic rubble.
   wreckRubble:{ fill: 0x2c2924, edge: 0x201d19 },
   // #110: debris field — a lesser urban hazard (the collapsed heap is now boundary-only).
   debris:    { fill: 0x4a4640, edge: 0x35322d },
@@ -145,10 +135,7 @@ const PAL = {
   crust:     { fill: 0x3a2620, edge: 0x281713 },
   lava:      { fill: 0x7a2410, edge: 0x4a1608 },
   fumarole:  { fill: 0x35302b, edge: 0x211d19 },
-  obsidian:  { fill: 0x2a2530, edge: 0x171420 },
-  ashRubble: { fill: 0x322d28, edge: 0x211d19 },
-  // #227: a destroyed fumarole hex — loose ash/cinder scatter, distinct from an obsidian
-  // outpost's rubble.
+  // #227: a destroyed fumarole hex — loose ash/cinder scatter, distinct from the generic rubble.
   fumaroleRubble:{ fill: 0x2a2117, edge: 0x1c160f },
   // #110: cinder field — a lesser volcanic hazard, distinct from boundary-only 'lava'.
   cinderField: { fill: 0x4a2a18, edge: 0x341c0f },
@@ -191,8 +178,8 @@ function isImpassableTerrainId(key) {
 // #222: the five terrain ids reserved EXCLUSIVELY for a biome's `deep` world-boundary ring
 // (data/biomes.js — never placed as an in-map feature, see worldgen.js `boundaryRingKeys`).
 // Distinct from `isImpassableTerrainId` above, which is broader (also true for destructible
-// buildings/outposts like `building`/`adobe`/`tower` — those keep their normal bordered,
-// detailed look). Only these five get the seamless boundary treatment below.
+// hard-cover structures like `alertTower`/`dockClosed`/`objective` — those keep their normal
+// bordered, detailed look). Only these five get the seamless boundary treatment below.
 const BOUNDARY_ONLY_IDS = new Set(['deepWater', 'mesa', 'ice', 'collapsed', 'lava']);
 function isBoundaryTerrainId(key) {
   return BOUNDARY_ONLY_IDS.has(key.replace(/^hex_/, ''));
@@ -329,16 +316,6 @@ const CLUMP_SPOTS = buildClumpLattice(4242);
 function coverFloor(sg, color, alpha = 0.7) {
   sg.fillStyle(color, alpha);
   sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
-}
-
-// A generic destructible-outpost roof (adobe / ice-ruin / tower / obsidian): a base outline, a
-// roof plate, a top-light strip, and a couple of detail marks — palette-driven per biome.
-function outpostRoof(sg, base, roof, light, mark, markCol) {
-  sg.fillStyle(base, 1); sg.fillRect(C.cx - 15, C.cy - 13, 30, 26);
-  sg.fillStyle(roof, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 22);
-  sg.fillStyle(light, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 5);
-  sg.fillStyle(base, 1); sg.fillRect(C.cx - 7, C.cy - 1, 6, 6); sg.fillRect(C.cx + 3, C.cy + 4, 5, 5);
-  if (mark) { sg.fillStyle(markCol, 0.9); sg.fillRect(C.cx + 6, C.cy - 9, 3, 3); }
 }
 
 // A thin "crack"/seam line between successive points, drawn as a chain of thin oriented quads
@@ -511,35 +488,9 @@ const DETAIL = {
     // A grove of trees covering the entire tile, drawn back-to-front.
     for (const [dx, dy, r] of FOREST_TREES) tree(sg, C.cx + dx, C.cy + dy, r);
   },
-  hex_building: (sg) => {
-    sg.fillStyle(0x2a2e34, 1); sg.fillRect(C.cx - 15, C.cy - 13, 30, 26);    // base/outline
-    sg.fillStyle(0x4a5159, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 22);    // roof
-    sg.fillStyle(0x565d66, 1); sg.fillRect(C.cx - 13, C.cy - 11, 26, 5);     // top-light strip
-    sg.fillStyle(0x2a2e34, 1); sg.fillRect(C.cx - 7, C.cy - 1, 6, 6); sg.fillRect(C.cx + 3, C.cy + 4, 5, 5); // vents
-    sg.fillStyle(0xc8a23a, 0.85); sg.fillRect(C.cx + 6, C.cy - 9, 3, 3);     // a warning light
-  },
-  // #251: helipad ground marking — a SMALL landing-pad detail for the static `helipad` terrain
-  // (data/terrain.js — stamped into the map at world-gen time, worldgen.js `HELIPAD_COUNT`).
-  // Deliberately subtle: a tarmac disc well inside the hex's own footprint (r=13 vs the hex's
-  // ~24px half-width), a thin painted ring, and a small "H" mark — reads as ground detail, not a
-  // structure. The prior standalone decal (src/art/helipad.js, since removed) baked a
-  // ~92px-diameter pad that dwarfed a single hex tile; this one is roughly a third that diameter.
-  hex_helipad: (sg) => {
-    const r = 13;
-    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, r * 2.05, r * 1.5);   // soft ground shadow
-    sg.fillStyle(0x22262c, 0.85); sg.fillCircle(C.cx, C.cy, r);                                 // tarmac disc
-    sg.fillStyle(0xcfa93a, 0.75); sg.fillCircle(C.cx, C.cy, r * 0.86);                          // painted boundary ring
-    sg.fillStyle(0x22262c, 0.9);  sg.fillCircle(C.cx, C.cy, r * 0.78);                          // inner disc
-    const hw = r * 0.3, hh = r * 0.5, barW = r * 0.16;                                          // small "H" landing mark
-    sg.fillStyle(0xd8cba0, 0.85);
-    sg.fillRect(C.cx - hw, C.cy - hh, barW, hh * 2);
-    sg.fillRect(C.cx + hw - barW, C.cy - hh, barW, hh * 2);
-    sg.fillRect(C.cx - hw, C.cy - barW / 2, hw * 2, barW);
-  },
-  // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad, distinct from helipad's
-  // round disc+H mark. Reads as a loading bay: a squared-off deck with a painted border frame,
-  // two corner bollard studs, and a chevron "lane" marking down the middle pointing toward the
-  // bay's mouth — a docked unit backs/parks into this, unlike a helicopter landing on a circle.
+  // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad. Reads as a loading bay: a
+  // squared-off deck with a painted border frame, two corner bollard studs, and a chevron "lane"
+  // marking down the middle pointing toward the bay's mouth — a docked unit backs/parks into this.
   hex_dock: (sg) => {
     const hw = 14, hh = 10;
     sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, hw * 2.1, hh * 1.7);   // ground shadow
@@ -574,13 +525,12 @@ const DETAIL = {
     sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
   },
   // #269 playtest follow-up: the turret-emplacement placement marker (data/terrain.js
-  // `turretEmplacement`) — deliberately a near-clone of `hex_helipad`'s ground-marking layout
-  // (same disc/ring/inner-disc structure) so it reads as "the same FAMILY of base-infra ground
-  // marking," but with a warning-red ring (vs. helipad's amber) and a crosshair/gun-mount mark
-  // instead of an "H", so the two are still clearly distinguishable at a glance — a weapon pad,
-  // not a landing pad. This is a reasonable placeholder look reusing the existing base-infra
-  // palette (BASE_INFRA_COLOR); a more bespoke turret-pad visual may still be worth a follow-up
-  // pass once this is playtested (parallel #269 art work is covering dock/alertTower distinctness).
+  // `turretEmplacement`) — a small disc/ring/inner-disc ground marking (same family shape as
+  // `hex_dock`'s bay-pad layout) with a warning-red ring and a crosshair/gun-mount mark instead of
+  // a chevron lane, so it's still clearly distinguishable at a glance — a weapon pad, not a
+  // landing pad. This is a reasonable placeholder look reusing the existing base-infra palette
+  // (BASE_INFRA_COLOR); a more bespoke turret-pad visual may still be worth a follow-up pass once
+  // this is playtested (parallel #269 art work is covering dock/alertTower distinctness).
   // #269 playtest follow-up (dock open/closed states): `dockClosed` — a sealed steel dome over
   // the same rectangular bay footprint as `hex_dock` above, so the pad's outline still reads as
   // the same hex, just shut. A domed cap (concentric arcs, like a hatch seen edge-on) replaces
@@ -618,9 +568,8 @@ const DETAIL = {
     sg.fillRect(C.cx - barW / 2, C.cy - arm, barW, arm * 2);
     sg.fillStyle(0x22262c, 1); sg.fillCircle(C.cx, C.cy, r * 0.16);                             // hub
   },
-  // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette (wider/heavier
-  // than `hex_building`'s plain roofline) topped with a bold red target-ring beacon, so it reads
-  // unmistakably as "the real objective," distinct from an ordinary destructible outpost and from
+  // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette topped with a
+  // bold red target-ring beacon, so it reads unmistakably as "the real objective," distinct from
   // the alertTower's slim sensor mast.
   hex_objective: (sg) => {
     sg.fillStyle(0x000000, 0.3); sg.fillEllipse(C.cx + 2, C.cy + 5, 30, 14);                  // ground shadow
@@ -668,9 +617,8 @@ const DETAIL = {
       coverClump(sg, C.cx + dx, C.cy + dy, r * 0.8, 0x5c4a24, 0x7d6a34, 0xa89150);
     }
   },
-  hex_adobe: (sg) => outpostRoof(sg, 0x8a6636, 0xc79a5c, 0xd8b070, true, 0x6a4a24),
-  hex_sandRubble: (sg) => rubbleScatter(sg, 0x7d6741, 0x9c8355, 0xb89b64, 0x51),
-  // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT adobe's masonry look.
+  // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT the generic
+  // rubble's masonry look.
   hex_scrubRubble: (sg) => organicDebrisScatter(sg, 0x513f28, 0x8f7548, 0xb2955e, 0x59),
   // #110: quicksand — a sunken, rippled pit distinct from the dry-riverbed channel.
   hex_quicksand: (sg) => {
@@ -706,9 +654,8 @@ const DETAIL = {
     coverFloor(sg, 0xb2c3d3, 0.6);
     for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r, 0xa9bccb, 0xcfe0ec, 0xffffff);
   },
-  hex_iceRuin: (sg) => outpostRoof(sg, 0x8497a6, 0xaebfcc, 0xd2e0ea, true, 0x6f8698),
-  hex_snowRubble: (sg) => rubbleScatter(sg, 0x96a6b3, 0xb6c4cf, 0xdae6ee, 0x63),
-  // #227: destroyed snowdrift — jagged broken ice/snow shards, NOT iceRuin's masonry-slab look.
+  // #227: destroyed snowdrift — jagged broken ice/snow shards, NOT the generic rubble's
+  // masonry-slab look.
   hex_driftRubble: (sg) => iceShardScatter(sg, 0x647a8c, 0xaebfcc, 0xe4eef5, 0x6b),
   // #110: broken ice — thin cracked plates over cold water, lighter/weaker read than solid ice.
   hex_brokenIce: (sg) => {
@@ -725,12 +672,6 @@ const DETAIL = {
   hex_pavementB: (sg) => {
     sg.fillStyle(0x3a3e44, 0.7); sg.fillRect(C.cx - 13, C.cy + 3.5, 26, 1); sg.fillRect(C.cx - 5.5, C.cy - 12, 1, 24);
     sg.fillStyle(0x2f3238, 0.5); sg.fillCircle(C.cx + 5, C.cy + 6, 1.3);
-  },
-  hex_road: (sg) => {   // dark asphalt lane with a dashed centre line
-    sg.fillStyle(0x2a2c31, 0.6); sg.fillRect(C.cx - 15, C.cy - 6, 30, 12);
-    sg.fillStyle(0xc8b23a, 0.8);
-    for (const dx of [-10, -2, 6]) sg.fillRect(C.cx + dx, C.cy - 1, 5, 2);   // centre-line dashes
-    sg.fillStyle(0x9aa0a8, 0.4); sg.fillRect(C.cx - 15, C.cy - 6, 30, 1); sg.fillRect(C.cx - 15, C.cy + 5, 30, 1); // curbs
   },
   hex_collapsed: (sg) => {   // an impassable heap of collapsed structure
     sg.fillStyle(0x000000, 0.28); sg.fillEllipse(C.cx + 2, C.cy + 4, 26, 15);
@@ -751,12 +692,12 @@ const DETAIL = {
     }
     sg.fillStyle(0xd8632a, 0.35); sg.fillCircle(C.cx + 3, C.cy - 2, 5);   // a faint smoulder glow
   },
-  hex_tower: (sg) => outpostRoof(sg, 0x393d43, 0x565b63, 0x676d76, true, 0xc8a23a),
-  hex_cityRubble: (sg) => rubbleScatter(sg, 0x2c2f34, 0x484c53, 0x5c626b, 0x77),
-  // #227: destroyed wreck — burnt debris scraps + a faint ember fleck, NOT the tower's
-  // masonry-slab look.
+  // #227: destroyed wreck — burnt debris scraps + a faint ember fleck, NOT the generic
+  // rubble's masonry-slab look.
   hex_wreckRubble: (sg) => organicDebrisScatter(sg, 0x201d19, 0x4a423a, 0xd8632a, 0x84),
-  // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed tower heap.
+  // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed-tower heap.
+  // #275: also urban's `channel` role now (see biomes.js) — a paved lane and a rubble-strewn
+  // street both read as "urban street" well enough to share one texture.
   hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, 0x82),
 
   // ── Volcanic wasteland ─────────────────────────────────────────────────────────────────
@@ -786,10 +727,8 @@ const DETAIL = {
     for (const [dx, dy, r] of CLUMP_SPOTS) coverClump(sg, C.cx + dx, C.cy + dy, r * 0.9, 0x1e1a17, 0x3a352f, 0x55504a);
     sg.fillStyle(0xff6a1e, 0.3); sg.fillCircle(C.cx, C.cy, 6);   // ember glow at the vent
   },
-  hex_obsidian: (sg) => outpostRoof(sg, 0x171420, 0x2a2530, 0x3f3848, true, 0xff5a14),
-  hex_ashRubble: (sg) => rubbleScatter(sg, 0x211d19, 0x3a352f, 0x55504a, 0x88),
-  // #227: destroyed fumarole — loose ash/cinder scatter with glowing embers, NOT obsidian's
-  // masonry-slab look.
+  // #227: destroyed fumarole — loose ash/cinder scatter with glowing embers, NOT the generic
+  // rubble's masonry-slab look.
   hex_fumaroleRubble: (sg) => cinderScatter(sg, 0x1c160f, 0x453a2c, 0xff6a1e, 0x9c),
   // #110: cinder field — a hot ash/ember patch, milder read than a full molten-lava pool.
   hex_cinderField: (sg) => {
@@ -816,7 +755,7 @@ export function buildHexTextures(scene) {
     hex_ground: PAL.ground, hex_groundB: PAL.groundB,
     hex_grass: PAL.grass, hex_grassB: PAL.grassB,
     hex_river: PAL.river, hex_deepWater: PAL.deepWater,
-    hex_forest: PAL.forest, hex_building: PAL.building, hex_rubble: PAL.rubble,
+    hex_forest: PAL.forest, hex_rubble: PAL.rubble,
   };
   // Biome tiles (#67): every palette key besides the abstract-arena ones maps to a `hex_<key>`
   // texture, so adding a biome terrain is just its PAL entry (+ optional DETAIL painter) — no

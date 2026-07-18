@@ -27,11 +27,14 @@ describe('terrain table (#41 full model)', () => {
     expect(TERRAIN.forest.speedFactor).toBeLessThan(1);
   });
 
-  it('makes buildings destructible hard cover with HP', () => {
-    expect(TERRAIN.building.passable).toBe(false);
-    expect(TERRAIN.building.blocksLOS).toBe(true);
-    expect(TERRAIN.building.destructible).toBe(true);
-    expect(TERRAIN.building.hp).toBeGreaterThan(0);
+  // #275: the 5 biome-specific destructible outpost buildings (building/adobe/iceRuin/tower/
+  // obsidian) were removed — `alertTower` is now the representative destructible-hard-cover
+  // base-infra structure.
+  it('makes destructible base-infra structures (e.g. alertTower) hard cover with HP', () => {
+    expect(TERRAIN.alertTower.passable).toBe(false);
+    expect(TERRAIN.alertTower.blocksLOS).toBe(true);
+    expect(TERRAIN.alertTower.destructible).toBe(true);
+    expect(TERRAIN.alertTower.hp).toBeGreaterThan(0);
   });
 
   it('leaves grass as normal open ground', () => {
@@ -42,59 +45,40 @@ describe('terrain table (#41 full model)', () => {
     }
   });
 
-  // #251: helipad is a genuine first-class TERRAIN entry (same shape/rigor as grass/sand/snow/
-  // pavement — a real tex + passable/blocksLOS/speedFactor), not a special-cased runtime-only
-  // construct. It's placed as static base-infrastructure set dressing at world-gen time
-  // (worldgen.js `HELIPAD_COUNT`), fully independent of any enemy spawn.
-  it('makes the helipad ground marking normal, walkable, non-cover terrain', () => {
-    expect(TERRAIN.helipad).toBeDefined();
-    expect(TERRAIN.helipad.id).toBe('helipad');
-    expect(typeof TERRAIN.helipad.tex).toBe('string');
-    expect(TERRAIN.helipad.passable).toBe(true);
-    expect(TERRAIN.helipad.blocksLOS).toBe(false);
-    expect(terrainSpeedFactor('helipad')).toBe(1);
-    expect(isPassable('helipad')).toBe(true);
-    expect(blocksLOS('helipad')).toBe(false);
-    expect(isSoftCover('helipad')).toBe(false);
-    expect(isWaterTerrain('helipad')).toBe(false);
+  // #275: `helipad` (base-infrastructure set-dressing, biome-independent) was removed entirely
+  // along with the 5 destructible outpost buildings — `dock` is now the representative
+  // non-destructible, open-cover, full-movement `base`-category entry.
+  it('makes the dock ground marking normal, walkable, non-cover terrain', () => {
+    expect(TERRAIN.dock).toBeDefined();
+    expect(TERRAIN.dock.id).toBe('dock');
+    expect(typeof TERRAIN.dock.tex).toBe('string');
+    expect(TERRAIN.dock.passable).toBe(true);
+    expect(TERRAIN.dock.blocksLOS).toBe(false);
+    expect(terrainSpeedFactor('dock')).toBe(1);
+    expect(isPassable('dock')).toBe(true);
+    expect(blocksLOS('dock')).toBe(false);
+    expect(isSoftCover('dock')).toBe(false);
+    expect(isWaterTerrain('dock')).toBe(false);
   });
 
-  // #251 (playtest follow-up): base infrastructure is destructible like any other outpost —
-  // hp:50 (between soft cover's 30-40 and a hard outpost's 60) collapsing to the generic
-  // `rubble` id, and it stays passable throughout (standing AND once collapsed) since a mech
-  // must always be able to drive over it. It's still excluded from ever being picked as THE
-  // mission objective (`isMissionObjective`) because it's atmospheric set-dressing, not a
-  // genuine assault target.
-  it('makes helipad destructible, collapsing to passable rubble, but never a mission objective', () => {
-    expect(isDestructible('helipad')).toBe(true);
-    expect(TERRAIN.helipad.hp).toBe(50);
-    expect(TERRAIN.helipad.rubbleId).toBe('rubble');
-    expect(TERRAIN.rubble.passable).toBe(true);
-    expect(isMissionObjective('helipad')).toBe(false);
-    // Sanity: a genuine outpost IS still objective-eligible (the exclusion is helipad-specific).
-    expect(isMissionObjective('building')).toBe(true);
-  });
-
-  // #269 playtest follow-up: dock/alertTower previously reused hex_helipad/hex_tower verbatim,
-  // making them visually indistinguishable from a real helipad and from an ordinary destructible
-  // outpost building respectively — a player couldn't tell an alert tower apart from a building
-  // it was fine to demolish, so it kept getting destroyed incidentally and never woke a base.
-  // Each now has its own dedicated texture key (art/hexArt.js).
-  it('gives dock its own texture, distinct from helipad', () => {
+  // #269 playtest follow-up: dock/alertTower previously reused the (since-removed, #275)
+  // helipad/tower outpost textures verbatim, making them visually indistinguishable from a real
+  // helipad and from an ordinary destructible outpost building respectively — a player couldn't
+  // tell an alert tower apart from a building it was fine to demolish, so it kept getting
+  // destroyed incidentally and never woke a base. Each now has its own dedicated texture key
+  // (art/hexArt.js).
+  it('gives dock its own texture', () => {
     expect(TERRAIN.dock).toBeDefined();
     expect(typeof TERRAIN.dock.tex).toBe('string');
-    expect(TERRAIN.dock.tex).not.toBe(TERRAIN.helipad.tex);
     expect(TERRAIN.dock.passable).toBe(true);
     expect(TERRAIN.dock.blocksLOS).toBe(false);
     expect(TERRAIN.dock.destructible).toBeFalsy();
     expect(isBaseCategory('dock')).toBe(true);
   });
 
-  it('gives alertTower its own texture, distinct from BOTH the regular tower outpost and helipad', () => {
+  it('gives alertTower its own texture, distinct from dock, and makes it a destructible mission-objective-exempt structure', () => {
     expect(TERRAIN.alertTower).toBeDefined();
     expect(typeof TERRAIN.alertTower.tex).toBe('string');
-    expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.tower.tex);
-    expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.helipad.tex);
     expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.dock.tex);
     expect(TERRAIN.alertTower.passable).toBe(false);
     expect(TERRAIN.alertTower.blocksLOS).toBe(true);
@@ -149,19 +133,19 @@ describe('terrain property resolvers', () => {
     expect(terrainSpeedFactor('nope')).toBe(1);
   });
 
-  it('isPassable: grass/river/forest/rubble yes; deepWater/building no; off-map no', () => {
+  it('isPassable: grass/river/forest/rubble yes; deepWater/alertTower no; off-map no', () => {
     expect(isPassable('grass')).toBe(true);
     expect(isPassable('river')).toBe(true);
     expect(isPassable('forest')).toBe(true);
     expect(isPassable('rubble')).toBe(true);
     expect(isPassable('deepWater')).toBe(false);
-    expect(isPassable('building')).toBe(false);
+    expect(isPassable('alertTower')).toBe(false);
     expect(isPassable(undefined)).toBe(false);   // off the arena disc is blocked
   });
 
-  it('blocksLOS: forest + building only; water/grass/rubble shoot over; off-map no', () => {
+  it('blocksLOS: forest + alertTower only; water/grass/rubble shoot over; off-map no', () => {
     expect(blocksLOS('forest')).toBe(true);
-    expect(blocksLOS('building')).toBe(true);
+    expect(blocksLOS('alertTower')).toBe(true);
     expect(blocksLOS('river')).toBe(false);
     expect(blocksLOS('deepWater')).toBe(false);
     expect(blocksLOS('grass')).toBe(false);
@@ -169,9 +153,9 @@ describe('terrain property resolvers', () => {
     expect(blocksLOS(undefined)).toBe(false);
   });
 
-  it('isDestructible + buildingHp: buildings and soft cover have HP; open ground does not', () => {
-    expect(isDestructible('building')).toBe(true);
-    expect(buildingHp('building')).toBe(TERRAIN.building.hp);
+  it('isDestructible + buildingHp: destructible hard cover and soft cover have HP; open ground does not', () => {
+    expect(isDestructible('alertTower')).toBe(true);
+    expect(buildingHp('alertTower')).toBe(TERRAIN.alertTower.hp);
     expect(isDestructible('forest')).toBe(true);   // #72 destructible soft cover
     expect(buildingHp('forest')).toBe(TERRAIN.forest.hp);
     for (const id of ['grass', 'river', 'deepWater', 'rubble', undefined]) {
@@ -187,16 +171,16 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
       expect(isSoftCover(id)).toBe(true);
     }
     // Solid cover, open ground, hazards, and off-map are NOT soft cover.
-    for (const id of ['building', 'mesa', 'adobe', 'iceRuin', 'grass', 'river', 'deepWater', 'rubble', 'lava', undefined, 'nope']) {
+    for (const id of ['alertTower', 'dockClosed', 'objective', 'mesa', 'grass', 'river', 'deepWater', 'rubble', 'lava', undefined, 'nope']) {
       expect(isSoftCover(id)).toBe(false);
     }
   });
 
-  it('every soft-cover terrain is destructible, with LESS HP than an outpost, and flattens to passable no-cover ground', () => {
+  it('every soft-cover terrain is destructible, with LESS HP than a full base-infra structure, and flattens to passable no-cover ground', () => {
     for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
       expect(isDestructible(id)).toBe(true);
       expect(buildingHp(id)).toBeGreaterThan(0);
-      expect(buildingHp(id)).toBeLessThanOrEqual(TERRAIN.building.hp);
+      expect(buildingHp(id)).toBeLessThanOrEqual(TERRAIN.objective.hp);
       const rub = rubbleFor(id);
       expect(isPassable(rub)).toBe(true);
       expect(blocksLOS(rub)).toBe(false);
@@ -229,7 +213,7 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
 
   it('shotBlockedAt: SOLID cover blocks even when exempted; open ground never blocks', () => {
     const exempt = new Set(['3,-1']);
-    for (const id of ['building', 'adobe', 'iceRuin', 'tower', 'obsidian']) {
+    for (const id of ['alertTower', 'dockClosed', 'objective']) {
       expect(shotBlockedAt(id, '3,-1', exempt)).toBe(true);
     }
     // #221: mesa/collapsed are boundary-only impassable terrain (like deepWater/lava) — they
@@ -268,13 +252,13 @@ describe('isWaterTerrain (#151) — reads as actual water, not just slow terrain
     }
   });
 
-  it('does NOT flag other slow-but-not-water terrain (dry riverbeds, sand, ash, rubble, roads)', () => {
+  it('does NOT flag other slow-but-not-water terrain (dry riverbeds, sand, ash, rubble, debris)', () => {
     for (const id of [
       'grass', 'grassB', 'forest', 'rubble', 'vegRubble',
-      'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'adobe', 'sandRubble', 'scrubRubble', 'quicksand',
-      'snow', 'snowB', 'drift', 'iceRuin', 'snowRubble', 'driftRubble',
-      'pavement', 'pavementB', 'road', 'collapsed', 'wreck', 'tower', 'cityRubble', 'wreckRubble', 'debris',
-      'ash', 'ashB', 'crust', 'lava', 'fumarole', 'obsidian', 'ashRubble', 'fumaroleRubble', 'cinderField',
+      'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'scrubRubble', 'quicksand',
+      'snow', 'snowB', 'drift', 'driftRubble',
+      'pavement', 'pavementB', 'collapsed', 'wreck', 'wreckRubble', 'debris',
+      'ash', 'ashB', 'crust', 'lava', 'fumarole', 'fumaroleRubble', 'cinderField',
       undefined, 'nope',
     ]) {
       expect(isWaterTerrain(id), String(id)).toBe(false);
@@ -293,13 +277,14 @@ describe('isWaterTerrain (#151) — reads as actual water, not just slow terrain
 });
 
 describe('rubbleFor — a destructible collapses into its biome rubble (#67)', () => {
-  it('maps each biome outpost to its own passable, no-cover debris', () => {
-    const pairs = [
-      ['building', 'rubble'], ['adobe', 'sandRubble'], ['iceRuin', 'snowRubble'],
-      ['tower', 'cityRubble'], ['obsidian', 'ashRubble'],
-    ];
-    for (const [outpost, rub] of pairs) {
-      expect(rubbleFor(outpost)).toBe(rub);
+  // #275: the 5 biome-specific destructible outposts (building/adobe/iceRuin/tower/obsidian) —
+  // and their bespoke rubble ids (sandRubble/snowRubble/cityRubble/ashRubble, since orphaned once
+  // their outpost was gone; grassland's `rubble` stayed as the shared/generic fallback) — were
+  // removed. Every base-infra destructible now collapses to that same generic `rubble` id.
+  it('every base-infra destructible collapses to the generic passable, no-cover rubble', () => {
+    for (const id of ['alertTower', 'objective', 'dockClosed']) {
+      const rub = rubbleFor(id);
+      expect(rub).toBe(RUBBLE);
       expect(isPassable(rub)).toBe(true);
       expect(blocksLOS(rub)).toBe(false);
     }
@@ -312,18 +297,11 @@ describe('rubbleFor — a destructible collapses into its biome rubble (#67)', (
   });
 });
 
-describe('#227 — destroyed soft cover leaves DIFFERENT rubble than a destroyed outpost, per biome', () => {
-  it('every biome\'s soft-destructible rubble id differs from its hard-destructible (outpost) rubble id', () => {
-    const biomes = [
-      ['forest', 'building'],
-      ['scrub', 'adobe'],
-      ['drift', 'iceRuin'],
-      ['wreck', 'tower'],
-      ['fumarole', 'obsidian'],
-    ];
-    for (const [soft, hard] of biomes) {
+describe('#227 — destroyed soft cover leaves DIFFERENT rubble than the generic base-infra rubble, per biome', () => {
+  it('every biome\'s soft-destructible rubble id differs from the generic base-infra rubble id', () => {
+    for (const soft of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
       const softRub = rubbleFor(soft);
-      const hardRub = rubbleFor(hard);
+      const hardRub = RUBBLE;   // #275: every base-infra destructible collapses to this now
       expect(softRub, `${soft} rubble`).not.toBe(hardRub);
       // Both still land on ordinary passable, non-cover debris.
       expect(isPassable(softRub)).toBe(true);
@@ -373,8 +351,8 @@ describe('damageBuilding — HP → rubble transition (pure)', () => {
     expect(r.destroyed).toBe(false);
   });
 
-  it('a building can be flattened in successive stomp bites', () => {
-    let hp = buildingHp('building');
+  it('a destructible base-infra structure can be flattened in successive stomp bites', () => {
+    let hp = buildingHp('alertTower');
     let destroyed = false;
     for (let i = 0; i < 100 && !destroyed; i++) {
       ({ hp, destroyed } = damageBuilding(hp, 15));   // ~stomp-per-frame bite
@@ -410,27 +388,27 @@ describe('#269 hex vocabulary — category/movement/cover fields', () => {
     expect(blocksLOS('forest')).toBe(true);
   });
 
-  it('a HARD-cover example (building): impassable, no movement, hard cover', () => {
-    expect(movementTier('building')).toBe('none');
-    expect(coverTier('building')).toBe('hard');
-    expect(isPassable('building')).toBe(false);
-    expect(isSoftCover('building')).toBe(false);
-    expect(blocksLOS('building')).toBe(true);
+  it('a HARD-cover example (alertTower): impassable, no movement, hard cover', () => {
+    expect(movementTier('alertTower')).toBe('none');
+    expect(coverTier('alertTower')).toBe('hard');
+    expect(isPassable('alertTower')).toBe(false);
+    expect(isSoftCover('alertTower')).toBe(false);
+    expect(blocksLOS('alertTower')).toBe(true);
   });
 
-  // #251/#269: helipad is the one `base`-category entry today. Its cover/movement fall out of
-  // its OWN raw fields (open/full), not from being `base` — category never drives cover/movement.
-  it('a BASE example (helipad): category base, but open cover + full movement like any ground', () => {
-    expect(isBaseCategory('helipad')).toBe(true);
-    expect(movementTier('helipad')).toBe('full');
-    expect(coverTier('helipad')).toBe('open');
-    expect(isPassable('helipad')).toBe(true);
-    expect(blocksLOS('helipad')).toBe(false);
-    expect(terrainSpeedFactor('helipad')).toBe(1);
+  // #275: `dock` is a `base`-category entry whose cover/movement fall out of its OWN raw fields
+  // (open/full), not from being `base` — category never drives cover/movement.
+  it('a BASE example (dock): category base, but open cover + full movement like any ground', () => {
+    expect(isBaseCategory('dock')).toBe(true);
+    expect(movementTier('dock')).toBe('full');
+    expect(coverTier('dock')).toBe('open');
+    expect(isPassable('dock')).toBe(true);
+    expect(blocksLOS('dock')).toBe(false);
+    expect(terrainSpeedFactor('dock')).toBe(1);
   });
 
   it('everything else is `terrain` category, not `base`', () => {
-    for (const id of ['grass', 'forest', 'building', 'river', 'rubble', 'mesa', 'sand', 'tower']) {
+    for (const id of ['grass', 'forest', 'river', 'rubble', 'mesa', 'sand']) {
       expect(isBaseCategory(id), id).toBe(false);
     }
   });
@@ -458,7 +436,9 @@ describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one spe
     const slowIds = Object.values(TERRAIN).filter((t) => t.movement === 'slow').map((t) => t.id);
     // Sanity: this consolidation actually covers a broad swath of terrain (rivers, soft cover,
     // every rubble, desert/snow/urban/volcanic hazards) — not a trivially small/empty set.
-    expect(slowIds.length).toBeGreaterThan(20);
+    // #275: 4 biome-specific rubble ids (sandRubble/snowRubble/cityRubble/ashRubble) were removed
+    // along with their now-gone outposts, so the threshold here dropped accordingly.
+    expect(slowIds.length).toBeGreaterThan(15);
     for (const id of slowIds) {
       expect(TERRAIN[id].speedFactor, id).toBe(SLOW_MOVEMENT_FACTOR);
       expect(terrainSpeedFactor(id), id).toBe(SLOW_MOVEMENT_FACTOR);
@@ -470,7 +450,7 @@ describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one spe
   });
 
   it('movement:"full" and movement:"none" entries are unaffected by the consolidation', () => {
-    for (const id of ['grass', 'sand', 'pavement', 'road', 'helipad']) {
+    for (const id of ['grass', 'sand', 'pavement', 'dock']) {
       expect(movementTier(id)).toBe('full');
       expect(terrainSpeedFactor(id)).toBe(1);
     }
@@ -495,9 +475,9 @@ describe('#269 §1 soft-cover size-tier plumbing', () => {
   });
 
   it('coverBlocksForRay: hard cover always blocks regardless of size-tier or own-hex exemption', () => {
-    expect(coverBlocksForRay('building', false, false)).toBe(true);
-    expect(coverBlocksForRay('building', false, true)).toBe(true);
-    expect(coverBlocksForRay('building', true, true)).toBe(true);   // even "own hex" doesn't exempt hard cover
+    expect(coverBlocksForRay('alertTower', false, false)).toBe(true);
+    expect(coverBlocksForRay('alertTower', false, true)).toBe(true);
+    expect(coverBlocksForRay('alertTower', true, true)).toBe(true);   // even "own hex" doesn't exempt hard cover
   });
 
   it('coverBlocksForRay: soft cover blocks only a small unit (own-hex exemption still applies)', () => {
@@ -517,6 +497,6 @@ describe('#269 §1 soft-cover size-tier plumbing', () => {
     expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);   // own-hex exemption wins
     expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);    // deep woods still blocks a small unit
     expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(false);  // a large unit sees over deep woods
-    expect(shotBlockedAt('building', '3,-1', exempt, true)).toBe(true); // hard cover unaffected
+    expect(shotBlockedAt('alertTower', '3,-1', exempt, true)).toBe(true); // hard cover unaffected
   });
 });
