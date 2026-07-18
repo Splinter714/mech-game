@@ -3,8 +3,9 @@
 // terrain.js) is the sensor: each frame the scene tells this module whether the player is
 // currently within the tower's detection radius; `tickAlertTower` folds that into a countdown
 // ("radioing it in") and reports when the countdown COMPLETES (`triggered: true`), at which point
-// the caller (scenes/arena/bases.js) resolves the single nearest base and wakes its dormant
-// docked units (data/bases.js `nearestBaseTo` + `_wakeBase`).
+// the caller (scenes/arena/bases.js `_triggerAlert`) wakes the ONE base this tower is linked to —
+// its own `baseId`, threaded through from `placeGapTowers` (data/worldgen.js, #284) — and its
+// dormant docked units (`_wakeBase`).
 //
 // Kept deliberately simple per the issue's own scoping: leaving the detection radius before the
 // countdown completes resets it to idle (no partial-progress memory — a stealth/tension WINDOW,

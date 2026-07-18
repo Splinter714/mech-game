@@ -16,7 +16,7 @@ import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE, UNAWARE, detectionRangeFor } from '../../data/awareness.js';
-import { hexToPixel } from '../../data/hexgrid.js';
+import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { makeLock } from '../../data/targetlock.js';
 
 function makeScene() {
@@ -481,6 +481,65 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
     // cleared — the patrol's presence/absence has zero bearing on the win condition either way.
     scene.enemies.push(makeDockedUnit('turret', { baseId: 'base0' }));
     expect(scene._allBasesCleared()).toBe(false);
+  });
+});
+
+// #284: a tower must wake its OWN linked base (`baseId`, threaded through from `placeGapTowers`)
+// even when a DIFFERENT base sits geometrically closer to the tower's position — proving the fix
+// actually changes behavior, not just that it still works on layouts where straight-line
+// distance happened to agree with real gap ownership.
+describe('#284: alert tower wake-trigger uses its own linked baseId, not geometric nearest-base', () => {
+  it('_triggerAlert wakes exactly the base passed as baseId, ignoring this.bases entirely', () => {
+    const scene = makeScene();
+    scene.bases = [
+      { id: 'base0', center: { q: 0, r: 0 }, docks: [], turrets: [] },
+      { id: 'base1', center: { q: 1, r: 0 }, docks: [], turrets: [] },   // geometrically closer to (0,0)
+    ];
+    const dormant = makeDockedUnit('turret', { baseId: 'base0' });
+    scene.enemies.push(dormant);
+    scene._triggerAlert('base0');
+    expect(dormant.awareness).toBe(AWARE);
+    expect(scene._wokenBases.has('base1')).toBe(false);
+  });
+
+  it('a null baseId (tower somehow unlinked) wakes nothing rather than guessing a base', () => {
+    const scene = makeScene();
+    const dormant = makeDockedUnit('turret', { baseId: 'base0' });
+    scene.enemies.push(dormant);
+    scene._triggerAlert(null);
+    expect(dormant.awareness).toBe(DORMANT);
+    expect(scene._wokenBases.size).toBe(0);
+  });
+
+  it('a completed countdown wakes the tower\'s linked base even though a DIFFERENT base sits physically closer to the tower', () => {
+    const scene = makeScene();
+    // A deliberately "curvy corridor" layout: the tower is placed near base0's hex per its real
+    // gap ownership (#275 — a tower sits within its own gap's progress bounds), but base1's centre
+    // happens to land physically CLOSER to the tower's world position than base0's does — exactly
+    // the scenario a curving spine can produce (progress-along-the-spine disagrees with straight-
+    // line distance). The old `nearestBaseTo` would have woken base1; the fix must wake base0.
+    const towerHex = { q: 0, r: 0 };
+    scene.bases = [
+      { id: 'base0', center: { q: 40, r: 0 }, docks: [], turrets: [] },   // base0: far by straight line...
+      { id: 'base1', center: { q: 1, r: 0 }, docks: [], turrets: [] },    // ...base1: geometrically nearest
+    ];
+    scene.alertTowerHexes = [{ ...towerHex, baseId: 'base0' }];   // ...but the tower is base0's own
+    scene.terrain = new Map([[axialKey(towerHex.q, towerHex.r), 'alertTower']]);
+    scene._initAlertTowers();   // re-init now that alertTowerHexes/terrain are populated
+
+    const base0Unit = makeDockedUnit('turret', { baseId: 'base0' });
+    const base1Unit = makeDockedUnit('turret', { baseId: 'base1' });
+    scene.enemies.push(base0Unit, base1Unit);
+
+    const { x, y } = hexToPixel(towerHex.q, towerHex.r);
+    scene.px = x; scene.py = y;   // player standing right on the tower, well within detect radius
+    // One big tick, well past the full countdown, completes it in a single call.
+    scene._updateAlertTowers(30);
+
+    expect(base0Unit.awareness).toBe(AWARE);     // the tower's OWN linked base woke...
+    expect(base1Unit.awareness).toBe(DORMANT);   // ...NOT the geometrically-nearest one
+    expect(scene._wokenBases.has('base0')).toBe(true);
+    expect(scene._wokenBases.has('base1')).toBe(false);
   });
 });
 
