@@ -16,7 +16,7 @@ import {
 import { Audio } from '../../audio/index.js';
 import {
   DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
-  isSmallUnit, crushTriggerRadius,
+  isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH,
 } from './shared.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
@@ -348,6 +348,46 @@ export const WorldMixin = {
       if (circleContains(x, y, e.x, e.y, groundEnemyRadius(e))) return e;
     }
     return null;
+  },
+
+  // #282: mutual ground-unit collision — the counterpart to `_blockedByGroundEnemy` above, but
+  // called from an ENEMY's own movement integration (enemies.js `_updateEnemy`/`_updateVehicle`)
+  // instead of only the player's. Only LARGE ground units (mech/quadruped/turret — #269's
+  // `isSmallUnit`) ever block: a small unit (tank/infantry) is walkable by everyone, so it's
+  // skipped entirely here, matching the existing player-side crush behavior's "small units
+  // aren't obstacles" spirit — this function is simply never called for a small unit's OWN
+  // movement either (see the `isSmallUnit(e)` gate at each call site), so small-vs-large and
+  // small-vs-small both stay uncollided, unchanged from before this issue.
+  //
+  // Checks the PLAYER's own collision circle too (`ENEMY_COLLIDE_RADIUS_MECH` — the player is
+  // drawn at the same ARENA_MECH_SCALE as an enemy mech, so it shares that radius) so a large
+  // enemy can't walk through the player any more than the player can already walk through it.
+  // `self` is excluded from the enemy scan so a unit never blocks against its own circle.
+  _blockedByOtherLargeUnit(self, x, y) {
+    if (circleContains(x, y, this.px, this.py, ENEMY_COLLIDE_RADIUS_MECH)) return true;
+    for (const o of this.enemies) {
+      if (o === self) continue;
+      if (o.flying) continue;
+      if (o.mech.isDestroyed()) continue;
+      if (isSmallUnit(o)) continue;
+      if (circleContains(x, y, o.x, o.y, groundEnemyRadius(o))) return true;
+    }
+    return false;
+  },
+
+  // #282: mutual FLYER collision — flying units (drone/helicopter) already ignore terrain and
+  // ground units entirely (narratively elevated, see `_blockedByGroundEnemy`'s flying exclusion
+  // and #92); this adds ONLY flyer-vs-flyer separation so two flyers can't overlap/fly through
+  // each other, without touching their existing ground/terrain immunity. Reuses the same
+  // `groundEnemyRadius` footprint (a non-mech vehicle kind's own data-driven `scale`) as the
+  // collision circle — flyers don't get a special radius of their own.
+  _blockedByOtherFlyer(self, x, y) {
+    for (const o of this.enemies) {
+      if (o === self || !o.flying) continue;
+      if (o.mech.isDestroyed()) continue;
+      if (circleContains(x, y, o.x, o.y, groundEnemyRadius(o))) return true;
+    }
+    return false;
   },
 
   // #112: is a CRUSHABLE ground enemy (tank/infantry — 'small' units, see #269's `isSmallUnit`
