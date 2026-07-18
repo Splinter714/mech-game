@@ -341,6 +341,21 @@ function crackLine(sg, pts, color, alpha, width = 1) {
   }
 }
 
+// #287: a single angled armor plate/sandbag segment — a rotated rectangle drawn as an explicit
+// 4-point polygon (the scaledGraphics wrapper has no per-shape rotate, so corners are computed
+// by hand). Used to ring `hex_turretEmplacement`'s platform with plating that looks canted
+// outward like real bunker armor, not a row of flat axis-aligned boxes.
+function armorPlate(sg, cx, cy, angle, w, h, color, alpha) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const hw = w / 2, hh = h / 2;
+  const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => ({
+    x: cx + x * cos - y * sin,
+    y: cy + x * sin + y * cos,
+  }));
+  sg.fillStyle(color, alpha);
+  sg.fillPoints(corners, true);
+}
+
 // A generic rubble scatter (broken slabs over a scorched base), palette-driven per biome.
 function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
   sg.fillStyle(baseCol, 0.8); sg.fillEllipse(C.cx, C.cy, 26, 20);
@@ -532,13 +547,18 @@ const DETAIL = {
     sg.fillStyle(0xd8462a, 0.35); sg.fillCircle(C.cx, C.cy - 17.5, 4.2);         // beacon glow halo
     sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
   },
-  // #269 playtest follow-up: the turret-emplacement placement marker (data/terrain.js
-  // `turretEmplacement`) — a small disc/ring/inner-disc ground marking (same family shape as
-  // `hex_dock`'s bay-pad layout) with a warning-red ring and a crosshair/gun-mount mark instead of
-  // a chevron lane, so it's still clearly distinguishable at a glance — a weapon pad, not a
-  // landing pad. This is a reasonable placeholder look reusing the existing base-infra palette
-  // (BASE_INFRA_COLOR); a more bespoke turret-pad visual may still be worth a follow-up pass once
-  // this is playtested (parallel #269 art work is covering dock/alertTower distinctness).
+  // #287 (playtest follow-up): the turret-emplacement placement marker (data/terrain.js
+  // `turretEmplacement`) — upgraded from a flat painted disc/ring decal to a raised bunker
+  // platform so a turret unit standing here reads as rooted into a built defensive position,
+  // not parked on empty ground. Still PASSABLE/open-cover terrain (unchanged in terrain.js) —
+  // deliberately kept LOW and ringed rather than solid/walled like `hex_objective` or
+  // `hex_dockClosed`, so it reads as "built-up platform you drive across/around," not a hard
+  // structure. Layering: a wide soft rim-shadow ring sells "raised above ground level", a
+  // concrete slab with a bevelled highlight/shadow edge gives it 3-D thickness, a ring of
+  // angled armor plates (chamfered rects around the perimeter, echoing the rubble/objective
+  // family's layered-rect language) stands in for sandbag/plating cover, and a smaller inner
+  // gun-deck plus a subdued crosshair/gun-mount mark (muted metal + small red bolts, no longer
+  // a dominant red ring) mark where the turret itself mounts.
   // #269 playtest follow-up (dock open/closed states): `dockClosed` — a sealed steel dome over
   // the same rectangular bay footprint as `hex_dock` above, so the pad's outline still reads as
   // the same hex, just shut. A domed cap (concentric arcs, like a hatch seen edge-on) replaces
@@ -565,16 +585,32 @@ const DETAIL = {
     sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx, C.cy + hh - 2, 1.1);                       // sealed-warning light
   },
   hex_turretEmplacement: (sg) => {
-    const r = 13;
-    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, r * 2.05, r * 1.5);   // soft ground shadow
-    sg.fillStyle(0x22262c, 0.85); sg.fillCircle(C.cx, C.cy, r);                                 // tarmac disc
-    sg.fillStyle(0xb3392a, 0.75); sg.fillCircle(C.cx, C.cy, r * 0.86);                          // warning-red ring
-    sg.fillStyle(0x22262c, 0.9);  sg.fillCircle(C.cx, C.cy, r * 0.78);                          // inner disc
-    const arm = r * 0.5, barW = r * 0.16;                                                        // crosshair / gun-mount mark
-    sg.fillStyle(0xd8cba0, 0.85);
-    sg.fillRect(C.cx - arm, C.cy - barW / 2, arm * 2, barW);
-    sg.fillRect(C.cx - barW / 2, C.cy - arm, barW, arm * 2);
-    sg.fillStyle(0x22262c, 1); sg.fillCircle(C.cx, C.cy, r * 0.16);                             // hub
+    const r = 13.5;
+    sg.fillStyle(0x000000, 0.28); sg.fillEllipse(C.cx + 1.5, C.cy + 3, r * 2.3, r * 1.7);       // ground shadow, offset — platform sits above grade
+    sg.fillStyle(0x000000, 0.2);  sg.fillCircle(C.cx, C.cy + 1.5, r * 1.12);                     // rim shadow — reads as the raised edge overhanging the ground
+    sg.fillStyle(0x494e55, 1);    sg.fillCircle(C.cx, C.cy, r);                                  // concrete base slab
+    sg.fillStyle(0x373b41, 0.9);  sg.fillCircle(C.cx + 1.4, C.cy + 1.4, r * 0.96);                // bottom-right bevel shadow — gives the slab thickness
+    sg.fillStyle(0x565b63, 1);    sg.fillCircle(C.cx - 0.6, C.cy - 0.9, r * 0.88);                // top surface, lit
+    sg.fillStyle(0x6a7078, 0.55); sg.fillEllipse(C.cx - 3.5, C.cy - 4.5, r * 0.75, r * 0.38);     // top-left highlight sheen
+
+    // Angled armor-plate ring standing in for sandbag/plating cover around the gun deck —
+    // alternating tones so individual plates read as distinct segments, each canted outward.
+    const plateCount = 8, plateR = r * 0.8;
+    for (let i = 0; i < plateCount; i++) {
+      const a = (i / plateCount) * Math.PI * 2 + 0.25;
+      const px = C.cx + Math.cos(a) * plateR, py = C.cy + Math.sin(a) * plateR * 0.6;
+      armorPlate(sg, px, py, a + Math.PI / 2, r * 0.42, r * 0.22, i % 2 === 0 ? 0x3a3e44 : 0x454a51, 0.95);
+    }
+
+    sg.fillStyle(0x30343a, 1); sg.fillCircle(C.cx, C.cy + 0.5, r * 0.5);                          // inner gun deck (recessed)
+    const arm = r * 0.32, barW = r * 0.1;                                                          // muted gun-mount crosshair
+    sg.fillStyle(0x9098a3, 0.8);
+    sg.fillRect(C.cx - arm, C.cy + 0.5 - barW / 2, arm * 2, barW);
+    sg.fillRect(C.cx - barW / 2, C.cy + 0.5 - arm, barW, arm * 2);
+    sg.fillStyle(0x22262c, 1); sg.fillCircle(C.cx, C.cy + 0.5, r * 0.14);                          // mount hub
+    sg.fillStyle(0xd8342a, 0.9);                                                                    // small armed-position bolts, not a dominant ring
+    sg.fillCircle(C.cx - r * 0.42, C.cy + 0.5, 1);
+    sg.fillCircle(C.cx + r * 0.42, C.cy + 0.5, 1);
   },
   // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette topped with a
   // bold red target-ring beacon, so it reads unmistakably as "the real objective," distinct from
