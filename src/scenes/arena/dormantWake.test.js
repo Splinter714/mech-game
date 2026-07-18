@@ -10,6 +10,7 @@ import { BasesMixin } from './bases.js';
 import { HpBody } from '../../data/HpBody.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { DORMANT, AWARE, UNAWARE } from '../../data/awareness.js';
+import { hexToPixel } from '../../data/hexgrid.js';
 
 function makeScene() {
   const scene = { time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [] };
@@ -198,6 +199,76 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     scene._wakeBase('base0');
     expect(scene.enemies.length).toBe(2);
     expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
+  });
+});
+
+describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near each alert tower', () => {
+  // Same lightweight `_spawnKind` stub as the dock-composition suite above — out of scope here
+  // is Phaser texture/view building, in scope is spawnX/spawnY/awareness/baseId shape.
+  function makeSceneWithSpawnStub(alertTowerHexes) {
+    const scene = makeScene();
+    scene.alertTowerHexes = alertTowerHexes;
+    scene.terrain = new Map();   // empty terrain: nearestValidPixel's passableCheck treats every
+                                  // hex as absent/impassable, exercising the "must snap to a
+                                  // nearby hex" fallback path deterministically.
+    scene._spawnKind = (x, y, kindId) => {
+      const def = ENEMY_KINDS[kindId];
+      const e = {
+        key: `${kindId}Test`, mech: new HpBody(def), kind: def.kind, kindDef: def,
+        x, y, spawnX: x, spawnY: y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0,
+        typeId: kindId, awareness: UNAWARE,
+      };
+      scene.enemies.push(e);
+      return e;
+    };
+    return scene;
+  }
+
+  it('spawns one patrol unit per alert tower, starting UNAWARE with no baseId/dockKey', () => {
+    const scene = makeSceneWithSpawnStub([{ q: 0, r: 0 }, { q: 4, r: -2 }]);
+    scene._spawnTowerPatrols();
+    expect(scene.enemies.length).toBe(2);
+    for (const e of scene.enemies) {
+      expect(e.awareness).toBe(UNAWARE);
+      expect(e.baseId).toBeUndefined();
+      expect(e.dockKey).toBeUndefined();
+    }
+  });
+
+  it('no alert towers means no patrol units spawned', () => {
+    const scene = makeSceneWithSpawnStub([]);
+    scene._spawnTowerPatrols();
+    expect(scene.enemies.length).toBe(0);
+  });
+
+  it('a patrol unit\'s spawnX/spawnY (idle-wander anchor) sit near the tower position, not just at the origin', () => {
+    const scene = makeSceneWithSpawnStub([{ q: 6, r: 3 }]);
+    scene._spawnTowerPatrols();
+    expect(scene.enemies.length).toBe(1);
+    const e = scene.enemies[0];
+    const { x: tx, y: ty } = hexToPixel(6, 3);
+    // Empty terrain forces nearestValidPixel's ring-search fallback — the exact landing hex
+    // isn't asserted (that's nearestValidPixel's own unit-tested behavior, spawnPlacement.test.js
+    // if present, or covered by hexgrid's nearestHex tests), just that it's a real finite point
+    // reasonably close to the tower, not left at (0,0)/NaN.
+    expect(Number.isFinite(e.spawnX)).toBe(true);
+    expect(Number.isFinite(e.spawnY)).toBe(true);
+    expect(Math.hypot(e.spawnX - tx, e.spawnY - ty)).toBeLessThan(4000);
+  });
+
+  it('_allBasesCleared ignores patrol units entirely — a base can be "cleared" while its nearby patrol is still alive, and vice versa', () => {
+    const scene = makeSceneWithSpawnStub([{ q: 0, r: 0 }]);
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [], turrets: [] }];
+    scene._spawnTowerPatrols();
+    // No base-origin (baseId-tagged) enemy exists — cleared is true even though the patrol unit
+    // spawned near the tower is alive and sitting in `this.enemies`.
+    expect(scene.enemies.length).toBe(1);
+    expect(scene._allBasesCleared()).toBe(true);
+
+    // Conversely: a base-origin enemy alive with the patrol also alive still reads as NOT
+    // cleared — the patrol's presence/absence has zero bearing on the win condition either way.
+    scene.enemies.push(makeDockedUnit('turret', { baseId: 'base0' }));
+    expect(scene._allBasesCleared()).toBe(false);
   });
 });
 

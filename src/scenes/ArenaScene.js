@@ -147,6 +147,11 @@ export default class ArenaScene extends Phaser.Scene {
     // is initialized alongside so `_updateAlertTowers` (update(), below) can start ticking
     // immediately.
     this._spawnDormantUnits();
+    // #269 playtest follow-up: a light, already-active roaming patrol presence stationed near
+    // each alert tower — independent of the dormant/wake system above (see bases.js
+    // `_spawnTowerPatrols` for why). Spawned after the dormant docks so both draw from the same
+    // freshly-built `this.terrain`/`this.bases`/`this.alertTowerHexes`.
+    this._spawnTowerPatrols();
     this._initAlertTowers();
 
     this.controls = new Controls(this);

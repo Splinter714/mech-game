@@ -11,6 +11,7 @@ import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
 import { DEPTH } from './shared.js';
 import { Audio } from '../../audio/index.js';
+import { nearestValidPixel } from '../../data/spawnPlacement.js';
 
 // #269 playtest follow-up ("sensor towers need a visual AND a noise to indicate they are
 // spooling up") — the live escalating ring drawn over a counting-down alert tower. Colour
@@ -31,6 +32,15 @@ const ALERT_RING_ALPHA_MAX = 0.95;
 // about-to-happen alarm.
 const ALERT_PULSE_INTERVAL_MAX_MS = 520;
 const ALERT_PULSE_INTERVAL_MIN_MS = 120;
+
+// #269 playtest follow-up (patrol units): kind + headcount for the roaming units stationed near
+// each alert tower. Deliberately modest — a light escort/defense presence for the tower, not
+// another base-sized encounter — so a single cheap `infantry` trooper per tower (the smallest,
+// weakest kind in the game, see enemyKinds.js) rather than a tank/drone squad. Infantry's own
+// idle-wander already has an existing avoidWater/lumbering-mob feel tuned for exactly this "a
+// trooper loiters near a fixed point" behavior, so it reuses that machinery for free.
+export const TOWER_PATROL_KIND_ID = 'infantry';
+export const TOWER_PATROL_COUNT = 1;
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
@@ -87,6 +97,31 @@ export const BasesMixin = {
         e.awareness = DORMANT;
         e.baseId = base.id;
         e.dockKey = axialKey(turret.q, turret.r);
+      }
+    }
+  },
+
+  // #269 playtest follow-up (patrol units): a small, ALREADY-ACTIVE roaming presence stationed
+  // near each alert tower — explicitly NOT part of the dormant/wake system above. The tower
+  // itself remains the only thing that actually triggers a base's wake cascade; these units
+  // never get a `baseId`/`dockKey` and are never touched by `_wakeBase`/`_allBasesCleared`, so
+  // they can't accidentally gate the win condition or wake alongside a base. They spawn UNAWARE
+  // (via `_spawnKind`'s own default — never forced to DORMANT) and fight the player through the
+  // exact same UNAWARE→AWARE proximity/noise system every other regular enemy already uses.
+  //
+  // Reuses `_idleMoveIntent`'s existing "wander within IDLE_WANDER_RADIUS of spawnX/spawnY"
+  // behavior for the patrol feel — no new patrol-route code needed — by simply setting the
+  // unit's own spawn point to (a hex near) the tower's position. The alert tower hex itself is
+  // `passable: false` (data/terrain.js), so units can't stand ON the tower's own hex; snapping
+  // through `nearestValidPixel` (the same nearest-passable-hex primitive turret clusters/powerup
+  // drops already use, data/spawnPlacement.js) finds the nearest passable ground hex next to it
+  // instead. Called once from ArenaScene.create(), alongside `_spawnDormantUnits`.
+  _spawnTowerPatrols() {
+    for (const t of this.alertTowerHexes ?? []) {
+      const { x: tx, y: ty } = hexToPixel(t.q, t.r);
+      const { x, y } = nearestValidPixel(this.terrain, this.worldRadius, tx, ty);
+      for (let i = 0; i < TOWER_PATROL_COUNT; i++) {
+        this._spawnKind(x, y, TOWER_PATROL_KIND_ID);
       }
     }
   },
