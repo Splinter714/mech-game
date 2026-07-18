@@ -75,10 +75,58 @@ function tankMoveIntent(e, ctx, def) {
   return { mx, my, active: Math.abs(radial) + Math.abs(strafe) > 0 };
 }
 
+// #294 (playtest: "tread turning feels a bit too often or too smooth"): tankMoveIntent's
+// radial/strafe target isn't jittery by itself — the radial component has hysteresis bands
+// (advance/hold/reverse) — but `ctx.ux/uy` (the bearing to the player) drifts continuously every
+// single frame as the tank moves along its strafe arc, and that drift feeds straight into
+// mx/my → e.vx/e.vy → hullTravelAngle's target angle. So the hull was re-aiming at a slightly
+// different heading every tick, which reads as smooth/constant re-tracking rather than a
+// treaded vehicle committing to a heading and holding it. That's the actual driver, not
+// `turnRate` itself (1.4 rad/s is already fairly deliberate) — so the fix is a MINIMUM COMMIT
+// TIME on the desired heading: only recompute the movement intent every
+// TANK_HEADING_COMMIT_MS-ish, and hold it steady in between. The hull still turns at the same
+// chassis turnRate, but now toward a target that only changes in discrete beats, which is what
+// makes a tread vehicle read as notchy/deliberate rather than fluidly tracking.
+const TANK_HEADING_COMMIT_MS = 650;
+// #294 follow-up (Jackson, live playtest note): "when the treads turn, the turret stays perfect
+// on target instead of kinda moving with the tread turning and then needing to re-adjust." The
+// turret was tracking the player's bearing in pure world-space (aimAndFire's rotateToward),
+// totally decoupled from the hull's own rotation — but the turret is physically MOUNTED on the
+// hull, so a real one would get dragged when the hull re-orients underneath it and need to
+// re-settle. TANK_TURRET_DRAG is the fraction of a heading SWING (see below) applied as a
+// one-time jolt to the turret's current angle.
+//
+// This is deliberately applied only at the moment the tank COMMITS to a new heading (the same
+// beat the movement-commit fix above already introduced), not smoothly every single frame: a
+// per-frame nudge sized off the hull's tiny per-tick rotation (turnRate*dt) is always smaller
+// than what turretSlew*dt can correct in that same tick — rotateToward SNAPS exactly onto the
+// target whenever the remaining gap is within its per-tick reach (see shared.js), so a
+// same-tick drag-then-correct pair is invisible; the turret would appear perfectly locked again
+// by the time this frame's aimAndFire call returns, and onTarget would never see it as knocked
+// off. Applying the jolt once, sized off the FULL angular swing between the old and new
+// committed heading, gives a disturbance that isn't bounded by a single tick's slew budget —
+// so it genuinely takes several subsequent frames of turretSlew correction to re-settle,
+// exactly the "moves with the turn, then needs to re-adjust" read Jackson described. Firing
+// gates on aimAndFire's existing onTarget check (`|turret - bearing| < 0.35`), so a turret
+// freshly knocked off by a heading change correctly withholds fire until it re-settles — no
+// change needed there.
+const TANK_TURRET_DRAG = 0.35;
 function tankBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  const { mx, my, active } = tankMoveIntent(e, ctx, def);
+  e._headingCd = (e._headingCd ?? 0) - ctx.delta;
+  if (e._headingCd <= 0 || e._heading == null) {
+    e._headingCd = rand(TANK_HEADING_COMMIT_MS * 0.75, TANK_HEADING_COMMIT_MS * 1.25);
+    const nextHeading = tankMoveIntent(e, ctx, def);
+    if (e._heading != null) {
+      const prevA = Math.atan2(e._heading.my, e._heading.mx);
+      const nextA = Math.atan2(nextHeading.my, nextHeading.mx);
+      const swing = Phaser.Math.Angle.Wrap(nextA - prevA);
+      e.turret = (e.turret ?? 0) + swing * TANK_TURRET_DRAG;
+    }
+    e._heading = nextHeading;
+  }
+  const { mx, my, active } = e._heading;
   // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock is flagged
   // `e.holdGround` — see bases.js `_wakeBase` for what that still means. #285 ("units should
   // fully commit to attacking the player"): it used to also leash this movement to stay near

@@ -179,7 +179,10 @@ export const ENEMY_KINDS = {
     // per-location armor, just as one flat unit-wide pool (HpBody has no per-location split).
     armor: 40,
     parts: {
-      hull: { x: 0, y: 7, w: 30, h: 26 },
+      // #294: hull w/h narrowed + lengthened to match the art's new less-square silhouette
+      // (art/vehicles/tank.js drawHull — tracks moved from sx ±13 to ±10, hull tub lengthened
+      // from y -14.6..15.6 to -18..20) — was a near-square 30x26, now clearly longer-than-wide.
+      hull: { x: 0, y: 8, w: 22, h: 32 },
       turret: { x: 0, y: -4, w: 18, h: 16 },
       barrel: { x: 0, y: -16, w: 6, h: 16 },
     },
