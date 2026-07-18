@@ -289,21 +289,18 @@ export const ENEMY_KINDS = {
     // negligible at world scale, but included for consistency with every other kind.
     muzzleForward: -1,
     weaponId: 'machineGun',
-    // #243 playtest follow-up: single-lane stream — the player's Repeater fires a twin-lane
-    // (`streams: 2`) tracer stream; the gunship runs the same gun at the same per-round damage
-    // (no damage override) but with ONE lane, so each pass reads lighter than the player's
-    // mount. Cadence itself is unchanged (machineGun's own fireRate 18 ⇒ ~55.6ms/tick via
-    // `_fireInterval`, per #241).
+    // #269 playtest follow-up: back to twin-lane — the player's Repeater fires a twin-lane
+    // (`streams: 2`) tracer stream, and the gunship now matches it (no damage override; same
+    // per-round damage as before). Cadence itself is unchanged (machineGun's own fireRate 18
+    // ⇒ ~55.6ms/tick via `_fireInterval`, per #241).
     weaponOverride: {
-      delivery: { streams: 1 },   // player's Repeater is streams: 2
+      delivery: { streams: 2 },   // matches player's Repeater
     },
     fireRange: 460,
     // #243 trigger discipline (retuned in the playtest follow-up): post-#241 the gunship hosed
     // its full stream for an ENTIRE strafing pass — these bound each squeeze to 15 cadence
-    // ticks (~0.83s of fire, 15 rounds single-lane) followed by a 1.2s rest, so a pass reads
-    // as aggressive raking BURSTS of cannon fire rather than one continuous hose. Was 10
-    // shots / 1000ms rest when the stream was still twin-lane; the longer squeeze + slightly
-    // longer rest keep the burst reading substantial now that it's half the rounds per tick.
+    // ticks (~0.83s of fire, 15 rounds per lane) followed by a 1.2s rest, so a pass reads
+    // as aggressive raking BURSTS of cannon fire rather than one continuous hose.
     // Owner: tune via playtest.
     burstShots: 15,
     burstRestMs: 1200,

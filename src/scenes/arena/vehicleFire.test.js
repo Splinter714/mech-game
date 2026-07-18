@@ -213,16 +213,16 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     expect(e.fireCd).toBeCloseTo(500, 6);   // 1000/2 — the override's rate, not the base 18/sec
   });
 
-  it('the live helicopter kind (enemyKinds.js) resolves machineGun\'s true stream cadence, single-lane', async () => {
+  it('the live helicopter kind (enemyKinds.js) resolves machineGun\'s true stream cadence, twin-lane', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
     const { resolveWeapon } = await import('../../data/weapons.js');
     expect(ENEMY_KINDS.helicopter.weaponId).toBe(STREAM_WEAPON_ID);
-    // #243 playtest follow-up: single tracer lane (player's Repeater is streams: 2) — the
-    // ONLY delta; damage and fireRate stay the player's.
-    expect(ENEMY_KINDS.helicopter.weaponOverride).toEqual({ delivery: { streams: 1 } });
+    // #269 playtest follow-up: back to twin tracer lanes, matching the player's Repeater —
+    // no delta from the player's weapon anymore; damage and fireRate stay the player's too.
+    expect(ENEMY_KINDS.helicopter.weaponOverride).toEqual({ delivery: { streams: 2 } });
 
     const resolved = resolveWeapon(ENEMY_KINDS.helicopter.weaponId, ENEMY_KINDS.helicopter.weaponOverride);
-    expect(resolved.delivery.streams).toBe(1);
+    expect(resolved.delivery.streams).toBe(2);
     expect(resolved.damage).toBe(STREAM_WEAPON.damage);
     expect(resolved.delivery.fireRate).toBe(18);   // cadence untouched — full 18/sec during a burst
 
