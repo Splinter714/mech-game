@@ -417,6 +417,11 @@ export const WorldMixin = {
     if (img) img.setTexture(getTerrain(rub).tex);
     const { x: cx, y: cy } = hexToPixel(h.q, h.r);
     this._outpostCollapseFx(cx, cy, soft);
+    // #269 Part 2: generic hook for anything that needs to react to a SPECIFIC hex collapsing
+    // (currently only a closed dock, whose resupply must be permanently retired the instant it's
+    // destroyed — see bases.js `_onTerrainCollapsed`). No-op for every other destructible hex;
+    // optional chaining since most scenes/tests never wire a handler at all.
+    this._onTerrainCollapsed?.(k);
     return true;
   },
 

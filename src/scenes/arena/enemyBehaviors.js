@@ -14,7 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
-import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
+import { rotateToward, hullTravelAngle, isSmallUnit, leashIntent } from './shared.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -58,38 +58,40 @@ function turretBehavior(scene, e, ctx) {
 // same hull-vs-turret decoupling the player's own mech has (locomotion.js `_drive`: `this.angle`
 // follows travel, `this.turretAngle` follows aim). Slow, heavy; blocked by cover/water. Backs
 // off if the player crowds it.
-function tankBehavior(scene, e, ctx) {
-  const def = e.kindDef;
-  // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock holds its
-  // ground rather than grinding toward the player's standoff distance — see the top-level
-  // comment on `e.holdGround` in scenes/arena/bases.js `_wakeBase` for the full reasoning.
-  // #269 playtest follow-up ("ground units still don't move"): holding ground must NOT freeze
-  // the hull at its spawn-time facing forever — a stationary tank whose body never turns to
-  // face the player (only its turret, decoupled, was slewing) read as completely dead/inert.
-  // It still doesn't translate, but the hull now turns to face the player like the turret does,
-  // so a woken unit visibly reacts the instant it wakes rather than sitting frozen in whatever
-  // direction it happened to spawn facing.
-  if (e.holdGround) {
-    e.vx = 0; e.vy = 0;
-    e.angle = rotateToward(e.angle, ctx.bearing, def.move.turnRate, ctx.dt);
-    aimAndFire(scene, e, ctx, { needLos: true });
-    return;
-  }
+// Grind-to-standoff-and-hold movement intent, shared by the normal and #269 Part 1 hold-ground
+// paths below (extracted so both run the literal SAME formula, not a copy that can drift).
+// Desired radial move: close if beyond standoff, ease off inside it, back up if very close. A
+// slight lateral creep so it isn't a perfectly static block once at range.
+function tankMoveIntent(e, ctx, def) {
   const standoff = def.standoff ?? 300;
-  const mv = def.move;
-  // Desired radial move: close if beyond standoff, ease off inside it, back up if very close.
   let radial = 0;
   if (ctx.dist > standoff * 1.15) radial = 1;          // advance
   else if (ctx.dist < standoff * 0.7) radial = -0.8;   // reverse (keep the gun's distance)
-  // A slight lateral creep so it isn't a perfectly static block once at range.
   const strafe = (e.handed || 1) * 0.25;
   let mx = ctx.ux * radial - ctx.uy * strafe;
   let my = ctx.uy * radial + ctx.ux * strafe;
   const m = Math.hypot(mx, my) || 1;
   mx /= m; my /= m;
-  const target = radial === 0 && strafe === 0 ? 0 : mv.maxSpeed;
-  e.vx = approach(e.vx, mx * (Math.abs(radial) + Math.abs(strafe) > 0 ? target : 0), mv.accel * ctx.dt);
-  e.vy = approach(e.vy, my * (Math.abs(radial) + Math.abs(strafe) > 0 ? target : 0), mv.accel * ctx.dt);
+  return { mx, my, active: Math.abs(radial) + Math.abs(strafe) > 0 };
+}
+
+function tankBehavior(scene, e, ctx) {
+  const def = e.kindDef;
+  const mv = def.move;
+  let { mx, my, active } = tankMoveIntent(e, ctx, def);
+  // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock holds its
+  // ground — see the top-level comment on `e.holdGround` in scenes/arena/bases.js `_wakeBase`
+  // for the full reasoning. #269 Part 1 ("hold-ground units should still move — leash, not
+  // freeze"): holding ground no longer means freezing in place — it still runs this SAME
+  // advance-to-standoff/strafe movement, just leashed to stay near its dock (`leashIntent`,
+  // shared.js) rather than chasing the player arbitrarily far across the map.
+  if (e.holdGround) {
+    const leashed = leashIntent(e, mx, my);
+    mx = leashed.mx; my = leashed.my; active = active || leashed.leashed;
+  }
+  const target = active ? mv.maxSpeed : 0;
+  e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
   // Hull faces the direction of travel (tank-like driving), turning at the chassis turn rate;
   // it holds its last heading while stopped rather than snapping to face the player.
   e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
@@ -195,24 +197,11 @@ function deployNearby(scene, e, kindId) {
   }
 }
 
-function quadrupedBehavior(scene, e, ctx) {
-  const def = e.kindDef;
-  // #269 §7: same hold-ground wake response as tankBehavior above — a woken defensive dock
-  // unit fights from where it stands rather than advancing. The deploy-drone mechanic below
-  // still runs regardless (it's a support ability, not locomotion).
-  if (e.holdGround) {
-    e.vx = 0; e.vy = 0;
-    // See tankBehavior's holdGround branch above — the hull still turns to face the player so
-    // a woken nest visibly reacts instead of reading as frozen.
-    e.angle = rotateToward(e.angle, ctx.bearing, def.move.turnRate, ctx.dt);
-    aimAndFire(scene, e, ctx, { needLos: true });
-    quadrupedDeployTick(scene, e, def, ctx);
-    return;
-  }
+// Same grind-to-standoff-and-hold shape as tankMoveIntent above, just its own standoff default
+// and a slightly lighter strafe — extracted so the normal and #269 Part 1 hold-ground-leashed
+// paths below both run the literal same formula.
+function quadrupedMoveIntent(e, ctx, def) {
   const standoff = def.standoff ?? 320;
-  const mv = def.move;
-  // Desired radial move: close if beyond standoff, ease off inside it, back up if very close —
-  // identical shape to tankBehavior's grind-to-standoff-and-hold.
   let radial = 0;
   if (ctx.dist > standoff * 1.15) radial = 1;
   else if (ctx.dist < standoff * 0.7) radial = -0.8;
@@ -221,7 +210,22 @@ function quadrupedBehavior(scene, e, ctx) {
   let my = ctx.uy * radial + ctx.ux * strafe;
   const m = Math.hypot(mx, my) || 1;
   mx /= m; my /= m;
-  const target = Math.abs(radial) + Math.abs(strafe) > 0 ? mv.maxSpeed : 0;
+  return { mx, my, active: Math.abs(radial) + Math.abs(strafe) > 0 };
+}
+
+function quadrupedBehavior(scene, e, ctx) {
+  const def = e.kindDef;
+  const mv = def.move;
+  let { mx, my, active } = quadrupedMoveIntent(e, ctx, def);
+  // #269 §7 / Part 1: same hold-ground wake response as tankBehavior above — a woken defensive
+  // dock unit still runs its normal advance-to-standoff/strafe movement, just leashed near its
+  // dock rather than freezing OR chasing the player unbounded. The deploy-drone mechanic below
+  // still runs regardless (it's a support ability, not locomotion).
+  if (e.holdGround) {
+    const leashed = leashIntent(e, mx, my);
+    mx = leashed.mx; my = leashed.my; active = active || leashed.leashed;
+  }
+  const target = active ? mv.maxSpeed : 0;
   e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
   // Hull faces the direction of travel; turret tracks the player completely independently
@@ -262,17 +266,9 @@ function quadrupedDeployTick(scene, e, def, ctx) {
 // crowd rather than a single-file conga line or a static firing line. Ground unit — needs LOS
 // like a tank/turret (it can't shoot through walls), and collides with terrain like any
 // ground unit (handled generically by the caller, same as tank/turret).
-function infantryBehavior(scene, e, ctx) {
-  const def = e.kindDef;
-  // #269 §7: same hold-ground wake response as tank/quadruped above — hull still turns to face
-  // the player so a woken trooper visibly reacts instead of reading as frozen.
-  if (e.holdGround) {
-    e.vx = 0; e.vy = 0;
-    e.angle = rotateToward(e.angle, ctx.bearing, def.move.turnRate, ctx.dt);
-    aimAndFire(scene, e, ctx, { needLos: true });
-    return;
-  }
-  const mv = def.move;
+// "Advance and mill" movement intent, shared by the normal and #269 Part 1 hold-ground-leashed
+// paths below (extracted so both run the literal same formula).
+function infantryMoveIntent(e, ctx, def) {
   const standoff = (def.fireRange ?? 200) * 0.75;
   e._jitterAt = (e._jitterAt ?? 0) - ctx.delta;
   if (e._jitterAt <= 0) {
@@ -290,8 +286,19 @@ function infantryBehavior(scene, e, ctx) {
     my = Math.sin(e._orbitAng) * 0.5;
   }
   const m = Math.hypot(mx, my) || 1;
-  e.vx = approach(e.vx, (mx / m) * mv.maxSpeed, mv.accel * ctx.dt);
-  e.vy = approach(e.vy, (my / m) * mv.maxSpeed, mv.accel * ctx.dt);
+  return { mx: mx / m, my: my / m };
+}
+
+function infantryBehavior(scene, e, ctx) {
+  const def = e.kindDef;
+  const mv = def.move;
+  let { mx, my } = infantryMoveIntent(e, ctx, def);
+  // #269 §7 / Part 1: same hold-ground wake response as tank/quadruped above — a woken trooper
+  // still advances/mills exactly like a non-held one, just leashed near its dock instead of
+  // freezing OR chasing the player unbounded.
+  if (e.holdGround) ({ mx, my } = leashIntent(e, mx, my));
+  e.vx = approach(e.vx, mx * mv.maxSpeed, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, my * mv.maxSpeed, mv.accel * ctx.dt);
   if (Math.hypot(e.vx, e.vy) > 5) e.angle = Math.atan2(e.vy, e.vx);
   aimAndFire(scene, e, ctx, { needLos: true });
 }

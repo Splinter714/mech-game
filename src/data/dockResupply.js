@@ -53,3 +53,15 @@ export function tickDockResupply(
   if (remainingMs <= 0) return { remainingMs: cooldownMs, count: state.count + 1, ready: true };
   return { remainingMs, count: state.count };
 }
+
+// #269 Part 2 ("dock open/closed states"): a CLOSED dock is destructible — destroying it must
+// permanently retire its ability to ever resupply again, even if it hadn't reached
+// `maxPerDock` yet (a real tactical choice: blow the dome open before it can pop out
+// reinforcements). Scenes/arena/bases.js hooks this into world.js's generic destructible-
+// terrain collapse path (`_damageBuildingAt` → `_onTerrainCollapsed`) rather than adding
+// dock-specific destruction handling there. Pure: forces `count` to `maxPerDock` so every future
+// `tickDockResupply` call hits the already-spent early return above and forever reports
+// `ready: false`; `remainingMs` is carried through unchanged (irrelevant once spent).
+export function spendDockResupply(state, maxPerDock = DOCK_RESUPPLY_MAX_PER_DOCK) {
+  return { remainingMs: state.remainingMs, count: maxPerDock };
+}

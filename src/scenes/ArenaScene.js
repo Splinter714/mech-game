@@ -332,6 +332,10 @@ export default class ArenaScene extends Phaser.Scene {
     this._updateAlertTowers(dt);
     // #269 §3 "rare multi-spawn exception": tick every dock's occasional-resupply cooldown.
     this._updateDockResupply(dt);
+    // #269 Part 2 ("dock open/closed states"): detect a dock hex being vacated (its own units
+    // walked away or died) and seal it — see bases.js `_updateDockOpenClose` for the state
+    // machine (open ⇄ closed ⇄ reopened-for-resupply).
+    this._updateDockOpenClose();
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);

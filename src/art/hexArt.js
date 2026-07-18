@@ -93,6 +93,12 @@ const PAL = {
   // bunker silhouette with a bold red target-ring beacon) is what makes it read as visually
   // distinct — specifically as "THE thing to punch through," unlike a background outpost.
   objective: BASE_INFRA_COLOR,
+  // #269 playtest follow-up (dock open/closed states): the CLOSED state of a dock hex (terrain.js
+  // `dockClosed`) — a genuine sealed structure (impassable, destructible), so it gets its own
+  // darker/heavier base-infra tone rather than the open `dock`'s neutral BASE_INFRA_COLOR, so a
+  // player can tell open vs. closed apart at a glance even before the DETAIL painter's dome icon
+  // registers.
+  dockClosed: { fill: 0x33383e, edge: 0x22262c },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -575,6 +581,31 @@ const DETAIL = {
   // not a landing pad. This is a reasonable placeholder look reusing the existing base-infra
   // palette (BASE_INFRA_COLOR); a more bespoke turret-pad visual may still be worth a follow-up
   // pass once this is playtested (parallel #269 art work is covering dock/alertTower distinctness).
+  // #269 playtest follow-up (dock open/closed states): `dockClosed` — a sealed steel dome over
+  // the same rectangular bay footprint as `hex_dock` above, so the pad's outline still reads as
+  // the same hex, just shut. A domed cap (concentric arcs, like a hatch seen edge-on) replaces
+  // the open pad's chevron lane marking, with riveted seam lines and a small red "sealed"
+  // warning light where the dock's amber bollards were — deliberately alarming (red, not amber)
+  // so it reads as "closed/dangerous," distinct from the open dock's welcoming amber palette.
+  hex_dockClosed: (sg) => {
+    const hw = 14, hh = 10;
+    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, hw * 2.1, hh * 1.7);   // ground shadow
+    sg.fillStyle(0x1c1f24, 0.9); sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, hh * 2);            // deck base plate
+    sg.fillStyle(0x676d76, 0.5);                                                                // painted border frame (dimmer than open)
+    sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, 1.6);
+    sg.fillRect(C.cx - hw, C.cy + hh - 1.6, hw * 2, 1.6);
+    sg.fillRect(C.cx - hw, C.cy - hh, 1.6, hh * 2);
+    sg.fillRect(C.cx + hw - 1.6, C.cy - hh, 1.6, hh * 2);
+    sg.fillStyle(0x2c2f34, 1); sg.fillEllipse(C.cx, C.cy, hw * 1.7, hh * 1.5);                 // domed hatch cap
+    sg.fillStyle(0x40444a, 0.9); sg.fillEllipse(C.cx, C.cy, hw * 1.2, hh * 1.0);                // concentric seam ring
+    sg.fillStyle(0x565b63, 0.7); sg.fillEllipse(C.cx, C.cy - 1, hw * 0.7, hh * 0.55);           // top-lit dome highlight
+    sg.fillStyle(0x676d76, 0.6);                                                                 // riveted seam dots
+    for (const [dx, dy] of [[-6, -3], [6, -3], [-6, 4], [6, 4], [0, -6], [0, 6]]) {
+      sg.fillCircle(C.cx + dx, C.cy + dy, 0.8);
+    }
+    sg.fillStyle(0xb3392a, 0.35); sg.fillCircle(C.cx, C.cy + hh - 2, 2.2);                       // sealed-warning glow halo
+    sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx, C.cy + hh - 2, 1.1);                       // sealed-warning light
+  },
   hex_turretEmplacement: (sg) => {
     const r = 13;
     sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, r * 2.05, r * 1.5);   // soft ground shadow

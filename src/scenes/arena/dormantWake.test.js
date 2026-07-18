@@ -65,6 +65,11 @@ function makeTickableUnit(kindId, { baseId = 'base0' } = {}) {
     key: `${kindId}Test`, mech, view, kind: def.kind, kindDef: def, behavior: def.behavior,
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, handed: 1,
     awareness: DORMANT, baseId, detectRange: detectionRangeFor(def.fireRange),
+    // #269 Part 1: real `_spawnDormantUnits` always stashes a home anchor for the leash
+    // (`leashIntent`, shared.js) — mirror that here so a holdGround unit's movement is actually
+    // leashed in these tests, not left un-leashed just because this hand-rolled unit skipped
+    // the real spawn path.
+    homeX: 0, homeY: 0,
   };
 }
 
@@ -356,15 +361,19 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     }
   });
 
-  it('a held-ground mech never translates but its hull turns to track the player, turret slews too', () => {
+  it('#269 Part 1: a held-ground mech still moves (runs the normal tactical brain) but stays leashed near its dock', () => {
     const scene = makeSceneWithSpawnStubs();
     scene.enemyMove = true;
     scene.enemyFire = false;   // out of scope here: firing needs a full art/weapon-plumbing stub
     scene._blocked = () => false;
     scene._speedFactorAt = () => 1;
     scene._cachedLosToPlayer = () => true;
+    scene._wallDistanceLos = () => Infinity;   // no cover in this stub world — always clear LOS
     scene._syncTilts = () => {};
-    scene.px = 900; scene.py = 300;
+    scene.px = 900; scene.py = 300; scene.vx = 0; scene.vy = 0; scene.turretAngle = 0;
+    // `_decideEnemyState` reads the PLAYER's own mech (lethalHealth(this.mech)) for the
+    // "is the player vulnerable" signal — a full-health stub is enough for this test.
+    scene.mech = { partHealthFraction: () => 1 };
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
       docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
@@ -373,18 +382,24 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     scene._wakeBase('base0');
     const e = scene.enemies[0];
     e.view = { setPosition() {}, hull: { rotation: 0 }, turret: { rotation: 0 } };
+    e.homeX = e.x; e.homeY = e.y;   // real _spawnDormantUnits stashes this; this stub doesn't
     const spawnAngle = e.angle;
     const spawnX = e.x, spawnY = e.y;
 
-    for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
+    for (let i = 0; i < 200; i++) scene._updateEnemy(e, 0.016, 16);
 
-    expect(e.state).toBe('hold');
-    expect(e.x).toBe(spawnX);
-    expect(e.y).toBe(spawnY);
-    expect(e.vx).toBe(0);
-    expect(e.vy).toBe(0);
-    // Root-cause parity with the non-mech holdGround bug-1 fix below: the hull must actually
-    // turn to face the player even though it never moves, not stay frozen at its spawn facing.
+    // It's no longer pinned to a frozen 'hold' — it ran the real PRESS/KITE/FLANK/COVER/HOLD
+    // brain, which (tooFar from the player, standoff 200 vs dist ~950) presses toward the
+    // player just like a non-held mech would.
+    expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
+    expect(e.x !== spawnX || e.y !== spawnY).toBe(true);
+    // But the leash caps how far it's allowed to wander from its dock (home) — never past the
+    // leash radius plus a small accel-limited overshoot budget (see the tank leash test below
+    // for why this isn't a tight one-frame epsilon).
+    const distFromHome = Math.hypot(e.x - spawnX, e.y - spawnY);
+    expect(distFromHome).toBeLessThanOrEqual(360);
+    // Root-cause parity with the non-mech holdGround bug-1 fix below: the hull turns to track
+    // the player as it moves/holds, not stay frozen at its spawn facing.
     expect(e.angle).not.toBe(spawnAngle);
     // The turret independently tracks the player too (unchanged pre-existing behavior).
     expect(e.turret).not.toBe(Math.PI / 2);
@@ -571,7 +586,7 @@ describe('#269 bug 1 regression: a woken unit actually reacts on its next tick',
     expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
   });
 
-  it('a slow/holdGround kind (tank) never gets velocity, but its hull turns to face the player', () => {
+  it('#269 Part 1: a slow/holdGround kind (tank) still moves toward the player (leashed), and its hull turns to face it', () => {
     const scene = makeTickableScene();
     const e = makeTickableUnit('tank');
     scene.enemies.push(e);
@@ -580,13 +595,26 @@ describe('#269 bug 1 regression: a woken unit actually reacts on its next tick',
     const spawnAngle = e.angle;
     for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
     // Root-cause assertion: BEFORE the fix this stayed pinned at `spawnAngle` forever (the actual
-    // bug). It still never translates (holdGround is a real "stand and fight" design choice), but
-    // it must visibly turn to track the player.
+    // bug), AND never translated at all. Holding ground is no longer a total freeze — it still
+    // gets real velocity, chasing/strafing exactly like a non-held tank, just leashed near home.
     expect(e.angle).not.toBe(spawnAngle);
-    expect(e.vx).toBe(0);
-    expect(e.vy).toBe(0);
-    expect(e.x).toBe(0);
-    expect(e.y).toBe(0);
+    expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
+    expect(e.x !== 0 || e.y !== 0).toBe(true);
+  });
+
+  it('#269 Part 1: a holdGround unit never wanders past the leash radius from its dock/home point', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    // Many ticks (~32s simulated) — long enough that, un-leashed, a tank (52px/s) chasing a
+    // player 900+px away would have wandered well past the leash radius by the end; leashed, it
+    // should settle at/near the leash boundary and never exceed it by more than a small
+    // accel-limited overshoot budget (the leash only corrects once the unit is ALREADY past the
+    // radius, and `approach()`'s accel ramp takes a few frames to turn the velocity around).
+    for (let i = 0; i < 2000; i++) scene._updateEnemy(e, 0.016, 16);
+    const distFromHome = Math.hypot(e.x - e.homeX, e.y - e.homeY);
+    expect(distFromHome).toBeLessThanOrEqual(340);
   });
 
   it('a slow/holdGround kind (infantry) also turns its hull instead of staying frozen', () => {

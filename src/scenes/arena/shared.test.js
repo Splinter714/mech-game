@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { explosionCategoryFor, deathScaleFor, nearestLocation, resolveHitLocation, pickLiveWeighted } from './shared.js';
+import {
+  explosionCategoryFor, deathScaleFor, nearestLocation, resolveHitLocation, pickLiveWeighted,
+  leashIntent, HOLD_GROUND_LEASH_PX,
+} from './shared.js';
 import { Mech } from '../../data/Mech.js';
 
 // #107: which discrete destruction-explosion-SOUND category a dying enemy falls into, bucketed
@@ -165,5 +168,45 @@ describe('pickLiveWeighted (#231 — player weighted-random hit-location redirec
   it('falls back to the rolled (destroyed) location if the entire pool is destroyed '
     + '(defensive fallback, mirrors resolveHitLocation)', () => {
     expect(pickLiveWeighted(pool, () => true, () => 0)).toBe('leftTorso');
+  });
+});
+
+describe('#269 Part 1: leashIntent — hold-ground units still move, but stay within a leash radius of home', () => {
+  it('no home point recorded ⇒ the normal intent passes through unchanged (no leash)', () => {
+    const e = { x: 500, y: 500 };
+    const result = leashIntent(e, 0.7, -0.7);
+    expect(result).toEqual({ mx: 0.7, my: -0.7, leashed: false });
+  });
+
+  it('inside the leash radius ⇒ the normal intent passes through unchanged', () => {
+    const e = { x: 100, y: 0, homeX: 0, homeY: 0 };
+    const result = leashIntent(e, 1, 0);
+    expect(result.mx).toBe(1);
+    expect(result.my).toBe(0);
+    expect(result.leashed).toBe(false);
+  });
+
+  it('exactly at the leash radius ⇒ still not leashed (radius is inclusive)', () => {
+    const e = { x: HOLD_GROUND_LEASH_PX, y: 0, homeX: 0, homeY: 0 };
+    const result = leashIntent(e, 1, 0);
+    expect(result.leashed).toBe(false);
+  });
+
+  it('past the leash radius ⇒ overrides the intent with a straight pull-back toward home, regardless of the requested direction', () => {
+    const e = { x: HOLD_GROUND_LEASH_PX + 50, y: 0, homeX: 0, homeY: 0 };
+    // Asking to move further AWAY from home (mx: 1) should be overridden.
+    const result = leashIntent(e, 1, 0);
+    expect(result.leashed).toBe(true);
+    expect(result.mx).toBeCloseTo(-1, 5);   // straight back toward home
+    expect(result.my).toBeCloseTo(0, 5);
+  });
+
+  it('pull-back direction is always a unit vector toward home, from any angle', () => {
+    const e = { x: 0, y: HOLD_GROUND_LEASH_PX + 100, homeX: 0, homeY: 0 };
+    const result = leashIntent(e, 0, 1);
+    expect(result.leashed).toBe(true);
+    expect(result.mx).toBeCloseTo(0, 5);
+    expect(result.my).toBeCloseTo(-1, 5);
+    expect(Math.hypot(result.mx, result.my)).toBeCloseTo(1, 5);
   });
 });

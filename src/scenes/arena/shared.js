@@ -519,3 +519,36 @@ export function backwardSpeedScale(mx, my, turretAngle) {
   // facing in [-1, 0]; lerp from 1 (purely sideways) to BACKWARD_SPEED_MULT (straight back).
   return 1 + facing * (1 - BACKWARD_SPEED_MULT);
 }
+
+// #269 Part 1 ("hold-ground units should still move — leash, not freeze"): a woken hold-ground
+// dock/base unit (tank/quadruped/infantry via enemyBehaviors.js, or a mech via enemies.js
+// `_updateEnemy`) was previously frozen solid (vx=vy=0 forever) once `e.holdGround` was set —
+// that read as dead rather than defensive. The fix keeps the unit's EXISTING non-hold-ground
+// movement brain running (advance-to-standoff, strafe, the full PRESS/KITE/FLANK/COVER/HOLD
+// state machine for mechs) so it still actively repositions, but leashes the result to a radius
+// around its home point (`e.homeX`/`e.homeY`, stashed at spawn by bases.js
+// `_spawnDormantUnits`) so it can't chase the player arbitrarily far from its dock/base.
+//
+// LEASH_PX is a few hundred px — the same order of magnitude as a fire-range standoff (tank/
+// quadruped standoffs run 300-320px, most direct-fire weapon ranges 200-500px) so a leashed unit
+// can still fully perform its normal advance/strafe/flank dance without the leash constantly
+// fighting it, while still keeping it "relatively near" its dock rather than crossing the whole
+// corridor. Owner: tunable via playtest.
+export const HOLD_GROUND_LEASH_PX = 320;
+
+// Given a unit's home point and its NORMALLY-computed movement intent {mx, my} (unit-length or
+// zero, from the kind's own non-hold-ground movement logic), return the intent to actually use
+// this frame. Inside the leash, the normal intent passes straight through unchanged — a held
+// unit fights exactly like a non-held one while it's near home. Once the unit has wandered past
+// `HOLD_GROUND_LEASH_PX` from home, the intent is overridden with a straight pull back toward
+// home (ignoring whatever the normal brain wanted), so the leash is a hard cap, not a soft bias
+// — normal behaviour resumes the instant it's back inside next frame. No home point recorded
+// (a non-dock unit, e.g. a tower patrol, or a test enemy built without going through
+// `_spawnDormantUnits`) ⇒ no leash, the normal intent passes through untouched.
+export function leashIntent(e, mx, my) {
+  if (e.homeX == null || e.homeY == null) return { mx, my, leashed: false };
+  const dx = e.homeX - e.x, dy = e.homeY - e.y;
+  const distHome = Math.hypot(dx, dy);
+  if (distHome <= HOLD_GROUND_LEASH_PX) return { mx, my, leashed: false };
+  return { mx: dx / distHome, my: dy / distHome, leashed: true };
+}
