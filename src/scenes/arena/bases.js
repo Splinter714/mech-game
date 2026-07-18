@@ -8,12 +8,12 @@
 // `this.alertTowerHexes` from `placeGapTowers`, #275 redesign: one tower placed solo per gap
 // between successive bases along the corridor's progression, not anchored to any base or
 // "outpost" concept).
-import { hexToPixel, axialKey, hexCorners } from '../../data/hexgrid.js';
+import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
-import { DEPTH } from './shared.js';
+import { DEPTH, strokeHexRing } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { makeDockResupplyState, tickDockResupply, spendDockResupply } from '../../data/dockResupply.js';
@@ -279,21 +279,28 @@ export const BasesMixin = {
       // duration/easing of its own, which would fight with "the countdown itself controls
       // exactly how far along this is" (and a tower whose countdown resets partway through a
       // tween would leave the tween instantly out of sync).
-      // #280: hexagon outline (stroke-only Polygon, matching the real grid's pointy-top
-      // orientation via the same `hexCorners` helper hexArt.js uses for terrain hexes) instead
-      // of a circle. Unlike `Circle`, `Polygon` has no `setRadius` — this ring is resized live
-      // every tick as the countdown's `fraction` climbs, so its geometry is recomputed from
-      // scratch each tick via `setTo` rather than scaled, which would also scale (and thus
-      // distort) the stroke width.
-      const ring = this.add.polygon(x, y, hexCorners(ALERT_RING_RADIUS_MIN))
-        .setStrokeStyle(3, ALERT_RING_COLOR, ALERT_RING_ALPHA_MIN)
-        .setDepth(DEPTH.WORLD_UI);
+      // #280: hexagon outline (matching the real grid's pointy-top orientation via the same
+      // `hexCorners` helper hexArt.js uses for terrain hexes) instead of a circle. #280 playtest
+      // follow-up: drawn with `Graphics` + `strokeHexRing` (shared.js), not a `Polygon` shape —
+      // `Polygon`'s display-origin math renders an already-centered point set (what `hexCorners`
+      // returns) offset up-left by its own radius, at ANY radius including after a `setTo` resize
+      // (see `strokeHexRing`'s comment for the full mechanism). This ring is resized live every
+      // tick as the countdown's `fraction` climbs — `Graphics` has no notion of "resize", so it's
+      // simply cleared and re-stroked from scratch each tick via `strokeHexRing`, at the ring's
+      // fixed world position `(x, y)` set once here via `setPosition`.
+      const ring = this.add.graphics().setPosition(x, y).setDepth(DEPTH.WORLD_UI);
+      strokeHexRing(ring, ALERT_RING_RADIUS_MIN, 3, ALERT_RING_COLOR, ALERT_RING_ALPHA_MIN);
       fx = { ring, pulseTimerMs: 0 };
       this._alertTowerFx.set(key, fx);
     }
     const f = next.fraction ?? 0;
-    fx.ring.setTo(hexCorners(ALERT_RING_RADIUS_MIN + (ALERT_RING_RADIUS_MAX - ALERT_RING_RADIUS_MIN) * f));
-    fx.ring.setStrokeStyle(3, ALERT_RING_COLOR, ALERT_RING_ALPHA_MIN + (ALERT_RING_ALPHA_MAX - ALERT_RING_ALPHA_MIN) * f);
+    strokeHexRing(
+      fx.ring,
+      ALERT_RING_RADIUS_MIN + (ALERT_RING_RADIUS_MAX - ALERT_RING_RADIUS_MIN) * f,
+      3,
+      ALERT_RING_COLOR,
+      ALERT_RING_ALPHA_MIN + (ALERT_RING_ALPHA_MAX - ALERT_RING_ALPHA_MIN) * f,
+    );
     // Periodic warning beep, re-triggered on an interval that shrinks as `f` climbs (see
     // ALERT_PULSE_INTERVAL_MIN/MAX_MS above) — a simple countdown timer accumulated in ms,
     // fired the frame it reaches zero and reset to the (now-shorter) interval for `f`.

@@ -6,6 +6,7 @@ import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { CENTER } from '../../art/mechPrims.js';
 import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
+import { hexCorners } from '../../data/hexgrid.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
 // and combat (mapping a hit point back to the nearest body part).
@@ -551,4 +552,30 @@ export function leashIntent(e, mx, my) {
   const distHome = Math.hypot(dx, dy);
   if (distHome <= HOLD_GROUND_LEASH_PX) return { mx, my, leashed: false };
   return { mx: dx / distHome, my: dy / distHome, leashed: true };
+}
+
+// #280 playtest follow-up ("hexagon rings render offset toward the top-left of the intended hex
+// position"): both the static objective marker (mission.js) and the live-resizing alert-tower
+// ring (bases.js) used to draw their hex outline as a `Phaser.GameObjects.Polygon` built from
+// `hexCorners()` — a point set that's already centered on (0,0) (symmetric, -size..+size on both
+// axes). Polygon/Shape's renderer draws every point as `point - displayOrigin`, where
+// `displayOrigin` is derived from the polygon's bounding box under the ASSUMPTION the points
+// span 0..width/0..height (a top-left-origin box), same convention as a rectangle's corner
+// points. Feeding it an already-centered point set double-subtracts that centering: the whole
+// shape renders shifted by exactly `-size` on both axes — up and to the left of the intended
+// centre, matching the reported bug precisely (`setTo()` recomputes width/height/origin correctly
+// on every resize, so this wasn't a stale-cache bug — the offset was there from frame one, at
+// every radius). hexArt.js's terrain-hex drawing never hit this because it never uses `Polygon`
+// at all — it draws every hex via `Graphics.fillPoints`/`strokePoints` with points it offsets to
+// an absolute centre itself (`cx + p.x`), which has no origin-guessing step to get wrong. This
+// helper follows that same established, already-correct pattern: `graphics` must already be
+// positioned (via `add.graphics()` + `setPosition`, or as a child of a container already placed)
+// at the ring's intended centre, and `hexCorners(radius)` — centered on (0,0) — is stroked as
+// literal LOCAL points with no origin math involved, so the rendered ring is centered on
+// `graphics`'s own position by construction, at any radius, every time it's redrawn.
+export function strokeHexRing(graphics, radius, lineWidth, color, alpha) {
+  graphics.clear();
+  graphics.lineStyle(lineWidth, color, alpha);
+  graphics.strokePoints(hexCorners(radius), true);
+  return graphics;
 }

@@ -17,6 +17,10 @@ function fakeGraphic() {
   const obj = {
     setStrokeStyle: () => obj, setOrigin: () => obj, setDepth: () => obj,
     setColor: () => obj, setText: () => obj, destroy: () => {},
+    // #280: the objective marker's rings are now drawn via `Graphics` (`strokeHexRing`,
+    // shared.js), not `Polygon` — chain the calls it makes (`clear`/`lineStyle`/`strokePoints`)
+    // the same no-op way as the rest of this fake.
+    clear: () => obj, lineStyle: () => obj, strokePoints: () => obj,
   };
   return obj;
 }
@@ -27,6 +31,7 @@ function fakeScene(overrides = {}) {
     add: {
       circle: () => fakeGraphic(),
       polygon: () => fakeGraphic(),
+      graphics: () => fakeGraphic(),
       text: () => fakeGraphic(),
       container: (x, y, list) => Object.assign({ x, y, list }, {
         setDepth() { return this; }, destroy() {},
