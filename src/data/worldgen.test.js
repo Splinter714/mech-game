@@ -204,8 +204,11 @@ describe('generateTerrain', () => {
     // biome's real outpost — both are "solid" (non-soft-cover) destructibles; only outposts are
     // ever picked as the mission objective (isMissionObjective, exercised elsewhere). #269: the
     // alertTower base-infra hex is the same kind of destructible-but-not-a-mission-objective
-    // set-dressing.
-    for (const k of buildingHp.keys()) expect([GRASSLAND.outpost, 'helipad', 'alertTower']).toContain(terrain.get(k));
+    // set-dressing. #269 playtest follow-up: `objective` is a new destructible base-infra hex too
+    // (the real target `_targetCurrentBase` now points the mission marker at).
+    for (const k of buildingHp.keys()) {
+      expect([GRASSLAND.outpost, 'helipad', 'alertTower', 'objective']).toContain(terrain.get(k));
+    }
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
 
@@ -276,8 +279,9 @@ describe('generateTerrain', () => {
         // #251: `helipad` is a normal stamped role now too — static set-dressing, not a hazard.
         // #269: `dock`/`alertTower` are the base-population system's own normal stamped roles.
         // `turretEmplacement` (playtest follow-up) is the same kind of normal stamped role.
+        // `objective` (playtest follow-up) is the base's dedicated destructible-target hex.
         GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost,
-        'helipad', 'dock', 'alertTower', 'turretEmplacement',
+        'helipad', 'dock', 'alertTower', 'turretEmplacement', 'objective',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });
@@ -328,6 +332,28 @@ describe('generateTerrain', () => {
       const few = generateTerrain({ seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, outposts: 1 });
       const many = generateTerrain({ seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, outposts: 20 });
       expect(many.buildingHp.size).toBeGreaterThan(few.buildingHp.size);
+    });
+
+    // #269 playtest follow-up ("outpost:base ratio should be 1:1"): with no explicit `outposts`
+    // override, outpost count now DEFAULTS to `baseCount` (not a biome-tuned flat number — that
+    // field was removed from biomes.js entirely) — so a map's outpost seed count always tracks
+    // its base count 1:1, whatever `baseCount` is asked for.
+    it('outpost seed count defaults to baseCount (1:1), not a biome-specific number', () => {
+      const { includedKeys } = buildCorridor(9);
+      for (const baseCount of [1, 3, 5]) {
+        const { outposts } = generateTerrain({
+          seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, baseCount,
+        });
+        expect(outposts.length).toBe(baseCount);
+      }
+    });
+
+    it('an explicit `outposts` override still wins over the baseCount default', () => {
+      const { includedKeys } = buildCorridor(9);
+      const { outposts } = generateTerrain({
+        seed: 5, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, baseCount: 3, outposts: 7,
+      });
+      expect(outposts.length).toBe(7);
     });
   });
 });
@@ -642,6 +668,32 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       for (const t of base.turrets) {
         expect(T.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
       }
+      // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"):
+      // every base gets exactly one dedicated, destructible `objective` hex.
+      expect(base.objectiveHex).toBeTruthy();
+      expect(T.get(axialKey(base.objectiveHex.q, base.objectiveHex.r))).toBe('objective');
+    }
+  });
+
+  // #269 playtest follow-up: the objective hex is a real, destructible, base-owned hex — not
+  // just a returned coordinate — so the mission marker (mission.js `_targetCurrentBase`) always
+  // points at something a player can actually punch through.
+  it('places exactly one objective hex per base, distinct from its docks/turrets', () => {
+    const rng = mulberry32(42);
+    const all = buildAllRing();
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
+
+    expect(bases.length).toBe(BASE_COUNT);
+    for (const base of bases) {
+      expect(base.objectiveHex).toBeTruthy();
+      const objKey = axialKey(base.objectiveHex.q, base.objectiveHex.r);
+      expect(T.get(objKey)).toBe('objective');
+      // The objective hex isn't double-booked as a dock or turret hex too.
+      for (const d of base.docks) expect(axialKey(d.q, d.r)).not.toBe(objKey);
+      for (const t of base.turrets) expect(axialKey(t.q, t.r)).not.toBe(objKey);
     }
   });
 

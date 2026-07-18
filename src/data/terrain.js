@@ -178,6 +178,27 @@ export const TERRAIN = {
   turretEmplacement: { id: 'turretEmplacement', tex: 'hex_turretEmplacement', passable: true, blocksLOS: false, speedFactor: 1,
                category: 'base', movement: 'full', cover: 'open' },
 
+  // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): a
+  // dedicated, DESTRUCTIBLE base hex the mission marker actually points at — previously
+  // `_targetCurrentBase` (scenes/arena/mission.js) pointed at `base.center`, which is just the
+  // geometric centroid of a base's dock cluster, not necessarily even a real placed hex. `objective`
+  // is placed once per base (data/worldgen.js `placeBases`), separate from docks/turretEmplacement/
+  // alertTower, and reads as "the real thing to punch through" for that base — a proper structure,
+  // not a placement marker, so it's a genuine hard-cover building (mirrors `alertTower`'s shape as
+  // a real structure: impassable, blocks LOS) rather than the passable ground markings dock/
+  // turretEmplacement use. hp 40 sits between the alert tower's slim-mast 25 and a full outpost's
+  // 60 — substantial enough to read as a real objective, not a one-shot. `setDressing` is
+  // deliberately OMITTED (unlike alertTower/helipad) — this hex IS meant to be `isMissionObjective`-
+  // eligible in spirit (it's what the marker targets), though nothing currently drives
+  // `isBaseCleared`/win-condition off it directly (kill-all-docked-enemies stays the actual win
+  // condition, per the issue's explicit scoping call — this hex only fixes what the marker visually
+  // points at). Collapses to the same generic biome-independent `rubble` as the other base-infra
+  // structures (dock/alertTower/helipad) — a destroyed objective reads as the same kind of
+  // wreckage everywhere, not a biome-specific rubble.
+  objective: { id: 'objective', tex: 'hex_objective', passable: false, blocksLOS: true,
+               destructible: true, hp: 40, rubbleId: 'rubble',
+               category: 'base', movement: 'none', cover: 'hard' },
+
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'terrain', movement: 'full', cover: 'open' },

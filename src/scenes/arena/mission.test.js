@@ -46,6 +46,12 @@ function makeBase(id, q, r) {
   return { id, center: { q, r }, docks: [], turrets: [] };
 }
 
+// #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): a base
+// with a real `objectiveHex` distinct from its (arbitrary-centroid) `center`.
+function makeBaseWithObjective(id, centerQ, centerR, objQ, objR) {
+  return { id, center: { q: centerQ, r: centerR }, docks: [], turrets: [], objectiveHex: { q: objQ, r: objR } };
+}
+
 describe('objective sequencing walks through bases in index order (#269 playtest follow-up)', () => {
   it('the first objective targets base 0, not an arbitrary hex', () => {
     const bases = [makeBase('base0', 0, 0), makeBase('base1', 20, 0), makeBase('base2', 0, 20)];
@@ -132,5 +138,25 @@ describe('objective sequencing walks through bases in index order (#269 playtest
     expect(scene.mission.status).toBe('complete');
     scene._advanceObjective();
     expect(scene._objectiveBase.id).toBe('base1');
+  });
+});
+
+// #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): the
+// marker now targets a base's dedicated destructible `objectiveHex`, not the geometric-centroid
+// `center` (which isn't necessarily even a real placed hex).
+describe('the mission marker targets the base objective hex, not the arbitrary centroid (#269 playtest follow-up)', () => {
+  it('points at objectiveHex when the base has one, not at center', () => {
+    const bases = [makeBaseWithObjective('base0', 0, 0, 3, -1)];
+    const scene = fakeScene({ bases });
+    scene._initMission();
+    expect(scene.objectiveHex).toBe(axialKey(3, -1));
+    expect(scene.objectiveHex).not.toBe(axialKey(0, 0));
+  });
+
+  it('falls back to center when a base has no objectiveHex (e.g. invalidated by the safe-zone clear)', () => {
+    const bases = [makeBase('base0', 5, 5)];   // no objectiveHex field at all
+    const scene = fakeScene({ bases });
+    scene._initMission();
+    expect(scene.objectiveHex).toBe(axialKey(5, 5));
   });
 });

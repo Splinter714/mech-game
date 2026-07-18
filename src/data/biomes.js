@@ -20,10 +20,15 @@
 //                       river, already covers the "watch your footing" role — see `hasHazard`).
 //   cover             — scattered walk-through cover clusters (forest analog: passable, slow,
 //                       blocks LOS).
-//   outpost           — the destructible hard-cover building for this biome.
+//   outpost           — the destructible hard-cover building for this biome. #269 playtest
+//                       follow-up ("outpost:base ratio should be 1:1"): how MANY outposts get
+//                       placed is no longer a per-biome knob (a flat `outposts` count used to
+//                       live here, 3-8 depending on biome) — it now defaults to `BASE_COUNT`
+//                       (data/worldgen.js `generateTerrain`'s `outpostCount`), since each outpost
+//                       anchors exactly one alert tower (`placeOutpostTowers`) and the issue wants
+//                       one outpost per base.
 // Generation knobs:
 //   coverClusters     — multiplier on how many cover clusters to seed (1 = grassland default).
-//   outposts          — how many destructible outpost clusters to seed.
 //   hasChannel        — draw the winding channel strip.
 //   hasHazard         — #110 (was `hasDeep`): grow an in-map blob of `hazard` (not `deep` — see
 //                       above). false for grassland, since its channel already serves the role.
@@ -39,7 +44,7 @@ export const BIOMES = {
     hazard: null,
     cover: 'forest',
     outpost: 'building',
-    coverClusters: 1, outposts: 4, hasChannel: true, hasHazard: false,
+    coverClusters: 1, hasChannel: true, hasHazard: false,
   },
 
   desert: {
@@ -51,7 +56,7 @@ export const BIOMES = {
     hazard: 'quicksand',   // #110: the in-map lesser hazard — passable but heavily slowing
     cover: 'scrub',        // sparse brush cover
     outpost: 'adobe',
-    coverClusters: 0.7, outposts: 4, hasChannel: true, hasHazard: true,
+    coverClusters: 0.7, hasChannel: true, hasHazard: true,
   },
 
   arctic: {
@@ -63,7 +68,7 @@ export const BIOMES = {
     hazard: 'brokenIce',   // #110: the in-map lesser hazard — thin/cracked ice, passable but slow
     cover: 'drift',        // snowdrifts / frozen pines
     outpost: 'iceRuin',
-    coverClusters: 1, outposts: 3, hasChannel: true, hasHazard: true,
+    coverClusters: 1, hasChannel: true, hasHazard: true,
   },
 
   urban: {
@@ -75,7 +80,7 @@ export const BIOMES = {
     hazard: 'debris',      // #110: the in-map lesser hazard — a rubble-strewn street, slow but passable
     cover: 'wreck',        // burned-out wreckage / low walls
     outpost: 'tower',
-    coverClusters: 1.6, outposts: 8, hasChannel: true, hasHazard: true, // dense destructible cover
+    coverClusters: 1.6, hasChannel: true, hasHazard: true, // dense destructible cover
   },
 
   volcanic: {
@@ -93,7 +98,7 @@ export const BIOMES = {
     hazard: 'cinderField', // #110: the in-map lesser hazard — hot ash/embers, passable but slow
     cover: 'fumarole',     // ash dunes / smoke plumes
     outpost: 'obsidian',
-    coverClusters: 0.9, outposts: 4, hasChannel: true, hasHazard: true,
+    coverClusters: 0.9, hasChannel: true, hasHazard: true,
   },
 };
 

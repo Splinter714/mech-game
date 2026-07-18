@@ -87,6 +87,12 @@ const PAL = {
   // category:'base' entries — the DETAIL painter below (a red weapon-pad ring + crosshair) is
   // what makes it read as visually distinct from `dock`'s amber "H" landing-pad marking.
   turretEmplacement: BASE_INFRA_COLOR,
+  // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): the
+  // dedicated destructible `objective` base hex (data/terrain.js) each base's mission marker now
+  // points at. Same shared base-infra fill as its siblings — the DETAIL painter below (a squared
+  // bunker silhouette with a bold red target-ring beacon) is what makes it read as visually
+  // distinct — specifically as "THE thing to punch through," unlike a background outpost.
+  objective: BASE_INFRA_COLOR,
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -580,6 +586,21 @@ const DETAIL = {
     sg.fillRect(C.cx - arm, C.cy - barW / 2, arm * 2, barW);
     sg.fillRect(C.cx - barW / 2, C.cy - arm, barW, arm * 2);
     sg.fillStyle(0x22262c, 1); sg.fillCircle(C.cx, C.cy, r * 0.16);                             // hub
+  },
+  // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette (wider/heavier
+  // than `hex_building`'s plain roofline) topped with a bold red target-ring beacon, so it reads
+  // unmistakably as "the real objective," distinct from an ordinary destructible outpost and from
+  // the alertTower's slim sensor mast.
+  hex_objective: (sg) => {
+    sg.fillStyle(0x000000, 0.3); sg.fillEllipse(C.cx + 2, C.cy + 5, 30, 14);                  // ground shadow
+    sg.fillStyle(0x25282e, 1); sg.fillRect(C.cx - 16, C.cy - 10, 32, 20);                     // bunker base/outline
+    sg.fillStyle(0x454b53, 1); sg.fillRect(C.cx - 14, C.cy - 8, 28, 16);                      // armored face
+    sg.fillStyle(0x565d66, 1); sg.fillRect(C.cx - 14, C.cy - 8, 28, 4);                       // top-light strip
+    sg.fillStyle(0x25282e, 1); sg.fillRect(C.cx - 4, C.cy - 2, 8, 8);                          // reinforced hatch
+    sg.fillStyle(0xb3392a, 0.3); sg.fillCircle(C.cx, C.cy - 13, 7);                             // beacon glow halo
+    sg.fillStyle(0xd8342a, 0.95); sg.fillCircle(C.cx, C.cy - 13, 4.2);                          // target ring (outer)
+    sg.fillStyle(0x25282e, 1);    sg.fillCircle(C.cx, C.cy - 13, 2.8);                          // target ring (punch-through)
+    sg.fillStyle(0xff5a3a, 1); sg.fillCircle(C.cx, C.cy - 13, 1.6);                            // beacon core
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────
