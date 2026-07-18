@@ -67,7 +67,7 @@ export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 // (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery), late-pool only — see
 // `BASE_LATE_KIND_POOL`'s own comment for the full reasoning (mechs are the toughest kind, they
 // belong in the hard tier; `holdGround` now applies to mechs too, see scenes/arena/bases.js
-// `_wakeBase`, so their heavier tactical AI reads fine as a stationary defender). `swarm`/
+// `_wakeBase`, so their heavier tactical AI reads fine as a defender). `swarm`/
 // `turretNest`/`infantryMob` (multi-unit cluster EXPANSIONS, not single kinds) are excluded too —
 // a dock hosts a KIND, spawned in the COUNT `dockCountFor` below assigns for that kind, not a
 // bespoke cluster-expansion typeId.
@@ -88,18 +88,17 @@ export const BASE_EARLY_KIND_POOL = ['tank'];
 // opener. `_spawnDormantUnits` (scenes/arena/bases.js) tells a mech id apart from a vehicle-kind
 // id via `isEnemyKind` (data/enemyKinds.js) and constructs it through `_spawnMech` instead of
 // `_spawnKind`; every woken mech defaults to `holdGround` regardless of chassis (see
-// scenes/arena/bases.js `_wakeBase` and its comment) — it defends its dock rather than
-// sortieing, so ALL FOUR archetypes (brawler/skirmisher/sniper/artillery) read fine as
-// stationary defenders, unlike the old off-screen-squad system where a slow heavy chassis
-// artillery would otherwise never catch up to the player (#273: sniper moved off the heavy
-// chassis onto medium — see enemies.js). `raider` is weighted 2x (a
-// mid-range brawler/skirmisher hybid — the most generic, always-reads-right defender) over the
-// three specialists (each 1x): `skirmisher` (an aggressive brawler, presses in even while
-// holding ground via its firing-range weapons), `sniper` (kites/holds at long range — a natural
-// dock sentry), and `artillery` (every weapon indirect-fire — normally camps behind cover, but
-// with holdGround forcing it to just stand and shell, it reads PERFECTLY as a stationary base
-// defender lobbing shells over the wall — the exact "camping siege unit" its design already
-// wants, no `allIndirect` cover-seeking even needed once it's rooted at a dock).
+// scenes/arena/bases.js `_wakeBase` and its comment) — a stronger dock defender than a fast
+// vehicle kind, unlike the old off-screen-squad system where a slow heavy chassis artillery
+// would otherwise never catch up to the player (#273: sniper moved off the heavy chassis onto
+// medium — see enemies.js). #285: `holdGround` no longer leashes movement or forces a
+// stand-and-fight posture — once woken, a docked mech runs the exact same tactical AI
+// (PRESS/KITE/FLANK/COVER/HOLD) as any other mech and fully commits to closing on the player,
+// same as a non-docked one. `raider` is weighted 2x (a mid-range brawler/skirmisher hybrid — the
+// most generic, always-reads-right defender) over the three specialists (each 1x): `skirmisher`
+// (an aggressive brawler), `sniper` (kites/holds at long range), and `artillery` (every weapon
+// indirect-fire — camps behind cover and lobs shells, the normal `allIndirect` behavior every
+// artillery already has, docked or not).
 export const BASE_LATE_KIND_POOL = [
   'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
 ];

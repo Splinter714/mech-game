@@ -31,7 +31,7 @@ import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance 
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, leashIntent } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -394,6 +394,7 @@ export const EnemiesMixin = {
     // AI state same as everything else here — clear it so a debug reset doesn't leave a
     // previously-woken mech permanently pinned to 'hold' with no dock/base left to explain why.
     e.holdGround = false;
+    e.reactDelayMs = null;        // #285: any pending post-wake stagger is transient AI state too
   },
 
   // #44 follow-up: the default opening squad — one of each mech type — dropped OFF-SCREEN so
@@ -589,6 +590,30 @@ export const EnemiesMixin = {
     return true;
   },
 
+  // #285 ("units at a base shouldn't all snap to AWARE in the same frame"): whether `e` should
+  // run its full tactical engagement (movement brain, turret tracking, locking, firing) THIS
+  // frame. `e.awareness` itself still flips to AWARE synchronously the instant `_wakeBase`
+  // processes it (bases.js) — that part is unchanged and stays a clean one-way transition other
+  // systems (win condition, HUD, tests) can key off immediately. What's new is `e.reactDelayMs`:
+  // a short randomized "still noticing" delay `_wakeBase` also stamps onto the unit alongside
+  // the awareness flip (see its comment for the exact range + reasoning), counted down here
+  // every frame the unit is AWARE, the same delta-countdown convention `e.decideAt`/`e.deployCd`
+  // already use elsewhere in this file. While it's still counting down the unit is AWARE but not
+  // yet "reacting" — every call site below that used to gate real engagement on `aware` now
+  // gates on `reacting` instead, so the unit spends that brief window doing exactly what an
+  // UNAWARE unit does (idle-loiter, no turret tracking, no firing) before its tactical brain
+  // actually kicks in. Units with no `reactDelayMs` at all (patrol spawns, `_resupplyDock`'s
+  // direct-to-AWARE units, or any unit that was already AWARE before this system existed) react
+  // immediately, same as before this change.
+  _isReacting(e, delta) {
+    if (e.awareness !== AWARE) return false;
+    if (e.reactDelayMs == null) return true;
+    e.reactDelayMs -= delta;
+    if (e.reactDelayMs > 0) return false;
+    e.reactDelayMs = null;
+    return true;
+  },
+
   _updateEnemy(e, dt, delta) {
     // #87: a dead enemy is torn down and pruned out of `this.enemies` the same tick it dies (see
     // `_removeEnemy`), so in practice this guard is now belt-and-suspenders — nothing in
@@ -630,6 +655,13 @@ export const EnemiesMixin = {
       }
     }
     const aware = e.awareness === AWARE;
+    // #285: `reacting` is `aware` PLUS "the short post-wake noticing delay has elapsed" — see
+    // `_isReacting` for the stagger mechanism. Every gate below that used to key off `aware` for
+    // actual engagement (movement brain, turret tracking, locking, firing) now keys off
+    // `reacting` instead, so a freshly-woken unit briefly still idles (same as a genuinely
+    // UNAWARE one) before its tactical brain actually kicks in — `aware` itself still flips the
+    // instant the unit is detected, unchanged.
+    const reacting = this._isReacting(e, delta);
 
     if (this.enemyMove) {
       // Track incoming damage: any drop in lethal health opens a "prefer cover" window.
@@ -638,20 +670,18 @@ export const EnemiesMixin = {
       e.lastHealth = hp;
 
       let mx, my;
-      if (!aware) {
-        // Idle/patrol: loiter near the spawn point instead of running the tactical brain.
+      if (!reacting) {
+        // Idle/patrol (also covers the brief post-wake stagger window, #285): loiter near the
+        // spawn point instead of running the tactical brain.
         ({ mx, my } = this._idleMoveIntent(e, delta));
       } else {
         // Re-decide on a cadence timer (or immediately after arriving at a goal). Between
         // decisions the enemy commits to its current state, so behaviour reads deliberately.
-        // #269 Part 1 ("hold-ground units should still move — leash, not freeze"): a woken
-        // docked mech (`e.holdGround`, see scenes/arena/bases.js `_wakeBase`'s comment on why
-        // EVERY mech defaults to holdGround, regardless of chassis/role) used to skip this whole
-        // PRESS/KITE/FLANK/COVER/HOLD decision machine entirely and just sit pinned to 'hold' —
-        // that read as frozen/dead. It now runs the exact SAME decision machine and movement
-        // intent as a non-held mech, so it still actively presses/flanks/kites like normal; the
-        // ONLY difference is the leash clamp applied to the result below, which keeps it from
-        // wandering far from its dock/base rather than chasing the player across the map.
+        // #269 Part 1 / #285: a woken docked mech (`e.holdGround`, see scenes/arena/bases.js
+        // `_wakeBase`'s comment on why EVERY mech defaults to holdGround, regardless of
+        // chassis/role) runs this exact SAME decision machine and movement intent as a
+        // non-held mech — it actively presses/flanks/kites like normal, fully committing to the
+        // player with no distance clamp (the leash that used to sit here was removed per #285).
         e.decideAt -= delta;
         e.recampAt -= delta;   // all-indirect camp-hold timer (see _decideEnemyState)
         const arrived = e.goal && Math.hypot(e.goal.x - e.x, e.goal.y - e.y) < ARRIVE_SLOW;
@@ -664,14 +694,13 @@ export const EnemiesMixin = {
         }
         // Resolve the current state into a movement-intent vector (mx, my), roughly unit length.
         ({ mx, my } = this._enemyMoveIntent(e, dist, bearing, ux, uy));
-        if (e.holdGround) ({ mx, my } = leashIntent(e, mx, my));
       }
 
       // #45: backing away (relative to turret facing) is slower.
       const backScale = backwardSpeedScale(mx, my, e.turret);
       // Ease to a stop near a point goal so the enemy doesn't jitter on top of it.
-      let speedFrac = aware ? MOVE_SPEED_FRAC : MOVE_SPEED_FRAC * IDLE_SPEED_FRAC;
-      const goal = aware ? e.goal : e.idleGoal;
+      let speedFrac = reacting ? MOVE_SPEED_FRAC : MOVE_SPEED_FRAC * IDLE_SPEED_FRAC;
+      const goal = reacting ? e.goal : e.idleGoal;
       if (goal) {
         const gd = Math.hypot(goal.x - e.x, goal.y - e.y);
         if (gd < ARRIVE_SLOW) speedFrac *= clamp(gd / ARRIVE_SLOW, 0, 1);
@@ -692,39 +721,41 @@ export const EnemiesMixin = {
         else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
         else { nx = e.x; ny = e.y; e.vx = e.vy = 0; }
         // Bumped a wall (or another unit) while pathing to a goal — abandon it so we re-plan promptly.
-        if (aware && e.goal) e.decideAt = Math.min(e.decideAt, 200);
+        if (reacting && e.goal) e.decideAt = Math.min(e.decideAt, 200);
       }
       e.x = nx; e.y = ny;
     } else {
       e.vx = approach(e.vx, 0, mv.accel * dt); e.vy = approach(e.vy, 0, mv.accel * dt);
     }
 
-    // Aim turret + face travel. While UNAWARE the turret doesn't track the player (it hasn't
-    // noticed it) — it just follows the idle travel direction, so the enemy reads as patrolling
-    // rather than watching the player it hasn't spotted yet.
-    if (aware) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
+    // Aim turret + face travel. While UNAWARE (or still in the brief post-wake stagger window,
+    // #285) the turret doesn't track the player — it just follows the idle travel direction, so
+    // the enemy reads as patrolling/still-noticing rather than watching a player it hasn't
+    // (yet) reacted to.
+    if (reacting) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
-    // #269 Part 1: a held-ground mech now runs the same movement brain as a normal one (just
-    // leashed near home, see above) so it's usually in motion and the ordinary "turn to face
-    // travel direction" rule below already applies fine. It can still occasionally sit still
-    // while holding (e.g. 'hold'/camped-'cover' states resolve to a zero intent, and the leash
-    // itself is a no-op once already inside its radius) — in exactly that stationary case, face
-    // the player directly rather than holding whatever heading it happened to stop at, same
-    // "don't read as dead while stopped" fix the tank kind's own holdGround branch established.
-    if (e.holdGround && Math.hypot(e.vx, e.vy) <= 5) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
+    // #269 Part 1: a held-ground mech runs the same movement brain as a normal one so it's
+    // usually in motion and the ordinary "turn to face travel direction" rule below already
+    // applies fine. It can still occasionally sit still while holding (e.g. 'hold'/camped-
+    // 'cover' states resolve to a zero intent) — in exactly that stationary case, once it's
+    // actually reacting, face the player directly rather than holding whatever heading it
+    // happened to stop at, same "don't read as dead while stopped" fix the tank kind's own
+    // holdGround branch established.
+    if (e.holdGround && reacting && Math.hypot(e.vx, e.vy) <= 5) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
     // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once
-    // aware; an unaware enemy has no business tracking the player at all.
-    if (aware) this._updateEnemyLock(e, dist, bearing);
+    // it's actually reacting; a not-yet-reacting (or unaware) enemy has no business tracking the
+    // player at all.
+    if (reacting) this._updateEnemyLock(e, dist, bearing);
 
-    // Fire ready weapons at the player (gated by #28, and by #103 awareness — an unaware enemy
-    // never fires). Direct-fire weapons need current LOS. An indirect-fire weapon (homing/
-    // arcing) fires straight through cover (#62/#44, rework #252; playtest follow-up #252 dropped
-    // the old dead-reckoned "blind fire" — it now just tracks the player's LIVE position, no LOS
-    // needed) whenever this enemy has a target at all (no charge-up wait, no maintain-timer
-    // expiry — see `_updateEnemyLock` below).
-    if (this.enemyFire && aware) for (const w of e.mech.readyWeapons()) {
+    // Fire ready weapons at the player (gated by #28, and by #103/#285 reacting — an unaware or
+    // still-noticing enemy never fires). Direct-fire weapons need current LOS. An indirect-fire
+    // weapon (homing/arcing) fires straight through cover (#62/#44, rework #252; playtest
+    // follow-up #252 dropped the old dead-reckoned "blind fire" — it now just tracks the
+    // player's LIVE position, no LOS needed) whenever this enemy has a target at all (no
+    // charge-up wait, no maintain-timer expiry — see `_updateEnemyLock` below).
+    if (this.enemyFire && reacting) for (const w of e.mech.readyWeapons()) {
       let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
       const indirect = isIndirectWeapon(w.weapon);
@@ -824,12 +855,16 @@ export const EnemiesMixin = {
         e.awareness = AWARE;
       }
     }
-    const aware = e.awareness === AWARE;
+    // #285: same `reacting` stagger gate as the mech path (_updateEnemy) — see `_isReacting`'s
+    // comment for the mechanism. `aware` flips the instant the unit is detected; `reacting`
+    // additionally waits out the unit's short post-wake "still noticing" delay, if any.
+    const reacting = this._isReacting(e, delta);
 
     const behavior = ENEMY_BEHAVIORS[e.behavior];
-    if (!aware) {
-      // Idle: loiter near spawn rather than running the kind's tactical brain (which also gates
-      // firing, since aimAndFire lives inside each behavior fn — an unaware unit never fires).
+    if (!reacting) {
+      // Idle (also covers the brief post-wake stagger window, #285): loiter near spawn rather
+      // than running the kind's tactical brain (which also gates firing, since aimAndFire lives
+      // inside each behavior fn — a not-yet-reacting unit never fires).
       const mv = e.kindDef.move;
       if (mv.maxSpeed > 0) {
         const { mx, my } = this._idleMoveIntent(e, delta);

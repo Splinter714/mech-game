@@ -70,12 +70,14 @@ function makeTickableUnit(kindId, { baseId = 'base0' } = {}) {
     key: `${kindId}Test`, mech, view, kind: def.kind, kindDef: def, behavior: def.behavior,
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, handed: 1,
     awareness: DORMANT, baseId, detectRange: detectionRangeFor(def.fireRange),
-    // #269 Part 1: real `_spawnDormantUnits` always stashes a home anchor for the leash
-    // (`leashIntent`, shared.js) — mirror that here so a holdGround unit's movement is actually
-    // leashed in these tests, not left un-leashed just because this hand-rolled unit skipped
-    // the real spawn path.
-    homeX: 0, homeY: 0,
   };
+}
+
+// #285: bypasses the post-wake reaction stagger (`e.reactDelayMs`, see enemies.js
+// `_isReacting`) so a test that isn't specifically about the stagger itself gets the exact
+// same "reacts on its very next tick" behavior these tests had before #285 introduced it.
+function skipWakeStagger(e) {
+  e.reactDelayMs = 0;
 }
 
 describe('#269 §4: a DORMANT enemy is fully inert — _updateEnemy skips all AI/movement/firing', () => {
@@ -366,7 +368,7 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     }
   });
 
-  it('#269 Part 1: a held-ground mech still moves (runs the normal tactical brain) but stays leashed near its dock', () => {
+  it('#269 Part 1 / #285: a held-ground mech still moves (runs the normal tactical brain) and, unleashed, keeps closing on the player', () => {
     const scene = makeSceneWithSpawnStubs();
     scene.enemyMove = true;
     scene.enemyFire = false;   // out of scope here: firing needs a full art/weapon-plumbing stub
@@ -390,9 +392,10 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     scene._wakeBase('base0');
     const e = scene.enemies[0];
     e.view = { setPosition() {}, hull: { rotation: 0 }, turret: { rotation: 0 } };
-    e.homeX = e.x; e.homeY = e.y;   // real _spawnDormantUnits stashes this; this stub doesn't
+    skipWakeStagger(e);   // #285: not under test here — react on the very next tick
     const spawnAngle = e.angle;
     const spawnX = e.x, spawnY = e.y;
+    const distToPlayerStart = Math.hypot(scene.px - spawnX, scene.py - spawnY);
 
     for (let i = 0; i < 200; i++) scene._updateEnemy(e, 0.016, 16);
 
@@ -401,11 +404,10 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     // player just like a non-held mech would.
     expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
     expect(e.x !== spawnX || e.y !== spawnY).toBe(true);
-    // But the leash caps how far it's allowed to wander from its dock (home) — never past the
-    // leash radius plus a small accel-limited overshoot budget (see the tank leash test below
-    // for why this isn't a tight one-frame epsilon).
-    const distFromHome = Math.hypot(e.x - spawnX, e.y - spawnY);
-    expect(distFromHome).toBeLessThanOrEqual(360);
+    // #285: the leash that used to cap this distance is gone — it fully commits and keeps
+    // closing distance toward the player instead of settling at/near a fixed radius from spawn.
+    const distToPlayerNow = Math.hypot(scene.px - e.x, scene.py - e.y);
+    expect(distToPlayerNow).toBeLessThan(distToPlayerStart);
     // Root-cause parity with the non-mech holdGround bug-1 fix below: the hull turns to track
     // the player as it moves/holds, not stay frozen at its spawn facing.
     expect(e.angle).not.toBe(spawnAngle);
@@ -590,39 +592,48 @@ describe('#269 bug 1 regression: a woken unit actually reacts on its next tick',
     scene.enemies.push(e);
     scene._wakeBase('base0');
     expect(e.holdGround).toBeUndefined();
+    skipWakeStagger(e);   // #285: not under test here — react on the very next tick
     scene._updateEnemy(e, 0.016, 16);
     expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
   });
 
-  it('#269 Part 1: a slow/holdGround kind (tank) still moves toward the player (leashed), and its hull turns to face it', () => {
+  it('#269 Part 1 / #285: a slow/holdGround kind (tank) still moves toward the player, fully unleashed, and its hull turns to face it', () => {
     const scene = makeTickableScene();
     const e = makeTickableUnit('tank');
     scene.enemies.push(e);
     scene._wakeBase('base0');
     expect(e.holdGround).toBe(true);
+    skipWakeStagger(e);   // #285: not under test here — react on the very next tick
     const spawnAngle = e.angle;
     for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
-    // Root-cause assertion: BEFORE the fix this stayed pinned at `spawnAngle` forever (the actual
-    // bug), AND never translated at all. Holding ground is no longer a total freeze — it still
-    // gets real velocity, chasing/strafing exactly like a non-held tank, just leashed near home.
+    // Root-cause assertion: BEFORE the #269 fix this stayed pinned at `spawnAngle` forever (the
+    // actual bug), AND never translated at all. Holding ground is no longer a total freeze — it
+    // gets real velocity, chasing/strafing exactly like a non-held tank.
     expect(e.angle).not.toBe(spawnAngle);
     expect(Math.hypot(e.vx, e.vy)).toBeGreaterThan(0);
     expect(e.x !== 0 || e.y !== 0).toBe(true);
   });
 
-  it('#269 Part 1: a holdGround unit never wanders past the leash radius from its dock/home point', () => {
+  it('#285: a holdGround unit is NOT leashed — it keeps closing on the player indefinitely, unlike the old leash-capped behavior', () => {
     const scene = makeTickableScene();
+    scene.enemyFire = false;   // out of scope here: firing needs a full projectile-spawn stub
     const e = makeTickableUnit('tank');
     scene.enemies.push(e);
     scene._wakeBase('base0');
-    // Many ticks (~32s simulated) — long enough that, un-leashed, a tank (52px/s) chasing a
-    // player 900+px away would have wandered well past the leash radius by the end; leashed, it
-    // should settle at/near the leash boundary and never exceed it by more than a small
-    // accel-limited overshoot budget (the leash only corrects once the unit is ALREADY past the
-    // radius, and `approach()`'s accel ramp takes a few frames to turn the velocity around).
+    skipWakeStagger(e);
+    // Many ticks (~32s simulated). The old leash (HOLD_GROUND_LEASH_PX = 320px, now removed)
+    // would have capped this well under 360px from spawn; #285 removes that cap entirely, so a
+    // tank (52px/s) chasing a player 900px away keeps closing distance the whole time instead of
+    // getting pulled back once it wanders "too far" from where it woke up.
+    const spawnX = e.x, spawnY = e.y;
+    const distToPlayerStart = Math.hypot(scene.px - spawnX, scene.py - spawnY);
     for (let i = 0; i < 2000; i++) scene._updateEnemy(e, 0.016, 16);
-    const distFromHome = Math.hypot(e.x - e.homeX, e.y - e.homeY);
-    expect(distFromHome).toBeLessThanOrEqual(340);
+    const distTraveled = Math.hypot(e.x - spawnX, e.y - spawnY);
+    const distToPlayerNow = Math.hypot(scene.px - e.x, scene.py - e.y);
+    // Old leash radius (plus a small overshoot budget) — must now be comfortably exceeded.
+    expect(distTraveled).toBeGreaterThan(400);
+    // And it's genuinely closing the gap toward the player, not just wandering.
+    expect(distToPlayerNow).toBeLessThan(distToPlayerStart);
   });
 
   it('a slow/holdGround kind (infantry) also turns its hull instead of staying frozen', () => {
@@ -630,9 +641,62 @@ describe('#269 bug 1 regression: a woken unit actually reacts on its next tick',
     const e = makeTickableUnit('infantry');
     scene.enemies.push(e);
     scene._wakeBase('base0');
+    skipWakeStagger(e);   // #285: not under test here — react on the very next tick
     const spawnAngle = e.angle;
     for (let i = 0; i < 30; i++) scene._updateEnemy(e, 0.016, 16);
     expect(e.angle).not.toBe(spawnAngle);
+  });
+});
+
+// #285 ("units at a base shouldn't all snap into motion in the same instant"): coverage for the
+// wake-response stagger (`e.reactDelayMs`, set by `_wakeBase`, consumed by enemies.js
+// `_isReacting`). `awareness` still flips synchronously for the whole base at once (unchanged,
+// covered above) — what's new is that each unit's actual engagement (movement/turret-tracking/
+// firing) starts at a slightly different moment.
+describe('#285: wake-response stagger — a base\'s units don\'t all start reacting on the identical tick', () => {
+  it('a freshly-woken unit is AWARE but does not move/turn on the very first tick (still "noticing")', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    // Real `_wakeBase` always stamps a non-zero-or-more stagger — sanity-check it's actually set
+    // rather than accidentally always 0 (which would make this whole feature a no-op).
+    expect(e.reactDelayMs).not.toBeNull();
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(0);
+    scene._updateEnemy(e, 0.016, 16);
+    expect(e.turret).toBe(0);   // hasn't started tracking the player yet
+  });
+
+  it('two units woken together at the same base can differ in when they start reacting', () => {
+    const scene = makeTickableScene();
+    const a = makeTickableUnit('tank');
+    const b = makeTickableUnit('tank');
+    scene.enemies.push(a, b);
+    scene._wakeBase('base0');
+    // Force a deterministic split straddling a single tick: `a` reacts almost immediately, `b`
+    // only after several ticks — mirrors the real spread `_wakeBase`'s randomization produces,
+    // without depending on Math.random's actual output.
+    a.reactDelayMs = 1;
+    b.reactDelayMs = 100;
+    scene._updateEnemy(a, 0.016, 16);
+    scene._updateEnemy(b, 0.016, 16);
+    // `a` has started reacting (turret tracking the player); `b` hasn't yet — NOT the identical
+    // same-tick snap the old synchronous wake produced.
+    expect(a.turret).not.toBe(0);
+    expect(b.turret).toBe(0);
+    // Enough further ticks for `b`'s longer delay to lapse too — it eventually reacts as well.
+    for (let i = 0; i < 10; i++) scene._updateEnemy(b, 0.016, 16);
+    expect(b.turret).not.toBe(0);
+  });
+
+  it('the stagger is short — every unit is reacting well within a second of waking', () => {
+    const scene = makeTickableScene();
+    const units = ['tank', 'tank', 'tank', 'infantry', 'infantry'].map(() => makeTickableUnit('tank'));
+    scene.enemies.push(...units);
+    scene._wakeBase('base0');
+    // 60 ticks @16ms ≈ 1s — comfortably past even the maximum possible stagger window.
+    for (let i = 0; i < 60; i++) for (const u of units) scene._updateEnemy(u, 0.016, 16);
+    for (const u of units) expect(u.turret).not.toBe(0);
   });
 });
 
