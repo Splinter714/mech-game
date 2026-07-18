@@ -144,11 +144,36 @@ function tankBehavior(scene, e, ctx) {
   // its dock; the leash is gone now, so a hold-ground tank just runs the exact same
   // advance-to-standoff/strafe movement a non-hold-ground tank already runs, no distance cap.
   const target = active ? mv.maxSpeed : 0;
-  e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
-  e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
-  // Hull faces the direction of travel (tank-like driving), turning at the chassis turn rate;
-  // it holds its last heading while stopped rather than snapping to face the player.
-  e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
+  // #295 (playtest: "tanks feel like they're sliding around as they turn... start moving in a
+  // direction and the turning kinda happens to match in response, instead of turning and THEN
+  // moving"): the root cause was that `e.vx`/`e.vy` used to be set DIRECTLY toward the desired
+  // heading (mx, my) via `approach`, completely free of the hull's current facing — the hull
+  // (`e.angle`) was then only a COSMETIC catch-up, rotating after the fact to match whatever
+  // velocity already existed. That's an omnidirectional strafer with decorative hull rotation,
+  // not a real point-and-drive vehicle.
+  //
+  // Fix: the hull still turns toward the desired heading every tick, same turnRate/#294 commit
+  // stagger as before — but it now turns off the intent vector (mx, my) itself, scaled to a
+  // synthetic "desired velocity" (mx/my * maxSpeed) rather than off the tank's ACTUAL e.vx/e.vy.
+  // That distinction matters once thrust (below) is gated by hull alignment: a badly-misaligned
+  // tank's real velocity sits near zero, and turning off e.vx/e.vy directly would strand it
+  // facing the wrong way forever — no thrust because it hasn't turned yet, and it never turns
+  // because hullTravelAngle's moveThreshold sees ~0 velocity and treats that as "stopped."
+  // Turning off the intent vector (which is what the hull SHOULD end up facing) sidesteps that
+  // chicken-and-egg trap and keeps the turn even from a dead stop or a hard reversal.
+  e.angle = hullTravelAngle(e.angle, mx * mv.maxSpeed, my * mv.maxSpeed, mv.turnRate, ctx.dt);
+  // Thrust is applied ALONG the hull's current facing (e.angle) — NOT toward the raw desired
+  // direction (mx, my) — scaled by how well that facing is currently aligned with the desired
+  // heading. `alignment` uses cos(angleBetween)^2 rather than a plain cosine: full speed dead
+  // on, but a steeper falloff off-axis (~25% thrust at a 60° mismatch instead of cosine's 50%)
+  // so a tank that's still mostly turned away reads as genuinely pivoting-in-place rather than
+  // crabbing forward at a still-substantial diagonal clip. Clamped to 0 past 90° either way — a
+  // tank facing away from where it wants to go doesn't drift there, it turns first.
+  const desiredAngle = Math.atan2(my, mx);
+  const alignment = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(desiredAngle - e.angle))) ** 2;
+  const thrust = target * alignment;
+  e.vx = approach(e.vx, Math.cos(e.angle) * thrust, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, Math.sin(e.angle) * thrust, mv.accel * ctx.dt);
   aimAndFire(scene, e, ctx, { needLos: true });
 }
 
@@ -276,11 +301,21 @@ function quadrupedBehavior(scene, e, ctx) {
   // unit, no leash/distance cap (removed per #285). The deploy-drone mechanic below still runs
   // regardless (it's a support ability, not locomotion).
   const target = active ? mv.maxSpeed : 0;
-  e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
-  e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
-  // Hull faces the direction of travel; turret tracks the player completely independently
-  // (aimAndFire below sets e.turret on its own slew) — same hull-vs-turret decoupling as tank.
-  e.angle = hullTravelAngle(e.angle, e.vx, e.vy, mv.turnRate, ctx.dt);
+  // #295 follow-up: quadrupedBehavior shares tankBehavior's exact hull-travel/turret-independent
+  // pattern by design (see the header comment above) and had the identical "hull is a cosmetic
+  // catch-up, thrust is free of facing" bug — same root cause, same fix, applied the same way:
+  // the hull turns toward the intent vector (scaled to a synthetic desired velocity so it clears
+  // hullTravelAngle's moveThreshold even when actual thrust is ~0), then thrust is applied along
+  // the hull's OWN current facing, scaled by alignment with the desired heading. Deliberately NOT
+  // porting #294's heading-commit stagger here — that solved a separate "re-aims too smoothly"
+  // complaint that was never reported for the quadruped, and porting it unprompted would be a
+  // behavior change beyond this issue's scope. See tankBehavior above for the fuller rationale.
+  e.angle = hullTravelAngle(e.angle, mx * mv.maxSpeed, my * mv.maxSpeed, mv.turnRate, ctx.dt);
+  const desiredAngle = Math.atan2(my, mx);
+  const alignment = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(desiredAngle - e.angle))) ** 2;
+  const thrust = target * alignment;
+  e.vx = approach(e.vx, Math.cos(e.angle) * thrust, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, Math.sin(e.angle) * thrust, mv.accel * ctx.dt);
   aimAndFire(scene, e, ctx, { needLos: true });
   quadrupedDeployTick(scene, e, def, ctx);
 }

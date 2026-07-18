@@ -13,6 +13,7 @@ vi.mock('phaser', () => ({
   },
 }));
 
+import Phaser from 'phaser';
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 
@@ -132,5 +133,94 @@ describe('tankBehavior — turret drag on heading commit (#294 follow-up: "turre
       if (scene._fireVehicleWeapon.mock.calls.length > 0) { refired = true; break; }
     }
     expect(refired).toBe(true);
+  });
+});
+
+// #295 ("tanks still feel like they're kinda sliding around as they turn... they start moving in
+// a direction and the turning kinda happens to match in response instead of turning and THEN
+// moving"): thrust must be applied ALONG the hull's current facing (e.angle), gated by how well
+// that facing aligns with the desired heading — not toward the raw desired direction (mx, my)
+// the way it used to be. These tests exercise the thrust/alignment side specifically, leaving the
+// heading-commit and turret-drag mechanics (#294, tested above) untouched.
+describe('tankBehavior — thrust follows hull alignment, not raw desired direction (#295)', () => {
+  const mv = ENEMY_KINDS.tank.move;
+
+  it('produces near-zero speed when the hull faces significantly away from the desired heading', () => {
+    const scene = makeScene();
+    // Hull faces due west; the player (and so the desired advance heading) is due east — roughly
+    // a 180 degree mismatch, well past the 90 degree cutoff where alignment clamps to zero.
+    const e = makeTank({ angle: Math.PI });
+    tankBehavior(scene, e, makeCtx({ bearing: 0, dist: 380 }));
+    // The old bug would have driven e.vx/e.vy straight toward the desired direction (mx*maxSpeed
+    // ~ +x) regardless of hull facing; the fix must NOT do that — speed stays near zero instead of
+    // sliding off toward +x at any real fraction of maxSpeed.
+    expect(Math.hypot(e.vx, e.vy)).toBeLessThan(mv.maxSpeed * 0.1);
+  });
+
+  it('drives at full speed once the hull IS aligned with the desired heading', () => {
+    const scene = makeScene();
+    // Hull already faces roughly where the advance heading points (~+x, given the small strafe
+    // component) — should ramp all the way up to maxSpeed over a few accel-limited ticks.
+    const e = makeTank({ angle: 0 });
+    let peakSpeed = 0;
+    for (let i = 0; i < 60; i++) {
+      tankBehavior(scene, e, makeCtx({ dt: 0.016, delta: 16, bearing: 0, dist: 380 }));
+      peakSpeed = Math.max(peakSpeed, Math.hypot(e.vx, e.vy));
+    }
+    expect(peakSpeed).toBeGreaterThan(mv.maxSpeed * 0.9);
+  });
+
+  it('turns the hull before ramping velocity back up when it commits to a sharply different heading', () => {
+    const scene = makeScene();
+    const e = makeTank({ angle: 0 });
+    // Get the tank up to full speed, hull aligned, cruising toward the player (advance band).
+    for (let i = 0; i < 60; i++) {
+      tankBehavior(scene, e, makeCtx({ dt: 0.016, delta: 16, bearing: 0, dist: 380 }));
+    }
+    const speedCruising = Math.hypot(e.vx, e.vy);
+    const angleCruising = e.angle;
+    expect(speedCruising).toBeGreaterThan(mv.maxSpeed * 0.9);
+
+    // Force a sharply different desired heading: point-blank range trips tankMoveIntent's reverse
+    // band (radial -0.8 instead of advance's +1), swinging the desired heading ~150+ degrees from
+    // where the hull is currently pointed. Tick with ordinary per-frame dt until the next commit
+    // window elapses and the new heading actually lands.
+    let recommitTick = -1;
+    for (let i = 0; i < 80 && recommitTick < 0; i++) {
+      const before = e._heading;
+      tankBehavior(scene, e, makeCtx({ dt: 0.016, delta: 16, bearing: 0, dist: 50 }));
+      if (e._heading !== before) recommitTick = i;
+    }
+    expect(recommitTick).toBeGreaterThanOrEqual(0);
+
+    // The instant the new (sharply different) heading commits, the hull has barely begun turning
+    // toward it — alignment collapses and speed starts bleeding off immediately.
+    const speedAtRecommit = Math.hypot(e.vx, e.vy);
+    const angleAtRecommit = e.angle;
+    expect(angleAtRecommit).not.toBe(angleCruising); // hull has already started rotating
+
+    // A further short stretch of frames: the hull keeps turning (visibly, in real angle terms)
+    // while speed keeps dropping — turning happens BEFORE the velocity ramps back up, not
+    // simultaneously with a slide in the new direction.
+    let angleAfterDip = angleAtRecommit;
+    let speedAfterDip = speedAtRecommit;
+    for (let i = 0; i < 15; i++) {
+      tankBehavior(scene, e, makeCtx({ dt: 0.016, delta: 16, bearing: 0, dist: 50 }));
+      angleAfterDip = e.angle;
+      speedAfterDip = Math.hypot(e.vx, e.vy);
+    }
+    const rotatedSoFar = Math.abs(Phaser.Math.Angle.Wrap(angleAfterDip - angleCruising));
+    expect(rotatedSoFar).toBeGreaterThan(0.15); // hull has visibly rotated toward the new heading
+    expect(speedAfterDip).toBeLessThan(speedCruising * 0.6); // and speed has meaningfully dropped
+
+    // Given many more frames, the hull finishes turning onto the new heading and speed climbs
+    // back up toward maxSpeed again — the "turn, THEN drive" read, not simultaneous sliding.
+    let speedLate = speedAfterDip;
+    for (let i = 0; i < 200; i++) {
+      tankBehavior(scene, e, makeCtx({ dt: 0.016, delta: 16, bearing: 0, dist: 50 }));
+      speedLate = Math.hypot(e.vx, e.vy);
+    }
+    expect(speedLate).toBeGreaterThan(speedAfterDip);
+    expect(speedLate).toBeGreaterThan(mv.maxSpeed * 0.8);
   });
 });
