@@ -469,8 +469,9 @@ describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/aler
     const scene = makeScene();
     scene.add = {
       text: (x, y, s, style) => ({
-        x, y, text: s, style,
+        x, y, text: s, style, visible: true,
         setOrigin() { return this; }, setDepth() { return this; },
+        setVisible(v) { this.visible = v; return this; },
       }),
     };
     return scene;
@@ -515,6 +516,36 @@ describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/aler
     scene.alertTowerHexes = [];
     expect(() => scene._spawnHexLabels()).not.toThrow();
     expect(scene._hexLabels).toEqual([]);
+  });
+
+  // #270 playtest follow-up: a live L-key toggle (ArenaScene `_hexLabelsVisible`, see
+  // hexLabelDevGate.guard.test.js) hides/shows both hex-label systems at once. bases.js's own
+  // half of that: a label picks up the scene's CURRENT `_hexLabelsVisible` the moment it's
+  // created, so a base/tower spawned (or re-labelled) after a toggle still comes in correctly.
+  it('a label created while _hexLabelsVisible is true is visible', () => {
+    const scene = makeSceneWithAdd();
+    scene._hexLabelsVisible = true;
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'tank', count: 1 }], turrets: [] }];
+    scene.alertTowerHexes = [];
+    scene._spawnHexLabels();
+    expect(scene._hexLabels[0].visible).toBe(true);
+  });
+
+  it('a label created while _hexLabelsVisible is false is created hidden', () => {
+    const scene = makeSceneWithAdd();
+    scene._hexLabelsVisible = false;
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'tank', count: 1 }], turrets: [] }];
+    scene.alertTowerHexes = [];
+    scene._spawnHexLabels();
+    expect(scene._hexLabels[0].visible).toBe(false);
+  });
+
+  it('defaults to visible when _hexLabelsVisible is unset (test-harness safety, real ArenaScene always sets it)', () => {
+    const scene = makeSceneWithAdd();   // _hexLabelsVisible left unset
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'tank', count: 1 }], turrets: [] }];
+    scene.alertTowerHexes = [];
+    scene._spawnHexLabels();
+    expect(scene._hexLabels[0].visible).toBe(true);
   });
 });
 

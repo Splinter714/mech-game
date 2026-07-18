@@ -763,20 +763,11 @@ export const EnemiesMixin = {
           // flat ENEMY_FIRE_GAIN_SCALE approximation (see fireCues.js's header comment).
           scheduleFireCues(this, w.weapon, plan, true, 1, { x: mx2, y: my2, listenerX: this.px, listenerY: this.py });
         }
-        if (plan.mode === 'contact') {
-          this._melee(w, mx2, my2, fireAngle, 'enemy');
-        } else if (plan.mode === 'hitscan') {
-          this._fireHitscan(w, mx2, my2, fireAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e));
-        } else {
-          // No explicit seek target needed here (playtest follow-up #252 dropped the old
-          // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
-          // intrinsic chase-the-player behaviour in _updateProjectiles (it re-reads the player's
-          // LIVE position every frame), so it tracks straight through cover exactly the same
-          // whether this shot had LOS or not. #245: a flying shooter's rounds also ignore terrain
-          // cover in flight (last arg — no live flying MECH kind today, but keeps both fire paths
-          // uniform).
-          this._spawnProjectile(w, mx2, my2, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying, isSmallUnit(e));
-        }
+        // #269 playtest follow-up (helicopter Repeater streams bug): dispatch EVERY emission in
+        // `plan.shots`, not just one — see `_fireEnemyShots`'s header comment for the root cause
+        // this fixes (this call site used to fire only shots[0], silently dropping a multi-
+        // stream/spread/burst weapon's other lanes for every enemy mech kind).
+        this._fireEnemyShots(w, plan, mx2, my2, fireAngle, e);
         cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
       }
       e.fireCd[w.location] = Math.max(0, cd);
@@ -895,6 +886,51 @@ export const EnemiesMixin = {
     if (e.view.shadow) { e.view.shadow.x = 10; e.view.shadow.y = 16; }   // offset = "height" read
   },
 
+  // #269 playtest follow-up: root cause of "helicopter Repeater fires a single stream even
+  // though `weaponOverride.delivery.streams: 2` (and, since #256, machineGun's own BASE delivery)
+  // is set." Both enemy fire call sites (the mech-enemy loop above and `_fireVehicleWeapon`
+  // below) resolved the weapon and called `planEmissions(weapon)` — same shared sim the PLAYER's
+  // own `fireWeapon` (firing.js) uses — but then only ever spawned ONE round/beam/melee swing
+  // from `plan`, ignoring every entry in `plan.shots` past the first. `planEmissions` returns one
+  // shot object per parallel-stream lane (or spread-fan shot, or burst pulse); the player's
+  // `fireWeapon` loops `for (const s of plan.shots)` and fires each one with its own
+  // lateral/angleOffset/delay (firing.js) — the enemy paths never did, so a "2-stream" weapon
+  // always visually read as a single stream/shot no matter what the data said, for EVERY multi-
+  // shot enemy weapon, not just the helicopter. This helper mirrors firing.js's loop for an
+  // enemy-owned shot: same lateral-offset perpendicular math, same delayed sub-shots for a
+  // staggered spread/burst, dispatched to melee/hitscan/projectile by `plan.mode` exactly like
+  // the single-shot call sites used to.
+  _fireEnemyShots(w, plan, mx, my, fireAngle, e) {
+    for (const s of plan.shots) {
+      const go = () => {
+        const baseAngle = fireAngle + s.angleOffset;
+        const perp = baseAngle + Math.PI / 2;
+        const ox = mx + Math.cos(perp) * s.lateral, oy = my + Math.sin(perp) * s.lateral;
+        if (plan.mode === 'contact') {
+          this._melee(w, ox, oy, baseAngle, 'enemy');
+        } else if (plan.mode === 'hitscan') {
+          // #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`) shoots from
+          // above, so its shots ignore terrain cover entirely: the hitscan trace skips the wall
+          // check and a spawned round is stamped `ignoresCover` (see firing.js/projectiles.js).
+          // Ground kinds pass false and are blocked by cover exactly as before.
+          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e));
+        } else {
+          // No explicit seek target needed here (playtest follow-up #252 dropped the old
+          // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
+          // intrinsic chase-the-player behaviour in _updateProjectiles (it re-reads the player's
+          // LIVE position every frame), so it tracks straight through cover exactly the same
+          // whether this shot had LOS or not. #245: a flying shooter's rounds also ignore terrain
+          // cover in flight. `aimAngle` (the un-offset centre bearing, matching firing.js's own
+          // `aimAngle` param) stays `fireAngle` for every sub-shot so a fanned/streamed weapon's
+          // arcing maxDist test (see `_spawnProjectile`) reads the same centre line the player
+          // path uses.
+          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, !!e.flying, isSmallUnit(e));
+        }
+      };
+      if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
+    }
+  },
+
   // Fire a non-mech unit's weapon at `aim` (its turret angle). The weapon comes from data
   // (resolveWeapon(def.weaponId, def.weaponOverride), #243) — NO weapon-id literal in this
   // file — wrapped as the {weapon,
@@ -937,17 +973,11 @@ export const EnemiesMixin = {
       // #264: same real positional audio as the mech enemy loop above.
       scheduleFireCues(this, weapon, plan, true, 1, { x: mx, y: my, listenerX: this.px, listenerY: this.py });
     }
-    if (plan.mode === 'contact') {
-      this._melee(w, mx, my, fireAngle, 'enemy');
-    } else if (plan.mode === 'hitscan') {
-      // #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`) shoots from
-      // above, so its shots ignore terrain cover entirely: the hitscan trace skips the wall
-      // check and a spawned round is stamped `ignoresCover` (see firing.js/projectiles.js).
-      // Ground kinds pass false and are blocked by cover exactly as before.
-      this._fireHitscan(w, mx, my, fireAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e));
-    } else {
-      this._spawnProjectile(w, mx, my, fireAngle, 'enemy', 0, null, fireAngle, !!e.flying, isSmallUnit(e));
-    }
+    // #269 playtest follow-up (helicopter Repeater streams bug): dispatch EVERY emission in
+    // `plan.shots`, not just one — see `_fireEnemyShots`'s header comment for the root cause
+    // this fixes. #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`) still
+    // shoots from above, ignoring terrain cover, exactly as before (threaded through the helper).
+    this._fireEnemyShots(w, plan, mx, my, fireAngle, e);
     // Cadence is ALWAYS the RESOLVED weapon's own `_fireInterval` (the same resolution the
     // player/mech-enemy path uses; `{}` mods since vehicles have no player buffs/Overdrive) —
     // #241 introduced this as the fallback behind a per-kind `fireEveryMs` timer, and #243

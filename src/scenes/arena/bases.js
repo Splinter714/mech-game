@@ -16,6 +16,7 @@ import { DEPTH } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { makeDockResupplyState, tickDockResupply } from '../../data/dockResupply.js';
+import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 
 // #269 playtest follow-up ("sensor towers need a visual AND a noise to indicate they are
 // spooling up") — the live escalating ring drawn over a counting-down alert tower. Colour
@@ -48,12 +49,14 @@ export const TOWER_PATROL_COUNT = 1;
 
 // #269 playtest follow-up (hex legibility): a base/tower hex's dormant unit or small art icon
 // alone doesn't read clearly as "this is a dock/alert tower/turret emplacement" during playtest
-// — a persistent red text tag above the hex makes it unambiguous at a glance. Always-on for now
-// (an explicit playtest/legibility aid Jackson asked for directly, not gated behind a debug
-// flag). Deliberately plain/loud (bright red, monospace) rather than styled like the amber
-// objective marker (mission.js `_makeObjectiveMarker`) — these are a debug-readable tag, not a
-// wayfinding beacon, so they shouldn't compete visually with the real objective marker.
-const HEX_LABEL_COLOR = '#ff4444';
+// — a persistent red text tag above the hex makes it unambiguous at a glance. Deliberately
+// plain/loud (bright red, monospace) rather than styled like the amber objective marker
+// (mission.js `_makeObjectiveMarker`) — these are a debug-readable tag, not a wayfinding beacon,
+// so they shouldn't compete visually with the real objective marker. #270 playtest follow-up:
+// dev-only (see ArenaScene.js's `import.meta.env.DEV` gate around `_spawnHexLabels()`) — this
+// was always a playtest legibility aid, never meant to ship in production. Color/size/weight
+// come from hexLabelStyle.js, shared with terrainLabels.js so the two label systems can't
+// drift into two different looks again.
 const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacement: 'TURRET', objective: 'OBJECTIVE' };
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
@@ -186,8 +189,11 @@ export const BasesMixin = {
   _addHexLabel(q, r, kindId) {
     const { x, y } = hexToPixel(q, r);
     const label = this.add.text(x, y - 34, HEX_LABEL_TEXT[kindId], {
-      fontFamily: 'monospace', fontSize: '11px', color: HEX_LABEL_COLOR, fontStyle: 'bold',
+      fontFamily: 'monospace', fontSize: HEX_LABEL_FONT_SIZE, color: HEX_LABEL_COLOR, fontStyle: HEX_LABEL_FONT_STYLE,
     }).setOrigin(0.5).setDepth(DEPTH.WORLD_UI);
+    // #270 playtest follow-up: honour the live L-key toggle (ArenaScene `_hexLabelsVisible`,
+    // default true) — `?? true` so this stays correct in a test harness that never set the flag.
+    label.setVisible(this._hexLabelsVisible ?? true);
     this._hexLabels.push(label);
   },
 
