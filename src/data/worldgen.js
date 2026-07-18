@@ -49,7 +49,7 @@ export const DOCKS_PER_BASE_MAX = 5;
 // and so on — exactly `baseCount` gaps for `baseCount` bases (see `placeGapTowers` below). This
 // makes a tower a real "you're about to walk into a base" tripwire rather than tied to a
 // building that no longer exists. The tower's own trigger behaviour (detect → countdown → wake
-// the NEAREST base, `nearestBaseTo`) is unchanged; only how its position is chosen changed.
+// its linked base, by `baseId` — see #284) is unchanged; only how its position is chosen changed.
 
 // #269 playtest follow-up (dock composition, point 4): turret emplacements per base — placed via
 // their OWN loop (below, mirroring the dock loop's style), never drawn from the generic dock kind
@@ -219,14 +219,20 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
 }
 
 // #275 (redesign): place one alert tower per GAP along the corridor's progression, instead of
-// anchoring towers to the removed "outpost" concept. `baseCenters` is the ordered list of base
-// centre hexes (`placeBases`' returned `bases.map(b => b.center)`, in base-index order 0..N-1,
-// which is already stratified by `progressOf` — see that function's own comment). For gap `i`
-// (0-indexed), the tower goes somewhere between base `i-1`'s progress position (or the corridor
-// START, progress 0 — spawn sits at spine u=0 — for gap 0) and base `i`'s progress position: a
-// real "you're about to walk into a base" tripwire between encampments, not tied to a building
-// that no longer exists. `baseCenters.length` gaps are placed for `baseCenters.length` bases —
-// gap 0 before the first base, gap 1 between the first and second, and so on.
+// anchoring towers to the removed "outpost" concept. `bases` is the ordered list of base
+// descriptors (`placeBases`' returned `bases`, in base-index order 0..N-1, each already
+// stratified by `progressOf` — see that function's own comment). For gap `i` (0-indexed), the
+// tower goes somewhere between base `i-1`'s progress position (or the corridor START, progress
+// 0 — spawn sits at spine u=0 — for gap 0) and base `i`'s progress position: a real "you're
+// about to walk into a base" tripwire between encampments, not tied to a building that no
+// longer exists. `bases.length` gaps are placed for `bases.length` bases — gap 0 before the
+// first base, gap 1 between the first and second, and so on.
+//
+// #284: gap `i`'s tower is placed strictly within gap `i`'s progress bounds, i.e. between base
+// `i-1` and base `i` — it conceptually already "belongs" to base `i`. Rather than making the
+// wake-trigger code re-derive that relationship geometrically (`nearestBaseTo`, which can
+// disagree with actual gap ownership on a curving spine), each returned tower record carries the
+// `baseId` of the base it precedes directly, so wake-routing can use it as-is with no guessing.
 //
 // Implementation: for each gap, filter the candidate set `all` down to hexes whose OWN progress
 // falls within that gap's [lo, hi] progress range AND are still plain open ground (`isGround`) —
@@ -238,12 +244,12 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
 // `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, same as `placeBases`. Roaming patrols
 // (`scenes/arena/bases.js` `_spawnTowerPatrols`) still anchor to wherever the tower ends up,
 // unaffected by this redesign — they're just fed a different tower-position source now.
-export function placeGapTowers(rng, all, T, isGround, baseCenters, progressOf = null) {
+export function placeGapTowers(rng, all, T, isGround, bases, progressOf = null) {
   const alertTowers = [];
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   let prevProgress = 0;   // the corridor start (spawn sits at spine u=0 / distance 0 from origin)
-  for (const baseCenter of baseCenters ?? []) {
-    const baseProgress = progress(baseCenter);
+  for (const base of bases ?? []) {
+    const baseProgress = progress(base.center);
     const lo = Math.min(prevProgress, baseProgress);
     const hi = Math.max(prevProgress, baseProgress);
     const candidates = all.filter((h) => {
@@ -253,7 +259,7 @@ export function placeGapTowers(rng, all, T, isGround, baseCenters, progressOf = 
     if (candidates.length) {
       const h = candidates[Math.floor(rng() * candidates.length)];
       T.set(axialKey(h.q, h.r), 'alertTower');
-      alertTowers.push({ q: h.q, r: h.r });
+      alertTowers.push({ q: h.q, r: h.r, baseId: base.id });
     }
     prevProgress = baseProgress;
   }
@@ -372,7 +378,7 @@ export function generateTerrain({
   // Placed after bases (using their final centres) for the same "never overwrite a base's
   // docks/turrets" reason the old per-outpost placement observed, still before the safe-zone
   // clear below.
-  const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+  const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
 
   // Clear the safe zone (spawn point + line of fire) back to open ground.
   for (const h of range(safeCenter, 3)) { const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, groundAt(h)); }

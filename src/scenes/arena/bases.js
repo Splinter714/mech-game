@@ -11,7 +11,7 @@
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
-import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
+import { isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH, strokeHexRing } from './shared.js';
 import { Audio } from '../../audio/index.js';
@@ -221,8 +221,16 @@ export const BasesMixin = {
   // Called once from ArenaScene.create(), alongside `_spawnDormantUnits` above.
   _initAlertTowers() {
     this._alertTowerStates = new Map();
+    // #284: each tower record from `placeGapTowers` (data/worldgen.js) already carries the
+    // `baseId` of the base it's linked to (the base it sits in front of, gap-wise) — keep a
+    // parallel key→baseId lookup so `_triggerAlert` can wake that exact base directly, with no
+    // geometric re-derivation (`nearestBaseTo`, which could disagree with actual gap ownership
+    // on a curving spine — see the issue for the failure case).
+    this._alertTowerBaseId = new Map();
     for (const t of this.alertTowerHexes ?? []) {
-      this._alertTowerStates.set(axialKey(t.q, t.r), makeAlertState());
+      const key = axialKey(t.q, t.r);
+      this._alertTowerStates.set(key, makeAlertState());
+      this._alertTowerBaseId.set(key, t.baseId ?? null);
     }
     // §6: which bases have already been woken — a base wakes AT MOST once (waking an
     // already-awake base's units again is a harmless no-op, but tracking this avoids re-scanning
@@ -244,6 +252,7 @@ export const BasesMixin = {
     for (const [key, state] of [...this._alertTowerStates]) {
       if (this.terrain.get(key) !== 'alertTower') {
         this._alertTowerStates.delete(key);
+        this._alertTowerBaseId?.delete(key);   // #284: no tower left to link, drop its baseId lookup too
         this._freeAlertFx(key);   // #269 playtest follow-up: tower destroyed mid-countdown — kill its FX too
         continue;
       }
@@ -254,7 +263,7 @@ export const BasesMixin = {
       if (next.triggered) {
         this._alertTowerStates.delete(key);   // one-shot — nothing left to tick once it fires
         this._freeAlertFx(key);               // #269 playtest follow-up: countdown complete — swap FX for the real alert
-        this._triggerAlert(x, y);
+        this._triggerAlert(this._alertTowerBaseId?.get(key));
       } else {
         this._alertTowerStates.set(key, next);
         this._updateAlertFx(key, x, y, next, dt);
@@ -323,11 +332,13 @@ export const BasesMixin = {
     this._alertTowerFx.delete(key);
   },
 
-  // §6: the countdown completed — resolve the SINGLE nearest base (by straight-line distance
-  // from the tower's own position, data/bases.js `nearestBaseTo`) and wake only that one.
-  _triggerAlert(x, y) {
-    const base = nearestBaseTo({ x, y }, this.bases);
-    if (base) this._wakeBase(base.id);
+  // §6: the countdown completed — wake the ONE base this tower is linked to. #284: `baseId` is
+  // the tower's own gap-ownership relationship, threaded through from `placeGapTowers` (data/
+  // worldgen.js) via `this.alertTowerHexes` → `_alertTowerBaseId` — no geometric re-derivation
+  // (the old `nearestBaseTo`, pure straight-line distance) involved, so a curving corridor can
+  // never misroute a tower's wake to the wrong base.
+  _triggerAlert(baseId) {
+    if (baseId != null) this._wakeBase(baseId);
   },
 
   // #269 playtest follow-up ("enemies should also wake on player proximity, independent of

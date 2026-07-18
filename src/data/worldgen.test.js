@@ -658,16 +658,20 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
 
     it('places exactly one tower per gap, each landing strictly within its own gap\'s progress bounds', () => {
       const { all, T, isGround, progressOf } = buildLine();
-      const baseCenters = [{ q: 50, r: 0 }, { q: 150, r: 0 }, { q: 250, r: 0 }];
+      const bases = [
+        { id: 'base0', center: { q: 50, r: 0 } },
+        { id: 'base1', center: { q: 150, r: 0 } },
+        { id: 'base2', center: { q: 250, r: 0 } },
+      ];
       const rng = mulberry32(321);
-      const alertTowers = placeGapTowers(rng, all, T, isGround, baseCenters, progressOf);
+      const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
 
-      expect(alertTowers.length).toBe(baseCenters.length);
+      expect(alertTowers.length).toBe(bases.length);
       for (const t of alertTowers) expect(T.get(axialKey(t.q, t.r))).toBe('alertTower');
 
       let prev = 0;   // gap 0 starts at the corridor's start (progress 0), not a base
-      for (let i = 0; i < baseCenters.length; i++) {
-        const hi = baseCenters[i].q;
+      for (let i = 0; i < bases.length; i++) {
+        const hi = bases[i].center.q;
         const p = progressOf(alertTowers[i]);
         expect(p).toBeGreaterThanOrEqual(Math.min(prev, hi));
         expect(p).toBeLessThanOrEqual(Math.max(prev, hi));
@@ -675,12 +679,30 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       }
     });
 
+    // #284: each returned tower must carry the `baseId` of the base its gap precedes — gap i's
+    // tower belongs to base i — so the scene-side wake trigger can wake that exact base with no
+    // geometric re-derivation.
+    it('tags each tower with the baseId of the base its gap precedes', () => {
+      const { all, T, isGround, progressOf } = buildLine();
+      const bases = [
+        { id: 'base0', center: { q: 50, r: 0 } },
+        { id: 'base1', center: { q: 150, r: 0 } },
+        { id: 'base2', center: { q: 250, r: 0 } },
+      ];
+      const alertTowers = placeGapTowers(mulberry32(321), all, T, isGround, bases, progressOf);
+      expect(alertTowers.map((t) => t.baseId)).toEqual(['base0', 'base1', 'base2']);
+    });
+
     it('is deterministic given the same seed', () => {
-      const baseCenters = [{ q: 50, r: 0 }, { q: 150, r: 0 }, { q: 250, r: 0 }];
+      const bases = [
+        { id: 'base0', center: { q: 50, r: 0 } },
+        { id: 'base1', center: { q: 150, r: 0 } },
+        { id: 'base2', center: { q: 250, r: 0 } },
+      ];
       const runA = buildLine();
       const runB = buildLine();
-      const a = placeGapTowers(mulberry32(7), runA.all, runA.T, runA.isGround, baseCenters, runA.progressOf);
-      const b = placeGapTowers(mulberry32(7), runB.all, runB.T, runB.isGround, baseCenters, runB.progressOf);
+      const a = placeGapTowers(mulberry32(7), runA.all, runA.T, runA.isGround, bases, runA.progressOf);
+      const b = placeGapTowers(mulberry32(7), runB.all, runB.T, runB.isGround, bases, runB.progressOf);
       expect(a).toEqual(b);
     });
 
@@ -893,6 +915,34 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       }
     }
     expect(checked).toBeGreaterThan(30);   // sanity: the sweep actually placed towers to check
+  });
+
+  // #284: each tower generateTerrain returns must carry a `baseId` referencing a real base from
+  // this same generation, and no two towers share a base (each gap belongs to exactly one base) —
+  // the relationship the scene-side wake trigger relies on directly, with no geometric
+  // re-derivation. (The precise "tower's baseId matches the base its own gap precedes" claim is
+  // exercised more rigorously above, against a controlled straight-line corridor where gap
+  // membership is unambiguous — real curving corridors can occasionally produce a base whose
+  // stratified-but-randomized centre isn't strictly progress-ordered relative to its neighbours,
+  // which would make a from-scratch geometric re-derivation here just as ambiguous as the bug
+  // this issue fixes.)
+  it('generateTerrain tags every alert tower with a baseId from its own generation, one base per tower', () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 25; seed++) {
+      const { includedKeys, spine } = buildCorridor(seed * 101 + 3);
+      const { bases, alertTowers } = generateTerrain({
+        seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys, spine,
+      });
+      const baseIds = new Set(bases.map((b) => b.id));
+      const seenBaseIds = new Set();
+      for (const t of alertTowers) {
+        expect(baseIds.has(t.baseId)).toBe(true);
+        expect(seenBaseIds.has(t.baseId)).toBe(false);   // no base gets two towers
+        seenBaseIds.add(t.baseId);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(30);   // sanity: the sweep actually checked real towers
   });
 
   // #275: confirms placement isn't wildly unreliable — most of the `BASE_COUNT` gaps actually

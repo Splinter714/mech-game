@@ -1,27 +1,14 @@
-// #269 §6/§7 (issue: base population rework) — pure helpers for WAKE ROUTING: given the set of
-// bases world-gen placed (data/worldgen.js `placeBases`), which single base does a completed
-// alert-tower countdown wake, and which of that base's docked units sortie out vs. hold ground?
+// #269 §6/§7 (issue: base population rework) — pure helpers for WAKE ROUTING: which of a base's
+// docked units sortie out vs. hold ground once it wakes, and when is a base considered cleared?
 // No Phaser here (mirrors data/awareness.js, data/alertTower.js) — scenes/arena/bases.js is the
 // thin scene-side wiring that calls these with real world positions/enemy records.
-
-import { hexToPixel } from './hexgrid.js';
-
-// The single nearest base to a world point (an alert tower's own position), by straight-line
-// distance between the point and each base's centre hex. #269 playtest follow-up (bases/
-// outposts role swap): a tower is now placed at/near an OUTPOST, not a base, so it has no base
-// of its own to belong to — nearest-base is resolved at WAKE time exactly as before, purely
-// geometrically off the tower's own position, regardless of what it happens to sit next to.
-// Returns null if `bases` is empty.
-export function nearestBaseTo(point, bases) {
-  if (!bases || !bases.length) return null;
-  let best = null, bestD = Infinity;
-  for (const base of bases) {
-    const { x, y } = hexToPixel(base.center.q, base.center.r);
-    const d = Math.hypot(x - point.x, y - point.y);
-    if (d < bestD) { bestD = d; best = base; }
-  }
-  return best;
-}
+//
+// #284: WHICH base a completed alert-tower countdown wakes used to be resolved here too
+// (`nearestBaseTo`, pure straight-line distance from the tower's position to each base's centre)
+// but that could disagree with a tower's actual gap ownership on a curving spine — removed once
+// `placeGapTowers` (data/worldgen.js) started threading each tower's own linked `baseId` straight
+// through to the scene-side wake trigger (`scenes/arena/bases.js` `_triggerAlert`), which no
+// longer needs to re-derive it geometrically at all.
 
 // #7: fast/mobile kinds sortie toward the player the instant their base wakes; slow/defensive
 // kinds hold their dock position and just become combat-active there. A single maxSpeed
