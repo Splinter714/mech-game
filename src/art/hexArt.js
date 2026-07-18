@@ -61,6 +61,10 @@ const PAL = {
   rubble:   { fill: 0x2f3138, edge: 0x212329 },
   // #227: a destroyed forest hex — charred plant debris, distinct from the generic rubble.
   forestRubble:{ fill: 0x241f16, edge: 0x1a1610 },
+  // #278: grassland's own in-map hazard — a boggy mud patch. Warm dark brown, distinct from
+  // both forest's greens and forestRubble's char (rather than an earthy tone that could read as
+  // "just more forest floor").
+  mud:      { fill: 0x4a3a20, edge: 0x352918 },
   // #251 (playtest follow-up): base-infrastructure hex types (dock/alertTower/turretEmplacement/
   // objective) render with ONE fixed neutral colour regardless of which biome they're stamped
   // into — a dock must look like a dock on grass, desert, ice, or ash alike. Reusing the CURRENT
@@ -128,6 +132,10 @@ const PAL = {
   wreckRubble:{ fill: 0x2c2924, edge: 0x201d19 },
   // #110: debris field — a lesser urban hazard (the collapsed heap is now boundary-only).
   debris:    { fill: 0x4a4640, edge: 0x35322d },
+  // #278: urban's own channel — a flooded concrete drainage canal. Cool blue-grey (distinct from
+  // debris's warm ash-brown and pavement's neutral grey) so it reads as standing water in a
+  // man-made culvert.
+  canal:     { fill: 0x39474d, edge: 0x293338 },
 
   // ── Volcanic wasteland (#67) — dark/ember palette. ──
   ash:       { fill: 0x2b2723, edge: 0x1d1a17 },
@@ -620,6 +628,14 @@ const DETAIL = {
   // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT the generic
   // rubble's masonry look.
   hex_scrubRubble: (sg) => organicDebrisScatter(sg, 0x513f28, 0x8f7548, 0xb2955e, 0x59),
+  // #278: mud — grassland's own in-map hazard: a soft boggy patch with glossy standing-water
+  // pools and a few sunken cracked-mud rings, distinct from quicksand's cleaner sand-pit look.
+  hex_mud: (sg) => {
+    sg.fillStyle(0x352918, 0.6); sg.fillEllipse(C.cx, C.cy, 24, 14);
+    sg.fillStyle(0x5c6a3a, 0.35); sg.fillEllipse(C.cx - 3, C.cy + 2, 12, 5);   // dull puddle sheen
+    sg.fillStyle(0x241b0e, 0.5); sg.fillCircle(C.cx - 6, C.cy - 2, 2.4); sg.fillCircle(C.cx + 6, C.cy + 3, 1.8); // sunken pockmarks
+    crackLine(sg, [[C.cx - 9, C.cy - 4], [C.cx - 1, C.cy], [C.cx + 8, C.cy - 3]], 0x2a2010, 0.6, 1);
+  },
   // #110: quicksand — a sunken, rippled pit distinct from the dry-riverbed channel.
   hex_quicksand: (sg) => {
     sg.fillStyle(0x6b5830, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 14);
@@ -699,6 +715,16 @@ const DETAIL = {
   // #275: also urban's `channel` role now (see biomes.js) — a paved lane and a rubble-strewn
   // street both read as "urban street" well enough to share one texture.
   hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, 0x82),
+  // #278: canal — urban's own channel: a flooded concrete drainage culvert. Straight parallel
+  // concrete-lip edges (unlike the organic riverbank curve of `river`/`dryRiver`) with a
+  // rippled water fill, so it reads as man-made rather than a natural stream.
+  hex_canal: (sg) => {
+    sg.fillStyle(0x293338, 0.85); sg.fillRect(C.cx - 14, C.cy - 7, 28, 14);   // concrete channel bed
+    sg.fillStyle(0x3d5a63, 0.7); sg.fillRect(C.cx - 12, C.cy - 5, 24, 10);    // standing water
+    sg.fillStyle(0x5a7d87, 0.4); sg.fillRect(C.cx - 12, C.cy - 5, 24, 1.5);   // concrete lip highlight
+    sg.fillStyle(0x5a7d87, 0.4); sg.fillRect(C.cx - 12, C.cy + 3.5, 24, 1.5);
+    sg.fillStyle(0x9fc4dd, 0.3); sg.fillEllipse(C.cx - 3, C.cy, 10, 1.6); sg.fillEllipse(C.cx + 6, C.cy - 2, 6, 1.2); // ripples
+  },
 
   // ── Volcanic wasteland ─────────────────────────────────────────────────────────────────
   hex_ash: (sg) => {   // grey ash drifts + a few glowing embers

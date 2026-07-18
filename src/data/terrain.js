@@ -84,6 +84,14 @@ export const TERRAIN = {
   // from the generic rubble's broken-masonry look even though both are passable/no-cover.
   forestRubble: { id: 'forestRubble', tex: 'hex_forestRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
+  // #278: grassland's own in-map hazard — every other biome had one already (quicksand/brokenIce/
+  // debris/cinderField), grassland was the sole biome with `hazard: null` (its shallow river
+  // channel was judged to already cover the "watch your footing" role, but the other biomes'
+  // hazards are all distinct-in-map-danger tiles independent of their channel). A boggy mud patch
+  // fits grassland thematically (soft ground you sink into) and follows the same passable-but-slow,
+  // no-LOS-block, non-destructible shape as every other hazard entry above.
+  mud:       { id: 'mud',       tex: 'hex_mud',       passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
+               category: 'terrain', movement: 'slow', cover: 'open' },
   // #269 §3 (issue: base population rework — dormant docks + alert towers): a GENERIC dock/bay
   // hex — a pure PLACEMENT MARKER for a dormant docked unit (data/worldgen.js `placeBases`), not
   // a structure of its own. Per the issue's explicit call ("NOT rendered as a distinctive
@@ -281,6 +289,14 @@ export const TERRAIN = {
   // rubble-strewn street both read as "urban hazard/street" well enough to share one id rather
   // than inventing a new distinct paved-road identity for a role that's otherwise gone.
   debris:    { id: 'debris',    tex: 'hex_debris',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
+               category: 'terrain', movement: 'slow', cover: 'open' },
+  // #278: urban's own dedicated channel — previously `channel` just pointed at `debris` (urban's
+  // OWN hazard id), so urban was the one biome sharing a single id across two roles instead of
+  // having a distinct channel identity like every other biome (river/dryRiver/slush/crust). A
+  // flooded concrete drainage canal/culvert fits "urban ruins" without reintroducing a paved-road
+  // identity (deliberately removed in #275) — reads as standing water in a man-made channel, so
+  // `water: true` like the other biomes' channel terrain (river/slush).
+  canal:     { id: 'canal',     tex: 'hex_canal',     passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR, water: true,
                category: 'terrain', movement: 'slow', cover: 'open' },
 
   // ── Volcanic wasteland (#67) — dark/ember palette; lava hazards + ash fields. ──

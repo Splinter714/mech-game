@@ -14,9 +14,11 @@
 //                       feature anymore. Every biome still declares one (impassable, so it
 //                       reads as "the edge of the world"), it just isn't stamped mid-map.
 //   hazard            — #110: the LESSER in-map hazard that replaces `deep` as an actual
-//                       mid-map feature. Passable (just slow/dangerous), unlike `deep`. `null`
-//                       means this biome doesn't need one (grassland: its `channel`, a shallow
-//                       river, already covers the "watch your footing" role — see `hasHazard`).
+//                       mid-map feature. Passable (just slow/dangerous), unlike `deep`. #278:
+//                       every biome now has a distinct one — grassland's `mud` was the last
+//                       biome missing this role (previously `null`, on the reasoning that its
+//                       `channel` already covered "watch your footing"; playtest/#278 wanted a
+//                       real distinct hazard id like every other biome has).
 //   cover             — scattered walk-through cover clusters (forest analog: passable, slow,
 //                       blocks LOS).
 // #275: this biome record used to also carry an `outpost` role (the destructible hard-cover
@@ -40,11 +42,11 @@ export const BIOMES = {
     id: 'grassland',
     name: 'Grassland',
     groundA: 'grass', groundB: 'grassB',
-    channel: 'river',       // already the "shallow water" analog — no separate in-map hazard needed
+    channel: 'river',       // already the "shallow water" analog
     deep: 'deepWater',      // #110: boundary-only now (was also an in-map lake blob)
-    hazard: null,
+    hazard: 'mud',          // #278: grassland's own in-map hazard — a boggy patch, passable but slow
     cover: 'forest',
-    coverClusters: 1, hasChannel: true, hasHazard: false,
+    coverClusters: 1, hasChannel: true, hasHazard: true,
   },
 
   desert: {
@@ -75,12 +77,12 @@ export const BIOMES = {
     groundA: 'pavement', groundB: 'pavementB',
     // #275: `road` (the dedicated paved-lane terrain) was removed — a plain destructible outpost
     // scattered as generic cover was redundant next to the newer base hexes, and a distinct
-    // paved-road identity wasn't worth keeping for a channel role alone. Urban's `channel` now
-    // points at the same `debris` id as its `hazard` role (a rubble-strewn street reads fine as
-    // both "the winding channel strip" and "the lesser in-map hazard" — this is a judgment call,
-    // not a hard rule; `hasChannel: false` was the other reasonable option, but keeping a channel
-    // strip preserves the winding visual/tactical lane every other biome has).
-    channel: 'debris',
+    // paved-road identity wasn't worth keeping for a channel role alone. #278: urban's `channel`
+    // originally just pointed at its own `debris` hazard id as a stopgap — the one biome sharing
+    // a single terrain id across two roles instead of having a distinct channel identity like
+    // every other biome. Now uses its own `canal` terrain (a flooded concrete drainage
+    // culvert) — reads as "urban ruins" without reintroducing a paved-road identity.
+    channel: 'canal',
     deep: 'collapsed',     // #110: boundary-only — a collapsed-tower heap marks the world's edge
     hazard: 'debris',      // #110: the in-map lesser hazard — a rubble-strewn street, slow but passable
     cover: 'wreck',        // burned-out wreckage / low walls

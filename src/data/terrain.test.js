@@ -245,16 +245,49 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
   });
 });
 
+// #278: grassland's new `mud` hazard and urban's new `canal` channel — each shaped exactly like
+// the existing hazard/channel entries (passable, slow, no LOS block, terrain category, NOT
+// destructible — hazards/channels never have HP, unlike soft cover).
+describe('#278 mud (grassland hazard) + canal (urban channel)', () => {
+  it('mud is shaped exactly like the other in-map hazards (quicksand/brokenIce/debris/cinderField)', () => {
+    expect(TERRAIN.mud).toBeDefined();
+    expect(TERRAIN.mud.passable).toBe(true);
+    expect(TERRAIN.mud.blocksLOS).toBe(false);
+    expect(TERRAIN.mud.speedFactor).toBe(SLOW_MOVEMENT_FACTOR);
+    expect(TERRAIN.mud.category).toBe('terrain');
+    expect(TERRAIN.mud.movement).toBe('slow');
+    expect(TERRAIN.mud.cover).toBe('open');
+    expect(TERRAIN.mud.destructible).toBeUndefined();
+    expect(typeof TERRAIN.mud.tex).toBe('string');
+  });
+
+  it('canal is shaped exactly like the other channels (river/dryRiver/slush/crust) and reads as water', () => {
+    expect(TERRAIN.canal).toBeDefined();
+    expect(TERRAIN.canal.passable).toBe(true);
+    expect(TERRAIN.canal.blocksLOS).toBe(false);
+    expect(TERRAIN.canal.speedFactor).toBe(SLOW_MOVEMENT_FACTOR);
+    expect(TERRAIN.canal.category).toBe('terrain');
+    expect(TERRAIN.canal.movement).toBe('slow');
+    expect(TERRAIN.canal.cover).toBe('open');
+    expect(TERRAIN.canal.destructible).toBeUndefined();
+    expect(isWaterTerrain('canal')).toBe(true);
+    expect(typeof TERRAIN.canal.tex).toBe('string');
+    // Distinct from urban's own hazard (debris) — no longer sharing a single id across two roles.
+    expect(TERRAIN.canal.tex).not.toBe(TERRAIN.debris.tex);
+  });
+});
+
 describe('isWaterTerrain (#151) — reads as actual water, not just slow terrain in general', () => {
   it('flags exactly the water-like ids across all 5 biomes', () => {
-    for (const id of ['river', 'deepWater', 'slush', 'ice', 'brokenIce']) {
+    // #278: urban's new `canal` channel reads as flooded standing water too.
+    for (const id of ['river', 'deepWater', 'slush', 'ice', 'brokenIce', 'canal']) {
       expect(isWaterTerrain(id), id).toBe(true);
     }
   });
 
   it('does NOT flag other slow-but-not-water terrain (dry riverbeds, sand, ash, rubble, debris)', () => {
     for (const id of [
-      'grass', 'grassB', 'forest', 'rubble', 'forestRubble',
+      'grass', 'grassB', 'forest', 'rubble', 'forestRubble', 'mud',
       'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'scrubRubble', 'quicksand',
       'snow', 'snowB', 'drift', 'driftRubble',
       'pavement', 'pavementB', 'collapsed', 'wreck', 'wreckRubble', 'debris',

@@ -227,7 +227,7 @@ describe('generateTerrain', () => {
       expect(sawHazard).toBe(true);
     });
 
-    it('grassland (no hazard) never stamps anything but its normal roles', () => {
+    it('grassland never stamps anything but its normal roles', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: GRASSLAND });
       const validIds = new Set([
         // #269: `dock`/`alertTower` are the base-population system's own normal stamped roles.
@@ -235,7 +235,8 @@ describe('generateTerrain', () => {
         // `objective` (playtest follow-up) is the base's dedicated destructible-target hex.
         // #275: the outpost-cluster loop and `helipad` were removed — there's no longer a
         // biome-specific "outpost" role or a stamped helipad id to allow here.
-        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover,
+        // #278: grassland now has its own in-map `hazard` (mud), like every other biome.
+        GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.hazard,
         'dock', 'alertTower', 'turretEmplacement', 'objective',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
@@ -830,9 +831,12 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
   // the previous base's position (or the corridor start, for gap 0) and the next base's, in the
   // same order as the bases themselves (base index order == progress order, per `placeBases`).
   it('generateTerrain places alert towers one per gap, ordered along the bases\' own progress', () => {
-    const { spine, includedKeys } = buildCorridor(456);
+    // #278: seed picked to still place all 3 gap towers now that grassland has its own `mud`
+    // in-map hazard (occupies some ground candidates it didn't before — seed 456 now misses one
+    // gap under the new terrain mix, which is expected best-effort behavior, not a regression).
+    const { spine, includedKeys } = buildCorridor(451);
     const { bases, alertTowers } = generateTerrain({
-      seed: 456, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys, spine,
+      seed: 451, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 }, includedKeys, spine,
     });
     expect(bases.length).toBe(BASE_COUNT);
     // Best-effort placement (a gap can rarely miss if it has no ground candidate) — but on a

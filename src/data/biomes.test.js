@@ -60,9 +60,31 @@ describe('biome registry (#67)', () => {
     }
   });
 
-  it('grassland has no separate in-map hazard blob — its channel already covers the role', () => {
-    expect(BIOMES.grassland.hazard).toBeNull();
-    expect(BIOMES.grassland.hasHazard).toBe(false);
+  // #278: grassland was the last biome with `hazard: null` — every other biome already had a
+  // distinct in-map hazard tile independent of its channel. It now has its own (`mud`).
+  it('grassland has its own real in-map hazard, distinct from its channel', () => {
+    expect(BIOMES.grassland.hazard).toBe('mud');
+    expect(BIOMES.grassland.hasHazard).toBe(true);
+    expect(BIOMES.grassland.hazard).not.toBe(BIOMES.grassland.channel);
+  });
+
+  // #278: urban's `channel` previously just reused its own `hazard` id (`debris`) — the one biome
+  // sharing a single terrain id across two roles. It now has a distinct channel identity (`canal`).
+  it("urban's channel is a distinct id from its own hazard", () => {
+    expect(BIOMES.urban.channel).toBe('canal');
+    expect(BIOMES.urban.hazard).toBe('debris');
+    expect(BIOMES.urban.channel).not.toBe(BIOMES.urban.hazard);
+  });
+
+  // #278: every biome's 5 core roles (groundA/groundB/channel/cover/hazard) must be 5 DISTINCT
+  // terrain ids — no biome should be missing a role, and no biome should share one id across two
+  // roles (the bug urban's channel/hazard had before this issue).
+  it("every biome's 5 core roles (groundA/groundB/channel/cover/hazard) are 5 distinct ids", () => {
+    for (const b of Object.values(BIOMES)) {
+      const roles = [b.groundA, b.groundB, b.channel, b.cover, b.hazard];
+      for (const id of roles) expect(id, `${b.id} missing a role`).toBeTruthy();
+      expect(new Set(roles).size, `${b.id} roles: ${roles.join(', ')}`).toBe(roles.length);
+    }
   });
 
   it('every biome declares generation knobs', () => {
