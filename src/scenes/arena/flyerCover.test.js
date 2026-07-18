@@ -188,16 +188,27 @@ describe('#245 _fireVehicleWeapon threads the shooter\'s flying flag into both f
     expect(calls.hitscan).toEqual([{ owner: 'enemy', key: 'testKind', ignoreCover: false }]);
   });
 
-  it('a FLYING kind\'s projectile spawns with ignoreCover: true', () => {
+  // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
+  // stream weapon (`delivery.streams: 2`) — `_fireVehicleWeapon` now dispatches EVERY emission
+  // in the plan (see enemies.js `_fireEnemyShots`), so one trigger pull spawns TWO rounds, both
+  // carrying the same owner/ignoreCover — not one, like the old single-shot-only dispatch did.
+
+  it('a FLYING kind\'s projectile spawns with ignoreCover: true (both stream lanes)', () => {
     const { scene, calls } = makeVehicleScene();
     scene._fireVehicleWeapon(makeKindEnemy(STRAIGHT_PROJECTILE.id, true), {}, 0);
-    expect(calls.projectile).toEqual([{ owner: 'enemy', ignoreCover: true }]);
+    expect(calls.projectile).toEqual([
+      { owner: 'enemy', ignoreCover: true },
+      { owner: 'enemy', ignoreCover: true },
+    ]);
   });
 
-  it('a GROUND kind\'s projectile spawns with ignoreCover: false (unchanged)', () => {
+  it('a GROUND kind\'s projectile spawns with ignoreCover: false (unchanged, both stream lanes)', () => {
     const { scene, calls } = makeVehicleScene();
     scene._fireVehicleWeapon(makeKindEnemy(STRAIGHT_PROJECTILE.id, false), {}, 0);
-    expect(calls.projectile).toEqual([{ owner: 'enemy', ignoreCover: false }]);
+    expect(calls.projectile).toEqual([
+      { owner: 'enemy', ignoreCover: false },
+      { owner: 'enemy', ignoreCover: false },
+    ]);
   });
 });
 

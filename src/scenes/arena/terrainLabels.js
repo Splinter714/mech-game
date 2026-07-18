@@ -49,17 +49,17 @@ import { hexesForLabelsInRange } from '../../data/hexLabels.js';
 import { getTerrain } from '../../data/terrain.js';
 import { isBoundaryTerrainId } from '../../art/hexArt.js';
 import { DEPTH } from './shared.js';
+import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 
 export const LABEL_UPDATE_MS = 200;
 export const LABEL_RADIUS_MARGIN_PX = 220;
 
-// Deliberately subtle/muted — small font, low alpha, a desaturated colour — so dozens of these
-// on screen at once read as ambient flavour text, not a wall of UI. Contrast is the point: the
-// existing bases.js labels stay bold/red/full-alpha ("pay attention"), these stay quiet
-// ("here's what's under you, if you look").
-const LABEL_COLOR = '#b8b3a4';
-const LABEL_ALPHA = 0.38;
-const LABEL_FONT_SIZE = '9px';
+// #270 playtest follow-up: unified with bases.js's dock/alertTower/turretEmplacement labels —
+// same color/size/weight (hexLabelStyle.js), full alpha. Previously this layer used a distinct
+// muted-gray/low-alpha look to read as "quiet ambient flavour text" vs. bases.js's "pay
+// attention" red; Jackson asked for one consistent look across all hex labels instead, so that
+// distinction is gone. Dev-only now too (see ArenaScene.js's `import.meta.env.DEV` gate around
+// `_initTerrainLabels()`/`_updateTerrainLabels()`).
 
 export const TerrainLabelsMixin = {
   // Called once from ArenaScene.create(), after `_buildWorld`/`_spawnHexLabels` have populated
@@ -105,8 +105,12 @@ export const TerrainLabelsMixin = {
       if (this._terrainLabelPool.has(key)) continue;
       const { x, y } = hexToPixel(q, r);
       const label = this.add.text(x, y, id, {
-        fontFamily: 'monospace', fontSize: LABEL_FONT_SIZE, color: LABEL_COLOR,
-      }).setOrigin(0.5).setAlpha(LABEL_ALPHA).setDepth(DEPTH.WORLD_UI);
+        fontFamily: 'monospace', fontSize: HEX_LABEL_FONT_SIZE, color: HEX_LABEL_COLOR, fontStyle: HEX_LABEL_FONT_STYLE,
+      }).setOrigin(0.5).setDepth(DEPTH.WORLD_UI);
+      // #270 playtest follow-up: honour the live L-key toggle (ArenaScene `_hexLabelsVisible`,
+      // default true) — a hex that enters view AFTER a toggle still comes in hidden/shown
+      // correctly, since every newly pooled label picks up the current flag on creation.
+      label.setVisible(this._hexLabelsVisible ?? true);
       this._terrainLabelPool.set(key, label);
     }
     for (const [key, label] of this._terrainLabelPool) {

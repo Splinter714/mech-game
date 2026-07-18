@@ -173,7 +173,10 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
 
     scene._fireVehicleWeapon(e, {}, 0);
 
-    expect(calls.projectile.length).toBe(1);
+    // #269 playtest follow-up (streams bug fix): machineGun's own base delivery is a twin-lane
+    // stream (streams: 2) — one trigger pull now spawns BOTH lanes (_fireEnemyShots dispatches
+    // every entry in plan.shots), not just one, per the actual dispatch fix.
+    expect(calls.projectile.length).toBe(2);
     const expected = scene._fireInterval(STREAM_WEAPON, {});
     expect(e.fireCd).toBeCloseTo(expected, 6);
     // Sanity: this is the actual bug fix — the resolved cadence is nowhere near the old flat
@@ -209,7 +212,9 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
 
     scene._fireVehicleWeapon(e, {}, 0);
 
-    expect(calls.projectile.length).toBe(1);
+    // #269 playtest follow-up (streams bug fix): the override only retunes fireRate, so the
+    // base weapon's twin-lane streams: 2 still applies — both lanes fire per trigger pull.
+    expect(calls.projectile.length).toBe(2);
     expect(e.fireCd).toBeCloseTo(500, 6);   // 1000/2 — the override's rate, not the base 18/sec
   });
 
@@ -381,7 +386,9 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
 
     scene._fireVehicleWeapon(e, {}, 0);
 
-    expect(calls.projectile.length).toBe(1);
+    // #269 playtest follow-up (streams bug fix): the override's damage/fireRate delta doesn't
+    // touch streams — the base weapon's twin-lane streams: 2 still applies to both shots fired.
+    expect(calls.projectile.length).toBe(2);
     const fired = calls.projectile[0].w.weapon;
     expect(fired.damage).toBe(1);
     expect(fired.delivery.fireRate).toBe(9);

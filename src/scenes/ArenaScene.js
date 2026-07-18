@@ -154,12 +154,23 @@ export default class ArenaScene extends Phaser.Scene {
     // freshly-built `this.terrain`/`this.bases`/`this.alertTowerHexes`.
     this._spawnTowerPatrols();
     this._initAlertTowers();
-    // #269 playtest follow-up (hex legibility): persistent red text tags over every dock/
-    // alertTower/turretEmplacement hex, so the new hex types are unambiguous during playtest.
-    this._spawnHexLabels();
-    // #270: a second, quieter labelling layer for every OTHER hex's real terrain id — camera-
-    // culled/pooled (see terrainLabels.js), unlike the fixed handful spawned just above.
-    this._initTerrainLabels();
+    // #269/#270 playtest follow-up (hex legibility), dev-only: both hex-labelling systems —
+    // bases.js's persistent red text tags over every dock/alertTower/turretEmplacement hex, and
+    // terrainLabels.js's camera-culled/pooled labels for every OTHER hex's real terrain id — were
+    // always meant as a playtest legibility aid, never a shipped HUD feature, so they're gated to
+    // `npm run dev` and never run in a production build. `import.meta.env.DEV` is Vite's
+    // build-time flag (stripped to `false`/dead-code-eliminated in `npm run build`; see
+    // GarageScene.js's own `import.meta.env.DEV` use for the same pattern). The underlying
+    // methods (`_spawnHexLabels`, `_initTerrainLabels`, `_updateTerrainLabels` below) stay
+    // directly callable/testable — only this ArenaScene auto-invocation is gated.
+    // #270 playtest follow-up: also a live L keybind (dev-only, see below) to hide/show both
+    // systems at once without restarting — on by default (matches the old always-on-in-dev
+    // behavior), `_hexLabelsVisible` is the single source of truth both systems read.
+    this._hexLabelsVisible = true;
+    if (import.meta.env.DEV) {
+      this._spawnHexLabels();
+      this._initTerrainLabels();
+    }
 
     this.controls = new Controls(this);
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
@@ -201,6 +212,11 @@ export default class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
     this.input.keyboard.on('keydown-R', () => this._resetEnemies());   // #39
     this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
+    // #270 playtest follow-up: L toggles both hex-label systems on/off live — dev-only, same as
+    // the systems themselves (see `_hexLabelsVisible` init above and `_toggleHexLabels` below).
+    if (import.meta.env.DEV) {
+      this.input.keyboard.on('keydown-L', () => this._toggleHexLabels());
+    }
     // #262: F toggles convergence/lock's enemy-vs-building targeting focus (see this.focusMode
     // above). Phaser's `keydown-*` events already fire once per physical press, so no separate
     // edge-detector is needed here (unlike the pad side, which polls raw button state and needs
@@ -262,8 +278,9 @@ export default class ArenaScene extends Phaser.Scene {
     // bounds computation.
     this._updateTileCulling(view);
     // #270: general terrain-id hex labels — same view rect, own coarse recompute cadence (see
-    // terrainLabels.js for the interval/margin reasoning).
-    this._updateTerrainLabels(view, dt);
+    // terrainLabels.js for the interval/margin reasoning). Dev-only, see the `_initTerrainLabels`
+    // gate in create() above — `this._terrainLabelPool` only exists when that ran.
+    if (import.meta.env.DEV) this._updateTerrainLabels(view, dt);
 
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();
@@ -373,6 +390,20 @@ export default class ArenaScene extends Phaser.Scene {
     this.focusMode = this.focusMode === 'enemy' ? 'building' : 'enemy';
     const label = this.focusMode === 'building' ? 'FOCUS: BUILDING' : 'FOCUS: ENEMY';
     this._floatText(this.px, this.py - 30, label, '#7c8794');
+  }
+
+  // #270 playtest follow-up: live on/off toggle for both hex-label systems (bases.js's
+  // dock/alertTower/turretEmplacement tags + terrainLabels.js's per-terrain pool), bound to L
+  // (dev-only, see create()). `_hexLabelsVisible` is the single flag both systems read: bases.js
+  // stamps it onto every label as it's created (`_addHexLabel`) and terrainLabels.js does the
+  // same for every newly pooled label (`_updateTerrainLabels`) — so a hex that enters view AFTER
+  // a toggle still comes in hidden/shown correctly. This method just flips the flag and re-applies
+  // it to whatever's alive right now.
+  _toggleHexLabels() {
+    this._hexLabelsVisible = !this._hexLabelsVisible;
+    for (const label of this._hexLabels ?? []) label.setVisible(this._hexLabelsVisible);
+    for (const label of this._terrainLabelPool?.values() ?? []) label.setVisible(this._hexLabelsVisible);
+    this._floatText(this.px, this.py - 30, this._hexLabelsVisible ? 'HEX LABELS: ON' : 'HEX LABELS: OFF', '#7c8794');
   }
 }
 
