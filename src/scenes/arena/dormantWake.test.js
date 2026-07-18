@@ -10,7 +10,7 @@ vi.mock('phaser', () => ({
 }));
 
 import { EnemiesMixin } from './enemies.js';
-import { BasesMixin } from './bases.js';
+import { BasesMixin, TOWER_PATROL_COUNT } from './bases.js';
 import { HpBody } from '../../data/HpBody.js';
 import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
@@ -438,15 +438,35 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
     return scene;
   }
 
-  it('spawns one patrol unit per alert tower, starting UNAWARE with no baseId/dockKey', () => {
+  it('spawns TOWER_PATROL_COUNT patrol units per alert tower, starting UNAWARE with no baseId/dockKey', () => {
     const scene = makeSceneWithSpawnStub([{ q: 0, r: 0 }, { q: 4, r: -2 }]);
     scene._spawnTowerPatrols();
-    expect(scene.enemies.length).toBe(2);
+    expect(scene.enemies.length).toBe(2 * TOWER_PATROL_COUNT);
     for (const e of scene.enemies) {
       expect(e.awareness).toBe(UNAWARE);
       expect(e.baseId).toBeUndefined();
       expect(e.dockKey).toBeUndefined();
     }
+  });
+
+  // #269 playtest follow-up round 2 (TOWER_PATROL_COUNT 1 -> 5): a real squad-sized patrol reads
+  // as a genuine presence, not a lone trooper — assert the bumped headcount explicitly (rather
+  // than only asserting via the derived `2 * TOWER_PATROL_COUNT` above) so a future accidental
+  // drop back toward 1 fails loudly here too.
+  it('TOWER_PATROL_COUNT is a real squad size (more than a lone trooper, short of a base-sized fight)', () => {
+    expect(TOWER_PATROL_COUNT).toBeGreaterThanOrEqual(4);
+    expect(TOWER_PATROL_COUNT).toBeLessThanOrEqual(6);
+  });
+
+  // #269 playtest follow-up round 2: a multi-unit patrol must scatter around the tower's landing
+  // point rather than stacking every unit on the exact same pixel (the same "huddle, don't stack"
+  // idea `_spawnDormantUnits` already applies to a multi-unit dock cluster).
+  it('scatters a multi-unit patrol\'s spawn points around the tower rather than stacking them on one pixel', () => {
+    const scene = makeSceneWithSpawnStub([{ q: 6, r: 3 }]);
+    scene._spawnTowerPatrols();
+    expect(scene.enemies.length).toBe(TOWER_PATROL_COUNT);
+    const points = scene.enemies.map((e) => `${e.spawnX},${e.spawnY}`);
+    expect(new Set(points).size).toBe(TOWER_PATROL_COUNT);   // every unit gets its own distinct point
   });
 
   it('no alert towers means no patrol units spawned', () => {
@@ -455,28 +475,29 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
     expect(scene.enemies.length).toBe(0);
   });
 
-  it('a patrol unit\'s spawnX/spawnY (idle-wander anchor) sit near the tower position, not just at the origin', () => {
+  it('every patrol unit\'s spawnX/spawnY (idle-wander anchor) sits near the tower position, not just at the origin', () => {
     const scene = makeSceneWithSpawnStub([{ q: 6, r: 3 }]);
     scene._spawnTowerPatrols();
-    expect(scene.enemies.length).toBe(1);
-    const e = scene.enemies[0];
+    expect(scene.enemies.length).toBe(TOWER_PATROL_COUNT);
     const { x: tx, y: ty } = hexToPixel(6, 3);
-    // Empty terrain forces nearestValidPixel's ring-search fallback — the exact landing hex
-    // isn't asserted (that's nearestValidPixel's own unit-tested behavior, spawnPlacement.test.js
-    // if present, or covered by hexgrid's nearestHex tests), just that it's a real finite point
-    // reasonably close to the tower, not left at (0,0)/NaN.
-    expect(Number.isFinite(e.spawnX)).toBe(true);
-    expect(Number.isFinite(e.spawnY)).toBe(true);
-    expect(Math.hypot(e.spawnX - tx, e.spawnY - ty)).toBeLessThan(4000);
+    for (const e of scene.enemies) {
+      // Empty terrain forces nearestValidPixel's ring-search fallback — the exact landing hex
+      // isn't asserted (that's nearestValidPixel's own unit-tested behavior, spawnPlacement.test.js
+      // if present, or covered by hexgrid's nearestHex tests), just that it's a real finite point
+      // reasonably close to the tower, not left at (0,0)/NaN.
+      expect(Number.isFinite(e.spawnX)).toBe(true);
+      expect(Number.isFinite(e.spawnY)).toBe(true);
+      expect(Math.hypot(e.spawnX - tx, e.spawnY - ty)).toBeLessThan(4000);
+    }
   });
 
   it('_allBasesCleared ignores patrol units entirely — a base can be "cleared" while its nearby patrol is still alive, and vice versa', () => {
     const scene = makeSceneWithSpawnStub([{ q: 0, r: 0 }]);
     scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [], turrets: [] }];
     scene._spawnTowerPatrols();
-    // No base-origin (baseId-tagged) enemy exists — cleared is true even though the patrol unit
-    // spawned near the tower is alive and sitting in `this.enemies`.
-    expect(scene.enemies.length).toBe(1);
+    // No base-origin (baseId-tagged) enemy exists — cleared is true even though the patrol units
+    // spawned near the tower are alive and sitting in `this.enemies`.
+    expect(scene.enemies.length).toBe(TOWER_PATROL_COUNT);
     expect(scene._allBasesCleared()).toBe(true);
 
     // Conversely: a base-origin enemy alive with the patrol also alive still reads as NOT

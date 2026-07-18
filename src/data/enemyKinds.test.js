@@ -44,6 +44,13 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.infantry.flying).toBe(false);
   });
 
+  it('#294: tank hull hitbox reads clearly longer-than-wide (a rectangular tank profile, not '
+    + 'a near-square), matching the narrowed/lengthened art/vehicles/tank.js silhouette', () => {
+    const { w, h } = ENEMY_KINDS.tank.parts.hull;
+    expect(h).toBeGreaterThan(w);
+    expect(h / w).toBeGreaterThan(1.3);
+  });
+
   it('#97: infantry is smaller and weaker than the drone — the weakest unit in the game', () => {
     expect(ENEMY_KINDS.infantry.scale).toBeLessThan(ENEMY_KINDS.drone.scale);
     expect(ENEMY_KINDS.infantry.hp).toBeLessThan(ENEMY_KINDS.drone.hp);

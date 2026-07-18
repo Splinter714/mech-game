@@ -19,7 +19,7 @@
 // is decoupled from length — the half-width is kept narrow (so #126's boundary ring is reliably
 // visible on the SIDES at the real GAMEPLAY_ZOOM=1.3, see below), while the length is long and
 // independent, so the corridor's far end is NOT visible from spawn and a run traverses it end-to-end.
-import { axialKey, range, neighbors, hexToPixel, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
+import { axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf } from './terrain.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
@@ -152,6 +152,19 @@ export function baseLateFraction(baseIndex, baseCount) {
 // used elsewhere in `generateTerrain`); callers with a real corridor spine pass
 // `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, since a curving spine's "progress along
 // the run" is NOT the same as straight-line distance from origin once the corridor bends.
+// #269 (spawn rear-pad fix): `prevProgress` below starts at literal `0`, not the player's actual
+// spawn position — investigated whether it needed to change now that the player spawns behind
+// origin (`spineSpawnHex`, negative `u`/progress) instead of exactly at it. It does not: `0` was
+// always just the FLOOR ANCHOR for gap 0 ("base 0 must land at least `minGapProgress` past this
+// value"), never a literal claim about where the player stands. Every real `progressOf` in play
+// (`spineProgressHexOf`, or this file's own straight-line-distance default) returns >= 0 for any
+// hex reachable by `placeBases`'/`placeGapTowers`' own candidate sets, so the `0` floor anchor was
+// already the true minimum either way — moving spawn to a negative `u` only ADDS unused-but-real
+// travel distance behind that floor (the rear-pad stretch), it never changes where base 0 or gap
+// 0's tower are allowed to land (`floor = prevProgress(0) + minGapProgress`, always > 0). Confirmed
+// by the existing '#283 minimum calm-gap spacing' suite in worldgen.test.js, which still asserts
+// this floor holds unchanged. If a future change ever lets `progressOf` return negative values for
+// in-bounds hexes, this anchor would need revisiting — it does not today.
 export function placeBases(
   rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
 ) {
@@ -286,18 +299,56 @@ export function placeGapTowers(
   let prevProgress = 0;   // the corridor start (spawn sits at spine u=0 / distance 0 from origin)
   for (const base of bases ?? []) {
     const baseProgress = progress(base.center);
-    // #283: same floor `placeBases` enforces on the base itself — a tower can't land within
-    // `minGapProgress` of wherever the PREVIOUS base (or spawn, for gap 0) sits. Since
-    // `placeBases` already guarantees `baseProgress >= prevProgress + minGapProgress` (barring
-    // its own rare total-fallback case), `lo` here is never past `hi` in practice — the gap
-    // always has at least `minGapProgress` of room for the tower to land in, so this rarely
-    // starves the gap of a tower the way it might if the floor were tuned much larger.
-    const lo = Math.min(prevProgress, baseProgress) + minGapProgress;
-    const hi = Math.max(prevProgress, baseProgress);
-    const candidates = all.filter((h) => {
+    // #269 playtest follow-up ("alert towers are too close to their linked base"): the floor used
+    // to apply ONLY to the tower's distance from the PREVIOUS base/spawn (`lo`), leaving `hi`
+    // (the ceiling before the linked base) completely unbuffered — a tower could land right on
+    // top of its own base with zero calm space before it. Fix: apply the SAME `minGapProgress`
+    // floor symmetrically on both sides — at least `minGapProgress` past the previous segment
+    // AND at least `minGapProgress` before the linked base's own position — so "spawn -> tower0"
+    // and "tower(i) -> base(i)" read as the same size of calm gap (Jackson's framing: "there
+    // should be a similar amount of safe space between all segments").
+    //
+    // Graceful degradation: if the gap is too short to fit BOTH full floors (a short/curvy
+    // corridor segment), a naive `lo = lower + minGapProgress` / `hi = upper - minGapProgress`
+    // can invert (lo > hi), leaving an empty candidate window and silently dropping the tower —
+    // exactly the "skip it silently" outcome the issue asks to avoid where possible. Instead,
+    // shrink the buffer PROPORTIONALLY to fit: `buffer = min(minGapProgress, width / 2)`. This
+    // still gives the full floor whenever the gap is wide enough (buffer == minGapProgress, the
+    // common case), and as the gap narrows the buffer shrinks in lockstep so `lo` and `hi`
+    // converge smoothly on the gap's own midpoint (`buffer == width / 2` implies `lo == hi ==
+    // (lower + upper) / 2`) rather than ever crossing — the tower still gets *some* space on
+    // both sides (proportional to what the gap can actually offer) and, in the fully-degenerate
+    // case, lands exactly at the midpoint, mirroring `placeBases`' own "split the difference
+    // rather than skip" fallback spirit for a too-tight corridor.
+    const lower = Math.min(prevProgress, baseProgress);
+    const upper = Math.max(prevProgress, baseProgress);
+    const buffer = Math.min(minGapProgress, (upper - lower) / 2);
+    const lo = lower + buffer;
+    const hi = upper - buffer;
+    let candidates = all.filter((h) => {
       const p = progress(h);
       return p >= lo && p <= hi && isGround(axialKey(h.q, h.r));
     });
+    // Second-layer fallback: on a genuinely tight/sparse gap, even the proportionally-shrunk
+    // `[lo, hi]` window can come up EMPTY — e.g. it's shrunk to a single floating-point progress
+    // value that no real hex's progress exactly equals, or the narrow window just has no ground
+    // candidate (cover/hazard ate it). Rather than skip the tower, widen back out to the gap's
+    // FULL bounds `[lower, upper]` and take whichever ground hex's progress lands closest to the
+    // buffered window's own centre — still "as close to the intended calm midpoint as this gap's
+    // actual ground allows," just not constrained to the (possibly empty) exact window.
+    if (!candidates.length) {
+      const target = (lo + hi) / 2;
+      const inGap = all.filter((h) => progress(h) >= lower && progress(h) <= upper && isGround(axialKey(h.q, h.r)));
+      if (inGap.length) {
+        let best = inGap[0];
+        let bestDiff = Math.abs(progress(best) - target);
+        for (const h of inGap) {
+          const diff = Math.abs(progress(h) - target);
+          if (diff < bestDiff) { best = h; bestDiff = diff; }
+        }
+        candidates = [best];
+      }
+    }
     if (candidates.length) {
       const h = candidates[Math.floor(rng() * candidates.length)];
       T.set(axialKey(h.q, h.r), 'alertTower');
@@ -557,6 +608,21 @@ export function generateSpine(rng, {
     points.push({ x: dirX * u + perpX * v, y: dirY * u + perpY * v, u });
   }
   return { points, startAngle, length, rearPad };
+}
+
+// #269 (spawn rear-pad fix, playtest follow-up): the hex the player should actually SPAWN at —
+// the spine's own first sample, `spine.points[0]` (u = -rearPad, snapped out to the same
+// u=0-aligned sample grid `generateSpine` builds on), converted to its nearest hex centre. The
+// spine — and the corridor carved around it, `corridorHexSet` — already extends
+// CORRIDOR_REAR_PAD_PX behind world origin (u=0); previously the player spawned exactly at
+// origin anyway, leaving that whole already-generated, already-safe rear-pad stretch behind them
+// and never walked. Spawning here instead means the player walks FORWARD through it on the way
+// to u=0 and then on to the first gap tower/base, using space that's already there. Exported so
+// both the live scene (`scenes/arena/world.js` `_buildWorld`) and tests derive the exact same
+// spawn hex from a spine, with no duplicated "which spine sample is spawn" logic.
+export function spineSpawnHex(spine) {
+  const p = spine.points[0];
+  return pixelToHex(p.x, p.y);
 }
 
 // The set of playable hex keys for a spine: every hex within `halfWidth` (perpendicular pixel

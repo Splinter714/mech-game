@@ -11,7 +11,7 @@ import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId } from '../../art/hexArt.js';
 import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
-  safeZoneKeys, MAX_WORLD_RADIUS,
+  safeZoneKeys, MAX_WORLD_RADIUS, spineSpawnHex,
 } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import {
@@ -118,7 +118,16 @@ export const WorldMixin = {
     // which draws the whole corridor's silhouette by unioning discs along it. Set once here (the
     // corridor is built once per run, #111) — HudScene reads it as a stable snapshot each frame.
     this.registry.set('spineWorld', spine.points.map((p) => ({ x: p.x, y: p.y })));
-    const includedKeys = corridorHexSet(spine.points, undefined, safeZoneKeys({ q: 0, r: 0 }, 3));
+    // #269 (spawn rear-pad fix): the player now spawns at the spine's own starting sample
+    // (u = -rearPad, `spineSpawnHex`) instead of world origin (u=0) — real corridor terrain
+    // already gets carved all the way back to there, so this uses that already-generated
+    // rear-pad stretch instead of leaving it sitting behind the player unused. `this._spawnHex`/
+    // `this._spawnPoint` are exposed so `create()` (below `_buildWorld()` in the caller) can set
+    // `this.px/this.py` to a real hex centre rather than a raw, possibly-off-grid spine sample.
+    const spawnHex = spineSpawnHex(spine);
+    this._spawnHex = spawnHex;
+    this._spawnPoint = hexToPixel(spawnHex.q, spawnHex.r);
+    const includedKeys = corridorHexSet(spine.points, undefined, safeZoneKeys(spawnHex, 3));
     const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
     this._boundaryRing = boundaryRing;   // exposed for tests/smoke
 
@@ -126,9 +135,12 @@ export const WorldMixin = {
     // between successive bases along the corridor's spine progression (`placeGapTowers`,
     // data/worldgen.js) — no "outpost" concept or biome-tuned count involved anymore.
     const dummyKey = axialKey(DUMMY_HEX.q, DUMMY_HEX.r);
+    // #269: `safeCenter` now follows the moved spawn point (`spawnHex`) instead of the world-
+    // origin default, so the guaranteed-clear radius-3 disc actually surrounds where the player
+    // stands — not just wherever generically falls inside the corridor.
     const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
-      includedKeys, boundaryRing, spine,
+      includedKeys, boundaryRing, spine, safeCenter: spawnHex,
     });
     // #269 §3: the run's bases (dormant docks + turret emplacements), placed once here at
     // world-gen time. `this.bases` feeds `_spawnDormantUnits`/`_wakeBase` (scenes/arena/

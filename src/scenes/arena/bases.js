@@ -58,13 +58,27 @@ const WAKE_REACT_STAGGER_MIN_MS = 80;
 const WAKE_REACT_STAGGER_MAX_MS = 380;
 
 // #269 playtest follow-up (patrol units): kind + headcount for the roaming units stationed near
-// each alert tower. Deliberately modest — a light escort/defense presence for the tower, not
-// another base-sized encounter — so a single cheap `infantry` trooper per tower (the smallest,
-// weakest kind in the game, see enemyKinds.js) rather than a tank/drone squad. Infantry's own
-// idle-wander already has an existing avoidWater/lumbering-mob feel tuned for exactly this "a
-// trooper loiters near a fixed point" behavior, so it reuses that machinery for free.
+// each alert tower. A single cheap `infantry` trooper per tower (the smallest, weakest kind in
+// the game, see enemyKinds.js) rather than a tank/drone squad — infantry's own idle-wander
+// already has an existing avoidWater/lumbering-mob feel tuned for exactly this "a trooper
+// loiters near a fixed point" behavior, so it reuses that machinery for free.
+//
+// #269 playtest follow-up round 2 (Jackson: "that's insane" re: a lone trooper): 1 read as
+// undefended, not "a light escort presence." Bumped to 5 — big enough to read as a real patrol
+// squad guarding the tower (not a solo guy standing there), still well short of a base-sized
+// fight (a base's own dock clusters run 3-5 docks, several with 2-3 units EACH — a 5-strong
+// infantry patrol stays clearly lighter than that). Kept as a single flat count (not a rolled
+// range like `dockCountFor`) since the ask was just "meaningfully more," not a new escalation
+// curve.
 export const TOWER_PATROL_KIND_ID = 'infantry';
-export const TOWER_PATROL_COUNT = 1;
+export const TOWER_PATROL_COUNT = 5;
+
+// #269 playtest follow-up round 2: how far apart a tower patrol's units are scattered around
+// their shared spawn point, mirroring `DOCK_HUDDLE_OFFSET` below (same "huddle, don't stack"
+// idea for a multi-unit spawn at one shared point) — infantry's own sprite is small/cheap
+// (scale-wise the lightest kind in the roster), so it reuses the same 16px huddle radius rather
+// than needing the wider berth tank/helicopter docks get.
+const TOWER_PATROL_HUDDLE_OFFSET = 16;
 
 // #269 playtest follow-up (hex legibility): a base/tower hex's dormant unit or small art icon
 // alone doesn't read clearly as "this is a dock/alert tower/turret emplacement" during playtest
@@ -191,18 +205,31 @@ export const BasesMixin = {
   // exact same UNAWARE→AWARE proximity/noise system every other regular enemy already uses.
   //
   // Reuses `_idleMoveIntent`'s existing "wander within IDLE_WANDER_RADIUS of spawnX/spawnY"
-  // behavior for the patrol feel — no new patrol-route code needed — by simply setting the
+  // behavior for the patrol feel — no new patrol-route code needed — by simply setting each
   // unit's own spawn point to (a hex near) the tower's position. The alert tower hex itself is
   // `passable: false` (data/terrain.js), so units can't stand ON the tower's own hex; snapping
   // through `nearestValidPixel` (the same nearest-passable-hex primitive turret clusters/powerup
   // drops already use, data/spawnPlacement.js) finds the nearest passable ground hex next to it
   // instead. Called once from ArenaScene.create(), alongside `_spawnDormantUnits`.
+  //
+  // #269 playtest follow-up round 2 (`TOWER_PATROL_COUNT` 1 -> 5): a 5-unit patrol all spawning
+  // on the exact same pixel would stack/overlap, so scatter them the same way `_spawnDormantUnits`
+  // already huddles a multi-unit dock cluster around its shared centre — units placed evenly
+  // around a circle of radius `TOWER_PATROL_HUDDLE_OFFSET`, same `Math.PI / 4` phase offset so
+  // the pattern doesn't put a unit directly north (a purely cosmetic choice, matches the dock
+  // loop's own phase). `_spawnKind` sets each unit's own `spawnX`/`spawnY` to wherever it's
+  // actually placed, so `_idleMoveIntent`'s wander radius is centred on the SCATTERED point, not
+  // the shared tower point — each patrol member wanders around its own huddle position, which
+  // still reads as "loitering near the tower" as a group.
   _spawnTowerPatrols() {
     for (const t of this.alertTowerHexes ?? []) {
       const { x: tx, y: ty } = hexToPixel(t.q, t.r);
       const { x, y } = nearestValidPixel(this.terrain, this.worldRadius, tx, ty);
       for (let i = 0; i < TOWER_PATROL_COUNT; i++) {
-        this._spawnKind(x, y, TOWER_PATROL_KIND_ID);
+        const a = (i / TOWER_PATROL_COUNT) * Math.PI * 2 + Math.PI / 4;
+        const px = TOWER_PATROL_COUNT > 1 ? x + Math.cos(a) * TOWER_PATROL_HUDDLE_OFFSET : x;
+        const py = TOWER_PATROL_COUNT > 1 ? y + Math.sin(a) * TOWER_PATROL_HUDDLE_OFFSET : y;
+        this._spawnKind(px, py, TOWER_PATROL_KIND_ID);
       }
     }
   },
