@@ -15,6 +15,15 @@
 // small unit's own movement now also respects large obstacles and the player (previously it
 // skipped this check entirely), and two small units now push apart from each other too.
 //
+// FLYERS (#282 second follow-up: "piles of drones are stuck on each other"): the flyer-vs-flyer
+// path is NO LONGER a hard positional block. `_blockedByOtherFlyer` (a hard reject of any move
+// overlapping another flyer) gridlocked a dense swarm — every drone in a spawn pile overlaps its
+// neighbours, so every candidate move was rejected and the whole swarm froze. It was removed and
+// replaced by SOFT boids separation inside the flyer behaviours (enemyBehaviors.js
+// `flyerSeparation`, blended into `droneBehavior`/`helicopterBehavior`): overlapping flyers are
+// pushed apart over a few frames instead of frozen, so a pile always resolves. The flyer coverage
+// below therefore asserts SPREADING (a tight overlapping swarm fans out), not hard non-overlap.
+//
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection
 // throws under vitest's node env, so it's stubbed (same convention as dormantWake.test.js).
 import { describe, it, expect, vi } from 'vitest';
@@ -100,36 +109,6 @@ describe('_blockedByOtherGroundUnit (#282) — mutual ground-unit + player colli
     expect(scene._blockedByOtherGroundUnit(large, ENEMY_COLLIDE_RADIUS_MECH + 5, 0)).toBe(false);
     expect(scene._blockedByOtherGroundUnit(small, ENEMY_COLLIDE_RADIUS_MECH - 1, 0)).toBe(true);
     expect(scene._blockedByOtherGroundUnit(small, ENEMY_COLLIDE_RADIUS_MECH + 5, 0)).toBe(false);
-  });
-});
-
-describe('_blockedByOtherFlyer (#282) — mutual flyer-only collision geometry', () => {
-  it('blocks against another FLYING unit\'s collision circle', () => {
-    const other = makeUnit(10, 0, { flying: true, scale: 1 });
-    const scene = makeWorldScene({ enemies: [other] });
-    const r = groundEnemyRadius(other);
-    expect(scene._blockedByOtherFlyer(null, 10 + r - 1, 0)).toBe(true);
-    expect(scene._blockedByOtherFlyer(null, 10 + r + 5, 0)).toBe(false);
-  });
-
-  it('ignores a non-flying (ground) unit entirely, regardless of size', () => {
-    const largeGround = makeUnit(10, 0, { flying: false, size: 'large' });
-    const smallGround = makeUnit(-10, 0, { flying: false, size: 'small' });
-    const scene = makeWorldScene({ enemies: [largeGround, smallGround] });
-    expect(scene._blockedByOtherFlyer(null, 10, 0)).toBe(false);
-    expect(scene._blockedByOtherFlyer(null, -10, 0)).toBe(false);
-  });
-
-  it('excludes `self` from the scan', () => {
-    const self = makeUnit(0, 0, { flying: true });
-    const scene = makeWorldScene({ enemies: [self] });
-    expect(scene._blockedByOtherFlyer(self, 0, 0)).toBe(false);
-  });
-
-  it('ignores an already-destroyed flyer', () => {
-    const dead = makeUnit(5, 0, { flying: true, dead: true });
-    const scene = makeWorldScene({ enemies: [dead] });
-    expect(scene._blockedByOtherFlyer(null, 5, 0)).toBe(false);
   });
 });
 
@@ -251,23 +230,69 @@ describe('_updateVehicle movement resolution (#282 follow-up) — SMALL ground u
   });
 });
 
-describe('_updateVehicle movement resolution (#282) — flyers', () => {
-  it('two flyers cannot end up overlapping after movement resolution', () => {
-    const scene = makeVehicleScene();
-    const target = makeVehicleUnit(200, 0, { flying: true });
-    const mover = makeVehicleUnit(0, 0, { flying: true, vx: 5000 });
-    scene.enemies.push(target, mover);
+describe('flyer separation (#282 follow-up) — a dense overlapping swarm spreads out, never gridlocks', () => {
+  // A real drone unit (behavior 'drone') so the actual `flyerSeparation` steering in
+  // enemyBehaviors.js drives the outcome, not the deterministic __testForward stub.
+  function makeDroneUnit(x, y) {
+    const view = { setPosition() {}, hull: { setTexture() {}, rotation: 0 }, turret: { rotation: 0 }, shadow: null };
+    return {
+      key: 'drone', kind: 'drone', behavior: 'drone', flying: true,
+      kindDef: {
+        size: 'large', scale: 0.52, art: 'drone', swarmRadius: 200, fireRange: 280,
+        move: { maxSpeed: 150, accel: 420, turnRate: 6, turretSlew: 9 },
+      },
+      mech: { isDestroyed: () => false, tickShield() {} },
+      x, y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, rotorSpin: 0,
+      awareness: AWARE, flying: true, view,
+    };
+  }
 
-    scene._updateVehicle(mover, 1, 1000);
+  // The actual #282 failure case: SWARM_SIZE drones dropped in a tight, mutually-overlapping pile
+  // (every pair well inside the ~12.5px drone collision footprint). Under the OLD hard
+  // `_blockedByOtherFlyer` block this configuration gridlocked — no drone had a non-overlapping
+  // move available, so the whole pile froze. With soft separation it must fan out instead.
+  it('18 drones piled on nearly the same point fan apart over a few frames', () => {
+    const scene = makeVehicleScene({ px: 400, py: 0 }); // player a moderate distance off
+    const N = 18;
+    const drones = [];
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      drones.push(makeDroneUnit(Math.cos(a) * 6, Math.sin(a) * 6)); // radius-6 pile: all overlapping
+    }
+    scene.enemies.push(...drones);
 
-    const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
-    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(target) - 0.001);
+    const minPairwise = () => {
+      let m = Infinity;
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          m = Math.min(m, Math.hypot(drones[i].x - drones[j].x, drones[i].y - drones[j].y));
+        }
+      }
+      return m;
+    };
+
+    const before = minPairwise();
+    for (let f = 0; f < 90; f++) {
+      for (const d of drones) scene._updateVehicle(d, 1 / 60, 1000 / 60);
+    }
+    const after = minPairwise();
+
+    // They spread: the tightest pair is strictly farther apart than at spawn...
+    expect(after).toBeGreaterThan(before);
+    // ...and no two remain locked on top of each other — the closest pair now clears a full drone
+    // collision footprint (they're no longer overlapping), proving the pile actually resolved.
+    expect(after).toBeGreaterThan(groundEnemyRadius(drones[0]));
+    // Sanity: nothing exploded to NaN/Infinity.
+    for (const d of drones) {
+      expect(Number.isFinite(d.x)).toBe(true);
+      expect(Number.isFinite(d.y)).toBe(true);
+    }
   });
 
-  it('a flyer still ignores ground units and terrain (unchanged) even while mutual-colliding '
-    + 'with other flyers', () => {
+  it('a flyer still ignores ground units and terrain (unchanged) — no movement gate on the fly path', () => {
     // Terrain is "always blocked" and a large ground unit sits right in the flight path — a
-    // flyer must sail through both exactly as before #282.
+    // flyer must sail through both exactly as before #282 (separation only pushes off OTHER
+    // flyers, never terrain or ground units).
     const scene = makeVehicleScene({ blockedTerrain: true });
     const groundBlocker = makeVehicleUnit(200, 0, { size: 'large' });
     const mover = makeVehicleUnit(0, 0, { flying: true, vx: 5000 });
@@ -295,7 +320,7 @@ describe('_updateVehicle movement resolution (#282) — flyers', () => {
 // below is deliberately generous (budget-fraction, not a tight number) — it's a canary against a
 // FUTURE regression (e.g. the scan growing an allocation, or enemy counts growing well past
 // "dozens"), not a tight perf lock-in.
-describe('_blockedByOtherGroundUnit / _blockedByOtherFlyer (#237) — per-frame cost at realistic enemy counts', () => {
+describe('_blockedByOtherGroundUnit (#237) — per-frame cost at realistic enemy counts', () => {
   function makeCollisionEnemies(n) {
     const enemies = [];
     for (let i = 0; i < n; i++) {
@@ -324,15 +349,12 @@ describe('_blockedByOtherGroundUnit / _blockedByOtherFlyer (#237) — per-frame 
 
     const simulateOneFrame = () => {
       for (const e of enemies) {
-        if (e.flying) {
-          scene._blockedByOtherFlyer(e, e.x + 1, e.y);
-          scene._blockedByOtherFlyer(e, e.x + 1, e.y);
-          scene._blockedByOtherFlyer(e, e.x, e.y + 1);
-        } else {
-          scene._blockedByOtherGroundUnit(e, e.x + 1, e.y);
-          scene._blockedByOtherGroundUnit(e, e.x + 1, e.y);
-          scene._blockedByOtherGroundUnit(e, e.x, e.y + 1);
-        }
+        // Flyers no longer run any scene-level collision method (#282: replaced by soft
+        // separation inside the flyer behaviours) — only ground units hit this scan now.
+        if (e.flying) continue;
+        scene._blockedByOtherGroundUnit(e, e.x + 1, e.y);
+        scene._blockedByOtherGroundUnit(e, e.x + 1, e.y);
+        scene._blockedByOtherGroundUnit(e, e.x, e.y + 1);
       }
     };
 

@@ -177,6 +177,48 @@ function tankBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: true });
 }
 
+// #282: boids-style SEPARATION for flyers — replaces the old HARD `_blockedByOtherFlyer`
+// movement block (world.js), which rejected a flyer's move outright whenever its target position
+// overlapped ANY other flyer's collision circle. A swarm (SWARM_SIZE = 18 drones, _spawnSwarm)
+// spawns in a tight overlapping pile, so under that hard block every drone's every candidate move
+// landed inside a neighbour and got rejected → the whole swarm gridlocked, unable to separate
+// (there was no non-overlapping move available to break out). Soft separation fixes that: each
+// flyer sums a repulsion vector pointing AWAY from every other live flyer within
+// FLYER_SEPARATION_RADIUS, weighted so a closer neighbour pushes harder, and blends it into its
+// desired heading. An overlapping flyer therefore always has a non-zero move carrying it apart —
+// it can never freeze. The blend renormalizes to full speed, so when no flyer is nearby the
+// separation term is zero and the behaviour is bit-identical to before; when flyers pile up the
+// summed push dominates the orbit/pass heading and drives them apart.
+//
+// Cheap by construction (#237 collision-cost audit): a single radius loop over the other flyers
+// with NO allocation inside it — the accumulator is a shared module-level scratch object reused
+// every call (safe: JS is single-threaded and behaviours run sequentially per frame). A swarm is
+// ~18, so this is a small O(n_flyers) pass per flyer.
+const FLYER_SEPARATION_RADIUS = 46;   // px — comfortable spacing a flyer keeps from other flyers
+const FLYER_SEPARATION_WEIGHT = 1.8;  // how strongly separation competes with the orbit/pass heading
+const _sep = { x: 0, y: 0 };          // reused scratch — no per-call allocation
+function flyerSeparation(scene, e) {
+  _sep.x = 0; _sep.y = 0;
+  const r = FLYER_SEPARATION_RADIUS;
+  const r2 = r * r;
+  for (const o of scene.enemies) {
+    if (o === e || !o.flying) continue;
+    if (o.mech.isDestroyed()) continue;
+    let dx = e.x - o.x, dy = e.y - o.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= r2) continue;
+    const d = Math.sqrt(d2);
+    // Near-exact overlap has no defined "away" direction; skip it — each flyer's OWN orbit/pass
+    // target already differs (its own jittered angle / pass side), so coincident flyers still
+    // pull toward different points and separate on their own; the weighted push handles the rest.
+    if (d <= 0.0001) continue;
+    const w = (1 - d / r) / d;   // closer ⇒ stronger; /d normalizes (dx,dy) to a unit away-vector
+    _sep.x += dx * w;
+    _sep.y += dy * w;
+  }
+  return _sep;
+}
+
 // DRONE — one of a swarm. Hovers at a loose orbit radius, jittering so the pack reads as a
 // cloud, not a line. Flies (ignores cover). Light fast weapon, fired whenever roughly in range.
 function droneBehavior(scene, e, ctx) {
@@ -197,8 +239,11 @@ function droneBehavior(scene, e, ctx) {
   const dm = Math.hypot(dx, dy) || 1;
   // Add a tangential swirl so the swarm churns around the player.
   const swirl = (e.handed || 1);
-  const desiredX = dx / dm + (-ctx.uy) * swirl * 0.5;
-  const desiredY = dy / dm + (ctx.ux) * swirl * 0.5;
+  // #282: blend in boids separation (away from nearby flyers) so a dense swarm spreads instead of
+  // piling — see flyerSeparation above.
+  const sep = flyerSeparation(scene, e);
+  const desiredX = dx / dm + (-ctx.uy) * swirl * 0.5 + sep.x * FLYER_SEPARATION_WEIGHT;
+  const desiredY = dy / dm + (ctx.ux) * swirl * 0.5 + sep.y * FLYER_SEPARATION_WEIGHT;
   const dmag = Math.hypot(desiredX, desiredY) || 1;
   e.vx = approach(e.vx, (desiredX / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
   e.vy = approach(e.vy, (desiredY / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
@@ -227,8 +272,14 @@ function helicopterBehavior(scene, e, ctx) {
   let dx = waypointX - e.x, dy = waypointY - e.y;
   const dm = Math.hypot(dx, dy) || 1;
   if (e._passAt <= 0 || dm < 60) { e._passAt = rand(1400, 2400); e.handed = (e.handed || 1) * -1; }
-  e.vx = approach(e.vx, (dx / dm) * mv.maxSpeed, mv.accel * ctx.dt);
-  e.vy = approach(e.vy, (dy / dm) * mv.maxSpeed, mv.accel * ctx.dt);
+  // #282: same boids separation as the drone (flyerSeparation above) so two gunships (or a gunship
+  // amid a drone swarm) push apart instead of overlapping — replaces the removed hard flyer block.
+  const sep = flyerSeparation(scene, e);
+  const desiredX = dx / dm + sep.x * FLYER_SEPARATION_WEIGHT;
+  const desiredY = dy / dm + sep.y * FLYER_SEPARATION_WEIGHT;
+  const dmag = Math.hypot(desiredX, desiredY) || 1;
+  e.vx = approach(e.vx, (desiredX / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
+  e.vy = approach(e.vy, (desiredY / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
   e.angle = Math.atan2(e.vy, e.vx);
   aimAndFire(scene, e, ctx, { needLos: false });
 }
