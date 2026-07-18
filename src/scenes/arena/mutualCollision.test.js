@@ -278,3 +278,66 @@ describe('_updateVehicle movement resolution (#282) — flyers', () => {
     expect(mover.x).toBeGreaterThan(200);
   });
 });
+
+// ── Part 3: per-frame cost audit (#237 — "frame rate dropped after a recent merge") ──────────
+// #237's ranked suspect list named this O(n²) mutual-collision scan (landed AFTER #237's first
+// investigation pass, whose comment cleared #205/#211/#222/#227/#230/#231/#185/#200 but never
+// touched this system) as worth auditing "at realistic enemy counts (dozens)". This locks in
+// that audit's empirical result rather than just asserting it in a comment: `_blockedByOtherGroundUnit`
+// scans every OTHER live enemy per call, and each blocked-ground-unit's own movement integration
+// (enemies.js `_updateEnemy`/`_updateVehicle`) can call it up to 3x/frame (candidate position +
+// two axis-slide fallbacks) — so worst case is 3 scans/enemy/frame, ~3n² comparisons total.
+// This game's base-population design (3 bases × a handful of docks/turrets/patrols each, see
+// data/worldgen.js BASE_COUNT/DOCKS_PER_BASE_MAX, bases.js TOWER_PATROL_COUNT) tops out around
+// several dozen LIVE (non-DORMANT) enemies at once even in a worst-case simultaneous multi-base
+// engagement — nowhere near where an O(n²) scan of cheap comparisons (a handful of property
+// reads + one Math.hypot each) becomes visible in a 16.67ms (60fps) frame budget. The threshold
+// below is deliberately generous (budget-fraction, not a tight number) — it's a canary against a
+// FUTURE regression (e.g. the scan growing an allocation, or enemy counts growing well past
+// "dozens"), not a tight perf lock-in.
+describe('_blockedByOtherGroundUnit / _blockedByOtherFlyer (#237) — per-frame cost at realistic enemy counts', () => {
+  function makeCollisionEnemies(n) {
+    const enemies = [];
+    for (let i = 0; i < n; i++) {
+      const flying = i % 7 === 0;
+      const small = !flying && i % 3 === 0;
+      enemies.push(makeUnit((i % 20) * 40 - 400, Math.floor(i / 20) * 40 - 400, {
+        flying, size: small ? 'small' : 'large',
+      }));
+    }
+    return enemies;
+  }
+
+  it('simulating one frame\'s worth of collision checks for dozens of enemies stays a small fraction of the 16.67ms (60fps) frame budget', () => {
+    const REALISTIC_MAX_LIVE_ENEMIES = 60;   // generous upper bound — see comment above
+    const FRAME_BUDGET_MS = 1000 / 60;
+    const enemies = makeCollisionEnemies(REALISTIC_MAX_LIVE_ENEMIES);
+    const scene = makeWorldScene({ enemies, px: 0, py: 0 });
+
+    const simulateOneFrame = () => {
+      for (const e of enemies) {
+        if (e.flying) {
+          scene._blockedByOtherFlyer(e, e.x + 1, e.y);
+          scene._blockedByOtherFlyer(e, e.x + 1, e.y);
+          scene._blockedByOtherFlyer(e, e.x, e.y + 1);
+        } else {
+          scene._blockedByOtherGroundUnit(e, e.x + 1, e.y);
+          scene._blockedByOtherGroundUnit(e, e.x + 1, e.y);
+          scene._blockedByOtherGroundUnit(e, e.x, e.y + 1);
+        }
+      }
+    };
+
+    for (let i = 0; i < 20; i++) simulateOneFrame();   // JIT warmup
+    const FRAMES = 200;
+    const t0 = performance.now();
+    for (let i = 0; i < FRAMES; i++) simulateOneFrame();
+    const perFrameMs = (performance.now() - t0) / FRAMES;
+
+    // A tenth of the frame budget is still an extremely generous ceiling for this cheap a scan
+    // at this enemy count (measured well under 1% in practice) — comfortably catches a real
+    // algorithmic regression (e.g. an accidental n³, or a per-check allocation) without being a
+    // flaky tight timing assertion on slower CI hardware.
+    expect(perFrameMs).toBeLessThan(FRAME_BUDGET_MS * 0.1);
+  });
+});
