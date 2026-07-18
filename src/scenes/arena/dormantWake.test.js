@@ -99,6 +99,108 @@ describe('#269 §7: wake-response split by speed (data/bases.js isFastWakeKind)'
   });
 });
 
+describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUnits)', () => {
+  // `_spawnKind` normally builds real Phaser textures/views (buildVehicleTextures,
+  // `this.textures.exists`, `this._makeVehicleView`) — out of scope for this pure logic test, so
+  // it's stubbed to a lightweight plain-object stand-in (mirrors the shape `makeDockedUnit`
+  // above hand-builds) that also pushes into `scene.enemies`, matching the one real side effect
+  // `_spawnDormantUnits`/`_wakeBase` actually depend on.
+  function makeSceneWithSpawnStub() {
+    const scene = makeScene();
+    scene._spawnKind = (x, y, kindId) => {
+      const def = ENEMY_KINDS[kindId];
+      const e = {
+        key: `${kindId}Test`, mech: new HpBody(def), kind: def.kind, kindDef: def,
+        x, y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, typeId: kindId,
+      };
+      scene.enemies.push(e);
+      return e;
+    };
+    return scene;
+  }
+
+  it('a count:3 dock spawns 3 units, scattered (not stacked), all sharing baseId/dockKey', () => {
+    const scene = makeSceneWithSpawnStub();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'tank', count: 3 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+
+    expect(scene.enemies.length).toBe(3);
+    for (const e of scene.enemies) {
+      expect(e.typeId).toBe('tank');
+      expect(e.awareness).toBe(DORMANT);
+      expect(e.baseId).toBe('base0');
+    }
+    const dockKeys = new Set(scene.enemies.map((e) => e.dockKey));
+    expect(dockKeys.size).toBe(1);   // one shared dockKey for the whole cluster
+    // Scattered around the dock's centre pixel, not stacked exactly on top of one another.
+    const positions = new Set(scene.enemies.map((e) => `${e.x},${e.y}`));
+    expect(positions.size).toBe(3);
+  });
+
+  it('a count:2 helicopter dock spawns exactly 2 units', () => {
+    const scene = makeSceneWithSpawnStub();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'helicopter', count: 2 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(2);
+    expect(scene.enemies.every((e) => e.typeId === 'helicopter')).toBe(true);
+  });
+
+  it('a count:1 dock (e.g. quadruped) spawns exactly one unit, at the dock hex centre', () => {
+    const scene = makeSceneWithSpawnStub();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'quadruped', count: 1 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(1);
+  });
+
+  it('turret emplacements spawn a dormant turret tagged with the owning base id', () => {
+    const scene = makeSceneWithSpawnStub();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 }, docks: [], turrets: [{ q: 1, r: 0 }],
+    }];
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(1);
+    expect(scene.enemies[0].typeId).toBe('turret');
+    expect(scene.enemies[0].awareness).toBe(DORMANT);
+    expect(scene.enemies[0].baseId).toBe('base0');
+  });
+
+  it('a multi-unit dock cluster all wake together as one group', () => {
+    const scene = makeSceneWithSpawnStub();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'tank', count: 3 }], turrets: [],
+    }];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    expect(scene.enemies.length).toBe(3);
+    expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
+    // Tanks are a slow/defensive kind (data/bases.js isFastWakeKind) — they hold ground rather
+    // than sortie, same as the existing single-unit wake-response-split coverage above.
+    expect(scene.enemies.every((e) => e.holdGround === true)).toBe(true);
+  });
+
+  it('a turret emplacement wakes alongside its base\'s docks (same wake group)', () => {
+    const scene = makeSceneWithSpawnStub();
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'quadruped', count: 1 }], turrets: [{ q: 1, r: 0 }],
+    }];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    expect(scene.enemies.length).toBe(2);
+    expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
+  });
+});
+
 describe('#269 §8: _allBasesCleared — the run\'s simplified win condition', () => {
   it('false when no bases exist at all (nothing to clear yet)', () => {
     const scene = makeScene();

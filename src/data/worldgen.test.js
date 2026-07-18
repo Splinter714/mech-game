@@ -12,7 +12,7 @@ import {
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, HELIPAD_COUNT,
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX, ALERT_TOWERS_PER_BASE_MIN,
   ALERT_TOWERS_PER_BASE_MAX, BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
-  placeBases,
+  placeBases, dockCountFor, TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN } from './terrain.js';
@@ -274,8 +274,9 @@ describe('generateTerrain', () => {
       const validIds = new Set([
         // #251: `helipad` is a normal stamped role now too — static set-dressing, not a hazard.
         // #269: `dock`/`alertTower` are the base-population system's own normal stamped roles.
+        // `turretEmplacement` (playtest follow-up) is the same kind of normal stamped role.
         GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.outpost,
-        'helipad', 'dock', 'alertTower',
+        'helipad', 'dock', 'alertTower', 'turretEmplacement',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });
@@ -611,7 +612,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     return range({ q: 0, r: 0 }, radius);
   }
 
-  it('places BASE_COUNT bases, each with docks in range and a pre-assigned kindId', () => {
+  it('places BASE_COUNT bases, each with docks in range and a pre-assigned kindId+count', () => {
     const rng = mulberry32(777);
     const all = buildAllRing();
     const T = new Map();
@@ -627,6 +628,15 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         expect(T.get(axialKey(d.q, d.r))).toBe('dock');
         expect(typeof d.kindId).toBe('string');
         expect([...BASE_EARLY_KIND_POOL, ...BASE_LATE_KIND_POOL]).toContain(d.kindId);
+        // #269 playtest follow-up: every dock now carries a count too.
+        expect(Number.isInteger(d.count)).toBe(true);
+        expect(d.count).toBeGreaterThanOrEqual(1);
+      }
+      // #269 playtest follow-up: turret emplacements are their own placement, tagged on the base.
+      expect(base.turrets.length).toBeGreaterThanOrEqual(0);
+      expect(base.turrets.length).toBeLessThanOrEqual(TURRET_EMPLACEMENTS_PER_BASE_MAX);
+      for (const t of base.turrets) {
+        expect(T.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
       }
     }
     for (const t of alertTowers) {
@@ -635,6 +645,24 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // Total alert towers is within the expected per-base band (best-effort — placement can miss
     // a candidate hex on a crowded map, so this is an upper bound, not an exact count).
     expect(alertTowers.length).toBeLessThanOrEqual(BASE_COUNT * ALERT_TOWERS_PER_BASE_MAX);
+  });
+
+  it('#269 playtest follow-up: drone and turret never appear in the dock kind pools', () => {
+    expect(BASE_EARLY_KIND_POOL).not.toContain('drone');
+    expect(BASE_EARLY_KIND_POOL).not.toContain('turret');
+    expect(BASE_LATE_KIND_POOL).not.toContain('drone');
+    expect(BASE_LATE_KIND_POOL).not.toContain('turret');
+  });
+
+  it('#269 playtest follow-up: dockCountFor gives tanks 2-3, helicopters exactly 2, everything else 1', () => {
+    const lowRng = () => 0;      // floors every roll to its minimum
+    const highRng = () => 0.999; // ceilings every roll to just under its max
+    expect(dockCountFor('tank', lowRng)).toBe(2);
+    expect(dockCountFor('tank', highRng)).toBe(3);
+    expect(dockCountFor('helicopter', lowRng)).toBe(2);
+    expect(dockCountFor('helicopter', highRng)).toBe(2);
+    expect(dockCountFor('quadruped', lowRng)).toBe(1);
+    expect(dockCountFor('quadruped', highRng)).toBe(1);
   });
 
   it('never overwrites a hex that is no longer plain ground', () => {
@@ -649,6 +677,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
     for (const base of bases) {
       for (const d of base.docks) expect(preMarked.has(axialKey(d.q, d.r))).toBe(false);
+      for (const t of base.turrets) expect(preMarked.has(axialKey(t.q, t.r))).toBe(false);
     }
   });
 
@@ -672,6 +701,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(bases.length).toBe(BASE_COUNT);
     for (const base of bases) {
       for (const d of base.docks) expect(terrain.get(axialKey(d.q, d.r))).toBe('dock');
+      for (const t of base.turrets) expect(terrain.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
     }
     for (const t of alertTowers) expect(terrain.get(axialKey(t.q, t.r))).toBe('alertTower');
   });

@@ -66,9 +66,11 @@
 //              shrunk further per #89's composition/sizing pass, then nudged down again per
 //              #91, then again per #145's follow-up): turret 0.42 (down from 0.55, itself way
 //              down from 1.15 — it now spawns in tight clusters, see TURRET_CLUSTER_SIZE, so a
-//              nest of tiny sentries reads right instead of one big one), tank 0.48 (down from
-//              0.6 per #91 — "tanks smaller"), drone 0.52 (down from 0.62 per #91 — "drones
-//              slightly smaller again"), helicopter 0.75 (down from 1.0).
+//              nest of tiny sentries reads right instead of one big one), tank 0.4 (down from
+//              0.48 per the #269 dock-composition follow-up — 2-3 tanks now dock-cluster on one
+//              hex), drone 0.52 (down from 0.62 per #91 — "drones slightly smaller again"),
+//              helicopter 0.6 (down from 0.75 per the same #269 follow-up — a paired 2-heli
+//              dock cluster needs the extra headroom).
 
 export const ENEMY_KINDS = {
   // 1) TURRET / emplacement — static objective defender. No locomotion. #94 (playtest: "turrets
@@ -205,7 +207,10 @@ export const ENEMY_KINDS = {
     // ground and stompable.
     size: 'small',
     themeColor: 0xc65a34,
-    scale: 0.48,           // #91: shrunk further (was 0.6) — "tanks smaller".
+    // #269 playtest follow-up (dock composition): shrunk again (was 0.48, #91's "tanks
+    // smaller" pass) so 2-3 tanks can dock in a tight cluster on ONE dock hex (scenes/arena/
+    // bases.js `_spawnDormantUnits`'s scatter offset) without excessive overlap.
+    scale: 0.4,
   },
 
   // 3) DRONE — one unit of an infantry/drone SWARM. Cheap, small, fast, individually weak; a
@@ -310,8 +315,10 @@ export const ENEMY_KINDS = {
     // #269: 'large' — an elevated flyer, never crushable, not a small ground target.
     size: 'large',
     themeColor: 0xcf4d4d,
-    scale: 0.75,           // #89: shrunk further (was 1.0) — more gunships spawn now, so each
-                           // one reads smaller and the sky feels busier rather than crowded-big.
+    // #269 playtest follow-up (dock composition): shrunk again (was 0.75, #89's pass) so a
+    // paired 2-helicopter dock cluster (scenes/arena/bases.js `_spawnDormantUnits`) reads as
+    // two distinct gunships rather than one overlapping blob.
+    scale: 0.6,
   },
 
   // 5) QUADRUPED — "Broodwalker" (#130). A slow, tanky four-legged ground unit with a
