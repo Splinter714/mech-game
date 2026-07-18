@@ -20,7 +20,7 @@
 // visible on the SIDES at the real GAMEPLAY_ZOOM=1.3, see below), while the length is long and
 // independent, so the corridor's far end is NOT visible from spawn and a run traverses it end-to-end.
 import { axialKey, range, neighbors, hexToPixel, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
-import { buildingHp as buildingHpOf, isSoftCover } from './terrain.js';
+import { buildingHp as buildingHpOf, isPassable as isPassableOf } from './terrain.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
 // stage/squad system, data/run.js's now-retired `squadForStage`/`DEFAULT_SQUAD`): enemies are no
@@ -410,11 +410,19 @@ export function generateTerrain({
     for (const k of boundaryRing) T.set(k, B.deep);
   }
 
-  const buildingHp = new Map();   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
-  const coverHp = new Map();      // hexKey → remaining HP for destructible soft-cover hexes
+  const buildingHp = new Map();   // hexKey → remaining HP for destructible OUTPOST (solid, impassable) hexes
+  const coverHp = new Map();      // hexKey → remaining HP for destructible walk-through cover hexes
   for (const [k, id] of T) {
     const hp = buildingHpOf(id);
-    if (hp > 0) (isSoftCover(id) ? coverHp : buildingHp).set(k, hp);
+    // #279: this split used to key off `isSoftCover(id)`, which was equivalent to "passable" back
+    // when soft cover was the only passable destructible terrain. Now that forest/scrub/drift/
+    // wreck/fumarole are HARD cover while staying passable, `isSoftCover` would wrongly bucket
+    // them as solid OUTPOSTs (buildingHp) — silently dropping their flame-damage multiplier and
+    // "soft" collapse FX in `_damageBuildingAt` (world.js), which key off `store === this.coverHp`.
+    // The real distinguishing feature downstream was always "can a unit stand inside it" (walk-
+    // through cover) vs "is it a solid structure" (base infra) — i.e. `isPassable`, not the LOS
+    // cover tier — so key off that instead.
+    if (hp > 0) (isPassableOf(id) ? coverHp : buildingHp).set(k, hp);
   }
   return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers };
 }

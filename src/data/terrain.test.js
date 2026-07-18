@@ -165,18 +165,31 @@ describe('terrain property resolvers', () => {
   });
 });
 
-describe('#72 soft cover — own-hex transparency + destructible/burnable trees', () => {
-  it('isSoftCover: exactly the passable+LOS-blocking terrains', () => {
+// #279: forest/scrub/drift/wreck/fumarole flipped from `cover: 'soft'` to `cover: 'hard'` —
+// they still block unconditionally (both small AND large/mech units now, not just small ones),
+// stay passable+slow+destructible/burnable exactly as before, and the own-hex transparency rule
+// (a unit standing inside cover can still see/shoot out through its own hex) is generalized so it
+// keeps working even though the tier is now hard.
+describe('#279 cover terrain (forest/scrub/drift/wreck/fumarole) — hard cover + destructible/burnable', () => {
+  it('isSoftCover: no terrain entry uses the soft tier after #279 (forest et al. are hard now)', () => {
     for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
-      expect(isSoftCover(id)).toBe(true);
+      expect(isSoftCover(id)).toBe(false);
+      expect(coverTier(id)).toBe('hard');
     }
-    // Solid cover, open ground, hazards, and off-map are NOT soft cover.
+    // Solid base-infra cover, open ground, hazards, and off-map are NOT soft cover either.
     for (const id of ['alertTower', 'dockClosed', 'objective', 'mesa', 'grass', 'river', 'deepWater', 'rubble', 'lava', undefined, 'nope']) {
       expect(isSoftCover(id)).toBe(false);
     }
   });
 
-  it('every soft-cover terrain is destructible, with LESS HP than a full base-infra structure, and flattens to passable no-cover ground', () => {
+  it('blocks BOTH small and large/mech units unconditionally, unlike the old soft-cover size-tier gating', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(coverBlocksForRay(id, false, true)).toBe(true);   // small unit
+      expect(coverBlocksForRay(id, false, false)).toBe(true);  // large unit / mech — no longer sees over it
+    }
+  });
+
+  it('every cover terrain is destructible, with LESS HP than a full base-infra structure, and flattens to passable no-cover ground', () => {
     for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
       expect(isDestructible(id)).toBe(true);
       expect(buildingHp(id)).toBeGreaterThan(0);
@@ -188,9 +201,9 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
     }
   });
 
-  it('soft cover flattens to its own biome rubble (data-driven)', () => {
-    // #227: each soft-cover destructible now has its OWN rubble id, distinct from its biome's
-    // hard-destructible (outpost) rubble.
+  it('cover terrain flattens to its own biome rubble (data-driven)', () => {
+    // #227: each cover destructible has its OWN rubble id, distinct from its biome's hard
+    // base-infra (outpost) rubble.
     expect(rubbleFor('forest')).toBe('forestRubble');
     expect(rubbleFor('scrub')).toBe('scrubRubble');
     expect(rubbleFor('drift')).toBe('driftRubble');
@@ -198,23 +211,29 @@ describe('#72 soft cover — own-hex transparency + destructible/burnable trees'
     expect(rubbleFor('fumarole')).toBe('fumaroleRubble');
   });
 
-  it('shotBlockedAt: soft cover is transparent for exempted hexes only (small unit involved)', () => {
-    // #269: soft cover only blocks a SMALL ground unit's LOS — pass smallUnitInvolved=true
-    // throughout so this test still exercises the #72 own-hex exemption it's actually about.
+  it('shotBlockedAt: own-hex exemption still works now that cover is hard — a unit standing INSIDE cover can see/shoot out through its own hex, for both size tiers', () => {
     const exempt = new Set(['3,-1']);
-    // The target's own forest hex does not protect it...
+    // The target's/shooter's own forest hex does not protect/blind it, regardless of size tier.
     expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);
-    // ...but another forest hex on the way still blocks ("deep woods").
+    expect(shotBlockedAt('forest', '3,-1', exempt, false)).toBe(false);
+    // ...but another forest hex on the way still blocks ("deep woods") — unconditionally now,
+    // for a small unit AND a mech/large unit alike (hard cover, no size-tier gating).
     expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);
-    // No exemptions at all → forest blocks like before.
+    expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(true);
+    // No exemption at all → forest blocks unconditionally, like any hard cover.
     expect(shotBlockedAt('forest', '3,-1', null, true)).toBe(true);
     expect(shotBlockedAt('forest', '3,-1', new Set(), true)).toBe(true);
+    expect(shotBlockedAt('forest', '3,-1', new Set(), false)).toBe(true);
   });
 
-  it('shotBlockedAt: SOLID cover blocks even when exempted; open ground never blocks', () => {
+  it('shotBlockedAt: the own-hex exemption generalizes to base-infra hard cover too; a different hex of the same terrain still blocks; open ground never blocks', () => {
     const exempt = new Set(['3,-1']);
     for (const id of ['alertTower', 'dockClosed', 'objective']) {
-      expect(shotBlockedAt(id, '3,-1', exempt)).toBe(true);
+      // #279: the exemption is now tier-agnostic — it would apply here too, though in practice
+      // no living unit ever occupies these impassable hexes, so this never fires in real play.
+      expect(shotBlockedAt(id, '3,-1', exempt)).toBe(false);
+      expect(shotBlockedAt(id, '9,9', exempt)).toBe(true);
+      expect(shotBlockedAt(id, '9,9', null)).toBe(true);
     }
     // #221: mesa/collapsed are boundary-only impassable terrain (like deepWater/lava) — they
     // never block LOS, matching the other biomes' boundary-only terrain (ice, deepWater, lava).
@@ -413,11 +432,13 @@ describe('#269 hex vocabulary — category/movement/cover fields', () => {
     expect(isSoftCover('grass')).toBe(false);
   });
 
-  it('a SOFT-cover example (forest): passable, slow movement, soft cover', () => {
+  // #279: forest (and the other 4 cover terrains) is now HARD cover while staying passable+slow
+  // — a deliberate departure from the usual "hard cover ⇒ impassable" pattern (alertTower et al.).
+  it('a passable HARD-cover example (forest, #279): passable, slow movement, hard cover', () => {
     expect(movementTier('forest')).toBe('slow');
-    expect(coverTier('forest')).toBe('soft');
+    expect(coverTier('forest')).toBe('hard');
     expect(isPassable('forest')).toBe(true);
-    expect(isSoftCover('forest')).toBe(true);
+    expect(isSoftCover('forest')).toBe(false);
     expect(blocksLOS('forest')).toBe(true);
   });
 
@@ -495,29 +516,47 @@ describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one spe
   });
 });
 
-// #269 §1/§2: soft cover only blocks a SMALL ground unit's LOS — a large unit/mech sees over it.
-// The size tier lives in `scenes/arena/shared.js`'s `isSmallUnit`/`unitSize` (issue #269 §2);
-// these tests exercise the terrain-layer plumbing (`softCoverBlocksLOS`/`coverBlocksForRay`/
-// `shotBlockedAt`) directly against a `smallUnitInvolved` boolean, since that's the boundary this
-// module owns — callers compute the boolean via the real per-entity query.
-describe('#269 §1 soft-cover size-tier plumbing', () => {
+// #269 §1/§2: the soft-cover size-tier mechanism (only a SMALL ground unit's LOS is blocked; a
+// large unit/mech sees over it) is retained per #279's explicit instruction, even though no
+// current terrain entry uses the `soft` tier anymore (forest/scrub/drift/wreck/fumarole are all
+// `hard` now — see the '#279 cover terrain' describe block above). These tests exercise the
+// terrain-layer plumbing (`softCoverBlocksLOS`/`coverBlocksForRay`/`shotBlockedAt`) directly
+// against a `smallUnitInvolved` boolean and, for the soft-tier-specific assertions, a temporary
+// synthetic `cover: 'soft'` TERRAIN entry (since no live one exists to exercise post-#279).
+describe('#269 §1 / #279 soft-cover tier plumbing (mechanism retained, currently unused by any terrain entry)', () => {
   it('softCoverBlocksLOS blocks only when a small unit is involved', () => {
     expect(softCoverBlocksLOS(true)).toBe(true);
     expect(softCoverBlocksLOS(false)).toBe(false);
     expect(softCoverBlocksLOS(undefined)).toBeFalsy();
   });
 
-  it('coverBlocksForRay: hard cover always blocks regardless of size-tier or own-hex exemption', () => {
-    expect(coverBlocksForRay('alertTower', false, false)).toBe(true);
-    expect(coverBlocksForRay('alertTower', false, true)).toBe(true);
-    expect(coverBlocksForRay('alertTower', true, true)).toBe(true);   // even "own hex" doesn't exempt hard cover
+  it('coverBlocksForRay: hard cover (base-infra AND, since #279, forest et al.) blocks unconditionally between two other points, regardless of size tier', () => {
+    for (const id of ['alertTower', 'forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(coverBlocksForRay(id, false, false)).toBe(true);
+      expect(coverBlocksForRay(id, false, true)).toBe(true);
+    }
   });
 
-  it('coverBlocksForRay: soft cover blocks only a small unit (own-hex exemption still applies)', () => {
-    expect(coverBlocksForRay('forest', false, false)).toBe(false);  // large unit sees clean over it
-    expect(coverBlocksForRay('forest', false, true)).toBe(true);    // small unit's sightline is blocked
-    expect(coverBlocksForRay('forest', true, false)).toBe(false);   // #72 own-hex transparency still works
-    expect(coverBlocksForRay('forest', true, true)).toBe(false);
+  it('coverBlocksForRay: #279 generalizes the own-hex exemption to hard cover too — it now wins regardless of tier', () => {
+    for (const id of ['alertTower', 'forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(coverBlocksForRay(id, true, true)).toBe(false);
+      expect(coverBlocksForRay(id, true, false)).toBe(false);
+    }
+  });
+
+  it('coverBlocksForRay: the retained soft tier still gates on size, own-hex exemption still applies — exercised via a temporary synthetic soft-cover entry since no live terrain uses it after #279', () => {
+    TERRAIN.__testSoftCover = {
+      id: '__testSoftCover', tex: 'hex_grass', passable: true, blocksLOS: true,
+      category: 'terrain', movement: 'slow', cover: 'soft',
+    };
+    try {
+      expect(coverBlocksForRay('__testSoftCover', false, false)).toBe(false); // large unit sees clean over it
+      expect(coverBlocksForRay('__testSoftCover', false, true)).toBe(true);   // small unit's sightline is blocked
+      expect(coverBlocksForRay('__testSoftCover', true, false)).toBe(false);  // #72 own-hex transparency
+      expect(coverBlocksForRay('__testSoftCover', true, true)).toBe(false);
+    } finally {
+      delete TERRAIN.__testSoftCover;
+    }
   });
 
   it('coverBlocksForRay: open terrain never blocks', () => {
@@ -525,11 +564,12 @@ describe('#269 §1 soft-cover size-tier plumbing', () => {
     expect(coverBlocksForRay('grass', true, true)).toBe(false);
   });
 
-  it('shotBlockedAt threads smallUnitInvolved through to the soft-cover exemption', () => {
+  it('shotBlockedAt: own-hex exemption wins regardless of smallUnitInvolved, for forest (now hard) and alertTower alike (#279)', () => {
     const exempt = new Set(['3,-1']);
-    expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);   // own-hex exemption wins
-    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);    // deep woods still blocks a small unit
-    expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(false);  // a large unit sees over deep woods
-    expect(shotBlockedAt('alertTower', '3,-1', exempt, true)).toBe(true); // hard cover unaffected
+    expect(shotBlockedAt('forest', '3,-1', exempt, true)).toBe(false);    // own-hex exemption wins
+    expect(shotBlockedAt('forest', '2,-1', exempt, true)).toBe(true);     // deep woods still blocks a small unit
+    expect(shotBlockedAt('forest', '2,-1', exempt, false)).toBe(true);    // ...and now blocks a mech too (hard cover)
+    expect(shotBlockedAt('alertTower', '3,-1', exempt, true)).toBe(false); // #279: own-hex exemption generalized here too
+    expect(shotBlockedAt('alertTower', '9,9', exempt, true)).toBe(true);   // a different alertTower hex still blocks
   });
 });

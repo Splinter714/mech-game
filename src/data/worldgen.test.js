@@ -198,14 +198,17 @@ describe('generateTerrain', () => {
     expect(terrain.get(dummy)).toBe(GRASSLAND.groundA);
   });
 
-  it('buildingHp only holds destructible solid hexes (base infra like alertTower/objective), never soft cover', () => {
+  it('buildingHp only holds destructible solid (impassable) hexes (base infra like alertTower/objective), never walk-through cover', () => {
     const { terrain, buildingHp, coverHp } = generateTerrain({ seed: 0x5eed, worldRadius: 20, biome: GRASSLAND });
     // #275: the destructible outposts (building/adobe/iceRuin/tower/obsidian) and `helipad` were
-    // removed — `alertTower`/`objective` (world-gen stamped) are the only "solid" (non-soft-cover)
+    // removed — `alertTower`/`objective` (world-gen stamped) are the only "solid" (impassable)
     // destructibles generateTerrain can produce. Only `objective` is ever picked as the mission
     // objective (isMissionObjective, exercised elsewhere); alertTower is destructible set-dressing.
     // (`dockClosed` is a live RUNTIME state swap — scenes/arena/bases.js — never stamped by
     // world-gen itself, so it can't appear here.)
+    // #279: the buildingHp/coverHp split now keys off `isPassable`, not the LOS cover tier —
+    // forest (GRASSLAND.cover) is HARD cover now but stays passable, so it still lands in
+    // `coverHp`, not `buildingHp`, exactly as before.
     for (const k of buildingHp.keys()) {
       expect(['alertTower', 'objective']).toContain(terrain.get(k));
     }
