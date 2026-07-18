@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor } from './hexArt.js';
+import {
+  HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor,
+  buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId,
+} from './hexArt.js';
 import { HEX_SIZE, hexCorners, hexToPixel } from '../data/hexgrid.js';
 import { TERRAIN } from '../data/terrain.js';
 
@@ -65,5 +68,62 @@ describe('dock/alertTower distinct textures (#269 playtest follow-up)', () => {
   it('both stay on the shared base-infrastructure fill colour', () => {
     expect(terrainFillColor('dock')).toBe(BASE_INFRA_COLOR.fill);
     expect(terrainFillColor('alertTower')).toBe(BASE_INFRA_COLOR.fill);
+  });
+});
+
+// #289: cover terrain (forest/scrub/drift/wreck/fumarole) now bakes a SECOND, separate texture —
+// a transparent-background canopy/foliage overlay — alongside its existing ground texture, so
+// world.js can place both as independent Images at different depths. A fake Phaser-shaped
+// `scene.make.graphics()` stands in for the real canvas (mirrors dockResupply.test.js's approach
+// elsewhere in the codebase); `generateTexture` just records which keys got baked, so these
+// checks confirm the REGISTRY wiring (every cover id gets both a ground key and a canopy key)
+// without needing a real GPU/canvas context.
+function fakeGraphicsScene() {
+  const registered = new Set();
+  const noop = () => {};
+  return {
+    make: {
+      graphics: () => ({
+        fillStyle: noop, lineStyle: noop, fillRect: noop, fillCircle: noop,
+        fillEllipse: noop, fillTriangle: noop, fillPoints: noop,
+        generateTexture: (key) => registered.add(key),
+        destroy: noop,
+      }),
+    },
+    textures: { exists: () => false, get: () => ({ getSourceImage: () => ({ getContext: () => null }) }) },
+    _registered: registered,
+  };
+}
+
+describe('cover terrain ground/canopy texture split (#289)', () => {
+  it('lists exactly the 5 walk-through cover terrain ids', () => {
+    expect([...COVER_CANOPY_IDS].sort()).toEqual(['drift', 'forest', 'fumarole', 'scrub', 'wreck'].sort());
+  });
+
+  it('canopyTexKey accepts both a bare terrain id and a hex_-prefixed texture key', () => {
+    expect(canopyTexKey('forest')).toBe('hex_forest_canopy');
+    expect(canopyTexKey('hex_forest')).toBe('hex_forest_canopy');
+  });
+
+  it('isCoverCanopyId is true only for the 5 cover ids, false for ordinary terrain', () => {
+    for (const id of COVER_CANOPY_IDS) {
+      expect(isCoverCanopyId(id)).toBe(true);
+      expect(isCoverCanopyId(`hex_${id}`)).toBe(true);
+    }
+    expect(isCoverCanopyId('grass')).toBe(false);
+    expect(isCoverCanopyId('hex_alertTower')).toBe(false);
+  });
+
+  it('buildHexTextures bakes both a ground texture and a canopy texture for every cover id', () => {
+    const scene = fakeGraphicsScene();
+    buildHexTextures(scene);
+    for (const id of COVER_CANOPY_IDS) {
+      expect(scene._registered.has(`hex_${id}`)).toBe(true);
+      expect(scene._registered.has(canopyTexKey(id))).toBe(true);
+    }
+    // Non-cover terrain (e.g. plain grass) still gets exactly its one ground texture — no
+    // canopy key is ever baked for it.
+    expect(scene._registered.has('hex_grass')).toBe(true);
+    expect(scene._registered.has('hex_grass_canopy')).toBe(false);
   });
 });
