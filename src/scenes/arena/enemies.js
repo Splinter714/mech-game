@@ -31,7 +31,7 @@ import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance 
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, leashIntent } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -641,20 +641,17 @@ export const EnemiesMixin = {
       if (!aware) {
         // Idle/patrol: loiter near the spawn point instead of running the tactical brain.
         ({ mx, my } = this._idleMoveIntent(e, delta));
-      } else if (e.holdGround) {
-        // #269 playtest follow-up ("fold mechs into the dock system"): a woken docked mech
-        // defends its position instead of sortieing (see scenes/arena/bases.js `_wakeBase`'s
-        // comment on why EVERY mech defaults to holdGround, regardless of chassis/role). This
-        // skips the whole PRESS/KITE/FLANK/COVER/HOLD decision machine (_decideEnemyState)
-        // entirely — state is pinned to 'hold' and it never moves — mirroring the non-mech
-        // kinds' own `e.holdGround` branch (enemyBehaviors.js tankBehavior etc: vx=vy=0, only
-        // the turret/aim keeps tracking). The turret-slew/fire logic below is untouched and
-        // still runs normally, so a held mech tracks and shoots the player exactly as before.
-        e.state = 'hold'; e.goal = null; e.coverSpot = null;
-        mx = 0; my = 0;
       } else {
         // Re-decide on a cadence timer (or immediately after arriving at a goal). Between
         // decisions the enemy commits to its current state, so behaviour reads deliberately.
+        // #269 Part 1 ("hold-ground units should still move — leash, not freeze"): a woken
+        // docked mech (`e.holdGround`, see scenes/arena/bases.js `_wakeBase`'s comment on why
+        // EVERY mech defaults to holdGround, regardless of chassis/role) used to skip this whole
+        // PRESS/KITE/FLANK/COVER/HOLD decision machine entirely and just sit pinned to 'hold' —
+        // that read as frozen/dead. It now runs the exact SAME decision machine and movement
+        // intent as a non-held mech, so it still actively presses/flanks/kites like normal; the
+        // ONLY difference is the leash clamp applied to the result below, which keeps it from
+        // wandering far from its dock/base rather than chasing the player across the map.
         e.decideAt -= delta;
         e.recampAt -= delta;   // all-indirect camp-hold timer (see _decideEnemyState)
         const arrived = e.goal && Math.hypot(e.goal.x - e.x, e.goal.y - e.y) < ARRIVE_SLOW;
@@ -667,6 +664,7 @@ export const EnemiesMixin = {
         }
         // Resolve the current state into a movement-intent vector (mx, my), roughly unit length.
         ({ mx, my } = this._enemyMoveIntent(e, dist, bearing, ux, uy));
+        if (e.holdGround) ({ mx, my } = leashIntent(e, mx, my));
       }
 
       // #45: backing away (relative to turret facing) is slower.
@@ -701,12 +699,14 @@ export const EnemiesMixin = {
     // rather than watching the player it hasn't spotted yet.
     if (aware) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
-    // #269 playtest follow-up: a held-ground mech never moves, so the ordinary "turn to face
-    // travel direction" hull rule below would freeze it facing whatever way it happened to spawn
-    // — same "reads as dead" bug the tank kind's own holdGround branch already fixed
-    // (enemyBehaviors.js tankBehavior). Mirror that fix here: the hull turns to face the player
-    // directly while holding ground, even though it never translates.
-    if (e.holdGround) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
+    // #269 Part 1: a held-ground mech now runs the same movement brain as a normal one (just
+    // leashed near home, see above) so it's usually in motion and the ordinary "turn to face
+    // travel direction" rule below already applies fine. It can still occasionally sit still
+    // while holding (e.g. 'hold'/camped-'cover' states resolve to a zero intent, and the leash
+    // itself is a no-op once already inside its radius) — in exactly that stationary case, face
+    // the player directly rather than holding whatever heading it happened to stop at, same
+    // "don't read as dead while stopped" fix the tank kind's own holdGround branch established.
+    if (e.holdGround && Math.hypot(e.vx, e.vy) <= 5) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
     // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once

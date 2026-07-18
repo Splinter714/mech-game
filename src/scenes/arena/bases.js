@@ -15,7 +15,8 @@ import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
-import { makeDockResupplyState, tickDockResupply } from '../../data/dockResupply.js';
+import { makeDockResupplyState, tickDockResupply, spendDockResupply } from '../../data/dockResupply.js';
+import { getTerrain, buildingHp as terrainBuildingHp } from '../../data/terrain.js';
 
 // #269 playtest follow-up ("sensor towers need a visual AND a noise to indicate they are
 // spooling up") — the live escalating ring drawn over a counting-down alert tower. Colour
@@ -64,6 +65,17 @@ const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacem
 // enemyKinds.js) read bigger on screen than a turret (scale 0.42), so they need more room to
 // stay visually distinct as several units rather than reading as one blob.
 const DOCK_HUDDLE_OFFSET = 16;
+
+// #269 Part 2 ("dock open/closed states"): how close a dock's own live unit(s) (matched by
+// `dockKey`) must stay to the dock's own pixel centre for the hex to still read as OCCUPIED. A
+// DORMANT cluster sits within `DOCK_HUDDLE_OFFSET` (16px) of centre, well inside this; the
+// moment a woken unit's hold-ground leash (`HOLD_GROUND_LEASH_PX`, shared.js — 320px) carries it
+// meaningfully away to fight, or it dies, the dock reads as VACATED and closes. Deliberately
+// bigger than the huddle scatter (so idle jitter never falsely triggers a close) but much
+// smaller than the leash radius (so engaging the player reliably closes the dock almost
+// immediately, matching the issue's "the dock closes once its units leave" framing). Owner:
+// tunable via playtest.
+const DOCK_VACATE_RADIUS_PX = 60;
 
 export const BasesMixin = {
   // §4: spawn every base's docked units NOW, at deploy time, dormant — not lazily, not via the
@@ -126,6 +138,11 @@ export const BasesMixin = {
           e.awareness = DORMANT;
           e.baseId = base.id;
           e.dockKey = dockKey;
+          // #269 Part 1 (hold-ground leash): the dock's own centre pixel is this unit's home
+          // anchor — see `leashIntent` (scenes/arena/shared.js) for how a woken hold-ground unit
+          // uses this to stay near its dock instead of freezing OR chasing the player unbounded.
+          // Stashed on every unit in the cluster (not just one), same as `dockKey`.
+          e.homeX = x; e.homeY = y;
         }
       }
       for (const turret of base.turrets ?? []) {
@@ -134,6 +151,7 @@ export const BasesMixin = {
         e.awareness = DORMANT;
         e.baseId = base.id;
         e.dockKey = axialKey(turret.q, turret.r);
+        e.homeX = x; e.homeY = y;
       }
     }
   },
@@ -367,6 +385,87 @@ export const BasesMixin = {
     }
   },
 
+  // #269 Part 2 ("dock open/closed states") — per-frame tick, called from ArenaScene.update()
+  // alongside `_updateDockResupply`, that detects a dock hex being VACATED (its own live units,
+  // matched by `dockKey`, have all either walked far enough away or died) and closes it. Only
+  // ever acts on a hex that's CURRENTLY the plain open `dock` terrain — a hex that's already
+  // `dockClosed` (or has since collapsed to rubble via `_damageBuildingAt`) is skipped, so this
+  // never fights the resupply cycle's own closed→open transition (`_resupplyDock`/`_openDock`
+  // below) or re-close an already-destroyed dock. Cheap: `this._dockResupplyMeta` only ever holds
+  // DOCK hexes (never `turretEmplacement` — see that map's own header comment in
+  // `_spawnDormantUnits`), and this game has at most a handful of docks, so a plain per-dock
+  // `.some()` scan (same cost shape as `_updateDockResupply`/`_maybeProximityWake`) is fine.
+  _updateDockOpenClose() {
+    if (!this._dockResupplyMeta || !this._dockResupplyMeta.size) return;
+    for (const [dockKey, meta] of this._dockResupplyMeta) {
+      if (this.terrain.get(dockKey) !== 'dock') continue;   // already closed, or destroyed
+      const occupied = this.enemies.some((e) => e.dockKey === dockKey
+        && Math.hypot(e.x - meta.x, e.y - meta.y) <= DOCK_VACATE_RADIUS_PX);
+      if (!occupied) this._closeDock(dockKey, meta);
+    }
+  },
+
+  // Swap a vacated dock hex from open `dock` to the sealed, destructible `dockClosed` terrain —
+  // the exact same `this.terrain.set` + `tileImages.get(k).setTexture` mechanism `_damageBuildingAt`
+  // (world.js) already uses to swap a collapsed outpost to rubble in place, just going the other
+  // direction (open → a NEW standing structure, not standing → rubble). Also seeds `this.buildingHp`
+  // for this hex so it immediately starts participating in the generic destructible-terrain system
+  // — `_damageBuildingAt` can now damage/collapse it exactly like any world-gen-seeded outpost, and
+  // `_onTerrainCollapsed` below is how a collapse gets routed back to retiring this dock's resupply.
+  _closeDock(dockKey, meta) {
+    this.terrain.set(dockKey, 'dockClosed');
+    const img = this.tileImages.get(dockKey);
+    if (img) img.setTexture(getTerrain('dockClosed').tex);
+    this.buildingHp.set(dockKey, terrainBuildingHp('dockClosed'));
+    this._closeDockFx(meta.x, meta.y);
+  },
+
+  // The inverse of `_closeDock` — swap a still-intact closed dock back to the open `dock`
+  // terrain and drop it out of `buildingHp` (an open dock, like the original design, carries no
+  // HP of its own — see terrain.js `dock`'s comment). Called from `_resupplyDock` below, right
+  // as the resupply elevator sequence starts, so the "doors open / platform rises" FX already
+  // built there doubles as the dome's own reopening beat — no separate reopen animation needed.
+  _openDock(dockKey) {
+    this.terrain.set(dockKey, 'dock');
+    const img = this.tileImages.get(dockKey);
+    if (img) img.setTexture(getTerrain('dock').tex);
+    this.buildingHp.delete(dockKey);
+  },
+
+  // #269 Part 2: hooked from world.js `_damageBuildingAt` (`_onTerrainCollapsed`) — fires for
+  // EVERY destructible-hex collapse, not just docks, so this is a no-op unless `hexKey` is a
+  // dock this scene is actually tracking resupply state for. Permanently retires that dock's
+  // resupply (`spendDockResupply`, data/dockResupply.js) the instant its closed dome is
+  // destroyed — a real tactical payoff for blowing it open before it can produce reinforcements,
+  // even if it hadn't used its one resupply yet.
+  _onTerrainCollapsed(hexKey) {
+    const state = this._dockResupplyStates?.get(hexKey);
+    if (state) this._dockResupplyStates.set(hexKey, spendDockResupply(state));
+  },
+
+  // A steel dome sealing shut over a vacated dock hex: a dark plate scales in from nothing to
+  // cover the pad, with a bright metallic rim ring flashing as it seals, then both fade — same
+  // throwaway-display-object/tween style as `_outpostCollapseFx`/`_resupplyDock`'s door FX
+  // (nothing here is baked into the static hex art, which `_closeDock` already swapped above).
+  _closeDockFx(x, y) {
+    // A small, quiet mechanical thud (not a full destruction boom) reusing the existing
+    // explosion cue at a low scale — same precedent as `_outpostCollapseFx`'s softer soft-cover
+    // variant, just even quieter since nothing is actually being destroyed here.
+    Audio.explosion(0.25, { x, y, listenerX: this.px, listenerY: this.py });
+    const plate = this.add.circle(x, y, 15, 0x1c1f24, 0.94).setScale(0.05).setDepth(DEPTH.IMPACT_FX);
+    const rim = this.add.circle(x, y).setStrokeStyle(2.5, 0x9098a3, 0).setRadius(15).setScale(1.4).setDepth(DEPTH.IMPACT_FX + 0.1);
+    this.tweens.add({ targets: plate, scale: 1, duration: 380, ease: 'Quad.easeOut' });
+    this.tweens.add({
+      targets: rim, scale: 1, alpha: 0.9, duration: 380, ease: 'Quad.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: [plate, rim], alpha: 0, duration: 260, delay: 140,
+          onComplete: () => { plate.destroy(); rim.destroy(); },
+        });
+      },
+    });
+  },
+
   // Plays the doors-open → platform-rise → doors-close FX at a cleared dock's position, and
   // spawns the fresh unit mid-sequence (roughly when it would first be visible rising out of the
   // bay). All Phaser tweens on a temporary container (mirrors world.js `_outpostCollapseFx`'s
@@ -381,6 +480,14 @@ export const BasesMixin = {
   // other kind through `_spawnKind`, both via the same `isEnemyKind` predicate.
   _resupplyDock(dockKey, meta) {
     const { x, y, kindId } = meta;
+    // #269 Part 2 ("dock open/closed states"): a dock that's currently CLOSED (the normal case —
+    // its original unit(s) walked off/died and `_updateDockOpenClose` already sealed it, see
+    // above) reopens right here, at the same moment this elevator sequence kicks off — the
+    // doors-open/platform-rise FX below already IS the "dome reopening" beat the issue asks for,
+    // so no separate reopen animation is needed. If the dock never actually closed (e.g. its
+    // original unit died right on the pad before ever moving — see `_updateDockOpenClose`'s own
+    // comment), this is a harmless no-op: the hex is already the open `dock` terrain.
+    if (this.terrain.get(dockKey) === 'dockClosed') this._openDock(dockKey);
     const doorHalfW = 15, doorH = 4, shaftHalfW = 15, riseFrom = 22;
 
     // The dark shaft the platform rises through — stays visible for the whole sequence, so the
@@ -411,6 +518,7 @@ export const BasesMixin = {
           e.awareness = AWARE;
           e.baseId = meta.baseId;
           e.dockKey = dockKey;
+          e.homeX = x; e.homeY = y;   // #269 Part 1: same leash anchor as an original dock spawn
         });
         // Stage 3: once the platform has surfaced, doors close back over the (now empty) shaft.
         this.time.delayedCall(500, () => {

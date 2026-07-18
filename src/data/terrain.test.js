@@ -104,6 +104,29 @@ describe('terrain table (#41 full model)', () => {
     expect(isBaseCategory('alertTower')).toBe(true);
   });
 
+  // #269 playtest follow-up (dock open/closed states): `dockClosed` is the sealed, destructible
+  // runtime state a `dock` hex swaps into once vacated (scenes/arena/bases.js `_closeDock`) —
+  // unlike the open `dock` marker (deliberately non-destructible), this is a genuine structure:
+  // impassable, blocks LOS, has real HP, and collapses to the same uniform base-infra rubble
+  // every other destructible base hex uses. Excluded from the mission-objective pool since it's
+  // a dynamic occupancy state, not a placed assault objective.
+  it('gives dockClosed its own texture and makes it a genuine destructible structure, unlike the open dock marker', () => {
+    expect(TERRAIN.dockClosed).toBeDefined();
+    expect(typeof TERRAIN.dockClosed.tex).toBe('string');
+    expect(TERRAIN.dockClosed.tex).not.toBe(TERRAIN.dock.tex);
+    expect(TERRAIN.dockClosed.passable).toBe(false);
+    expect(TERRAIN.dockClosed.blocksLOS).toBe(true);
+    expect(isPassable('dockClosed')).toBe(false);
+    expect(blocksLOS('dockClosed')).toBe(true);
+    expect(isDestructible('dockClosed')).toBe(true);
+    expect(TERRAIN.dockClosed.hp).toBeGreaterThan(0);
+    expect(TERRAIN.dockClosed.rubbleId).toBe('rubble');
+    expect(isMissionObjective('dockClosed')).toBe(false);
+    expect(isBaseCategory('dockClosed')).toBe(true);
+    // Sanity: the open dock marker it swaps FROM/TO stays exactly as before — never destructible.
+    expect(TERRAIN.dock.destructible).toBeFalsy();
+  });
+
   it('leaves rubble passable, no cover, mildly slowing', () => {
     expect(TERRAIN.rubble.passable).toBe(true);
     expect(TERRAIN.rubble.blocksLOS).toBe(false);

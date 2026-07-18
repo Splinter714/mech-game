@@ -133,6 +133,30 @@ export const TERRAIN = {
   // landing marking whether or not anything is currently standing on it.
   dock:      { id: 'dock',      tex: 'hex_dock',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'base', movement: 'full', cover: 'open' },
+  // #269 playtest follow-up ("docks need real open/closed visual + LOS/destructibility states,
+  // not just a resupply FX overlay") — the CLOSED state of a dock hex. A dock starts (and
+  // reopens after each resupply) as the plain `dock` entry above; the moment its docked
+  // unit(s) actually vacate the hex (walk away past a small radius, or die), the scene swaps the
+  // hex's terrain data to THIS entry and plays a "steel dome sealing over the hex" FX
+  // (scenes/arena/bases.js `_closeDockFx`) — see that file's `_updateDockOpenClose`/
+  // `_closeDock`/`_openDock` for the runtime state machine (open ⇄ closed is a live terrain
+  // swap at runtime, same `this.terrain.set` + `tileImages.get(k).setTexture` mechanism
+  // `_damageBuildingAt` already uses for rubble collapse — never baked into world-gen).
+  // Unlike the generic `dock` marker (deliberately non-destructible, no HP of its own — see that
+  // entry's comment), a CLOSED dock is a real sealed structure: impassable, blocks LOS, and is
+  // destructible — a genuine tactical choice to blow the dome open before it can ever produce a
+  // reinforcement (bases.js hooks `_onTerrainCollapsed` into world.js's generic
+  // `_damageBuildingAt` collapse path to permanently retire that dock's resupply state the
+  // instant this hex is destroyed, even if it hadn't used up its one resupply yet).
+  // `hp: 30` sits between alertTower's slim sensor mast (25) and a full outpost building (60) —
+  // a sealed bay door is sturdier than a thin mast but still not a whole building. Collapses to
+  // the same uniform `rubble` every other base-infra hex uses (helipad/alertTower/building) so
+  // destroyed base infrastructure reads consistently. `setDressing: true` (same precedent as
+  // `alertTower`/`helipad`) keeps it OUT of the mission-objective pool — it's a dynamic
+  // occupancy state, never a placed assault objective. Owner: hp tunable via playtest.
+  dockClosed:{ id: 'dockClosed',tex: 'hex_dockClosed', passable: false, blocksLOS: true,
+               destructible: true, hp: 30, rubbleId: 'rubble', setDressing: true,
+               category: 'base', movement: 'none', cover: 'hard' },
   // #269 §3: a small, cheap, DESTRUCTIBLE sensor tower — the wake TRIGGER for the base-population
   // system (data/alertTower.js's pure countdown state machine + scenes/arena/bases.js's per-frame
   // tick/wake routing). #269 playtest follow-up (bases/outposts role swap): it's placed at/near
