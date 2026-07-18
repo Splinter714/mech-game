@@ -99,7 +99,8 @@ export const BASE_EARLY_KIND_POOL = ['tank'];
 // scenes/arena/bases.js `_wakeBase` and its comment) — it defends its dock rather than
 // sortieing, so ALL FOUR archetypes (brawler/skirmisher/sniper/artillery) read fine as
 // stationary defenders, unlike the old off-screen-squad system where a slow heavy chassis
-// sniper/artillery would otherwise never catch up to the player. `raider` is weighted 2x (a
+// artillery would otherwise never catch up to the player (#273: sniper moved off the heavy
+// chassis onto medium — see enemies.js). `raider` is weighted 2x (a
 // mid-range brawler/skirmisher hybid — the most generic, always-reads-right defender) over the
 // three specialists (each 1x): `skirmisher` (an aggressive brawler, presses in even while
 // holding ground via its firing-range weapons), `sniper` (kites/holds at long range — a natural

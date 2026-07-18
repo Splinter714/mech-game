@@ -30,8 +30,8 @@ export const ENEMIES = {
     mounts: { rightArm: ['shotgun'], leftArm: ['machineGun'] },
   },
 
-  // Sniper: long-range weapons on a slow heavy chassis, so it KITES — holds distance,
-  // backpedals when the player closes, uses cover.
+  // Sniper: long-range weapons that KITE — holds distance, backpedals when the player
+  // closes, uses cover.
   // #96: railLance (opt 400) and napalm (opt 500) were both shelved per Jackson's weapon
   // curation pass. Swapped to beamLaser (opt 500, max 640 — the longest-range keeper) and
   // clusterRocket (opt 660, max 960 — the other long-range keeper), preserving the "holds
@@ -41,8 +41,20 @@ export const ENEMIES = {
   // enemies never routed hitscan weapons through the beam-fire path at all), so that look is now
   // formalized as its own real projectile weapon rather than "fixed" to an instant beam. See
   // plasmaLance's definition in data/weapons.js for the full story.
+  // #273: chassisId moved 'heavy' -> 'medium'. All 4 mech archetypes were keyed to only 2 of
+  // the 3 chassis weight classes (raider+skirmisher both 'light', sniper+artillery both
+  // 'heavy' — 'medium' unused), so any two sharing a class read as near-identical mechs (same
+  // body shape, same decor) apart from mounted weapon icons. Reassigning the sniper to
+  // 'medium' puts all 3 weight classes in play using the existing chassis art exactly as-is —
+  // no new art system needed. Thematically medium fits a kiter better than heavy did anyway:
+  // "backpedal when the player closes" wants the mobility a heavy chassis (the slowest,
+  // most ponderous of the three) actively works against; medium's balanced speed/turn lets
+  // it actually hold a kiting standoff instead of getting run down. Artillery keeps 'heavy'
+  // alone (the "camp behind cover and bombard" siege unit is exactly heavy's "immovable
+  // object" identity), and raider+skirmisher keep sharing 'light' (both want mobility to
+  // flank/close) — the one still-shared pair Jackson called out as fine and expected.
   sniper: {
-    chassisId: 'heavy',
+    chassisId: 'medium',
     name: 'Warden',
     mounts: { rightArm: ['plasmaLance'], leftTorso: ['clusterRocket'] },
   },

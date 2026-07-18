@@ -331,8 +331,9 @@ export const ENEMY_KINDS = {
     name: 'Broodwalker',
     kind: 'quadruped',
     hp: 260,                // #130 (owner: tune): tougher than tank's 160, but well under a
-                             // heavy mech's ~616-hp pool (sniper/artillery's 'heavy' chassis) —
-                             // a real but beatable objective target, not a brick wall.
+                             // heavy mech's ~616-hp pool (artillery's 'heavy' chassis; #273
+                             // moved sniper off 'heavy' onto 'medium') — a real but beatable
+                             // objective target, not a brick wall.
     // #246: ALL THREE layers (shield + armor + hp) — the toughest non-mech kind gets the full
     // stack, a deliberately different combination from tank's (armor-only) and helicopter's
     // (shield-only) so the roster exercises every layer-combo the design calls for. Slower
