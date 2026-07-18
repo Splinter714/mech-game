@@ -594,8 +594,11 @@ export const EnemiesMixin = {
     // #269 §4: a DORMANT docked unit (scenes/arena/bases.js `_spawnDormantUnits`) is genuinely
     // inert until its base is woken (`_wakeBase`) — skip ALL per-frame AI/movement/firing, for
     // both mech and non-mech kinds alike. Unlike UNAWARE (below), which still runs idle-wander,
-    // a dormant unit does nothing at all: no movement, no turret slew, no firing.
-    if (e.awareness === DORMANT) return;
+    // a dormant unit does nothing at all: no movement, no turret slew, no firing. #269 playtest
+    // follow-up ("enemies should also wake on player proximity"): it STILL gets one cheap
+    // distance-only check (`_maybeProximityWake`, bases.js) so a unit the player walks right up
+    // to wakes even with no alert tower involved — not full AI ticking, just a `Math.hypot`.
+    if (e.awareness === DORMANT) { this._maybeProximityWake(e); return; }
     // #68: non-mech kinds run their own simple per-kind brain + integrate/render path.
     if (e.kind !== 'mech') { this._updateVehicle(e, dt, delta); return; }
     const mv = e.mech.movement;

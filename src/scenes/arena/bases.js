@@ -6,7 +6,7 @@
 // positions, the live `this.enemies` array, and `this.bases`/`this.alertTowerHexes` (both set
 // by `_buildWorld`, world.js, from `generateTerrain`'s `placeBases` result).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
-import { DORMANT, AWARE } from '../../data/awareness.js';
+import { DORMANT, AWARE, shouldBecomeAware } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
 import { DEPTH } from './shared.js';
@@ -269,6 +269,27 @@ export const BasesMixin = {
   _triggerAlert(x, y) {
     const base = nearestBaseTo({ x, y }, this.bases);
     if (base) this._wakeBase(base.id);
+  },
+
+  // #269 playtest follow-up ("enemies should also wake on player proximity, independent of
+  // alert towers"): a DORMANT unit's own `detectRange` (set at spawn time in `_spawnKind`,
+  // exactly the same `detectionRangeFor(def.fireRange)` an UNAWARE unit uses for its own
+  // proximity/noise aggro) doubles as its "someone got close enough to notice me" radius here —
+  // reusing `shouldBecomeAware` (data/awareness.js) rather than a new bespoke proximity check,
+  // since the underlying concept ("player got close enough, I noticed") is identical to the
+  // UNAWARE→AWARE case; only the RESPONSE differs. Passing `e.awareness` (DORMANT, not AWARE)
+  // straight through is safe — `shouldBecomeAware` only special-cases the AWARE state, so a
+  // DORMANT unit falls through to the same distance/noise-based `seen`/`heard` check any
+  // UNAWARE non-mech unit gets (see `_updateVehicle`'s call site — no LOS raycast, distance-only,
+  // deliberately cheap since docks can spawn many units). Unlike an UNAWARE unit's own solo
+  // wake, this wakes the unit's WHOLE base together via `_wakeBase` — same as an alert tower's
+  // countdown completing — since the base-population design already treats "wake" as a
+  // per-base group event, not a per-unit one. A no-op once the base is already woken (checked
+  // inside `_wakeBase`), so this stays a cheap `Math.hypot` for every already-irrelevant tick.
+  _maybeProximityWake(e) {
+    if (e.baseId == null) return;
+    const dist = Math.hypot(this.px - e.x, this.py - e.y);
+    if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange })) this._wakeBase(e.baseId);
   },
 
   // §6/§7: wake every still-dormant unit belonging to `baseId`. Idempotent — waking an

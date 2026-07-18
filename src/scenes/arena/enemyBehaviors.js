@@ -63,7 +63,18 @@ function tankBehavior(scene, e, ctx) {
   // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock holds its
   // ground rather than grinding toward the player's standoff distance — see the top-level
   // comment on `e.holdGround` in scenes/arena/bases.js `_wakeBase` for the full reasoning.
-  if (e.holdGround) { e.vx = 0; e.vy = 0; aimAndFire(scene, e, ctx, { needLos: true }); return; }
+  // #269 playtest follow-up ("ground units still don't move"): holding ground must NOT freeze
+  // the hull at its spawn-time facing forever — a stationary tank whose body never turns to
+  // face the player (only its turret, decoupled, was slewing) read as completely dead/inert.
+  // It still doesn't translate, but the hull now turns to face the player like the turret does,
+  // so a woken unit visibly reacts the instant it wakes rather than sitting frozen in whatever
+  // direction it happened to spawn facing.
+  if (e.holdGround) {
+    e.vx = 0; e.vy = 0;
+    e.angle = rotateToward(e.angle, ctx.bearing, def.move.turnRate, ctx.dt);
+    aimAndFire(scene, e, ctx, { needLos: true });
+    return;
+  }
   const standoff = def.standoff ?? 300;
   const mv = def.move;
   // Desired radial move: close if beyond standoff, ease off inside it, back up if very close.
@@ -191,6 +202,9 @@ function quadrupedBehavior(scene, e, ctx) {
   // still runs regardless (it's a support ability, not locomotion).
   if (e.holdGround) {
     e.vx = 0; e.vy = 0;
+    // See tankBehavior's holdGround branch above — the hull still turns to face the player so
+    // a woken nest visibly reacts instead of reading as frozen.
+    e.angle = rotateToward(e.angle, ctx.bearing, def.move.turnRate, ctx.dt);
     aimAndFire(scene, e, ctx, { needLos: true });
     quadrupedDeployTick(scene, e, def, ctx);
     return;
@@ -250,8 +264,14 @@ function quadrupedDeployTick(scene, e, def, ctx) {
 // ground unit (handled generically by the caller, same as tank/turret).
 function infantryBehavior(scene, e, ctx) {
   const def = e.kindDef;
-  // #269 §7: same hold-ground wake response as tank/quadruped above.
-  if (e.holdGround) { e.vx = 0; e.vy = 0; aimAndFire(scene, e, ctx, { needLos: true }); return; }
+  // #269 §7: same hold-ground wake response as tank/quadruped above — hull still turns to face
+  // the player so a woken trooper visibly reacts instead of reading as frozen.
+  if (e.holdGround) {
+    e.vx = 0; e.vy = 0;
+    e.angle = rotateToward(e.angle, ctx.bearing, def.move.turnRate, ctx.dt);
+    aimAndFire(scene, e, ctx, { needLos: true });
+    return;
+  }
   const mv = def.move;
   const standoff = (def.fireRange ?? 200) * 0.75;
   e._jitterAt = (e._jitterAt ?? 0) - ctx.delta;
