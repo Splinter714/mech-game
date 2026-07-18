@@ -1013,7 +1013,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         const { all, T, isGround, progressOf } = buildSpaciousLine();
         const rng = mulberry32(seed);
         const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
-        const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
         expect(alertTowers.length).toBe(BASE_COUNT);   // spacious corridor: every gap gets a tower
         let prev = 0;
         for (let i = 0; i < alertTowers.length; i++) {
@@ -1029,7 +1029,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         const { all, T, isGround, progressOf } = buildSpaciousLine();
         const rng = mulberry32(seed);
         const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
-        const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
+        const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
         expect(bases.length).toBe(BASE_COUNT);
         expect(alertTowers.length).toBe(BASE_COUNT);
       }
