@@ -9,6 +9,8 @@ import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { nearestBaseTo, isFastWakeKind } from '../../data/bases.js';
+import { makeDockResupplyState, tickDockResupply } from '../../data/dockResupply.js';
+import { DEPTH } from './shared.js';
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
@@ -39,12 +41,22 @@ export const BasesMixin = {
   // never drawn from the dock kind pools) are spawned the same DORMANT way, one `turret` per
   // emplacement hex, tagged with the SAME base's `baseId` so they wake alongside that base's
   // docks and count toward the win condition (`_allBasesCleared`) exactly like a dock unit does.
+  //
+  // #269 §3 "rare multi-spawn exception" (playtest follow-up): also records, per DOCK hex only
+  // (never a turret emplacement — see data/dockResupply.js's file header for why), the metadata
+  // `_updateDockResupply` needs later — the dock's kind/position/owning base and a fresh
+  // resupply state — in `this._dockResupplyMeta`/`this._dockResupplyStates`. Built here rather
+  // than a separate pass since this loop already visits every dock exactly once.
   _spawnDormantUnits() {
+    this._dockResupplyMeta = new Map();
+    this._dockResupplyStates = new Map();
     for (const base of this.bases ?? []) {
       for (const dock of base.docks) {
         const { x, y } = hexToPixel(dock.q, dock.r);
         const count = dock.count ?? 1;
         const dockKey = axialKey(dock.q, dock.r);
+        this._dockResupplyMeta.set(dockKey, { baseId: base.id, kindId: dock.kindId, x, y });
+        this._dockResupplyStates.set(dockKey, makeDockResupplyState());
         for (let i = 0; i < count; i++) {
           const a = (i / count) * Math.PI * 2 + Math.PI / 4;
           const px = count > 1 ? x + Math.cos(a) * DOCK_HUDDLE_OFFSET : x;
@@ -127,6 +139,84 @@ export const BasesMixin = {
       e.awareness = AWARE;
       if (e.kindDef && !isFastWakeKind(e.kindDef)) e.holdGround = true;
     }
+  },
+
+  // #269 §3 "rare multi-spawn exception" (playtest follow-up) — per-frame tick for every dock's
+  // resupply cooldown, called from ArenaScene.update() alongside `_updateAlertTowers`. A dock is
+  // ELIGIBLE (the cooldown counts down) only once BOTH hold: its base has actually been woken
+  // (`this._wokenBases` — §2 of the mechanic: a still-fully-dormant base's cleared dock must
+  // never resupply, this is tied to "under active assault," not a background timer) AND the
+  // dock is currently CLEARED (no live enemy — original assignment or an earlier resupply —
+  // still carries its `dockKey`; #87's "a killed enemy is pruned from `this.enemies` the same
+  // tick it dies" convention, already relied on by `_allBasesCleared` above, makes that a plain
+  // `.some()` scan). `tickDockResupply` (data/dockResupply.js) is the pure state machine; this
+  // is just the glue feeding it real per-frame eligibility and reacting to `ready: true`.
+  _updateDockResupply(dt) {
+    if (!this._dockResupplyStates || !this._dockResupplyStates.size) return;
+    for (const [dockKey, meta] of this._dockResupplyMeta) {
+      const state = this._dockResupplyStates.get(dockKey);
+      if (!state) continue;
+      const awake = this._wokenBases.has(meta.baseId);
+      const cleared = !this.enemies.some((e) => e.dockKey === dockKey);
+      const next = tickDockResupply(state, { eligible: awake && cleared, dt });
+      this._dockResupplyStates.set(dockKey, next);
+      if (next.ready) this._resupplyDock(dockKey, meta);
+    }
+  },
+
+  // Plays the doors-open → platform-rise → doors-close FX at a cleared dock's position, and
+  // spawns the fresh unit mid-sequence (roughly when it would first be visible rising out of the
+  // bay). All Phaser tweens on a temporary container (mirrors world.js `_outpostCollapseFx`'s
+  // "build throwaway display objects, tween them, destroy on completion" style — nothing here is
+  // baked into the static hex art, which stays untouched). The spawned unit goes DIRECTLY active
+  // (AWARE, no `holdGround`/wake-response split needed — its base is already awake and fighting,
+  // matched to the mechanic's design intent that a resupply unit doesn't sit inert like an
+  // original dormant one) and is scattered like a fresh dock spawn.
+  _resupplyDock(dockKey, meta) {
+    const { x, y, kindId } = meta;
+    const doorHalfW = 15, doorH = 4, shaftHalfW = 15, riseFrom = 22;
+
+    // The dark shaft the platform rises through — stays visible for the whole sequence, so the
+    // doors read as sliding open OVER a real gap rather than just two bars moving apart.
+    const shaft = this.add.rectangle(x, y, shaftHalfW * 2, doorH * 2.4, 0x0a0b0d, 0.85).setDepth(DEPTH.IMPACT_FX);
+    // Two door leaves, starting CLOSED (meeting at centre, fully covering the shaft).
+    const doorL = this.add.rectangle(x - doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.IMPACT_FX + 0.1);
+    const doorR = this.add.rectangle(x + doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.IMPACT_FX + 0.1);
+    // The rising platform itself — starts below the deck (hidden), rises to deck level.
+    const platform = this.add.rectangle(x, y + riseFrom, doorHalfW * 1.6, doorH * 1.6, 0x565d66, 1).setDepth(DEPTH.IMPACT_FX + 0.2);
+    const glow = this.add.circle(x, y + riseFrom, 4, 0xd8cba0, 0.9).setDepth(DEPTH.IMPACT_FX + 0.3);
+    const fx = [shaft, doorL, doorR, platform, glow];
+    const destroyFx = () => { for (const obj of fx) obj.destroy(); };
+
+    // Stage 1: doors open (slide apart to reveal the shaft).
+    this.tweens.add({
+      targets: doorL, x: x - doorHalfW * 1.6, duration: 500, ease: 'Quad.easeOut',
+    });
+    this.tweens.add({
+      targets: doorR, x: x + doorHalfW * 1.6, duration: 500, ease: 'Quad.easeOut',
+      onComplete: () => {
+        // Stage 2: the platform rises out of the shaft. The unit itself is spawned partway
+        // through the rise (roughly when the platform would first crest the deck), directly
+        // ACTIVE — no dormant/wake step, matching "the base is already fighting."
+        this.tweens.add({ targets: [platform, glow], y: `-=${riseFrom}`, duration: 450, ease: 'Sine.easeOut' });
+        this.time.delayedCall(220, () => {
+          const e = this._spawnKind(x, y, kindId);
+          e.awareness = AWARE;
+          e.baseId = meta.baseId;
+          e.dockKey = dockKey;
+        });
+        // Stage 3: once the platform has surfaced, doors close back over the (now empty) shaft.
+        this.time.delayedCall(500, () => {
+          this.tweens.add({ targets: doorL, x: x - doorHalfW / 2, duration: 500, ease: 'Quad.easeIn' });
+          this.tweens.add({
+            targets: doorR, x: x + doorHalfW / 2, duration: 500, ease: 'Quad.easeIn',
+            onComplete: () => {
+              this.tweens.add({ targets: fx, alpha: 0, duration: 200, onComplete: destroyFx });
+            },
+          });
+        });
+      },
+    });
   },
 
   // #269 §8: the run's simplified win condition — every base's docked units (dormant or

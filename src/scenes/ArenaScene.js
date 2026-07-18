@@ -298,6 +298,8 @@ export default class ArenaScene extends Phaser.Scene {
     this._updateEnemies(dt, delta);
     // #269 §5: tick every standing alert tower's wake-countdown sensor.
     this._updateAlertTowers(dt);
+    // #269 §3 "rare multi-spawn exception": tick every dock's occasional-resupply cooldown.
+    this._updateDockResupply(dt);
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
