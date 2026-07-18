@@ -21,8 +21,9 @@
 //   1. Own-hex transparency: a cover hex does NOT protect its own occupant — shots treat
 //      the target's (and the shooter's muzzle's) own hex as see-through (`shotBlockedAt`).
 //      Deeper cover hexes between shooter and target still block. (#279: this exemption is
-//      generalized across BOTH cover tiers — see the `cover` field note below and
-//      `coverBlocksForRay`'s own comment for why.)
+//      generalized across BOTH cover tiers — it's applied once, up front, regardless of
+//      soft/hard — see the `cover` field note below and `coverBlocksForRay`'s own comment
+//      for why the generalization is kept even though terrain cover reverted to `soft`.)
 //   2. Destructible + burnable: this cover has HP (less than an outpost's 60) so gunfire chews
 //      firing lanes through it, and FLAME damage (flamethrower gouts, napalm ground fire) is
 //      multiplied by FLAME_COVER_MULT so incendiaries are the premier forest-clearing tool.
@@ -45,16 +46,16 @@
 //              and reasoning. Impassable/boundary terrain (deepWater/mesa/ice/collapsed/lava) is
 //              'none', so the consolidation never touches it.
 //   cover    — 'open' | 'soft' | 'hard', per-entry (not purely derived from `blocksLOS`+
-//              `passable` — see #279 below): 'open' when `blocksLOS` is false; `hard` for the
-//              impassable base-infra structures (alertTower/dockClosed/objective) AND, since
-//              #279, for the walk-through terrain cover (forest/scrub/drift/wreck/fumarole) too
-//              — those stay passable+slow, just now block EVERY ground unit's LOS unconditionally
-//              (mech included), not only a small unit's. `soft` cover (only a SMALL ground unit's
-//              LOS is blocked, per issue #269 §1's size tier — a mech/large unit sees clean over
-//              it) remains a fully supported tier (`isSoftCover`/`softCoverBlocksLOS`), it's just
-//              not used by any current entry — a future terrain type can still opt into it. See
-//              `coverBlocksForRay`/`softCoverBlocksLOS` below for how the tiers are wired, and
-//              that function's own comment for the (now tier-independent) own-hex exemption.
+//              `passable`): 'open' when `blocksLOS` is false; `hard` for the impassable
+//              base-infra structures (alertTower/dockClosed/objective) — those always block
+//              EVERY ground unit's LOS unconditionally. The walk-through terrain cover
+//              (forest/scrub/drift/wreck/fumarole) is `soft`: passable+slow, and only a SMALL
+//              ground unit's LOS is blocked (per issue #269 §1's size tier — a mech/large unit
+//              sees clean over it). (#279 briefly flipped these five to `hard`; a playtest
+//              reversed that back to `soft` — cover should only affect small units.) See
+//              `coverBlocksForRay`/`softCoverBlocksLOS`/`isSoftCover` below for how the tiers
+//              are wired, and that function's own comment for the (tier-independent) own-hex
+//              exemption.
 // The raw fields remain the source of truth callers read via `isPassable`/`blocksLOS`/etc.
 // below; category/movement/cover are DERIVED from them per-entry (not the other way around) so
 // adding a new terrain type is still "one entry, all fields together" — no separate derivation
@@ -83,7 +84,7 @@ export const TERRAIN = {
   // Forest: walk-through cover — passable but slowing, and it hides you (blocks LOS).
   // #227: its OWN rubble (charred plant debris) distinct from a destroyed building's masonry.
   forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 40, rubbleId: 'forestRubble',
-               category: 'terrain', movement: 'slow', cover: 'hard' },
+               category: 'terrain', movement: 'slow', cover: 'soft' },
   // #227: what a destroyed forest hex leaves behind — charred plant debris, visually distinct
   // from the generic rubble's broken-masonry look even though both are passable/no-cover.
   forestRubble: { id: 'forestRubble', tex: 'hex_forestRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
@@ -232,7 +233,7 @@ export const TERRAIN = {
   // Scrub: sparse desert brush — walk-through cover (passable + slowing + blocks LOS), like forest.
   // #227: its own rubble (scattered dead scrub) distinct from the generic rubble's masonry look.
   scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'scrubRubble',
-               category: 'terrain', movement: 'slow', cover: 'hard' },
+               category: 'terrain', movement: 'slow', cover: 'soft' },
   // #227: what a destroyed scrub hex leaves behind — scattered dead brush, distinct from the
   // generic rubble's masonry look (#275: was originally distinguished from the desert's own
   // `adobe` outpost rubble; that outpost/rubble pair has since been removed).
@@ -259,7 +260,7 @@ export const TERRAIN = {
   // #227: its own rubble (broken ice/snow drift chunks) distinct from the generic rubble's
   // masonry look.
   drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'driftRubble',
-               category: 'terrain', movement: 'slow', cover: 'hard' },
+               category: 'terrain', movement: 'slow', cover: 'soft' },
   // #227: what a destroyed snowdrift hex leaves behind — shattered ice/snow chunks, distinct
   // from the generic rubble's masonry look (#275: was originally distinguished from the arctic's
   // own `iceRuin` outpost rubble; that outpost/rubble pair has since been removed).
@@ -283,7 +284,7 @@ export const TERRAIN = {
   // Wreckage: burned-out vehicles / low wall — walk-through cover (passable + slow + LOS).
   // #227: its own rubble (burnt debris scraps) distinct from the generic rubble's masonry look.
   wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 40, rubbleId: 'wreckRubble',
-               category: 'terrain', movement: 'slow', cover: 'hard' },
+               category: 'terrain', movement: 'slow', cover: 'soft' },
   // #227: what a destroyed wreck hex leaves behind — burnt debris scraps, distinct from the
   // generic rubble's masonry look (#275: was originally distinguished from urban's own `tower`
   // outpost rubble; that outpost/rubble pair has since been removed).
@@ -320,7 +321,7 @@ export const TERRAIN = {
   // Ash dunes / smoke plumes: walk-through cover (passable + slow + LOS block).
   // #227: its own rubble (loose ash/cinder scatter) distinct from the generic rubble's masonry look.
   fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 30, rubbleId: 'fumaroleRubble',
-               category: 'terrain', movement: 'slow', cover: 'hard' },
+               category: 'terrain', movement: 'slow', cover: 'soft' },
   // #227: what a destroyed fumarole hex leaves behind — loose ash/cinder scatter, distinct
   // from the generic rubble's masonry look (#275: was originally distinguished from volcanic's
   // own `obsidian` outpost rubble; that outpost/rubble pair has since been removed).
@@ -434,10 +435,9 @@ export function isMissionObjective(id) {
 }
 
 // #72: soft cover — walk-through concealment that only blocks a SMALL ground unit's LOS (a
-// mech/large unit sees clean over it). #279: no current terrain entry uses this tier (the former
-// soft-cover set — forest/scrub/drift/wreck/fumarole — is now `hard`, blocking everyone), but the
-// tier itself is fully supported and a future terrain type can still opt in. #269: derived from
-// the `cover` tier directly. Unknown ⇒ false.
+// mech/large unit sees clean over it). The walk-through terrain cover set (forest/scrub/drift/
+// wreck/fumarole) uses this tier (#279 briefly made them `hard`; a playtest reverted them back to
+// `soft`). #269: derived from the `cover` tier directly. Unknown ⇒ false.
 export function isSoftCover(id) {
   return coverTier(id) === 'soft';
 }
@@ -458,16 +458,15 @@ export function softCoverBlocksLOS(smallUnitInvolved) {
 // drift across its three call sites. `ownHexExempt` is #72's own-hex transparency (true when the
 // point being tested sits in a hex the caller has marked see-through for this particular shot —
 // the shooter's muzzle hex, or a living target's own hex); `smallUnitInvolved` is #269 §1's
-// size-tier soft-cover exemption (see `softCoverBlocksLOS` above for why it's currently inert).
+// size-tier soft-cover exemption (see `softCoverBlocksLOS` above).
 // #279: the own-hex exemption applies to BOTH cover tiers — originally it only existed under the
 // `soft` branch because every `hard`-cover hex was impassable (alertTower/dockClosed/objective),
-// so nobody could ever stand inside one and the exemption was moot there. Now that terrain cover
-// (forest/scrub/drift/wreck/fumarole) is `hard` while staying passable, a unit WILL stand inside
-// it — without this, that unit's own hex would block every ray touching it, making it unable to
-// see out or be seen/shot at all. So the exemption check happens once, up front, regardless of
-// tier; only after that does the soft-vs-hard distinction matter (soft cover between two other
-// points is further gated by the size-tier exemption; hard cover between two other points always
-// blocks unconditionally).
+// so nobody could ever stand inside one and the exemption was moot there. Generalizing it to run
+// once, up front, regardless of tier is harmless for both tiers (a unit standing in cover still
+// sees/shoots out) and keeps the rule robust if a passable `hard`-cover terrain is ever added.
+// Only after that up-front exemption does the soft-vs-hard distinction matter: soft cover between
+// two other points is gated by the size-tier exemption (a mech sees over it, a small unit
+// doesn't); hard cover between two other points always blocks unconditionally.
 export function coverBlocksForRay(id, ownHexExempt, smallUnitInvolved = false) {
   if (!blocksLOS(id)) return false;
   if (ownHexExempt) return false;
@@ -487,8 +486,9 @@ export function coverBlocksForRay(id, ownHexExempt, smallUnitInvolved = false) {
 // (mesa/collapsed/deepWater/ice/lava) never block LOS at all (#221 — they're stamped only at the
 // world's outer edge, never used as an in-map obstacle).
 // #269: `smallUnitInvolved` (optional, default false) threads through to the soft-cover size-tier
-// exemption via `coverBlocksForRay` — see that function + `softCoverBlocksLOS` for why it's
-// currently a no-op (no terrain entry uses the `soft` tier after #279).
+// exemption via `coverBlocksForRay` — see that function + `softCoverBlocksLOS`. It's live for the
+// walk-through terrain cover (forest/scrub/drift/wreck/fumarole), which is `soft`: those hexes
+// block a small unit's ray but not a mech's.
 export function shotBlockedAt(id, key, transparent = null, smallUnitInvolved = false) {
   const ownHexExempt = !!(transparent && transparent.has(key));
   return coverBlocksForRay(id, ownHexExempt, smallUnitInvolved);

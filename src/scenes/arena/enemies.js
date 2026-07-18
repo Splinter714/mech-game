@@ -365,11 +365,13 @@ export const EnemiesMixin = {
     turret.rotation = angle + Math.PI / 2;
     parts.push(hull, turret);
     const c = this.add.container(x, y, parts);
-    // #99/#113: a flying kind (helicopter/drone — narratively elevated, no "who's closer to the
-    // ground" ambiguity) shares the player's DEPTH.UNITS tier, same as before. A GROUND kind
-    // (tank/turret/infantry) now renders one tier below at DEPTH.GROUND_UNITS so it can never
-    // stand over/hide the player — see the tier comments in shared.js.
-    c.setDepth(unitDepth(false, def.flying));
+    // #99/#113/#289: a flying kind (helicopter/drone — narratively elevated, no "who's closer to
+    // the ground" ambiguity) shares the player's DEPTH.UNITS tier. A GROUND kind renders below the
+    // player, split by SIZE tier (#289): a SMALL kind (tank/infantry, `def.size === 'small'`) sits
+    // at DEPTH.GROUND_UNITS, below the cover canopy so it peeks out from under foliage; a LARGE kind
+    // (turret/quadruped) sits at DEPTH.LARGE_GROUND_UNITS, above the canopy so it towers over tree
+    // tops. `def.size` mirrors `unitSize`'s default-to-large when absent — see shared.js.
+    c.setDepth(unitDepth(false, def.flying, def.size === 'small'));
     c.hull = hull; c.turret = turret; c.shadow = shadow;
     return c;
   },

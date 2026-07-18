@@ -531,14 +531,13 @@ export function generateTerrain({
   const coverHp = new Map();      // hexKey → remaining HP for destructible walk-through cover hexes
   for (const [k, id] of T) {
     const hp = buildingHpOf(id);
-    // #279: this split used to key off `isSoftCover(id)`, which was equivalent to "passable" back
-    // when soft cover was the only passable destructible terrain. Now that forest/scrub/drift/
-    // wreck/fumarole are HARD cover while staying passable, `isSoftCover` would wrongly bucket
-    // them as solid OUTPOSTs (buildingHp) — silently dropping their flame-damage multiplier and
-    // "soft" collapse FX in `_damageBuildingAt` (world.js), which key off `store === this.coverHp`.
-    // The real distinguishing feature downstream was always "can a unit stand inside it" (walk-
-    // through cover) vs "is it a solid structure" (base infra) — i.e. `isPassable`, not the LOS
-    // cover tier — so key off that instead.
+    // #279: this split keys off `isPassableOf(id)`, not the LOS cover tier. The real
+    // distinguishing feature downstream is "can a unit stand inside it" (walk-through cover →
+    // coverHp) vs "is it a solid structure" (base infra → buildingHp), which is exactly
+    // passability. Keying off passability rather than `isSoftCover` keeps the flame-damage
+    // multiplier and "soft" collapse FX in `_damageBuildingAt` (world.js, which check
+    // `store === this.coverHp`) wired correctly regardless of whether the walk-through cover is
+    // the `soft` or `hard` tier — robust even though forest/scrub/drift/wreck/fumarole are `soft`.
     if (hp > 0) (isPassableOf(id) ? coverHp : buildingHp).set(k, hp);
   }
   return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers };

@@ -1,7 +1,8 @@
 // #289: cover terrain (forest/scrub/drift/wreck/fumarole) now renders as TWO separately-placed
 // Images per hex — a ground layer (unchanged depth/behaviour) and a new foliage/canopy overlay
-// (hexArt.js's separate canopy texture pass) at a depth between GROUND_UNITS and UNITS, so a
-// small ground unit standing in cover can render visually BETWEEN the two. Non-cover hexes are
+// (hexArt.js's separate canopy texture pass) at a depth between GROUND_UNITS and LARGE_GROUND_UNITS
+// (#289 follow-up), so a SMALL ground unit standing in cover renders BELOW the canopy (peeks out
+// from under) while LARGE ground units and the player render ABOVE it. Non-cover hexes are
 // unaffected — still exactly one Image. These tests build a real world via `_buildWorld` against
 // a minimal fake Phaser `add`/`cameras`/`registry` (mirrors dockResupply.test.js's hand-rolled
 // scene harness) and inspect the resulting `tileImages`/`canopyImages` maps directly, rather than
@@ -84,9 +85,11 @@ describe('#289 cover terrain ground/canopy split', () => {
         expect(canopyImg).toBeTruthy();
         expect(canopyImg.tex).toBe(canopyTexKey(tex));
         expect(canopyImg.depth).toBe(DEPTH.COVER_CANOPY);
-        // The new tier sits strictly between GROUND_UNITS and UNITS.
+        // #289 follow-up: the canopy sits strictly between the SMALL ground tier (GROUND_UNITS)
+        // and the LARGE ground tier (LARGE_GROUND_UNITS) — small units peek out under it, large
+        // units tower over it.
         expect(DEPTH.COVER_CANOPY).toBeGreaterThan(DEPTH.GROUND_UNITS);
-        expect(DEPTH.COVER_CANOPY).toBeLessThan(DEPTH.UNITS);
+        expect(DEPTH.COVER_CANOPY).toBeLessThan(DEPTH.LARGE_GROUND_UNITS);
         // Same hex centre as the ground tile.
         expect(canopyImg.x).toBe(groundImg.x);
         expect(canopyImg.y).toBe(groundImg.y);
@@ -99,9 +102,10 @@ describe('#289 cover terrain ground/canopy split', () => {
     expect(sawPlainHex).toBe(true);   // ...and plenty of ordinary single-Image terrain too
   });
 
-  it('DEPTH.COVER_CANOPY sits strictly between GROUND_UNITS and UNITS', () => {
+  it('DEPTH.COVER_CANOPY sits strictly between the small (GROUND_UNITS) and large (LARGE_GROUND_UNITS) ground tiers, both below UNITS', () => {
     expect(DEPTH.GROUND_UNITS).toBeLessThan(DEPTH.COVER_CANOPY);
-    expect(DEPTH.COVER_CANOPY).toBeLessThan(DEPTH.UNITS);
+    expect(DEPTH.COVER_CANOPY).toBeLessThan(DEPTH.LARGE_GROUND_UNITS);
+    expect(DEPTH.LARGE_GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
   });
 
   it('collapsing a cover hex to rubble destroys its orphaned canopy overlay', () => {
