@@ -22,13 +22,6 @@
 import { axialKey, range, neighbors, hexToPixel, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isSoftCover } from './terrain.js';
 
-// #251: how many static `helipad` ground markings (data/terrain.js) get stamped into a
-// generated map — pure base-infrastructure set-dressing, not a gameplay objective, so this is a
-// small flat count rather than something scaled up like `outposts` (which needs to keep pace
-// with a long corridor so every stage has an assault target). 2 is enough that a full traversal
-// of the corridor plausibly passes one without turning every map into a helipad showcase.
-export const HELIPAD_COUNT = 2;
-
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
 // stage/squad system, data/run.js's now-retired `squadForStage`/`DEFAULT_SQUAD`): enemies are no
 // longer squad-dropped off-camera near the player on mission-complete — they're placed once,
@@ -47,21 +40,20 @@ export const BASE_COUNT = 3;
 export const DOCKS_PER_BASE_MIN = 3;
 export const DOCKS_PER_BASE_MAX = 5;
 
-// #269 playtest follow-up (bases/outposts role swap): alert towers are NO LONGER placed as
-// connective tissue between bases — they're now OWNED by outposts (the separate, old,
-// plain-destructible-building system; see `placeOutpostTowers` below and the `outpostCount`
-// loop in `generateTerrain`). A base itself gets no dedicated tower anymore: it's already the
-// dense, obviously-dangerous encounter (docks + turretEmplacements), while an outpost — a
-// single unassuming building with nothing guarding it — is the one that needed a sentry. The
-// tower's own trigger behaviour (detect → countdown → wake the NEAREST base, `nearestBaseTo`)
-// is unchanged; only where it gets planted moved.
-export const ALERT_TOWERS_PER_OUTPOST_MIN = 1;
-export const ALERT_TOWERS_PER_OUTPOST_MAX = 1;
+// #275 (redesign, on top of the outpost-terrain removal): alert towers are no longer anchored to
+// an "outpost" concept at all — Jackson clarified he never thought of the removed building/
+// adobe/iceRuin/tower/obsidian terrain as "outposts," and didn't want alert towers anchored to
+// where those used to cluster, not even on the now-plain ground left behind. Instead, towers
+// place SOLO, one per "gap" along the corridor's spine progression: one somewhere between spawn
+// and the first base, one between the first and second base, one between the second and third,
+// and so on — exactly `baseCount` gaps for `baseCount` bases (see `placeGapTowers` below). This
+// makes a tower a real "you're about to walk into a base" tripwire rather than tied to a
+// building that no longer exists. The tower's own trigger behaviour (detect → countdown → wake
+// the NEAREST base, `nearestBaseTo`) is unchanged; only how its position is chosen changed.
 
 // #269 playtest follow-up (dock composition, point 4): turret emplacements per base — placed via
-// their OWN loop (below, mirroring the dock/alert-tower loops' style), never drawn from the
-// generic dock kind pools. Small count, similar spirit to `ALERT_TOWERS_PER_OUTPOST_MIN/MAX` —
-// a base gets 1-2 defensive turret emplacements guarding it, not a wall of them.
+// their OWN loop (below, mirroring the dock loop's style), never drawn from the generic dock kind
+// pools. Small count — a base gets 1-2 defensive turret emplacements guarding it, not a wall of them.
 export const TURRET_EMPLACEMENTS_PER_BASE_MIN = 1;
 export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 
@@ -134,26 +126,23 @@ export function baseLateFraction(baseIndex, baseCount) {
   return baseIndex / (baseCount - 1);
 }
 
-// Place `baseCount` bases into the terrain map `T` (mutated in place, same style as the
-// outpost/helipad loops above): each base is a small cluster of `dock` hexes (one dormant enemy
-// KIND+COUNT pre-assigned per dock — world-gen PLACEMENT DATA, not a new terrain entry per kind,
-// per the issue), plus a small cluster of `turretEmplacement` hexes (its own dedicated placement,
-// #269 playtest follow-up point 4 — never drawn from the dock kind pools). Returns the array of
-// base descriptors: `{ id, center: {q,r}, docks: [{q, r, kindId, count}], turrets: [{q,r}] }`.
-// Every hex actually used is stamped into `T` only if it's still plain open ground (`isGround`)
-// at the time its turn comes up, exactly like the outpost/helipad loops — never overwriting
-// cover/an outpost/another dock/turret.
+// Place `baseCount` bases into the terrain map `T` (mutated in place): each base is a small
+// cluster of `dock` hexes (one dormant enemy KIND+COUNT pre-assigned per dock — world-gen
+// PLACEMENT DATA, not a new terrain entry per kind, per the issue), plus a small cluster of
+// `turretEmplacement` hexes (its own dedicated placement, #269 playtest follow-up point 4 —
+// never drawn from the dock kind pools). Returns the array of base descriptors: `{ id, center:
+// {q,r}, docks: [{q, r, kindId, count}], turrets: [{q,r}] }`. Every hex actually used is stamped
+// into `T` only if it's still plain open ground (`isGround`) at the time its turn comes up —
+// never overwriting cover/another dock/turret.
 //
 // #269 playtest follow-up (bases/outposts role swap): bases no longer place their own alert
-// towers — see `placeOutpostTowers` below, which anchors towers (+ the roaming patrols they
-// imply via `scenes/arena/bases.js` `_spawnTowerPatrols`, unchanged) to OUTPOSTS instead.
+// towers — see `placeGapTowers` below, which places one tower per GAP between successive bases
+// (#275 redesign) instead.
 //
 // #269 playtest follow-up: base CENTRES are stratified along the run instead of drawn by pure
 // uniform-random pick across the whole candidate list. With only `baseCount` (3) draws, a pure
 // random pick can (and did, in play) cluster every base toward the far end of the ~3400px
-// corridor by sheer chance — unlike the outpost loop above, which also draws uniformly at
-// random but does so MANY times (`outpostCount` scales with corridor length), so it blankets the
-// corridor evenly by volume alone. Bases don't have that luxury with only 3 draws, so instead we
+// corridor by sheer chance. Bases don't have that luxury with only 3 draws, so instead we
 // sort candidates by `progressOf` ("how far down the run" a hex sits) and place base `i` inside
 // the `i`-th of `baseCount` roughly-equal slices of that ordering — base 0 is guaranteed to land
 // in the first slice, the last base in the final slice — while still picking a RANDOM hex within
@@ -176,9 +165,7 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
     const center = segment[Math.floor(rng() * segment.length)];
     const frac = baseLateFraction(i, baseCount);
     const dockCount = DOCKS_PER_BASE_MIN + Math.floor(rng() * (DOCKS_PER_BASE_MAX - DOCKS_PER_BASE_MIN + 1));
-    // Candidate hexes for this base's docks: the centre, then successive rings out from it —
-    // mirrors the outpost cluster's "centre + neighbours" shape but wider, since a base needs
-    // more hexes than a single building footprint.
+    // Candidate hexes for this base's docks: the centre, then successive rings out from it.
     const candidates = [center, ...neighbors(center.q, center.r), ...range(center, 2)];
     const docks = [];
     for (const h of candidates) {
@@ -231,31 +218,44 @@ export function placeBases(rng, all, T, isGround, baseCount = BASE_COUNT, progre
   return { bases };
 }
 
-// #269 playtest follow-up (bases/outposts role swap): alert towers (+ the roaming patrols
-// `scenes/arena/bases.js` `_spawnTowerPatrols` stations at each tower's position, unchanged) now
-// belong to OUTPOSTS instead of bases — a base is already the dense, obviously-dangerous
-// encounter; an outpost is the unassuming lone building that needed a sentry watching it. Same
-// "pick a nearby ring hex, snap to the first valid ground hex" placement shape the old per-base
-// loop used (rings 3-5 out, 10 rejection-sample tries), just anchored to each outpost centre in
-// `outpostCenters` (the positions `generateTerrain`'s outpost loop actually stamped) instead of a
-// base centre. `ALERT_TOWERS_PER_OUTPOST_MIN/MAX` are both 1 — the issue reads "each outpost"
-// literally (1:1), and a biome's flat outpost count (3-8, data/biomes.js) is small enough that
-// 1:1 doesn't create the "towers everywhere" density the old per-base loop risked (up to
-// BASE_COUNT(3) * 2 = 6 towers before, vs. up to 8 now on the densest biome — same order of
-// magnitude, not an explosion). Returns the flat `{q,r}` alert-tower list, same shape as before.
-export function placeOutpostTowers(rng, outpostCenters, T, isGround) {
+// #275 (redesign): place one alert tower per GAP along the corridor's progression, instead of
+// anchoring towers to the removed "outpost" concept. `baseCenters` is the ordered list of base
+// centre hexes (`placeBases`' returned `bases.map(b => b.center)`, in base-index order 0..N-1,
+// which is already stratified by `progressOf` — see that function's own comment). For gap `i`
+// (0-indexed), the tower goes somewhere between base `i-1`'s progress position (or the corridor
+// START, progress 0 — spawn sits at spine u=0 — for gap 0) and base `i`'s progress position: a
+// real "you're about to walk into a base" tripwire between encampments, not tied to a building
+// that no longer exists. `baseCenters.length` gaps are placed for `baseCenters.length` bases —
+// gap 0 before the first base, gap 1 between the first and second, and so on.
+//
+// Implementation: for each gap, filter the candidate set `all` down to hexes whose OWN progress
+// falls within that gap's [lo, hi] progress range AND are still plain open ground (`isGround`) —
+// guarantees the tower's final position genuinely sits within its gap (no ring-hop drift that
+// could push it past a boundary), then rng-picks one. If a gap has no valid ground candidate
+// (rare — a heavily-hazarded/covered gap, or a very short one), that gap simply gets no tower
+// rather than forcing a bad placement. `progressOf(hex)` defaults to straight-line distance from
+// the world origin (matching `placeBases`' own default); callers with a real corridor spine pass
+// `(h) => spineProgressHexOf(spine, h.q, h.r)` instead, same as `placeBases`. Roaming patrols
+// (`scenes/arena/bases.js` `_spawnTowerPatrols`) still anchor to wherever the tower ends up,
+// unaffected by this redesign — they're just fed a different tower-position source now.
+export function placeGapTowers(rng, all, T, isGround, baseCenters, progressOf = null) {
   const alertTowers = [];
-  for (const center of outpostCenters ?? []) {
-    const towerCount = ALERT_TOWERS_PER_OUTPOST_MIN
-      + Math.floor(rng() * (ALERT_TOWERS_PER_OUTPOST_MAX - ALERT_TOWERS_PER_OUTPOST_MIN + 1));
-    for (let t = 0; t < towerCount; t++) {
-      const ring = range(center, 3 + Math.floor(rng() * 3));
-      for (let tries = 0; tries < 10; tries++) {
-        const h = ring[Math.floor(rng() * ring.length)];
-        const k = axialKey(h.q, h.r);
-        if (T.has(k) && isGround(k)) { T.set(k, 'alertTower'); alertTowers.push({ q: h.q, r: h.r }); break; }
-      }
+  const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
+  let prevProgress = 0;   // the corridor start (spawn sits at spine u=0 / distance 0 from origin)
+  for (const baseCenter of baseCenters ?? []) {
+    const baseProgress = progress(baseCenter);
+    const lo = Math.min(prevProgress, baseProgress);
+    const hi = Math.max(prevProgress, baseProgress);
+    const candidates = all.filter((h) => {
+      const p = progress(h);
+      return p >= lo && p <= hi && isGround(axialKey(h.q, h.r));
+    });
+    if (candidates.length) {
+      const h = candidates[Math.floor(rng() * candidates.length)];
+      T.set(axialKey(h.q, h.r), 'alertTower');
+      alertTowers.push({ q: h.q, r: h.r });
     }
+    prevProgress = baseProgress;
   }
   return alertTowers;
 }
@@ -289,18 +289,16 @@ export function safeZoneKeys(center, radius = 3) {
 // sliver of a huge bounding disc, so scanning `range({0,0}, worldRadius)` (the older organic-blob
 // path, kept as a fallback via the `included` predicate for existing callers/tests) would waste
 // almost all of its work. Feature density scales off `all.length` (the true playable area), so a
-// thin corridor doesn't get a disc-sized dose of cover/outposts.
+// thin corridor doesn't get a disc-sized dose of cover.
 //
 // #110: `boundaryRing` (optional Set of hex keys, e.g. from `boundaryRingKeys`) stamps every
 // hex it contains with the biome's `deep` terrain id — the world's outer boundary — regardless
 // of membership (these hexes are, by construction, just OUTSIDE the playable shape). This is
 // the ONLY place `biome.deep` is ever stamped now; the old in-map "deep blob" is gone (see
-// `hasHazard`/`hazard` below). `outposts` (optional) overrides the outpost count, which
-// otherwise defaults to `baseCount` (#269 playtest follow-up — one outpost per base, see the
-// `outpostCount` line below for the full reasoning).
+// `hasHazard`/`hazard` below).
 export function generateTerrain({
   seed, worldRadius, biome, safeCenter = { q: 0, r: 0 }, extraClear = [],
-  included = null, includedKeys = null, boundaryRing = null, outposts = null, baseCount = BASE_COUNT,
+  included = null, includedKeys = null, boundaryRing = null, baseCount = BASE_COUNT,
   spine = null,
 }) {
   const R = worldRadius;
@@ -318,14 +316,6 @@ export function generateTerrain({
   const groundAt = (h) => ((h.q + h.r) % 2 ? B.groundB : B.groundA);
   const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
 
-  // #269 playtest follow-up ("outpost:base ratio should be 1:1"): outpost count now DEFAULTS to
-  // `baseCount` (the same parameter threaded through this function for `placeBases`) instead of
-  // the biome's own flat `outposts` field — each outpost anchors exactly one alert tower
-  // (`placeOutpostTowers` below), and the issue wants exactly one outpost per base, not an
-  // independent biome-tuned count (previously 3-8, unrelated to `BASE_COUNT`). The biome no
-  // longer carries an `outposts` field at all (data/biomes.js) since nothing reads it anymore;
-  // the explicit `outposts` override param is untouched and still wins when a caller (tests, or
-  // any future tuning) passes it directly.
   // Base: a checkered open floor (grass / sand / snow / pavement / ash by biome).
   for (const h of all) T.set(axialKey(h.q, h.r), groundAt(h));
 
@@ -369,61 +359,20 @@ export function generateTerrain({
     }
   }
 
-  // A few DESTRUCTIBLE outposts (building clusters) — hard cover. HP seeded below. `outposts`
-  // (from the caller) overrides the biome default so a long corridor gets outposts spread along
-  // its whole length — otherwise late stages, whose objective sits near the far end, would have
-  // no standing outpost to target there.
-  //
-  // #269 playtest follow-up (bases/outposts role swap): each cluster's centre `c` is now also
-  // collected into `outpostCenters`, so `placeOutpostTowers` below has something to anchor an
-  // alert tower (+ roaming patrol) to. Collected regardless of whether `c`'s own hex ends up
-  // actually stamped `B.outpost` (this loop, unlike the dock/turret/tower loops, doesn't check
-  // `isGround` before writing) — a tower planted near "roughly where an outpost cluster is" is
-  // the right anchor even on the rare hex where `c` itself got overwritten by a neighbour draw
-  // elsewhere; it's re-validated against the final `T` below anyway, same as bases/towers are.
-  const outpostCount = outposts ?? baseCount;
-  const outpostCenters = [];
-  for (let i = 0; i < outpostCount; i++) {
-    const c = all[Math.floor(rng() * all.length)];
-    outpostCenters.push({ q: c.q, r: c.r });
-    for (const h of [c, ...neighbors(c.q, c.r).filter(() => rng() < 0.55)]) {
-      const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, B.outpost);
-    }
-  }
-
-  // #251: a couple of static helipad ground markings — base-infrastructure SET DRESSING
-  // (data/terrain.js `helipad`: passable, no LOS block; destructible with its own hp, same as a
-  // real outpost, but excluded from ever being picked as the mission objective via
-  // `setDressing: true`/`isMissionObjective`), placed as a normal part of the generated layout
-  // exactly like the outposts/cover above, NOT tied to any
-  // enemy's spawn moment (helicopters keep using their own independent offscreen spawn logic —
-  // there is no requirement a helicopter spawn near one, or vice versa). `HELIPAD_COUNT` is
-  // deliberately tiny (flavor, not a repeated hazard/cover density like the loops above) — each
-  // candidate hex only actually becomes a helipad if it's still plain open ground by the time
-  // its turn comes up (`isGround`), so a helipad never overwrites cover/an outpost placed just
-  // above; landing inside the spawn safe zone is fine too, since the safe-zone clear right below
-  // already resets anything there back to open ground the same way it would an outpost.
-  for (let i = 0; i < HELIPAD_COUNT; i++) {
-    const c = all[Math.floor(rng() * all.length)];
-    const k = axialKey(c.q, c.r);
-    if (isGround(k)) T.set(k, 'helipad');
-  }
-
-  // #269 §3: place the run's bases (dormant docks + turret emplacements) — same "random valid
-  // ground hex" style as the outpost/helipad loops above, AFTER them so a base never overwrites
-  // an outpost/cover cluster, BEFORE the safe-zone clear so anything that lands inside it is
-  // reset back to open ground exactly like an outpost or helipad would be.
-  // #269 playtest follow-up: prefer real progress-along-the-spine over straight-line distance
-  // from origin when a spine is available — the corridor curves, so distance-from-origin alone
-  // can rank a hex that's actually far down a bend as "early" (falls back to the distance proxy,
-  // matching the pattern used elsewhere in this function, when no spine is passed).
+  // #269 §3: place the run's bases (dormant docks + turret emplacements) — "random valid ground
+  // hex" style, BEFORE the safe-zone clear so anything that lands inside it is reset back to open
+  // ground. #269 playtest follow-up: prefer real progress-along-the-spine over straight-line
+  // distance from origin when a spine is available — the corridor curves, so distance-from-origin
+  // alone can rank a hex that's actually far down a bend as "early" (falls back to the distance
+  // proxy, matching the pattern used elsewhere in this function, when no spine is passed).
   const progressOf = spine ? (h) => spineProgressHexOf(spine, h.q, h.r) : null;
   const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf);
-  // #269 playtest follow-up (bases/outposts role swap): alert towers (+ the roaming patrols they
-  // imply) are now anchored to OUTPOSTS instead of bases — see `placeOutpostTowers` above.
-  // Placed after bases for the same "never overwrite a base's docks/turrets" reason, still
-  // before the safe-zone clear below.
-  const alertTowers = placeOutpostTowers(rng, outpostCenters, T, isGround);
+  // #275 (redesign): one alert tower per GAP between successive bases (`placeGapTowers`'s own
+  // comment has the full reasoning) — replaces the old outpost-cluster-anchored placement.
+  // Placed after bases (using their final centres) for the same "never overwrite a base's
+  // docks/turrets" reason the old per-outpost placement observed, still before the safe-zone
+  // clear below.
+  const alertTowers = placeGapTowers(rng, all, T, isGround, bases.map((b) => b.center), progressOf);
 
   // Clear the safe zone (spawn point + line of fire) back to open ground.
   for (const h of range(safeCenter, 3)) { const k = axialKey(h.q, h.r); if (T.has(k)) T.set(k, groundAt(h)); }
@@ -433,13 +382,11 @@ export function generateTerrain({
     T.set(k, B.groundA);
   }
 
-  // #269: unlike the outpost/helipad loops (which bake straight into `T` with nothing else ever
-  // tracking their positions separately), `bases`/`alertTowers` are returned as their OWN data —
-  // the scene spawns a real dormant enemy record at each dock's exact position, so a dock/tower
-  // whose hex the safe-zone clear just reset back to open ground must be dropped from these
-  // lists too, or the scene would spawn a "dormant unit" standing on plain grass with no matching
-  // terrain marker under it. Re-validated against the now-final `T` (cheap — base/tower counts
-  // are small), same "landing in the safe zone is fine, it just gets cleared" spirit as helipad.
+  // #269: `bases`/`alertTowers` are returned as their OWN data — the scene spawns a real dormant
+  // enemy record at each dock's exact position, so a dock/tower whose hex the safe-zone clear
+  // just reset back to open ground must be dropped from these lists too, or the scene would spawn
+  // a "dormant unit" standing on plain grass with no matching terrain marker under it.
+  // Re-validated against the now-final `T` (cheap — base/tower counts are small).
   for (const base of bases) {
     base.docks = base.docks.filter((d) => T.get(axialKey(d.q, d.r)) === 'dock');
     base.turrets = (base.turrets ?? []).filter((t) => T.get(axialKey(t.q, t.r)) === 'turretEmplacement');
@@ -451,14 +398,10 @@ export function generateTerrain({
       base.objectiveHex = null;
     }
   }
+  // #275: re-validated against the now-final `T` the same way bases' docks/turrets/objective are
+  // above — if the safe-zone clear (or a debug extraClear hex) reset a gap tower's hex back to
+  // open ground, drop it rather than leaving a stale position.
   const finalAlertTowers = alertTowers.filter((t) => T.get(axialKey(t.q, t.r)) === 'alertTower');
-  // #269 playtest follow-up (bases/outposts role swap): `outpostCenters` is re-validated the same
-  // way — only centres whose own hex is still the biome's `outpost` id in the final map (not
-  // reset by the safe-zone clear, not overwritten by a later base/helipad draw) are returned, so
-  // a caller anchoring UI/analytics to "where the outposts are" never sees a stale/cleared one.
-  // `placeOutpostTowers` above already ran against the pre-clear centres (matching how bases run
-  // against pre-clear candidates too) — this filtered list is for callers, not re-fed into it.
-  const finalOutposts = outpostCenters.filter((c) => T.get(axialKey(c.q, c.r)) === B.outpost);
 
   // #110: stamp the boundary ring LAST (and unconditionally) — these hexes sit just OUTSIDE
   // the playable shape, so nothing above ever touched them; this is the one and only place
@@ -473,7 +416,7 @@ export function generateTerrain({
     const hp = buildingHpOf(id);
     if (hp > 0) (isSoftCover(id) ? coverHp : buildingHp).set(k, hp);
   }
-  return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers, outposts: finalOutposts };
+  return { terrain: T, buildingHp, coverHp, bases, alertTowers: finalAlertTowers };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

@@ -49,29 +49,21 @@ describe('hex tile edge bleed (#255 seam fix)', () => {
   });
 });
 
-// #269 playtest follow-up: `dock` and `alertTower` used to reuse `hex_helipad`/`hex_tower`
-// verbatim (see the terrain.js entries at the time), which made them indistinguishable from a
-// real helipad / a regular destructible outpost building in play. Each now has its own PAL
-// entry (buildHexTextures wires every non-abstract PAL key to a `hex_<key>` texture
-// automatically) — these checks confirm the wiring exists and terrain.js actually points at it,
-// without needing a real Phaser scene to bake the textures.
+// #269 playtest follow-up: `dock` and `alertTower` used to reuse the (since-removed, #275)
+// `helipad`/`tower` outpost textures verbatim, which made them indistinguishable from a real
+// helipad / a regular destructible outpost building in play. Each now has its own PAL entry
+// (buildHexTextures wires every non-abstract PAL key to a `hex_<key>` texture automatically) —
+// these checks confirm the wiring exists and terrain.js actually points at it, without needing a
+// real Phaser scene to bake the textures.
 describe('dock/alertTower distinct textures (#269 playtest follow-up)', () => {
-  it('terrain.js points dock and alertTower at their own texture keys, not helipad/tower', () => {
+  it('terrain.js points dock and alertTower at their own distinct texture keys', () => {
     expect(TERRAIN.dock.tex).toBe('hex_dock');
     expect(TERRAIN.alertTower.tex).toBe('hex_alertTower');
-    expect(TERRAIN.dock.tex).not.toBe(TERRAIN.helipad.tex);
-    expect(TERRAIN.alertTower.tex).not.toBe(TERRAIN.tower.tex);
+    expect(TERRAIN.dock.tex).not.toBe(TERRAIN.alertTower.tex);
   });
 
-  it('both stay on the shared base-infrastructure fill colour, like helipad', () => {
+  it('both stay on the shared base-infrastructure fill colour', () => {
     expect(terrainFillColor('dock')).toBe(BASE_INFRA_COLOR.fill);
     expect(terrainFillColor('alertTower')).toBe(BASE_INFRA_COLOR.fill);
-    expect(terrainFillColor('helipad')).toBe(BASE_INFRA_COLOR.fill);
-  });
-
-  it('alertTower does NOT reuse the regular urban-ruins tower fill either', () => {
-    // hex_tower (the ordinary destructible outpost building) keeps its own grey PAL entry,
-    // distinct from the base-infrastructure family alertTower now shares with helipad/dock.
-    expect(terrainFillColor('alertTower')).not.toBe(terrainFillColor('tower'));
   });
 });

@@ -7,8 +7,7 @@
 //
 // Roles (mirror the grassland's terrain mix):
 //   groundA / groundB — the checkered open floor (open, fast).
-//   channel           — the winding "river" strip: passable but usually slowing (or a fast
-//                       road in the city). Non-LOS-blocking.
+//   channel           — the winding "river" strip: passable but usually slowing. Non-LOS-blocking.
 //   deep              — the impassable "lake" terrain id. #110: RESERVED EXCLUSIVELY for the
 //                       world's outer boundary ring (see data/worldgen.js `boundaryRingKeys` +
 //                       scenes/arena/world.js `_buildWorld`) — never spawned as an in-map
@@ -20,13 +19,15 @@
 //                       river, already covers the "watch your footing" role — see `hasHazard`).
 //   cover             — scattered walk-through cover clusters (forest analog: passable, slow,
 //                       blocks LOS).
-//   outpost           — the destructible hard-cover building for this biome. #269 playtest
-//                       follow-up ("outpost:base ratio should be 1:1"): how MANY outposts get
-//                       placed is no longer a per-biome knob (a flat `outposts` count used to
-//                       live here, 3-8 depending on biome) — it now defaults to `BASE_COUNT`
-//                       (data/worldgen.js `generateTerrain`'s `outpostCount`), since each outpost
-//                       anchors exactly one alert tower (`placeOutpostTowers`) and the issue wants
-//                       one outpost per base.
+// #275: this biome record used to also carry an `outpost` role (the destructible hard-cover
+// building for this biome — building/adobe/iceRuin/tower/obsidian in terrain.js) — removed along
+// with those 5 terrain entries: plain destructible buildings scattered as generic cover were
+// redundant next to the newer, more specific base hexes (dock/alertTower/objective/
+// turretEmplacement). The "outpost" CONCEPT is gone entirely, not just its terrain — alert towers
+// no longer anchor to outpost clusters at all (Jackson: he never thought of the removed terrain
+// as "outposts"). They now place solo, one per gap between successive bases along the corridor's
+// spine progression (data/worldgen.js `placeGapTowers`), so no biome-specific terrain id or
+// cluster-placement geometry is needed here anymore.
 // Generation knobs:
 //   coverClusters     — multiplier on how many cover clusters to seed (1 = grassland default).
 //   hasChannel        — draw the winding channel strip.
@@ -43,7 +44,6 @@ export const BIOMES = {
     deep: 'deepWater',      // #110: boundary-only now (was also an in-map lake blob)
     hazard: null,
     cover: 'forest',
-    outpost: 'building',
     coverClusters: 1, hasChannel: true, hasHazard: false,
   },
 
@@ -55,7 +55,6 @@ export const BIOMES = {
     deep: 'mesa',          // #110: boundary-only — impassable rock buttes mark the world's edge
     hazard: 'quicksand',   // #110: the in-map lesser hazard — passable but heavily slowing
     cover: 'scrub',        // sparse brush cover
-    outpost: 'adobe',
     coverClusters: 0.7, hasChannel: true, hasHazard: true,
   },
 
@@ -67,7 +66,6 @@ export const BIOMES = {
     deep: 'ice',           // #110: boundary-only — a solid frozen lake marks the world's edge
     hazard: 'brokenIce',   // #110: the in-map lesser hazard — thin/cracked ice, passable but slow
     cover: 'drift',        // snowdrifts / frozen pines
-    outpost: 'iceRuin',
     coverClusters: 1, hasChannel: true, hasHazard: true,
   },
 
@@ -75,11 +73,17 @@ export const BIOMES = {
     id: 'urban',
     name: 'Urban Ruins',
     groundA: 'pavement', groundB: 'pavementB',
-    channel: 'road',       // a fast paved lane instead of a river
+    // #275: `road` (the dedicated paved-lane terrain) was removed — a plain destructible outpost
+    // scattered as generic cover was redundant next to the newer base hexes, and a distinct
+    // paved-road identity wasn't worth keeping for a channel role alone. Urban's `channel` now
+    // points at the same `debris` id as its `hazard` role (a rubble-strewn street reads fine as
+    // both "the winding channel strip" and "the lesser in-map hazard" — this is a judgment call,
+    // not a hard rule; `hasChannel: false` was the other reasonable option, but keeping a channel
+    // strip preserves the winding visual/tactical lane every other biome has).
+    channel: 'debris',
     deep: 'collapsed',     // #110: boundary-only — a collapsed-tower heap marks the world's edge
     hazard: 'debris',      // #110: the in-map lesser hazard — a rubble-strewn street, slow but passable
     cover: 'wreck',        // burned-out wreckage / low walls
-    outpost: 'tower',
     coverClusters: 1.6, hasChannel: true, hasHazard: true, // dense destructible cover
   },
 
@@ -97,7 +101,6 @@ export const BIOMES = {
     deep: 'lava',          // boundary-only
     hazard: 'cinderField', // #110: the in-map lesser hazard — hot ash/embers, passable but slow
     cover: 'fumarole',     // ash dunes / smoke plumes
-    outpost: 'obsidian',
     coverClusters: 0.9, hasChannel: true, hasHazard: true,
   },
 };
