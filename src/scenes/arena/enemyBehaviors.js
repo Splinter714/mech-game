@@ -14,7 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
-import { rotateToward, hullTravelAngle, isSmallUnit, leashIntent } from './shared.js';
+import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -78,17 +78,12 @@ function tankMoveIntent(e, ctx, def) {
 function tankBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  let { mx, my, active } = tankMoveIntent(e, ctx, def);
-  // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock holds its
-  // ground — see the top-level comment on `e.holdGround` in scenes/arena/bases.js `_wakeBase`
-  // for the full reasoning. #269 Part 1 ("hold-ground units should still move — leash, not
-  // freeze"): holding ground no longer means freezing in place — it still runs this SAME
-  // advance-to-standoff/strafe movement, just leashed to stay near its dock (`leashIntent`,
-  // shared.js) rather than chasing the player arbitrarily far across the map.
-  if (e.holdGround) {
-    const leashed = leashIntent(e, mx, my);
-    mx = leashed.mx; my = leashed.my; active = active || leashed.leashed;
-  }
+  const { mx, my, active } = tankMoveIntent(e, ctx, def);
+  // #269 §7 (wake-response split): a slow/defensive kind woken from a base dock is flagged
+  // `e.holdGround` — see bases.js `_wakeBase` for what that still means. #285 ("units should
+  // fully commit to attacking the player"): it used to also leash this movement to stay near
+  // its dock; the leash is gone now, so a hold-ground tank just runs the exact same
+  // advance-to-standoff/strafe movement a non-hold-ground tank already runs, no distance cap.
   const target = active ? mv.maxSpeed : 0;
   e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
@@ -216,15 +211,11 @@ function quadrupedMoveIntent(e, ctx, def) {
 function quadrupedBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  let { mx, my, active } = quadrupedMoveIntent(e, ctx, def);
-  // #269 §7 / Part 1: same hold-ground wake response as tankBehavior above — a woken defensive
-  // dock unit still runs its normal advance-to-standoff/strafe movement, just leashed near its
-  // dock rather than freezing OR chasing the player unbounded. The deploy-drone mechanic below
-  // still runs regardless (it's a support ability, not locomotion).
-  if (e.holdGround) {
-    const leashed = leashIntent(e, mx, my);
-    mx = leashed.mx; my = leashed.my; active = active || leashed.leashed;
-  }
+  const { mx, my, active } = quadrupedMoveIntent(e, ctx, def);
+  // #269 §7 / #285: same hold-ground wake response as tankBehavior above — a woken defensive
+  // dock unit runs its normal advance-to-standoff/strafe movement exactly like a non-hold-ground
+  // unit, no leash/distance cap (removed per #285). The deploy-drone mechanic below still runs
+  // regardless (it's a support ability, not locomotion).
   const target = active ? mv.maxSpeed : 0;
   e.vx = approach(e.vx, mx * target, mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * target, mv.accel * ctx.dt);
@@ -292,11 +283,9 @@ function infantryMoveIntent(e, ctx, def) {
 function infantryBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  let { mx, my } = infantryMoveIntent(e, ctx, def);
-  // #269 §7 / Part 1: same hold-ground wake response as tank/quadruped above — a woken trooper
-  // still advances/mills exactly like a non-held one, just leashed near its dock instead of
-  // freezing OR chasing the player unbounded.
-  if (e.holdGround) ({ mx, my } = leashIntent(e, mx, my));
+  const { mx, my } = infantryMoveIntent(e, ctx, def);
+  // #269 §7 / #285: same hold-ground wake response as tank/quadruped above — a woken trooper
+  // advances/mills exactly like a non-hold-ground one, no leash/distance cap (removed per #285).
   e.vx = approach(e.vx, mx * mv.maxSpeed, mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * mv.maxSpeed, mv.accel * ctx.dt);
   if (Math.hypot(e.vx, e.vy) > 5) e.angle = Math.atan2(e.vy, e.vx);

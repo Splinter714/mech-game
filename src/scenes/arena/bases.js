@@ -41,6 +41,22 @@ const ALERT_RING_ALPHA_MAX = 0.95;
 const ALERT_PULSE_INTERVAL_MAX_MS = 520;
 const ALERT_PULSE_INTERVAL_MIN_MS = 120;
 
+// #285 ("units at a base shouldn't all snap into motion in the same instant"): the randomized
+// per-unit delay (ms) `_wakeBase` stamps onto `e.reactDelayMs` before a newly-woken unit's
+// tactical brain actually kicks in (movement, turret tracking, firing — see enemies.js
+// `_isReacting`). Deliberately much shorter than the tactical AI's own re-decide cadence
+// (`DECIDE_MIN`/`DECIDE_MAX` in enemies.js, 750-1500ms) — this isn't a second decision timer,
+// just enough of a stagger to desync a handful of units reacting on the same tick into a
+// natural-looking "oh, we're under attack" cascade rather than a synchronized snap. 80ms is
+// short enough to be barely perceptible on its own (~5 frames at 60fps) but non-zero, so even
+// a base's very FIRST unit to react doesn't feel instantaneous; 380 is long enough that, spread
+// across a handful of units, the gaps between them are individually noticeable (a few frames to
+// ~1/4 second apart) without any single unit reading as slow to respond — well under the ~0.5s
+// threshold where a delay starts reading as "this thing hasn't noticed the fight yet" rather
+// than "reacting a beat after its neighbor." Owner: tunable via playtest.
+const WAKE_REACT_STAGGER_MIN_MS = 80;
+const WAKE_REACT_STAGGER_MAX_MS = 380;
+
 // #269 playtest follow-up (patrol units): kind + headcount for the roaming units stationed near
 // each alert tower. Deliberately modest — a light escort/defense presence for the tower, not
 // another base-sized encounter — so a single cheap `infantry` trooper per tower (the smallest,
@@ -74,12 +90,12 @@ const DOCK_HUDDLE_OFFSET = 16;
 // #269 Part 2 ("dock open/closed states"): how close a dock's own live unit(s) (matched by
 // `dockKey`) must stay to the dock's own pixel centre for the hex to still read as OCCUPIED. A
 // DORMANT cluster sits within `DOCK_HUDDLE_OFFSET` (16px) of centre, well inside this; the
-// moment a woken unit's hold-ground leash (`HOLD_GROUND_LEASH_PX`, shared.js — 320px) carries it
-// meaningfully away to fight, or it dies, the dock reads as VACATED and closes. Deliberately
-// bigger than the huddle scatter (so idle jitter never falsely triggers a close) but much
-// smaller than the leash radius (so engaging the player reliably closes the dock almost
-// immediately, matching the issue's "the dock closes once its units leave" framing). Owner:
-// tunable via playtest.
+// moment a woken unit moves meaningfully away to engage the player (#285: no longer capped by a
+// leash — it can travel arbitrarily far once it commits to the fight), or it dies, the dock reads
+// as VACATED and closes. Deliberately bigger than the huddle scatter (so idle jitter never
+// falsely triggers a close) but still small enough that engaging the player reliably closes the
+// dock almost immediately, matching the issue's "the dock closes once its units leave" framing.
+// Owner: tunable via playtest.
 const DOCK_VACATE_RADIUS_PX = 60;
 
 export const BasesMixin = {
@@ -143,11 +159,6 @@ export const BasesMixin = {
           e.awareness = DORMANT;
           e.baseId = base.id;
           e.dockKey = dockKey;
-          // #269 Part 1 (hold-ground leash): the dock's own centre pixel is this unit's home
-          // anchor — see `leashIntent` (scenes/arena/shared.js) for how a woken hold-ground unit
-          // uses this to stay near its dock instead of freezing OR chasing the player unbounded.
-          // Stashed on every unit in the cluster (not just one), same as `dockKey`.
-          e.homeX = x; e.homeY = y;
         }
       }
       for (const turret of base.turrets ?? []) {
@@ -156,7 +167,6 @@ export const BasesMixin = {
         e.awareness = DORMANT;
         e.baseId = base.id;
         e.dockKey = axialKey(turret.q, turret.r);
-        e.homeX = x; e.homeY = y;
       }
     }
   },
@@ -367,10 +377,22 @@ export const BasesMixin = {
   // `isFastWakeKind`, keyed off the kind's own `move.maxSpeed`) needs no special handling at
   // all — every non-mech behavior fn (enemyBehaviors.js) already computes its movement relative
   // to the player's LIVE position each frame once aware, so it starts sortieing the instant it
-  // wakes. A slow/defensive kind gets `e.holdGround = true` instead — a light flag
-  // tank/quadruped/infantry's behavior fns check to skip their normal "advance to standoff"
-  // movement and just fight from where they're standing (turret already has maxSpeed 0, so it
-  // needs no flag at all to "hold ground").
+  // wakes. A slow/defensive kind gets `e.holdGround = true` instead.
+  //
+  // #285 ("units should fully commit to attacking the player, not stay tethered near their
+  // dock"): `e.holdGround` used to also mean "leash movement to a radius around home" — that
+  // leash is gone (see scenes/arena/shared.js's removed `leashIntent`/`HOLD_GROUND_LEASH_PX`).
+  // The flag now means only what its name says: this is a defensive/stationary-posture unit that
+  // fights from wherever it ends up rather than closing distance the way a fast kind does — it no
+  // longer constrains WHERE that fighting can happen. Its one remaining functional effect is
+  // cosmetic/tactical polish, not movement-limiting: enemies.js `_updateEnemy` reads it to decide
+  // that a hold-ground mech which happens to be momentarily stationary should face the player
+  // rather than hold its last travel heading (tank/quadruped/infantry already got the same
+  // "don't read as dead while stopped" fix directly in their own behavior fns). tank/quadruped/
+  // infantry's OWN behavior fns (enemyBehaviors.js) no longer read `e.holdGround` at all now that
+  // the leash is gone — it's still set on them (kept for the flag's documented "which units are
+  // hold-ground" semantics, and in case a future feature wants it) but has no code path consuming
+  // it for those kinds any more.
   //
   // #269 playtest follow-up ("fold mechs into the dock system"): a docked MECH (e.kind ===
   // 'mech') has no `kindDef` at all (that field only exists on non-mech kinds — see `_spawnKind`)
@@ -382,12 +404,17 @@ export const BasesMixin = {
   // chassis, which reads wrong), every mech defaults to `holdGround = true` unconditionally: a
   // mech is the toughest, most dangerous thing the dock system can field, so it reads better as
   // "the boss that holds the objective and makes you come to it" than "the thing that rushes
-  // you across the map." This also sidesteps wiring `holdGround` support into all four mech
-  // roles individually — the mech tactical AI (enemies.js `_updateEnemy`) checks this ONE flag
-  // and skips its whole PRESS/KITE/FLANK/COVER/HOLD decision machine outright when set (forcing
-  // state 'hold', see the comment there), so every archetype — brawler, skirmisher, sniper, and
-  // even the normally cover-seeking all-indirect artillery — uniformly just stands its ground and
-  // fights, no per-role special-casing needed.
+  // you across the map." The mech tactical AI (enemies.js `_updateEnemy`) runs the exact same
+  // PRESS/KITE/FLANK/COVER/HOLD decision machine either way now (it no longer short-circuits on
+  // this flag) — every archetype fully engages, `holdGround` just tips the stationary-vs-facing
+  // polish above.
+  //
+  // #285 stagger: each newly-woken unit also gets a short randomized `e.reactDelayMs` — see
+  // enemies.js `_isReacting` for how it's consumed, and the constants below for the exact range
+  // and reasoning. `e.awareness` itself still flips synchronously for every qualifying unit in
+  // this same loop (so "is this base awake" stays an instant, all-at-once fact other systems —
+  // the win condition, HUD, tests — can rely on); only the unit's actual movement/turret-
+  // tracking/firing is what gets staggered.
   _wakeBase(baseId) {
     if (this._wokenBases.has(baseId)) return;
     this._wokenBases.add(baseId);
@@ -395,6 +422,8 @@ export const BasesMixin = {
       if (e.baseId !== baseId || e.awareness !== DORMANT) continue;
       e.awareness = AWARE;
       if (e.kind === 'mech' || (e.kindDef && !isFastWakeKind(e.kindDef))) e.holdGround = true;
+      e.reactDelayMs = WAKE_REACT_STAGGER_MIN_MS
+        + Math.random() * (WAKE_REACT_STAGGER_MAX_MS - WAKE_REACT_STAGGER_MIN_MS);
     }
   },
 
@@ -558,7 +587,6 @@ export const BasesMixin = {
           e.awareness = AWARE;
           e.baseId = meta.baseId;
           e.dockKey = dockKey;
-          e.homeX = x; e.homeY = y;   // #269 Part 1: same leash anchor as an original dock spawn
         });
         // Stage 3: once the platform has surfaced, doors close back over the (now empty) shaft.
         this.time.delayedCall(500, () => {
