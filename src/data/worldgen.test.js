@@ -15,13 +15,14 @@ import {
   placeBases, placeGapTowers, dockCountFor,
   TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
+  placeBaseWalls, nearestSpinePoint, WALL_SEGMENT_SETBACK_PX, WALL_BREACH_GAP_SEGMENTS,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
-import { TERRAIN, isPassable } from './terrain.js';
-import { axialKey, range, neighbors, distance, hexToPixel, pixelToHex } from './hexgrid.js';
+import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
+import { axialKey, range, neighbors, distance, hexToPixel, pixelToHex, hexesAlongSegment } from './hexgrid.js';
 import { ALERT_DETECT_RADIUS } from './alertTower.js';
 import { PROXIMITY_WAKE_RANGE_CAP } from './awareness.js';
-import { GAMEPLAY_ZOOM } from '../scenes/arena/shared.js';
+import { GAMEPLAY_ZOOM, ENEMY_COLLIDE_RADIUS_MECH } from '../scenes/arena/shared.js';
 
 const GRASSLAND = getBiome('grassland');
 const DESERT = getBiome('desert');
@@ -1269,6 +1270,281 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // or a revert to the old tight radius fails loudly.
     it('audit: ALERT_DETECT_RADIUS is intentionally larger than PROXIMITY_WAKE_RANGE_CAP (decoupled tripwire, #269)', () => {
       expect(ALERT_DETECT_RADIUS).toBeGreaterThan(PROXIMITY_WAKE_RANGE_CAP);
+    });
+  });
+});
+
+// #288 (base front-wall design): a literal ROW of independently-destructible `wallSegment` hexes
+// at every base's approach edge, perpendicular to the LOCAL spine tangent (the corridor curves,
+// so "spans the width" only means anything relative to the spine's own local direction there),
+// spanning the corridor's full playable cross-section — a genuine hard gate (issue decisions #1/
+// #2/#3), breached by grinding down enough contiguous segments to open a mech-sized gap.
+describe('placeBaseWalls (#288: base front-wall design — approach-edge wall row)', () => {
+  const B = GRASSLAND;
+
+  // A perfectly straight synthetic spine (zero curviness) at a given heading — lets the
+  // geometry assertions below check against the EXACT tangent/perpendicular instead of a
+  // numerically-estimated one, so "perpendicular to the local tangent" is verified precisely.
+  function straightSpine(angleRad, { length = 2000, rearPad = 400, step = 24 } = {}) {
+    const dirX = Math.cos(angleRad), dirY = Math.sin(angleRad);
+    const points = [];
+    for (let u = -rearPad; u <= length; u += step) points.push({ x: dirX * u, y: dirY * u, u });
+    return { points, startAngle: angleRad, length, rearPad };
+  }
+
+  // A generous disc of plain ground, big enough to cover any anchor/width this describe block's
+  // tests place a synthetic base+wall inside.
+  function fillGroundDisc(radiusHex = 45) {
+    const T = new Map();
+    for (const h of range({ q: 0, r: 0 }, radiusHex)) T.set(axialKey(h.q, h.r), B.groundA);
+    return T;
+  }
+
+  it('places a non-empty wall row for a base near the spine, and no-ops gracefully without one', () => {
+    const spine = straightSpine(0.3);
+    const dirX = Math.cos(0.3), dirY = Math.sin(0.3);
+    const bases = [{ id: 'base0', center: pixelToHex(dirX * 1000, dirY * 1000) }];
+    const T = fillGroundDisc();
+
+    const walls = placeBaseWalls(T, bases, spine);
+    expect(walls.length).toBe(1);
+    expect(walls[0].baseId).toBe('base0');
+    expect(walls[0].segments.length).toBeGreaterThan(1);
+    for (const s of walls[0].segments) expect(T.get(axialKey(s.q, s.r))).toBe('wallSegment');
+
+    expect(placeBaseWalls(T, bases, null)).toEqual([]);
+    expect(placeBaseWalls(T, [], spine)).toEqual([]);
+  });
+
+  it('the row is genuinely PERPENDICULAR to the local spine tangent, not a fixed world-axis line', () => {
+    for (const angle of [0, 0.35, 1.1, 2.4, -0.8]) {
+      const spine = straightSpine(angle);
+      const dirX = Math.cos(angle), dirY = Math.sin(angle);
+      const bases = [{ id: 'b', center: pixelToHex(dirX * 1000, dirY * 1000) }];
+      const [wall] = placeBaseWalls(fillGroundDisc(), bases, spine);
+      expect(wall.segments.length).toBeGreaterThan(1);
+
+      // Project every segment centre onto the tangent axis ("along") and the perpendicular axis
+      // ("across"). A row genuinely perpendicular to the tangent has almost all its spread ACROSS
+      // and almost none ALONG (just hex-quantization noise); a row that ignored the local tangent
+      // (e.g. a fixed-axis line) would show comparable spread in both.
+      const along = [], across = [];
+      for (const s of wall.segments) {
+        const p = hexToPixel(s.q, s.r);
+        along.push(p.x * dirX + p.y * dirY);
+        across.push(p.x * -dirY + p.y * dirX);
+      }
+      const alongSpread = Math.max(...along) - Math.min(...along);
+      const acrossSpread = Math.max(...across) - Math.min(...across);
+      expect(acrossSpread).toBeGreaterThan(CORRIDOR_HALF_WIDTH_PX * 1.5);
+      expect(alongSpread).toBeLessThan(150);   // a few hexes' worth of quantization, not a real drift
+    }
+  });
+
+  it('the row genuinely spans the corridor\'s full playable width (≈ 2 * CORRIDOR_HALF_WIDTH_PX)', () => {
+    const angle = 0.9;
+    const spine = straightSpine(angle);
+    const dirX = Math.cos(angle), dirY = Math.sin(angle);
+    const bases = [{ id: 'b', center: pixelToHex(dirX * 1200, dirY * 1200) }];
+    const [wall] = placeBaseWalls(fillGroundDisc(), bases, spine);
+    const pts = wall.segments.map((s) => hexToPixel(s.q, s.r));
+    let maxSpan = 0;
+    for (const a of pts) for (const b of pts) maxSpan = Math.max(maxSpan, Math.hypot(a.x - b.x, a.y - b.y));
+    const fullWidth = CORRIDOR_HALF_WIDTH_PX * 2;
+    expect(maxSpan).toBeGreaterThan(fullWidth * 0.85);
+    expect(maxSpan).toBeLessThanOrEqual(fullWidth + HEX_STEP_PX * 2);
+  });
+
+  // The row overwrites ANY same-base hex it crosses — dock, turretEmplacement, objective alike —
+  // rather than protecting any of them. This is deliberate (see `placeBaseWalls`'s own comment):
+  // skipping just one hex a diagonal stretch of the line steps around can leave an untouched,
+  // fully passable ALTERNATE hex adjacent to both flanking segments — a real bypass route, not
+  // merely a cosmetic gap. Always overwriting sidesteps that whole failure class entirely.
+  it('overwrites any dock/turretEmplacement/objective hex the line crosses, never leaving a passable gap', () => {
+    const spine = straightSpine(0);
+    const bases = [{ id: 'b', center: pixelToHex(1000, 0) }];
+    const [dryRun] = placeBaseWalls(fillGroundDisc(), bases, spine);
+    expect(dryRun.segments.length).toBeGreaterThan(2);
+    const claimed = dryRun.segments[1];
+    const claimedKey = axialKey(claimed.q, claimed.r);
+
+    for (const markerId of ['dock', 'turretEmplacement', 'objective']) {
+      const T = fillGroundDisc();
+      T.set(claimedKey, markerId);   // as if placeBases already claimed this hex
+      const [wall] = placeBaseWalls(T, bases, spine);
+      expect(T.get(claimedKey)).toBe('wallSegment');   // overwritten, not left as a passable gap
+      expect(wall.segments.some((s) => axialKey(s.q, s.r) === claimedKey)).toBe(true);
+    }
+  });
+
+  // Regression test for the exact failure mode found while building this: when a hex the true
+  // line crosses is unavailable to stamp (here, simulated by removing it from the playable set
+  // entirely — the same shape as a corridor-edge hex outside `T`), the row must still close the
+  // resulting gap rather than leaving a walkable bypass through a fully-passable NEIGHBOUR of the
+  // two flanking segments. A hex-grid gap of 2 steps generically has TWO candidate bridging
+  // hexes, not one — this asserts BOTH are accounted for (either stamped, or never in the
+  // playable set to begin with), not just whichever one a naive line reconstruction would touch.
+  it('closes the gap left by a hex that falls outside the playable set, with no passable bypass beside it', () => {
+    const spine = straightSpine(0);
+    const bases = [{ id: 'b', center: pixelToHex(1000, 0) }];
+    const [dryRun] = placeBaseWalls(fillGroundDisc(), bases, spine);
+    expect(dryRun.segments.length).toBeGreaterThan(3);
+    // Find an interior segment that's actually LOAD-BEARING for contiguity — i.e. its own
+    // flanking neighbours are NOT already directly adjacent to each other (some of
+    // `hexesAlongSegment`'s raw output can include a "sidestep" hex whose removal wouldn't open
+    // a real gap at all, since its neighbours already touch directly) — so removing it is
+    // guaranteed to actually create the 2-step gap this test means to exercise.
+    let idx = -1;
+    for (let i = 1; i < dryRun.segments.length - 1; i++) {
+      if (distance(dryRun.segments[i - 1], dryRun.segments[i + 1]) > 1) { idx = i; break; }
+    }
+    expect(idx).toBeGreaterThan(0);
+    const removed = dryRun.segments[idx];
+    const before = dryRun.segments[idx - 1], after = dryRun.segments[idx + 1];
+    expect(distance(before, after)).toBeGreaterThan(1);   // confirms removing it is load-bearing
+    const removedKey = axialKey(removed.q, removed.r);
+
+    const T = fillGroundDisc();
+    T.delete(removedKey);   // simulate "outside the playable corridor" — never stamped
+    placeBaseWalls(T, bases, spine);
+
+    expect(T.has(removedKey)).toBe(false);   // still never stamped — it was never in bounds
+    // Every hex adjacent to BOTH flanking segments — the candidate bypass routes around the
+    // removed hex — is either stamped (safe) or itself outside the playable set (safe, matches
+    // the live game's boundary ring wrapping right up to the corridor edge).
+    let foundCandidate = false;
+    for (const n of neighbors(before.q, before.r)) {
+      if (distance(n, after) !== 1) continue;
+      foundCandidate = true;
+      const k = axialKey(n.q, n.r);
+      if (!T.has(k)) continue;
+      expect(T.get(k)).toBe('wallSegment');
+    }
+    expect(foundCandidate).toBe(true);
+  });
+
+  it('is deterministic given the same inputs', () => {
+    const spine = straightSpine(0.5);
+    const bases = [{ id: 'b', center: pixelToHex(Math.cos(0.5) * 900, Math.sin(0.5) * 900) }];
+    const a = placeBaseWalls(fillGroundDisc(), bases, spine);
+    const b = placeBaseWalls(fillGroundDisc(), bases, spine);
+    expect(a).toEqual(b);
+  });
+
+  describe('nearestSpinePoint', () => {
+    it('finds the closest sample and its own index on a simple line', () => {
+      const spine = straightSpine(0);
+      const { point, index } = nearestSpinePoint(spine, 500.5, 3);
+      expect(Math.abs(point.x - 500.5)).toBeLessThanOrEqual(12); // within half the 24px sample step
+      expect(spine.points[index]).toBe(point);
+    });
+  });
+
+  // Full-pipeline coverage: the real generateSpine/corridorHexSet/generateTerrain path (not the
+  // synthetic straight-spine the precision geometry checks above use) actually places a wall row
+  // for every base it generates, across many seeds/corridor orientations.
+  describe('on the real corridor pipeline (generateTerrain)', () => {
+    // Full production fidelity: `world.js` always builds `boundaryRing` and anchors `safeCenter`
+    // on the REAL spawn hex (not world origin) — matched here so these tests can't produce a
+    // false "hole" that's really just an artifact of an incomplete reproduction (confirmed the
+    // hard way while building this: omitting `safeCenter: spawnHex` let the origin-anchored
+    // safe-zone clear coincidentally wipe a wall segment on rare seeds, which the real spawn-
+    // anchored clear — always far down-corridor from any base's wall row, `MIN_GAP_PROGRESS_PX`
+    // — never does).
+    function realTerrainArgs(seed) {
+      const { spine, includedKeys, spawnHex } = buildCorridor(seed);
+      const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
+      return { seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, boundaryRing, spine, safeCenter: spawnHex };
+    }
+
+    it('every base gets a non-empty wall row with NO PASSABLE hole anywhere along it, each segment independently HP-seeded', () => {
+      for (let seed = 1; seed <= 40; seed++) {
+        const { bases, buildingHp, terrain } = generateTerrain(realTerrainArgs(seed * 13 + 3));
+        expect(bases.length).toBe(BASE_COUNT);
+        for (const base of bases) {
+          expect(base.wallSegments.length).toBeGreaterThan(0);
+          // Consecutive segments (row order) are always literal grid neighbours in practice —
+          // `placeBaseWalls` always overwrites whatever it crosses, and closes any residual gap
+          // by stamping the FULL geodesic diamond between the two flanking hexes (see
+          // `closeWallGaps`'s own comment). The passability check below is the load-bearing
+          // safety net regardless: it must NEVER find a PASSABLE hex sitting between two
+          // segments — that would be a real, walkable hole in what's supposed to be a genuinely
+          // unbroken gate — even if some future change reintroduces a case where consecutive
+          // segments aren't literal neighbours.
+          for (let i = 1; i < base.wallSegments.length; i++) {
+            const a = base.wallSegments[i - 1], b = base.wallSegments[i];
+            if (distance(a, b) === 1) continue;
+            const pa = hexToPixel(a.q, a.r), pb = hexToPixel(b.q, b.r);
+            const between = hexesAlongSegment(pa.x, pa.y, pb.x, pb.y);
+            for (const h of between) {
+              if ((h.q === a.q && h.r === a.r) || (h.q === b.q && h.r === b.r)) continue;
+              expect(isPassable(terrain.get(axialKey(h.q, h.r)))).toBe(false);
+            }
+          }
+          // Every segment is independently seeded with its own full HP — no shared pool.
+          for (const seg of base.wallSegments) {
+            expect(buildingHp.get(axialKey(seg.q, seg.r))).toBe(TERRAIN.wallSegment.hp);
+          }
+        }
+      }
+    });
+
+    it('the wall row sits on the APPROACH side — lower spine progress than the base itself', () => {
+      const args = realTerrainArgs(101);
+      const { spine } = args;
+      const { bases } = generateTerrain(args);
+      let checked = 0;
+      for (const base of bases) {
+        if (!base.wallSegments.length) continue;
+        checked++;
+        const baseProgress = spineProgressHexOf(spine, base.center.q, base.center.r);
+        const wallProgress = base.wallSegments.map((s) => spineProgressHexOf(spine, s.q, s.r));
+        const avgWallProgress = wallProgress.reduce((a, b) => a + b, 0) / wallProgress.length;
+        expect(avgWallProgress).toBeLessThan(baseProgress);
+      }
+      expect(checked).toBeGreaterThan(0);
+    });
+
+    it('destroying one segment never touches an adjacent segment\'s own HP (independent pools)', () => {
+      const { bases, buildingHp } = generateTerrain(realTerrainArgs(55));
+      const base = bases.find((b) => b.wallSegments.length >= 2);
+      expect(base).toBeTruthy();
+      const [first, second] = base.wallSegments;
+      const kFirst = axialKey(first.q, first.r), kSecond = axialKey(second.q, second.r);
+      const secondBefore = buildingHp.get(kSecond);
+
+      const { destroyed } = damageBuilding(buildingHp.get(kFirst), 1000);
+      expect(destroyed).toBe(true);
+      buildingHp.delete(kFirst);   // mirrors world.js `_damageBuildingAt`'s own collapse handling
+
+      expect(buildingHp.get(kSecond)).toBe(secondBefore);   // untouched by its neighbour's destruction
+      expect(buildingHp.has(kFirst)).toBe(false);
+    });
+
+    it('a mech-sized gap: destroying WALL_BREACH_GAP_SEGMENTS contiguous segments clears the mech\'s collision diameter', () => {
+      // A fixed property of the regular hex grid — HEX_STEP_PX is the SAME centre-to-centre
+      // spacing between adjacent hexes in every direction (see that export's own comment) — so
+      // even a SINGLE destroyed segment already opens more width than a mech's own collision
+      // diameter, and the documented/tested breach threshold (WALL_BREACH_GAP_SEGMENTS = 2) opens
+      // roughly double that, comfortably clear for a real driving line.
+      const mechDiameter = ENEMY_COLLIDE_RADIUS_MECH * 2;
+      expect(HEX_STEP_PX).toBeGreaterThan(mechDiameter);
+      expect(WALL_BREACH_GAP_SEGMENTS * HEX_STEP_PX).toBeGreaterThan(mechDiameter * 2.5);
+
+      // And confirm it against a REAL wall row: two ADJACENT (row-order, hex-distance-1) segments
+      // really are exactly HEX_STEP_PX apart in world space, not just "nearby".
+      const { bases } = generateTerrain(realTerrainArgs(9));
+      let checkedPair = false;
+      for (const base of bases) {
+        for (let i = 1; i < base.wallSegments.length && !checkedPair; i++) {
+          const a = base.wallSegments[i - 1], b = base.wallSegments[i];
+          if (distance(a, b) !== 1) continue;
+          const pa = hexToPixel(a.q, a.r), pb = hexToPixel(b.q, b.r);
+          expect(Math.hypot(pa.x - pb.x, pa.y - pb.y)).toBeCloseTo(HEX_STEP_PX, 1);
+          checkedPair = true;
+        }
+      }
+      expect(checkedPair).toBe(true);
     });
   });
 });

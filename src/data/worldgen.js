@@ -19,7 +19,10 @@
 // is decoupled from length — the half-width is kept narrow (so #126's boundary ring is reliably
 // visible on the SIDES at the real GAMEPLAY_ZOOM=1.3, see below), while the length is long and
 // independent, so the corridor's far end is NOT visible from spawn and a run traverses it end-to-end.
-import { axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius } from './hexgrid.js';
+import {
+  axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius,
+  hexesAlongSegment,
+} from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf } from './terrain.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
@@ -484,6 +487,15 @@ export function generateTerrain({
   // proxy, matching the pattern used elsewhere in this function, when no spine is passed).
   const progressOf = spine ? (h) => spineProgressHexOf(spine, h.q, h.r) : null;
   const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf);
+  // #288: stamp each base's approach-edge wall row next — needs a real `spine` for its local-
+  // tangent geometry (no-ops, returning `[]`, if none is passed, e.g. the older disc-shaped test
+  // callers below that never had a corridor spine to begin with). Placed BEFORE alert towers so a
+  // gap tower's own placement (which already requires `isGround`) naturally skips over any hex a
+  // wall segment just claimed, exactly like it already skips a dock/turret/objective hex.
+  const baseWalls = placeBaseWalls(T, bases, spine);
+  for (const base of bases) {
+    base.wallSegments = baseWalls.find((w) => w.baseId === base.id)?.segments ?? [];
+  }
   // #275 (redesign): one alert tower per GAP between successive bases (`placeGapTowers`'s own
   // comment has the full reasoning) — replaces the old outpost-cluster-anchored placement.
   // Placed after bases (using their final centres) for the same "never overwrite a base's
@@ -514,6 +526,10 @@ export function generateTerrain({
     if (base.objectiveHex && T.get(axialKey(base.objectiveHex.q, base.objectiveHex.r)) !== 'objective') {
       base.objectiveHex = null;
     }
+    // #288: same re-validation as docks/turrets/objective above — if the safe-zone clear (or a
+    // debug extraClear hex) reset a wall segment's hex back to open ground, drop it from the list
+    // rather than leaving a stale position.
+    base.wallSegments = (base.wallSegments ?? []).filter((s) => T.get(axialKey(s.q, s.r)) === 'wallSegment');
   }
   // #275: re-validated against the now-final `T` the same way bases' docks/turrets/objective are
   // above — if the safe-zone clear (or a debug extraClear hex) reset a gap tower's hex back to
@@ -669,6 +685,191 @@ export function spineProgressHexOf(spine, q, r) {
     if (d < bestD) { bestD = d; bestU = p.u; }
   }
   return bestU / HEX_STEP_PX;
+}
+
+// #288 (base front-wall design, issue: full hard gate at every base's approach edge, breached by
+// grinding down independently-destructible wall SEGMENTS): how far "up-corridor" (toward spawn,
+// i.e. LOWER spine progress) of a base's own centre the wall row's anchor point sits. The dock/
+// turret/objective candidate ring (`placeBases` above) only ever reaches `range(center, 2)` — at
+// most 2 hex RINGS from centre, ≈2 * HEX_STEP_PX ≈ 166px in the worst-case direction — so a
+// setback comfortably past that (250px, ≈3 hex steps) guarantees the wall row's anchor sits
+// clearly OUTSIDE the dock/turret/objective cluster on its approach side. (The row itself can
+// still brush a claimed dock/turret/objective hex at its FAR ends on a sharply-curved stretch of
+// spine — `placeBaseWalls` below explicitly skips re-stamping those rather than relying on
+// distance alone to guarantee it never happens.)
+export const WALL_SEGMENT_SETBACK_PX = 250;
+
+// #288: how many CONTIGUOUS destroyed segments the issue's "genuinely wide enough for a mech to
+// physically fit through" breach mechanic is documented/tested against. Adjacent wall-segment hex
+// CENTRES are always exactly HEX_STEP_PX (≈83.14px) apart — a regular-hex-grid constant, true in
+// every direction (see that export's own comment) — comfortably more than a mech's own collision
+// DIAMETER (2 * ENEMY_COLLIDE_RADIUS_MECH = 56px, scenes/arena/shared.js), so destroying even a
+// SINGLE segment already opens more hex-width than a mech needs to physically pass through
+// (≈27px of clearance to spare on a dead-straight approach). Two contiguous segments (≈166px) is
+// used as the documented/tested threshold anyway — matching the issue's own framing ("a gap of
+// 1-2 destroyed segments") — since a single-hex gap driven at speed (swept collision, an
+// imperfect approach angle, a mech that isn't dead square to the wall) benefits from the extra
+// margin a second open segment provides; it is not because one segment is geometrically
+// insufficient (worldgen.test.js asserts BOTH the 1-segment and 2-segment cases clear the mech's
+// diameter).
+export const WALL_BREACH_GAP_SEGMENTS = 2;
+
+// #288: every hex lying on SOME shortest hex-grid path between `a` and `b` (the "geodesic
+// diamond" between them) — every `h` with `distance(a,h) + distance(h,b) === distance(a,b)`,
+// excluding `a`/`b` themselves. Used by `placeBaseWalls` to close a gap between two flanking wall
+// segments that ended up more than 1 grid-step apart (see that function's own comment for why this
+// can happen, and why it matters). Deliberately stamps EVERY such hex, not just one representative
+// bridge — for a gap of exactly 2 grid-steps, the diamond usually contains TWO candidate hexes
+// (the "bend" case), and closing only the ONE a naively-reconstructed line happens to touch leaves
+// the OTHER fully untouched and passable: a genuine, walkable bypass route around whatever the gap
+// was skipping past (confirmed empirically — see worldgen.test.js). Stamping the whole diamond
+// makes that geometrically impossible: NO passable path between `a` and `b` shorter than going
+// around the ends of the wall row can survive, regardless of which specific hex the original
+// pixel-space line happened to cross. Bounded to `range(a, d)` (a small local neighbourhood — `d`
+// is always small in practice, a handful of hexes at most) so this stays cheap.
+function geodesicDiamond(a, b) {
+  const d = distance(a, b);
+  if (d <= 1) return [];
+  const out = [];
+  for (const h of range(a, d)) {
+    if ((h.q === a.q && h.r === a.r) || (h.q === b.q && h.r === b.r)) continue;
+    if (distance(a, h) + distance(h, b) === d) out.push(h);
+  }
+  return out;
+}
+
+// #288: given the hexes a wall row's pixel-space line has already been stamped into (in row
+// order), close any remaining gap — two CONSECUTIVE hexes more than 1 grid-step apart — by
+// stamping every hex in their `geodesicDiamond` (see that function's own comment) that's still
+// inside the playable set, and splicing them into the returned list. `T` is mutated in place, same
+// as the rest of `placeBaseWalls`'s stamping.
+function closeWallGaps(T, hexes) {
+  if (hexes.length < 2) return hexes;
+  const out = [hexes[0]];
+  for (let i = 1; i < hexes.length; i++) {
+    const prevHex = out[out.length - 1];
+    const h = hexes[i];
+    if (distance(prevHex, h) > 1) {
+      for (const bridge of geodesicDiamond(prevHex, h)) {
+        const k = axialKey(bridge.q, bridge.r);
+        if (!T.has(k)) continue;   // outside the playable set — nothing to stamp
+        T.set(k, 'wallSegment');
+        out.push({ q: bridge.q, r: bridge.r });
+      }
+    }
+    out.push(h);
+  }
+  return out;
+}
+
+// The spine sample point nearest a given pixel position, plus its own index in `spine.points` —
+// so a caller can look at NEIGHBOURING samples to derive a local tangent direction there. Pure
+// geometry, factored out so `placeBaseWalls`'s tangent math is independently unit-testable.
+export function nearestSpinePoint(spine, x, y) {
+  let best = spine.points[0], bestD = Infinity, bestIndex = 0;
+  for (let i = 0; i < spine.points.length; i++) {
+    const p = spine.points[i];
+    const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+    if (d < bestD) { bestD = d; best = p; bestIndex = i; }
+  }
+  return { point: best, index: bestIndex };
+}
+
+// #288: stamp one wall ROW per base into `T` (mutated in place) — a literal line of independently-
+// destructible `wallSegment` hexes spanning the corridor's full playable cross-section
+// (`2 * halfWidth`) at that base's APPROACH edge (the side nearer spawn / lower spine progress),
+// PERPENDICULAR TO THE LOCAL SPINE TANGENT there (not a fixed world-axis line — the corridor
+// curves, so "spans the width" only means anything relative to the spine's own local direction).
+// Returns `[{ baseId, segments: [{q,r}] }]` — one entry per base that got a row (a base can come
+// back empty in a genuinely degenerate case, e.g. its whole approach stretch already claimed by
+// something else), `segments` in ROW ORDER (as `hexesAlongSegment` walks the perpendicular line)
+// so a caller can identify which segments are ADJACENT/contiguous without recomputing hex distance.
+//
+// Geometry, step by step:
+//   1. Find the spine sample nearest the base's own centre (`nearestSpinePoint`) — the base
+//      centre itself may sit laterally off the spine (it's just a dock-cluster anchor, not a
+//      spine point), so this re-anchors onto the corridor's actual centreline.
+//   2. Walk that sample's `u` (main-axis progress) BACK by `setbackPx` toward spawn, and find the
+//      spine sample whose own `u` is closest to that target — the wall's anchor point, a real
+//      point ON the spine.
+//   3. Estimate the LOCAL TANGENT at the anchor by finite difference between its immediate
+//      neighbouring spine samples (samples are dense — `SPINE_SAMPLE_STEP_PX` = 24px apart — so
+//      this is a good local estimate even on a sharply curving stretch).
+//   4. The wall runs along the PERPENDICULAR to that tangent (rotate 90°), centred on the anchor,
+//      spanning `±halfWidth` — i.e. the row's total span equals the full playable cross-section.
+//   5. `hexesAlongSegment` (hexgrid.js) enumerates the hexes that pixel segment passes through —
+//      the same "supercover line" primitive the collision system itself uses for swept movement.
+//      Two things can still leave a gap in the STAMPED result, though: `hexesAlongSegment`'s own
+//      dedup can occasionally skip a hex the line only grazes at certain angles/distances, AND a
+//      hex the line genuinely does cross can fall outside the playable set (`T.has(k)`, below) at
+//      a corridor edge. Either way, `closeWallGaps` (below) closes the resulting gap afterward by
+//      stamping the FULL `geodesicDiamond` between the two flanking stamped hexes, not just one
+//      representative bridge — see that function's own comment for why "just one bridge" isn't
+//      actually enough to guarantee no bypass survives.
+//
+// Every hex on the line still inside the playable set (`T.has(k)`) is stamped `wallSegment`
+// UNCONDITIONALLY — never gated behind `isGround` the way docks/turrets/objective are, and with NO
+// per-terrain-id exception either (an earlier version protected this SAME base's own `dock`/
+// `turretEmplacement`/`objective` hexes from being overwritten; removed — see below) — because the
+// whole point (issue #288 decision #1) is a hard gate with "no way around it": the row must be
+// genuinely unbroken even where it happens to cross a cover/hazard/channel/dock/turret/objective
+// hex.
+//
+// Why NOT protect a same-base dock/turret/objective hex the line happens to cross: it seems
+// appealing (don't silently delete the base's own structures), but it's actively unsafe. Confirmed
+// empirically across a wide corridor-seed sweep (worldgen.test.js): skipping just ONE hex that a
+// diagonal stretch of the line steps around can leave an untouched, fully passable hex adjacent to
+// BOTH of that gap's flanking segments — a real, walkable bypass route past the "protected" hex,
+// not merely a cosmetic gap. (Two hexes that are 2 grid-steps apart on a hex grid generally have
+// TWO possible "bridging" hexes, not one — the actual line only ever crosses ONE of them, so
+// protecting it does nothing to block the OTHER.) Reliably closing that would require detecting
+// and additionally blocking the alternate bridge hex too, which reduces to "just stamp the whole
+// line" anyway — so this stamps unconditionally instead. `generateTerrain` already re-validates
+// `base.docks`/`base.turrets`/`base.objectiveHex` against the FINAL terrain map after every
+// placement pass (dropping any entry whose hex no longer matches its expected id; `objectiveHex`
+// falls back to `base.center` — mission.js `_targetCurrentBase` already handles that null case),
+// so an overwritten dock/turret/objective simply drops out of that base's spawn list/target — a
+// base loses (at most, and rarely) one of its usual 3-5 docks, 1-2 turrets, or its objective hex to
+// its own wall row, rather than the wall silently gaining an exploitable gap.
+//
+// Requires a real `spine` (no meaningful "local tangent" without one) — returns `[]` if none is
+// passed, same graceful-no-op shape as `progressOf` elsewhere in this file.
+export function placeBaseWalls(T, bases, spine, halfWidth = CORRIDOR_HALF_WIDTH_PX, setbackPx = WALL_SEGMENT_SETBACK_PX) {
+  const walls = [];
+  if (!spine || !bases?.length) return walls;
+  for (const base of bases) {
+    const centerPx = hexToPixel(base.center.q, base.center.r);
+    const { point: nearest } = nearestSpinePoint(spine, centerPx.x, centerPx.y);
+    const targetU = nearest.u - setbackPx;
+    let anchorIdx = 0, bestDiff = Infinity;
+    for (let i = 0; i < spine.points.length; i++) {
+      const diff = Math.abs(spine.points[i].u - targetU);
+      if (diff < bestDiff) { bestDiff = diff; anchorIdx = i; }
+    }
+    const anchor = spine.points[anchorIdx];
+    const prev = spine.points[Math.max(0, anchorIdx - 1)];
+    const next = spine.points[Math.min(spine.points.length - 1, anchorIdx + 1)];
+    let tx = next.x - prev.x, ty = next.y - prev.y;
+    const tlen = Math.hypot(tx, ty) || 1;
+    tx /= tlen; ty /= tlen;
+    const perpX = -ty, perpY = tx;   // rotate the tangent 90° — the direction the row runs along
+    const x0 = anchor.x - perpX * halfWidth, y0 = anchor.y - perpY * halfWidth;
+    const x1 = anchor.x + perpX * halfWidth, y1 = anchor.y + perpY * halfWidth;
+    const lineHexes = hexesAlongSegment(x0, y0, x1, y1);
+    let segments = [];
+    for (const h of lineHexes) {
+      const k = axialKey(h.q, h.r);
+      if (!T.has(k)) continue;   // outside the playable set entirely — nothing to stamp
+      T.set(k, 'wallSegment');
+      segments.push({ q: h.q, r: h.r });
+    }
+    // Close any remaining gap — `hexesAlongSegment`'s own dedup quirk, or simply a hex the true
+    // line touched sitting outside the playable set — so the row can never end up with an
+    // unstamped, potentially-passable hole. See `closeWallGaps`/`geodesicDiamond`'s own comments.
+    segments = closeWallGaps(T, segments);
+    if (segments.length) walls.push({ baseId: base.id, segments });
+  }
+  return walls;
 }
 
 // MAX_WORLD_RADIUS: a finite bounding cap on the corridor's reach in hex-distance from origin, used
