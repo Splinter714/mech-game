@@ -795,15 +795,33 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(BASE_LATE_KIND_POOL).not.toContain('turret');
   });
 
-  it('#269 playtest follow-up: dockCountFor gives tanks 2-3, helicopters exactly 2, everything else 1', () => {
+  it('#269 playtest follow-up: dockCountFor caps tanks at a flat 2, helicopters exactly 2, everything else 1', () => {
     const lowRng = () => 0;      // floors every roll to its minimum
     const highRng = () => 0.999; // ceilings every roll to just under its max
+    // "only 2 per dock at most" — tank is a flat 2 now (was 2-3), never rolling to 3.
     expect(dockCountFor('tank', lowRng)).toBe(2);
-    expect(dockCountFor('tank', highRng)).toBe(3);
+    expect(dockCountFor('tank', highRng)).toBe(2);
     expect(dockCountFor('helicopter', lowRng)).toBe(2);
     expect(dockCountFor('helicopter', highRng)).toBe(2);
     expect(dockCountFor('quadruped', lowRng)).toBe(1);
     expect(dockCountFor('quadruped', highRng)).toBe(1);
+  });
+
+  it('#269 playtest follow-up: early pool mixes tank + helicopter (not wall-to-wall tanks), late pool weights helicopter up', () => {
+    // Early bases are no longer 100% tanks — helicopter is an equal-weight early presence.
+    expect(BASE_EARLY_KIND_POOL).toContain('tank');
+    expect(BASE_EARLY_KIND_POOL).toContain('helicopter');
+    // Kept SOFT: only the two vehicle kinds early — no quadruped, no mechs (those stay late-only).
+    expect(BASE_EARLY_KIND_POOL).not.toContain('quadruped');
+    for (const mech of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+      expect(BASE_EARLY_KIND_POOL).not.toContain(mech);
+    }
+    // Late pool: helicopter weighting raised from 2 to 3 entries.
+    const heliLate = BASE_LATE_KIND_POOL.filter((k) => k === 'helicopter').length;
+    expect(heliLate).toBe(3);
+    // ...and helicopter is now more common than tank in the late pool.
+    const tankLate = BASE_LATE_KIND_POOL.filter((k) => k === 'tank').length;
+    expect(heliLate).toBeGreaterThan(tankLate);
   });
 
   it('never overwrites a hex that is no longer plain ground', () => {

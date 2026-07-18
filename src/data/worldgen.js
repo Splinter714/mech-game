@@ -77,10 +77,17 @@ export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 // `deployEveryMs`/`deployBatchMin/Max`/`deployCap`), so a dock ALSO producing standalone drones
 // was redundant with that. `'turret'` is REMOVED entirely too — turrets now get their own
 // dedicated `turretEmplacement` terrain hex, placed via a separate loop below
-// (`placeTurretEmplacements`), never mixed into the generic dock pool. `BASE_EARLY_KIND_POOL`
-// is left as the single remaining entry (`'tank'`) rather than padded back out with other
-// kinds — not asked for by the issue, and an easy follow-up tune once playtested.
-export const BASE_EARLY_KIND_POOL = ['tank'];
+// (`placeTurretEmplacements`), never mixed into the generic dock pool.
+//
+// #269 playtest follow-up ("too many fuckin' tanks; get some helicopters up in this bitch"):
+// the early pool was a single `['tank']` entry, so EVERY early base was 100% tanks — the core of
+// the "too many tanks" complaint (early bases are where the run is mostly spent, and they read as
+// wall-to-wall armour). It's now a 50/50 tank/helicopter mix: tanks stay the basic ground opener,
+// but helicopters are an immediate, equal presence from base 0 instead of not showing up until the
+// late pool bleeds in. Kept to just these two soft vehicle kinds (no quadruped, no mechs) so the
+// early tier stays the SOFT opener half of the escalation — mechs/quadruped remain late-only per
+// `BASE_LATE_KIND_POOL` below, preserving the early→late difficulty ramp `baseLateFraction` drives.
+export const BASE_EARLY_KIND_POOL = ['tank', 'helicopter'];
 // #269 playtest follow-up ("where did all the enemy mechs go?" / "fold mechs into the dock
 // system"): mechs (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery, the full
 // tactical-AI Mech roster) are now dockable too, but ONLY in the LATE pool — they're the
@@ -99,22 +106,33 @@ export const BASE_EARLY_KIND_POOL = ['tank'];
 // (an aggressive brawler), `sniper` (kites/holds at long range), and `artillery` (every weapon
 // indirect-fire — camps behind cover and lobs shells, the normal `allIndirect` behavior every
 // artillery already has, docked or not).
+//
+// #269 playtest follow-up ("get some helicopters up in this bitch"): helicopter weight raised from
+// 2/9 to 3/10 (~22% → 30% of late draws) so gunships stay a clear presence even in the mech-heavy
+// late tier, not just the early pool. Tank is left at its already-minimal 1/10 (late bases lean on
+// the tougher mech roster, not armour columns — the "too many tanks" complaint is fixed in the
+// EARLY pool and the per-dock count, not by touching the already-thin late tank slot). Mech roster
+// (raider ×2, skirmisher/sniper/artillery ×1 each = 5/10) still dominates late, keeping the
+// escalation intent intact.
 export const BASE_LATE_KIND_POOL = [
-  'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
 ];
 
 // #269 playtest follow-up (dock composition): "2-3 tanks should dock on ONE dock hex" / "2
 // helicopters should dock on ONE dock hex" — a dock is now a KIND + COUNT, not just a kind
 // (`{ q, r, kindId, count }`, see `placeBases` below). `dockCountFor` is the one place that
-// count is decided, keyed off the kind: tank rolls a small 2-3 cluster (mirrors the old
-// SQUAD_BASE-style "a few of them" escalation spirit), helicopter is a flat paired 2 (the issue
-// asked for "2 helicopters" literally, and a gunship pair reads as a natural wingman formation
-// rather than needing a randomized range), every other still-dockable kind (today just
-// `quadruped`, per the pools above) stays a single dormant unit — not asked to extend further.
+// count is decided, keyed off the kind.
+//
+// #269 playtest follow-up ("too many fuckin' tanks; only 2 per dock at most"): tanks were
+// rolling a 2-3 cluster, which — combined with the early pool being 100% tanks (see below) —
+// made the run read as wall-to-wall tanks. Tank is now a FLAT 2, matching helicopter: still a
+// "a few of them" pair, but never the 3-body pile that pushed the count over. `rng` is retained
+// in the signature (callers pass it) even though no kind currently rolls a range, so re-adding a
+// randomized count later is a one-line change without touching the call sites.
 export function dockCountFor(kindId, rng) {
-  if (kindId === 'tank') return 2 + Math.floor(rng() * 2);   // 2 or 3
-  if (kindId === 'helicopter') return 2;
-  return 1;
+  if (kindId === 'tank') return 2;         // #269: capped at 2 (was 2-3) — "only 2 per dock at most"
+  if (kindId === 'helicopter') return 2;   // a gunship pair reads as a natural wingman formation
+  return 1;                                // every other dockable kind (quadruped, mechs) is a single unit
 }
 
 // Same 0→1 escalation shape as the old (now-retired) run.js `lateFraction`, just indexed by
