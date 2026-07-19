@@ -7,6 +7,7 @@ import { getWeapon } from '../../data/weapons.js';
 import { CENTER } from '../../art/mechPrims.js';
 import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
 import { hexCorners } from '../../data/hexgrid.js';
+import { liveToughnessBounds } from '../../data/rosterBounds.js';
 import { ART_SCALE } from '../../art/mechArt.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
@@ -161,38 +162,53 @@ export const DUMMY_HEX = { q: 3, r: -1 };
 // from what a player expects. Both `Mech` and the non-mech `HpBody` expose a uniform `.maxHp`
 // (#90), the same family of "how big a deal was this kill" signal the powerup drop chance uses
 // — reuse it here too instead of inventing a second, kind-branching one.
-// NOTE (#106): the drop-chance path has since moved OFF `.maxHp` onto `.toughness` (structure +
-// armor + shield) with floor/ceiling DERIVED from the live roster (data/powerups.js
-// `dropBounds`). These explosion-sizing bounds are still hand-set, and their ceiling (616) is
-// stale — a heavy mech's real maxHp is 430 since #128/#230, so every kill above 430 already
-// tops out below the biggest boom. Purely cosmetic (explosion size only), left alone here to
-// keep #106 scoped to drop rates; worth folding into a later pass.
-const DEATH_HP_FLOOR = 14;    // maxHp at/below which a kill gets the smallest boom (a drone)
-const DEATH_HP_CEIL = 616;    // maxHp at/above which a kill gets the biggest boom (base heavy mech)
+// #301 (fixing the drift this comment used to just describe): both the explosion SIZE and the
+// explosion SOUND tier now read `.toughness` (structure + armor + shield — uniform across
+// Mech/HpBody) against bounds DERIVED from the live roster, exactly as the drop curve does
+// (data/rosterBounds.js, shared by both). The old hand-set pair — floor 14, ceiling 616 on
+// `.maxHp` — was stale: #128 dropped head/cockpit/centerTorso out of the tracked damage
+// locations, making the real toughest unit 430, so NOTHING could reach the ceiling and the whole
+// scale sat compressed in its lower range. Deriving the endpoints means the toughest thing alive
+// always gets the biggest boom, and #299's coming HP retune moves it automatically.
+// Today's derived range: floor 6 (infantry) … ceiling 430 (the artillery mech on heavy chassis).
 const DEATH_SCALE_MIN = 0.5;
 // #225: exported (was module-private) so combat.js's player-death path can reuse the exact
 // same ceiling `deathScaleFor` ever produces for an enemy, instead of a second hardcoded
 // magic number drifting out of sync with it.
 export const DEATH_SCALE_MAX = 1.3;
-export function deathScaleFor(e) {
-  const hp = Math.max(0, e.mech?.maxHp || 0);
-  const span = DEATH_HP_CEIL - DEATH_HP_FLOOR;
-  const t = span > 0 ? Math.min(1, Math.max(0, (hp - DEATH_HP_FLOOR) / span)) : 1;
-  return DEATH_SCALE_MIN + t * (DEATH_SCALE_MAX - DEATH_SCALE_MIN);
+
+// How far up the roster's toughness range this body sits: 0 = the weakest thing in the game,
+// 1 = the toughest. `bounds` is injectable for tests.
+function toughnessProgress(e, bounds = liveToughnessBounds()) {
+  const t = Math.max(0, e?.mech?.toughness || 0);
+  const span = bounds.ceil - bounds.floor;
+  if (!(span > 0)) return 1;
+  return Math.min(1, Math.max(0, (t - bounds.floor) / span));
+}
+
+export function deathScaleFor(e, bounds = liveToughnessBounds()) {
+  return DEATH_SCALE_MIN + toughnessProgress(e, bounds) * (DEATH_SCALE_MAX - DEATH_SCALE_MIN);
 }
 
 // #107: which discrete destruction-EXPLOSION SOUND category a dying enemy's boom uses (Weapon
 // Lab tunable — see audio/sfxParams.js's deathExplosionSmall/Medium/Large/Massive entries +
-// Audio.deathExplosion). Buckets off the SAME `.maxHp` toughness signal `deathScaleFor` above
-// already uses (drone 14 hp … base heavy mech 616 hp) — a few tunable buckets instead of
-// continuously scaling one param set. Calibrated against the actual roster: drone 14 hp ⇒
-// small; turret 90 / tank 160 / helicopter 70 / light mech ≈266 hp ⇒ medium; medium mech ≈416
-// hp ⇒ large; heavy mech ≈616 hp ⇒ massive.
-export function explosionCategoryFor(e) {
-  const hp = Math.max(0, e.mech?.maxHp || 0);
-  if (hp < 50) return 'small';
-  if (hp < 300) return 'medium';
-  if (hp < 550) return 'large';
+// Audio.deathExplosion). Still the same four discrete buckets off the same toughness signal
+// `deathScaleFor` uses — #301 only changed WHAT the thresholds are measured against, not the
+// bucketing design (whether tiers should track toughness linearly at all is an open playtest
+// question on #301, deliberately not touched here). The cut points are expressed as FRACTIONS
+// of the derived range, preserving #107's original relative calibration (its 50/300/550 cuts
+// sat at ~0.06/0.48/0.89 of the then-assumed 14..616 span) while letting the endpoints move with
+// the roster. Against today's derived 6..430: infantry 6 / drone 14 ⇒ small; turret 90 /
+// helicopter 100 / light mech 184 / tank 200 ⇒ medium; medium mech 290 / quadruped 370 ⇒ large;
+// heavy mech 430 ⇒ massive — the top tier is reachable again, by exactly the toughest unit.
+const CATEGORY_CUTS = [
+  [0.06, 'small'],
+  [0.48, 'medium'],
+  [0.89, 'large'],
+];
+export function explosionCategoryFor(e, bounds = liveToughnessBounds()) {
+  const t = toughnessProgress(e, bounds);
+  for (const [cut, name] of CATEGORY_CUTS) if (t < cut) return name;
   return 'massive';
 }
 

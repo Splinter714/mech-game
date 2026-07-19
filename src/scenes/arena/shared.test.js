@@ -1,58 +1,97 @@
 import { describe, it, expect } from 'vitest';
 import {
-  explosionCategoryFor, deathScaleFor, nearestLocation, resolveHitLocation, pickLiveWeighted,
+  explosionCategoryFor, deathScaleFor, DEATH_SCALE_MAX, nearestLocation, resolveHitLocation,
+  pickLiveWeighted,
 } from './shared.js';
+import { rosterToughnessBounds, liveToughnessBounds } from '../../data/rosterBounds.js';
 import { Mech } from '../../data/Mech.js';
 
-// #107: which discrete destruction-explosion-SOUND category a dying enemy falls into, bucketed
-// off `.maxHp` (uniform across Mech/HpBody per #90) — calibrated against the real roster: drone
-// 14 hp, turret 90 hp, tank 160 hp, helicopter 70 hp, light mech ≈266 hp, medium mech ≈416 hp,
-// heavy mech ≈616 hp (see enemyKinds.js + chassis maxHp comment in data/Mech.js).
-function enemyWithHp(hp) {
-  return { mech: { maxHp: hp } };
+// #107 (+ #301): which discrete destruction-explosion-SOUND category a dying enemy falls into,
+// bucketed off `.toughness` (structure + armor + shield — uniform across Mech/HpBody per #106)
+// against bounds DERIVED from the live roster (data/rosterBounds.js). Today's roster:
+// infantry 6, drone 14, turret 90, helicopter 100, light mech 184, tank 200, medium mech 290,
+// quadruped 370, heavy/artillery mech 430 (the ceiling).
+function enemyWithToughness(toughness) {
+  return { mech: { toughness } };
 }
 
-describe('explosionCategoryFor (#107 — Weapon Lab destruction-explosion size categories)', () => {
-  it('buckets a drone (14 hp) as small', () => {
-    expect(explosionCategoryFor(enemyWithHp(14))).toBe('small');
+describe('explosionCategoryFor (#107 buckets, #301 roster-derived bounds)', () => {
+  it('buckets infantry (6) and a drone (14) as small', () => {
+    expect(explosionCategoryFor(enemyWithToughness(6))).toBe('small');
+    expect(explosionCategoryFor(enemyWithToughness(14))).toBe('small');
   });
 
-  it('buckets turret (90 hp), tank (160 hp), helicopter (70 hp), and light mech (~266 hp) as medium', () => {
-    expect(explosionCategoryFor(enemyWithHp(90))).toBe('medium');
-    expect(explosionCategoryFor(enemyWithHp(160))).toBe('medium');
-    expect(explosionCategoryFor(enemyWithHp(70))).toBe('medium');
-    expect(explosionCategoryFor(enemyWithHp(266))).toBe('medium');
+  it('buckets turret (90), helicopter (100), light mech (184), and tank (200) as medium', () => {
+    for (const t of [90, 100, 184, 200]) {
+      expect(explosionCategoryFor(enemyWithToughness(t))).toBe('medium');
+    }
   });
 
-  it('buckets a medium mech (~416 hp) as large', () => {
-    expect(explosionCategoryFor(enemyWithHp(416))).toBe('large');
+  it('buckets a medium mech (290) and the quadruped (370) as large', () => {
+    expect(explosionCategoryFor(enemyWithToughness(290))).toBe('large');
+    expect(explosionCategoryFor(enemyWithToughness(370))).toBe('large');
   });
 
-  it('buckets a heavy mech (~616 hp) as massive', () => {
-    expect(explosionCategoryFor(enemyWithHp(616))).toBe('massive');
+  // The #301 regression itself: under the old hardcoded 616 ceiling the toughest unit in the
+  // game (430) landed in 'large', leaving 'massive' unreachable.
+  it('gives the TOUGHEST unit in the live roster the top tier', () => {
+    const { ceil } = liveToughnessBounds();
+    expect(explosionCategoryFor(enemyWithToughness(ceil))).toBe('massive');
   });
 
   it('is monotonic across the small/medium/large/massive boundaries', () => {
     const order = ['small', 'medium', 'large', 'massive'];
-    const hps = [10, 49, 50, 299, 300, 549, 550, 1000];
     let lastIdx = -1;
-    for (const hp of hps) {
-      const idx = order.indexOf(explosionCategoryFor(enemyWithHp(hp)));
+    for (const t of [0, 6, 14, 60, 90, 200, 290, 370, 420, 430, 5000]) {
+      const idx = order.indexOf(explosionCategoryFor(enemyWithToughness(t)));
       expect(idx).toBeGreaterThanOrEqual(lastIdx);
       lastIdx = idx;
     }
   });
 });
 
-describe('deathScaleFor (unchanged by #107 — still drives the visual burst size)', () => {
-  it('scales with maxHp toughness, drone (14 hp) at the floor and heavy mech (616 hp) at the ceiling', () => {
-    expect(deathScaleFor(enemyWithHp(14))).toBeCloseTo(0.5, 5);
-    expect(deathScaleFor(enemyWithHp(616))).toBeCloseTo(1.3, 5);
+describe('deathScaleFor (#301 — roster-derived, not hardcoded)', () => {
+  it('puts the weakest live unit at the min scale and the toughest at the max', () => {
+    const { floor, ceil } = liveToughnessBounds();
+    expect(deathScaleFor(enemyWithToughness(floor))).toBeCloseTo(0.5, 5);
+    expect(deathScaleFor(enemyWithToughness(ceil))).toBeCloseTo(DEATH_SCALE_MAX, 5);
   });
 
-  it('is monotonically increasing with maxHp', () => {
-    expect(deathScaleFor(enemyWithHp(90))).toBeGreaterThan(deathScaleFor(enemyWithHp(14)));
-    expect(deathScaleFor(enemyWithHp(416))).toBeGreaterThan(deathScaleFor(enemyWithHp(160)));
+  it('is monotonically increasing with toughness', () => {
+    expect(deathScaleFor(enemyWithToughness(90))).toBeGreaterThan(deathScaleFor(enemyWithToughness(14)));
+    expect(deathScaleFor(enemyWithToughness(370))).toBeGreaterThan(deathScaleFor(enemyWithToughness(200)));
+  });
+});
+
+// The point of #301: the endpoints are COMPUTED from the roster, so they move when the roster
+// does instead of drifting stale (as the hardcoded 616 ceiling did after #128, and as any
+// hardcoded 430 would after #299's HP retune).
+describe('explosion bounds track the roster (#301)', () => {
+  const stubKinds = {
+    weakling: { hp: 10 },
+    bruiser: { hp: 1000 },
+  };
+
+  it('derives different endpoints under a stubbed roster', () => {
+    const stubbed = rosterToughnessBounds({}, stubKinds);
+    expect(stubbed.floor).toBe(10);
+    expect(stubbed.ceil).toBe(1000);
+    const live = liveToughnessBounds();
+    expect(stubbed.ceil).not.toBe(live.ceil);
+  });
+
+  it('re-tiers the same enemy when the roster bounds change', () => {
+    const stubbed = rosterToughnessBounds({}, stubKinds);
+    const e = enemyWithToughness(430);
+    // Top of today's live roster ⇒ the biggest boom…
+    expect(explosionCategoryFor(e)).toBe('massive');
+    expect(deathScaleFor(e)).toBeCloseTo(DEATH_SCALE_MAX, 5);
+    // …but middling in a roster whose toughest unit is 1000.
+    expect(explosionCategoryFor(e, stubbed)).toBe('medium');
+    expect(deathScaleFor(e, stubbed)).toBeLessThan(DEATH_SCALE_MAX);
+    // …and the stub roster's own toughest unit takes the top tier there.
+    expect(explosionCategoryFor(enemyWithToughness(1000), stubbed)).toBe('massive');
+    expect(deathScaleFor(enemyWithToughness(1000), stubbed)).toBeCloseTo(DEATH_SCALE_MAX, 5);
   });
 });
 
