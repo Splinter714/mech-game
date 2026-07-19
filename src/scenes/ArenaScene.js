@@ -250,10 +250,12 @@ export default class ArenaScene extends Phaser.Scene {
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
     // layer so a ground decal can never out-rank a unit no matter what else gets added later.
-    // #306: the line-of-sight dimming overlay. Created here (before the unit views) so its
-    // Graphics exists for the first `_updateVisibility` tick; its DEPTH.LOS_DIM (2.9) tier is
-    // what puts it under the player/flyers and over everything on the ground — see
-    // arena/visibility.js.
+    // #306: the line-of-sight dimming overlay, plus the gameplay sight FOV that targeting gates on.
+    // Called here (before the unit views) so the overlay's Graphics — when enabled — exists for the
+    // first `_updateVisibility` tick; its DEPTH.LOS_DIM (2.9) tier is what puts it under the
+    // player/flyers and over everything on the ground. NOTE: the overlay is currently toggled OFF
+    // (`LOS_DIM_ENABLED` in arena/visibility.js) pending the owner's verdict; the sight gate that
+    // makes cover real (#316) is unaffected and still runs from here.
     this._initVisibility();
     this.groundFx = this.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning-ground patches (napalm)
     this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
