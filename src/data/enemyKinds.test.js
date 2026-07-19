@@ -187,15 +187,18 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(q.muzzlePart).toBeUndefined();
     expect(Object.keys(kindWeaponSlots(q))).toEqual([]);
     expect(kindMaxFireRange(q)).toBeUndefined();
-    // #147: the deploy mechanic is a SWARM — a batch of several units per tick, a fast cadence,
-    // and a high lifetime cap. #328 leaves all of it untouched (deliberately NOT buffed to
-    // compensate for disarming the unit — Jackson wants to feel that in play first).
+    // #147: the deploy mechanic is a SWARM — a batch of several units per tick, a fast cadence.
+    // Cadence/batch size stay untouched by the #328 follow-up so the cap removal is felt alone.
     expect(q.deployEveryMs).toBeGreaterThanOrEqual(2000);
     expect(q.deployEveryMs).toBeLessThanOrEqual(8000);
     expect(q.deployBatchMin).toBeGreaterThan(1);   // more than one unit per tick — a real "batch"
     expect(q.deployBatchMax).toBeGreaterThanOrEqual(q.deployBatchMin);
-    expect(q.deployCap).toBeGreaterThan(q.deployBatchMax);   // room for multiple bursts, not just one
-    expect(q.deployCap).toBeLessThanOrEqual(30);   // generous, but still a bounded lifetime cap
+  });
+
+  it('#328 follow-up: the carrier is an INFINITE spawner — no lifetime deploy cap', () => {
+    // Jackson: "yes make broodhauler an infinite spawner, yes". `deployCap: 24` used to stop it
+    // dead after ~12-16s; killing it is now the only lever, exactly as docks work post-#326.
+    expect(ENEMY_KINDS.carrier.deployCap).toBeUndefined();
   });
 
   it('#152: carrier deploy batch minimum is at least 5 (round-2 playtest floor)', () => {

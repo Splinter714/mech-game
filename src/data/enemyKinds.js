@@ -503,13 +503,17 @@ export const ENEMY_KINDS = {
     // `legFrames` drives multi-frame HULL art. `carrierBehavior` flips the live frame to 1 for
     // a beat whenever a batch launches.
     turretFrames: 2,
-    // #147/#152: every deployEveryMs while alive+aware it drops a whole BATCH of drones at once
-    // (carrierBehavior), floor 5 so every burst is a real swarm, up to a lifetime cap of 24.
-    // #328 leaves the deploy batching completely unchanged.
+    // #147/#152: every deployEveryMs while alive+engaged it drops a whole BATCH of drones at once
+    // (enemies.js `_updateVehicle` → enemyBehaviors.js `carrierDeployTick`), floor 5 so every
+    // burst is a real swarm.
+    // #328 follow-up: NO `deployCap`. The old lifetime cap of 24 exhausted a carrier after 3-4
+    // batches (~12-16s), then it never deployed again. Jackson: "yes make broodhauler an infinite
+    // spawner, yes" — it now deploys for as long as it lives, and killing it is the only lever,
+    // exactly as docks work post-#326. Cadence and batch size are deliberately untouched so the
+    // cap removal can be felt in isolation.
     deployEveryMs: 4000,
     deployBatchMin: 5,
     deployBatchMax: 8,
-    deployCap: 24,
     art: 'carrier',
     behavior: 'carrier',
     // #269: 'large' — not crushable, and it towers over the tree canopy.

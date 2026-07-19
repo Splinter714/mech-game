@@ -389,14 +389,16 @@ function helicopterBehavior(scene, e, ctx) {
 // #152, reworked into an unarmed tank-bodied carrier in #328). Grinds to a standoff and holds,
 // the same tank-style hull-travel pattern as tankBehavior (reused deliberately, not reinvented —
 // see tankBehavior above for the same radial/strafe shape), just on a slower/heavier chassis.
-// Its whole threat is the periodic SWARM deploy: while alive and AWARE (this fn only runs while
-// aware — see _updateVehicle's aware gate) it acts as a mobile "nest," dropping a whole BATCH of
-// drones from its own body on a data-driven cadence (def.deployEveryMs), sized between
-// def.deployBatchMin-deployBatchMax, up to a lifetime cap (def.deployCap) so a long fight can't
-// have it spawn forever unbounded. This is PER-FRAME incremental spawning (unlike
-// turretNest/infantryMob, which expand everything up front at spawn time) — the timer/count
-// state (`e.deployCd`/`e.deployCount`) is lazily initialized here since _spawnKind stays a
-// generic, kind-agnostic constructor.
+// Its whole threat is the periodic SWARM deploy, which lives in `carrierDeployTick` BELOW rather
+// than in this function: it acts as a mobile "nest," dropping a whole BATCH of drones from its
+// own body on a data-driven cadence (def.deployEveryMs), sized between
+// def.deployBatchMin-deployBatchMax, for as long as it is alive (no lifetime cap — #328
+// follow-up). The tick is deliberately NOT called from here: it is driven straight from
+// _updateVehicle so a frame on which the carrier isn't running its tactical brain (lost sight,
+// post-wake stagger) doesn't stall the cadence. This is PER-FRAME incremental spawning (unlike
+// turretNest/infantryMob, which expand everything up front at spawn time) — the timer state
+// (`e.deployCd`) is lazily initialized there since _spawnKind stays a generic, kind-agnostic
+// constructor.
 //
 // #328: UNARMED. Jackson chose "unarmed — pure carrier", so this behaviour never calls
 // `aimAndFire` and the kind carries no weapon data at all. With nothing to aim, the unit's
@@ -483,32 +485,42 @@ function carrierBehavior(scene, e, ctx) {
   // #328: unarmed — no aimAndFire. The bay door is deck-mounted, so it rides the hull's angle
   // rather than tracking the player like every armed kind's turret does.
   e.turret = e.angle;
-  carrierDeployTick(scene, e, def, ctx);
 }
 
-// #130/#147 deploy mechanic — lazily initializes the per-enemy timer/count on first tick so the
+// #328 follow-up: how long (ms) a carrier keeps deploying after it stops "reacting" to the
+// player. Deployment used to live INSIDE carrierBehavior, so it only ticked on frames the unit
+// ran its full tactical brain — break line of sight, duck behind one of #333's much larger base
+// structures, or catch the post-wake reacting stagger, and the 4s cadence stalled with it
+// ("isn't dispensing drones consistently"). The tick is now hoisted out of the behaviour
+// (enemies.js `_updateVehicle` calls it directly) and, once the carrier has engaged even once,
+// this grace keeps the bay running through those gaps. 6s = one and a half deploy cycles, so a
+// player breaking sight for a moment never sees the cadence hitch, while a carrier genuinely
+// left far behind does eventually button up. Owner: tunable.
+export const CARRIER_DEPLOY_GRACE_MS = 6000;
+
+// #130/#147 deploy mechanic — lazily initializes the per-enemy timer on first tick so the
 // generic _spawnKind constructor never needs kind-specific bootstrapping.
-function carrierDeployTick(scene, e, def, ctx) {
+//
+// #328 follow-up: NO lifetime cap. `deployCap: 24` used to stop a carrier dead after 3-4 batches
+// (~12-16s), which is why a Broodhauler stopped producing "long enough". Jackson: "yes make
+// broodhauler an infinite spawner, yes" — a carrier now deploys for as long as it is alive, and
+// killing it is the only lever, exactly as docks work post-#326.
+export function carrierDeployTick(scene, e, def, delta) {
   if (e.deployCd == null) e.deployCd = rand(def.deployEveryMs * 0.4, def.deployEveryMs);
-  e.deployCount = e.deployCount ?? 0;
-  e.deployCd -= ctx.delta;
+  e.deployCd -= delta;
   // #328: tick the bay door's open timer down and publish the live art frame. `turretFrame` is
   // the generic multi-frame-turret seam (enemies.js `_updateVehicle`), 0 = shut, 1 = open.
-  e.doorMs = Math.max(0, (e.doorMs ?? 0) - ctx.delta);
+  e.doorMs = Math.max(0, (e.doorMs ?? 0) - delta);
   e.turretFrame = e.doorMs > 0 ? 1 : 0;
-  const cap = def.deployCap ?? 5;
-  if (e.deployCd <= 0 && e.deployCount < cap) {
-    // #147: deploy a whole SWARM-sized batch at once (not one unit per tick) — sized between
-    // deployBatchMin/Max but clamped so a batch near the end of the lifetime cap can't overshoot
-    // it and spawn more than deployCap total.
+  if (e.deployCd <= 0) {
+    // #147: deploy a whole SWARM-sized batch at once (not one unit per tick), sized between
+    // deployBatchMin/Max.
     const batchMin = def.deployBatchMin ?? 1, batchMax = def.deployBatchMax ?? batchMin;
-    const wanted = batchMin + Math.floor(Math.random() * (batchMax - batchMin + 1));
-    const batchSize = Math.min(wanted, cap - e.deployCount);
+    const batchSize = batchMin + Math.floor(Math.random() * (batchMax - batchMin + 1));
     for (let i = 0; i < batchSize; i++) {
       const kindId = CARRIER_DEPLOY_KINDS[Math.floor(Math.random() * CARRIER_DEPLOY_KINDS.length)];
       deployNearby(scene, e, kindId);
     }
-    e.deployCount += batchSize;
     e.deployCd = def.deployEveryMs;
     // #328: the doors fly open for the launch, then shut again (DOOR_OPEN_MS above).
     e.doorMs = DOOR_OPEN_MS;
