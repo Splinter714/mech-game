@@ -516,6 +516,12 @@ export const WorldMixin = {
     // destroyed — see bases.js `_onTerrainCollapsed`). No-op for every other destructible hex;
     // optional chaining since most scenes/tests never wire a handler at all.
     this._onTerrainCollapsed?.(k);
+    // #306: the hex just stopped blocking line of sight, so the player's cached field-of-view set
+    // is stale — invalidate it so the dimming behind the hole clears on the next tick. This is
+    // what makes "destroying cover visibly buys vision" true rather than cosmetic; without it the
+    // overlay would only refresh the next time the player happened to cross a hex boundary.
+    // Optional chaining: plenty of tests build a bare world without the visibility mixin.
+    this._invalidateVisibility?.();
     return true;
   },
 

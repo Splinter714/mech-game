@@ -22,6 +22,7 @@
 //    unit-tested; here we feed it the live queries.
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { stepLock, stepReticlePosition } from '../../data/targetlock.js';
+import { enemyTargetable } from '../../data/visibility.js';
 import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget, pickAimEnemy } from './shared.js';
 
 // #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
@@ -44,7 +45,21 @@ export const TargetingMixin = {
   //    charge, no maintain, no switch-dwell, and, per the #252 playtest follow-up, no LOS gate
   //    or blind/dead-reckoning state either) — it drives the reticle-slide position for drawing.
   _updateLock(dt) {
-    const inRange = (e) => !e.mech.isDestroyed() && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE;
+    // #306 (confirmed intent): TARGETING RESPECTS LOS. Convergence/lock may not acquire an enemy
+    // the player has no sight of, so breaking a sightline genuinely protects a unit and
+    // concealment becomes tactically real. `enemyTargetable` (data/visibility.js) is the pure
+    // rule; FLYING enemies are exempt — they're above whatever blocks ground-level sight, the
+    // same exception #245/#257 already make for flyers and cover when FIRING, which keeps the
+    // targeting rule and the rendering rule (flyers draw above the dimming) in agreement.
+    //
+    // Symmetry note: enemy fire already gates on LOS (`aimAndFire`'s `needLos`, via
+    // `_cachedLosToPlayer`), and the visible set is computed with `coverBlocksForRay` — the SAME
+    // shared cover decision that raycast uses, with the same #72 own-hex endpoint exemption — so
+    // the player can now target exactly the set of ground enemies that can target the player
+    // back. This closes an asymmetry rather than creating one.
+    const inRange = (e) => !e.mech.isDestroyed()
+      && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE
+      && enemyTargetable(e, this.visibleHexes, (x, y) => this._hexKeyAt(x, y));
 
     // aimEnemy (convergence): the in-range enemy `pickAimEnemy` (shared.js) scores best — angular
     // offset from the aim line dominates, but #250 playtest follow-up: a meaningfully closer
