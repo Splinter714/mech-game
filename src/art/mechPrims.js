@@ -66,7 +66,7 @@ export function rectC(sg, cx, cy, w, h, fill, alpha = 1) {
 // Centred rounded rect (via the raw super-sampled graphics).
 export function roundC(sg, cx, cy, w, h, fill, r, alpha = 1) {
   sg.fillStyle(fill, alpha);
-  const k = ART_SCALE, rr = Math.min(r, w / 2, h / 2);
+  const k = sg.scale ?? ART_SCALE, rr = Math.min(r, w / 2, h / 2);
   sg.raw.fillRoundedRect((CENTER + cx - w / 2) * k, (CENTER + cy - h / 2) * k, w * k, h * k, rr * k);
 }
 // Centred filled ellipse (used for soft glow pools).

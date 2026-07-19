@@ -47,6 +47,24 @@ export const SOFT_PILLAR_SPAN = 2;
 export const BOSS_HEX = { q: 0, r: 0 };
 export const PLAYER_SPAWN_HEX = { q: 0, r: BOSS_ARENA_RADIUS - 2 };
 
+// The pit's dressing, as a ROLE → terrain-id map (same shape/spirit as a biome record in
+// data/biomes.js, so the arena builder never names a terrain id itself). Volcanic ids: this is
+// a lair, not a random battlefield, and the black-ash floor with a lava rim reads as its own
+// distinct place rather than "one of the five maps you've been running."
+//
+//   hard — `wallSegment` (impassable + LOS-blocking). It IS a destructible terrain id, but the
+//          boss arena deliberately seeds NO building HP for these hexes, and `_damageBuildingAt`
+//          (scenes/arena/world.js) no-ops on a hex with no HP entry — so they are permanent
+//          here without needing a new terrain entry that behaves differently everywhere else.
+//   soft — `fumarole`, ordinary destructible soft cover, seeded WITH HP so the boss (and the
+//          player) chew through it over the course of the fight.
+export const BOSS_ARENA_TERRAIN = {
+  groundA: 'ash', groundB: 'ashB',
+  hard: 'wallSegment',
+  soft: 'fumarole',
+  boundary: 'lava',
+};
+
 // Hex distance from the origin, in axial coords (same metric as hexgrid.js's `distance`,
 // specialised to the centre so the layout doesn't need to import it).
 function ringOf(q, r) {

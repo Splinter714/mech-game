@@ -56,7 +56,12 @@ export function attachPadTabCycle(scene, active) {
 
 // Draw the bar across the top of `scene`. `active` is the current scene key. `onDeploy` is
 // called when Deploy is clicked; `canDeploy` greys it out + makes it inert when false.
-export function buildTabBar(scene, { active, onDeploy, canDeploy = true } = {}) {
+//
+// #240: `onBossArena` (optional) adds a second pinned action to the LEFT of Deploy — the Boss
+// Arena deploy target. It is only rendered when the caller passes a handler at all, so the
+// bar is byte-identical for every scene that doesn't offer one; GarageScene owns the decision
+// of when it's available (all five biomes cleared, or any dev build).
+export function buildTabBar(scene, { active, onDeploy, canDeploy = true, onBossArena = null } = {}) {
   const dpr = scene.registry.get('dpr') || 1;
   const W = Math.round(scene.scale.width / dpr);
   const layer = scene.add.container(0, 0).setDepth(50);
@@ -86,6 +91,25 @@ export function buildTabBar(scene, { active, onDeploy, canDeploy = true } = {}) 
   // Deploy, pinned right. Greyed + inert when the build is incomplete (canDeploy === false).
   const depW = 160;
   const dx = W - depW - 16;
+  // #240: the Boss Arena action sits immediately left of Deploy, in its own alarm-red styling so
+  // it never reads as "the normal way to start a run." Same canDeploy gate — you can't walk into
+  // the boss fight with an incomplete build either.
+  if (onBossArena) {
+    const bw = 170, bx = dx - bw - 8;
+    const bEnabled = canDeploy;
+    const br = scene.add.rectangle(bx, y, bw, tabH, TAB_UI.tab).setOrigin(0, 0)
+      .setStrokeStyle(1, bEnabled ? 0xe2533a : TAB_UI.barEdge);
+    const bt = scene.add.text(bx + bw / 2, y + tabH / 2, '☠ BOSS ARENA', {
+      fontFamily: 'monospace', fontSize: '14px', color: bEnabled ? '#e2533a' : TAB_UI.off,
+    }).setOrigin(0.5);
+    layer.add([br, bt]);
+    if (bEnabled) {
+      br.setInteractive({ useHandCursor: true });
+      br.on('pointerover', () => br.setFillStyle(TAB_UI.tabHover));
+      br.on('pointerout', () => br.setFillStyle(TAB_UI.tab));
+      br.on('pointerdown', onBossArena);
+    }
+  }
   const enabled = canDeploy && !!onDeploy;
   const dr = scene.add.rectangle(dx, y, depW, tabH, TAB_UI.tab).setOrigin(0, 0)
     .setStrokeStyle(1, enabled ? TAB_UI.sel : TAB_UI.barEdge);

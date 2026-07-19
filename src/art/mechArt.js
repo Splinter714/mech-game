@@ -71,11 +71,15 @@ export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, righ
 // (add it to the mech's screen position); `rot` is the base rotation (caller adds the
 // convergence tilt). At tilt 0 this reproduces the part's old baked-into-the-turret placement
 // exactly. Mirrors the muzzle convention in locomotion._muzzle (forward = −y, right = +x).
-export function partSpriteTransform(mech, loc, angle, scale) {
+// #240: `artScale` is the super-sampling factor the mech's TEXTURES were generated at (see
+// buildMechTextures' own `opts.artScale`). Every ordinary mech omits it and gets the global
+// ART_SCALE, exactly as before; a mech drawn on a finer grid needs the joint offsets computed
+// against THAT grid or its arms/torsos would be placed at a fraction of the right distance.
+export function partSpriteTransform(mech, loc, angle, scale, artScale = ART_SCALE) {
   const p = mechLayout(mech)[loc];
   const pivot = PART_PIVOT[loc] ?? 0.42;
   const sx = p.x, sy = p.y + p.h * pivot;             // joint in design coords
-  const disp = scale * ART_SCALE;
+  const disp = scale * artScale;
   const f = -sy * disp, r = sx * disp;                // forward / right offset (world px)
   return {
     ox: 0.5 + sx / DESIGN, oy: 0.5 + sy / DESIGN,
@@ -265,23 +269,27 @@ function drawHull(sg, mech, frame, T) {
 
 // Build (or re-skin in place) all textures for one mech under `key`. `opts.theme`
 // ('player' | 'enemy') picks the faction palette/shape.
+// `opts.artScale` (#240) overrides the global super-sampling factor for THIS mech only. Every
+// ordinary mech omits it and renders exactly as before. The boss draws on a much finer grid so
+// that, displayed ~10x larger, its plating still reads as crisp procedural art rather than a
+// 4x texture stretched past its resolution. The caller must scale its sprites by
+// (worldPxPerDesignUnit / artScale) to keep the on-screen size right — see arena/shared.js's
+// `mechDispUnit` for that relationship.
 export function buildMechTextures(scene, key, mech, opts) {
   const T = themeFor(opts);
+  const S = opts?.artScale ?? ART_SCALE;
+  const px = DESIGN * S;
   for (let f = 0; f < 4; f++) {
-    gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawHull(scaledGraphics(g), mech, f, T));
+    gen(scene, `${key}_hull_${f}`, px, px, (g) => drawHull(scaledGraphics(g, S), mech, f, T));
   }
-  gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-    (g) => drawTurret(scaledGraphics(g), mech, T));
+  gen(scene, `${key}_turret`, px, px, (g) => drawTurret(scaledGraphics(g, S), mech, T));
   // One texture per side torso + arm — the scene pivots each toward the weapon-convergence
   // point (side torsos subtly, arms more; see partSpriteTransform).
   for (const loc of SIDE_TORSO_LOCATIONS) {
-    gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T));
+    gen(scene, `${key}_${loc}`, px, px, (g) => drawSideTorso(scaledGraphics(g, S), mech, loc, T));
   }
   for (const loc of ARM_LOCATIONS) {
-    gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawArm(scaledGraphics(g), mech, loc, T));
+    gen(scene, `${key}_${loc}`, px, px, (g) => drawArm(scaledGraphics(g, S), mech, loc, T));
   }
 }
 

@@ -28,6 +28,10 @@ export function scaledGraphics(g, r = ART_SCALE) {
   const s = (n) => n * r;
   return {
     raw: g,
+    // #240: the grid factor this wrapper is scaling by, exposed so a primitive that reaches
+    // through to `.raw` (mechPrims.js `roundC`) can multiply by the SAME factor instead of
+    // assuming the global ART_SCALE — which is wrong for a mech built on a finer grid.
+    scale: r,
     fillStyle: (c, a) => g.fillStyle(c, a),
     lineStyle: (w, c, a) => g.lineStyle(w * r, c, a),
     fillRect: (x, y, w, h) => g.fillRect(s(x), s(y), s(w), s(h)),

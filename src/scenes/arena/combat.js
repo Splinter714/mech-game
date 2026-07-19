@@ -5,7 +5,7 @@ import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import {
   ARENA_MECH_SCALE, DAMAGEABLE, DEATH_SCALE_MAX, DEPTH, deathScaleFor, explosionCategoryFor,
-  resolveHitLocation, pickLiveWeighted,
+  resolveHitLocation, pickLiveWeighted, mechDispUnit,
 } from './shared.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 import { DORMANT } from '../../data/awareness.js';
@@ -169,7 +169,12 @@ export const CombatMixin = {
     // dormant basemates get woken). `_wakeBase` is idempotent, so an already-woken base is a no-op.
     if (e.awareness === DORMANT && e.baseId != null) this._wakeBase(e.baseId);
     const isMech = e.kind === 'mech' || e.kind === undefined;
-    const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
+    // #240: world px per design unit for THIS unit. `mechDispUnit` returns exactly
+    // ARENA_MECH_SCALE * ART_SCALE for every ordinary mech (the values below are its defaults),
+    // so this is unchanged for the whole existing roster — it only differs for the 10x boss,
+    // whose limbs must map to hit points at ITS size or every shot would resolve onto whichever
+    // part happened to be nearest the centre.
+    const dispUnit = isMech ? mechDispUnit(e) : ARENA_MECH_SCALE * ART_SCALE;
     const lx = x - e.x, ly = y - e.y;
     const lay = isMech ? mechLayout(e.mech) : e.mech.parts;
     const locs = isMech ? DAMAGEABLE : e.mech.locations();
@@ -181,7 +186,11 @@ export const CombatMixin = {
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke
     // or lost its armor plating (#246 armor-shell overlay), not on every single hit. Vehicle
     // (non-mech) kinds have static textures regardless (no reskin path at all).
-    if (isMech && (res.destroyed || res.armorBrokeNow)) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
+    // #240: `artScale` must be carried through the reskin — a mech built on a finer texture
+    // grid (the boss) would otherwise be silently re-generated at the global ART_SCALE the
+    // first time a part broke, changing its texture size and shrinking it mid-fight.
+    // `e.artScale` is undefined for every ordinary mech, so this is a no-op for them.
+    if (isMech && (res.destroyed || res.armorBrokeNow)) reskinMech(this, e.key, e.mech, { theme: 'enemy', artScale: e.artScale });
     // #83: no floating damage number on enemy hits either — damage still applies above (res),
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     // #201: same shared part-loss cue as the player path above.
