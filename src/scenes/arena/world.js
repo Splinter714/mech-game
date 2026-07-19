@@ -366,10 +366,12 @@ export const WorldMixin = {
   // #288: a standing wall span is solid to sight and fire exactly like a solid terrain hex is —
   // checked in ADDITION to the terrain rule, never instead of it, and never exempted by the own-hex
   // soft-cover transparency (`transparent`), which only ever applied to walk-through cover.
-  _isWall(x, y, transparent = null, smallUnitInvolved = false) {
+  // #310 `ignoreSpanKey`: one span this ray does not see — the parapet under a wall turret that is
+  // either the shooter or the thing being shot at. See wallEdges.js `wallEdgeAt`.
+  _isWall(x, y, transparent = null, smallUnitInvolved = false, ignoreSpanKey = null) {
     const k = this._hexKeyAt(x, y);
     if (shotBlockedAt(this.terrain.get(k), k, transparent, smallUnitInvolved)) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX);   // #309: see through an open gate
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #309: see through an open gate
   },
 
   // #168: like `_isWall`, but the see-through set is the UNION of a shared per-frame Set (all
@@ -380,14 +382,14 @@ export const WorldMixin = {
   // only the allocation is removed. Defers to `coverBlocksForRay` (terrain.js) — the same shared
   // decision `shotBlockedAt`/`_wallDistanceLos` use — so the cover rule can't drift between the
   // three call sites. #269: `smallUnitInvolved` — see `_isWall` above.
-  _isWallForRound(x, y, sharedTransparent, originHexes, smallUnitInvolved = false) {
+  _isWallForRound(x, y, sharedTransparent, originHexes, smallUnitInvolved = false, ignoreSpanKey = null) {
     const k = this._hexKeyAt(x, y);
     const id = this.terrain.get(k);
     const ownHexExempt =
       (sharedTransparent != null && sharedTransparent.has(k)) ||
       (originHexes != null && originHexes.includes(k));
     if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX);   // #288/#309 — see `_isWall`
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #288/#309 — see `_isWall`
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's
@@ -750,15 +752,15 @@ export const WorldMixin = {
   // `maxT`. Used so beams/shots are blocked by cover. #72: pass a `transparent` hex-key Set
   // (usually `_losTransparency(shooter, target)`) so each endpoint's own soft-cover hex
   // doesn't block the ray.
-  _wallDistance(x0, y0, angle, maxT, transparent = null, smallUnitInvolved = false) {
+  _wallDistance(x0, y0, angle, maxT, transparent = null, smallUnitInvolved = false, ignoreSpanKey = null) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     // #288: the nearest standing wall span this ray crosses, resolved up front so the sampled
     // terrain scan below can stop the moment it passes that point — whichever blocker is CLOSER
     // wins, exactly as it would if walls were tiles.
-    const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT);
+    const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT, ignoreSpanKey);
     for (let t = 8; t < maxT; t += 8) {
       if (t >= tw) break;
-      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent, smallUnitInvolved)) return t;
+      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent, smallUnitInvolved, ignoreSpanKey)) return t;
     }
     return tw;
   },
@@ -774,8 +776,11 @@ export const WorldMixin = {
   // walked out — and it is also what sells the fiction that stops the open gate reading as a bug:
   // the opening is genuinely open — you can see through it, shoot through it, and (since the #309
   // playtest) drive through it, so a hole in the wall line behaves in every way like a hole.
-  _wallEdgeDistance(x0, y0, x1, y1) {
-    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX);
+  // #310 `ignoreSpanKey`: ONE span this ray does not see — the parapet under a wall turret that is
+  // either the shooter or the thing being shot at. See wallEdges.js `wallEdgeCrossing`'s
+  // `ignoreKey` for why it exists and why it is scoped to one named span.
+  _wallEdgeDistance(x0, y0, x1, y1, ignoreSpanKey = null) {
+    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, ignoreSpanKey);
     return hit ? hit.dist : Infinity;
   },
 
@@ -797,14 +802,14 @@ export const WorldMixin = {
   // decision `shotBlockedAt`/`_isWallForRound` use. #269: `smallUnitInvolved` (optional) — see
   // `_isWall` above; propagated through `_cachedLosToPlayer` so a caller with a live enemy handle
   // can pass `isSmallUnit(e)`.
-  _wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved = false) {
+  _wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved = false, ignoreSpanKey = null) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     const oh = pixelToHex(x0, y0);          // shooter/muzzle endpoint hex (soft-cover-transparent)
     const eh = pixelToHex(x1, y1);          // target endpoint hex (soft-cover-transparent)
     // #288: nearest wall-span crossing, same up-front resolution as `_wallDistance` above — needed
     // here in particular because this loop deliberately SKIPS samples that land in the same hex as
     // the previous one, which a point-sampled wall check could not survive.
-    const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT);
+    const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT, ignoreSpanKey);
     let lastQ = null, lastR = null;
     for (let t = 8; t < maxT; t += 8) {
       if (t >= tw) break;
@@ -850,7 +855,9 @@ export const WorldMixin = {
     if (e._losCd <= 0) {
       e._losCd += LOS_REFRESH_MS;                 // preserve sub-frame phase (keeps the stagger)
       if (e._losCd <= 0) e._losCd = LOS_REFRESH_MS;   // guard: a huge delta spike still recomputes once
-      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved) === Infinity;
+      // #310: a wall turret ignores the span it is bolted to (and only that one), so a gun seated
+      // on the wall's centreline can see out across the approach AND back into the compound.
+      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved, e.spanKey ?? null) === Infinity;
     }
     return e._losClear;
   },

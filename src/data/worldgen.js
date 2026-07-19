@@ -1030,9 +1030,11 @@ function assignGates(T, base, edges) {
 // argument and no progress derivation). The alternative, concentrating them on the approach face,
 // was considered and rejected: it makes flanking to the far side a completely safe answer, which
 // turns a fortification into a puzzle with one solution. Spread evenly, there is no free heading —
-// but because each gun's own wall blocks it from firing along the ring (see
-// TURRET_MOUNT_OFFSET_PX), only the two or three facing the player's arc can engage him at once.
-// So the ring is threatening from every side without ever bringing its whole armament to bear.
+// but a gun is still blocked by every span of the ring OTHER than the one it is bolted to (#310's
+// centring exempts only its own span, see TURRET_MOUNT_OFFSET_PX), so only the two or three facing
+// the player's arc can engage him at once. The ring is threatening from every side without ever
+// bringing its whole armament to bear — and since the centring, that holds INSIDE the compound too
+// rather than the guns all falling silent the moment the player is through the wall.
 //
 // ELIGIBILITY, two rules:
 //   - NEVER a gate span. A gate that is also a gun emplacement muddles both reads: the gate's

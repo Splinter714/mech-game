@@ -1315,7 +1315,10 @@ export const EnemiesMixin = {
           // more — every shooter's beam is blocked by hard cover identically, flying or not.
           // #307: `lane`/`lateral` keep a multi-lane continuous beam from collapsing into one
           // object (enemies have no Barrage, so this is lane 0 today — threaded for parity).
-          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, isSmallUnit(e), { lane, lateral: s.lateral });
+          // #310: `ignoreSpanKey` — a wall turret's beam is not stopped by the span it is bolted
+          // to (`e.spanKey`; undefined for every other shooter, so nothing else changes). Without
+          // it a centred gun would detonate its own lance on its own parapet every shot.
+          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, isSmallUnit(e), { lane, lateral: s.lateral, ignoreSpanKey: e.spanKey ?? null });
         } else {
           // No explicit seek target needed here (playtest follow-up #252 dropped the old
           // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its

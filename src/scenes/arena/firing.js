@@ -316,10 +316,13 @@ export const FiringMixin = {
   // and solid walls do.
   // #269: `smallUnitInvolved` (optional) — see world.js `_isWall`; a caller shooting FOR a live
   // enemy should pass `isSmallUnit(e)` so this hot path is ready once the size tier lands.
-  _hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved = false) {
+  // #310 `ignoreSpanKey`: the shooter's own wall span, for a wall turret firing off the centreline
+  // it is mounted on — see wallEdges.js `wallEdgeCrossing`'s `ignoreKey`. Null for every other
+  // shooter, so no one else's beam gains a way through a wall.
+  _hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved = false, ignoreSpanKey = null) {
     const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY), this._hexKeyAt(this.px, this.py)]);
     for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
-    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent, smallUnitInvolved);
+    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent, smallUnitInvolved, ignoreSpanKey);
   },
 
   // Re-aim a held continuous beam's existing line at the current muzzle/angle, every render
@@ -381,7 +384,7 @@ export const FiringMixin = {
   // offset, remembered on the beam so `_trackHeldBeam` can re-derive that lane's own muzzle
   // every render frame. A single-lane hold is lane 0 with lateral 0 — i.e. exactly one
   // tracking object, preserving #86.
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', smallUnitInvolved = false, { lane = 0, lateral = 0 } = {}) {
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', smallUnitInvolved = false, { lane = 0, lateral = 0, ignoreSpanKey = null } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -395,7 +398,17 @@ export const FiringMixin = {
     let endDist = trace.endDist;
     // Cover: a wall between muzzle and target stops the beam short. #316: no exceptions — a
     // flying shooter's beam is blocked by hard cover exactly like a ground shooter's.
-    const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved);
+    //
+    // #310 (2026-07-19), ONE exception, and it is not a cover exemption: a beam aimed at a WALL
+    // TURRET is not stopped by the span that turret is standing on. Since the gun was centred on
+    // its wall line, muzzle-to-gun and muzzle-to-wall are the same distance from every direction,
+    // and the wall test runs first — so without this the gun is literally unshootable and its
+    // 200hp span becomes the only way to silence it (measured: 4x the cost, from either side).
+    // #310 shipped the gun and the span as two separate health pools on purpose; this keeps them
+    // that way. Scoped to the span under the thing you are actually aiming at, so it never opens a
+    // lane through a wall to anything else — every other span still stops the beam dead.
+    const targetSpanKey = (target && typeof target === 'object' && target.spanKey) || null;
+    const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved, ignoreSpanKey ?? targetSpanKey);
     let blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     // #317, hitscan half of the targeted-hex rule: a beam has no per-step position to test, so its

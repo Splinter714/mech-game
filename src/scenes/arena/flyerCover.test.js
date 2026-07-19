@@ -212,8 +212,10 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
       const { scene, calls } = makeVehicleScene();
       scene._fireVehicleWeapon(makeKindEnemy(HITSCAN_WEAPON.id, flying), {}, 0);
       // owner, shooterKey, then #269's smallUnitInvolved (false — the test kind isn't small)
-      // and #307's lane descriptor. Nothing between them; `flying` is not consulted.
-      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', false, { lane: 0, lateral: 0 }]);
+      // and #307's lane descriptor. Nothing between them; `flying` is not consulted. #310 added
+      // `ignoreSpanKey` to that descriptor — null for anything that isn't a wall turret, which is
+      // every shooter here.
+      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', false, { lane: 0, lateral: 0, ignoreSpanKey: null }]);
     });
 
     // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
