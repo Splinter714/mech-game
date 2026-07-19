@@ -32,8 +32,10 @@ import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 // the Shield POWERUP (data/powerups.js) is what makes the shield feel powerful for a while.
 // `pauseMs` is the brief (not shooter-style multi-second) regen interrupt on any hit that
 // reaches the shield, per the #246 decision.
-// #299: `max` raised 50 -> 100 as part of the owner-set balance table (player = 200 structure /
-// 300 armor / 100 shield = 600). Regen behaviour deliberately unchanged (2/sec, 1200ms pause):
+// #299: `max` raised 50 -> 100 as part of the owner-set balance table. (#324: the armor/structure
+// half of that table was being multiplied by 7 at deploy and now reads honestly as 2100/1400 in
+// chassis/mediumPlayer.js — the shield is separate, unaffected, and stays 100.)
+// Regen behaviour deliberately unchanged (2/sec, 1200ms pause):
 // the pool got bigger, the trickle did not, so it still reads as breathing room rather than a
 // second health bar — it just now takes 50s rather than 25s to refill from empty.
 const PLAYER_SHIELD = { max: 100, regenPerSec: 2, pauseMs: 1200 };
@@ -94,15 +96,14 @@ export default class ArenaScene extends Phaser.Scene {
     this.allMechs = this.registry.get('allMechs');
     this.mech = this.allMechs[ACTIVE_MECH_KEY];
     this.mech.repairAll();
-    // Player-only survivability buffer: ~7x the chassis' per-location armor + structure.
-    // Applied here (deploy time), not in the shared chassis data, so enemies are unaffected.
-    // #64: tuned down from the old 100x (near-invincible sandbox) to a moderate value in the
-    // 5-10x band — real damage across a run should threaten death (the run loop now ends the
-    // run on player destruction), but a single bad opening shouldn't be instant-death.
-    this.mech.boostHealth(7);
-    // #246: (re)establish the player's native shield baseline fresh each sortie — same
-    // redeploy-safe, idempotent spirit as boostHealth above (never compounds, always starts
-    // this deploy at full charge with no lingering powerup boost from a prior run).
+    // #324: the player's survivability buffer used to be applied HERE as `boostHealth(7)`, which
+    // meant the chassis data said 600 while the mech on the field was 3500 — and several balance
+    // passes were reasoned against the wrong figure. It now lives in the chassis totals
+    // (data/chassis/mediumPlayer.js: 2100 armor + 1400 hp = the same 3500). repairAll() above is
+    // all the deploy path needs.
+    // #246: (re)establish the player's native shield baseline fresh each sortie — redeploy-safe
+    // and idempotent (never compounds, always starts this deploy at full charge with no
+    // lingering powerup boost from a prior run).
     this.mech.configureShield(PLAYER_SHIELD);
     this.registry.set('playerMech', this.mech);
     buildMechTextures(this, 'playerMech', this.mech);

@@ -344,48 +344,10 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
   });
 });
 
-describe('Mech.boostHealth (#69 deploy survivability buffer — must not compound)', () => {
-  it('multiplies chassis base max armor/structure by exactly mult', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    const baseArmor = m.parts.leftTorso.maxArmor;
-    const baseHp = m.parts.leftTorso.maxHp;
-    m.boostHealth(100);
-    expect(m.parts.leftTorso.maxArmor).toBe(Math.round(baseArmor * 100));
-    expect(m.parts.leftTorso.maxHp).toBe(Math.round(baseHp * 100));
-    expect(m.parts.leftTorso.armor).toBe(m.parts.leftTorso.maxArmor);
-    expect(m.parts.leftTorso.hp).toBe(m.parts.leftTorso.maxHp);
-  });
-
-  it('calling boostHealth twice in a row (simulating repeated redeploys) is idempotent, not compounding', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    const baseArmor = m.parts.leftTorso.maxArmor;
-    const baseHp = m.parts.leftTorso.maxHp;
-
-    m.boostHealth(100);
-    const afterFirst = { armor: m.parts.leftTorso.maxArmor, hp: m.parts.leftTorso.maxHp };
-
-    m.boostHealth(100);
-    const afterSecond = { armor: m.parts.leftTorso.maxArmor, hp: m.parts.leftTorso.maxHp };
-
-    expect(afterSecond).toEqual(afterFirst);
-    expect(afterSecond.armor).toBe(Math.round(baseArmor * 100));
-    expect(afterSecond.hp).toBe(Math.round(baseHp * 100));
-  });
-
-  it('repairAll (deploy refill) between boosts does not cause boostHealth to compound', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    const baseArmor = m.parts.leftTorso.maxArmor;
-
-    // Simulate the ArenaScene deploy path across three sorties: repairAll() then
-    // boostHealth(100) each time.
-    for (let i = 0; i < 3; i++) {
-      m.repairAll();
-      m.boostHealth(100);
-    }
-
-    expect(m.parts.leftTorso.maxArmor).toBe(Math.round(baseArmor * 100));
-  });
-});
+// #324: `Mech.boostHealth` (and the per-part baseMaxArmor/baseMaxHp capture it needed) was
+// deleted along with its only call site. The player-only 7x deploy buffer it existed to apply is
+// now plain chassis data (data/chassis/mediumPlayer.js: 2100 armor + 1400 hp = the same 3500),
+// which balance.test.js pins directly — so there is nothing left here to test for compounding.
 
 describe('Mech mounting: one copy of a weapon at a time (#84)', () => {
   it('mounting an already-mounted weapon into a new slot MOVES it, not duplicates it', () => {

@@ -34,7 +34,11 @@ const TABLE = {
   skirmisher:  { structure: 100, armor: 75,  shield: 25,  total: 200 },
   sniper:      { structure: 150, armor: 150, shield: 50,  total: 350 },
   artillery:   { structure: 200, armor: 225, shield: 75,  total: 500 },
-  player:      { structure: 200, armor: 300, shield: 100, total: 600 },
+  // #324: the player's row as it ACTUALLY is. The owner set 200/300/100 in the #299 pass, but
+  // ArenaScene then multiplied armor+structure by 7 at deploy (#64's `boostHealth`), so the mech
+  // on the field was never the 600 this table claimed. The multiplier is now folded into the
+  // chassis and boostHealth is gone; effective toughness is unchanged at 3500 (+100 shield).
+  player:      { structure: 1400, armor: 2100, shield: 100, total: 3600 },
 };
 
 // A mech's structure/armor are per-location; sum them the way the balance table means them.
@@ -84,8 +88,8 @@ describe('#299: the player and the enemy medium chassis are genuinely separable'
     expect(ENEMIES.sniper.chassisId).toBe('medium');
     const player = new Mech({ chassisId: 'mediumPlayer' });
     const warden = new Mech(ENEMIES.sniper);
-    expect(mechLayers(player).structure).toBe(200);
-    expect(mechLayers(player).armor).toBe(300);
+    expect(mechLayers(player).structure).toBe(1400);
+    expect(mechLayers(player).armor).toBe(2100);
     expect(mechLayers(warden).structure).toBe(150);
     expect(mechLayers(warden).armor).toBe(150);
   });
@@ -125,7 +129,7 @@ describe('#299: turrets are armor-only — the owner explicitly ruled out a turr
 
 describe('#299: the downstream roster bounds re-derive with no edits', () => {
   it('floor is the weakest unit (3) and ceiling the toughest ENEMY (500)', () => {
-    // Note the player (600) is deliberately outside this span: rosterBounds reads ENEMIES +
+    // Note the player (3500 + shield) is deliberately outside this span: rosterBounds reads ENEMIES +
     // ENEMY_KINDS, and the player is in neither, so the ceiling means "the toughest thing you
     // fight" — which is what both consumers (drop chance, explosion size) actually want.
     expect(rosterToughnessBounds()).toEqual({ floor: 3, ceil: 500 });

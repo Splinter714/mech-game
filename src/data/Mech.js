@@ -50,11 +50,6 @@ export class Mech {
       this.parts[loc] = {
         maxArmor: def.maxArmor,
         maxHp: def.maxHp,
-        // True chassis base, captured once and never touched again — boostHealth
-        // always multiplies FROM this, so re-applying a buffer is idempotent instead
-        // of compounding on whatever maxArmor/maxHp currently holds.
-        baseMaxArmor: def.maxArmor,
-        baseMaxHp: def.maxHp,
         armor: saved?.armor ?? def.maxArmor,
         hp: saved?.hp ?? def.maxHp,
       };
@@ -69,7 +64,9 @@ export class Mech {
     this.shield = createShield(data.shield);
     // Set only while a timed Shield-powerup boost is active (see boostShield/_clearShieldBoost
     // below) — remembers the PRE-boost base so reverting on expiry is exact, never compounding
-    // across repeated pickups (mirrors boostHealth's baseMaxArmor/baseMaxHp idempotency above).
+    // across repeated pickups. (#324: `boostHealth` and its parallel baseMaxArmor/baseMaxHp
+    // capture are gone — the player's durability is plain chassis data now — so this is the only
+    // remaining "multiply a max, remember the base, revert exactly" mechanism in the model.)
     this._shieldBoost = null;
   }
 
@@ -248,8 +245,8 @@ export class Mech {
   // Shield powerup pickup (#246 decision: BOTH effects, the strongest version) — instantly
   // fills the shield to 100% of its (possibly boosted) capacity AND multiplies max capacity +
   // regen rate by `mult` for `durationMs`. A duplicate pickup mid-boost just refreshes the
-  // timer against the SAME captured pre-boost base (mirrors boostHealth's idempotency: never
-  // compounds across repeated pickups). No-op on a mech with no native shield at all.
+  // timer against the SAME captured pre-boost base, so it never compounds across repeated
+  // pickups. No-op on a mech with no native shield at all.
   //
   // #271: this also covers a duplicate pickup mid-decay (after the previous boost's timer
   // expired but `shield.hp` hasn't drained back to base yet) — `_shieldBoost` is still around
@@ -309,11 +306,12 @@ export class Mech {
   }
 
   // Set/replace this mech's native shield config at runtime (fresh, full, no lingering boost).
-  // Opt-in and applied outside the shared chassis/enemy data, same spirit as `boostHealth` —
-  // the arena uses this to give the PLAYER a baseline shield (see ArenaScene's PLAYER_SHIELD)
-  // without touching the constructor-time `data.shield` every mech (including enemy mechs) is
-  // built from. Idempotent: calling it again (e.g. once per redeploy) just re-establishes the
-  // same config from scratch, matching boostHealth's own redeploy-safe pattern.
+  // Opt-in and applied outside the shared chassis/enemy data: the arena uses this to give the
+  // PLAYER a baseline shield (see ArenaScene's PLAYER_SHIELD) without touching the
+  // constructor-time `data.shield` every mech (including enemy mechs) is built from. Idempotent:
+  // calling it again (e.g. once per redeploy) just re-establishes the same config from scratch.
+  // (#324 note: the player's armor/hp buffer used to be applied the same way, via `boostHealth`;
+  // it now lives in the chassis data, and this shield config is the last such deploy-time patch.)
   configureShield(config) {
     this.shield = createShield(config);
     this._shieldBoost = null;
@@ -411,22 +409,6 @@ export class Mech {
         const w = getWeapon(id);
         this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt);
       });
-    }
-  }
-
-  // Scale every location's max armor + hp by `mult` of the chassis BASE (and
-  // refill to the new max). Opt-in and applied at instantiation time — NOT in the shared
-  // chassis data — so it affects only the mech it's called on. The arena uses this to give
-  // the PLAYER a large survivability buffer without touching enemies (who share the same
-  // chassis configs). Always computes from the stored base, never the current max, so
-  // calling this repeatedly (e.g. once per redeploy) is idempotent rather than compounding.
-  boostHealth(mult) {
-    for (const loc of LOCATIONS) {
-      const p = this.parts[loc];
-      p.maxArmor = Math.round(p.baseMaxArmor * mult);
-      p.maxHp = Math.round(p.baseMaxHp * mult);
-      p.armor = p.maxArmor;
-      p.hp = p.maxHp;
     }
   }
 
