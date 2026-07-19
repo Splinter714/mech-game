@@ -187,13 +187,20 @@ export const FiringMixin = {
     // burst — through each pattern's own existing expansion. Outside Barrage it's 1, i.e. the
     // exact plan as before. (Ammo is spent per trigger pull above, not per emitted shot.)
     const plan = planEmissions(w.weapon, { countMult: mods.countMult ?? 1 });
+    // #307: a held continuous beam keeps one persistent beam object PER LANE (see
+    // `_fireHitscan`). When Barrage expires mid-hold the plan drops from n lanes back to 1, so
+    // retire any beam whose lane no longer exists rather than leaving it hanging in place
+    // (it would otherwise sit frozen at its last position until its ttl ran out).
+    if (plan.mode === 'hitscan' && this._isHeldBeam(w.weapon)) {
+      this._retireStaleBeamLanes('player', w.location, plan.shots.length);
+    }
     // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
     // trajectory beat) are scheduled in one shared place (audio/fireCues.js) that the Weapon
     // Lab preview calls too, so their timing can't drift; the arena always plays (audible:
     // true). Held/looping weapons (flamethrower/beam laser) get their sound from their loop
     // instead — scheduleFireCues no-ops for them, as it does for the delay:0-only case.
     scheduleFireCues(this, w.weapon, plan, true);
-    for (const s of plan.shots) {
+    for (const [lane, s] of plan.shots.entries()) {
       const go = () => {
         if (!this.scene.isActive()) return;
         const m = this._muzzle(w.location);
@@ -202,7 +209,11 @@ export const FiringMixin = {
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', 'player', ignoreCover);
+        // #307: `lane`/`lateral` let a continuously-held beam own ONE persistent beam object
+        // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
+        // both lanes shared a beam key so the second silently overwrote the first's endpoints
+        // (two shots fired, one line drawn).
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', 'player', ignoreCover, false, { lane, lateral: s.lateral });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
@@ -320,19 +331,40 @@ export const FiringMixin = {
   // cadence, which only governs damage ticks via fireWeapon/_fireHitscan. Purely visual: no
   // damage, no ammo, no impact fx. If no fire tick has created the beam yet (the very first
   // frame it's held), there's nothing to reposition — fireWeapon creates it.
+  // #307: under Barrage this location may own SEVERAL parallel lanes, so re-pin every one of
+  // them, each from its own laterally-offset muzzle (the `lateral` the fire tick stamped on it).
+  // With no Barrage there's exactly one lane (lateral 0) and this is the original single-beam
+  // reposition, unchanged.
   _trackHeldBeam(w) {
-    const live = this.beams.find((b) => b.loc === `player:${w.location}`);
-    if (!live) return;
+    const prefix = `player:${w.location}:`;
+    const lanes = this.beams.filter((b) => typeof b.loc === 'string' && b.loc.startsWith(prefix));
+    if (!lanes.length) return;
     const m = this._muzzle(w.location);
     const angle = this._fireAngle(w, m);
+    const perp = angle + Math.PI / 2;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
-    const trace = traceHitscan(m.x, m.y, angle, reach, this._liveEnemiesForTrace());
-    let endDist = trace.endDist;
-    const wallT = this._hitscanReach(m.x, m.y, angle, endDist);
-    if (wallT < endDist) endDist = wallT;
-    live.x0 = m.x; live.y0 = m.y;
-    live.x1 = m.x + Math.cos(angle) * endDist;
-    live.y1 = m.y + Math.sin(angle) * endDist;
+    for (const live of lanes) {
+      const off = live.lateral || 0;
+      const mx = m.x + Math.cos(perp) * off, my = m.y + Math.sin(perp) * off;
+      const trace = traceHitscan(mx, my, angle, reach, this._liveEnemiesForTrace());
+      let endDist = trace.endDist;
+      const wallT = this._hitscanReach(mx, my, angle, endDist);
+      if (wallT < endDist) endDist = wallT;
+      live.x0 = mx; live.y0 = my;
+      live.x1 = mx + Math.cos(angle) * endDist;
+      live.y1 = my + Math.sin(angle) * endDist;
+    }
+  },
+
+  // Retire persistent beam lanes for `shooterKey`+`location` whose lane index is at or beyond
+  // `laneCount` — i.e. lanes that this trigger pull no longer plans (Barrage expiring mid-hold).
+  // Zeroing ttl hands them to the normal expiry path in projectiles.js, so they fade out through
+  // the same spark-fade every other beam uses instead of vanishing abruptly.
+  _retireStaleBeamLanes(shooterKey, location, laneCount) {
+    const prefix = `${shooterKey}:${location}:`;
+    for (const b of this.beams) {
+      if (typeof b.loc === 'string' && b.loc.startsWith(prefix) && b.lane >= laneCount) b.ttl = 0;
+    }
   },
 
   // `owner`/`shooterKey` (#117): generalizes the player's beam-fire path for an ENEMY mech's
@@ -347,7 +379,14 @@ export const FiringMixin = {
   // ground enemies never pass this, so their beams stop at cover exactly as before.
   // `smallUnitInvolved` (#269, optional): threads to the soft-cover size-tier exemption — see
   // world.js `_isWall`. Enemy callers pass `isSmallUnit(e)`; the player never does (always large).
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', ignoreCover = false, smallUnitInvolved = false) {
+  // `lane`/`lateral` (#307, optional): which PARALLEL LANE of the emission plan this shot is.
+  // A continuously-held beam keeps one persistent beam object per lane — keyed by
+  // shooter+location+lane — so Barrage's two lanes each own (and re-pin) their own line
+  // instead of the second stomping the first. `lateral` is the lane's perpendicular muzzle
+  // offset, remembered on the beam so `_trackHeldBeam` can re-derive that lane's own muzzle
+  // every render frame. A single-lane hold is lane 0 with lateral 0 — i.e. exactly one
+  // tracking object, preserving #86.
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', ignoreCover = false, smallUnitInvolved = false, { lane = 0, lateral = 0 } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -372,13 +411,14 @@ export const FiringMixin = {
     const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
     const heavy = w.weapon.delivery.kind === 'rail';
     const continuous = w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
-    const beamKey = `${shooterKey}:${w.location}`;
+    const beamKey = `${shooterKey}:${w.location}:${lane}`;
     const live = continuous ? this.beams.find((b) => b.loc === beamKey) : null;
     if (live) {
       live.x0 = muzzleX; live.y0 = muzzleY; live.x1 = endX; live.y1 = endY;
+      live.lateral = lateral;
       live.ttl = beamTtl;   // age keeps advancing → warble flows continuously
     } else {
-      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null });
+      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral });
     }
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));

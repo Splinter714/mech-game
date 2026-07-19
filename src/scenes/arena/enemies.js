@@ -1165,7 +1165,7 @@ export const EnemiesMixin = {
   // staggered spread/burst, dispatched to melee/hitscan/projectile by `plan.mode` exactly like
   // the single-shot call sites used to.
   _fireEnemyShots(w, plan, mx, my, fireAngle, e) {
-    for (const s of plan.shots) {
+    for (const [lane, s] of plan.shots.entries()) {
       const go = () => {
         const baseAngle = fireAngle + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;
@@ -1177,7 +1177,9 @@ export const EnemiesMixin = {
           // above, so its shots ignore terrain cover entirely: the hitscan trace skips the wall
           // check and a spawned round is stamped `ignoresCover` (see firing.js/projectiles.js).
           // Ground kinds pass false and are blocked by cover exactly as before.
-          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e));
+          // #307: `lane`/`lateral` keep a multi-lane continuous beam from collapsing into one
+          // object (enemies have no Barrage, so this is lane 0 today — threaded for parity).
+          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e), { lane, lateral: s.lateral });
         } else {
           // No explicit seek target needed here (playtest follow-up #252 dropped the old
           // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
