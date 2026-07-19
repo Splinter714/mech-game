@@ -94,6 +94,10 @@ export const WorldMixin = {
   // own internal seed-derived RNG for terrain features).
   _buildWorld(seed = Math.floor(Math.random() * 0x100000000)) {
     this.worldRadius = MAX_WORLD_RADIUS;
+    // #311: published so later same-run setup passes that need randomness can derive their own
+    // deterministic generator from the run's seed instead of reaching for bare `Math.random`
+    // (bases.js `_spawnDormantUnits` rolls each dock's resupply cadence/phase off this).
+    this._worldSeed = seed;
     // The biome to build (set on the scene before create(), e.g. per deploy #64). The role →
     // terrain-id mapping comes entirely from the biome data, so this generator never branches on
     // which biome it is; swapping biomes just swaps the ids it stamps. The biome stays fixed for

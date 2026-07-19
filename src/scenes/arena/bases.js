@@ -16,7 +16,8 @@ import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH, strokeHexRing } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
-import { makeDockResupplyState, tickDockResupply, spendDockResupply } from '../../data/dockResupply.js';
+import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
+import { mulberry32 } from '../../data/worldgen.js';
 import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp } from '../../data/terrain.js';
@@ -162,13 +163,18 @@ export const BasesMixin = {
   _spawnDormantUnits() {
     this._dockResupplyMeta = new Map();
     this._dockResupplyStates = new Map();
+    // #311: one generator for every dock's resupply cadence/phase roll, derived from the run's
+    // world seed (set by `_buildWorld`, world.js) so a seeded run reproduces the same staggering
+    // — the same reason worldgen.js threads a `mulberry32` rng rather than calling `Math.random`.
+    // Falls back to a random draw only when there's no seed (a test stub that never built a world).
+    const dockRng = mulberry32(((this._worldSeed ?? Math.floor(Math.random() * 0x100000000)) ^ 0x00c0ffee) >>> 0);
     for (const base of this.bases ?? []) {
       for (const dock of base.docks) {
         const { x, y } = hexToPixel(dock.q, dock.r);
         const count = dock.count ?? 1;
         const dockKey = axialKey(dock.q, dock.r);
         this._dockResupplyMeta.set(dockKey, { baseId: base.id, kindId: dock.kindId, x, y });
-        this._dockResupplyStates.set(dockKey, makeDockResupplyState());
+        this._dockResupplyStates.set(dockKey, makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, dockRng));
         for (let i = 0; i < count; i++) {
           const a = (i / count) * Math.PI * 2 + Math.PI / 4;
           const px = count > 1 ? x + Math.cos(a) * DOCK_HUDDLE_OFFSET : x;
