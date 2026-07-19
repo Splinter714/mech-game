@@ -14,6 +14,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
 import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
+import { targetHexKeyOf } from './shared.js';
 
 export const FiringMixin = {
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -395,8 +396,18 @@ export const FiringMixin = {
     // Cover: a wall between muzzle and target stops the beam short. #316: no exceptions — a
     // flying shooter's beam is blocked by hard cover exactly like a ground shooter's.
     const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved);
-    const blocked = wallT < endDist;
+    let blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
+    // #317, hitscan half of the targeted-hex rule: a beam has no per-step position to test, so its
+    // stopping point is solved up front. If the player's converge/lock pick is a standing
+    // destructible hex and this ray enters it SHORTER than wherever the beam would otherwise end,
+    // the beam terminates there instead. Without this a laser aimed at a locked forest hex passed
+    // clean over it for exactly the same reason a bullet did — soft cover doesn't block a mech.
+    const tHexKey = owner === 'player' ? targetHexKeyOf(this.convergeTarget) : null;
+    if (tHexKey && this._destructibleStandingAt?.(tHexKey)) {
+      const tt = this._targetHexDistance(muzzleX, muzzleY, angle, endDist, tHexKey);
+      if (tt < endDist) { endDist = tt; hit = false; blocked = true; }
+    }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
     // Persistent beam so sparks can linger after it fades. A continuously-held beam
@@ -420,6 +431,18 @@ export const FiringMixin = {
       else this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
+      // #317: a stopped beam now CHIPS what stopped it, exactly as a round that detonates on cover
+      // has always done (projectiles.js). Before this, hitscan weapons could not damage destructible
+      // terrain at ALL — no beam/laser path ever called `_damageBuildingAt`, so a blocked beam just
+      // played sparks against an outpost/wall forever. That made the "shots pass over forests"
+      // complaint doubly true for energy loadouts: aiming at a hex neither stopped the beam nor hurt
+      // the hex. `_damageBuildingAt` routes a hit landing on a wall span to that span (#288) and
+      // otherwise to the hex under the impact point, so this covers spans and tiles alike.
+      // Enemy-fired beams damage terrain the same way their rounds already do — cover is cover for
+      // every shooter (#316).
+      // Optional chaining: plenty of tests exercise `_fireHitscan` against a bare stub scene with
+      // no world mixin at all, the same way the rest of this file guards `_stopTrajectorySfx` etc.
+      this._damageBuildingAt?.(endX, endY, Math.max(1, Math.round(w.weapon.damage)), { flame: false });
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     }
   },
@@ -507,7 +530,14 @@ export const FiringMixin = {
     // mech's centre, so back-project along the fire angle). A unit standing inside soft cover
     // can then fire OUT without its own round detonating on its own hex.
     const originHexes = [this._hexKeyAt(x, y), this._hexKeyAt(x - Math.cos(angle) * 24, y - Math.sin(angle) * 24)];
-    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, smallUnitInvolved: !!smallUnitInvolved };
+    // #317: stamp the hex the player is actually AIMED AT (when the converge/lock pick is a
+    // destructible hex rather than an enemy or a wall span). projectiles.js stops the round the
+    // moment it enters that hex, whether or not the terrain there would have blocked it — which is
+    // the whole fix: soft cover never blocks a mech's ray, so before this a locked forest hex was
+    // targetable and literally unhittable. Player-only: an enemy has no convergence pick, and the
+    // stamp is null for every other target kind, so nothing else changes behaviour.
+    const targetHexKey = owner === 'player' ? targetHexKeyOf(this.convergeTarget) : null;
+    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, smallUnitInvolved: !!smallUnitInvolved };
     this.projectiles.push(pushed);
     return pushed;
   },

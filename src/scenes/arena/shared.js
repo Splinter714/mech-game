@@ -453,7 +453,7 @@ export function pickAimEnemy(px, py, turretAngle, candidates, maxDist = Infinity
 // #250 (issue: "destroyable hexes should be potential convergence targets, but lower priority
 // than enemies"): what direct-fire convergence should aim at this frame. `aimEnemy` is whatever
 // targeting.js `_updateLock` already picked as the live most-aimed enemy (or null); `hexCandidates`
-// is a list of standing destructible-terrain points (world.js `_destructibleHexesNear`) to fall
+// is a list of standing destructible-terrain points (world.js `_destructibleTargetsNear`) to fall
 // back on. The ordering is enforced structurally, not by comparing scores: an enemy is returned
 // immediately whenever one exists, so a destructible hex is NEVER even considered — let alone
 // preferred — while any enemy is available, regardless of which is closer or better-aimed. Only
@@ -475,6 +475,30 @@ export function pickConvergeTarget(px, py, turretAngle, aimEnemy, hexCandidates,
   if (aimEnemy) return aimEnemy;
   return nearestToAimLine(px, py, turretAngle, hexCandidates, maxDist);
 }
+
+// #317: the hex key a converge/lock target designates, or null if it designates anything else (a
+// live enemy, a wall span, or nothing). PURE — the whole "is this hex my target" question in one
+// place, so the firing code never has to re-derive target identity from a bare {x,y} point.
+//
+// This is the fix for #317's core bug, and it deliberately does NOT go through the terrain
+// transparency mechanism. `coverBlocksForRay` answers "does this terrain stop a ray that happens to
+// pass through it" — and for SOFT cover the honest answer, for a mech, is no: a mech shoots clean
+// over foliage, which is the entire point of the soft tier (#279). The own-hex `transparent`
+// exemption only ever makes a hex MORE see-through, so for soft cover it was a no-op and a targeted
+// forest hex could never be impacted at all. "Is this my target" is a different question from "does
+// this terrain block", and it has to be able to STOP a shot that the terrain rule would let sail
+// past — so it is asked separately, and only ever about the one hex the player actually aimed at.
+export function targetHexKeyOf(target) {
+  if (!target || target.mech) return null;
+  return target.hexKey ?? null;
+}
+
+// #318 note on the OTHER target shape: a wall span is edge-keyed (`edgeKey`/`edge`), so
+// `targetHexKeyOf` correctly returns null for one. A span needs no impact rule of its own — spans
+// are solid to sight and fire unconditionally, so every non-arcing round already detonates on one
+// (projectiles.js `_wallEdgeHit`) and every beam already stops on one (world.js `_wallDistance`).
+// #318 was therefore purely a POOL gap: spans were hittable all along, just never offered as a
+// convergence/lock target because the pool only scanned the hex-keyed HP maps.
 
 // #92: the tank's HULL turns to face its direction of TRAVEL (like a real tank driving),
 // completely independent of its turret (which separately tracks the player — see aimAndFire

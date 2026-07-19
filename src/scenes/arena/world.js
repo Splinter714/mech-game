@@ -651,13 +651,63 @@ export const WorldMixin = {
   // terrain the map has overall. Feeds the direct-fire convergence fallback (#250: destructible
   // terrain is a convergence target, but only below any live enemy — see shared.js
   // `pickConvergeTarget`, called from targeting.js `_updateLock`).
-  _destructibleHexesNear(x, y, maxDist) {
+  // #318 renamed from `_destructibleHexesNear`: the pool is no longer hexes only. A base WALL SPAN
+  // is destructible (200 HP, wallEdges.js) and is the single most-destroyed thing in the game, but
+  // #288 rebuilt walls as hex-EDGE geometry — they have no hex key, so the hex-map scan above could
+  // never see them and the reticle would not converge on the one wall you must breach to get in.
+  // Spans are added here, on the TERRAIN side of #262's focus toggle, so they need no third
+  // category and — because `pickConvergeTarget` returns any live enemy immediately in the default
+  // 'enemy' mode — a 25-30 span ring can never pull the reticle off a mech that's shooting you.
+  //
+  // Every candidate carries its IDENTITY, not just a point (#317 needs it too):
+  //   • a hex   ⇒ `{ x, y, hexKey }`   — the centre of a standing destructible tile
+  //   • a span  ⇒ `{ x, y, edgeKey, edge }` — the segment midpoint (`hexEdges.js` derives the
+  //     endpoints from the two shared corners), plus the live record so a hit can damage it.
+  // Nothing downstream may assume a hex key: `pickConvergeTarget`/`nearestToAimLine` score on
+  // x/y alone, and firing.js discriminates on which key is present.
+  //
+  // GATE spans (#309) are included deliberately: a gate has HP like any other span and blowing one
+  // is a permanent breach, so it would be strange to be able to shoot it down but never lock it.
+  // TURRET spans (#310) are included as spans; the `wallTurret` riding on one is a separate live
+  // enemy in `this.enemies`, so "shoot the gun" and "shoot the wall out from under it" stay
+  // distinct picks decided by the focus toggle rather than fighting over one candidate.
+  _destructibleTargetsNear(x, y, maxDist) {
     const pts = [];
     for (const h of hexesWithinPixelRadius(x, y, maxDist)) {
       const k = axialKey(h.q, h.r);
-      if (this.buildingHp.has(k) || this.coverHp.has(k)) pts.push(hexToPixel(h.q, h.r));
+      if (this.buildingHp.has(k) || this.coverHp.has(k)) {
+        const p = hexToPixel(h.q, h.r);
+        pts.push({ x: p.x, y: p.y, hexKey: k });
+      }
+    }
+    // Spans are a flat list (a ring is tens of edges, not thousands), so a straight distance
+    // filter is cheaper than any spatial index would be here.
+    for (const e of liveWallEdges(this.wallEdges)) {
+      const mx = (e.x0 + e.x1) / 2, my = (e.y0 + e.y1) / 2;
+      if (Math.hypot(mx - x, my - y) <= maxDist) pts.push({ x: mx, y: my, edgeKey: e.key, edge: e });
     }
     return pts;
+  },
+
+  // #317: is the destructible terrain hex `key` still STANDING? Membership in either HP map is
+  // exactly that fact — both delete the key the instant `_damageBuildingAt` collapses it to rubble.
+  // Used by the targeted-hex impact rule (projectiles.js/firing.js) so a shot only stops in its
+  // target hex while there is actually something there left to hit.
+  _destructibleStandingAt(key) {
+    return this.buildingHp.has(key) || this.coverHp.has(key);
+  },
+
+  // #317: distance from (x0,y0) along `angle` to the first sample inside hex `key`, or Infinity if
+  // the ray never enters it within `maxT`. The hitscan counterpart of the projectile's per-step
+  // "am I in my target hex yet" test — a beam does not travel in steps, so its stopping point has
+  // to be solved up front, exactly as `_wallDistance` solves the cover blocker's.
+  _targetHexDistance(x0, y0, angle, maxT, key) {
+    if (!key) return Infinity;
+    const cx = Math.cos(angle), cy = Math.sin(angle);
+    for (let t = 8; t < maxT; t += 8) {
+      if (this._hexKeyAt(x0 + cx * t, y0 + cy * t) === key) return t;
+    }
+    return Infinity;
   },
 
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush
