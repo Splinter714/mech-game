@@ -15,12 +15,17 @@ import {
   placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind, drawDockKind,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
   placeBaseWalls, BASE_FOOTPRINT_HALF_LENGTH, BASE_FOOTPRINT_HALF_WIDTH, footprintShape,
+  MIN_BASE_SEPARATION_PX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
 import { axialKey, range, neighbors, distance, hexToPixel, pixelToHex } from './hexgrid.js';
 import { edgeKey, edgeMidpoint } from './hexEdges.js';
 import { ALERT_DETECT_RADIUS } from './alertTower.js';
+// #340: read the wall turret's reach off the KIND rather than re-typing 900 — the whole point of
+// the separation floor is that it tracks the real engagement envelope, so a range change must
+// show up here as a failing test, not as a stale literal that still passes.
+import { ENEMY_KINDS } from './enemyKinds.js';
 import { PROXIMITY_WAKE_RANGE_CAP } from './awareness.js';
 import { GAMEPLAY_ZOOM, ENEMY_COLLIDE_RADIUS_MECH } from '../scenes/arena/shared.js';
 
@@ -869,7 +874,11 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // the same pools and mostly come up as low-count plain kinds — so this stays a guard against a
     // re-weighting blowout rather than a limit the dock count is now pressed against. If a future
     // change pushes it near 48 again, re-measure rather than just raising the number.
-    expect(maxOpeningBodies).toBeLessThanOrEqual(48);
+    // #340 re-baselined this 48 → 56. Nothing about dock counts changed; the corridor got ~4x
+    // longer, which re-rolls the RNG stream and re-samples the same distribution far more times,
+    // so the observed tail moved (measured worst case 52). Re-measured as the comment above asks
+    // for, not just nudged past the failure.
+    expect(maxOpeningBodies).toBeLessThanOrEqual(56);
   });
 
   it('#269/#314: dockCountFor is a flat 1 per dock except the two weak swarm kinds', () => {
@@ -1023,22 +1032,71 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
 
     it('derives corridor length from the base count, so the per-base share is invariant', () => {
       expect(CORRIDOR_LENGTH_PX).toBe(CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT);
-      // The share each base gets is what determines how far you travel between encounters, and
-      // it is held at what the shipped 3-base/3400px corridor gave (≈1133px). Raising BASE_COUNT
-      // without this derivation is exactly the "more crowded, not longer" outcome #308 rejected.
-      expect(Math.abs(CORRIDOR_LENGTH_PX / BASE_COUNT - 3400 / 3)).toBeLessThan((3400 / 3) * 0.02);
+      // #308's structural claim — corridor length is a MULTIPLE of the count, so raising the
+      // count can never mean "the same trek, more crowded" — is what this pins, and it survives
+      // #340 untouched. What #340 changed is the SHARE itself (1140 → 4800): #308 had pinned it at
+      // what the old radius-2 disc bases got out of a 3400px/3-base corridor, then #333 grew the
+      // compound ~3.5x without revisiting it, and five compounds of the new size filled the lane
+      // end to end. The share is now sized off `MIN_BASE_SEPARATION_PX` instead (see below), which
+      // is a real geometric requirement rather than a historical figure.
+      expect(CORRIDOR_LENGTH_PER_BASE_PX).toBeGreaterThan(MIN_BASE_SEPARATION_PX);
     });
 
-    // MIN_GAP_PROGRESS_PX's own sizing argument (see worldgen.js) rests on each base getting a
-    // ~1130px slice of corridor to place itself in. That argument has to still hold at 5 bases,
-    // or the 600px calm-gap floor stops being reliably achievable — which is precisely what the
-    // corridor-length derivation buys. Pinned so a future count change can't quietly break it.
-    it('leaves the calm-gap floor comfortably inside each base\'s slice of corridor', () => {
+    // Both floors have to fit inside the slice each base actually gets. `MIN_GAP_PROGRESS_PX` is
+    // the gap-tower calm-travel floor; `MIN_BASE_SEPARATION_PX` is #340's much larger base-to-base
+    // one, and it is the binding one. `placeBases` picks randomly within the slice above the
+    // floor, so the floor must leave real headroom or the fallback path starts taking over and the
+    // floor stops being reliably achieved — the shipped ratio was 600/1140 ≈ 0.53.
+    it('leaves both spacing floors comfortably inside each base\'s slice of corridor', () => {
       const slicePx = CORRIDOR_LENGTH_PX / BASE_COUNT;
       expect(MIN_GAP_PROGRESS_PX).toBeLessThan(slicePx * 0.6);
-      // All `BASE_COUNT` floors must also fit end-to-end inside one corridor, with room to spare.
-      expect(MIN_GAP_PROGRESS_PX * BASE_COUNT).toBeLessThan(CORRIDOR_LENGTH_PX * 0.6);
+      expect(MIN_BASE_SEPARATION_PX).toBeLessThan(slicePx * 0.75);
+      // All `BASE_COUNT` separations must also fit end-to-end inside one corridor, with room to
+      // spare — otherwise the last base runs out of corridor and its gap collapses.
+      expect(MIN_BASE_SEPARATION_PX * BASE_COUNT).toBeLessThan(CORRIDOR_LENGTH_PX * 0.75);
+      // #340: a gap tower must fit at least `MIN_GAP_PROGRESS_PX` past the previous base AND that
+      // far before the next one, so a base gap has to hold 2x the calm-travel floor. This is
+      // exactly what broke when base separation was first tried as a bigger MIN_GAP_PROGRESS_PX:
+      // the two are different quantities and only one of them may grow.
+      expect(MIN_BASE_SEPARATION_PX).toBeGreaterThan(MIN_GAP_PROGRESS_PX * 2);
     });
+
+    // ── #340: bases sit outside each other's wall-turret envelopes ────────────────────────────
+    // Jackson's concrete target. Wall turrets sit ON the compound's ring and reach
+    // `ENEMY_KINDS.wallTurret.fireRange`; two neighbouring compounds each contribute a half-length plus that
+    // reach, so anything less than the sum means a base can shoot the player while he is inside a
+    // DIFFERENT base — the overlap #340 exists to remove. Asserted as arithmetic on the constants
+    // so a future footprint or range change can't silently reintroduce it.
+    it('separates bases by more than two full wall-turret envelopes plus both footprints', () => {
+      const halfLengthPx = BASE_FOOTPRINT_HALF_LENGTH * HEX_STEP_PX;
+      const envelopeTouch = 2 * (halfLengthPx + ENEMY_KINDS.wallTurret.fireRange);
+      expect(MIN_BASE_SEPARATION_PX).toBeGreaterThan(envelopeTouch);
+      // …and beyond merely touching, there is GENUINE open ground: a stretch no wall turret
+      // anywhere can reach, wider than the 400px graphics cull margin (so it is somewhere that
+      // actually stops drawing a compound — the measurable proxy #340 names).
+      expect(MIN_BASE_SEPARATION_PX - envelopeTouch).toBeGreaterThan(400);
+    });
+
+    // …and the arithmetic above is only worth anything if the REAL pipeline honours the floor.
+    // Swept against generateTerrain at the live BASE_COUNT, checking the euclidean centre gap (not
+    // just spine progress — progress is measured ALONG the meander and so over-reports how far
+    // apart two compounds actually are, which is the direction that would hide an overlap).
+    it('actually achieves that separation between every pair of bases, on real corridors', () => {
+      const halfLengthPx = BASE_FOOTPRINT_HALF_LENGTH * HEX_STEP_PX;
+      const envelopeTouch = 2 * (halfLengthPx + ENEMY_KINDS.wallTurret.fireRange);
+      for (let seed = 1; seed <= 20; seed++) {
+        const { bases } = generateTerrain(realArgsFor(seed * 41 + 3));
+        expect(bases.length).toBe(BASE_COUNT);
+        for (let i = 0; i < bases.length; i++) {
+          for (let j = i + 1; j < bases.length; j++) {
+            const a = hexToPixel(bases[i].center.q, bases[i].center.r);
+            const b = hexToPixel(bases[j].center.q, bases[j].center.r);
+            const px = Math.hypot(a.x - b.x, a.y - b.y);
+            expect(px).toBeGreaterThan(envelopeTouch);
+          }
+        }
+      }
+    }, 60000);
 
     // The early→late difficulty ramp is normalized, so it adapts to any count for free — but
     // "adapts" isn't the same as "reads smoothly." Over five bases the steps must be even and

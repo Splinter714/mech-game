@@ -457,7 +457,9 @@ function laneOpenSet(playable, claimed, T) {
 }
 
 export function placeBases(
-  rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
+  rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null,
+  // #340: base-to-base separation is its OWN floor now, not the gap-tower calm-travel one.
+  minGapProgress = MIN_BASE_SEPARATION_HEX,
   axisOf = null,
 ) {
   const bases = [];
@@ -893,9 +895,18 @@ export function generateTerrain({
     : range({ q: 0, r: 0 }, R).filter((h) => !included || included(h.q, h.r));
   // The actual extent of the playable area (may be far smaller than the `worldRadius`
   // bounding box) — the channel sweep and hazard placement below scale off this.
-  const effR = all.length
-    ? Math.max(5, ...all.map((h) => distance(h, { q: 0, r: 0 })))
-    : R;
+  // #340: folded, NOT `Math.max(5, ...all.map(...))`. The spread passes one argument per playable
+  // hex, and a 24000px corridor has thousands — enough to blow the call-stack argument limit
+  // outright (`RangeError: Maximum call stack size exceeded`), i.e. world generation crashed. A
+  // fold is O(n) with no argument-count ceiling and gives the identical answer.
+  let effR = R;
+  if (all.length) {
+    effR = 5;
+    for (const h of all) {
+      const d = distance(h, { q: 0, r: 0 });
+      if (d > effR) effR = d;
+    }
+  }
   const T = new Map();
   const B = biome;
   const groundAt = (h) => ((h.q + h.r) % 2 ? B.groundB : B.groundA);
@@ -955,7 +966,7 @@ export function generateTerrain({
   // each centre. No spine (isolated unit callers) → null, and `baseFootprint` falls back to the
   // world +x axis, which is the right answer for a corridor-less test world anyway.
   const axisOf = spine ? (h) => spineTangentAt(spine, h.q, h.r) : null;
-  const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf, MIN_GAP_PROGRESS_HEX, axisOf);
+  const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf, MIN_BASE_SEPARATION_HEX, axisOf);
   // #275 (redesign): one alert tower per GAP between successive bases (`placeGapTowers`'s own
   // comment has the full reasoning) — replaces the old outpost-cluster-anchored placement.
   // Placed after bases (using their final centres) for the same "never overwrite a base's
@@ -1090,8 +1101,33 @@ export const CORRIDOR_HALF_WIDTH_PX = 250;
 // still ~1140px), and `MIN_GAP_PROGRESS_PX`'s 600px floor was itself sized against a ~1130px
 // slice (see its comment), so both stay exactly as valid at 5 bases as they were at 3.
 //
-// At BASE_COUNT = 5 this is 5700px ≈ 69 hexes of travel end-to-end (was 3400px ≈ 41).
-export const CORRIDOR_LENGTH_PER_BASE_PX = 1140;
+// #340 (Jackson 2026-07-19: "Neighboring bases - honestly we need to file a separate issue to
+// spread things out way more anyway"; on the fork, he chose LONGER CORRIDOR, keep BASE_COUNT at 5 —
+// "runs get longer still, same number of fights, real travel between them," preserving #308's
+// intent rather than fighting it by cutting the count): 1140 → 4800.
+//
+// WHY the share had to move at all: #308 pinned this at the per-base share the OLD radius-2 disc
+// bases got, then #333 grew the footprint ~3.5x (half-length 2 → `BASE_FOOTPRINT_HALF_LENGTH` = 6
+// hexes ≈ 500px) WITHOUT revisiting it. Five compounds of the new size fill the lane end to end:
+// the audit found the furthest point in the entire world sat only 319px from some base's wall
+// ring — inside the 400px graphics cull margin, i.e. there was literally nowhere to stand that
+// wasn't next to a base.
+//
+// WHY 4800 specifically — it is arithmetic off the wall turret, not a feel-guess. The target
+// Jackson set is "a base sits outside every other base's 900px wall-turret envelope, with genuine
+// open ground beyond that." Wall turrets sit ON the ring, so between two adjacent base CENTRES the
+// budget is: 500 (this base's half-length) + 900 (its turrets' reach) + 900 (the next base's) +
+// 500 (its half-length) = 2800px just to make the two envelopes TOUCH, with zero neutral ground.
+// `MIN_GAP_PROGRESS_PX` is therefore raised to 3400 (below) — 2800 of envelope plus 600px of
+// ground no turret anywhere can reach, deliberately the same 600px that used to be the whole
+// calm-gap budget. This constant is the SLICE that floor has to fit inside: `placeBases`
+// stratifies one base per 1/`baseCount` slice and needs real headroom above the floor for its
+// random pick (the shipped ratio was 600/1140 ≈ 0.53), so 3400/4800 ≈ 0.71 keeps a comparable
+// margin. Wall-turret range (900) is deliberately NOT touched — the issue says revisit it only if
+// spacing alone doesn't fix the overlap, and spacing alone does.
+//
+// At BASE_COUNT = 5 this is 24000px ≈ 289 hexes of travel end-to-end (was 5700px ≈ 69).
+export const CORRIDOR_LENGTH_PER_BASE_PX = 4800;
 export const CORRIDOR_LENGTH_PX = CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT;
 
 // REAR PAD — how far the corridor extends BEHIND the spawn end (origin sits at spine u=0, the
@@ -1431,8 +1467,18 @@ function assignWallTurrets(T, base, edges) {
 // harmonics: `curviness` + 0.35*`curviness`), converted at the SMALLEST px-per-hex step (the hex
 // distance metric advances ~1.5*HEX_SIZE = 72px per step along a diagonal), plus 20% headroom.
 // = ceil((5700 + 405) / 72 * 1.2) = 102 at BASE_COUNT 5, and it re-derives if either changes.
+//
+// #340: the headroom is ADDITIVE now (+12 hexes), not a 20% multiplier. The `HEX_SIZE * 1.5`
+// divisor already uses the SMALLEST px-per-hex-step, so the term in front of the margin is an
+// over-estimate of the real reach on its own; all the margin has to absorb is a few hexes of
+// rounding and boundary-ring slop, which is a fixed quantity that does not grow with the run. At
+// the old 5700px corridor a 20% margin was ~17 hexes and looked harmless; at #340's 24000px it
+// balloons to ~68 hexes of pure slack, and `worldRadius` is what sizes `nearestValidHex`'s search
+// budget (data/spawnPlacement.js) and the fallback spawn ring, so an inflated cap is real wasted
+// work rather than a harmless number. Measured worst-case reach at 24000px is ~336 hexes; this
+// gives 351.
 export const MAX_WORLD_RADIUS = Math.ceil(
-  ((CORRIDOR_LENGTH_PX + CORRIDOR_CURVINESS * 1.35) / (HEX_SIZE * 1.5)) * 1.2,
+  (CORRIDOR_LENGTH_PX + CORRIDOR_CURVINESS * 1.35) / (HEX_SIZE * 1.5) + 12,
 );
 
 // #169: the near-spawn safety floor #110/#127/#158 introduced protects one invariant: the boundary
@@ -1511,11 +1557,53 @@ export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_P
 // buffer even for the fastest chassis in the worst RNG case, and larger (up to the full 600px)
 // whenever the tower doesn't land flush against the base. Playtest-tunable like every other
 // placement constant in this file.
+//
+// #340: this constant KEEPS its 600px value and its original meaning — "the calm travel buffer
+// before the next detection envelope," which is what `placeGapTowers` needs and what every
+// paragraph above is an argument about. #340's much larger base-to-base requirement is a
+// DIFFERENT quantity and lives in its own constant (`MIN_BASE_SEPARATION_PX`, just below);
+// overloading this one broke `placeGapTowers`, which must fit a tower at least this far past the
+// previous base AND this far before the next, i.e. it needs 2x this inside every base gap.
 export const MIN_GAP_PROGRESS_PX = 600;
 // Converted to the same hex-progress unit `spineProgressHexOf`/the straight-line-distance
 // fallback both already use, so `placeBases`/`placeGapTowers` can compare it directly against
 // `progressOf(...)` results without a separate px<->hex conversion at every call site.
 export const MIN_GAP_PROGRESS_HEX = MIN_GAP_PROGRESS_PX / HEX_STEP_PX; // ≈7.22
+
+// #340: HOW FAR APART TWO BASES MUST SIT. Split out of `MIN_GAP_PROGRESS_PX` above, which
+// `placeBases` used to borrow. They were never the same quantity and #340 is what forced the two
+// apart: the old one is about TRAVEL TIME (how many calm seconds before the next detection bubble
+// — sized off chassis speed, and still exactly right for `placeGapTowers`), this one is about
+// ENGAGEMENT GEOMETRY (how far apart two compounds must be before they stop shooting into each
+// other).
+//
+// Jackson, 2026-07-19: "Neighboring bases - honestly we need to file a separate issue to spread
+// things out way more anyway." The target he set: a base sits outside every other base's 900px
+// wall-turret envelope, with genuine open ground beyond that. Since #333 the compound is
+// `BASE_FOOTPRINT_HALF_LENGTH` = 6 hexes ≈ 500px of half-length along the corridor (successive
+// bases are strung out along that same axis, so the LONG half-extent is the one that faces the
+// neighbour), and wall turrets sit ON the ring and reach 900px:
+//
+//     500 (this compound) + 900 (its turrets) + 900 (the next base's turrets) + 500 (its
+//     compound) = 2800px  ← the two envelopes merely TOUCH; still zero neutral ground
+//
+// 3400 buys that plus 600px of ground no wall turret anywhere can reach — deliberately the same
+// 600px that `MIN_GAP_PROGRESS_PX` spends on calm travel, except here it is genuinely NEUTRAL
+// ground rather than ground that merely sits between two things shooting at you. That 600px is
+// also wider than the 400px graphics cull margin, which is the measurable proxy the issue names:
+// before this, the furthest point in the entire world was 319px from some base's wall ring, so
+// the quietest spot available still drew a compound (~7,800 commands/frame against ~1,100 in
+// genuine open ground pre-#333).
+//
+// Wall-turret range (900) is deliberately left alone — #340 says revisit it only if spacing alone
+// doesn't fix the overlap, and spacing alone does.
+//
+// This floor is what `CORRIDOR_LENGTH_PER_BASE_PX` (4800) is sized to hold: `placeBases` needs
+// real headroom above the floor inside each 1/`baseCount` slice for its random pick, and
+// 3400/4800 ≈ 0.71 leaves a comparable margin to the shipped 600/1140 ≈ 0.53. Verified against
+// the REAL pipeline by the gap-floor sweep in worldgen.test.js rather than assumed.
+export const MIN_BASE_SEPARATION_PX = 3400;
+export const MIN_BASE_SEPARATION_HEX = MIN_BASE_SEPARATION_PX / HEX_STEP_PX; // ≈40.9
 
 // #110/#169: the Set of hex keys forming a ring `ringWidth` hexes thick immediately OUTSIDE the
 // playable shape — the world's impassable outer boundary. Found by BFS-expanding outward from the
