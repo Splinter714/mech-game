@@ -247,7 +247,10 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
       for (let i = 0; i < n; i++) shots.push(shot({ delay: i * d.burst.interval }));
       return { mode, shots };
     }
-    return { mode, shots: [shot()] };
+    // #137: a non-burst hitscan (Beam Laser, Rail Lance) has no pattern of its own to widen,
+    // so a count above 1 becomes PARALLEL BEAMS — n lanes straddling the aim line. This is
+    // what makes Barrage read as "2 beams instead of 1" on a beam weapon.
+    return { mode, shots: laneShots(n, d) };
   }
 
   // Projectile: a single round, a fanned cone of n, or — for `cluster` weapons — a tight
@@ -270,14 +273,18 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
   // Either way the ammo cost is unchanged: ammo is spent once per fireWeapon() call, not per
   // shot, so hold-to-fire sustain doesn't care how many particles pop out.
   if (d.pattern === 'stream' && (jitterRad || n > 1)) {
-    const spacing = d.streamSpacing || STREAM_SPACING;
+    if (!jitterRad) return { mode, shots: laneShots(n, d) };
     const streamShots = [];
     for (let i = 0; i < n; i++) {
-      if (jitterRad) streamShots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad }));
-      else streamShots.push(shot({ lateral: (i - (n - 1) / 2) * spacing }));   // centred lane index: −…0…+
+      streamShots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad }));
     }
     return { mode, shots: streamShots };
   }
+
+  // #137: likewise for a plain single-round projectile (Autocannon, Plasma Cannon, Napalm) —
+  // no fan, no lanes, no burst to lengthen, so a count above 1 fires n rounds side by side in
+  // parallel lanes rather than n invisibly-overlapping shots on the exact same line.
+  if (n > 1 && !d.burst && d.pattern !== 'spread') return { mode, shots: laneShots(n, d) };
 
   const shots = [];
   const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
@@ -323,6 +330,18 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
 
 function shot({ delay = 0, angleOffset = 0, lateral = 0 } = {}) {
   return { delay, angleOffset, lateral };
+}
+
+// n rounds/beams fired at once in parallel lanes, centred on the aim line (no fan — every
+// shot keeps angleOffset 0). Shared by the multi-lane stream weapons (Repeater) and, since
+// #137, by any weapon whose count has been pushed above 1 without a pattern of its own to
+// expand. n === 1 is just the plain single shot.
+function laneShots(n, d) {
+  if (n <= 1) return [shot()];
+  const spacing = d.streamSpacing || STREAM_SPACING;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(shot({ lateral: (i - (n - 1) / 2) * spacing }));
+  return out;
 }
 
 // #137: the ONE canonical "how many things does one trigger pull emit" number, replacing the

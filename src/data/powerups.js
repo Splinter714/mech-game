@@ -67,6 +67,20 @@ export const POWERUPS = {
     id: 'shield', label: 'SHIELD', color: 0x5ec8e0, weight: 1,
     duration: 12, effect: 'shield', boostMult: 2.5,
   },
+  // 6) #137: doubles how many things every weapon fires PER TRIGGER PULL — deliberately the
+  //    complement to Overdrive, which multiplies how OFTEN it fires. Because #137 unified the
+  //    old spreadCount/streams/burst.count fields into one `delivery.count`, `countMult` is a
+  //    single multiplier that every delivery pattern honours through its own existing
+  //    expansion (delivery.js `emissionCount`/`planEmissions`): a Scatter Gun throws 14 pellets
+  //    instead of 7, a Repeater runs 4 tracer lanes instead of 2, a Streak Pod unloads 12
+  //    missiles instead of 6, a Plasma Lance puts out 2 bolt streams instead of 1. Visually the
+  //    loudest of the six, which is the point — it should read instantly without a HUD glance.
+  //    Ammo is spent once per trigger pull (not per emitted shot), so this is straight bonus
+  //    output for its duration; 10s / weight 1 keeps it in line with the other timed buffs.
+  barrage: {
+    id: 'barrage', label: 'BARRAGE', color: 0xc06be0, weight: 1,
+    duration: 10, effect: 'shotCount', countMult: 2,
+  },
 };
 
 // Drop tuning. #90 (playtest 2026-07-10): the drop chance used to be a flat `DROP_CHANCE`
@@ -171,6 +185,9 @@ export function durationMs(id) {
 // single contract between this data layer and the scene:
 //   freeAmmo        — true ⇒ don't spend ammo (Overcharge)
 //   cycleMult       — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
+//   countMult       — multiplier on delivery.count, i.e. how many things one trigger pull
+//                     emits (Barrage, #137; >1 = more at once). Consumed in firing.js, which
+//                     hands it to planEmissions so every pattern fans/lanes/bursts wider.
 //   overclockActive — true ⇒ Overclock is live (#189): the arena's Sprint handling
 //                     (scenes/arena/firing.js `_handleSprint`) forces Sprint on, fuel-free,
 //                     for as long as this stays true. No magnitude here — Sprint's own
@@ -180,6 +197,7 @@ export function buffModifiers(active) {
   const mods = {
     freeAmmo: false,
     cycleMult: 1,
+    countMult: 1,
     overclockActive: false,
   };
   for (const id of Object.keys(active || {})) {
@@ -189,6 +207,7 @@ export function buffModifiers(active) {
     switch (p.effect) {
       case 'freeAmmo': mods.freeAmmo = true; break;
       case 'fireRate': mods.cycleMult *= p.cycleMult ?? 1; break;
+      case 'shotCount': mods.countMult *= p.countMult ?? 1; break;
       case 'overclock': mods.overclockActive = true; break;
       default: break;
     }

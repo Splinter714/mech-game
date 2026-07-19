@@ -57,7 +57,7 @@ const UI_GAP = 10;        // gap below the whole UI block before the autofire ro
 // Order within a group follows the id order below, not SFX_DOMAINS.ui's own order.
 const UI_GROUPS = [
   { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
-  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield'] },
+  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage'] },
   { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
   { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
 ];

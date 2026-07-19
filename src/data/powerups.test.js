@@ -6,12 +6,12 @@ import {
 import { Mech } from './Mech.js';
 
 describe('powerup catalog', () => {
-  it('has the #187 owner-approved roster (Surge + Double Shot cut, Shield added) and NO Target Paint', () => {
+  it('has the #187 owner-approved roster (Surge cut, Shield added, #137 Barrage added) and NO Target Paint', () => {
     expect(POWERUP_IDS.sort()).toEqual(
-      ['armorPatch', 'overcharge', 'overclock', 'overdrive', 'shield'].sort(),
+      ['armorPatch', 'overcharge', 'overclock', 'overdrive', 'shield', 'barrage'].sort(),
     );
     expect(POWERUPS.surge).toBeUndefined();
-    expect(POWERUPS.doubleShot).toBeUndefined();
+    expect(POWERUPS.doubleShot).toBeUndefined();   // #137's Barrage is the shot-count buff now
     expect(POWERUPS.targetPaint).toBeUndefined();
   });
 
@@ -55,7 +55,7 @@ describe('pickPowerupType — weighted selection', () => {
 describe('buffModifiers — collapsing the active overlay', () => {
   it('returns the identity when nothing is active', () => {
     const m = buffModifiers({});
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, overclockActive: false });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, countMult: 1, overclockActive: false });
   });
 
   it('ignores expired (non-positive remaining) entries', () => {
@@ -72,15 +72,53 @@ describe('buffModifiers — collapsing the active overlay', () => {
   });
 
   it('stacks DIFFERENT types simultaneously (one-per-type overlay)', () => {
-    const m = buffModifiers({ overcharge: 500, overdrive: 500, overclock: 500 });
+    const m = buffModifiers({ overcharge: 500, overdrive: 500, overclock: 500, barrage: 500 });
     expect(m.freeAmmo).toBe(true);
     expect(m.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
+    expect(m.countMult).toBe(POWERUPS.barrage.countMult);
     expect(m.overclockActive).toBe(true);
+  });
+
+  // #137 Barrage: a timed shot-COUNT multiplier, the complement to Overdrive's fire-RATE one.
+  // The two are independent fields, so having both up multiplies neither into the other.
+  describe('#137 Barrage — countMult', () => {
+    it('is a real doubling on its own field, and the identity when inactive', () => {
+      expect(POWERUPS.barrage.effect).toBe('shotCount');
+      expect(POWERUPS.barrage.countMult).toBe(2);
+      expect(buffModifiers({ barrage: 500 }).countMult).toBe(2);
+      expect(buffModifiers({ barrage: 500 }).cycleMult).toBe(1);   // does NOT touch fire rate
+      expect(buffModifiers({}).countMult).toBe(1);
+      expect(buffModifiers({ barrage: 0 }).countMult).toBe(1);     // expired ⇒ identity
+    });
+
+    it('is a timed buff (not instant) in the same 9-12s band as the others', () => {
+      expect(isInstant('barrage')).toBe(false);
+      expect(POWERUPS.barrage.duration).toBeGreaterThanOrEqual(9);
+      expect(POWERUPS.barrage.duration).toBeLessThanOrEqual(12);
+    });
+
+    it('a duplicate pickup REFRESHES rather than stacks — one entry per type can only ever contribute once', () => {
+      // The active overlay is a map keyed by type id, so a second Barrage pickup overwrites the
+      // same key's remaining time (the arena's `_activatePowerup` does `active[id] = duration`).
+      // buffModifiers can therefore never see the same type twice: countMult stays exactly 2x,
+      // never 4x, no matter how many are picked up.
+      const active = {};
+      active.barrage = 5000;
+      active.barrage = 10000;                                       // duplicate pickup = refresh
+      expect(Object.keys(active)).toEqual(['barrage']);
+      expect(buffModifiers(active).countMult).toBe(2);
+      expect(buffModifiers({ barrage: 10000, overdrive: 500 }).countMult).toBe(2);
+    });
+
+    it('a distinct color from every other powerup (readable at a glance on the ground)', () => {
+      const colors = POWERUP_IDS.map((id) => POWERUPS[id].color);
+      expect(new Set(colors).size).toBe(colors.length);
+    });
   });
 
   it('Shield never contributes to buffModifiers even when "active" would include it — it is tracked out-of-band', () => {
     const m = buffModifiers({ shield: 500 });
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, overclockActive: false });
+    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, countMult: 1, overclockActive: false });
   });
 });
 

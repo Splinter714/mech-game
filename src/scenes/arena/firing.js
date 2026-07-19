@@ -182,7 +182,11 @@ export const FiringMixin = {
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
     // and aim so a slewing turret and aim-assist still apply per sub-shot.
-    const plan = planEmissions(w.weapon);
+    // #137 Barrage: `countMult` (2 while active) scales the weapon's delivery.count, so one
+    // trigger pull emits twice as many things — a wider fan, more parallel lanes, a longer
+    // burst — through each pattern's own existing expansion. Outside Barrage it's 1, i.e. the
+    // exact plan as before. (Ammo is spent per trigger pull above, not per emitted shot.)
+    const plan = planEmissions(w.weapon, { countMult: mods.countMult ?? 1 });
     // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
     // trajectory beat) are scheduled in one shared place (audio/fireCues.js) that the Weapon
     // Lab preview calls too, so their timing can't drift; the arena always plays (audible:
