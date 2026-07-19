@@ -52,9 +52,24 @@ describe('targeting LOS gate (#306)', () => {
     expect(sc._lockAimPoint()).toBe(null);
   });
 
-  it('still acquires a FLYING enemy in an un-sighted hex', () => {
+  // #316 reverses #306's flyer exception (this test used to assert the flyer WAS acquired):
+  // "let's stop being able to shoot them beyond cover also; let's let cover be actual cover."
+  // The convergence pick now treats a flyer exactly like the ground enemy above it.
+  it('#316: REFUSES to acquire a FLYING enemy in an un-sighted hex, same as a ground enemy', () => {
     const flyer = enemy(400, 0, { flying: true });
     const sc = makeScene(new Set([keyAt(0, 0)]));
+    sc.enemies = [flyer];
+    sc._updateLock(0.016);
+    expect(sc.aimEnemy).toBe(null);
+    expect(sc.convergeTarget).toBe(null);
+    expect(sc.lock.target).toBe(null);
+  });
+
+  // The complement: flight is no longer special in EITHER direction — a SIGHTED flyer is still
+  // perfectly lockable, so the change above isn't just "flyers became untargetable".
+  it('#316: still acquires a FLYING enemy that IS in a sighted hex', () => {
+    const flyer = enemy(400, 0, { flying: true });
+    const sc = makeScene(new Set([keyAt(0, 0), keyAt(400, 0)]));
     sc.enemies = [flyer];
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(flyer);

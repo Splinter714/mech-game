@@ -43,8 +43,8 @@ describe('#307 a held beam owns one persistent beam object PER PARALLEL LANE', (
   it('Barrage\'s two lanes create TWO distinct beams instead of the second stomping the first', () => {
     const scene = makeScene();
     // What fireWeapon does under Barrage: two lanes, straddling laterals, same angle.
-    scene._fireHitscan(W(BEAM_WEAPON), 0, -2.5, 0, 'player', 'player', false, false, { lane: 0, lateral: -2.5 });
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 2.5, 0, 'player', 'player', false, false, { lane: 1, lateral: 2.5 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, -2.5, 0, 'player', 'player', false, { lane: 0, lateral: -2.5 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 2.5, 0, 'player', 'player', false, { lane: 1, lateral: 2.5 });
 
     expect(scene.beams).toHaveLength(2);
     expect(scene.beams.map((b) => b.loc)).toEqual(['player:rightArm:0', 'player:rightArm:1']);
@@ -56,7 +56,7 @@ describe('#307 a held beam owns one persistent beam object PER PARALLEL LANE', (
   it('#86 NOT regressed: repeated ticks of a SINGLE-lane hold keep re-pinning one object', () => {
     const scene = makeScene();
     for (let i = 0; i < 12; i++) {
-      scene._fireHitscan(W(BEAM_WEAPON), i, 0, 0, 'player', 'player', false, false, { lane: 0, lateral: 0 });
+      scene._fireHitscan(W(BEAM_WEAPON), i, 0, 0, 'player', 'player', false, { lane: 0, lateral: 0 });
     }
     expect(scene.beams).toHaveLength(1);
     expect(scene.beams[0].loc).toBe('player:rightArm:0');
@@ -66,8 +66,8 @@ describe('#307 a held beam owns one persistent beam object PER PARALLEL LANE', (
   it('each lane is independently re-pinned across ticks (2 lanes stay 2 objects)', () => {
     const scene = makeScene();
     for (let i = 0; i < 8; i++) {
-      scene._fireHitscan(W(BEAM_WEAPON), i, -2.5, 0, 'player', 'player', false, false, { lane: 0, lateral: -2.5 });
-      scene._fireHitscan(W(BEAM_WEAPON), i, 2.5, 0, 'player', 'player', false, false, { lane: 1, lateral: 2.5 });
+      scene._fireHitscan(W(BEAM_WEAPON), i, -2.5, 0, 'player', 'player', false, { lane: 0, lateral: -2.5 });
+      scene._fireHitscan(W(BEAM_WEAPON), i, 2.5, 0, 'player', 'player', false, { lane: 1, lateral: 2.5 });
     }
     expect(scene.beams).toHaveLength(2);
     expect(scene.beams[0].x0).toBe(7);
@@ -76,22 +76,22 @@ describe('#307 a held beam owns one persistent beam object PER PARALLEL LANE', (
 
   it('two shooters in the same location still keep separate beams (#117 unchanged)', () => {
     const scene = makeScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tankA', false, false, { lane: 0, lateral: 0 });
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tankB', false, false, { lane: 0, lateral: 0 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tankA', false, { lane: 0, lateral: 0 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tankB', false, { lane: 0, lateral: 0 });
     expect(scene.beams.map((b) => b.loc)).toEqual(['tankA:rightArm:0', 'tankB:rightArm:0']);
   });
 
   it('a NON-continuous hitscan (rail-style) still pushes independent, unkeyed beams', () => {
     const scene = makeScene();
-    scene._fireHitscan(W(RAIL_WEAPON), 0, 0, 0, 'player', 'player', false, false, { lane: 0, lateral: -2.5 });
-    scene._fireHitscan(W(RAIL_WEAPON), 0, 0, 0, 'player', 'player', false, false, { lane: 1, lateral: 2.5 });
+    scene._fireHitscan(W(RAIL_WEAPON), 0, 0, 0, 'player', 'player', false, { lane: 0, lateral: -2.5 });
+    scene._fireHitscan(W(RAIL_WEAPON), 0, 0, 0, 'player', 'player', false, { lane: 1, lateral: 2.5 });
     expect(scene.beams).toHaveLength(2);
     expect(scene.beams.map((b) => b.loc)).toEqual([null, null]);
   });
 
   it('defaults to lane 0 when no lane descriptor is passed (enemy call sites, old behaviour)', () => {
     const scene = makeScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tank', false);
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tank');
     expect(scene.beams[0].loc).toBe('tank:rightArm:0');
   });
 });
@@ -99,8 +99,8 @@ describe('#307 a held beam owns one persistent beam object PER PARALLEL LANE', (
 describe('#307 retiring lanes that are no longer planned (Barrage expiring mid-hold)', () => {
   it('drops the lanes beyond the new plan\'s lane count, keeping the surviving one', () => {
     const scene = makeScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, -2.5, 0, 'player', 'player', false, false, { lane: 0, lateral: -2.5 });
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 2.5, 0, 'player', 'player', false, false, { lane: 1, lateral: 2.5 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, -2.5, 0, 'player', 'player', false, { lane: 0, lateral: -2.5 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 2.5, 0, 'player', 'player', false, { lane: 1, lateral: 2.5 });
     expect(scene.beams).toHaveLength(2);
 
     // Barrage lapses: the plan is back to a single lane.
@@ -112,15 +112,15 @@ describe('#307 retiring lanes that are no longer planned (Barrage expiring mid-h
 
   it('leaves a single-lane hold completely alone', () => {
     const scene = makeScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'player', 'player', false, false, { lane: 0, lateral: 0 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'player', 'player', false, { lane: 0, lateral: 0 });
     scene._retireStaleBeamLanes('player', 'rightArm', 1);
     expect(scene.beams.filter((b) => b.ttl > 0)).toHaveLength(1);
   });
 
   it('never touches another location\'s or another shooter\'s lanes', () => {
     const scene = makeScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'player', 'leftArm', false, false, { lane: 0, lateral: 0 });
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tank', false, false, { lane: 1, lateral: 0 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'player', 'leftArm', false, { lane: 0, lateral: 0 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'enemy', 'tank', false, { lane: 1, lateral: 0 });
     scene._retireStaleBeamLanes('player', 'rightArm', 1);
     expect(scene.beams.every((b) => b.ttl > 0)).toBe(true);
   });
@@ -137,8 +137,8 @@ describe('#307 _trackHeldBeam re-pins EVERY lane at its own lateral offset', () 
 
   it('moves both Barrage lanes to the new muzzle, each keeping its own perpendicular offset', () => {
     const scene = trackableScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, -2.5, 0, 'player', 'player', false, false, { lane: 0, lateral: -2.5 });
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 2.5, 0, 'player', 'player', false, false, { lane: 1, lateral: 2.5 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, -2.5, 0, 'player', 'player', false, { lane: 0, lateral: -2.5 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 2.5, 0, 'player', 'player', false, { lane: 1, lateral: 2.5 });
 
     scene._trackHeldBeam(W(BEAM_WEAPON));
 
@@ -152,7 +152,7 @@ describe('#307 _trackHeldBeam re-pins EVERY lane at its own lateral offset', () 
 
   it('a single lane tracks exactly as before (#86), with no lateral offset applied', () => {
     const scene = trackableScene();
-    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'player', 'player', false, false, { lane: 0, lateral: 0 });
+    scene._fireHitscan(W(BEAM_WEAPON), 0, 0, 0, 'player', 'player', false, { lane: 0, lateral: 0 });
     scene._trackHeldBeam(W(BEAM_WEAPON));
     expect(scene.beams).toHaveLength(1);
     expect(scene.beams[0].x0).toBeCloseTo(100, 3);

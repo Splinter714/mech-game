@@ -153,17 +153,12 @@ export const FiringMixin = {
     // `canFireWeapon` for exactly which deliveries this gates (only guidance: 'homing' —
     // direct-fire and dumbfire/arcing-lob weapons are unaffected).
     if (!canFireWeapon(w.weapon, this.lock)) return;
-    // #257 follow-up to #245: that fix made a FLYING enemy's own shots ignore terrain cover
-    // (it's shooting from above), but left the reverse asymmetric — the player's shots still
-    // stopped dead on a wall even when aiming at a flyer sitting over/behind that same terrain,
-    // making it unhittable from the ground despite being freely able to shoot the player through
-    // it. Mirror the mechanism: when the player's current convergence pick (`this.convergeTarget`
-    // — the same live target `_fireAngle` already aims muzzles at, set each frame in
-    // `_updateLock`) is a flying enemy (`.flying`, enemyKinds.js), the player's own shot ignores
-    // cover too, exactly like a flyer's shot does. A destructible-hex convergence target (#250)
-    // has no `.flying` property, so it's untouched (stays cover-respecting); a non-flying
-    // (ground) enemy target is likewise unaffected.
-    const ignoreCover = !!this.convergeTarget?.flying;
+    // #316 reverses #245/#257: there used to be a cover exemption here — when the player's
+    // convergence pick was a FLYING enemy, the player's shot ignored terrain cover (mirroring
+    // #245, which let a flyer's own shots ignore it). Both directions are gone. Cover is cover
+    // for everyone: the player's rounds stop on a wall whether the thing they're aimed at flies
+    // or not, and a flyer's rounds do the same. There is no per-shot cover-exemption flag left in
+    // this file — the wall trace / in-flight wall check below run unconditionally.
     const mods = this._buffMods?.() ?? {};
     // #60 Overcharge: while active, weapons don't spend ammo (freeAmmo). Otherwise spend a
     // shot's worth, scaled by cycleMult (#235): Overdrive's cycleMult 0.5 halves the fire
@@ -213,12 +208,12 @@ export const FiringMixin = {
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
         // (two shots fired, one line drawn).
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', 'player', ignoreCover, false, { lane, lateral: s.lateral });
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', 'player', false, { lane, lateral: s.lateral });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, ignoreCover);
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle);
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -374,9 +369,8 @@ export const FiringMixin = {
   // `shooterKey` disambiguates the "one live continuous beam per shooter+location" lookup below
   // so two different enemies (or an enemy and the player) mounting the same weapon in the same
   // body location don't stomp each other's beam object.
-  // `ignoreCover` (#245): a FLYING enemy (drone/helicopter) shoots from above, so its beam is
-  // never blocked by terrain cover — the wall trace below is skipped entirely. The player and
-  // ground enemies never pass this, so their beams stop at cover exactly as before.
+  // (#245's `ignoreCover` param — a flying shooter's beam skipping the wall trace — was removed
+  // by #316: cover blocks every shooter, so the wall trace below is unconditional.)
   // `smallUnitInvolved` (#269, optional): threads to the soft-cover size-tier exemption — see
   // world.js `_isWall`. Enemy callers pass `isSmallUnit(e)`; the player never does (always large).
   // `lane`/`lateral` (#307, optional): which PARALLEL LANE of the emission plan this shot is.
@@ -386,7 +380,7 @@ export const FiringMixin = {
   // offset, remembered on the beam so `_trackHeldBeam` can re-derive that lane's own muzzle
   // every render frame. A single-lane hold is lane 0 with lateral 0 — i.e. exactly one
   // tracking object, preserving #86.
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', ignoreCover = false, smallUnitInvolved = false, { lane = 0, lateral = 0 } = {}) {
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', smallUnitInvolved = false, { lane = 0, lateral = 0 } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -398,9 +392,9 @@ export const FiringMixin = {
     let t = trace.t;
     let hit = !!target;
     let endDist = trace.endDist;
-    // Cover: a wall between muzzle and target stops the beam short — unless the shooter flies
-    // over it (#245, `ignoreCover` above).
-    const wallT = ignoreCover ? Infinity : this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved);
+    // Cover: a wall between muzzle and target stops the beam short. #316: no exceptions — a
+    // flying shooter's beam is blocked by hard cover exactly like a ground shooter's.
+    const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved);
     const blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
@@ -439,13 +433,12 @@ export const FiringMixin = {
   // maxDist comment below for why this must be the centre bearing, not `angle` (this shot's own
   // launch heading). Defaults to `angle` for every single-shot caller (enemies, non-spread
   // weapons), where the two are identical anyway.
-  // `ignoreCover` (#245): true only for a round fired by a FLYING enemy (kindDef.flying —
-  // drone/helicopter) — the round is stamped `ignoresCover` so the in-flight wall check
-  // (projectiles.js) never detonates it on terrain cover; it flies over, same as its shooter.
+  // (#245's `ignoreCover` param — stamping `ignoresCover` onto a flying enemy's round so the
+  // in-flight wall check skipped it — was removed by #316: every round respects cover.)
   // `smallUnitInvolved` (#269, optional): stamped onto the round so projectiles.js's in-flight
   // cover check can pass it to `_isWallForRound` — see world.js `_isWall`. Enemy callers pass
   // `isSmallUnit(e)`; the player never does (always large).
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, ignoreCover = false, smallUnitInvolved = false) {
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, smallUnitInvolved = false) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -514,7 +507,7 @@ export const FiringMixin = {
     // mech's centre, so back-project along the fire angle). A unit standing inside soft cover
     // can then fire OUT without its own round detonating on its own hex.
     const originHexes = [this._hexKeyAt(x, y), this._hexKeyAt(x - Math.cos(angle) * 24, y - Math.sin(angle) * 24)];
-    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, ignoresCover: !!ignoreCover, smallUnitInvolved: !!smallUnitInvolved };
+    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, smallUnitInvolved: !!smallUnitInvolved };
     this.projectiles.push(pushed);
     return pushed;
   },

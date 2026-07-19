@@ -100,16 +100,28 @@ export function hexLineClear(a, b, terrainAt) {
 // #306 (confirmed with Jackson): TARGETING RESPECTS LOS — the convergence/lock system must not
 // acquire an enemy the player has no sight of, so breaking a sightline genuinely protects a unit.
 //
-// FLYING enemies are always targetable regardless of the visible set: they're in the air, above
-// whatever blocks ground-level sight. That's the same exception #245/#257 already make for
-// flyers and cover when FIRING, and it's what makes the rendering rule (flyers draw above the
-// dimming overlay) and the targeting rule agree — a helicopter you can plainly see is a
-// helicopter you can lock.
+// #316 REVERSES the flyer exception this function used to carry. It read:
+//
+//     if (enemy.flying) return true;   // always targetable, they're above ground-level sight
+//
+// which made flyers lockable through anything, matching #245/#257's firing exemptions and #306's
+// "flyers draw above the dimming overlay" rendering rule. Jackson found the resulting rules
+// confusing in play — "let's stop being able to shoot them beyond cover also; let's let cover be
+// actual cover" — so all three went away together. The three rules still AGREE, just at the
+// opposite setting: a flyer behind hard cover is dimmed, can't shoot you, and can't be locked.
+//
+// Note this gate is what makes point 2 of #316 real. Removing `firing.js`'s `ignoreCover` only
+// stopped the player's ROUNDS from passing through walls; without this change the convergence
+// system would still happily acquire and track a flyer it has no sight of, which is the
+// "targeting selection is confusing" half of the complaint.
+//
+// Soft cover is not special-cased here either, and doesn't need to be: `computeVisibleHexes`
+// builds `visible` from `coverBlocksForRay`, which already lets a LARGE unit see over soft cover —
+// so a flyer over forest stays in the visible set and stays lockable, exactly like a ground mech.
 //
 // Pure so the rule is unit-testable without a scene: `hexKeyOf` maps the enemy's world position
 // to its axial key, `visible` is the computed set.
 export function enemyTargetable(enemy, visible, hexKeyOf) {
   if (!visible) return true;          // no FOV computed yet ⇒ don't silently disable targeting
-  if (enemy.flying) return true;
   return visible.has(hexKeyOf(enemy.x, enemy.y));
 }
