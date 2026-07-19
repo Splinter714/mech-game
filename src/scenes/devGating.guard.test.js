@@ -73,15 +73,6 @@ describe('#296 GarageScene: the SFX-authoring surface is dev-only', () => {
     expect(garage).toMatch(/this\.list\.destroy\(\);\s*\n\s*\/\/[\s\S]*?if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.panel\.destroy\(\);/);
   });
 
-  // #240: the inverse direction of the same pattern — the Boss Arena option must be
-  // UNCONDITIONALLY available on the dev server (otherwise the fight can't be playtested without
-  // clearing all five biomes first), while a production build falls through to the real unlock.
-  it('#240 the Boss Arena option is always available under DEV, and gated on the real unlock otherwise', () => {
-    const body = garage.match(/_bossArenaUnlocked\(\)\s*\{[\s\S]*?\n {2}\}/)[0];
-    expect(body).toMatch(/if \(import\.meta\.env\.DEV\) return true;/);
-    expect(body).toMatch(/return allBiomesCleared\(\);/);
-  });
-
   it('_topRegion returns a full-width catalog (no panel reserve) in production', () => {
     const body = garage.match(/_topRegion\(top\)\s*\{[\s\S]*?\n {2}\}/)[0];
     expect(body).toMatch(/if \(!import\.meta\.env\.DEV\)\s*\{\s*\n\s*return \{ list: \{ x: 20, y: top, w: this\.W - 40/);

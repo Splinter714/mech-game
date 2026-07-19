@@ -3,7 +3,7 @@ import { buildMechTextures, reskinMech, partSpriteTransform } from '../art/index
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
-import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency, allBiomesCleared } from '../data/save.js';
+import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
@@ -355,23 +355,7 @@ export default class GarageScene extends Phaser.Scene {
       active: 'GarageScene',
       canDeploy: this.mech.isComplete(),
       onDeploy: () => this.deploy(),
-      // #240: the Boss Arena button only appears once it's unlocked (see `_bossArenaUnlocked`).
-      onBossArena: this._bossArenaUnlocked() ? () => this.deploy({ boss: true }) : null,
     });
-  }
-
-  // #240: is the Boss Arena deploy target available?
-  //
-  // The real unlock is one SUCCESSFUL run in each of the five biomes (data/save.js
-  // `allBiomesCleared` — a run ending in death never counts). But that would make the whole
-  // fight untestable during development, so — following #296's established pattern (see the
-  // `import.meta.env.DEV` gates elsewhere in this file, in HudScene, and in ArenaScene) — the
-  // option is unconditionally present on the dev server. `import.meta.env.DEV` is Vite's
-  // build-time flag: it's stripped to `false` and dead-code-eliminated by `npm run build`, so a
-  // PRODUCTION bundle evaluates the real all-five-biomes condition and nothing else.
-  _bossArenaUnlocked() {
-    if (import.meta.env.DEV) return true;
-    return allBiomesCleared();
   }
 
   // Swap to the next chassis, carrying the loadout over (all chassis share the same four
@@ -758,11 +742,7 @@ export default class GarageScene extends Phaser.Scene {
   // Deploy button is greyed to match. Pressing Deploy on an invalid build no longer fails
   // silently: it toasts what's wrong and focuses the first empty slot (filtering the catalog
   // to what fits it) so the fix is one click away.
-  // #240: `opts.boss` deploys to the Boss Arena instead of a normal biome run. Same method (and
-  // therefore the same build-validity check, repair, save and MECH_DEPLOYED emit) so the two
-  // deploy targets can never drift apart on any of that; only the world the arena then builds
-  // differs, selected via the `arenaMode` registry value ArenaScene reads in create().
-  deploy(opts = {}) {
+  deploy() {
     if (!this.mech.isComplete()) {
       const empty = MOUNT_LOCATIONS.filter((loc) => this.mech.usedSlots(loc) === 0);
       if (empty.length) {
@@ -789,18 +769,6 @@ export default class GarageScene extends Phaser.Scene {
     // on "are we in test mode," the smoke script can set `debugForceBiome` on the registry before
     // calling deploy() to pin the very next pick; it's consumed once here and cleared, so it
     // never affects any deploy after the one it was set for.
-    // #240: which arena to build. Always written (never left stale from a previous deploy) so a
-    // normal run after a boss run can't accidentally inherit boss mode.
-    this.registry.set('arenaMode', opts.boss ? 'boss' : null);
-    if (opts.boss) {
-      // The boss arena is its own hand-authored pit, not one of the five biomes — skip the biome
-      // draw entirely (and leave `biomeHistory` untouched, so a boss run doesn't perturb the
-      // recency weighting of the normal rotation) and start clean.
-      this.registry.set('run', null);
-      this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
-      this.scene.start('ArenaScene');
-      return;
-    }
     const n = this.registry.get('deployCount') || 0;
     this.registry.set('deployCount', n + 1);
     const forced = this.registry.get('debugForceBiome');

@@ -21,7 +21,6 @@ import { RunMixin } from './arena/run.js';
 import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { TerrainLabelsMixin } from './arena/terrainLabels.js';
-import { BossMixin, BOSS_ARENA_ZOOM } from './arena/boss.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -58,15 +57,7 @@ export default class ArenaScene extends Phaser.Scene {
     // scene applies — see GAMEPLAY_ZOOM's comment (arena/shared.js) for why. Set as an instance
     // property (not a one-off local) so a window resize re-derives `dpr * zoomFactor` instead of
     // reverting to the bare `dpr` every other scene uses.
-    // #240: the Boss Arena is its own deploy target, chosen in the garage (`arenaMode`), not a
-    // normal sortie — a hand-authored pit with one enormous enemy in it, no bases, no objectives,
-    // no biome. One flag read once here decides which world gets built and which per-frame ticks
-    // run; everything else in the arena is shared verbatim between the two modes.
-    this.bossMode = this.registry.get('arenaMode') === 'boss';
-    // At ~10x a medium mech the boss is bigger than the viewport at the normal framing, so the
-    // gameplay zoom is pulled back for this fight only — see arena/boss.js's header comment on
-    // the 10x-scale readability problem.
-    this.zoomFactor = this.bossMode ? GAMEPLAY_ZOOM * BOSS_ARENA_ZOOM : GAMEPLAY_ZOOM;
+    this.zoomFactor = GAMEPLAY_ZOOM;
     this.cameras.main.setZoom(dpr * this.zoomFactor);
     this.cameras.main.setBackgroundColor('#0d1014');
     // #202: brief cosmetic fade-in on deploy, to match the deploy sfx cue (#194) instead of
@@ -78,14 +69,10 @@ export default class ArenaScene extends Phaser.Scene {
     buildHexTextures(this);
     // Biome for this sortie (#67) — chosen by the garage per deploy; defaults to grassland.
     this.biomeId = this.registry.get('arenaBiome');
-    if (this.bossMode) {
-      this._buildBossArena();
-    } else {
-      this._buildWorld();
-      // #66: designate the mission objective (one of the world's outposts) now that
-      // `buildingHp` exists, and mark it in the world.
-      this._initMission();
-    }
+    this._buildWorld();
+    // #66: designate the mission objective (one of the world's outposts) now that
+    // `buildingHp` exists, and mark it in the world.
+    this._initMission();
     // #64: continue the in-progress run (set by a prior stage advance) or start a fresh one.
     this._initRun();
     // Refs #281: reset the player-corpse flag fresh every deploy. Phaser reuses the SAME
@@ -182,20 +169,13 @@ export default class ArenaScene extends Phaser.Scene {
     // relative placement needed, unlike the old off-screen spawn). Alert-tower countdown state
     // is initialized alongside so `_updateAlertTowers` (update(), below) can start ticking
     // immediately.
-    if (this.bossMode) {
-      // #240: one enormous enemy instead of a populated corridor. Spawned here, after the player
-      // and camera are set, for the same reason the dormant units below are — it needs a live
-      // player position/viewport to reason about.
-      this._spawnBoss();
-    } else {
-      this._spawnDormantUnits();
-      // #269 playtest follow-up: a light, already-active roaming patrol presence stationed near
-      // each alert tower — independent of the dormant/wake system above (see bases.js
-      // `_spawnTowerPatrols` for why). Spawned after the dormant docks so both draw from the same
-      // freshly-built `this.terrain`/`this.bases`/`this.alertTowerHexes`.
-      this._spawnTowerPatrols();
-      this._initAlertTowers();
-    }
+    this._spawnDormantUnits();
+    // #269 playtest follow-up: a light, already-active roaming patrol presence stationed near
+    // each alert tower — independent of the dormant/wake system above (see bases.js
+    // `_spawnTowerPatrols` for why). Spawned after the dormant docks so both draw from the same
+    // freshly-built `this.terrain`/`this.bases`/`this.alertTowerHexes`.
+    this._spawnTowerPatrols();
+    this._initAlertTowers();
     // #269/#270 playtest follow-up (hex legibility), dev-only: both hex-labelling systems —
     // bases.js's persistent red text tags over every dock/alertTower/turretEmplacement hex, and
     // terrainLabels.js's camera-culled/pooled labels for every OTHER hex's real terrain id — were
@@ -370,18 +350,14 @@ export default class ArenaScene extends Phaser.Scene {
     this._stepGait(dt);
     if (!this._playerDead) this._handleFiring(intent, delta);
     this._updateEnemies(dt, delta);
-    // #240: the boss arena has no bases, docks or alert towers at all — these three ticks are
-    // the base-population system and are skipped wholesale there.
-    if (!this.bossMode) {
-      // #269 §5: tick every standing alert tower's wake-countdown sensor.
-      this._updateAlertTowers(dt);
-      // #269 §3 "rare multi-spawn exception": tick every dock's occasional-resupply cooldown.
-      this._updateDockResupply(dt);
-      // #269 Part 2 ("dock open/closed states"): detect a dock hex being vacated (its own units
-      // walked away or died) and seal it — see bases.js `_updateDockOpenClose` for the state
-      // machine (open ⇄ closed ⇄ reopened-for-resupply).
-      this._updateDockOpenClose();
-    }
+    // #269 §5: tick every standing alert tower's wake-countdown sensor.
+    this._updateAlertTowers(dt);
+    // #269 §3 "rare multi-spawn exception": tick every dock's occasional-resupply cooldown.
+    this._updateDockResupply(dt);
+    // #269 Part 2 ("dock open/closed states"): detect a dock hex being vacated (its own units
+    // walked away or died) and seal it — see bases.js `_updateDockOpenClose` for the state
+    // machine (open ⇄ closed ⇄ reopened-for-resupply).
+    this._updateDockOpenClose();
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
@@ -393,19 +369,11 @@ export default class ArenaScene extends Phaser.Scene {
     // #65: bob/expire dropped SCRAP pickups, grab any the player touches.
     this._updateSalvage(delta);
 
-    if (this.bossMode) {
-      // #240: the boss fight owns BOTH terminal transitions itself (core destroyed → won,
-      // player destroyed → dead), so the mission/run objective ticks are skipped entirely —
-      // there is no mission and no base to clear, and `_allObjectivesDestroyed()` over an empty
-      // base list would otherwise read as an instant win.
-      this._updateBoss(dt, delta);
-    } else {
-      // #66: has the objective been destroyed? Evaluate + publish the mission each frame.
-      this._updateMission();
-      // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
-      // the run on mission-complete, or end it on player destruction.
-      this._updateRun();
-    }
+    // #66: has the objective been destroyed? Evaluate + publish the mission each frame.
+    this._updateMission();
+    // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
+    // the run on mission-complete, or end it on player destruction.
+    this._updateRun();
 
     // #136: subtle facing line (shared wayfinding highlight colour) — always drawn (no lock
     // needed) so the mouse/stick-vs-turret slew gap is visible at a glance. Drawn before the
@@ -481,5 +449,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin, BossMixin,
+  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin,
 );

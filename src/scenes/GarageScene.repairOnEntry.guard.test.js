@@ -51,6 +51,6 @@ describe('#249 Garage repairs the mech on every scene entry, not just on next de
   });
 
   it('deploy() still repairs too (belt-and-braces; harmless no-op once create() already healed it)', () => {
-    expect(garageScene).toMatch(/deploy\(opts = \{\}\)\s*\{[\s\S]*?this\.mech\.repairAll\(\);/);
+    expect(garageScene).toMatch(/deploy\(\)\s*\{[\s\S]*?this\.mech\.repairAll\(\);/);
   });
 });

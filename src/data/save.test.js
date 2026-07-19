@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  loadAllMechs, saveAllMechs, loadUnlocked, saveUnlocked,
-  loadClearedBiomes, saveClearedBiomes, markBiomeCleared, allBiomesCleared,
-} from './save.js';
+import { loadAllMechs, saveAllMechs, loadUnlocked, saveUnlocked } from './save.js';
 import { STARTING_UNLOCKED } from './shop.js';
-import { BIOME_IDS } from './biomes.js';
 
 // Minimal in-memory localStorage stub (vitest runs in node, which has none). save.js
 // reads localStorage lazily inside its functions, so installing it per-test is enough.
@@ -65,63 +61,5 @@ describe('unlocked-catalog persistence (#65)', () => {
     const unlocked = loadUnlocked();
     for (const id of STARTING_UNLOCKED) expect(unlocked.has(id)).toBe(true);
     expect(unlocked.has('shotgun')).toBe(true);
-  });
-});
-
-// #240: the boss-arena unlock — one SUCCESSFUL run in each of the 5 biomes. The "a death does
-// not count" half of the rule is enforced at the single call site (scenes/arena/run.js `_endRun`
-// only marks on the 'won' branch), so the persistence-level guarantee tested here is the one
-// that backs it: nothing is ever marked unless someone explicitly marks it, and the all-5
-// condition is a real per-biome set, not a count of runs.
-describe('per-biome run completion (#240 boss-arena unlock)', () => {
-  it('a fresh save has cleared nothing and the boss arena is locked', () => {
-    expect(loadClearedBiomes().size).toBe(0);
-    expect(allBiomesCleared()).toBe(false);
-  });
-
-  it('marking a biome complete persists it across a reload', () => {
-    markBiomeCleared('desert');
-    const reloaded = loadClearedBiomes();
-    expect(reloaded.has('desert')).toBe(true);
-    expect(reloaded.size).toBe(1);
-  });
-
-  it('marking the same biome twice does not double-count', () => {
-    markBiomeCleared('arctic');
-    markBiomeCleared('arctic');
-    expect(loadClearedBiomes().size).toBe(1);
-    expect(allBiomesCleared()).toBe(false);
-  });
-
-  it('unlocks only once ALL five biomes are cleared, not after five wins', () => {
-    for (const id of BIOME_IDS.slice(0, -1)) markBiomeCleared(id);
-    expect(allBiomesCleared()).toBe(false);
-    markBiomeCleared(BIOME_IDS[BIOME_IDS.length - 1]);
-    expect(allBiomesCleared()).toBe(true);
-  });
-
-  it('a run that ends in DEATH marks nothing — completion is only ever recorded explicitly', () => {
-    // Mirror the arena's terminal-run branch: a loss never calls markBiomeCleared at all.
-    const endRun = (status, biomeId) => { if (status === 'won') markBiomeCleared(biomeId); };
-    for (const id of BIOME_IDS) endRun('dead', id);
-    expect(loadClearedBiomes().size).toBe(0);
-    expect(allBiomesCleared()).toBe(false);
-    endRun('won', BIOME_IDS[0]);
-    expect(loadClearedBiomes().has(BIOME_IDS[0])).toBe(true);
-  });
-
-  it('ignores an unknown biome id, so a stale save can never fake the unlock', () => {
-    markBiomeCleared('atlantis');
-    expect(loadClearedBiomes().size).toBe(0);
-    saveClearedBiomes(new Set([...BIOME_IDS, 'atlantis']));
-    const reloaded = loadClearedBiomes();
-    expect(reloaded.has('atlantis')).toBe(false);
-    expect(allBiomesCleared(reloaded)).toBe(true);
-  });
-
-  it('survives a corrupt save without throwing', () => {
-    globalThis.localStorage.setItem('mech-game-biome-clears-v1', 'not json');
-    expect(loadClearedBiomes().size).toBe(0);
-    expect(allBiomesCleared()).toBe(false);
   });
 });
