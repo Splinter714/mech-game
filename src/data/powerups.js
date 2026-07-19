@@ -10,8 +10,15 @@
 //  - Buffs are an OVERLAY on top of the live Mech, never a mutation of the model, so they
 //    expire cleanly. `buffModifiers(active)` collapses the set of active types into a plain
 //    object the firing/movement code multiplies against.
-//  - Stacking is ONE-PER-TYPE: several different types can be active at once (each with its
-//    own countdown); picking up a duplicate of an active type just refreshes that type's time.
+//  - Stacking is ONE-PER-TYPE and DURATION-ONLY (#339): several different types can be active
+//    at once (each with its own countdown); picking up a duplicate of an ALREADY-ACTIVE type
+//    ADDS its full duration to that type's remaining time, capped (see `stackedRemainingMs`).
+//    MAGNITUDE never compounds — a second Overdrive is the same fire-rate multiplier for
+//    LONGER, not a faster one. That asymmetry is deliberate and load-bearing: #326 removed
+//    every dock reinforcement cap and #328 made the Broodhauler an infinite drone source, so
+//    there are far more farmable kills than when these were tuned. Magnitude stacking could
+//    trivialise fights (a x4 Barrage, a x0.125 Overdrive cycle); duration stacking cannot —
+//    the ceiling on how strong you get is unchanged, only how long you stay there moves.
 //  - Armor Patch is INSTANT (no timer) — it applies its repair on pickup and never enters the
 //    active set.
 //  - Shield (#246, reworked from #187) is a THIRD kind, alongside timed buffs and instants: it
@@ -219,6 +226,43 @@ export function isInstant(id) {
 export function durationMs(id) {
   const p = POWERUPS[id];
   return p && p.duration ? p.duration * 1000 : 0;
+}
+
+// ── Duration stacking (#339) ─────────────────────────────────────────────────────────────
+// How many times a powerup's OWN base duration it may accumulate to. 3 means a 9-second
+// Overdrive tops out at 27 seconds of continuous uptime no matter how many more you grab
+// while it's live; a 12-second Shield tops out at 36.
+//
+// This is the playtest dial for #339 — Jackson explicitly left the cap to the builder and
+// expects to tune it. Picked at 3 because it is generous enough that stacking is obviously
+// worth doing (two pickups is a real, felt reward; the third still lands) while keeping a
+// hard ceiling on how long one lucky drop streak can hold a buff up. Uncapped, the post-#326/
+// #328 infinite kill supply could in principle hold Barrage or Overcharge on permanently,
+// which is the same "trivialise the fight" failure that duration-only stacking exists to
+// avoid — just reached by a slower road. Raise it for a more power-fantasy feel, lower it
+// toward 1 to get back to the old pure-refresh behaviour.
+export const MAX_STACK_MULT = 3;
+
+// The cap, in ms, on a given type's accumulated remaining time. 0 for instant/unknown types.
+export function maxStackedMs(id) {
+  return durationMs(id) * MAX_STACK_MULT;
+}
+
+// THE stacking rule (#339), shared by every timed-buff path so there is exactly one policy:
+// picking up `id` while `remainingMs` of it is still on the clock ADDS a fresh full duration
+// on top, clamped to `maxStackedMs`. A fresh pickup (remaining 0 or absent) is just its own
+// duration. Magnitude is untouched — this returns a TIME, never a strength. Pure; the caller
+// (scene mixin / Mech shield boost) stores the result.
+//
+// Note the clamp is applied to the SUM rather than refusing the pickup: grabbing a duplicate
+// at 25s of a 27s-capped Overdrive still nudges you to the cap instead of doing nothing, so a
+// pickup never feels wasted. It can never REDUCE the remaining time either — if somehow
+// already above the cap, the existing value is kept.
+export function stackedRemainingMs(id, remainingMs = 0) {
+  const add = durationMs(id);
+  if (!add) return 0;
+  const cur = Math.max(0, remainingMs || 0);
+  return Math.max(cur, Math.min(cur + add, maxStackedMs(id)));
 }
 
 // ── Buff overlay math ────────────────────────────────────────────────────────────────────

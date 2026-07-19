@@ -124,3 +124,98 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
     for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).toHaveBeenCalledWith(false);
   });
 });
+
+// ── #339: the scene wiring for duration stacking ───────────────────────────────────────────
+// The pure rule is proven in data/powerups.test.js; this proves `_activatePowerup` actually
+// USES it on all three paths (plain timed buff, Shield's on-mech boost, instant Armor Patch)
+// rather than the old "set to durationMs" refresh. Driven against a minimal fake scene, same
+// pattern as the shield-visual tests above.
+import {
+  POWERUPS, durationMs, maxStackedMs, buffModifiers,
+} from '../../data/powerups.js';
+
+function fakeArena() {
+  return {
+    px: 0, py: 0,
+    activePowerups: {},
+    _floatText() {},
+    boostCalls: [],
+    mech: {
+      _remaining: 0,
+      _repairs: 0,
+      get shieldBoostRemainingMs() { return this._remaining; },
+      boostShield(mult, ms) { this._mult = mult; this._remaining = ms; },
+      repairArmor() { this._repairs++; return 10; },
+    },
+    _activatePowerup: PowerupsMixin._activatePowerup,
+    _applyInstantPowerup: PowerupsMixin._applyInstantPowerup,
+    _refreshBuffMods: PowerupsMixin._refreshBuffMods,
+  };
+}
+
+describe('#339: _activatePowerup stacks duration on duplicate pickups', () => {
+  it('a second timed pickup ADDS a duration rather than resetting to one', () => {
+    const s = fakeArena();
+    s._activatePowerup('overdrive');
+    expect(s.activePowerups.overdrive).toBe(durationMs('overdrive'));
+    s._activatePowerup('overdrive');
+    expect(s.activePowerups.overdrive).toBe(durationMs('overdrive') * 2);
+  });
+
+  it('stacks on top of a PARTIALLY DRAINED timer (the real in-game case)', () => {
+    const s = fakeArena();
+    s._activatePowerup('barrage');
+    s.activePowerups.barrage -= 4000;                       // 4s of play elapses
+    const before = s.activePowerups.barrage;
+    s._activatePowerup('barrage');
+    expect(s.activePowerups.barrage).toBe(before + durationMs('barrage'));
+  });
+
+  it('plateaus at the cap however many are collected, and never shortens the buff', () => {
+    const s = fakeArena();
+    let prev = 0;
+    for (let i = 0; i < 12; i++) {
+      s._activatePowerup('overcharge');
+      expect(s.activePowerups.overcharge).toBeGreaterThanOrEqual(prev);
+      prev = s.activePowerups.overcharge;
+    }
+    expect(prev).toBe(maxStackedMs('overcharge'));
+  });
+
+  it('does NOT change magnitude — the collapsed modifiers are identical however long it runs', () => {
+    const s = fakeArena();
+    s._activatePowerup('overdrive');
+    const once = buffModifiers(s.activePowerups);
+    for (let i = 0; i < 5; i++) s._activatePowerup('overdrive');
+    expect(buffModifiers(s.activePowerups)).toEqual(once);
+  });
+
+  it('Shield extends the on-mech boost window at the same boostMult', () => {
+    const s = fakeArena();
+    s._activatePowerup('shield');
+    expect(s.mech._mult).toBe(POWERUPS.shield.boostMult);
+    expect(s.mech._remaining).toBe(durationMs('shield'));
+    s._activatePowerup('shield');
+    expect(s.mech._mult).toBe(POWERUPS.shield.boostMult);   // same strength…
+    expect(s.mech._remaining).toBe(durationMs('shield') * 2); // …longer
+    // Shield still never enters the scene-level active set.
+    expect(s.activePowerups.shield).toBeUndefined();
+  });
+
+  it('Armor Patch simply applies again — no timer, never enters the active set', () => {
+    const s = fakeArena();
+    s._activatePowerup('armorPatch');
+    s._activatePowerup('armorPatch');
+    expect(s.mech._repairs).toBe(2);
+    expect(s.activePowerups.armorPatch).toBeUndefined();
+  });
+
+  it('different types keep their own independent clocks', () => {
+    const s = fakeArena();
+    s._activatePowerup('overdrive');
+    s._activatePowerup('overdrive');
+    s._activatePowerup('barrage');
+    expect(s.activePowerups.overdrive).toBe(durationMs('overdrive') * 2);
+    expect(s.activePowerups.barrage).toBe(durationMs('barrage'));
+  });
+});

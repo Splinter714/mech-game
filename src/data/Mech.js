@@ -252,6 +252,16 @@ export class Mech {
   // expired but `shield.hp` hasn't drained back to base yet) — `_shieldBoost` is still around
   // in its "expired" sub-state at that point, so this just un-expires it and refreshes the
   // timer against the SAME original `baseMax`/`baseRegenPerSec`, same as the still-active case.
+  // #339: how much boost time is still on the clock, in ms — 0 when no boost is live (including
+  // the post-expiry decay sub-state, which is a drain, not an active buff). The caller uses this
+  // to compute the STACKED total it then passes back into `boostShield`; the stacking policy
+  // itself stays in data/powerups.js (`stackedRemainingMs`) so all timed buffs share one rule
+  // and the model keeps its "set exactly what you're told" contract.
+  get shieldBoostRemainingMs() {
+    const b = this._shieldBoost;
+    return b && !b.expired ? Math.max(0, b.remainingMs || 0) : 0;
+  }
+
   boostShield(mult, durationMs) {
     if (!shieldPresent(this.shield)) return;
     if (!this._shieldBoost) {
