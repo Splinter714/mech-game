@@ -33,6 +33,7 @@
 import { DEPTH } from './shared.js';
 import { HEX_SIZE, axialKey, hexCorners, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { computeVisibleHexes } from '../../data/visibility.js';
+import { wallEdgeCrossing } from '../../data/wallEdges.js';
 
 // How dark, and what colour. Emphasis from the request is on *slightly*: this should read as
 // "you can't see round there", not fog-of-war blackout. A near-black with a faint blue bias
@@ -91,7 +92,20 @@ export const VisibilityMixin = {
 
     // The pure FOV pass (data/visibility.js). `this.terrain` is the live hex→terrain-id Map, so a
     // collapsed building is already rubble here by the time the invalidation flag is read.
-    this.visibleHexes = computeVisibleHexes(h, radius, (q, r) => this.terrain.get(axialKey(q, r)));
+    // #288: base walls are hex-EDGE geometry, not terrain hexes, so they're consulted as line
+    // segments (`wallEdgeCrossing`, the same exact-crossing test shots and movement use) rather
+    // than via the terrain lookup — otherwise the player would see straight through a base wall.
+    // Passed as null when there are no standing spans, which re-enables the open-ground fast path.
+    const walls = this.wallEdges && this.wallEdges.edges?.size > 0 ? this.wallEdges : null;
+    this.visibleHexes = computeVisibleHexes(
+      h, radius, (q, r) => this.terrain.get(axialKey(q, r)),
+      walls
+        ? {
+          hexCenter: (q, r) => hexToPixel(q, r),
+          segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(walls, x0, y0, x1, y1),
+        }
+        : {},
+    );
     this._drawVisibilityOverlay(h, radius);
   },
 

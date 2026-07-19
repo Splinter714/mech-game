@@ -35,7 +35,14 @@ import { coverBlocksForRay } from './terrain.js';
 //
 // Returns a Set of axial keys — every hex within `radius` of `center` the viewer can see,
 // always including the viewer's own hex.
-export function computeVisibleHexes(center, radius, terrainAt) {
+// `opts.segmentBlocked(x0, y0, x1, y1)` (optional) is the PIXEL-SPACE blocker test, for blockers
+// that aren't tiles at all. #288 made base walls hex-EDGE geometry rather than terrain hexes, so a
+// terrain-only pass would look straight through a base wall — they have to be consulted as line
+// segments, exactly as `_wallDistance`/`_wallEdgeDistance` already do for shots. Pass null (the
+// default) when the map has no standing walls, which also re-enables the open-ground fast path.
+// `opts.hexCenter(q, r)` maps a hex to its pixel centre; required whenever `segmentBlocked` is set.
+export function computeVisibleHexes(center, radius, terrainAt, opts = {}) {
+  const { segmentBlocked = null, hexCenter = null } = opts;
   const disc = range(center, radius);
   const visible = new Set();
   // Fast path, and it is the COMMON path: if nothing in the disc blocks a ray at all, every hex
@@ -43,19 +50,30 @@ export function computeVisibleHexes(center, radius, terrainAt) {
   // ground whose only cover is soft (forest/scrub, which a mech sees over), lands here — which in
   // this game is most of the map most of the time. One flat pass of cheap lookups replaces the
   // whole O(R^3) walk, and the caller skips its overlay redraw too since nothing is dimmed.
-  let anyBlocker = false;
-  for (const h of disc) {
-    if (coverBlocksForRay(terrainAt(h.q, h.r), false)) { anyBlocker = true; break; }
+  let anyBlocker = !!segmentBlocked;   // standing walls ⇒ the fast path is never valid
+  if (!anyBlocker) {
+    for (const h of disc) {
+      if (coverBlocksForRay(terrainAt(h.q, h.r), false)) { anyBlocker = true; break; }
+    }
   }
   if (!anyBlocker) {
     for (const h of disc) visible.add(axialKey(h.q, h.r));
     return visible;
   }
   visible.add(axialKey(center.q, center.r));
+  const c = segmentBlocked ? hexCenter(center.q, center.r) : null;
   for (const h of disc) {
     const k = axialKey(h.q, h.r);
     if (visible.has(k)) continue;
-    if (hexLineClear(center, h, terrainAt)) visible.add(k);
+    if (!hexLineClear(center, h, terrainAt)) continue;
+    // Walls are a line, not a tile, so they're tested against the actual pixel sight line rather
+    // than the hexes it passes through — the same exact-crossing test shots use, for the same
+    // reason (a hex-stepped scan can slip past a 14px-thick span it genuinely crosses).
+    if (segmentBlocked) {
+      const p = hexCenter(h.q, h.r);
+      if (segmentBlocked(c.x, c.y, p.x, p.y)) continue;
+    }
+    visible.add(k);
   }
   return visible;
 }

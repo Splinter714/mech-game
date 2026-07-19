@@ -588,7 +588,12 @@ export const WorldMixin = {
   _damageWallEdge(edge, amount) {
     const { destroyed } = damageWallEdge(this.wallEdges, edge, amount);
     this._redrawWallEdges();
-    if (destroyed) this._outpostCollapseFx((edge.x0 + edge.x1) / 2, (edge.y0 + edge.y1) / 2);
+    if (destroyed) {
+      this._outpostCollapseFx((edge.x0 + edge.x1) / 2, (edge.y0 + edge.y1) / 2);
+      // #306: the span just stopped blocking sight, so the cached field-of-view set is stale —
+      // breaching a base wall has to visibly reveal what was behind it, same as collapsing a tile.
+      this._invalidateVisibility?.();
+    }
     return destroyed;
   },
 

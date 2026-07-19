@@ -1,15 +1,17 @@
 // #306: the player's field-of-view pass and the targeting rule it feeds.
 import { describe, it, expect } from 'vitest';
 import { computeVisibleHexes, hexLineClear, enemyTargetable } from './visibility.js';
-import { axialKey, distance, range } from './hexgrid.js';
+import { axialKey, distance, hexToPixel, range } from './hexgrid.js';
 
 // A terrain lookup backed by a plain {key: id} map — everything unlisted is open grass.
 const world = (obj) => (q, r) => obj[axialKey(q, r)] ?? 'grass';
 
-// `wallSegment` is HARD cover (terrain.js `coverTier`), so it blocks a mech's sight line
+// `alertTower` is HARD cover (terrain.js `coverTier`), so it blocks a mech's sight line
 // unconditionally. `forest` is SOFT cover, which a large unit (the player is always a mech)
 // sees clean over — see `softCoverBlocksLOS`. Both facts are load-bearing below.
-const HARD = 'wallSegment';
+// (#288 turned base walls into hex-EDGE geometry rather than a `wallSegment` terrain, so the
+// hard-cover TILES are now the structures; walls are covered by the `segmentBlocked` tests below.)
+const HARD = 'alertTower';
 const SOFT = 'forest';
 
 describe('hexLineClear', () => {
@@ -121,5 +123,47 @@ describe('enemyTargetable', () => {
 
   it('does not gate at all before a field of view has been computed', () => {
     expect(enemyTargetable({ x: 9, y: 9 }, null, hexKeyOf)).toBe(true);
+  });
+});
+
+// #288: base walls are line segments, not tiles, so the FOV pass consults them through
+// `segmentBlocked` (the scene wires this to `wallEdgeCrossing`). Without this the player would
+// see straight through a base wall — the terrain lookup knows nothing about edge geometry.
+describe('computeVisibleHexes — wall EDGE blockers (#288 geometry)', () => {
+  const origin = { q: 0, r: 0 };
+  const hexCenter = (q, r) => hexToPixel(q, r);
+  // A vertical wall line at x = 150px: any sight line whose endpoints straddle it is blocked.
+  const wallAtX = (wx) => (x0, _y0, x1, _y1) => (x0 < wx) !== (x1 < wx);
+
+  it('blocks hexes on the far side of a wall the terrain map knows nothing about', () => {
+    const openOnly = computeVisibleHexes(origin, 6, world({}));
+    const withWall = computeVisibleHexes(origin, 6, world({}), {
+      hexCenter, segmentBlocked: wallAtX(150),
+    });
+    expect(withWall.size).toBeLessThan(openOnly.size);
+    // A hex well past x = 150px is hidden; one on the player's side is not.
+    const far = range(origin, 6).find((h) => hexCenter(h.q, h.r).x > 300);
+    const near = range(origin, 6).find((h) => hexCenter(h.q, h.r).x < -100);
+    expect(withWall.has(axialKey(far.q, far.r))).toBe(false);
+    expect(withWall.has(axialKey(near.q, near.r))).toBe(true);
+  });
+
+  it('always keeps the viewer own hex, even with a wall through the disc', () => {
+    const vis = computeVisibleHexes(origin, 5, world({}), { hexCenter, segmentBlocked: () => true });
+    expect(vis.has(axialKey(0, 0))).toBe(true);
+  });
+
+  it('breaching the wall (no spans left) restores the full open-ground view', () => {
+    const breached = computeVisibleHexes(origin, 6, world({}));
+    expect(breached.size).toBe(range(origin, 6).length);
+  });
+
+  it('combines tile cover and wall spans — either kind alone is enough to hide a hex', () => {
+    const vis = computeVisibleHexes(origin, 6, world({ '2,0': HARD }), {
+      hexCenter, segmentBlocked: wallAtX(-150),
+    });
+    expect(vis.has(axialKey(3, 0))).toBe(false);   // hidden by the hard TILE
+    const west = range(origin, 6).find((h) => hexCenter(h.q, h.r).x < -300);
+    expect(vis.has(axialKey(west.q, west.r))).toBe(false);   // hidden by the WALL span
   });
 });
