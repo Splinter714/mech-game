@@ -122,7 +122,7 @@ const TOWER_PATROL_HUDDLE_OFFSET = 16;
 // was always a playtest legibility aid, never meant to ship in production. Color/size/weight
 // come from hexLabelStyle.js, shared with terrainLabels.js so the two label systems can't
 // drift into two different looks again.
-const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacement: 'TURRET', objective: 'OBJECTIVE' };
+const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', objective: 'OBJECTIVE' };
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
@@ -195,13 +195,12 @@ export const BasesMixin = {
   // unit in the cluster shares the SAME `baseId`/`dockKey` so `_wakeBase` wakes them together
   // as one group.
   //
-  // Turret emplacements (`base.turrets`, their own dedicated `turretEmplacement` terrain hex —
-  // never drawn from the dock kind pools) are spawned the same DORMANT way, one `turret` per
-  // emplacement hex, tagged with the SAME base's `baseId` so they wake alongside that base's
-  // docks and count toward the win condition (`_allBasesCleared`) exactly like a dock unit does.
+  // #287 (owner, 2026-07-19): the interior turret-emplacement loop that used to follow the dock
+  // loop is GONE along with its terrain hex — a base's fixed guns are its WALL turrets
+  // (`_spawnWallTurrets` below), spawned the same DORMANT way and tagged with the same `baseId`.
   //
   // #269 §3 "rare multi-spawn exception" (playtest follow-up): also records, per DOCK hex only
-  // (never a turret emplacement — see data/dockResupply.js's file header for why), the metadata
+  // (see data/dockResupply.js's file header for why), the metadata
   // `_updateDockResupply` needs later — the dock's kind/position/owning base and a fresh
   // resupply state — in `this._dockResupplyMeta`/`this._dockResupplyStates`. Built here rather
   // than a separate pass since this loop already visits every dock exactly once.
@@ -245,31 +244,10 @@ export const BasesMixin = {
           e.dockKey = dockKey;
           // #283 audit: cap the DORMANT proximity-wake radius (data/awareness.js
           // `PROXIMITY_WAKE_RANGE_CAP`'s own comment has the full reasoning) — a no-op for every
-          // kind whose `detectRange` was already below the cap (tank/helicopter/quadruped/mech),
-          // only actually tightens the turret emplacement's wildly larger combat-range-derived
-          // value below.
+          // kind whose `detectRange` was already below the cap (tank/helicopter/quadruped/mech);
+          // the turret kinds' wildly larger combat-range-derived values are the ones it bites on.
           e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
         }
-      }
-      for (const turret of base.turrets ?? []) {
-        const { x, y } = hexToPixel(turret.q, turret.r);
-        const e = this._spawnKind(x, y, 'turret');
-        e.awareness = DORMANT;
-        e.baseId = base.id;
-        e.dockKey = axialKey(turret.q, turret.r);
-        // #287: the emplacement hex is now an impassable, HP-bearing bunker (terrain.js
-        // `turretEmplacement`), so this turret is standing on terrain that `_blocked` reports
-        // as blocked. `emplaced` marks it as legitimately garrisoning that structure, which
-        // exempts it from enemies.js's "recover a ground unit stranded on impassable terrain"
-        // snap-back (#115) — without it, every base turret would be shoved off its own bunker
-        // onto a neighbouring hex on the first frame. It's also how `_onTerrainCollapsed` below
-        // finds the occupant to destroy when the bunker itself is blown open.
-        e.emplaced = true;
-        // #283 audit: see the matching comment on the dock loop above — the turret emplacement
-        // is the biggest beneficiary of this cap (2880px -> 320px), though every dormant kind's
-        // proximity-wake radius now shares this same 320px envelope (awareness.js
-        // `PROXIMITY_WAKE_RANGE_CAP`'s own comment has the full reasoning).
-        e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
       }
     }
     this._spawnWallTurrets();
@@ -297,23 +275,24 @@ export const BasesMixin = {
       const e = this._spawnKind(mount.x, mount.y, 'wallTurret');
       e.awareness = DORMANT;
       e.baseId = edge.baseId;
-      // #287's `emplaced` flag, reused verbatim and for the same reason: a wall gun is seated
-      // hard against its own wall band, which `_blocked` reports as impassable, so without this it
+      // `emplaced` — the flag #287 introduced for its (now-removed) interior bunker garrison, and
+      // the wall gun's only remaining user. A wall gun is seated ON its own wall band, which
+      // `_blocked` reports as impassable, so without this it
       // would be shoved off its parapet by enemies.js's "recover a ground unit stranded on
       // impassable terrain" snap-back (#115) on the very first frame.
       e.emplaced = true;
       // #310: the span this gun belongs to. The wall analogue of `dockKey` — it is how
       // `_killWallTurretsOn` finds the occupant when the span underneath it is breached, and it
       // is deliberately a SEPARATE field from `dockKey` so a wall-span key can never collide with
-      // a hex key in `_killEmplacedAt`'s lookup.
+      // a hex key in any dock-keyed lookup.
       e.spanKey = edge.key;
       e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
     }
   },
 
   // #310: destroy every wall turret garrisoning `spanKey`. Hooked from world.js `_damageWallEdge`
-  // the instant a span collapses — the direct analogue of `_killEmplacedAt` above, and following
-  // #287's precedent exactly: a breached span should not leave its gun hovering intact over the
+  // the instant a span collapses, following #287's (removed) emplacement precedent exactly: a
+  // breached span should not leave its gun hovering intact over the
   // gap. Blowing the span open is therefore a genuine SECOND way to kill the gun, alongside
   // shooting the gun itself, and the two are separate health pools (the span's 200, the unit's 35
   // structure + 15 armor) — destroy either and the emplacement is out of the fight.
@@ -372,7 +351,7 @@ export const BasesMixin = {
   },
 
   // #269 playtest follow-up (hex legibility): one persistent red text tag per dock/alertTower/
-  // turretEmplacement hex, positioned via `hexToPixel` — a STATIC world-space label (unlike
+  // objective hex, positioned via `hexToPixel` — a STATIC world-space label (unlike
   // combat.js's `_floatText`, which fades/floats for hit numbers; this stays up the whole run,
   // same "persistent world-space thing pinned over a fixed hex" shape as mission.js's
   // `_makeObjectiveMarker`, just far simpler — no ring/tween, just the text). Called once from
@@ -382,7 +361,6 @@ export const BasesMixin = {
     this._hexLabels = [];
     for (const base of this.bases ?? []) {
       for (const dock of base.docks) this._addHexLabel(dock.q, dock.r, 'dock');
-      for (const turret of base.turrets ?? []) this._addHexLabel(turret.q, turret.r, 'turretEmplacement');
       // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"):
       // tag the base's dedicated objective hex too, same red-text legibility treatment as the
       // other base-population hex types.
@@ -686,8 +664,7 @@ export const BasesMixin = {
   // `dockClosed` (or has since collapsed to rubble via `_damageBuildingAt`) is skipped, so this
   // never fights the resupply cycle's own closed→open transition (`_resupplyDock`/`_openDock`
   // below) or re-close an already-destroyed dock. Cheap: `this._dockResupplyMeta` only ever holds
-  // DOCK hexes (never `turretEmplacement` — see that map's own header comment in
-  // `_spawnDormantUnits`), and this game has at most a handful of docks, so a plain per-dock
+  // DOCK hexes (see that map's own header comment in `_spawnDormantUnits`), and this game has at most a handful of docks, so a plain per-dock
   // `.some()` scan (same cost shape as `_updateDockResupply`/`_maybeProximityWake`) is fine.
   _updateDockOpenClose() {
     if (!this._dockResupplyMeta || !this._dockResupplyMeta.size) return;
@@ -732,19 +709,9 @@ export const BasesMixin = {
   // resupply (`spendDockResupply`, data/dockResupply.js) the instant its closed dome is
   // destroyed — a real tactical payoff for blowing it open before it can produce reinforcements,
   // even if it hadn't used its one resupply yet.
-  // #287: ...and, on the same hook, a collapsing turret emplacement takes its GARRISON with it.
-  // DELIBERATE CALL: Jackson asked for a hex that "fully gets destroyed into rubble" — an
-  // emplacement that's gone shouldn't leave its gun hovering intact over the crater, and the
-  // alternative (the turret survives, now standing on passable rubble) would read as the
-  // structure having been cosmetic after all, which is the exact complaint this issue exists to
-  // fix. So blowing the bunker open is a genuine second way to kill the turret, alongside
-  // shooting the turret unit itself (which has its own armor/structure since #299) — the hex's
-  // 30 hp and the unit's 35 structure / 15 armor are two separate health pools, and destroying
-  // EITHER one removes the emplacement from the fight.
   _onTerrainCollapsed(hexKey) {
     const state = this._dockResupplyStates?.get(hexKey);
     if (state) this._dockResupplyStates.set(hexKey, spendDockResupply(state));
-    this._killEmplacedAt(hexKey);
     this._maybeDropObjectiveReward(hexKey);
   },
 
@@ -767,24 +734,6 @@ export const BasesMixin = {
     // REACHABLE ground, which matters here: the objective hex has just become rubble but a
     // sealed base ring can leave its immediate surroundings walled.
     return this.spawnPowerup?.(x, y, 'armorPatch') ?? null;
-  },
-
-  // Destroy every emplaced turret garrisoning `hexKey`. Iterates a COPY of `this.enemies`
-  // because `_damageEnemyAt`'s kill path splices the array. Routed through `_damageEnemyAt`
-  // rather than a bespoke teardown so the death FX, the base-wake-on-damage cascade, the
-  // powerup drop roll and the win-condition bookkeeping all behave exactly as they do for a
-  // turret killed by direct fire.
-  _killEmplacedAt(hexKey) {
-    for (const e of [...(this.enemies ?? [])]) {
-      if (!e.emplaced || e.dockKey !== hexKey || e.mech.isDestroyed()) continue;
-      // `toughness` (structure + armor + shield, uniform across Mech/HpBody) — NOT `hp`. Since
-      // #299 the turret carries an ARMOR pool (15) on top of its structure (35), and
-      // `_damageEnemyAt` routes the hit through `applyDamage`, which spends armor first — so an
-      // `hp + 1` bite (the figure `_crushGroundEnemyAt` gets away with for unarmored small units)
-      // leaves an armored turret standing on its own crater. Caught in live verification, not by
-      // the unit tests, which stub `_damageEnemyAt`.
-      this._damageEnemyAt(e, e.x, e.y, (e.mech.toughness ?? e.mech.maxHp) + 1, 0xffb347);
-    }
   },
 
   // A steel dome sealing shut over a vacated dock hex: a dark plate scales in from nothing to

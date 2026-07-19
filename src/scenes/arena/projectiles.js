@@ -130,7 +130,22 @@ export const ProjectilesMixin = {
         // the whole step as a SEGMENT against the wall line (same swept principle as the
         // `segmentPointDistance` target check just below), and detonate at the exact crossing point
         // so the impact FX lands on the wall's face rather than somewhere past it.
-        const wallHit = this._wallEdgeHit?.(prevX, prevY, p.x, p.y);
+        // #310 (2026-07-19): the round's target may BE a wall turret, which since the mounts were
+        // centred stands on its span's CENTRELINE — so the gun and the wall occupy the same point,
+        // this wall test runs first, and without an exception the gun would be literally
+        // unhittable, leaving its 200hp span as the only way to silence it (4x what #310 shipped).
+        //
+        // The exception is deliberately narrow on BOTH axes, because a wall you can shoot through
+        // is a much worse bug than a gun you cannot shoot. It applies only to the one span the
+        // target gun stands on, AND only on the step where the round is genuinely landing on that
+        // gun (`hittingItsGun` — the same swept HIT_RADIUS test that resolves the hit a few lines
+        // below). A round merely passing near an armed span still detonates on the wall, exactly
+        // as it always did, so `enemyIndex.nearest` happening to name a wall turret can never open
+        // a hole in the perimeter.
+        const wallHit0 = this._wallEdgeHit?.(prevX, prevY, p.x, p.y);
+        const hittingItsGun = !!(wallHit0 && hitEnemy && !enemyShot && wallHit0.edge.key === hitEnemy.spanKey
+          && segmentPointDistance(prevX, prevY, p.x, p.y, hitEnemy.x, hitEnemy.y) < HIT_RADIUS + p.splash);
+        const wallHit = hittingItsGun ? null : wallHit0;
         if (wallHit) {
           p.dead = true;
           p.stopTrajectorySfx?.();
@@ -160,7 +175,11 @@ export const ProjectilesMixin = {
           continue;
         }
         const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
-        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes, p.smallUnitInvolved)) {
+        // #310: the point-sampled form of the same narrow exemption, gated on the same condition
+        // — the sampled band test would otherwise stop the round a few px short of the gun even
+        // once the swept test above has let it through.
+        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes, p.smallUnitInvolved,
+          hittingItsGun ? hitEnemy.spanKey : null)) {
           p.dead = true;
           p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });

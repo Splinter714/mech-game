@@ -178,7 +178,7 @@ export default class ArenaScene extends Phaser.Scene {
     this._spawnTowerPatrols();
     this._initAlertTowers();
     // #269/#270 playtest follow-up (hex legibility), dev-only: both hex-labelling systems —
-    // bases.js's persistent red text tags over every dock/alertTower/turretEmplacement hex, and
+    // bases.js's persistent red text tags over every dock/alertTower/objective hex, and
     // terrainLabels.js's camera-culled/pooled labels for every OTHER hex's real terrain id — were
     // always meant as a playtest legibility aid, never a shipped HUD feature, so they're gated to
     // `npm run dev` and never run in a production build. `import.meta.env.DEV` is Vite's
@@ -445,7 +445,7 @@ export default class ArenaScene extends Phaser.Scene {
   }
 
   // #270 playtest follow-up: live on/off toggle for both hex-label systems (bases.js's
-  // dock/alertTower/turretEmplacement tags + terrainLabels.js's per-terrain pool), bound to L
+  // dock/alertTower/objective tags + terrainLabels.js's per-terrain pool), bound to L
   // (dev-only, see create()). `_hexLabelsVisible` is the single flag both systems read: bases.js
   // stamps it onto every label as it's created (`_addHexLabel`) and terrainLabels.js does the
   // same for every newly pooled label (`_updateTerrainLabels`) — so a hex that enters view AFTER

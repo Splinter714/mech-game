@@ -234,16 +234,16 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     expect(scene.enemies.length).toBe(1);
   });
 
-  it('turret emplacements spawn a dormant turret tagged with the owning base id', () => {
+  // #287 (owner, 2026-07-19): a base descriptor no longer carries interior turret emplacements at
+  // all — its fixed guns are the WALL turrets (`_spawnWallTurrets`, covered in wallTurrets.test.js).
+  // A stale `turrets` array on a base must therefore spawn nothing rather than resurrecting them.
+  it('ignores any legacy `turrets` array on a base — interior emplacements are gone', () => {
     const scene = makeSceneWithSpawnStub();
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 }, docks: [], turrets: [{ q: 1, r: 0 }],
     }];
     scene._spawnDormantUnits();
-    expect(scene.enemies.length).toBe(1);
-    expect(scene.enemies[0].typeId).toBe('turret');
-    expect(scene.enemies[0].awareness).toBe(DORMANT);
-    expect(scene.enemies[0].baseId).toBe('base0');
+    expect(scene.enemies.length).toBe(0);
   });
 
   it('a multi-unit dock cluster all wake together as one group', () => {
@@ -261,17 +261,6 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     expect(scene.enemies.every((e) => e.holdGround === true)).toBe(true);
   });
 
-  it('a turret emplacement wakes alongside its base\'s docks (same wake group)', () => {
-    const scene = makeSceneWithSpawnStub();
-    scene.bases = [{
-      id: 'base0', center: { q: 0, r: 0 },
-      docks: [{ q: 0, r: 0, kindId: 'quadruped', count: 1 }], turrets: [{ q: 1, r: 0 }],
-    }];
-    scene._spawnDormantUnits();
-    scene._wakeBase('base0');
-    expect(scene.enemies.length).toBe(2);
-    expect(scene.enemies.every((e) => e.awareness === AWARE)).toBe(true);
-  });
 });
 
 // #269 playtest follow-up ("fold mechs into the dock system"): a dock's kindId can now be a full
@@ -748,7 +737,7 @@ describe('#269 overhaul: alert-tower activation triggers + sticky countdown (_up
   });
 });
 
-describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/alertTower/turretEmplacement', () => {
+describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/alertTower/objective', () => {
   // `_spawnHexLabels`/`_addHexLabel` only need `this.add.text` (a real ArenaScene always has
   // it) -- stub it the same chainable-fake style as mission.test.js so this stays a pure logic
   // test with no real Phaser dependency.
@@ -764,23 +753,23 @@ describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/aler
     return scene;
   }
 
-  it('creates one label per dock hex, per turret emplacement hex, and per alert tower hex', () => {
+  it('creates one label per dock hex and per alert tower hex (#287: no TURRET tag any more)', () => {
     const scene = makeSceneWithAdd();
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
       docks: [{ q: 0, r: 0, kindId: 'tank', count: 2 }, { q: 1, r: 0, kindId: 'helicopter', count: 2 }],
-      turrets: [{ q: -1, r: 0 }],
+      turrets: [{ q: -1, r: 0 }],   // #287: a legacy field — must produce NO label
     }];
     scene.alertTowerHexes = [{ q: 3, r: -1 }, { q: -3, r: 2 }];
 
     scene._spawnHexLabels();
 
-    // 2 docks + 1 turret + 2 alert towers = 5 labels, regardless of dock unit COUNT (one label
-    // per HEX, not per docked unit).
-    expect(scene._hexLabels.length).toBe(5);
+    // 2 docks + 2 alert towers = 4 labels, regardless of dock unit COUNT (one label per HEX, not
+    // per docked unit) and regardless of any stale `turrets` array.
+    expect(scene._hexLabels.length).toBe(4);
     const texts = scene._hexLabels.map((l) => l.text);
     expect(texts.filter((t) => t === 'DOCK').length).toBe(2);
-    expect(texts.filter((t) => t === 'TURRET').length).toBe(1);
+    expect(texts.filter((t) => t === 'TURRET').length).toBe(0);
     expect(texts.filter((t) => t === 'ALERT TOWER').length).toBe(2);
   });
 

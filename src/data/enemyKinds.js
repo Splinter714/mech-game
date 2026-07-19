@@ -229,11 +229,12 @@ export const ENEMY_KINDS = {
     //     and then one heavy lance is the shape. A fast rail lance is just a laser, which is the
     //     exact thing the owner chose railLance OVER. At 5.2s a player can watch a gun wind up,
     //     break its lane, and have it miss — the gauntlet is readable and beatable rather than a
-    //     raw DPS check. Per gun that is ~10 dps; with only two or three able to bear at once (see
-    //     the own-wall occlusion note in TURRET_MOUNT_OFFSET_PX) a ring brings ~20-30 dps against
+    //     raw DPS check. Per gun that is ~10 dps; with only two or three able to bear at once (every
+    //     span of the ring except its own still blocks a gun — see TURRET_MOUNT_OFFSET_PX) a ring
+    //     brings ~20-30 dps against
     //     a 600-toughness mech, i.e. a real cost to a slow approach and survivable to a brisk one.
     //   - range opt 520 / max 900, LONGER than the player's 400/640. A fixed emplacement on a
-    //     raised parapet with a prepared field of fire should out-range a walking mech; it is what
+    //     parapet with a prepared field of fire should out-range a walking mech; it is what
     //     makes the guns matter during the APPROACH (the point of the issue) rather than only once
     //     the player is already at the wall. Still far short of the sentry's 2400 artillery
     //     envelope, so the two never occupy the same tactical niche.

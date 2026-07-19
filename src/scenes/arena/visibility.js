@@ -171,7 +171,10 @@ export const VisibilityMixin = {
         ? {
           hexCenter: (q, r) => hexToPixel(q, r),
           // #309: `true` — you can see through an OPEN gate. A closed one blocks sight like any span.
-          segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(walls, x0, y0, x1, y1, undefined, true),
+          // #310: the trailing `true` here used to be #309's `passOpenGates`, which that issue
+          // retired — it had become a stray arg, and this position is now `ignoreKey`, so it is
+          // dropped rather than left to read as "ignore some span".
+          segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(walls, x0, y0, x1, y1),
         }
         : {},
     );

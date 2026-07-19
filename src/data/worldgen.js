@@ -58,11 +58,11 @@ export const DOCKS_PER_BASE_MAX = 5;
 // building that no longer exists. The tower's own trigger behaviour (detect → countdown → wake
 // its linked base, by `baseId` — see #284) is unchanged; only how its position is chosen changed.
 
-// #269 playtest follow-up (dock composition, point 4): turret emplacements per base — placed via
-// their OWN loop (below, mirroring the dock loop's style), never drawn from the generic dock kind
-// pools. Small count — a base gets 1-2 defensive turret emplacements guarding it, not a wall of them.
-export const TURRET_EMPLACEMENTS_PER_BASE_MIN = 1;
-export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
+// #287 (owner, playtest 2026-07-19: "remove interior base turret hexes now that we have them on
+// walls"): the interior `turretEmplacement` bunker and its per-base placement loop are GONE. #310
+// put rail-lance guns on the wall ring itself, which made two different turret-bearing structures
+// per base pure noise — a base's fixed guns now live on its parapet and nowhere else. The `turret`
+// enemy KIND survives, still used by the free-roaming `turretNest` spawn (enemies.js).
 
 // #269 §3: replaces run.js's retired EARLY_POOL/LATE_POOL (which drew a STAGE's squad
 // composition) with an analogous pair for DOCK composition — same "softer openers vs. tougher
@@ -82,9 +82,9 @@ export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 // #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — quadrupeds already
 // have their own independent drone-deploy mechanic (enemyBehaviors.js `quadrupedBehavior`'s
 // `deployEveryMs`/`deployBatchMin/Max`/`deployCap`), so a dock ALSO producing standalone drones
-// was redundant with that. `'turret'` is REMOVED entirely too — turrets now get their own
-// dedicated `turretEmplacement` terrain hex, placed via a separate loop below
-// (`placeTurretEmplacements`), never mixed into the generic dock pool.
+// was redundant with that. `'turret'` is REMOVED entirely too — a base's fixed guns are its WALL
+// turrets (#310 `assignWallTurrets`), never a kind drawn from the generic dock pool. (#287 removed
+// the interim interior `turretEmplacement` bunker that briefly served that role.)
 //
 // #269 playtest follow-up ("too many fuckin' tanks; get some helicopters up in this bitch"):
 // the early pool was a single `['tank']` entry, so EVERY early base was 100% tanks — the core of
@@ -203,9 +203,9 @@ export function baseLateFraction(baseIndex, baseCount) {
 // Place `baseCount` bases into the terrain map `T` (mutated in place): each base is a small
 // cluster of `dock` hexes (one dormant enemy KIND+COUNT pre-assigned per dock — world-gen
 // PLACEMENT DATA, not a new terrain entry per kind, per the issue), plus a small cluster of
-// `turretEmplacement` hexes (its own dedicated placement, #269 playtest follow-up point 4 —
-// never drawn from the dock kind pools). Returns the array of base descriptors: `{ id, center:
-// {q,r}, docks: [{q, r, kindId, count}], turrets: [{q,r}] }`. Every hex actually used is stamped
+// plus one dedicated `objective` hex. Returns the array of base descriptors: `{ id, center:
+// {q,r}, docks: [{q, r, kindId, count}], objectiveHex }`. (#287 removed the interior
+// `turretEmplacement` cluster that used to be placed here too.) Every hex actually used is stamped
 // into `T` only if it's still plain open ground (`isGround`) at the time its turn comes up —
 // never overwriting cover/another dock/turret.
 //
@@ -249,7 +249,7 @@ export function baseLateFraction(baseIndex, baseCount) {
 // 2 (a 19-hex disc) is deliberately the SAME radius `placeBases`' dock/turret/objective candidate
 // ring already used, so the compound is exactly "the area the base's own structures were always
 // drawn from" — nothing moves, the empty ground between the structures simply becomes yard. It's
-// also the smallest radius that comfortably holds a full base (up to 5 docks + 2 turrets + 1
+// also the smallest radius that comfortably holds a full base (up to 5 docks + 1
 // objective = 8 structures in 19 hexes) while staying compact enough that the ring reads as one
 // fortified compound you can see around rather than a wall stretching off past the horizon.
 //
@@ -420,23 +420,12 @@ export function placeBases(
       T.set(k, 'dock');
       docks.push({ q: h.q, r: h.r, kindId, count: dockCountFor(kindId, rng) });
     }
-    // #269 playtest follow-up: turret emplacements — their OWN dedicated placement, drawn from
-    // the same near-centre candidate ring the docks use (a turret emplacement is base defense,
-    // so it belongs close in), but stamped AFTER the dock loop above so it only ever lands on
-    // whatever ground the docks didn't already claim.
-    const turretCount = TURRET_EMPLACEMENTS_PER_BASE_MIN
-      + Math.floor(rng() * (TURRET_EMPLACEMENTS_PER_BASE_MAX - TURRET_EMPLACEMENTS_PER_BASE_MIN + 1));
-    const turrets = [];
-    for (const h of candidates) {
-      if (turrets.length >= turretCount) break;
-      const k = axialKey(h.q, h.r);
-      if (!isFree(k)) continue;
-      T.set(k, 'turretEmplacement');
-      turrets.push({ q: h.q, r: h.r });
-    }
+    // #287: the interior turret-emplacement placement loop that used to sit here is removed —
+    // see the constants' comment at the top of this file. A base's fixed guns are the wall
+    // turrets (`assignWallTurrets` below), not a second cluster of interior bunkers.
     // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): one
     // dedicated, DESTRUCTIBLE `objective` hex per base — the same near-centre candidate ring the
-    // docks/turrets above draw from (already-claimed candidates fail `isGround` naturally, so this
+    // docks above draw from (already-claimed candidates fail `isGround` naturally, so this
     // only ever lands on whatever ground neither loop already took), stamped LAST so it never
     // steals a dock/turret's spot. `_targetCurrentBase` (scenes/arena/mission.js) points the
     // mission marker at this instead of the old `base.center` (just a geometric centroid, not
@@ -459,7 +448,7 @@ export function placeBases(
     // #288: `footprint` travels with the base — `placeBaseWalls` builds the wall ring as this
     // set's outline, and `generateTerrain` re-validates it against the final terrain map.
     bases.push({
-      id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets, objectiveHex,
+      id: `base${i}`, center: { q: center.q, r: center.r }, docks, objectiveHex,
       footprint: [...footprint].map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; }),
     });
   }
@@ -670,7 +659,7 @@ export function generateTerrain({
   // #275 (redesign): one alert tower per GAP between successive bases (`placeGapTowers`'s own
   // comment has the full reasoning) — replaces the old outpost-cluster-anchored placement.
   // Placed after bases (using their final centres) for the same "never overwrite a base's
-  // docks/turrets" reason the old per-outpost placement observed, still before the safe-zone
+  // docks" reason the old per-outpost placement observed, still before the safe-zone
   // clear below.
   const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
 
@@ -689,8 +678,7 @@ export function generateTerrain({
   // Re-validated against the now-final `T` (cheap — base/tower counts are small).
   for (const base of bases) {
     base.docks = base.docks.filter((d) => T.get(axialKey(d.q, d.r)) === 'dock');
-    base.turrets = (base.turrets ?? []).filter((t) => T.get(axialKey(t.q, t.r)) === 'turretEmplacement');
-    // #269 playtest follow-up: same re-validation as docks/turrets above — if the safe-zone clear
+    // #269 playtest follow-up: same re-validation as docks above — if the safe-zone clear
     // (or a debug extraClear hex) reset this base's objective hex back to open ground, drop it
     // rather than leaving a stale position; `_targetCurrentBase` (mission.js) falls back to
     // `base.center` when `objectiveHex` is null.
@@ -698,7 +686,7 @@ export function generateTerrain({
       base.objectiveHex = null;
     }
   }
-  // #275: re-validated against the now-final `T` the same way bases' docks/turrets/objective are
+  // #275: re-validated against the now-final `T` the same way bases' docks/objective are
   // above — if the safe-zone clear (or a debug extraClear hex) reset a gap tower's hex back to
   // open ground, drop it rather than leaving a stale position.
   const finalAlertTowers = alertTowers.filter((t) => T.get(axialKey(t.q, t.r)) === 'alertTower');
@@ -712,7 +700,7 @@ export function generateTerrain({
 
   // #288 (placement re-specced to a full RING): each base's perimeter wall is the outline of its
   // own compound FOOTPRINT, so before building it, re-validate that footprint against the now-final
-  // `T` — exactly the same re-validation the docks/turrets/objective/towers above get, and for the
+  // `T` — exactly the same re-validation the docks/objective/towers above get, and for the
   // same reason. `placeBases` paved the footprint as `baseYard`, but the safe-zone clear and
   // `extraClear` both run AFTERWARDS and reset hexes back to plain ground; a footprint hex that got
   // reset is natural terrain again, and leaving it in would break the ring's whole point ("no
@@ -1042,9 +1030,11 @@ function assignGates(T, base, edges) {
 // argument and no progress derivation). The alternative, concentrating them on the approach face,
 // was considered and rejected: it makes flanking to the far side a completely safe answer, which
 // turns a fortification into a puzzle with one solution. Spread evenly, there is no free heading —
-// but because each gun's own wall blocks it from firing along the ring (see
-// TURRET_MOUNT_OFFSET_PX), only the two or three facing the player's arc can engage him at once.
-// So the ring is threatening from every side without ever bringing its whole armament to bear.
+// but a gun is still blocked by every span of the ring OTHER than the one it is bolted to (#310's
+// centring exempts only its own span, see TURRET_MOUNT_OFFSET_PX), so only the two or three facing
+// the player's arc can engage him at once. The ring is threatening from every side without ever
+// bringing its whole armament to bear — and since the centring, that holds INSIDE the compound too
+// rather than the guns all falling silent the moment the player is through the wall.
 //
 // ELIGIBILITY, two rules:
 //   - NEVER a gate span. A gate that is also a gun emplacement muddles both reads: the gate's

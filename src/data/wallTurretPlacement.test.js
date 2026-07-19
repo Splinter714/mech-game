@@ -157,11 +157,11 @@ describe('#310 §1b: the gun the wall mounts', () => {
   });
 });
 
-describe('#310 §2: the gun is seated CLEAR of its own wall band', () => {
-  // This is what lets the gun shoot at all: `aimAndFire` gates every unit on line of sight, traced
-  // from the unit's own position, so a gun on the span's centreline would be occluded by (or
-  // degenerately tangent to) the very wall it is mounted on. See TURRET_MOUNT_OFFSET_PX.
-  it('places the mount outboard of the wall thickness', () => {
+describe('#310 §2: the gun is seated CENTRED ON its own wall line', () => {
+  // Owner, playtest 2026-07-19: "wall turrets should be centered on the wall so they can shoot
+  // inside OR outside of the wall." The mount used to sit 13px OUTBOARD, clear of the 14px band,
+  // which made it a purely outward-facing perimeter gun. It now straddles the line.
+  it('places the mount exactly on the span centreline, at its midpoint', () => {
     const edges = ringFor(makeBase());
     const armed = edges.filter((e) => e.role === SPAN_ROLE_TURRET);
     expect(armed.length).toBeGreaterThan(0);
@@ -169,22 +169,24 @@ describe('#310 §2: the gun is seated CLEAR of its own wall band', () => {
     for (const e of set.edges.values()) {
       const m = spanTurretMount(e);
       expect(m).toBeTruthy();
-      const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, m.x, m.y);
-      // Strictly outside the solid band, so no LOS ray from the mount starts inside the wall.
-      expect(d).toBeGreaterThan(WALL_THICKNESS_PX / 2);
-      expect(d).toBeCloseTo(TURRET_MOUNT_OFFSET_PX, 5);
+      expect(pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, m.x, m.y)).toBeCloseTo(0, 6);
+      expect(m.x).toBeCloseTo((e.x0 + e.x1) / 2, 6);
+      expect(m.y).toBeCloseTo((e.y0 + e.y1) / 2, 6);
     }
   });
 
-  it('pushes the mount OUTWARD, away from the compound', () => {
+  it('pins the offset at zero — the centring is data, not an accident of the midpoint math', () => {
+    expect(TURRET_MOUNT_OFFSET_PX).toBe(0);
+  });
+
+  it('still derives OUTWARD correctly when an explicit offset is asked for', () => {
     const base = makeBase();
     const edges = ringFor(base);
     const c = hexToPixel(base.center.q, base.center.r);
     const set = makeWallEdgeSet(edges.filter((e) => e.role === SPAN_ROLE_TURRET));
     for (const e of set.edges.values()) {
       const mid = { x: (e.x0 + e.x1) / 2, y: (e.y0 + e.y1) / 2 };
-      const m = spanTurretMount(e);
-      // The mount must be FARTHER from the base centre than the span's midpoint is.
+      const m = spanTurretMount(e, 10);
       expect(Math.hypot(m.x - c.x, m.y - c.y)).toBeGreaterThan(Math.hypot(mid.x - c.x, mid.y - c.y));
     }
   });
@@ -195,37 +197,103 @@ describe('#310 §2: the gun is seated CLEAR of its own wall band', () => {
   });
 });
 
-describe('#310 §2b: the gun is NOT blinded by its own wall', () => {
-  // The sharpest form of the mount-offset claim, and the one that actually decides whether these
-  // guns work at all: `aimAndFire` gates every unit on line of sight traced from its own position,
-  // so if a lane from the mount out over the approach crossed the gun's OWN span, the turret would
-  // be permanently unable to fire and the whole feature would be silently inert. Tested here
-  // against the real ring geometry with the real crossing query, rather than in the scene test —
-  // whose LOS is necessarily stubbed.
-  it('an outward lane from the mount crosses no span of its own ring', () => {
-    const base = makeBase();
-    const edges = ringFor(base);
-    const set = makeWallEdgeSet(edges);
+describe('#310 §2b: a centred gun sees BOTH ways — past its own span, and nothing else', () => {
+  // The whole feature turns on this. `aimAndFire` gates every unit on line of sight traced from
+  // its own position with `wallEdgeCrossing`, so a gun sitting exactly on the centreline crosses
+  // that centreline on every ray it traces, in every direction, and would be permanently blind.
+  // The fix is `wallEdgeCrossing`'s `ignoreKey`: the shooter's OWN span, and only that span, is
+  // transparent to it. Tested here against real ring geometry with the real crossing query.
+  const lanesFor = (base, m) => {
     const c = hexToPixel(base.center.q, base.center.r);
+    const ux = m.x - c.x, uy = m.y - c.y;
+    const len = Math.hypot(ux, uy) || 1;
+    return {
+      // Straight out from the base centre through the mount, to the edge of the gun's envelope.
+      out: [m.x + (ux / len) * 900, m.y + (uy / len) * 900],
+      // ...and straight back IN, toward the compound the gun now also covers. Kept short (60px)
+      // so it stays inside the ring and can't reach the far side, which SHOULD block it.
+      in: [m.x - (ux / len) * 60, m.y - (uy / len) * 60],
+    };
+  };
+
+  it('an OUTWARD lane is clear once its own span is ignored (and blocked if it is not)', () => {
+    const base = makeBase();
+    const set = makeWallEdgeSet(ringFor(base));
     const armed = [...set.edges.values()].filter((e) => e.role === SPAN_ROLE_TURRET);
     expect(armed.length).toBeGreaterThan(0);
     for (const e of armed) {
       const m = spanTurretMount(e);
-      // Straight out from the base centre through the mount, to the edge of the gun's envelope.
-      const ux = (m.x - c.x), uy = (m.y - c.y);
-      const len = Math.hypot(ux, uy) || 1;
-      const tx = m.x + (ux / len) * 900, ty = m.y + (uy / len) * 900;
-      const hit = wallEdgeCrossing(set, m.x, m.y, tx, ty);
-      expect(hit, `span ${e.key} is blinded by its own ring`).toBeNull();
+      const [tx, ty] = lanesFor(base, m).out;
+      expect(wallEdgeCrossing(set, m.x, m.y, tx, ty, undefined, e.key),
+        `span ${e.key} is blinded outward by its own ring`).toBeNull();
+      // The exemption is doing real work: without it, the gun is blind. If this ever stops being
+      // true the ignoreKey has become dead code and the centring is silently relying on luck.
+      expect(wallEdgeCrossing(set, m.x, m.y, tx, ty)).not.toBeNull();
     }
   });
 
-  it('the mount sits OUTSIDE every standing span (not parked inside the wall band)', () => {
-    const edges = ringFor(makeBase());
-    const set = makeWallEdgeSet(edges);
+  it('an INWARD lane is clear too — the point of centring: a breaching player is still engaged', () => {
+    const base = makeBase();
+    const set = makeWallEdgeSet(ringFor(base));
     for (const e of [...set.edges.values()].filter((x) => x.role === SPAN_ROLE_TURRET)) {
       const m = spanTurretMount(e);
-      expect(wallEdgeAt(set, m.x, m.y), `mount for ${e.key} is inside a wall`).toBeNull();
+      const [tx, ty] = lanesFor(base, m).in;
+      expect(wallEdgeCrossing(set, m.x, m.y, tx, ty, undefined, e.key),
+        `span ${e.key} cannot cover the compound behind it`).toBeNull();
+    }
+  });
+
+  it('every OTHER span still blocks it — the exemption is one span, not a wall-hack', () => {
+    const base = makeBase();
+    const set = makeWallEdgeSet(ringFor(base));
+    const c = hexToPixel(base.center.q, base.center.r);
+    const armed = [...set.edges.values()].filter((x) => x.role === SPAN_ROLE_TURRET);
+    let blockedAcross = 0;
+    for (const e of armed) {
+      const m = spanTurretMount(e);
+      // Fire straight across the compound, through the centre and out the far side of the ring.
+      const tx = m.x + (c.x - m.x) * 4, ty = m.y + (c.y - m.y) * 4;
+      const hit = wallEdgeCrossing(set, m.x, m.y, tx, ty, undefined, e.key);
+      if (hit) { expect(hit.edge.key).not.toBe(e.key); blockedAcross++; }
+    }
+    // Every armed span faces the far side of its own ring, so all of them must be stopped by it.
+    expect(blockedAcross).toBe(armed.length);
+  });
+
+  it('the mount sits INSIDE its own span\'s band now (and that is the intended state)', () => {
+    const set = makeWallEdgeSet(ringFor(makeBase()));
+    for (const e of [...set.edges.values()].filter((x) => x.role === SPAN_ROLE_TURRET)) {
+      const m = spanTurretMount(e);
+      expect(wallEdgeAt(set, m.x, m.y)?.key).toBe(e.key);
+    }
+  });
+});
+
+describe('#310 §2c: `ignoreKey` on the POINT band test (wallEdgeAt) — shooting the gun back', () => {
+  // The swept exemption alone was NOT enough, and this was caught by measuring in the real game,
+  // not by reasoning: the sampled ray marchers (`_wallDistance` -> `_isWall`, and the projectiles'
+  // `_isWallForRound`) test the band by POINT, so a beam aimed at a centred gun stopped ~4px short
+  // of it even after `wallEdgeCrossing` correctly let it through. Without both, the gun is
+  // unshootable from either side and its 200hp span becomes the only way to silence it — 4x what
+  // #310 shipped, and a contradiction of its own two-separate-health-pools design.
+  it('a point inside an armed span\'s band resolves to that span, and to nothing once ignored', () => {
+    const set = makeWallEdgeSet(ringFor(makeBase()));
+    for (const e of [...set.edges.values()].filter((x) => x.role === SPAN_ROLE_TURRET)) {
+      const m = spanTurretMount(e);
+      expect(wallEdgeAt(set, m.x, m.y)?.key).toBe(e.key);
+      expect(wallEdgeAt(set, m.x, m.y, undefined, e.key)).toBeNull();
+    }
+  });
+
+  it('ignoring one span never hides a DIFFERENT one from the same query', () => {
+    const set = makeWallEdgeSet(ringFor(makeBase()));
+    const spans = [...set.edges.values()];
+    const armed = spans.find((x) => x.role === SPAN_ROLE_TURRET);
+    for (const other of spans) {
+      if (other.key === armed.key) continue;
+      const mid = { x: (other.x0 + other.x1) / 2, y: (other.y0 + other.y1) / 2 };
+      // A point on some OTHER span still reports a wall even with the armed span ignored.
+      expect(wallEdgeAt(set, mid.x, mid.y, undefined, armed.key)).not.toBeNull();
     }
   });
 });

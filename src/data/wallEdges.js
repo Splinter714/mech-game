@@ -122,32 +122,33 @@ export function turretEdges(set, baseId = null) {
   );
 }
 
-// #310: how far OUTBOARD of its span's centreline a wall turret's gun is seated, in px. This is
-// not a cosmetic nicety — it is what makes the gun able to shoot at all.
+// #310 (owner, playtest 2026-07-19: "wall turrets should be centered on the wall so they can shoot
+// inside OR outside of the wall"): a wall turret sits ON its span's centreline, not outboard of it.
 //
-// Every unit in the game, flyers included since #316, must pass `aimAndFire`'s line-of-sight gate
-// before it opens fire (scenes/arena/enemyBehaviors.js). LOS is traced from the unit's own
-// position, and a gun seated exactly ON the span's centreline traces its outward ray from inside
-// (or precisely along) its own 14px-thick wall band — a degenerate case that at best relies on
-// `wallEdgeCrossing`'s "a path that merely STARTS inside the band is not a contact" clause, and at
-// worst has the turret permanently blinded by the very wall it is mounted on. Seating it clear of
-// the outer face removes the question entirely rather than depending on a boundary case.
+// This used to be 13px — clear of the wall's 7px half-thickness — so the gun overhung the OUTER
+// face and its own wall band blocked it from firing back into the compound. That was deliberate at
+// the time ("a perimeter gun covers the ground outside the wall and nothing else"), and the owner
+// has now overruled it: the gun straddles the line and engages targets on EITHER side, so a player
+// who breaches gets no free reprieve from the ring's guns simply by being through it.
 //
-// > half of WALL_THICKNESS_PX (7), so the mount sits fully outboard of the plate with a little
-// margin, and it reads correctly too: the gun overhangs the parapet's OUTER face, looking out over
-// the approach. The deliberate corollary is that its own wall blocks it from firing INTO the
-// compound — a perimeter gun that covers the ground outside the wall and nothing else, which is
-// what a wall gun should do. Once the player breaches and is inside, the ring's turrets on the far
-// side genuinely cannot shoot him through their own wall, and that is a real, earned reprieve.
-export const TURRET_MOUNT_OFFSET_PX = 13;
+// The offset existed for a real reason, not just for looks: every unit must pass `aimAndFire`'s
+// line-of-sight gate before it opens fire, and LOS is traced with `wallEdgeCrossing` FROM the
+// unit's own position — a gun seated exactly on the centreline crosses that centreline at t ≈ 0 on
+// every single ray it traces, in every direction, so a naively-centred turret is permanently blind.
+// The fix is explicit rather than geometric: the LOS/fire path now IGNORES the shooter's own span
+// (`ignoreKey` below, threaded from the unit's `spanKey`), so the gun sees past the wall it is
+// bolted to and nothing else. Every OTHER span, including the rest of its own ring, still blocks it
+// exactly as before — which is what keeps only two or three guns able to bear at once.
+export const TURRET_MOUNT_OFFSET_PX = 0;
 
-// The world-space point a span's turret is seated at: the span's midpoint pushed OUTWARD (away
-// from the base-side hex `a`, toward the outer hex `b`) by TURRET_MOUNT_OFFSET_PX. Pure geometry,
-// derived from the record's own stored hexes, so nothing downstream has to know which side of a
-// span the compound is on. Returns null for a malformed record.
+// The world-space point a span's turret is seated at: its midpoint, optionally pushed OUTWARD
+// (away from the base-side hex `a`, toward the outer hex `b`) by `offset`. At the current offset
+// of 0 this is simply the midpoint; the outward derivation is kept because it costs nothing, it
+// is what `offset` means, and callers (art) still ask which way is out.
 export function spanTurretMount(edge, offset = TURRET_MOUNT_OFFSET_PX) {
   if (!edge?.a || !edge?.b) return null;
   const mx = (edge.x0 + edge.x1) / 2, my = (edge.y0 + edge.y1) / 2;
+  if (!offset) return { x: mx, y: my };
   const inner = hexToPixel(edge.a.q, edge.a.r);
   const outer = hexToPixel(edge.b.q, edge.b.r);
   const dx = outer.x - inner.x, dy = outer.y - inner.y;
@@ -235,13 +236,20 @@ function candidatesAlong(set, x0, y0, x1, y1) {
 // The standing wall a world point is INSIDE (within half the wall's thickness of its span), or
 // null. This is the point-shaped query: it's what lets the existing `_blocked`/`_isWall`/8px-ray
 // machinery treat an edge wall as solid without any of it learning what an edge is.
-export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX) {
+// `ignoreKey` (#310): one span this query pretends is not there — see `wallEdgeCrossing`'s own
+// note. Needed on the POINT form too, not just the swept one: the sampled ray marchers
+// (`_wallDistance` -> `_isWall`, and the projectiles' `_isWallForRound`) test the band by point,
+// and a wall turret sits inside its own band, so without this a beam aimed at the gun stops on the
+// sample 4px short of it even though the swept crossing test correctly let it through. Measured in
+// the real game, not reasoned about — the swept exemption alone was not enough.
+export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey = null) {
   if (!set || set.edges.size === 0) return null;
   const cand = new Set();
   candidatesNear(set, x, y, cand);
   const half = thickness / 2;
   let best = null, bestD = Infinity;
   for (const e of cand) {
+    if (ignoreKey && e.key === ignoreKey) continue;
     const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x, y);
     if (d <= half && d < bestD) { best = e; bestD = d; }
   }
@@ -264,7 +272,14 @@ export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX) {
 // parking inside it. Deliberately NOT symmetric: a path that merely STARTS inside the band is not a
 // contact, or a unit that ended up parked in the band would be frozen in place with no move (not
 // even a retreat) available to it — it just has to not cross the centreline to get out.
-export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX) {
+// `ignoreKey` (#310): one span, by canonical key, that this query pretends is not there. Exists
+// for two callers, both about a WALL TURRET seated on that span's centreline (#310's centred
+// mounts): the gun's own line of sight and outgoing fire, and fire aimed AT the gun. Without it a
+// centred gun crosses its own span on every ray it traces — blind in every direction — and is
+// itself unhittable, since the wall and the gun occupy the same point. Scoped to a single named
+// span, so the gun is still blinded by every OTHER wall (the far side of its own ring included)
+// and no shot gains a lane through any wall it was not already aimed through.
+export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null) {
   if (!set || set.edges.size === 0) return null;
   const cand = candidatesAlong(set, x0, y0, x1, y1);
   if (cand.size === 0) return null;
@@ -272,6 +287,7 @@ export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS
   const half = thickness / 2;
   let best = null, bestT = Infinity;
   for (const e of cand) {
+    if (ignoreKey && e.key === ignoreKey) continue;
     let t = segmentCrossT(x0, y0, x1, y1, e.x0, e.y0, e.x1, e.y1);
     // A step that never geometrically crosses the span's centreline can still END inside the wall's
     // thickness (e.g. driving straight at it and stopping short, or a round detonating on its face)

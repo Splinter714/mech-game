@@ -13,7 +13,6 @@ import {
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
   placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind,
-  TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
   placeBaseWalls, BASE_FOOTPRINT_RADIUS,
 } from './worldgen.js';
@@ -289,11 +288,11 @@ describe('generateTerrain', () => {
     // #279: the buildingHp/coverHp split keys off `isPassable`, not the LOS cover tier — forest
     // (GRASSLAND.cover) is soft, passable walk-through cover, so it lands in `coverHp`, not
     // `buildingHp`. (Keying off passability is robust regardless of the soft/hard tier.)
-    // #287: `turretEmplacement` joined that set — it used to be a passable, non-destructible
-    // placement marker and so never appeared in either map; it's now a genuine impassable,
-    // HP-bearing bunker, which puts every world-gen-stamped emplacement hex into `buildingHp`.
+    // #287 (2026-07-19): the `turretEmplacement` bunker that briefly joined this set is removed
+    // — a base's fixed guns live on its wall ring now, so the only world-gen-stamped destructible
+    // structures are the alert towers and each base's objective hex.
     for (const k of buildingHp.keys()) {
-      expect(['alertTower', 'objective', 'turretEmplacement']).toContain(terrain.get(k));
+      expect(['alertTower', 'objective']).toContain(terrain.get(k));
     }
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });
@@ -317,7 +316,6 @@ describe('generateTerrain', () => {
       const { terrain } = generateTerrain({ seed: 0x5eed, worldRadius: 25, biome: GRASSLAND });
       const validIds = new Set([
         // #269: `dock`/`alertTower` are the base-population system's own normal stamped roles.
-        // `turretEmplacement` (playtest follow-up) is the same kind of normal stamped role.
         // `objective` (playtest follow-up) is the base's dedicated destructible-target hex.
         // #275: the outpost-cluster loop and `helipad` were removed — there's no longer a
         // biome-specific "outpost" role or a stamped helipad id to allow here.
@@ -325,7 +323,7 @@ describe('generateTerrain', () => {
         GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.hazard,
         // #288 (ring placement): `baseYard` is the base compound's paved floor, stamped across
         // each base's whole hex footprint so the wall ring has base infrastructure behind it.
-        'dock', 'alertTower', 'turretEmplacement', 'objective', 'baseYard',
+        'dock', 'alertTower', 'objective', 'baseYard',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });
@@ -697,12 +695,9 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         expect(Number.isInteger(d.count)).toBe(true);
         expect(d.count).toBeGreaterThanOrEqual(1);
       }
-      // #269 playtest follow-up: turret emplacements are their own placement, tagged on the base.
-      expect(base.turrets.length).toBeGreaterThanOrEqual(0);
-      expect(base.turrets.length).toBeLessThanOrEqual(TURRET_EMPLACEMENTS_PER_BASE_MAX);
-      for (const t of base.turrets) {
-        expect(T.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
-      }
+      // #287 (2026-07-19): a base no longer carries an interior turret-emplacement cluster at
+      // all — the descriptor has no `turrets` field and no emplacement hex is ever stamped.
+      expect(base.turrets).toBeUndefined();
       // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"):
       // every base gets exactly one dedicated, destructible `objective` hex.
       expect(base.objectiveHex).toBeTruthy();
@@ -713,7 +708,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
   // #269 playtest follow-up: the objective hex is a real, destructible, base-owned hex — not
   // just a returned coordinate — so the mission marker (mission.js `_targetCurrentBase`) always
   // points at something a player can actually punch through.
-  it('places exactly one objective hex per base, distinct from its docks/turrets', () => {
+  it('places exactly one objective hex per base, distinct from its docks', () => {
     const rng = mulberry32(42);
     const all = buildAllRing();
     const T = new Map();
@@ -726,9 +721,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       expect(base.objectiveHex).toBeTruthy();
       const objKey = axialKey(base.objectiveHex.q, base.objectiveHex.r);
       expect(T.get(objKey)).toBe('objective');
-      // The objective hex isn't double-booked as a dock or turret hex too.
+      // The objective hex isn't double-booked as a dock hex too.
       for (const d of base.docks) expect(axialKey(d.q, d.r)).not.toBe(objKey);
-      for (const t of base.turrets) expect(axialKey(t.q, t.r)).not.toBe(objKey);
     }
   });
 
@@ -803,7 +797,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     });
   });
 
-  it('#269 playtest follow-up: turret never appears in the dock kind pools (its own emplacement hex)', () => {
+  it('#269/#287: the turret kind never appears in the dock kind pools (base guns live on the wall)', () => {
     expect(BASE_EARLY_KIND_POOL).not.toContain('turret');
     expect(BASE_LATE_KIND_POOL).not.toContain('turret');
   });
@@ -911,7 +905,6 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT);
     for (const base of bases) {
       for (const d of base.docks) expect(preMarked.has(axialKey(d.q, d.r))).toBe(false);
-      for (const t of base.turrets) expect(preMarked.has(axialKey(t.q, t.r))).toBe(false);
     }
   });
 
@@ -1117,7 +1110,6 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(bases.length).toBe(BASE_COUNT);
     for (const base of bases) {
       for (const d of base.docks) expect(terrain.get(axialKey(d.q, d.r))).toBe('dock');
-      for (const t of base.turrets) expect(terrain.get(axialKey(t.q, t.r))).toBe('turretEmplacement');
     }
     for (const t of alertTowers) expect(terrain.get(axialKey(t.q, t.r))).toBe('alertTower');
   });
@@ -1872,7 +1864,6 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
           // Structures never land outside the ring meant to protect them.
           const inside = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
           for (const d of base.docks) expect(inside.has(axialKey(d.q, d.r))).toBe(true);
-          for (const t of base.turrets) expect(inside.has(axialKey(t.q, t.r))).toBe(true);
         }
       }
     });

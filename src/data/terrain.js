@@ -35,7 +35,7 @@
 // #269 (issue, section 1): an additive orthogonal vocabulary layered on TOP of the raw fields
 // above — every entry ALSO carries:
 //   category — 'terrain' (natural ground) vs. 'base' (fabricated structures — dock/alertTower/
-//              turretEmplacement/objective today). Purely an art-palette/objective-eligibility
+//              objective today). Purely an art-palette/objective-eligibility
 //              signal (BASE_INFRA_COLOR, hexArt.js); it does NOT drive cover/movement — those
 //              still key off each entry's own raw fields (see `dock` below: `category: 'base'`
 //              but `movement: 'full'`/`cover: 'open'`, exactly like any other open ground).
@@ -200,64 +200,25 @@ export const TERRAIN = {
   rubble:    { id: 'rubble',    tex: 'hex_rubble',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
                category: 'terrain', movement: 'slow', cover: 'open' },
 
-  // #269 playtest follow-up (dock composition): turrets get their OWN dedicated base hex type
-  // instead of being just another kind drawn from the generic dock pool (worldgen.js
-  // `BASE_EARLY_KIND_POOL`/`BASE_LATE_KIND_POOL` no longer include `'turret'` at all —
-  // `placeBases` places `turretEmplacement` hexes via a separate loop).
-  //
-  // #287 (playtest 2026-07-18: "it should BE a hex that fully gets destroyed into rubble") —
-  // this entry USED to be a pure passable PLACEMENT MARKER (same shape as `dock`), on the
-  // reasoning that the turret enemy standing on it was the only thing worth having HP, and that
-  // every turret-cluster spawn path (`_spawnTurretCluster`/`turretClusterHexes`) assumed turrets
-  // sit on ordinary passable ground. A raised bunker-platform TEXTURE alone was then tried and
-  // rejected on playtest: decoration on a walk-through tile doesn't read as a structure. So the
-  // hex is now a genuine HP-bearing bunker, exactly like the other base-infra structures
-  // (`alertTower`/`dockClosed`/`objective`): impassable, hard cover, real hp, collapsing into
-  // its own dedicated rubble. hp 150 (#313, owner-confirmed retune from 30) — tougher than the
-  // alert tower's slim 75 mast, below the 200 of the base's actual objective and the sealed dock,
-  // and level with a quadruped on #299's unit-toughness scale: cracking a gun bunker open should
-  // cost about what killing a real unit costs. Note this is the BUNKER's own pool, on top of the
-  // garrisoned turret's separate body — though collapsing the hex kills that garrison outright
-  // (`_onTerrainCollapsed` bites for the enemy's full `toughness`, not its hp), so this HP is the
-  // real price of the shortcut.
-  //
-  // What the old comment warned about is handled at the spawn paths, not worked around here:
-  //   * `_spawnDormantUnits` (scenes/arena/bases.js) places a base's turrets ON their emplacement
-  //     hexes, which are now impassable — those turrets are tagged `emplaced` so enemies.js's
-  //     "recover a ground unit stranded on impassable terrain" snap-back (#115) leaves them
-  //     standing on their own bunker instead of shoving them onto neighbouring ground.
-  //   * `turretClusterHexes`/`_spawnTurretCluster` (the free-roaming `turretNest` spawn, which
-  //     never targeted emplacement hexes in the first place — it snaps to the nearest passable
-  //     hex) now simply never lands a nest on top of a base's bunker, which is the correct
-  //     reading rather than a regression.
-  //   * When the bunker collapses, the turret occupying it dies with it (bases.js
-  //     `_onTerrainCollapsed`) — the emplacement is gone, so its gun goes with it.
-  // `setDressing: true` (like `alertTower`/`dockClosed`) keeps it out of the mission-objective
-  // pool — a base has one dedicated `objective` hex and its turret bunkers must not compete
-  // with it. Its own texture (`hex_turretEmplacement`, art/hexArt.js) is the intact bunker;
-  // `hex_turretRubble` is its wrecked state.
-  turretEmplacement: { id: 'turretEmplacement', tex: 'hex_turretEmplacement', passable: false, blocksLOS: true,
-               destructible: true, hp: 150, rubbleId: 'turretRubble', setDressing: true,
-               category: 'base', movement: 'none', cover: 'hard' },
-
-  // #287: the wreck of a destroyed turret emplacement — a dedicated rubble type rather than the
-  // generic `rubble` the other base-infra structures collapse into, so a blown-open bunker reads
-  // unmistakably as "that gun position is gone" (shattered ring wall + a toppled gun mount in the
-  // debris) rather than as anonymous masonry. Same passable/slow/no-cover shape as `rubble`.
-  turretRubble: { id: 'turretRubble', tex: 'hex_turretRubble', passable: true, blocksLOS: false,
-               speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+  // #287 (owner, playtest 2026-07-19: "remove interior base turret hexes now that we have them on
+  // walls"): the `turretEmplacement` bunker hex and its `turretRubble` wreck partner USED to live
+  // here — a destructible interior gun platform, one or two per base, with a `turret` unit
+  // garrisoning each. #310 put rail-lance guns on the base's WALL RING, which made a second,
+  // interior turret-bearing structure redundant noise, so both entries (and their textures, their
+  // worldgen placement loop and the `_onTerrainCollapsed` garrison-kill wiring) are gone. A base's
+  // fixed guns are now exclusively its wall turrets. The `turret` enemy KIND is unaffected — it is
+  // still what the free-roaming `turretNest` spawn fields.
 
   // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): a
   // dedicated, DESTRUCTIBLE base hex the mission marker actually points at — previously
   // `_targetCurrentBase` (scenes/arena/mission.js) pointed at `base.center`, which is just the
   // geometric centroid of a base's dock cluster, not necessarily even a real placed hex. `objective`
-  // is placed once per base (data/worldgen.js `placeBases`), separate from docks/turretEmplacement/
-  // alertTower, and reads as "the real thing to punch through" for that base — a proper structure,
-  // not a placement marker, so it's a genuine hard-cover building (mirrors `alertTower`'s shape as
-  // a real structure: impassable, blocks LOS) rather than the passable ground markings dock/
-  // turretEmplacement use. hp 200 (#313, owner-confirmed retune from 40) sits above the alert
-  // tower's slim-mast 75 and the turret bunker's 150, level with the sealed dock — the joint
+  // is placed once per base (data/worldgen.js `placeBases`), separate from the docks and the
+  // gap alert towers, and reads as "the real thing to punch through" for that base — a proper
+  // structure, not a placement marker, so it's a genuine hard-cover building (mirrors
+  // `alertTower`'s shape as a real structure: impassable, blocks LOS) rather than the passable
+  // ground marking `dock` uses. hp 200 (#313, owner-confirmed retune from 40) sits above the alert
+  // tower's slim-mast 75, level with the sealed dock — the joint
   // toughest structure in the game, and equal to a light mech on #299's unit-toughness scale, so
   // the thing the mission marker points at reads as a real assault target rather than a one-shot.
   // (400 was floated and the owner revised it down to 200 — do not raise this without asking.) `setDressing` is
@@ -408,8 +369,7 @@ export function coverTier(id) {
   const t = id && TERRAIN[id];
   return t ? t.cover : undefined;
 }
-// #269: is this a fabricated `base`-category hex (dock/dockClosed/alertTower/turretEmplacement/
-// objective today)? Purely an art-palette/objective-eligibility signal — does NOT drive
+// #269: is this a fabricated `base`-category hex (dock/dockClosed/alertTower/objective today)? Purely an art-palette/objective-eligibility signal — does NOT drive
 // cover/movement, see the TERRAIN header comment and `dock`'s own entry above.
 export function isBaseCategory(id) {
   const t = id && TERRAIN[id];

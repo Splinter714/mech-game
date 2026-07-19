@@ -7,7 +7,7 @@ import { hexesWithinPixelRadius, axialKey } from './hexgrid.js';
 
 // `terrain` is the scene's hexKey → terrainId Map (world.js `this.terrain`). `excludeKeys`
 // (optional Set) skips hex keys that already carry a different label — e.g. the bold-red
-// dock/alertTower/turretEmplacement tags (bases.js `_spawnHexLabels`), so a base hex never gets
+// dock/alertTower/objective tags (bases.js `_spawnHexLabels`), so a base hex never gets
 // double-labelled. A hex that's within radius but absent from `terrain` (nothing generated
 // there) is silently skipped — there's no terrain id to show.
 export function hexesForLabelsInRange(terrain, cx, cy, radius, excludeKeys = null) {

@@ -3,7 +3,7 @@
 // The pure placement/geometry half is in data/wallTurretPlacement.test.js.
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection throws
-// under vitest's node env, so it's stubbed out (same convention as turretEmplacement.test.js).
+// under vitest's node env, so it's stubbed out (same convention as dormantWake.test.js).
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({
   default: {
@@ -17,6 +17,7 @@ import { WorldMixin } from './world.js';
 import { HpBody } from '../../data/HpBody.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { AWARE, DORMANT, detectionRangeFor } from '../../data/awareness.js';
+import { hexToPixel } from '../../data/hexgrid.js';
 import {
   makeWallEdgeSet, spanTurretMount, SPAN_ROLE_TURRET, SPAN_ROLE_GATE, SPAN_ROLE_WALL,
 } from '../../data/wallEdges.js';
@@ -103,7 +104,7 @@ describe('#310 §1: seating a gun on every armed span', () => {
     expect(new Set(wallGuns(scene).map((e) => e.spanKey)).size).toBe(3);
   });
 
-  it('seats the gun at its span\'s outboard mount point, and marks it `emplaced`', () => {
+  it('seats the gun at its span\'s CENTRED mount point, and marks it `emplaced`', () => {
     const scene = makeScene();
     scene._spawnDormantUnits();
     const gun = wallGuns(scene)[0];
@@ -111,11 +112,85 @@ describe('#310 §1: seating a gun on every armed span', () => {
     const m = spanTurretMount(edge);
     expect(gun.x).toBeCloseTo(m.x, 5);
     expect(gun.y).toBeCloseTo(m.y, 5);
-    // #287's flag, reused: without it the #115 "recover a unit stranded on impassable terrain"
-    // snap-back would shove the gun off its own parapet on the first frame.
+    // #310 (owner, 2026-07-19): centred ON the wall line, not outboard of it — the gun covers
+    // ground on BOTH sides of the wall. Pinned here as well as in the pure geometry suite because
+    // it is the scene that decides where the unit actually stands.
+    expect(gun.x).toBeCloseTo((edge.x0 + edge.x1) / 2, 5);
+    expect(gun.y).toBeCloseTo((edge.y0 + edge.y1) / 2, 5);
+    // Without `emplaced` the #115 "recover a unit stranded on impassable terrain" snap-back would
+    // shove the gun off its own parapet on the first frame — and now that it is seated ON the band
+    // rather than 13px clear of it, that snap-back would trigger every single frame.
     expect(gun.emplaced).toBe(true);
   });
 
+});
+
+// #310 (owner, playtest 2026-07-19: "centered on the wall so they can shoot inside OR outside").
+// The rest of this file holds LOS true to isolate the wake wiring; this block deliberately runs the
+// REAL `_cachedLosToPlayer`/`_wallDistanceLos`/`_wallEdgeDistance` chain against real ring geometry,
+// because the whole point of the change is which side of the wall a gun can see — and the answer
+// depends on the shooter's `spanKey` being threaded all the way down into `wallEdgeCrossing`.
+describe('#310 §1b: a centred gun engages BOTH sides of its wall', () => {
+  const losFrom = (scene, gun, tx, ty) => {
+    const dist = Math.hypot(tx - gun.x, ty - gun.y);
+    const bearing = Math.atan2(ty - gun.y, tx - gun.x);
+    delete gun._losCd;                       // force a fresh, un-staggered recompute
+    scene._cachedLosToPlayer(gun, 10_000, gun.x, gun.y, bearing, dist, tx, ty, false);
+    return gun._losClear;
+  };
+
+  function realLosScene() {
+    const scene = makeScene();
+    delete scene._cachedLosToPlayer;         // fall through to the real WorldMixin implementation
+    Object.assign(scene, WorldMixin);
+    scene._redrawWallEdges = () => {};
+    scene._outpostCollapseFx = () => {};
+    scene._invalidateVisibility = () => {};
+    scene._spawnDormantUnits();
+    return scene;
+  }
+
+  it('sees a target OUTSIDE the ring, past the span it is bolted to', () => {
+    const scene = realLosScene();
+    const gun = wallGuns(scene)[0];
+    const c = hexToPixel(0, 0);
+    const ux = gun.x - c.x, uy = gun.y - c.y;
+    const len = Math.hypot(ux, uy) || 1;
+    expect(losFrom(scene, gun, gun.x + (ux / len) * 400, gun.y + (uy / len) * 400)).toBe(true);
+  });
+
+  it('sees a target INSIDE the compound — the breaching player gets no reprieve', () => {
+    // The practical fix the owner asked for. Before centring, the gun sat outboard and its own
+    // wall blocked every inward lane, so a player who was through the ring was safe from it.
+    const scene = realLosScene();
+    const gun = wallGuns(scene)[0];
+    const c = hexToPixel(0, 0);
+    expect(losFrom(scene, gun, c.x, c.y)).toBe(true);
+  });
+
+  it('is still blocked by a DIFFERENT span — the exemption is its own wall only', () => {
+    // A second ring span placed squarely across an inward lane must still stop the gun, or the
+    // exemption has degenerated into "wall turrets shoot through walls".
+    const scene = realLosScene();
+    const gun = wallGuns(scene)[0];
+    const other = [...scene.wallEdges.edges.values()].find((e) => e.key !== gun.spanKey);
+    const target = { x: (other.x0 + other.x1) / 2, y: (other.y0 + other.y1) / 2 };
+    // Aim a little PAST that other span's midpoint so the lane genuinely crosses it.
+    const tx = gun.x + (target.x - gun.x) * 1.6, ty = gun.y + (target.y - gun.y) * 1.6;
+    expect(losFrom(scene, gun, tx, ty)).toBe(false);
+  });
+
+  it('an ordinary ground unit gets no exemption at all (no spanKey ⇒ its own walls still blind it)', () => {
+    const scene = realLosScene();
+    const gun = wallGuns(scene)[0];
+    const bystander = { ...gun, spanKey: undefined };
+    delete bystander._losCd;
+    const c = hexToPixel(0, 0);
+    const dist = Math.hypot(c.x - bystander.x, c.y - bystander.y);
+    scene._cachedLosToPlayer(bystander, 10_000, bystander.x, bystander.y,
+      Math.atan2(c.y - bystander.y, c.x - bystander.x), dist, c.x, c.y, false);
+    expect(bystander._losClear).toBe(false);
+  });
 });
 
 describe('#310 §2: DORMANT until the base wakes', () => {
