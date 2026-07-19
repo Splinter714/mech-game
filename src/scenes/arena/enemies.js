@@ -119,6 +119,15 @@ const REPICK_ON_ARRIVE = true;      // arriving at a FLANK/COVER goal forces an 
 const IDLE_WANDER_RADIUS = 90;      // px around spawnX/spawnY the idle waypoint may land
 const IDLE_REPICK_MIN = 2200;       // ms — min hold before picking a fresh idle waypoint
 const IDLE_REPICK_MAX = 4200;       // ms — max hold before picking a fresh idle waypoint
+
+// #304: how long after the player's mech is destroyed the enemy squad keeps engaging before it
+// stands down. NOT zero, on purpose (confirmed with Jackson: "a short beat, roughly half a
+// second... so it doesn't cut off mid-volley in a way that reads as a glitch"). 600ms is that
+// half-second-ish beat rounded up a touch: long enough that a burst weapon's own train (~300ms
+// for the 5-pulse Pulse Laser, data/delivery.js) can finish rather than being chopped, and that
+// rounds already in flight land — but comfortably inside RUN_OVER_DELAY, so the disengage is
+// clearly visible before the garage transition takes the camera away. Owner: tunable.
+const STAND_DOWN_DELAY_MS = 600;
 const IDLE_SPEED_FRAC = 0.35;       // fraction of MOVE_SPEED_FRAC used while idle (slow patrol)
 
 // Reactivity: bias state choice on what the player is doing.
@@ -433,6 +442,7 @@ export const EnemiesMixin = {
     // previously-woken mech permanently pinned to 'hold' with no dock/base left to explain why.
     e.holdGround = false;
     e.reactDelayMs = null;        // #285: any pending post-wake stagger is transient AI state too
+    e.standDownGoal = null;       // #304: cached withdrawal point — transient, re-resolved on demand
   },
 
   // #44 follow-up: the default opening squad — one of each mech type — dropped OFF-SCREEN so
@@ -593,6 +603,90 @@ export const EnemiesMixin = {
     this.enemies.splice(idx, 1);
   },
 
+  // ── #304 stand-down (player dead) ────────────────────────────────────────────────────
+  // Playtest report: "enemies keep firing at me even after I've exploded while I wait to return
+  // to garage." `_playerDead` (combat.js) only ever gated the PLAYER's own input — nothing on the
+  // enemy side read it, so the whole squad kept engaging the crater for the RUN_OVER_DELAY.
+  //
+  // Two-phase, deliberately NOT instant on the death frame (confirmed with Jackson): for
+  // STAND_DOWN_DELAY_MS after the player dies everything runs exactly as before, so an
+  // in-progress volley finishes and it doesn't read as the game glitching to a halt. After that
+  // beat this returns true and every engagement path below stands down — firing gated off,
+  // turrets stop tracking, and mobile units break contact and head home (see
+  // `_standDownGoal`/`_standDownMoveIntent`).
+  //
+  // The deadline is stamped LAZILY on first ask rather than in combat.js, so there's exactly one
+  // place that owns this clock. `_standDownAt` is reset per-deploy in ArenaScene.create()
+  // alongside `_playerDead` itself — see #281's comment there for why that reset is mandatory
+  // (Phaser reuses the same scene instance, and a stale deadline would leave a fresh sortie's
+  // enemies permanently stood down).
+  _standDownActive() {
+    if (!this._playerDead) return false;
+    if (this._standDownAt == null) { this._standDownAt = this.time.now + STAND_DOWN_DELAY_MS; return false; }
+    return this.time.now >= this._standDownAt;
+  },
+
+  // The single firing gate shared by BOTH enemy fire paths (the mech loop's readyWeapons firing
+  // below and enemyBehaviors.js `aimAndFire` for every vehicle kind). Wraps the existing #28
+  // debug toggle rather than mutating it — `enemyFire` stays purely the player's manual switch.
+  _enemyFireAllowed() {
+    return this.enemyFire && !this._standDownActive();
+  },
+
+  // Where a stood-down unit withdraws to, resolved once and cached on the unit.
+  //  - A dock/base-spawned unit (#269 `baseId`) heads back to its OWN base's centre — literally
+  //    "return to base."
+  //  - Anything else (patrol/wave spawns, debug spawns, the boss arena which has no bases at all)
+  //    falls back to its own spawn point. That's deliberately the SAME anchor `_idleMoveIntent`
+  //    already loiters around for an UNAWARE unit, i.e. its patrol post — so "return to post" and
+  //    "patrol here" mean the same place, instead of inventing a second concept. Sending an
+  //    unbased roamer to the *nearest* base was the alternative; rejected because a wave spawn
+  //    has no fictional relationship to a base it never came from, and it would funnel unrelated
+  //    units into a pile at whatever base happens to be closest to the crater.
+  _standDownGoal(e) {
+    if (e.baseId != null) {
+      const base = (this.bases ?? []).find((b) => b.id === e.baseId);
+      if (base) {
+        const p = hexToPixel(base.center.q, base.center.r);
+        return { x: p.x, y: p.y };
+      }
+    }
+    return { x: e.spawnX, y: e.spawnY };
+  },
+
+  // Movement intent for a stood-down unit: steer to the withdrawal point, then stop. Shared by
+  // the mech loop and the vehicle loop so both disengage the same way.
+  _standDownMoveIntent(e) {
+    const g = (e.standDownGoal ??= this._standDownGoal(e));
+    const gx = g.x - e.x, gy = g.y - e.y;
+    const gm = Math.hypot(gx, gy);
+    if (gm < ARRIVE_SLOW) return { mx: 0, my: 0 };
+    return { mx: gx / gm, my: gy / gm };
+  },
+
+  // Vehicle-kind (#68) stand-down movement, in place of the kind's tactical behavior fn — which
+  // is skipped wholesale, so no vehicle even reaches its `aimAndFire`. An immobile kind (turret,
+  // maxSpeed 0) simply coasts to a stop and holds its facing: it can't disengage, so per the
+  // issue it just stops shooting.
+  _standDownVehicleMove(e, dt) {
+    e.state = 'standdown';
+    const mv = e.kindDef.move;
+    if (!mv.maxSpeed) {
+      e.vx = approach(e.vx, 0, (mv.accel || 200) * dt);
+      e.vy = approach(e.vy, 0, (mv.accel || 200) * dt);
+      return;
+    }
+    const { mx, my } = this._standDownMoveIntent(e);
+    e.vx = approach(e.vx, mx * mv.maxSpeed, mv.accel * dt);
+    e.vy = approach(e.vy, my * mv.maxSpeed, mv.accel * dt);
+    if (Math.hypot(e.vx, e.vy) > 5) {
+      e.angle = Math.atan2(e.vy, e.vx);
+      // Gun swings off the player and back over the direction of travel — the visible "threat
+      // eliminated" read, rather than a turret still tracking a hole in the ground.
+      e.turret = rotateToward(e.turret, e.angle, mv.turretSlew, dt);
+    }
+  },
+
   // Debug (#28): flip enemy movement or firing on/off and toast the new state.
   _toggleAi(which) {
     if (which === 'move') this.enemyMove = !this.enemyMove;
@@ -716,6 +810,10 @@ export const EnemiesMixin = {
     // UNAWARE one) before its tactical brain actually kicks in — `aware` itself still flips the
     // instant the unit is detected, unchanged.
     const reacting = this._isReacting(e, delta);
+    // #304: the player is dead and the stand-down beat has elapsed — this unit disengages
+    // instead of fighting. Checked once per unit per frame and threaded through the movement,
+    // turret-tracking, lock and firing gates below.
+    const stood = this._standDownActive();
 
     if (this.enemyMove) {
       // Track incoming damage: any drop in lethal health opens a "prefer cover" window.
@@ -724,7 +822,22 @@ export const EnemiesMixin = {
       e.lastHealth = hp;
 
       let mx, my;
-      if (!reacting) {
+      if (stood) {
+        // #304: break contact and withdraw. Deliberately BYPASSES `_decideEnemyState` entirely
+        // rather than being another branch inside it — the decision machine only re-runs on the
+        // slow DECIDE_MIN/MAX cadence, so routing through it would leave a unit committed to its
+        // last combat state (pressing the crater) for up to another half-second past the beat.
+        // 'standdown' is still written to `e.state` so the rest of the engine (and tests) can
+        // observe the posture the same way as any other state.
+        e.state = 'standdown';
+        e.goal = null;
+        // Leave the decision timer expired so that if anything ever un-stands-down a live unit
+        // (nothing does today — a redeploy rebuilds the squad from scratch), it re-decides a real
+        // tactical state on the very next frame rather than coasting on 'standdown', which
+        // `_enemyMoveIntent` would otherwise fall through to its default strafe.
+        e.decideAt = 0;
+        ({ mx, my } = this._standDownMoveIntent(e));
+      } else if (!reacting) {
         // Idle/patrol (also covers the brief post-wake stagger window, #285): loiter near the
         // spawn point instead of running the tactical brain.
         ({ mx, my } = this._idleMoveIntent(e, delta));
@@ -753,8 +866,11 @@ export const EnemiesMixin = {
       // #45: backing away (relative to turret facing) is slower.
       const backScale = backwardSpeedScale(mx, my, e.turret);
       // Ease to a stop near a point goal so the enemy doesn't jitter on top of it.
-      let speedFrac = reacting ? MOVE_SPEED_FRAC : MOVE_SPEED_FRAC * IDLE_SPEED_FRAC;
-      const goal = reacting ? e.goal : e.idleGoal;
+      // #304: a withdrawing unit travels at full combat pace (not the idle loiter fraction) —
+      // it's marching home with purpose, not patrolling — and eases to a stop on arrival at its
+      // withdrawal point via the same ARRIVE_SLOW ramp every other goal uses.
+      let speedFrac = (reacting || stood) ? MOVE_SPEED_FRAC : MOVE_SPEED_FRAC * IDLE_SPEED_FRAC;
+      const goal = stood ? e.standDownGoal : (reacting ? e.goal : e.idleGoal);
       if (goal) {
         const gd = Math.hypot(goal.x - e.x, goal.y - e.y);
         if (gd < ARRIVE_SLOW) speedFrac *= clamp(gd / ARRIVE_SLOW, 0, 1);
@@ -787,7 +903,10 @@ export const EnemiesMixin = {
     // #285) the turret doesn't track the player — it just follows the idle travel direction, so
     // the enemy reads as patrolling/still-noticing rather than watching a player it hasn't
     // (yet) reacted to.
-    if (reacting) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
+    // #304: a stood-down mech stops tracking the player too — its gun swings back over its line
+    // of travel (the same rule an unaware/patrolling unit already follows), so the disengage
+    // reads visually and not just as "it walked away still aiming at me."
+    if (reacting && !stood) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     // #269 Part 1: a held-ground mech runs the same movement brain as a normal one so it's
     // usually in motion and the ordinary "turn to face travel direction" rule below already
@@ -796,13 +915,16 @@ export const EnemiesMixin = {
     // actually reacting, face the player directly rather than holding whatever heading it
     // happened to stop at, same "don't read as dead while stopped" fix the tank kind's own
     // holdGround branch established.
-    if (e.holdGround && reacting && Math.hypot(e.vx, e.vy) <= 5) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
+    // #304: `&& !stood` — a held-ground mech that has finished withdrawing must NOT pivot its
+    // hull back to face the crater; standing at its post facing wherever it stopped is the point.
+    if (e.holdGround && reacting && !stood && Math.hypot(e.vx, e.vy) <= 5) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
 
     // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once
     // it's actually reacting; a not-yet-reacting (or unaware) enemy has no business tracking the
     // player at all.
-    if (reacting) this._updateEnemyLock(e, dist, bearing);
+    // #304: a stood-down unit also drops its indirect-fire lock work — nothing left to lock onto.
+    if (reacting && !stood) this._updateEnemyLock(e, dist, bearing);
 
     // Fire ready weapons at the player (gated by #28, and by #103/#285 reacting — an unaware or
     // still-noticing enemy never fires). Direct-fire weapons need current LOS. An indirect-fire
@@ -810,7 +932,9 @@ export const EnemiesMixin = {
     // follow-up #252 dropped the old dead-reckoned "blind fire" — it now just tracks the
     // player's LIVE position, no LOS needed) whenever this enemy has a target at all (no
     // charge-up wait, no maintain-timer expiry — see `_updateEnemyLock` below).
-    if (this.enemyFire && reacting) for (const w of e.mech.readyWeapons()) {
+    // #304: `_enemyFireAllowed()` is `this.enemyFire` PLUS the player-dead stand-down gate — the
+    // one choke point both enemy fire paths share (see its comment).
+    if (this._enemyFireAllowed() && reacting) for (const w of e.mech.readyWeapons()) {
       let cd = (e.fireCd[w.location] ?? 0) - delta;
       const inRange = dist < (w.weapon.range.max || 300) * 1.05;
       const indirect = isIndirectWeapon(w.weapon);
@@ -925,7 +1049,14 @@ export const EnemiesMixin = {
     const reacting = this._isReacting(e, delta);
 
     const behavior = ENEMY_BEHAVIORS[e.behavior];
-    if (!reacting) {
+    // #304: player dead + the beat elapsed — disengage instead of running the kind's tactical
+    // brain. Placed FIRST so it also pre-empts the `e.behavior === 'turret'` special case below
+    // (a turret runs its brain even with enemyMove off); firing lives inside each behavior fn,
+    // so skipping the brain is itself the firing stop for every vehicle kind, with
+    // `aimAndFire`'s own `_enemyFireAllowed()` check as the belt-and-braces second gate.
+    if (this._standDownActive()) {
+      this._standDownVehicleMove(e, dt);
+    } else if (!reacting) {
       // Idle (also covers the brief post-wake stagger window, #285): loiter near spawn rather
       // than running the kind's tactical brain (which also gates firing, since aimAndFire lives
       // inside each behavior fn — a not-yet-reacting unit never fires).

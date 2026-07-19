@@ -96,6 +96,11 @@ export default class ArenaScene extends Phaser.Scene {
     // session permanently disabled movement/firing (update()'s `!this._playerDead` gate) on
     // every subsequent deploy, with no way to recover short of reloading the page.
     this._playerDead = false;
+    // Refs #304: same reason, for the enemy-side stand-down clock stamped off that flag
+    // (enemies.js `_standDownActive`). Without this reset a redeploy after a death would find
+    // an already-elapsed deadline still sitting on the reused scene instance and every enemy
+    // would spawn permanently disengaged — the enemy-side twin of #281's bug.
+    this._standDownAt = null;
 
     // Player mech (repaired fresh for the sortie).
     this.allMechs = this.registry.get('allMechs');
