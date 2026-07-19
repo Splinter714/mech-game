@@ -8,12 +8,13 @@ import { edgeKey } from './hexEdges.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────────────
 // The traversability predicate the game itself builds: tile passability of the destination hex
-// AND no blocking span on the edge between. `passOpenGates` mirrors #309's enemy opt-in.
-const stepper = (blockedHexes = new Set(), wallSet = null, passOpenGates = false) => (from, to) => {
+// AND no blocking span on the edge between. Since the #309 playtest `blocksSpan` takes no
+// per-caller opt-in — an open gate is passable to everyone — so there is one stepper, not two.
+const stepper = (blockedHexes = new Set(), wallSet = null) => (from, to) => {
   if (blockedHexes.has(axialKey(to.q, to.r))) return false;
   if (wallSet) {
     const e = wallSet.edges.get(edgeKey(from, to));
-    if (e && blocksSpan(e, passOpenGates)) return false;
+    if (e && blocksSpan(e)) return false;
   }
   return true;
 };
@@ -178,19 +179,31 @@ describe('findHexPath — #309 gates', () => {
     expect(findHexPath({ q: 4, r: 0 }, centre, stepper(new Set(), set, false)).complete).toBe(false);
   });
 
-  it('an OPEN gate is a real route for an enemy, and still a wall for the player', () => {
+  // #309 playtest: an OPEN gate is a real route in BOTH directions, for everyone. The garrison
+  // routes out through it, and the player routes in through the very same span — there is no
+  // longer a player form of the predicate that sees it as solid.
+  it('an OPEN gate is a real route out for the garrison AND in for the player', () => {
     const { set, gateNeighbour } = build();
     const gate = set.edges.get(edgeKey(centre, gateNeighbour));
     setGateOpen(set, gate, true);
 
-    // Enemy form (passOpenGates = true) — routes out through the sally port.
-    const enemy = findHexPath(centre, { q: 4, r: 0 }, stepper(new Set(), set, true));
-    expect(enemy.complete).toBe(true);
-    expect(enemy.path[0]).toEqual({ q: gateNeighbour.q, r: gateNeighbour.r });
+    // Outbound: the garrison unit's way out is through the gate's own neighbour hex.
+    const out = findHexPath(centre, { q: 4, r: 0 }, stepper(new Set(), set));
+    expect(out.complete).toBe(true);
+    expect(out.path[0]).toEqual({ q: gateNeighbour.q, r: gateNeighbour.r });
 
-    // Player form (passOpenGates = false) — the gate is not his to use, still sealed.
-    const player = findHexPath({ q: 4, r: 0 }, centre, stepper(new Set(), set, false));
-    expect(player.complete).toBe(false);
+    // Inbound: the same span, the other way. This is the entry the playtest opened up.
+    const inbound = findHexPath({ q: 4, r: 0 }, centre, stepper(new Set(), set));
+    expect(inbound.complete).toBe(true);
+  });
+
+  // …and the counterpart that proves the door is what did it: SHUT it, and the ring is sealed
+  // again in both directions.
+  it('a SHUT gate seals the ring against the garrison and the player alike', () => {
+    const { set, gateNeighbour } = build();
+    setGateOpen(set, set.edges.get(edgeKey(centre, gateNeighbour)), false);
+    expect(findHexPath(centre, { q: 4, r: 0 }, stepper(new Set(), set)).complete).toBe(false);
+    expect(findHexPath({ q: 4, r: 0 }, centre, stepper(new Set(), set)).complete).toBe(false);
   });
 
   it('does not mistake an open gate for a wall when routing around', () => {

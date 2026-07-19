@@ -53,14 +53,10 @@ import {
 } from './shieldOutline.js';
 import { shieldPresent } from '../../data/shield.js';
 
-// #309: the gate-aware form of the scene's `_blocked` for ENEMY ground movement — an open gate
-// span is walkable for them and for nobody else (world.js `_blockedForEnemy`). Routed through this
-// helper rather than called directly so the many hand-rolled scene stubs across the test suite,
-// which provide only the plain `_blocked`, keep working unchanged and simply see every gate as
-// solid — the conservative direction to fail in.
-const blockedForEnemy = (scene, x, y) => (
-  scene._blockedForEnemy ? scene._blockedForEnemy(x, y) : scene._blocked(x, y)
-);
+// #309 playtest: an open gate is passable to EVERYONE now, so there is no longer an enemy-specific
+// form of the scene's `_blocked` to route through — this is the plain query, kept as a named helper
+// only because the many hand-rolled scene stubs across the test suite may omit `_blocked` entirely.
+const blockedForEnemy = (scene, x, y) => scene._blocked(x, y);
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -816,10 +812,9 @@ export const EnemiesMixin = {
   // both flanking hexes are ordinary ground and a tile-only check would happily route straight
   // through a wall. Tile passability of the destination AND the span on the shared edge.
   //
-  // `blocksSpan(edge, true)` — the ENEMY form, matching `_blockedForEnemy` (world.js). Enemies may
-  // walk through their own base's OPEN gate, so routing has to agree: use the player's form here
-  // and a garrison unit would refuse to path out through a doorway that is standing wide open.
-  // This is the hottest function in the feature — it runs six times per expanded node — so it is
+  // `blocksSpan(edge)` — one answer for everyone since the #309 playtest: an open gate is a real
+  // doorway, so routing agrees with movement automatically and a garrison unit will path out
+  // through a doorway that is standing wide open. This is the hottest function in the feature — it runs six times per expanded node — so it is
   // written to allocate nothing. `toKey` is passed in already built by the search, and the span
   // lookup goes through `byHex` (which indexes every span under BOTH its flanking hexes) rather
   // than through `edgeKey`: building a canonical edge key allocates three strings per call, and
@@ -834,7 +829,7 @@ export const EnemiesMixin = {
     if (!spans) return true;                       // no wall touches this hex at all — the common case
     for (const e of spans) {
       const onThisEdge = (e.a.q === to.q && e.a.r === to.r) || (e.b.q === to.q && e.b.r === to.r);
-      if (onThisEdge && blocksSpan(e, true)) return false;
+      if (onThisEdge && blocksSpan(e)) return false;
     }
     return true;
   },
@@ -849,7 +844,7 @@ export const EnemiesMixin = {
     for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
       if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return false;
     }
-    return !wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, true);
+    return !wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX);
   },
 
   _routeCtx() {
