@@ -30,10 +30,13 @@ import { kindWeaponSlot, kindMaxFireRange } from '../../data/kindWeapons.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, vehicleTextureSet, mechLayout, ART_SCALE } from '../../art/index.js';
-import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
+import { hexToPixel, range, HEX_SIZE, axialKey, pixelToHex, hexesAlongSegment } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
-import { isWaterTerrain } from '../../data/terrain.js';
+import { isWaterTerrain, isPassable } from '../../data/terrain.js';
+import { makeRouter } from '../../data/hexRoute.js';
+import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
+import { edgeKey } from '../../data/hexEdges.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
@@ -680,7 +683,10 @@ export const EnemiesMixin = {
     const gx = g.x - e.x, gy = g.y - e.y;
     const gm = Math.hypot(gx, gy);
     if (gm < ARRIVE_SLOW) return { mx: 0, my: 0 };
-    return { mx: gx / gm, my: gy / gm };
+    // #312: routed. #304's agent flagged this exact case when it built the withdrawal — "a ground
+    // unit with a wall between it and its base will bump and stop" — and it is the walk that made
+    // the stall most visible, since the goal is a base CENTRE, i.e. inside a walled ring.
+    return this._routedIntent(e, g.x, g.y);
   },
 
   // Vehicle-kind (#68) stand-down movement, in place of the kind's tactical behavior fn — which
@@ -716,6 +722,11 @@ export const EnemiesMixin = {
   _updateEnemies(dt, delta) {
     this.registry.set('aiMove', this.enemyMove);
     this.registry.set('aiFire', this.enemyFire);
+    // #312: refill the shared per-tick A* search budget. This is what stops a crowd from all
+    // replanning on the same frame — units past the budget keep following their existing route
+    // and ask again next tick, so the cost of a mass invalidation (a gate cycling with a full
+    // garrison awake) is spread over several frames instead of spiking one.
+    this._enemyRouter?.beginTick();
     for (const e of this.enemies) this._updateEnemy(e, dt, delta);
     const alive = this.enemies.filter((e) => !e.mech.isDestroyed()).length;
     // #87: dead enemies are pruned out of `this.enemies` the SAME tick they die, so the array
@@ -779,6 +790,89 @@ export const EnemiesMixin = {
     if (e.reactDelayMs > 0) return false;
     e.reactDelayMs = null;
     return true;
+  },
+
+  // ── #312 routing ─────────────────────────────────────────────────────────────────────
+  // Ground units used to steer in dead straight lines at everything, so a unit with a wall or an
+  // impassable hex between it and its target drove into the obstacle and stalled. These methods
+  // are the scene-side half of the fix: they supply the world queries the pure A* in
+  // data/hexRoute.js deliberately knows nothing about, and hand the movement code a WAYPOINT to
+  // steer at instead of the far-away goal. The steering itself is untouched.
+
+  _router() {
+    return (this._enemyRouter ??= makeRouter());
+  },
+
+  // Every cached route is stale. Called from the same three places #306's field-of-view cache is
+  // invalidated — a wall span destroyed, a gate opening or shutting, a terrain hex collapsing —
+  // because those are exactly the events that change what is walkable. Cheap (one counter), which
+  // matters because #309 cycles gates roughly every 15s per awake base, so this is a RECURRING
+  // event and not a one-off.
+  _invalidateRoutes() {
+    this._enemyRouter?.invalidate();
+  },
+
+  // Can an enemy ground unit step from hex `from` to adjacent hex `to`? This is the per-EDGE
+  // traversability test that is the whole point of #312: #288's walls live on hex BOUNDARIES, so
+  // both flanking hexes are ordinary ground and a tile-only check would happily route straight
+  // through a wall. Tile passability of the destination AND the span on the shared edge.
+  //
+  // `blocksSpan(edge, true)` — the ENEMY form, matching `_blockedForEnemy` (world.js). Enemies may
+  // walk through their own base's OPEN gate, so routing has to agree: use the player's form here
+  // and a garrison unit would refuse to path out through a doorway that is standing wide open.
+  _canEnemyStep(from, to) {
+    if (!isPassable(this.terrain.get(axialKey(to.q, to.r)))) return false;
+    const set = this.wallEdges;
+    if (set && set.edges.size > 0) {
+      const edge = set.edges.get(edgeKey(from, to));
+      if (edge && blocksSpan(edge, true)) return false;
+    }
+    return true;
+  },
+
+  // Is the straight line between two world points walkable for an enemy — i.e. does this unit even
+  // NEED a route? The enemy counterpart of `_blockedAlongSegment` (world.js), gate-permissive in
+  // the same way `_canEnemyStep` is. hexRoute.js throttles how often this runs (it is not cheap —
+  // it walks every hex along the segment plus a swept wall test), and a `true` here means the unit
+  // steers exactly as it did before this feature, which is what keeps open-ground movement smooth
+  // rather than zigzagging between hex centres.
+  _enemyLineClear(x0, y0, x1, y1) {
+    for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
+      if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return false;
+    }
+    return !wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, true);
+  },
+
+  _routeCtx() {
+    return (this._enemyRouteCtx ??= {
+      canStep: (a, b) => this._canEnemyStep(a, b),
+      clearLine: (x0, y0, x1, y1) => this._enemyLineClear(x0, y0, x1, y1),
+      hexOf: (x, y) => pixelToHex(x, y),
+    });
+  },
+
+  // Turn "travel toward world point (tx, ty)" into the movement-intent unit vector the integrator
+  // consumes — routed around obstacles when it has to be, straight at the target when it doesn't.
+  //
+  // Falls back to the plain straight-line vector whenever routing can't or shouldn't apply:
+  //   - the scene has no terrain Map (the many hand-rolled scene stubs across the test suite),
+  //   - the router found no route at all (a unit sealed inside an intact ring — the NORMAL state
+  //     of a garrison, given #288's rings are sealed and #309's gates are shut most of the time).
+  // In that second case the unit does exactly what it did before #312 — leans toward its target —
+  // rather than freezing or thrashing, which is the graceful degradation the issue asks for.
+  _routedIntent(e, tx, ty) {
+    const dx = tx - e.x, dy = ty - e.y;
+    const m = Math.hypot(dx, dy) || 1;
+    const direct = { mx: dx / m, my: dy / m };
+    if (!this.terrain?.get) return direct;
+    const wp = this._router().follow(
+      e, e.x, e.y, { x: tx, y: ty }, this.time?.now ?? 0, this._routeCtx(),
+    );
+    if (!wp) return direct;
+    const wx = wp.x - e.x, wy = wp.y - e.y;
+    const wm = Math.hypot(wx, wy);
+    if (wm < 1) return direct;
+    return { mx: wx / wm, my: wy / wm };
   },
 
   _updateEnemy(e, dt, delta) {
@@ -1453,7 +1547,10 @@ export const EnemiesMixin = {
     switch (e.state) {
       case 'press':  // close the gap; stop pressing once inside optimal so we don't faceplant.
         if (dist <= e.standoff * 0.8) return this._strafeIntent(e, ux, uy);
-        return { mx: ux, my: uy };
+        // #312: routed. This is the big one — "walk at the player" is the most common travel
+        // intent in the game, and it is the one that used to drive units face-first into a wall
+        // and hold them there. With a clear line `_routedIntent` returns exactly `{ux, uy}`.
+        return this._routedIntent(e, this.px, this.py);
 
       case 'kite':   // back away from the player while keeping LOS; sidestep a touch so it
                      // isn't a dead-straight retreat the player can walk down.
@@ -1471,7 +1568,9 @@ export const EnemiesMixin = {
         if (e.state === 'cover' && gm < PEEK_DIST * 2) {
           return e.allIndirect ? { mx: 0, my: 0 } : { mx: ux * 0.4, my: uy * 0.4 };
         }
-        return { mx: gx / gm, my: gy / gm };
+        // #312: routed — a flank/cover destination is frequently on the far side of exactly the
+        // wall the unit picked it to hide behind, which is precisely when a straight steer stalls.
+        return this._routedIntent(e, e.goal.x, e.goal.y);
       }
 
       case 'hold':   // hold position, a gentle strafe so we're not a static target.

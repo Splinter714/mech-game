@@ -603,6 +603,10 @@ export const WorldMixin = {
     // overlay would only refresh the next time the player happened to cross a hex boundary.
     // Optional chaining: plenty of tests build a bare world without the visibility mixin.
     this._invalidateVisibility?.();
+    // #312: the hex's movement cost just changed too (an impassable building collapsed into
+    // walkable rubble), so every cached enemy route is stale — a unit that was routing the long
+    // way around this structure can now go straight through where it stood.
+    this._invalidateRoutes?.();
     return true;
   },
 
@@ -619,6 +623,10 @@ export const WorldMixin = {
       // #306: the span just stopped blocking sight, so the cached field-of-view set is stale —
       // breaching a base wall has to visibly reveal what was behind it, same as collapsing a tile.
       this._invalidateVisibility?.();
+      // #312: THE breach case the issue calls out — the player just opened a route that every
+      // cached path is unaware of. Without this, the garrison he just breached would keep
+      // believing it was sealed in until its failure backoff expired.
+      this._invalidateRoutes?.();
     }
     return destroyed;
   },
