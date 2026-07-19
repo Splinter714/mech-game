@@ -30,12 +30,16 @@ import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory 
 // longer squad-dropped off-camera near the player on mission-complete — they're placed once,
 // here, at world-gen time, dormant, inside a handful of real bases.
 //
-// BASE_COUNT: how many bases a generated map gets. 3 is a first-pass pick that mirrors the old
-// system's shape at a coarser grain — 5 escalating stages compressed into a handful of real
-// encampments spread down the corridor, each a meaningfully-sized fight rather than one-per-
-// stage. Small enough to keep this pass simple (per the issue's own "keep it SIMPLE" framing);
-// tune via playtest once the core loop is felt out.
-export const BASE_COUNT = 3;
+// BASE_COUNT: how many bases a generated map gets.
+//
+// #308 (Jackson 2026-07-19: "runs should have more objectives before completion, like they
+// should just be longer in general"): 3 → 5. Crucially he asked for BOTH more bases AND a longer
+// corridor, not just a higher count — "a longer run should feel like a longer trek, not a more
+// crowded one." So this constant does NOT stand alone: `CORRIDOR_LENGTH_PX` below is derived from
+// it via `CORRIDOR_LENGTH_PER_BASE_PX`, which pins the per-base share of corridor (and therefore
+// the calm travel gap between encounters, #283) at exactly what 3 bases got out of the old
+// 3400px. Changing BASE_COUNT alone can't compress the run any more — the corridor grows with it.
+export const BASE_COUNT = 5;
 
 // Docks per base: a small cluster (not a wall of enemies) — mirrors the old SQUAD_BASE/GROWTH
 // escalation's spirit (more, tougher units later) via `baseLateFraction` below rather than a
@@ -297,14 +301,34 @@ export function placeBases(
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   const sorted = [...all].sort((a, b) => progress(a) - progress(b));
   const segSize = Math.max(1, Math.floor(sorted.length / baseCount));
+  // #308: segments are sliced by PROGRESS SPAN, not by hex COUNT.
+  //
+  // The original split was `sorted.slice(i * segSize, …)` — equal numbers of hexes per segment.
+  // That silently assumed hex count is uniform along the corridor, and it isn't: the spawn end
+  // carries the rear pad AND the force-included radius-3 safe disc, so it holds far more hexes
+  // per unit of travel than anywhere else. Measured on the real pipeline at 5 bases, segment 0
+  // came out spanning progress -4.0 → 6.9 while segments 1-4 each spanned ~14.4 — i.e. the first
+  // segment lay ENTIRELY below `minGapProgress` (7.22), so base 0's own slice was always fully
+  // eaten by the calm-gap floor. It then fell through to the "anywhere past the floor" fallback,
+  // landed deep in segment 1's territory (~23), and shoved every later base forward until the
+  // last one ran out of corridor and its gap collapsed to 4.0 hexes.
+  //
+  // Splitting the PROGRESS RANGE into `baseCount` equal spans instead makes each segment mean
+  // what it was always supposed to mean — an equal share of the RUN, measured in travel — so the
+  // stratification is uniform regardless of how hexes bunch up. That's also exactly the quantity
+  // #308's corridor scaling holds constant per base, so the two now agree by construction.
+  const pMin = progress(sorted[0]);
+  const pMax = progress(sorted[sorted.length - 1]);
+  const segSpan = (pMax - pMin) / baseCount;
   // #283: `prevProgress` chains forward from spawn (progress 0) through each placed base in
   // turn — the floor for base `i` is "at least `minGapProgress` past wherever base `i-1` (or
   // spawn, for base 0) actually landed," not just "somewhere in this segment."
   let prevProgress = 0;
   for (let i = 0; i < baseCount; i++) {
-    const segStart = i * segSize;
-    const segEnd = i === baseCount - 1 ? sorted.length : segStart + segSize;
-    const segment = segEnd > segStart ? sorted.slice(segStart, segEnd) : all;
+    const segLo = pMin + i * segSpan;
+    const segHi = i === baseCount - 1 ? Infinity : pMin + (i + 1) * segSpan;
+    const inSeg = sorted.filter((h) => progress(h) >= segLo && progress(h) < segHi);
+    const segment = inSeg.length ? inSeg : all;
     // #283: an exclusion zone at the START of this segment — filter out any candidate whose own
     // progress doesn't clear the floor. This is layered ON TOP of the existing stratified-slice
     // logic (still exactly one random pick within `segment`), not a replacement for it: on a
@@ -332,6 +356,23 @@ export function placeBases(
         const forward = sorted.filter((h) => progress(h) >= prevProgress);
         pool = (forward.length ? forward : sorted).slice(-Math.max(1, segSize));
       }
+    }
+    // #308: NO TWO COMPOUNDS MAY OVERLAP. Each base paves its whole radius-`BASE_FOOTPRINT_RADIUS`
+    // footprint as `baseYard` (#288) and then rings that footprint with a sealed wall, so two
+    // footprints sharing a hex is not a cosmetic collision — the second base's paving stamps over
+    // the first's already-placed objective/docks, and the two rings interpenetrate into a shape
+    // neither seals. On the real corridor `minGapProgress` (~7.22 hexes) already keeps centres far
+    // enough apart that this can't happen, so this is belt-and-braces there — but it was resting
+    // on a constant tuned for a completely different purpose (calm travel time), one corridor-
+    // geometry change away from breaking, and it DOES bite on tighter regions than the shipped
+    // corridor. Two radius-R discs are disjoint exactly when their centres are more than 2R apart,
+    // which is the whole test. Degrades gracefully: if honouring it would leave nowhere to put
+    // this base, the unfiltered pool is kept — a base is never dropped, count is never affected.
+    if (bases.length) {
+      const disjoint = pool.filter(
+        (h) => bases.every((b) => distance(h, b.center) > BASE_FOOTPRINT_RADIUS * 2),
+      );
+      if (disjoint.length) pool = disjoint;
     }
     const center = pool[Math.floor(rng() * pool.length)];
     prevProgress = progress(center);
@@ -744,10 +785,22 @@ export function generateTerrain({
 export const CORRIDOR_HALF_WIDTH_PX = 250;
 
 // LENGTH — the main-axis span from the spawn end to the far end, in pixels. Long and independent
-// of width: at GAMEPLAY_ZOOM=1.3 the camera shows ~985px of world across, so a ~3400px corridor
-// reveals only ~1/4 of its length from spawn, and a full run's five stages march the objective
-// progressively down it (`spineProgressHexOf` + `pickStageObjective`). ~3400px ≈ 41 hexes of travel.
-export const CORRIDOR_LENGTH_PX = 3400;
+// of width: at GAMEPLAY_ZOOM=1.3 the camera shows ~985px of world across, so the corridor reveals
+// only a fraction of its length from spawn, and a full run marches the objective progressively
+// down it (`spineProgressHexOf` + `pickStageObjective`).
+//
+// #308: length is no longer a free-standing magic number — it is DERIVED from `BASE_COUNT`, so
+// "more objectives" can never silently mean "the same trek, more crowded." The per-base share is
+// pinned at what the shipped 3-base/3400px corridor actually gave each base (3400/3 ≈ 1133px,
+// rounded to 1140), which is the quantity that determines the FEEL Jackson asked to preserve:
+// how far you travel between encounters. Everything downstream is sized off that share rather
+// than off total length — `placeBases` stratifies one base per 1/`baseCount` slice (so a slice is
+// still ~1140px), and `MIN_GAP_PROGRESS_PX`'s 600px floor was itself sized against a ~1130px
+// slice (see its comment), so both stay exactly as valid at 5 bases as they were at 3.
+//
+// At BASE_COUNT = 5 this is 5700px ≈ 69 hexes of travel end-to-end (was 3400px ≈ 41).
+export const CORRIDOR_LENGTH_PER_BASE_PX = 1140;
+export const CORRIDOR_LENGTH_PX = CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT;
 
 // REAR PAD — how far the corridor extends BEHIND the spawn end (origin sits at spine u=0, the
 // corridor runs from u=-REAR_PAD to u=+LENGTH). Gives the radius-3 spawn safe zone room on the
@@ -761,8 +814,15 @@ export const CORRIDOR_REAR_PAD_PX = 320;
 // is mathematically non-self-intersecting — this only controls how pronounced the S-bends read.
 export const CORRIDOR_CURVINESS = 300;
 
-// WAVELENGTH — main-axis pixels per full snake wave. ~1500px over a 3400px corridor gives a bit
-// over two broad bends — a clear meander without cramming in tight switchbacks.
+// WAVELENGTH — main-axis pixels per full snake wave. ~1500px gives a broad bend roughly every
+// 1500px of travel — a clear meander without cramming in tight switchbacks.
+//
+// #308: deliberately NOT scaled with `CORRIDOR_LENGTH_PX`. Wavelength is a LOCAL property — it
+// sets how tight a bend feels as you drive through it. Scaling it with total length would keep
+// the bend COUNT fixed (~2.3 waves) and stretch every curve out as the run grows, so a longer run
+// would read as a straighter one. Holding it fixed keeps each individual bend exactly the shape
+// it is today and simply gives you more of them (~2.3 waves at 3400px → ~3.8 at 5700px), which is
+// the "longer trek, same texture" reading Jackson asked for.
 export const CORRIDOR_WAVELENGTH_PX = 1500;
 
 // How finely the spine is sampled into points (pixels). Must be < CORRIDOR_HALF_WIDTH_PX so
@@ -908,7 +968,17 @@ export function placeBaseWalls(T, bases) {
 // little headroom lands here. Nothing scans a full `range({0,0}, MAX_WORLD_RADIUS)` disc in the
 // live corridor path anymore (both generateTerrain and boundaryRingKeys take the explicit hex set),
 // so this is a loose cap, not a per-hex cost driver.
-export const MAX_WORLD_RADIUS = 60;
+//
+// #308: DERIVED now, not a hand-tuned 60. The old literal was sized against the old 3400px
+// corridor; a longer corridor silently overflowing its own bounding cap would break the fallback
+// spawn ring and `nearestValidHex`'s search budget (data/spawnPlacement.js sizes `searchSteps`
+// off it). Worst case reach from origin is the far end plus the spine's peak lateral swing (both
+// harmonics: `curviness` + 0.35*`curviness`), converted at the SMALLEST px-per-hex step (the hex
+// distance metric advances ~1.5*HEX_SIZE = 72px per step along a diagonal), plus 20% headroom.
+// = ceil((5700 + 405) / 72 * 1.2) = 102 at BASE_COUNT 5, and it re-derives if either changes.
+export const MAX_WORLD_RADIUS = Math.ceil(
+  ((CORRIDOR_LENGTH_PX + CORRIDOR_CURVINESS * 1.35) / (HEX_SIZE * 1.5)) * 1.2,
+);
 
 // #169: the near-spawn safety floor #110/#127/#158 introduced protects one invariant: the boundary
 // ring must never encroach the guaranteed-clear radius-3 safe zone around spawn. In the corridor,
@@ -959,9 +1029,11 @@ export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_P
 //   - Bigger is more "calm" — sized against the FASTEST chassis (light, 268px/s,
 //     chassis/light.js `maxSpeed`) as the binding case, since a slower chassis only gets MORE
 //     calm seconds out of the same px floor.
-//   - But `baseCount` (3) floors have to fit end-to-end inside ONE corridor
-//     (CORRIDOR_LENGTH_PX = 3400px) alongside the existing stratified-slice segmentation, which
-//     itself only gives each base ~1/3 of the corridor (~1130px) to work with. Push the floor
+//   - But `baseCount` floors have to fit end-to-end inside ONE corridor alongside the existing
+//     stratified-slice segmentation, which only gives each base a 1/`baseCount` slice (~1130px)
+//     to work with. #308 is why this argument SURVIVED going from 3 bases to 5: corridor length
+//     is now `CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT`, so the slice each base gets is a
+//     constant ~1140px no matter the count, and the sweep below still binds. Push the floor
 //     too high and `placeBases`'s own fallback (see its comment) increasingly can't reach the
 //     full target — the 2000-seed sweep showed ZERO shortfalls up to 600px, but a fast-growing
 //     tail of shortfalls from ~700px on (14/2000 short at 700px, worsening from there), so 600px

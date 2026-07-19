@@ -348,7 +348,7 @@ describe('flyer separation (#282 follow-up) — a dense overlapping swarm spread
 // scans every OTHER live enemy per call, and each blocked-ground-unit's own movement integration
 // (enemies.js `_updateEnemy`/`_updateVehicle`) can call it up to 3x/frame (candidate position +
 // two axis-slide fallbacks) — so worst case is 3 scans/enemy/frame, ~3n² comparisons total.
-// This game's base-population design (3 bases × a handful of docks/turrets/patrols each, see
+// This game's base-population design (#308: 5 bases × a handful of docks/turrets/patrols each, see
 // data/worldgen.js BASE_COUNT/DOCKS_PER_BASE_MAX, bases.js TOWER_PATROL_COUNT) tops out around
 // several dozen LIVE (non-DORMANT) enemies at once even in a worst-case simultaneous multi-base
 // engagement — nowhere near where an O(n²) scan of cheap comparisons (a handful of property

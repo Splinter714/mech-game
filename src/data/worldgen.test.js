@@ -9,7 +9,7 @@ import {
   boundaryRingKeys, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH, MIN_SPAWN_BOUNDARY_HEX_DIST,
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
   generateSpine, corridorHexSet, spineProgressHexOf, spineSpawnHex,
-  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX,
+  CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, CORRIDOR_LENGTH_PER_BASE_PX,
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
   placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind,
@@ -43,6 +43,14 @@ function buildCorridor(seed, halfWidth = CORRIDOR_HALF_WIDTH_PX) {
   const spawnHex = spineSpawnHex(spine);
   const includedKeys = corridorHexSet(spine.points, halfWidth, safeZoneKeys(spawnHex, 3));
   return { spine, includedKeys, startAngle, spawnHex };
+}
+
+// The full production `generateTerrain` argument set for a seed, built off the real corridor —
+// what `scenes/arena/world.js` actually passes. Shared by the #308 sweeps and the wall-ring ones.
+function realArgsFor(seed, biome = GRASSLAND) {
+  const { spine, includedKeys, spawnHex } = buildCorridor(seed);
+  const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
+  return { seed, worldRadius: MAX_WORLD_RADIUS, biome, includedKeys, boundaryRing, spine, safeCenter: spawnHex };
 }
 
 describe('mulberry32', () => {
@@ -990,6 +998,109 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(baseLateFraction(0, BASE_COUNT)).toBe(0);
     expect(baseLateFraction(BASE_COUNT - 1, BASE_COUNT)).toBe(1);
     expect(baseLateFraction(0, 1)).toBe(0);   // guards the /0 edge case
+  });
+
+  // #308 ("runs should just be longer in general"): five bases AND a longer corridor. The whole
+  // point of the pairing is that a longer run reads as a longer TREK, not a denser one — so what
+  // these pin is the RELATIONSHIP between count and length, not either number in isolation.
+  describe('#308: longer runs — more bases without compressing the travel between them', () => {
+    it('runs five bases', () => {
+      expect(BASE_COUNT).toBe(5);
+    });
+
+    it('derives corridor length from the base count, so the per-base share is invariant', () => {
+      expect(CORRIDOR_LENGTH_PX).toBe(CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT);
+      // The share each base gets is what determines how far you travel between encounters, and
+      // it is held at what the shipped 3-base/3400px corridor gave (≈1133px). Raising BASE_COUNT
+      // without this derivation is exactly the "more crowded, not longer" outcome #308 rejected.
+      expect(Math.abs(CORRIDOR_LENGTH_PX / BASE_COUNT - 3400 / 3)).toBeLessThan((3400 / 3) * 0.02);
+    });
+
+    // MIN_GAP_PROGRESS_PX's own sizing argument (see worldgen.js) rests on each base getting a
+    // ~1130px slice of corridor to place itself in. That argument has to still hold at 5 bases,
+    // or the 600px calm-gap floor stops being reliably achievable — which is precisely what the
+    // corridor-length derivation buys. Pinned so a future count change can't quietly break it.
+    it('leaves the calm-gap floor comfortably inside each base\'s slice of corridor', () => {
+      const slicePx = CORRIDOR_LENGTH_PX / BASE_COUNT;
+      expect(MIN_GAP_PROGRESS_PX).toBeLessThan(slicePx * 0.6);
+      // All `BASE_COUNT` floors must also fit end-to-end inside one corridor, with room to spare.
+      expect(MIN_GAP_PROGRESS_PX * BASE_COUNT).toBeLessThan(CORRIDOR_LENGTH_PX * 0.6);
+    });
+
+    // The early→late difficulty ramp is normalized, so it adapts to any count for free — but
+    // "adapts" isn't the same as "reads smoothly." Over five bases the steps must be even and
+    // monotonic (0, .25, .5, .75, 1), not lurching from soft straight to mech-heavy.
+    it('escalates the early→late mix in even steps across all five bases', () => {
+      const fracs = Array.from({ length: BASE_COUNT }, (_, i) => baseLateFraction(i, BASE_COUNT));
+      expect(fracs).toEqual([0, 0.25, 0.5, 0.75, 1]);
+      for (let i = 1; i < fracs.length; i++) {
+        expect(fracs[i]).toBeGreaterThan(fracs[i - 1]);
+        expect(fracs[i] - fracs[i - 1]).toBeCloseTo(1 / (BASE_COUNT - 1), 10);
+      }
+      // The first base is a pure early-pool draw and the last a pure late-pool one, so the run
+      // still has a genuinely soft opener and a genuinely hard finish — the ramp got smoother
+      // with more bases, it didn't get flatter at the ends.
+      expect(fracs[0]).toBe(0);
+      expect(fracs[BASE_COUNT - 1]).toBe(1);
+    });
+
+    // #308: two compounds sharing a hex would let the later base's paving stamp over the
+    // earlier's objective, and leave two interpenetrating wall rings that neither seals. Checked
+    // on the REAL pipeline across a broad sweep, at the live BASE_COUNT.
+    it('never places two base compounds close enough for their footprints to overlap', () => {
+      for (let seed = 1; seed <= 60; seed++) {
+        const { bases } = generateTerrain(realArgsFor(seed * 41 + 3));
+        expect(bases.length).toBe(BASE_COUNT);
+        for (let i = 0; i < bases.length; i++) {
+          for (let j = i + 1; j < bases.length; j++) {
+            expect(distance(bases[i].center, bases[j].center)).toBeGreaterThan(BASE_FOOTPRINT_RADIUS * 2);
+          }
+        }
+        // …and the footprints themselves are genuinely disjoint sets, not merely far apart.
+        const seen = new Set();
+        for (const b of bases) {
+          for (const h of b.footprint) {
+            const k = axialKey(h.q, h.r);
+            expect(seen.has(k)).toBe(false);
+            seen.add(k);
+          }
+        }
+      }
+    });
+
+    // The stratification #308 rewrote: segments are sliced by PROGRESS SPAN, not hex count, so
+    // the spawn end's extra hex mass (rear pad + force-included safe disc) can't squash base 0's
+    // segment below the calm-gap floor and shove every later base forward. Directly asserted:
+    // each base sits in roughly its own fifth of the run, with no bunching at either end.
+    it('spreads all five bases evenly down the corridor, none bunched at the far end', () => {
+      for (let seed = 1; seed <= 60; seed++) {
+        const { spine, includedKeys } = buildCorridor(seed * 41 + 3);
+        const all = [...includedKeys].map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; });
+        const T = new Map();
+        for (const h of all) T.set(axialKey(h.q, h.r), GRASSLAND.groundA);
+        const isGround = (k) => { const t = T.get(k); return t === GRASSLAND.groundA || t === GRASSLAND.groundB; };
+        const progressOf = (h) => spineProgressHexOf(spine, h.q, h.r);
+        const { bases } = placeBases(mulberry32(seed), all, T, isGround, BASE_COUNT, progressOf);
+        const ps = bases.map((b) => progressOf(b.center));
+        const allP = all.map(progressOf);
+        // Progress starts NEGATIVE (the corridor's rear pad sits behind spawn at u<0), so slices
+        // have to be measured across the real [min, max] range, not from zero.
+        const minP = Math.min(...allP);
+        const maxP = Math.max(...allP);
+        // Monotonic: base index order IS forward progress order (mission.js relies on this).
+        for (let i = 1; i < ps.length; i++) expect(ps[i]).toBeGreaterThan(ps[i - 1]);
+        // Each base lands inside a generous window around its own fifth of the run. The window is
+        // wide (±1 slice) because placement is deliberately random within a slice — what's being
+        // ruled out is systematic drift, e.g. every base crowding the last third.
+        const slice = (maxP - minP) / BASE_COUNT;
+        for (let i = 0; i < BASE_COUNT; i++) {
+          expect(ps[i]).toBeGreaterThan(minP + i * slice - slice);
+          expect(ps[i]).toBeLessThan(minP + (i + 2) * slice);
+        }
+        // And the run genuinely uses its whole length: the last base is out in the final fifth.
+        expect(ps[BASE_COUNT - 1]).toBeGreaterThan(maxP - slice);
+      }
+    });
   });
 
   it('BASE_EARLY_KIND_POOL/BASE_LATE_KIND_POOL are non-mech ENEMY_KINDS ids, never cluster expansions', () => {

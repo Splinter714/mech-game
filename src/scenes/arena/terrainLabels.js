@@ -4,8 +4,9 @@
 // other hex with its real terrain id ("grass"/"forest"/"building"/...), which a full corridor
 // map can carry thousands of — creating one persistent Text per hex for the whole map the way
 // bases.js does would mean thousands of live GameObjects sitting around from world-build, most
-// never on screen (worldgen.js CORRIDOR_LENGTH_PX=3400 × CORRIDOR_HALF_WIDTH_PX=250, i.e. a
-// ~1.7M px² playable area against a 48px hex — comfortably four figures of hexes, on top of the
+// never on screen (worldgen.js CORRIDOR_LENGTH_PX=5700 after #308 lengthened the run ×
+// CORRIDOR_HALF_WIDTH_PX=250, i.e. a ~2.9M px² playable area against a 48px hex — comfortably
+// four figures of hexes, and #308 made it ~1.7x more so, on top of the
 // #155 tile-culling comment's own ~20k-tile figure for the boundary-inclusive terrain map).
 //
 // So instead of pre-building, this is a camera-culled POOL: only hexes within the current view
