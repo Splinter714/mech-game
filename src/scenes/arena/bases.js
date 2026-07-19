@@ -20,13 +20,27 @@ import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPP
 import { mulberry32 } from '../../data/worldgen.js';
 import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
-import { getTerrain, buildingHp as terrainBuildingHp } from '../../data/terrain.js';
+import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../data/terrain.js';
 import { gateEdges, setGateOpen, turretEdges, spanTurretMount, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
-import { pointSegmentDistance } from '../../data/hexEdges.js';
 import {
   makeGateState, tickGate, gatePassable, GATE_STAGGER_MAX_MS,
   GATE_OPENING, GATE_OPENING_MS, GATE_CLOSING, GATE_CLOSING_MS,
 } from '../../data/gateCycle.js';
+import { makeGateDemand, firstGateOnRoute } from '../../data/gateDemand.js';
+import { findHexPath } from '../../data/hexRoute.js';
+import { pixelToHex } from '../../data/hexgrid.js';
+
+// #309 playtest — how often the DEMAND scan runs, and how many garrison units it may ask per scan.
+// The scan is the expensive half of demand-driven gates: each unit it asks costs one A* search
+// (data/hexRoute.js `findHexPath`), which is the exact cost #312's per-tick router budget exists to
+// keep off the frame. So it is throttled AND capped, and the units are visited round-robin so a
+// large garrison is still covered completely, just over several scans rather than in one.
+//
+// 250ms / 4 units means a 12-unit garrison is fully re-asked every ~750ms, comfortably inside
+// gateDemand's 1500ms grace window — so a gate that is genuinely wanted never lapses between scans,
+// which is what lets a sampled signal be read as if it were continuous.
+const GATE_DEMAND_SCAN_MS = 250;
+const GATE_DEMAND_UNITS_PER_SCAN = 4;
 
 // #269 overhaul ("a pulsing red ring of some kind once it's activated") — the live ring drawn
 // over a counting-down alert tower. Was the beacon's own orange (0xff6a3a); Jackson asked for a
@@ -895,12 +909,85 @@ export const BasesMixin = {
   // two opening a beat apart reads as a base reacting.
   _initGates() {
     this._gateStates = new Map();
+    this._gateDemand = makeGateDemand();
+    this._gateDemandCursor = 0;
+    this._nextGateDemandAt = 0;
     const rng = mulberry32(0x9e3779b9 ^ (this.runSeed ?? 1));
     for (const edge of gateEdges(this.wallEdges)) {
       this._gateStates.set(edge.key, makeGateState(rng() * GATE_STAGGER_MAX_MS));
       edge.open = false;
       edge.openFrac = 0;
     }
+  },
+
+  // ── The DEMAND scan (#309 playtest) ────────────────────────────────────────────────────
+  // Ask a few garrison units at a time "what is your way out", and record which gate span each one
+  // is asking for. This is the signal that replaced the first pass's clock; the reasoning for the
+  // counterfactual predicate, the first-crossing rule, and the sealed-in case is all in
+  // data/gateDemand.js's header, which is worth reading before changing anything here.
+  //
+  // The predicate below is the ONE thing that differs from ordinary enemy routing: it treats every
+  // standing gate span as passable regardless of its current phase, so a unit can discover a way
+  // out through a door that is currently shut. Movement still routes against `_canEnemyStep`, where
+  // a shut gate is solid — nothing walks through a closed door, it only learns that it would like
+  // to.
+  _canEnemyStepGatesOpen(from, to, toKey) {
+    if (!isPassable(this.terrain.get(toKey ?? axialKey(to.q, to.r)))) return false;
+    const set = this.wallEdges;
+    if (!set || set.edges.size === 0) return true;
+    const spans = set.byHex.get(from.key ?? axialKey(from.q, from.r));
+    if (!spans) return true;
+    for (const e of spans) {
+      const onThisEdge = (e.a.q === to.q && e.a.r === to.r) || (e.b.q === to.q && e.b.r === to.r);
+      if (!onThisEdge) continue;
+      if (e.destroyed) continue;                       // a breach — open to everyone, permanently
+      if (e.role === 'gate') continue;                 // the counterfactual: assume this door opens
+      return false;                                    // a solid span, and no door can change that
+    }
+    return true;
+  },
+
+  // Is this enemy one whose opinion about gates counts? A garrison unit that is awake, alive, on
+  // the ground, and able to move. Flyers go over the wall and never need a door; wall turrets are
+  // bolted to the parapet and are never going anywhere; a dormant unit has not noticed the player
+  // and so wants nothing. Excluding all three is what stops a base from opening its gates for units
+  // that could not use them.
+  _isGateDemandUnit(e) {
+    return e.baseId != null
+      && !e.flying
+      && e.behavior !== 'turret'
+      && e.awareness !== DORMANT
+      && !e.mech?.isDestroyed?.();
+  },
+
+  _updateGateDemand(nowMs) {
+    if (!this._gateDemand || !this._gateStates?.size) return;
+    if (nowMs < this._nextGateDemandAt) return;
+    this._nextGateDemandAt = nowMs + GATE_DEMAND_SCAN_MS;
+    if (!this.terrain?.get || !this.wallEdges) return;
+
+    const units = (this.enemies ?? []).filter(
+      (e) => this._isGateDemandUnit(e) && this._wokenBases.has(e.baseId),
+    );
+    if (units.length === 0) return;
+
+    const goal = pixelToHex(this.px, this.py);
+    const canStep = (a, b, k) => this._canEnemyStepGatesOpen(a, b, k);
+    // Round-robin from wherever the last scan stopped, so a garrison larger than the per-scan cap
+    // is covered evenly instead of the same first four units being asked forever.
+    const n = Math.min(GATE_DEMAND_UNITS_PER_SCAN, units.length);
+    for (let i = 0; i < n; i++) {
+      const e = units[(this._gateDemandCursor + i) % units.length];
+      const res = findHexPath(pixelToHex(e.x, e.y), goal, canStep);
+      // ONLY a complete route counts. hexRoute returns a best-effort partial route when it cannot
+      // reach the goal, and a partial route that happens to end beside a gate must not be read as
+      // wanting it — that is precisely the sealed-in garrison case, which has to register no demand
+      // rather than opening a door that cannot help. See gateDemand.js.
+      if (!res.complete) continue;
+      const key = firstGateOnRoute(pixelToHex(e.x, e.y), res.path, this.wallEdges.byHex);
+      this._gateDemand.note(key, nowMs);
+    }
+    this._gateDemandCursor = (this._gateDemandCursor + n) % units.length;
   },
 
   // Per-frame tick, called from ArenaScene.update() alongside `_updateDockResupply`. Drives every
@@ -915,21 +1002,32 @@ export const BasesMixin = {
   // that he has also permanently denied the base one of its two sally ports.
   _updateGates(dt) {
     if (!this._gateStates || !this._gateStates.size) return;
+    const nowMs = this.time?.now ?? 0;
+    this._updateGateDemand(nowMs);
     let redraw = false;
     for (const edge of gateEdges(this.wallEdges)) {
       const state = this._gateStates.get(edge.key);
       if (!state) continue;
-      if (edge.destroyed) { this._gateStates.delete(edge.key); redraw = true; continue; }
-      const next = tickGate(state, { awake: this._wokenBases.has(edge.baseId), dt });
+      if (edge.destroyed) {
+        this._gateStates.delete(edge.key);
+        this._gateDemand?.forget(edge.key);   // a blown door's stale demand must not outlive it
+        redraw = true;
+        continue;
+      }
+      const next = tickGate(state, {
+        awake: this._wokenBases.has(edge.baseId),
+        demand: !!this._gateDemand?.wanted(edge.key, nowMs),
+        dt,
+      });
       if (next === state) continue;
       this._gateStates.set(edge.key, next);
-      // Passable ONLY in the fully-open phase — never mid-travel, so a unit can't be caught in a
+      // Passable ONLY in the fully-open phase — never mid-travel, so nothing can be caught in a
       // closing span. `setGateOpen` is the one place the flag is written.
       setGateOpen(this.wallEdges, edge, gatePassable(next));
       // The leaves' visible travel: 0 shut -> 1 open, ramped across the opening/closing phases so
       // the doors are seen to move rather than snapping between two states.
-      edge.openFrac = next.phase === GATE_OPENING ? 1 - next.remainingMs / GATE_OPENING_MS
-        : next.phase === GATE_CLOSING ? next.remainingMs / GATE_CLOSING_MS
+      edge.openFrac = next.phase === GATE_OPENING ? Math.min(1, next.phaseMs / GATE_OPENING_MS)
+        : next.phase === GATE_CLOSING ? Math.max(0, 1 - next.phaseMs / GATE_CLOSING_MS)
           : gatePassable(next) ? 1 : 0;
       redraw = true;
       if (next.startedOpening) this._gateOpenFx(edge);
@@ -942,29 +1040,10 @@ export const BasesMixin = {
       // the resulting replans are spread across frames by the router's per-tick budget.
       if (next.justOpened || next.justClosed) { this._invalidateVisibility?.(); this._invalidateRoutes?.(); }
     }
-    // Redraw every frame while any gate is mid-cycle or lit, so the leaves animate and the
-    // barrier field pulses; otherwise only on an actual transition.
+    // Redraw every frame while any gate is mid-cycle, so the leaves animate; otherwise only on an
+    // actual transition. (A fully-open gate is now static — no pulsing field left to animate — but
+    // it is cheap to keep redrawing it and it keeps the leaves' rest position honest.)
     if (redraw || [...this._gateStates.values()].some(gatePassable)) this._redrawWallEdges();
-    this._updateGateFieldContact();
-  },
-
-  // The confirming beat for "open, but not for you": while the player is pressed against an OPEN
-  // gate's barrier field, it sparks off him. Without this, driving into a visibly open doorway and
-  // simply stopping is the exact sensation of a collision bug — with it, he is visibly leaning on
-  // a screen that is holding him out. Throttled to a few sparks a second so a player who sits on
-  // the field gets a steady crackle rather than a strobe.
-  _updateGateFieldContact() {
-    if (!this._gateStates?.size) return;
-    const now = this.time?.now ?? 0;
-    if (now < (this._nextGateSparkAt ?? 0)) return;
-    for (const edge of gateEdges(this.wallEdges)) {
-      if (!edge.open || edge.destroyed) continue;
-      const d = pointSegmentDistance(edge.x0, edge.y0, edge.x1, edge.y1, this.px, this.py);
-      if (d > WALL_THICKNESS_PX * 2.2) continue;
-      this._nextGateSparkAt = now + 140;
-      this._gateFieldFx(edge);
-      return;
-    }
   },
 
   // A bright amber flare and ring across the gate's mouth as the leaves start to part — the
@@ -987,14 +1066,5 @@ export const BasesMixin = {
     Audio.explosion(0.2, { x, y, listenerX: this.px, listenerY: this.py });
     const ring = this.add.circle(x, y).setStrokeStyle(2.5, 0x8a7645, 0.85).setRadius(26).setDepth(DEPTH.IMPACT_FX);
     this.tweens.add({ targets: ring, scale: 0.2, alpha: 0, duration: 420, ease: 'Quad.easeIn', onComplete: () => ring.destroy() });
-  },
-
-  // The player shoving against a live barrier field — a small spark at the point of contact.
-  _gateFieldFx(edge) {
-    const t = Math.max(0, Math.min(1, ((this.px - edge.x0) * (edge.x1 - edge.x0) + (this.py - edge.y0) * (edge.y1 - edge.y0))
-      / (((edge.x1 - edge.x0) ** 2 + (edge.y1 - edge.y0) ** 2) || 1)));
-    const x = edge.x0 + (edge.x1 - edge.x0) * t, y = edge.y0 + (edge.y1 - edge.y0) * t;
-    const spark = this.add.circle(x, y, 5, 0xffe2a0, 0.85).setDepth(DEPTH.IMPACT_FX + 0.4);
-    this.tweens.add({ targets: spark, scale: 2.1, alpha: 0, duration: 220, ease: 'Quad.easeOut', onComplete: () => spark.destroy() });
   },
 };

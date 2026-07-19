@@ -46,10 +46,10 @@ describe('#312 _canEnemyStep — traversability is per EDGE', () => {
     const a = CENTRE, b = neighbors(0, 0)[0];
     const s = makeScene({ wallDefs: [{ a, b }] });
     // The integrator's own view: neither tile blocks, but the band between them does.
-    expect(s._blockedForEnemy(centre(a).x, centre(a).y)).toBe(false);
-    expect(s._blockedForEnemy(centre(b).x, centre(b).y)).toBe(false);
+    expect(s._blocked(centre(a).x, centre(a).y)).toBe(false);
+    expect(s._blocked(centre(b).x, centre(b).y)).toBe(false);
     const m = edgeMidpoint(a, b);
-    expect(s._blockedForEnemy(m.x, m.y)).toBe(true);
+    expect(s._blocked(m.x, m.y)).toBe(true);
     // Routing must reach the same conclusion, which a tile-only predicate could not.
     expect(s._canEnemyStep(a, b)).toBe(false);
     expect(s._canEnemyStep(b, a)).toBe(false);
@@ -62,7 +62,7 @@ describe('#312 _canEnemyStep — traversability is per EDGE', () => {
     expect(s._canEnemyStep(CENTRE, water)).toBe(false);
   });
 
-  it('an OPEN gate is steppable for an enemy — and matches _blockedForEnemy exactly', () => {
+  it('an OPEN gate is steppable — and matches the movement query _blocked exactly', () => {
     const defs = ringDefs();
     defs[0].role = SPAN_ROLE_GATE;
     const s = makeScene({ wallDefs: defs });
@@ -70,12 +70,16 @@ describe('#312 _canEnemyStep — traversability is per EDGE', () => {
 
     expect(s._canEnemyStep(defs[0].a, defs[0].b)).toBe(false);       // shut
     setGateOpen(s.wallEdges, gate, true);
-    expect(s._canEnemyStep(defs[0].a, defs[0].b)).toBe(true);        // open: enemies through
+    expect(s._canEnemyStep(defs[0].a, defs[0].b)).toBe(true);        // open: everyone through
 
-    // And the two views of the world stay consistent: the integrator lets an enemy stand in the
-    // open gate's band, and still refuses the player.
+    // Routing and movement must agree about the same span — a disagreement here is how a unit
+    // ends up planning through a door it then cannot walk through, or vice versa. Since the #309
+    // playtest there is one answer for everyone, so this is a straight equality rather than the
+    // enemy/player split it used to assert.
     const m = edgeMidpoint(defs[0].a, defs[0].b);
-    expect(s._blockedForEnemy(m.x, m.y)).toBe(false);
+    expect(s._blocked(m.x, m.y)).toBe(false);
+    setGateOpen(s.wallEdges, gate, false);
+    expect(s._canEnemyStep(defs[0].a, defs[0].b)).toBe(false);
     expect(s._blocked(m.x, m.y)).toBe(true);
   });
 });
@@ -127,7 +131,7 @@ describe('#312 _routedIntent — the steering the movement code consumes', () =>
     const dot = got.mx * (direct.x / dm) + got.my * (direct.y / dm);
     expect(dot).toBeLessThan(0.95);
     // And following it does not put the unit inside the wall band.
-    expect(s._blockedForEnemy(e.x + got.mx * 20, e.y + got.my * 20)).toBe(false);
+    expect(s._blocked(e.x + got.mx * 20, e.y + got.my * 20)).toBe(false);
   });
 
   it('a unit sealed inside an intact ring falls back to the old straight-line steer, not a freeze', () => {
@@ -226,7 +230,7 @@ describe('#312 _routedIntent — the steering the movement code consumes', () =>
       s._enemyRouter?.beginTick();
       const { mx, my } = s._routedIntent(e, target.x, target.y);
       const nx = e.x + mx * 6, ny = e.y + my * 6;
-      if (!s._blockedForEnemy(nx, ny)) { e.x = nx; e.y = ny; }
+      if (!s._blocked(nx, ny)) { e.x = nx; e.y = ny; }
       if (distance({ q: 0, r: 0 }, { q: 0, r: 0 }) === 0 && Math.hypot(e.x, e.y) > 120) escaped = true;
     }
     expect(escaped).toBe(true);

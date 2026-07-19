@@ -41,7 +41,7 @@ function band(x0, y0, x1, y1, hw) {
 // vanishing, which is indistinguishable from the player having breached it.
 const GATE_LEAF = 0x4b4030;     // brass-toned door leaf: warm, machined, obviously a moving part
 const GATE_LEAF_LIT = 0x8a7645;
-const GATE_FIELD = 0xffc65a;    // the barrier curtain across an OPEN gate
+const GATE_GLOW = 0xffc65a;     // warm threshold light spilling from an OPEN gate's mouth
 const GATE_FRAME = 0x6a5a3a;    // the heavy jamb posts a gate hangs from
 
 // #309: the interpolated position of a gate's leaves, 0 = fully shut, 1 = fully open. The scene
@@ -51,25 +51,25 @@ function openFracOf(e) {
   return Math.max(0, Math.min(1, e.openFrac ?? (e.open ? 1 : 0)));
 }
 
-// Draw one gate span. THE LEGIBILITY PROBLEM this solves: #309 requires the gate to keep blocking
-// the PLAYER even while it stands open, and "a visible opening my mech refuses to drive through"
-// is exactly the shape of a collision bug. The answer is to make the thing that stops him a
-// visible object in its own right rather than an invisible rule:
+// Draw one gate span.
 //
-//   - The two LEAVES slide apart into their jamb posts, so the doors are unmistakably open and the
-//     opening is a real opening — you can see through it, shoot through it, and units walk out of
-//     it (world.js routes sight and fire through an open gate for exactly this reason).
-//   - Across that opening sits a BARRIER FIELD — a bright amber curtain, pulsing, drawn only while
-//     the gate is open and only across the span between the retracted leaves. It is the widest,
-//     brightest thing on the wall line when lit. It reads as an active emitter, and an active
-//     emitter that stops vehicles is a familiar idea that needs no explanation.
-//   - The player driving into it gets a spark ripple off the field (bases.js `_gateFieldFx`),
-//     which is the confirming beat: he is not stuck on nothing, he is pushing on something that
-//     pushes back. A unit coming the other way passes through it untouched, which is the visual
-//     statement that the field is THEIRS and keyed to them.
+// #309's first pass had a BARRIER FIELD here — a bright amber curtain drawn across the open mouth,
+// pulsing, the widest thing on the wall line. It existed for exactly one reason: the gate used to
+// stay impassable to the PLAYER even while standing open, and "a visible opening my mech refuses to
+// drive through" is the shape of a collision bug, so the thing stopping him had to be a visible
+// object rather than an invisible rule.
 //
-// So the fiction is complete and self-consistent: the gate is open, and the base's own screen is
-// what he cannot cross. Nothing about it is a silent rule.
+// The playtest removed that rule ("player should be able to pass through the gate when it's open,
+// it just shouldn't open FOR the player"), which removed the field's entire job. Keeping it would
+// have been worse than useless: a big glowing screen across a doorway that everything now drives
+// straight through reads as broken art, or as a hazard that has stopped working. So it is gone.
+//
+// In its place the open mouth gets a THRESHOLD GLOW — a soft warm spill of light on the ground
+// between the retracted leaves, dim and wide rather than bright and flat. It is an invitation, not
+// a barrier, and that is precisely the new meaning: this is a way in, for anyone who can reach it
+// before it shuts. The leaves themselves do the rest of the work — they slide apart into their jamb
+// posts, so the opening is unmistakably an opening you can see through, shoot through, and drive
+// through.
 function drawGate(g, e, hw, timeMs) {
   const f = openFracOf(e);
   const dx = e.x1 - e.x0, dy = e.y1 - e.y0;
@@ -83,23 +83,22 @@ function drawGate(g, e, hw, timeMs) {
     [e.x0, e.y0, e.x0 + ux * leaf, e.y0 + uy * leaf],
     [e.x1, e.y1, e.x1 - ux * leaf, e.y1 - uy * leaf],
   ];
-  // The barrier field first, so the leaves sit on top of it where they overlap.
+  // The threshold glow first, so the leaves sit on top of it where they overlap. Two wide, faint
+  // bands rather than one bright one: the light falls off away from the opening, which reads as
+  // spill rather than as a painted stripe, and at these alphas it can never be mistaken for a
+  // solid object in the gap. No pulse — a steady light is a doorway, a pulsing one is a hazard.
   if (f > 0.02) {
-    // Pulse: a slow breathing brightness, so the field reads as powered rather than as a static
-    // painted stripe. Deterministic in `timeMs` — no per-frame random, nothing to desync.
-    const pulse = 0.5 + 0.5 * Math.sin(timeMs / 190);
     const gapA = { x: e.x0 + ux * leaf, y: e.y0 + uy * leaf };
     const gapB = { x: e.x1 - ux * leaf, y: e.y1 - uy * leaf };
-    // Wider than the wall itself — the field bulges out of the doorway, which is what makes it
-    // read as a projected screen rather than as a thin painted line in the gap.
-    g.fillStyle(GATE_FIELD, (0.16 + 0.12 * pulse) * f);
-    g.fillPoints(band(gapA.x, gapA.y, gapB.x, gapB.y, hw * 1.5), true);
-    g.fillStyle(GATE_FIELD, (0.34 + 0.26 * pulse) * f);
-    g.fillPoints(band(gapA.x, gapA.y, gapB.x, gapB.y, hw * 0.8), true);
-    // Emitter nodes at the field's two anchor points, brightest of all — where the power comes from.
-    g.fillStyle(GATE_FIELD, 0.6 + 0.4 * pulse);
-    g.fillCircle(gapA.x, gapA.y, hw * 0.42);
-    g.fillCircle(gapB.x, gapB.y, hw * 0.42);
+    g.fillStyle(GATE_GLOW, 0.10 * f);
+    g.fillPoints(band(gapA.x, gapA.y, gapB.x, gapB.y, hw * 1.9), true);
+    g.fillStyle(GATE_GLOW, 0.16 * f);
+    g.fillPoints(band(gapA.x, gapA.y, gapB.x, gapB.y, hw * 0.9), true);
+    // A small lamp at each jamb where the leaf has retracted to — the doorway's own edge lighting,
+    // and the cue that picks an open mouth out at distance now that the curtain is gone.
+    g.fillStyle(GATE_GLOW, 0.55 * f);
+    g.fillCircle(gapA.x, gapA.y, hw * 0.3);
+    g.fillCircle(gapB.x, gapB.y, hw * 0.3);
   }
   // The leaves.
   for (const [ax, ay, bx, by] of leaves) {
@@ -181,8 +180,8 @@ function drawTurretPlinth(g, e, hw) {
 export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 0) {
   g.clear();
   const hw = thickness / 2;
-  // #309: gates are drawn by their own routine below — they have moving parts and a barrier field,
-  // none of which the plain-span passes know how to express.
+  // #309: gates are drawn by their own routine below — they have moving parts and a threshold
+  // glow, neither of which the plain-span passes know how to express.
   const standing = edges.filter((e) => !e.destroyed);
   const gates = standing.filter((e) => e.role === 'gate');
   // #310: a turret span IS a plain span — it draws through every normal pass below and only gains
@@ -223,6 +222,7 @@ export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 
   // Pass 6 (#310): the turret plinths, over the plain wall passes they sit on (and over the pass-5
   // hazard pip, which the emplacement mark replaces).
   for (const e of turretSpans) drawTurretPlinth(g, e, hw);
-  // Pass 7 (#309): the gates, last, so a lit barrier field reads over the wall line beside it.
+  // Pass 7 (#309): the gates, last, so an open mouth's threshold glow reads over the wall line
+  // beside it rather than being painted under the neighbouring spans.
   for (const e of gates) drawGate(g, e, hw, timeMs);
 }

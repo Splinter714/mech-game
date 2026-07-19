@@ -1,56 +1,142 @@
 // #309 — the sally-port cycle state machine (data/gateCycle.js). Pure, so this is a plain
 // tick-it-forward test with no scene involved.
+//
+// Rewritten for the 2026-07-19 playtest: the machine is DEMAND-driven, not clock-driven, so almost
+// every test here is now a statement about what the gate does with a given demand signal over time.
+// The old suite's questions ("does it open N ms after wake", "does it re-sortie after the
+// cooldown") no longer have answers, because there is no longer a clock to ask them of — the
+// replacements are "does it open when asked", "does it stay shut when not", and the anti-flicker
+// properties, which is what the issue actually cares about.
 import { describe, it, expect } from 'vitest';
 import {
   makeGateState, tickGate, gatePassable,
   GATE_CLOSED, GATE_OPENING, GATE_OPEN, GATE_CLOSING,
-  GATE_FIRST_SORTIE_MS, GATE_OPENING_MS, GATE_OPEN_HOLD_MS, GATE_CLOSING_MS, GATE_SORTIE_COOLDOWN_MS,
+  GATE_REACTION_MS, GATE_OPENING_MS, GATE_MIN_OPEN_MS, GATE_CLOSING_MS, GATE_RECLOSE_LOCKOUT_MS,
 } from './gateCycle.js';
 
 // Advance `ms` in 16ms frames, the real per-frame granularity, collecting every state it passes
-// through — so the transitions are observed the way the scene observes them, not by jumping the
-// whole phase in one giant dt.
-function run(state, ms) {
+// through — so transitions are observed the way the scene observes them, not by jumping a whole
+// phase in one giant dt. `demand` may be a constant or a function of elapsed ms, which is how the
+// churn/flicker tests drive a signal that comes and goes.
+function run(state, ms, demand = true, awake = true) {
   const seen = [state];
   for (let t = 0; t < ms; t += 16) {
-    state = tickGate(state, { awake: true, dt: 0.016 });
+    const d = typeof demand === 'function' ? demand(t) : demand;
+    state = tickGate(state, { awake, demand: d, dt: 0.016 });
     seen.push(state);
   }
   return { state, seen };
 }
 
-describe('#309 gate cycle', () => {
+// The full trip from "demand appears" to "doors are open", for tests that just want to get there.
+const TO_OPEN_MS = GATE_REACTION_MS + GATE_OPENING_MS + 64;
+
+describe('#309 gate cycle — demand-driven', () => {
   it('starts shut and impassable', () => {
     const s = makeGateState();
     expect(s.phase).toBe(GATE_CLOSED);
     expect(gatePassable(s)).toBe(false);
   });
 
-  // The trigger. A base the player has not woken is a shut fortress — its gate must not be
-  // quietly counting down toward a sortie he has not earned, the same rule dockResupply applies.
-  it('a DORMANT base\'s gate never moves, however long it is ticked', () => {
-    let s = makeGateState();
-    for (let i = 0; i < 5000; i++) s = tickGate(s, { awake: false, dt: 0.016 });
-    expect(s.phase).toBe(GATE_CLOSED);
-    expect(gatePassable(s)).toBe(false);
+  // ── The precondition: wake ────────────────────────────────────────────────────────────
+  // A base the player has not woken is a shut fortress. Note this is now a stronger claim than it
+  // used to be: it must hold even when demand is asserted, because demand is computed from routes
+  // that exist whether or not anyone has noticed the player.
+  it("a DORMANT base's gate never opens, even with demand present", () => {
+    const { state } = run(makeGateState(), 30000, true, /* awake */ false);
+    expect(state.phase).toBe(GATE_CLOSED);
+    expect(gatePassable(state)).toBe(false);
   });
 
-  it('opens a beat after the base wakes, and not before', () => {
-    // Just short of the first-sortie delay: still shut.
-    const early = run(makeGateState(), GATE_FIRST_SORTIE_MS - 200);
+  // ── THE ISSUE: no clock ───────────────────────────────────────────────────────────────
+  // The single most important test in this file. The owner's complaint was that a woken base
+  // cycled its gates on a metronome whether or not anything wanted them. An awake base with no
+  // demand must sit there, shut, forever.
+  it('an AWAKE base with no demand never opens its gate — there is no clock', () => {
+    const { state, seen } = run(makeGateState(), 60000, /* demand */ false);
+    expect(state.phase).toBe(GATE_CLOSED);
+    expect(state.sorties).toBe(0);
+    expect(seen.some(gatePassable)).toBe(false);
+    expect(seen.some((s) => s.startedOpening)).toBe(false);
+  });
+
+  it('opens when a unit needs it, a reaction beat after the demand appears', () => {
+    // Just short of the reaction window: the leaves have not moved.
+    const early = run(makeGateState(), GATE_REACTION_MS - 100);
     expect(early.state.phase).toBe(GATE_CLOSED);
-    // Past the delay plus the doors' own travel: open.
-    const later = run(makeGateState(), GATE_FIRST_SORTIE_MS + GATE_OPENING_MS + 100);
+    // Past the reaction window plus the doors' own travel: open and passable.
+    const later = run(makeGateState(), TO_OPEN_MS);
     expect(later.state.phase).toBe(GATE_OPEN);
     expect(gatePassable(later.state)).toBe(true);
+    expect(later.state.sorties).toBe(1);
   });
 
-  // The safety property behind "passable only in the fully-open phase": there is no frame in which
-  // the doors are visibly travelling AND the span is walkable, so nothing can be caught in a
-  // closing gate.
+  // ── Closing is demand-driven too ──────────────────────────────────────────────────────
+  it('stays open as long as it is still wanted, well past the minimum', () => {
+    const { state } = run(makeGateState(), TO_OPEN_MS + GATE_MIN_OPEN_MS * 3);
+    expect(state.phase).toBe(GATE_OPEN);
+    expect(gatePassable(state)).toBe(true);
+  });
+
+  it('shuts once nothing wants it any more', () => {
+    // Demand for long enough to open and satisfy the floor, then gone.
+    const openPhase = TO_OPEN_MS + GATE_MIN_OPEN_MS + 200;
+    const { state, seen } = run(makeGateState(), openPhase + GATE_CLOSING_MS + 400,
+      (t) => t < openPhase);
+    expect(state.phase).toBe(GATE_CLOSED);
+    expect(seen.some((s) => s.justClosed)).toBe(true);
+  });
+
+  // ── Anti-flicker ──────────────────────────────────────────────────────────────────────
+  // The floor: demand that vanishes the instant the doors finish opening must not slam them shut.
+  // This is what protects a sortie whose lead unit briefly loses its routing lock, and (since the
+  // playtest) the player's opportunity window to slip inside.
+  it('honours the minimum-open floor when demand vanishes immediately', () => {
+    const { seen } = run(makeGateState(), TO_OPEN_MS + GATE_MIN_OPEN_MS + GATE_CLOSING_MS + 400,
+      (t) => t < TO_OPEN_MS);
+    const openFrames = seen.filter(gatePassable).length;
+    expect(openFrames * 16).toBeGreaterThanOrEqual(GATE_MIN_OPEN_MS - 100);
+    // ...and it does not linger much past the floor once nothing wants it.
+    expect(openFrames * 16).toBeLessThan(GATE_MIN_OPEN_MS + 400);
+  });
+
+  // A single unit's route churning on and off the span for a frame at a time is the exact failure
+  // mode the issue names ("a gate shouldn't stutter open/closed as one unit's route churns"). The
+  // reaction accumulator requires demand to be CONTINUOUS, so a signal this ragged never opens it
+  // at all — and the scene's grace window (gateDemand.js) means a real demand never looks like
+  // this in the first place.
+  it('a demand signal that flickers frame-to-frame never moves the doors', () => {
+    const { state, seen } = run(makeGateState(), 30000, (t) => Math.floor(t / 16) % 3 === 0);
+    expect(state.phase).toBe(GATE_CLOSED);
+    expect(seen.some((s) => s.startedOpening)).toBe(false);
+  });
+
+  // The re-open lockout: demand that genuinely lapses and genuinely returns a moment later must
+  // not read as the door bouncing.
+  it('refuses to re-open immediately after closing', () => {
+    // Open, satisfy the floor, drop demand to force a close, then reassert it at once.
+    const dropAt = TO_OPEN_MS + GATE_MIN_OPEN_MS + 200;
+    const resumeAt = dropAt + GATE_CLOSING_MS + 100;
+    let s = makeGateState();
+    const seen = [];
+    for (let t = 0; t < resumeAt + GATE_RECLOSE_LOCKOUT_MS - 200; t += 16) {
+      s = tickGate(s, { awake: true, demand: t < dropAt || t >= resumeAt, dt: 0.016 });
+      seen.push({ t, phase: s.phase });
+    }
+    // It closed, and despite demand being back it has NOT started opening again inside the lockout.
+    expect(seen.some((f) => f.phase === GATE_CLOSING)).toBe(true);
+    expect(s.phase).toBe(GATE_CLOSED);
+    // Given enough further time, though, it does come back — the lockout delays, never denies.
+    const after = run(s, GATE_RECLOSE_LOCKOUT_MS + TO_OPEN_MS);
+    expect(after.state.phase).toBe(GATE_OPEN);
+  });
+
+  // ── Safety: no ambiguous half-open frame ──────────────────────────────────────────────
+  // "Passable only in the fully-open phase" — there is no frame in which the doors are visibly
+  // travelling AND the span is walkable, so nothing can be caught in a closing gate.
   it('is impassable during both door-travel phases', () => {
-    const { seen } = run(makeGateState(), GATE_FIRST_SORTIE_MS + GATE_OPENING_MS
-      + GATE_OPEN_HOLD_MS + GATE_CLOSING_MS + 200);
+    const openPhase = TO_OPEN_MS + GATE_MIN_OPEN_MS + 200;
+    const { seen } = run(makeGateState(), openPhase + GATE_CLOSING_MS + 400, (t) => t < openPhase);
     for (const s of seen) {
       if (s.phase === GATE_OPENING || s.phase === GATE_CLOSING) expect(gatePassable(s)).toBe(false);
     }
@@ -58,38 +144,26 @@ describe('#309 gate cycle', () => {
     expect(seen.some((s) => s.phase === GATE_CLOSING)).toBe(true);
   });
 
-  it('holds open for the full sortie window, then shuts again', () => {
-    const { seen } = run(makeGateState(), GATE_FIRST_SORTIE_MS + GATE_OPENING_MS
-      + GATE_OPEN_HOLD_MS + GATE_CLOSING_MS + 200);
-    const openFrames = seen.filter(gatePassable).length;
-    // ~GATE_OPEN_HOLD_MS worth of 16ms frames, within a frame or two either way.
-    expect(openFrames * 16).toBeGreaterThan(GATE_OPEN_HOLD_MS - 100);
-    expect(openFrames * 16).toBeLessThan(GATE_OPEN_HOLD_MS + 100);
-    expect(seen[seen.length - 1].phase).toBe(GATE_CLOSED);
+  // Committed once moving: demand evaporating mid-swing must not bail the doors out half-open,
+  // which would be the most visible stutter of all.
+  it('finishes opening even if demand disappears while the doors are travelling', () => {
+    const { state } = run(makeGateState(), TO_OPEN_MS, (t) => t < GATE_REACTION_MS + 32);
+    expect(state.phase).toBe(GATE_OPEN);
   });
 
   it('fires exactly one open/close transition per sortie', () => {
-    const { seen } = run(makeGateState(), GATE_FIRST_SORTIE_MS + GATE_OPENING_MS
-      + GATE_OPEN_HOLD_MS + GATE_CLOSING_MS + 200);
+    const openPhase = TO_OPEN_MS + GATE_MIN_OPEN_MS + 200;
+    const { seen } = run(makeGateState(), openPhase + GATE_CLOSING_MS + 400, (t) => t < openPhase);
     expect(seen.filter((s) => s.justOpened).length).toBe(1);
     expect(seen.filter((s) => s.justClosed).length).toBe(1);
     expect(seen.filter((s) => s.startedOpening).length).toBe(1);
   });
 
-  // Sorties REPEAT while the base stays awake — a base that only ever counterattacks once would
-  // let the player win by outlasting one wave.
-  it('sorties again after the cooldown, for as long as the base stays awake', () => {
-    const full = GATE_OPENING_MS + GATE_OPEN_HOLD_MS + GATE_CLOSING_MS + GATE_SORTIE_COOLDOWN_MS;
-    const { state, seen } = run(makeGateState(), GATE_FIRST_SORTIE_MS + full * 3);
-    expect(state.sorties).toBeGreaterThanOrEqual(3);
-    expect(seen.filter((s) => s.justOpened).length).toBeGreaterThanOrEqual(3);
-  });
-
-  // The de-synchroniser: a base's two gates are built with different jitter so they don't crank in
-  // perfect lockstep (the same reasoning #311 applied to docks).
-  it('jitter staggers two gates of the same base', () => {
-    const a = run(makeGateState(0), GATE_FIRST_SORTIE_MS + GATE_OPENING_MS + 100).state;
-    const b = run(makeGateState(1500), GATE_FIRST_SORTIE_MS + GATE_OPENING_MS + 100).state;
+  // The de-synchroniser: a base's two gates carry different jitter so that when they ARE both
+  // wanted at once they still crank a beat apart rather than in lockstep.
+  it('jitter staggers two gates that become wanted on the same frame', () => {
+    const a = run(makeGateState(0), GATE_REACTION_MS + GATE_OPENING_MS + 64).state;
+    const b = run(makeGateState(500), GATE_REACTION_MS + GATE_OPENING_MS + 64).state;
     expect(a.phase).toBe(GATE_OPEN);
     expect(b.phase).not.toBe(GATE_OPEN);   // still catching up
   });
@@ -97,7 +171,7 @@ describe('#309 gate cycle', () => {
   it('never mutates the state passed in', () => {
     const s = makeGateState();
     const before = { ...s };
-    tickGate(s, { awake: true, dt: 0.016 });
+    tickGate(s, { awake: true, demand: true, dt: 0.016 });
     expect(s).toEqual(before);
   });
 });
