@@ -21,6 +21,7 @@ import { RunMixin } from './arena/run.js';
 import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { TerrainLabelsMixin } from './arena/terrainLabels.js';
+import { VisibilityMixin } from './arena/visibility.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -249,6 +250,11 @@ export default class ArenaScene extends Phaser.Scene {
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
     // layer so a ground decal can never out-rank a unit no matter what else gets added later.
+    // #306: the line-of-sight dimming overlay. Created here (before the unit views) so its
+    // Graphics exists for the first `_updateVisibility` tick; its DEPTH.LOS_DIM (2.9) tier is
+    // what puts it under the player/flyers and over everything on the ground — see
+    // arena/visibility.js.
+    this._initVisibility();
     this.groundFx = this.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning-ground patches (napalm)
     this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
     this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
@@ -299,6 +305,10 @@ export default class ArenaScene extends Phaser.Scene {
     // the single biggest FPS cost in the game. Reuses this same view rect, not a second camera-
     // bounds computation.
     this._updateTileCulling(view);
+    // #306: refresh the line-of-sight dimming. Reuses the SAME view rect; internally gated so the
+    // field-of-view pass and overlay redraw only happen when the player crosses a hex boundary or
+    // terrain collapses — see arena/visibility.js for the cost reasoning.
+    this._updateVisibility(view);
     // #270: general terrain-id hex labels — same view rect, own coarse recompute cadence (see
     // terrainLabels.js for the interval/margin reasoning). Dev-only, see the `_initTerrainLabels`
     // gate in create() above — `this._terrainLabelPool` only exists when that ran.
@@ -449,5 +459,5 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin,
 );

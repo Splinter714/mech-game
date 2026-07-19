@@ -102,7 +102,19 @@ export const DEPTH = {
   // peek-out-from-under intent. Another fractional slot (2.75) between COVER_CANOPY and UNITS, for
   // the same "no renumbering" reason COVER_CANOPY uses 2.5.
   LARGE_GROUND_UNITS: 2.75,
-  UNITS: 3,           // the player, and flying enemy views (helicopter, drone) — elevated units
+  // #306: the line-of-sight dimming overlay (arena/visibility.js) — ONE dark translucent layer
+  // over the hexes the player currently has no sight of. Its position in this stack IS the
+  // feature: everything below it (terrain 0, ground FX 1, small ground units 2, cover canopy 2.5,
+  // large ground units 2.75) is dimmed uniformly because they all share this single overlay,
+  // while the player and FLYING enemy views (UNITS = 3) sit ABOVE it and are untouched — which is
+  // exactly the requested "a flying enemy over a blocked area still flies above the dimming",
+  // with no per-entity logic. Ground enemies under it read as DIMMED, not hidden (confirmed
+  // intent: the player must never be shot by something wholly invisible). World-space markers
+  // (WORLD_UI = 6) stay bright as navigational aids — a deliberate call, see visibility.js.
+  // Another fractional slot, for the same "don't renumber every existing tier" reason 2.5/2.75
+  // use (#289).
+  LOS_DIM: 2.9,
+  UNITS: 3,        // the player, and flying enemy views (helicopter, drone) — elevated units
                       // that don't have the same "who's actually closer to the ground" ambiguity
                       // ground units do, so they keep the original flat #99 tier alongside the
                       // player.
