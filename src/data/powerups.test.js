@@ -3,6 +3,7 @@ import {
   POWERUPS, POWERUP_IDS, POWERUP_POOL_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
   dropChanceForToughness, dropChanceForKill, dropBounds, dropBoundsForRoster,
   MIN_DROP_CHANCE, MAX_DROP_CHANCE, CRUSH_KILL_DROP_CHANCE,
+  stackedRemainingMs, maxStackedMs, MAX_STACK_MULT,
 } from './powerups.js';
 import { Mech } from './Mech.js';
 import { HpBody } from './HpBody.js';
@@ -380,5 +381,158 @@ describe('#106: crush/stomp kills use a fixed, extremely low chance', () => {
       expect(dropChanceForKill(t)).toBe(dropChanceForToughness(t));
       expect(dropChanceForKill(t, false)).toBe(dropChanceForToughness(t));
     }
+  });
+});
+
+// ── #339: duplicate pickups stack DURATION, never magnitude ────────────────────────────────
+// Jackson: "duration stacks, magnitude does not... A second Overdrive means you keep the same
+// fire-rate multiplier for longer, not a faster one." The magnitude half of that is enforced by
+// buffModifiers being a function of WHICH types are active, not of how many were picked up —
+// `activePowerups` is a map keyed by type, so there is structurally nowhere for a second
+// Overdrive to live. These tests pin both halves.
+describe('#339: duplicate pickups extend duration', () => {
+  const TIMED = POWERUP_IDS.filter((id) => !isInstant(id));
+
+  it('a fresh pickup is just its own catalog duration', () => {
+    for (const id of TIMED) {
+      expect(stackedRemainingMs(id, 0)).toBe(durationMs(id));
+      expect(stackedRemainingMs(id)).toBe(durationMs(id));
+      expect(stackedRemainingMs(id, undefined)).toBe(durationMs(id));
+    }
+  });
+
+  it('picking up a duplicate mid-buff ADDS a full duration instead of merely refreshing', () => {
+    for (const id of TIMED) {
+      const d = durationMs(id);
+      // Half-spent buff: the old behaviour would reset this to exactly `d`; stacking gives d*1.5.
+      expect(stackedRemainingMs(id, d / 2)).toBe(d * 1.5);
+      expect(stackedRemainingMs(id, d / 2)).toBeGreaterThan(d);
+      // Untouched buff: two back-to-back pickups are worth two full durations.
+      expect(stackedRemainingMs(id, d)).toBe(d * 2);
+    }
+  });
+
+  it('accumulates across repeated pickups, monotonically, up to the cap', () => {
+    const id = 'overdrive';
+    const d = durationMs(id);
+    let remaining = 0;
+    const seen = [];
+    for (let i = 0; i < 10; i++) {
+      const next = stackedRemainingMs(id, remaining);
+      expect(next).toBeGreaterThanOrEqual(remaining);   // a pickup NEVER shortens the buff
+      remaining = next;
+      seen.push(remaining);
+    }
+    expect(seen[0]).toBe(d);
+    expect(seen[1]).toBe(d * 2);
+    expect(seen[2]).toBe(d * MAX_STACK_MULT);
+    expect(remaining).toBe(maxStackedMs(id));           // and it plateaus there forever
+  });
+
+  it('caps total accumulated time at MAX_STACK_MULT x the base duration', () => {
+    expect(MAX_STACK_MULT).toBeGreaterThan(1);          // 1 would be the old pure-refresh rule
+    for (const id of TIMED) {
+      expect(maxStackedMs(id)).toBe(durationMs(id) * MAX_STACK_MULT);
+      // Way past the cap in one go: clamped, not unbounded.
+      expect(stackedRemainingMs(id, durationMs(id) * 50)).toBeLessThanOrEqual(
+        Math.max(maxStackedMs(id), durationMs(id) * 50),
+      );
+      expect(stackedRemainingMs(id, maxStackedMs(id) - 1)).toBe(maxStackedMs(id));
+    }
+  });
+
+  it('a pickup just under the cap still nudges up to it rather than being wasted', () => {
+    const id = 'barrage';
+    const nearCap = maxStackedMs(id) - 500;
+    expect(stackedRemainingMs(id, nearCap)).toBe(maxStackedMs(id));
+    expect(stackedRemainingMs(id, nearCap)).toBeGreaterThan(nearCap);
+  });
+
+  it('never REDUCES an already-over-cap remaining time', () => {
+    const id = 'overcharge';
+    const over = maxStackedMs(id) + 5000;
+    expect(stackedRemainingMs(id, over)).toBe(over);
+  });
+
+  it('is a no-op for instant / unknown types (Armor Patch has no timer to extend)', () => {
+    expect(stackedRemainingMs('armorPatch', 0)).toBe(0);
+    expect(stackedRemainingMs('armorPatch', 9999)).toBe(0);
+    expect(stackedRemainingMs('nope', 1000)).toBe(0);
+    expect(maxStackedMs('armorPatch')).toBe(0);
+  });
+
+  it('MAGNITUDE does not compound: a longer-stacked buff has exactly the same modifiers', () => {
+    const id = 'overdrive';
+    const once = buffModifiers({ [id]: durationMs(id) });
+    const stacked = buffModifiers({ [id]: maxStackedMs(id) });
+    expect(stacked).toEqual(once);
+    expect(stacked.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
+    // Barrage likewise stays x2, never x4.
+    expect(buffModifiers({ barrage: maxStackedMs('barrage') }).countMult)
+      .toBe(POWERUPS.barrage.countMult);
+  });
+
+  it('different types still stack independently (this changes nothing about cross-type stacking)', () => {
+    const mods = buffModifiers({ overdrive: 1, barrage: 1, overcharge: 1, overclock: 1 });
+    expect(mods.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
+    expect(mods.countMult).toBe(POWERUPS.barrage.countMult);
+    expect(mods.freeAmmo).toBe(true);
+    expect(mods.overclockActive).toBe(true);
+  });
+});
+
+describe('#339: Armor Patch (instant) simply applies again', () => {
+  it('a second patch repairs again off the new, less-damaged state — no timer involved', () => {
+    const mech = new Mech({ chassisId: 'medium' });
+    mech.applyDamage('leftArm', 500);
+    mech.applyDamage('rightTorso', 500);
+    const frac = POWERUPS.armorPatch.repairFrac;
+
+    const first = mech.repairArmor(frac);
+    expect(first).toBeGreaterThan(0);
+    const second = mech.repairArmor(frac);
+    expect(second).toBeGreaterThan(0);            // it DOES do something the second time
+    expect(second).toBeLessThan(first);           // …on the smaller remaining deficit
+    // Never enters the timed-buff world at all.
+    expect(isInstant('armorPatch')).toBe(true);
+    expect(durationMs('armorPatch')).toBe(0);
+  });
+});
+
+describe('#339: Mech.shieldBoostRemainingMs exposes the boost clock for stacking', () => {
+  const shieldMech = () => new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 2 } });
+
+  it('is 0 with no boost, and reports the live boost time once one is applied', () => {
+    const mech = shieldMech();
+    expect(mech.shieldBoostRemainingMs).toBe(0);
+    mech.boostShield(POWERUPS.shield.boostMult, durationMs('shield'));
+    expect(mech.shieldBoostRemainingMs).toBe(durationMs('shield'));
+  });
+
+  it('a duplicate Shield extends the boost window at the SAME multiplier, not a bigger one', () => {
+    const mech = shieldMech();
+    const mult = POWERUPS.shield.boostMult;
+    const baseMax = mech.shield.max;
+
+    mech.boostShield(mult, stackedRemainingMs('shield', mech.shieldBoostRemainingMs));
+    const boostedMax = mech.shield.max;
+    expect(boostedMax).toBe(Math.round(baseMax * mult));
+
+    // Second pickup, mid-boost.
+    mech.boostShield(mult, stackedRemainingMs('shield', mech.shieldBoostRemainingMs));
+    expect(mech.shieldBoostRemainingMs).toBe(durationMs('shield') * 2);   // longer…
+    expect(mech.shield.max).toBe(boostedMax);                              // …not stronger
+    expect(mech.shield.regenPerSec).toBe(boostedMax > 0 ? mech.shield.regenPerSec : 0);
+  });
+
+  it('capacity stays put no matter how many Shields are collected', () => {
+    const mech = shieldMech();
+    const mult = POWERUPS.shield.boostMult;
+    const expectedMax = Math.round(mech.shield.max * mult);
+    for (let i = 0; i < 8; i++) {
+      mech.boostShield(mult, stackedRemainingMs('shield', mech.shieldBoostRemainingMs));
+      expect(mech.shield.max).toBe(expectedMax);
+    }
+    expect(mech.shieldBoostRemainingMs).toBe(maxStackedMs('shield'));
   });
 });

@@ -8,9 +8,11 @@
 // The overlay is `this.activePowerups` — a map { typeId → remaining ms } living on the scene,
 // NEVER a mutation of the Mech, so buffs expire cleanly. `_buffMods()` collapses it (via the
 // pure buffModifiers) into the multipliers/flags the other mixins read. Stacking is one-per-
-// type: a duplicate pickup of an active type just refreshes its remaining time.
+// type and DURATION-ONLY (#339): a duplicate pickup of an active type ADDS a full duration to
+// its remaining time (capped at MAX_STACK_MULT × the base), and never changes how strong it is.
 import {
   POWERUPS, dropChanceForKill, pickPowerupType, isInstant, durationMs, buffModifiers,
+  stackedRemainingMs,
 } from '../../data/powerups.js';
 // #246: Shield is now a real layer living ON the Mech itself (this.mech.shield —
 // data/shield.js), not a scene-tracked pool — the powerup's job is just to tell the mech
@@ -217,11 +219,14 @@ export const PowerupsMixin = {
     this._updateShieldVisual(delta);
   },
 
-  // Apply a picked-up powerup. Instant types (Armor Patch) resolve immediately and never enter
-  // the active set; Shield (#246) is BOTH an instant full-fill AND a temporary capacity/regen
-  // boost on the mech's own native shield layer (Mech.boostShield) — a duplicate pickup mid-
-  // boost just refreshes the timer (see Mech.boostShield's idempotency note); everything else
-  // is a timed buff that sets/refreshes its per-type countdown (one-per-type stacking).
+  // Apply a picked-up powerup. Three kinds, all now sharing ONE stacking rule (#339 — duration
+  // stacks, magnitude never does; see data/powerups.js `stackedRemainingMs`):
+  //  - Instant types (Armor Patch) have no timer at all, so 'extra duration' is meaningless for
+  //    them — they simply apply AGAIN, repairing more. That IS the stack for an instant.
+  //  - Shield (#246) is both an instant full-fill and a timed capacity/regen boost living on the
+  //    mech's own shield layer; the boost's remaining time is what stacks, at the same unchanged
+  //    `boostMult`, so a second Shield means a longer big-shield window, not a bigger one.
+  //  - Everything else is a plain timed buff whose per-type countdown accumulates.
   _activatePowerup(typeId) {
     const p = POWERUPS[typeId];
     if (!p) return;
@@ -231,9 +236,13 @@ export const PowerupsMixin = {
     if (isInstant(typeId)) {
       this._applyInstantPowerup(typeId);
     } else if (p.effect === 'shield') {
-      this.mech.boostShield(p.boostMult ?? 1, durationMs(typeId));
+      // Same `boostMult` as ever (magnitude does NOT compound), for a stacked span of time.
+      this.mech.boostShield(
+        p.boostMult ?? 1,
+        stackedRemainingMs(typeId, this.mech.shieldBoostRemainingMs),
+      );
     } else {
-      this.activePowerups[typeId] = durationMs(typeId);   // set OR refresh
+      this.activePowerups[typeId] = stackedRemainingMs(typeId, this.activePowerups[typeId]);
     }
     const col = '#' + p.color.toString(16).padStart(6, '0');
     this._floatText(this.px, this.py - 34, p.label, col);
