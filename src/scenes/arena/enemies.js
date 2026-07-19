@@ -35,7 +35,7 @@ import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance 
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain, isPassable } from '../../data/terrain.js';
 import { makeRouter } from '../../data/hexRoute.js';
-import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
+import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX, SPAN_ROLE_GATE } from '../../data/wallEdges.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
@@ -821,6 +821,27 @@ export const EnemiesMixin = {
   // in the live profile that alone was a meaningful slice of the frame. Since every span in
   // `byHex[from]` has `from` as one endpoint, "is this the span between from and to" is just a
   // numeric compare against its OTHER endpoint. The list is at most six long.
+  // ── #309 PLAYTEST 3: routing STAGES toward a shut gate ────────────────────────────────
+  // A gate on an AWAKE base is treated as passable by ROUTE PLANNING even while it is shut, and
+  // this is load-bearing rather than a convenience.
+  //
+  // The problem it solves is a deadlock introduced the moment gates became just-in-time. Demand now
+  // only registers once a unit is within `GATE_OPEN_LEAD_MS` of TRAVEL from its door
+  // (data/gateDemand.js). But if planning treated a shut gate as solid, a garrison unit would never
+  // plan a route toward one — hexRoute would fail and fall back to "walk to the reachable hex
+  // nearest the player", which is wherever the wall happens to be closest, not the doorway. So
+  // nobody would ever approach a gate, nobody would ever get inside the lead window, and the door
+  // would never open: shut because nobody is near it, and nobody near it because it is shut.
+  //
+  // Letting planning see through a shut gate breaks that circle. The unit walks to its door, its
+  // ETA falls, demand fires, and the leaves are open by the time it arrives. Nothing about physical
+  // movement changes — `_blocked` (world.js) still treats a shut gate as solid for everyone, so a
+  // unit that somehow beats its own door simply presses against it for a moment rather than walking
+  // through a closed span. Planning is an intent; collision is the truth.
+  //
+  // The AWAKE condition is what keeps this honest: it means "this is a door that can actually open
+  // for me". Without it, a unit could route through a dormant base's gate, which will never open,
+  // and stall against it indefinitely.
   _canEnemyStep(from, to, toKey) {
     if (!isPassable(this.terrain.get(toKey ?? axialKey(to.q, to.r)))) return false;
     const set = this.wallEdges;
@@ -829,9 +850,22 @@ export const EnemiesMixin = {
     if (!spans) return true;                       // no wall touches this hex at all — the common case
     for (const e of spans) {
       const onThisEdge = (e.a.q === to.q && e.a.r === to.r) || (e.b.q === to.q && e.b.r === to.r);
-      if (onThisEdge && blocksSpan(e)) return false;
+      if (!onThisEdge) continue;
+      if (!blocksSpan(e)) return true;             // destroyed, or a gate already standing open
+      if (this._gateIsStageable?.(e)) return true; // shut, but it is a door that will open — stage at it
+      return false;
     }
     return true;
+  },
+
+  // Is this span a gate a unit may plan THROUGH while it is still shut? See `_canEnemyStep`.
+  // Deliberately a named method rather than an inline condition so the scene stubs across the test
+  // suite (which have no `_wokenBases`) fall back to the old strict behaviour rather than silently
+  // gaining a new one.
+  _gateIsStageable(edge) {
+    return edge.role === SPAN_ROLE_GATE
+      && !edge.destroyed
+      && !!this._wokenBases?.has(edge.baseId);
   },
 
   // Is the straight line between two world points walkable for an enemy — i.e. does this unit even

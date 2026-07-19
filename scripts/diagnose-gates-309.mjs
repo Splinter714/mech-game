@@ -173,6 +173,147 @@ const report = await page.evaluate(async () => {
     // Which kinds actually contributed demand — the reported case is specifically TANKS.
     out.longitudinal.tankContribution = st.byKind.tank ?? null;
   }
+  // ── E. PLAYTEST 3: THE LEAD TIME, measured live with TANKS ───────────────────────────
+  // "gates appear to be opening WAAAAAAY in advance of a ground unit needing to pass through it."
+  // The number that settles it: how long does a gate stand open before the first ground unit
+  // actually crosses it? Under the old behaviour this was the unit's whole walk across the
+  // compound; it should now be a beat.
+  //
+  // Deliberately self-contained: earlier phases teleport the player, delete and restore garrisons
+  // and re-init the gate subsystem, so this resets to a clean state and picks a base that actually
+  // has a live ground garrison INSIDE its ring. A probe that measures a base whose units already
+  // left reports "no crossings" and tells you nothing.
+  {
+    a._initGates();
+    for (const b of a.bases) a._wakeBase(b.id);
+    for (const e of a.enemies) if (e.awareness === 'dormant') e.awareness = 'aware';
+
+    const insideRing = (b, e) => {
+      const bc = hexToPixel(b.center.q, b.center.r);
+      return Math.hypot(e.x - bc.x, e.y - bc.y) < 170;    // inside a radius-2 compound
+    };
+    // Prefer a base with ground units still inside its walls; prefer one with tanks.
+    const scored = a.bases.map((b) => {
+      const inside = a.enemies.filter((e) => a._isGateDemandUnit(e) && e.baseId === b.id && insideRing(b, e));
+      return { b, inside, tanks: inside.filter((e) => e.kind === 'tank').length };
+    }).filter((s) => s.inside.length > 0 && gates.some((g) => g.baseId === s.b.id && !g.destroyed));
+    scored.sort((x, y) => (y.tanks - x.tanks) || (y.inside.length - x.inside.length));
+    const pick = scored[0] ?? null;
+    out.leadProbeBase = pick
+      ? { insideCount: pick.inside.length, tanks: pick.tanks,
+          kinds: pick.inside.reduce((m, e) => { m[e.kind ?? '?'] = (m[e.kind ?? '?'] ?? 0) + 1; return m; }, {}) }
+      : null;
+
+    if (pick) {
+      const bc = hexToPixel(pick.b.center.q, pick.b.center.r);
+      const bGates = gates.filter((g) => g.baseId === pick.b.id && !g.destroyed);
+      // Stand outside one of this base's own gates so its garrison has a reason to come through.
+      let ps = null;
+      for (const g of bGates) {
+        const gmx = (g.x0 + g.x1) / 2, gmy = (g.y0 + g.y1) / 2;
+        const dd = Math.hypot(gmx - bc.x, gmy - bc.y) || 1;
+        const nx = (gmx - bc.x) / dd, ny = (gmy - bc.y) / dd;
+        for (let d = 60; d <= 400; d += 20) {
+          const x = gmx + nx * d, y = gmy + ny * d;
+          const h = pixelToHex(x, y);
+          if (isPassable(a.terrain.get(axialKey(h.q, h.r)))) { ps = { x, y }; break; }
+        }
+        if (ps) break;
+      }
+      if (ps) { a.px = ps.x; a.py = ps.y; }
+
+      const openedAt = new Map();
+      const crossings = [];
+      const sideOf = (g, e) => Math.sign((g.x1 - g.x0) * (e.y - g.y0) - (g.y1 - g.y0) * (e.x - g.x0));
+      const tracked = pick.inside.slice();
+      const lastSide = new Map();
+      const minDist = new Map();     // closest any intent-holder got to each gate's mouth
+      for (const g of bGates) {
+        for (let i = 0; i < tracked.length; i++) lastSide.set(g.key + '|' + i, sideOf(g, tracked[i]));
+        minDist.set(g.key, Infinity);
+      }
+
+      // Time series of the whole demand->open->cross chain, so a zero-crossing run says WHICH link
+      // broke rather than just that it did.
+      const { remainingToGate } = await import('/src/data/gateDemand.js');
+      const series = [];
+      let nextSample = 0;
+
+      const t0 = performance.now();
+      while (performance.now() - t0 < 40000) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const now = performance.now() - t0;
+        if (now >= nextSample) {
+          nextSample = now + 500;
+          const g0 = bGates[0];
+          const mx0 = (g0.x0 + g0.x1) / 2, my0 = (g0.y0 + g0.y1) / 2;
+          let intents = 0, minEta = Infinity, minDistNow = Infinity;
+          for (const e of tracked) {
+            if (e.mech?.isDestroyed?.()) continue;
+            const d = Math.hypot(e.x - mx0, e.y - my0);
+            if (d < minDistNow) minDistNow = d;
+            if (e._gateIntent?.key !== g0.key) continue;
+            intents++;
+            const rem = remainingToGate(e.x, e.y, e._gateIntent, mx0, my0);
+            const spd = ((e.kindDef?.move?.maxSpeed) ?? 50) * 0.85;
+            const eta = spd > 0 ? (rem / spd) * 1000 : Infinity;
+            if (eta < minEta) minEta = eta;
+          }
+          series.push({
+            t: Math.round(now),
+            phase: a._gateStates.get(g0.key)?.phase ?? 'gone',
+            open: !!g0.open,
+            wanted: !!a._gateDemand.wanted(g0.key, a.time.now),
+            intents,
+            minEtaMs: minEta === Infinity ? null : Math.round(minEta),
+            minDistPx: minDistNow === Infinity ? null : Math.round(minDistNow),
+          });
+        }
+        for (const g of bGates) {
+          if (g.open && !openedAt.has(g.key)) openedAt.set(g.key, now);
+          if (!g.open) openedAt.delete(g.key);
+          const mx = (g.x0 + g.x1) / 2, my = (g.y0 + g.y1) / 2;
+          const spanLen = Math.hypot(g.x1 - g.x0, g.y1 - g.y0);
+          for (let i = 0; i < tracked.length; i++) {
+            const e = tracked[i];
+            if (e.mech?.isDestroyed?.()) continue;
+            const d = Math.hypot(e.x - mx, e.y - my);
+            if (d < minDist.get(g.key)) minDist.set(g.key, d);
+            const id = g.key + '|' + i;
+            const side = sideOf(g, e);
+            const prev = lastSide.get(id);
+            lastSide.set(id, side);
+            if (prev === undefined || side === 0 || prev === 0 || side === prev) continue;
+            if (d > spanLen) continue;    // flipped the span's line, but nowhere near the span
+            crossings.push({
+              gate: g.key, kind: e.kind ?? '?',
+              leadMs: openedAt.has(g.key) ? Math.round(now - openedAt.get(g.key)) : null,
+              gateWasOpen: !!g.open,
+            });
+          }
+        }
+      }
+      const withLead = crossings.filter((c) => c.leadMs != null);
+      const tankCrossings = withLead.filter((c) => c.kind === 'tank');
+      const leads = withLead.map((c) => c.leadMs).sort((x, y) => x - y);
+      out.leadTime = {
+        crossings: crossings.length,
+        crossingsWhileOpen: withLead.length,
+        crossingsWhileShut: crossings.filter((c) => !c.gateWasOpen).length,
+        tankCrossings: tankCrossings.length,
+        // THE HEADLINE: ms between a gate opening and a unit actually going through it.
+        leadMsMedian: leads.length ? leads[Math.floor(leads.length / 2)] : null,
+        leadMsMin: leads.length ? leads[0] : null,
+        leadMsMax: leads.length ? leads[leads.length - 1] : null,
+        tankLeadMs: tankCrossings.map((c) => c.leadMs).sort((x, y) => x - y),
+        // Diagnostics for a zero-crossing run: did anyone even get near a door?
+        closestApproachPx: [...minDist.values()].map((v) => (v === Infinity ? null : Math.round(v))),
+        survivingTracked: tracked.filter((e) => !e.mech?.isDestroyed?.()).length,
+        trackedTotal: tracked.length,
+        series,
+      };
+    }
+  }
   return out;
 });
 

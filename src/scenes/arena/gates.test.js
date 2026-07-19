@@ -49,6 +49,7 @@ function garrison(hex = A, over = {}) {
   const p = hexToPixel(hex.q, hex.r);
   return {
     x: p.x, y: p.y, baseId: 'base0', awareness: AWARE, flying: false,
+    kind: 'tank', kindDef: { move: { maxSpeed: 52 } },   // a real tank's speed, for ETA
     mech: { isDestroyed: () => false }, ...over,
   };
 }
@@ -338,6 +339,112 @@ describe('#309 gate wiring', () => {
     // budget than movement, or a unit can plan its way out and still fail to ask for the door.
     it('the demand budget is larger than the movement budget', () => {
       expect(GATE_DEMAND_MAX_NODES).toBeGreaterThan(ROUTE_MAX_NODES);
+    });
+  });
+
+  // ── PLAYTEST 3 REGRESSION: JUST IN TIME ──────────────────────────────────────────────
+  // "gates appear to be opening WAAAAAAY in advance of a ground unit needing to pass through it.
+  // like it opens when the pathing is decided, but it should open at the last moment when it needs
+  // to pass through instead."
+  //
+  // Cause: demand fired the moment a unit's route CROSSED a gate, with no notion of how far along
+  // that route the unit actually was. So a unit deep in a compound opened the door immediately and
+  // then walked to it while it stood wide open.
+  //
+  // These tests use a STRAIGHT corridor of known length so travel time is arithmetic rather than
+  // guesswork, and they walk the unit down it at a real tank's speed.
+  describe('just-in-time opening', () => {
+    const CORRIDOR_HEXES = 16;
+    const TANK_SPEED = 52 * 0.85;          // kindDef maxSpeed x the AI's speed fraction
+
+    // A straight run of passable hexes leading away from the gate, with everything else impassable.
+    // The player stands inside the compound, so a unit out in the corridor has a route to him that
+    // crosses the gate — the same demand question as a garrison heading out, just mirrored, and it
+    // lets the test control the unit's distance-to-door precisely.
+    function makeCorridorScene() {
+      const terrain = new Map();
+      for (let q = -40; q <= 40; q++) for (let r = -40; r <= 40; r++) terrain.set(axialKey(q, r), 'lava');
+      terrain.set(axialKey(A.q, A.r), 'grass');
+      const corridor = [];
+      for (let i = 0; i <= CORRIDOR_HEXES; i++) {
+        const h = { q: NB[3].q - i, r: NB[3].r };
+        corridor.push(h);
+        terrain.set(axialKey(h.q, h.r), 'grass');
+      }
+      const scene = Object.assign({}, WorldMixin, BasesMixin, {
+        terrain,
+        wallEdges: makeWallEdgeSet(NB.map((n, i) => ({
+          a: A, b: n, baseId: 'base0', ...(i === 3 ? { role: 'gate' } : {}),
+        }))),
+        buildingHp: new Map(), coverHp: new Map(),
+        enemies: [], bases: [],
+        px: hexToPixel(A.q, A.r).x, py: hexToPixel(A.q, A.r).y,   // the player, inside
+        _wokenBases: new Set(['base0']),
+        time: { now: 0 },
+        tweens: { add: (cfg) => { if (cfg.onComplete) cfg.onComplete(); return {}; } },
+        add: { circle: () => fakeGameObject(), rectangle: () => fakeGameObject() },
+        _redrawWallEdges() {}, _invalidateVisibility() {}, _outpostCollapseFx() {},
+      });
+      scene._initGates();
+      const gate = gateEdges(scene.wallEdges)[0];
+      const mouth = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
+      return { scene, gate, mouth, corridor };
+    }
+
+    // THE BUG. A unit with a perfectly good route through the gate, but a long way from it, must
+    // leave the door alone. Under the old behaviour this opened within about a second.
+    it('a unit far down its route does NOT open the gate', () => {
+      const { scene, gate, corridor } = makeCorridorScene();
+      const far = corridor[corridor.length - 1];
+      const p = hexToPixel(far.q, far.r);
+      scene.enemies.push(garrison(A, { x: p.x, y: p.y }));
+      run(scene, 30000);
+      expect(gate.open).toBe(false);
+      // …and it is genuinely wanting the door, not simply routeless — the intent exists, it is just
+      // not close enough to be a request yet. Without this the test could pass for the wrong reason.
+      expect(scene.enemies[0]._gateIntent?.key).toBe(gate.key);
+    });
+
+    // …and the same unit standing right outside opens it promptly.
+    it('a unit right at its gate DOES open it', () => {
+      const { scene, gate, mouth } = makeCorridorScene();
+      scene.enemies.push(garrison(A, { x: mouth.x - 40, y: mouth.y }));
+      run(scene, SURELY_OPEN_MS);
+      expect(gate.open).toBe(true);
+    });
+
+    // THE MEASUREMENT. Walk the unit down the corridor at a real tank's speed and record how much
+    // travel time is left when the doors finish opening. That lead should be positive (the door is
+    // never late) but small (it is not opening "WAAAAAAY in advance").
+    it('opens with a small positive lead — open before arrival, not long before', () => {
+      const { scene, gate, mouth, corridor } = makeCorridorScene();
+      const far = corridor[corridor.length - 1];
+      const start = hexToPixel(far.q, far.r);
+      const e = garrison(A, { x: start.x, y: start.y });
+      scene.enemies.push(e);
+
+      const totalPx = Math.hypot(mouth.x - start.x, mouth.y - start.y);
+      const ux = (mouth.x - start.x) / totalPx, uy = (mouth.y - start.y) / totalPx;
+      let openedAtMs = null, arrivedAtMs = null;
+      for (let t = 0; t < 60000 && arrivedAtMs === null; t += 16) {
+        const travelled = TANK_SPEED * (t / 1000);
+        if (travelled < totalPx) { e.x = start.x + ux * travelled; e.y = start.y + uy * travelled; }
+        else if (arrivedAtMs === null) arrivedAtMs = t;
+        scene.time.now += 16;
+        scene._updateGates(0.016);
+        if (gate.open && openedAtMs === null) openedAtMs = t;
+      }
+
+      expect(openedAtMs).not.toBeNull();
+      expect(arrivedAtMs).not.toBeNull();
+      const leadMs = arrivedAtMs - openedAtMs;
+      // Open BEFORE the unit gets there — never late, which is the worse failure.
+      expect(leadMs).toBeGreaterThan(0);
+      // …but only just. The whole complaint was a door standing open for many seconds; the lead is
+      // budgeted at GATE_OPEN_LEAD_MS (2200ms) minus the 1400ms the doors take to react and travel,
+      // so a couple of seconds of slack is the ceiling. A corridor this long (16 hexes, ~17s of
+      // walking) would have opened at t=0 under the old behaviour, i.e. a lead of ~17000ms.
+      expect(leadMs).toBeLessThan(3500);
     });
   });
 
