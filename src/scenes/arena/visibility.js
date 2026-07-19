@@ -1,260 +1,228 @@
-// Arena line-of-sight dimming (#306; flyer rule reversed by #316; reworked to RAYCAST by #306's
-// own playtest) — "could we try slightly dimming stuff that is outside of LOS for the player?"
+// #337 — REGION FOG OF WAR (the scene-side wiring; the model is pure in data/fogRegions.js).
 //
-// ⚠ CURRENT STATE: the DIMMING OVERLAY IS OFF. See `LOS_DIM_ENABLED` below — one constant, flip it
-// to `true` to restore it. The GAMEPLAY sight gate (`computeVisibleHexes` → `_pointVisible` →
-// targeting) is a different decision (#316) and is still ON. Everything described below is intact
-// and still tested; only the drawing is skipped.
+// THIS REPLACED #306's per-hex/per-frame raycast dimming. That version swept a visibility POLYGON
+// every frame the player moved and gated targeting on a per-hex LOS set; Jackson had the overlay
+// toggled off, undecided, and then re-specced the whole thing: "rework the greying out thing, I
+// have in 'inside/outside' concept that's less frequently updating that I think would be good",
+// plus "I would like to soften the edges of the shadow itself. So it's not quite so stark."
 //
-// ── What the playtest changed ──
-// The first pass dimmed whole HEXES that failed a hex-line LOS walk. It worked, but the owner's
-// verdict was twofold: "should be MUCH MUCH more dim; also didn't realize you were building a
-// hex-darkening version instead of like a raycast". So two things changed here and nothing else:
+// ⚠ THE CADENCE IS THE FEATURE. Everything expensive here is keyed to an EVENT, not to a frame:
 //
-//   1. DIM_ALPHA 0.34 → 0.8. Close to blacked out. He chose this knowing units in shadow become
-//      hard to make out — that is the accepted trade, and it is one constant to retune.
-//   2. The overlay is now a true VISIBILITY POLYGON (data/shadowPolygon.js): blockers are line
-//      segments, rays sweep their corners, and the dark region is filled as angularly-disjoint
-//      wedges. Shadow edges are straight lines radiating from real obstacle corners at whatever
-//      angle the geometry gives, instead of snapping to hex boundaries.
+//   • The region set recomputes when the player CROSSES A REGION THRESHOLD (leaves a base compound,
+//     or leaves one coarse open cell for another). Driving across the middle of a cell recomputes
+//     nothing at all.
+//   • Breach/open-gate reveals recompute when a span falls or a gate changes state
+//     (`_invalidateVisibility`, already called from world.js and bases.js for exactly those events).
+//   • Symmetric visibility ("if it can shoot me I can see it") is evaluated PER ENGAGING ENEMY, a
+//     few dozen at most, never per hex.
 //
-// ── TWO cadences, deliberately, because there are TWO consumers ──
-// This file runs two independent computations that must not be conflated:
+// The only per-frame work is the overlay REDRAW, and even that is gated on the camera having moved
+// a hex. If you are about to add a per-frame full-map visibility pass, stop — that pass is the
+// thing this issue deleted.
 //
-//   • RENDERING (the shadow polygon) — recomputed EVERY FRAME the player has moved at all. This is
-//     not a nice-to-have: a raycast shadow's ANGLE changes continuously with the viewer's position,
-//     so the hex-boundary gate the first pass used (~5 recomputes/second) would make every shadow
-//     edge visibly snap and jump while driving. The owner flagged exactly this — "5x/sec seems...
-//     kinda infrequent". Per-frame is the only cadence that looks right, and it measured cheap
-//     enough to afford.
-//   • GAMEPLAY (`_pointVisible` → what targeting/convergence may acquire) — still the ORIGINAL
-//     hex-based `computeVisibleHexes`, still gated on crossing a hex boundary. That code is pure,
-//     unit-tested, and #316 has just re-cut its flyer rule; re-basing a tested combat gate on new
-//     geometry for a cosmetic change would be all risk and no gain. Hexes decide what you may
-//     SHOOT; polygons decide what looks dark.
+// ── What the layer looks like ──
+// ONE dark translucent layer at DEPTH.LOS_DIM (2.9), the same single-overlay treatment #306 chose
+// and for the same reason: terrain (0), ground FX (1), small ground units (2), the cover canopy
+// (2.5) and large ground units (2.75) are all fogged IDENTICALLY by construction, with no rule
+// about which thing gets which treatment. The player (3) is above it and is never fogged.
 //
-//   Both are built from the same blockers (`coverBlocksForRay` + standing wall spans), so they
-//   agree to within a hex. Where they can differ is a sub-hex sliver at a shadow boundary: an
-//   enemy whose hex CENTRE is lit but whose sprite is clipped by a shadow edge, or the reverse.
-//   That seam is known and accepted, not silently reconciled.
+// Unlike #306 the fog is drawn PER HEX with a per-hex alpha, which is what buys the softness:
+// `softFogDepths` ramps alpha over FOG_SOFT_STEPS rings out from the lit frontier, so an edge is a
+// two-or-three-hex gradient instead of a stencil, and the ceiling dropped 0.8 → 0.62.
 //
-// ── The treatment (unchanged from the original decision) ──
-// ONE dark translucent layer at DEPTH.LOS_DIM (2.9) — not per-object tinting, not a grey wash.
-// Because everything below 2.9 shares this single overlay, terrain (0), ground FX (1), small ground
-// units (2), the cover canopy (2.5) and large ground units (2.75) are dimmed IDENTICALLY, by
-// construction. There is no rule about which thing gets which treatment and no way for them to
-// drift apart. The PLAYER sits at UNITS (3), above the overlay, and is never dimmed.
+// THREE tiers, and they encode the persistence rule Jackson set:
+//   • lit    (alpha 0)          — inside the current region, or revealed through a breach/open gate
+//   • known  (alpha KNOWN_ALPHA)— TERRAIN PERSISTS for the run once seen. A fresh run starts dark.
+//   • unseen (alpha FOG_ALPHA)  — never visited
+// ENEMIES DO NOT PERSIST ("Yes, but enemies still hide") — they are hidden per-frame by
+// `_enemyVisible`, independently of the terrain memory, so a compound you have already looted still
+// reads as mapped-but-unwatched.
 //
-// ⚠ #327 CHANGED THIS: FLYING units (helicopter, drone) used to sit at 2.8, BELOW the overlay, so
-// #316 could dim them like ground units. In play that also drew aircraft UNDERNEATH the mechs they
-// flew over, which read wrong, so #327 moved them to 3.5 — ABOVE both the player and this overlay.
-// Since the dimming is currently off (see LOS_DIM_ENABLED), that costs nothing today; the owner's
-// call on #327 was "don't care [about the fog], just fix the z-order". But IF YOU FLIP THE DIMMING
-// BACK ON, flyers will stay bright over un-sighted ground — the exact bug #316 fixed — and you have
-// to re-decide it: either raise LOS_DIM above FLYING_UNITS, or dim flyers per-entity instead of via
-// this single overlay. See the FLYING_UNITS comment in shared.js.
+// #327's z-order (flyers at 3.5, ABOVE this layer) was previously flagged as a wart to revisit. It
+// is now the INTENDED rule — "Hides enemies too except for airborn enemies that have launched into
+// the air" — so flyers being un-foggable is correct and nothing about the depth stack needs redoing.
 //
-// Enemies in shadow are DIMMED, NOT HIDDEN — you can still make out a shape, so you're never shot
-// by something wholly invisible. At 0.8 that shape is faint; post-#316 anything with no sight line
-// to you can't shoot you anyway, so the darkness reads as an honest tell that it's out of the fight.
-//
-// ── World UI is deliberately NOT dimmed ──
-// Powerups, salvage and the objective beacon live at DEPTH.WORLD_UI (6), above the overlay, so
-// leaving them bright was a real choice. They're navigational aids, not threats: dimming a threat
-// is the whole mechanic, dimming a pickup marker would just make routing fiddly. The objective
-// beacon in particular is what the HUD's off-screen arrow (#80/#260) promises is always findable.
-//
-// ── Cost ──
-// The sweep is affordable because of what it is NOT asked to do: blocking hexes contribute only
-// their SILHOUETTE (edges shared with another blocker are skipped), everything is culled to the
-// view radius, and each ray angularly rejects a segment in two compares before any intersection
-// maths. Measured in the real running game with a paired within-session A/B (same page, same world,
-// same fight, toggling every second — scripts/profile-los-306.mjs), because the standard profiler
-// reseeds the world per run and its noise swamps the signal. Numbers are in the issue.
+// World UI (powerups, salvage, the objective beacon, DEPTH.WORLD_UI 6) stays above the fog for
+// #306's original reason: they are navigational aids, not threats.
 import { DEPTH } from './shared.js';
-import { HEX_SIZE, axialKey, hexToPixel, pixelToHex } from '../../data/hexgrid.js';
-import { computeVisibleHexes } from '../../data/visibility.js';
-import { collectShadowSegments, computeVisibilityPolygon, shadowWedges } from '../../data/shadowPolygon.js';
-import { liveWallEdges, wallEdgeCrossing } from '../../data/wallEdges.js';
+import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
+import { blocksSpan, wallEdgeCrossing } from '../../data/wallEdges.js';
+import {
+  buildFogWorld, regionKeyAt, regionVisibleHexes, breachRevealHexes,
+  softFogDepths, fogAlphaFor, enemyVisibleInFog,
+} from '../../data/fogRegions.js';
+import { DORMANT } from '../../data/awareness.js';
 
-// ─────────────────────────────────────────────────────────────────────────────────────
-// #306 TEMPORARY PLAYTEST TOGGLE — the dimming overlay is currently OFF.
-//
-// Owner, 2026-07-19: "temporarily turn off the LOS/greyout/raycast thing, I'm not sure if I like
-// it or not, but don't remove the code yet". He is UNDECIDED, not rejecting it. Nothing has been
-// deleted: shadowPolygon.js, visibility.js, this file and every test still stand and still pass.
-//
-//   TO TURN IT BACK ON: change this one constant to `true`. That is the whole change — no other
-//   edit anywhere. Off, the renderer costs literally nothing: no Graphics object is created and
-//   `_updateShadowPolygon` returns before any segment collection, sweep, or fill.
-//
-// THIS FLAG IS RENDER-ONLY, AND THAT IS DELIBERATE. The GAMEPLAY sight gate — `computeVisibleHexes`
-// feeding `_pointVisible`, which decides what targeting/convergence may lock — is a SEPARATE
-// decision from #316 ("let's let cover be actual cover") that he has NOT reversed. It stays ON
-// unconditionally below, and cover keeps being real cover with the visual dark.
-const LOS_DIM_ENABLED = false;
-// ─────────────────────────────────────────────────────────────────────────────────────
+// Near-black with a faint blue bias: darkens without tinting, so it won't fight the biome palettes
+// the way a neutral grey would. Kept from #306; only the ALPHAS changed (see fogRegions.js).
+const FOG_COLOR = 0x050a12;
 
-// How dark, and what colour. The owner's call after playtesting 0.34: "should be MUCH MUCH more
-// dim" — he picked ~80%, knowing it makes units in shadow hard to read. A near-black with a faint
-// blue bias darkens without tinting, so it won't fight the biome palettes the way a grey would.
-// THIS IS THE RETUNE KNOB — one number, and nothing else needs to change with it.
-const DIM_ALPHA = 0.8;
-const DIM_COLOR = 0x050a12;
+// Redraw the overlay once the camera has drifted this far. A hex is the natural quantum — the fog
+// is drawn per hex, so nothing on screen can change identity until roughly this much has moved.
+const REDRAW_MOVE_PX = HEX_SIZE;
 
-// Re-sweep once the player has moved this far. Effectively per-frame while driving (a mech covers
-// far more than half a pixel in one frame at any speed), and exactly zero while parked — which is
-// strictly better than an unconditional per-frame recompute and visually identical, because the
-// geometry depends only on POSITION, not on facing or time. Deliberately sub-pixel: anything larger
-// and shadow edges would step, which is the whole complaint this rework exists to fix.
-const SHADOW_MOVE_EPS_PX = 0.5;
+// A couple of rings past the camera's half-diagonal, so hexes scrolling into view are already
+// fogged rather than popping a frame later.
+const DRAW_MARGIN_RINGS = 2;
 
-// How far past the camera's half-diagonal rays are cast. Slightly over, so geometry scrolling into
-// view is already classified rather than popping a frame later.
-const FAR_MARGIN = 1.15;
+// Hard cap on the drawn radius so an unusually large window can't make the redraw unbounded.
+const MAX_DRAW_RADIUS = 26;
 
-// Hard cap on the FOV radius so an unusually large window can't make either pass unbounded.
-const MAX_FOV_RADIUS = 26;
-
-// A couple of rings past what the camera can show, same reason as FAR_MARGIN.
-const FOV_MARGIN_RINGS = 2;
+// Fills are drawn a hair oversized so adjacent hexes overlap instead of leaving hairline seams
+// between two differently-alpha'd neighbours.
+const HEX_OVERDRAW = 1.06;
 
 export const VisibilityMixin = {
-  // Called once from create(). The Graphics is world-space (not scroll-fixed) and sits between
-  // DEPTH.LARGE_GROUND_UNITS (2.75) and DEPTH.UNITS (3) — that single depth value is the entire
-  // "everything but the player gets dimmed" implementation. NOTE (#327): flying units moved to
-  // 3.5, ABOVE this layer, so they are no longer dimmed — see the FLYING_UNITS comment in
-  // shared.js if this dimming is ever re-enabled.
   _initVisibility() {
-    // Off (the current default), no Graphics is ever created — there is nothing to draw into and
-    // nothing for Phaser to submit each frame. The gameplay FOV below is set up regardless.
-    this.fogFx = LOS_DIM_ENABLED ? this.add.graphics().setDepth(DEPTH.LOS_DIM) : null;
+    this.fogFx = this.add.graphics().setDepth(DEPTH.LOS_DIM);
     this._visibilityReady = true;
-    this.visibleHexes = null;   // null = not computed yet; targeting treats that as "no gate"
-    this._fogHexQ = null;
-    this._fogHexR = null;
-    this._fogRadius = 0;
-    this._fogDirty = true;      // set by world.js on terrain collapse / wall breach
-    this._shadowX = null;       // last position the polygon was swept from
-    this._shadowY = null;
-    this._shadowSegs = 0;       // last segment count — read by the perf harness
+    // The precomputed region map: base footprints, their interiors and their outlines. Built once
+    // per run from `this.bases` (world.js `_buildWorld` populates it before create() gets here).
+    this.fogWorld = buildFogWorld(this.bases ?? []);
+    this.fogRegion = null;        // current region key — the threshold everything hangs off
+    this.visibleHexes = null;     // LIVE lit set; also the targeting gate (see `_pointVisible`)
+    this.knownHexes = new Set();  // terrain memory, persists for the whole run
+    this._fogDepths = new Map();  // per-hex soft-edge depth, rebuilt with the region
+    this._fogDirty = true;        // a wall fell / a gate moved ⇒ recompute the reveals
+    this._fogDrawX = null;        // last position the overlay was drawn from
+    this._fogDrawY = null;
   },
 
-  // #306: the world just changed shape (a destructible hex collapsed, or a wall span was breached),
-  // so both caches are stale — blowing a hole in cover has to visibly buy vision immediately.
-  // Called from world.js. Cheap: flips a flag, the work happens on the next tick.
+  // The world just changed shape — a destructible hex collapsed, a wall span was breached, or a
+  // gate opened/closed. All three are exactly the events a breach reveal depends on, and all three
+  // already call this (world.js `_damageBuildingAt`/`_damageWallEdge`, bases.js's gate tick). Cheap:
+  // flips a flag; the recompute happens on the next tick.
   _invalidateVisibility() {
     this._fogDirty = true;
-    this._shadowX = null;
+    this._fogDrawX = null;
   },
 
-  // Per-frame tick from update(), with the camera's world-view rect (the same one tile culling and
-  // the terrain labels use — no second camera-bounds computation).
   _updateVisibility(view) {
-    // Gated on init, NOT on `fogFx` — with the overlay off there is no Graphics, but the gameplay
-    // sight gate below must still run every tick or cover would stop being cover.
     if (!this._visibilityReady) return;
-    const radius = this._fovRadius(view);
-    this._updateTargetingFov(radius);   // GAMEPLAY — always on, never touched by the toggle.
-    if (!LOS_DIM_ENABLED) { this._fogDirty = false; return; }
-    this._updateShadowPolygon(view, radius);
-  },
-
-  // ── Gameplay gate: unchanged hex FOV, unchanged cadence ──────────────────────────────
-  // Only runs when the player's HEX changes, the radius changes, or the world collapsed. That is
-  // the right cadence for THIS consumer precisely because its output is hex-granular: targeting
-  // asks "is the enemy's hex visible", and that answer cannot change until somebody changes hex.
-  _updateTargetingFov(radius) {
     const h = pixelToHex(this.px, this.py);
-    if (!this._fogDirty && h.q === this._fogHexQ && h.r === this._fogHexR && radius === this._fogRadius) return;
-    this._fogHexQ = h.q;
-    this._fogHexR = h.r;
-    this._fogRadius = radius;
-
-    // #288: base walls are hex-EDGE geometry, not terrain hexes, so they're consulted as line
-    // segments (`wallEdgeCrossing`, the same exact-crossing test shots and movement use). Passed
-    // as null when there are no standing spans, which re-enables the open-ground fast path.
-    const walls = this.wallEdges && this.wallEdges.edges?.size > 0 ? this.wallEdges : null;
-    this.visibleHexes = computeVisibleHexes(
-      h, radius, (q, r) => this.terrain.get(axialKey(q, r)),
-      walls
-        ? {
-          hexCenter: (q, r) => hexToPixel(q, r),
-          // #309: `true` — you can see through an OPEN gate. A closed one blocks sight like any span.
-          // #310: the trailing `true` here used to be #309's `passOpenGates`, which that issue
-          // retired — it had become a stray arg, and this position is now `ignoreKey`, so it is
-          // dropped rather than left to read as "ignore some span".
-          segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(walls, x0, y0, x1, y1),
-        }
-        : {},
-    );
+    const region = regionKeyAt(h.q, h.r, this.fogWorld);
+    // ── THE THRESHOLD ── everything below this line runs only when the answer to "which region am
+    // I in" changed, or when the wall geometry did. Not per frame, not per hex, not per movement.
+    if (region !== this.fogRegion || this._fogDirty) {
+      this._fogDirty = false;
+      this.fogRegion = region;
+      this._rebuildRegionVisibility(region);
+    }
+    this._drawFog(view);
   },
 
-  // ── Rendering: the raycast sweep, per frame ──────────────────────────────────────────
-  // `_fogDirty` is consumed HERE rather than in the targeting pass so a wall breach re-sweeps the
-  // polygon on the very next frame even if the player is standing perfectly still. (It's read by
-  // the targeting pass first, which runs before this one — hence the explicit clear here.)
-  _updateShadowPolygon(view, radius) {
-    if (!this.fogFx) return;   // overlay disabled (or not initialised) — nothing to sweep into.
-    const dirty = this._fogDirty;
-    this._fogDirty = false;
-    if (!dirty && this._shadowX !== null
-      && Math.abs(this.px - this._shadowX) < SHADOW_MOVE_EPS_PX
-      && Math.abs(this.py - this._shadowY) < SHADOW_MOVE_EPS_PX) return;
-    this._shadowX = this.px;
-    this._shadowY = this.py;
-
-    // Cull to the camera's half-diagonal plus a margin. Rays are capped at this distance and shadow
-    // wedges are extended well past it, so nothing on screen is ever left unclassified.
-    const far = Math.hypot(view.width / 2, view.height / 2) * FAR_MARGIN;
-    const walls = this.wallEdges ? liveWallEdges(this.wallEdges) : null;
-    const segs = collectShadowSegments(
-      this.px, this.py, far, (q, r) => this.terrain.get(axialKey(q, r)),
-      { wallEdges: walls, hexRadius: radius },
-    );
-    this._shadowSegs = segs.length;
-    this._drawShadow(segs, far);
+  // Lit set = the region's own hexes ∪ everything any breach/open gate reveals. Then fold the
+  // result into the run-long terrain memory and recompute the soft-edge ramp.
+  _rebuildRegionVisibility(region) {
+    const visible = regionVisibleHexes(region, this.fogWorld);
+    for (const k of this._breachReveals()) visible.add(k);
+    this.visibleHexes = visible;
+    for (const k of visible) this.knownHexes.add(k);
+    this._fogDepths = softFogDepths(visible);
   },
 
-  _drawShadow(segs, far) {
+  // Every base with at least one non-solid span gets the all-angles reveal. `blocksSpan` is the
+  // canonical "is this span solid" predicate, so a breached wall and an open gate are handled by
+  // the SAME code path with no branch — which is precisely what Jackson asked for ("open gate should
+  // reveal a portion of the base per what we talked about, right?").
+  //
+  // This is the generous case he was shown and accepted: the union over all exterior viewpoints of
+  // what is visible through the gap. For an open compound that can be most of the interior. If it
+  // plays too loose the knob is `BREACH_MAX_DEPTH` in fogRegions.js — one constant.
+  _breachReveals() {
+    const out = new Set();
+    const set = this.wallEdges;
+    if (!set || !set.edges?.size) return out;
+    const openings = new Map();   // baseId -> [segment]
+    for (const e of set.edges.values()) {
+      if (blocksSpan(e) || e.baseId == null) continue;
+      if (!openings.has(e.baseId)) openings.set(e.baseId, []);
+      openings.get(e.baseId).push({ x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 });
+    }
+    for (const [baseId, segs] of openings) {
+      const revealed = breachRevealHexes(baseId, this.fogWorld, segs, {
+        // Standing spans still block — a breach on the north wall does not light the yard behind
+        // an intact south wall. Same exact-crossing test shots and movement use.
+        segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(set, x0, y0, x1, y1),
+        terrainAt: (q, r) => this.terrain.get(axialKey(q, r)),
+      });
+      for (const k of revealed) out.add(k);
+    }
+    return out;
+  },
+
+  // ── Drawing ──────────────────────────────────────────────────────────────────────────
+  // Redrawn only when the camera has drifted a hex, or a rebuild just happened. Everything it needs
+  // (the lit set, the memory set, the depth ramp) is already computed; this is pure fill.
+  _drawFog(view) {
     const g = this.fogFx;
+    if (!g) return;
+    if (this._fogDrawX !== null
+      && Math.abs(this.px - this._fogDrawX) < REDRAW_MOVE_PX
+      && Math.abs(this.py - this._fogDrawY) < REDRAW_MOVE_PX) return;
+    this._fogDrawX = this.px;
+    this._fogDrawY = this.py;
     g.clear();
-    // Nothing in range blocks sight (open ground — the common case): the clear IS the whole redraw,
-    // no sweep and no fills at all.
-    if (!segs.length) return;
-    const poly = computeVisibilityPolygon(this.px, this.py, segs, far);
-    const wedges = shadowWedges(poly, this.px, this.py, far);
-    if (!wedges.length) return;
-    g.fillStyle(DIM_COLOR, DIM_ALPHA);
-    // The wedges are angularly disjoint by construction (see shadowPolygon.js), so filling them
-    // independently at one alpha gives a perfectly uniform darkness — no double-darkened overlaps,
-    // which is exactly what naive per-obstacle shadow volumes WOULD have produced.
-    // One reused 4-point buffer rather than fresh objects per wedge: Phaser reads the points
-    // synchronously inside fillPoints, so mutating and re-passing is safe, and it turns hundreds of
-    // short-lived allocations per FRAME (this now runs per frame) into zero.
-    const buf = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
-    for (const w of wedges) {
-      for (let i = 0; i < 4; i++) { buf[i].x = w[i * 2]; buf[i].y = w[i * 2 + 1]; }
-      g.fillPoints(buf, true, true);
+    const center = pixelToHex(this.px, this.py);
+    for (const h of range(center, this._drawRadius(view))) {
+      const k = axialKey(h.q, h.r);
+      const a = fogAlphaFor(k, {
+        visible: this.visibleHexes, known: this.knownHexes, depths: this._fogDepths,
+      });
+      if (a <= 0) continue;
+      const p = hexToPixel(h.q, h.r);
+      g.fillStyle(FOG_COLOR, a);
+      g.fillPoints(hexPoints(p.x, p.y), true, true);
     }
   },
 
-  // How many rings out the hex FOV needs to cover: the half-diagonal of the camera's world-view
-  // rect converted to hex steps (a hex advances 1.5 * HEX_SIZE per row, the tighter of the two
-  // axes, so this over- rather than under-estimates), plus a margin, clamped.
-  _fovRadius(view) {
+  _drawRadius(view) {
     const halfDiag = Math.hypot(view.width / 2, view.height / 2);
-    const rings = Math.ceil(halfDiag / (HEX_SIZE * 1.5)) + FOV_MARGIN_RINGS;
-    return Math.min(MAX_FOV_RADIUS, rings);
+    return Math.min(MAX_DRAW_RADIUS, Math.ceil(halfDiag / (HEX_SIZE * 1.5)) + DRAW_MARGIN_RINGS);
   },
 
-  // Is the world point (x, y) inside the player's current field of view? Used by TARGETING to gate
-  // what convergence/lock may acquire — deliberately the HEX answer, not the polygon one (see the
-  // file header). Returns true when no FOV has been computed yet, so targeting is never silently
-  // disabled by ordering.
+  // ── Consumers ────────────────────────────────────────────────────────────────────────
+  // Is this world point currently lit? The player's targeting gate for non-enemy things (hexes,
+  // wall spans). Returns true before any fog exists so targeting is never silently disabled.
   _pointVisible(x, y) {
     if (!this.visibleHexes) return true;
     const h = pixelToHex(x, y);
     return this.visibleHexes.has(axialKey(h.q, h.r));
   },
+
+  // Can the player SEE this enemy right now? The one gate for both drawing it and targeting it —
+  // "nobody targets what they can't see", and the player never gets a lock on something he isn't
+  // being shown. Airborne units and wall turrets are always visible; anything with a live firing
+  // lane to the player is visible by SYMMETRY, so he is never shot by something wholly invisible.
+  _enemyVisible(e) {
+    return enemyVisibleInFog(e, {
+      visible: this.visibleHexes,
+      hexKeyOf: (x, y) => this._hexKeyAt(x, y),
+      losClear: e?._losClear === true,
+      awake: e?.awareness !== DORMANT,
+    });
+  },
+
+  // Per-frame, per-enemy (a few dozen): hide the view of anything the fog conceals. Terrain memory
+  // deliberately does NOT apply here — enemies never persist.
+  _syncEnemyFogVisibility() {
+    if (!this.visibleHexes || !this.enemies) return;
+    for (const e of this.enemies) {
+      if (e.view) e.view.setVisible(this._enemyVisible(e));
+    }
+  },
 };
+
+// A pointy-top hex outline in world pixels, slightly oversized (see HEX_OVERDRAW). One reused
+// buffer: Phaser reads the points synchronously inside fillPoints, so mutating and re-passing is
+// safe, and it turns hundreds of short-lived allocations per redraw into zero.
+const HEX_BUF = [0, 1, 2, 3, 4, 5].map(() => ({ x: 0, y: 0 }));
+function hexPoints(cx, cy) {
+  const rad = HEX_SIZE * HEX_OVERDRAW;
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    HEX_BUF[i].x = cx + rad * Math.cos(a);
+    HEX_BUF[i].y = cy + rad * Math.sin(a);
+  }
+  return HEX_BUF;
+}

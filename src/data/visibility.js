@@ -1,3 +1,11 @@
+// ⚠ #337 SUPERSEDED MOST OF THIS FILE. The region fog (data/fogRegions.js) replaced the per-hex
+// LOS model wholesale: `computeVisibleHexes`/`hexLineClear` are no longer wired to anything in the
+// running game — the lit set now comes from which REGION the player is in, and the shadow-polygon
+// renderer they shared a header with (data/shadowPolygon.js) is deleted. They are kept, tested, as
+// the general "what can be seen from this hex" utility, and because #337's breach reveal is the
+// same idea at a different cadence. What IS still live is `enemyTargetable` below, as the fallback
+// path when a scene has no fog (`_enemyVisible` is the real gate — arena/visibility.js).
+//
 // #306: the player's FIELD OF VIEW over the hex grid — "which hexes can I actually see from
 // where I'm standing?" — as pure, testable geometry. This is categorically different from the
 // LOS the rest of the game already had: `_wallDistanceLos` (arena/world.js) and

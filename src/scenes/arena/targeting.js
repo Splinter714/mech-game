@@ -59,7 +59,14 @@ export const TargetingMixin = {
     // back. This closes an asymmetry rather than creating one.
     const inRange = (e) => !e.mech.isDestroyed()
       && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE
-      && enemyTargetable(e, this.visibleHexes, (x, y) => this._hexKeyAt(x, y));
+      // #337: the fog's per-enemy rule, not the raw hex set. "Nobody targets what they can't see —
+      // player and enemies alike" (Jackson chose "Full parity"), and the corollary is that anything
+      // the fog DOES show him is lockable: airborne units, wall turrets, and — by symmetry — any
+      // enemy with a live firing lane on him. `_enemyVisible` is the single source of truth for
+      // both what gets drawn and what may be acquired, so the reticle can never grab a shape that
+      // isn't on screen, and a thing shooting him is never un-lockable.
+      && (this._enemyVisible ? this._enemyVisible(e)
+        : enemyTargetable(e, this.visibleHexes, (x, y) => this._hexKeyAt(x, y)));
 
     // aimEnemy (convergence): the in-range enemy `pickAimEnemy` (shared.js) scores best — angular
     // offset from the aim line dominates, but #250 playtest follow-up: a meaningfully closer

@@ -734,6 +734,11 @@ export const EnemiesMixin = {
     // garrison awake) is spread over several frames instead of spiking one.
     this._enemyRouter?.beginTick();
     for (const e of this.enemies) this._updateEnemy(e, dt, delta);
+    // #337: hide anything the region fog conceals. Runs AFTER the per-enemy update so `_losClear`
+    // (the symmetric-visibility half of the rule) is this tick's answer, not last tick's. Terrain
+    // persists for the run but enemies never do — Jackson: "Yes, but enemies still hide" — so this
+    // is re-evaluated every tick from the LIVE lit set, not from the terrain memory.
+    this._syncEnemyFogVisibility?.();
     const alive = this.enemies.filter((e) => !e.mech.isDestroyed()).length;
     // #87: dead enemies are pruned out of `this.enemies` the SAME tick they die, so the array
     // length alone no longer reflects the stage's squad size — use the running spawn counter for
