@@ -90,7 +90,7 @@ describe('resolveWeapon (#243)', () => {
     expect(r.delivery.fireRate).toBe(9);
     // Every other delivery field survives from the base profile.
     expect(r.delivery.pattern).toBe('stream');
-    expect(r.delivery.streams).toBe(WEAPONS.machineGun.delivery.streams);
+    expect(r.delivery.count).toBe(WEAPONS.machineGun.delivery.count);
     expect(r.delivery.velocity).toBe(WEAPONS.machineGun.delivery.velocity);
     expect(r.delivery.kind).toBe(WEAPONS.machineGun.delivery.kind);
     expect(r.delivery.hit).toBe(WEAPONS.machineGun.delivery.hit);
@@ -98,7 +98,7 @@ describe('resolveWeapon (#243)', () => {
 
   it('never mutates the base WEAPONS entry (or its delivery)', () => {
     const before = JSON.parse(JSON.stringify(WEAPONS.machineGun));
-    const r = resolveWeapon('machineGun', { damage: 1, delivery: { fireRate: 9, streams: 1 } });
+    const r = resolveWeapon('machineGun', { damage: 1, delivery: { fireRate: 9, count: 1 } });
     expect(r).not.toBe(WEAPONS.machineGun);
     expect(r.delivery).not.toBe(WEAPONS.machineGun.delivery);
     expect(JSON.parse(JSON.stringify(WEAPONS.machineGun))).toEqual(before);

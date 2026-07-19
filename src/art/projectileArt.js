@@ -223,7 +223,7 @@ function drawWeaponIcon(g, weapon, S, c) {
   }
   const kind = projectileKind(weapon);
   if (d.pattern === 'spread') {
-    const n = Math.min(3, Math.max(2, d.spreadCount || 3));
+    const n = Math.min(3, Math.max(2, d.count || 3));
     const perp = ang + Math.PI / 2;
     for (let i = 0; i < n; i++) {
       const o = (i - (n - 1) / 2) * 6 * S;

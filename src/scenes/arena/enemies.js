@@ -944,7 +944,7 @@ export const EnemiesMixin = {
   },
 
   // #269 playtest follow-up: root cause of "helicopter Repeater fires a single stream even
-  // though `weaponOverride.delivery.streams: 2` (and, since #256, machineGun's own BASE delivery)
+  // though `weaponOverride.delivery.count: 2` (and, since #256, machineGun's own BASE delivery)
   // is set." Both enemy fire call sites (the mech-enemy loop above and `_fireVehicleWeapon`
   // below) resolved the weapon and called `planEmissions(weapon)` — same shared sim the PLAYER's
   // own `fireWeapon` (firing.js) uses — but then only ever spawned ONE round/beam/melee swing

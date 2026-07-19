@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -10,11 +10,11 @@ describe('planEmissions', () => {
     expect(p.shots[0]).toMatchObject({ delay: 0, angleOffset: 0, lateral: 0 });
   });
 
-  it('fans a spread weapon into spreadCount angled shots, centred on the aim line', () => {
+  it('fans a spread weapon into `count` angled shots, centred on the aim line', () => {
     // swarmRack has no spreadJitter, so its fan is the plain deterministic (unjittered)
     // case — shotgun (#101) shares this same deterministic-fan behaviour, verified below.
     const p = planEmissions(WEAPONS.swarmRack);
-    expect(p.shots).toHaveLength(WEAPONS.swarmRack.delivery.spreadCount);
+    expect(p.shots).toHaveLength(WEAPONS.swarmRack.delivery.count);
     const angles = p.shots.map((s) => s.angleOffset);
     expect(Math.min(...angles)).toBeLessThan(0);
     expect(Math.max(...angles)).toBeGreaterThan(0);
@@ -27,17 +27,17 @@ describe('planEmissions', () => {
     // "organic" feel, but the owner wants the fan itself perfectly even/repeatable — no
     // launch-angle jitter. Instead the organic feel comes from independent per-pellet FLIGHT
     // wobble (see the 'kinematics' describe block below), which never touches these angles.
-    const { spreadCount, spreadAngle, spreadJitter } = WEAPONS.shotgun.delivery;
+    const { count, spreadAngle, spreadJitter } = WEAPONS.shotgun.delivery;
     const cone = (spreadAngle * Math.PI) / 180;
 
-    expect(spreadCount).toBe(7);
+    expect(count).toBe(7);
     expect(WEAPONS.shotgun.damage).toBe(4.457);   // #259 DPS-squish retune (was 3)
     expect(spreadJitter).toBeUndefined(); // no launch-angle jitter (reverted)
 
     // Repeated trigger pulls produce the EXACT same evenly-spaced fan every time.
     const runs = Array.from({ length: 20 }, () => planEmissions(WEAPONS.shotgun).shots.map((s) => s.angleOffset));
     const first = runs[0];
-    expect(first).toHaveLength(spreadCount);
+    expect(first).toHaveLength(count);
     for (const angles of runs) expect(angles).toEqual(first);
 
     // The fan spans exactly ±cone/2 (centred, symmetric) with no random overshoot.
@@ -52,19 +52,19 @@ describe('planEmissions', () => {
 
   it('clusters a dumbfire clump with lateral offsets and ~parallel headings (no fan)', () => {
     const p = planEmissions(WEAPONS.clusterRocket);
-    expect(p.shots).toHaveLength(WEAPONS.clusterRocket.delivery.spreadCount);
+    expect(p.shots).toHaveLength(WEAPONS.clusterRocket.delivery.count);
     expect(p.shots.some((s) => s.lateral !== 0)).toBe(true);
     expect(p.shots.every((s) => Math.abs(s.angleOffset) < 0.05)).toBe(true); // tight, not a cone
     expect(p.shots.every((s) => s.delay === 0)).toBe(true);                  // whole clump launches at once
   });
 
   it('schedules a multi-pulse burst as delayed sub-shots', () => {
-    const { burst } = WEAPONS.pulseLaser.delivery;
+    const { burst, count } = WEAPONS.pulseLaser.delivery;
     const p = planEmissions(WEAPONS.pulseLaser);
     expect(p.mode).toBe('hitscan');
-    expect(p.shots).toHaveLength(burst.count);
+    expect(p.shots).toHaveLength(count);
     expect(p.shots.map((s) => s.delay)).toEqual(
-      Array.from({ length: burst.count }, (_, i) => i * burst.interval),
+      Array.from({ length: count }, (_, i) => i * burst.interval),
     );
   });
 
@@ -94,8 +94,8 @@ describe('planEmissions', () => {
   });
 
   // #220: a small spreadJitter was added so the single-lane bolt stream sputters slightly
-  // off a perfectly straight line. plasmaLance has no sprayCount/streams>1/cluster/spread,
-  // so this must land on the "single continuously-streamed shot" branch of planEmissions —
+  // off a perfectly straight line. plasmaLance is count: 1 with no cluster/spread, so this
+  // must land on the jittered-stream branch of planEmissions with a count of one —
   // exactly ONE bolt per cadence tick, just with a small random angleOffset — never an
   // accidental multi-pellet spray or fan.
   it('jitters Plasma Lance bolts slightly without spawning extra pellets per shot', () => {
@@ -118,29 +118,30 @@ describe('planEmissions', () => {
 
   it('emits parallel lanes for a multi-stream weapon — offset laterally, no fan (Repeater)', () => {
     const p = planEmissions(WEAPONS.machineGun);
-    const { streams, streamSpacing } = WEAPONS.machineGun.delivery;
-    expect(p.shots).toHaveLength(streams);
+    const { count, streamSpacing } = WEAPONS.machineGun.delivery;
+    expect(p.shots).toHaveLength(count);
     expect(p.shots.every((s) => s.angleOffset === 0)).toBe(true);        // parallel, not fanned
     const laterals = p.shots.map((s) => s.lateral);
     expect(laterals.reduce((a, b) => a + b, 0)).toBeCloseTo(0);          // straddles the aim line
-    expect(new Set(laterals).size).toBe(streams);                       // distinct lanes
+    expect(new Set(laterals).size).toBe(count);                         // distinct lanes
     // Adjacent lanes are exactly streamSpacing apart.
     const sorted = [...laterals].sort((a, b) => a - b);
     expect(sorted[1] - sorted[0]).toBeCloseTo(streamSpacing);
   });
 
-  it('sprays a random handful of simultaneous shots per stream tick (Flamethrower)', () => {
-    const { min, max } = WEAPONS.flamethrower.delivery.sprayCount;
-    const counts = new Set();
+  // #137: Flamethrower's spray used to be a RANDOM {min:2,max:4} count per cadence tick
+  // (`sprayCount`), the one weapon whose count wasn't a plain number. Unified onto the shared
+  // fixed `count` (3 — the old average, so its DPS math is unchanged); the gout's chaos now
+  // comes entirely from the per-particle angle jitter asserted in the next test.
+  it('sprays a fixed handful of simultaneous shots per stream tick (Flamethrower)', () => {
+    const { count } = WEAPONS.flamethrower.delivery;
+    expect(count).toBe(3);
     for (let i = 0; i < 50; i++) {
       const p = planEmissions(WEAPONS.flamethrower);
       expect(p.mode).toBe('projectile');
-      expect(p.shots.length).toBeGreaterThanOrEqual(min);
-      expect(p.shots.length).toBeLessThanOrEqual(max);
+      expect(p.shots).toHaveLength(count);                   // fixed now, never a range
       expect(p.shots.every((s) => s.delay === 0)).toBe(true); // simultaneous, not staggered
-      counts.add(p.shots.length);
     }
-    expect(counts.size).toBeGreaterThan(1); // actually varies, not a fixed count
   });
 
   it('jitters each sprayed shot\'s angle so a held trigger stays chaotic, not laser-straight', () => {
@@ -287,7 +288,7 @@ describe('arcMaxDist (#77 follow-up: "missile range too low" / "swarm rack fligh
   // landing them well short of the target (read as low range) with the homing-blend window
   // squeezed into much less remaining distance for the round with the largest heading error to
   // correct (read as a chaotic flight path).
-  const swarm = WEAPONS.swarmRack.delivery;   // spreadAngle 44°, spreadCount 6 → offsets up to ±22°
+  const swarm = WEAPONS.swarmRack.delivery;   // spreadAngle 44°, count 6 → offsets up to ±22°
   const maxRange = WEAPONS.swarmRack.range.max + 40;
   const opt = WEAPONS.swarmRack.range.opt;
 
@@ -618,13 +619,137 @@ describe('weak seek (#213 — Plasma Lance)', () => {
   });
 });
 
+// ── #137: one unified `delivery.count`, and the Barrage powerup that doubles it ─────────────
+// The whole point of collapsing spreadCount / streams / burst.count / sprayCount into ONE
+// `delivery.count` was that a single multiplier could then scale EVERY pattern through its own
+// existing geometric expansion, with no per-weapon or per-pattern special-casing. These tests
+// are the load-bearing proof of that claim: one representative live weapon per pattern, each
+// asserted to emit exactly twice as many shots under Barrage's countMult while keeping the
+// SHAPE of its pattern (a fan stays a fan, lanes stay parallel lanes, a burst stays staggered).
+describe('planEmissions countMult — Barrage doubles every pattern (#137)', () => {
+  const BARRAGE = { countMult: 2 };
+
+  it('emissionCount: multiplies the weapon\'s own count, defaults to 1, and never drops below 1', () => {
+    expect(emissionCount({ count: 7 })).toBe(7);
+    expect(emissionCount({ count: 7 }, 2)).toBe(14);
+    expect(emissionCount({})).toBe(1);              // no count field ⇒ a single shot
+    expect(emissionCount({}, 2)).toBe(2);
+    expect(emissionCount({ count: 1 }, 0.1)).toBe(1);  // floored — a shrinking mult can't emit nothing
+  });
+
+  it('SPREAD (Scatter Gun): twice the pellets, still one symmetric fan across the same cone', () => {
+    const { count, spreadAngle } = WEAPONS.shotgun.delivery;
+    const cone = (spreadAngle * Math.PI) / 180;
+    const base = planEmissions(WEAPONS.shotgun);
+    const doubled = planEmissions(WEAPONS.shotgun, BARRAGE);
+
+    expect(base.shots).toHaveLength(count);
+    expect(doubled.shots).toHaveLength(count * 2);
+
+    // Still a FAN, not lanes: distinct angles, zero lateral, spanning exactly the same cone.
+    const angles = doubled.shots.map((s) => s.angleOffset);
+    expect(doubled.shots.every((s) => s.lateral === 0)).toBe(true);
+    expect(new Set(angles).size).toBe(count * 2);
+    expect(angles.reduce((a, b) => a + b, 0)).toBeCloseTo(0);       // symmetric
+    expect(Math.min(...angles)).toBeCloseTo(-cone / 2);             // same cone width, denser
+    expect(Math.max(...angles)).toBeCloseTo(cone / 2);
+  });
+
+  it('SPREAD (Swarm Rack, homing fan) doubles too — the pattern is what expands, not one weapon', () => {
+    expect(planEmissions(WEAPONS.swarmRack, BARRAGE).shots)
+      .toHaveLength(WEAPONS.swarmRack.delivery.count * 2);
+    // …and a spread that's a `cluster` (Cluster Rocket) doubles its clump, staying parallel.
+    const cluster = planEmissions(WEAPONS.clusterRocket, BARRAGE);
+    expect(cluster.shots).toHaveLength(WEAPONS.clusterRocket.delivery.count * 2);
+    expect(cluster.shots.every((s) => Math.abs(s.angleOffset) < 0.05)).toBe(true);
+  });
+
+  it('STREAM (Repeater): twice the parallel tracer lanes, still parallel and still centred', () => {
+    const { count, streamSpacing } = WEAPONS.machineGun.delivery;
+    const doubled = planEmissions(WEAPONS.machineGun, BARRAGE);
+
+    expect(planEmissions(WEAPONS.machineGun).shots).toHaveLength(count);
+    expect(doubled.shots).toHaveLength(count * 2);
+
+    const laterals = doubled.shots.map((s) => s.lateral);
+    expect(doubled.shots.every((s) => s.angleOffset === 0)).toBe(true);   // parallel, not fanned
+    expect(new Set(laterals).size).toBe(count * 2);                       // distinct lanes
+    expect(laterals.reduce((a, b) => a + b, 0)).toBeCloseTo(0);           // still straddles the aim line
+    const sorted = [...laterals].sort((a, b) => a - b);
+    expect(sorted[1] - sorted[0]).toBeCloseTo(streamSpacing);             // same lane gap
+  });
+
+  it('STREAM, jittered flavour (Flamethrower + Plasma Lance): twice the particles per cadence tick', () => {
+    const flame = WEAPONS.flamethrower.delivery.count;
+    for (let i = 0; i < 20; i++) {
+      expect(planEmissions(WEAPONS.flamethrower, BARRAGE).shots).toHaveLength(flame * 2);
+    }
+    // Plasma Lance is a count-1 jittered stream: Barrage makes it a genuine TWO-bolt stream.
+    for (let i = 0; i < 20; i++) {
+      const p = planEmissions(WEAPONS.plasmaLance, BARRAGE);
+      expect(p.shots).toHaveLength(2);
+      expect(p.shots.every((s) => s.delay === 0)).toBe(true);
+    }
+    expect(planEmissions(WEAPONS.plasmaLance).shots).toHaveLength(1);     // unbuffed baseline
+  });
+
+  it('BURST, hitscan (Pulse Laser): twice the pulses, same interval — a longer burst, not a faster one', () => {
+    const { count, burst } = WEAPONS.pulseLaser.delivery;
+    const doubled = planEmissions(WEAPONS.pulseLaser, BARRAGE);
+
+    expect(planEmissions(WEAPONS.pulseLaser).shots).toHaveLength(count);
+    expect(doubled.mode).toBe('hitscan');
+    expect(doubled.shots).toHaveLength(count * 2);
+    expect(doubled.shots.map((s) => s.delay)).toEqual(
+      Array.from({ length: count * 2 }, (_, i) => i * burst.interval),   // spacing UNCHANGED
+    );
+  });
+
+  it('BURST, projectile (Streak Pod): twice the missiles, same stagger cadence', () => {
+    const { count, burst } = WEAPONS.streakPod.delivery;
+    const doubled = planEmissions(WEAPONS.streakPod, BARRAGE);
+
+    expect(planEmissions(WEAPONS.streakPod).shots).toHaveLength(count);
+    expect(doubled.mode).toBe('projectile');
+    expect(doubled.shots).toHaveLength(count * 2);
+    expect(doubled.shots.map((s) => s.delay)).toEqual(
+      Array.from({ length: count * 2 }, (_, i) => i * burst.interval),
+    );
+  });
+
+  it('SINGLE (Autocannon) and CONTACT (melee) are the honest edge cases', () => {
+    // A plain single-shot weapon has count 1, so Barrage genuinely doubles it to a twin shot —
+    // this is intended (every weapon benefits), and it stays one immediate un-fanned pair.
+    expect(planEmissions(WEAPONS.autocannon, BARRAGE).shots).toHaveLength(2);
+    // Contact/melee has no emission plan at all — one swing, buff or no buff.
+    const melee = Object.values(WEAPONS).find((w) => w.delivery.hit === 'contact');
+    if (melee) expect(planEmissions(melee, BARRAGE).shots).toHaveLength(1);
+  });
+
+  it('EVERY weapon in the catalog at least doubles its shot count — no pattern is silently skipped', () => {
+    for (const w of Object.values(WEAPONS)) {
+      if (w.delivery.hit === 'contact') continue;             // melee has no count concept
+      const base = planEmissions(w).shots.length;
+      const doubled = planEmissions(w, { countMult: 2 }).shots.length;
+      expect(doubled, w.id).toBe(base * 2);
+    }
+  });
+
+  it('omitting the option is exactly the old behaviour (countMult defaults to 1)', () => {
+    for (const w of Object.values(WEAPONS)) {
+      expect(planEmissions(w).shots.length, w.id).toBe(planEmissions(w, {}).shots.length);
+      expect(planEmissions(w, { countMult: 1 }).shots.length, w.id).toBe(planEmissions(w).shots.length);
+    }
+  });
+});
+
 // #243 tunability pass: constants that a single weapon could plausibly want to vary are now
 // optional per-weapon `delivery` fields, each defaulting to the shared constant — so every
 // existing weapon behaves EXACTLY as before (zero-behavior-change refactor), and a weapon that
 // sets the field genuinely deviates.
 describe('per-weapon delivery tunables default to the shared constants (#243)', () => {
   it('spreadJitterDelay: default emission stagger stays within the old 35ms cap; an override widens it', () => {
-    // Flamethrower (spreadJitter, sprayCount) — its multi-pellet sibling path: use a synthetic
+    // Flamethrower (spreadJitter, count 3) — its multi-pellet sibling path: use a synthetic
     // jittered SPREAD so the delay branch is exercised deterministically.
     const jittered = { ...WEAPONS.shotgun, delivery: { ...WEAPONS.shotgun.delivery, spreadJitter: 5, wobble: null } };
     for (let i = 0; i < 40; i++) {
