@@ -47,7 +47,7 @@ export function detectionRangeFor(baseRange, mult = DETECTION_RANGE_MULT) {
 // AWARE/UNAWARE non-mech kind uses for its own aggro detection. For every kind except one, that
 // stays a modest few-hundred-px envelope well inside worldgen.js's `MIN_GAP_PROGRESS_PX` floor
 // between encounters: tank `detectionRangeFor(420)` = 504px, helicopter `detectionRangeFor(460)`
-// = 552px, quadruped `detectionRangeFor(380)` = 456px, a mech's standoff-derived detectRange
+// = 552px, carrier `detectionRangeFor(380)` = 456px, a mech's standoff-derived detectRange
 // tops out at `detectionRangeFor(520)` = 624px (STANDOFF_MAX, scenes/arena/enemies.js).
 //
 // The turret emplacement is the one wild outlier: its `fireRange` is DELIBERATELY "INSANE"
@@ -69,7 +69,7 @@ export function detectionRangeFor(baseRange, mult = DETECTION_RANGE_MULT) {
 // either alone — with both capped at 320px, the worst-case calm stretch in a
 // `MIN_GAP_PROGRESS_PX`-sized gap is simply `MIN_GAP_PROGRESS_PX - 320`, not
 // `MIN_GAP_PROGRESS_PX - 320 - PROXIMITY_WAKE_RANGE_CAP`. This also tightens
-// tank(504px)/helicopter(552px)/quadruped(456px)/mech(up to 624px) down to the same 320px —
+// tank(504px)/helicopter(552px)/carrier(456px)/mech(up to 624px) down to the same 320px —
 // a deliberate widening of scope beyond just the turret outlier, so EVERY dormant kind's
 // proximity-wake radius sits inside the audited budget, not just the worst offender.
 // Applied where a DORMANT unit's `detectRange` is set (`scenes/arena/bases.js`

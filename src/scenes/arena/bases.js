@@ -244,7 +244,7 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
     e.dockKey = dockKey;
     // #283 audit: cap the DORMANT proximity-wake radius (data/awareness.js
     // `PROXIMITY_WAKE_RANGE_CAP` has the full reasoning) — a no-op for every kind whose
-    // `detectRange` was already below the cap (tank/helicopter/quadruped/mech); the turret kinds'
+    // `detectRange` was already below the cap (tank/helicopter/carrier/mech); the turret kinds'
     // wildly larger combat-range-derived values are the ones it bites on. Only meaningful for a
     // dormant unit — an AWARE resupply unit is already engaged and never consults its wake radius.
     if (awareness === DORMANT) e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
@@ -672,8 +672,8 @@ export const BasesMixin = {
   // longer constrains WHERE that fighting can happen. Its one remaining functional effect is
   // cosmetic/tactical polish, not movement-limiting: enemies.js `_updateEnemy` reads it to decide
   // that a hold-ground mech which happens to be momentarily stationary should face the player
-  // rather than hold its last travel heading (tank/quadruped/infantry already got the same
-  // "don't read as dead while stopped" fix directly in their own behavior fns). tank/quadruped/
+  // rather than hold its last travel heading (tank/carrier/infantry already got the same
+  // "don't read as dead while stopped" fix directly in their own behavior fns). tank/carrier/
   // infantry's OWN behavior fns (enemyBehaviors.js) no longer read `e.holdGround` at all now that
   // the leash is gone — it's still set on them (kept for the flag's documented "which units are
   // hold-ground" semantics, and in case a future feature wants it) but has no code path consuming

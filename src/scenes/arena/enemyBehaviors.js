@@ -54,7 +54,7 @@ function aimAndFire(scene, e, ctx, { slot = undefined, fire = true } = {}) {
   // soft-cover hex (and this unit's) doesn't block the lane; and since `isSmallUnit` is false for
   // both flyer kinds (drone/helicopter are size 'large'), soft cover — forest/scrub — doesn't
   // block a flyer's lane either, exactly as it doesn't block a mech's. Hard cover blocks everyone.
-  // #167: ground vehicles (tanks/infantry/quadrupeds, often 40+ at once) ran this raycast per
+  // #167: ground vehicles (tanks/infantry/carriers, often 40+ at once) ran this raycast per
   // unit per frame — now a STAGGERED CACHE (~120ms per-enemy refresh), exact at each refresh.
   const los = scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py, isSmallUnit(e));
   // Only fire once the gun is roughly on target, so shots read as aimed.
@@ -320,7 +320,7 @@ function droneBehavior(scene, e, ctx) {
 function helicopterBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  // Lazily initialised, like the Broodwalker's deploy state above — _spawnKind stays a generic,
+  // Lazily initialised, like the Broodhauler's deploy state above — _spawnKind stays a generic,
   // kind-agnostic constructor. The spawn-time standoff roll happens here (cycle zero).
   e.gunship ??= initGunshipCycle();
   const st = e.gunship;
@@ -378,31 +378,41 @@ function helicopterBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { slot: plan.slot, fire: plan.slot != null });
 }
 
-// QUADRUPED — "Broodwalker" (#130, swarm deploy reworked in #147, drones-only + origin fixed in
-// #152). Grinds to a firing standoff and holds, same tank-style hull-travel/turret-independent-
-// track pattern as tankBehavior (reused deliberately, not reinvented — see tankBehavior above
-// for the same radial/strafe shape), just on a slower/heavier chassis. PLUS a periodic SWARM
-// deploy mechanic: while alive and AWARE (this fn only runs while aware — see _updateVehicle's
-// aware gate) it acts as a mobile "nest," dropping a whole BATCH of units from its own body on a
-// data-driven cadence (def.deployEveryMs), sized between def.deployBatchMin-deployBatchMax, up
-// to a lifetime cap (def.deployCap) so a long fight can't have it spawn forever unbounded. This
-// is PER-FRAME incremental spawning (unlike turretNest/infantryMob, which expand everything up
-// front at spawn time) — the timer/count state (`e.deployCd`/`e.deployCount`) is lazily
-// initialized here since _spawnKind stays a generic, kind-agnostic constructor.
+// CARRIER — "Broodhauler" (#130, swarm deploy reworked in #147, drones-only + origin fixed in
+// #152, reworked into an unarmed tank-bodied carrier in #328). Grinds to a standoff and holds,
+// the same tank-style hull-travel pattern as tankBehavior (reused deliberately, not reinvented —
+// see tankBehavior above for the same radial/strafe shape), just on a slower/heavier chassis.
+// Its whole threat is the periodic SWARM deploy: while alive and AWARE (this fn only runs while
+// aware — see _updateVehicle's aware gate) it acts as a mobile "nest," dropping a whole BATCH of
+// drones from its own body on a data-driven cadence (def.deployEveryMs), sized between
+// def.deployBatchMin-deployBatchMax, up to a lifetime cap (def.deployCap) so a long fight can't
+// have it spawn forever unbounded. This is PER-FRAME incremental spawning (unlike
+// turretNest/infantryMob, which expand everything up front at spawn time) — the timer/count
+// state (`e.deployCd`/`e.deployCount`) is lazily initialized here since _spawnKind stays a
+// generic, kind-agnostic constructor.
+//
+// #328: UNARMED. Jackson chose "unarmed — pure carrier", so this behaviour never calls
+// `aimAndFire` and the kind carries no weapon data at all. With nothing to aim, the unit's
+// second sprite — the launch BAY DOOR, where every other kind has a gun turret — is pinned to
+// the hull's own angle so it reads as bolted to the deck.
 //
 // #152 (round-2 playtest): "deploy drones only" — DEPLOY_INFANTRY gates infantry back OUT of the
 // rotation (flag-disabled, not deleted — flip it back to `true` to restore the drone+infantry
 // mix from #147, same disable-not-delete pattern #144 used for the aim-line).
-// #239: confirmed this already stays `false`, so the Broodwalker's nest-deploy can't spawn
-// infantry even though infantryMob itself is separately pulled from ENEMY_ROTATION/DEFAULT_SQUAD/
-// LATE_POOL (data/enemies.js, data/run.js) pending a redesign — no change needed here for #239,
-// this flag already keeps the two consistent.
+// #239: confirmed this already stays `false`, so the nest-deploy can't spawn infantry even
+// though infantryMob itself is separately pulled from ENEMY_ROTATION/DEFAULT_SQUAD/LATE_POOL
+// (data/enemies.js, data/run.js) pending a redesign — no change needed here for #239.
 const DEPLOY_INFANTRY = false;
-const QUADRUPED_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone'];
+const CARRIER_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone'];
+
+// #328: how long (ms) the bay door holds OPEN after a batch launches. Long enough to actually
+// read at gameplay zoom (the batch's own "emerging" pop tween below is 260ms), short enough that
+// the carrier spends most of its 4s deploy cycle visibly buttoned up. Owner: tunable.
+const DOOR_OPEN_MS = 900;
 
 // Drop a fresh kind spawn essentially AT the nest's own body position — #152 (round-2 playtest:
 // "spawn from within the body, not beside it" — the old 50-80px offset read as popping in beside
-// the Broodwalker rather than emerging from it). A tiny few-px jitter keeps simultaneous spawns
+// the unit rather than emerging from it). A tiny few-px jitter keeps simultaneous spawns
 // within one batch from stacking on the exact same pixel; still nudges off blocked terrain toward
 // the nest itself (mirrors the same pattern used by enemies.js `_flankGoal`/`_idleMoveIntent`) as
 // a defensive fallback, though at this radius it's rarely ever needed. A brief "emerging" pop
@@ -424,7 +434,7 @@ function deployNearby(scene, e, kindId) {
 // Same grind-to-standoff-and-hold shape as tankMoveIntent above, just its own standoff default
 // and a slightly lighter strafe — extracted so the normal and #269 Part 1 hold-ground-leashed
 // paths below both run the literal same formula.
-function quadrupedMoveIntent(e, ctx, def) {
+function carrierMoveIntent(e, ctx, def) {
   const standoff = def.standoff ?? 320;
   let radial = 0;
   if (ctx.dist > standoff * 1.15) radial = 1;
@@ -439,42 +449,45 @@ function quadrupedMoveIntent(e, ctx, def) {
   return { mx, my, active: Math.abs(radial) + Math.abs(strafe) > 0 };
 }
 
-function quadrupedBehavior(scene, e, ctx) {
+function carrierBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  const { mx, my, active } = quadrupedMoveIntent(e, ctx, def);
+  const { mx, my, active } = carrierMoveIntent(e, ctx, def);
   // #269 §7 / #285: same hold-ground wake response as tankBehavior above — a woken defensive
   // dock unit runs its normal advance-to-standoff/strafe movement exactly like a non-hold-ground
-  // unit, no leash/distance cap (removed per #285). The deploy-drone mechanic below still runs
+  // unit, no leash/distance cap (removed per #285). The deploy mechanic below still runs
   // regardless (it's a support ability, not locomotion).
   const target = active ? mv.maxSpeed : 0;
-  // #295 follow-up: quadrupedBehavior shares tankBehavior's exact hull-travel/turret-independent
-  // pattern by design (see the header comment above) and had the identical "hull is a cosmetic
-  // catch-up, thrust is free of facing" bug — same root cause, same fix, applied the same way:
-  // the hull turns toward the intent vector (scaled to a synthetic desired velocity so it clears
-  // hullTravelAngle's moveThreshold even when actual thrust is ~0), then thrust is applied along
-  // the hull's OWN current facing, scaled by alignment with the desired heading. Deliberately NOT
-  // porting #294's heading-commit stagger here — that solved a separate "re-aims too smoothly"
-  // complaint that was never reported for the quadruped, and porting it unprompted would be a
-  // behavior change beyond this issue's scope. See tankBehavior above for the fuller rationale.
+  // #295 follow-up: this shares tankBehavior's exact hull-travel pattern by design (see the
+  // header comment above) and had the identical "hull is a cosmetic catch-up, thrust is free of
+  // facing" bug — same root cause, same fix, applied the same way: the hull turns toward the
+  // intent vector (scaled to a synthetic desired velocity so it clears hullTravelAngle's
+  // moveThreshold even when actual thrust is ~0), then thrust is applied along the hull's OWN
+  // current facing, scaled by alignment with the desired heading. Deliberately NOT porting
+  // #294's heading-commit stagger here — that solved a separate "re-aims too smoothly" complaint
+  // that was never reported for this unit. See tankBehavior above for the fuller rationale.
   e.angle = hullTravelAngle(e.angle, mx * mv.maxSpeed, my * mv.maxSpeed, mv.turnRate, ctx.dt);
   const desiredAngle = Math.atan2(my, mx);
   const alignment = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(desiredAngle - e.angle))) ** 2;
   const thrust = target * alignment;
   e.vx = approach(e.vx, Math.cos(e.angle) * thrust, mv.accel * ctx.dt);
   e.vy = approach(e.vy, Math.sin(e.angle) * thrust, mv.accel * ctx.dt);
-  aimAndFire(scene, e, ctx);
-  quadrupedDeployTick(scene, e, def, ctx);
+  // #328: unarmed — no aimAndFire. The bay door is deck-mounted, so it rides the hull's angle
+  // rather than tracking the player like every armed kind's turret does.
+  e.turret = e.angle;
+  carrierDeployTick(scene, e, def, ctx);
 }
 
-// #130/#147 deploy mechanic, split out so both the normal (advance-to-standoff) and #269
-// hold-ground wake-response paths above can call it — lazily initializes the per-enemy
-// timer/count on first tick so the generic _spawnKind constructor never needs kind-specific
-// bootstrapping.
-function quadrupedDeployTick(scene, e, def, ctx) {
+// #130/#147 deploy mechanic — lazily initializes the per-enemy timer/count on first tick so the
+// generic _spawnKind constructor never needs kind-specific bootstrapping.
+function carrierDeployTick(scene, e, def, ctx) {
   if (e.deployCd == null) e.deployCd = rand(def.deployEveryMs * 0.4, def.deployEveryMs);
   e.deployCount = e.deployCount ?? 0;
   e.deployCd -= ctx.delta;
+  // #328: tick the bay door's open timer down and publish the live art frame. `turretFrame` is
+  // the generic multi-frame-turret seam (enemies.js `_updateVehicle`), 0 = shut, 1 = open.
+  e.doorMs = Math.max(0, (e.doorMs ?? 0) - ctx.delta);
+  e.turretFrame = e.doorMs > 0 ? 1 : 0;
   const cap = def.deployCap ?? 5;
   if (e.deployCd <= 0 && e.deployCount < cap) {
     // #147: deploy a whole SWARM-sized batch at once (not one unit per tick) — sized between
@@ -484,11 +497,14 @@ function quadrupedDeployTick(scene, e, def, ctx) {
     const wanted = batchMin + Math.floor(Math.random() * (batchMax - batchMin + 1));
     const batchSize = Math.min(wanted, cap - e.deployCount);
     for (let i = 0; i < batchSize; i++) {
-      const kindId = QUADRUPED_DEPLOY_KINDS[Math.floor(Math.random() * QUADRUPED_DEPLOY_KINDS.length)];
+      const kindId = CARRIER_DEPLOY_KINDS[Math.floor(Math.random() * CARRIER_DEPLOY_KINDS.length)];
       deployNearby(scene, e, kindId);
     }
     e.deployCount += batchSize;
     e.deployCd = def.deployEveryMs;
+    // #328: the doors fly open for the launch, then shut again (DOOR_OPEN_MS above).
+    e.doorMs = DOOR_OPEN_MS;
+    e.turretFrame = 1;
   }
 }
 
@@ -527,7 +543,7 @@ function infantryBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
   const { mx, my } = infantryMoveIntent(e, ctx, def);
-  // #269 §7 / #285: same hold-ground wake response as tank/quadruped above — a woken trooper
+  // #269 §7 / #285: same hold-ground wake response as tank/carrier above — a woken trooper
   // advances/mills exactly like a non-hold-ground one, no leash/distance cap (removed per #285).
   e.vx = approach(e.vx, mx * mv.maxSpeed, mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * mv.maxSpeed, mv.accel * ctx.dt);
@@ -548,5 +564,5 @@ export const ENEMY_BEHAVIORS = {
   drone: droneBehavior,
   helicopter: helicopterBehavior,
   infantry: infantryBehavior,
-  quadruped: quadrupedBehavior,
+  carrier: carrierBehavior,
 };

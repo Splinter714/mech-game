@@ -465,7 +465,7 @@ export const WorldMixin = {
   // small-vs-small was deliberately left uncollided in the original scope.)
   //
   // Tier rule (kept deliberately simple/consistent with how the player already treats these
-  // tiers, rather than inventing a new one): a LARGE obstacle (mech/quadruped/turret) blocks
+  // tiers, rather than inventing a new one): a LARGE obstacle (mech/carrier/turret) blocks
   // ANY other ground unit's movement, small or large — a tank/infantry unit shouldn't be able
   // to drive through a standing mech/turret any more than the player can (`_blockedByGroundEnemy`
   // already blocks the player against every ground enemy regardless of size). A SMALL obstacle

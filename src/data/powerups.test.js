@@ -241,12 +241,12 @@ describe('#106: toughness = structure + armor + shield, uniformly across body ty
     expect(heli.toughness).toBe(50);     // + its 15-point shield (#299)
   });
 
-  it('counts all three layers at once (quadruped: 50 hp + 50 armor + 50 shield)', () => {
-    expect(new HpBody(ENEMY_KINDS.quadruped).toughness).toBe(150);
+  it('counts all three layers at once (carrier: 50 hp + 50 armor + 50 shield)', () => {
+    expect(new HpBody(ENEMY_KINDS.carrier).toughness).toBe(150);
   });
 
   it('leaves maxHp alone on both body types (other consumers rely on its current meaning)', () => {
-    expect(new HpBody(ENEMY_KINDS.quadruped).maxHp).toBe(50);
+    expect(new HpBody(ENEMY_KINDS.carrier).maxHp).toBe(50);
     expect(new Mech({ chassisId: 'heavy' }).maxHp).toBe(425);
   });
 
@@ -315,7 +315,7 @@ describe('#106: the convex drop curve over the current roster', () => {
     ['turret', kindToughness('turret'), 50, 0.08],
     ['helicopter', kindToughness('helicopter'), 50, 0.08],
     ['tank', kindToughness('tank'), 80, 0.10],
-    ['quadruped', kindToughness('quadruped'), 150, 0.19],
+    ['carrier', kindToughness('carrier'), 150, 0.19],
     ['light mech', mechToughness('raider'), 200, 0.27],
     ['medium mech', mechToughness('sniper'), 350, 0.58],
     ['heavy mech', mechToughness('artillery'), 500, 0.95],

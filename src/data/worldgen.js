@@ -70,7 +70,7 @@ export const DOCKS_PER_BASE_MAX = 5;
 // the run, 0→1) instead of per-stage.
 //
 // #269 playtest follow-up ("fold mechs into the dock system"): the pool now mixes the non-mech
-// ENEMY_KINDS roster (turret/tank/drone/helicopter/quadruped/infantry) WITH full mech loadouts
+// ENEMY_KINDS roster (turret/tank/drone/helicopter/carrier/infantry) WITH full mech loadouts
 // (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery), late-pool only — see
 // `BASE_LATE_KIND_POOL`'s own comment for the full reasoning (mechs are the toughest kind, they
 // belong in the hard tier; `holdGround` now applies to mechs too, see scenes/arena/bases.js
@@ -79,8 +79,8 @@ export const DOCKS_PER_BASE_MAX = 5;
 // a dock hosts a KIND, spawned in the COUNT `dockCountFor` below assigns for that kind, not a
 // bespoke cluster-expansion typeId.
 //
-// #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — quadrupeds already
-// have their own independent drone-deploy mechanic (enemyBehaviors.js `quadrupedBehavior`'s
+// #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — carriers already
+// have their own independent drone-deploy mechanic (enemyBehaviors.js `carrierBehavior`'s
 // `deployEveryMs`/`deployBatchMin/Max`/`deployCap`), so a dock ALSO producing standalone drones
 // was redundant with that. `'turret'` is REMOVED entirely too — a base's fixed guns are its WALL
 // turrets (#310 `assignWallTurrets`), never a kind drawn from the generic dock pool. (#287 removed
@@ -91,15 +91,15 @@ export const DOCKS_PER_BASE_MAX = 5;
 // the "too many tanks" complaint (early bases are where the run is mostly spent, and they read as
 // wall-to-wall armour). It's now a 50/50 tank/helicopter mix: tanks stay the basic ground opener,
 // but helicopters are an immediate, equal presence from base 0 instead of not showing up until the
-// late pool bleeds in. Kept to just these two soft vehicle kinds (no quadruped, no mechs) so the
-// early tier stays the SOFT opener half of the escalation — mechs/quadruped remain late-only per
+// late pool bleeds in. Kept to just these two soft vehicle kinds (no carrier, no mechs) so the
+// early tier stays the SOFT opener half of the escalation — mechs/carrier remain late-only per
 // `BASE_LATE_KIND_POOL` below, preserving the early→late difficulty ramp `baseLateFraction` drives.
 //
 // #314 (Jackson 2026-07-19: "add a burst of drones to the potential spawns for a dock; maybe like
 // 10 of them? same for infantry, maybe like 10 of them?"): `'drone'` is BACK in the pool — but as
 // a fundamentally different thing than the single standalone drone #269 removed. A drone dock is
 // now a SWARM dock (`DOCK_SWARM_COUNT` = 10 bodies, see `dockCountFor`), so it doesn't re-create
-// the "redundant with the quadruped's own drone-deploy" problem #269 was solving; it's a set-piece
+// the "redundant with the carrier's own drone-deploy" problem #269 was solving; it's a set-piece
 // burst, not a lone escort. `'infantry'` joins for the same reason (infantry are already live in
 // every run via the alert-tower patrol, scenes/arena/bases.js `TOWER_PATROL_KIND_ID` — this adds
 // nothing that was switched off; #239 only ever disabled the 28-strong `infantryMob`).
@@ -146,12 +146,12 @@ export const BASE_EARLY_KIND_POOL = [
 //
 // #314: `drone`/`infantry` swarm docks are available in the LATE pool too ("a swarm can show up at
 // any point in a run"), at the same deliberately-thin 1 entry each. Every pre-existing late entry
-// is doubled so the ORIGINAL late mix (helicopter 3 : quadruped 1 : tank 1 : raider 2 :
+// is doubled so the ORIGINAL late mix (helicopter 3 : carrier 1 : tank 1 : raider 2 :
 // skirmisher/sniper/artillery 1 each) is preserved EXACTLY in relative terms while the two swarm
 // kinds land at 1/22 of draws apiece — same density reasoning as the early pool's comment above.
 export const BASE_LATE_KIND_POOL = [
-  'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
-  'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
   'drone', 'infantry',
 ];
 
@@ -189,7 +189,7 @@ export function dockCountFor(kindId, rng) {
   if (isSwarmDockKind(kindId)) return DOCK_SWARM_COUNT;  // #314: a ~10-body burst from one dock
   if (kindId === 'tank') return 1;         // #269: "1 tank per dock" — a lone tank, no cluster
   if (kindId === 'helicopter') return 1;   // #269: "1 helicopter per dock" — a single gunship
-  return 1;                                // every other dockable kind (quadruped, mechs) is a single unit
+  return 1;                                // every other dockable kind (carrier, mechs) is a single unit
 }
 
 // Same 0→1 escalation shape as the old (now-retired) run.js `lateFraction`, just indexed by

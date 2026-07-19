@@ -821,10 +821,10 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
   it('#314: doubling the late pool preserved the #269 relative mix exactly', () => {
     const plain = BASE_LATE_KIND_POOL.filter((k) => !isSwarmDockKind(k));
     const count = (k) => plain.filter((x) => x === k).length;
-    // #269's ratios (helicopter 3 : quadruped 1 : tank 1 : raider 2 : the three specialists 1 each),
+    // #269's ratios (helicopter 3 : carrier 1 : tank 1 : raider 2 : the three specialists 1 each),
     // just doubled — helicopter still beats tank, mechs still dominate late.
     expect(count('helicopter')).toBe(6);
-    expect(count('quadruped')).toBe(2);
+    expect(count('carrier')).toBe(2);
     expect(count('tank')).toBe(2);
     expect(count('raider')).toBe(4);
     for (const m of ['skirmisher', 'sniper', 'artillery']) expect(count(m)).toBe(2);
@@ -869,8 +869,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(dockCountFor('tank', highRng)).toBe(1);
     expect(dockCountFor('helicopter', lowRng)).toBe(1);
     expect(dockCountFor('helicopter', highRng)).toBe(1);
-    expect(dockCountFor('quadruped', lowRng)).toBe(1);
-    expect(dockCountFor('quadruped', highRng)).toBe(1);
+    expect(dockCountFor('carrier', lowRng)).toBe(1);
+    expect(dockCountFor('carrier', highRng)).toBe(1);
     // #314: drone/infantry are the deliberate exception — a flat ~10-body burst, rng-independent.
     expect(DOCK_SWARM_COUNT).toBe(10);
     for (const rng of [lowRng, highRng]) {
@@ -885,8 +885,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // Early bases are no longer 100% tanks — helicopter is an equal-weight early presence.
     expect(BASE_EARLY_KIND_POOL).toContain('tank');
     expect(BASE_EARLY_KIND_POOL).toContain('helicopter');
-    // Kept SOFT: only the two vehicle kinds early — no quadruped, no mechs (those stay late-only).
-    expect(BASE_EARLY_KIND_POOL).not.toContain('quadruped');
+    // Kept SOFT: only the two vehicle kinds early — no carrier, no mechs (those stay late-only).
+    expect(BASE_EARLY_KIND_POOL).not.toContain('carrier');
     for (const mech of ['raider', 'skirmisher', 'sniper', 'artillery']) {
       expect(BASE_EARLY_KIND_POOL).not.toContain(mech);
     }
@@ -894,7 +894,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // tank since #314 doubled every pre-existing late entry (see its own test below), which
     // preserves #269's relative mix but not the raw entry counts.
     const heliLate = BASE_LATE_KIND_POOL.filter((k) => k === 'helicopter').length;
-    const quadLate = BASE_LATE_KIND_POOL.filter((k) => k === 'quadruped').length;
+    const quadLate = BASE_LATE_KIND_POOL.filter((k) => k === 'carrier').length;
     expect(heliLate / quadLate).toBe(3);
     // ...and helicopter is now more common than tank in the late pool.
     const tankLate = BASE_LATE_KIND_POOL.filter((k) => k === 'tank').length;

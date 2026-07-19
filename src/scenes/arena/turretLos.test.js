@@ -6,7 +6,7 @@
 // DECISION to open fire, which had no gate at all — the turret could blast the player through
 // solid walls from anywhere in its huge 2400px range the instant it woke. Fix: turretBehavior now
 // passes needLos: true, so the fire decision runs the same shared `_cachedLosToPlayer` gate every
-// other needLos:true kind (tank/quadruped/infantry) already uses. These tests exercise the real
+// other needLos:true kind (tank/carrier/infantry) already uses. These tests exercise the real
 // `turretBehavior` (via ENEMY_BEHAVIORS.turret) end-to-end against the real aimAndFire.
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection

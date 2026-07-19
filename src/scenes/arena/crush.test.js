@@ -123,13 +123,13 @@ describe('isSmallUnit/unitSize (#269) — same #104 scope for instant-crush-on-c
     const turret = { kind: 'turret', kindDef: { size: 'large' } };
     const drone = { kind: 'drone', kindDef: { size: 'large' } };
     const helicopter = { kind: 'helicopter', kindDef: { size: 'large' } };
-    const quadruped = { kind: 'quadruped', kindDef: { size: 'large' } };
+    const carrier = { kind: 'carrier', kindDef: { size: 'large' } };
     expect(isSmallUnit(tank)).toBe(true);
     expect(isSmallUnit(infantry)).toBe(true);
     expect(isSmallUnit(turret)).toBe(false);
     expect(isSmallUnit(drone)).toBe(false);
     expect(isSmallUnit(helicopter)).toBe(false);
-    expect(isSmallUnit(quadruped)).toBe(false);
+    expect(isSmallUnit(carrier)).toBe(false);
     expect(unitSize(tank)).toBe('small');
     expect(unitSize(turret)).toBe('large');
   });

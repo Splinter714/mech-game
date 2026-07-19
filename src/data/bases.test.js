@@ -13,10 +13,10 @@ describe('isFastWakeKind (#269 §7: wake-response split by speed)', () => {
     expect(isFastWakeKind(ENEMY_KINDS.helicopter)).toBe(true);
   });
 
-  it('turret/tank/quadruped/infantry (heavy/rooted) are NOT fast-wake kinds', () => {
+  it('turret/tank/carrier/infantry (heavy/rooted) are NOT fast-wake kinds', () => {
     expect(isFastWakeKind(ENEMY_KINDS.turret)).toBe(false);
     expect(isFastWakeKind(ENEMY_KINDS.tank)).toBe(false);
-    expect(isFastWakeKind(ENEMY_KINDS.quadruped)).toBe(false);
+    expect(isFastWakeKind(ENEMY_KINDS.carrier)).toBe(false);
     expect(isFastWakeKind(ENEMY_KINDS.infantry)).toBe(false);
   });
 
@@ -28,7 +28,7 @@ describe('isFastWakeKind (#269 §7: wake-response split by speed)', () => {
   it('the threshold sits strictly between the fastest slow kind and slowest fast kind', () => {
     const slowMax = Math.max(
       ENEMY_KINDS.turret.move.maxSpeed, ENEMY_KINDS.tank.move.maxSpeed,
-      ENEMY_KINDS.quadruped.move.maxSpeed, ENEMY_KINDS.infantry.move.maxSpeed,
+      ENEMY_KINDS.carrier.move.maxSpeed, ENEMY_KINDS.infantry.move.maxSpeed,
     );
     const fastMin = Math.min(ENEMY_KINDS.drone.move.maxSpeed, ENEMY_KINDS.helicopter.move.maxSpeed);
     expect(FAST_WAKE_SPEED_THRESHOLD).toBeGreaterThan(slowMax);

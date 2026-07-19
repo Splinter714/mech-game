@@ -5,16 +5,18 @@ import { getWeapon, resolveWeapon, WEAPONS } from './weapons.js';
 // top-level `weaponId`. `kindWeaponSlots` normalises both forms into the same slot map, so these
 // invariants now hold per SLOT — which is stronger than before: a multi-weapon kind's every gun
 // is checked, not just its first.
-import { kindWeaponSlots } from './kindWeapons.js';
+import { kindWeaponSlots, kindMaxFireRange } from './kindWeapons.js';
 import { HpBody } from './HpBody.js';
 import { Mech } from './Mech.js';
 import { ENEMIES } from './enemies.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('defines the seven expected kinds', () => {
-    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'infantry', 'quadruped', 'tank', 'turret', 'wallTurret']);
+    expect(ENEMY_KIND_IDS.sort()).toEqual(['carrier', 'drone', 'helicopter', 'infantry', 'tank', 'turret', 'wallTurret']);
   });
 
+  // #328: an UNARMED kind (the Carrier) resolves to ZERO weapon slots, so this loop simply has
+  // nothing to check for it — no weapon id to be wrong. The armed kinds are still all covered.
   it('every kind names a REAL weapon id (so no scene ever hardcodes one)', () => {
     for (const id of ENEMY_KIND_IDS) {
       const k = ENEMY_KINDS[id];
@@ -32,7 +34,7 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
       expect(body.locations().length).toBeGreaterThan(0);
       expect(body.isDestroyed()).toBe(false);
       // Damaging any part draws down the pool. #246: some kinds now layer a shield/armor pool
-      // in FRONT of hp (tank/helicopter/quadruped — see enemyKinds.js), so a killing blow must
+      // in FRONT of hp (tank/helicopter/carrier — see enemyKinds.js), so a killing blow must
       // clear those layers too, not just k.hp — one hit for the full stack plus a margin.
       const loc = body.locations()[0];
       const overkill = (k.hp || 0) + (k.armor || 0) + (k.shield?.max || 0) + 1;
@@ -80,13 +82,13 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   });
 
   it('#269: small is exactly tank + infantry (the pre-#269 crushable-on-contact scope); '
-    + 'turret/drone/helicopter/quadruped are large', () => {
+    + 'turret/drone/helicopter/carrier are large', () => {
     expect(ENEMY_KINDS.tank.size).toBe('small');
     expect(ENEMY_KINDS.infantry.size).toBe('small');
     expect(ENEMY_KINDS.turret.size).toBe('large');
     expect(ENEMY_KINDS.drone.size).toBe('large');
     expect(ENEMY_KINDS.helicopter.size).toBe('large');
-    expect(ENEMY_KINDS.quadruped.size).toBe('large');
+    expect(ENEMY_KINDS.carrier.size).toBe('large');
   });
 
   it('each kind wires an art + behavior registry key', () => {
@@ -132,7 +134,7 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('#151: infantry avoids voluntarily wandering into water; no other kind is flagged', () => {
     expect(ENEMY_KINDS.infantry.avoidWater).toBe(true);
     // Explicitly infantry-only per the #151 report: turret is static (N/A), drone/helicopter fly
-    // over water regardless, tank/quadruped are bulkier and read fine wading through it.
+    // over water regardless, tank/carrier are bulkier and read fine wading through it.
     for (const id of ENEMY_KIND_IDS) {
       if (id === 'infantry') continue;
       expect(ENEMY_KINDS[id].avoidWater, id).toBeFalsy();
@@ -159,25 +161,35 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(weapon.range.max).toBeGreaterThanOrEqual(t.fireRange);
   });
 
-  it('#130: quadruped (Broodwalker) is a slow, tanky ground unit with a deploy mechanic', () => {
-    const q = ENEMY_KINDS.quadruped;
+  it('#130/#328: carrier (Broodhauler) is a slow, tanky, UNARMED ground unit with a deploy mechanic', () => {
+    const q = ENEMY_KINDS.carrier;
     expect(q.flying).toBe(false);
-    // "comparable to or slower than tank" — tank's own maxSpeed is 52.
-    expect(q.move.maxSpeed).toBeLessThanOrEqual(ENEMY_KINDS.tank.move.maxSpeed);
+    // #328: "movement feel should match the tank, but maybe slower" — slower than the tank on
+    // EVERY axis now, not just top speed (the old 0.35 turnRate was a legged-lurch tune).
+    expect(q.move.maxSpeed).toBeLessThan(ENEMY_KINDS.tank.move.maxSpeed);
     expect(q.move.maxSpeed).toBeGreaterThan(0);
-    // #299 rebalance: the comparison is now on TOTAL toughness (all three layers), not the bare
-    // hp pool — the Broodwalker's 50 structure ties the tank's, and its lead comes from the armor
-    // and shield stacked on top (150 vs 80). It now sits BELOW a light mech (200) rather than near
-    // heavy-mech tough, which was an explicit, confirmed owner decision.
+    expect(q.move.accel).toBeLessThan(ENEMY_KINDS.tank.move.accel);
+    expect(q.move.turnRate).toBeLessThan(ENEMY_KINDS.tank.move.turnRate);
+    // ...but still recognisably tank-like, not the old sub-0.5 lumbering-legs turn rate.
+    expect(q.move.turnRate).toBeGreaterThan(0.5);
+    // #299 rebalance, UNCHANGED by #328: the comparison is on TOTAL toughness (all three
+    // layers), not the bare hp pool — the Broodhauler's 50 structure ties the tank's, and its
+    // lead comes from the armor and shield stacked on top (150 vs 80). It sits BELOW a light
+    // mech (200), which was an explicit, confirmed owner decision.
     expect(new HpBody(q).toughness).toBeGreaterThan(new HpBody(ENEMY_KINDS.tank).toughness);
     expect(new HpBody(q).toughness).toBeLessThan(new Mech(ENEMIES.raider).toughness);
-    // A real weapon mount, same as every other kind.
-    expect(getWeapon(q.weaponId)).toBeTruthy();
-    // #147: the deploy mechanic was reworked into a SWARM — a batch of several units per tick,
-    // a faster cadence, and a much higher lifetime cap — rather than #130's original 1-per-8s
-    // trickle capped at 5. Cadence still sane (not so fast it floods the arena instantly), and
-    // the batch/cap numbers are internally consistent (batch bounds positive and ordered, cap
-    // comfortably larger than a single batch so it actually reads as multiple bursts).
+    // #328: NO weapon at all. Jackson: "unarmed — pure carrier" — its only threat is what it
+    // unloads, so every weapon-shaped field is gone and the seam resolves zero slots.
+    expect(q.weaponId).toBeUndefined();
+    expect(q.weaponOverride).toBeUndefined();
+    expect(q.weapons).toBeUndefined();
+    expect(q.fireRange).toBeUndefined();
+    expect(q.muzzlePart).toBeUndefined();
+    expect(Object.keys(kindWeaponSlots(q))).toEqual([]);
+    expect(kindMaxFireRange(q)).toBeUndefined();
+    // #147: the deploy mechanic is a SWARM — a batch of several units per tick, a fast cadence,
+    // and a high lifetime cap. #328 leaves all of it untouched (deliberately NOT buffed to
+    // compensate for disarming the unit — Jackson wants to feel that in play first).
     expect(q.deployEveryMs).toBeGreaterThanOrEqual(2000);
     expect(q.deployEveryMs).toBeLessThanOrEqual(8000);
     expect(q.deployBatchMin).toBeGreaterThan(1);   // more than one unit per tick — a real "batch"
@@ -186,31 +198,38 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(q.deployCap).toBeLessThanOrEqual(30);   // generous, but still a bounded lifetime cap
   });
 
-  it('#152: quadruped deploy batch minimum is at least 5 (round-2 playtest floor)', () => {
-    const q = ENEMY_KINDS.quadruped;
+  it('#152: carrier deploy batch minimum is at least 5 (round-2 playtest floor)', () => {
+    const q = ENEMY_KINDS.carrier;
     expect(q.deployBatchMin).toBeGreaterThanOrEqual(5);
     expect(q.deployBatchMax).toBeGreaterThanOrEqual(q.deployBatchMin);
   });
 
-  it('#152: quadruped body turnRate is now much slower, while turretSlew is UNCHANGED at 2.0', () => {
-    const q = ENEMY_KINDS.quadruped;
-    // Dropped hard from the #130/#147 value of 1.1 — well under a third of it, and under even the
-    // heavy player chassis's already-ponderous 1.0 body turnRate (chassis/heavy.js) — so the body
-    // reads as struggling to reorient.
-    expect(q.move.turnRate).toBeLessThan(0.5);
-    expect(q.move.turnRate).toBeGreaterThan(0);
-    // The turret must keep tracking responsively regardless — explicitly untouched.
-    expect(q.move.turretSlew).toBe(2.0);
-    expect(q.move.turretSlew).toBeGreaterThan(q.move.turnRate * 3);
+  it('#328: the carrier is drawn on the TANK\'s art, visibly bigger than a tank', () => {
+    const q = ENEMY_KINDS.carrier, t = ENEMY_KINDS.tank;
+    // Same art builder family: the carrier's own module reuses tank.js's `drawTankHull`, so the
+    // two kinds' `scale` values are finally directly comparable (they weren't before #328 —
+    // the old quadruped art had a much larger intrinsic size).
+    expect(q.art).toBe('carrier');
+    expect(q.behavior).toBe('carrier');
+    // "make the whole thing bigger" — 1.5x a tank's on-screen footprint.
+    expect(q.scale).toBeCloseTo(t.scale * 1.5, 5);
+    expect(q.size).toBe('large');
+    // No turret to slew — the bay door is deck-mounted, pinned to the hull by carrierBehavior.
+    expect(q.move.turretSlew).toBeUndefined();
+    // The legged walk cycle went away with the legs.
+    expect(q.legFrames).toBeUndefined();
+    expect(q.move.stepInterval).toBeUndefined();
   });
 
-  it('#152: quadruped carries a walk-cycle leg-frame count for its animated gait', () => {
-    const q = ENEMY_KINDS.quadruped;
-    expect(q.legFrames).toBeGreaterThanOrEqual(2);
-    expect(q.move.stepInterval).toBeGreaterThan(0);
-    // A slow, heavy, LURCHING cadence — not a brisk trot — so noticeably slower than the heavy
-    // player chassis's own already-ponderous stepInterval (460ms, chassis/heavy.js).
-    expect(q.move.stepInterval).toBeGreaterThan(460);
+  it('#328: the carrier declares a two-frame BAY DOOR for its launch animation', () => {
+    const q = ENEMY_KINDS.carrier;
+    // Mirrors the retired `legFrames` convention on the other sprite: the art builds
+    // `<key>_turret_0` (shut) and `<key>_turret_1` (open), and carrierBehavior flips the live
+    // frame for a beat on each launch.
+    // (art/vehicles/carrier.js CARRIER_DOOR_FRAMES — not imported here, this file stays
+    // Phaser-free like the rest of the pure data layer.)
+    expect(q.turretFrames).toBe(2);
+    expect(q.turretFrames).toBeGreaterThanOrEqual(2);
   });
 
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {

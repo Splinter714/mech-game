@@ -44,7 +44,7 @@
 //              `_fireInterval` on the RESOLVED weapon (the same resolution the player/
 //              mech-enemy path uses), so a kind that wants a slower/faster cadence tunes it
 //              in the weapon's OWN terms — `weaponOverride: { cycleTime: 260 }` for a
-//              single-shot weapon (drone/tank/quadruped below), or
+//              single-shot weapon (drone/tank below), or
 //              `weaponOverride: { delivery: { fireRate: 10/7 } }` for a stream weapon
 //              (infantry below). One cadence concept, no parallel per-kind timer vocabulary.
 //   fireRange  px at which it opens fire (falls back to the weapon's own max).
@@ -68,7 +68,7 @@
 //              check (world.js `_crushTargetAt`) and the hex-vocabulary cover/LOS work go
 //              through. 'small': tank, infantry (the two kinds already crushable on contact,
 //              pre-#269 gated by the now-superseded CRUSHABLE_BEHAVIORS Set). 'large': turret,
-//              drone, helicopter, quadruped. A mech enemy (data/enemies.js) has no entry in this
+//              drone, helicopter. A mech enemy (data/enemies.js) has no entry in this
 //              table at all and is always 'large' — `unitSize` special-cases that.
 //   scale      on-screen sprite size as a MULTIPLE of the arena mech scale (data-driven per #75;
 //              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
@@ -375,7 +375,7 @@ export const ENEMY_KINDS = {
     // than plating; regens fast (it's evasive and often out of the fight between passes) but
     // the pool itself is modest, so a sustained pass still breaks through it quickly. Exercises
     // the HpBody shield layer (data/shield.js) with a DIFFERENT tuning than the player/
-    // Broodwalker below, showing the config is genuinely per-kind.
+    // Broodhauler below, showing the config is genuinely per-kind.
     // #299: pool 30 -> 15 (owner-set); regen tuning left exactly as it was.
     shield: { max: 15, regenPerSec: 3, pauseMs: 900 },
     parts: {
@@ -447,96 +447,83 @@ export const ENEMY_KINDS = {
     scale: 0.6,
   },
 
-  // 5) QUADRUPED — "Broodwalker" (#130). A slow, tanky four-legged ground unit with a
-  //    turreted main gun (same independent hull-vs-turret decoupling as tank, reusing
-  //    tankBehavior's movement pattern via quadrupedBehavior) PLUS a periodic deploy
-  //    mechanic: while alive and AWARE it acts as a mobile "nest," dropping a drone or
-  //    infantry trooper near itself every so often (see quadrupedBehavior in
-  //    enemyBehaviors.js) up to a lifetime cap, rather than a cluster spawning everything
-  //    up front like turretNest/infantryMob. A support/objective unit — tougher than a
-  //    tank but well under a full mech's pool — so it reads as worth focusing down before
-  //    its spawns pile up, not a one-shot kill.
-  quadruped: {
-    name: 'Broodwalker',
-    kind: 'quadruped',
-    // #299 balance pass (owner-set): 50 structure / 50 armor / 50 shield = 150 total, a hard cut
-    // from 260+60+50=370. This deliberately drops the Broodwalker BELOW a light mech (200), where
-    // it used to sit near heavy-mech tough. Flagged to the owner as a big change to that fight and
-    // confirmed. The old sizing rationale below is kept for history but no longer describes it.
-    hp: 50,                 // #130 (owner: tune): tougher than tank's 160, but well under a
-                             // heavy mech's ~616-hp pool (artillery's 'heavy' chassis; #273
-                             // moved sniper off 'heavy' onto 'medium') — a real but beatable
-                             // objective target, not a brick wall.
+  // 5) CARRIER — "Broodhauler" (#130, reworked in #328). A slow, tanky, UNARMED drone carrier:
+  //    the battle tank's exact tracked body (art/vehicles/carrier.js reuses tank.js's own
+  //    `drawTankHull`) with the gun turret replaced by a launch BAY DOOR, and no weapon at all.
+  //    Its only threat is what it unloads — while alive and AWARE it acts as a mobile "nest,"
+  //    dropping a whole BATCH of drones from its own body on a cadence (carrierBehavior in
+  //    enemyBehaviors.js) up to a lifetime cap, rather than a cluster spawning everything up
+  //    front like turretNest/infantryMob.
+  //
+  //    #328 (playtest 2026-07-19, Jackson): the old four-legged Broodwalker "honestly looks
+  //    bad" — re-skinned onto the tank body ("re-use tank art exactly, but minus the tank
+  //    turret", plus "something on top that looks like a bay door... to let the drones out"),
+  //    disarmed ("unarmed — pure carrier"), and moved onto tank-like movement ("movement feel
+  //    should match the tank, but maybe slower, and also make the whole thing bigger"). The
+  //    known consequence — that it is now much LESS dangerous, since the player can park
+  //    alongside and dismantle it at leisure — was surfaced and accepted; deliberately NOT
+  //    compensated for by buffing drone output, so it can be felt in play first.
+  carrier: {
+    name: 'Broodhauler',
+    kind: 'carrier',
+    // #299 balance pass (owner-set): 50 structure / 50 armor / 50 shield = 150 total. #328
+    // leaves the whole toughness stack untouched — only art, weapon, movement and size moved.
+    hp: 50,
     // #246: ALL THREE layers (shield + armor + hp) — the toughest non-mech kind gets the full
     // stack, a deliberately different combination from tank's (armor-only) and helicopter's
-    // (shield-only) so the roster exercises every layer-combo the design calls for. Slower
-    // shield regen than the helicopter's (it's a ground brawler that stays in the fight, not
-    // an evasive flyer) but a bigger pool and a longer post-hit pause.
-    armor: 50,       // #299: 60 -> 50
-    shield: { max: 50, regenPerSec: 1.5, pauseMs: 1500 },   // #299: pool unchanged at 50
+    // (shield-only) so the roster exercises every layer-combo the design calls for.
+    armor: 50,
+    shield: { max: 50, regenPerSec: 1.5, pauseMs: 1500 },
+    // #328: the hitboxes follow the new art. `hull` is byte-identical to the TANK's, because it
+    // is now literally the same drawing (see art/vehicles/carrier.js); the tank's `turret` and
+    // `barrel` parts are replaced by the single `bay` — the launch door on the deck. Both parts
+    // scale with `scale` at hit-resolution time like every other kind's.
     parts: {
-      hull: { x: 0, y: 2, w: 34, h: 30 },
-      turret: { x: 0, y: -8, w: 20, h: 18 },
-      barrel: { x: 0, y: -22, w: 6, h: 20 },
+      hull: { x: 0, y: 8, w: 22, h: 32 },
+      bay: { x: 0, y: 1, w: 16, h: 20 },
     },
-    muzzlePart: 'barrel',
-    // #233: `barrel`'s own front edge (y:-22, h:20 ⇒ y=-32) actually sits PAST the gun's real
-    // rendered tip — the muzzle-glow ellipse at y=-28 in art/vehicles/quadruped.js drawTurret
-    // — so this is the one kind where the fix pulls the spawn point BACK (negative), not
-    // forward: shots were floating ~4 design units ahead of the barrel, not behind it.
-    muzzleForward: -4,
-    weaponId: 'autocannon',
-    // #243 (was `fireEveryMs: 1700`): a touch slower cadence than tank's 1500 — bulkier
-    // support gun. Same deliberate slower-than-weapon choice as tank, now via the override.
-    weaponOverride: { cycleTime: 1700 },
-    fireRange: 380,
-    standoff: 320,           // px it wants to hold from the player
+    // #328: NO weapon. Jackson chose "unarmed — pure carrier", so there is no `weaponId`, no
+    // `weaponOverride`, no `muzzlePart`/`muzzleForward` and no `fireRange` — `kindWeaponSlots`
+    // (data/kindWeapons.js) resolves an unarmed kind to ZERO slots, and `carrierBehavior` never
+    // calls `aimAndFire` at all. Its detection radius falls back to `detectionRangeFor`'s own
+    // default (360px), which is close to the 456px the old gun-derived value produced.
+    standoff: 320,           // px it wants to hold from the player while unloading
     flying: false,
-    // #130 (owner: tune): "comparable to or slower than tank" — tank's maxSpeed is 52, this is
-    // noticeably slower/heavier so it reads as a lumbering quadruped rather than a light tank.
-    // #152 (round-2 playtest): "body turn rate too fast" — turnRate dropped hard from 1.1 to
-    // 0.35 (under a third, and well below even the heavy player chassis's already-ponderous 1.0
-    // turnRate — see chassis/heavy.js) so the BODY struggles to reorient like a lumbering heavy
-    // machine. turretSlew is explicitly left at 2.0, UNCHANGED — the gun must keep tracking
-    // responsively (aimAndFire in enemyBehaviors.js slews the turret completely independently of
-    // the body's own turnRate) even while the hull turns slowly.
-    // stepInterval drives the walk-cycle frame swap (see legFrames below / enemies.js
-    // _updateVehicle) — a slow, heavy cadence (well above the heavy player chassis's 460ms —
-    // see chassis/heavy.js) so it lurches rather than trots.
-    move: { maxSpeed: 38, accel: 90, turnRate: 0.35, turretSlew: 2.0, stepInterval: 720 },
-    // #152: how many walk-cycle hull frames this kind's art builds (src/art/vehicles/quadruped.js
-    // QUADRUPED_LEG_FRAMES) — presence of this field is what tells the arena (enemies.js
-    // _makeVehicleView/_updateVehicle) to animate `<key>_hull_0..N` instead of using one static
-    // `<key>_hull` texture, mirroring the player mech's own multi-frame stompy gait.
-    legFrames: 4,
-    // #147 (playtest follow-up to #130: "should deploy SWARMS of quadcopters and infantry" —
-    // the old 1-unit-per-8s-capped-at-5 trickle didn't read as a swarm at all). Now every 4s
-    // while alive+aware it drops a whole BATCH of drones at once (quadrupedBehavior), up to a
-    // much higher deployCap (24, in the same ballpark as the drone SWARM_SIZE(18)/
-    // INFANTRY_MOB_SIZE(28) below) so a full fight reads as genuinely swarm-dangerous without
-    // spawning literally unbounded units and tanking arena performance.
-    // #152 (round-2 playtest): "deploy batch minimum 5" — bumped the floor from 3 to 5 (every
-    // burst is now a real swarm, never a small 3-unit trickle); max nudged up in step to 8 so
-    // there's still batch-size VARIETY above the new floor, not a flat constant every time.
-    // "deploy drones only" — quadrupedBehavior's QUADRUPED_DEPLOY_KINDS now excludes infantry
-    // (flag-disabled there, not deleted), so every deployed unit here is a drone regardless of
-    // this data's own batch sizing.
+    // #328: "movement feel should match the tank, but maybe slower". Tank is
+    // { maxSpeed: 52, accel: 120, turnRate: 1.4 }; this is the same tank-style hull-travel
+    // shape a touch heavier across the board. The old 0.35 turnRate was a deliberate
+    // lumbering-LEGS tune (#152) that no longer describes anything now the legs are gone.
+    // No `turretSlew` — there is no turret to slew; the bay door is pinned to the hull.
+    // Owner: tunable, these are playtest dials.
+    move: { maxSpeed: 40, accel: 95, turnRate: 1.0 },
+    // #328: how many BAY-DOOR frames this kind's art builds (art/vehicles/carrier.js
+    // CARRIER_DOOR_FRAMES — [0] shut, [1] open). Presence of this field is what tells the arena
+    // (enemies.js _makeVehicleView/_updateVehicle/_reskinVehicle) to render
+    // `<key>_turret_0..N` instead of one static `<key>_turret`, exactly mirroring how
+    // `legFrames` drives multi-frame HULL art. `carrierBehavior` flips the live frame to 1 for
+    // a beat whenever a batch launches.
+    turretFrames: 2,
+    // #147/#152: every deployEveryMs while alive+aware it drops a whole BATCH of drones at once
+    // (carrierBehavior), floor 5 so every burst is a real swarm, up to a lifetime cap of 24.
+    // #328 leaves the deploy batching completely unchanged.
     deployEveryMs: 4000,
     deployBatchMin: 5,
     deployBatchMax: 8,
     deployCap: 24,
-    art: 'quadruped',
-    behavior: 'quadruped',
-    // #269: 'large' — the toughest non-mech kind, deliberately bulked up to read "on par with a
-    // full player mech's effective on-screen scale" (see the scale comment below); not crushable
-    // pre-#269 either.
+    art: 'carrier',
+    behavior: 'carrier',
+    // #269: 'large' — not crushable, and it towers over the tree canopy.
     size: 'large',
     themeColor: 0x8a4fc9,    // distinct violet accent — reads as a different "danger" bit
                              // from tank's orange / turret's orange / drone's yellow / etc.
-    // #147: playtest said the #130 0.6 (already "bigger footprint than tank's 0.48") still read
-    // "way too small" for a tougher-than-tank objective unit — bumped to 1.0 (on par with a full
-    // player mech's effective on-screen scale, ARENA_MECH_SCALE × 1), a clearly obvious jump.
-    scale: 1.0,
+    // #328: "make the whole thing bigger" — visibly bigger than a tank. Because this now draws
+    // the TANK's art, `scale` is finally directly comparable to the tank's own 0.4, so this is
+    // simply 1.5x a tank's on-screen footprint. (The old 1.0 was against the old Broodwalker art's
+    // much larger intrinsic size and is NOT comparable — see #328's note.) Side effect worth
+    // knowing: its collision radius therefore FALLS from 24px to 14.4px
+    // (shared.js `groundEnemyRadius` = 24 * scale), so it fits through gates and wall breaches
+    // strictly better than the Broodhauler did, not worse.
+    scale: 0.6,
   },
 
   // 6) INFANTRY — one trooper of a GROUND swarm (#97). The weakest unit in the game by a wide
@@ -566,7 +553,7 @@ export const ENEMY_KINDS = {
     // weapon's own terms — a slow popgun stream, fireRate 10/7 ≈ 1.43 shots/sec
     // (`_fireInterval`: 1000 / (10/7) = 700ms). #241's balance flag carries over verbatim:
     // this cadence has never been confirmed as a deliberate slower-than-weapon choice (unlike
-    // tank/quadruped's), but un-slowing it would let a 28-unit INFANTRY_MOB_SIZE mob each
+    // tank/carrier's), but un-slowing it would let a 28-unit INFANTRY_MOB_SIZE mob each
     // stream at the Repeater's full 18/sec — a huge DPS jump — so it's preserved byte-identical
     // pending a deliberate playtest/tune pass.
     weaponOverride: { delivery: { fireRate: 10 / 7 } },
@@ -582,7 +569,7 @@ export const ENEMY_KINDS = {
     // only affects idle-wander GOAL PICKING (scenes/arena/enemies.js `_idleMoveIntent`) — a
     // trooper directly chasing/fleeing across a river when AWARE is unaffected (that's driven by
     // direct-line movement toward the player, not a chosen destination) and can still physically
-    // cross passable water if forced to. Tank/quadruped are bulkier and read fine wading, so this
+    // cross passable water if forced to. Tank/carrier are bulkier and read fine wading, so this
     // is infantry-only, not a generic "small ground unit" flag — see #151 report.
     avoidWater: true,
     art: 'infantry',

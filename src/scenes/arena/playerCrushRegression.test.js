@@ -2,7 +2,7 @@
 // (`_blockedByOtherGroundUnit`, world.js) to also cover small-vs-small must NOT touch the
 // PLAYER's own movement resolution — the player still instantly crushes a small unit (tank/
 // infantry) on contact via `_crushTargetAt`/`_crushGroundEnemyAt`, and still just BLOCKS against
-// a large unit (mech/turret/quadruped) via `_blockedByGroundEnemy`, exactly as before this issue.
+// a large unit (mech/turret/carrier) via `_blockedByGroundEnemy`, exactly as before this issue.
 // Those two functions (and the player's `_drive` in locomotion.js) were deliberately left
 // completely untouched by the #282 fix — this test drives `_drive` end-to-end (not just the
 // isolated helpers crush.test.js/collision.test.js already cover) to prove the full player-side

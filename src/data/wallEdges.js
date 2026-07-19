@@ -13,7 +13,7 @@ import { edgeKey, edgeEndpoints, segmentCrossT, pointSegmentDistance } from './h
 
 // HP per SPAN (one hex edge). #313 (owner-confirmed retune): raised 55 → 200. Every destructible
 // structure used to be more fragile than the cheapest combat unit — against #299's unit toughness
-// scale (tank 80, quadruped 150, light mech 200, player 600) a 55hp span fell to a four-weapon
+// scale (tank 80, carrier 150, light mech 200, player 600) a 55hp span fell to a four-weapon
 // mech in about half a second, which made the gate a speed bump. 200 puts a single span on par
 // with a light mech, so punching a hole is a deliberate several-second commitment under fire.
 // Since the mech collides as a POINT against terrain and walls alike, breaching just ONE span

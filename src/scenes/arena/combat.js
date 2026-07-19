@@ -187,7 +187,7 @@ export const CombatMixin = {
     // or lost its armor plating (#246 armor-shell overlay), not on every single hit. Vehicle
     // (non-mech) kinds instead swap between two pre-built shared texture sets — see below.
     if (isMech && (res.destroyed || res.armorBrokeNow)) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
-    // #300: a non-mech unit (tank/quadruped) with an armor pool swaps from its PLATED texture set
+    // #300: a non-mech unit (tank/carrier) with an armor pool swaps from its PLATED texture set
     // to the bare one the moment that pool empties, so the player sees the plating strip off.
     else if (!isMech && res.armorBrokeNow) this._reskinVehicle(e);
     // #83: no floating damage number on enemy hits either — damage still applies above (res),

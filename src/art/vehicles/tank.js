@@ -15,7 +15,11 @@ import { VEHICLE as V, accentGlow } from './palette.js';
 // y-extent, so the outer silhouette is now ~29px wide by ~44px tall (~1:1.5, clearly
 // longer-than-wide) while keeping the same visual language (tracks down each side, sloped
 // glacis front, rear engine deck) — a proportion tweak, not a redesign.
-function drawHull(sg, accent, armored = false) {
+// #328: EXPORTED so the Carrier (art/vehicles/carrier.js) can draw the literal same tank body
+// rather than forking a near-copy of it — Jackson asked to "re-use tank art exactly, but minus
+// the tank turret." Any future tweak to the tank's silhouette therefore lands on both units by
+// construction; there is no second copy of this to keep in sync.
+export function drawTankHull(sg, accent, armored = false) {
   // Ground shadow.
   ellipseC(sg, 0, 5, 28, 38, V.deep, 0.35);
 
@@ -86,6 +90,6 @@ export function drawTank(scene, key, def, opts = {}) {
   const accent = def.themeColor ?? V.rim;
   const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
-  gen(scene, `${key}_hull`, D, D, (g) => drawHull(scaledGraphics(g), accent, armored));
+  gen(scene, `${key}_hull`, D, D, (g) => drawTankHull(scaledGraphics(g), accent, armored));
   gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent, armored));
 }

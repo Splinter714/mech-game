@@ -8,7 +8,7 @@ import { drawTank } from './tank.js';
 import { drawDrone } from './drone.js';
 import { drawHelicopter } from './helicopter.js';
 import { drawInfantry } from './infantry.js';
-import { drawQuadruped } from './quadruped.js';
+import { drawCarrier } from './carrier.js';
 
 const VEHICLE_ART = {
   turret: drawTurret,
@@ -17,10 +17,10 @@ const VEHICLE_ART = {
   drone: drawDrone,
   helicopter: drawHelicopter,
   infantry: drawInfantry,
-  quadruped: drawQuadruped,
+  carrier: drawCarrier,   // #328: the tank-bodied drone carrier (shares tank.js's hull)
 };
 
-// #300: an ARMORED kind (enemyKinds.js `armor` > 0 — tank, quadruped) gets a SECOND texture set
+// #300: an ARMORED kind (enemyKinds.js `armor` > 0 — tank, carrier) gets a SECOND texture set
 // under this suffix, drawn with the shared `armorShell()` plating overlay. Vehicle textures are
 // shared across every live unit of a kind (see enemies.js `vehicleTextureKey`), so a per-instance
 // reskin like the mech's is impossible here — instead both looks are rasterised once up front and
@@ -47,7 +47,7 @@ export function vehicleHasArmorArt(def) {
 // kind def (`def.art` selects the builder). No-op with a clear throw if the art key is unknown.
 // #300: for an armored kind this builds BOTH sets — the bare one at `texKey` and the plated one
 // at `texKey + ARMORED_SUFFIX`. An art builder that doesn't honour `opts.armored` simply draws
-// the same thing twice (harmless): today tank + quadruped are the armored kinds and both do.
+// the same thing twice (harmless): today tank + carrier are the armored kinds and both do.
 export function buildVehicleTextures(scene, texKey, def) {
   const builder = VEHICLE_ART[def.art];
   if (!builder) throw new Error(`buildVehicleTextures: unknown vehicle art '${def.art}'`);

@@ -461,7 +461,7 @@ export function isSoftCover(id) {
 // particular ray? Final design: only a small unit's sightline is blocked by soft cover — a
 // mech/large unit sees clean over it. `smallUnitInvolved` is computed by callers via
 // `isSmallUnit(theLiveEnemy)` (`scenes/arena/shared.js`, the real per-entity size-tier query —
-// small = tank/infantry, large = mech/quadruped, per the design doc's confirmed mapping; the
+// small = tank/infantry, large = mech/carrier, per the design doc's confirmed mapping; the
 // player is always a mech, implicitly large, so a caller never needs this for the player side
 // of a ray) and threaded down through `coverBlocksForRay` below.
 export function softCoverBlocksLOS(smallUnitInvolved) {

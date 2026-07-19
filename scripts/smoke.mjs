@@ -344,13 +344,15 @@ try {
     // SAME body interface (isDestroyed/applyDamage/partHealthFraction), and die — and a FLYER
     // ignores ground cover. Spawn one of each kind at the origin and exercise all of that.
     const veh = { spawned: 0, textured: 0, damaged: 0, killed: 0, flyerIgnoresWall: false };
-    for (const kind of ['turret', 'tank', 'drone', 'helicopter', 'infantry', 'quadruped']) {
+    for (const kind of ['turret', 'tank', 'drone', 'helicopter', 'infantry', 'carrier']) {
       const e = a._spawnKind(0, 0, kind);
       veh.spawned++;
-      // #152: the Broodwalker (quadruped) now builds a multi-frame walk-cycle hull
-      // (`<key>_hull_0..N`, see def.legFrames) instead of one static `<key>_hull` texture.
+      // A kind whose art builds multiple HULL frames (def.legFrames) or multiple TURRET frames
+      // (#328's def.turretFrames — the Broodhauler's two-frame bay door) is keyed `_0..N`
+      // instead of one static texture.
       const hullKey = e.kindDef.legFrames ? e.key + '_hull_0' : e.key + '_hull';
-      if (g.textures.exists(hullKey) && g.textures.exists(e.key + '_turret')) veh.textured++;
+      const turKey = e.kindDef.turretFrames ? e.key + '_turret_0' : e.key + '_turret';
+      if (g.textures.exists(hullKey) && g.textures.exists(turKey)) veh.textured++;
       const before = e.mech.partHealthFraction(e.mech.locations()[0]);
       a._damageEnemyAt(e, e.x, e.y, 10, 0xffffff);
       if (e.mech.partHealthFraction(e.mech.locations()[0]) < before) veh.damaged++;
@@ -426,18 +428,18 @@ try {
       return { spawnedCount, matchesMobSize, textured, damaged, diedAndRemoved };
     })();
 
-    // #130/#147/#152: the Broodwalker (quadruped) — a slow tanky ground unit that fires its
-    // turret AND periodically deploys a whole SWARM-sized batch of drones near itself while
+    // #130/#147/#152/#328: the Broodhauler (carrier) — a slow, tanky, UNARMED hauler that
+    // periodically deploys a whole SWARM-sized batch of drones near itself while
     // alive+aware (reworked in #147 from a 1-unit-per-8s trickle into several units per burst,
     // faster cadence, much higher lifetime cap; #152 restricted the deploy to drones-only, bumped
     // the batch floor to 5, and fixed the spawn origin to the nest's own body). Park the player
-    // within its fireRange/detect range, force it AWARE (mirrors the #103 awareness test's
+    // within its detect range, force it AWARE (mirrors the #103 awareness test's
     // direct-flag approach — this isolates the deploy/fire mechanic from the detection timing
     // already covered by that test), and drive real `_updateVehicle` ticks covering several of
     // its (deliberately short-circuited) deploy cooldowns.
     const quad = (() => {
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
-      const q = a._spawnKind(150, 0, 'quadruped');
+      const q = a._spawnKind(150, 0, 'carrier');
       q.awareness = 'aware';
       q.deployCd = 50;               // short-circuit the first deploy so this test doesn't need
                                       // thousands of ticks to reach the real ~4s cadence
@@ -447,17 +449,18 @@ try {
       let firstBurstSize = 0;
       // #152: distance of each newly-deployed unit from the NEST'S OWN position at the exact
       // tick it was spawned (checked per-tick, before any further nest movement can drift it) —
-      // confirms units originate AT the Broodwalker's own body, not offset beside it.
+      // confirms units originate AT the Broodhauler's own body, not offset beside it.
       let firstBurstMaxDist = null;
       for (let i = 0; i < 4 && !deployedAtLeastOnce; i++) {
         // Run one FULL deploy-interval's worth of ticks (not stopping the instant a batch
-        // appears — the turret still needs the rest of this window to slew onto the player and
-        // get a shot off, checked below via firedTurret), then re-shortcut the next cooldown so a
-        // handful of loop iterations reliably exercises multiple deploys without simulating the
-        // full real-world cadence.
+        // appears — the bay door's open window runs out over the rest of it, checked below via
+        // doorAnimates), then re-shortcut the next cooldown so a handful of loop iterations
+        // reliably exercises multiple deploys without simulating the full real-world cadence.
         for (let t = 0; t < 40; t++) {
           const beforeTick = a.enemies.length;
           a._updateVehicle(q, 0.016, 16);
+          if (q.turretFrame === 1) q._doorSawOpen = true;
+          if (q.turretFrame === 0 && q._doorSawOpen) q._doorSawShut = true;
           if (a.enemies.length > beforeTick && !deployedAtLeastOnce) {
             deployedAtLeastOnce = true;
             const newOnes = a.enemies.slice(beforeTick);
@@ -469,9 +472,14 @@ try {
       }
       const deployedCount = a.enemies.length - spawnedBefore;
       // #152: drones ONLY now — infantry deploy is flag-disabled (not deleted) in
-      // enemyBehaviors.js QUADRUPED_DEPLOY_KINDS.
+      // enemyBehaviors.js CARRIER_DEPLOY_KINDS.
       const deployedUnitsAreDronesOnly = a.enemies.slice(spawnedBefore).every((e) => e.kind === 'drone');
-      const firedTurret = a.projectiles.some((p) => p.owner === 'enemy');
+      // #328: the carrier is UNARMED — it must never put an enemy round into the world, no
+      // matter how long it sits at standoff with LOS on the player.
+      const neverFires = !a.projectiles.some((p) => p.owner === 'enemy');
+      // #328: the bay DOOR must actually animate — frame 1 (open) while a batch launches, back
+      // to frame 0 (shut) once the open window expires.
+      const doorOpenedOnLaunch = q._doorSawOpen === true;
       // #152: every batch is now floored at 5 (bumped from #147's 3), not just "more than one."
       const firstBurstIsSwarm = firstBurstSize >= 5 && firstBurstSize >= (q.kindDef.deployBatchMin ?? 1);
       // #152: spawned units must land essentially AT the nest's own body (a few px of jitter),
@@ -480,17 +488,18 @@ try {
       // Cap respected: deployCount tracked on the nest itself never exceeds its def.deployCap.
       const capRespected = q.deployCount <= q.kindDef.deployCap;
 
-      // #152: walk-cycle animation — put the nest far from the player so quadrupedBehavior drives
-      // it forward at a sustained speed (tooFar ⇒ radial advance), then run enough real ticks to
-      // clear its own stepInterval several times over and confirm the hull texture actually swaps
-      // frames (not a single static texture the whole time).
+      // #328: the bay door must close again after its open window — run the carrier on for a
+      // few real seconds with no further launches due and confirm the frame returns to 0 (shut).
       a.px = -5000; a.py = 0;
-      const framesSeen = new Set([q.hullFrame]);
-      for (let t = 0; t < 400 && framesSeen.size < 3; t++) {
+      q.deployCount = q.kindDef.deployCap;   // no more launches, so nothing re-opens the doors
+      for (let t = 0; t < 200 && !q._doorSawShut; t++) {
         a._updateVehicle(q, 0.016, 16);
-        framesSeen.add(q.hullFrame);
+        if (q.turretFrame === 0) q._doorSawShut = true;
       }
-      const walkAnimates = framesSeen.size >= 2;
+      const doorAnimates = q._doorSawOpen === true && q._doorSawShut === true;
+      // #328: the bay door is DECK-MOUNTED — it rides the hull's angle rather than tracking the
+      // player like an armed kind's turret. Drive a big reorientation and confirm they match.
+      const doorLockedToHull = Math.abs(Math.atan2(Math.sin(q.turret - q.angle), Math.cos(q.turret - q.angle))) < 1e-6;
       a.px = 0; a.py = 0;
 
       // Kill the nest and confirm its previously-deployed drones are NOT orphaned: they're
@@ -506,32 +515,11 @@ try {
       a.px = 0; a.py = 0; a.vx = 0; a.vy = 0;
       return {
         deployedAtLeastOnce, deployedCount, firstBurstSize, firstBurstIsSwarm,
-        deployedUnitsAreDronesOnly, spawnedAtNestBody, walkAnimates, firedTurret,
-        capRespected, nestDiedAndRemoved, childrenSurvivedNestDeath,
+        deployedUnitsAreDronesOnly, spawnedAtNestBody, doorAnimates, doorOpenedOnLaunch,
+        doorLockedToHull, neverFires, capRespected, nestDiedAndRemoved, childrenSurvivedNestDeath,
       };
     })();
 
-    // #152: confirm the BODY turns slowly while the TURRET keeps tracking responsively — spawn a
-    // fresh Broodwalker facing one way, put the player somewhere requiring a big reorientation
-    // (far enough that quadrupedBehavior advances toward it, driving the body-facing update), run
-    // a short burst of real ticks, and compare how far the body vs. the turret actually rotated.
-    const quadTurnRates = (() => {
-      const wrap = (ang) => Math.atan2(Math.sin(ang), Math.cos(ang));
-      const q2 = a._spawnKind(0, -400, 'quadruped');
-      q2.awareness = 'aware';
-      q2.angle = 0; q2.turret = 0;
-      a.px = 400; a.py = 0;   // well past its standoff, and a sharp turn from its current facing
-      const bodyStart = q2.angle, turretStart = q2.turret;
-      for (let t = 0; t < 30; t++) a._updateVehicle(q2, 0.016, 16);
-      const bodyTurned = Math.abs(wrap(q2.angle - bodyStart));
-      const turretTurned = Math.abs(wrap(q2.turret - turretStart));
-      a._removeEnemy(q2);
-      a.px = 0; a.py = 0;
-      // The turret must have swung noticeably farther than the body over the same real ticks —
-      // turnRate (0.35) vs turretSlew (2.0) is nearly a 6x gap, so over any shared window the
-      // turret should comfortably out-rotate the body.
-      return { bodyTurned, turretTurned, turretTurnsFasterThanBody: turretTurned > bodyTurned * 1.5 };
-    })();
 
     // #98: air-enemy shadow base ellipse was bumped from 26x14 to 34x18 (still × kindDef.scale,
     // per #93). Confirm a fresh drone/helicopter's shadow reflects the NEW, bigger base — i.e.
@@ -1397,7 +1385,6 @@ try {
       veh,
       infMob,
       quad,
-      quadTurnRates,
       shadowCheck,
       deathFx,
       missionStartedActive,
@@ -1487,7 +1474,7 @@ try {
   if (!(arena.deathFx.heavyMaxR > arena.deathFx.droneMaxR)) {
     fail(`#87 heavy mech death explosion (${arena.deathFx.heavyMaxR}) was not bigger than a drone's (${arena.deathFx.droneMaxR})`);
   }
-  // #68/#97/#130: the six non-mech kinds (turret/tank/drone/helicopter/infantry/quadruped)
+  // #68/#97/#130: the six non-mech kinds (turret/tank/drone/helicopter/infantry/carrier)
   // spawn, render their own textures, take damage, and die.
   if (arena.veh.spawned !== 6) fail(`#68 expected 6 non-mech kinds spawned, got ${arena.veh.spawned}`);
   if (arena.veh.textured !== 6) fail('#68 a non-mech kind is missing its hull/turret textures');
@@ -1500,25 +1487,22 @@ try {
   if (!arena.infMob.textured) fail('#97 an infantry trooper is missing its hull/turret textures');
   if (!arena.infMob.damaged) fail('#97 an infantry trooper did not take damage via the body interface');
   if (!arena.infMob.diedAndRemoved) fail('#97 an infantry trooper did not die + get removed through the normal death path');
-  // #130/#147/#152: the Broodwalker (quadruped) fires its turret, deploys a SWARM-sized batch of
+  // #130/#147/#152: the Broodhauler (carrier) fires its turret, deploys a SWARM-sized batch of
   // drones (drones ONLY as of #152) per tick (not one at a time) while aware, every batch is
-  // floored at 5, spawned units originate at the nest's own body (not offset beside it), its walk
-  // cycle actually animates, it respects its deploy cap, and dying doesn't orphan/remove its
-  // already-deployed units.
-  if (!arena.quad.deployedAtLeastOnce) fail('#130 the quadruped never deployed a drone while alive and aware');
-  if (!arena.quad.firstBurstIsSwarm) fail(`#152 the quadruped's first deploy burst only spawned ${arena.quad.firstBurstSize} unit(s), expected a batch of at least 5`);
-  if (!arena.quad.deployedUnitsAreDronesOnly) fail('#152 the quadruped deployed something other than a drone (infantry deploy should be disabled)');
-  if (!arena.quad.spawnedAtNestBody) fail('#152 the quadruped deployed units offset away from its own body instead of at/near it');
-  if (!arena.quad.walkAnimates) fail('#152 the quadruped hull texture never swapped frames — the walk-cycle animation is not actually animating');
-  if (!arena.quad.firedTurret) fail('#130 the quadruped never fired its turret at the player');
-  if (!arena.quad.capRespected) fail(`#130 the quadruped deployed more than its own deployCap (deployed ${arena.quad.deployedCount})`);
-  if (!arena.quad.nestDiedAndRemoved) fail('#130 the quadruped did not die + get removed through the normal death path');
-  if (!arena.quad.childrenSurvivedNestDeath) fail('#130 the quadruped\'s already-deployed drones were orphaned/killed when the nest died');
-  // #152: body turnRate dropped hard while turretSlew stayed at 2.0 — over the same real ticks
-  // the turret must rotate noticeably farther than the body.
-  if (!arena.quadTurnRates.turretTurnsFasterThanBody) {
-    fail(`#152 the quadruped's turret (${arena.quadTurnRates.turretTurned.toFixed(3)}rad) did not clearly out-rotate its body (${arena.quadTurnRates.bodyTurned.toFixed(3)}rad) — turnRate/turretSlew gap not reflected at runtime`);
-  }
+  // floored at 5, spawned units originate at the nest's own body (not offset beside it), its bay
+  // door actually opens on launch and shuts again (#328), it never fires (#328 — unarmed), it
+  // respects its deploy cap, and dying doesn't orphan/remove its already-deployed units.
+  if (!arena.quad.deployedAtLeastOnce) fail('#130 the carrier never deployed a drone while alive and aware');
+  if (!arena.quad.firstBurstIsSwarm) fail(`#152 the carrier's first deploy burst only spawned ${arena.quad.firstBurstSize} unit(s), expected a batch of at least 5`);
+  if (!arena.quad.deployedUnitsAreDronesOnly) fail('#152 the carrier deployed something other than a drone (infantry deploy should be disabled)');
+  if (!arena.quad.spawnedAtNestBody) fail('#152 the carrier deployed units offset away from its own body instead of at/near it');
+  if (!arena.quad.doorOpenedOnLaunch) fail('#328 the carrier\'s bay door never opened while it was launching a batch');
+  if (!arena.quad.doorAnimates) fail('#328 the carrier\'s bay door never returned to its shut frame — the door is not actually animating');
+  if (!arena.quad.doorLockedToHull) fail('#328 the carrier\'s bay door drifted off the hull angle — it is deck-mounted, not a tracking turret');
+  if (!arena.quad.neverFires) fail('#328 the carrier fired a projectile — it must be completely unarmed');
+  if (!arena.quad.capRespected) fail(`#130 the carrier deployed more than its own deployCap (deployed ${arena.quad.deployedCount})`);
+  if (!arena.quad.nestDiedAndRemoved) fail('#130 the carrier did not die + get removed through the normal death path');
+  if (!arena.quad.childrenSurvivedNestDeath) fail('#130 the carrier\'s already-deployed drones were orphaned/killed when the nest died');
   // #98: the air-enemy shadow base ellipse was bumped from 26x14 to 34x18 (still × kindDef.scale
   // per #93) — a fresh drone/helicopter's shadow width must reflect the bigger base.
   if (!(arena.shadowCheck.droneShadowW > arena.shadowCheck.droneOldW)) {
