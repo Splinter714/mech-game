@@ -20,7 +20,7 @@
 // visible on the SIDES at the real GAMEPLAY_ZOOM=1.3, see below), while the length is long and
 // independent, so the corridor's far end is NOT visible from spawn and a run traverses it end-to-end.
 import {
-  axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius,
+  axialKey, range, ring, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius,
   nearestHex,
 } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory } from './terrain.js';
@@ -44,8 +44,14 @@ export const BASE_COUNT = 5;
 // Docks per base: a small cluster (not a wall of enemies) — mirrors the old SQUAD_BASE/GROWTH
 // escalation's spirit (more, tougher units later) via `baseLateFraction` below rather than a
 // flat per-base count.
-export const DOCKS_PER_BASE_MIN = 3;
-export const DOCKS_PER_BASE_MAX = 5;
+// #333 (bases ~4x larger): scaled up alongside the footprint, but deliberately SLOWER than area.
+// Jackson asked for "more room and somewhat more stuff" — a base should feel more spacious AND
+// somewhat more defended, not 4x more defended. Footprint area went ~3.5x; docks went 3/5 → 5/8
+// (~1.6x), so the extra compound is mostly open yard to fight across rather than more spawners.
+// Kept on the conservative side on purpose: #326 removed every dock reinforcement cap, so each
+// added dock is a PERMANENT extra reinforcement stream for the whole fight, not a one-off spawn.
+export const DOCKS_PER_BASE_MIN = 5;
+export const DOCKS_PER_BASE_MAX = 8;
 
 // #275 (redesign, on top of the outpost-terrain removal): alert towers are no longer anchored to
 // an "outpost" concept at all — Jackson clarified he never thought of the removed building/
@@ -281,10 +287,77 @@ export function drawDockKind(rng, lateFraction) {
 // is only CORRIDOR_HALF_WIDTH_PX * 2 = 500px ≈ 6 hex steps wide, so a radius-3 compound would
 // routinely span the entire corridor and leave the ring's own outline pressed against the world
 // boundary on both flanks, which reads as a wall across the map rather than around a base.
-export const BASE_FOOTPRINT_RADIUS = 2;
+//
+// #333 (2026-07-19 playtest — Jackson: "make bases 2-3x as large"): the compound is no longer a
+// DISC at all. The radius-3 rejection above is the whole reason: the binding constraint is only
+// ACROSS the lane, never along it, and Jackson explicitly chose to keep the corridor width and
+// grow the base anisotropically instead ("keep the corridor, but maybe change the base depth or
+// something to get area 4x, not just pure radius"). So the footprint is an ELLIPSE oriented on the
+// corridor's own LOCAL axis: about as wide across the lane as a radius-3 disc would have been
+// (right at the corridor's limit, no wider), and much deeper ALONG it, which is free space nobody
+// was using. Same 4x-ish area, but you drive INTO a compound and fight down its length rather than
+// running into a wall spanning the map.
+//
+// Both half-extents are in HEX STEPS (multiplied up by HEX_STEP_PX inside `baseFootprint`), so
+// they read directly as "hexes out from the centre" the way the old radius did.
+export const BASE_FOOTPRINT_HALF_LENGTH = 6;
+export const BASE_FOOTPRINT_HALF_WIDTH = 2.6;
 
-// #288: a base's compound footprint — the CONTIGUOUS hexes within `BASE_FOOTPRINT_RADIUS` of its
-// centre that are real play space (`playableKeys`). Returned as a key Set.
+// #333: how square the compound's outline is — the exponent of the SUPERELLIPSE
+// |along/A|^n + |across/B|^n <= 1. n = 2 is a plain ellipse; n → ∞ is a rectangle.
+//
+// 3 is chosen, not default: with a plain ellipse the 6-wide x 12-deep box only reached ~3.3x the
+// old disc's area, short of the ~4x asked for, and the obvious fix — a longer box — is exactly the
+// "pure corridor to fight down" shape Jackson turned down in favour of lateral room. Filling the
+// SAME box more completely gets the area instead of the length: at 3 the flanks run nearly
+// straight down the compound's long sides (so the deep middle is full-width yard rather than
+// tapering to a point) and it lands at ~3.3-3.7x. Not pushed further — by n = 4 it is visually a
+// rectangle, and a base's ring wants rounded corners to read as a fortified perimeter rather than
+// a box drawn across the lane, which is the exact failure mode this whole issue is avoiding.
+const FOOTPRINT_SUPERELLIPSE_N = 3;
+
+// #333: the raw (unclipped, uncontiguous) compound OUTLINE as a key Set — every hex whose centre
+// falls inside a superellipse of half-extents `halfLength` (along `axis`) by `halfWidth` (across
+// it), both in hex steps, centred on `center`.
+//
+// Worked in PIXEL space rather than hex-metric space on purpose. The corridor's local direction is
+// a real-valued heading off the spine (`spineTangentAt`) that has nothing to do with the six hex
+// axes, so anything hex-metric would quantise the compound's orientation to 60° steps and make a
+// base's shape jump as the corridor bends. Pixel space also makes "6 hexes wide" mean the same
+// physical width in every direction, which the hex distance metric does NOT (it is a hexagon, not
+// a circle). `axis` is any non-zero {x,y} vector (normalised here); null falls back to world +x,
+// which is what the no-spine unit-test callers get.
+export function footprintShape(
+  center, axis = null,
+  halfLength = BASE_FOOTPRINT_HALF_LENGTH, halfWidth = BASE_FOOTPRINT_HALF_WIDTH,
+) {
+  const len = axis ? Math.hypot(axis.x, axis.y) : 0;
+  const ux = len > 1e-9 ? axis.x / len : 1;
+  const uy = len > 1e-9 ? axis.y / len : 0;
+  const A = halfLength * HEX_STEP_PX;
+  const Bx = halfWidth * HEX_STEP_PX;
+  const c = hexToPixel(center.q, center.r);
+  const out = new Set();
+  // `A` is the largest possible extent, so a disc of that radius is a sound superset to filter.
+  for (const h of hexesWithinPixelRadius(c.x, c.y, A)) {
+    const p = hexToPixel(h.q, h.r);
+    const dx = p.x - c.x, dy = p.y - c.y;
+    const along = dx * ux + dy * uy;          // component along the corridor
+    const across = -dx * uy + dy * ux;        // component across it
+    const n = FOOTPRINT_SUPERELLIPSE_N;
+    if (Math.abs(along / A) ** n + Math.abs(across / Bx) ** n <= 1) out.add(axialKey(h.q, h.r));
+  }
+  out.add(axialKey(center.q, center.r));
+  return out;
+}
+
+// #333: how many hexes of clear play space a base CENTRE must have all around it — see the filter
+// in `placeBases`. Sized off the compound's own half-width (the across-the-lane extent is what the
+// corridor actually constrains), so it tracks the footprint automatically if that's ever retuned.
+export const BASE_LATERAL_CLEARANCE = Math.ceil(BASE_FOOTPRINT_HALF_WIDTH);
+
+// #288: a base's compound footprint — the CONTIGUOUS hexes inside the base's compound outline
+// that are real play space (`playableKeys`). Returned as a key Set.
 //
 // Contiguity (a BFS from the centre, confined to the disc) rather than a plain disc-∩-playable
 // intersection is what keeps the footprint — and therefore the ring — a single closed shape. Where
@@ -296,8 +369,17 @@ export const BASE_FOOTPRINT_RADIUS = 2;
 // lake, a boulder field or a forest that happens to fall inside a base's footprint is PAVED OVER
 // into yard by the caller. That's the point — the compound is fabricated ground, so its outline is
 // the base's own deliberate perimeter rather than a shape negotiated with the local scenery.
-export function baseFootprint(center, playableKeys, radius = BASE_FOOTPRINT_RADIUS) {
-  const disc = new Set(range(center, radius).map((h) => axialKey(h.q, h.r)));
+//
+// #333: the BFS is unchanged — only the region it is confined to. What used to be a hex-metric
+// disc is now `footprintShape` below (an axis-oriented ellipse). The contiguity property this
+// function exists for is a property of the BFS, not of the disc, so it survives verbatim: the
+// BFS still walks outward from the centre through playable hexes and simply cannot reach an
+// island that the corridor's edge has severed, whatever the outline's shape.
+export function baseFootprint(
+  center, playableKeys, axis = null,
+  halfLength = BASE_FOOTPRINT_HALF_LENGTH, halfWidth = BASE_FOOTPRINT_HALF_WIDTH,
+) {
+  const disc = footprintShape(center, axis, halfLength, halfWidth);
   const centerKey = axialKey(center.q, center.r);
   if (!playableKeys.has(centerKey)) return new Set();
   const out = new Set([centerKey]);
@@ -313,10 +395,85 @@ export function baseFootprint(center, playableKeys, radius = BASE_FOOTPRINT_RADI
   return out;
 }
 
+// #333: how many candidate centres a base will try before settling. Each try is one footprint
+// build plus one corridor BFS, so this is the knob trading worldgen time against how reliably the
+// "never seals the lane" invariant is honoured. On real seeds the FIRST candidate almost always
+// passes (compounds only span the lane in specific spots — bends, pinch points), so this rarely
+// costs more than one try; 12 is generous headroom for the awkward seeds rather than a typical cost.
+const BASE_PLACEMENT_TRIES = 12;
+
+// #333: the sizes a base will accept, largest first, when no full-size placement in its segment
+// leaves a lane open past it (see `placeBases`). Multiplies both half-extents, so the compound
+// keeps its shape and orientation and simply gets smaller. The last rung, 0.34, puts the half-
+// extents at ~2.0 x ~0.9 — about the old radius-2 disc, the size the corridor demonstrably always
+// had room for, so the ladder is guaranteed to terminate on a real base rather than nothing.
+const BASE_SHRINK_LADDER = [1, 0.85, 0.7, 0.55, 0.45, 0.34];
+
+// #333: would a compound occupying `footprint` still leave a walkable lane past it? BFS across
+// `open` (see `laneOpenSet`) with this footprint additionally removed, from the corridor's
+// near end to its far end — so "reached" means a unit can genuinely get from before the base to
+// beyond it without entering any compound.
+//
+// It walks around COMPOUNDS, not around walls: a compound's ring is sealed, so its footprint is
+// exactly the region a bypassing route may not enter. Using the footprint rather than the ring
+// edges also keeps this independent of `placeBaseWalls`, which hasn't run yet at this point.
+//
+// `open` must already exclude IMPASSABLE TERRAIN, not merely non-playable hexes. Getting that
+// wrong is what made the first cut of this check useless: it happily certified a lane that ran
+// through a lake or a mesa, so a base whose only bypass was unwalkable still passed and the run's
+// anti-soft-lock guarantee still broke on real seeds.
+function corridorStillOpen(open, footprint, start, goal) {
+  if (!start || !goal || footprint.has(axialKey(start.q, start.r))
+    || footprint.has(axialKey(goal.q, goal.r))) return false;
+  const goalKey = axialKey(goal.q, goal.r);
+  const seen = new Set([axialKey(start.q, start.r)]);
+  const queue = [start];
+  for (let i = 0; i < queue.length; i++) {
+    if (axialKey(queue[i].q, queue[i].r) === goalKey) return true;
+    for (const n of neighbors(queue[i].q, queue[i].r)) {
+      const nk = axialKey(n.q, n.r);
+      if (seen.has(nk) || !open.has(nk) || footprint.has(nk)) continue;
+      seen.add(nk);
+      queue.push(n);
+    }
+  }
+  return seen.has(goalKey);
+}
+
+// #333: the hexes a bypassing route may actually use — playable, not already annexed by a placed
+// compound, and standing on terrain a unit can walk on. Rebuilt once per base (compounds accumulate
+// into `claimed`), NOT once per candidate try: `progress` is `spineProgressHexOf`, which scans
+// every spine sample, so touching it inside the try loop turned world generation from ~12s of test
+// time into ~110s. The corridor's endpoints come from the caller's already-progress-sorted list
+// instead, which is the same answer for free.
+function laneOpenSet(playable, claimed, T) {
+  const open = new Set();
+  for (const k of playable) {
+    if (claimed.has(k)) continue;
+    if (!isPassableOf(T.get(k))) continue;
+    open.add(k);
+  }
+  return open;
+}
+
 export function placeBases(
   rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
+  axisOf = null,
 ) {
   const bases = [];
+  // #333: hexes already annexed by an earlier base's compound, plus a one-hex apron around them.
+  // See the footprint call below — this is what makes "no two compounds overlap" hold by
+  // CONSTRUCTION now that footprints are long enough to reach each other.
+  const claimed = new Set();
+  // #333: the same compounds WITHOUT the apron. The two are not interchangeable and conflating
+  // them is a real bug, not a tidiness point: the apron is a BUILDING exclusion (keep the next
+  // compound from abutting this one), but those hexes are ordinary passable ground that a unit
+  // walks over. The lane check below must use this set — feeding it `claimed` treats the apron as
+  // solid, and since the lane squeezing past a compound is often exactly one hex wide, that made
+  // the check declare the corridor already sealed for every base after the first. Every candidate
+  // then failed at every shrink rung, the fallback took over, and the invariant this whole
+  // mechanism exists to enforce was silently never enforced at all.
+  const claimedFootprints = new Set();
   // #288 (ring placement): the set of hexes that are actually PLAY SPACE, as keys. A base's
   // footprint is clipped to this rather than to `T.has` — by the time anything reads `T` it also
   // contains the impassable boundary ring, and a footprint must never annex a slab of that.
@@ -391,13 +548,102 @@ export function placeBases(
     // corridor. Two radius-R discs are disjoint exactly when their centres are more than 2R apart,
     // which is the whole test. Degrades gracefully: if honouring it would leave nowhere to put
     // this base, the unfiltered pool is kept — a base is never dropped, count is never affected.
+    //
+    // #333: the threshold follows the footprint's LONGEST half-extent (`BASE_FOOTPRINT_HALF_LENGTH`,
+    // along the corridor) rather than a single radius, since that is the direction two successive
+    // bases actually approach each other from — they are strung out along the same spine. Note the
+    // corridor's own length budget cannot always honour it: MIN_GAP_PROGRESS_HEX is ~7.22 and a
+    // segment is ~13.7 hexes, so two centres genuinely can land closer than 12 hexes apart, and
+    // this filter then degrades to the unfiltered pool exactly as it always did. That is why the
+    // footprint call below ALSO subtracts already-claimed ground: this filter keeps compounds
+    // comfortably apart whenever the corridor has room, and the claimed-set clip guarantees they
+    // never actually intersect when it doesn't.
     if (bases.length) {
       const disjoint = pool.filter(
-        (h) => bases.every((b) => distance(h, b.center) > BASE_FOOTPRINT_RADIUS * 2),
+        (h) => bases.every((b) => distance(h, b.center) > BASE_FOOTPRINT_HALF_LENGTH * 2),
       );
       if (disjoint.length) pool = disjoint;
     }
-    const center = pool[Math.floor(rng() * pool.length)];
+    // #333: KEEP THE COMPOUND OFF THE CORRIDOR'S EDGE. A radius-2 disc fit almost anywhere in the
+    // lane, so base centres were only ever filtered by progress; a compound this size does not.
+    // Placed hard against the edge it gets badly clipped, its ring ends up part-built against the
+    // impassable boundary, and (observed on real seeds, seed 2 base3) the objective can finish
+    // with deep water for a neighbour and NO span of its own ring that opens a route in — a
+    // soft-lock, not just an ugly base.
+    //
+    // The fix is placement, not a smaller base: require a centre to have `BASE_LATERAL_CLEARANCE`
+    // hexes of real play space all around it, which is a cheap lateral-centring proxy (the
+    // corridor is only ~6 hex steps wide, so "a full disc of this radius is playable" is
+    // essentially "sitting on the centreline rather than the flank"). Deliberately checked on a
+    // DISC rather than on the actual footprint: it is orientation-independent and ~free, whereas
+    // testing the real superellipse per candidate would mean rebuilding it across the whole pool.
+    // Degrades the same way every other filter here does — if nothing qualifies, the unfiltered
+    // pool stands and a base still gets placed.
+    const centred = pool.filter(
+      (h) => range(h, BASE_LATERAL_CLEARANCE).every((n) => playable.has(axialKey(n.q, n.r))),
+    );
+    if (centred.length) pool = centred;
+    // #333: A BASE MUST NEVER SEAL THE CORRIDOR. This is the invariant that used to hold by
+    // accident and no longer does. A radius-2 disc was small enough that a lane always survived
+    // beside it whatever the RNG picked; a compound several times the area can span the lane
+    // outright — and on a BEND it can do so while still being narrower than the corridor, because
+    // its long axis cuts the chord. Measured on real seeds at a whole range of widths and lengths
+    // (including sizes barely above the old disc), so this is not something a smaller footprint
+    // fixes: it is a property of the placement, not of the dimensions.
+    //
+    // The consequence is not cosmetic. Every base's ring is sealed, so if base N's compound cuts
+    // the lane then base N+1 sits behind TWO rings and the run's anti-soft-lock guarantee
+    // ("breaching one span of a base's own ring opens a route to its objective") fails outright.
+    // It is also the literal thing #333 exists to avoid — a base that reads as a wall across the
+    // map rather than a compound you drive into.
+    //
+    // So the centre and the footprint are now chosen TOGETHER: try candidates in random order and
+    // keep the first whose compound still leaves a walkable lane from the corridor's near end to
+    // its far end. `corridorStillOpen` does one BFS over the playable set, cheap enough at a
+    // handful of tries per base, once per world.
+    //
+    // If NO candidate in the segment fits at full size — a genuinely tight stretch, and the case
+    // that actually bit on real seeds (seed 1, base1) — the base SHRINKS rather than seals. The
+    // scale ladder is walked outermost-last, so a full-size compound somewhere else in the segment
+    // always wins over a shrunken one here, and only a stretch where nothing fits produces a small
+    // base. Degrading the SIZE is the right trade: base size is a look-and-feel dial, whereas a
+    // sealed corridor is an unwinnable run. The floor of the ladder is roughly the old radius-2
+    // disc, which is known to fit anywhere in the lane, so this terminates with a real base.
+    let center = null, axis = null, footprint = null, scale = 1;
+    const tries = [];
+    const shuffled = [...pool];
+    for (let s = shuffled.length - 1; s > 0; s--) {
+      const j = Math.floor(rng() * (s + 1));
+      [shuffled[s], shuffled[j]] = [shuffled[j], shuffled[s]];
+    }
+    const buildable = claimed.size
+      ? new Set([...playable].filter((k) => !claimed.has(k)))
+      : playable;
+    // The corridor's two extreme ends, straight off the already-progress-sorted candidate list.
+    const laneOpen = laneOpenSet(playable, claimedFootprints, T);
+    const laneStart = sorted.find((h) => laneOpen.has(axialKey(h.q, h.r)));
+    const laneGoal = [...sorted].reverse().find((h) => laneOpen.has(axialKey(h.q, h.r)));
+    const attempts = shuffled.slice(0, BASE_PLACEMENT_TRIES);
+    outer:
+    for (const sc of BASE_SHRINK_LADDER) {
+      for (const cand of attempts) {
+        const candAxis = axisOf ? axisOf(cand) : null;
+        const fp = baseFootprint(
+          cand, buildable, candAxis,
+          BASE_FOOTPRINT_HALF_LENGTH * sc, BASE_FOOTPRINT_HALF_WIDTH * sc,
+        );
+        if (sc === 1) tries.push({ cand, candAxis, fp });
+        if (!fp.size) continue;
+        if (corridorStillOpen(laneOpen, fp, laneStart, laneGoal)) {
+          center = cand; axis = candAxis; footprint = fp; scale = sc;
+          break outer;
+        }
+      }
+    }
+    if (!center) {
+      const fallback = tries.find((t) => t.fp.size) ?? tries[0];
+      center = fallback.cand; axis = fallback.candAxis; footprint = fallback.fp;
+    }
     prevProgress = progress(center);
     const frac = baseLateFraction(i, baseCount);
     const dockCount = DOCKS_PER_BASE_MIN + Math.floor(rng() * (DOCKS_PER_BASE_MAX - DOCKS_PER_BASE_MIN + 1));
@@ -410,14 +656,40 @@ export function placeBases(
     // Unlike every other stamp in this function it is UNCONDITIONAL — it deliberately paves over
     // cover, channel and hazard alike. A base is a fabricated installation; the alternative (paving
     // only plain ground) is precisely the ragged, grass-backed outline the owner rejected.
-    const footprint = baseFootprint(center, playable);
-    for (const k of footprint) T.set(k, 'baseYard');
+    //
+    //
+    // #333: the compound is oriented on the corridor's LOCAL heading at this base's own centre
+    // (`axisOf`) — not the run's overall heading, which would swing the long axis into the corridor
+    // wall on a bend — and it was clipped against `buildable` (the playable set minus every hex an
+    // earlier compound took, plus a one-hex apron so two rings never share a border wall). Feeding
+    // that exclusion through `baseFootprint`'s existing BFS rather than trimming afterwards is
+    // deliberate: the BFS re-derives contiguity from the centre against whatever set it's given, so
+    // a compound clipped by its neighbour stays a single closed shape for exactly the same reason
+    // one clipped by the corridor edge does, with no second code path. Both happen in the
+    // try-loop above, since whether a candidate is acceptable depends on the footprint it produces.
+    for (const k of footprint) {
+      T.set(k, 'baseYard');
+      claimed.add(k);
+      claimedFootprints.add(k);
+      const [cq, cr] = k.split(',').map(Number);
+      for (const n of neighbors(cq, cr)) claimed.add(axialKey(n.q, n.r));
+    }
     // Candidate hexes for this base's structures: the centre, then successive rings out from it —
     // now drawn from the FOOTPRINT itself (identical set to the old `range(center, 2)` disc, minus
     // anything clipped off the edge of play space), so a structure can never land outside the ring
     // that is supposed to be protecting it.
     const inFootprint = (h) => footprint.has(axialKey(h.q, h.r));
-    const candidates = [center, ...neighbors(center.q, center.r), ...range(center, 2)].filter(inFootprint);
+    //
+    // #333: extended from rings 0-2 to rings 0-3, and explicitly ring-ORDERED. The compound is
+    // now several times the area but only carries ~1.6x the structures, so packing up to 8 docks
+    // plus an objective into a 19-hex core would leave them shoulder-to-shoulder in the middle of
+    // a large empty yard. Ring order still fills from the centre outward, so the structures remain
+    // the base's dense CORE and the extra depth reads as the open ground Jackson asked for ("a bit
+    // more room to move laterally inside") — it just gives a max-roll base one more ring to
+    // breathe into. Still strictly inside the footprint, so nothing lands outside its own wall.
+    const candidates = [
+      { q: center.q, r: center.r }, ...ring(center, 1), ...ring(center, 2), ...ring(center, 3),
+    ].filter(inFootprint);
     // #288: the whole footprint is `baseYard` now, so `isGround` (which only recognises the biome's
     // two natural ground ids) would reject every candidate. "Free" for a structure means "still
     // bare yard" — i.e. no earlier loop has claimed it. Same first-come semantics as before.
@@ -465,6 +737,14 @@ export function placeBases(
     // set's outline, and `generateTerrain` re-validates it against the final terrain map.
     bases.push({
       id: `base${i}`, center: { q: center.q, r: center.r }, docks, objectiveHex,
+      // #333: the corridor heading this compound was shaped against, kept so `generateTerrain`'s
+      // late re-validation can rebuild the SAME ellipse rather than re-deriving (and possibly
+      // disagreeing about) the local axis.
+      footprintAxis: axis,
+      // #333: the shrink rung this compound settled on (1 unless its stretch of corridor was too
+      // tight for a full-size base) — kept for the same reason as the axis: so `generateTerrain`'s
+      // late re-validation rebuilds the SAME compound rather than a full-size one.
+      footprintScale: scale,
       footprint: [...footprint].map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; }),
     });
   }
@@ -671,7 +951,11 @@ export function generateTerrain({
   // alone can rank a hex that's actually far down a bend as "early" (falls back to the distance
   // proxy, matching the pattern used elsewhere in this function, when no spine is passed).
   const progressOf = spine ? (h) => spineProgressHexOf(spine, h.q, h.r) : null;
-  const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf);
+  // #333: bases' compounds are elongated along the corridor, so they need its LOCAL heading at
+  // each centre. No spine (isolated unit callers) → null, and `baseFootprint` falls back to the
+  // world +x axis, which is the right answer for a corridor-less test world anyway.
+  const axisOf = spine ? (h) => spineTangentAt(spine, h.q, h.r) : null;
+  const { bases } = placeBases(rng, all, T, isGround, baseCount, progressOf, MIN_GAP_PROGRESS_HEX, axisOf);
   // #275 (redesign): one alert tower per GAP between successive bases (`placeGapTowers`'s own
   // comment has the full reasoning) — replaces the old outpost-cluster-anchored placement.
   // Placed after bases (using their final centres) for the same "never overwrite a base's
@@ -734,7 +1018,11 @@ export function generateTerrain({
         .filter((h) => isBaseCategory(T.get(axialKey(h.q, h.r))))
         .map((h) => axialKey(h.q, h.r)),
     );
-    base.footprint = [...baseFootprint(base.center, surviving, BASE_FOOTPRINT_RADIUS)]
+    const sc = base.footprintScale ?? 1;
+    base.footprint = [...baseFootprint(
+      base.center, surviving, base.footprintAxis ?? null,
+      BASE_FOOTPRINT_HALF_LENGTH * sc, BASE_FOOTPRINT_HALF_WIDTH * sc,
+    )]
       .map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; });
   }
   const baseWalls = placeBaseWalls(T, bases);
@@ -907,6 +1195,34 @@ export function spineProgressHexOf(spine, q, r) {
     if (d < bestD) { bestD = d; bestU = p.u; }
   }
   return bestU / HEX_STEP_PX;
+}
+
+// #333: the corridor's LOCAL direction at a hex — a unit vector along the spine at whichever
+// sample sits nearest, used to orient a base's elongated compound footprint. The corridor snakes,
+// so `spine.startAngle` (the run's overall heading) is NOT this: a base sitting on a bend can be
+// tens of degrees off the world axis, and orienting its compound to the world axis instead of the
+// local one would push the long side of the ellipse straight through the corridor wall.
+//
+// Measured as a CENTRED difference over a few samples either side rather than a single adjacent
+// pair: at SPINE_SAMPLE_STEP_PX = 24px, one step's heading is dominated by rounding noise, while
+// a ±4-sample (~192px) window is still well under the corridor's own curvature scale
+// (CORRIDOR_WAVELENGTH_PX = 1500) and so reads the real local heading. Clamped at both ends so
+// the very first/last samples fall back to a shorter but still valid window.
+const TANGENT_WINDOW_SAMPLES = 4;
+export function spineTangentAt(spine, q, r) {
+  const { x, y } = hexToPixel(q, r);
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < spine.points.length; i++) {
+    const p = spine.points[i];
+    const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  const a = spine.points[Math.max(0, best - TANGENT_WINDOW_SAMPLES)];
+  const b = spine.points[Math.min(spine.points.length - 1, best + TANGENT_WINDOW_SAMPLES)];
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const n = Math.hypot(dx, dy);
+  if (n < 1e-9) return { x: Math.cos(spine.startAngle), y: Math.sin(spine.startAngle) };
+  return { x: dx / n, y: dy / n };
 }
 
 // #288 (placement re-specced 2026-07-19 — "instead of a line across the corridor, let's do a full

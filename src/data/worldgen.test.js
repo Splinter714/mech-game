@@ -8,13 +8,13 @@ import {
   pickStageObjective, STAGE_OBJECTIVE_NEAR_FRACTION, STAGE_OBJECTIVE_FAR_FRACTION,
   boundaryRingKeys, MAX_WORLD_RADIUS, BOUNDARY_RING_WIDTH, MIN_SPAWN_BOUNDARY_HEX_DIST,
   REQUIRED_VIEW_DEPTH_PX, HEX_STEP_PX,
-  generateSpine, corridorHexSet, spineProgressHexOf, spineSpawnHex,
+  generateSpine, corridorHexSet, spineProgressHexOf, spineSpawnHex, spineTangentAt,
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, CORRIDOR_LENGTH_PER_BASE_PX,
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
   placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind, drawDockKind,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
-  placeBaseWalls, BASE_FOOTPRINT_RADIUS,
+  placeBaseWalls, BASE_FOOTPRINT_HALF_LENGTH, BASE_FOOTPRINT_HALF_WIDTH, footprintShape,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
@@ -668,7 +668,11 @@ describe('pickStageObjective (#138)', () => {
 
 describe('placeBases (#269 §3: base population world-gen placement)', () => {
   const B = GRASSLAND;
-  function buildAllRing(radius = 12) {
+  // #333: widened from 12 to 34. A base's compound is now ~12 hexes deep, so five of them cannot
+  // physically fit in a radius-12 disc — the later ones had their footprints clipped away to
+  // nothing and placed zero docks. A fixture-scale issue, not a placement one: the real corridor
+  // is ~69 hexes of travel long.
+  function buildAllRing(radius = 34) {
     return range({ q: 0, r: 0 }, radius);
   }
 
@@ -858,7 +862,14 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // The measured ceiling. Swarm kinds are thin in both pools, so even the worst roll stays well
     // under a "wall of bodies" — this bound is the guard against a future pool re-weighting
     // quietly turning multi-swarm bases into the density blowout #269's playtest corrected.
-    expect(maxOpeningBodies).toBeLessThanOrEqual(40);
+    //
+    // #333 re-baselined this from 40 to 48: `DOCKS_PER_BASE_MIN`/`MAX` went 3/5 → 5/8 alongside the
+    // ~3.5x larger compound, and the measured worst case moved 40 → 44. Worth noting the ceiling
+    // rose far less than the dock count did (+10% against +60%), because the extra docks draw from
+    // the same pools and mostly come up as low-count plain kinds — so this stays a guard against a
+    // re-weighting blowout rather than a limit the dock count is now pressed against. If a future
+    // change pushes it near 48 again, re-measure rather than just raising the number.
+    expect(maxOpeningBodies).toBeLessThanOrEqual(48);
   });
 
   it('#269/#314: dockCountFor is a flat 1 per dock except the two weak swarm kinds', () => {
@@ -1055,7 +1066,13 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         expect(bases.length).toBe(BASE_COUNT);
         for (let i = 0; i < bases.length; i++) {
           for (let j = i + 1; j < bases.length; j++) {
-            expect(distance(bases[i].center, bases[j].center)).toBeGreaterThan(BASE_FOOTPRINT_RADIUS * 2);
+            // #333: compounds are elongated ALONG the corridor and successive bases are strung out
+            // along that same axis, so centres can legitimately sit closer than a full compound
+            // length when the corridor's length budget is tight — `placeBases` clips the later
+            // footprint against the earlier one instead. The disjointness of the footprints
+            // themselves (just below) is the real invariant; this only pins that centres never
+            // coincide or crowd into each other's core.
+            expect(distance(bases[i].center, bases[j].center)).toBeGreaterThan(BASE_FOOTPRINT_HALF_WIDTH);
           }
         }
         // …and the footprints themselves are genuinely disjoint sets, not merely far apart.
@@ -1068,6 +1085,136 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
           }
         }
       }
+    });
+
+    // ── #333: compounds ~4x the old area, elongated ALONG the corridor ────────────────────────
+    describe('#333: a base is a deep compound along the lane, never a wall across it', () => {
+      // THE load-bearing invariant of #333, and the one that broke every intermediate version of
+      // it. A base's ring is sealed, so if a compound spans the corridor then every base beyond it
+      // sits behind two sealed rings and the run is unwinnable — and it is also literally the
+      // "reads as a wall across the map" outcome the issue exists to avoid. Asserted directly on
+      // the walkable hex graph rather than via any proxy about widths or distances.
+      it('never seals the corridor: you can always walk past a base without entering it', () => {
+        for (let seed = 1; seed <= 25; seed++) {
+          const args = realArgsFor(seed * 29 + 7);
+          const { bases, terrain } = generateTerrain(args);
+          const spawn = spineSpawnHex(args.spine);
+          const progressOf = (h) => spineProgressHexOf(args.spine, h.q, h.r);
+          for (const base of bases) {
+            // "Past it" means reaching the corridor's own FAR END without entering this compound.
+            // Deliberately not "some progress beyond the base": the last base sits near the end of
+            // the run, so there may be no corridor beyond it at all and such a test would fail on
+            // geometry rather than on sealing.
+            const fpKeys = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+            let goal = null, best = -Infinity;
+            for (const [k, t] of terrain) {
+              if (fpKeys.has(k) || !isPassable(t)) continue;
+              const [q, r] = k.split(',').map(Number);
+              const p = progressOf({ q, r });
+              if (p > best) { best = p; goal = k; }
+            }
+            // Walk from spawn over passable terrain, forbidden from entering THIS compound.
+            const seen = new Set([axialKey(spawn.q, spawn.r)]);
+            const queue = [spawn];
+            for (let i = 0; i < queue.length; i++) {
+              for (const n of neighbors(queue[i].q, queue[i].r)) {
+                const nk = axialKey(n.q, n.r);
+                if (seen.has(nk) || fpKeys.has(nk)) continue;
+                const t = terrain.get(nk);
+                if (t === undefined || !isPassable(t)) continue;
+                seen.add(nk);
+                queue.push(n);
+              }
+            }
+            // Reaching corridor beyond the compound proves the lane past it is open — the compound
+            // is something you go AROUND (or into), never a barrier across the lane.
+            expect(seen.has(goal)).toBe(true);
+          }
+        }
+      });
+
+      // The shape itself: markedly deeper along the corridor than it is wide across it. Measured
+      // in PIXEL space against each base's own recorded local corridor axis, because that is the
+      // frame the compound is built in — a hex-metric measurement would quantise to 60° steps.
+      it('is elongated along the corridor axis, not a bigger disc', () => {
+        let checked = 0;
+        for (let seed = 1; seed <= 15; seed++) {
+          const { bases } = generateTerrain(realArgsFor(seed * 37 + 11));
+          for (const base of bases) {
+            const a = base.footprintAxis;
+            expect(a).toBeTruthy();
+            const c = hexToPixel(base.center.q, base.center.r);
+            let deep = 0, wide = 0;
+            for (const h of base.footprint) {
+              const p = hexToPixel(h.q, h.r);
+              const dx = p.x - c.x, dy = p.y - c.y;
+              deep = Math.max(deep, Math.abs(dx * a.x + dy * a.y));
+              wide = Math.max(wide, Math.abs(-dx * a.y + dy * a.x));
+            }
+            // Unclipped it is ~6 x ~2.6 half-extents; clipping at the corridor edge only ever
+            // takes WIDTH, so depth > width is the property that survives every seed.
+            expect(deep).toBeGreaterThan(wide);
+            // …and the width genuinely stays inside the lane rather than pressing through it.
+            expect(wide).toBeLessThanOrEqual((CORRIDOR_HALF_WIDTH_PX / HEX_STEP_PX + 0.5) * HEX_STEP_PX);
+            checked++;
+          }
+        }
+        expect(checked).toBeGreaterThan(50);
+      });
+
+      // "Roughly 4x the current footprint area" — the old compound was a 19-hex radius-2 disc.
+      // A lower bound of 2x rather than ~3.5x on purpose: a base whose stretch of corridor is too
+      // tight for a full-size compound legitimately shrinks (see `BASE_SHRINK_LADDER`), so this
+      // pins that bases really did get much bigger without pretending every one is max size.
+      it('is several times the area of the old radius-2 disc', () => {
+        const sizes = [];
+        for (let seed = 1; seed <= 15; seed++) {
+          for (const base of generateTerrain(realArgsFor(seed * 41 + 5)).bases) sizes.push(base.footprint.length);
+        }
+        const mean = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+        expect(mean).toBeGreaterThan(19 * 2);
+        // Typical (median) base is around the full ~3.5x, not merely dragged up by outliers.
+        const median = [...sizes].sort((a, b) => a - b)[Math.floor(sizes.length / 2)];
+        expect(median).toBeGreaterThan(19 * 2.5);
+      });
+
+      // The contiguity property `baseFootprint`'s BFS exists for — a clipped compound must never
+      // spawn a detached island, which would get its own little ring floating off the base. The
+      // shape function changed underneath that BFS, so this is re-proved on the new shape.
+      it('keeps every compound a single contiguous blob, however the corridor clips it', () => {
+        for (let seed = 1; seed <= 20; seed++) {
+          for (const base of generateTerrain(realArgsFor(seed * 19 + 13)).bases) {
+            const fp = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+            const seen = new Set([axialKey(base.center.q, base.center.r)]);
+            const queue = [base.center];
+            for (let i = 0; i < queue.length; i++) {
+              for (const n of neighbors(queue[i].q, queue[i].r)) {
+                const nk = axialKey(n.q, n.r);
+                if (seen.has(nk) || !fp.has(nk)) continue;
+                seen.add(nk);
+                queue.push(n);
+              }
+            }
+            expect(seen.size).toBe(fp.size);
+          }
+        }
+      });
+
+      // Orientation follows the corridor's LOCAL heading, not the world axis: on a curving spine
+      // a base on a bend must be rotated to match, or its long side drives into the corridor wall.
+      it('orients each compound on the corridor heading at its own centre', () => {
+        const args = realArgsFor(97);
+        const { bases } = generateTerrain(args);
+        for (const base of bases) {
+          const local = spineTangentAt(args.spine, base.center.q, base.center.r);
+          const a = base.footprintAxis;
+          // Same direction (unit vectors, so the dot product is the cosine of the angle between).
+          expect(a.x * local.x + a.y * local.y).toBeGreaterThan(0.99);
+        }
+        // …and the seed genuinely bends, so this isn't vacuously comparing a straight run.
+        const heads = bases.map((b) => Math.atan2(b.footprintAxis.y, b.footprintAxis.x));
+        expect(Math.max(...heads) - Math.min(...heads)).toBeGreaterThan(0.05);
+      });
     });
 
     // The stratification #308 rewrote: segments are sliced by PROGRESS SPAN, not hex count, so
@@ -1469,9 +1616,23 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
     return T;
   }
 
-  // A synthetic base with a full, unclipped radius-`BASE_FOOTPRINT_RADIUS` footprint disc.
+  // A synthetic base with a full, unclipped footprint DISC. #333 made real compounds an
+  // axis-oriented superellipse, but `placeBaseWalls` consumes an arbitrary footprint set and knows
+  // nothing about its shape — so these shape-agnostic ring tests deliberately keep feeding it the
+  // simplest possible closed blob. `synthBase` below covers the real elongated shape.
+  const SYNTH_RADIUS = 2;
   const discBase = (center, id = 'b') => ({
-    id, center, footprint: range(center, BASE_FOOTPRINT_RADIUS).map((h) => ({ q: h.q, r: h.r })),
+    id, center, footprint: range(center, SYNTH_RADIUS).map((h) => ({ q: h.q, r: h.r })),
+  });
+
+  // #333: a synthetic base carrying a REAL elongated compound footprint, at an arbitrary corridor
+  // heading, so the ring properties below are also exercised against the shape the game actually
+  // generates — not just against a disc that no longer occurs in play.
+  const synthBase = (center, angle = 0.4, id = 'b') => ({
+    id,
+    center,
+    footprint: [...footprintShape(center, { x: Math.cos(angle), y: Math.sin(angle) })]
+      .map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; }),
   });
 
   // Can you WALK from `start` to `goal` across the playable set without crossing a standing wall
@@ -1574,8 +1735,8 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       // The far face of the outermost footprint ring — nothing beyond it, and nothing loitering
       // near the centre either (a ring, not a blob).
       const d = Math.hypot(m.x - c.x, m.y - c.y);
-      expect(d).toBeLessThanOrEqual((BASE_FOOTPRINT_RADIUS + 0.6) * HEX_STEP_PX);
-      expect(d).toBeGreaterThan((BASE_FOOTPRINT_RADIUS - 0.5) * HEX_STEP_PX);
+      expect(d).toBeLessThanOrEqual((SYNTH_RADIUS + 0.6) * HEX_STEP_PX);
+      expect(d).toBeGreaterThan((SYNTH_RADIUS - 0.5) * HEX_STEP_PX);
     }
   });
 
@@ -1592,6 +1753,30 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
         expect(reachable(T, walled, from, center)).toBe(false);
         // …and with the wall gone the same route IS walkable, proving the block is the wall's
         // doing and not an accident of the disc.
+        expect(reachable(T, new Set(), from, center)).toBe(true);
+      }
+    }
+  });
+
+  // #333: the seal again, on the REAL compound shape — a long superellipse at an arbitrary
+  // corridor heading, which has a much longer perimeter and many more spans than the old disc.
+  // A ring that closes around a compact blob does not automatically close around an elongated one,
+  // so this is proved rather than assumed.
+  it('SEALS an elongated compound too, at any corridor heading', () => {
+    for (const angle of [0, 0.4, 1.1, 1.9, 2.7]) {
+      const T = fillGroundDisc();
+      const center = pixelToHex(400, -200);
+      const base = synthBase(center, angle);
+      const [wall] = placeBaseWalls(T, [base]);
+      const walled = walledKeySet(wall);
+      expect(wall.edges.length).toBeGreaterThan(20);
+      // Probe from well outside the compound's own long axis — including from straight off both
+      // ENDS, the two bearings a disc-shaped ring never had to defend.
+      const c = hexToPixel(center.q, center.r);
+      for (const a of [angle, angle + Math.PI, angle + Math.PI / 2, angle - Math.PI / 2, angle + 1]) {
+        const from = pixelToHex(c.x + Math.cos(a) * 1400, c.y + Math.sin(a) * 1400);
+        expect(T.has(axialKey(from.q, from.r))).toBe(true);
+        expect(reachable(T, walled, from, center)).toBe(false);
         expect(reachable(T, new Set(), from, center)).toBe(true);
       }
     }
@@ -1807,7 +1992,7 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       // Wall off a big arc of the compound's surroundings with impassable rock, including the
       // whole approach side, and confirm no gate lands on it.
       const c = hexToPixel(base.center.q, base.center.r);
-      for (const h of range(base.center, BASE_FOOTPRINT_RADIUS + 2)) {
+      for (const h of range(base.center, SYNTH_RADIUS + 2)) {
         const p = hexToPixel(h.q, h.r);
         if (p.x < c.x) T.set(axialKey(h.q, h.r), B.mountain ?? 'mountain');
       }
@@ -1823,7 +2008,7 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
     it('gives a fully-walled-in base no gate at all rather than a bad one', () => {
       const T = fillGroundDisc();
       const base = discBase({ q: 12, r: -4 });
-      for (const h of range(base.center, BASE_FOOTPRINT_RADIUS + 2)) {
+      for (const h of range(base.center, SYNTH_RADIUS + 2)) {
         const k = axialKey(h.q, h.r);
         if (!base.footprint.some((f) => axialKey(f.q, f.r) === k)) T.set(k, B.mountain ?? 'mountain');
       }
@@ -1868,7 +2053,13 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
         const { bases } = generateTerrain(realTerrainArgs(seed * 13 + 3));
         for (const base of bases) {
           expect(base.footprint.length).toBeGreaterThanOrEqual(7);
-          expect(base.footprint.length).toBeLessThanOrEqual(range(base.center, BASE_FOOTPRINT_RADIUS).length);
+          // #333: the compound is a superellipse ~2*HALF_LENGTH deep by ~2*HALF_WIDTH wide, so its
+          // unclipped hex count is bounded by that box's area in hexes (one hex covers √3/2 of a
+          // squared hex-step). Generous on purpose — a "did the shape blow up" guard, not a fit.
+          const maxHexes = Math.ceil(
+            (2 * BASE_FOOTPRINT_HALF_LENGTH) * (2 * BASE_FOOTPRINT_HALF_WIDTH) / (Math.sqrt(3) / 2),
+          );
+          expect(base.footprint.length).toBeLessThanOrEqual(maxHexes);
           expect(base.wallEdges.length).toBeGreaterThanOrEqual(6);
           // Structures never land outside the ring meant to protect them.
           const inside = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
