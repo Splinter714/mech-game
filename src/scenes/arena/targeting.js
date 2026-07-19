@@ -3,13 +3,11 @@
 // systems remain, and #252 unified them further — indirect fire now simply follows whichever
 // target direct-fire convergence has already picked:
 //  • Convergence (direct fire: lasers, autocannons): _fireAngle angles off-centre muzzles inward
-//    to a forward point at `convergeTarget`'s range — the LIVE best-scoring enemy (`aimEnemy`,
-//    #250 playtest follow-up: angular offset dominant, blended with a proximity term so a
-//    meaningfully closer enemy can beat a marginally-better-aimed farther one), or, #250, a nearby
-//    standing destructible-terrain hex when no enemy is available, or CONVERGE_DIST
-//    when neither exists — so shots land where the turret points. Purely geometric (no LOS check
-//    at all); `convergeTarget` (shared.js `pickConvergeTarget`) is the ranked pick: an enemy
-//    always wins over a hex.
+//    to a forward point at `convergeTarget`'s range — the target `pickConvergeTarget` (shared.js)
+//    picks this frame, or CONVERGE_DIST when there is none — so shots land where the turret points.
+//    Purely geometric (no LOS check at all). #322 replaced the old ranked "enemy always beats
+//    terrain" ordering with ONE rule over ONE pool: within a ~20° cone of the aim direction,
+//    NEAREST wins, enemies scored as modestly closer so they still win at comparable range.
 //  • Indirect-fire lock (missiles, lobs, #252 rework): the lock IS `convergeTarget`, mirrored
 //    instantly every frame — no amber→red charge-up, no maintain timer that outlives convergence,
 //    no deliberate-switch dwell. Because convergence itself has no LOS gate, its live pick can be
@@ -23,12 +21,16 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { stepLock, stepReticlePosition } from '../../data/targetlock.js';
 import { enemyTargetable } from '../../data/visibility.js';
-import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget, pickAimEnemy } from './shared.js';
+import { CONVERGE_DIST, convergedFireAngle, pickConvergeTarget } from './shared.js';
+import { TARGETING_RANGE } from '../../data/targetingRange.js';
 
-// #77 tuning follow-up: bumped from 620 alongside the 3-4x missile range increase (weapons.js)
-// so the lock can still be held at the weapon's own new effective range — kept comfortably
-// above the longest missile range.max (swarmRack, 1750) with the same margin ratio as before.
-const ASSIST_RANGE = 2200;        // px the enemy must be within for convergence to consider it
+// #322: the two hand-set targeting ranges are gone. `ASSIST_RANGE` (2200) gated enemies and
+// `CONVERGE_DIST` (450) gated terrain — different numbers for the same question, and 2200 was
+// PAST the longest weapon in the game, so the player could lock what nothing could reach. Both
+// roles are now `TARGETING_RANGE` (data/targetingRange.js), derived from the live WEAPONS table's
+// longest `range.max` (1750 today), so retuning a weapon retunes targeting. CONVERGE_DIST is still
+// imported above for its OTHER, separate job: the convergence GEOMETRY distance when there is no
+// target at all (see `_fireAngle`).
 
 // #144 playtest correction on #140 ("turn off the aiming dotted line for now, not loving it"):
 // disabled without deleting the implementation, so it's easy to re-enable later if revisited.
@@ -37,10 +39,10 @@ const AIM_LINE_ENABLED = false;
 export const TargetingMixin = {
   // Advance BOTH direct-fire convergence and the indirect-fire lock, which #252 made a direct
   // mirror of it:
-  //  • `this.aimEnemy` / `this.convergeTarget` — the live convergence pick (shared.js
-  //    `pickConvergeTarget`, fed by `pickAimEnemy`'s blended angle+proximity score, #250): the
-  //    best-scoring in-range enemy right now, or, #250, a fallback destructible hex, or null.
-  //    Purely geometric, no LOS gate.
+  //  • `this.convergeTarget` — the live pick (shared.js `pickConvergeTarget`, #322): the nearest
+  //    in-cone candidate of any kind — enemy, destructible hex, or wall span — or null.
+  //    `this.aimEnemy` is just that pick when it happens to be a live enemy. No LOS gate on the
+  //    geometry itself (enemy candidates are LOS-filtered separately, below).
   //  • `this.lock` (data/targetlock.js) — mirrors `convergeTarget` every frame, instantly (no
   //    charge, no maintain, no switch-dwell, and, per the #252 playtest follow-up, no LOS gate
   //    or blind/dead-reckoning state either) — it drives the reticle-slide position for drawing.
@@ -58,32 +60,23 @@ export const TargetingMixin = {
     // the player can now target exactly the set of ground enemies that can target the player
     // back. This closes an asymmetry rather than creating one.
     const inRange = (e) => !e.mech.isDestroyed()
-      && Math.hypot(e.x - this.px, e.y - this.py) <= ASSIST_RANGE
+      && Math.hypot(e.x - this.px, e.y - this.py) <= TARGETING_RANGE
       && enemyTargetable(e, this.visibleHexes, (x, y) => this._hexKeyAt(x, y));
 
-    // aimEnemy (convergence): the in-range enemy `pickAimEnemy` (shared.js) scores best — angular
-    // offset from the aim line dominates, but #250 playtest follow-up: a meaningfully closer
-    // enemy can outweigh a modest angular disadvantage, so it's not PURE angle-only any more.
-    const aimE = pickAimEnemy(this.px, this.py, this.turretAngle, this.enemies.filter(inRange), ASSIST_RANGE);
-    this.aimEnemy = aimE;
-    // #250 ("destroyable hexes should be potential convergence targets, but lower priority than
-    // enemies"): only bother scanning for a fallback hex when there's no enemy to converge on —
-    // pickConvergeTarget returns aimEnemy immediately whenever one exists, so a populated hex
-    // list would never even be consulted, let alone preferred. Scoped to CONVERGE_DIST (the same
-    // "no target" convergence range, and comfortably past direct-fire's actual optimal ranges) via
-    // world.js `_destructibleTargetsNear`, which bounds the scan to a local ring rather than
-    // walking the whole buildingHp/coverHp maps.
-    // #262: in 'building' focus mode a hex can outrank a live enemy, so the scan can't be skipped
-    // just because an enemy exists — only skip it in the default 'enemy' mode, where
-    // pickConvergeTarget would never consult it anyway.
-    // #318: the pool carries base WALL SPANS (edge-keyed) alongside destructible hexes now, both on
-    // the terrain side of the focus toggle — hence the rename to `_destructibleTargetsNear`. The
-    // 'enemy'-mode skip below is exactly what keeps a 25-30 span wall ring from ever outranking a
-    // live enemy: in that mode `pickConvergeTarget` returns the enemy without consulting this list.
-    const hexCandidates = (aimE && this.focusMode !== 'building')
-      ? [] : this._destructibleTargetsNear(this.px, this.py, CONVERGE_DIST);
+    // #322: ONE pool, ONE rule. Enemies and destructible terrain (hexes AND base wall spans,
+    // world.js `_destructibleTargetsNear`) are handed to `pickConvergeTarget` together and scored
+    // identically — inside a ~20° cone of the aim direction, nearest wins, with enemies given a
+    // modest range edge. The terrain scan can no longer be skipped when an enemy exists (the #250
+    // shortcut, which was exactly the mechanism that made "enemy always wins" absolute), and it now
+    // spans the full TARGETING_RANGE rather than the old 450px stub, so a wall directly in front of
+    // you can actually beat a drone way off to the side.
+    const enemyCandidates = this.enemies.filter(inRange);
+    const terrainCandidates = this._destructibleTargetsNear(this.px, this.py, TARGETING_RANGE);
     this.convergeTarget = pickConvergeTarget(
-      this.px, this.py, this.turretAngle, aimE, hexCandidates, Infinity, this.focusMode);
+      this.px, this.py, this.turretAngle, enemyCandidates, terrainCandidates, TARGETING_RANGE);
+    // `aimEnemy` stays the "is the current pick a live enemy" view of the same decision (read by
+    // the HUD/FX paths that only care about enemy targets), rather than a separately-scored pick.
+    this.aimEnemy = this.convergeTarget?.mech ? this.convergeTarget : null;
 
     // #252: the lock is simply `convergeTarget`, mirrored every frame — no LOS gate on the pick
     // (convergence itself never had one) and, per the playtest follow-up, no LOS gate on what the

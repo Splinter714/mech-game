@@ -425,77 +425,48 @@ export function aimAngleOffset(px, py, turretAngle, x, y) {
   return Math.atan2(Math.sin(raw), Math.cos(raw));
 }
 
-// #250: of `candidates` (each a {x, y, ...}) within `maxDist` px of (px, py), the one most
-// centred on the aim line (smallest |aimAngleOffset|) — no cone gate, "whatever I'm pointing
-// closest to." PURE; mirrors the enemy convergence pick in targeting.js `_updateLock` exactly,
-// so destructible-terrain candidates are scored by the identical rule.
-export function nearestToAimLine(px, py, turretAngle, candidates, maxDist = Infinity) {
-  let best = null, bestOff = Infinity;
-  for (const c of candidates) {
-    if (Math.hypot(c.x - px, c.y - py) > maxDist) continue;
-    const off = Math.abs(aimAngleOffset(px, py, turretAngle, c.x, c.y));
-    if (off < bestOff) { bestOff = off; best = c; }
-  }
-  return best;
-}
-
-// #250 playtest follow-up ("convergence/locking should somewhat prefer closer targets, not just
-// strictly follow pure aim precision"): which in-range enemy `_updateLock` converges/locks onto
-// this frame. Previously this was a pure angular-offset minimization — whoever's most centred on
-// the aim line won outright, with zero weight for distance short of the hard ASSIST_RANGE cutoff,
-// so a far-off enemy dead-centre on the crosshair always beat a nearby enemy just slightly
-// off-centre. This blends angular offset (still the dominant term) with distance so proximity can
-// break near-ties and tip genuinely close calls, without turning into "just pick the nearest
-// enemy."
+// ── #322: cone gate, then NEAREST wins ───────────────────────────────────────────────────
+// The whole targeting priority rule, replacing #250's blended angle+distance score for enemies,
+// #250's pure-angle score for terrain, and #262's focus toggle (all removed). Designed live with
+// the owner, who summed up the old behaviour as "enemy always wins has been feeling really bad."
 //
-// Score = (off / AIM_ANGLE_SCALE) + AIM_DIST_WEIGHT * (dist / maxDist) — both terms normalized to
-// roughly [0, 1] within the relevant range, lower wins. AIM_ANGLE_SCALE (60°) is the "clearly
-// off-aim" reference: a candidate offset by a full 60° scores a full 1.0 on the angle term, the
-// same order of magnitude as the distance term's OWN maximum (AIM_DIST_WEIGHT * 1.0, at maxDist).
-// AIM_DIST_WEIGHT = 0.3 keeps distance a minority contributor: for a farther-but-better-aimed
-// candidate to lose to a closer-but-worse-aimed one, the angular gap between them has to be under
-// AIM_DIST_WEIGHT * AIM_ANGLE_SCALE = 18° at the extreme (one candidate at maxDist, the other
-// adjacent to the mech) — and proportionally less than that for any smaller distance gap. So
-// proximity can only ever flip a genuinely modest angular disadvantage, never a large one; aim
-// precision remains the dominant factor overall.
-export const AIM_ANGLE_SCALE = Math.PI / 3;   // 60°: angular offset that scores a full 1.0
-export const AIM_DIST_WEIGHT = 0.3;           // distance's max share of the blended score
-export function pickAimEnemy(px, py, turretAngle, candidates, maxDist = Infinity) {
+// A candidate qualifies if it lies within TARGET_CONE of the aim direction; among qualifiers the
+// CLOSEST wins. Two reasons for this shape over a blended score:
+//  • Angle is the wrong unit at a distance. At 1750px, 5° off-aim is ~153px lateral; at 200px the
+//    same 5° is ~17px. Any angle-weighted score therefore flatters far targets, which is exactly
+//    the drift this issue reported. Used only as a GATE, angle stops distorting the ranking.
+//  • One legible dial. There is no normalization and no weight to re-solve when a range changes —
+//    behaviour is identical at every distance, so the cone is the only number to tune in play.
+//
+// ENEMIES AND TERRAIN GO THROUGH THE SAME RULE. A destructible hex or a base wall span is scored
+// exactly like a mech, so a wall directly in front of you can now beat a drone way out to the
+// side — the thing that used to be structurally impossible.
+export const TARGET_CONE = 20 * Math.PI / 180;   // half-angle of the qualifying cone
+
+// The enemy's modest edge: an enemy is ranked as if it were this fraction of its true distance
+// away, so at COMPARABLE range a live enemy beats terrain, while terrain much closer than the
+// enemy still wins. 0.8 means an enemy at 1000px ranks like terrain at 800px — enough to break
+// "the wall and the mech are both roughly in front of me" toward the mech, not enough to bring
+// back "enemy always wins." PLAYTEST DIAL: lower = enemies win from farther out, 1.0 = pure
+// nearest-wins with no preference at all.
+export const ENEMY_RANGE_EDGE = 0.8;
+
+// The pick: the best candidate among `enemies` and `terrain` (each entry a {x, y, ...}), or null.
+// PURE (no Phaser / no scene), so the priority rule is unit-testable on its own.
+// `maxDist` is the single derived targeting range (data/targetingRange.js) at the call site.
+// Enemies are considered first so an exact effective-distance tie resolves to the enemy.
+export function pickConvergeTarget(px, py, turretAngle, enemies, terrain, maxDist = Infinity) {
   let best = null, bestScore = Infinity;
-  for (const c of candidates) {
+  const consider = (c, edge) => {
     const dist = Math.hypot(c.x - px, c.y - py);
-    if (dist > maxDist) continue;
-    const off = Math.abs(aimAngleOffset(px, py, turretAngle, c.x, c.y));
-    const score = (off / AIM_ANGLE_SCALE) + AIM_DIST_WEIGHT * (dist / maxDist);
+    if (dist > maxDist) return;
+    if (Math.abs(aimAngleOffset(px, py, turretAngle, c.x, c.y)) > TARGET_CONE) return;
+    const score = dist * edge;
     if (score < bestScore) { bestScore = score; best = c; }
-  }
+  };
+  for (const e of enemies || []) consider(e, ENEMY_RANGE_EDGE);
+  for (const t of terrain || []) consider(t, 1);
   return best;
-}
-
-// #250 (issue: "destroyable hexes should be potential convergence targets, but lower priority
-// than enemies"): what direct-fire convergence should aim at this frame. `aimEnemy` is whatever
-// targeting.js `_updateLock` already picked as the live most-aimed enemy (or null); `hexCandidates`
-// is a list of standing destructible-terrain points (world.js `_destructibleTargetsNear`) to fall
-// back on. The ordering is enforced structurally, not by comparing scores: an enemy is returned
-// immediately whenever one exists, so a destructible hex is NEVER even considered — let alone
-// preferred — while any enemy is available, regardless of which is closer or better-aimed. Only
-// when there is no enemy at all does a hex get scored via `nearestToAimLine`. Returns null (the
-// pre-#250 "nothing to converge on" case) when neither exists, matching prior behavior exactly.
-//
-// #262: `focusMode` ('enemy' | 'building', default 'enemy' — preserves the #250 behavior exactly
-// for any caller/test that doesn't know about this parameter) lets the player flip which side of
-// the ranking wins. 'enemy' is the untouched #250 rule above. 'building' inverts it: a destructible
-// hex is preferred over an enemy whenever one is in range/on-line, so the player can intentionally
-// target terrain (clear cover, break a wall) even with an enemy also in view — falling back to the
-// enemy only when no hex candidate is available, so aiming never goes fully idle just because
-// focus mode is on terrain.
-export function pickConvergeTarget(px, py, turretAngle, aimEnemy, hexCandidates, maxDist = Infinity, focusMode = 'enemy') {
-  if (focusMode === 'building') {
-    const hex = nearestToAimLine(px, py, turretAngle, hexCandidates, maxDist);
-    return hex || aimEnemy || null;
-  }
-  if (aimEnemy) return aimEnemy;
-  return nearestToAimLine(px, py, turretAngle, hexCandidates, maxDist);
 }
 
 // #317: the hex key a converge/lock target designates, or null if it designates anything else (a

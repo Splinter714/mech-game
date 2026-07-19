@@ -818,28 +818,30 @@ export const WorldMixin = {
   // to a local ring scan (`hexesWithinPixelRadius`, same trick `_updateTileCulling` above uses)
   // rather than walking either full map, so cost stays independent of how much destructible
   // terrain the map has overall. Feeds the direct-fire convergence fallback (#250: destructible
-  // terrain is a convergence target, but only below any live enemy — see shared.js
-  // `pickConvergeTarget`, called from targeting.js `_updateLock`).
+  // terrain is a convergence target — see shared.js `pickConvergeTarget`, called from targeting.js
+  // `_updateLock`. #322: scanned out to the full derived TARGETING_RANGE now, not a 450px stub).
   // #318 renamed from `_destructibleHexesNear`: the pool is no longer hexes only. A base WALL SPAN
   // is destructible (200 HP, wallEdges.js) and is the single most-destroyed thing in the game, but
   // #288 rebuilt walls as hex-EDGE geometry — they have no hex key, so the hex-map scan above could
   // never see them and the reticle would not converge on the one wall you must breach to get in.
-  // Spans are added here, on the TERRAIN side of #262's focus toggle, so they need no third
-  // category and — because `pickConvergeTarget` returns any live enemy immediately in the default
-  // 'enemy' mode — a 25-30 span ring can never pull the reticle off a mech that's shooting you.
+  // Spans are added here alongside hexes as one terrain pool (#262's focus toggle is gone as of
+  // #322). They no longer sit structurally below enemies: #322 scores spans, hexes and enemies by
+  // the same cone-then-nearest rule, so a span you're pointed at and standing next to CAN outrank a
+  // distant mech — which is the point. The ~20° cone is what keeps a 25-30 span wall ring from
+  // grabbing the reticle: only the couple of spans actually ahead of you ever qualify.
   //
   // Every candidate carries its IDENTITY, not just a point (#317 needs it too):
   //   • a hex   ⇒ `{ x, y, hexKey }`   — the centre of a standing destructible tile
   //   • a span  ⇒ `{ x, y, edgeKey, edge }` — the segment midpoint (`hexEdges.js` derives the
   //     endpoints from the two shared corners), plus the live record so a hit can damage it.
-  // Nothing downstream may assume a hex key: `pickConvergeTarget`/`nearestToAimLine` score on
-  // x/y alone, and firing.js discriminates on which key is present.
+  // Nothing downstream may assume a hex key: `pickConvergeTarget` scores on x/y alone, and
+  // firing.js discriminates on which key is present.
   //
   // GATE spans (#309) are included deliberately: a gate has HP like any other span and blowing one
   // is a permanent breach, so it would be strange to be able to shoot it down but never lock it.
   // TURRET spans (#310) are included as spans; the `wallTurret` riding on one is a separate live
-  // enemy in `this.enemies`, so "shoot the gun" and "shoot the wall out from under it" stay
-  // distinct picks decided by the focus toggle rather than fighting over one candidate.
+  // enemy in `this.enemies`, so "shoot the gun" and "shoot the wall out from under it" are two
+  // candidates competing under #322's one rule (the turret, being an enemy, gets the range edge).
   _destructibleTargetsNear(x, y, maxDist) {
     const pts = [];
     for (const h of hexesWithinPixelRadius(x, y, maxDist)) {

@@ -17,7 +17,7 @@ const enemy = (x, y, extra = {}) => ({
 function makeScene(visibleHexes) {
   const s = Object.assign(Object.create(TargetingMixin), {
     px: 0, py: 0, turretAngle: 0,
-    enemies: [], focusMode: 'enemy',
+    enemies: [],
     lock: { target: null }, _reticlePos: null,
     visibleHexes,
     _hexKeyAt(x, y) { const h = pixelToHex(x, y); return axialKey(h.q, h.r); },
@@ -77,11 +77,12 @@ describe('targeting LOS gate (#306)', () => {
   });
 
   it('prefers a SIGHTED enemy over a better-aimed hidden one', () => {
-    // The hidden enemy is dead ahead (perfect aim score); the sighted one is off to the side and
-    // would lose on score alone. The LOS gate removes the hidden one from consideration entirely.
+    // The hidden enemy is dead ahead AND nearer (it would win outright on #322's nearest-wins
+    // rule); the sighted one is farther and off to one side but still inside the aim cone. The LOS
+    // gate removes the hidden one from consideration entirely.
     const hidden = enemy(300, 0);
-    const sighted = enemy(500, 400);
-    const sc = makeScene(new Set([keyAt(0, 0), keyAt(500, 400)]));
+    const sighted = enemy(700, 150);
+    const sc = makeScene(new Set([keyAt(0, 0), keyAt(700, 150)]));
     sc.enemies = [hidden, sighted];
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(sighted);

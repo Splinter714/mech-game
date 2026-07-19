@@ -210,18 +210,16 @@ export default class ArenaScene extends Phaser.Scene {
     // Indirect-fire lock (#62, rework #252): `this.lock` (data/targetlock.js) is the pure state
     // record — it mirrors `this.convergeTarget` every frame, instantly, so homing/arcing weapons
     // simply fire at whatever direct-fire convergence is currently aimed at. `aimEnemy` is the live
-    // most-aimed enemy; `convergeTarget` (shared.js `pickConvergeTarget`) is the ranked pick fed to
-    // convergence — aimEnemy, or, #250, a fallback destructible hex, or null. Both set each frame
+    // most-aimed enemy; `convergeTarget` (shared.js `pickConvergeTarget`) is the live pick fed to
+    // convergence — #322: the nearest in-cone candidate of any kind, or null. Both set each frame
     // in `_updateLock` (targeting.js). `_reticlePos` is the reticle's eased (sliding) drawn position.
     this.lock = makeLock();
     this.aimEnemy = null;
     this.convergeTarget = null;
     this._reticlePos = null;
-    // #262: convergence/lock's enemy-vs-destructible-terrain preference (shared.js
-    // `pickConvergeTarget`'s `focusMode` param) — 'enemy' is the #250 default (an enemy always
-    // wins over a hex); 'building' inverts it so the player can intentionally target terrain even
-    // with an enemy in view. Toggled by R3 (pad) / F (keyboard), see update()/`_toggleFocusMode`.
-    this.focusMode = 'enemy';
+    // #322 removed #262's enemy-vs-building focus toggle entirely (Jackson: "we don't want to need
+    // enemy vs terrain mode anymore"). One rule now scores both pools, so there is nothing to flip;
+    // F and R3 are unbound.
 
     // Debug toggles (#28): stop/start the enemy's movement and firing for testing.
     this.enemyMove = true;
@@ -241,12 +239,6 @@ export default class ArenaScene extends Phaser.Scene {
     if (import.meta.env.DEV) {
       this.input.keyboard.on('keydown-L', () => this._toggleHexLabels());
     }
-    // #262: F toggles convergence/lock's enemy-vs-building targeting focus (see this.focusMode
-    // above). Phaser's `keydown-*` events already fire once per physical press, so no separate
-    // edge-detector is needed here (unlike the pad side, which polls raw button state and needs
-    // PadEdges — see the R3 check in update()).
-    this.input.keyboard.on('keydown-F', () => this._toggleFocusMode());
-
     // #99: explicit depths (DEPTH.* — shared.js) instead of relying on scene add-order, which
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
@@ -343,11 +335,6 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
     if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
-    // #262: R3 toggles convergence/lock's enemy-vs-building targeting focus (keyboard equivalent:
-    // F, wired via a keydown listener in create()). R3 was freed up by #252, which removed the
-    // old manual drop-lock action entirely — nothing else reads it.
-    if (this.padEdges.pressed(PAD.R3)) this._toggleFocusMode();
-
     // ── Indirect-fire lock (#62, rework #252): mirrors direct-fire convergence's live pick
     // instantly (no charge-up, no maintain timer) — blind fire onto the target's last-known/
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
@@ -433,16 +420,6 @@ export default class ArenaScene extends Phaser.Scene {
     Audio.ui('returnToGarage');
     this.scene.stop('HudScene');
     this.scene.start('GarageScene');
-  }
-
-  // #262: flip convergence/lock's enemy-vs-building targeting preference (see `this.focusMode`
-  // above, and shared.js `pickConvergeTarget`'s `focusMode` param). A toggle, not a hold — one
-  // press/press-equivalent flips it, fired from both the R3 pad edge (update()) and the F keydown
-  // listener (create()). Floating text mirrors the M mute toggle's feedback pattern.
-  _toggleFocusMode() {
-    this.focusMode = this.focusMode === 'enemy' ? 'building' : 'enemy';
-    const label = this.focusMode === 'building' ? 'FOCUS: BUILDING' : 'FOCUS: ENEMY';
-    this._floatText(this.px, this.py - 30, label, '#7c8794');
   }
 
   // #270 playtest follow-up: live on/off toggle for both hex-label systems (bases.js's

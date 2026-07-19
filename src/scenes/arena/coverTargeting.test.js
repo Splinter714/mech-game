@@ -45,7 +45,7 @@ function makeScene({ hexes = [], wallDefs = [] } = {}) {
       terrain, buildingHp: buildings, coverHp: cover,
       wallEdges: makeWallEdgeSet(wallDefs),
       enemies: [], projectiles: [], firePatches: [],
-      px: 0, py: 0, turretAngle: 0, focusMode: 'enemy',
+      px: 0, py: 0, turretAngle: 0,
       lock: { target: null }, _reticlePos: null,
       visibleHexes: null,
       mech: { isDestroyed: () => false },
@@ -192,25 +192,29 @@ describe('#318 wall spans are convergence/lock targets', () => {
     expect(s._lockAimPoint().x).toBeCloseTo(m.x, 3);
   });
 
-  it('an ENEMY still outranks a whole wall ring in the default focus mode', () => {
-    // The failure this guards against: a ring is 25-30 spans, and standing next to one must never
-    // pull the reticle off a mech that is shooting you.
+  it('an enemy at comparable range outranks a distant wall ring (#322 enemy edge)', () => {
+    // A ring is 25-30 spans, and one of them is usually somewhere ahead of you. #322 dropped the
+    // structural "enemy always wins", so this is now decided on distance: the enemy is nearer than
+    // the ring here (and gets the enemy range edge on top), so it must still take the reticle.
     const ring = [];
-    for (const n of neighbors(A.q, A.r)) ring.push({ a: A, b: n });
+    for (const n of neighbors(6, 0)) ring.push({ a: { q: 6, r: 0 }, b: n });
     const s = makeScene({ wallDefs: ring });
-    const enemy = { x: 600, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
+    const enemy = { x: 200, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
     s.enemies = [enemy];
-    s.visibleHexes = new Set([s._hexKeyAt(0, 0), s._hexKeyAt(600, 0)]);
+    s.visibleHexes = new Set([s._hexKeyAt(0, 0), s._hexKeyAt(200, 0)]);
     s._updateLock(0.016);
     expect(s.convergeTarget).toBe(enemy);
   });
 
-  it("but 'building' focus mode DOES prefer the span — spans ride the terrain side of #262", () => {
-    const s = makeScene({ wallDefs: spanDefs });
-    const enemy = { x: 600, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
+  it('but a span you are standing right next to DOES beat a distant enemy now (#322)', () => {
+    // The #322 fix in one case: the old rule made this structurally impossible — any live enemy,
+    // at any range, always took the reticle off the wall in front of your face.
+    const ring = [];
+    for (const n of neighbors(A.q, A.r)) ring.push({ a: A, b: n });
+    const s = makeScene({ wallDefs: ring });
+    const enemy = { x: 1200, y: 60, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
     s.enemies = [enemy];
-    s.visibleHexes = new Set([s._hexKeyAt(0, 0), s._hexKeyAt(600, 0)]);
-    s.focusMode = 'building';
+    s.visibleHexes = new Set([s._hexKeyAt(0, 0), s._hexKeyAt(1200, 60)]);
     s._updateLock(0.016);
     expect(s.convergeTarget?.edgeKey).toBeTruthy();
   });
