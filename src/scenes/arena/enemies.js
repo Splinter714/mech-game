@@ -40,6 +40,12 @@ import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
+// #302: shielded enemies (helicopter 30, quadruped 50 — enemyKinds.js) wear the SAME glowing
+// shield outline the player does, from the same shared implementation.
+import {
+  SHIELD_MECH_PART_KEYS, SHIELD_VEHICLE_PART_KEYS, makeShieldOutline, updateShieldOutline,
+} from './shieldOutline.js';
+import { shieldPresent } from '../../data/shield.js';
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -225,6 +231,7 @@ export const EnemiesMixin = {
       detectRange: detectionRangeFor(clamp(opt * STANDOFF_FRAC, STANDOFF_MIN, STANDOFF_MAX)),
     };
     this._resetAiState(e);
+    this._initEnemyShieldVisual(e, SHIELD_MECH_PART_KEYS, mechViewScale(e));
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);
@@ -269,6 +276,11 @@ export const EnemiesMixin = {
       // def.legFrames / _updateVehicle below) — harmless/unused for kinds without it.
       stepMs: 0, hullFrame: 0,
     };
+    // #302: a shielded vehicle kind (helicopter/quadruped) gets a TWO-sprite outline — hull +
+    // turret — which reads as one shell around the whole unit. That's the honest depiction: an
+    // HpBody has ONE unit-wide shield pool, not the player's per-location parts, so there's
+    // nothing to draw per-part.
+    this._initEnemyShieldVisual(e, SHIELD_VEHICLE_PART_KEYS, vehicleScale(def));
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);
@@ -379,6 +391,25 @@ export const EnemiesMixin = {
     c.setDepth(unitDepth(false, def.flying, def.size === 'small'));
     c.hull = hull; c.turret = turret; c.shadow = shadow;
     return c;
+  },
+
+  // #302: give ONE enemy the shared shield outline — but only if its data actually configures a
+  // shield. That gate is the whole performance story: every unshielded enemy (the great majority
+  // — drones, tanks, turrets, infantry, every enemy mech) builds no outline sprites and holds no
+  // `shieldVisual`, so `_updateEnemyShieldVisual` returns on a single null check and the per-frame
+  // re-pose cost #237 worried about is never multiplied across the roster. A shielded unit whose
+  // pool is momentarily down pays only the same early-exit the player's outline already did.
+  _initEnemyShieldVisual(e, keys, scale) {
+    if (!shieldPresent(e.mech?.shield)) return;
+    e.shieldVisual = makeShieldOutline(this, e.view, { keys, scale });
+  },
+
+  // Per-frame upkeep for one enemy's outline: no-op unless this unit has one at all. The
+  // show/hide-on-0↔>0 edge, the fraction fade and the empty-pool early exit are all the shared
+  // `updateShieldOutline` — identical behaviour to the player's, by construction.
+  _updateEnemyShieldVisual(e, delta) {
+    if (!e.shieldVisual) return;
+    updateShieldOutline(e.shieldVisual, e.view, e.mech?.shield, delta);
   },
 
   // Zero an enemy's transient AI decision state (state machine + timers + memory). Split out
@@ -850,6 +881,7 @@ export const EnemiesMixin = {
     e.view.turret.rotation = e.turret + Math.PI / 2;
     // Place + rotate all four pivoting parts each frame at the enemy's turret facing, tilt 0.
     this._syncTilts(e.view, e.mech, e.turret, mechViewScale(e), 0, 0, {}, dt, e.artScale);
+    this._updateEnemyShieldVisual(e, delta);   // #302 — no-op for an unshielded mech (all of them today)
   },
 
   // ── Non-mech unit update (#68) ────────────────────────────────────────────────────────
@@ -970,6 +1002,10 @@ export const EnemiesMixin = {
       e.view.turret.rotation = e.turret + Math.PI / 2;      // gun tracks the player
     }
     if (e.view.shadow) { e.view.shadow.x = 10; e.view.shadow.y = 16; }   // offset = "height" read
+    // #302: track the shell onto the (possibly walk-cycling) hull + turret. No-op unless this
+    // kind actually has a shield; early-exits while the pool is broken, so a gunship you've just
+    // burst down costs nothing until it regens.
+    this._updateEnemyShieldVisual(e, delta);
   },
 
   // #269 playtest follow-up: root cause of "helicopter Repeater fires a single stream even
