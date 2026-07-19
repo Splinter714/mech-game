@@ -62,7 +62,11 @@ export const STANDOFF_MAX = 400;
 export const APPROACH_TIMEOUT_MS = 4200;
 export const STRAFE_MIN_MS = 2200;
 export const STRAFE_MAX_MS = 3200;
-export const REPOSITION_TIMEOUT_MS = 3200;
+// Generous enough that the unit normally ARRIVES at its new attack point rather than timing out
+// mid-swing: the break-off is an arc of up to ~2.3 rad out to ~1.9x standoff, which at the
+// gunship's 210px/s can be most of 800px of travel. Cutting it short leaves the unit halfway
+// round, which reads as an aimless wobble instead of a break-off and re-attack.
+export const REPOSITION_TIMEOUT_MS = 4600;
 
 // Distance triggers.
 // APPROACH ends once the unit is inside its standoff radius — it has closed to gun range and now
