@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_EDGE_HP, WALL_THICKNESS_PX,
+  WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
 } from './wallEdges.js';
 import { edgeKey, edgeEndpoints, edgeMidpoint } from './hexEdges.js';
 import { HEX_SIZE, hexToPixel, neighbors } from './hexgrid.js';
@@ -216,5 +216,42 @@ describe('#288 per-span destruction', () => {
     for (const e of [...set.edges.values()].slice(0, 4)) damageWallEdge(set, e, 999);
     expect(liveWallEdges(set)).toHaveLength(2);
     expect(liveWallEdges(null)).toEqual([]);
+  });
+});
+
+describe('#313 wall-span HP retune — the gate is a commitment, not a speed bump', () => {
+  // Raised 55 -> 200 with the rest of the destructible structures. Because the mech collides as a
+  // POINT, breaching ONE span already opens a drivable gap, so all of a gate's toughness has to
+  // live in the per-span pool — which is why this is the joint-highest destructible value in the
+  // game rather than a middling one.
+  it('pins the per-span HP at the owner-confirmed 200', () => {
+    expect(WALL_EDGE_HP).toBe(200);
+  });
+
+  it('makes a span as tough as a light mech, not as a tank', () => {
+    // #299 toughness scale: tank 80, quadruped 150, light mech 200. A gate span you can pop faster
+    // than the cheapest vehicle in the game was the exact complaint #313 was filed about.
+    expect(WALL_EDGE_HP).toBeGreaterThan(80);
+    expect(WALL_EDGE_HP).toBeGreaterThanOrEqual(200);
+  });
+
+  it('still falls to a full pool of damage in one bite, and survives one short of it', () => {
+    // Guards the raise against an off-by-one in any damage path that assumed the old 55.
+    const set = oneWall();
+    const e = [...set.edges.values()][0];
+    expect(damageWallEdge(set, e, WALL_EDGE_HP - 1)).toEqual({ hp: 1, destroyed: false });
+    expect(damageWallEdge(set, e, 1)).toEqual({ hp: 0, destroyed: true });
+  });
+
+  it('keeps shooting decisively cheaper than ramming (WALL_STOMP_FACTOR unchanged at 0.25)', () => {
+    // #313 check 2. NOTE the number below is the BEST CASE only: `_stompBuildingAt` scales its
+    // bite by `speedFrac`, and a mech pressed against a wall has stalled, so measured reality is
+    // much worse than this bound (scripts/audit-destructible-313.mjs clocked 51s of leaning vs
+    // 1.8s of shooting a span down). All this pins is the design invariant that survived the
+    // retune: ramming must never be the quick way through a gate.
+    const STOMP_DPS = 45;   // scenes/arena/world.js (module-private; mirrored here deliberately)
+    const bestCaseRammingSeconds = WALL_EDGE_HP / (STOMP_DPS * WALL_STOMP_FACTOR);
+    expect(WALL_STOMP_FACTOR).toBe(0.25);
+    expect(bestCaseRammingSeconds).toBeGreaterThan(10);
   });
 });

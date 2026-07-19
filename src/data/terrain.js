@@ -132,15 +132,16 @@ export const TERRAIN = {
   // if it hadn't used up its one resupply yet). #286: passable-but-slow (not impassable) — a
   // sealed dome still lets a mech walk over/around it (same `SLOW_MOVEMENT_FACTOR` as any other
   // walk-through cover), it just no longer functions as a resupply point until it reopens.
-  // `hp: 30` sits between alertTower's slim sensor mast (25) and objective's 40 — a sealed bay
-  // door is sturdier than a thin mast but still not the real assault target. Collapses to
+  // `hp: 200` (#313, owner-confirmed retune from 30) — well above alertTower's slim sensor mast
+  // (75), level with the objective: blowing a dome open before it can produce a reinforcement is
+  // meant to be a real tactical investment, not something you incidentally graze on the way past. Collapses to
   // the same uniform `rubble` every other base-infra hex uses (alertTower/objective/dockClosed)
   // so destroyed base infrastructure reads consistently. `setDressing: true` (same precedent as
   // `alertTower`) keeps it OUT of the mission-objective pool — it's a dynamic
   // occupancy state, never a placed assault objective. Owner: hp tunable via playtest.
   dockClosed:{ id: 'dockClosed',tex: 'hex_dockClosed', passable: true, blocksLOS: true,
                speedFactor: SLOW_MOVEMENT_FACTOR,
-               destructible: true, hp: 30, rubbleId: 'rubble', setDressing: true,
+               destructible: true, hp: 200, rubbleId: 'rubble', setDressing: true,
                category: 'base', movement: 'slow', cover: 'hard' },
   // #269 §3: a small, cheap, DESTRUCTIBLE sensor tower — the wake TRIGGER for the base-population
   // system (data/alertTower.js's pure countdown state machine + scenes/arena/bases.js's per-frame
@@ -153,7 +154,9 @@ export const TERRAIN = {
   // it — a real stealth/tension window, not just flavor. Reads as a small emplacement — hard
   // cover, no movement, same shape as the other base-infra structures (dockClosed/objective)
   // since it should feel like a genuine destructible objective-of-opportunity for a stealthy
-  // player — just cheaper (hp 25) since it's a slim sensor mast, not a whole structure. #269
+  // player — just cheaper (hp 75, #313's owner-confirmed retune from 25) since it's a slim sensor
+  // mast, not a whole structure. It deliberately stays the most snipeable structure in the game so
+  // racing its countdown before it wakes the base remains viable — just no longer trivial. #269
   // playtest follow-up: originally reused the removed `tower` outpost's texture verbatim — the
   // EXACT same texture as an ordinary destructible outpost building — so in play it was
   // indistinguishable from a regular building; players fighting through/near a base destroyed
@@ -165,7 +168,7 @@ export const TERRAIN = {
   // `setDressing: true` (same precedent as `dockClosed`) keeps it OUT of the mission-objective pool
   // (`isMissionObjective`) — it's a stealth/wake mechanic, never the assault-objective hex.
   alertTower:{ id: 'alertTower',tex: 'hex_alertTower', passable: false, blocksLOS: true,
-               destructible: true, hp: 25, rubbleId: 'rubble', setDressing: true,
+               destructible: true, hp: 75, rubbleId: 'rubble', setDressing: true,
                category: 'base', movement: 'none', cover: 'hard' },
 
   // Rubble: what a destroyed base-infra structure leaves behind — broken masonry chunks,
@@ -189,8 +192,13 @@ export const TERRAIN = {
   // rejected on playtest: decoration on a walk-through tile doesn't read as a structure. So the
   // hex is now a genuine HP-bearing bunker, exactly like the other base-infra structures
   // (`alertTower`/`dockClosed`/`objective`): impassable, hard cover, real hp, collapsing into
-  // its own dedicated rubble. hp 30 matches `dockClosed` — tougher than the alert tower's slim
-  // 25 mast, below the 40 of the base's actual objective.
+  // its own dedicated rubble. hp 150 (#313, owner-confirmed retune from 30) — tougher than the
+  // alert tower's slim 75 mast, below the 200 of the base's actual objective and the sealed dock,
+  // and level with a quadruped on #299's unit-toughness scale: cracking a gun bunker open should
+  // cost about what killing a real unit costs. Note this is the BUNKER's own pool, on top of the
+  // garrisoned turret's separate body — though collapsing the hex kills that garrison outright
+  // (`_onTerrainCollapsed` bites for the enemy's full `toughness`, not its hp), so this HP is the
+  // real price of the shortcut.
   //
   // What the old comment warned about is handled at the spawn paths, not worked around here:
   //   * `_spawnDormantUnits` (scenes/arena/bases.js) places a base's turrets ON their emplacement
@@ -208,7 +216,7 @@ export const TERRAIN = {
   // with it. Its own texture (`hex_turretEmplacement`, art/hexArt.js) is the intact bunker;
   // `hex_turretRubble` is its wrecked state.
   turretEmplacement: { id: 'turretEmplacement', tex: 'hex_turretEmplacement', passable: false, blocksLOS: true,
-               destructible: true, hp: 30, rubbleId: 'turretRubble', setDressing: true,
+               destructible: true, hp: 150, rubbleId: 'turretRubble', setDressing: true,
                category: 'base', movement: 'none', cover: 'hard' },
 
   // #287: the wreck of a destroyed turret emplacement — a dedicated rubble type rather than the
@@ -227,8 +235,11 @@ export const TERRAIN = {
   // alertTower, and reads as "the real thing to punch through" for that base — a proper structure,
   // not a placement marker, so it's a genuine hard-cover building (mirrors `alertTower`'s shape as
   // a real structure: impassable, blocks LOS) rather than the passable ground markings dock/
-  // turretEmplacement use. hp 40 sits above the alert tower's slim-mast 25 and dockClosed's 30 —
-  // substantial enough to read as a real objective, not a one-shot. `setDressing` is
+  // turretEmplacement use. hp 200 (#313, owner-confirmed retune from 40) sits above the alert
+  // tower's slim-mast 75 and the turret bunker's 150, level with the sealed dock — the joint
+  // toughest structure in the game, and equal to a light mech on #299's unit-toughness scale, so
+  // the thing the mission marker points at reads as a real assault target rather than a one-shot.
+  // (400 was floated and the owner revised it down to 200 — do not raise this without asking.) `setDressing` is
   // deliberately OMITTED (unlike alertTower/dockClosed) — this hex IS meant to be `isMissionObjective`-
   // eligible in spirit (it's what the marker targets), though nothing currently drives
   // `isBaseCleared`/win-condition off it directly (kill-all-docked-enemies stays the actual win
@@ -237,7 +248,7 @@ export const TERRAIN = {
   // structures (alertTower/dockClosed) — a destroyed objective reads as the same kind of
   // wreckage everywhere, not a biome-specific rubble.
   objective: { id: 'objective', tex: 'hex_objective', passable: false, blocksLOS: true,
-               destructible: true, hp: 40, rubbleId: 'rubble',
+               destructible: true, hp: 200, rubbleId: 'rubble',
                category: 'base', movement: 'none', cover: 'hard' },
 
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──

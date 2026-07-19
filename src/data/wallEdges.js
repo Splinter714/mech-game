@@ -11,13 +11,16 @@
 import { HEX_SIZE, axialKey, pixelToHex, neighbors, hexesAlongSegment } from './hexgrid.js';
 import { edgeKey, edgeEndpoints, segmentCrossT, pointSegmentDistance } from './hexEdges.js';
 
-// HP per SPAN (one hex edge) — carried over unchanged from the tile version's per-segment 55, the
-// sturdiest destructible structure in the game (above alertTower's 25, dockClosed's 30, objective's
-// 40), so the gate is no weaker than the one that was playtested. Since the mech collides as a
-// POINT against terrain and walls alike, breaching just ONE span already opens a drivable gap (a
-// hex edge is HEX_SIZE ≈ 48px long and its two flanking spans only eat WALL_THICKNESS_PX/2 off each
-// end), so the toughness lives in the per-span pool rather than in needing several. Owner: tunable.
-export const WALL_EDGE_HP = 55;
+// HP per SPAN (one hex edge). #313 (owner-confirmed retune): raised 55 → 200. Every destructible
+// structure used to be more fragile than the cheapest combat unit — against #299's unit toughness
+// scale (tank 80, quadruped 150, light mech 200, player 600) a 55hp span fell to a four-weapon
+// mech in about half a second, which made the gate a speed bump. 200 puts a single span on par
+// with a light mech, so punching a hole is a deliberate several-second commitment under fire.
+// Since the mech collides as a POINT against terrain and walls alike, breaching just ONE span
+// already opens a drivable gap (a hex edge is HEX_SIZE ≈ 48px long and its two flanking spans only
+// eat WALL_THICKNESS_PX/2 off each end), so the toughness lives in the per-span pool rather than in
+// needing several — that's exactly why it can afford to be this high. Owner: tunable.
+export const WALL_EDGE_HP = 200;
 
 // #288: how much of the normal building-STOMP rate a wall takes when the mech simply leans on it
 // (scenes/arena/world.js `_stompBuildingAt`). A wall is stompable like any other structure — that
@@ -25,7 +28,15 @@ export const WALL_EDGE_HP = 55;
 // (STOMP_DPS 45) a span would fall after barely a second of pressing against it, which makes the
 // gate something you drive through rather than something you shoot through. At a quarter rate it's
 // a genuine several-second grind under fire, so shooting stays the sensible route while ramming is
-// still a desperate last resort. Owner: tunable.
+// still a desperate last resort. #313 re-checked this after WALL_EDGE_HP went 55 → 200, by
+// MEASURING it in the real game (scripts/audit-destructible-313.mjs) rather than modelling it —
+// which matters, because the naive arithmetic (STOMP_DPS 45 × 0.25 ≈ 11 HP/s ⇒ ~18s) is wrong:
+// `_stompBuildingAt` scales its bite by `speedFrac`, and a mech pressed against a wall has
+// STALLED, so the real rate is far below the nominal one. Measured: 51s of flat-out leaning to
+// break a span, vs 1.8s of shooting it with a four-weapon loadout. Ramming is therefore no longer
+// a meaningful last resort at this HP — it reads as "the wall is not stompable." Left at 0.25
+// because #313's brief was HP only, but this is the knob to revisit (or drop the speedFrac scaling
+// for walls) if the owner ever wants ramming to be a real option again. Owner: tunable.
 export const WALL_STOMP_FACTOR = 0.25;
 
 // How thick a wall reads/collides, in px, centred on the hex boundary — ~30% of a hex edge's own
