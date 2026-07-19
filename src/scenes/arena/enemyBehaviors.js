@@ -25,7 +25,11 @@ const rand = (a, b) => a + Math.random() * (b - a);
 function aimAndFire(scene, e, ctx, { needLos }) {
   const def = e.kindDef;
   e.turret = rotateToward(e.turret, ctx.bearing, def.move.turretSlew, ctx.dt);
-  if (!scene.enemyFire) return;
+  // #304: `_enemyFireAllowed()` = the #28 debug toggle AND "the player isn't dead (past the
+  // stand-down beat)". In practice a stood-down vehicle never even reaches here — _updateVehicle
+  // swaps the whole behavior call out for its withdrawal move — but this keeps the gate on the
+  // literal fire path too, so any future caller of a behavior fn inherits it.
+  if (!scene._enemyFireAllowed()) return;
   const inRange = ctx.dist < (def.fireRange ?? 300);
   // Ground units need a clear firing lane; flyers shoot over everything. #72 own-hex
   // transparency: the player's own soft-cover hex (and this unit's) doesn't block the lane.

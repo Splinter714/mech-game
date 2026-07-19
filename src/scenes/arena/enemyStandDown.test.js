@@ -1,0 +1,187 @@
+// #304 — Jackson (owner), live playtest: "enemies keep firing at me even after I've exploded
+// while I wait to return to garage." `_playerDead` (combat.js) only ever gated the PLAYER's own
+// input; nothing on the enemy side read it, so the squad kept engaging the crater for the whole
+// RUN_OVER_DELAY (3200ms).
+//
+// Confirmed behaviour: after a SHORT BEAT (not instantly on the death frame — a hard cut
+// mid-volley reads as a glitch) enemies stop firing and visibly disengage, heading back toward
+// their base / patrol post. Turrets can't move, so they just stop.
+//
+// The helpers below are exercised directly against a minimal ArenaScene-shaped `this` (real
+// EnemiesMixin methods), the same technique enemyDecideState.test.js / enemyFireAngle.test.js
+// use. The WIRING of those helpers into the per-frame loops is additionally covered by
+// source-text guards at the bottom — same technique playerDeath.test.js uses for the
+// player-side `_playerDead` gates, since driving a full `_updateEnemy` frame would need the
+// whole Phaser view/texture stack.
+import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+vi.mock('phaser', () => ({ default: {} }));
+import { EnemiesMixin } from './enemies.js';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const src = (...f) => readFileSync(join(HERE, ...f), 'utf8');
+
+function makeScene({ now = 0, playerDead = false, enemyFire = true, bases = [] } = {}) {
+  const scene = { time: { now }, enemyFire, bases, _playerDead: playerDead, _standDownAt: null };
+  Object.assign(scene, EnemiesMixin);
+  return scene;
+}
+
+describe('#304 the stand-down clock', () => {
+  it('is inactive while the player is alive', () => {
+    const scene = makeScene({ now: 10_000 });
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._enemyFireAllowed()).toBe(true);
+  });
+
+  it('is NOT active on the death frame — the beat has to elapse first (enemies still fire)', () => {
+    const scene = makeScene({ now: 1000, playerDead: true });
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._enemyFireAllowed()).toBe(true);        // trailing fire, on purpose
+    expect(scene._standDownAt).toBeGreaterThan(1000);    // deadline stamped lazily on first ask
+  });
+
+  it('stays inactive partway through the beat', () => {
+    const scene = makeScene({ now: 1000, playerDead: true });
+    scene._standDownActive();                 // stamps the deadline at 1000 + beat
+    scene.time.now = 1000 + 200;              // 200ms in — well short of the ~600ms beat
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._enemyFireAllowed()).toBe(true);
+  });
+
+  it('activates once the beat has elapsed, and firing is gated off from then on', () => {
+    const scene = makeScene({ now: 1000, playerDead: true });
+    scene._standDownActive();
+    scene.time.now = 1000 + 5000;             // comfortably past the beat
+    expect(scene._standDownActive()).toBe(true);
+    expect(scene._enemyFireAllowed()).toBe(false);
+  });
+
+  it('the beat is short — under a second, so the stand-down is visible well inside RUN_OVER_DELAY', () => {
+    const scene = makeScene({ now: 0, playerDead: true });
+    scene._standDownActive();
+    expect(scene._standDownAt).toBeGreaterThan(0);       // not instant
+    expect(scene._standDownAt).toBeLessThan(1000);       // but a beat, not a pause
+  });
+
+  it('leaves the #28 debug fire toggle authoritative when it is off', () => {
+    const scene = makeScene({ now: 0, enemyFire: false });
+    expect(scene._enemyFireAllowed()).toBe(false);
+  });
+
+  it('never mutates this.enemyFire (the debug toggle is the player\'s switch, not ours)', () => {
+    const scene = makeScene({ now: 1000, playerDead: true });
+    scene._standDownActive();
+    scene.time.now = 9000;
+    scene._enemyFireAllowed();
+    expect(scene.enemyFire).toBe(true);
+  });
+});
+
+describe('#304 where a stood-down unit withdraws to', () => {
+  it('a dock/base-spawned unit (baseId) heads back to its OWN base', () => {
+    const scene = makeScene({ bases: [{ id: 'base0', center: { q: 0, r: 0 } }, { id: 'base1', center: { q: 5, r: -2 } }] });
+    const goal = scene._standDownGoal({ baseId: 'base1', spawnX: 999, spawnY: 999, x: 0, y: 0 });
+    const other = scene._standDownGoal({ baseId: 'base0', spawnX: 999, spawnY: 999, x: 0, y: 0 });
+    expect(goal).not.toEqual(other);          // it picks ITS base, not just any base
+    expect(goal.x).not.toBe(999);             // and not its spawn fallback
+  });
+
+  it('an unbased roamer (patrol/wave/debug spawn) falls back to its own spawn post', () => {
+    const scene = makeScene({ bases: [{ id: 'base0', center: { q: 3, r: 3 } }] });
+    // Deliberately NOT the nearest base: a wave spawn has no fictional tie to a base it never
+    // came from, and funnelling unrelated units into the nearest one piles them up at the crater.
+    expect(scene._standDownGoal({ baseId: null, spawnX: 120, spawnY: -40 })).toEqual({ x: 120, y: -40 });
+  });
+
+  it('survives a baseId whose base no longer exists, and the boss arena (no bases at all)', () => {
+    const scene = makeScene({ bases: [] });
+    scene.bases = undefined;
+    expect(scene._standDownGoal({ baseId: 'base9', spawnX: 7, spawnY: 8 })).toEqual({ x: 7, y: 8 });
+  });
+});
+
+describe('#304 disengage movement', () => {
+  it('steers toward the withdrawal point and caches it on the unit', () => {
+    const scene = makeScene();
+    const e = { baseId: null, spawnX: 100, spawnY: 0, x: 0, y: 0 };
+    const { mx, my } = scene._standDownMoveIntent(e);
+    expect(mx).toBeCloseTo(1, 5);             // due +x, straight home
+    expect(my).toBeCloseTo(0, 5);
+    expect(e.standDownGoal).toEqual({ x: 100, y: 0 });
+  });
+
+  it('stops once it has arrived, instead of jittering on the spot', () => {
+    const scene = makeScene();
+    const e = { baseId: null, spawnX: 5, spawnY: 0, x: 0, y: 0 };
+    expect(scene._standDownMoveIntent(e)).toEqual({ mx: 0, my: 0 });
+  });
+
+  it('a mobile vehicle withdraws: it gains velocity toward home and takes the standdown posture', () => {
+    const scene = makeScene();
+    const e = {
+      baseId: null, spawnX: 1000, spawnY: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, turret: Math.PI,
+      kindDef: { move: { maxSpeed: 200, accel: 400, turretSlew: 3 } },
+    };
+    for (let i = 0; i < 30; i++) scene._standDownVehicleMove(e, 1 / 60);
+    expect(e.state).toBe('standdown');
+    expect(e.vx).toBeGreaterThan(0);          // moving away from the crater, toward its post
+    expect(Math.abs(e.turret)).toBeLessThan(Math.PI);   // gun swung off target, back over travel
+  });
+
+  it('a TURRET (immobile) does not try to disengage — it just coasts to a stop', () => {
+    const scene = makeScene();
+    const e = {
+      baseId: null, spawnX: 1000, spawnY: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, turret: 0,
+      kindDef: { move: { maxSpeed: 0, accel: 400, turretSlew: 3 } },
+    };
+    for (let i = 0; i < 30; i++) scene._standDownVehicleMove(e, 1 / 60);
+    expect(e.state).toBe('standdown');
+    expect(e.vx).toBe(0);
+    expect(e.vy).toBe(0);
+  });
+
+  it('the cached withdrawal point is transient AI state, cleared by _resetAiState', () => {
+    expect(src('enemies.js')).toMatch(/_resetAiState\(e\) \{[\s\S]*?e\.standDownGoal = null;/);
+  });
+});
+
+// ── Wiring guards (source-text, same technique as playerDeath.test.js) ──────────────────
+describe('#304 the stand-down gate is actually wired into both enemy loops', () => {
+  it('the mech-enemy firing loop fires through _enemyFireAllowed(), not the raw toggle', () => {
+    expect(src('enemies.js')).toMatch(/if \(this\._enemyFireAllowed\(\) && reacting\) for \(const w of e\.mech\.readyWeapons\(\)\)/);
+    expect(src('enemies.js')).not.toMatch(/if \(this\.enemyFire && reacting\)/);
+  });
+
+  it('every vehicle kind fires through _enemyFireAllowed() too (aimAndFire)', () => {
+    expect(src('enemyBehaviors.js')).toMatch(/if \(!scene\._enemyFireAllowed\(\)\) return;/);
+    expect(src('enemyBehaviors.js')).not.toMatch(/if \(!scene\.enemyFire\) return;/);
+  });
+
+  it('a stood-down mech enters the standdown state instead of running the combat brain', () => {
+    expect(src('enemies.js')).toMatch(/if \(stood\) \{[\s\S]*?e\.state = 'standdown';[\s\S]*?_standDownMoveIntent\(e\)/);
+  });
+
+  it('a stood-down vehicle skips its tactical behavior entirely (which is where its firing lives)', () => {
+    expect(src('enemies.js')).toMatch(/if \(this\._standDownActive\(\)\) \{\s*\n\s*this\._standDownVehicleMove\(e, dt\);\s*\n\s*\} else if \(!reacting\)/);
+  });
+
+  it('a stood-down mech stops tracking the player with its turret and drops its lock', () => {
+    expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) e\.turret = rotateToward\(e\.turret, bearing/);
+    expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) this\._updateEnemyLock\(/);
+  });
+});
+
+// Refs #281's lesson (a first death left the player permanently frozen because scene state
+// survived a redeploy on the reused Phaser scene instance) — the enemy-side twin of that bug
+// would be a redeploy finding every enemy already stood down.
+describe('#304 a redeploy resets the stand-down clock', () => {
+  it('ArenaScene.create() clears _standDownAt alongside _playerDead', () => {
+    const arena = src('..', 'ArenaScene.js');
+    const create = arena.match(/create\(\)[\s\S]*?\n {2}\}/);
+    expect(create[0]).toMatch(/this\._playerDead = false;/);
+    expect(create[0]).toMatch(/this\._standDownAt = null;/);
+  });
+});

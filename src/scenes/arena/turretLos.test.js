@@ -41,6 +41,9 @@ function makeCtx(dist) {
 function makeScene({ hasLos }) {
   return {
     enemyFire: true,
+    // #304: aimAndFire now asks the scene through this gate (debug toggle AND the player-dead
+    // stand-down clock) rather than reading `enemyFire` raw — player alive here, so it's open.
+    _enemyFireAllowed: () => true,
     px: 500, py: 0,
     _cachedLosToPlayer: vi.fn(() => hasLos),
     _fireVehicleWeapon: vi.fn(),

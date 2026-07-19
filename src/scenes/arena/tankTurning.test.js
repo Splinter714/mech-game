@@ -24,6 +24,9 @@ const tankBehavior = ENEMY_BEHAVIORS.tank;
 function makeScene() {
   return {
     enemyFire: true,
+    // #304: aimAndFire now asks the scene through this gate (debug toggle AND the player-dead
+    // stand-down clock) rather than reading `enemyFire` raw — player alive here, so it's open.
+    _enemyFireAllowed: () => true,
     _cachedLosToPlayer: () => true,
     _fireVehicleWeapon: vi.fn(),
   };
