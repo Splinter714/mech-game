@@ -15,6 +15,11 @@
 
 import Phaser from 'phaser';
 import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
+import { kindWeaponSlot } from '../../data/kindWeapons.js';
+import {
+  APPROACH, STRAFE, FACE_PLAYER, FACE_BROADSIDE,
+  initGunshipCycle, stepGunshipCycle, phasePlan,
+} from '../../data/gunshipCycle.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -22,15 +27,24 @@ const rand = (a, b) => a + Math.random() * (b - a);
 // Slew the turret toward the player and fire when the player is within the kind's fire range and
 // (for ground units) line-of-sight isn't blocked by cover. Flyers ignore cover. Shared tail end
 // of every behavior. Returns nothing; mutates e.turret and may spawn a shot.
-function aimAndFire(scene, e, ctx, { needLos }) {
+// #305: `slot` names which of the kind's WEAPON SLOTS (data/kindWeapons.js) is live this call —
+// a role name the kind's data defines, not a weapon. Omitted ⇒ the kind's default/only gun, so
+// every existing caller is unchanged. `slot: null` explicitly means HOLD FIRE: the turret still
+// slews to track the player (so the unit stays menacing and is instantly ready when it re-opens)
+// but nothing is fired — that's what the gunship's break-off phase uses.
+function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
   const def = e.kindDef;
   e.turret = rotateToward(e.turret, ctx.bearing, def.move.turretSlew, ctx.dt);
+  if (!fire) return;
+  e.weaponSlot = slot;
+  // Range comes from the LIVE slot (each gun has its own reach) rather than the kind as a whole.
+  const mount = kindWeaponSlot(def, slot);
   // #304: `_enemyFireAllowed()` = the #28 debug toggle AND "the player isn't dead (past the
   // stand-down beat)". In practice a stood-down vehicle never even reaches here — _updateVehicle
   // swaps the whole behavior call out for its withdrawal move — but this keeps the gate on the
   // literal fire path too, so any future caller of a behavior fn inherits it.
   if (!scene._enemyFireAllowed()) return;
-  const inRange = ctx.dist < (def.fireRange ?? 300);
+  const inRange = ctx.dist < (mount?.fireRange ?? 300);
   // Ground units need a clear firing lane; flyers shoot over everything. #72 own-hex
   // transparency: the player's own soft-cover hex (and this unit's) doesn't block the lane.
   // #167: ground vehicles (tanks/infantry/quadrupeds, often 40+ at once) ran this raycast per
@@ -255,37 +269,85 @@ function droneBehavior(scene, e, ctx) {
   aimAndFire(scene, e, ctx, { needLos: false });
 }
 
-// HELICOPTER — fast strafing runs. Flies a pass line offset from the player, crossing its front,
-// then peels off and comes back on the other side. Flies (ignores cover). Missiles on the pass.
+// HELICOPTER — a GUNSHIP running the #305 three-phase attack cycle. The state machine itself
+// (phases, transition triggers, per-phase facing + weapon slot, the randomised standoff) is a
+// pure module: data/gunshipCycle.js. Read its header for the design and the rationale; this
+// function is the adapter that turns "which phase, facing which way" into velocity and a shot.
+//
+// This REPLACES the old flyby: it used to pick a waypoint 220px along a perpendicular, fly there,
+// flip sides and repeat, facing its own velocity the whole time and hosing one weapon regardless
+// of where it pointed. Jackson (2026-07-18): "helicopters should do strafe firing, not flyby
+// firing." Now:
+//   APPROACH   nose on the player, closing, firing the DUMBFIRE cluster salvo down the airframe
+//              axis — a run the player can sidestep.
+//   STRAFE     broadside, sliding laterally across the player's front, door gun chattering.
+//   REPOSITION guns cold, nose into travel, out to a fresh angle of attack. Then round again.
+//
+// Weapon selection is driven by FACING, which is the entire point of the feature — the phase
+// picks both, together, from PHASE_PLAN.
+//
+// Preserved from before: #282 boids `flyerSeparation` blending (so two gunships, or a gunship
+// inside a drone swarm, push apart rather than overlapping) applies in EVERY phase, and #245's
+// `needLos: false` (flyers shoot over cover) is unchanged.
 function helicopterBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
-  const offset = def.strafeRange ?? 320;
-  // A pass has a heading (perpendicular-ish to the player bearing) and a side. Re-plan the pass
-  // when we've overshot the player's flank or a timer elapses.
-  e._passAt = (e._passAt ?? 0) - ctx.delta;
-  const passSide = e.handed || 1;
-  // The waypoint we're strafing toward: a point offset to the player's side and ahead along the
-  // pass. Compute a perpendicular to the bearing; run along it, holding the standoff offset.
-  const perpX = -ctx.uy * passSide, perpY = ctx.ux * passSide;   // player-relative lateral dir
-  // Aim point sits offset from the player and leads along the pass direction.
-  const holdX = scene.px - ctx.ux * offset;   // stay `offset` out along the bearing
-  const holdY = scene.py - ctx.uy * offset;
-  const waypointX = holdX + perpX * 220;
-  const waypointY = holdY + perpY * 220;
-  let dx = waypointX - e.x, dy = waypointY - e.y;
-  const dm = Math.hypot(dx, dy) || 1;
-  if (e._passAt <= 0 || dm < 60) { e._passAt = rand(1400, 2400); e.handed = (e.handed || 1) * -1; }
-  // #282: same boids separation as the drone (flyerSeparation above) so two gunships (or a gunship
-  // amid a drone swarm) push apart instead of overlapping — replaces the removed hard flyer block.
+  // Lazily initialised, like the Broodwalker's deploy state above — _spawnKind stays a generic,
+  // kind-agnostic constructor. The spawn-time standoff roll happens here (cycle zero).
+  e.gunship ??= initGunshipCycle();
+  const st = e.gunship;
+
+  const repoDist = st.repoX == null ? Infinity : Math.hypot(st.repoX - e.x, st.repoY - e.y);
+  stepGunshipCycle(st, ctx.delta, ctx.dist, {
+    px: scene.px, py: scene.py, ex: e.x, ey: e.y, handed: e.handed || 1, repoDist,
+  });
+  const plan = phasePlan(st.phase);
+
+  // ── Desired movement direction, per phase ──────────────────────────────────────────────
+  let desiredX = 0, desiredY = 0;
+  if (st.phase === APPROACH) {
+    // Straight in at the player. ctx.ux/uy already point enemy → player.
+    desiredX = ctx.ux; desiredY = ctx.uy;
+  } else if (st.phase === STRAFE) {
+    // Slide laterally across the player's front while HOLDING the standoff radius. The radial
+    // component uses the same hysteresis bands as `tankMoveIntent` above (advance / hold /
+    // back off) — deliberately reused rather than reinvented, because that's what stops the
+    // unit oscillating between closing and retreating and reads as a steady pass instead of a
+    // wobble. The lateral component is what makes it a strafe.
+    const side = e.handed || 1;
+    let radial = 0;
+    if (ctx.dist > st.standoff * 1.15) radial = 1;
+    else if (ctx.dist < st.standoff * 0.75) radial = -0.9;
+    desiredX = ctx.ux * radial + (-ctx.uy * side);
+    desiredY = ctx.uy * radial + (ctx.ux * side);
+  } else {
+    // REPOSITION — cruise out to the fresh attack point the machine picked on entry.
+    const dx = (st.repoX ?? scene.px) - e.x, dy = (st.repoY ?? scene.py) - e.y;
+    const dm = Math.hypot(dx, dy) || 1;
+    desiredX = dx / dm; desiredY = dy / dm;
+  }
+  // #282: boids separation, blended into whatever the phase wanted.
   const sep = flyerSeparation(scene, e);
-  const desiredX = dx / dm + sep.x * FLYER_SEPARATION_WEIGHT;
-  const desiredY = dy / dm + sep.y * FLYER_SEPARATION_WEIGHT;
+  desiredX += sep.x * FLYER_SEPARATION_WEIGHT;
+  desiredY += sep.y * FLYER_SEPARATION_WEIGHT;
   const dmag = Math.hypot(desiredX, desiredY) || 1;
   e.vx = approach(e.vx, (desiredX / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
   e.vy = approach(e.vy, (desiredY / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
-  e.angle = Math.atan2(e.vy, e.vx);
-  aimAndFire(scene, e, ctx, { needLos: false });
+
+  // ── Facing, per phase ──────────────────────────────────────────────────────────────────
+  // Rotated at the chassis `turnRate` rather than snapped, so the turn between phases is a
+  // visible manoeuvre — the gunship is seen swinging broadside, which is the tell that tells
+  // the player which gun is about to speak.
+  let want;
+  if (plan.facing === FACE_PLAYER) want = ctx.bearing;
+  else if (plan.facing === FACE_BROADSIDE) want = ctx.bearing + (Math.PI / 2) * (e.handed || 1);
+  else want = Math.atan2(e.vy, e.vx);
+  e.angle = rotateToward(e.angle, want, mv.turnRate, ctx.dt);
+
+  // ── Guns ───────────────────────────────────────────────────────────────────────────────
+  // The phase names the slot; `slot: null` (REPOSITION) holds fire while still tracking.
+  // #245: flyers ignore cover for LOS, unchanged.
+  aimAndFire(scene, e, ctx, { needLos: false, slot: plan.slot, fire: plan.slot != null });
 }
 
 // QUADRUPED — "Broodwalker" (#130, swarm deploy reworked in #147, drones-only + origin fixed in

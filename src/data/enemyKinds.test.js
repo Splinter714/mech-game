@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE, isEnemyKind } from './enemyKinds.js';
 import { getWeapon, resolveWeapon, WEAPONS } from './weapons.js';
+// #305: a kind may now declare MULTIPLE weapon slots (`weapons: {...}`) instead of a single
+// top-level `weaponId`. `kindWeaponSlots` normalises both forms into the same slot map, so these
+// invariants now hold per SLOT — which is stronger than before: a multi-weapon kind's every gun
+// is checked, not just its first.
+import { kindWeaponSlots } from './kindWeapons.js';
 import { HpBody } from './HpBody.js';
 import { Mech } from './Mech.js';
 import { ENEMIES } from './enemies.js';
@@ -13,7 +18,9 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('every kind names a REAL weapon id (so no scene ever hardcodes one)', () => {
     for (const id of ENEMY_KIND_IDS) {
       const k = ENEMY_KINDS[id];
-      expect(getWeapon(k.weaponId), `${id} weapon ${k.weaponId}`).toBeTruthy();
+      for (const s of Object.values(kindWeaponSlots(k))) {
+        expect(getWeapon(s.weaponId), `${id}.${s.slot} weapon ${s.weaponId}`).toBeTruthy();
+      }
     }
   });
 
@@ -278,10 +285,12 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('#243: every kind\'s weaponOverride (when present) resolves to a valid weapon', () => {
     for (const id of ENEMY_KIND_IDS) {
       const k = ENEMY_KINDS[id];
-      const resolved = resolveWeapon(k.weaponId, k.weaponOverride);
-      expect(resolved, `${id} resolved weapon`).toBeTruthy();
-      expect(resolved.delivery, `${id} resolved delivery`).toBeTruthy();
-      expect(resolved.damage, `${id} resolved damage`).toBeGreaterThan(0);
+      for (const s of Object.values(kindWeaponSlots(k))) {
+        const resolved = resolveWeapon(s.weaponId, s.weaponOverride);
+        expect(resolved, `${id}.${s.slot} resolved weapon`).toBeTruthy();
+        expect(resolved.delivery, `${id}.${s.slot} resolved delivery`).toBeTruthy();
+        expect(resolved.damage, `${id}.${s.slot} resolved damage`).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -293,9 +302,11 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     for (const id of ENEMY_KIND_IDS) {
       if (id === 'turret') continue;
       const k = ENEMY_KINDS[id];
-      expect(k.weaponOverride?.damage, id).toBeUndefined();
-      const resolved = resolveWeapon(k.weaponId, k.weaponOverride);
-      expect(resolved.damage, `${id} resolved damage`).toBe(WEAPONS[k.weaponId].damage);
+      for (const s of Object.values(kindWeaponSlots(k))) {
+        expect(s.weaponOverride?.damage, `${id}.${s.slot}`).toBeUndefined();
+        const resolved = resolveWeapon(s.weaponId, s.weaponOverride);
+        expect(resolved.damage, `${id}.${s.slot} resolved damage`).toBe(WEAPONS[s.weaponId].damage);
+      }
     }
     // The turret's consolidated artillery shell keeps the old siegeShell numbers exactly.
     const t = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
