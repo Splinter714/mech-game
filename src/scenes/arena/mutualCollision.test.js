@@ -26,7 +26,7 @@
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection
 // throws under vitest's node env, so it's stubbed (same convention as dormantWake.test.js).
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 vi.mock('phaser', () => ({
   default: {
     Math: { Angle: { Wrap: (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; } } },
@@ -247,11 +247,39 @@ describe('flyer separation (#282 follow-up) — a dense overlapping swarm spread
     };
   }
 
+  // #298 — WHY THIS TEST IS SEEDED. It used to fail intermittently (~0.7% of runs, measured over
+  // a 300-run sweep). The nondeterminism is NOT in `flyerSeparation` itself (that's a plain
+  // deterministic scan over `scene.enemies` in array order) — it's `Math.random()` inside
+  // `droneBehavior` (enemyBehaviors.js): every 300–700ms each drone independently re-rolls its
+  // orbit angle (`_orbitAng`, uniform over the full circle) and orbit radius (`_orbitR`, 0.75–1.25x
+  // `swarmRadius`). Over the 90 simulated frames (1.5s) each drone re-rolls two or three times, and
+  // occasionally two drones happen to draw nearly the SAME angle AND radius — they then converge on
+  // the same point on the orbit ring, and the min-pairwise distance sampled at the final frame can
+  // momentarily dip back inside a drone footprint. That's a churning swarm crossing itself, not a
+  // failure to untangle, but the instantaneous sample can't tell the two apart.
+  //
+  // Per #298 the fix is to the TEST, not the game: the game keeps its random jitter (drones
+  // separating in a different order run-to-run is invisible in play). Pinning Math.random to a
+  // seeded PRNG for this one case makes the run exactly reproducible. The assertions below are NOT
+  // loosened — they're the original ones plus a stricter added spread check. Seed 42 is an ordinary
+  // run, not a cherry-picked outlier: its final min-pairwise is 27.8px against a 12.5px footprint,
+  // above the 22.6px median of the sweep.
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  afterEach(() => { vi.restoreAllMocks(); });
+
   // The actual #282 failure case: SWARM_SIZE drones dropped in a tight, mutually-overlapping pile
   // (every pair well inside the ~12.5px drone collision footprint). Under the OLD hard
   // `_blockedByOtherFlyer` block this configuration gridlocked — no drone had a non-overlapping
   // move available, so the whole pile froze. With soft separation it must fan out instead.
   it('18 drones piled on nearly the same point fan apart over a few frames', () => {
+    vi.spyOn(Math, 'random').mockImplementation(mulberry32(42));
     const scene = makeVehicleScene({ px: 400, py: 0 }); // player a moderate distance off
     const N = 18;
     const drones = [];
@@ -282,6 +310,14 @@ describe('flyer separation (#282 follow-up) — a dense overlapping swarm spread
     // ...and no two remain locked on top of each other — the closest pair now clears a full drone
     // collision footprint (they're no longer overlapping), proving the pile actually resolved.
     expect(after).toBeGreaterThan(groundEnemyRadius(drones[0]));
+    // #298: an ADDED (not loosened) anti-gridlock check, independent of which coincident drone
+    // resolves first. Under the old hard-block gridlock every drone stayed pinned within the
+    // radius-6 spawn pile forever; here EVERY drone must have left it by at least two full
+    // collision footprints. This is the property the test really exists to prove, and unlike the
+    // instantaneous min-pairwise sample above it can't be satisfied by a lucky moment.
+    for (const d of drones) {
+      expect(Math.hypot(d.x, d.y)).toBeGreaterThan(groundEnemyRadius(drones[0]) * 2);
+    }
     // Sanity: nothing exploded to NaN/Infinity.
     for (const d of drones) {
       expect(Number.isFinite(d.x)).toBe(true);
