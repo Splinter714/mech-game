@@ -616,6 +616,11 @@ export const WorldMixin = {
     this._redrawWallEdges();
     if (destroyed) {
       this._outpostCollapseFx((edge.x0 + edge.x1) / 2, (edge.y0 + edge.y1) / 2);
+      // #310: a span that carried a wall turret takes the gun down with it — the direct analogue
+      // of `_onTerrainCollapsed` -> `_killEmplacedAt` for a collapsing turret emplacement (#287),
+      // and the same reasoning: a breached span must not leave its gun hovering intact over the
+      // hole. Optional chaining because plenty of tests build a bare world with no bases mixin.
+      this._killWallTurretsOn?.(edge.key);
       // #306: the span just stopped blocking sight, so the cached field-of-view set is stale —
       // breaching a base wall has to visibly reveal what was behind it, same as collapsing a tile.
       this._invalidateVisibility?.();

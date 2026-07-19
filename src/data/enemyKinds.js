@@ -180,6 +180,85 @@ export const ENEMY_KINDS = {
                            // spawn in tight clusters (see TURRET_CLUSTER_SIZE / 'turretNest').
   },
 
+  // 1b) WALL TURRET (#310) — the rail-lance gun mounted on a base wall's parapet.
+  //
+  // A DISTINCT KIND, not the `turret` above with a weaponOverride. Three reasons, in order of
+  // weight:
+  //   1. `weaponOverride` is a per-KIND field, not per-spawn. There is no mechanism by which two
+  //      spawns of one kind mount different weapons, so "the turret kind with railLance instead of
+  //      napalm" is not expressible as an override at all — it would require a forked kind
+  //      regardless. The #243 mechanism is for tuning ONE weapon per owner, which is exactly what
+  //      the `weaponOverride` below does do (rail lance, but a fortification's version of it).
+  //   2. Almost nothing else would survive the override anyway. The sentry's identity is its
+  //      napalm artillery: fireRange 2400, an arcing no-LOS lob, a 2.6s bombardment cadence. A
+  //      parapet gun is a direct-fire hitscan sniper with an ordinary engagement envelope. The
+  //      shared part is the HP pool and the "rooted, no locomotion" chassis — the smaller half.
+  //   3. They must read as different objects. The player has to learn "sentry nest = incoming
+  //      lobs you can hide from, wall gun = a lance down your throat if you're in its lane" and
+  //      that lesson is impossible if they share a silhouette and a name.
+  // Stats are deliberately IDENTICAL to the sentry's (#299's owner-set 35 structure + 15 armor) —
+  // this is a different weapon on the same emplacement chassis, and the owner set that table.
+  wallTurret: {
+    name: 'Wall Lance',
+    kind: 'turret',
+    hp: 35,
+    armor: 15,
+    parts: {
+      base: { x: 0, y: 6, w: 22, h: 12 },
+      gun: { x: 0, y: -6, w: 10, h: 22 },
+    },
+    muzzlePart: 'gun',
+    muzzleForward: 6,     // see the sentry's note — the drawn barrel tip sits ahead of the box edge
+    // #310 (owner-confirmed weapon): the RAIL LANCE — "it telegraphs, it hits hard, and it makes
+    // closing on a walled base a real gauntlet rather than a stream of chip damage." The override
+    // (#243 resolveWeapon: top-level merged, `delivery` merged field-by-field, `range` replaced
+    // WHOLESALE so it is restated complete) is the FORTIFICATION's version of that gun:
+    //
+    //   - NO damage override. The gun hits for the rail lance's own full 52.8, exactly as the
+    //     player's does. This is the #243 playtest rule ("enemy rounds always match the player's
+    //     weapon") and it is deliberately NOT bent here: the one standing exception is the
+    //     sentry's shell, and that is excused only because it is a distinct consolidated weapon
+    //     with its own damage identity (#244), not an enemy-side retune of a gun the player also
+    //     mounts — which is precisely what softening the lance would be. It also turns out to be
+    //     the right call on the merits: a half-weight lance would undercut the whole brief. The
+    //     owner picked this weapon because "it telegraphs, it hits hard"; a 52.8 hit is ~9% of the
+    //     player's health in one crack, which is the "hits hard" doing its job.
+    //   - cycleTime 5200 vs the player's 2200. THE balance lever, and the one the #243 rule leaves
+    //     open — difficulty here is carried by cadence and gun count, never by per-round damage.
+    //     Better than 2.4x slower: the whole brief is that it telegraphs, so a long silent charge
+    //     and then one heavy lance is the shape. A fast rail lance is just a laser, which is the
+    //     exact thing the owner chose railLance OVER. At 5.2s a player can watch a gun wind up,
+    //     break its lane, and have it miss — the gauntlet is readable and beatable rather than a
+    //     raw DPS check. Per gun that is ~10 dps; with only two or three able to bear at once (see
+    //     the own-wall occlusion note in TURRET_MOUNT_OFFSET_PX) a ring brings ~20-30 dps against
+    //     a 600-toughness mech, i.e. a real cost to a slow approach and survivable to a brisk one.
+    //   - range opt 520 / max 900, LONGER than the player's 400/640. A fixed emplacement on a
+    //     raised parapet with a prepared field of fire should out-range a walking mech; it is what
+    //     makes the guns matter during the APPROACH (the point of the issue) rather than only once
+    //     the player is already at the wall. Still far short of the sentry's 2400 artillery
+    //     envelope, so the two never occupy the same tactical niche.
+    //   - A deep, slowly-refilling magazine (8 / 0.25): a fortification does not run dry in a
+    //     fight, but a player who survives a long engagement does see the volume taper.
+    // Per #243 the resolved weapon keeps the BASE id ('railLance'), so its fire/impact cues
+    // resolve as the rail lance's own tuned sound — deliberate: the player already knows that
+    // charge-and-crack, and hearing it from the wall is the telegraph doing its job.
+    weaponId: 'railLance',
+    weaponOverride: {
+      range: { min: 0, opt: 520, max: 900 },
+      ammoMax: 8, ammoRegen: 0.25,
+      cycleTime: 5200,
+    },
+    fireRange: 900,        // matches the override's range.max above
+    flying: false,
+    move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 1.5 },   // slow, heavy traverse: part of the telegraph
+    art: 'wallTurret',
+    behavior: 'turret',
+    size: 'large',
+    themeColor: 0x5ac8e0,  // cold cyan — rail/energy, and distinct from the sentry's warm orange
+    scale: 0.34,           // smaller than the sentry (0.42): it sits ON a 14px-thick wall line and
+                           // must not swamp the span it is mounted on.
+  },
+
   // 2) TANK — ground armour. Slow, heavy, tough frontal facing; a turreted main gun (direct
   //    fire). No jumping/flying — blocked by cover/water like a mech. Grinds toward a firing
   //    standoff and holds, hull facing the player.
