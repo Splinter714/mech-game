@@ -17,6 +17,16 @@
 //   muzzlePart which entry in `parts` a shot actually spawns from (#109) — the gun/barrel/nose,
 //              not the unit's centre. Falls back to the first `parts` entry if omitted.
 //   weaponId   which WEAPONS entry this unit fires (its delivery drives the projectile).
+//   weapons    #305: the MULTI-WEAPON form. A kind that needs more than one gun declares a map
+//              of SLOTS instead of the single top-level weaponId — `weapons: { nose: {...},
+//              flank: {...} }` — where each slot carries its OWN weaponId, weaponOverride,
+//              fireRange and burstShots/burstRestMs (every field below that describes a gun is
+//              per-slot in this form). `defaultWeaponSlot` names the one a caller gets when it
+//              doesn't ask. Slot keys are MOUNT/ROLE names, never weapon names, so weapon ids
+//              still never leak out of this file. A kind with no `weapons` map is normalised
+//              into one synthesised slot from its top-level fields, so every single-weapon kind
+//              is unchanged. See data/kindWeapons.js for the seam and the helicopter below for
+//              the live example (its live slot is chosen by FACING — data/gunshipCycle.js).
 //   weaponOverride  #243: optional PARTIAL override merged onto the base weapon for THIS kind
 //              only (resolveWeapon, data/weapons.js): top-level fields shallow-merge, the nested
 //              `delivery` object also shallow-merges, and the base WEAPONS entry is never
@@ -298,23 +308,52 @@ export const ENEMY_KINDS = {
     // hot-glow tip (y=-17 in art/vehicles/helicopter.js drawAirframe) — within ~1 design unit,
     // negligible at world scale, but included for consistency with every other kind.
     muzzleForward: -1,
-    weaponId: 'machineGun',
-    // #269 playtest follow-up: back to twin-lane — the player's Repeater fires a twin-lane
-    // (`count: 2`) tracer stream, and the gunship now matches it (no damage override; same
-    // per-round damage as before). Cadence itself is unchanged (machineGun's own fireRate 18
-    // ⇒ ~55.6ms/tick via `_fireInterval`, per #241).
-    weaponOverride: {
-      delivery: { count: 2 },   // matches player's Repeater
+    // #305: the gunship is the first MULTI-WEAPON kind — see data/kindWeapons.js for the seam.
+    // Two slots, and which one is live is decided by FACING (data/gunshipCycle.js): the nose
+    // gun while the airframe is pointed at the player on its approach run, the door gun while
+    // it's broadside on its strafing pass. Slot keys are MOUNT names, so the weapon ids stay
+    // confined to this file exactly as #243 requires.
+    weapons: {
+      // NOSE — Cluster Salvo, fired down the airframe axis during the nose-on APPROACH.
+      // Jackson picked the DUMBFIRE cluster over the homing seeker deliberately, so a head-on
+      // gunship run is something the player can read and sidestep rather than something that
+      // simply tracks him. No damage override (per #243's rule): the enemy's per-round damage
+      // is the player's own Cluster Salvo. Cadence is the weapon's own 1100ms cycleTime, and
+      // 3 salvos per squeeze then a 1.4s rest keeps an approach to a few readable volleys
+      // rather than a continuous rocket stream. fireRange is shorter than the door gun's — it
+      // must actually be closing before it starts throwing rockets.
+      nose: {
+        weaponId: 'clusterRocket',
+        // A FIXED FORWARD mount: it aims and fires along the AIRFRAME, and holds fire until the
+        // airframe itself is on target (see aimAndFire). Without this the gunship dumped a salvo
+        // the instant its approach began, while still ~77 degrees off from the previous phase —
+        // measured in the running game. It's also what makes the dumbfire salvo sidesteppable:
+        // the rockets go where the aircraft visibly points.
+        fixedForward: true,
+        fireRange: 520,
+        burstShots: 3,
+        burstRestMs: 1400,
+      },
+      // FLANK — the door gun. This is the pre-#305 gunship loadout, moved verbatim into its
+      // own slot: twin-lane Repeater (#269 playtest follow-up: matches the player's Repeater,
+      // no damage override; cadence is machineGun's own fireRate 18 ⇒ ~55.6ms/tick via
+      // `_fireInterval`, #241), with #243's trigger discipline bounding each squeeze to 15
+      // cadence ticks (~0.83s, 15 rounds per lane) then a 1.2s rest, so a pass reads as
+      // aggressive raking BURSTS rather than one continuous hose. Owner: tune via playtest.
+      flank: {
+        weaponId: 'machineGun',
+        weaponOverride: { delivery: { count: 2 } },   // matches player's Repeater
+        fireRange: 460,
+        burstShots: 15,
+        burstRestMs: 1200,
+      },
     },
-    fireRange: 460,
-    // #243 trigger discipline (retuned in the playtest follow-up): post-#241 the gunship hosed
-    // its full stream for an ENTIRE strafing pass — these bound each squeeze to 15 cadence
-    // ticks (~0.83s of fire, 15 rounds per lane) followed by a 1.2s rest, so a pass reads
-    // as aggressive raking BURSTS of cannon fire rather than one continuous hose.
-    // Owner: tune via playtest.
-    burstShots: 15,
-    burstRestMs: 1200,
-    strafeRange: 320,       // px offset of the pass line from the player
+    // Which slot a caller gets if nothing asks for one — the door gun, its bread-and-butter.
+    defaultWeaponSlot: 'flank',
+    // NOTE: the old flat `strafeRange: 320` is GONE. #305 randomises the standoff per unit in a
+    // 240-400px band, re-rolled each attack cycle, so a group of gunships spreads across the
+    // field instead of sitting on one radius — the band lives in data/gunshipCycle.js
+    // (STANDOFF_MIN/STANDOFF_MAX) next to the cycle it belongs to.
     flying: true,
     move: { maxSpeed: 210, accel: 260, turnRate: 3.2, turretSlew: 4 },
     art: 'helicopter',

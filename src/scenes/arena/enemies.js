@@ -23,6 +23,10 @@ import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
+// #305: the multi-weapon seam. A kind may declare several weapon SLOTS; the behaviour names the
+// live one via `e.weaponSlot` and this file resolves it — no weapon-id literal (#243) and no
+// slot-key literal ever appears here. See data/kindWeapons.js's header for the whole model.
+import { kindWeaponSlot, kindMaxFireRange } from '../../data/kindWeapons.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, vehicleTextureSet, mechLayout, ART_SCALE } from '../../art/index.js';
@@ -272,14 +276,18 @@ export const EnemiesMixin = {
     const texKey = vehicleTextureSet(key, body);
     const view = this._makeVehicleView(texKey, x, y, angle, def);
     const e = {
-      key, texKey, mech: body, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: 0,
+      key, texKey, mech: body, view, x, y, vx: 0, vy: 0, angle, turret: angle,
+      // #305: per-weapon-SLOT cooldown + burst counters (data/kindWeapons.js). A single-weapon
+      // kind just ends up with one entry; a multi-weapon kind's guns cycle independently.
+      slotCd: {}, slotBurst: {}, weaponSlot: null,
       spawnX: x, spawnY: y, typeId, kind: def.kind, kindDef: def, flying: !!def.flying,
       behavior: def.behavior, handed: Math.random() < 0.5 ? 1 : -1,
       rotorSpin: 0,           // flyers spin their rotor overlay
       // #103: starts UNAWARE — idles near spawn until it detects the player. Detection range
       // reuses the kind's own engagement range (fireRange), widened a touch.
       awareness: UNAWARE,
-      detectRange: detectionRangeFor(def.fireRange),
+      // #305: a multi-weapon kind wakes at its LONGEST gun's reach, not an arbitrary slot's.
+      detectRange: detectionRangeFor(kindMaxFireRange(def)),
       idleGoal: null, idleAt: 0,
       // #152: walk-cycle animation state for a kind whose art builds multiple hull frames (see
       // def.legFrames / _updateVehicle below) — harmless/unused for kinds without it.
@@ -550,8 +558,10 @@ export const EnemiesMixin = {
         this._resetAiState(e);   // #44: fresh decision state, no mid-plan carry-over
         reskinMech(this, e.key, e.mech, { theme: 'enemy' });
       } else {
-        e.fireCd = 0;            // vehicles use a single numeric cooldown
-        e.burstShotsFired = 0;   // #243: fresh burst window (trigger discipline, _fireVehicleWeapon)
+        // #305: vehicles keep one cooldown + burst counter PER WEAPON SLOT — clear both maps
+        // so every gun comes back off repair ready to fire with a fresh burst window (#243).
+        e.slotCd = {};
+        e.slotBurst = {};
         this._reskinVehicle(e);  // #300: repairAll restored its armor — put the plating back on
       }
     }
@@ -1097,8 +1107,13 @@ export const EnemiesMixin = {
     }
     e.x = nx; e.y = ny;
 
-    // Tick the weapon cooldown (a single per-unit timer; the kind's cadence lives in data).
-    if (e.fireCd > 0) e.fireCd = Math.max(0, e.fireCd - delta);
+    // Tick the weapon cooldowns. #305: one timer PER WEAPON SLOT rather than a single per-unit
+    // one, so a multi-weapon kind's guns cycle independently (a single-weapon kind simply has
+    // one entry keyed DEFAULT_SLOT and behaves exactly as it did). The cadence itself still
+    // comes from the resolved weapon's own timing — see _fireVehicleWeapon.
+    if (e.slotCd) {
+      for (const k in e.slotCd) if (e.slotCd[k] > 0) e.slotCd[k] = Math.max(0, e.slotCd[k] - delta);
+    }
 
     // #152: legged walk-cycle for a kind whose art builds multiple hull frames (def.legFrames —
     // currently just the Broodwalker/quadruped) — mirrors the player mech's stompy stepGait
@@ -1186,14 +1201,25 @@ export const EnemiesMixin = {
   // location} shape _spawnProjectile expects. Enemy-owned round; cadence is the resolved
   // weapon's own fire interval (#241/#243 — no per-kind timer field).
   _fireVehicleWeapon(e, ctx, aim) {
-    if (e.fireCd > 0) return;
     const def = e.kindDef;
-    // #243: the kind's weapon is the shared base entry with its optional per-kind
-    // `weaponOverride` delta merged on top (see resolveWeapon in data/weapons.js and the
-    // field doc in enemyKinds.js) — the helicopter's single-lane Repeater is the live example. The
-    // resolved weapon flows through EVERYTHING below: the emission plan, the fire-cue key,
-    // the damage the spawned round carries, and #241's `_fireInterval` cadence fallback.
-    const weapon = resolveWeapon(def.weaponId, def.weaponOverride);
+    // #305: which of the kind's weapon SLOTS is live this frame. `e.weaponSlot` is set by the
+    // behaviour (the gunship's phase machine sets it from its facing); every other kind never
+    // sets it and `kindWeaponSlot` falls through to that kind's single synthesised slot, so
+    // their behaviour is unchanged. The slot carries its own weapon, override, fireRange and
+    // trigger discipline — all the per-gun fields that used to be per-unit.
+    const mount = kindWeaponSlot(def, e.weaponSlot);
+    if (!mount) return;
+    // #305: cadence and burst state are keyed BY SLOT, not by unit. A gunship alternating a
+    // 1.1s rocket salvo with a ~56ms door-gun tick must not have either weapon's cooldown
+    // gate the other's — each slot counts down independently (ticked in _updateVehicle).
+    const cds = (e.slotCd ??= {});
+    if ((cds[mount.slot] ?? 0) > 0) return;
+    // #243: the slot's weapon is the shared base entry with its optional `weaponOverride` delta
+    // merged on top (see resolveWeapon in data/weapons.js and the field doc in enemyKinds.js) —
+    // the gunship's twin-lane Repeater is the live example. The resolved weapon flows through
+    // EVERYTHING below: the emission plan, the fire-cue key, the damage the spawned round
+    // carries, and #241's `_fireInterval` cadence.
+    const weapon = resolveWeapon(mount.weaponId, mount.weaponOverride);
     if (!weapon) return;
     const w = { weapon, location: e.kind, index: 0 };
     const aimErr = (Math.random() - 0.5) * 0.1;
@@ -1234,19 +1260,22 @@ export const EnemiesMixin = {
     // the weapon's own terms through `weaponOverride` (cycleTime for single-shot weapons,
     // delivery.fireRate for streams — see enemyKinds.js's field docs), so one cadence concept
     // serves every fire path.
-    e.fireCd = this._fireInterval(weapon, {});
-    // #243 trigger discipline: a kind with `burstShots` fires N shots at the cadence above,
+    cds[mount.slot] = this._fireInterval(weapon, {});
+    // #243 trigger discipline: a slot with `burstShots` fires N shots at the cadence above,
     // then RESTS — the shot that completes the burst swaps its cooldown for the (longer)
     // `burstRestMs` instead of the per-shot cadence, and the counter re-arms for the next
     // burst. Orthogonal to the cadence resolution above, which spaces the shots WITHIN a
-    // burst; burstShots/burstRestMs bound how long a burst runs. Both fields absent (every
-    // kind except helicopter today) ⇒ this whole block is a no-op and the unit fires
-    // continuously exactly as before.
-    if (def.burstShots > 0) {
-      e.burstShotsFired = (e.burstShotsFired ?? 0) + 1;
-      if (e.burstShotsFired >= def.burstShots) {
-        e.burstShotsFired = 0;
-        e.fireCd = def.burstRestMs ?? 1000;
+    // burst; burstShots/burstRestMs bound how long a burst runs. Both fields absent ⇒ this
+    // whole block is a no-op and the unit fires continuously exactly as before.
+    // #305: the counter is per SLOT for the same reason the cooldown is — a burst window
+    // belongs to a gun, not to a unit, so the gunship's door-gun burst count can't be
+    // advanced (or reset) by a rocket salvo fired from the nose between passes.
+    if (mount.burstShots > 0) {
+      const bursts = (e.slotBurst ??= {});
+      bursts[mount.slot] = (bursts[mount.slot] ?? 0) + 1;
+      if (bursts[mount.slot] >= mount.burstShots) {
+        bursts[mount.slot] = 0;
+        cds[mount.slot] = mount.burstRestMs ?? 1000;
       }
     }
   },
