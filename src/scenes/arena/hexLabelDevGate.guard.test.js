@@ -1,4 +1,4 @@
-// #270 playtest follow-up: both hex-label systems (bases.js's dock/alertTower/turretEmplacement
+// #270 playtest follow-up: both hex-label systems (bases.js's dock/alertTower/objective
 // tags + terrainLabels.js's per-terrain pool) are a playtest legibility aid, never meant to ship
 // in production — so ArenaScene.js gates their auto-invocation behind `import.meta.env.DEV`
 // (Vite's build-time flag, stripped in `npm run build`) and adds a live L-key toggle (dev-only

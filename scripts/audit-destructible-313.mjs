@@ -185,7 +185,7 @@ const results = [];
 // Pass 1: everything the player has mounted — the normal case.
 await useSlots(null);
 results.push(await measure('wall span', plantWall));
-for (const id of ['objective', 'dockClosed', 'turretEmplacement', 'alertTower']) {
+for (const id of ['objective', 'dockClosed', 'alertTower']) {
   results.push(await measure(id, plantHex(id)));
 }
 // Pass 2: one gun only — the worst case a stripped or half-wrecked mech faces.

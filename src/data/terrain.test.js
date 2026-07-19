@@ -569,85 +569,23 @@ describe('#269 §1 soft-cover size-tier plumbing', () => {
   });
 });
 
-// #287 (playtest 2026-07-18: "it should BE a hex that fully gets destroyed into rubble") — the
-// turret emplacement stopped being a passable placement marker and became a real HP-bearing
-// bunker, mirroring the `objective`/`dockClosed`/`alertTower` precedent tested above.
-describe('#287: turretEmplacement is a genuine destructible structure', () => {
-  it('is an impassable, LOS-blocking hard-cover structure, not walk-through ground', () => {
-    expect(TERRAIN.turretEmplacement.passable).toBe(false);
-    expect(TERRAIN.turretEmplacement.blocksLOS).toBe(true);
-    expect(isPassable('turretEmplacement')).toBe(false);
-    expect(blocksLOS('turretEmplacement')).toBe(true);
-    expect(movementTier('turretEmplacement')).toBe('none');
-    expect(coverTier('turretEmplacement')).toBe('hard');
-    expect(isSoftCover('turretEmplacement')).toBe(false);
-    expect(isBaseCategory('turretEmplacement')).toBe(true);
+// #287 (owner, playtest 2026-07-19: "remove interior base turret hexes now that we have them on
+// walls"): the whole `turretEmplacement`/`turretRubble` pair — and the suite that pinned it — is
+// gone. #310 put rail-lance guns on the base's WALL RING, which made a second turret-bearing
+// structure inside the compound redundant. Guarded below so a stale id can never sneak back in.
+describe('#287: the interior turret emplacement is gone entirely', () => {
+  it('has no turretEmplacement or turretRubble terrain entry', () => {
+    expect(TERRAIN.turretEmplacement).toBeUndefined();
+    expect(TERRAIN.turretRubble).toBeUndefined();
   });
 
-  it('carries real HP, between the alert tower and the base objective', () => {
-    expect(isDestructible('turretEmplacement')).toBe(true);
-    expect(TERRAIN.turretEmplacement.hp).toBe(150);   // #313 retune, was 30
-    expect(buildingHp('turretEmplacement')).toBe(150);
-    expect(buildingHp('turretEmplacement')).toBeGreaterThan(buildingHp('alertTower'));
-    expect(buildingHp('turretEmplacement')).toBeLessThan(buildingHp('objective'));
-  });
-
-  it('collapses into its own dedicated turretRubble, not the generic rubble', () => {
-    expect(rubbleFor('turretEmplacement')).toBe('turretRubble');
-    expect(rubbleFor('turretEmplacement')).not.toBe(RUBBLE);
-    expect(TERRAIN.turretRubble).toBeDefined();
-    expect(TERRAIN.turretRubble.tex).not.toBe(TERRAIN.turretEmplacement.tex);
-    expect(TERRAIN.turretRubble.tex).not.toBe(TERRAIN.rubble.tex);
-  });
-
-  it('leaves rubble that is passable, slow, open ground with no HP of its own', () => {
-    expect(isPassable('turretRubble')).toBe(true);
-    expect(blocksLOS('turretRubble')).toBe(false);
-    expect(movementTier('turretRubble')).toBe('slow');
-    expect(coverTier('turretRubble')).toBe('open');
-    expect(terrainSpeedFactor('turretRubble')).toBe(SLOW_MOVEMENT_FACTOR);
-    expect(isDestructible('turretRubble')).toBe(false);
-    expect(buildingHp('turretRubble')).toBe(0);
-    // Wreckage, not standing base infrastructure — so it must not read as base-category art.
-    expect(isBaseCategory('turretRubble')).toBe(false);
-  });
-
-  it('the full damage->collapse transition: it absorbs hits, then flattens to turretRubble', () => {
-    // Written against `buildingHp` rather than hard-coded steps so a balance retune (#313 took
-    // this hex 30 -> 150) changes ONE number in terrain.js, not an arithmetic chain in here.
-    const hp = buildingHp('turretEmplacement');
-    const bite = 12;
-    let step = { hp, destroyed: false };
-    const bitesToKill = Math.ceil(hp / bite);
-    for (let i = 1; i < bitesToKill; i++) {
-      step = damageBuilding(step.hp, bite);
-      expect(step.destroyed).toBe(false);
-      expect(step.hp).toBe(hp - i * bite);
+  it('leaves no dangling reference from any surviving entry (rubbleId / tex)', () => {
+    for (const t of Object.values(TERRAIN)) {
+      expect(t.rubbleId ?? null).not.toBe('turretRubble');
+      if (t.rubbleId) expect(TERRAIN[t.rubbleId]).toBeDefined();
+      expect(t.tex).not.toBe('hex_turretEmplacement');
+      expect(t.tex).not.toBe('hex_turretRubble');
     }
-    // ...and the next bite is the killing blow, exactly.
-    step = damageBuilding(step.hp, bite);
-    expect(step.destroyed).toBe(true);
-    expect(step.hp).toBe(0);
-    // What the scene swaps the hex to on that killing blow.
-    expect(rubbleFor('turretEmplacement')).toBe('turretRubble');
-  });
-
-  it('is destructible but deliberately NOT mission-objective eligible (setDressing)', () => {
-    // A base has one dedicated `objective` hex; its turret bunkers must not compete for the
-    // marker now that they're destructible (which is what `isMissionObjective` keys off).
-    expect(TERRAIN.turretEmplacement.setDressing).toBe(true);
-    expect(isMissionObjective('turretEmplacement')).toBe(false);
-    expect(isMissionObjective('objective')).toBe(true);
-  });
-
-  it('does not protect its own occupant: a turret garrisoning the bunker is still shootable', () => {
-    // #279 generalized own-hex transparency across BOTH cover tiers precisely so a passable-or-
-    // occupied HARD-cover hex like this works — otherwise the emplaced turret would be immune.
-    const key = '2,-3';
-    expect(shotBlockedAt('turretEmplacement', key, new Set([key]))).toBe(false);
-    // ...but an emplacement between shooter and target still blocks, for either size tier.
-    expect(shotBlockedAt('turretEmplacement', key, new Set(['9,9']))).toBe(true);
-    expect(shotBlockedAt('turretEmplacement', key, new Set(['9,9']), true)).toBe(true);
   });
 });
 
@@ -661,7 +599,6 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
   // deliberately rather than drift.
   it('pins the base-infrastructure HP values', () => {
     expect(buildingHp('alertTower')).toBe(75);
-    expect(buildingHp('turretEmplacement')).toBe(150);
     expect(buildingHp('dockClosed')).toBe(200);
     expect(buildingHp('objective')).toBe(200);
   });
@@ -681,7 +618,7 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
     // wake countdown has to stay viable, so it must remain the softest STRUCTURE — while still
     // sitting above every piece of incidental cover.
     const tower = buildingHp('alertTower');
-    for (const id of ['turretEmplacement', 'dockClosed', 'objective']) {
+    for (const id of ['dockClosed', 'objective']) {
       expect(buildingHp(id)).toBeGreaterThan(tower);
     }
     for (const id of ['forest', 'wreck', 'scrub', 'drift', 'fumarole']) {
@@ -691,7 +628,7 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
 
   it('puts every structure at or above the cheapest combat unit (the whole point of #313)', () => {
     const CHEAPEST_UNIT_TOUGHNESS = 80;   // #299's tank
-    for (const id of ['turretEmplacement', 'dockClosed', 'objective']) {
+    for (const id of ['dockClosed', 'objective']) {
       expect(buildingHp(id)).toBeGreaterThanOrEqual(CHEAPEST_UNIT_TOUGHNESS);
     }
   });

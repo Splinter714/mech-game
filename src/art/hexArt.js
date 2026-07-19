@@ -14,9 +14,10 @@ const SQRT3 = Math.sqrt(3);
 // terrain entries can reuse it instead of re-deriving a color.
 export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x40444a };
 
-// #287: the ashen debris tone shared by the generic `rubble` tile and the dedicated
-// `turretRubble` wreck of a destroyed turret emplacement — hoisted out of PAL so both entries
-// read from one value instead of the second re-deriving it.
+// The ashen debris tone the generic `rubble` tile uses. (#287 introduced it as a shared value for
+// `rubble` + the dedicated `turretRubble` wreck; #287's 2026-07-19 follow-up removed the turret
+// emplacement and its wreck entirely, so `rubble` is the only reader today — kept named rather
+// than inlined so a future debris tile has one tone to reuse.)
 const RUBBLE_COLOR = { fill: 0x2f3138, edge: 0x212329 };
 
 // #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
@@ -70,8 +71,7 @@ const PAL = {
   // both forest's greens and forestRubble's char (rather than an earthy tone that could read as
   // "just more forest floor").
   mud:      { fill: 0x4a3a20, edge: 0x352918 },
-  // #251 (playtest follow-up): base-infrastructure hex types (dock/alertTower/turretEmplacement/
-  // objective) render with ONE fixed neutral colour regardless of which biome they're stamped
+  // #251 (playtest follow-up): base-infrastructure hex types (dock/alertTower/objective) render with ONE fixed neutral colour regardless of which biome they're stamped
   // into — a dock must look like a dock on grass, desert, ice, or ash alike. Reusing the CURRENT
   // biome's ground fill (grass green) would make it read as biome-tinted grass rather than a
   // distinct man-made surface. A cool neutral concrete/tarmac tone reads as "built", not
@@ -93,18 +93,8 @@ const PAL = {
   // BASE_INFRA_COLOR its structure siblings use: it's the ground BETWEEN the structures, so it has
   // to read as the same fabricated concrete family (so the compound looks like one continuous
   // built surface, and the wall ring visibly encloses "the base" rather than a patch of grass)
-  // while still letting a dock/turret/objective pop out of it rather than blending in.
+  // while still letting a dock/objective pop out of it rather than blending in.
   baseYard:   { fill: 0x494d53, edge: 0x3a3e44 },
-  // #269 playtest follow-up (dock composition): turrets get their own dedicated placement-marker
-  // hex (data/terrain.js `turretEmplacement`), same neutral base-infra fill as the other
-  // category:'base' entries — the DETAIL painter below (a red weapon-pad ring + crosshair) is
-  // what makes it read as visually distinct from `dock`'s amber "H" landing-pad marking.
-  turretEmplacement: BASE_INFRA_COLOR,
-  // #287: the destroyed state of that bunker (terrain.js `turretRubble`). Shares the generic
-  // `rubble` fill/edge tone (it IS wreckage now, not standing base infrastructure — and it's
-  // `category: 'terrain'`, so it must not read as intact base infra), with its own DETAIL
-  // painter below carrying the "this was a turret emplacement" specifics.
-  turretRubble: RUBBLE_COLOR,
   // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): the
   // dedicated destructible `objective` base hex (data/terrain.js) each base's mission marker now
   // points at. Same shared base-infra fill as its siblings — the DETAIL painter below (a squared
@@ -359,20 +349,6 @@ function crackLine(sg, pts, color, alpha, width = 1) {
   }
 }
 
-// #287: a single angled armor plate/sandbag segment — a rotated rectangle drawn as an explicit
-// 4-point polygon (the scaledGraphics wrapper has no per-shape rotate, so corners are computed
-// by hand). Used to ring `hex_turretEmplacement`'s platform with plating that looks canted
-// outward like real bunker armor, not a row of flat axis-aligned boxes.
-function armorPlate(sg, cx, cy, angle, w, h, color, alpha) {
-  const cos = Math.cos(angle), sin = Math.sin(angle);
-  const hw = w / 2, hh = h / 2;
-  const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => ({
-    x: cx + x * cos - y * sin,
-    y: cy + x * sin + y * cos,
-  }));
-  sg.fillStyle(color, alpha);
-  sg.fillPoints(corners, true);
-}
 
 // A generic rubble scatter (broken slabs over a scorched base), palette-driven per biome.
 function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
@@ -582,20 +558,6 @@ const DETAIL = {
     sg.fillStyle(0xd8462a, 0.35); sg.fillCircle(C.cx, C.cy - 17.5, 4.2);         // beacon glow halo
     sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
   },
-  // #287 (playtest follow-up): the turret-emplacement placement marker (data/terrain.js
-  // `turretEmplacement`) — upgraded from a flat painted disc/ring decal to a raised bunker
-  // platform so a turret unit standing here reads as rooted into a built defensive position,
-  // not parked on empty ground. #287 (second playtest — the raised look alone wasn't enough):
-  // the hex is now genuinely impassable, hard-cover and HP-bearing (terrain.js), so the art was
-  // pushed the rest of the way to match — a visible wall face under the deck and a crenellated
-  // parapet ring, so it reads as a casemate you have to blow open, not a platform you drive
-  // across. `hex_turretRubble` below is its destroyed state. Layering: a wide soft rim-shadow
-  // ring plus a cast ground shadow sell "raised above grade", a
-  // concrete slab with a bevelled highlight/shadow edge gives it 3-D thickness, a ring of
-  // angled armor plates (chamfered rects around the perimeter, echoing the rubble/objective
-  // family's layered-rect language) stands in for sandbag/plating cover, and a smaller inner
-  // gun-deck plus a subdued crosshair/gun-mount mark (muted metal + small red bolts, no longer
-  // a dominant red ring) mark where the turret itself mounts.
   // #269 playtest follow-up (dock open/closed states): `dockClosed` — a sealed steel dome over
   // the same rectangular bay footprint as `hex_dock` above, so the pad's outline still reads as
   // the same hex, just shut. A domed cap (concentric arcs, like a hatch seen edge-on) replaces
@@ -620,77 +582,6 @@ const DETAIL = {
     }
     sg.fillStyle(0xb3392a, 0.35); sg.fillCircle(C.cx, C.cy + hh - 2, 2.2);                       // sealed-warning glow halo
     sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx, C.cy + hh - 2, 1.1);                       // sealed-warning light
-  },
-  hex_turretEmplacement: (sg) => {
-    const r = 13.5;
-    sg.fillStyle(0x000000, 0.34); sg.fillEllipse(C.cx + 2, C.cy + 4.5, r * 2.4, r * 1.8);       // ground shadow, offset — bunker sits well above grade
-    sg.fillStyle(0x000000, 0.2);  sg.fillCircle(C.cx, C.cy + 1.5, r * 1.12);                     // rim shadow — reads as the raised edge overhanging the ground
-    // #287: the bunker is now a genuine impassable, HP-bearing structure (terrain.js), so it has
-    // to read as one — a visible WALL FACE below the deck (the near side of the casemate, seen
-    // from above at a slight angle) plus a heavier cast shadow give it real height instead of
-    // the old low drive-over platform silhouette.
-    sg.fillStyle(0x2a2d33, 1);    sg.fillEllipse(C.cx, C.cy + 3.6, r * 2, r * 1.25);              // wall face, in shadow
-    sg.fillStyle(0x3c4047, 1);    sg.fillEllipse(C.cx - 1, C.cy + 2.4, r * 1.9, r * 1.15);        // wall face, upper (lit) band
-    sg.fillStyle(0x494e55, 1);    sg.fillCircle(C.cx, C.cy, r);                                  // concrete base slab
-    sg.fillStyle(0x373b41, 0.9);  sg.fillCircle(C.cx + 1.4, C.cy + 1.4, r * 0.96);                // bottom-right bevel shadow — gives the slab thickness
-    sg.fillStyle(0x565b63, 1);    sg.fillCircle(C.cx - 0.6, C.cy - 0.9, r * 0.88);                // top surface, lit
-    sg.fillStyle(0x6a7078, 0.55); sg.fillEllipse(C.cx - 3.5, C.cy - 4.5, r * 0.75, r * 0.38);     // top-left highlight sheen
-
-    // Angled armor-plate ring standing in for sandbag/plating cover around the gun deck —
-    // alternating tones so individual plates read as distinct segments, each canted outward.
-    const plateCount = 8, plateR = r * 0.8;
-    for (let i = 0; i < plateCount; i++) {
-      const a = (i / plateCount) * Math.PI * 2 + 0.25;
-      const px = C.cx + Math.cos(a) * plateR, py = C.cy + Math.sin(a) * plateR * 0.6;
-      // #287: taller plates (a crenellated parapet rather than a low kerb) now that this is a
-      // real structure — each merlon also gets a lit top edge so the ring reads as standing UP
-      // off the deck rather than being painted onto it.
-      armorPlate(sg, px, py, a + Math.PI / 2, r * 0.44, r * 0.34, i % 2 === 0 ? 0x3a3e44 : 0x454a51, 1);
-      armorPlate(sg, px, py - r * 0.13, a + Math.PI / 2, r * 0.44, r * 0.09, 0x646a73, 0.85);
-    }
-
-    sg.fillStyle(0x30343a, 1); sg.fillCircle(C.cx, C.cy + 0.5, r * 0.5);                          // inner gun deck (recessed)
-    const arm = r * 0.32, barW = r * 0.1;                                                          // muted gun-mount crosshair
-    sg.fillStyle(0x9098a3, 0.8);
-    sg.fillRect(C.cx - arm, C.cy + 0.5 - barW / 2, arm * 2, barW);
-    sg.fillRect(C.cx - barW / 2, C.cy + 0.5 - arm, barW, arm * 2);
-    sg.fillStyle(0x22262c, 1); sg.fillCircle(C.cx, C.cy + 0.5, r * 0.14);                          // mount hub
-    sg.fillStyle(0xd8342a, 0.9);                                                                    // small armed-position bolts, not a dominant ring
-    sg.fillCircle(C.cx - r * 0.42, C.cy + 0.5, 1);
-    sg.fillCircle(C.cx + r * 0.42, C.cy + 0.5, 1);
-  },
-  // #287: the WRECK of a turret emplacement (terrain.js `turretRubble`) — what the bunker
-  // collapses into. Deliberately readable as "this specific thing was destroyed" rather than the
-  // generic `hex_rubble` masonry heap: the parapet ring survives only as a broken arc of stubs,
-  // the gun deck is a scorched crater, and the gun's mount lies toppled across the debris.
-  hex_turretRubble: (sg) => {
-    const r = 13.5;
-    sg.fillStyle(0x17191d, 0.85); sg.fillEllipse(C.cx, C.cy + 1.5, r * 2.4, r * 1.8);           // scorched footprint — matches the intact bunker's own footprint
-    sg.fillStyle(0x2b2e34, 0.9);  sg.fillCircle(C.cx, C.cy, r * 0.98);                           // cracked-open slab remains
-    sg.fillStyle(0x101215, 0.9);  sg.fillEllipse(C.cx, C.cy + 0.5, r * 0.5, r * 0.4);            // blown-out gun-deck crater
-
-    // Broken parapet: only some of the 8 merlons are left standing, and the survivors are
-    // shorter and unevenly canted — the gaps are what read as "this got blown apart".
-    const standing = [0, 1, 3, 6];
-    for (const i of standing) {
-      const a = (i / 8) * Math.PI * 2 + 0.25;
-      const px = C.cx + Math.cos(a) * r * 0.8, py = C.cy + Math.sin(a) * r * 0.8 * 0.6;
-      armorPlate(sg, px, py, a + Math.PI / 2 + (i % 2 ? 0.3 : -0.35), r * 0.34, r * 0.2, 0x33373d, 1);
-      armorPlate(sg, px, py - r * 0.07, a + Math.PI / 2 + (i % 2 ? 0.3 : -0.35), r * 0.34, r * 0.06, 0x4e535a, 0.7);
-    }
-
-    // Scattered concrete chunks over the wreck.
-    const rnd = seeded(9871);
-    for (let i = 0; i < 7; i++) {
-      const dx = (rnd() - 0.5) * 30, dy = (rnd() - 0.5) * 21;
-      const w = 3.5 + rnd() * 4.5, h = 3 + rnd() * 3;
-      sg.fillStyle(0x3a3d44, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
-      sg.fillStyle(0x4c4f57, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.2);
-    }
-
-    // The toppled gun: a barrel lying flat across the debris, still attached to a tipped mount.
-    sg.fillStyle(0x21242a, 1); sg.fillCircle(C.cx - 3, C.cy + 3, r * 0.18);                       // tipped mount hub
-    armorPlate(sg, C.cx + 2.5, C.cy - 1, -0.55, r * 0.95, r * 0.11, 0x5a6069, 1);
   },
   // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette topped with a
   // bold red target-ring beacon, so it reads unmistakably as "the real objective," distinct from

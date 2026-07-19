@@ -6,8 +6,8 @@
 // the dock actually vacated right now?) tracked separately, and plays the doors-open/rise/
 // doors-close FX + spawns the unit when a tick reports `ready: true`.
 //
-// Explicitly scoped to DOCK hexes only (never `turretEmplacement` — a stationary turret
-// refilling itself doesn't fit "reinforcements rolling out of a bay").
+// Explicitly scoped to DOCK hexes only — a stationary turret refilling itself doesn't fit
+// "reinforcements rolling out of a bay", so no other base structure participates.
 
 // Cooldown, counted down once a dock's base is awake, before it resupplies. #269
 // playtest follow-up: the original 45s "rare exception" cadence read as a one-off surprise

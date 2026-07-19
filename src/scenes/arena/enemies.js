@@ -1138,10 +1138,11 @@ export const EnemiesMixin = {
     // predating the #114/#115 spawn-time validation, or terrain that shrank/shifted under it),
     // snapping it back onto the nearest valid ground rather than leaving it permanently stranded
     // outside the playable area. Flyers are exempt — they narratively ignore ground terrain.
-    // #287: `e.emplaced` (a base turret garrisoning its own `turretEmplacement` bunker — set in
-    // bases.js `_spawnDormantUnits`) is exempt: that hex is deliberately impassable now, and the
-    // turret standing on it is not stranded, it's manning the structure. Without this exemption
-    // every base turret would be snapped off its own bunker onto neighbouring ground on frame 1.
+    // `e.emplaced` (set in bases.js `_spawnDormantUnits`) is exempt: an emplaced gun is standing
+    // on an impassable structure deliberately — it is manning it, not stranded on it. Introduced
+    // by #287 for its interior turret bunker (since removed); today its only user is #310's WALL
+    // turret, which sits ON the wall band `_blocked` reports as impassable and would otherwise be
+    // snapped off its own parapet onto neighbouring ground on frame 1.
     // #309: the enemy form here too — a unit part-way through an open gate is standing legally,
     // not stuck, and must not be picked up by the stuck-unit rescue and teleported off its sortie.
     if (!e.flying && !e.emplaced && blockedForEnemy(this, e.x, e.y)) {

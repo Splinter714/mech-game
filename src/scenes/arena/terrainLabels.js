@@ -55,7 +55,7 @@ import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './he
 export const LABEL_UPDATE_MS = 200;
 export const LABEL_RADIUS_MARGIN_PX = 220;
 
-// #270 playtest follow-up: unified with bases.js's dock/alertTower/turretEmplacement labels —
+// #270 playtest follow-up: unified with bases.js's dock/alertTower/objective labels —
 // same color/size/weight (hexLabelStyle.js), full alpha. Previously this layer used a distinct
 // muted-gray/low-alpha look to read as "quiet ambient flavour text" vs. bases.js's "pay
 // attention" red; Jackson asked for one consistent look across all hex labels instead, so that
@@ -66,7 +66,7 @@ export const TerrainLabelsMixin = {
   // Called once from ArenaScene.create(), after `_buildWorld`/`_spawnHexLabels` have populated
   // `this.terrain`/`this.bases`/`this.alertTowerHexes` — mirrors bases.js `_spawnHexLabels`'s own
   // iteration over bases/towers, but only to build a Set of hex KEYS to skip (never creates a
-  // Text here) so a dock/alertTower/turretEmplacement hex is never double-labelled. Read-only
+  // Text here) so a dock/alertTower/objective hex is never double-labelled. Read-only
   // over `this.bases`/`this.alertTowerHexes`; doesn't touch bases.js's own `_hexLabels` array.
   _initTerrainLabels() {
     this._terrainLabelPool = new Map();   // hexKey -> live Phaser.Text

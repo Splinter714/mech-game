@@ -3,7 +3,7 @@
 // The pure placement/geometry half is in data/wallTurretPlacement.test.js.
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection throws
-// under vitest's node env, so it's stubbed out (same convention as turretEmplacement.test.js).
+// under vitest's node env, so it's stubbed out (same convention as dormantWake.test.js).
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({
   default: {

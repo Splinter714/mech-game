@@ -24,8 +24,8 @@
 // #275: this biome record used to also carry an `outpost` role (the destructible hard-cover
 // building for this biome — building/adobe/iceRuin/tower/obsidian in terrain.js) — removed along
 // with those 5 terrain entries: plain destructible buildings scattered as generic cover were
-// redundant next to the newer, more specific base hexes (dock/alertTower/objective/
-// turretEmplacement). The "outpost" CONCEPT is gone entirely, not just its terrain — alert towers
+// redundant next to the newer, more specific base hexes (dock/alertTower/objective).
+// The "outpost" CONCEPT is gone entirely, not just its terrain — alert towers
 // no longer anchor to outpost clusters at all (Jackson: he never thought of the removed terrain
 // as "outposts"). They now place solo, one per gap between successive bases along the corridor's
 // spine progression (data/worldgen.js `placeGapTowers`), so no biome-specific terrain id or
