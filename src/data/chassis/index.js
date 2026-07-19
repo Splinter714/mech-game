@@ -7,6 +7,10 @@ import { LOCATIONS, LOCATION_INFO } from '../anatomy.js';
 import { LIGHT_CONFIG } from './light.js';
 import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
+// #240: the boss's stat block. Registered here like any other chassis (one config + one entry,
+// per the standing convention) — it's simply never offered to the player, since the garage's
+// chassis switcher is disabled and rosters.js force-migrates every player mech onto 'medium'.
+import { COLOSSUS_CONFIG } from './colossus.js';
 
 // Relative bulk of each damage-tracked location, used to distribute armor + HP (#246:
 // renamed from "structure" — plain language, same layering) from the chassis' baseline
@@ -61,7 +65,7 @@ export function makeChassis(cfg) {
 
 // Built registry: weight-class id → full chassis def.
 export const CHASSIS = Object.fromEntries(
-  [LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG].map((cfg) => [cfg.id, makeChassis(cfg)]),
+  [LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG, COLOSSUS_CONFIG].map((cfg) => [cfg.id, makeChassis(cfg)]),
 );
 
 export const CHASSIS_IDS = Object.keys(CHASSIS);

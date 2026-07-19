@@ -6,6 +6,7 @@
 import { ROSTERS } from './rosters.js';
 import { RUN_CURRENCY_KEY } from './events.js';
 import { STARTING_UNLOCKED } from './shop.js';
+import { BIOME_IDS } from './biomes.js';
 
 export function makeRoster({ storageKey, Model, defaultRoster, migrate }) {
   function readSaved() {
@@ -115,6 +116,58 @@ export function saveUnlocked(set) {
   } catch {
     // localStorage blocked/unavailable — the game still plays this session.
   }
+}
+
+// #240: which biomes the player has SUCCESSFULLY finished a run in — the boss-arena unlock
+// condition. "Successfully finished" means the run ended as a WIN (every base's objective
+// destroyed, then returned to the garage alive); a run that ends in the player's death never
+// marks anything (see scenes/arena/run.js `_endRun`, the single call site — it only calls
+// `markBiomeCleared` on the 'won' branch).
+//
+// Same localStorage shape/spirit as the unlocked-catalog block above: stored as a plain id
+// array, loaded back as a Set, never throws, and unknown/stale ids (a biome removed from
+// data/biomes.js since the save was written) are filtered out on load so `allBiomesCleared`
+// can't be satisfied by junk. Persisting the SET of ids (rather than a bare count) is what
+// makes "one run in EACH of the 5" checkable rather than "5 runs anywhere."
+const BIOME_CLEARS_STORAGE_KEY = 'mech-game-biome-clears-v1';
+
+export function loadClearedBiomes() {
+  try {
+    const raw = localStorage.getItem(BIOME_CLEARS_STORAGE_KEY);
+    const arr = raw != null ? JSON.parse(raw) : null;
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((id) => BIOME_IDS.includes(id)));
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveClearedBiomes(set) {
+  try {
+    localStorage.setItem(BIOME_CLEARS_STORAGE_KEY, JSON.stringify([...set]));
+  } catch {
+    // localStorage blocked/unavailable — the game still plays this session.
+  }
+}
+
+// Record one biome as cleared and persist it. Idempotent (clearing the same biome twice is a
+// no-op) and ignores an unknown id outright, so a caller can pass whatever `biomeId` the arena
+// happened to be built with without pre-validating it. Returns the updated set.
+export function markBiomeCleared(biomeId) {
+  const set = loadClearedBiomes();
+  if (!BIOME_IDS.includes(biomeId)) return set;
+  set.add(biomeId);
+  saveClearedBiomes(set);
+  return set;
+}
+
+// The boss-arena unlock condition (#240): one successful run in EVERY biome. Pure over the
+// passed set so it's testable without localStorage; defaults to the saved set for callers that
+// just want the live answer. NOTE: the DEV override ("the Boss Arena option is always available
+// on the dev server") deliberately lives at the UI call site (GarageScene), NOT here — this
+// stays the honest production rule so tests and the saved state can't be confused by it.
+export function allBiomesCleared(cleared = loadClearedBiomes()) {
+  return BIOME_IDS.every((id) => cleared.has(id));
 }
 
 export { RUN_CURRENCY_KEY };

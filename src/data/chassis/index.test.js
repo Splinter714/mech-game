@@ -5,8 +5,19 @@ import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
 
 describe('CHASSIS — weight-class movement stats', () => {
-  it('defines the three expected weight classes', () => {
-    expect(CHASSIS_IDS.sort()).toEqual(['heavy', 'light', 'medium']);
+  // #240 added 'colossus' — the boss's stat block (data/chassis/colossus.js). It's registered
+  // like any other chassis but is deliberately never player-selectable, so the three PLAYER
+  // weight classes are still exactly light/medium/heavy and every tuning assertion below
+  // (which is about the player's speed spread) is unaffected.
+  it('defines the three expected player weight classes', () => {
+    expect(CHASSIS_IDS.filter((id) => id !== 'colossus').sort()).toEqual(['heavy', 'light', 'medium']);
+  });
+
+  it('#240: the boss chassis is registered but is not a player weight class', () => {
+    expect(CHASSIS.colossus).toBeDefined();
+    expect(CHASSIS.colossus.weightClass).toBe('colossus');
+    // A slow siege platform — it must never out-run the slowest player chassis.
+    expect(CHASSIS.colossus.movement.maxSpeed).toBeLessThan(CHASSIS.heavy.movement.maxSpeed);
   });
 
   it('#159: heavy maxSpeed now matches light\'s OLD (pre-#159) maxSpeed of 135', () => {
