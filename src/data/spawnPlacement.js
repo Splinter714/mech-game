@@ -41,9 +41,23 @@ function passableCheck(terrain) {
 // worldRadius` alone no longer guarantees once worldRadius shrinks below it. Add
 // BOUNDARY_RING_WIDTH explicitly (plus a flat margin for the shape's own organic noise) so the
 // budget stays correct regardless of how small worldRadius gets relative to the ring.
+// #345: and a CEILING on that budget, so it can't scale away with the world. `worldRadius` is
+// MAX_WORLD_RADIUS, which #340 grew from 102 to 351 — `2 * worldRadius` is then 752 rings, ~1.7M
+// hexes, all of it walked whenever the search finds nothing (a degenerate/empty terrain map). The
+// sibling drop search hit exactly this and froze the game for minutes; the predicate here is only
+// a Map lookup so it's far cheaper per candidate, but "unbounded by world size" is the bug either
+// way. What the search actually has to cross is the impassable boundary ring's fixed depth plus
+// the organic shape's noise — a fixed quantity that does not grow with the corridor's length. Two
+// ring-widths plus 60 hexes of slack (~6200px) is generous for that and caps the worst case at
+// ~51k lookups.
+export const MAX_SEARCH_STEPS = BOUNDARY_RING_WIDTH * 2 + 60;
+
 export function nearestValidHex(terrain, worldRadius, x, y) {
   const rawHex = pixelToHex(x, y);
-  const searchSteps = (worldRadius ?? 20) * 2 + BOUNDARY_RING_WIDTH + 15;
+  const searchSteps = Math.min(
+    (worldRadius ?? 20) * 2 + BOUNDARY_RING_WIDTH + 15,
+    MAX_SEARCH_STEPS,
+  );
   return nearestHex(rawHex, passableCheck(terrain), searchSteps) ?? rawHex;
 }
 

@@ -24,7 +24,6 @@ import { isPassable } from '../../data/terrain.js';
 // is pure and lives in data/dropPlacement.js; this file only supplies the scene's predicates.
 import { resolveDropPos, DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
 import { wallEdgeSeparating } from '../../data/wallEdges.js';
-import { BOUNDARY_RING_WIDTH } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
 // #302: the shield-outline technique itself now lives in ONE shared place, driven by the player
@@ -109,17 +108,16 @@ export const PowerupsMixin = {
   // has no side of its own, so its drop lands where the player can reach it). Omitting it keeps
   // the old side-agnostic behaviour, which is right for a drop with no meaningful side.
   _reachableDropPos(x, y, ref = null) {
-    // #158: `worldRadius * 2` alone assumed worldRadius is always much bigger than
-    // BOUNDARY_RING_WIDTH (true pre-#158; no longer guaranteed once the playable interior
-    // shrinks below the ring's own fixed depth) — see spawnPlacement.js `nearestValidHex`'s
-    // matching fix/comment for the full reasoning.
-    const searchSteps = (this.worldRadius ?? 20) * 2 + BOUNDARY_RING_WIDTH + 15;
+    // #345: the search budget is NOT derived from the world size anymore. It used to be
+    // `worldRadius * 2 + BOUNDARY_RING_WIDTH + 15` — copied from `nearestValidHex`, whose
+    // per-candidate test is a cheap map lookup; here every candidate also runs a wall-separation
+    // test, and #340's longer corridor turned that into a multi-minute freeze on a kill against a
+    // base wall. `resolveDropPos` now defaults to its own fixed local `DROP_SEARCH_RINGS`.
     const pos = resolveDropPos(x, y, {
       ref,
       blocked: this.terrain && this._blocked ? (px, py) => this._blocked(px, py) : null,
       passable: (q, r) => isPassable(this.terrain?.get(axialKey(q, r))),
       separated: (ax, ay, bx, by) => !!wallEdgeSeparating(this.wallEdges, ax, ay, bx, by),
-      maxSteps: searchSteps,
     });
     return { x: pos.x, y: pos.y };
   },
