@@ -23,6 +23,13 @@
 //    never enters `active`/`buffModifiers` — the arena mixin just calls `mech.boostShield`
 //    directly (scenes/arena/powerups.js `_activatePowerup`).
 
+// #106: the drop-chance bounds are derived from the LIVE enemy roster (see `dropBounds`
+// below), so these registries are imported here rather than the bounds being hand-typed.
+import { ENEMIES } from './enemies.js';
+import { ENEMY_KINDS } from './enemyKinds.js';
+import { Mech } from './Mech.js';
+import { HpBody } from './HpBody.js';
+
 // ── The powerup catalog (owner: tune) ───────────────────────────────────────────────────
 // Each entry: id, label (HUD), color (collectible + HUD), weight (relative drop odds), and
 // `duration` in seconds for timed buffs (Armor Patch is instant → no duration). The buff's
@@ -69,71 +76,114 @@ export const POWERUPS = {
   },
 };
 
-// Drop tuning. #90 (playtest 2026-07-10): the drop chance used to be a flat `DROP_CHANCE`
-// roll regardless of what died — a drone and a heavy sniper mech had identical odds. Now it
-// SCALES with the killed enemy's toughness, using `maxHp` as the difficulty signal (both
-// `Mech` and the non-mech `HpBody` expose a uniform `.maxHp`, so this needs no per-kind
-// branching at the call site — see combat.js `_damageEnemyAt`).
+// ── Drop tuning (#90 → #106) ─────────────────────────────────────────────────────────────
+// A kill's powerup odds SCALE with how tough the thing you killed was. Two knobs decide the
+// shape: the roster-derived floor/ceiling (which kill counts as "trivial" and which as "the
+// hardest thing in the game") and the curve exponent between them.
 //
-// Bounds picked from the actual roster's max-hp spread: the weakest real enemy IN-TREE today
-// is a drone (hp 14) and the toughest is a base heavy-chassis mech (maxHp 400 — see Mech.js
-// `maxHp`; dropped from 616 when #128 removed head/cockpit/centerTorso from the tracked
-// damage locations). #97 (infantry, proposed maxHp 6) would be weaker still, but is not
-// implemented as of this pass — when it lands, drop DROP_HP_FLOOR to 6 so infantry becomes
-// the true floor point instead of quietly landing at MIN_DROP_CHANCE alongside the drone.
+// TOUGHNESS, not `maxHp` (#106). The difficulty signal is `body.toughness` — structure + armor
+// + shield — exposed identically by `Mech` and the non-mech `HpBody`, so there's still no
+// per-kind branching at the call site (combat.js `_damageEnemyAt`). This replaced `.maxHp`,
+// which meant different things per body type: Mech summed armor+structure while HpBody
+// returned only its hp pool, so vehicles' armor/shields were invisible to the curve (a tank
+// rated 160 instead of its real 200; the gunship's 30-point shield and the Broodwalker's
+// 60 armor + 50 shield counted for nothing) — vehicles were systematically under-rated.
 //
-// #106 (playtest 2026-07-10, follow-up to #90): "small enemies still give WAAAAAAAAAAY too
-// many powerups for how easy they are to kill" — even the old 35% floor read as a coin-flip-
-// adjacent rate for a kill that's basically free. MIN_DROP_CHANCE comes down hard, to 5%, so
-// the weakest kills feel like an occasional bonus, not a norm.
+// DERIVED BOUNDS (#106). `DROP_HP_FLOOR`/`DROP_HP_CEIL` used to be hand-set constants (14 and
+// 400) and drifted out of sync with the roster every single time enemy stats moved — #128
+// forced a manual re-solve of the exponent, and infantry (toughness 6) shipped without the
+// floor ever being lowered to match. They're now COMPUTED from the live roster: the min and
+// max toughness across every mech enemy (data/enemies.js) and every vehicle kind
+// (data/enemyKinds.js). Retuning enemy health, or adding/removing a unit, needs NO edit here —
+// the endpoints move on their own. Today that derives to floor 6 (infantry) and ceiling 430
+// (the artillery mech on the heavy chassis).
 //
-// A plain linear lerp can't hit that low a floor without also gutting the middle of the curve:
-// widening the span from 0.6 (old 0.35→0.95) to 0.9 (new 0.05→0.95) would have dragged EVERY
-// non-ceiling tier down with it — including the medium mech, the most common kill, whose ~0.75
-// "typical kill feels unchanged" sanity check (#90) was the whole point of scaling by toughness
-// in the first place. Instead the curve is bent concave — `t ** DROP_CURVE_EXP` (exponent < 1)
-// in place of plain `t` — which still passes through exactly MIN at the floor and MAX at the
-// ceiling (0**k = 0, 1**k = 1 for any k), but bows the middle of the curve up relative to a
-// straight line. Net effect: weak/moderate kills (drone/heli/turret/tank) drop noticeably less
-// than before, while medium/heavy — the "normal" difficulty range — land close to where #90
-// put them. DROP_CURVE_EXP was originally 0.6, solved for dropChanceForMaxHp(416) ≈ 0.756
-// against a maxHp ceiling of 616.
+// CURVE (#106): CONVEX, exponent 1.5. The previous 0.7 exponent was CONCAVE — it bowed the
+// middle of the curve UP, roughly +10 percentage points across the mid-range versus a straight
+// line, which is exactly the "weak/easy enemies pay out way too often" complaint this issue
+// opened with. 1.5 bows the middle DOWN instead: trivial kills stay near the floor much longer
+// and the payout only really climbs once you're fighting things that fight back. Both endpoints
+// are unaffected by the exponent (0**k = 0, 1**k = 1), so the floor is still MIN_DROP_CHANCE
+// and the toughest kill in the game is still MAX_DROP_CHANCE.
 //
-// #128 dropped the heavy mech's real maxHp to 400 (head/cockpit/centerTorso left the tracked
-// damage locations), shrinking DROP_HP_CEIL to match — which on its own compresses the curve
-// and pushes every non-ceiling tier UP (e.g. the turret, at a fixed 90 hp, moved from 0.389
-// under the old ceiling to over the 0.35 "should read as rare" line). Re-solved
-// DROP_CURVE_EXP = 0.7 against the new floor/ceiling to restore both anchors: the medium mech
-// (now maxHp 270) back near ~0.75, and the turret back comfortably under 0.35.
+// Resulting curve across today's roster (toughness → chance):
+//   infantry 6 → 5%      drone 14 → 5%       turret 90 → 13%    helicopter 100 → 14%
+//   light mech 184 → 29% tank 200 → 33%      medium mech 290 → 54%
+//   quadruped 370 → 77%  heavy mech 430 → 95%
+// These numbers are DERIVED, not hand-solved — they're what the formula produces for the
+// current roster, and they'll shift on their own when the roster does.
 //
-// Resulting curve across the current roster (drone/heli/turret/tank/light/medium/heavy):
-//   0.05 → 0.28 → 0.34 → 0.51 → 0.53 → 0.73 → 0.95
-// vs. the old linear curve's 0.35 → 0.41 → 0.43 → 0.50 → 0.60 → 0.75 → 0.95 — trivial kills
-// down sharply, "normal" kills roughly where they were. Flagging for playtest per #106.
-export const MIN_DROP_CHANCE = 0.05;   // weakest kill (drone, maxHp ~14) — was 0.35
-export const MAX_DROP_CHANCE = 0.95;   // toughest kill (heavy mech, maxHp ~400) — unchanged
-const DROP_HP_FLOOR = 14;              // maxHp at/below which a kill gets MIN_DROP_CHANCE
-const DROP_HP_CEIL = 400;              // maxHp at/above which a kill gets MAX_DROP_CHANCE
-                                        // (#128: heavy mech's real maxHp, was 616 before head/
-                                        // cockpit/centerTorso dropped out of tracked damage)
-const DROP_CURVE_EXP = 0.7;            // <1 ⇒ concave: bows the mid-curve up so medium/heavy
-                                        // stay close to #90's values even with a much lower floor
-                                        // (re-solved for the #128 floor/ceiling, was 0.6)
+// CRUSH KILLS (#106) bypass the curve entirely — see CRUSH_KILL_DROP_CHANCE below.
+//
+// Historical note: #90 replaced a flat `DROP_CHANCE` roll (a drone and a heavy mech had
+// identical odds) with this toughness-scaled curve. #128's chassis change forced a manual
+// re-solve of the exponent, and #106's review found the hand-set bounds had drifted again —
+// which is why the bounds are derived from the roster now instead of typed in.
+export const MIN_DROP_CHANCE = 0.05;   // the weakest kill in the game (today: infantry)
+export const MAX_DROP_CHANCE = 0.95;   // the toughest kill in the game (today: heavy mech)
+const DROP_CURVE_EXP = 1.5;            // >1 ⇒ CONVEX: bows the mid-curve DOWN, so easy kills
+                                        // stay near the floor (#106; was 0.7, i.e. concave)
+
+// #106: a CRUSH/stomp kill (driving over a tank or a trooper — world.js `_crushGroundEnemyAt`,
+// scoped by `isSmallUnit`) ignores the toughness curve entirely and always rolls this flat,
+// deliberately tiny chance. Jackson: "what feels odd about tanks is they are stompable, which
+// works immediately regardless of their relatively higher HP. maybe we should set extremely low
+// drop rates for any stomp kills, regardless of the enemy." A stomp costs the player nothing —
+// no ammo, no exposure, no time — so it shouldn't pay out like a fought kill; a stomped tank
+// (toughness 200, 33% if fought) and a stomped trooper (toughness 6) now roll exactly the same.
+export const CRUSH_KILL_DROP_CHANCE = 0.03;
 
 // Kept for anything still importing the old flat constant (none in-tree after #90, but
 // harmless to leave as a documented "typical" reference point).
 export const DROP_CHANCE = 0.75;
 
-// Difficulty-scaled powerup drop chance for a kill whose max hit points was `maxHp`. Pure —
-// no enemy-kind branching, no Phaser — so it's unit-testable independent of the scene. Clamps
-// outside the floor/ceil, then bends the 0..1 progress through a concave curve (see comment
-// above) before lerping between MIN/MAX_DROP_CHANCE.
-export function dropChanceForMaxHp(maxHp) {
-  const hp = Math.max(0, maxHp || 0);
-  const span = DROP_HP_CEIL - DROP_HP_FLOOR;
-  const t = span > 0 ? Math.min(1, Math.max(0, (hp - DROP_HP_FLOOR) / span)) : 1;
+// The toughness of one roster entry, whatever kind it is. Both body types expose `.toughness`
+// (structure + armor + shield) — see Mech.js / HpBody.js — so this is a straight read.
+function rosterToughnesses(enemies = ENEMIES, kinds = ENEMY_KINDS) {
+  const out = [];
+  for (const def of Object.values(enemies || {})) {
+    try { out.push(new Mech(def).toughness); } catch { /* skip a malformed entry */ }
+  }
+  for (const def of Object.values(kinds || {})) {
+    try { out.push(new HpBody(def).toughness); } catch { /* skip a malformed entry */ }
+  }
+  return out.filter((v) => Number.isFinite(v) && v > 0);
+}
+
+// Floor/ceiling for the drop curve, DERIVED from a roster rather than hardcoded (#106): the
+// least- and most-tough units that exist. Exported (and parameterized) so tests can prove the
+// endpoints actually track the roster by passing a stubbed one. Pure — no memo-state leaks.
+export function dropBoundsForRoster(enemies = ENEMIES, kinds = ENEMY_KINDS) {
+  const all = rosterToughnesses(enemies, kinds);
+  if (!all.length) return { floor: 0, ceil: 1 };
+  return { floor: Math.min(...all), ceil: Math.max(...all) };
+}
+
+// The live roster's bounds, computed lazily ONCE on first use (the registries are static data,
+// and building a few Mechs at module-eval time would be needless import-order coupling).
+let _liveBounds = null;
+export function dropBounds() {
+  if (!_liveBounds) _liveBounds = dropBoundsForRoster();
+  return _liveBounds;
+}
+
+// Difficulty-scaled powerup drop chance for a kill of the given `toughness` (structure + armor
+// + shield — `body.toughness`). Pure — no enemy-kind branching, no Phaser — so it's unit-
+// testable independent of the scene. Clamps outside the derived floor/ceiling, then bends the
+// 0..1 progress through the convex curve (see the block comment above) before lerping between
+// MIN/MAX_DROP_CHANCE. `bounds` is injectable for tests.
+export function dropChanceForToughness(toughness, bounds = dropBounds()) {
+  const hp = Math.max(0, toughness || 0);
+  const span = bounds.ceil - bounds.floor;
+  const t = span > 0 ? Math.min(1, Math.max(0, (hp - bounds.floor) / span)) : 1;
   const curved = Math.pow(t, DROP_CURVE_EXP);
   return MIN_DROP_CHANCE + curved * (MAX_DROP_CHANCE - MIN_DROP_CHANCE);
+}
+
+// The one entry point the kill path uses (scenes/arena/powerups.js `_maybeDropPowerup`):
+// a crush/stomp kill always gets the flat low chance; anything else runs the curve.
+export function dropChanceForKill(toughness, isCrush = false) {
+  return isCrush ? CRUSH_KILL_DROP_CHANCE : dropChanceForToughness(toughness);
 }
 
 // Ordered id list (stable) — used by the weighted pick and by any UI that wants a fixed order.

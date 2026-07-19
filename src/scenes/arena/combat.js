@@ -160,7 +160,11 @@ export const CombatMixin = {
   // (parts positioned via mechLayout, re-skinned to show damage) and a non-mech HpBody unit
   // (#68: parts carry their own {x,y}; single-pool, so the nearest part only decides where the
   // damage number floats — the whole unit shares the hp — and its textures are static, no reskin).
-  _damageEnemyAt(e, x, y, damage, color) {
+  // `isCrush` (#106) marks a CRUSH/stomp kill — the player driving over a small ground unit
+  // (world.js `_crushGroundEnemyAt`) rather than shooting it. Every weapon-damage caller leaves
+  // it false; it only changes the powerup drop roll below (a free kill shouldn't pay out like a
+  // fought one), nothing else in the damage/death pipeline.
+  _damageEnemyAt(e, x, y, damage, color, isCrush = false) {
     if (e.mech.isDestroyed()) return;
     // #269: being shot is the most unambiguous "you've been noticed" signal there is — a dormant
     // unit taking a hit wakes its whole base (via the BasesMixin `_wakeBase`, composed onto the
@@ -197,9 +201,10 @@ export const CombatMixin = {
       this._deathFx(dx, dy, deathScaleFor(e), explosionCategoryFor(e));
       // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
       // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
-      // #90: pass the kill's maxHp (uniform across Mech/HpBody) so the odds scale with how
-      // tough the enemy was, instead of a flat roll.
-      this._maybeDropPowerup?.(dx, dy, e.mech.maxHp);
+      // #90/#106: pass the kill's TOUGHNESS (structure + armor + shield — uniform across
+      // Mech/HpBody) so the odds scale with how tough the enemy actually was, instead of a flat
+      // roll; plus the crush flag, which swaps the curve for a flat tiny chance (#106).
+      this._maybeDropPowerup?.(dx, dy, e.mech.toughness ?? e.mech.maxHp, isCrush);
       // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
       // in data/shop.js) — independent roll from the powerup drop, same kill site.
       this._maybeDropSalvage?.(dx, dy);

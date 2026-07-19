@@ -139,10 +139,14 @@ export const DUMMY_HEX = { q: 3, r: -1 };
 // toughest non-mech enemy) is deliberately drawn SMALL (scale 0.48, "tanks smaller" — #91) so
 // it produced a SMALLER death explosion than a drone (hp 14, scale 0.52), exactly backwards
 // from what a player expects. Both `Mech` and the non-mech `HpBody` expose a uniform `.maxHp`
-// (#90) that already drives the powerup drop-chance scaling on this same "how big a deal was
-// this kill" signal (data/powerups.js `dropChanceForMaxHp` — same floor/ceiling bounds, same
-// roster spread: weakest real enemy is a drone at hp 14, toughest is a base heavy-chassis mech
-// at maxHp 616) — reuse it here too instead of inventing a second, kind-branching one.
+// (#90), the same family of "how big a deal was this kill" signal the powerup drop chance uses
+// — reuse it here too instead of inventing a second, kind-branching one.
+// NOTE (#106): the drop-chance path has since moved OFF `.maxHp` onto `.toughness` (structure +
+// armor + shield) with floor/ceiling DERIVED from the live roster (data/powerups.js
+// `dropBounds`). These explosion-sizing bounds are still hand-set, and their ceiling (616) is
+// stale — a heavy mech's real maxHp is 430 since #128/#230, so every kill above 430 already
+// tops out below the biggest boom. Purely cosmetic (explosion size only), left alone here to
+// keep #106 scoped to drop rates; worth folding into a later pass.
 const DEATH_HP_FLOOR = 14;    // maxHp at/below which a kill gets the smallest boom (a drone)
 const DEATH_HP_CEIL = 616;    // maxHp at/above which a kill gets the biggest boom (base heavy mech)
 const DEATH_SCALE_MIN = 0.5;

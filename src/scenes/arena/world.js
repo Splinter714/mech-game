@@ -460,7 +460,10 @@ export const WorldMixin = {
   _crushGroundEnemyAt(e) {
     if (e.mech.isDestroyed()) return;
     const dmg = (e.mech.hp ?? e.mech.maxHp) + 1;   // comfortably >= remaining hp: dies in one hit
-    this._damageEnemyAt(e, e.x, e.y, dmg, 0xffffff);
+    // #106: the trailing `true` marks this as a CRUSH kill, so the powerup drop roll uses the
+    // flat CRUSH_KILL_DROP_CHANCE instead of the toughness curve — stomping a tank is free, so
+    // it shouldn't pay out at a fought tank's rate.
+    this._damageEnemyAt(e, e.x, e.y, dmg, 0xffffff, true);
   },
 
   // Max-speed multiplier for the terrain under a world point — river/forest/rubble slow the mech;
