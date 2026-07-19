@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  POWERUPS, POWERUP_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
+  POWERUPS, POWERUP_IDS, POWERUP_POOL_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
   dropChanceForToughness, dropChanceForKill, dropBounds, dropBoundsForRoster,
   MIN_DROP_CHANCE, MAX_DROP_CHANCE, CRUSH_KILL_DROP_CHANCE,
 } from './powerups.js';
@@ -44,15 +44,82 @@ describe('powerup catalog', () => {
 
 describe('pickPowerupType — weighted selection', () => {
   it('is deterministic under a fixed rng and returns a real id', () => {
-    expect(pickPowerupType(() => 0)).toBe(POWERUP_IDS[0]);
+    expect(pickPowerupType(() => 0)).toBe(POWERUP_POOL_IDS[0]);
     // rng≈1 lands on the last weighted bucket.
-    expect(POWERUP_IDS).toContain(pickPowerupType(() => 0.999999));
+    expect(POWERUP_POOL_IDS).toContain(pickPowerupType(() => 0.999999));
   });
 
-  it('covers every type across the 0..1 range', () => {
+  it('covers every POOLED type across the 0..1 range', () => {
     const seen = new Set();
     for (let i = 0; i < 1000; i++) seen.add(pickPowerupType(() => i / 1000));
-    for (const id of POWERUP_IDS) expect(seen.has(id)).toBe(true);
+    for (const id of POWERUP_POOL_IDS) expect(seen.has(id)).toBe(true);
+  });
+});
+
+// #315: Armor Patch left the random pool entirely — it is now the guaranteed reward for
+// destroying a base objective (scenes/arena/bases.js `_onTerrainCollapsed`), not a roll.
+describe('#315: armorPatch is absent from the weighted random pool', () => {
+  it('carries zero weight and is flagged objectiveOnly', () => {
+    expect(POWERUPS.armorPatch.weight).toBe(0);
+    expect(POWERUPS.armorPatch.objectiveOnly).toBe(true);
+  });
+
+  it('is excluded from POWERUP_POOL_IDS but still a real catalog entry', () => {
+    expect(POWERUP_POOL_IDS).not.toContain('armorPatch');
+    expect(POWERUP_IDS).toContain('armorPatch');
+    expect(POWERUP_POOL_IDS.sort())
+      .toEqual(['overcharge', 'overdrive', 'overclock', 'shield', 'barrage'].sort());
+  });
+
+  it('can NEVER come out of pickPowerupType, at any rng value including the fallback edges', () => {
+    for (let i = 0; i <= 20000; i++) {
+      expect(pickPowerupType(() => i / 20000)).not.toBe('armorPatch');
+    }
+    // The loop's own fallback return (rng exactly 1, and a degenerate rng past the end).
+    expect(pickPowerupType(() => 1)).not.toBe('armorPatch');
+    expect(pickPowerupType(() => 5)).not.toBe('armorPatch');
+    // 20k random draws for good measure.
+    for (let i = 0; i < 20000; i++) expect(pickPowerupType()).not.toBe('armorPatch');
+  });
+
+  it('the remaining five share the pool evenly — each is exactly 20%, since all carry weight 1', () => {
+    const counts = {};
+    const N = 100000;
+    for (let i = 0; i < N; i++) {
+      const id = pickPowerupType(() => i / N);
+      counts[id] = (counts[id] || 0) + 1;
+    }
+    expect(Object.keys(counts).sort()).toEqual(POWERUP_POOL_IDS.slice().sort());
+    for (const id of POWERUP_POOL_IDS) {
+      expect(counts[id] / N).toBeCloseTo(0.2, 3);
+    }
+  });
+
+  it('is still INSTANT (applies on pickup, never enters the active set) — unchanged by #315', () => {
+    expect(isInstant('armorPatch')).toBe(true);
+    expect(durationMs('armorPatch')).toBe(0);
+    expect(buffModifiers({ armorPatch: 5000 }))
+      .toEqual({ freeAmmo: false, cycleMult: 1, countMult: 1, overclockActive: false });
+  });
+
+  // #315 part 2: the palette's only ACHROMATIC entry, so it can't be confused with Shield's
+  // cyan (the reported problem) or any other coloured pickup.
+  it('is achromatic (r≈g≈b) and clearly separated from Shield in colour', () => {
+    const c = POWERUPS.armorPatch.color;
+    const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThanOrEqual(24);  // near-neutral
+    expect(c).not.toBe(0xffffff);   // not pure white — would wash out on arctic snow (0xd9e6ef)
+    // Every OTHER powerup is strongly chromatic, so "the grey one" is unambiguous.
+    for (const id of POWERUP_IDS) {
+      if (id === 'armorPatch') continue;
+      const o = POWERUPS[id].color;
+      const or = (o >> 16) & 0xff, og = (o >> 8) & 0xff, ob = o & 0xff;
+      expect(Math.max(or, og, ob) - Math.min(or, og, ob)).toBeGreaterThan(40);
+    }
+    // ...and specifically far from Shield's cyan in raw channel distance.
+    const s = POWERUPS.shield.color;
+    const dist = Math.abs(r - ((s >> 16) & 0xff)) + Math.abs(g - ((s >> 8) & 0xff)) + Math.abs(b - (s & 0xff));
+    expect(dist).toBeGreaterThan(100);
   });
 });
 

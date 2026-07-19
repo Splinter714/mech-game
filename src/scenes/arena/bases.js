@@ -633,6 +633,28 @@ export const BasesMixin = {
     const state = this._dockResupplyStates?.get(hexKey);
     if (state) this._dockResupplyStates.set(hexKey, spendDockResupply(state));
     this._killEmplacedAt(hexKey);
+    this._maybeDropObjectiveReward(hexKey);
+  },
+
+  // #315: the ARMOR PATCH is no longer a random drop — it is the GUARANTEED reward for
+  // destroying a base's objective hex, exactly one per objective, no roll. Keyed off the same
+  // `_onTerrainCollapsed` signal #269 already uses for objective completion, so "the objective
+  // is destroyed" and "the reward exists" are literally the same event and can't drift apart.
+  // A no-op for every other destructible hex. `_objectiveRewardsDropped` guards against a
+  // double award if the collapse hook ever fired twice for one hex, and makes the "exactly one"
+  // property directly testable.
+  _maybeDropObjectiveReward(hexKey) {
+    const base = (this.bases ?? []).find((b) => b.objectiveHex
+      && axialKey(b.objectiveHex.q, b.objectiveHex.r) === hexKey);
+    if (!base) return null;
+    if (!this._objectiveRewardsDropped) this._objectiveRewardsDropped = new Set();
+    if (this._objectiveRewardsDropped.has(hexKey)) return null;
+    this._objectiveRewardsDropped.add(hexKey);
+    const { x, y } = hexToPixel(base.objectiveHex.q, base.objectiveHex.r);
+    // `spawnPowerup` (scenes/arena/powerups.js) already relocates a drop to the nearest
+    // REACHABLE ground, which matters here: the objective hex has just become rubble but a
+    // sealed base ring can leave its immediate surroundings walled.
+    return this.spawnPowerup?.(x, y, 'armorPatch') ?? null;
   },
 
   // Destroy every emplaced turret garrisoning `hexKey`. Iterates a COPY of `this.enemies`
