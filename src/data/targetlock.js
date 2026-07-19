@@ -1,33 +1,28 @@
-// Indirect-fire target lock (#62, feel pass #77, rework #252, live-through-cover follow-up #252)
-// — the pure, engine-agnostic core of the targeting used by BOTH the player and enemy
-// indirect-fire mechs. Kept here (no Phaser) so the reticle-slide easing can be unit-tested; the
-// ArenaScene mixins wrap this with the actual convergence/enemy queries + drawing.
+// Target lock & reticle (#62, feel pass #77, rework #252, unification #341) — the pure,
+// engine-agnostic remnant of the targeting used by BOTH the player and enemy indirect-fire mechs.
+// Kept here (no Phaser) so the reticle-slide easing can be unit-tested; the ArenaScene mixins wrap
+// this with the actual convergence/enemy queries + drawing.
 //
-// #252 rework — the model in one place:
-//   • The "lock" is nothing more than a mirror of whatever WEAPON CONVERGENCE currently has
-//     selected (for the player: `convergeTarget`, shared.js `pickConvergeTarget` — an enemy, or,
-//     #250, a fallback destructible-terrain hex, or null; for an enemy mech: simply the player
-//     whenever it's in range). There is no separate acquire/charge phase (the old amber→red
-//     LOCK_TIME climb), no independent maintain timer that outlives convergence itself (the old
-//     LOCK_MAINTAIN hold-through-cover window), and no deliberate-switch dwell gate (the old
-//     SWITCH_DWELL) — the target simply follows convergence's live pick, instantly, every frame.
-//   • Playtest follow-up (#252): an earlier pass added a "blind fire" state — when convergence's
-//     live pick had no LOS (a real enemy behind a wall), indirect rounds aimed at a dead-reckoned
-//     last-known-position-plus-velocity guess instead of the truth, and the reticle drew violet
-//     to flag it. Jackson's call: drop that entirely. Indirect fire (homing/lob) never had an LOS
-//     requirement on ITS OWN already-picked target to begin with — this mirrors #245 (a flying
-//     enemy's own shots ignore terrain cover) and #257 (the player's shots ignore cover when
-//     aimed at a flying enemy), both elsewhere in this same scene. So the lock always tracks the
-//     LIVE target position, always drawn "locked," and a homing round's own steering
-//     (projectiles.js) already has no wall gate at all — arcing rounds (every indirect weapon in
-//     the catalog is `path: 'arcing'`) never detonate on terrain cover in the first place
-//     (`!p.arc` guards that check), so there's nothing left to bypass there either. There is no
-//     more prediction math, no more `lock.blind`, no more last-known bookkeeping: `stepLock` just
-//     mirrors `target`.
-//   • The reticle SLIDES rather than snaps: `stepReticlePosition` eases the drawn position toward
-//     the live aim point each frame. This is purely cosmetic — it never affects what the weapon
-//     actually fires at (that follows the live target immediately, per above); it only keeps the
-//     old system's legibility/weight without reintroducing a waiting mechanic.
+// #341 — there is only ONE target concept now. #252 had already collapsed the BEHAVIOUR (no
+// amber→red charge-up, no independent maintain timer, no deliberate-switch dwell, no LOS rule of
+// its own, no dead-reckoned "blind fire" state), leaving a `lock` record whose `target` field was
+// re-assigned from the convergence pick every single frame — two names for one thing. That record
+// and its `makeLock`/`stepLock`/`hasLock` helpers are gone. The target IS the convergence pick:
+//   • Player: `this.convergeTarget` (targeting.js `_updateLock`, via shared.js `pickConvergeTarget`,
+//     #322) — the nearest candidate inside a ~20° cone of the aim direction: a visible enemy
+//     (#306/#337: targeting respects sight, flyers exempt), a destructible-terrain hex (#250), a
+//     base wall span, or null.
+//   • Enemy: `e.lockTarget` (enemies.js `_updateEnemyLock`) — trivially the player whenever in
+//     range, else null.
+// A target is therefore an opaque enemy/player handle (carries `.mech`/`.x`/`.y`/`.vx`/`.vy`), a
+// static `{x, y}` point (no `.mech`), or null.
+//
+// What survives here is the presentational half plus the one shared firing rule:
+//   • The reticle SLIDES rather than snaps: `stepReticlePosition` eases the DRAWN position toward
+//     the live aim point each frame. Purely cosmetic — it never affects what a weapon actually
+//     fires at (that follows the live target immediately); it only keeps the old system's
+//     legibility/weight without reintroducing a waiting mechanic.
+//   • `canFireWeapon` — the no-target-no-fire gate for genuine tracking missiles.
 
 // ── Reticle slide (#252) ────────────────────────────────────────────────────────────────────
 // Exponential ("frame-rate independent") ease toward the live aim point — smooth but responsive,
@@ -35,41 +30,18 @@
 // frames at 60fps while still reading as a slide rather than an instant jump.
 export const LOCK_RETICLE_LERP_RATE = 16; // 1/s
 
-// A fresh, empty lock record. `target` mirrors this frame's live convergence pick: an opaque
-// enemy handle (carries `.mech`/`.x`/`.y`/`.vx`/`.vy`), a static `{x, y}` point (e.g. a
-// destructible-terrain hex, #250 — no `.mech`), or null when convergence has nothing at all.
-export function makeLock() {
-  return {
-    target: null,
-  };
-}
-
-// Does this lock currently have a target at all? Replaces the old charge-gated `isFullLock` —
-// there's no charge phase any more, so any live convergence pick counts immediately.
-export function hasLock(lock) {
-  return !!lock.target;
-}
-
 // Should a PLAYER (or enemy) trigger pull actually fire, given this weapon's delivery and the
-// current lock? A genuine tracking/homing missile (guidance === 'homing', swarmRack, streakPod)
-// needs a lock to fire at all: no convergence target ⇒ the trigger does nothing, not a
+// current target (the convergence pick — see the file header; there is no separate lock object
+// any more, #341)? A genuine tracking/homing missile (guidance === 'homing', swarmRack, streakPod)
+// needs a target to fire at all: no convergence target ⇒ the trigger does nothing, not a
 // dumbfire-straight fallback. Everything else — direct-fire hitscan/lasers, dumbfire projectiles
 // (clusterRocket is explicitly guidance: 'dumbfire', never tracks), and arcing-but-unguided lobs
-// (plasma cannon, napalm — they fly a fixed arc off the turret facing and never needed a lock to
-// begin with) — fires unconditionally on trigger, lock or no lock. Pure; used by both the fire
-// gate (firing.js) and its tests.
-export function canFireWeapon(weapon, lock) {
+// (plasma cannon, napalm — they fly a fixed arc off the turret facing and never needed a target to
+// begin with) — fires unconditionally on trigger, target or no target. Pure; used by both the fire
+// gate (firing.js) and its tests. `target` may be an enemy handle, a static point, or null.
+export function canFireWeapon(weapon, target) {
   if (weapon.delivery?.guidance !== 'homing') return true;
-  return hasLock(lock);
-}
-
-// Advance the lock to mirror this frame's live convergence pick (#252 — no charge, no maintain,
-// no switch-dwell, and, per the playtest follow-up above, no blind/dead-reckoning state either):
-// the target simply follows `target`, immediately, always live. Mutates and returns `lock`. Pure
-// (no time/rng/DOM).
-export function stepLock(lock, { target }) {
-  lock.target = target;
-  return lock;
+  return !!target;
 }
 
 // Ease the drawn reticle position toward `target` ({x, y}) over `dt` seconds instead of snapping

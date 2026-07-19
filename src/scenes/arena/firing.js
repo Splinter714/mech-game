@@ -148,12 +148,13 @@ export const FiringMixin = {
   // spawn travelling rounds that respect velocity, arc, and spread.
   fireWeapon(w) {
     if (!this.scene.isActive()) return;
-    // #77, rework #252: a tracking (homing) weapon with no lock (i.e. convergence currently has
-    // no target at all) does not fire — no dumbfire fallback. The trigger pull is a no-op: nothing
-    // spawns, no ammo spent, no cooldown-worthy shot actually happened. See data/targetlock.js
-    // `canFireWeapon` for exactly which deliveries this gates (only guidance: 'homing' —
-    // direct-fire and dumbfire/arcing-lob weapons are unaffected).
-    if (!canFireWeapon(w.weapon, this.lock)) return;
+    // #77, rework #252, #341: a tracking (homing) weapon with no target (i.e. convergence has
+    // nothing picked this frame) does not fire — no dumbfire fallback. The trigger pull is a no-op:
+    // nothing spawns, no ammo spent, no cooldown-worthy shot actually happened. `convergeTarget`
+    // (targeting.js `_updateLock`) is the one target concept — the same pick the reticle draws and
+    // homing rounds seek. See data/targetlock.js `canFireWeapon` for exactly which deliveries this
+    // gates (only guidance: 'homing' — direct-fire and dumbfire/arcing-lob weapons are unaffected).
+    if (!canFireWeapon(w.weapon, this.convergeTarget)) return;
     // #316 reverses #245/#257: there used to be a cover exemption here — when the player's
     // convergence pick was a FLYING enemy, the player's shot ignored terrain cover (mirroring
     // #245, which let a flyer's own shots ignore it). Both directions are gone. Cover is cover

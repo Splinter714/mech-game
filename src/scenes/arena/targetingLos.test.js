@@ -18,7 +18,7 @@ function makeScene(visibleHexes) {
   const s = Object.assign(Object.create(TargetingMixin), {
     px: 0, py: 0, turretAngle: 0,
     enemies: [],
-    lock: { target: null }, _reticlePos: null,
+    _reticlePos: null,
     visibleHexes,
     _hexKeyAt(x, y) { const h = pixelToHex(x, y); return axialKey(h.q, h.r); },
     _destructibleTargetsNear() { return []; },
@@ -39,7 +39,7 @@ describe('targeting LOS gate (#306)', () => {
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(target);
     expect(sc.convergeTarget).toBe(target);
-    expect(sc.lock.target).toBe(target);
+    expect(sc.convergeTarget).toBe(target);
   });
 
   it('REFUSES to acquire a ground enemy in an un-sighted hex', () => {
@@ -48,7 +48,7 @@ describe('targeting LOS gate (#306)', () => {
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(null);
     expect(sc.convergeTarget).toBe(null);
-    expect(sc.lock.target).toBe(null);
+    expect(sc.convergeTarget).toBe(null);
     expect(sc._lockAimPoint()).toBe(null);
   });
 
@@ -62,7 +62,7 @@ describe('targeting LOS gate (#306)', () => {
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(null);
     expect(sc.convergeTarget).toBe(null);
-    expect(sc.lock.target).toBe(null);
+    expect(sc.convergeTarget).toBe(null);
   });
 
   // The complement: flight is no longer special in EITHER direction — a SIGHTED flyer is still
@@ -73,7 +73,7 @@ describe('targeting LOS gate (#306)', () => {
     sc.enemies = [flyer];
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(flyer);
-    expect(sc.lock.target).toBe(flyer);
+    expect(sc.convergeTarget).toBe(flyer);
   });
 
   it('prefers a SIGHTED enemy over a better-aimed hidden one', () => {
