@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   findHexPath, makeRouter, ROUTE_FAIL_BACKOFF_MS, ROUTE_REPLAN_MS, LINE_CHECK_MS,
+  routeDistancePx, HEX_STEP_PX,
 } from './hexRoute.js';
 import { axialKey, hexToPixel, pixelToHex, distance, neighbors } from './hexgrid.js';
 import { makeWallEdgeSet, blocksSpan, setGateOpen, damageWallEdge, SPAN_ROLE_GATE } from './wallEdges.js';
@@ -444,5 +445,31 @@ describe('makeRouter', () => {
     router.forget(a);
     expect(router.routeFor(a)).toBeNull();
     expect(router.routeFor(b)).not.toBeNull();
+  });
+});
+
+// ── #332: route length in pixels ────────────────────────────────────────────────────────
+// The number that makes a garrison's engagement decision honest: "how far do I actually have to
+// drive", as opposed to how far the player is as the crow flies through the unit's own wall.
+describe('routeDistancePx (#332)', () => {
+  it('is just the leg to the waypoint when that waypoint is the last one', () => {
+    expect(routeDistancePx(0, 0, { x: 30, y: 40 }, 1)).toBeCloseTo(50);
+  });
+
+  it('adds one hex step for every waypoint beyond the next', () => {
+    // Three left: the real leg to the next, plus two more hex hops after it.
+    expect(routeDistancePx(0, 0, { x: 30, y: 40 }, 3)).toBeCloseTo(50 + 2 * HEX_STEP_PX);
+  });
+
+  it('a long way round measures far longer than the straight line it detours past', () => {
+    // The #332 case in miniature: the player is 50px away in a straight line, but the route out
+    // is six hexes of driving. The decision must key off the second number, not the first.
+    const straight = 50;
+    const route = routeDistancePx(0, 0, { x: 30, y: 40 }, 6);
+    expect(route).toBeGreaterThan(straight * 4);
+  });
+
+  it('never goes negative on a degenerate remaining count', () => {
+    expect(routeDistancePx(0, 0, { x: 0, y: 0 }, 0)).toBe(0);
   });
 });

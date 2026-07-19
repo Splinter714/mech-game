@@ -116,8 +116,15 @@ function turretBehavior(scene, e, ctx) {
 function tankMoveIntent(e, ctx, def) {
   const standoff = def.standoff ?? 300;
   let radial = 0;
-  if (ctx.dist > standoff * 1.15) radial = 1;          // advance
-  else if (ctx.dist < standoff * 0.7) radial = -0.8;   // reverse (keep the gun's distance)
+  // #332: banded on TRAVEL distance (how far the player is along the route), not the straight line
+  // through whatever is in the way — see `_updateVehicle`'s ctx comment. Identical to `ctx.dist`
+  // out in the open; several times larger for a unit inside its own compound, which is what sends
+  // a woken garrison out through the gate instead of strafing against the inside of its wall.
+  const travel = ctx.travelDist ?? ctx.dist;           // #332 fallback: unrouted callers
+  // #332: no line of fire from here (it is behind its own wall) ⇒ close, unconditionally. Holding
+  // a firing standoff you cannot fire from is just hiding, and it is what kept garrisons indoors.
+  if (ctx.noFiringLane || travel > standoff * 1.15) radial = 1;   // advance
+  else if (travel < standoff * 0.7) radial = -0.8;     // reverse (keep the gun's distance)
   const strafe = (e.handed || 1) * 0.25;
   // #312: TRAVEL heading (routed around walls/blocking terrain), not the raw bearing to the
   // player — see `_updateVehicle`'s ctx comment. `tux/tuy` equals `ux/uy` whenever the line is
@@ -437,8 +444,9 @@ function deployNearby(scene, e, kindId) {
 function carrierMoveIntent(e, ctx, def) {
   const standoff = def.standoff ?? 320;
   let radial = 0;
-  if (ctx.dist > standoff * 1.15) radial = 1;
-  else if (ctx.dist < standoff * 0.7) radial = -0.8;
+  const travel = ctx.travelDist ?? ctx.dist;   // #332: route distance — see tankMoveIntent.
+  if (ctx.noFiringLane || travel > standoff * 1.15) radial = 1;
+  else if (travel < standoff * 0.7) radial = -0.8;
   const strafe = (e.handed || 1) * 0.2;
   // #312: routed travel heading — see tankMoveIntent above.
   const tux = ctx.tux ?? ctx.ux, tuy = ctx.tuy ?? ctx.uy;   // #312 fallback: unrouted callers
@@ -524,7 +532,9 @@ function infantryMoveIntent(e, ctx, def) {
     e._orbitAng = rand(0, Math.PI * 2);
   }
   let mx, my;
-  if (ctx.dist > standoff * 1.2) {
+  // #332: route distance — see tankMoveIntent. Infantry are the largest ground population on a
+  // generated map, so this is where a garrison actually emptying out is most visible.
+  if (ctx.noFiringLane || (ctx.travelDist ?? ctx.dist) > standoff * 1.2) {
     // Advance, with a little lateral jitter so the mob doesn't funnel into one file.
     // #312: routed travel heading — see tankMoveIntent. Infantry are the single largest ground
     // population on a generated map, so this is where routing is most visible.

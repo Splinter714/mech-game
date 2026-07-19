@@ -18,7 +18,24 @@
 // which the caller implements as tile passability of `to` AND no blocking span on the edge
 // between. A tile-only predicate is expressible as a `canStep` that ignores `from`; the reverse is
 // not, which is why the edge form is the one baked in here.
-import { axialKey, neighbors, distance, hexToPixel } from './hexgrid.js';
+import { axialKey, neighbors, distance, hexToPixel, HEX_SIZE } from './hexgrid.js';
+
+// Centre-to-centre distance between two adjacent hexes (pointy-top): every step in a route costs
+// exactly this much travel, which is what makes a hex count convertible into pixels below.
+export const HEX_STEP_PX = HEX_SIZE * Math.sqrt(3);
+
+// #332: how far is the unit ACTUALLY going to have to drive, along its route?
+//
+// `follow` hands back the next waypoint plus how many waypoints are left. Route length is then
+// the real leg to that waypoint (the unit is generally NOT standing on a hex centre) plus one hex
+// step for each waypoint after it. The error is bounded by well under one hex — the last waypoint
+// is the goal's own hex rather than the goal point — which is nothing next to the several-hundred-
+// pixel gap between "300px away as the crow flies" and "600px of driving out through the gate"
+// that this exists to tell apart.
+export function routeDistancePx(x, y, wp, remaining, stepPx = HEX_STEP_PX) {
+  const leg = Math.hypot(wp.x - x, wp.y - y);
+  return leg + Math.max(0, (remaining ?? 1) - 1) * stepPx;
+}
 
 // ── Tuning (owner: tunable) ─────────────────────────────────────────────────────────────
 // How many nodes one search may expand before giving up. The world is a disc a few dozen hexes

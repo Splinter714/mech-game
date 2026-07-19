@@ -34,7 +34,7 @@ import { hexToPixel, range, HEX_SIZE, axialKey, pixelToHex, hexesAlongSegment } 
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain, isPassable } from '../../data/terrain.js';
-import { makeRouter } from '../../data/hexRoute.js';
+import { makeRouter, routeDistancePx } from '../../data/hexRoute.js';
 import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX, SPAN_ROLE_GATE } from '../../data/wallEdges.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, wallCollideRadius } from './shared.js';
@@ -909,19 +909,50 @@ export const EnemiesMixin = {
   //     of a garrison, given #288's rings are sealed and #309's gates are shut most of the time).
   // In that second case the unit does exactly what it did before #312 — leans toward its target —
   // rather than freezing or thrashing, which is the graceful degradation the issue asks for.
-  _routedIntent(e, tx, ty) {
+  // #332: `routeDist` rides along with the heading — "how far away is the player ALONG THE ROUTE",
+  // or null when there is no route to measure. Null is the honest answer, not a fallback value,
+  // and every caller treats it as "use the straight-line distance exactly as before":
+  //   - no terrain / no waypoint (the line to the goal is CLEAR — the open-field case, and by far
+  //     the most common one): route distance and straight-line distance are the same thing, so
+  //     open-ground engagement is untouched by construction.
+  //   - an INCOMPLETE route (the unit is genuinely sealed in — a dormant base whose gates will
+  //     never open for it): the partial path's length is not the distance to the player, it is the
+  //     distance to the nearest point the unit can reach. Reporting it would be a lie in the other
+  //     direction, so those units keep exactly today's behaviour.
+  // `token` keys the router's per-unit route state. It defaults to the unit itself; a caller that
+  // routes toward a DIFFERENT goal for the same unit passes its own token so the two don't fight
+  // over one cached path and force a replan every frame (see `_playerTravel`).
+  _routedIntent(e, tx, ty, token = e) {
     const dx = tx - e.x, dy = ty - e.y;
     const m = Math.hypot(dx, dy) || 1;
-    const direct = { mx: dx / m, my: dy / m };
+    const direct = { mx: dx / m, my: dy / m, routeDist: null };
     if (!this.terrain?.get) return direct;
     const wp = this._router().follow(
-      e, e.x, e.y, { x: tx, y: ty }, this.time?.now ?? 0, this._routeCtx(),
+      token, e.x, e.y, { x: tx, y: ty }, this.time?.now ?? 0, this._routeCtx(),
     );
     if (!wp) return direct;
     const wx = wp.x - e.x, wy = wp.y - e.y;
     const wm = Math.hypot(wx, wy);
     if (wm < 1) return direct;
-    return { mx: wx / wm, my: wy / wm };
+    const routeDist = wp.complete ? routeDistancePx(e.x, e.y, wp, wp.remaining) : null;
+    return { mx: wx / wm, my: wy / wm, routeDist };
+  },
+
+  // #332: the routed heading AND route length from this unit to the player, computed once per
+  // frame and shared by the unit's engagement decision and its movement.
+  //
+  // The problem this solves (diagnosed in #331): travel DIRECTION was routed but the DECISION to
+  // travel was not. A garrison unit measured its standoff to the player as the crow flies —
+  // straight THROUGH its own wall — decided it was already at its ideal firing range, and strafed
+  // against the inside of the wall forever, while the real route out through the gate ran several
+  // times longer. Measuring the standoff along the ROUTE makes that decision honest: a unit that
+  // is 250px away but 700px of driving away now knows it has to come out and fight.
+  //
+  // Its own router token: a mech in COVER/FLANK routes toward a cover spot, not the player, so
+  // sharing one cached route between the two goals would invalidate it on alternate frames and
+  // burn a search every tick. Two tokens, two independent cached routes, each on its own cadence.
+  _playerTravel(e) {
+    return this._routedIntent(e, this.px, this.py, (e._playerRouteToken ??= {}));
   },
 
   _updateEnemy(e, dt, delta) {
@@ -1013,16 +1044,22 @@ export const EnemiesMixin = {
         // player with no distance clamp (the leash that used to sit here was removed per #285).
         e.decideAt -= delta;
         e.recampAt -= delta;   // all-indirect camp-hold timer (see _decideEnemyState)
+        // #332: mechs are ~5/11 of a late base's ground garrison, so they need the same honest
+        // standoff the vehicle path gets — a docked raider holding station inside its own wall
+        // reads exactly as broken as a tank doing it. One routed query per frame, reused by both
+        // the decision machine and the PRESS movement below so it costs one search, not two.
+        const travel = this._playerTravel(e);
+        const travelDist = travel.routeDist ?? dist;
         const arrived = e.goal && Math.hypot(e.goal.x - e.x, e.goal.y - e.y) < ARRIVE_SLOW;
         if (e.decideAt <= 0 || (REPICK_ON_ARRIVE && arrived && (e.state === 'flank' || e.state === 'cover'))) {
-          this._decideEnemyState(e, dist, bearing, hp);
+          this._decideEnemyState(e, travelDist, dist, bearing, hp);
           // #72 leash bookkeeping: only a COVER commitment keeps its camp timer; anything else
           // clears it so the next stint behind cover starts a fresh leash.
           if (e.state !== 'cover') e.coverSpot = null;
           e.decideAt = rand(DECIDE_MIN, DECIDE_MAX);
         }
         // Resolve the current state into a movement-intent vector (mx, my), roughly unit length.
-        ({ mx, my } = this._enemyMoveIntent(e, dist, bearing, ux, uy));
+        ({ mx, my } = this._enemyMoveIntent(e, travelDist, bearing, ux, uy, travel));
       }
 
       // #45: backing away (relative to turret facing) is slower.
@@ -1225,10 +1262,33 @@ export const EnemiesMixin = {
     // population the owner watches bump into walls. Flyers are skipped (they pass over ground
     // obstacles) and so are turrets (`move` is absent — they cannot travel at all), which keeps
     // the router off ~40% of the roster for free.
-    const ctx = { dt, delta, dxp, dyp, dist, bearing, ux, uy, tux: ux, tuy: uy };
+    //
+    // #332: `travelDist` is the third piece and the one that makes a garrison sortie. `dist` stays
+    // the true straight-line distance and is what AIM, range checks and LOS use; `travelDist` is
+    // how far the player is ALONG THE ROUTE, and is what the movement intents gate their
+    // advance/hold/reverse bands on. They are the same number whenever the line is clear, which is
+    // every open-field engagement — so this changes nothing out in the open and everything for a
+    // unit standing inside its own wall.
+    //
+    // `noFiringLane` is the other half, and it is what actually empties a compound. Route distance
+    // alone is not enough: a tank wants to sit 300px from the player, and 300px measured along a
+    // route that leaves through the gate still puts it INSIDE its own wall, where it has no shot.
+    // Measured — it advanced to the gate mouth and stopped there. So the standoff band only means
+    // anything when the unit can actually shoot from where it is standing; with no line of fire,
+    // "hold at my ideal range" is not a posture, it is hiding. A routed unit is by definition one
+    // whose straight line to the player is blocked, so this needs no extra raycast.
+    const ctx = {
+      dt, delta, dxp, dyp, dist, bearing, ux, uy, tux: ux, tuy: uy,
+      travelDist: dist, noFiringLane: false,
+    };
     if (!e.flying && e.kindDef?.move?.maxSpeed) {
-      const routed = this._routedIntent(e, this.px, this.py);
+      const routed = this._playerTravel(e);
       ctx.tux = routed.mx; ctx.tuy = routed.my;
+      ctx.travelDist = routed.routeDist ?? dist;
+      // Only when there is a COMPLETE route out. A unit genuinely sealed in (a dormant base whose
+      // gates will never open for it) keeps exactly today's behaviour rather than grinding
+      // pointlessly into the inside of a wall it cannot pass.
+      ctx.noFiringLane = routed.routeDist != null;
     }
 
     // #103 awareness: distance-only detection (+ noise) for non-mech kinds — deliberately
@@ -1492,9 +1552,16 @@ export const EnemiesMixin = {
   // ── State selection ─────────────────────────────────────────────────────────────────
   // Choose the enemy's next tactical state from the situation: role, distance band, health,
   // LOS, and what the player is doing. This is the "brain"; _enemyMoveIntent then realises it.
-  _decideEnemyState(e, dist, bearing, hp) {
-    const tooClose = dist < e.standoff * TOO_CLOSE_FRAC;
-    const tooFar = dist > e.standoff * TOO_FAR_FRAC;
+  // #332: `travelDist` is how far the player is ALONG THE ROUTE; `dist` is the true straight line.
+  // The two are equal whenever the line is clear, i.e. in every open-field fight. The RANGE BANDS
+  // use travel distance, because "am I at my firing range" is a question about driving, not about
+  // geometry — a unit 250px from the player through a sealed wall is not at its firing range, it
+  // is 700px of driving away and needs to come out. Everything that is genuinely about the
+  // straight line — line of sight, the bearing, "is the player's turret tracking me" — keeps using
+  // `dist`.
+  _decideEnemyState(e, travelDist, dist, bearing, hp) {
+    const tooClose = travelDist < e.standoff * TOO_CLOSE_FRAC;
+    const tooFar = travelDist > e.standoff * TOO_FAR_FRAC;
     // #167: fresh (not cached) — state decisions run on the slow DECIDE_MIN/MAX cadence, not per
     // frame, so this wants a current read; still routed through the allocation-free raycast.
     const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, this.px, this.py, isSmallUnit(e)) === Infinity;
@@ -1633,14 +1700,19 @@ export const EnemiesMixin = {
 
   // ── Movement realisation ────────────────────────────────────────────────────────────
   // Turn the current state into a movement-intent vector (mx, my), roughly unit length.
-  _enemyMoveIntent(e, dist, bearing, ux, uy) {
+  // `travelDist` is route distance to the player (#332 — see `_decideEnemyState`). `travel`, when
+  // given, is the already-computed routed heading toward the player, passed in so PRESS reuses the
+  // caller's single routed query instead of running a second one.
+  _enemyMoveIntent(e, travelDist, bearing, ux, uy, travel = null) {
     switch (e.state) {
       case 'press':  // close the gap; stop pressing once inside optimal so we don't faceplant.
-        if (dist <= e.standoff * 0.8) return this._strafeIntent(e, ux, uy);
+        // #332: route distance, so a unit that has "arrived" only in a straight line through a
+        // wall keeps pressing until it has actually driven the route.
+        if (travelDist <= e.standoff * 0.8) return this._strafeIntent(e, ux, uy);
         // #312: routed. This is the big one — "walk at the player" is the most common travel
         // intent in the game, and it is the one that used to drive units face-first into a wall
         // and hold them there. With a clear line `_routedIntent` returns exactly `{ux, uy}`.
-        return this._routedIntent(e, this.px, this.py);
+        return travel ?? this._playerTravel(e);
 
       case 'kite':   // back away from the player while keeping LOS; sidestep a touch so it
                      // isn't a dead-straight retreat the player can walk down.

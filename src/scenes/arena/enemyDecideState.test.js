@@ -51,7 +51,7 @@ describe('#212 a hurt enemy still resumes pursuit once the player has moved far 
     const e = makeEnemy({ standoff: 200 });
     const scene = makeScene({ px: 250, py: 0 });   // dist 250, well within standoff*1.45=290
 
-    scene._decideEnemyState(e, 250, 0, 0.2);   // hp 0.2 < COVER_HEALTH_TRIGGER (0.45) => hurt
+    scene._decideEnemyState(e, 250, 250, 0, 0.2);   // hp 0.2 < COVER_HEALTH_TRIGGER (0.45) => hurt
 
     expect(e.state).toBe('kite');
   });
@@ -61,7 +61,7 @@ describe('#212 a hurt enemy still resumes pursuit once the player has moved far 
     const dist = 800;   // way beyond standoff*1.45=290 => tooFar
     const scene = makeScene({ px: dist, py: 0 });
 
-    scene._decideEnemyState(e, dist, 0, 0.2);   // still hurt (hp 0.2)
+    scene._decideEnemyState(e, dist, dist, 0, 0.2);   // still hurt (hp 0.2)
 
     expect(e.state).toBe('press');
   });
@@ -71,7 +71,7 @@ describe('#212 a hurt enemy still resumes pursuit once the player has moved far 
     const dist = 800;
     const scene = makeScene({ px: dist, py: 0, now: 1000 });   // now < hurtUntil => hurt
 
-    scene._decideEnemyState(e, dist, 0, 1.0);   // full hp, but within the post-hit window
+    scene._decideEnemyState(e, dist, dist, 0, 1.0);   // full hp, but within the post-hit window
 
     expect(e.state).toBe('press');
   });
@@ -81,7 +81,7 @@ describe('#212 a hurt enemy still resumes pursuit once the player has moved far 
     const dist = 800;
     const scene = makeScene({ px: dist, py: 0 });
 
-    scene._decideEnemyState(e, dist, 0, 1.0);   // full hp, no recent hit
+    scene._decideEnemyState(e, dist, dist, 0, 1.0);   // full hp, no recent hit
 
     expect(e.state).toBe('press');
   });
