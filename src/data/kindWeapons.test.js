@@ -19,7 +19,7 @@ describe('kindWeaponSlots — normalising single- and multi-weapon kinds', () =>
     expect(Object.keys(slots)).toEqual([DEFAULT_SLOT]);
     expect(slots[DEFAULT_SLOT]).toEqual({
       slot: DEFAULT_SLOT, weaponId: 'autocannon', weaponOverride: { cycleTime: 1700 },
-      fireRange: 380, burstShots: 2, burstRestMs: 800,
+      fireRange: 380, burstShots: 2, burstRestMs: 800, fixedForward: false,
     });
   });
 
@@ -115,6 +115,11 @@ describe('the LIVE roster through the seam', () => {
     expect(flank.delivery.count).toBe(2);
     expect(slots.flank.burstShots).toBe(15);
     expect(slots.flank.burstRestMs).toBe(1200);
+
+    // The nose salvo is a FIXED FORWARD mount (fires along the airframe, holds fire until the
+    // airframe is on target); the door gun is turreted and tracks independently.
+    expect(slots.nose.fixedForward).toBe(true);
+    expect(slots.flank.fixedForward).toBe(false);
 
     // Two genuinely different guns with genuinely different cadences — which is exactly why the
     // cooldowns had to become per-slot.

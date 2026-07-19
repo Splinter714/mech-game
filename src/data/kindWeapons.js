@@ -61,6 +61,10 @@ function normalize(slot, spec) {
     fireRange: spec.fireRange,
     burstShots: spec.burstShots,
     burstRestMs: spec.burstRestMs,
+    // #305: a gun bolted to the airframe rather than mounted on a slewing turret — it aims and
+    // fires along the unit's HULL angle, and won't fire until the hull itself is on target.
+    // See aimAndFire in scenes/arena/enemyBehaviors.js.
+    fixedForward: !!spec.fixedForward,
   };
 }
 

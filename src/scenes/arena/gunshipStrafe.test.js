@@ -157,7 +157,11 @@ describe('gunship attack cycle — facing drives the weapon (#305)', () => {
     const scene = makeScene();
     const e = makeGunship({ x: 900 });
     const log = fly(scene, e, 600);
-    const repo = log.filter((f) => f.phase === REPOSITION);
+    // The FIRST contiguous break-off only — the log may clip mid-way through a later one.
+    const start = log.findIndex((f) => f.phase === REPOSITION);
+    let end = start;
+    while (end + 1 < log.length && log[end + 1].phase === REPOSITION) end++;
+    const repo = log.slice(start, end + 1);
     expect(repo.length).toBeGreaterThan(20);
     // Guns cold for the entire break-off — this is the visible "flies off in a non-strafing
     // style" beat Jackson described.
@@ -165,8 +169,12 @@ describe('gunship attack cycle — facing drives the weapon (#305)', () => {
       expect(f.fired).toBe(false);
       expect(f.slot).toBeNull();
     }
-    // And it genuinely leaves — further out at the end of the break-off than at the start.
-    expect(repo[repo.length - 1].dist).toBeGreaterThan(repo[0].dist);
+    // And it genuinely leaves. Note the break-off is an ARC, not a straight retreat: it swings
+    // 1.1-2.3 rad around the player on its way to a point at ~1.9x standoff, and the chord of
+    // that swing dips inside the old radius partway through. So the honest claim isn't
+    // "monotonically further every frame" — it's that it ends up well OUTSIDE the standoff it
+    // was just holding, i.e. clear of gun range before it turns back in.
+    expect(repo[repo.length - 1].dist).toBeGreaterThan(repo[0].standoff * 1.3);
   });
 
   it('re-enters the cycle after repositioning — approach, strafe, break off, approach again', () => {

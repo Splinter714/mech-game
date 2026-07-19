@@ -54,8 +54,22 @@ function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
   // unit per frame — now a STAGGERED CACHE (~120ms per-enemy refresh), exact at each refresh.
   const los = needLos ? scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py, isSmallUnit(e)) : true;
   // Only fire once the gun is roughly on target, so shots read as aimed.
-  const onTarget = Math.abs(Phaser.Math.Angle.Wrap(e.turret - ctx.bearing)) < 0.35;
-  if (inRange && los && onTarget) scene._fireVehicleWeapon(e, ctx, e.turret);
+  //
+  // #305: a slot may be a FIXED FORWARD mount (`fixedForward` in the kind's data) — a gun bolted
+  // to the airframe rather than sitting on a slewing turret, like the gunship's nose rockets.
+  // Two consequences, and the real-game run showed both matter:
+  //   * It aims with the HULL, not the turret. The turret tracks the player continuously (it
+  //     never stops, even through the break-off), so gating a nose gun on `e.turret` let the
+  //     gunship dump a rocket salvo the instant it entered its approach — while the airframe
+  //     was still ~77° off from the previous phase, firing rockets sideways out of its nose.
+  //     Measured in the running game before this gate existed.
+  //   * It FIRES along the hull axis for the same reason. That's what makes the dumbfire salvo
+  //     something the player can read and sidestep: the rockets go where the aircraft is
+  //     pointed, which he can see coming, rather than wherever an invisible turret is aimed.
+  const fixed = !!mount?.fixedForward;
+  const aimAxis = fixed ? e.angle : e.turret;
+  const onTarget = Math.abs(Phaser.Math.Angle.Wrap(aimAxis - ctx.bearing)) < 0.35;
+  if (inRange && los && onTarget) scene._fireVehicleWeapon(e, ctx, aimAxis);
 }
 
 // TURRET — static artillery emplacement. No locomotion at all; just track + fire. #94: fires an

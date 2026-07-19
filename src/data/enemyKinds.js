@@ -324,6 +324,12 @@ export const ENEMY_KINDS = {
       // must actually be closing before it starts throwing rockets.
       nose: {
         weaponId: 'clusterRocket',
+        // A FIXED FORWARD mount: it aims and fires along the AIRFRAME, and holds fire until the
+        // airframe itself is on target (see aimAndFire). Without this the gunship dumped a salvo
+        // the instant its approach began, while still ~77 degrees off from the previous phase —
+        // measured in the running game. It's also what makes the dumbfire salvo sidesteppable:
+        // the rockets go where the aircraft visibly points.
+        fixedForward: true,
         fireRange: 520,
         burstShots: 3,
         burstRestMs: 1400,
