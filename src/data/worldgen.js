@@ -86,8 +86,8 @@ export const DOCKS_PER_BASE_MAX = 8;
 // bespoke cluster-expansion typeId.
 //
 // #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — carriers already
-// have their own independent drone-deploy mechanic (enemyBehaviors.js `carrierBehavior`'s
-// `deployEveryMs`/`deployBatchMin/Max`/`deployCap`), so a dock ALSO producing standalone drones
+// have their own independent drone-deploy mechanic (enemyBehaviors.js `carrierDeployTick`'s
+// `deployEveryMs`/`deployBatchMin/Max`, uncapped since the #328 follow-up), so a dock ALSO producing standalone drones
 // was redundant with that. `'turret'` is REMOVED entirely too — a base's fixed guns are its WALL
 // turrets (#310 `assignWallTurrets`), never a kind drawn from the generic dock pool. (#287 removed
 // the interim interior `turretEmplacement` bunker that briefly served that role.)

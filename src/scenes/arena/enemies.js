@@ -42,7 +42,7 @@ import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, DORMANT, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
-import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
+import { ENEMY_BEHAVIORS, carrierDeployTick, CARRIER_DEPLOY_GRACE_MS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
@@ -1330,6 +1330,24 @@ export const EnemiesMixin = {
     } else if (this.enemyMove || e.behavior === 'turret') {
       behavior(this, e, ctx);
     } else { e.vx = approach(e.vx, 0, (e.kindDef.move.accel || 200) * dt); e.vy = approach(e.vy, 0, (e.kindDef.move.accel || 200) * dt); }
+
+    // #328 follow-up: the carrier's swarm deploy ticks HERE, outside the movement/brain branch
+    // above, for any kind that declares a deploy cadence. It used to run inside carrierBehavior,
+    // which meant it only advanced on frames the unit ran its full tactical brain — so breaking
+    // line of sight, or the post-wake `reacting` stagger, stalled the 4s cadence along with the
+    // movement ("isn't dispensing drones consistently"). Now: the first reacting frame arms the
+    // bay (`deployArmed`) and refreshes a grace timer; the tick keeps running while that grace
+    // lasts, so brief gaps in engagement no longer hitch the cadence. Stand-down (#304, player
+    // dead) still stops it — a disengaging force shouldn't keep birthing drones — as does death,
+    // since a dead unit never reaches this loop. There is no lifetime cap: killing it is the
+    // only lever.
+    if (e.kindDef.deployEveryMs && !this._standDownActive()) {
+      if (reacting) { e.deployArmed = true; e.deployGraceMs = CARRIER_DEPLOY_GRACE_MS; }
+      else if (e.deployGraceMs > 0) e.deployGraceMs -= delta;
+      if (e.deployArmed && (reacting || e.deployGraceMs > 0)) {
+        carrierDeployTick(this, e, e.kindDef, delta);
+      }
+    }
 
     // Integrate. Flyers pass over walls/water/forest/ground-units (unchanged, #92); ground units
     // collide + slide like a mech. #282: mutual ground-unit collision layers on top of the
