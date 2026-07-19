@@ -110,7 +110,8 @@ export const VisibilityMixin = {
       walls
         ? {
           hexCenter: (q, r) => hexToPixel(q, r),
-          segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(walls, x0, y0, x1, y1),
+          // #309: `true` — you can see through an OPEN gate. A closed one blocks sight like any span.
+          segmentBlocked: (x0, y0, x1, y1) => !!wallEdgeCrossing(walls, x0, y0, x1, y1, undefined, true),
         }
         : {},
     );

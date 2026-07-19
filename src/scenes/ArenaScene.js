@@ -368,6 +368,9 @@ export default class ArenaScene extends Phaser.Scene {
     // walked away or died) and seal it — see bases.js `_updateDockOpenClose` for the state
     // machine (open ⇄ closed ⇄ reopened-for-resupply).
     this._updateDockOpenClose();
+    // #309: tick each base's wall GATES — a woken base cracks its sally ports open a beat after
+    // the alarm, holds them open long enough for its garrison to pour out, then shuts them again.
+    this._updateGates(dt);
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);

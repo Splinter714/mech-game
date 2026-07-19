@@ -51,6 +51,15 @@ import {
 } from './shieldOutline.js';
 import { shieldPresent } from '../../data/shield.js';
 
+// #309: the gate-aware form of the scene's `_blocked` for ENEMY ground movement — an open gate
+// span is walkable for them and for nobody else (world.js `_blockedForEnemy`). Routed through this
+// helper rather than called directly so the many hand-rolled scene stubs across the test suite,
+// which provide only the plain `_blocked`, keep working unchanged and simply see every gate as
+// solid — the conservative direction to fail in.
+const blockedForEnemy = (scene, x, y) => (
+  scene._blockedForEnemy ? scene._blockedForEnemy(x, y) : scene._blocked(x, y)
+);
+
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
 // ── #44 tactical-AI tuning (owner: review/tune) ─────────────────────────────────────────
@@ -896,7 +905,13 @@ export const EnemiesMixin = {
       // collision check below, alongside the existing terrain `_blocked` check — an enemy mech
       // can no longer walk through another large enemy (mech/quadruped/turret) or the player.
       // (Small units still never block a large one — see `_blockedByOtherGroundUnit`'s comment.)
-      const blocked = (x, y) => this._blocked(x, y) || this._blockedByOtherGroundUnit(e, x, y);
+      // #309: `_blockedForEnemy` — a garrison unit may step through its OWN base's OPEN gate.
+      // This is the entire enemy half of the sally port: the units need no new pathing state, no
+      // waypoint, and no knowledge that a gate exists — the span simply stops being solid to them
+      // while it is open, and their existing straight-line steering at the player carries them
+      // through it. (The player's movement integrator, locomotion.js, calls `_blockedAlongSegment`,
+      // which has no such opt-in — see world.js.)
+      const blocked = (x, y) => blockedForEnemy(this, x, y) || this._blockedByOtherGroundUnit(e, x, y);
       if (blocked(nx, ny)) {
         if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
         else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
@@ -1029,7 +1044,9 @@ export const EnemiesMixin = {
     // bases.js `_spawnDormantUnits`) is exempt: that hex is deliberately impassable now, and the
     // turret standing on it is not stranded, it's manning the structure. Without this exemption
     // every base turret would be snapped off its own bunker onto neighbouring ground on frame 1.
-    if (!e.flying && !e.emplaced && this._blocked(e.x, e.y)) {
+    // #309: the enemy form here too — a unit part-way through an open gate is standing legally,
+    // not stuck, and must not be picked up by the stuck-unit rescue and teleported off its sortie.
+    if (!e.flying && !e.emplaced && blockedForEnemy(this, e.x, e.y)) {
       const p = nearestValidPixel(this.terrain, this.worldRadius, e.x, e.y);
       e.x = p.x; e.y = p.y; e.vx = 0; e.vy = 0;
     }
@@ -1093,7 +1110,13 @@ export const EnemiesMixin = {
     // gridlocked dense swarms, see #282's follow-up and that method's removed-comment in world.js.
     let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
     if (!e.flying) {
-      const blocked = (x, y) => this._blocked(x, y) || this._blockedByOtherGroundUnit(e, x, y);
+      // #309: `_blockedForEnemy` — a garrison unit may step through its OWN base's OPEN gate.
+      // This is the entire enemy half of the sally port: the units need no new pathing state, no
+      // waypoint, and no knowledge that a gate exists — the span simply stops being solid to them
+      // while it is open, and their existing straight-line steering at the player carries them
+      // through it. (The player's movement integrator, locomotion.js, calls `_blockedAlongSegment`,
+      // which has no such opt-in — see world.js.)
+      const blocked = (x, y) => blockedForEnemy(this, x, y) || this._blockedByOtherGroundUnit(e, x, y);
       if (blocked(nx, ny)) {
         if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
         else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }

@@ -21,6 +21,12 @@ import { mulberry32 } from '../../data/worldgen.js';
 import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp } from '../../data/terrain.js';
+import { gateEdges, setGateOpen, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
+import { pointSegmentDistance } from '../../data/hexEdges.js';
+import {
+  makeGateState, tickGate, gatePassable, GATE_STAGGER_MAX_MS,
+  GATE_OPENING, GATE_OPENING_MS, GATE_CLOSING, GATE_CLOSING_MS,
+} from '../../data/gateCycle.js';
 
 // #269 overhaul ("a pulsing red ring of some kind once it's activated") — the live ring drawn
 // over a counting-down alert tower. Was the beacon's own orange (0xff6a3a); Jackson asked for a
@@ -820,5 +826,112 @@ export const BasesMixin = {
   _allObjectivesDestroyed() {
     if (!this.bases || !this.bases.length) return false;
     return this.bases.every((base) => isBaseObjectiveDestroyed(base, this.buildingHp, this.enemies));
+  },
+
+  // ── #309: WALL GATES / the sally port ───────────────────────────────────────────────────
+  // Build one cycle state per gate span. Called from `_buildWorld` (world.js) once the wall-edge
+  // set exists. The two gates of a ring get slightly different starting offsets so they don't
+  // crank in perfect lockstep — the same de-synchronisation reasoning #311 applied to docks, and
+  // it matters more here: two gates opening on the same frame reads as one scripted event, while
+  // two opening a beat apart reads as a base reacting.
+  _initGates() {
+    this._gateStates = new Map();
+    const rng = mulberry32(0x9e3779b9 ^ (this.runSeed ?? 1));
+    for (const edge of gateEdges(this.wallEdges)) {
+      this._gateStates.set(edge.key, makeGateState(rng() * GATE_STAGGER_MAX_MS));
+      edge.open = false;
+      edge.openFrac = 0;
+    }
+  },
+
+  // Per-frame tick, called from ArenaScene.update() alongside `_updateDockResupply`. Drives every
+  // gate's cycle from its base's `awake` flag, mirrors the resulting phase onto the span's live
+  // `open` / `openFrac` fields (which is what world.js's queries and wallArt.js's renderer read),
+  // and plays the door FX on each transition.
+  //
+  // A DESTROYED gate is dropped from the map entirely: the player shot it down, it is now an
+  // ordinary permanent breach in the ring, and there is nothing left to open or close. That is the
+  // deliberate answer to "what happens if he destroys a closed gate" — a gate is a span with the
+  // same 200hp pool as every other span, so blowing it open is exactly a breach, with the bonus
+  // that he has also permanently denied the base one of its two sally ports.
+  _updateGates(dt) {
+    if (!this._gateStates || !this._gateStates.size) return;
+    let redraw = false;
+    for (const edge of gateEdges(this.wallEdges)) {
+      const state = this._gateStates.get(edge.key);
+      if (!state) continue;
+      if (edge.destroyed) { this._gateStates.delete(edge.key); redraw = true; continue; }
+      const next = tickGate(state, { awake: this._wokenBases.has(edge.baseId), dt });
+      if (next === state) continue;
+      this._gateStates.set(edge.key, next);
+      // Passable ONLY in the fully-open phase — never mid-travel, so a unit can't be caught in a
+      // closing span. `setGateOpen` is the one place the flag is written.
+      setGateOpen(this.wallEdges, edge, gatePassable(next));
+      // The leaves' visible travel: 0 shut -> 1 open, ramped across the opening/closing phases so
+      // the doors are seen to move rather than snapping between two states.
+      edge.openFrac = next.phase === GATE_OPENING ? 1 - next.remainingMs / GATE_OPENING_MS
+        : next.phase === GATE_CLOSING ? next.remainingMs / GATE_CLOSING_MS
+          : gatePassable(next) ? 1 : 0;
+      redraw = true;
+      if (next.startedOpening) this._gateOpenFx(edge);
+      if (next.justClosed) this._gateCloseFx(edge);
+      // A gate opening or shutting changes what can be seen through it, so the cached field of
+      // view is stale — same invalidation a breached span triggers (world.js `_damageWallEdge`).
+      if (next.justOpened || next.justClosed) this._invalidateVisibility?.();
+    }
+    // Redraw every frame while any gate is mid-cycle or lit, so the leaves animate and the
+    // barrier field pulses; otherwise only on an actual transition.
+    if (redraw || [...this._gateStates.values()].some(gatePassable)) this._redrawWallEdges();
+    this._updateGateFieldContact();
+  },
+
+  // The confirming beat for "open, but not for you": while the player is pressed against an OPEN
+  // gate's barrier field, it sparks off him. Without this, driving into a visibly open doorway and
+  // simply stopping is the exact sensation of a collision bug — with it, he is visibly leaning on
+  // a screen that is holding him out. Throttled to a few sparks a second so a player who sits on
+  // the field gets a steady crackle rather than a strobe.
+  _updateGateFieldContact() {
+    if (!this._gateStates?.size) return;
+    const now = this.time?.now ?? 0;
+    if (now < (this._nextGateSparkAt ?? 0)) return;
+    for (const edge of gateEdges(this.wallEdges)) {
+      if (!edge.open || edge.destroyed) continue;
+      const d = pointSegmentDistance(edge.x0, edge.y0, edge.x1, edge.y1, this.px, this.py);
+      if (d > WALL_THICKNESS_PX * 2.2) continue;
+      this._nextGateSparkAt = now + 140;
+      this._gateFieldFx(edge);
+      return;
+    }
+  },
+
+  // A bright amber flare and ring across the gate's mouth as the leaves start to part — the
+  // "something is coming out of there" cue, deliberately loud enough to pull the eye across the
+  // field. Same throwaway-display-object/tween style as `_resupplyDock`'s door sequence and
+  // `_closeDockFx`, which is the machinery #309 asked this to reuse.
+  _gateOpenFx(edge) {
+    const x = (edge.x0 + edge.x1) / 2, y = (edge.y0 + edge.y1) / 2;
+    Audio.explosion(0.3, { x, y, listenerX: this.px, listenerY: this.py });
+    const flare = this.add.circle(x, y, 10, 0xffc65a, 0.75).setDepth(DEPTH.IMPACT_FX);
+    const ring = this.add.circle(x, y).setStrokeStyle(3, 0xffc65a, 0.9).setRadius(12).setDepth(DEPTH.IMPACT_FX + 0.1);
+    this.tweens.add({ targets: flare, scale: 2.4, alpha: 0, duration: 620, ease: 'Quad.easeOut', onComplete: () => flare.destroy() });
+    this.tweens.add({ targets: ring, scale: 3.4, alpha: 0, duration: 760, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
+  },
+
+  // The gate slamming shut: a quiet mechanical thud and a quick inward flash, mirroring
+  // `_closeDockFx`'s "nothing was destroyed, something just sealed" register.
+  _gateCloseFx(edge) {
+    const x = (edge.x0 + edge.x1) / 2, y = (edge.y0 + edge.y1) / 2;
+    Audio.explosion(0.2, { x, y, listenerX: this.px, listenerY: this.py });
+    const ring = this.add.circle(x, y).setStrokeStyle(2.5, 0x8a7645, 0.85).setRadius(26).setDepth(DEPTH.IMPACT_FX);
+    this.tweens.add({ targets: ring, scale: 0.2, alpha: 0, duration: 420, ease: 'Quad.easeIn', onComplete: () => ring.destroy() });
+  },
+
+  // The player shoving against a live barrier field — a small spark at the point of contact.
+  _gateFieldFx(edge) {
+    const t = Math.max(0, Math.min(1, ((this.px - edge.x0) * (edge.x1 - edge.x0) + (this.py - edge.y0) * (edge.y1 - edge.y0))
+      / (((edge.x1 - edge.x0) ** 2 + (edge.y1 - edge.y0) ** 2) || 1)));
+    const x = edge.x0 + (edge.x1 - edge.x0) * t, y = edge.y0 + (edge.y1 - edge.y0) * t;
+    const spark = this.add.circle(x, y, 5, 0xffe2a0, 0.85).setDepth(DEPTH.IMPACT_FX + 0.4);
+    this.tweens.add({ targets: spark, scale: 2.1, alpha: 0, duration: 220, ease: 'Quad.easeOut', onComplete: () => spark.destroy() });
   },
 };

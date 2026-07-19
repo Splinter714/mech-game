@@ -956,9 +956,67 @@ export function placeBaseWalls(T, bases) {
         edges.push({ a: { q, r }, b: { q: n.q, r: n.r } });   // `a` = the base side
       }
     }
-    if (edges.length) walls.push({ baseId: base.id, edges });
+    if (edges.length) walls.push({ baseId: base.id, edges: assignGates(T, base, edges) });
   }
   return walls;
+}
+
+// ── #309: which spans of a ring are GATES ───────────────────────────────────────────────────
+// A gate is not a separate structure — it is one of the ring's own spans, flagged `role: 'gate'`
+// (data/wallEdges.js). It keeps the same HP pool and the same geometry as any other span, so
+// destroying a closed gate simply breaches it like any other span and leaves a permanent hole; and
+// it stays SOLID TO THE PLAYER whether open or shut, which is what preserves #288's seal.
+//
+// TWO gates per ring, on roughly OPPOSITE sides.
+//   - Why two and not one: a single gate is a fixed answer to the fight — the player parks off the
+//     one opening and farms whatever walks out of it. With one gate facing his approach and one
+//     behind, a garrison that sorties can come at him from two headings and he cannot cover both,
+//     which is the whole reason a fortification has more than one sally port.
+//   - Why not more: every gate is a span he can shoot open, and a ring with gates all round starts
+//     to read as a fence rather than a wall. Two is the smallest number that creates a flank.
+//
+// WHERE THEY SIT. The first gate faces the player's APPROACH — the bearing from the base's centre
+// back toward the world origin, which is where the run spawns (the corridor spine starts at u=0 at
+// the origin, see `placeBases`). That is a cheap proxy for "the side he will arrive on" that needs
+// no spine argument and cannot be thrown off by a corridor that doubles back, unlike anything
+// derived from progress. The second gate is the span nearest the opposite bearing.
+//
+// FORGIVING GEOMETRY (#312 is not built — enemy movement is still straight-line steering, so a
+// unit that emerges facing its own wall will grind along it rather than path around). Two things
+// keep that from happening: a span is only eligible if the hex on its OUTER side is passable
+// ground, so nothing ever opens onto a mesa or a lake; and the outward bearing test naturally
+// favours a span whose outward normal points away from the compound, so a unit stepping through is
+// already heading into open field. If no eligible span exists (a base wedged against impassable
+// terrain on every side), that base simply gets no gate rather than one that opens into a cliff —
+// it is then a purely passive fortress, exactly as it was before this issue, which is a safe
+// degradation rather than a broken one.
+function assignGates(T, base, edges) {
+  const c = hexToPixel(base.center.q, base.center.r);
+  // Outward bearing of each span: from the base centre toward the OUTER hex's centre. Using the
+  // outer hex rather than the edge midpoint makes the measure agree with the direction a unit
+  // actually travels as it steps through.
+  const withBearing = edges.map((e) => {
+    const o = hexToPixel(e.b.q, e.b.r);
+    return { e, bearing: Math.atan2(o.y - c.y, o.x - c.x), outerPassable: isPassableOf(T?.get(axialKey(e.b.q, e.b.r))) };
+  });
+  const eligible = withBearing.filter((w) => w.outerPassable);
+  if (!eligible.length) return edges;
+  // The approach: back toward the origin, where the run spawns.
+  const approach = Math.atan2(-c.y, -c.x);
+  const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  const nearestTo = (target, exclude) => {
+    let best = null, bestD = Infinity;
+    for (const w of eligible) {
+      if (exclude && w.e === exclude) continue;
+      const d = angDiff(w.bearing, target);
+      if (d < bestD) { best = w; bestD = d; }
+    }
+    return best;
+  };
+  const front = nearestTo(approach, null);
+  const rear = nearestTo(approach + Math.PI, front?.e);
+  for (const w of [front, rear]) if (w) w.e.role = 'gate';
+  return edges;
 }
 
 // MAX_WORLD_RADIUS: a finite bounding cap on the corridor's reach in hex-distance from origin, used
