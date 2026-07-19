@@ -1,4 +1,4 @@
-// #300: shooting an armored non-mech unit (tank / quadruped) must visibly STRIP its plating the
+// #300: shooting an armored non-mech unit (tank / carrier) must visibly STRIP its plating the
 // moment its armor pool empties. Mechs already did this via `reskinMech` on `res.armorBrokeNow`;
 // vehicles had no reskin path at all. This exercises the real CombatMixin `_damageEnemyAt` and the
 // real EnemiesMixin `_reskinVehicle` against a minimal fake scene (same harness style as
@@ -25,7 +25,7 @@ function makeVehicle(kindId = 'tank') {
   const view = { hull: sprite(`${BASE_KEY}${ARMORED_SUFFIX}_hull`), turret: sprite(`${BASE_KEY}${ARMORED_SUFFIX}_turret`) };
   return {
     key: BASE_KEY, texKey: BASE_KEY + ARMORED_SUFFIX, mech: body, view,
-    x: 0, y: 0, kind: def.kind, kindDef: def, hullFrame: 0,
+    x: 0, y: 0, kind: def.kind, kindDef: def, hullFrame: 0, turretFrame: 0,
   };
 }
 
@@ -82,20 +82,24 @@ describe('an armored vehicle strips its plating when the armor pool empties (#30
     expect(e.view.hull.tex).toBe(`${BASE_KEY}${ARMORED_SUFFIX}_hull`);
   });
 
-  it('uses the CURRENT walk-cycle frame when re-pointing a legged kind (quadruped)', () => {
-    const e = makeVehicle('quadruped');
-    e.key = 'vehicle_quadruped_0';
-    e.texKey = `vehicle_quadruped_0${ARMORED_SUFFIX}`;
-    e.hullFrame = 2;
-    e.view.hull.tex = `vehicle_quadruped_0${ARMORED_SUFFIX}_hull_2`;
+  it('#328: uses the CURRENT bay-door frame when re-pointing a multi-frame-turret kind (carrier)', () => {
+    const e = makeVehicle('carrier');
+    e.key = 'vehicle_carrier_0';
+    e.texKey = `vehicle_carrier_0${ARMORED_SUFFIX}`;
+    e.turretFrame = 1;   // doors mid-launch when the plating breaks
+    e.view.hull.tex = `vehicle_carrier_0${ARMORED_SUFFIX}_hull`;
+    e.view.turret.tex = `vehicle_carrier_0${ARMORED_SUFFIX}_turret_1`;
     const scene = makeScene(e);
-    expect(ENEMY_KINDS.quadruped.legFrames).toBeGreaterThan(0);
+    expect(ENEMY_KINDS.carrier.turretFrames).toBeGreaterThan(0);
 
-    // The quadruped carries all three layers — one hit big enough to burn through the shield
+    // The carrier carries all three layers — one hit big enough to burn through the shield
     // AND the armor pool in the same swing is what trips `armorBrokeNow`.
-    scene._damageEnemyAt(e, 0, 0, (ENEMY_KINDS.quadruped.shield?.max ?? 0) + ENEMY_KINDS.quadruped.armor);
+    scene._damageEnemyAt(e, 0, 0, (ENEMY_KINDS.carrier.shield?.max ?? 0) + ENEMY_KINDS.carrier.armor);
     expect(e.mech.hasArmor()).toBe(false);
-    expect(e.view.hull.tex).toBe('vehicle_quadruped_0_hull_2');
+    // Hull is single-frame now (the legs went away with the rework), the DOOR keeps its frame —
+    // a carrier that loses its plating mid-launch must not snap its bay shut for a frame.
+    expect(e.view.hull.tex).toBe('vehicle_carrier_0_hull');
+    expect(e.view.turret.tex).toBe('vehicle_carrier_0_turret_1');
   });
 
   it('leaves an unarmored kind (drone) entirely alone', () => {

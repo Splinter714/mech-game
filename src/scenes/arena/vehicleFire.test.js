@@ -198,7 +198,7 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     expect(e.slotCd.main).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 1500ms — the weapon's own cadence
   });
 
-  it('a weaponOverride cycleTime slows a single-shot weapon\'s cadence in the weapon\'s own terms (tank/quadruped shape)', () => {
+  it('a weaponOverride cycleTime slows a single-shot weapon\'s cadence in the weapon\'s own terms (tank/carrier shape)', () => {
     const { scene, calls } = makeScene();
     const e = makeKindEnemy(PROJECTILE_WEAPON_ID, { cycleTime: 3100 });
 
@@ -246,7 +246,9 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     }
     // The kinds that used it now express the SAME cadence through weaponOverride:
     expect(ENEMY_KINDS.tank.weaponOverride).toEqual({ cycleTime: 1500 });
-    expect(ENEMY_KINDS.quadruped.weaponOverride).toEqual({ cycleTime: 1700 });
+    // #328: the carrier used to sit here with { cycleTime: 1700 }; it is now UNARMED and
+    // carries no weapon fields at all.
+    expect(ENEMY_KINDS.carrier.weaponOverride).toBeUndefined();
     // Infantry's old 700ms timer, byte-identical, in stream terms: 1000 / (10/7) = 700.
     expect(1000 / ENEMY_KINDS.infantry.weaponOverride.delivery.fireRate).toBeCloseTo(700, 6);
     // Turret (#244): the old dedicated siegeShell entry is gone — its full artillery tuning,
@@ -257,7 +259,7 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
 
 // #233 ("projectiles should originate from the tip of the weapon muzzle art"): non-mech KIND
 // enemies (turret/tank/drone/…) spawn shots via this same `_fireVehicleWeapon` path, keyed off
-// `def.muzzlePart`'s box — but that box's own front edge sits behind (or, for the quadruped,
+// `def.muzzlePart`'s box — but that box's own front edge sits behind (or, for the carrier,
 // past) the kind's hand-drawn gun/barrel art. `def.muzzleForward` (enemyKinds.js) closes that
 // gap; these tests prove `_fireVehicleWeapon` actually applies it.
 describe('_fireVehicleWeapon applies muzzleForward to the spawn point (#233)', () => {
@@ -289,7 +291,7 @@ describe('_fireVehicleWeapon applies muzzleForward to the spawn point (#233)', (
     expect(Math.abs(want.x - withoutForward.x) + Math.abs(want.y - withoutForward.y)).toBeGreaterThan(0.01);
   });
 
-  it('pulls the spawn point BACK for a negative muzzleForward (the quadruped kind\'s -4 case)', () => {
+  it('pulls the spawn point BACK for a negative muzzleForward (the carrier kind\'s -4 case)', () => {
     const { scene } = makeScene();
     const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
     e.kindDef.muzzleForward = -4;

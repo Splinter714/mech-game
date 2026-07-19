@@ -41,10 +41,10 @@ try {
     a._spawnEnemy(a.px + 420, a.py, 'swarm');
     a._spawnEnemy(a.px - 420, a.py, 'swarm');
     a._spawnEnemy(a.px, a.py - 420, 'infantryMob');
-    a._spawnEnemy(a.px + 500, a.py - 200, 'quadruped');
-    a._spawnEnemy(a.px - 500, a.py - 200, 'quadruped');
-    a._spawnEnemy(a.px + 200, a.py + 500, 'quadruped');
-    a._spawnEnemy(a.px - 200, a.py + 500, 'quadruped');
+    a._spawnEnemy(a.px + 500, a.py - 200, 'carrier');
+    a._spawnEnemy(a.px - 500, a.py - 200, 'carrier');
+    a._spawnEnemy(a.px + 200, a.py + 500, 'carrier');
+    a._spawnEnemy(a.px - 200, a.py + 500, 'carrier');
     a._spawnEnemy(a.px + 300, a.py + 300, 'raider');
     a._spawnEnemy(a.px - 300, a.py + 300, 'artillery');
     a._spawnEnemy(a.px + 300, a.py - 300, 'sniper');
@@ -69,7 +69,7 @@ try {
 
     a._updateRun = () => {};
     const reinforceKinds = ['raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest',
-      'artillery', 'swarm', 'infantryMob', 'quadruped', 'quadruped'];
+      'artillery', 'swarm', 'infantryMob', 'carrier', 'carrier'];
     let seq = 0;
     window.__profTimers = [
       setInterval(() => a.mech.repairAll(), 400),

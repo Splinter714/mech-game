@@ -130,7 +130,7 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
     expect(DEPTH.GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
   });
 
-  it('#289: puts a LARGE ground enemy (mech/quadruped/turret) at DEPTH.LARGE_GROUND_UNITS — above the cover canopy but below the player', () => {
+  it('#289: puts a LARGE ground enemy (mech/carrier/turret) at DEPTH.LARGE_GROUND_UNITS — above the cover canopy but below the player', () => {
     expect(unitDepth(false, false, false)).toBe(DEPTH.LARGE_GROUND_UNITS);
     expect(DEPTH.LARGE_GROUND_UNITS).toBeGreaterThan(DEPTH.COVER_CANOPY);
     expect(DEPTH.LARGE_GROUND_UNITS).toBeLessThan(DEPTH.UNITS);

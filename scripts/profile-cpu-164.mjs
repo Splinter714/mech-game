@@ -2,13 +2,13 @@
 // scripts/profile-cpu.mjs (boot the real game, deploy, stage combat, capture a real V8 CPU
 // profile via CDP), but the staged scenario is deliberately HEAVIER and reflects the CURRENT
 // state of `main` (post #159 collision-sweep + higher chassis speeds, post #162's 5x
-// Broodwalker spawn-frequency bump):
+// Broodhauler spawn-frequency bump):
 //
-//   - Several Broodwalkers ('quadruped') spawn concurrently and are left to run their FULL
+//   - Several Broodhaulers ('carrier') spawn concurrently and are left to run their FULL
 //     deploy cycle (deployEveryMs=4000, batches of 5-8 drones, cap 24 each) — #162 makes this
 //     common in a real session, not a rare event, so a realistic profile needs several of them
 //     actually completing their bursts, not just existing.
-//   - A steady drip of additional reinforcements (mixed kinds, including MORE quadrupeds) during
+//   - A steady drip of additional reinforcements (mixed kinds, including MORE carriers) during
 //     the whole window, approximating a real ~5-10 minute session's accumulating enemy count
 //     rather than a single fixed squad.
 //   - The player moves continuously at full stick deflection with frequent direction reversals
@@ -62,15 +62,15 @@ try {
     const a = g.scene.getScene('ArenaScene');
 
     // The default opening squad already spawned in create(). Add a swarm-scale baseline PLUS
-    // several Broodwalkers up front so their deploy bursts are running well before profiling
+    // several Broodhaulers up front so their deploy bursts are running well before profiling
     // starts (each hits its 24-drone cap over ~16-20s of being aware).
     a._spawnEnemy(a.px + 420, a.py, 'swarm');
     a._spawnEnemy(a.px - 420, a.py, 'swarm');
     a._spawnEnemy(a.px, a.py - 420, 'infantryMob');
-    a._spawnEnemy(a.px + 500, a.py - 200, 'quadruped');
-    a._spawnEnemy(a.px - 500, a.py - 200, 'quadruped');
-    a._spawnEnemy(a.px + 200, a.py + 500, 'quadruped');
-    a._spawnEnemy(a.px - 200, a.py + 500, 'quadruped');
+    a._spawnEnemy(a.px + 500, a.py - 200, 'carrier');
+    a._spawnEnemy(a.px - 500, a.py - 200, 'carrier');
+    a._spawnEnemy(a.px + 200, a.py + 500, 'carrier');
+    a._spawnEnemy(a.px - 200, a.py + 500, 'carrier');
     a._spawnEnemy(a.px + 300, a.py + 300, 'raider');
     a._spawnEnemy(a.px - 300, a.py + 300, 'artillery');
     a._spawnEnemy(a.px + 300, a.py - 300, 'sniper');
@@ -101,11 +101,11 @@ try {
     };
 
     // Keep the fight alive for the whole window: no run end, periodic repair so the player
-    // survives, and a steady drip of reinforcements (mixed kinds incl. quadruped) approximating
+    // survives, and a steady drip of reinforcements (mixed kinds incl. carrier) approximating
     // a real session's accumulating enemy count under #162's boosted late-pool draw rate.
     a._updateRun = () => {};
     const reinforceKinds = ['raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest',
-      'artillery', 'swarm', 'infantryMob', 'quadruped', 'quadruped'];
+      'artillery', 'swarm', 'infantryMob', 'carrier', 'carrier'];
     let seq = 0;
     window.__profTimers = [
       setInterval(() => a.mech.repairAll(), 400),
@@ -148,7 +148,7 @@ try {
     });
   });
 
-  log(`fight staged; ramping ${RAMP_SECONDS}s so Broodwalker deploy bursts + reinforcement waves ` +
+  log(`fight staged; ramping ${RAMP_SECONDS}s so Broodhauler deploy bursts + reinforcement waves ` +
     'run their course before profiling starts');
   const rampMs = RAMP_SECONDS * 1000;
   const rampStep = 2000;

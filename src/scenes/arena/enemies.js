@@ -46,7 +46,7 @@ import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
-// #302: shielded enemies (helicopter 30, quadruped 50 — enemyKinds.js) wear the SAME glowing
+// #302: shielded enemies (helicopter 30, carrier 50 — enemyKinds.js) wear the SAME glowing
 // shield outline the player does, from the same shared implementation.
 import {
   SHIELD_MECH_PART_KEYS, SHIELD_VEHICLE_PART_KEYS, makeShieldOutline, updateShieldOutline,
@@ -304,7 +304,7 @@ export const EnemiesMixin = {
       // def.legFrames / _updateVehicle below) — harmless/unused for kinds without it.
       stepMs: 0, hullFrame: 0,
     };
-    // #302: a shielded vehicle kind (helicopter/quadruped) gets a TWO-sprite outline — hull +
+    // #302: a shielded vehicle kind (helicopter/carrier) gets a TWO-sprite outline — hull +
     // turret — which reads as one shell around the whole unit. That's the honest depiction: an
     // HpBody has ONE unit-wide shield pool, not the player's per-location parts, so there's
     // nothing to draw per-part.
@@ -401,11 +401,15 @@ export const EnemiesMixin = {
       parts.push(shadow);
     }
     // #152: a kind whose art builds a walk-cycle (def.legFrames — currently just the
-    // Broodwalker/quadruped) starts on frame 0 of `${key}_hull_0..N`; every other kind keeps the
+    // old Broodwalker's legged gait) starts on frame 0 of `${key}_hull_0..N`; every other kind keeps the
     // single static `${key}_hull` texture, unchanged.
     const hullKey = def.legFrames ? `${key}_hull_0` : `${key}_hull`;
     const hull = this.add.sprite(0, 0, hullKey).setScale(vs);
-    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(vs);
+    // #328: the exact same convention on the SECOND sprite — a kind whose art builds multiple
+    // turret frames (def.turretFrames; today just the Carrier's two-frame bay door) starts on
+    // frame 0 of `${key}_turret_0..N`, every other kind keeps the single static `${key}_turret`.
+    const turretKey = def.turretFrames ? `${key}_turret_0` : `${key}_turret`;
+    const turret = this.add.sprite(0, 0, turretKey).setScale(vs);
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
     parts.push(hull, turret);
@@ -414,7 +418,7 @@ export const EnemiesMixin = {
     // the ground" ambiguity) shares the player's DEPTH.UNITS tier. A GROUND kind renders below the
     // player, split by SIZE tier (#289): a SMALL kind (tank/infantry, `def.size === 'small'`) sits
     // at DEPTH.GROUND_UNITS, below the cover canopy so it peeks out from under foliage; a LARGE kind
-    // (turret/quadruped) sits at DEPTH.LARGE_GROUND_UNITS, above the canopy so it towers over tree
+    // (turret/carrier) sits at DEPTH.LARGE_GROUND_UNITS, above the canopy so it towers over tree
     // tops. `def.size` mirrors `unitSize`'s default-to-large when absent — see shared.js.
     c.setDepth(unitDepth(false, def.flying, def.size === 'small'));
     c.hull = hull; c.turret = turret; c.shadow = shadow;
@@ -555,7 +559,10 @@ export const EnemiesMixin = {
     e.texKey = next;
     const hullKey = e.kindDef.legFrames ? `${next}_hull_${e.hullFrame ?? 0}` : `${next}_hull`;
     e.view.hull.setTexture(hullKey);
-    e.view.turret.setTexture(`${next}_turret`);
+    // #328: preserve the live turret FRAME across an armor-break reskin too, so a carrier whose
+    // plating strips off mid-launch doesn't snap its bay door shut for a frame.
+    const turretKey = e.kindDef.turretFrames ? `${next}_turret_${e.turretFrame ?? 0}` : `${next}_turret`;
+    e.view.turret.setTexture(turretKey);
   },
 
   _resetEnemies() {
@@ -1005,7 +1012,7 @@ export const EnemiesMixin = {
       // #282: an enemy mech is always a LARGE ground unit (isSmallUnit(e) is false for the
       // 'mech' kind — see #269's unitSize), so it always also respects the mutual ground-unit
       // collision check below, alongside the existing terrain `_blocked` check — an enemy mech
-      // can no longer walk through another large enemy (mech/quadruped/turret) or the player.
+      // can no longer walk through another large enemy (mech/carrier/turret) or the player.
       // (Small units still never block a large one — see `_blockedByOtherGroundUnit`'s comment.)
       // #309: `_blockedForEnemy` — a garrison unit may step through its OWN base's OPEN gate.
       // This is the entire enemy half of the sally port: the units need no new pathing state, no
@@ -1176,7 +1183,7 @@ export const EnemiesMixin = {
     // #312: `ux/uy` is the true bearing to the player and stays that — it is what every kind's
     // gun AIMS along (`aimAndFire`), and aiming must always point at the player himself, never at
     // a waypoint. `tux/tuy` is the separate TRAVEL heading: the same vector routed around walls
-    // and blocking terrain. The ground movement intents (tank/infantry/quadruped) build their
+    // and blocking terrain. The ground movement intents (tank/infantry/carrier) build their
     // advance and strafe components off the travel heading; everything else is untouched.
     //
     // This matters far more than the mech path does: a real generated world runs about 3 mechs to
@@ -1233,7 +1240,7 @@ export const EnemiesMixin = {
     // Integrate. Flyers pass over walls/water/forest/ground-units (unchanged, #92); ground units
     // collide + slide like a mech. #282: mutual ground-unit collision layers on top of the
     // existing terrain `_blocked` check for BOTH size tiers now — a LARGE ground unit
-    // (isSmallUnit(e) false: quadruped/turret) can't walk into another large enemy or the
+    // (isSmallUnit(e) false: carrier/turret) can't walk into another large enemy or the
     // player (unchanged); a SMALL unit (tank/infantry) now ALSO can't walk into another small
     // unit, or into a large one/the player — see `_blockedByOtherGroundUnit`'s comment (world.js)
     // for the full tier rule and the playtest report ("tanks nearly on top of one another") that
@@ -1273,7 +1280,7 @@ export const EnemiesMixin = {
     }
 
     // #152: legged walk-cycle for a kind whose art builds multiple hull frames (def.legFrames —
-    // currently just the Broodwalker/quadruped) — mirrors the player mech's stompy stepGait
+    // no kind uses it since #328 retired the legged Broodhauler) — mirrors the player mech's stompy stepGait
     // (locomotion.js _stepGait): advance a per-enemy stepMs by actual ground speed (not a fixed
     // timer), and swap to the next hull frame each time it crosses the kind's own stepInterval,
     // so the gait speeds up/slows down with real motion and stops cycling when stationary.
@@ -1288,6 +1295,12 @@ export const EnemiesMixin = {
         }
       }
       e.view.hull.setTexture(`${e.texKey}_hull_${e.hullFrame}`);
+    }
+    // #328: same for a multi-frame TURRET (the Carrier's bay door). The frame itself is chosen
+    // by the kind's behaviour (enemyBehaviors.js `carrierDeployTick` opens the doors for a beat
+    // on each launch); this just renders whatever `e.turretFrame` currently says.
+    if (e.kindDef.turretFrames) {
+      e.view.turret.setTexture(`${e.texKey}_turret_${e.turretFrame ?? 0}`);
     }
 
     // Render. Hull faces travel/hull-facing; turret faces its gun; flyers spin their rotor overlay

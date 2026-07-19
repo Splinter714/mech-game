@@ -118,7 +118,7 @@ export const ENEMIES = {
 // of the kind — see enemyKinds.js's infantryMob/infantry definitions, which are left completely
 // intact (art + behavior untouched too), so restoring it here is a one-line add, not an
 // archaeology project.
-// #234: 'quadruped' (the Broodwalker) was fully built — art/behavior/weapon/260hp, plus its own
+// #234: 'carrier' (the Broodhauler) was fully built — art/behavior/weapon/260hp, plus its own
 // periodic drone-drop mechanic — but was never added here or to DEFAULT_SQUAD, so it had no path
 // into a normal run except one rare slot in run.js's LATE_POOL (reachable only in late-stage
 // squad draws). That's why Jackson had seen it, but rarely, per his playtest note ("those enemies
@@ -132,7 +132,7 @@ export const ENEMIES = {
 // not by where it sits.
 export const ENEMY_ROTATION = [
   'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest', 'artillery', 'swarm',
-  'quadruped',
+  'carrier',
 ];
 
 // The default opening squad (#44 / #68 / #75 / #89): a mix of mechs and non-mech units so the
@@ -149,7 +149,7 @@ export const ENEMY_ROTATION = [
 // #239 (temporary): 'infantryMob' pulled back OUT of the opening squad while Jackson plans a
 // redesign of the kind — see the matching #239 note on ENEMY_ROTATION above. enemyKinds.js's
 // definition/art/behavior are untouched, so re-adding it here later is a one-line change.
-// #234: 'quadruped' (the Broodwalker) is deliberately NOT added here. Per its own comments
+// #234: 'carrier' (the Broodhauler) is deliberately NOT added here. Per its own comments
 // (data/enemyKinds.js), it's framed as "tougher than a tank but well under a full mech's pool" —
 // a rarer, tougher escalation unit, not an opener. It got its real fix in ENEMY_ROTATION above
 // (regular-but-not-common cadence across a run) and its existing rare LATE_POOL slot

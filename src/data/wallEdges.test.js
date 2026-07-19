@@ -229,7 +229,7 @@ describe('#313 wall-span HP retune — the gate is a commitment, not a speed bum
   });
 
   it('makes a span as tough as a light mech, not as a tank', () => {
-    // #299 toughness scale: tank 80, quadruped 150, light mech 200. A gate span you can pop faster
+    // #299 toughness scale: tank 80, carrier 150, light mech 200. A gate span you can pop faster
     // than the cheapest vehicle in the game was the exact complaint #313 was filed about.
     expect(WALL_EDGE_HP).toBeGreaterThan(80);
     expect(WALL_EDGE_HP).toBeGreaterThanOrEqual(200);

@@ -10,7 +10,7 @@ import { Mech } from '../../data/Mech.js';
 // bucketed off `.toughness` (structure + armor + shield — uniform across Mech/HpBody per #106)
 // against bounds DERIVED from the live roster (data/rosterBounds.js). Today's roster:
 // infantry 6, drone 14, turret 90, helicopter 100, light mech 184, tank 200, medium mech 290,
-// quadruped 370, heavy/artillery mech 430 (the ceiling).
+// carrier 370, heavy/artillery mech 430 (the ceiling).
 function enemyWithToughness(toughness) {
   return { mech: { toughness } };
 }
@@ -27,7 +27,7 @@ describe('explosionCategoryFor (#107 buckets, #301 roster-derived bounds)', () =
     }
   });
 
-  it('buckets a medium mech (290) and the quadruped (370) as large', () => {
+  it('buckets a medium mech (290) and the carrier (370) as large', () => {
     expect(explosionCategoryFor(enemyWithToughness(290))).toBe('large');
     expect(explosionCategoryFor(enemyWithToughness(370))).toBe('large');
   });

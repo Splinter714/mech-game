@@ -29,7 +29,7 @@ const TABLE = {
   turret:      { structure: 35,  armor: 15,  shield: 0,   total: 50 },
   helicopter:  { structure: 35,  armor: 0,   shield: 15,  total: 50 },
   tank:        { structure: 50,  armor: 30,  shield: 0,   total: 80 },
-  quadruped:   { structure: 50,  armor: 50,  shield: 50,  total: 150 },
+  carrier:   { structure: 50,  armor: 50,  shield: 50,  total: 150 },
   raider:      { structure: 100, armor: 75,  shield: 25,  total: 200 },
   skirmisher:  { structure: 100, armor: 75,  shield: 25,  total: 200 },
   sniper:      { structure: 150, armor: 150, shield: 50,  total: 350 },
@@ -53,7 +53,7 @@ function bodyLayers(b) {
 }
 
 describe('#299: every unit hits its confirmed structure / armor / shield numbers', () => {
-  for (const id of ['infantry', 'drone', 'turret', 'helicopter', 'tank', 'quadruped']) {
+  for (const id of ['infantry', 'drone', 'turret', 'helicopter', 'tank', 'carrier']) {
     it(`${id} (vehicle kind)`, () => {
       expect(bodyLayers(new HpBody(ENEMY_KINDS[id]))).toEqual(TABLE[id]);
     });

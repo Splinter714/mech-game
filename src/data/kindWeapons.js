@@ -26,7 +26,7 @@
 // Every field that was per-KIND and weapon-shaped (`weaponId`, `weaponOverride`, `fireRange`,
 // `burstShots`, `burstRestMs`) is per-SLOT here, because they all describe one gun. A kind with
 // no `weapons` map is normalised into a single slot named DEFAULT_SLOT built from its existing
-// top-level fields, so every single-weapon kind (turret/tank/drone/infantry/quadruped) is
+// top-level fields, so every single-weapon kind (turret/tank/drone/infantry) is
 // byte-identically unchanged and needs no edit. That normalisation is the ONLY compatibility
 // shim; there is no parallel single-weapon code path anywhere downstream.
 //
@@ -50,6 +50,11 @@ export function kindWeaponSlots(def) {
     for (const [slot, spec] of Object.entries(def.weapons)) out[slot] = normalize(slot, spec);
     return out;
   }
+  // #328: an UNARMED kind (the Carrier — no `weapons` map AND no top-level `weaponId`) has zero
+  // slots, not one empty slot. That's what makes `kindWeaponSlot` return null and
+  // `kindMaxFireRange` return undefined for it, instead of handing callers a slot whose weaponId
+  // is undefined and letting `resolveWeapon` blow up somewhere downstream.
+  if (!def?.weaponId) return {};
   return { [DEFAULT_SLOT]: normalize(DEFAULT_SLOT, def ?? {}) };
 }
 

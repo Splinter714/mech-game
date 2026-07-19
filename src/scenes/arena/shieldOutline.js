@@ -1,6 +1,6 @@
 // Shared shield-outline visual (#302). ONE implementation of "a unit with a live shield pool
 // wears a glowing rim hugging its own silhouette", driven by BOTH the player mech (the Shield
-// powerup / the mech's native shield layer) and any shielded enemy (helicopter's 30, quadruped's
+// powerup / the mech's native shield layer) and any shielded enemy (helicopter's 30, carrier's
 // 50 — data/enemyKinds.js). #302's hard requirement: a future rework of the shield look must
 // change player and enemies together in ONE edit, so the technique, the colour, the alpha curve
 // and the hit-flash all live here and nothing outside this file knows how a shield is drawn.
@@ -15,7 +15,7 @@
 //
 // Per-unit-type difference, and why it's just a `keys` argument: the player (and any mech-kind
 // enemy) is a `Mech` drawn as six pivoting part sprites, so its outline is six duplicates that
-// re-pose every frame. A helicopter/quadruped is an `HpBody` drawn as ONE hull + ONE turret
+// re-pose every frame. A helicopter/carrier is an `HpBody` drawn as ONE hull + ONE turret
 // sprite with a single unit-wide shield pool — so it gets a two-sprite outline, which reads as
 // one shell around the whole vehicle. That matches the model: a vehicle's shield is one pool, not
 // per-location, so a single shell (rather than per-part rims) is the honest depiction, and the
