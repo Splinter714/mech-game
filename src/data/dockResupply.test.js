@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeDockResupplyState, tickDockResupply, spendDockResupply,
-  DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK, chargeDockResupply,
+  DOCK_RESUPPLY_COOLDOWN_MS,
   DOCK_RESUPPLY_COOLDOWN_JITTER, DOCK_RESUPPLY_PHASE_MIN, DOCK_RESUPPLY_PHASE_MAX,
 } from './dockResupply.js';
 
@@ -93,25 +93,19 @@ describe('#269 §3 "rare multi-spawn exception": tickDockResupply', () => {
     expect(state.ready).toBeFalsy();
   });
 
-  it('is capped at DOCK_RESUPPLY_MAX_PER_DOCK — never fires `ready` beyond that many times', () => {
+  // #326: the headline behaviour change. There is no lifetime budget at all — an intact dock
+  // reinforces forever. 200 cycles is far past any cap the old constant ever expressed (3), so a
+  // surviving budget of any size would fail this.
+  it('#326: resupplies INDEFINITELY — an intact dock never stops firing, however long the fight runs', () => {
     let state = flatState();
-    // Drive the cooldown to elapse exactly `DOCK_RESUPPLY_MAX_PER_DOCK` times — each elapse
-    // should report `ready: true` and bump `count`, up to (but never past) the cap.
-    for (let i = 1; i <= DOCK_RESUPPLY_MAX_PER_DOCK; i++) {
+    for (let i = 1; i <= 200; i++) {
       state = tickDockResupply(state, { awake: true, cleared: true, dt: DOCK_RESUPPLY_COOLDOWN_MS / 1000 });
       expect(state.ready).toBe(true);
       expect(state.count).toBe(i);
     }
-    expect(state.count).toBe(DOCK_RESUPPLY_MAX_PER_DOCK);
-
-    // Further ticks, even fully awake+cleared and well past cooldown again, never report ready
-    // again, and the stale `ready: true` from the tick that just fired does not leak into
-    // subsequent ticks.
-    for (let i = 0; i < 5; i++) {
-      state = tickDockResupply(state, { awake: true, cleared: true, dt: DOCK_RESUPPLY_COOLDOWN_MS / 1000 });
-      expect(state.ready).toBeFalsy();
-      expect(state.count).toBe(DOCK_RESUPPLY_MAX_PER_DOCK);
-    }
+    // And `count` really is just a tally now — nothing gates on it, so it keeps climbing.
+    expect(state.count).toBe(200);
+    expect(state.retired).toBe(false);
   });
 
   it('never mutates the state object passed in (pure)', () => {
@@ -180,12 +174,14 @@ describe('#311 dock resupply jitter: per-dock cooldown + starting phase', () => 
     expect(firedA).not.toBe(firedB);
   });
 
-  it('a jittered dock keeps its OWN interval for every later cycle, and still respects DOCK_RESUPPLY_MAX_PER_DOCK', () => {
+  // #311's per-dock cadence must survive #326's uncapping: a dock that now runs forever must run
+  // forever at ITS OWN jittered interval, not drift back to the shared constant.
+  it('a jittered dock keeps its OWN interval for every later cycle, indefinitely (#326)', () => {
     let state = makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, seqRng(99));
     const own = state.cooldownMs;
     expect(own).not.toBe(DOCK_RESUPPLY_COOLDOWN_MS);
     let fires = 0;
-    // Run far longer than the cap could ever need (well past maxPerDock full cycles).
+    // 20000 ticks at 16ms ≈ 320 simulated seconds — ~17 cycles at an 18s cadence.
     for (let t = 0; t < 20000; t++) {
       state = tickDockResupply(state, { awake: true, cleared: true, dt: 0.016 });
       if (state.ready) {
@@ -195,8 +191,12 @@ describe('#311 dock resupply jitter: per-dock cooldown + starting phase', () => 
         expect(state.remainingMs).toBe(own);
       }
     }
-    expect(fires).toBe(DOCK_RESUPPLY_MAX_PER_DOCK);
-    expect(state.count).toBe(DOCK_RESUPPLY_MAX_PER_DOCK);
+    // Every elapsed interval across the whole window fired — no cap truncated the run. The first
+    // fire lands at the dock's phase offset, each later one an `own` interval after it.
+    const elapsedMs = 20000 * 16;
+    expect(fires).toBe(Math.floor((elapsedMs - state.startMs) / own) + 1);
+    expect(fires).toBeGreaterThan(10);   // unambiguously past any cap the old constant expressed
+    expect(state.count).toBe(fires);
   });
 
   it('a dormant dock holds at its rolled starting phase — a dormant tick must not wipe the phase roll back to a full cooldown', () => {
@@ -216,7 +216,7 @@ describe('#311 dock resupply jitter: per-dock cooldown + starting phase', () => 
   it('spendDockResupply preserves the per-dock roll while retiring the dock', () => {
     const state = makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, seqRng(55));
     const spent = spendDockResupply(state);
-    expect(spent.count).toBe(DOCK_RESUPPLY_MAX_PER_DOCK);
+    expect(spent.retired).toBe(true);
     expect(spent.cooldownMs).toBe(state.cooldownMs);
     expect(spent.startMs).toBe(state.startMs);
     expect(tickDockResupply(spent, { awake: true, cleared: true, dt: 999 }).ready).toBeFalsy();
@@ -233,37 +233,34 @@ describe('#311 dock resupply jitter: per-dock cooldown + starting phase', () => 
   });
 });
 
-// #323 — the resupply BODY budget. `tickDockResupply` charges a floor of 1 per fire; the scene
-// bills the rest once it knows how many bodies the drawn kind actually delivers.
-describe('#323: chargeDockResupply — the budget is counted in BODIES, not fires', () => {
-  it('a 1-body fire costs nothing extra — a normal dock keeps all its cycles', () => {
-    const state = { remainingMs: 0, count: 1, cooldownMs: 18000, startMs: 18000 };
-    expect(chargeDockResupply(state, 1).count).toBe(1);
-    // Identity-preserving when there's nothing to bill, so the caller can charge unconditionally.
-    expect(chargeDockResupply(state, 1)).toBe(state);
+// #326: destroying the dock is now the ONLY thing that stops it, so `retired` gets its own block
+// rather than being a footnote on the budget's tests (#323's `chargeDockResupply` body-billing,
+// which this replaces, is gone along with the budget it billed against).
+describe('#326: destruction is the only terminal state', () => {
+  it('a retired dock never fires again, no matter how long or how favourably it is ticked', () => {
+    let state = spendDockResupply(flatState());
+    for (let i = 0; i < 500; i++) {
+      state = tickDockResupply(state, { awake: true, cleared: true, dt: 999 });
+      expect(state.ready).toBeFalsy();
+      expect(state.retired).toBe(true);
+    }
   });
 
-  it('a full swarm fire bills the remaining bodies and overruns the cap in one go', () => {
-    // Post-tick state: the tick already charged its 1-body floor.
-    const state = { remainingMs: 18000, count: 1, cooldownMs: 18000, startMs: 18000 };
-    const charged = chargeDockResupply(state, 10);
-    expect(charged.count).toBe(10);
-    expect(charged.count).toBeGreaterThanOrEqual(DOCK_RESUPPLY_MAX_PER_DOCK);
-    // Spent: the dock can never resupply again, so one swarm dock yields 10 extra bodies, not 30.
-    expect(tickDockResupply(charged, { awake: true, cleared: true, dt: 999 }).ready).toBeFalsy();
+  it('retiring mid-cycle stops a dock that was about to fire', () => {
+    // Cooldown fully elapsed but the dock is occupied, so it is holding at 0 — armed and waiting.
+    let state = tickDockResupply(flatState(), { awake: true, cleared: false, dt: DOCK_RESUPPLY_COOLDOWN_MS / 1000 });
+    expect(state.remainingMs).toBe(0);
+    expect(state.ready).toBeFalsy();
+    // Blow the dome open at exactly that moment: the pending fire must never land.
+    state = tickDockResupply(spendDockResupply(state), { awake: true, cleared: true, dt: 1 });
+    expect(state.ready).toBeFalsy();
   });
 
-  it('never mutates the state it is given', () => {
-    const state = { remainingMs: 18000, count: 1, cooldownMs: 18000, startMs: 18000 };
-    chargeDockResupply(state, 10);
-    expect(state.count).toBe(1);
-  });
-
-  it('carries the per-dock #311 rolls through, so billing never resets a dock cadence', () => {
-    const state = makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, seqRng(7));
-    const charged = chargeDockResupply({ ...state, count: 1 }, 10);
-    expect(charged.cooldownMs).toBe(state.cooldownMs);
-    expect(charged.startMs).toBe(state.startMs);
+  it('never mutates the state it is given (pure)', () => {
+    const state = flatState();
+    const frozen = { ...state };
+    spendDockResupply(state);
+    expect(state).toEqual(frozen);
   });
 });
 

@@ -81,6 +81,26 @@ export const UI_HIGHLIGHT_COLOR = 0xffb84a;
 export const DEPTH = {
   TERRAIN: 0,         // terrain tiles (world.js) — the floor, always lowest, explicit every time.
   GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
+  // #326 playtest bug (Jackson: "z-ordering on docks reinforcing animation is bad... it's too high
+  // compared to the units that are coming out"). The dock hatch FX — the shaft, the sliding door
+  // leaves, the rising platform and its glow (`_resupplyDock`), plus the dome plate/rim that seals
+  // a vacated dock (`_closeDockFx`), all in bases.js — used to be built on IMPACT_FX (5), far
+  // above every unit tier, so a tank driving out of its own bay rendered UNDERNEATH its own hatch
+  // doors. Exactly backwards: a hatch is a HOLE IN THE GROUND, and the things standing on the
+  // ground belong on top of it.
+  //
+  // Slotted between GROUND_FX (1) and GROUND_UNITS (2) — the ground-decal band, alongside napalm's
+  // burning patch — using the same fractional-tier pattern (#289) that COVER_CANOPY/
+  // LARGE_GROUND_UNITS use, so nothing has to be renumbered. The four sub-offsets below preserve
+  // the FX's existing internal order (shaft under doors under platform under glow).
+  //
+  // Deliberately ENTIRELY below the units rather than the alternative of leaving the door leaves
+  // above GROUND_UNITS to occlude a rising unit: by the time `_resupplyDock` spawns anything, its
+  // doors-open tween has already completed and the leaves have slid clear to either side, so they
+  // are not over the unit to occlude it in the first place. Splitting the tiers would buy no
+  // occlusion and would reintroduce the reported bug for large units. The reported problem is that
+  // units are hidden; this makes them unambiguously visible.
+  DOCK_FX: 1.5,
   GROUND_UNITS: 2,    // #113: SMALL non-flying enemy views (tank, infantry — #289 size-split) —
                       // always below the player, and (per #289) below the cover canopy so a small
                       // unit standing in cover peeks out from UNDER the foliage.
