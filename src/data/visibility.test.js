@@ -117,8 +117,14 @@ describe('enemyTargetable', () => {
     expect(enemyTargetable({ x: 9, y: 9 }, seen, hexKeyOf)).toBe(false);
   });
 
-  it('always accepts a FLYING enemy, sighted or not — they are above ground-level cover', () => {
-    expect(enemyTargetable({ x: 9, y: 9, flying: true }, seen, hexKeyOf)).toBe(true);
+  // #316 reverses #306's flyer exception here (this test used to assert `true`): cover is cover
+  // for everyone, so a flyer the player has no sight of can't be locked any more than a tank can.
+  it('#316: REJECTS a FLYING enemy the player has no sight of, same as a ground enemy', () => {
+    expect(enemyTargetable({ x: 9, y: 9, flying: true }, seen, hexKeyOf)).toBe(false);
+  });
+
+  it('#316: accepts a FLYING enemy standing in a visible hex — the gate is sight, not flight', () => {
+    expect(enemyTargetable({ x: 1, y: 0, flying: true }, seen, hexKeyOf)).toBe(true);
   });
 
   it('does not gate at all before a field of view has been computed', () => {

@@ -118,14 +118,12 @@ export const ProjectilesMixin = {
       // (and may flatten it to rubble; flame rounds chew soft cover extra fast). #72 own-hex
       // transparency: hexes holding something this round can hit, plus the round's own origin
       // hexes, don't count as walls — so a unit standing in forest is hittable, and a unit
-      // firing OUT of forest doesn't detonate its own shot at the muzzle. #245: a round fired
-      // by a FLYING enemy (drone/helicopter — `ignoresCover`, set in _spawnProjectile from the
-      // shooter's kindDef) is narratively fired from above, so it never collides with terrain
-      // cover at all — same total exemption an arcing round gets, without the lob visuals. #257:
-      // the same `ignoresCover` stamp now also covers the PLAYER'S own round when it was aimed at
-      // a flying enemy (firing.js `fireWeapon` reads `this.convergeTarget.flying`) — this check
-      // doesn't care which owner fired the round, only the flag, so no change was needed here.
-      if (!p.arc && !p.ignoresCover) {
+      // firing OUT of forest doesn't detonate its own shot at the muzzle. #316 reverses
+      // #245/#257: rounds used to carry an `ignoresCover` stamp exempting a FLYING enemy's shots
+      // (and the player's shots aimed AT a flyer) from this check entirely. That stamp is gone —
+      // cover is cover for every shooter and every target. Only an ARCING round still lobs over,
+      // which it always did on its own trajectory merits, unrelated to who fired it.
+      if (!p.arc) {
         // #288: base wall spans live on the boundaries BETWEEN hexes, so there's no tile under the
         // round to look up — and a fast round covers far more ground in one step than the wall's
         // ~14px thickness, so a point check at the step's endpoint could step clean over it. Test

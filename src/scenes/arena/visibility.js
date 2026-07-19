@@ -1,20 +1,28 @@
-// Arena line-of-sight dimming (#306) — "could we try slightly dimming stuff that is outside of
-// LOS for the player? and if there's a flying enemy that is in LOS because of that, then they fly
-// ABOVE the LOS dimming".
+// Arena line-of-sight dimming (#306, flyer rule reversed by #316) — "could we try slightly
+// dimming stuff that is outside of LOS for the player?"
+//
+// #306 originally also granted flyers an exemption ("if there's a flying enemy that is in LOS
+// because of that, then they fly ABOVE the LOS dimming"). #316 reversed that along with every
+// other flying cover exemption — "let's let the flying enemies get greyed out the same as ground
+// enemies when behind cover" — so flyers are now dimmed like anything else. See below.
 //
 // ── The treatment (final decision, #306) ──
 // ONE dark translucent layer over the un-sighted hexes, at DEPTH.LOS_DIM (2.9) — deliberately NOT
 // per-object tinting, and deliberately NOT a grey/desaturating wash. Because everything below 2.9
 // shares this single overlay, terrain (0), ground FX (1), small ground units (2), the cover canopy
-// (2.5) and large ground units (2.75) are all dimmed IDENTICALLY, by construction — there is no
-// rule about which thing gets which treatment and no way for terrain and units to drift to
-// different looks. The player and FLYING enemies sit at UNITS (3), above it, so a helicopter over
-// a blocked area stays plainly visible with no per-entity logic at all. That's the same
+// (2.5), large ground units (2.75) and — since #316 — FLYING units (2.8) are all dimmed
+// IDENTICALLY, by construction: there is no rule about which thing gets which treatment and no way
+// for terrain and units to drift to different looks. The PLAYER alone sits at UNITS (3), above the
+// overlay, and is the only thing never dimmed. #316 is therefore a one-number change — moving
+// flyers from 3 to their own FLYING_UNITS tier at 2.8, still above the canopy and every ground
+// unit so they visually fly over trees, but below 2.9 so the overlay covers them. Same
 // fractional-depth-tier trick #289 established for COVER_CANOPY/LARGE_GROUND_UNITS.
 //
-// It also means ground enemies in un-sighted areas are DIMMED, NOT HIDDEN — confirmed as the
-// intent: you can still make out a shape through the dimming, so the player is never shot by
-// something completely invisible.
+// It also means enemies in un-sighted areas — ground or flying — are DIMMED, NOT HIDDEN,
+// confirmed as the intent: you can still make out a shape through the dimming, so the player is
+// never shot by something completely invisible. (Post-#316 a flyer with no sight line to the
+// player can't shoot at all anyway — cover blocks it — so the dimming reads as an honest tell
+// that the thing is currently out of the fight.)
 //
 // ── World UI is deliberately NOT dimmed ──
 // Powerups, salvage/scrap and the objective beacon live on DEPTH.WORLD_UI (6), above the overlay,
@@ -54,9 +62,9 @@ const MAX_FOV_RADIUS = 26;
 const FOV_MARGIN_RINGS = 2;
 
 export const VisibilityMixin = {
-  // Called once from create(). The Graphics is world-space (not scroll-fixed) and sits just under
-  // DEPTH.UNITS — see the file header for why that single depth value is the entire "flyers
-  // render above the dimming" implementation.
+  // Called once from create(). The Graphics is world-space (not scroll-fixed) and sits between
+  // DEPTH.FLYING_UNITS (2.8) and DEPTH.UNITS (3) — see the file header for why that single depth
+  // value is the entire "everything but the player gets dimmed" implementation.
   _initVisibility() {
     this.fogFx = this.add.graphics().setDepth(DEPTH.LOS_DIM);
     this.visibleHexes = null;   // null = not computed yet; targeting treats that as "no gate"

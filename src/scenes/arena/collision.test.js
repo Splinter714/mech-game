@@ -92,9 +92,26 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
     expect(unitDepth(true, false, true)).toBe(DEPTH.UNITS);
   });
 
-  it('puts a flying enemy (helicopter/drone) at DEPTH.UNITS, same as the player, regardless of size', () => {
-    expect(unitDepth(false, true, false)).toBe(DEPTH.UNITS);
-    expect(unitDepth(false, true, true)).toBe(DEPTH.UNITS);
+  // #316 (reverses #306's depth choice): flyers used to share the player's DEPTH.UNITS tier,
+  // which sat ABOVE LOS_DIM and was the whole reason a flyer over an un-sighted area stayed
+  // bright. #316 removed every flying exemption, so they drop to their own FLYING_UNITS tier —
+  // still above all ground units and the canopy, but BELOW the dimming overlay.
+  it('#316: puts a flying enemy (helicopter/drone) at DEPTH.FLYING_UNITS, NOT the player tier, regardless of size', () => {
+    expect(unitDepth(false, true, false)).toBe(DEPTH.FLYING_UNITS);
+    expect(unitDepth(false, true, true)).toBe(DEPTH.FLYING_UNITS);
+    expect(DEPTH.FLYING_UNITS).not.toBe(DEPTH.UNITS);
+  });
+
+  it('#316: FLYING_UNITS sits below the LOS dimming layer, so flyers get dimmed like ground units', () => {
+    expect(DEPTH.FLYING_UNITS).toBeLessThan(DEPTH.LOS_DIM);
+    // ...while the player stays above it and is never dimmed.
+    expect(DEPTH.UNITS).toBeGreaterThan(DEPTH.LOS_DIM);
+  });
+
+  it('#316: FLYING_UNITS still sits above the cover canopy and every ground unit tier', () => {
+    expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.COVER_CANOPY);
+    expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.LARGE_GROUND_UNITS);
+    expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.GROUND_UNITS);
   });
 
   it('#289: puts a SMALL ground enemy (tank/infantry) at DEPTH.GROUND_UNITS, below the cover canopy', () => {
@@ -109,12 +126,16 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
     expect(DEPTH.LARGE_GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
   });
 
-  it('#289: the full ground layering is small (2) < canopy (2.5) < large (2.75) < player/flyers (3)', () => {
+  it('#289/#316: the full layering is small (2) < canopy (2.5) < large (2.75) < flyers (2.8) < dimming (2.9) < player (3)', () => {
     expect(DEPTH.GROUND_UNITS)
       .toBeLessThan(DEPTH.COVER_CANOPY);
     expect(DEPTH.COVER_CANOPY)
       .toBeLessThan(DEPTH.LARGE_GROUND_UNITS);
     expect(DEPTH.LARGE_GROUND_UNITS)
+      .toBeLessThan(DEPTH.FLYING_UNITS);
+    expect(DEPTH.FLYING_UNITS)
+      .toBeLessThan(DEPTH.LOS_DIM);
+    expect(DEPTH.LOS_DIM)
       .toBeLessThan(DEPTH.UNITS);
   });
 

@@ -1,11 +1,23 @@
-// #245 — "flying enemies' weapons should never be affected by cover." The fire GATE already
-// exempted flyers (enemyBehaviors.js passes needLos: false for drone/helicopter), but the SHOTS
-// themselves still collided with terrain: a straight enemy projectile detonated on the first
-// wall hex it crossed (projectiles.js's `if (!p.arc)` cover check), and an enemy hitscan beam
-// was cut short by `_hitscanReach` (firing.js). Fix: shots fired by a FLYING enemy
-// (enemyKinds.js `flying: true`) thread an ignore-cover flag — spawned rounds are stamped
-// `ignoresCover` and skip the in-flight wall check; hitscan traces skip the wall trace
-// entirely. Player-fired shots and ground-enemy shots are byte-for-byte unchanged.
+// #316 — "let's let cover be actual cover." This file used to encode the OPPOSITE intent and has
+// been rewritten in place (rather than deleted) so the reversal is legible:
+//
+//   #245 gave a FLYING enemy's shots a total cover exemption — spawned rounds were stamped
+//        `ignoresCover` and skipped projectiles.js's in-flight wall check; hitscan traces skipped
+//        `_hitscanReach` entirely; and enemyBehaviors.js passed `needLos: false` so a flyer would
+//        open fire with no sight line at all.
+//   #257 mirrored that for the PLAYER — `fireWeapon` read `this.convergeTarget.flying` and
+//        threaded `ignoreCover: true`, so the player's own rounds passed through walls when aimed
+//        at a flyer.
+//
+// Jackson played it and found the resulting targeting rules confusing. #316 removes BOTH
+// directions, and does it structurally: the `ignoreCover` parameter, the `ignoresCover` round
+// stamp, and `aimAndFire`'s `needLos` option are all GONE from the source, not merely always
+// passed false. There is no flying exemption left anywhere to regress to.
+//
+// The rule flyers now follow is exactly a ground mech's: HARD cover (walls, structures) blocks
+// them; SOFT cover (forest/scrub) does not — because both flyer kinds are `size: 'large'`, so
+// they get the same size-tier soft-cover exemption a mech does (terrain.js `softCoverBlocksLOS`).
+// That third case is the one most likely to regress silently, so it's asserted explicitly below.
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection
 // throws under vitest's node env, so we stub the module out (same as vehicleFire.test.js).
@@ -19,12 +31,13 @@ import { FiringMixin } from './firing.js';
 import { EnemiesMixin } from './enemies.js';
 import { WEAPONS } from '../../data/weapons.js';
 import { makeProjectile } from '../../data/delivery.js';
+import { ENEMY_KINDS } from '../../data/enemyKinds.js';
+import { TERRAIN, coverBlocksForRay, isSoftCover } from '../../data/terrain.js';
+import { isSmallUnit } from './shared.js';
 
 // Referenced via WEAPONS.<id>.id (no string literals) per the architecture guard's convention
 // in this directory's other tests. machineGun (Repeater) is the helicopter's actual straight
-// projectile stream; pulseLaser is the registry's canonical hitscan burst weapon (no longer
-// the drone's own mount as of #243's further follow-up — the drone now fires plasmaLance, a
-// projectile stream — but still a real hitscan weapon a live kind's shots could plausibly use).
+// projectile stream; pulseLaser is the registry's canonical hitscan burst weapon.
 const STRAIGHT_PROJECTILE = WEAPONS.machineGun;
 const HITSCAN_WEAPON = WEAPONS.pulseLaser;
 
@@ -53,13 +66,13 @@ function makeProjectileScene({ playerAt = { x: 300, y: 0 } } = {}) {
   return scene;
 }
 
-function fireEnemyRound(scene, { ignoresCover }) {
+function runRound(scene, owner, extra = {}) {
   const round = makeProjectile(STRAIGHT_PROJECTILE, 0, 0, 0, { maxDist: 9999 });
-  round.owner = 'enemy';
+  round.owner = owner;
   round.homing = false;
   round.trail = [];
   round.originHexes = [];
-  round.ignoresCover = ignoresCover;
+  Object.assign(round, extra);
   scene.projectiles = [round];
   for (let i = 0; i < 400 && scene.projectiles.length && !scene.projectiles[0].dead; i++) {
     scene._updateProjectiles(0.016);
@@ -67,40 +80,51 @@ function fireEnemyRound(scene, { ignoresCover }) {
   return round;
 }
 
-describe('#245 in-flight projectile: a flying enemy\'s round ignores terrain cover', () => {
-  it('a GROUND enemy\'s straight round still detonates on the wall (unchanged)', () => {
+describe('#316 in-flight projectile: EVERY round respects terrain cover (reverses #245/#257)', () => {
+  it('a ground enemy\'s straight round detonates on the wall (unchanged)', () => {
     const scene = makeProjectileScene();
-    fireEnemyRound(scene, { ignoresCover: false });
+    runRound(scene, 'enemy');
     expect(scene._damageBuildingAt).toHaveBeenCalled();   // chipped the cover it died on
     expect(scene._damagePlayerAt).not.toHaveBeenCalled(); // never reached the player
   });
 
-  it('a FLYING enemy\'s identical round (ignoresCover) sails over the same wall and hits the player', () => {
+  // The reversal of #245: this exact round used to sail through and hit the player.
+  it('a FLYING enemy\'s round now detonates on that same wall instead of sailing over it', () => {
     const scene = makeProjectileScene();
-    fireEnemyRound(scene, { ignoresCover: true });
-    expect(scene._damageBuildingAt).not.toHaveBeenCalled();
-    expect(scene._damagePlayerAt).toHaveBeenCalled();
+    runRound(scene, 'enemy');
+    expect(scene._damageBuildingAt).toHaveBeenCalled();
+    expect(scene._damagePlayerAt).not.toHaveBeenCalled();
   });
 
-  it('a PLAYER round without the flag still detonates on the wall (unchanged)', () => {
+  // Belt-and-braces on the structural removal: even if some future caller resurrected the old
+  // stamp and set it on a round, projectiles.js no longer reads it, so cover still stops the
+  // round. The exemption cannot come back by accident.
+  it('a stale `ignoresCover: true` stamp is ignored — the flag no longer exempts anything', () => {
     const scene = makeProjectileScene();
-    const round = makeProjectile(STRAIGHT_PROJECTILE, 0, 0, 0, { maxDist: 9999 });
-    round.owner = 'player';
-    round.homing = false;
-    round.trail = [];
-    round.originHexes = [];
-    round.ignoresCover = false;   // what _spawnProjectile stamps for every player shot
-    scene.projectiles = [round];
-    scene._updateProjectiles(0.016);
+    runRound(scene, 'enemy', { ignoresCover: true });
+    expect(scene._damageBuildingAt).toHaveBeenCalled();
+    expect(scene._damagePlayerAt).not.toHaveBeenCalled();
+  });
+
+  it('a PLAYER round detonates on the wall (unchanged)', () => {
+    const scene = makeProjectileScene();
+    const round = runRound(scene, 'player');
     expect(round.dead).toBe(true);
     expect(scene._damageBuildingAt).toHaveBeenCalled();
+  });
+
+  // An ARCING round still lobs over cover — that was never a flying exemption, it's the round's
+  // own trajectory (delivery.js `path: 'arcing'`), and #316 deliberately leaves it alone.
+  it('an ARCING round still lobs over cover, unrelated to who fired it', () => {
+    const scene = makeProjectileScene();
+    runRound(scene, 'enemy', { arc: true });
+    expect(scene._damageBuildingAt).not.toHaveBeenCalled();
   });
 });
 
 // ── Hitscan trace vs. wall ─────────────────────────────────────────────────────────────────
 // The REAL _fireHitscan runs against a minimal scene: the player sits 300px downrange and
-// `_hitscanReach` reports a wall at 50px. A cover-respecting beam stops there (blocked, no
-// damage); a flying shooter's beam (ignoreCover) must never even consult the wall trace.
+// `_hitscanReach` reports a wall at 50px. EVERY beam must now consult that wall trace.
 function makeHitscanScene() {
   const scene = {
     enemies: [],
@@ -122,44 +146,46 @@ function makeHitscanScene() {
 
 const HITSCAN_W = { weapon: HITSCAN_WEAPON, location: 'drone', index: 0 };
 
-describe('#245 hitscan: a flying enemy\'s beam ignores terrain blockers', () => {
-  it('a GROUND enemy\'s beam is still blocked by the wall (unchanged)', () => {
+describe('#316 hitscan: EVERY beam consults the wall trace (reverses #245)', () => {
+  it('a ground enemy\'s beam is blocked by the wall (unchanged)', () => {
     const scene = makeHitscanScene();
-    scene._fireHitscan(HITSCAN_W, 0, 0, 0, 'enemy', 'tank', false);
+    scene._fireHitscan(HITSCAN_W, 0, 0, 0, 'enemy', 'tank');
     expect(scene._hitscanReach).toHaveBeenCalled();
     expect(scene._damagePlayerAt).not.toHaveBeenCalled();
     // The beam visual stops at the wall, not at the player.
     expect(scene.beams[0].x1).toBeCloseTo(50, 3);
   });
 
-  it('a FLYING enemy\'s beam (ignoreCover) skips the wall trace and damages the player', () => {
+  // The reversal of #245: this call used to skip `_hitscanReach` entirely and damage the player.
+  it('a FLYING enemy\'s beam is now blocked by that same wall', () => {
     const scene = makeHitscanScene();
-    scene._fireHitscan(HITSCAN_W, 0, 0, 0, 'enemy', 'drone', true);
-    expect(scene._hitscanReach).not.toHaveBeenCalled();
-    expect(scene._damagePlayerAt).toHaveBeenCalled();
+    scene._fireHitscan(HITSCAN_W, 0, 0, 0, 'enemy', 'drone');
+    expect(scene._hitscanReach).toHaveBeenCalled();
+    expect(scene._damagePlayerAt).not.toHaveBeenCalled();
+    expect(scene.beams[0].x1).toBeCloseTo(50, 3);
   });
 
-  it('the PLAYER\'s beam (default args) still honors cover (unchanged)', () => {
+  it('the PLAYER\'s beam (default args) honors cover (unchanged)', () => {
     const scene = makeHitscanScene();
     scene.enemies = [{ x: 300, y: 0, mech: { isDestroyed: () => false } }];
-    scene._fireHitscan(HITSCAN_W, 0, 0, 0);   // owner/shooterKey/ignoreCover all defaulted
+    scene._fireHitscan(HITSCAN_W, 0, 0, 0);
     expect(scene._hitscanReach).toHaveBeenCalled();
     expect(scene._damageEnemyAt).not.toHaveBeenCalled();
   });
 });
 
-// ── Flag threading: _fireVehicleWeapon passes the shooter's `flying` through ───────────────
-// Same harness shape as vehicleFire.test.js: the REAL _fireVehicleWeapon dispatch runs with
-// the two fire helpers spied, so we can read the exact arguments each path received.
+// ── _fireVehicleWeapon no longer threads any flying-cover flag ─────────────────────────────
+// Same harness shape as vehicleFire.test.js: the REAL _fireVehicleWeapon dispatch runs with the
+// two fire helpers spied, so we can read the exact arguments each path received. Post-#316 the
+// only per-shot flag left is #269's `smallUnitInvolved` (soft-cover size tier) — `flying` is not
+// consulted at all.
 function makeVehicleScene() {
   const calls = { hitscan: [], projectile: [] };
   const scene = { time: { now: 0, delayedCall: () => {} } };
   Object.assign(scene, EnemiesMixin, FiringMixin);
   scene._melee = vi.fn();
-  scene._fireHitscan = vi.fn((w, mx, my, angle, owner, key, ignoreCover) =>
-    calls.hitscan.push({ owner, key, ignoreCover }));
-  scene._spawnProjectile = vi.fn((w, mx, my, angle, owner, angleOffset, seek, aimAngle, ignoreCover) =>
-    calls.projectile.push({ owner, ignoreCover }));
+  scene._fireHitscan = vi.fn((...args) => calls.hitscan.push(args));
+  scene._spawnProjectile = vi.fn((...args) => calls.projectile.push(args));
   return { scene, calls };
 }
 
@@ -175,45 +201,39 @@ function makeKindEnemy(weaponId, flying) {
   };
 }
 
-describe('#245 _fireVehicleWeapon threads the shooter\'s flying flag into both fire paths', () => {
-  it('a FLYING kind passes ignoreCover: true to _fireHitscan', () => {
-    const { scene, calls } = makeVehicleScene();
-    scene._fireVehicleWeapon(makeKindEnemy(HITSCAN_WEAPON.id, true), {}, 0);
-    expect(calls.hitscan).toEqual([{ owner: 'enemy', key: 'testKind', ignoreCover: true }]);
-  });
+// Muzzle position and per-shot aim carry real randomness (delivery.js's spread stagger and
+// speed/angle jitter), so these compare the DETERMINISTIC tail of each call — owner, shooter key,
+// and the surviving flags — rather than the whole arg array.
+describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter identically', () => {
+  for (const flying of [true, false]) {
+    const label = flying ? 'FLYING' : 'GROUND';
 
-  it('a GROUND kind passes ignoreCover: false to _fireHitscan (unchanged)', () => {
-    const { scene, calls } = makeVehicleScene();
-    scene._fireVehicleWeapon(makeKindEnemy(HITSCAN_WEAPON.id, false), {}, 0);
-    expect(calls.hitscan).toEqual([{ owner: 'enemy', key: 'testKind', ignoreCover: false }]);
-  });
+    it(`a ${label} kind's _fireHitscan args carry no cover-exemption flag`, () => {
+      const { scene, calls } = makeVehicleScene();
+      scene._fireVehicleWeapon(makeKindEnemy(HITSCAN_WEAPON.id, flying), {}, 0);
+      // owner, shooterKey, then #269's smallUnitInvolved (false — the test kind isn't small)
+      // and #307's lane descriptor. Nothing between them; `flying` is not consulted.
+      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', false, { lane: 0, lateral: 0 }]);
+    });
 
-  // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
-  // stream weapon (`delivery.count: 2`) — `_fireVehicleWeapon` now dispatches EVERY emission
-  // in the plan (see enemies.js `_fireEnemyShots`), so one trigger pull spawns TWO rounds, both
-  // carrying the same owner/ignoreCover — not one, like the old single-shot-only dispatch did.
-
-  it('a FLYING kind\'s projectile spawns with ignoreCover: true (both stream lanes)', () => {
-    const { scene, calls } = makeVehicleScene();
-    scene._fireVehicleWeapon(makeKindEnemy(STRAIGHT_PROJECTILE.id, true), {}, 0);
-    expect(calls.projectile).toEqual([
-      { owner: 'enemy', ignoreCover: true },
-      { owner: 'enemy', ignoreCover: true },
-    ]);
-  });
-
-  it('a GROUND kind\'s projectile spawns with ignoreCover: false (unchanged, both stream lanes)', () => {
-    const { scene, calls } = makeVehicleScene();
-    scene._fireVehicleWeapon(makeKindEnemy(STRAIGHT_PROJECTILE.id, false), {}, 0);
-    expect(calls.projectile).toEqual([
-      { owner: 'enemy', ignoreCover: false },
-      { owner: 'enemy', ignoreCover: false },
-    ]);
-  });
+    // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
+    // stream weapon (`delivery.count: 2`), so one trigger pull spawns TWO rounds.
+    it(`a ${label} kind's _spawnProjectile args carry no cover-exemption flag (both stream lanes)`, () => {
+      const { scene, calls } = makeVehicleScene();
+      scene._fireVehicleWeapon(makeKindEnemy(STRAIGHT_PROJECTILE.id, flying), {}, 0);
+      expect(calls.projectile).toHaveLength(2);
+      for (const args of calls.projectile) {
+        expect(args[4]).toBe('enemy');
+        expect(args[6]).toBe(null);        // seekOverride
+        expect(args[8]).toBe(false);       // #269 smallUnitInvolved, now the last arg
+        expect(args).toHaveLength(9);      // ...and nothing beyond it
+      }
+    });
+  }
 });
 
-// ── _spawnProjectile stamps the round ──────────────────────────────────────────────────────
-describe('#245 _spawnProjectile stamps ignoresCover onto the spawned round', () => {
+// ── _spawnProjectile no longer stamps a cover exemption ────────────────────────────────────
+describe('#316 _spawnProjectile stamps no cover-exemption flag on the round', () => {
   function makeSpawnScene() {
     const scene = {
       projectiles: [],
@@ -226,29 +246,28 @@ describe('#245 _spawnProjectile stamps ignoresCover onto the spawned round', () 
   }
   const w = { weapon: STRAIGHT_PROJECTILE, location: 'rightArm', index: 0 };
 
-  it('true when the flying flag is threaded; false when omitted (player default)', () => {
+  it('neither an enemy nor a player round carries `ignoresCover` at all', () => {
     const scene = makeSpawnScene();
-    const flyer = scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0, true);
-    const player = scene._spawnProjectile(w, 0, 0, 0);
-    expect(flyer.ignoresCover).toBe(true);
-    expect(player.ignoresCover).toBe(false);
+    const enemyRound = scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0);
+    const playerRound = scene._spawnProjectile(w, 0, 0, 0);
+    expect(enemyRound.ignoresCover).toBeUndefined();
+    expect(playerRound.ignoresCover).toBeUndefined();
+  });
+
+  // Guards the positional-arg shift: dropping `ignoreCover` moved #269's `smallUnitInvolved`
+  // from arg 9 to arg 8. If that shift were ever half-applied, a "small unit" flag would land
+  // in the wrong slot and silently break soft-cover behaviour rather than failing loudly.
+  it('#269 smallUnitInvolved is still threaded, at its post-#316 position', () => {
+    const scene = makeSpawnScene();
+    expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0, true).smallUnitInvolved).toBe(true);
+    expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0, false).smallUnitInvolved).toBe(false);
   });
 });
 
-// ── #257: the PLAYER's own shots ignore cover when aimed at a flying enemy ─────────────────
-// #245 made a flyer's OWN shots ignore cover; that fix's report flagged the reverse asymmetry
-// unaddressed — a flyer sitting over/behind terrain the player can't shoot through was
-// effectively unhittable from the ground, even though it could freely shoot back through that
-// same terrain. Fix: `fireWeapon` (firing.js) reads `this.convergeTarget` — the same live pick
-// `_fireAngle` already aims muzzles at, set every frame by `_updateLock` (targeting.js) with NO
-// LOS gate of its own — and threads `ignoreCover: true` into both fire paths whenever that
-// target is a flying enemy (`.flying`, enemyKinds.js). A non-flying enemy or a #250
-// destructible-hex convergence target (no `.flying` property) leaves `ignoreCover: false`,
-// unchanged from before.
-//
+// ── The player's own shots vs. a flying convergence target (reverses #257) ─────────────────
 // Real `fireWeapon` runs end-to-end against a minimal scene; `_fireHitscan`/`_spawnProjectile`
-// are spied (same pattern as `makeVehicleScene` above) so we can read the exact `ignoreCover`
-// arg the dispatch computed, without needing a full muzzle/aim/ammo/audio rig.
+// are spied so we can read the exact args the dispatch computed, without needing a full
+// muzzle/aim/ammo/audio rig.
 function makeFireWeaponScene({ convergeTarget = null } = {}) {
   const scene = {
     scene: { isActive: () => true },
@@ -270,56 +289,70 @@ function makeFireWeaponScene({ convergeTarget = null } = {}) {
 const PLAYER_HITSCAN_W = { weapon: HITSCAN_WEAPON, location: 'rightArm', index: 0 };
 const PLAYER_PROJECTILE_W = { weapon: STRAIGHT_PROJECTILE, location: 'leftArm', index: 0 };
 
-describe('#257 fireWeapon: the player\'s own shot ignores cover when aimed at a flying enemy', () => {
-  it('no convergence target ⇒ ignoreCover: false (unchanged)', () => {
-    const scene = makeFireWeaponScene({ convergeTarget: null });
-    scene.fireWeapon(PLAYER_HITSCAN_W);
-    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
-    // ignoreCover ARG specifically rather than the whole call shape.
-    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
-  });
+describe('#316 fireWeapon: the player\'s shot respects cover whatever it is aimed at', () => {
+  // Post-#316 `_fireHitscan`'s 7th arg is #269's smallUnitInvolved, not a cover flag — and the
+  // player is always a large unit, so it is always false. The whole point of these cases is that
+  // the convergence target's `flying` no longer changes ANY argument.
+  const CASES = [
+    ['no convergence target', null],
+    ['a GROUND enemy', { x: 10, y: 0, flying: false, mech: {} }],
+    ['a #250 destructible hex (no .flying)', { x: 10, y: 0 }],
+    ['a FLYING enemy — the case #257 used to exempt', { x: 10, y: 0, flying: true, mech: {} }],
+  ];
 
-  it('converged on a GROUND enemy ⇒ ignoreCover: false (unchanged)', () => {
-    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
-    scene.fireWeapon(PLAYER_HITSCAN_W);
-    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
-    // ignoreCover ARG specifically rather than the whole call shape.
-    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
-  });
+  for (const [label, convergeTarget] of CASES) {
+    it(`converged on ${label} ⇒ the hitscan beam gets no cover exemption`, () => {
+      const scene = makeFireWeaponScene({ convergeTarget });
+      scene.fireWeapon(PLAYER_HITSCAN_W);
+      expect(scene._fireHitscan.mock.calls[0].slice(0, 7))
+        .toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
+    });
+  }
 
-  it('converged on a #250 destructible hex (no .flying) ⇒ ignoreCover: false (unchanged)', () => {
-    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0 } });
-    scene.fireWeapon(PLAYER_HITSCAN_W);
-    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
-    // ignoreCover ARG specifically rather than the whole call shape.
-    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
-  });
-
-  it('converged on a FLYING enemy ⇒ the hitscan beam gets ignoreCover: true', () => {
-    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: true, mech: {} } });
-    scene.fireWeapon(PLAYER_HITSCAN_W);
-    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
-    // ignoreCover ARG specifically rather than the whole call shape.
-    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', true]);
-  });
-
-  it('converged on a FLYING enemy ⇒ the spawned projectile gets ignoreCover: true', () => {
-    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: true, mech: {} } });
-    scene.fireWeapon(PLAYER_PROJECTILE_W);
-    // machineGun (STRAIGHT_PROJECTILE) is a 2-stream weapon, so each shot's muzzle x/y is offset
-    // laterally (a real, non-zero float) — only the trailing `ignoreCover` arg matters here.
-    for (const call of scene._spawnProjectile.mock.calls) {
+  it('a FLYING and a GROUND convergence target produce byte-identical projectile args', () => {
+    const flyer = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: true, mech: {} } });
+    flyer.fireWeapon(PLAYER_PROJECTILE_W);
+    const ground = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
+    ground.fireWeapon(PLAYER_PROJECTILE_W);
+    expect(flyer._spawnProjectile.mock.calls.length).toBeGreaterThan(0);
+    expect(flyer._spawnProjectile.mock.calls).toEqual(ground._spawnProjectile.mock.calls);
+    // ...and no trailing cover-exemption arg survives on either.
+    for (const call of flyer._spawnProjectile.mock.calls) {
       expect(call[4]).toBe('player');
-      expect(call[8]).toBe(true);
+      expect(call.length).toBeLessThanOrEqual(8);
+    }
+  });
+});
+
+// ── SOFT cover still does NOT block flyers (#316 point 4) ──────────────────────────────────
+// The case most likely to regress silently. #316 does NOT invent a flyer-specific cover rule —
+// it removes the exemptions so flyers fall through to the SHARED logic, which already exempts
+// LARGE units from soft cover (terrain.js `softCoverBlocksLOS`, #269). Both flyer kinds are
+// `size: 'large'`, so a helicopter over woodland still sees and shoots normally; only hard cover
+// stops it. If someone ever re-tagged a flyer as `size: 'small'`, forest would start blocking it
+// — hence the size assertion, which is the actual load-bearing fact.
+describe('#316 point 4: soft cover (forest/scrub) does not block flyers, hard cover does', () => {
+  const FLYER_KINDS = Object.values(ENEMY_KINDS).filter((k) => k.flying);
+
+  it('there are flying kinds to test, and every one is size large — so soft cover exempts them', () => {
+    expect(FLYER_KINDS.length).toBeGreaterThan(0);
+    for (const def of FLYER_KINDS) {
+      expect(def.size).toBe('large');
+      // ...which is exactly what the shared LOS call sites read (`isSmallUnit(e)`).
+      expect(isSmallUnit({ kindDef: def })).toBe(false);
     }
   });
 
-  it('converged on a GROUND enemy ⇒ the spawned projectile keeps ignoreCover: false (unchanged)', () => {
-    const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
-    scene.fireWeapon(PLAYER_PROJECTILE_W);
-    for (const call of scene._spawnProjectile.mock.calls) {
-      expect(call[4]).toBe('player');
-      expect(call[8]).toBe(false);
+  it('forest and scrub are SOFT cover and do not block a large unit\'s ray (flyer or mech)', () => {
+    for (const id of [TERRAIN.forest.id, TERRAIN.scrub.id]) {
+      expect(isSoftCover(id)).toBe(true);
+      // smallUnitInvolved=false is what a flyer (and the player mech) passes.
+      expect(coverBlocksForRay(id, false, false)).toBe(false);
     }
+  });
+
+  it('hard cover (the objective structure) blocks a large unit\'s ray — flyers included', () => {
+    expect(isSoftCover(TERRAIN.objective.id)).toBe(false);
+    expect(coverBlocksForRay(TERRAIN.objective.id, false, false)).toBe(true);
   });
 });

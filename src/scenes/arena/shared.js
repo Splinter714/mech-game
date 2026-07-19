@@ -113,11 +113,19 @@ export const DEPTH = {
   // (WORLD_UI = 6) stay bright as navigational aids — a deliberate call, see visibility.js.
   // Another fractional slot, for the same "don't renumber every existing tier" reason 2.5/2.75
   // use (#289).
+  // #316: FLYING enemy views (helicopter, drone). Originally these shared the player's UNITS (3)
+  // tier, which sat ABOVE LOS_DIM and was #306's entire "flyers stay bright over un-sighted
+  // ground" implementation. #316 reverses that decision — there is no flying exemption anywhere,
+  // so a flyer must be dimmed by the LOS overlay exactly like a ground unit. That means splitting
+  // flyers out of UNITS into their own tier strictly BELOW LOS_DIM (2.9), while still ABOVE
+  // COVER_CANOPY (2.5) and LARGE_GROUND_UNITS (2.75) so they visually fly over tree tops and tower
+  // over ground units. 2.8 is the only band satisfying all three. Another fractional slot, for the
+  // same "don't renumber every existing tier" reason 2.5/2.75/2.9 use (#289).
+  FLYING_UNITS: 2.8,
   LOS_DIM: 2.9,
-  UNITS: 3,        // the player, and flying enemy views (helicopter, drone) — elevated units
-                      // that don't have the same "who's actually closer to the ground" ambiguity
-                      // ground units do, so they keep the original flat #99 tier alongside the
-                      // player.
+  UNITS: 3,        // the player — the one unit that is never dimmed and is never obscured by
+                      // anything else in the world. (Before #316 flying enemies shared this tier;
+                      // they now sit at FLYING_UNITS, just under the dimming layer.)
   PROJECTILES: 4,     // in-flight rounds, persistent beams, muzzle flash / melee slash — flying
                       // over the units they're headed toward or past.
   IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text
@@ -126,19 +134,23 @@ export const DEPTH = {
                       // beacons — always legible above units and FX.
 };
 
-// #113/#289: which DEPTH tier a unit's view belongs at. The player and any FLYING enemy
-// (helicopter, drone) stay at DEPTH.UNITS. Every non-flying (ground) ENEMY unit renders below the
-// player, but #289 splits ground units by SIZE tier so they sort correctly against the cover
-// canopy (COVER_CANOPY = 2.5): SMALL ground units (tank/infantry — `small === true`) stay at
-// DEPTH.GROUND_UNITS (2, below the canopy, so they peek out from UNDER foliage), while LARGE
-// ground units (enemy mech/quadruped/turret) render at DEPTH.LARGE_GROUND_UNITS (2.75, above the
-// canopy so they tower over tree tops) — still below the player. `small` is the caller's size-tier
-// signal (isSmallUnit / `def.size === 'small'`); it's ignored for the player and flyers, which the
-// isPlayer/flying branch handles first. PURE so the tier-SELECTION logic is unit-testable without
-// touching Phaser; the two real call sites (locomotion.js `_makeMechView`, enemies.js
-// `_makeVehicleView`) feed this and call `setDepth()` with the result.
+// #113/#289/#316: which DEPTH tier a unit's view belongs at. The PLAYER alone stays at DEPTH.UNITS
+// (3), above the LOS dimming layer. A FLYING enemy (helicopter, drone) renders at
+// DEPTH.FLYING_UNITS (2.8) — above every ground unit and the cover canopy, so it still flies over
+// tree tops and towers over ground units, but BELOW LOS_DIM (2.9) so #316's "no flying exemption
+// anywhere" holds and a flyer in an un-sighted area is dimmed like anything else. Every non-flying
+// (ground) ENEMY unit renders below that, and #289 splits ground units by SIZE tier so they sort
+// correctly against the cover canopy (COVER_CANOPY = 2.5): SMALL ground units (tank/infantry —
+// `small === true`) stay at DEPTH.GROUND_UNITS (2, below the canopy, so they peek out from UNDER
+// foliage), while LARGE ground units (enemy mech/quadruped/turret) render at
+// DEPTH.LARGE_GROUND_UNITS (2.75, above the canopy so they tower over tree tops). `small` is the
+// caller's size-tier signal (isSmallUnit / `def.size === 'small'`); it's ignored for the player and
+// flyers, which the isPlayer/flying branches handle first. PURE so the tier-SELECTION logic is
+// unit-testable without touching Phaser; the two real call sites (locomotion.js `_makeMechView`,
+// enemies.js `_makeVehicleView`) feed this and call `setDepth()` with the result.
 export function unitDepth(isPlayer, flying, small = false) {
-  if (isPlayer || flying) return DEPTH.UNITS;
+  if (isPlayer) return DEPTH.UNITS;
+  if (flying) return DEPTH.FLYING_UNITS;
   return small ? DEPTH.GROUND_UNITS : DEPTH.LARGE_GROUND_UNITS;
 }
 

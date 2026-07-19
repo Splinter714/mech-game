@@ -233,10 +233,22 @@ describe('gunship attack cycle — facing drives the weapon (#305)', () => {
     expect(minGap).toBeGreaterThan(20);
   });
 
-  it('never asks for line of sight — flyers shoot over cover (#245)', () => {
+  // #316 REVERSES #245. This test used to assert the opposite — that the gunship fired happily
+  // through a total cover field because flyers were exempt from the LOS gate. That exemption is
+  // gone: cover is cover for everyone, so a gunship with no sight line holds fire like any tank.
+  it('#316: holds fire with no line of sight — cover blocks flyers too (reverses #245)', () => {
     const scene = makeScene();
-    // A cover field that blocks EVERYTHING. If the gunship consulted LOS it would never fire.
+    // A cover field that blocks EVERYTHING.
     scene._cachedLosToPlayer = () => false;
+    const e = makeGunship({ x: 500 });
+    const log = fly(scene, e, 300);
+    expect(log.some((f) => f.fired)).toBe(false);
+  });
+
+  // The complement, so the test above can't pass merely because the rig never fires at all:
+  // with a clear sight line the same gunship on the same cycle does shoot.
+  it('#316: still fires normally when it DOES have line of sight', () => {
+    const scene = makeScene();   // makeScene's _cachedLosToPlayer returns true
     const e = makeGunship({ x: 500 });
     const log = fly(scene, e, 300);
     expect(log.some((f) => f.fired)).toBe(true);

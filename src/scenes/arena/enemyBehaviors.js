@@ -32,7 +32,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 // every existing caller is unchanged. `slot: null` explicitly means HOLD FIRE: the turret still
 // slews to track the player (so the unit stays menacing and is instantly ready when it re-opens)
 // but nothing is fired — that's what the gunship's break-off phase uses.
-function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
+function aimAndFire(scene, e, ctx, { slot = undefined, fire = true } = {}) {
   const def = e.kindDef;
   e.turret = rotateToward(e.turret, ctx.bearing, def.move.turretSlew, ctx.dt);
   // Record the live slot BEFORE the hold-fire bail, so `e.weaponSlot` always reflects what the
@@ -48,11 +48,15 @@ function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
   // literal fire path too, so any future caller of a behavior fn inherits it.
   if (!scene._enemyFireAllowed()) return;
   const inRange = ctx.dist < (mount?.fireRange ?? 300);
-  // Ground units need a clear firing lane; flyers shoot over everything. #72 own-hex
-  // transparency: the player's own soft-cover hex (and this unit's) doesn't block the lane.
+  // EVERY unit needs a clear firing lane before it opens fire. #316 removed the last `needLos:
+  // false` opt-out (flyers, #245/#94) — flyers now run this exact same gate, so the parameter is
+  // gone entirely rather than left as an unused door. #72 own-hex transparency: the player's own
+  // soft-cover hex (and this unit's) doesn't block the lane; and since `isSmallUnit` is false for
+  // both flyer kinds (drone/helicopter are size 'large'), soft cover — forest/scrub — doesn't
+  // block a flyer's lane either, exactly as it doesn't block a mech's. Hard cover blocks everyone.
   // #167: ground vehicles (tanks/infantry/quadrupeds, often 40+ at once) ran this raycast per
   // unit per frame — now a STAGGERED CACHE (~120ms per-enemy refresh), exact at each refresh.
-  const los = needLos ? scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py, isSmallUnit(e)) : true;
+  const los = scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py, isSmallUnit(e));
   // Only fire once the gun is roughly on target, so shots read as aimed.
   //
   // #305: a slot may be a FIXED FORWARD mount (`fixedForward` in the kind's data) — a gun bolted
@@ -78,15 +82,16 @@ function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
 // completely unaffected by LOS — it's the arcing DELIVERY (data/delivery.js `path: 'arcing'`,
 // consumed by projectiles.js) that lets the round skip wall collision, nothing in `aimAndFire`
 // touches that — so it still lobs over/through cover exactly as before once fired.
-// #293: `needLos` here gates a SEPARATE thing — the DECISION to open fire — and per #94 that used
-// to be dropped entirely (`needLos: false`) on the theory that "the shell doesn't need LOS to
-// reach the target, so the turret doesn't either." That conflated the two: the shell's physics
+// #293: `aimAndFire`'s LOS gate covers a SEPARATE thing — the DECISION to open fire — and per #94
+// the turret used to opt out of it (the old `needLos: false` flag) on the theory that "the shell
+// doesn't need LOS to reach the target, so the turret doesn't either." That conflated the two:
+// the shell's physics
 // not needing LOS says nothing about whether the turret should be able to see the player before
 // deciding to shoot at them. Result was a turret blasting the player through solid walls from
 // anywhere in its (huge, 2400px) range the instant it woke, which read as omniscient rather than
-// alert ("base alert vibes" playtest note). Now `needLos: true`, same as tank/quadruped — the
-// turret must actually have line of sight (via the shared staggered `_cachedLosToPlayer`, same
-// cache every other needLos:true kind already uses) before it opens fire; once it does fire, the
+// alert ("base alert vibes" playtest note). #293 put the turret back on the gate, and #316 made it
+// unconditional for every kind (the opt-out flag is gone) — the turret must actually have line of
+// sight (via the shared staggered `_cachedLosToPlayer`) before it opens fire; once it does fire, the
 // shell itself still ignores walls in flight exactly as before. Awareness itself (`_updateVehicle`
 // non-mech kinds — see its own comment) stays the existing distance+noise-only check, deliberately
 // NOT given an LOS requirement: that's a separate, pre-existing design choice (kept cheap since
@@ -95,7 +100,7 @@ function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
 // without touching that cheaper wake path.
 function turretBehavior(scene, e, ctx) {
   e.vx = 0; e.vy = 0;
-  aimAndFire(scene, e, ctx, { needLos: true });
+  aimAndFire(scene, e, ctx);
 }
 
 // TANK — grinds to a firing standoff and holds. #92: the HULL drives like a real tank — it
@@ -209,7 +214,7 @@ function tankBehavior(scene, e, ctx) {
   const thrust = target * alignment;
   e.vx = approach(e.vx, Math.cos(e.angle) * thrust, mv.accel * ctx.dt);
   e.vy = approach(e.vy, Math.sin(e.angle) * thrust, mv.accel * ctx.dt);
-  aimAndFire(scene, e, ctx, { needLos: true });
+  aimAndFire(scene, e, ctx);
 }
 
 // #282: boids-style SEPARATION for flyers — replaces the old HARD `_blockedByOtherFlyer`
@@ -283,7 +288,7 @@ function droneBehavior(scene, e, ctx) {
   e.vx = approach(e.vx, (desiredX / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
   e.vy = approach(e.vy, (desiredY / dmag) * mv.maxSpeed, mv.accel * ctx.dt);
   e.angle = Math.atan2(e.vy, e.vx);
-  aimAndFire(scene, e, ctx, { needLos: false });
+  aimAndFire(scene, e, ctx);
 }
 
 // HELICOPTER — a GUNSHIP running the #305 three-phase attack cycle. The state machine itself
@@ -304,8 +309,9 @@ function droneBehavior(scene, e, ctx) {
 // picks both, together, from PHASE_PLAN.
 //
 // Preserved from before: #282 boids `flyerSeparation` blending (so two gunships, or a gunship
-// inside a drone swarm, push apart rather than overlapping) applies in EVERY phase, and #245's
-// `needLos: false` (flyers shoot over cover) is unchanged.
+// inside a drone swarm, push apart rather than overlapping) applies in EVERY phase. #316 removed
+// #245's `needLos: false` (flyers shoot over cover): the gunship must now actually have line of
+// sight to open fire, like every other kind.
 function helicopterBehavior(scene, e, ctx) {
   const def = e.kindDef;
   const mv = def.move;
@@ -363,8 +369,8 @@ function helicopterBehavior(scene, e, ctx) {
 
   // ── Guns ───────────────────────────────────────────────────────────────────────────────
   // The phase names the slot; `slot: null` (REPOSITION) holds fire while still tracking.
-  // #245: flyers ignore cover for LOS, unchanged.
-  aimAndFire(scene, e, ctx, { needLos: false, slot: plan.slot, fire: plan.slot != null });
+  // #316: no flyer LOS exemption any more — `aimAndFire`'s shared cover gate applies here too.
+  aimAndFire(scene, e, ctx, { slot: plan.slot, fire: plan.slot != null });
 }
 
 // QUADRUPED — "Broodwalker" (#130, swarm deploy reworked in #147, drones-only + origin fixed in
@@ -450,7 +456,7 @@ function quadrupedBehavior(scene, e, ctx) {
   const thrust = target * alignment;
   e.vx = approach(e.vx, Math.cos(e.angle) * thrust, mv.accel * ctx.dt);
   e.vy = approach(e.vy, Math.sin(e.angle) * thrust, mv.accel * ctx.dt);
-  aimAndFire(scene, e, ctx, { needLos: true });
+  aimAndFire(scene, e, ctx);
   quadrupedDeployTick(scene, e, def, ctx);
 }
 
@@ -517,7 +523,7 @@ function infantryBehavior(scene, e, ctx) {
   e.vx = approach(e.vx, mx * mv.maxSpeed, mv.accel * ctx.dt);
   e.vy = approach(e.vy, my * mv.maxSpeed, mv.accel * ctx.dt);
   if (Math.hypot(e.vx, e.vy) > 5) e.angle = Math.atan2(e.vy, e.vx);
-  aimAndFire(scene, e, ctx, { needLos: true });
+  aimAndFire(scene, e, ctx);
 }
 
 // Local copy of the shared approach() (avoid importing the whole shared module chain here).

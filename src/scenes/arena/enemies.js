@@ -1173,24 +1173,24 @@ export const EnemiesMixin = {
         if (plan.mode === 'contact') {
           this._melee(w, ox, oy, baseAngle, 'enemy');
         } else if (plan.mode === 'hitscan') {
-          // #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`) shoots from
-          // above, so its shots ignore terrain cover entirely: the hitscan trace skips the wall
-          // check and a spawned round is stamped `ignoresCover` (see firing.js/projectiles.js).
-          // Ground kinds pass false and are blocked by cover exactly as before.
+          // #316 reverses #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`)
+          // used to pass a cover exemption here so its beam skipped the wall trace. It doesn't any
+          // more — every shooter's beam is blocked by hard cover identically, flying or not.
           // #307: `lane`/`lateral` keep a multi-lane continuous beam from collapsing into one
           // object (enemies have no Barrage, so this is lane 0 today — threaded for parity).
-          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, !!e.flying, isSmallUnit(e), { lane, lateral: s.lateral });
+          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, isSmallUnit(e), { lane, lateral: s.lateral });
         } else {
           // No explicit seek target needed here (playtest follow-up #252 dropped the old
           // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
           // intrinsic chase-the-player behaviour in _updateProjectiles (it re-reads the player's
           // LIVE position every frame), so it tracks straight through cover exactly the same
-          // whether this shot had LOS or not. #245: a flying shooter's rounds also ignore terrain
-          // cover in flight. `aimAngle` (the un-offset centre bearing, matching firing.js's own
+          // whether this shot had LOS or not. (#245 used to stamp a flying shooter's rounds so they
+          // ignored terrain cover in flight; #316 removed that — they detonate on cover like any
+          // other round.) `aimAngle` (the un-offset centre bearing, matching firing.js's own
           // `aimAngle` param) stays `fireAngle` for every sub-shot so a fanned/streamed weapon's
           // arcing maxDist test (see `_spawnProjectile`) reads the same centre line the player
           // path uses.
-          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, !!e.flying, isSmallUnit(e));
+          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, isSmallUnit(e));
         }
       };
       if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
