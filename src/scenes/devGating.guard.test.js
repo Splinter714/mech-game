@@ -17,15 +17,26 @@ const hud = read('HudScene.js');
 const garage = read('GarageScene.js');
 const tabBar = read('../ui/tabBar.js');
 
-describe('#296 HudScene: FPS / control hints / control-method / AI readouts are dev-gated', () => {
-  it('the FPS counter is created only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text/);
+describe('#334 HudScene: the performance readout is NOT dev-gated (it ships to production)', () => {
+  // #296 originally gated the FPS counter dev-only; #334 reverses that for the performance readout
+  // ONLY, so Jackson can diagnose the Windows/Edge frame-rate problem on the live build. The rest
+  // of #296's gating (below) is unchanged — that's the whole point of keeping these in one file.
+  it('the performance readout is created unconditionally', () => {
+    expect(hud).toMatch(/\n\s*this\.fpsText = this\.add\.text/);
+    expect(hud).not.toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text/);
   });
 
-  it('the FPS counter is updated only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText\.setText\(`FPS /);
+  it('the performance readout is updated unconditionally', () => {
+    expect(hud).toMatch(/\n\s*this\.fpsText\.setText\(perfLines\(\{/);
+    expect(hud).not.toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText\.setText/);
   });
 
+  it('reads the renderer type LIVE off the game rather than inferring it from config', () => {
+    expect(hud).toMatch(/rendererLabel\(this\.game\.renderer\?\.type, Phaser\.WEBGL, Phaser\.CANVAS\)/);
+  });
+});
+
+describe('#296 HudScene: control hints / control-method / AI readouts stay dev-gated', () => {
   it('the control-method (modeText) + AI (aiText) overlays are created only under import.meta.env.DEV', () => {
     expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.modeText = this\.add\.text[\s\S]*?this\.aiText = this\.add\.text/);
   });

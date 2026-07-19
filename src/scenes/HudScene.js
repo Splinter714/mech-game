@@ -7,6 +7,7 @@ import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { DASH_BIND } from '../input/Controls.js';
 import { AMMO_EMPTY_COOLDOWN } from '../data/Mech.js';
+import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -146,11 +147,19 @@ export default class HudScene extends Phaser.Scene {
     // has mode/AI text, bottom-centre has the skill bar). Phaser's own `game.loop.actualFps` is
     // already an EMA (25% new / 75% old, see TimeStep.js) refreshed once a second — plenty stable
     // frame-to-frame on its own, so no extra rolling-average layer is needed on top of it.
-    // #296: dev-only — created (and updated, see update()) behind `import.meta.env.DEV` so the
-    // FPS readout never ships in a production build.
-    if (import.meta.env.DEV) {
-      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '12px', color: C.dim }).setOrigin(0, 1);
-    }
+    // #296 gated this dev-only; #334 puts it BACK in production builds (Jackson: "put FPS counter
+    // back on production server") and widens it into a small performance readout — FPS plus the
+    // renderer/GPU/resolution facts needed to diagnose great-on-macOS-Safari vs awful-on-Windows-
+    // Edge. Deliberately NOT dev-gated; every OTHER #296 surface (hex labels, control hints, debug
+    // panels) stays dev-only. See src/data/perfReadout.js for why each field is a suspect.
+    this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1);
+    // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
+    // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
+    // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing.
+    this._perfRenderer = rendererLabel(this.game.renderer?.type, Phaser.WEBGL, Phaser.CANVAS);
+    this._perfGpu = gpuRendererString(
+      probeGl(this.game.renderer?.gl, () => document.createElement('canvas')),
+    );
 
     // #60: active timed-buff readout, top-right under the enemy count. One radial "cooldown-pie"
     // per active buff — a ring tinted the buff colour that drains clockwise as it runs out, with
@@ -379,10 +388,17 @@ export default class HudScene extends Phaser.Scene {
     this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
-    // #296: dev-only — the readout object only exists under DEV, so its update is gated to match.
-    if (import.meta.env.DEV) {
-      this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
-    }
+    // #334: ships in production now, so no DEV guard. Resolution/DPR are re-read every frame (a
+    // window move between displays changes DPR live, and main.js resizes the backing store to
+    // match); renderer/GPU were probed once in create().
+    this.fpsText.setText(perfLines({
+      fps: this.game.loop.actualFps,
+      renderer: this._perfRenderer,
+      gpu: this._perfGpu,
+      width: this.scale.width,
+      height: this.scale.height,
+      dpr: this.registry.get('dpr') || window.devicePixelRatio || 1,
+    }));
   }
 
   // #80: point at the current objective whenever it's off-camera. Reads the SAME live source
