@@ -19,6 +19,24 @@ import { pixelToHex, hexToPixel, nearestHex, HEX_SIZE } from './hexgrid.js';
 // visibly at their 26px pickup radius, but can no longer cross a wall on its own.
 export const DROP_SCATTER_RADIUS = 12;
 
+// #345 (freeze): how far the placement search may ever wander, in rings. This is deliberately a
+// FIXED LOCAL NEIGHBOURHOOD and not derived from the world's size.
+//
+// The callers used to pass `worldRadius * 2 + BOUNDARY_RING_WIDTH + 15` — a budget inherited from
+// `nearestValidHex`, which is a cheap terrain-map lookup per candidate. Here each candidate also
+// runs a wall-separation segment test, and #340's 24,000px corridor pushed that budget to 752
+// rings (~1.7M hexes). A kill landing ON a wall span leaves its reference point inside the wall,
+// so almost nothing reads as same-side, the search never succeeds, and it walks the entire world
+// — measured at 549 SECONDS for one drop, twice over (search, then the wedged pass). That is the
+// hang Jackson hit fighting beside a base.
+//
+// 6 rings is ~290px: comfortably past any wall band and any plausible pocket of blocked ground,
+// while capping the worst case at ~127 hexes. Beyond that there is nothing useful to find anyway
+// — a pickup 300px from where the kill happened is already at the edge of "that's my reward",
+// and the fallback (nearest correct-side tile, even if it clips the wall) is a better answer than
+// a tile hundreds of hexes away that happens to be reachable.
+export const DROP_SEARCH_RINGS = 6;
+
 // Resolve a drop's final resting place.
 //
 //   x, y      the (already scattered) ideal drop point
@@ -37,7 +55,7 @@ export const DROP_SCATTER_RADIUS = 12;
 // Returns { x, y, fallback } — `fallback` true only in the corner case below.
 export function resolveDropPos(x, y, {
   ref = null, blocked = null, passable = () => true,
-  separated = () => false, maxSteps = 40, size = HEX_SIZE,
+  separated = () => false, maxSteps = DROP_SEARCH_RINGS, size = HEX_SIZE,
 } = {}) {
   const sameSide = (px, py) => !ref || !separated(ref.x, ref.y, px, py);
   // Already fine where it landed: walkable AND on the right side of everything.

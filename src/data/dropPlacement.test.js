@@ -2,7 +2,7 @@
 // dropped it. Two nudges used to let that happen — an oversized #88 scatter and #73's
 // side-agnostic ring search — so these cover the tamed radius and the side rule together.
 import { describe, it, expect } from 'vitest';
-import { resolveDropPos, DROP_SCATTER_RADIUS } from './dropPlacement.js';
+import { resolveDropPos, DROP_SCATTER_RADIUS, DROP_SEARCH_RINGS } from './dropPlacement.js';
 import { hexToPixel, pixelToHex, axialKey, HEX_SIZE, scatterOffset } from './hexgrid.js';
 import { makeWallEdgeSet, wallEdgeSeparating } from './wallEdges.js';
 
@@ -101,6 +101,35 @@ describe('resolveDropPos — the wedged-in-a-corner fallback (#336)', () => {
     });
     expect(Number.isFinite(pos.x) && Number.isFinite(pos.y)).toBe(true);
     expect(pos.fallback).toBe(true);
+  });
+});
+
+// #345 — the freeze. A kill landing ON a wall span leaves the reference point inside the wall, so
+// nearly nothing reads as same-side and the ring search runs to exhaustion — twice (the search,
+// then the wedged pass). That is fine as long as "exhaustion" is a small fixed neighbourhood; it
+// was catastrophic when the budget was `worldRadius * 2 + …`, which #340's longer corridor pushed
+// to 752 rings (~1.7M candidates, each running a wall-separation segment test). Measured at 549
+// SECONDS for a single drop against a real generated base. These lock the bound in place.
+describe('resolveDropPos — the search is bounded to a local neighbourhood (#345)', () => {
+  it('does bounded work when NOTHING is ever on the right side', () => {
+    let calls = 0;
+    const pos = resolveDropPos(0, 0, {
+      ref: { x: 0, y: 0 }, blocked: () => true, passable: () => true,
+      separated: () => { calls++; return true; },
+    });
+    expect(pos.fallback).toBe(true);
+    // Both passes together walk at most two full DROP_SEARCH_RINGS discs. The point of the
+    // assertion is the ORDER OF MAGNITUDE: hundreds, never the ~1.7M the world-sized budget
+    // allowed. 3n(n+1)+1 hexes per disc, doubled, with room to spare.
+    const perDisc = 3 * DROP_SEARCH_RINGS * (DROP_SEARCH_RINGS + 1) + 1;
+    expect(calls).toBeLessThanOrEqual(perDisc * 2 + 2);
+    expect(calls).toBeLessThan(1000);
+  });
+
+  it('the default budget does not scale with the world — it is a small fixed constant', () => {
+    // The regression itself: the callers used to derive maxSteps from MAX_WORLD_RADIUS (351),
+    // giving 752. If someone reintroduces a world-derived default, this fails.
+    expect(DROP_SEARCH_RINGS).toBeLessThanOrEqual(12);
   });
 });
 
