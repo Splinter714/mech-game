@@ -591,7 +591,7 @@ describe('#287: the interior turret emplacement is gone entirely', () => {
 
 describe('#313 destructible-structure HP retune (owner-confirmed values)', () => {
   // Before #313 every destructible structure was more fragile than the CHEAPEST combat unit:
-  // against #299's toughness scale (tank 80, quadruped 150, light mech 200, sniper 350, player
+  // against #299's toughness scale (tank 80, carrier 150, light mech 200, sniper 350, player
   // 600) an objective sat at 40 — half a tank — so a four-weapon mech in the ~22-30 DPS band
   // deleted any fortification in well under a second. These are the exact values the owner
   // settled on after reviewing the real numbers; the objective in particular was offered 400 and

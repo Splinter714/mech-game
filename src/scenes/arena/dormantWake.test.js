@@ -163,9 +163,9 @@ describe('#269 §7: wake-response split by speed (data/bases.js isFastWakeKind)'
     expect(heli.holdGround).toBeUndefined();
   });
 
-  it('slow/defensive kinds (turret/tank/quadruped/infantry) get holdGround: true', () => {
+  it('slow/defensive kinds (turret/tank/carrier/infantry) get holdGround: true', () => {
     const scene = makeScene();
-    const units = ['turret', 'tank', 'quadruped', 'infantry'].map((k) => makeDockedUnit(k, { baseId: 'base0' }));
+    const units = ['turret', 'tank', 'carrier', 'infantry'].map((k) => makeDockedUnit(k, { baseId: 'base0' }));
     scene.enemies.push(...units);
     scene._wakeBase('base0');
     for (const u of units) expect(u.holdGround).toBe(true);
@@ -224,11 +224,11 @@ describe('#269 playtest follow-up: multi-count dock composition (_spawnDormantUn
     expect(scene.enemies.every((e) => e.typeId === 'helicopter')).toBe(true);
   });
 
-  it('a count:1 dock (e.g. quadruped) spawns exactly one unit, at the dock hex centre', () => {
+  it('a count:1 dock (e.g. carrier) spawns exactly one unit, at the dock hex centre', () => {
     const scene = makeSceneWithSpawnStub();
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
-      docks: [{ q: 0, r: 0, kindId: 'quadruped', count: 1 }], turrets: [],
+      docks: [{ q: 0, r: 0, kindId: 'carrier', count: 1 }], turrets: [],
     }];
     scene._spawnDormantUnits();
     expect(scene.enemies.length).toBe(1);
@@ -775,7 +775,7 @@ describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/aler
 
   it('every label is red and positioned above its hex\'s pixel centre', () => {
     const scene = makeSceneWithAdd();
-    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 2, r: 0, kindId: 'quadruped', count: 1 }], turrets: [] }];
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 2, r: 0, kindId: 'carrier', count: 1 }], turrets: [] }];
     scene.alertTowerHexes = [];
     scene._spawnHexLabels();
 
@@ -830,7 +830,7 @@ describe('#269 playtest follow-up: red hex labels (_spawnHexLabels) on dock/aler
 // enemyBehaviors.js only ever zeroed velocity — they never touched `e.angle`, so a holdGround
 // unit's HULL stayed frozen at whatever fixed angle it spawned with (`Math.PI/2`, straight down)
 // FOREVER, regardless of where the player was. Only its turret (independently slewed) tracked the
-// player, so from most approach angles a "woken" tank/quadruped/infantry read as a completely
+// player, so from most approach angles a "woken" tank/carrier/infantry read as a completely
 // static, lifeless prop — exactly the "ground units still don't move" playtest report. Fast
 // (non-holdGround) kinds were never affected — they were already getting real velocity via their
 // normal advance-to-standoff movement. Fixed by having each holdGround branch also rotate `e.angle`

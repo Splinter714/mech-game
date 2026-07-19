@@ -15,7 +15,7 @@
 // threshold (rather than a per-kind flag) keeps this data-driven off the SAME `move.maxSpeed`
 // every kind already carries (enemyKinds.js) — no new per-kind field needed, per the issue's own
 // suggestion. 100 px/s sits cleanly between the fastest "slow" kind (infantry, 48) and the
-// slowest "fast" kind (drone, 150) — turret (0) and tank (52) and quadruped (38) all read as
+// slowest "fast" kind (drone, 150) — turret (0) and tank (52) and carrier (38) all read as
 // heavy/rooted; drone (150) and helicopter (210) both clearly read as light/mobile. Owner:
 // tunable if a future kind's speed lands awkwardly close to this line.
 export const FAST_WAKE_SPEED_THRESHOLD = 100;

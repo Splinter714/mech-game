@@ -56,7 +56,7 @@ try {
     // extra mechs and a broodwalker so per-enemy costs dominate.
     a._spawnEnemy(a.px + 420, a.py, 'swarm');
     a._spawnEnemy(a.px - 420, a.py, 'infantryMob');
-    a._spawnEnemy(a.px, a.py - 420, 'quadruped');
+    a._spawnEnemy(a.px, a.py - 420, 'carrier');
     a._spawnEnemy(a.px + 300, a.py + 300, 'raider');
     a._spawnEnemy(a.px - 300, a.py + 300, 'artillery');
     // Wake everyone up so the full AI path runs (not the idle path).

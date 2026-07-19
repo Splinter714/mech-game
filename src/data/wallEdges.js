@@ -13,7 +13,7 @@ import { edgeKey, edgeEndpoints, segmentCrossT, pointSegmentDistance } from './h
 
 // HP per SPAN (one hex edge). #313 (owner-confirmed retune): raised 55 → 200. Every destructible
 // structure used to be more fragile than the cheapest combat unit — against #299's unit toughness
-// scale (tank 80, quadruped 150, light mech 200, player 600) a 55hp span fell to a four-weapon
+// scale (tank 80, carrier 150, light mech 200, player 600) a 55hp span fell to a four-weapon
 // mech in about half a second, which made the gate a speed bump. 200 puts a single span on par
 // with a light mech, so punching a hole is a deliberate several-second commitment under fire.
 // Since the mech collides as a POINT against terrain and walls alike, breaching just ONE span
@@ -46,6 +46,58 @@ export const WALL_STOMP_FACTOR = 0.25;
 // this distance of its segment. The exact swept crossing tests below are what stop anything fast
 // enough to step over a 14px band from tunnelling.
 export const WALL_THICKNESS_PX = 14;
+
+// ── #320: collision inflation by BODY RADIUS ────────────────────────────────────────────
+// Playtest: "sometimes tanks can visibly poke through a bit" — and its twin symptom, "I'm able to
+// shoot OVER walls if I stand real close." Both had ONE cause: every query below treated a unit as
+// a POINT, so a unit stopped when its CENTRE reached ±7px of the span's centreline while its body
+// (28px for a mech, up to 24px for a vehicle) carried on through the plate. The muzzle, offset
+// forward of that centre, then ended up on the far side of the wall, so the shot's ray started
+// past the barrier and never crossed it.
+//
+// The fix is Minkowski inflation: a unit of radius R stops when its BODY meets the plate, i.e. its
+// centre halts at `R + WALL_THICKNESS_PX / 2` from the span. Callers pass their own radius
+// (scenes/arena/shared.js `wallCollideRadius`); everything genuinely point-shaped — rounds, sight
+// rays, placement scans, #310's turret exemption — keeps passing 0 and is bit-for-bit unchanged.
+//
+// THE CATCH, and why `spanCollideSegment` exists. A hex edge is HEX_SIZE = 48px long, and a
+// breached span's two ring VERTICES are only 24px from its midpoint. Inflate naively by a mech's
+// body radius and the centre must stay clear of both vertices — so a one-span breach becomes
+// physically unenterable, which would break the drive-through #288 verified and the whole premise
+// of #313's per-span HP ("breaching just ONE span already opens a drivable gap"). Measured: naive
+// inflation seals a breach for any R > 17.
+//
+// So a span's COLLISION segment is its centreline SHORTENED by R at each end (clamped to its
+// midpoint), then inflated by R. Two consequences, both load-bearing and both verified in
+// wallEdges.test.js:
+//
+//   • THE SEAL ONLY EVER GETS STRONGER — the inflated shortened capsule is a strict SUPERSET of
+//     today's 14px band. Proof: take any point p within 7px of the full centreline, and let c be
+//     its closest point on that centreline. Either c survives the shortening (so p is within 7 of
+//     the collision segment), or c lies within R of an end, in which case the shortened endpoint e
+//     satisfies dist(p, e) <= dist(p, c) + R <= 7 + R. Either way p is inside. This is why #288's
+//     720-bearing pixel probes and the ring-VERTEX cases cannot regress: a vertex stays covered by
+//     BOTH of its spans' capsules with 7px of margin, exactly the margin it has today.
+//   • A BREACH AND AN OPEN GATE MOUTH STAY DRIVABLE — pulling the flanking spans back off the
+//     shared vertex reopens the pinch. Measured live on real maps: every breachable span leaves a
+//     34px hole against the 27px a full-radius body needs.
+//
+// Physically this says the plate resists you across its FACE at full body width, while the last R
+// of it near a corner is treated as a chamfer you can round rather than a post you snag on. That
+// is both the forgiving choice for driving and the honest one for a barrier whose whole point is
+// that a hole in it is a way through.
+export function spanCollideSegment(edge, radius = 0) {
+  if (!(radius > 0)) return edge;
+  const dx = edge.x1 - edge.x0, dy = edge.y1 - edge.y0;
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0)) return edge;
+  const cut = Math.min(radius, len / 2);
+  const ux = dx / len, uy = dy / len;
+  return {
+    x0: edge.x0 + ux * cut, y0: edge.y0 + uy * cut,
+    x1: edge.x1 - ux * cut, y1: edge.y1 - uy * cut,
+  };
+}
 
 // ── Span ROLE (#309) ────────────────────────────────────────────────────────────────────
 // A span is otherwise identical whatever it does — same HP pool, same geometry, same index — so
@@ -200,10 +252,37 @@ export function liveWallEdges(set) {
 // Candidate edges near a world point: the edges of the hex under it plus those of its 6 neighbours.
 // A wall within half-thickness of a point is always incident to that point's own hex or an adjacent
 // one, so this is complete, not a heuristic.
-function candidatesNear(set, x, y, out) {
+// #320: a RADIUS-inflated query reaches further than a point one, so the broad phase has to reach
+// further too or a span could be solid and never even be considered — the failure mode that turns
+// a collision fix into a tunnelling bug. The fan of axial offsets within `rings` steps is built
+// once per ring count and cached, because this runs per movement substep per unit and must not
+// allocate: the point case (rings = 1) is the original "own hex + 6 neighbours" as a 7-entry flat
+// array walk, with no Set and no per-call arrays.
+const OFFSET_FANS = new Map();
+function offsetFan(rings) {
+  let fan = OFFSET_FANS.get(rings);
+  if (fan) return fan;
+  fan = [];
+  for (let dq = -rings; dq <= rings; dq++) {
+    for (let dr = Math.max(-rings, -dq - rings); dr <= Math.min(rings, -dq + rings); dr++) {
+      fan.push(dq, dr);                       // flat pairs — no per-entry object
+    }
+  }
+  OFFSET_FANS.set(rings, fan);
+  return fan;
+}
+
+function collectAround(set, q, r, out, radius) {
+  // Hex inradius (centre to edge midpoint) for pointy-top hexes of side HEX_SIZE — one extra ring
+  // per inradius of reach. R = 0 gives 1 ring, i.e. exactly the original fan.
+  const rings = 1 + Math.ceil(Math.max(0, radius) / (HEX_SIZE * Math.sqrt(3) / 2));
+  const fan = offsetFan(rings);
+  for (let i = 0; i < fan.length; i += 2) collectHex(set, q + fan[i], r + fan[i + 1], out);
+}
+
+function candidatesNear(set, x, y, out, radius = 0) {
   const h = pixelToHex(x, y);
-  collectHex(set, h.q, h.r, out);
-  for (const n of neighbors(h.q, h.r)) collectHex(set, n.q, n.r, out);
+  collectAround(set, h.q, h.r, out, radius);
 }
 
 // #309: the single choke point where "is this span solid to THIS caller" is decided — every query
@@ -223,12 +302,9 @@ function collectHex(set, q, r, out) {
 // at grazing angles: if it ever skipped BOTH hexes flanking one edge, that edge would otherwise be
 // missed. Cheap — the whole thing is a handful of Map lookups that miss immediately on a map with
 // no walls near the ray.
-function candidatesAlong(set, x0, y0, x1, y1) {
+function candidatesAlong(set, x0, y0, x1, y1, radius = 0) {
   const out = new Set();
-  for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
-    collectHex(set, h.q, h.r, out);
-    for (const n of neighbors(h.q, h.r)) collectHex(set, n.q, n.r, out);
-  }
+  for (const h of hexesAlongSegment(x0, y0, x1, y1)) collectAround(set, h.q, h.r, out, radius);
   return out;
 }
 
@@ -242,15 +318,21 @@ function candidatesAlong(set, x0, y0, x1, y1) {
 // and a wall turret sits inside its own band, so without this a beam aimed at the gun stops on the
 // sample 4px short of it even though the swept crossing test correctly let it through. Measured in
 // the real game, not reasoned about — the swept exemption alone was not enough.
-export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey = null) {
+// #320: `radius` is the querying BODY's radius — 0 (the default) is the original point query, and
+// every point-shaped caller (rounds, sight rays, placement scans, #310's turret exemption) keeps
+// that. A positive radius tests the unit's whole circle against the span's collision segment; see
+// `spanCollideSegment`. The broad phase widens with it, since an inflated span reaches further
+// than its own hex pair.
+export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0) {
   if (!set || set.edges.size === 0) return null;
   const cand = new Set();
-  candidatesNear(set, x, y, cand);
-  const half = thickness / 2;
+  candidatesNear(set, x, y, cand, radius);
+  const half = thickness / 2 + Math.max(0, radius);
   let best = null, bestD = Infinity;
   for (const e of cand) {
     if (ignoreKey && e.key === ignoreKey) continue;
-    const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x, y);
+    const s = spanCollideSegment(e, radius);
+    const d = pointSegmentDistance(s.x0, s.y0, s.x1, s.y1, x, y);
     if (d <= half && d < bestD) { best = e; bestD = d; }
   }
   return best;
@@ -279,25 +361,66 @@ export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey =
 // itself unhittable, since the wall and the gun occupy the same point. Scoped to a single named
 // span, so the gun is still blinded by every OTHER wall (the far side of its own ring included)
 // and no shot gains a lane through any wall it was not already aimed through.
-export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null) {
+// #320: `radius` inflates the moving body exactly as in `wallEdgeAt` — 0 keeps the original
+// point-swept behaviour for rounds and rays. The caller (locomotion.js) rejects the whole step on
+// a contact, so a `t` that names the centreline rather than the exact moment of first touch never
+// has to be resolved.
+export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0) {
   if (!set || set.edges.size === 0) return null;
-  const cand = candidatesAlong(set, x0, y0, x1, y1);
+  const cand = candidatesAlong(set, x0, y0, x1, y1, radius);
   if (cand.size === 0) return null;
   const len = Math.hypot(x1 - x0, y1 - y0);
-  const half = thickness / 2;
+  const half = thickness / 2 + Math.max(0, radius);
   let best = null, bestT = Infinity;
   for (const e of cand) {
     if (ignoreKey && e.key === ignoreKey) continue;
+    // The two clauses use DIFFERENT geometry, and that asymmetry is load-bearing (#320).
+    //
+    // ANTI-TUNNELLING uses the span's FULL centreline, never the shortened one. Physically
+    // crossing the wall's own line is a contact at any radius — and a span shorter than 2R
+    // degenerates to a POINT under `spanCollideSegment`, which a zero-length crossing test can
+    // never detect, so testing the shortened segment here would hand a big mech a tunnel straight
+    // through every 48px span at speed. (Caught by the "no speed out-steps an inflated span" test,
+    // which failed exactly this way before the split.) Using the full line is also strictly the
+    // stronger seal: it is the unchanged point-form clause.
     let t = segmentCrossT(x0, y0, x1, y1, e.x0, e.y0, e.x1, e.y1);
-    // A step that never geometrically crosses the span's centreline can still END inside the wall's
-    // thickness (e.g. driving straight at it and stopping short, or a round detonating on its face)
-    // — treat the endpoint sample as a contact at t = 1 so the wall still stops it.
-    if (t == null && pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x1, y1) <= half) t = 1;
+    // PROXIMITY uses the shortened segment inflated by the body radius. A step that never crosses
+    // the centreline can still END with the body overlapping the plate (driving at a wall and
+    // stopping short, or a round detonating on its face) — a contact at t = 1. This is the clause
+    // the corner chamfer belongs to, and the only one a breach's drivability depends on.
+    if (t == null) {
+      const s = spanCollideSegment(e, radius);
+      if (pointSegmentDistance(s.x0, s.y0, s.x1, s.y1, x1, y1) <= half) t = 1;
+    }
     if (t == null || t >= bestT) continue;
     best = e; bestT = t;
   }
   if (!best) return null;
   return { edge: best, t: bestT, x: x0 + (x1 - x0) * bestT, y: y0 + (y1 - y0) * bestT, dist: len * bestT };
+}
+
+// #320: the first standing span that genuinely SEPARATES two points — i.e. whose centreline the
+// segment actually crosses, leaving the two ends on opposite sides — or null.
+//
+// Deliberately NOT `wallEdgeCrossing`, and the difference is the whole point. That function also
+// reports a contact when a segment merely ENDS inside the wall's thickness, which is right for
+// movement and for a round detonating on a plate, but wrong here: this backs the shot-origin guard
+// (world.js `_muzzleWallBlocked`), and a muzzle that is inside the plate but still on the shooter's
+// own side is a barrel pressed AGAINST the wall, not through it. Suppressing that shot would stop
+// the player breaching a wall he is leaning on — the core loop of #288/#313 — so it must still fire
+// and let the round resolve its hit on the span normally. Measured in the real game: at the closest
+// stance the fix permits, a long arm weapon's tip sits ~5px from the centreline, well inside the
+// 7px band, so this distinction is load-bearing and not a hypothetical.
+export function wallEdgeSeparating(set, x0, y0, x1, y1) {
+  if (!set || set.edges.size === 0) return null;
+  const cand = candidatesAlong(set, x0, y0, x1, y1);
+  let best = null, bestT = Infinity;
+  for (const e of cand) {
+    const t = segmentCrossT(x0, y0, x1, y1, e.x0, e.y0, e.x1, e.y1);
+    if (t == null || t >= bestT) continue;
+    best = e; bestT = t;
+  }
+  return best;
 }
 
 // The standing wall nearest a world point within `maxDist` (used to route a weapon hit that landed

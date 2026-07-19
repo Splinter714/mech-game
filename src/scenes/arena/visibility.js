@@ -41,10 +41,18 @@
 // ── The treatment (unchanged from the original decision) ──
 // ONE dark translucent layer at DEPTH.LOS_DIM (2.9) — not per-object tinting, not a grey wash.
 // Because everything below 2.9 shares this single overlay, terrain (0), ground FX (1), small ground
-// units (2), the cover canopy (2.5), large ground units (2.75) and — since #316 — FLYING units
-// (2.8) are dimmed IDENTICALLY, by construction. There is no rule about which thing gets which
-// treatment and no way for them to drift apart. The PLAYER alone sits at UNITS (3), above the
-// overlay, and is the only thing in the game never dimmed.
+// units (2), the cover canopy (2.5) and large ground units (2.75) are dimmed IDENTICALLY, by
+// construction. There is no rule about which thing gets which treatment and no way for them to
+// drift apart. The PLAYER sits at UNITS (3), above the overlay, and is never dimmed.
+//
+// ⚠ #327 CHANGED THIS: FLYING units (helicopter, drone) used to sit at 2.8, BELOW the overlay, so
+// #316 could dim them like ground units. In play that also drew aircraft UNDERNEATH the mechs they
+// flew over, which read wrong, so #327 moved them to 3.5 — ABOVE both the player and this overlay.
+// Since the dimming is currently off (see LOS_DIM_ENABLED), that costs nothing today; the owner's
+// call on #327 was "don't care [about the fog], just fix the z-order". But IF YOU FLIP THE DIMMING
+// BACK ON, flyers will stay bright over un-sighted ground — the exact bug #316 fixed — and you have
+// to re-decide it: either raise LOS_DIM above FLYING_UNITS, or dim flyers per-entity instead of via
+// this single overlay. See the FLYING_UNITS comment in shared.js.
 //
 // Enemies in shadow are DIMMED, NOT HIDDEN — you can still make out a shape, so you're never shot
 // by something wholly invisible. At 0.8 that shape is faint; post-#316 anything with no sight line
@@ -113,8 +121,10 @@ const FOV_MARGIN_RINGS = 2;
 
 export const VisibilityMixin = {
   // Called once from create(). The Graphics is world-space (not scroll-fixed) and sits between
-  // DEPTH.FLYING_UNITS (2.8) and DEPTH.UNITS (3) — that single depth value is the entire
-  // "everything but the player gets dimmed" implementation.
+  // DEPTH.LARGE_GROUND_UNITS (2.75) and DEPTH.UNITS (3) — that single depth value is the entire
+  // "everything but the player gets dimmed" implementation. NOTE (#327): flying units moved to
+  // 3.5, ABOVE this layer, so they are no longer dimmed — see the FLYING_UNITS comment in
+  // shared.js if this dimming is ever re-enabled.
   _initVisibility() {
     // Off (the current default), no Graphics is ever created — there is nothing to draw into and
     // nothing for Phaser to submit each frame. The gameplay FOV below is set up regardless.

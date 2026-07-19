@@ -507,3 +507,87 @@ describe('#288 a RING seals in pixel space, not just on the hex graph', () => {
     });
   });
 });
+
+// ── #320: the scene's side of body-radius collision + the shot-origin guard ──────────────
+describe('#320 body-radius wall collision and the muzzle guard, at the scene level', () => {
+  const R = 20;                                    // PLAYER_WALL_COLLIDE_RADIUS (shared.js)
+  const half = WALL_THICKNESS_PX / 2;
+
+  // Unit normal of the single A|B span, so tests can step straight off its face.
+  function faceNormal(s) {
+    const e = [...s.wallEdges.edges.values()][0];
+    const dx = e.x1 - e.x0, dy = e.y1 - e.y0, len = Math.hypot(dx, dy);
+    return { nx: -dy / len, ny: dx / len };
+  }
+
+  it('_blocked with a radius stops a body at its own width; the default stays a POINT query', () => {
+    const s = makeScene();
+    const m = edgeMidpoint(A, B);
+    const { nx, ny } = faceNormal(s);
+    const px = m.x + nx * (R + half - 1), py = m.y + ny * (R + half - 1);
+    // The body overlaps the plate here...
+    expect(s._blocked(px, py, R)).toBe(true);
+    // ...but the CENTRE is well clear, so the untouched point query says free — which is precisely
+    // the gap that let a tank park with its hull inside the wall.
+    expect(s._blocked(px, py)).toBe(false);
+  });
+
+  it('_blockedAlongSegment with a radius refuses the step that would bury the body in the plate', () => {
+    const s = makeScene();
+    const m = edgeMidpoint(A, B);
+    const { nx, ny } = faceNormal(s);
+    const from = { x: m.x + nx * 160, y: m.y + ny * 160 };
+    const to = { x: m.x + nx * (R + half - 2), y: m.y + ny * (R + half - 2) };
+    expect(s._blockedAlongSegment(from.x, from.y, to.x, to.y, R)).toBe(true);
+    expect(s._blockedAlongSegment(from.x, from.y, to.x, to.y)).toBe(false);
+    // Stopping clear of the body's reach is still a legal move at full radius.
+    const shy = { x: m.x + nx * (R + half + 3), y: m.y + ny * (R + half + 3) };
+    expect(s._blockedAlongSegment(from.x, from.y, shy.x, shy.y, R)).toBe(false);
+  });
+
+  it('_muzzleWallBlocked blocks a shot whose muzzle has crossed to the far side of a span', () => {
+    const s = makeScene();
+    const m = edgeMidpoint(A, B);
+    const { nx, ny } = faceNormal(s);
+    const cx = m.x + nx * 20, cy = m.y + ny * 20;      // chest on our side
+    const mzx = m.x - nx * 10, mzy = m.y - ny * 10;    // tip poked through
+    expect(s._muzzleWallBlocked(cx, cy, mzx, mzy)).toBe(true);
+  });
+
+  // The distinction that keeps breaching-while-leaning working: a barrel buried IN the plate but
+  // still on our own side must fire, so the round can damage the span.
+  it('does NOT block a muzzle merely inside the plate on the shooter\'s own side', () => {
+    const s = makeScene();
+    const m = edgeMidpoint(A, B);
+    const { nx, ny } = faceNormal(s);
+    const cx = m.x + nx * 30, cy = m.y + ny * 30;
+    const mzx = m.x + nx * 2, mzy = m.y + ny * 2;      // inside the 7px band, not across it
+    expect(s._muzzleWallBlocked(cx, cy, mzx, mzy)).toBe(false);
+  });
+
+  it('leaves legitimate close-range fire alone — muzzle and centre on the SAME side', () => {
+    const s = makeScene();
+    const m = edgeMidpoint(A, B);
+    const { nx, ny } = faceNormal(s);
+    const cx = m.x + nx * 40, cy = m.y + ny * 40;
+    expect(s._muzzleWallBlocked(cx, cy, m.x + nx * 22, m.y + ny * 22)).toBe(false);
+    // Shooting ALONG the wall face rather than across it.
+    const e = [...s.wallEdges.edges.values()][0];
+    const ax = (e.x1 - e.x0) / HEX_SIZE, ay = (e.y1 - e.y0) / HEX_SIZE;
+    expect(s._muzzleWallBlocked(cx, cy, cx + ax * 30, cy + ay * 30)).toBe(false);
+    // And on a map with no walls at all it can never trip.
+    const bare = makeScene([]);
+    expect(bare._muzzleWallBlocked(0, 0, 200, 200)).toBe(false);
+  });
+
+  it('a BREACHED span stops blocking the shot origin — you can fire through the hole you made', () => {
+    const s = makeScene();
+    const m = edgeMidpoint(A, B);
+    const { nx, ny } = faceNormal(s);
+    const cx = m.x + nx * 20, cy = m.y + ny * 20;
+    const mzx = m.x - nx * 10, mzy = m.y - ny * 10;
+    expect(s._muzzleWallBlocked(cx, cy, mzx, mzy)).toBe(true);
+    [...s.wallEdges.edges.values()][0].destroyed = true;
+    expect(s._muzzleWallBlocked(cx, cy, mzx, mzy)).toBe(false);
+  });
+});

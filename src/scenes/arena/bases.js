@@ -16,8 +16,8 @@ import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH, strokeHexRing } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
-import { makeDockResupplyState, tickDockResupply, spendDockResupply, chargeDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
-import { mulberry32, drawDockKind, dockCountFor, baseLateFraction, isSwarmDockKind } from '../../data/worldgen.js';
+import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
+import { mulberry32, drawDockKind, dockCountFor, baseLateFraction } from '../../data/worldgen.js';
 import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../data/terrain.js';
@@ -247,7 +247,7 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
     e.dockKey = dockKey;
     // #283 audit: cap the DORMANT proximity-wake radius (data/awareness.js
     // `PROXIMITY_WAKE_RANGE_CAP` has the full reasoning) — a no-op for every kind whose
-    // `detectRange` was already below the cap (tank/helicopter/quadruped/mech); the turret kinds'
+    // `detectRange` was already below the cap (tank/helicopter/carrier/mech); the turret kinds'
     // wildly larger combat-range-derived values are the ones it bites on. Only meaningful for a
     // dormant unit — an AWARE resupply unit is already engaged and never consults its wake radius.
     if (awareness === DORMANT) e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
@@ -675,8 +675,8 @@ export const BasesMixin = {
   // longer constrains WHERE that fighting can happen. Its one remaining functional effect is
   // cosmetic/tactical polish, not movement-limiting: enemies.js `_updateEnemy` reads it to decide
   // that a hold-ground mech which happens to be momentarily stationary should face the player
-  // rather than hold its last travel heading (tank/quadruped/infantry already got the same
-  // "don't read as dead while stopped" fix directly in their own behavior fns). tank/quadruped/
+  // rather than hold its last travel heading (tank/carrier/infantry already got the same
+  // "don't read as dead while stopped" fix directly in their own behavior fns). tank/carrier/
   // infantry's OWN behavior fns (enemyBehaviors.js) no longer read `e.holdGround` at all now that
   // the leash is gone — it's still set on them (kept for the flag's documented "which units are
   // hold-ground" semantics, and in case a future feature wants it) but has no code path consuming
@@ -736,12 +736,11 @@ export const BasesMixin = {
       if (!state) continue;
       const awake = this._wokenBases.has(meta.baseId);
       const cleared = !this.enemies.some((e) => e.dockKey === dockKey);
-      // #323: captured BEFORE the tick charges its 1-body floor. A swarm redraw is only allowed
-      // on a dock's FIRST resupply — see `_resupplyDock`'s `allowSwarm` reasoning.
-      const spentBefore = state.count;
       const next = tickDockResupply(state, { awake, cleared, dt });
       this._dockResupplyStates.set(dockKey, next);
-      if (next.ready) this._resupplyDock(dockKey, meta, { allowSwarm: spentBefore === 0 });
+      // #326: no budget check and no swarm-eligibility argument any more — an un-retired dock
+      // simply resupplies, every cycle, with whatever kind its base's pool draws.
+      if (next.ready) this._resupplyDock(dockKey, meta);
     }
   },
 
@@ -833,8 +832,8 @@ export const BasesMixin = {
     // explosion cue at a low scale — same precedent as `_outpostCollapseFx`'s softer soft-cover
     // variant, just even quieter since nothing is actually being destroyed here.
     Audio.explosion(0.25, { x, y, listenerX: this.px, listenerY: this.py });
-    const plate = this.add.circle(x, y, 15, 0x1c1f24, 0.94).setScale(0.05).setDepth(DEPTH.IMPACT_FX);
-    const rim = this.add.circle(x, y).setStrokeStyle(2.5, 0x9098a3, 0).setRadius(15).setScale(1.4).setDepth(DEPTH.IMPACT_FX + 0.1);
+    const plate = this.add.circle(x, y, 15, 0x1c1f24, 0.94).setScale(0.05).setDepth(DEPTH.DOCK_FX);
+    const rim = this.add.circle(x, y).setStrokeStyle(2.5, 0x9098a3, 0).setRadius(15).setScale(1.4).setDepth(DEPTH.DOCK_FX + 0.1);
     this.tweens.add({ targets: plate, scale: 1, duration: 380, ease: 'Quad.easeOut' });
     this.tweens.add({
       targets: rim, scale: 1, alpha: 0.9, duration: 380, ease: 'Quad.easeOut',
@@ -868,29 +867,23 @@ export const BasesMixin = {
   // `dock`/`dockClosed`, and placement/cluster/flyer handling all follow from the DRAWN kind
   // because `spawnDockCluster` re-derives everything from it.
   //
-  // Two density guards ride along, both protecting #314's work rather than reopening it:
-  //   - `hasSwarm` — the one-swarm-per-base cap, evaluated against the base's LIVE dock kinds (the
-  //     redraw writes `meta.kindId` back, so the map always reflects current composition). A
-  //     non-swarm dock CAN become a swarm dock mid-fight, but only if no dock in that base is
-  //     already a swarm one; a base never fields two swarm docks at once, exactly as at world-gen.
-  //   - `allowSwarm` — a swarm redraw is only permitted on a dock's FIRST resupply. Otherwise a
-  //     dock could spend two single-body cycles and then still draw a 10-body swarm on its third,
-  //     delivering 12 bodies against a 3-body budget. Restricting it to the first cycle caps any
-  //     one dock's total reinforcement at max(3 singles, 1 swarm of 10) = 10 bodies.
-  _resupplyDock(dockKey, meta, { allowSwarm = true } = {}) {
+  // #326 removed both of the density guards that used to ride along here — #314's
+  // one-swarm-per-base cap and #323's first-resupply-only swarm restriction. Jackson: "drop it —
+  // let bases have several". A dock's redraw is now the bare pool draw, so any dock can come back
+  // as any kind its base fields, including a swarm, on any cycle. What keeps that from compounding
+  // is the `cleared` gate in `tickDockResupply`: a dock that just sent 10 drones cannot send
+  // anything else until those 10 are gone, so a base's live population is bounded by its docks'
+  // current waves rather than growing with fight length.
+  _resupplyDock(dockKey, meta) {
     const { x, y } = meta;
-    const hasSwarm = [...this._dockResupplyMeta.values()]
-      .some((m) => m.baseId === meta.baseId && m !== meta && isSwarmDockKind(m.kindId));
     const rng = this._dockRng ?? Math.random;
-    const kindId = drawDockKind(rng, meta.lateFraction ?? 0, { hasSwarm: hasSwarm || !allowSwarm });
+    const kindId = drawDockKind(rng, meta.lateFraction ?? 0);
     meta.kindId = kindId;
     // #323 (the original bug): resupply used to make a single bare `_spawnKind` call, so a swarm
-    // dock trickled back one body at a time instead of the burst it opened with. The count now
-    // comes from the same `dockCountFor` the initial spawn uses, and the budget is charged in
-    // BODIES so a full swarm retires the dock rather than repeating three times.
+    // dock trickled back one body at a time instead of the burst it opened with. The count comes
+    // from the same `dockCountFor` the initial spawn uses, so a resupplied swarm arrives at full
+    // strength. (#326: nothing is billed for it any more — there is no budget to bill against.)
     const count = dockCountFor(kindId, rng);
-    const state = this._dockResupplyStates.get(dockKey);
-    if (state) this._dockResupplyStates.set(dockKey, chargeDockResupply(state, count));
     // #269 Part 2 ("dock open/closed states"): a dock that's currently CLOSED (the normal case —
     // its original unit(s) walked off/died and `_updateDockOpenClose` already sealed it, see
     // above) reopens right here, at the same moment this elevator sequence kicks off — the
@@ -903,13 +896,13 @@ export const BasesMixin = {
 
     // The dark shaft the platform rises through — stays visible for the whole sequence, so the
     // doors read as sliding open OVER a real gap rather than just two bars moving apart.
-    const shaft = this.add.rectangle(x, y, shaftHalfW * 2, doorH * 2.4, 0x0a0b0d, 0.85).setDepth(DEPTH.IMPACT_FX);
+    const shaft = this.add.rectangle(x, y, shaftHalfW * 2, doorH * 2.4, 0x0a0b0d, 0.85).setDepth(DEPTH.DOCK_FX);
     // Two door leaves, starting CLOSED (meeting at centre, fully covering the shaft).
-    const doorL = this.add.rectangle(x - doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.IMPACT_FX + 0.1);
-    const doorR = this.add.rectangle(x + doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.IMPACT_FX + 0.1);
+    const doorL = this.add.rectangle(x - doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.DOCK_FX + 0.1);
+    const doorR = this.add.rectangle(x + doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.DOCK_FX + 0.1);
     // The rising platform itself — starts below the deck (hidden), rises to deck level.
-    const platform = this.add.rectangle(x, y + riseFrom, doorHalfW * 1.6, doorH * 1.6, 0x565d66, 1).setDepth(DEPTH.IMPACT_FX + 0.2);
-    const glow = this.add.circle(x, y + riseFrom, 4, 0xd8cba0, 0.9).setDepth(DEPTH.IMPACT_FX + 0.3);
+    const platform = this.add.rectangle(x, y + riseFrom, doorHalfW * 1.6, doorH * 1.6, 0x565d66, 1).setDepth(DEPTH.DOCK_FX + 0.2);
+    const glow = this.add.circle(x, y + riseFrom, 4, 0xd8cba0, 0.9).setDepth(DEPTH.DOCK_FX + 0.3);
     const fx = [shaft, doorL, doorR, platform, glow];
     const destroyFx = () => { for (const obj of fx) obj.destroy(); };
 

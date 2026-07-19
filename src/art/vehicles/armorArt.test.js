@@ -83,13 +83,13 @@ describe('the live armored kinds get armored art', () => {
     for (const [, def] of armored) expect(vehicleHasArmorArt(def)).toBe(true);
   });
 
-  it('the tank and the quadruped are among them (the two units #300 was filed for)', () => {
+  it('the tank and the carrier are among them (the two units #300 was filed for)', () => {
     expect(vehicleHasArmorArt(ENEMY_KINDS.tank)).toBe(true);
-    expect(vehicleHasArmorArt(ENEMY_KINDS.quadruped)).toBe(true);
+    expect(vehicleHasArmorArt(ENEMY_KINDS.carrier)).toBe(true);
   });
 
   // #299 gave the Sentry Turret a real armor pool for the first time. #300 noted that only the
-  // tank and quadruped art builders honoured `opts.armored` — the turret would have silently
+  // tank and carrier art builders honoured `opts.armored` — the turret would have silently
   // rendered its "plated" set identically to its bare one, so plating would never visibly strip.
   // Its builder now takes the flag too; this pins that it actually varies its output.
   it('#299: the newly-armored turret both needs and draws a plated variant', () => {

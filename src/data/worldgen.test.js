@@ -821,35 +821,44 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
   it('#314: doubling the late pool preserved the #269 relative mix exactly', () => {
     const plain = BASE_LATE_KIND_POOL.filter((k) => !isSwarmDockKind(k));
     const count = (k) => plain.filter((x) => x === k).length;
-    // #269's ratios (helicopter 3 : quadruped 1 : tank 1 : raider 2 : the three specialists 1 each),
+    // #269's ratios (helicopter 3 : carrier 1 : tank 1 : raider 2 : the three specialists 1 each),
     // just doubled — helicopter still beats tank, mechs still dominate late.
     expect(count('helicopter')).toBe(6);
-    expect(count('quadruped')).toBe(2);
+    expect(count('carrier')).toBe(2);
     expect(count('tank')).toBe(2);
     expect(count('raider')).toBe(4);
     for (const m of ['skirmisher', 'sniper', 'artillery']) expect(count(m)).toBe(2);
     expect(count('helicopter')).toBeGreaterThan(count('tank'));
   });
 
-  it('#314 density cap: a base never fields more than ONE swarm dock', () => {
-    // #269 tuned docks down to a single unit because a base read too dense; a swarm dock is 10
-    // bodies, so stacking two on one base would blow straight through that. Swept over many seeds
-    // so the cap is exercised on the bases that actually draw a second swarm.
-    let sawSwarm = 0;
+  it('#326: a base MAY field several swarm docks — #314\'s one-per-base cap is gone', () => {
+    // Jackson: "drop it — let bases have several". The cap used to re-draw a second swarm down to
+    // a plain kind; nothing does that now. Swept over many seeds both to prove multi-swarm bases
+    // actually occur and to pin the WORST-CASE opening body count a base can present, which is the
+    // number #326 explicitly asked to be measured rather than assumed.
+    let multiSwarmBases = 0, maxSwarmDocks = 0, maxOpeningBodies = 0;
     for (let seed = 1; seed <= 80; seed++) {
       const { bases } = generateTerrain({
         seed, worldRadius: 14, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
       });
       for (const base of bases) {
         const swarmDocks = base.docks.filter((d) => isSwarmDockKind(d.kindId));
-        expect(swarmDocks.length).toBeLessThanOrEqual(1);
-        // The cap replaces the kind, it never drops the dock — every dock still has a real kind.
+        // Every dock still has a real kind and a count consistent with it — removing the cap must
+        // not have started dropping docks or desyncing kind from count.
         for (const d of base.docks) expect(d.count).toBe(dockCountFor(d.kindId, () => 0.5));
-        if (swarmDocks.length === 1) sawSwarm++;
+        const bodies = base.docks.reduce((n, d) => n + d.count, 0);
+        if (swarmDocks.length > 1) multiSwarmBases++;
+        maxSwarmDocks = Math.max(maxSwarmDocks, swarmDocks.length);
+        maxOpeningBodies = Math.max(maxOpeningBodies, bodies);
       }
     }
-    // Sanity: swarm docks do actually generate (the cap isn't silently suppressing all of them).
-    expect(sawSwarm).toBeGreaterThan(0);
+    // The cap really is gone: bases with two or more swarm docks now generate.
+    expect(multiSwarmBases).toBeGreaterThan(0);
+    expect(maxSwarmDocks).toBeGreaterThan(1);
+    // The measured ceiling. Swarm kinds are thin in both pools, so even the worst roll stays well
+    // under a "wall of bodies" — this bound is the guard against a future pool re-weighting
+    // quietly turning multi-swarm bases into the density blowout #269's playtest corrected.
+    expect(maxOpeningBodies).toBeLessThanOrEqual(40);
   });
 
   it('#269/#314: dockCountFor is a flat 1 per dock except the two weak swarm kinds', () => {
@@ -860,8 +869,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(dockCountFor('tank', highRng)).toBe(1);
     expect(dockCountFor('helicopter', lowRng)).toBe(1);
     expect(dockCountFor('helicopter', highRng)).toBe(1);
-    expect(dockCountFor('quadruped', lowRng)).toBe(1);
-    expect(dockCountFor('quadruped', highRng)).toBe(1);
+    expect(dockCountFor('carrier', lowRng)).toBe(1);
+    expect(dockCountFor('carrier', highRng)).toBe(1);
     // #314: drone/infantry are the deliberate exception — a flat ~10-body burst, rng-independent.
     expect(DOCK_SWARM_COUNT).toBe(10);
     for (const rng of [lowRng, highRng]) {
@@ -876,8 +885,8 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // Early bases are no longer 100% tanks — helicopter is an equal-weight early presence.
     expect(BASE_EARLY_KIND_POOL).toContain('tank');
     expect(BASE_EARLY_KIND_POOL).toContain('helicopter');
-    // Kept SOFT: only the two vehicle kinds early — no quadruped, no mechs (those stay late-only).
-    expect(BASE_EARLY_KIND_POOL).not.toContain('quadruped');
+    // Kept SOFT: only the two vehicle kinds early — no carrier, no mechs (those stay late-only).
+    expect(BASE_EARLY_KIND_POOL).not.toContain('carrier');
     for (const mech of ['raider', 'skirmisher', 'sniper', 'artillery']) {
       expect(BASE_EARLY_KIND_POOL).not.toContain(mech);
     }
@@ -885,7 +894,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // tank since #314 doubled every pre-existing late entry (see its own test below), which
     // preserves #269's relative mix but not the raw entry counts.
     const heliLate = BASE_LATE_KIND_POOL.filter((k) => k === 'helicopter').length;
-    const quadLate = BASE_LATE_KIND_POOL.filter((k) => k === 'quadruped').length;
+    const quadLate = BASE_LATE_KIND_POOL.filter((k) => k === 'carrier').length;
     expect(heliLate / quadLate).toBe(3);
     // ...and helicopter is now more common than tank in the late pool.
     const tankLate = BASE_LATE_KIND_POOL.filter((k) => k === 'tank').length;
@@ -1900,17 +1909,19 @@ describe('#323 drawDockKind (shared by placeBases and dock resupply)', () => {
     expect(counts.drone).toBe(counts.infantry);
   });
 
-  it('falls back to a NON-swarm kind when the base already fields a swarm dock (#314 cap)', () => {
-    // Force a swarm draw (early-pool index 16 = 'drone'), with the base already holding a swarm.
+  it('#326: a swarm draw is never re-drawn away — the draw is unconditional', () => {
+    // Force a swarm draw (early-pool index 16 = 'drone'). Pre-#326 a second argument could veto
+    // this; there is no such argument any more, and an extra one must be ignored rather than
+    // silently re-enabling a cap.
     const swarmDraw = () => { let n = 0; return () => (n++ === 0 ? 1 : 16.5 / BASE_EARLY_KIND_POOL.length); };
     expect(isSwarmDockKind(drawDockKind(swarmDraw(), 0))).toBe(true);
-    expect(isSwarmDockKind(drawDockKind(swarmDraw(), 0, { hasSwarm: true }))).toBe(false);
+    expect(isSwarmDockKind(drawDockKind(swarmDraw(), 0, { hasSwarm: true }))).toBe(true);
   });
 
   it('always returns a real kind from the pool it drew, never undefined', () => {
     const rng = mulberry32(99);
     for (let i = 0; i < 500; i++) {
-      const kind = drawDockKind(rng, i / 500, { hasSwarm: i % 2 === 0 });
+      const kind = drawDockKind(rng, i / 500);
       expect([...BASE_EARLY_KIND_POOL, ...BASE_LATE_KIND_POOL]).toContain(kind);
     }
   });

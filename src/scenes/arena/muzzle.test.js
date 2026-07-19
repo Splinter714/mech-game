@@ -69,7 +69,7 @@ describe('partMuzzle (#109)', () => {
       expect(tipped.y).toBeCloseTo(base.y, 10);
     });
 
-    it('a negative tipOffset pulls the spawn point back (the quadruped-kind case, #233)', () => {
+    it('a negative tipOffset pulls the spawn point back (the carrier-kind case, #233)', () => {
       const part = { x: 0, y: -22, w: 6, h: 20 };
       const disp = 1;
       const base = partMuzzle(part, 0, 0, 0, disp);

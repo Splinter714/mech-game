@@ -108,7 +108,7 @@ export const POWERUPS = {
 // per-kind branching at the call site (combat.js `_damageEnemyAt`). This replaced `.maxHp`,
 // which meant different things per body type: Mech summed armor+structure while HpBody
 // returned only its hp pool, so vehicles' armor/shields were invisible to the curve (a tank
-// rated 160 instead of its real 200; the gunship's 30-point shield and the Broodwalker's
+// rated 160 instead of its real 200; the gunship's 30-point shield and the Broodhauler's
 // 60 armor + 50 shield counted for nothing) — vehicles were systematically under-rated.
 //
 // DERIVED BOUNDS (#106). `DROP_HP_FLOOR`/`DROP_HP_CEIL` used to be hand-set constants (14 and
@@ -130,7 +130,7 @@ export const POWERUPS = {
 //
 // Resulting curve across today's roster, post-#299 (toughness → chance):
 //   infantry 3 → 5%      drone 3 → 5%        turret 50 → 8%     helicopter 50 → 8%
-//   tank 80 → 10%        quadruped 150 → 19% light mech 200 → 27%
+//   tank 80 → 10%        carrier 150 → 19% light mech 200 → 27%
 //   medium mech 350 → 58% heavy mech 500 → 95%
 // #299 changed none of this file — every figure above moved purely because the derived bounds
 // did. Chaff (vehicles) now sits low on the curve and mech kills carry the drops.

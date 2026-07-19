@@ -21,7 +21,7 @@ function drawBase(sg, accent, armored = false) {
   roundC(sg, -8, 10, 8, 6, V.tread, 2);
   rectC(sg, -8, 10, 6, 3.5, accent, 0.8);
   // #299/#300: the turret gained a real armor pool in the #299 balance pass (35 structure + 15
-  // armor), so it now honours `opts.armored` like the tank and Broodwalker do — plating brackets
+  // armor), so it now honours `opts.armored` like the tank and Broodhauler do — plating brackets
   // over the base plate that vanish the moment the pool breaks. Sized to the octagonal pad.
   if (armored) armorShell(sg, 0, 6, 24, 18);
 }

@@ -84,11 +84,23 @@ describe('kindMaxFireRange', () => {
 });
 
 describe('the LIVE roster through the seam', () => {
+  it('#328: an UNARMED kind resolves to zero slots, no fire range and no live slot', () => {
+    const unarmed = { kind: 'carrier' };
+    expect(kindWeaponSlots(unarmed)).toEqual({});
+    expect(kindWeaponSlot(unarmed, undefined)).toBeNull();
+    expect(kindMaxFireRange(unarmed)).toBeUndefined();
+    // The live roster's own unarmed kind goes through the same door.
+    expect(kindWeaponSlots(ENEMY_KINDS.carrier)).toEqual({});
+  });
+
   it('every kind but the gunship is still single-weapon, and resolves exactly what it did before', () => {
     for (const id of ENEMY_KIND_IDS) {
       if (id === 'helicopter') continue;
       const k = ENEMY_KINDS[id];
       const slots = kindWeaponSlots(k);
+      // #328: the Carrier is UNARMED — zero slots, not one empty one. Asserted explicitly below
+      // rather than silently skipped, so "unarmed" stays a checked property of the roster.
+      if (!k.weaponId) { expect(Object.keys(slots), id).toEqual([]); continue; }
       expect(Object.keys(slots), id).toEqual([DEFAULT_SLOT]);
       // The resolved weapon is byte-identical to the pre-#305 `resolveWeapon(def.weaponId,
       // def.weaponOverride)` call site.

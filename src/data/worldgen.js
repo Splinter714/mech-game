@@ -70,7 +70,7 @@ export const DOCKS_PER_BASE_MAX = 5;
 // the run, 0→1) instead of per-stage.
 //
 // #269 playtest follow-up ("fold mechs into the dock system"): the pool now mixes the non-mech
-// ENEMY_KINDS roster (turret/tank/drone/helicopter/quadruped/infantry) WITH full mech loadouts
+// ENEMY_KINDS roster (turret/tank/drone/helicopter/carrier/infantry) WITH full mech loadouts
 // (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery), late-pool only — see
 // `BASE_LATE_KIND_POOL`'s own comment for the full reasoning (mechs are the toughest kind, they
 // belong in the hard tier; `holdGround` now applies to mechs too, see scenes/arena/bases.js
@@ -79,8 +79,8 @@ export const DOCKS_PER_BASE_MAX = 5;
 // a dock hosts a KIND, spawned in the COUNT `dockCountFor` below assigns for that kind, not a
 // bespoke cluster-expansion typeId.
 //
-// #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — quadrupeds already
-// have their own independent drone-deploy mechanic (enemyBehaviors.js `quadrupedBehavior`'s
+// #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — carriers already
+// have their own independent drone-deploy mechanic (enemyBehaviors.js `carrierBehavior`'s
 // `deployEveryMs`/`deployBatchMin/Max`/`deployCap`), so a dock ALSO producing standalone drones
 // was redundant with that. `'turret'` is REMOVED entirely too — a base's fixed guns are its WALL
 // turrets (#310 `assignWallTurrets`), never a kind drawn from the generic dock pool. (#287 removed
@@ -91,15 +91,15 @@ export const DOCKS_PER_BASE_MAX = 5;
 // the "too many tanks" complaint (early bases are where the run is mostly spent, and they read as
 // wall-to-wall armour). It's now a 50/50 tank/helicopter mix: tanks stay the basic ground opener,
 // but helicopters are an immediate, equal presence from base 0 instead of not showing up until the
-// late pool bleeds in. Kept to just these two soft vehicle kinds (no quadruped, no mechs) so the
-// early tier stays the SOFT opener half of the escalation — mechs/quadruped remain late-only per
+// late pool bleeds in. Kept to just these two soft vehicle kinds (no carrier, no mechs) so the
+// early tier stays the SOFT opener half of the escalation — mechs/carrier remain late-only per
 // `BASE_LATE_KIND_POOL` below, preserving the early→late difficulty ramp `baseLateFraction` drives.
 //
 // #314 (Jackson 2026-07-19: "add a burst of drones to the potential spawns for a dock; maybe like
 // 10 of them? same for infantry, maybe like 10 of them?"): `'drone'` is BACK in the pool — but as
 // a fundamentally different thing than the single standalone drone #269 removed. A drone dock is
 // now a SWARM dock (`DOCK_SWARM_COUNT` = 10 bodies, see `dockCountFor`), so it doesn't re-create
-// the "redundant with the quadruped's own drone-deploy" problem #269 was solving; it's a set-piece
+// the "redundant with the carrier's own drone-deploy" problem #269 was solving; it's a set-piece
 // burst, not a lone escort. `'infantry'` joins for the same reason (infantry are already live in
 // every run via the alert-tower patrol, scenes/arena/bases.js `TOWER_PATROL_KIND_ID` — this adds
 // nothing that was switched off; #239 only ever disabled the 28-strong `infantryMob`).
@@ -146,12 +146,12 @@ export const BASE_EARLY_KIND_POOL = [
 //
 // #314: `drone`/`infantry` swarm docks are available in the LATE pool too ("a swarm can show up at
 // any point in a run"), at the same deliberately-thin 1 entry each. Every pre-existing late entry
-// is doubled so the ORIGINAL late mix (helicopter 3 : quadruped 1 : tank 1 : raider 2 :
+// is doubled so the ORIGINAL late mix (helicopter 3 : carrier 1 : tank 1 : raider 2 :
 // skirmisher/sniper/artillery 1 each) is preserved EXACTLY in relative terms while the two swarm
 // kinds land at 1/22 of draws apiece — same density reasoning as the early pool's comment above.
 export const BASE_LATE_KIND_POOL = [
-  'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
-  'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
   'drone', 'infantry',
 ];
 
@@ -189,7 +189,7 @@ export function dockCountFor(kindId, rng) {
   if (isSwarmDockKind(kindId)) return DOCK_SWARM_COUNT;  // #314: a ~10-body burst from one dock
   if (kindId === 'tank') return 1;         // #269: "1 tank per dock" — a lone tank, no cluster
   if (kindId === 'helicopter') return 1;   // #269: "1 helicopter per dock" — a single gunship
-  return 1;                                // every other dockable kind (quadruped, mechs) is a single unit
+  return 1;                                // every other dockable kind (carrier, mechs) is a single unit
 }
 
 // Same 0→1 escalation shape as the old (now-retired) run.js `lateFraction`, just indexed by
@@ -212,15 +212,15 @@ export function baseLateFraction(baseIndex, baseCount) {
 // intended weighting, and going through this function is what guarantees a caller can't
 // accidentally flatten it by de-duplicating or hand-rolling its own table.
 //
-// `hasSwarm` is #314's one-swarm-per-base density cap, threaded through rather than reimplemented:
-// when the base already fields a swarm dock, a swarm draw falls back to a non-swarm kind from the
-// same pool, so the base keeps its full dock count but never stacks bursts.
-export function drawDockKind(rng, lateFraction, { hasSwarm = false } = {}) {
+// #326 removed the `hasSwarm` option this used to take — #314's one-swarm-per-base cap, which
+// made a swarm draw fall back to a non-swarm kind once a base already had one. Jackson: "drop it —
+// let bases have several." The draw is now unconditional: whatever the pool gives, the dock gets,
+// at world-gen and at every mid-fight resupply alike. A base fielding two or three swarm docks is
+// now a legitimate (if hairy) roll, and the pool weighting — swarm kinds are deliberately thin in
+// both pools — is the only thing shaping how often that happens.
+export function drawDockKind(rng, lateFraction) {
   const pool = rng() < lateFraction ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
-  const kindId = pool[Math.floor(rng() * pool.length)];
-  if (!hasSwarm || !isSwarmDockKind(kindId)) return kindId;
-  const plain = pool.filter((id) => !isSwarmDockKind(id));
-  return plain[Math.floor(rng() * plain.length)];
+  return pool[Math.floor(rng() * pool.length)];
 }
 
 // Place `baseCount` bases into the terrain map `T` (mutated in place): each base is a small
@@ -427,16 +427,12 @@ export function placeBases(
       if (docks.length >= dockCount) break;
       const k = axialKey(h.q, h.r);
       if (!isFree(k)) continue;
-      // #314 density cap: AT MOST ONE swarm dock per base. A swarm dock fields 10 bodies where
-      // every other dock fields 1, so two or three of them on the same base stops reading as "a
-      // swarm defends this base" and becomes an unreadable wall of bodies — the exact failure
-      // #269's playtest called out when it tuned docks down to a single unit. Pool weighting alone
-      // can't guarantee this (a base draws several docks independently), so once a base has its
-      // swarm, further swarm draws fall back to a NON-swarm kind from the same pool rather than
-      // being dropped — the base keeps its full dock count, it just doesn't stack bursts.
-      // #323: the draw + that fallback both live in `drawDockKind` above now, shared with
-      // mid-fight resupply so the two paths can't drift into different distributions.
-      const kindId = drawDockKind(rng, frac, { hasSwarm: docks.some((d) => isSwarmDockKind(d.kindId)) });
+      // #326: #314's "at most one swarm dock per base" cap used to sit here, re-drawing a swarm
+      // kind down to a plain one once a base already had its swarm. Removed at Jackson's explicit
+      // request ("drop it — let bases have several"), so a base's dock kinds are now purely
+      // whatever the weighted pool draws, independently per dock. Shared with mid-fight resupply
+      // via `drawDockKind` above so the two paths can't drift into different distributions.
+      const kindId = drawDockKind(rng, frac);
       T.set(k, 'dock');
       docks.push({ q: h.q, r: h.r, kindId, count: dockCountFor(kindId, rng) });
     }

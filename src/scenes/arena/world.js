@@ -2,13 +2,13 @@
 // (terrain lookup, wall/LOS test, passability, ray-to-wall distance). Methods use `this`
 // (the ArenaScene); composed onto the scene prototype via Object.assign.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors, hexCorners } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors, hexCorners, HEX_SIZE } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage, coverBlocksForRay,
 } from '../../data/terrain.js';
 import {
-  makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
+  makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
   WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
@@ -47,6 +47,20 @@ const STOMP_DPS = 45;
 // can't have changed which tiles should show, so most frames skip the recompute entirely.
 const CULL_MARGIN_PX = 1200;
 const CULL_RECHECK_PX = 300;
+// #321: chunk size for the #222 boundary outline. Sized against CULL_MARGIN_PX (1200): large
+// enough that the whole world is only a few dozen Graphics objects rather than thousands of
+// tiny ones (each carries its own draw call and state change, so over-chunking trades one cost
+// for another), small enough that a chunk is a meaningful fraction of the margined view and
+// culling actually discards most of the corridor.
+const OUTLINE_CHUNK_PX = 1024;
+// #321: the static Graphics layers cull on a TIGHTER margin than the tiles do. CULL_MARGIN_PX's
+// 1200px exists to make the tiles' expensive full recompute rare; flipping `.visible` on a handful
+// of Graphics is free by comparison, so the only real constraint is pop-in. Visibility is decided
+// against the view rect as it stood at the last recompute, and a recompute happens whenever the
+// camera centre moves CULL_RECHECK_PX (300), so any margin above 300 makes pop-in impossible —
+// 400 keeps 100px of slack. Tighter culling is what actually pays here: at the 1200px margin three
+// of the five wall rings stayed on screen at once.
+const GFX_CULL_MARGIN_PX = 400;
 
 // #167: per-enemy LOS/firing-lane raycasts (`_wallDistanceLos` below) were the top game-logic
 // CPU cost once #155/#161 fixed the render + swarm-texture costs (#148/#164 profiles measured
@@ -174,7 +188,9 @@ export const WorldMixin = {
     // world queries below (`_blocked`/`_blockedAlongSegment`/`_isWall*`/`_wallDistance*`) each
     // consult this set alongside the terrain map.
     this.wallEdges = makeWallEdgeSet(wallEdges ?? []);
-    this._wallGfx = null;
+    // #321: per-ring wall Graphics + their world bounds, populated by `_redrawWallEdges`.
+    this._wallGfxByBase = new Map();
+    this._wallGfxBounds = new Map();
     // #309: one sally-port cycle per gate span, all shut. Must run after the set exists and
     // before the first `_updateGates` tick.
     this._initGates?.();
@@ -248,13 +264,41 @@ export const WorldMixin = {
     // no cue. One Graphics object, drawn once here since the layout is static after generation
     // (#111) — never redrawn per-frame, and purely visual: it reads `this.terrain` but writes
     // nothing back, so passability/LOS/pathing are completely unaffected.
-    const outline = this.add.graphics().setDepth(DEPTH.GROUND_FX);
-    outline.lineStyle(2, 0xf4f1e6, 0.14);
+    // #321 (frame rate): chunked into a coarse spatial grid rather than one world-spanning
+    // Graphics, for the same reason as the wall rings below — Phaser re-tessellates a visible
+    // Graphics object's whole command buffer every frame with no culling, and this outline
+    // measured 3,787 commands covering the entire 5700px corridor. #237 flagged it as "not
+    // covered by tile culling" but measured no cost back when the world was smaller; #308's
+    // longer corridor is what made it matter.
+    //
+    // Arbitrary spatial chunking is safe HERE (but not for the wall) because every segment is
+    // the same uniform stroke — one `lineStyle`, nothing but `lineBetween` — so there are no
+    // overlapping fill passes whose interleaving a chunk seam could change. Chunks are keyed by
+    // the hex's own centre, so a hex's six edges always land in one chunk together.
+    this._outlineChunks = new Map();
+    this._outlineBounds = new Map();
+    const outlineFor = (x, y) => {
+      const k = `${Math.floor(x / OUTLINE_CHUNK_PX)},${Math.floor(y / OUTLINE_CHUNK_PX)}`;
+      let g = this._outlineChunks.get(k);
+      if (!g) {
+        g = this.add.graphics().setDepth(DEPTH.GROUND_FX);
+        g.lineStyle(2, 0xf4f1e6, 0.14);
+        this._outlineChunks.set(k, g);
+        const [cxi, cyi] = k.split(',').map(Number);
+        // Padded by a hex radius so a segment drawn near a chunk's edge can't be culled early.
+        this._outlineBounds.set(k, {
+          minX: cxi * OUTLINE_CHUNK_PX - HEX_SIZE, minY: cyi * OUTLINE_CHUNK_PX - HEX_SIZE,
+          maxX: (cxi + 1) * OUTLINE_CHUNK_PX + HEX_SIZE, maxY: (cyi + 1) * OUTLINE_CHUNK_PX + HEX_SIZE,
+        });
+      }
+      return g;
+    };
     const corners = hexCorners();
     for (const [k, id] of this.terrain) {
       if (isBoundaryTerrainId(getTerrain(id).tex)) continue;
       const [q, r] = k.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
+      const outline = outlineFor(x, y);
       const nbrs = neighbors(q, r);
       for (let i = 0; i < 6; i++) {
         const n = nbrs[i];
@@ -273,7 +317,26 @@ export const WorldMixin = {
     // for tall standing scenery: small ground units read as being BEHIND the wall while the player
     // mech towers over it. Redrawn only when a span takes damage or falls (`_redrawWallEdges`),
     // never per frame — the layout is static after generation (#111).
-    this._wallGfx = this.add.graphics().setDepth(DEPTH.COVER_CANOPY);
+    // #321 (frame rate): ONE Graphics per base WALL RING rather than one for the whole world.
+    //
+    // Phaser's WebGL Graphics pipeline re-walks and re-tessellates a Graphics object's ENTIRE
+    // command buffer every frame it is visible — there is no retained geometry and no culling,
+    // so a Graphics costs the same whether it is on screen or 5000px away. The single
+    // world-spanning wall Graphics measured 16,835 commands, every one of them re-tessellated
+    // 60x a second, for geometry that is static and almost entirely off-screen. That cost
+    // scales with WORLD size, not with what the player can see, which is why #308's bigger
+    // world (five bases, longer corridor) hurt without entity counts moving at all (#326).
+    //
+    // Splitting per ring makes the cost scale with what's actually near the camera: rings are
+    // spatially disjoint (verified: five rings, zero bounding-box overlap), and every pass in
+    // `drawWallEdges` is per-span and position-local — the junction pillars are drawn at both
+    // endpoints of every span unconditionally, not derived from the span set — so a ring drawn
+    // into its own Graphics is pixel-identical to the same ring drawn into a shared one. The
+    // disjointness is what makes it safe: each chunk repeats the full pass sequence, so
+    // chunks that OVERLAPPED could interleave their layers differently at the seam. Rings
+    // don't touch, so they can't.
+    this._wallGfxByBase = new Map();
+    this._wallGfxBounds = new Map();
     this._redrawWallEdges();
   },
 
@@ -283,11 +346,62 @@ export const WorldMixin = {
   // scene tests use (they only stand up the handful of Graphics methods their own subject needs) —
   // same tolerance the rest of the mixin already shows toward partially-stubbed scene objects.
   _redrawWallEdges() {
-    if (!this.wallEdges || typeof this._wallGfx?.clear !== 'function') return;
-    // #309: `time.now` is still threaded through for any time-varying span art. The gate's leaves
-    // animate off their own `openFrac` rather than off the clock, so nothing here pulses any more —
-    // the barrier field that used to went away with the playtest change (see wallArt.js `drawGate`).
-    drawWallEdges(this._wallGfx, [...this.wallEdges.edges.values()], WALL_THICKNESS_PX, this.time?.now ?? 0);
+    if (!this.wallEdges || typeof this.add?.graphics !== 'function') return;
+    // #321: group by ring and repaint each ring into its OWN Graphics (see `_buildWorld` for why).
+    // Grouping is by `baseId`, the span field the generator already stamps on every edge; a span
+    // without one (none today, but the field is optional in the data model) falls into a shared
+    // 'loose' bucket rather than being dropped, so nothing can ever silently stop being drawn.
+    const byBase = new Map();
+    for (const e of this.wallEdges.edges.values()) {
+      const k = String(e.baseId ?? 'loose');
+      if (!byBase.has(k)) byBase.set(k, []);
+      byBase.get(k).push(e);
+    }
+    for (const [k, edges] of byBase) {
+      let g = this._wallGfxByBase.get(k);
+      if (!g) {
+        g = this.add.graphics().setDepth(DEPTH.COVER_CANOPY);
+        // The `clear` check keeps this a no-op against the minimal `add.graphics()` stubs the
+        // headless scene tests use (they only stand up the handful of Graphics methods their own
+        // subject needs) — same tolerance the rest of the mixin already shows toward
+        // partially-stubbed scene objects.
+        if (typeof g?.clear !== 'function') return;
+        this._wallGfxByBase.set(k, g);
+      }
+      // #309: `time.now` is still threaded through for any time-varying span art. The gate's leaves
+      // animate off their own `openFrac` rather than off the clock, so nothing here pulses any
+      // more — the barrier field that used to went away with the playtest change (wallArt.js
+      // `drawGate`).
+      drawWallEdges(g, edges, WALL_THICKNESS_PX, this.time?.now ?? 0);
+      // Bounds are recomputed on every repaint rather than cached at build time, because a span
+      // collapsing changes which geometry the ring actually covers. Padded by the wall thickness
+      // so the stroke's outer edge can never be culled a pixel early.
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const e of edges) {
+        minX = Math.min(minX, e.x0, e.x1); maxX = Math.max(maxX, e.x0, e.x1);
+        minY = Math.min(minY, e.y0, e.y1); maxY = Math.max(maxY, e.y0, e.y1);
+      }
+      const pad = WALL_THICKNESS_PX;
+      this._wallGfxBounds.set(k, { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad });
+    }
+    // Re-apply culling immediately: a ring repainted while off-screen must not pop back to
+    // visible just because it was redrawn (a fresh Graphics defaults to visible).
+    this._cullWallGfx();
+  },
+
+  // #321: show only the wall rings whose bounds intersect the margined camera view. An invisible
+  // Phaser Graphics is skipped by the renderer entirely, so a culled ring costs nothing — which is
+  // the whole point of splitting them up. Called from `_updateTileCulling` (already rate-limited by
+  // `CULL_RECHECK_PX`, so this adds no new per-frame work) and after any repaint.
+  _cullWallGfx(view = this._lastCullView, margin = GFX_CULL_MARGIN_PX) {
+    if (!view || !this._wallGfxByBase) return;
+    for (const [k, g] of this._wallGfxByBase) {
+      const b = this._wallGfxBounds.get(k);
+      if (!b || typeof g?.setVisible !== 'function') continue;
+      const on = b.maxX >= view.x - margin && b.minX <= view.x + view.width + margin
+        && b.maxY >= view.y - margin && b.minY <= view.y + view.height + margin;
+      if (g.visible !== on) g.setVisible(on);
+    }
   },
 
   // #155: hide every tile GameObject outside the camera's current view (+ margin), show every
@@ -308,6 +422,9 @@ export const WorldMixin = {
   _updateTileCulling(view, margin = CULL_MARGIN_PX) {
     const cx = view.x + view.width / 2;
     const cy = view.y + view.height / 2;
+    // #321: stashed so `_redrawWallEdges` can re-apply culling to a ring it repaints between
+    // recomputes (a freshly created Graphics defaults to visible).
+    this._lastCullView = view;
     if (this._cullCenterX != null) {
       const moved = Math.hypot(cx - this._cullCenterX, cy - this._cullCenterY);
       if (moved < CULL_RECHECK_PX) return;
@@ -342,6 +459,21 @@ export const WorldMixin = {
       if (canopy) canopy.setVisible(false);
     }
     this._visibleTiles = nextVisible;
+
+    // #321: the static world-spanning Graphics layers ride the SAME rate-limited recompute as the
+    // tiles — no new per-frame work, and they share the tiles' 1200px margin so a layer is never
+    // culled before the ground under it is.
+    this._cullWallGfx(view, GFX_CULL_MARGIN_PX);
+    if (this._outlineChunks) {
+      for (const [k, g] of this._outlineChunks) {
+        const b = this._outlineBounds.get(k);
+        if (!b || typeof g?.setVisible !== 'function') continue;
+        const m = GFX_CULL_MARGIN_PX;
+        const on = b.maxX >= view.x - m && b.minX <= view.x + view.width + m
+          && b.maxY >= view.y - m && b.minY <= view.y + view.height + m;
+        if (g.visible !== on) g.setVisible(on);
+      }
+    }
   },
 
   // Terrain id at a world point (undefined = outside the arena disc).
@@ -411,9 +543,13 @@ export const WorldMixin = {
   // enemy form. An open gate is passable to everyone, so the `passOpenGates` argument this used to
   // take — and the `_blockedForEnemy` alias that opted into it — are gone. A gate the player can
   // see standing open is one he can drive through; what he cannot do is cause it to open.
-  _blocked(x, y) {
+  // #320: `radius` is the moving unit's own body radius (`wallCollideRadius`, shared.js). It
+  // defaults to 0, so every point-shaped caller — powerup placement, spawn scans, both of #288's
+  // seal proofs — is bit-for-bit unchanged; only the movement integrators opt in, and they pass
+  // the radius of the specific unit being moved rather than one flat value.
+  _blocked(x, y, radius = 0) {
     if (!isPassable(this._terrainAt(x, y))) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX);
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, null, radius);
   },
 
   // #159: is any hex along the straight PIXEL path from (x0,y0) to (x1,y1) impassable? A
@@ -428,11 +564,15 @@ export const WorldMixin = {
   // #288: the wall half of this is a true SEGMENT-CROSSING test, not a lookup — a wall lives on a
   // line between hexes and has no tile to look up, and its 14px painted thickness is far thinner
   // than a fast mech's frame movement, so only "did this step cross the span" is safe at any speed.
-  _blockedAlongSegment(x0, y0, x1, y1) {
+  // #320: `radius` inflates only the WALL half of this test — the terrain half stays a hex-tile
+  // lookup, because a tile obstacle is a whole hex and the mech has always been allowed to stand
+  // with its shoulders over a neighbouring tile's border. Walls are the thing that reads wrong
+  // when a body overlaps them, because a wall IS the border.
+  _blockedAlongSegment(x0, y0, x1, y1, radius = 0) {
     for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
       if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return true;
     }
-    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
+    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, null, radius);
   },
 
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying
@@ -457,7 +597,7 @@ export const WorldMixin = {
   // small-vs-small was deliberately left uncollided in the original scope.)
   //
   // Tier rule (kept deliberately simple/consistent with how the player already treats these
-  // tiers, rather than inventing a new one): a LARGE obstacle (mech/quadruped/turret) blocks
+  // tiers, rather than inventing a new one): a LARGE obstacle (mech/carrier/turret) blocks
   // ANY other ground unit's movement, small or large — a tank/infantry unit shouldn't be able
   // to drive through a standing mech/turret any more than the player can (`_blockedByGroundEnemy`
   // already blocks the player against every ground enemy regardless of size). A SMALL obstacle
@@ -637,6 +777,33 @@ export const WorldMixin = {
     // #309: an open gate does not stop a round — the opening is a real opening. Rounds still stop
     // on the gate's own leaves while it is shut, so the span is shootable-down like any other.
     return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX);
+  },
+
+  // #320, the SECOND half of "I'm able to shoot OVER walls if I stand real close." Inflating
+  // movement by body radius fixes most of it, but not by construction: a shot leaves the weapon's
+  // real art tip (`_muzzle`), which sits forward of the mech's centre by the part layout plus the
+  // weapon's own `muzzleForward`, and nothing guarantees that reach is shorter than the radius the
+  // body now stops at. Measured in the real game, a long arm weapon on a mech parked as close as
+  // the game allows DOES still get its tip across the plate — and then the round's ray STARTS on
+  // the far side and never crosses the span, so the wall isn't failing to stop the shot, it never
+  // gets asked.
+  //
+  // Of the issue's two options — block the shot, or re-origin the blocking ray at the body centre —
+  // this is the first, and deliberately. Re-origining would change the geometry of EVERY shot in
+  // the game (spawn point, spread lateral offsets, convergence, beam endpoints, muzzle FX and
+  // positional audio all key off the muzzle), to fix a case that only arises when a wall is
+  // physically between the barrel and the chest. This guard is inert otherwise: a single swept
+  // test over the few centimetres from centre to tip, which can only trip when a STANDING span
+  // actually separates the two. Legitimate close-range fire — hugging a wall and shooting along
+  // it, over a breach, through an open gate mouth, or at anything not across a plate — is
+  // completely unaffected.
+  //
+  // Uses `wallEdgeSeparating`, NOT `wallEdgeCrossing`: only a span the barrel has genuinely got to
+  // the far side of counts. A muzzle merely buried in the plate is a gun pressed against a wall,
+  // and that shot must still go off so the player can breach a wall he is leaning on.
+  _muzzleWallBlocked(cx, cy, mx, my) {
+    if (!this.wallEdges) return false;
+    return !!wallEdgeSeparating(this.wallEdges, cx, cy, mx, my);
   },
 
   // #288: the standing wall spans, for tests/debug and for anything that needs the live geometry.
