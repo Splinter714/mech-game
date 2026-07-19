@@ -46,7 +46,7 @@ function makeScene({ hexes = [], wallDefs = [] } = {}) {
       wallEdges: makeWallEdgeSet(wallDefs),
       enemies: [], projectiles: [], firePatches: [],
       px: 0, py: 0, turretAngle: 0,
-      lock: { target: null }, _reticlePos: null,
+      _reticlePos: null,
       visibleHexes: null,
       mech: { isDestroyed: () => false },
       time: { now: 0 },
@@ -187,7 +187,8 @@ describe('#318 wall spans are convergence/lock targets', () => {
     const s = makeScene({ wallDefs: spanDefs });
     s._updateLock(0.016);
     expect(s.convergeTarget?.edgeKey).toBeTruthy();
-    expect(s.lock.target).toBe(s.convergeTarget);
+    // #341: one target concept — the aim point IS derived from `convergeTarget` (a static
+    // wall-span target resolves to its plain {x, y} point; a live enemy returns the handle itself).
     const m = edgeMidpoint(spanDefs[0].a, spanDefs[0].b);
     expect(s._lockAimPoint().x).toBeCloseTo(m.x, 3);
   });

@@ -4,7 +4,6 @@ import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
-import { makeLock } from '../data/targetlock.js';
 import { initialSprintState } from '../data/sprint.js';
 import { initialDashState } from '../data/dash.js';
 import { Audio } from '../audio/index.js';
@@ -207,13 +206,12 @@ export default class ArenaScene extends Phaser.Scene {
     this._sprintForcedByOverclock = false;
     this._overclockWasActive = false;
     this.dash = initialDashState();   // #261: hardcoded L3/Space burst + cooldown, see data/dash.js
-    // Indirect-fire lock (#62, rework #252): `this.lock` (data/targetlock.js) is the pure state
-    // record — it mirrors `this.convergeTarget` every frame, instantly, so homing/arcing weapons
-    // simply fire at whatever direct-fire convergence is currently aimed at. `aimEnemy` is the live
-    // most-aimed enemy; `convergeTarget` (shared.js `pickConvergeTarget`) is the live pick fed to
-    // convergence — #322: the nearest in-cone candidate of any kind, or null. Both set each frame
-    // in `_updateLock` (targeting.js). `_reticlePos` is the reticle's eased (sliding) drawn position.
-    this.lock = makeLock();
+    // THE target (#62, rework #252, unified #341): `convergeTarget` (shared.js `pickConvergeTarget`
+    // — #322: the nearest in-cone candidate of any kind, enemy/hex/wall span, or null) is the single
+    // source of truth. Direct fire converges on it, homing/arcing weapons seek it, the reticle draws
+    // at it — there is no separate lock record mirroring it any more. `aimEnemy` is that same pick
+    // when it's a live enemy. Both set each frame in `_updateLock` (targeting.js). `_reticlePos` is
+    // the reticle's eased (sliding) drawn position — presentation only.
     this.aimEnemy = null;
     this.convergeTarget = null;
     this._reticlePos = null;
@@ -339,11 +337,11 @@ export default class ArenaScene extends Phaser.Scene {
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
     // weapons seek it; direct weapons converge on the same live pick directly. ──
     this._updateLock(dt);
-    // #260: live lock-target world position (or null), republished each frame so HudScene can
-    // draw a matching off-screen arrow for the CURRENT lock target — same channel pattern as
+    // #260: live target's world position (or null), republished each frame so HudScene can
+    // draw a matching off-screen arrow for the CURRENT target — same channel pattern as
     // `objectiveWorld` above. Reuses `_lockAimPoint()` (targeting.js), the same query the
     // homing/reticle code already reads, so the arrow can never disagree with what's actually
-    // locked (hides itself the instant the target dies or there's no lock, same as that query).
+    // targeted (hides itself the instant the target dies or there's no target, same as that query).
     const lockPt = this._lockAimPoint();
     this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
     this._stepGait(dt);
@@ -382,7 +380,7 @@ export default class ArenaScene extends Phaser.Scene {
     // lock reticle, same graphics layer.
     this._drawAimLine();
 
-    // Lock reticle (#62, rework #252), drawn after projFx is cleared above so it isn't wiped, at
+    // Target reticle (#62, rework #252, #341), drawn after projFx is cleared above so it isn't wiped, at
     // `_reticlePos` — the position eased toward the live aim point, so switching convergence
     // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). Playtest
     // follow-up (#252): indirect fire now always tracks the live target through cover, so there's

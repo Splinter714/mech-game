@@ -68,7 +68,7 @@ function makeScene({ px, py, vx = 0, vy = 0, blocked = false }) {
   scene._losTransparency = () => 0;
   scene._blocked = () => false;
   scene._speedFactorAt = () => 1;
-  scene._updateEnemyLock = () => {};                      // don't touch e.lock — tests set it directly
+  scene._updateEnemyLock = () => {};                      // don't touch e.lockTarget — tests set it directly
   scene._fireInterval = () => 1000;
   scene._melee = vi.fn();
   scene._fireHitscan = vi.fn((w, mx, my, angle) => hitscan.push(angle));
@@ -145,7 +145,7 @@ describe('enemy indirect (lock-based) fire still fires through cover, always alo
     // fires along the turret's actual current angle, #153).
     const e = makeMechEnemy({ chassisId: 'heavy', mounts: { leftTorso: [INDIRECT_WEAPON] }, turret: 0 });
     // A live (#252: convergence-mirroring) lock — just needs a target, no last-known/blind state.
-    e.lock = { target: 'player' };
+    e.lockTarget = 'player';
     // LOS currently blocked (behind cover) but close/in-range, so the indirect fire gate is
     // satisfied purely by having a lock, with no LOS requirement at all.
     const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: true });
@@ -160,7 +160,7 @@ describe('enemy indirect (lock-based) fire still fires through cover, always alo
 
   it('an indirect weapon with no lock at all (player out of lock range) does not fire despite being in weapon range', () => {
     const e = makeMechEnemy({ chassisId: 'heavy', mounts: { leftTorso: [INDIRECT_WEAPON] }, turret: 0 });
-    e.lock = { target: null };
+    e.lockTarget = null;
     const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: true });
 
     scene._updateEnemy(e, 0.016, 16);

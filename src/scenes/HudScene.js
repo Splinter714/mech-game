@@ -407,10 +407,10 @@ export default class HudScene extends Phaser.Scene {
   }
 
   // #260: the same off-screen edge-direction indicator as the objective arrow, but for the
-  // CURRENT lock target (`this.lock.target` in targeting.js, republished each frame by
+  // CURRENT target (`this.convergeTarget` in targeting.js, republished each frame by
   // ArenaScene as the `lockWorld` registry channel via `_lockAimPoint()` — the same query the
-  // reticle/homing code reads, so this can never disagree with what's actually locked). Hidden
-  // entirely when there's no live lock target, and suppressed once the target is genuinely
+  // reticle/homing code reads, so this can never disagree with what's actually targeted). Hidden
+  // entirely when there's no live target, and suppressed once the target is genuinely
   // on-screen (the live reticle itself is visible there — no need to double up), exactly
   // mirroring how the objective arrow behaves.
   _updateLockArrow() {

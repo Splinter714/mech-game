@@ -1,124 +1,51 @@
 import { describe, it, expect } from 'vitest';
-import {
-  makeLock, stepLock, hasLock, canFireWeapon, stepReticlePosition,
-} from './targetlock.js';
+import { canFireWeapon, stepReticlePosition } from './targetlock.js';
 
 const A = { mech: { isDestroyed: () => false }, id: 'a' };
-const B = { mech: { isDestroyed: () => false }, id: 'b' };
 const hexA = { x: 300, y: 0 };   // a static (destructible-hex, #250) convergence target — no `.mech`
 
-describe('targetlock (#252) — the lock mirrors the live target instantly', () => {
-  it('has no target and cannot fire a homing weapon on a fresh lock', () => {
-    const lock = makeLock();
-    expect(hasLock(lock)).toBe(false);
-    expect(lock.target).toBe(null);
-  });
+// #341: the `lock` record that used to mirror the convergence pick every frame is gone, and with it
+// makeLock/stepLock/hasLock and the tests that exercised the mirroring (they asserted that assigning
+// a field assigns a field). There is ONE target now — the player's `convergeTarget` (targeting.js
+// `_updateLock`) or an enemy's `lockTarget` (enemies.js) — and the instant acquire / instant switch /
+// instant drop behaviour those tests described is asserted against that real pick in
+// scenes/arena/targetingLos.test.js and coverTargeting.test.js. What is left pure here is the fire
+// gate and the reticle easing.
 
-  it('acquires a target the SAME frame it appears — no charge delay', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    expect(lock.target).toBe(A);
-    expect(hasLock(lock)).toBe(true);
-  });
-
-  it('switches targets immediately (no dwell/hand-over delay) when the live pick changes', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    stepLock(lock, { target: B });
-    expect(lock.target).toBe(B);
-  });
-
-  it('drops to no-target the instant the live pick goes null (no maintain grace period)', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    stepLock(lock, { target: null });
-    expect(lock.target).toBe(null);
-    expect(hasLock(lock)).toBe(false);
-  });
-
-  it('re-acquiring the same target after a drop is instant too (no re-charge)', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    stepLock(lock, { target: null });
-    stepLock(lock, { target: A });
-    expect(hasLock(lock)).toBe(true);
-  });
-});
-
-// Playtest follow-up (#252): the old "blind fire" state (dead-reckoned last-known position while
-// the picked target had no LOS) is gone entirely — the lock has no LOS concept at all any more,
-// it purely mirrors whatever target convergence handed it, live, always. There is no `lock.blind`
-// and no last-known/prediction bookkeeping left to test.
-describe('targetlock (#252) — no LOS gate, no blind-fire state (playtest follow-up)', () => {
-  it('keeps tracking the same enemy target with no LOS concept involved at all', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    stepLock(lock, { target: A });
-    stepLock(lock, { target: A });
-    expect(lock.target).toBe(A);
-    expect(hasLock(lock)).toBe(true);
-    expect(lock.blind).toBeUndefined();
-  });
-
-  it('a static (hex) target behaves identically to an enemy target — just mirrored', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: hexA });
-    expect(lock.target).toBe(hexA);
-    expect(hasLock(lock)).toBe(true);
-  });
-
-  it('a homing weapon can fire at a hex target — hasLock only cares whether SOMETHING is targeted', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: hexA });
-    const homing = { delivery: { guidance: 'homing' } };
-    expect(canFireWeapon(homing, lock)).toBe(true);
-  });
-});
-
-// #252 no-lock-no-fire gate — unchanged semantics, just "has a target" instead of "fully charged".
-describe('targetlock — canFireWeapon (no-lock-no-fire gate)', () => {
+// The no-target-no-fire gate (#252, #341) — "has a target" is the whole rule; passing the target
+// straight in (no wrapper) is the #341 signature.
+describe('targetlock — canFireWeapon (no-target-no-fire gate)', () => {
   const homing = { delivery: { guidance: 'homing', path: 'arcing' } };
   const dumbfireMissile = { delivery: { guidance: 'dumbfire', path: 'straight' } };
   const arcingLob = { delivery: { guidance: null, path: 'arcing' } };
   const directHitscan = { delivery: { guidance: null, path: 'straight', hit: 'hitscan' } };
 
   it('blocks a homing weapon with no target at all', () => {
-    const lock = makeLock();
-    expect(canFireWeapon(homing, lock)).toBe(false);
+    expect(canFireWeapon(homing, null)).toBe(false);
   });
 
   it('allows a homing weapon the instant a target is acquired — no charge-up wait', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    expect(canFireWeapon(homing, lock)).toBe(true);
+    expect(canFireWeapon(homing, A)).toBe(true);
   });
 
-  it('blocks again once the target is gone', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    stepLock(lock, { target: null });
-    expect(canFireWeapon(homing, lock)).toBe(false);
+  it('a homing weapon can fire at a static hex/wall target too — only "is SOMETHING targeted" matters', () => {
+    expect(canFireWeapon(homing, hexA)).toBe(true);
   });
 
   it('a homing weapon can fire with no LOS on its target — indirect fire has no LOS requirement', () => {
-    const lock = makeLock();
-    stepLock(lock, { target: A });
-    expect(canFireWeapon(homing, lock)).toBe(true);
+    expect(canFireWeapon(homing, A)).toBe(true);
   });
 
-  it('never gates a dumbfire missile (clusterRocket) regardless of lock state', () => {
-    const lock = makeLock();
-    expect(canFireWeapon(dumbfireMissile, lock)).toBe(true);
+  it('never gates a dumbfire missile (clusterRocket) regardless of target state', () => {
+    expect(canFireWeapon(dumbfireMissile, null)).toBe(true);
   });
 
-  it('never gates an unguided arcing lob (plasma/napalm) regardless of lock state', () => {
-    const lock = makeLock();
-    expect(canFireWeapon(arcingLob, lock)).toBe(true);
+  it('never gates an unguided arcing lob (plasma/napalm) regardless of target state', () => {
+    expect(canFireWeapon(arcingLob, null)).toBe(true);
   });
 
-  it('never gates direct-fire hitscan regardless of lock state', () => {
-    const lock = makeLock();
-    expect(canFireWeapon(directHitscan, lock)).toBe(true);
+  it('never gates direct-fire hitscan regardless of target state', () => {
+    expect(canFireWeapon(directHitscan, null)).toBe(true);
   });
 });
 
