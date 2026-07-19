@@ -34,9 +34,40 @@ export const DOCK_RESUPPLY_COOLDOWN_MS = 18000;
 // call to go slightly above that given the cooldown change).
 export const DOCK_RESUPPLY_MAX_PER_DOCK = 3;
 
-// Fresh per-dock resupply state: full cooldown remaining, no resupplies spent yet.
-export function makeDockResupplyState(cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS) {
-  return { remainingMs: cooldownMs, count: 0 };
+// #311: per-dock cooldown variance. Every dock used to share the flat constant above AND to be
+// constructed/woken in the same pass, so a base's docks stayed perfectly in phase for a whole
+// fight — reinforcements arrived as one synchronized pulse instead of a trickle. Jackson:
+// "docks should have slight randomization in cooldown so they don't all happen quite so
+// simultaneously." ±15% of the baseline, i.e. ~15.3-20.7s. Deliberately small: it's a
+// de-synchronizer, not a re-tune of the 18s cadence reasoned about above. Owner: tunable.
+export const DOCK_RESUPPLY_COOLDOWN_JITTER = 0.15;
+
+// #311, and the more important half of the fix: each dock also starts at a RANDOM POINT IN ITS
+// OWN CYCLE rather than every dock beginning at a full cooldown. Interval variance alone still
+// has all docks fire together on the first cycle and only drift apart slowly over many minutes —
+// a random starting phase desynchronizes them on the very first resupply, which is the actual
+// symptom reported. The band is 0.5-1.0 of the dock's own cooldown rather than a full 0-1: the
+// baseline's own reasoning above is explicit that resupply must not feel like "an instant
+// respawn in your face", and a uniform 0-1 phase would let a dock pop a fresh unit a second or
+// two after its base wakes. 0.5-1.0 gives a first resupply somewhere in ~7.7-20.7s — plenty of
+// spread to break the lockstep, with a real floor before anything can reappear. Owner: tunable.
+export const DOCK_RESUPPLY_PHASE_MIN = 0.5;
+export const DOCK_RESUPPLY_PHASE_MAX = 1;
+
+// Fresh per-dock resupply state, with #311's two per-dock rolls baked in at construction:
+// a jittered `cooldownMs` (the interval THIS dock will use for every future cycle, carried on the
+// state so `tickDockResupply` reuses it rather than falling back to the flat constant) and a
+// randomized starting `remainingMs` (its phase). `rng` is injected — pass a seeded generator
+// (worldgen.js `mulberry32`) so a seeded run stays reproducible; defaults to `Math.random` for
+// callers that don't have one. Stays pure: no module-level RNG state.
+export function makeDockResupplyState(cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS, rng = Math.random) {
+  const jittered = cooldownMs * (1 + (rng() * 2 - 1) * DOCK_RESUPPLY_COOLDOWN_JITTER);
+  const phase = DOCK_RESUPPLY_PHASE_MIN + rng() * (DOCK_RESUPPLY_PHASE_MAX - DOCK_RESUPPLY_PHASE_MIN);
+  const startMs = jittered * phase;
+  // `startMs` is remembered separately because the `!awake` branch of `tickDockResupply` restores
+  // a not-yet-woken dock to its UNSTARTED value — which, post-#311, is this dock's phase offset,
+  // not a full cooldown. Without it a single dormant tick would wipe the phase roll.
+  return { remainingMs: startMs, count: 0, cooldownMs: jittered, startMs };
 }
 
 // Advance one tick for a single dock. Two separate concerns, deliberately split:
@@ -56,14 +87,24 @@ export function makeDockResupplyState(cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS) {
 export function tickDockResupply(
   state, { awake, cleared, dt }, cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS, maxPerDock = DOCK_RESUPPLY_MAX_PER_DOCK,
 ) {
+  // #311: a state built by `makeDockResupplyState` carries its OWN jittered interval; the
+  // `cooldownMs` argument is only the fallback for a hand-rolled/legacy state that lacks one.
+  // Everything below (the recharge after firing, the dormant hold) uses the per-dock value so a
+  // dock keeps its own cadence for its whole lifetime rather than snapping back to the constant.
+  const cd = state.cooldownMs ?? cooldownMs;
+  // The value an un-started dock sits at — its #311 phase offset, or a full cooldown for a state
+  // that predates the phase roll.
+  const unstartedMs = state.startMs ?? cd;
   // Spent — strip any stale `ready` from the tick that just fired (this is the very next call
   // after that one) so the caller never re-reads `ready: true` a second time and double-spawns.
-  if (state.count >= maxPerDock) return { remainingMs: state.remainingMs, count: state.count };
+  if (state.count >= maxPerDock) {
+    return { remainingMs: state.remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
+  }
   if (!awake) {
-    // Base hasn't woken yet — hold at full cooldown rather than ticking or draining; the
+    // Base hasn't woken yet — hold at its unstarted value rather than ticking or draining; the
     // countdown only ever runs once the base is awake.
-    if (!state.remainingMs || state.remainingMs === cooldownMs) return state;
-    return { remainingMs: cooldownMs, count: state.count };
+    if (!state.remainingMs || state.remainingMs === unstartedMs) return state;
+    return { remainingMs: unstartedMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
   }
   const remainingMs = Math.max(0, state.remainingMs - Math.max(0, dt) * 1000);
   if (remainingMs <= 0) {
@@ -71,10 +112,12 @@ export function tickDockResupply(
     // into an occupied hex isn't possible. If still occupied, hold at 0 (already-elapsed) rather
     // than restarting the cooldown, so resupply fires the instant `cleared` goes true with no
     // extra wait.
-    if (!cleared) return { remainingMs: 0, count: state.count };
-    return { remainingMs: cooldownMs, count: state.count + 1, ready: true };
+    if (!cleared) return { remainingMs: 0, count: state.count, cooldownMs: cd, startMs: unstartedMs };
+    // Recharges to this dock's OWN interval (#311), not the shared constant — no phase re-roll:
+    // the docks are already out of step by now and re-rolling each cycle would only add churn.
+    return { remainingMs: cd, count: state.count + 1, cooldownMs: cd, startMs: unstartedMs, ready: true };
   }
-  return { remainingMs, count: state.count };
+  return { remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
 }
 
 // #269 Part 2 ("dock open/closed states"): a CLOSED dock is destructible — destroying it must
@@ -86,5 +129,5 @@ export function tickDockResupply(
 // `tickDockResupply` call hits the already-spent early return above and forever reports
 // `ready: false`; `remainingMs` is carried through unchanged (irrelevant once spent).
 export function spendDockResupply(state, maxPerDock = DOCK_RESUPPLY_MAX_PER_DOCK) {
-  return { remainingMs: state.remainingMs, count: maxPerDock };
+  return { remainingMs: state.remainingMs, count: maxPerDock, cooldownMs: state.cooldownMs, startMs: state.startMs };
 }

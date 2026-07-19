@@ -15,7 +15,22 @@ import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE } from '../../data/awareness.js';
-import { DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK } from '../../data/dockResupply.js';
+import {
+  DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK,
+  DOCK_RESUPPLY_COOLDOWN_JITTER, DOCK_RESUPPLY_PHASE_MIN,
+} from '../../data/dockResupply.js';
+
+// #311 made each dock's interval and starting phase per-dock random, so these scene tests can no
+// longer step by exactly "the cooldown ± 1s" and expect a deterministic answer. They step by
+// bounds instead, derived from the jitter constants so they stay correct if those are re-tuned:
+//   - PAST_COOLDOWN_S   — longer than the LONGEST interval any dock can roll, so a dock that is
+//                         eligible at all is guaranteed to have fired.
+//   - BEFORE_COOLDOWN_S — shorter than the SHORTEST first cycle any dock can roll (the low end
+//                         of the interval band times the low end of the phase band), so no dock
+//                         can possibly have fired yet.
+const PAST_COOLDOWN_S = (DOCK_RESUPPLY_COOLDOWN_MS * (1 + DOCK_RESUPPLY_COOLDOWN_JITTER)) / 1000 + 1;
+const BEFORE_COOLDOWN_S =
+  (DOCK_RESUPPLY_COOLDOWN_MS * (1 - DOCK_RESUPPLY_COOLDOWN_JITTER) * DOCK_RESUPPLY_PHASE_MIN) / 1000 - 1;
 
 // A minimal Phaser-shaped stand-in: `add.rectangle`/`add.circle` return a chainable fake game
 // object (setDepth returns itself, destroy is a no-op spy); `tweens.add` and `time.delayedCall`
@@ -43,6 +58,11 @@ function makeScene() {
       circle: () => fakeGameObject(),
     },
     enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [],
+    // #311: docks now roll a jittered cooldown + starting phase off the run's world seed
+    // (`_buildWorld`, world.js). This stub never builds a world, so pin a seed here — otherwise
+    // every dock in these tests would draw fresh randomness on each run and the timing
+    // assertions below would be flaky.
+    _worldSeed: 424242,
     // #269 Part 2: `_resupplyDock`/`_updateDockOpenClose` read/write these world-state maps
     // (normally seeded by `_buildWorld`, world.js). Empty is fine for this file's coverage —
     // `this.terrain.get(dockKey)` reads as undefined (never `'dockClosed'`), so the reopen check
@@ -98,7 +118,7 @@ describe('#269 §3 dock resupply: trigger gating', () => {
     clearDock(scene, dockKey);   // dock cleared, but base never woken
 
     // Tick well past the cooldown — should never become eligible without a wake.
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 5);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(0);
@@ -111,7 +131,7 @@ describe('#269 §3 dock resupply: trigger gating', () => {
     scene._spawnDormantUnits();
     scene._wakeBase('base0');   // base is awake, but the dormant unit is still alive
 
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 5);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(1);   // still just the original unit, no resupply
@@ -148,7 +168,7 @@ describe('#269 playtest follow-up: resupply cooldown progress is decoupled from 
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
 
     // Cooldown fully elapses while the original unit is still alive — must not fire yet.
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
     expect(scene.enemies.length).toBe(1);
     expect(scene._dockResupplyStates.get(dockKey).count).toBe(0);
@@ -173,7 +193,7 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
 
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 - 1);
+    scene._updateDockResupply(BEFORE_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(0);
@@ -187,7 +207,7 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
 
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(1);
@@ -202,7 +222,7 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
 
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(1);
@@ -222,7 +242,7 @@ describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
 
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(1);
@@ -247,7 +267,7 @@ describe('#269 §3 dock resupply: per-dock cap', () => {
     // each one should produce exactly one fresh unit.
     for (let i = 0; i < DOCK_RESUPPLY_MAX_PER_DOCK; i++) {
       clearDock(scene, dockKey);
-      scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+      scene._updateDockResupply(PAST_COOLDOWN_S);
       scene._runScheduled();
       expect(scene.enemies.length).toBe(1);
     }
@@ -255,7 +275,7 @@ describe('#269 §3 dock resupply: per-dock cap', () => {
     // Clear it once more and wait well past another full cooldown — the cap is spent, must NOT
     // resupply again.
     clearDock(scene, dockKey);
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 5);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
     expect(scene.enemies.length).toBe(0);
   });
@@ -326,7 +346,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     scene._updateDockOpenClose();
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');   // sanity: actually closed first
 
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(1);   // the resupplied unit spawned
@@ -352,7 +372,7 @@ describe('#269 Part 2: dock open/closed states', () => {
 
     // Tick well past the cooldown — must NEVER resupply now, even though eligibility (awake +
     // cleared) genuinely holds.
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 5);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(0);
@@ -383,7 +403,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     expect(scene.buildingHp.has(dockKey)).toBe(true);
 
     // 2) Resupply fires → reopens, spawns a fresh unit sitting right at the dock.
-    scene._updateDockResupply(DOCK_RESUPPLY_COOLDOWN_MS / 1000 + 1);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
     expect(scene.terrain.get(dockKey)).toBe('dock');
     expect(scene.buildingHp.has(dockKey)).toBe(false);
@@ -396,5 +416,75 @@ describe('#269 Part 2: dock open/closed states', () => {
     scene._updateDockOpenClose();
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');
     expect(scene.buildingHp.get(dockKey)).toBe(TERRAIN.dockClosed.hp);
+  });
+});
+
+// #311 at the scene level: the reported symptom was a whole BASE's docks resupplying as one
+// synchronized pulse, so the thing worth pinning here is that `_spawnDormantUnits` hands every
+// dock in a run its own roll — and that the rolls are reproducible for a given world seed.
+describe('#311: a base\'s docks are staggered, not synchronized', () => {
+  function multiDockBase() {
+    return {
+      id: 'base0',
+      center: { q: 0, r: 0 },
+      docks: [
+        { q: 0, r: 0, kindId: 'tank', count: 1 },
+        { q: 1, r: 0, kindId: 'tank', count: 1 },
+        { q: 2, r: 0, kindId: 'tank', count: 1 },
+        { q: 3, r: 0, kindId: 'tank', count: 1 },
+      ],
+      turrets: [],
+    };
+  }
+
+  it('gives each dock of one base a distinct cooldown AND a distinct starting phase', () => {
+    const scene = makeScene();
+    scene.bases = [multiDockBase()];
+    scene._spawnDormantUnits();
+
+    const states = [...scene._dockResupplyStates.values()];
+    expect(states.length).toBe(4);
+    expect(new Set(states.map((s) => s.cooldownMs)).size).toBe(4);
+    expect(new Set(states.map((s) => s.remainingMs)).size).toBe(4);
+    for (const s of states) {
+      expect(s.cooldownMs).toBeGreaterThanOrEqual(DOCK_RESUPPLY_COOLDOWN_MS * (1 - DOCK_RESUPPLY_COOLDOWN_JITTER));
+      expect(s.cooldownMs).toBeLessThanOrEqual(DOCK_RESUPPLY_COOLDOWN_MS * (1 + DOCK_RESUPPLY_COOLDOWN_JITTER));
+      expect(s.remainingMs).toBeGreaterThanOrEqual(s.cooldownMs * DOCK_RESUPPLY_PHASE_MIN);
+      expect(s.remainingMs).toBeLessThanOrEqual(s.cooldownMs);
+    }
+  });
+
+  it('is deterministic for a given world seed (a seeded run reproduces the same staggering)', () => {
+    const build = (seed) => {
+      const scene = makeScene();
+      scene._worldSeed = seed;
+      scene.bases = [multiDockBase()];
+      scene._spawnDormantUnits();
+      return [...scene._dockResupplyStates.values()].map((s) => [s.cooldownMs, s.remainingMs]);
+    };
+    expect(build(777)).toEqual(build(777));
+    expect(build(777)).not.toEqual(build(778));
+  });
+
+  it('those docks do not all fire their first resupply on the same tick', () => {
+    const scene = makeScene();
+    scene.bases = [multiDockBase()];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    for (const dockKey of scene._dockResupplyMeta.keys()) clearDock(scene, dockKey);
+
+    // Step in small slices and record, per dock, the tick its count first went from 0 to 1.
+    const firstFire = new Map();
+    for (let t = 0; t < 3000; t++) {
+      scene._updateDockResupply(0.016);
+      scene._runScheduled();
+      for (const [dockKey, s] of scene._dockResupplyStates) {
+        if (s.count >= 1 && !firstFire.has(dockKey)) firstFire.set(dockKey, t);
+      }
+      // Keep every dock permanently clear so `cleared` is never the limiting factor.
+      for (const dockKey of scene._dockResupplyMeta.keys()) clearDock(scene, dockKey);
+    }
+    expect(firstFire.size).toBe(4);
+    expect(new Set(firstFire.values()).size).toBe(4);
   });
 });
