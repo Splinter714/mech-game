@@ -88,6 +88,13 @@ const PAL = {
   // painter shape.
   dock:       BASE_INFRA_COLOR,
   alertTower: BASE_INFRA_COLOR,
+  // #288 (ring placement): `baseYard` — the base compound's paved floor, filling out its whole
+  // hex footprint inside the wall ring. Deliberately a SHADE DARKER/flatter than the shared
+  // BASE_INFRA_COLOR its structure siblings use: it's the ground BETWEEN the structures, so it has
+  // to read as the same fabricated concrete family (so the compound looks like one continuous
+  // built surface, and the wall ring visibly encloses "the base" rather than a patch of grass)
+  // while still letting a dock/turret/objective pop out of it rather than blending in.
+  baseYard:   { fill: 0x494d53, edge: 0x3a3e44 },
   // #269 playtest follow-up (dock composition): turrets get their own dedicated placement-marker
   // hex (data/terrain.js `turretEmplacement`), same neutral base-infra fill as the other
   // category:'base' entries — the DETAIL painter below (a red weapon-pad ring + crosshair) is
@@ -467,6 +474,22 @@ const FOREST_TREES = buildForestTrees();
 
 // Per-terrain detail painted over the base hex.
 const DETAIL = {
+  // #288 (ring placement): `baseYard` — the compound's paved apron. Deliberately UNDERSTATED: this
+  // tile carpets most of a base's footprint, so anything with a recognizable "icon" would tile into
+  // an obviously-repeating pattern (the same failure #222 fixed for the boundary ring). Instead it
+  // gets flat concrete-slab language only — faint expansion-joint scoring plus a couple of low-
+  // contrast stain/patch blotches — which reads as continuous poured hardstanding across a cluster
+  // of hexes while keeping the dock/turret/objective icons the only things that draw the eye.
+  hex_baseYard: (sg) => {
+    sg.fillStyle(0x3a3e44, 0.75);                            // expansion-joint scoring
+    sg.fillRect(C.cx - 20, C.cy - 4.5, 40, 0.9);
+    sg.fillRect(C.cx - 2.5, C.cy - 20, 0.9, 40);
+    sg.fillStyle(0x53575e, 0.5);                             // lighter poured-slab patches
+    sg.fillEllipse(C.cx - 9, C.cy + 8, 11, 6);
+    sg.fillEllipse(C.cx + 10, C.cy - 10, 9, 5);
+    sg.fillStyle(0x3f4349, 0.45);                            // oil/scorch staining
+    sg.fillEllipse(C.cx + 7, C.cy + 9, 7, 4);
+  },
   hex_grass: (sg) => {
     sg.fillStyle(0x244020, 0.7);
     for (const [dx, dy] of [[-10, -6], [7, -9], [11, 5], [-6, 9], [-12, 6]]) sg.fillEllipse(C.cx + dx, C.cy + dy, 5, 2.4);

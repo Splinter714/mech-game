@@ -23,7 +23,7 @@ import {
   axialKey, range, neighbors, hexToPixel, pixelToHex, distance, HEX_SIZE, hexesWithinPixelRadius,
   nearestHex,
 } from './hexgrid.js';
-import { buildingHp as buildingHpOf, isPassable as isPassableOf } from './terrain.js';
+import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory } from './terrain.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
 // stage/squad system, data/run.js's now-retired `squadForStage`/`DEFAULT_SQUAD`): enemies are no
@@ -236,10 +236,64 @@ export function baseLateFraction(baseIndex, baseCount) {
 // by the existing '#283 minimum calm-gap spacing' suite in worldgen.test.js, which still asserts
 // this floor holds unchanged. If a future change ever lets `progressOf` return negative values for
 // in-bounds hexes, this anchor would need revisiting — it does not today.
+// #288 (placement re-spec — "a full ring around the base", "the bases should flow with no natural
+// hexes directly behind each wall segment"): how many hex rings out from its centre a base's
+// COMPOUND FOOTPRINT extends. This is now a load-bearing shape decision, not just a placement
+// bound: the wall ring is literally this footprint's outline, so the footprint's shape IS the
+// fortification's shape.
+//
+// 2 (a 19-hex disc) is deliberately the SAME radius `placeBases`' dock/turret/objective candidate
+// ring already used, so the compound is exactly "the area the base's own structures were always
+// drawn from" — nothing moves, the empty ground between the structures simply becomes yard. It's
+// also the smallest radius that comfortably holds a full base (up to 5 docks + 2 turrets + 1
+// objective = 8 structures in 19 hexes) while staying compact enough that the ring reads as one
+// fortified compound you can see around rather than a wall stretching off past the horizon.
+//
+// Radius 1 (7 hexes) was rejected: it can't fit a max-roll base's structures, and a ring that tight
+// leaves no interior to fight across once breached. Radius 3 (37 hexes) was rejected: the corridor
+// is only CORRIDOR_HALF_WIDTH_PX * 2 = 500px ≈ 6 hex steps wide, so a radius-3 compound would
+// routinely span the entire corridor and leave the ring's own outline pressed against the world
+// boundary on both flanks, which reads as a wall across the map rather than around a base.
+export const BASE_FOOTPRINT_RADIUS = 2;
+
+// #288: a base's compound footprint — the CONTIGUOUS hexes within `BASE_FOOTPRINT_RADIUS` of its
+// centre that are real play space (`playableKeys`). Returned as a key Set.
+//
+// Contiguity (a BFS from the centre, confined to the disc) rather than a plain disc-∩-playable
+// intersection is what keeps the footprint — and therefore the ring — a single closed shape. Where
+// a base sits near the corridor's edge the disc gets clipped, and an unconstrained intersection can
+// leave an island of footprint hexes cut off around a bulge in the corridor wall; that island would
+// get its own separate little ring, floating away from the base. The BFS drops those.
+//
+// Note the disc is intersected with playable space but NOT with passability or terrain type: a
+// lake, a boulder field or a forest that happens to fall inside a base's footprint is PAVED OVER
+// into yard by the caller. That's the point — the compound is fabricated ground, so its outline is
+// the base's own deliberate perimeter rather than a shape negotiated with the local scenery.
+export function baseFootprint(center, playableKeys, radius = BASE_FOOTPRINT_RADIUS) {
+  const disc = new Set(range(center, radius).map((h) => axialKey(h.q, h.r)));
+  const centerKey = axialKey(center.q, center.r);
+  if (!playableKeys.has(centerKey)) return new Set();
+  const out = new Set([centerKey]);
+  const queue = [center];
+  for (let i = 0; i < queue.length; i++) {
+    for (const n of neighbors(queue[i].q, queue[i].r)) {
+      const nk = axialKey(n.q, n.r);
+      if (out.has(nk) || !disc.has(nk) || !playableKeys.has(nk)) continue;
+      out.add(nk);
+      queue.push(n);
+    }
+  }
+  return out;
+}
+
 export function placeBases(
   rng, all, T, isGround, baseCount = BASE_COUNT, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
 ) {
   const bases = [];
+  // #288 (ring placement): the set of hexes that are actually PLAY SPACE, as keys. A base's
+  // footprint is clipped to this rather than to `T.has` — by the time anything reads `T` it also
+  // contains the impassable boundary ring, and a footprint must never annex a slab of that.
+  const playable = new Set(all.map((h) => axialKey(h.q, h.r)));
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   const sorted = [...all].sort((a, b) => progress(a) - progress(b));
   const segSize = Math.max(1, Math.floor(sorted.length / baseCount));
@@ -283,13 +337,32 @@ export function placeBases(
     prevProgress = progress(center);
     const frac = baseLateFraction(i, baseCount);
     const dockCount = DOCKS_PER_BASE_MIN + Math.floor(rng() * (DOCKS_PER_BASE_MAX - DOCKS_PER_BASE_MIN + 1));
-    // Candidate hexes for this base's docks: the centre, then successive rings out from it.
-    const candidates = [center, ...neighbors(center.q, center.r), ...range(center, 2)];
+    // #288 (ring placement): PAVE THE COMPOUND FIRST. Every hex of the base's footprint that isn't
+    // about to become a structure becomes `baseYard`, so the base is a solid built compound rather
+    // than a scatter of structures on grass. This has to happen BEFORE the dock/turret/objective
+    // loops below (they stamp over the yard), and it's what makes the wall ring's invariant hold by
+    // construction: the ring is this footprint's outline, so nothing natural can sit behind a span.
+    //
+    // Unlike every other stamp in this function it is UNCONDITIONAL — it deliberately paves over
+    // cover, channel and hazard alike. A base is a fabricated installation; the alternative (paving
+    // only plain ground) is precisely the ragged, grass-backed outline the owner rejected.
+    const footprint = baseFootprint(center, playable);
+    for (const k of footprint) T.set(k, 'baseYard');
+    // Candidate hexes for this base's structures: the centre, then successive rings out from it —
+    // now drawn from the FOOTPRINT itself (identical set to the old `range(center, 2)` disc, minus
+    // anything clipped off the edge of play space), so a structure can never land outside the ring
+    // that is supposed to be protecting it.
+    const inFootprint = (h) => footprint.has(axialKey(h.q, h.r));
+    const candidates = [center, ...neighbors(center.q, center.r), ...range(center, 2)].filter(inFootprint);
+    // #288: the whole footprint is `baseYard` now, so `isGround` (which only recognises the biome's
+    // two natural ground ids) would reject every candidate. "Free" for a structure means "still
+    // bare yard" — i.e. no earlier loop has claimed it. Same first-come semantics as before.
+    const isFree = (k) => T.get(k) === 'baseYard';
     const docks = [];
     for (const h of candidates) {
       if (docks.length >= dockCount) break;
       const k = axialKey(h.q, h.r);
-      if (!T.has(k) || !isGround(k)) continue;
+      if (!isFree(k)) continue;
       const pool = rng() < frac ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
       let kindId = pool[Math.floor(rng() * pool.length)];
       // #314 density cap: AT MOST ONE swarm dock per base. A swarm dock fields 10 bodies where
@@ -316,7 +389,7 @@ export function placeBases(
     for (const h of candidates) {
       if (turrets.length >= turretCount) break;
       const k = axialKey(h.q, h.r);
-      if (!T.has(k) || !isGround(k)) continue;
+      if (!isFree(k)) continue;
       T.set(k, 'turretEmplacement');
       turrets.push({ q: h.q, r: h.r });
     }
@@ -333,7 +406,7 @@ export function placeBases(
     let objectiveHex = null;
     for (const h of candidates) {
       const k = axialKey(h.q, h.r);
-      if (!T.has(k) || !isGround(k)) continue;
+      if (!isFree(k)) continue;
       T.set(k, 'objective');
       objectiveHex = { q: h.q, r: h.r };
       break;
@@ -342,7 +415,12 @@ export function placeBases(
       T.set(axialKey(center.q, center.r), 'objective');
       objectiveHex = { q: center.q, r: center.r };
     }
-    bases.push({ id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets, objectiveHex });
+    // #288: `footprint` travels with the base — `placeBaseWalls` builds the wall ring as this
+    // set's outline, and `generateTerrain` re-validates it against the final terrain map.
+    bases.push({
+      id: `base${i}`, center: { q: center.q, r: center.r }, docks, turrets, objectiveHex,
+      footprint: [...footprint].map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; }),
+    });
   }
   return { bases };
 }
@@ -591,20 +669,30 @@ export function generateTerrain({
     for (const k of boundaryRing) T.set(k, B.deep);
   }
 
-  // #288 (rebuilt as edge geometry): derive each base's approach-line WALL EDGES — needs a real
-  // `spine` for its anchor/spawn geometry (no-ops, returning `[]`, if none is passed, e.g. the
-  // older disc-shaped test callers below that never had a corridor spine to begin with).
+  // #288 (placement re-specced to a full RING): each base's perimeter wall is the outline of its
+  // own compound FOOTPRINT, so before building it, re-validate that footprint against the now-final
+  // `T` — exactly the same re-validation the docks/turrets/objective/towers above get, and for the
+  // same reason. `placeBases` paved the footprint as `baseYard`, but the safe-zone clear and
+  // `extraClear` both run AFTERWARDS and reset hexes back to plain ground; a footprint hex that got
+  // reset is natural terrain again, and leaving it in would break the ring's whole point ("no
+  // natural hexes directly behind each wall segment"). Dropping it instead simply shrinks the
+  // compound, and the BFS re-connect from the base centre keeps what's left a single closed shape
+  // so the ring stays one ring rather than fragmenting into a ring plus an orphaned islet.
   //
-  // Deliberately the LAST placement pass, after every mutation of `T` is finished (including the
-  // safe-zone clear and the boundary ring): the wall is built as a level set of walking distance
-  // over the FINAL terrain (`placeBaseWalls`), so anything that changes passability afterwards
-  // could otherwise leave the front computed against a map that no longer exists — confirmed the
-  // hard way, as an occasional walkable bypass on a handful of seeds when this ran mid-pipeline.
-  //
-  // Unlike every other placement pass, this one does NOT touch `T` at all: an edge wall lives on
-  // the boundaries BETWEEN hexes and owns no tile, so it can't overwrite a dock/turret/objective
-  // and needs no re-validation pass of its own. It's returned as its own parallel layer.
-  const baseWalls = placeBaseWalls(T, bases, spine);
+  // Deliberately still the LAST placement pass, after every mutation of `T` is finished (including
+  // the boundary ring). Unlike every other pass it does NOT touch `T`: an edge wall lives on the
+  // boundaries BETWEEN hexes and owns no tile, so it can't overwrite a dock/turret/objective. It's
+  // returned as its own parallel layer.
+  for (const base of bases) {
+    const surviving = new Set(
+      (base.footprint ?? [])
+        .filter((h) => isBaseCategory(T.get(axialKey(h.q, h.r))))
+        .map((h) => axialKey(h.q, h.r)),
+    );
+    base.footprint = [...baseFootprint(base.center, surviving, BASE_FOOTPRINT_RADIUS)]
+      .map((k) => { const [q, r] = k.split(',').map(Number); return { q, r }; });
+  }
+  const baseWalls = placeBaseWalls(T, bases);
   for (const base of bases) {
     base.wallEdges = baseWalls.find((w) => w.baseId === base.id)?.edges ?? [];
   }
@@ -757,117 +845,55 @@ export function spineProgressHexOf(spine, q, r) {
   return bestU / HEX_STEP_PX;
 }
 
-// #288 (rebuilt as EDGE geometry after the first pass's tile version failed playtest): how far
-// "up-corridor" (toward spawn, i.e. LOWER spine progress) of a base's own centre the wall line
-// sits. The dock/turret/objective candidate ring (`placeBases` above) only ever reaches
-// `range(center, 2)` — at most 2 hex RINGS from centre, ≈2 * HEX_STEP_PX ≈ 166px in the worst-case
-// direction — so a setback comfortably past that (250px, ≈3 hex steps) puts the wall clearly
-// OUTSIDE the base's own dock/turret/objective cluster, on its approach side. Because the wall now
-// lives on hex BOUNDARIES rather than on hexes, it can no longer overwrite any of those structures
-// no matter where it lands — the whole class of "the wall ate this base's dock" problem the tile
-// version had to reason about simply doesn't exist for an edge.
-export const WALL_LINE_SETBACK_PX = 250;
-
-// The spine sample point nearest a given pixel position, plus its own index in `spine.points` —
-// so a caller can look at NEIGHBOURING samples to derive a local tangent direction there. Pure
-// geometry, factored out so `placeBaseWalls`'s tangent math is independently unit-testable.
-export function nearestSpinePoint(spine, x, y) {
-  let best = spine.points[0], bestD = Infinity, bestIndex = 0;
-  for (let i = 0; i < spine.points.length; i++) {
-    const p = spine.points[i];
-    const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
-    if (d < bestD) { bestD = d; best = p; bestIndex = i; }
-  }
-  return { point: best, index: bestIndex };
-}
-// #288: hop-distance from `origin` to every PASSABLE hex of the playable set `T`, as a plain BFS
-// over hex adjacency. Used by `placeBaseWalls` below to build a wall as a level set of this
-// distance — see there for why. Hexes unreachable from `origin` (isolated pockets behind
-// impassable terrain) simply don't appear in the result.
-function hopDistances(T, origin) {
-  const dist = new Map();
-  const ok = (k) => T.has(k) && isPassableOf(T.get(k));
-  const originKey = axialKey(origin.q, origin.r);
-  if (!ok(originKey)) return dist;
-  dist.set(originKey, 0);
-  const queue = [origin];
-  for (let i = 0; i < queue.length; i++) {
-    const cur = queue[i];
-    const d = dist.get(axialKey(cur.q, cur.r)) + 1;
-    for (const n of neighbors(cur.q, cur.r)) {
-      const nk = axialKey(n.q, n.r);
-      if (dist.has(nk) || !ok(nk)) continue;
-      dist.set(nk, d);
-      queue.push(n);
-    }
-  }
-  return dist;
-}
-
-// #288 (rebuilt): the wall LINE across one base's approach, expressed as a set of hex EDGES — the
-// boundaries BETWEEN hexes — rather than as hexes of its own. Returns
-// `[{ baseId, edges: [{ a, b }] }]`, one entry per base that got a wall (`a`/`b` are the two
+// #288 (placement re-specced 2026-07-19 — "instead of a line across the corridor, let's do a full
+// RING around the base"): one base's perimeter wall, as a set of hex EDGES. Returns
+// `[{ baseId, edges: [{ a, b }] }]`, one entry per base that got a ring (`a`/`b` are the two
 // adjacent axial coords the edge separates; `a` is always the BASE-side hex). Consumes nothing from
 // `T` and writes nothing to it: an edge wall occupies no tile, so world-gen's terrain map is
-// completely untouched by this pass — the caller hands the returned edges to `makeWallEdgeSet`
+// untouched by this pass — the caller hands the returned edges to `makeWallEdgeSet`
 // (data/wallEdges.js) as their own parallel layer.
 //
-// The construction is a LEVEL SET OF WALKING DISTANCE FROM SPAWN, which is what makes it both
-// simple and airtight:
-//   1. BFS the whole playable set once from the spawn hex (`hopDistances`), giving every hex its
-//      hop distance `d` from where the player starts.
-//   2. Read the base centre's own distance `dBase`, and set the wall's distance `D = dBase -
-//      setback`, where the setback is `setbackPx` converted to hops. That's the tile version's
-//      "sit this far up-corridor of the base" intent, expressed in the same currency as the cut.
-//   3. The wall is every edge separating a hex at `d === D` from a neighbour at `d === D + 1`.
+// THE CONSTRUCTION: the ring is the TOPOLOGICAL BOUNDARY OF THE BASE'S OWN FOOTPRINT — walk every
+// hex of `base.footprint` and wall every edge whose far side is NOT in the footprint. Three
+// properties fall straight out of that, none of which needs a patching pass:
 //
-// That is SEALED by definition: BFS distance changes by at most 1 per step, so any walk from spawn
-// (d = 0) to the base (d = dBase > D) must take a step from exactly D to exactly D + 1 — and every
-// such step is walled. No gap-patching pass, no "did the line graze a corner" failure mode (both of
-// which the tile version needed, and which are deleted along with it). Anchoring `D` off the BASE's
-// own distance rather than off a spine point is what makes the guarantee unconditional: a spine
-// anchor can, on a corridor that doubles back, land FARTHER from spawn in hops than the base it's
-// supposed to be guarding, in which case its front doesn't separate the two at all (observed on a
-// real seed while building this).
+//   1. SEALED, unconditionally. Any walk from outside the footprint to inside it must, at some
+//      step, cross from a non-footprint hex to a footprint hex — and by definition every such
+//      edge is walled. There is no seam, no corner gap, and no "between two spans" to slip
+//      through: the boundary is a complete cut in the adjacency graph. The owner confirmed the
+//      seal is deliberate (with #309's gates being enemies-only, BREACHING IS THE ONLY WAY IN).
+//   2. NOTHING NATURAL BEHIND A SPAN. `a` is always a footprint hex, and `placeBases` paves the
+//      entire footprint as base infrastructure — so every span backs onto the compound, which is
+//      the "the bases should flow with no natural hexes directly behind each wall segment"
+//      requirement, satisfied by construction rather than by a proximity heuristic.
+//   3. It HUGS the base. There is no setback parameter anymore because there is no longer anything
+//      for a setback to mean: the wall is the compound's own perimeter fence. `WALL_LINE_SETBACK_PX`
+//      (250px, ~3 hex steps up-corridor) is deleted along with the BFS level-set construction it
+//      fed — that whole approach put the wall out in alert-tower territory, which is what failed
+//      the 2026-07-19 playtest.
 //
-// It's also the right SHAPE without ever being constructed as a line: a BFS front inside a corridor
-// IS the corridor's cross-section, so the wall comes out spanning the full width, perpendicular to
-// the corridor's local direction, and it follows the corridor around a bend instead of cutting a
-// straight chord across it. (Two earlier constructions here — a straight tangent-plane cut, and a
-// spine-progress cut — each failed on real curved seeds: the plane version let a bend leave and
-// re-enter its neighbourhood, leaving a walkable route around the "cut", and the progress version
-// scattered stray spans wherever nearest-spine-point assignment jumped on the inside of a bend.)
-// It bends around any impassable terrain in the cross-section for free, too, since the BFS does.
+// Deliberately walls boundary edges REGARDLESS of what's on the far side — including edges facing
+// impassable terrain or the world boundary ring. Those spans are redundant for sealing (nothing
+// walks through a mesa either), but the ring is a visible fortification and a fortification with
+// its far wall missing because a lake happened to be there reads as broken. Keeping it
+// unconditional also means the seal can never be quietly weakened by a later change to what counts
+// as passable.
 //
-// Requires a real `spine` (there's no anchor, and no spawn hex, without one) — returns `[]` if none
-// is passed, the same graceful-no-op shape as `progressOf` elsewhere in this file.
-export function placeBaseWalls(T, bases, spine, setbackPx = WALL_LINE_SETBACK_PX) {
+// Takes no `spine` and no `T`-derived reachability: unlike the deleted level-set version, a ring
+// is a purely local property of the base, so it can't be thrown off by a corridor that doubles
+// back (which broke two earlier constructions of the wall LINE on real curved seeds).
+export function placeBaseWalls(T, bases) {
   const walls = [];
-  if (!spine || !bases?.length) return walls;
-  const dist = hopDistances(T, spineSpawnHex(spine));
-  if (dist.size === 0) return walls;
-  const setbackHops = Math.max(1, Math.round(setbackPx / HEX_STEP_PX));
+  if (!bases?.length) return walls;
   for (const base of bases) {
-    // A base's own centre hex can be impassable (its `objective` bunker sits there on some
-    // layouts) and so carry no BFS distance of its own — take the SMALLEST distance in its
-    // immediate neighbourhood instead. Smallest, specifically: the wall has to sit in front of the
-    // base's nearest approachable corner, not in front of some farther-round-the-back one, or a
-    // span could end up at the same walking distance as a way in to the base.
-    let baseD = Infinity;
-    for (const h of range(base.center, 2)) {
-      const d = dist.get(axialKey(h.q, h.r));
-      if (d !== undefined && d < baseD) baseD = d;
-    }
-    if (!Number.isFinite(baseD)) continue;
-    const D = baseD - setbackHops;
-    if (D < 1) continue;   // base practically on top of spawn — no approach to wall off
+    const footprint = new Set((base.footprint ?? []).map((h) => axialKey(h.q, h.r)));
+    if (!footprint.size) continue;
     const edges = [];
-    for (const [k, d] of dist) {
-      if (d !== D) continue;
+    for (const k of footprint) {
       const [q, r] = k.split(',').map(Number);
       for (const n of neighbors(q, r)) {
-        if (dist.get(axialKey(n.q, n.r)) !== D + 1) continue;
-        edges.push({ a: { q: n.q, r: n.r }, b: { q, r } });   // `a` = the far/base side
+        if (footprint.has(axialKey(n.q, n.r))) continue;
+        edges.push({ a: { q, r }, b: { q: n.q, r: n.r } });   // `a` = the base side
       }
     }
     if (edges.length) walls.push({ baseId: base.id, edges });

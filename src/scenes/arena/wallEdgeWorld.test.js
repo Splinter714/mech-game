@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { WorldMixin } from './world.js';
 import { makeWallEdgeSet, WALL_EDGE_HP, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
 import { edgeMidpoint } from '../../data/hexEdges.js';
-import { hexToPixel, axialKey, neighbors, HEX_SIZE } from '../../data/hexgrid.js';
+import { hexToPixel, pixelToHex, axialKey, neighbors, HEX_SIZE } from '../../data/hexgrid.js';
 
 const A = { q: 0, r: 0 };
 const B = neighbors(A.q, A.r)[0];
@@ -176,5 +176,101 @@ describe('#288 weapon damage routing', () => {
     const hit = s._wallEdgeHit(m.x - ux * 900, m.y - uy * 900, m.x + ux * 900, m.y + uy * 900);
     expect(hit).toBeTruthy();
     expect(Math.hypot(hit.x - m.x, hit.y - m.y)).toBeLessThan(WALL_THICKNESS_PX);
+  });
+});
+
+// #288 (placement re-specced to a full RING): the seal, in PIXEL space. The hex-graph proof lives
+// in worldgen.test.js ("SEALS the base…"), which shows no hex-to-hex STEP can cross the ring. That
+// is the right proof for the construction, but the mech doesn't move on the hex graph — it moves
+// with free physics on top of it, so what matters in play is that no continuous pixel-space path
+// gets out either, including one that threads a ring VERTEX where three hexes meet. That "slip
+// through a corner/seam" case is exactly what the owner asked to be verified, and it's the failure
+// mode two earlier wall constructions had, so it's pinned directly against the scene's own
+// collision method rather than argued from the hex proof.
+describe('#288 a RING seals in pixel space, not just on the hex graph', () => {
+  // Every boundary edge of the radius-`radius` hex disc centred on the origin — built the same way
+  // worldgen's `placeBaseWalls` builds a base's ring (wall every edge whose far side is outside the
+  // footprint), so this is the real shape, not a hand-drawn approximation.
+  function ringDefs(radius = 2) {
+    const inside = new Set();
+    for (let q = -radius; q <= radius; q++) {
+      for (let r = -radius; r <= radius; r++) {
+        if (Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= radius) inside.add(axialKey(q, r));
+      }
+    }
+    const defs = [];
+    for (const k of inside) {
+      const [q, r] = k.split(',').map(Number);
+      for (const n of neighbors(q, r)) {
+        if (!inside.has(axialKey(n.q, n.r))) defs.push({ a: { q, r }, b: n });
+      }
+    }
+    return defs;
+  }
+
+  it('no straight dash from the centre escapes the ring, at any bearing or speed', () => {
+    const s = makeScene(ringDefs());
+    const c = centre({ q: 0, r: 0 });
+    // 720 bearings — a much finer sweep than the 6 hex directions — deliberately including the
+    // bearings that aim straight at a ring VERTEX (where two spans meet and a naive construction
+    // leaves a pinhole).
+    for (let i = 0; i < 720; i++) {
+      const a = (i / 720) * Math.PI * 2;
+      // Every probe distance must actually REACH the ring: a radius-2 compound's outer wall face
+      // sits at most ~2.5 hex steps (~210px) from the centre, so 300px is the floor. (Probing
+      // short of the wall was the first draft of this test, and it "failed" for the trivial reason
+      // that the dash stopped inside the compound.)
+      for (const dist of [300, 400, 5000]) {
+        const x = c.x + Math.cos(a) * dist, y = c.y + Math.sin(a) * dist;
+        expect(s._blockedAlongSegment(c.x, c.y, x, y)).toBe(true);
+      }
+    }
+  });
+
+  it('…and no dash from OUTSIDE gets in, either', () => {
+    const s = makeScene(ringDefs());
+    const c = centre({ q: 0, r: 0 });
+    for (let i = 0; i < 720; i++) {
+      const a = (i / 720) * Math.PI * 2;
+      const from = { x: c.x + Math.cos(a) * 300, y: c.y + Math.sin(a) * 300 };
+      expect(s._blockedAlongSegment(from.x, from.y, c.x, c.y)).toBe(true);
+    }
+  });
+
+  // The enemy-pathing consequence the re-spec calls out: a ground unit sealed inside the ring
+  // cannot reach the player until a breach (or #309's gate) opens. That is expected — what must
+  // NOT happen is the unit ending up in a broken state (escaping, tunnelling, or teleporting out
+  // via the stuck-unit rescue) while it grinds against the inside of the wall.
+  //
+  // This drives the SAME collide-and-slide rule the enemy integrator uses (enemies.js: try the
+  // full step, else drop one axis, else stop) frame after frame, with the unit steering flat-out
+  // at the player standing outside.
+  it('a ground unit trapped inside grinds to a halt against the wall and never escapes', () => {
+    const s = makeScene(ringDefs());
+    const c = centre({ q: 0, r: 0 });
+    const inside = (x, y) => Math.max(
+      Math.abs(pixelToHex(x, y).q), Math.abs(pixelToHex(x, y).r),
+      Math.abs(pixelToHex(x, y).q + pixelToHex(x, y).r),
+    ) <= 2;
+    // Start at the compound's centre, charge at a "player" far outside in each hex direction.
+    for (const n of neighbors(0, 0)) {
+      const target = centre({ q: n.q * 8, r: n.r * 8 });
+      let x = c.x, y = c.y;
+      for (let frame = 0; frame < 400; frame++) {
+        const d = Math.hypot(target.x - x, target.y - y) || 1;
+        const vx = ((target.x - x) / d) * 6, vy = ((target.y - y) / d) * 6;   // ~360px/s at 60fps
+        let nx = x + vx, ny = y + vy;
+        if (s._blocked(nx, ny)) {
+          if (!s._blocked(x + vx, y)) ny = y;
+          else if (!s._blocked(x, y + vy)) nx = x;
+          else { nx = x; ny = y; }
+        }
+        x = nx; y = ny;
+        // Never inside the wall band (which is what would trigger the stuck-unit teleport that
+        // could pop it outside), and never out of the compound.
+        expect(s._blocked(x, y)).toBe(false);
+        expect(inside(x, y)).toBe(true);
+      }
+    }
   });
 });
