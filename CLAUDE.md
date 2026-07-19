@@ -23,14 +23,15 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
 ## Architecture
 
 - **`src/main.js`** — Phaser config + HiDPI/DPR sizing. Scenes: Boot → Garage ↔ Arena
-  (+ Hud overlay during Arena).
+  (+ Hud overlay during Arena, + MusicScene).
 - **`src/data/`** — pure logic, no Phaser, fully unit-tested:
   - `Mech.js` — the generic model: per-location armor/structure, `applyDamage`, the
     kill rule, mounting, per-weapon ammo (self-regenerating magazines), weapon queries.
     Configured entirely by data. No heat (removed); ammo is the only firing constraint.
   - `anatomy.js` — the 8 body locations + the kill rule (`mechDestroyed`): head OR
-    cockpit OR centerTorso destroyed, OR both legs. The **six skill slots** are the
-    mountable upper-body locations (`MOUNT_LOCATIONS`); legs aren't mount points.
+    cockpit OR centerTorso destroyed, OR both legs. The **four skill slots** are the
+    mountable upper-body locations (`MOUNT_LOCATIONS`) — the two arms and the two side
+    torsos; head dropped out with #31, centerTorso with #188. Legs aren't mount points.
   - `chassis/` — weight classes (light/medium/heavy). `index.js` expands a short
     config (`light.js` etc.) into per-location stats + movement tuning. **Add a chassis
     = a new config + one registry entry.**
@@ -52,11 +53,13 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     delivery feel (spread stagger, speed-jitter band, homing turn radius, weak-seek
     strength/radius, burst stagger) is per-weapon tunable via optional `delivery` fields
     that default to the shared constants in `delivery.js`.
-  - `equipment.js` (abilities mounted in the centre-torso slot — `jumpJet`,
-    `bubbleShield`), `items.js` (unified
-    lookup), `loadout.js` (the build model: **six skill slots, one item per location**,
+  - `items.js` (unified lookup — since #188 removed `equipment.js` and its centre-torso
+    abilities, every mountable item is a weapon, so this is a thin wrapper over `WEAPONS`),
+    `loadout.js` (the build model: **four skill slots, one item per location**,
     melee only in arms; no tonnage, no multi-slot capacity).
-  - `hexgrid.js` — **the only file that knows hexes exist.** Axial coords; pure
+  - `hexgrid.js` — the shared hex primitives every hex-aware module builds on (others
+    that reason about hexes: `hexRoute.js`, `hexEdges.js`, `hexLabels.js`, `wallEdges.js`,
+    `worldgen.js`, `arena/world.js`). Axial coords; pure
     `neighbors/distance/hexToPixel/pixelToHex/range/ring`. The mech moves with free
     physics on top, so collision/LOS are not hex algorithms.
   - `save.js` + `rosters.js` — localStorage garage (the `makeRoster` factory mirrors
@@ -67,9 +70,11 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   weapons vanish. `hexArt.js`, `iconArt.js`. `index.js` is the build registry.
 - **`src/input/Controls.js`** — input abstraction: keyboard+mouse and a gamepad both
   feed one per-frame *intent* (throttle/turn, aim, and a held flag per skill slot). Each
-  of the six slots is bound to a fixed button (`SKILL_BINDS`): RA→RT/RMB, LA→LT/LMB,
-  RT→RB/E, LT→LB/Q, CT→L3/Space, head→R3/F. Left stick/WASD drives, right stick/mouse aims.
-- **`src/scenes/`** — `GarageScene` (mech lab: a six-slot paper-doll; click a catalog
+  of the four slots is bound to a fixed button (`SKILL_BINDS`): RA→RT/RMB, LA→LT/LMB,
+  RT→RB/E, LT→LB/Q. L3/Space is the always-available Dash (#261, `DASH_BIND` — separate from
+  `SKILL_BINDS`, it isn't a mountable location); R3/F is unbound since #322. Left stick/WASD
+  drives, right stick/mouse aims.
+- **`src/scenes/`** — `GarageScene` (mech lab: a four-slot paper-doll; click a catalog
   item then a body section to mount it, each slot shows its fire bind, live mech preview,
   deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia; turret slews
   within `turretArc` and pushes the chassis when you aim past it; stompy stepped gait;
@@ -86,6 +91,6 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
 
 ## Status (Milestone 1)
 
-Foundation + a thin vertical slice of both the garage and the arena. Deferred: full
-garage UX, enemy AI + real combat, full heat/ammo simulation, world collision, more
-chassis/assault class, squad control. See `~/.claude/plans/` for the plan.
+Foundation + a thin vertical slice of both the garage and the arena. Enemy AI + real combat
+and world collision have since shipped. Still deferred: full garage UX, full heat/ammo
+simulation, more chassis/assault class, squad control. See `~/.claude/plans/` for the plan.

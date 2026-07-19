@@ -16,8 +16,8 @@
 // LOCATIONS (damage) vs MOUNT_LOCATIONS (mountable) below.
 //
 // #188: centerTorso used to ALSO be the one mountable "ability" skill slot (jumpJet/
-// bubbleShield, L3/Space). That's gone — L3/Space is now hardcoded to a built-in Sprint
-// (data/sprint.js) every mech always has, never mounted/chosen — so centerTorso dropped
+// bubbleShield, L3/Space). That's gone — L3/Space is now hardcoded to a built-in Dash
+// (#261, data/dash.js) every mech always has, never mounted/chosen — so centerTorso dropped
 // out of MOUNT_LOCATIONS entirely and is purely cosmetic now, same as head/cockpit.
 
 // Locations that track armor/structure and can be destroyed. Legs aren't here either:

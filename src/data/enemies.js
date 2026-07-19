@@ -118,10 +118,11 @@ export const ENEMIES = {
 // of the kind — see enemyKinds.js's infantryMob/infantry definitions, which are left completely
 // intact (art + behavior untouched too), so restoring it here is a one-line add, not an
 // archaeology project.
-// #234: 'carrier' (the Broodhauler) was fully built — art/behavior/weapon/260hp, plus its own
-// periodic drone-drop mechanic — but was never added here or to DEFAULT_SQUAD, so it had no path
-// into a normal run except one rare slot in run.js's LATE_POOL (reachable only in late-stage
-// squad draws). That's why Jackson had seen it, but rarely, per his playtest note ("those enemies
+// #234: 'carrier' (the Broodhauler) was fully built — art/behavior/toughness, plus its own
+// drone-deploy mechanic — but was never added here or to DEFAULT_SQUAD, so it had no path
+// into a normal run except one rare slot in run.js's then-existing LATE_POOL (reachable only in
+// late-stage squad draws; that whole squad-draw system was retired by #269). That's why Jackson
+// had seen it, but rarely, per his playtest note ("those enemies
 // that spawn drones are so cool but I barely ever see them"). Appended once here — same tier as
 // turretNest/artillery/swarm/infantryMob, not doubled up like tank/helicopter — so the debug
 // spawn-more control (keydown-N / dpad-up) cycles through it too. This list is consumed by index
@@ -152,8 +153,9 @@ export const ENEMY_ROTATION = [
 // #234: 'carrier' (the Broodhauler) is deliberately NOT added here. Per its own comments
 // (data/enemyKinds.js), it's framed as "tougher than a tank but well under a full mech's pool" —
 // a rarer, tougher escalation unit, not an opener. It got its real fix in ENEMY_ROTATION above
-// (regular-but-not-common cadence across a run) and its existing rare LATE_POOL slot
-// (data/run.js); every opening squad seeing it would overexpose a unit meant to read as a
+// (regular-but-not-common cadence across a run); it also had a rare LATE_POOL slot at the time,
+// since retired with the rest of the squad-draw system by #269 (data/run.js). Every opening squad
+// seeing it would overexpose a unit meant to read as a
 // mid/late-run surprise.
 export const DEFAULT_SQUAD = [
   'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper',

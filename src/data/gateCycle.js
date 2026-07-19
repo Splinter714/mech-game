@@ -62,9 +62,12 @@ export const GATE_STAGGER_MAX_MS = 600;
 // and this only sets a minimum).
 //
 // It is doing two jobs, and 7000ms is defensible for both:
-//   1. A sortie has to be able to finish. A unit starting at the far side of a radius-2 compound at
-//      the slowest ground speed reaches the opening and clears it inside this window — sized off
-//      that worst case, not the best one. Less critical than it was, since demand now holds the
+//   1. A sortie has to be able to finish — a unit starting deep inside the compound at the slowest
+//      ground speed has to reach the opening and clear it inside this window. (The original sizing
+//      argument was the far side of a radius-2 compound; #333 grew the footprint to
+//      `BASE_FOOTPRINT_HALF_LENGTH` = 6 hexes without revisiting this number, so 7000ms is no
+//      longer derived from a checked worst case — treat it as unverified for THIS job.)
+//      Less critical than it was, since demand now holds the
 //      door open on its own while anyone is still routing through it, but it still guarantees that
 //      a sortie which briefly loses its routing lock is not shut in.
 //   2. Since the playtest change, this is ALSO the player's opportunity window — the time he has to

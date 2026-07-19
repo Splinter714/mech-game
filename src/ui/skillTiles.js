@@ -12,7 +12,7 @@ import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
 
 // Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
-// centre-torso ability slot is gone (Sprint is a hardcoded L3/Space toggle, not mounted), so
+// centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
 // this is now four weapon slots only.
 export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 
