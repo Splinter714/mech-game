@@ -1,6 +1,11 @@
 // Arena line-of-sight dimming (#306; flyer rule reversed by #316; reworked to RAYCAST by #306's
 // own playtest) — "could we try slightly dimming stuff that is outside of LOS for the player?"
 //
+// ⚠ CURRENT STATE: the DIMMING OVERLAY IS OFF. See `LOS_DIM_ENABLED` below — one constant, flip it
+// to `true` to restore it. The GAMEPLAY sight gate (`computeVisibleHexes` → `_pointVisible` →
+// targeting) is a different decision (#316) and is still ON. Everything described below is intact
+// and still tested; only the drawing is skipped.
+//
 // ── What the playtest changed ──
 // The first pass dimmed whole HEXES that failed a hex-line LOS walk. It worked, but the owner's
 // verdict was twofold: "should be MUCH MUCH more dim; also didn't realize you were building a
@@ -64,6 +69,24 @@ import { computeVisibleHexes } from '../../data/visibility.js';
 import { collectShadowSegments, computeVisibilityPolygon, shadowWedges } from '../../data/shadowPolygon.js';
 import { liveWallEdges, wallEdgeCrossing } from '../../data/wallEdges.js';
 
+// ─────────────────────────────────────────────────────────────────────────────────────
+// #306 TEMPORARY PLAYTEST TOGGLE — the dimming overlay is currently OFF.
+//
+// Owner, 2026-07-19: "temporarily turn off the LOS/greyout/raycast thing, I'm not sure if I like
+// it or not, but don't remove the code yet". He is UNDECIDED, not rejecting it. Nothing has been
+// deleted: shadowPolygon.js, visibility.js, this file and every test still stand and still pass.
+//
+//   TO TURN IT BACK ON: change this one constant to `true`. That is the whole change — no other
+//   edit anywhere. Off, the renderer costs literally nothing: no Graphics object is created and
+//   `_updateShadowPolygon` returns before any segment collection, sweep, or fill.
+//
+// THIS FLAG IS RENDER-ONLY, AND THAT IS DELIBERATE. The GAMEPLAY sight gate — `computeVisibleHexes`
+// feeding `_pointVisible`, which decides what targeting/convergence may lock — is a SEPARATE
+// decision from #316 ("let's let cover be actual cover") that he has NOT reversed. It stays ON
+// unconditionally below, and cover keeps being real cover with the visual dark.
+const LOS_DIM_ENABLED = false;
+// ─────────────────────────────────────────────────────────────────────────────────────
+
 // How dark, and what colour. The owner's call after playtesting 0.34: "should be MUCH MUCH more
 // dim" — he picked ~80%, knowing it makes units in shadow hard to read. A near-black with a faint
 // blue bias darkens without tinting, so it won't fight the biome palettes the way a grey would.
@@ -93,7 +116,10 @@ export const VisibilityMixin = {
   // DEPTH.FLYING_UNITS (2.8) and DEPTH.UNITS (3) — that single depth value is the entire
   // "everything but the player gets dimmed" implementation.
   _initVisibility() {
-    this.fogFx = this.add.graphics().setDepth(DEPTH.LOS_DIM);
+    // Off (the current default), no Graphics is ever created — there is nothing to draw into and
+    // nothing for Phaser to submit each frame. The gameplay FOV below is set up regardless.
+    this.fogFx = LOS_DIM_ENABLED ? this.add.graphics().setDepth(DEPTH.LOS_DIM) : null;
+    this._visibilityReady = true;
     this.visibleHexes = null;   // null = not computed yet; targeting treats that as "no gate"
     this._fogHexQ = null;
     this._fogHexR = null;
@@ -115,9 +141,12 @@ export const VisibilityMixin = {
   // Per-frame tick from update(), with the camera's world-view rect (the same one tile culling and
   // the terrain labels use — no second camera-bounds computation).
   _updateVisibility(view) {
-    if (!this.fogFx) return;
+    // Gated on init, NOT on `fogFx` — with the overlay off there is no Graphics, but the gameplay
+    // sight gate below must still run every tick or cover would stop being cover.
+    if (!this._visibilityReady) return;
     const radius = this._fovRadius(view);
-    this._updateTargetingFov(radius);
+    this._updateTargetingFov(radius);   // GAMEPLAY — always on, never touched by the toggle.
+    if (!LOS_DIM_ENABLED) { this._fogDirty = false; return; }
     this._updateShadowPolygon(view, radius);
   },
 
@@ -153,6 +182,7 @@ export const VisibilityMixin = {
   // polygon on the very next frame even if the player is standing perfectly still. (It's read by
   // the targeting pass first, which runs before this one — hence the explicit clear here.)
   _updateShadowPolygon(view, radius) {
+    if (!this.fogFx) return;   // overlay disabled (or not initialised) — nothing to sweep into.
     const dirty = this._fogDirty;
     this._fogDirty = false;
     if (!dirty && this._shadowX !== null
