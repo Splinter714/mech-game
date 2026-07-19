@@ -7,6 +7,11 @@ import {
   getTerrain, terrainSpeedFactor, isPassable, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage, coverBlocksForRay,
 } from '../../data/terrain.js';
+import {
+  makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
+  WALL_THICKNESS_PX,
+} from '../../data/wallEdges.js';
+import { drawWallEdges } from '../../art/wallArt.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
 import { terrainFillColor, isBoundaryTerrainId, isCoverCanopyId, canopyTexKey } from '../../art/hexArt.js';
 import {
@@ -138,7 +143,7 @@ export const WorldMixin = {
     // #269: `safeCenter` now follows the moved spawn point (`spawnHex`) instead of the world-
     // origin default, so the guaranteed-clear radius-3 disc actually surrounds where the player
     // stands — not just wherever generically falls inside the corridor.
-    const { terrain, buildingHp, coverHp, bases, alertTowers } = generateTerrain({
+    const { terrain, buildingHp, coverHp, bases, alertTowers, wallEdges } = generateTerrain({
       seed, worldRadius: this.worldRadius, biome: B, extraClear: [dummyKey],
       includedKeys, boundaryRing, spine, safeCenter: spawnHex,
     });
@@ -150,6 +155,14 @@ export const WorldMixin = {
     // (same file) completely unchanged; only WHERE the positions in that list came from moved.
     this.bases = bases;
     this.alertTowerHexes = alertTowers;
+    // #288 (rebuilt as edge geometry): each base's approach wall, as destructible spans living on
+    // the BOUNDARIES between hexes rather than on hexes of their own — so the barrier eats none of
+    // the play space it crosses. This is a completely separate layer from `this.terrain`: nothing
+    // about passability, LOS, or tile art reads a "wall" terrain id anymore (there isn't one). The
+    // world queries below (`_blocked`/`_blockedAlongSegment`/`_isWall*`/`_wallDistance*`) each
+    // consult this set alongside the terrain map.
+    this.wallEdges = makeWallEdgeSet(wallEdges ?? []);
+    this._wallGfx = null;
 
     this.terrain = terrain;
     this.buildingHp = buildingHp;   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
@@ -239,6 +252,24 @@ export const WorldMixin = {
         outline.lineBetween(x + c0.x, y + c0.y, x + c1.x, y + c1.y);
       }
     }
+
+    // #288: the wall line itself — one Graphics object for the whole run, stroked as thickened
+    // bands along the hex boundaries (art/wallArt.js). Drawn at COVER_CANOPY depth, the tier used
+    // for tall standing scenery: small ground units read as being BEHIND the wall while the player
+    // mech towers over it. Redrawn only when a span takes damage or falls (`_redrawWallEdges`),
+    // never per frame — the layout is static after generation (#111).
+    this._wallGfx = this.add.graphics().setDepth(DEPTH.COVER_CANOPY);
+    this._redrawWallEdges();
+  },
+
+  // #288: repaint the wall line from its current per-span HP/destroyed state. Cheap (a few dozen
+  // spans across the whole run) and only called on a hit or a collapse.
+  // The `clear` check keeps this a no-op against the minimal `add.graphics()` stubs the headless
+  // scene tests use (they only stand up the handful of Graphics methods their own subject needs) —
+  // same tolerance the rest of the mixin already shows toward partially-stubbed scene objects.
+  _redrawWallEdges() {
+    if (!this.wallEdges || typeof this._wallGfx?.clear !== 'function') return;
+    drawWallEdges(this._wallGfx, [...this.wallEdges.edges.values()], WALL_THICKNESS_PX);
   },
 
   // #155: hide every tile GameObject outside the camera's current view (+ margin), show every
@@ -314,9 +345,13 @@ export const WorldMixin = {
   // own occupant. Solid cover blocks regardless (the pure rule lives in terrain.js). #269:
   // `smallUnitInvolved` (optional) threads to the soft-cover size-tier exemption — see
   // `coverBlocksForRay` in terrain.js for why it's currently a no-op regardless of the value.
+  // #288: a standing wall span is solid to sight and fire exactly like a solid terrain hex is —
+  // checked in ADDITION to the terrain rule, never instead of it, and never exempted by the own-hex
+  // soft-cover transparency (`transparent`), which only ever applied to walk-through cover.
   _isWall(x, y, transparent = null, smallUnitInvolved = false) {
     const k = this._hexKeyAt(x, y);
-    return shotBlockedAt(this.terrain.get(k), k, transparent, smallUnitInvolved);
+    if (shotBlockedAt(this.terrain.get(k), k, transparent, smallUnitInvolved)) return true;
+    return !!wallEdgeAt(this.wallEdges, x, y);
   },
 
   // #168: like `_isWall`, but the see-through set is the UNION of a shared per-frame Set (all
@@ -333,7 +368,8 @@ export const WorldMixin = {
     const ownHexExempt =
       (sharedTransparent != null && sharedTransparent.has(k)) ||
       (originHexes != null && originHexes.includes(k));
-    return coverBlocksForRay(id, ownHexExempt, smallUnitInvolved);
+    if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return true;
+    return !!wallEdgeAt(this.wallEdges, x, y);   // #288 — see `_isWall`
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's
@@ -346,8 +382,13 @@ export const WorldMixin = {
   },
 
   // Is a world point impassable for the mech — non-passable terrain, or off the arena disc?
+  // #288: standing wall spans block movement the same way impassable terrain does. This point form
+  // is what the ENEMY movement integrators use (their per-frame steps are small relative to the
+  // wall's thickness); the player's own movement goes through the swept `_blockedAlongSegment`
+  // below, which is exact at any speed.
   _blocked(x, y) {
-    return !isPassable(this._terrainAt(x, y));
+    if (!isPassable(this._terrainAt(x, y))) return true;
+    return !!wallEdgeAt(this.wallEdges, x, y);
   },
 
   // #159: is any hex along the straight PIXEL path from (x0,y0) to (x1,y1) impassable? A
@@ -359,11 +400,14 @@ export const WorldMixin = {
   // `hexesAlongSegment`'s comment). This walks every hex the segment actually crosses via the
   // standard hex line-draw algorithm, so it catches a wall regardless of speed or angle — the
   // movement-resolution code (`_drive`) uses this instead of a raw endpoint `_blocked` call.
+  // #288: the wall half of this is a true SEGMENT-CROSSING test, not a lookup — a wall lives on a
+  // line between hexes and has no tile to look up, and its 14px painted thickness is far thinner
+  // than a fast mech's frame movement, so only "did this step cross the span" is safe at any speed.
   _blockedAlongSegment(x0, y0, x1, y1) {
     for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
       if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return true;
     }
-    return false;
+    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
   },
 
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying
@@ -479,6 +523,13 @@ export const WorldMixin = {
   // + collision + LOS all update, the tile is re-textured, and a debris FX plays (a lighter one
   // for soft cover). Returns true iff this hit destroyed the hex (so callers can react).
   _damageBuildingAt(x, y, amount, opts = {}) {
+    // #288: a hit that landed ON a wall span damages that span, not the (perfectly intact, merely
+    // adjacent) terrain hex underneath the impact point. Checked FIRST and returns immediately, so
+    // one shot never chips both a wall and a building. `nearestWallEdge`'s search radius is a touch
+    // wider than the wall's own painted thickness so a round detonating against its face — which
+    // stops a hair short of the centreline — still counts as hitting it.
+    const wall = nearestWallEdge(this.wallEdges, x, y, WALL_THICKNESS_PX);
+    if (wall) return this._damageWallEdge(wall, amount);
     const h = pixelToHex(x, y);
     const k = axialKey(h.q, h.r);
     const store = this.buildingHp.has(k) ? this.buildingHp : (this.coverHp.has(k) ? this.coverHp : null);
@@ -517,6 +568,29 @@ export const WorldMixin = {
     // optional chaining since most scenes/tests never wire a handler at all.
     this._onTerrainCollapsed?.(k);
     return true;
+  },
+
+  // #288: chip one wall span's HP, repaint the line, and — if that killed it — collapse it. A
+  // destroyed span stops blocking movement, sight, and fire the instant it falls, leaving a real
+  // hole in the line the player can drive through while the rest of the wall still stands. Plays
+  // the same debris/fireball the other destructible structures use, centred on the span itself.
+  // Returns true iff this hit destroyed the span, matching `_damageBuildingAt`'s contract.
+  _damageWallEdge(edge, amount) {
+    const { destroyed } = damageWallEdge(this.wallEdges, edge, amount);
+    this._redrawWallEdges();
+    if (destroyed) this._outpostCollapseFx((edge.x0 + edge.x1) / 2, (edge.y0 + edge.y1) / 2);
+    return destroyed;
+  },
+
+  // #288: the first standing wall span a swept step crosses, as `{ edge, x, y, dist }` or null —
+  // the projectile-facing form of the same crossing test movement uses (projectiles.js).
+  _wallEdgeHit(x0, y0, x1, y1) {
+    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
+  },
+
+  // #288: the standing wall spans, for tests/debug and for anything that needs the live geometry.
+  _liveWallEdges() {
+    return liveWallEdges(this.wallEdges);
   },
 
   // #250: world-space centres of every currently-STANDING destructible terrain hex within
@@ -576,10 +650,26 @@ export const WorldMixin = {
   // doesn't block the ray.
   _wallDistance(x0, y0, angle, maxT, transparent = null, smallUnitInvolved = false) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
+    // #288: the nearest standing wall span this ray crosses, resolved up front so the sampled
+    // terrain scan below can stop the moment it passes that point — whichever blocker is CLOSER
+    // wins, exactly as it would if walls were tiles.
+    const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT);
     for (let t = 8; t < maxT; t += 8) {
+      if (t >= tw) break;
       if (this._isWall(x0 + cx * t, y0 + cy * t, transparent, smallUnitInvolved)) return t;
     }
-    return Infinity;
+    return tw;
+  },
+
+  // #288: distance from (x0,y0) to the first standing wall SPAN the ray crosses, or Infinity. An
+  // exact segment-crossing test rather than a sampled one, for the same reason movement uses one:
+  // a wall is a line, and both ray marchers above sample coarsely (8px steps, and `_wallDistanceLos`
+  // deliberately skips samples that land in the same hex as the last one) — coarsely enough that a
+  // ray could otherwise slip past a span it genuinely crosses. Returns Infinity on a wall-free map
+  // after a single Map-size check, so this costs nothing where there are no walls.
+  _wallEdgeDistance(x0, y0, x1, y1) {
+    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
+    return hit ? hit.dist : Infinity;
   },
 
   // #167: allocation-free equivalent of `_wallDistance(x0,y0,angle,maxT, _losTransparency(x0,y0,
@@ -604,8 +694,13 @@ export const WorldMixin = {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     const oh = pixelToHex(x0, y0);          // shooter/muzzle endpoint hex (soft-cover-transparent)
     const eh = pixelToHex(x1, y1);          // target endpoint hex (soft-cover-transparent)
+    // #288: nearest wall-span crossing, same up-front resolution as `_wallDistance` above — needed
+    // here in particular because this loop deliberately SKIPS samples that land in the same hex as
+    // the previous one, which a point-sampled wall check could not survive.
+    const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT);
     let lastQ = null, lastR = null;
     for (let t = 8; t < maxT; t += 8) {
+      if (t >= tw) break;
       const h = pixelToHex(x0 + cx * t, y0 + cy * t);
       if (h.q === lastQ && h.r === lastR) continue;   // same hex as last step ⇒ wall-ness unchanged
       lastQ = h.q; lastR = h.r;
@@ -615,7 +710,7 @@ export const WorldMixin = {
       const ownHexExempt = (h.q === oh.q && h.r === oh.r) || (h.q === eh.q && h.r === eh.r);
       if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return t;
     }
-    return Infinity;
+    return tw;
   },
 
   // #167: staggered + cached LOS boolean — "does enemy `e` have a clear firing lane / line of
