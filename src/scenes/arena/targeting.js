@@ -61,7 +61,9 @@ export const TargetingMixin = {
     // back. This closes an asymmetry rather than creating one.
     const inRange = (e) => !e.mech.isDestroyed()
       && Math.hypot(e.x - this.px, e.y - this.py) <= TARGETING_RANGE
-      // #337: the fog's per-enemy rule, not the raw hex set. "Nobody targets what they can't see —
+      // #337 v2: the fog's per-enemy rule. Live, `_enemyVisible` is ALWAYS the branch taken (the
+      // mixin is unconditional); the `enemyTargetable` fallback survives only for scene doubles in
+      // tests that predate the fog. "Nobody targets what they can't see —
       // player and enemies alike" (Jackson chose "Full parity"), and the corollary is that anything
       // the fog DOES show him is lockable: airborne units, wall turrets, and — by symmetry — any
       // enemy with a live firing lane on him. `_enemyVisible` is the single source of truth for

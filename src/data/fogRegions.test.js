@@ -1,239 +1,188 @@
-// #337 — the pure region-fog model. These are the merge gate for this issue: every rule Jackson
-// stated maps to a test here, and the CADENCE property (region membership only changes at a
-// threshold) is asserted directly rather than trusted.
+// #337 v2 — the compound-interior fog model. The v1 tests that lived here pinned the open-world
+// block machinery (cell keys, cell centres, the 9-ring reveal disc, the all-angles breach union) and
+// were deleted with it; nothing in the redesign has an open-world concept to test.
 import { describe, it, expect } from 'vitest';
-import { axialKey, hexToPixel, range } from './hexgrid.js';
 import {
-  OPEN_CELL_SIZE, FOG_ALPHA, KNOWN_ALPHA, FOG_SOFT_STEPS,
-  buildFogWorld, regionKeyAt, openCellKey, openCellCenter, regionVisibleHexes,
-  breachRevealHexes, softFogDepths, fogAlphaFor, enemyVisibleInFog,
+  buildFogWorld, compoundAt, fogHexes, fogEdgeDepths, fogAlphaFor, enemyVisibleInFog,
+  FOG_ALPHA, FOG_SOFT_STEPS,
 } from './fogRegions.js';
+import { axialKey, range } from './hexgrid.js';
+import { pointVisibleFrom } from './shadowPolygon.js';
 
-// A compact stand-in for a worldgen base: a radius-2 disc of hexes around `center`.
-function discBase(id, center, radius = 2) {
-  return { id, center, footprint: range(center, radius) };
+// A compound centred on `c` with radius `rad` rings — the same shape worldgen hands over.
+function base(id, c, rad) {
+  return { id, footprint: range(c, rad) };
 }
+const K = (q, r) => axialKey(q, r);
 
 describe('buildFogWorld', () => {
-  const world = buildFogWorld([discBase('base0', { q: 0, r: 0 })]);
+  const world = buildFogWorld([base('alpha', { q: 0, r: 0 }, 3)]);
 
-  it('indexes every footprint hex to its base', () => {
-    expect(world.owner.get(axialKey(0, 0))).toBe('base0');
-    expect(world.owner.get(axialKey(2, 0))).toBe('base0');
-    expect(world.owner.get(axialKey(3, 0))).toBeUndefined();
+  it('splits a footprint into an outline ring and an interior', () => {
+    const fp = world.footprints.get('alpha');
+    const out = world.outlines.get('alpha');
+    const inner = world.interiors.get('alpha');
+    expect(fp.size).toBe(37);                       // 3-ring hex
+    expect(out.size).toBe(18);                      // the outermost ring only
+    expect(inner.size).toBe(19);                    // everything strictly inside
+    expect(out.size + inner.size).toBe(fp.size);
+    expect(out.has(K(3, 0))).toBe(true);
+    expect(inner.has(K(0, 0))).toBe(true);
   });
 
-  it('splits the footprint into an outline (where the walls sit) and an interior', () => {
-    // A radius-2 disc: 19 hexes, of which the outer ring (12) touches the outside.
-    expect(world.outlines.get('base0').size).toBe(12);
-    expect(world.interiors.get('base0').size).toBe(7);
-    expect(world.outlines.get('base0').has(axialKey(2, 0))).toBe(true);
-    expect(world.interiors.get('base0').has(axialKey(0, 0))).toBe(true);
+  it('maps every footprint hex back to its base and leaves the open world unowned', () => {
+    expect(compoundAt(0, 0, world)).toBe('alpha');
+    expect(compoundAt(3, 0, world)).toBe('alpha');  // outline hexes still belong to the compound
+    expect(compoundAt(20, 20, world)).toBe(null);
   });
 
-  it('ignores a base with no footprint rather than half-building it', () => {
-    const w = buildFogWorld([{ id: 'empty', footprint: [] }]);
-    expect(w.footprints.size).toBe(0);
-  });
-});
-
-describe('regionKeyAt', () => {
-  const world = buildFogWorld([discBase('base0', { q: 0, r: 0 })]);
-
-  it('reports the base region anywhere in the compound, outline included', () => {
-    expect(regionKeyAt(0, 0, world)).toBe('base:base0');
-    expect(regionKeyAt(2, 0, world)).toBe('base:base0');
-  });
-
-  it('reports an open cell outside any compound', () => {
-    expect(regionKeyAt(30, 30, world)).toBe(openCellKey(30, 30));
-  });
-
-  // THE CADENCE PROPERTY, asserted directly: moving within a cell must not change the region key,
-  // which is what makes the whole recompute event-driven instead of continuous.
-  it('is constant across a whole open cell and only flips at the boundary', () => {
-    const inside = [];
-    for (let q = 0; q < OPEN_CELL_SIZE; q++) {
-      for (let r = 0; r < OPEN_CELL_SIZE; r++) inside.push(regionKeyAt(q + 100, r + 100, world));
-    }
-    // (100,100) is not cell-aligned, so sample from an aligned origin instead.
-    const base = OPEN_CELL_SIZE * 20;
-    const keys = new Set();
-    for (let q = 0; q < OPEN_CELL_SIZE; q++) {
-      for (let r = 0; r < OPEN_CELL_SIZE; r++) keys.add(regionKeyAt(base + q, base + r, world));
-    }
-    expect(keys.size).toBe(1);
-    expect(regionKeyAt(base + OPEN_CELL_SIZE, base, world)).not.toBe([...keys][0]);
-    expect(inside.length).toBe(OPEN_CELL_SIZE * OPEN_CELL_SIZE);
-  });
-
-  it('handles negative coordinates without straddling two cells at the origin', () => {
-    expect(openCellKey(-1, -1)).not.toBe(openCellKey(0, 0));
-    const c = openCellCenter(openCellKey(-1, -1));
-    expect(regionKeyAt(c.q, c.r, world)).toBe(openCellKey(-1, -1));
+  it('ignores a base with no footprint', () => {
+    const w = buildFogWorld([{ id: 'ghost', footprint: [] }, base('real', { q: 0, r: 0 }, 2)]);
+    expect(w.footprints.has('ghost')).toBe(false);
+    expect(w.footprints.has('real')).toBe(true);
   });
 });
 
-describe('regionVisibleHexes', () => {
-  const world = buildFogWorld([discBase('base0', { q: 0, r: 0 })]);
+describe('fogHexes', () => {
+  const world = buildFogWorld([
+    base('alpha', { q: 0, r: 0 }, 3),
+    base('beta', { q: 40, r: 0 }, 3),
+  ]);
 
-  it('inside a compound, lights the whole compound and nothing outside it', () => {
-    const v = regionVisibleHexes('base:base0', world);
-    expect(v.size).toBe(19);
-    expect(v.has(axialKey(0, 0))).toBe(true);
-    expect(v.has(axialKey(5, 0))).toBe(false);
+  it('fogs only compound INTERIORS — never the wall ring, never the open world', () => {
+    const fogged = fogHexes(world, new Set());
+    expect(fogged.has(K(0, 0))).toBe(true);         // deep interior
+    expect(fogged.has(K(3, 0))).toBe(false);        // outline: walls + wall turrets read from both sides
+    expect(fogged.has(K(15, 7))).toBe(false);       // open ground is NEVER fogged in v2
+    expect(fogged.size).toBe(19 * 2);
   });
 
-  it('outside, lights open ground but NOT the compound interior', () => {
-    // A cell whose reveal disc comfortably covers the base at the origin.
-    const cell = openCellKey(0, 0);
-    const v = regionVisibleHexes(cell, world);
-    expect(v.has(axialKey(0, 0))).toBe(false);   // interior stays dark
-    expect(v.has(axialKey(2, 0))).toBe(true);    // outline (wall + its turrets) is visible
-    expect(v.has(axialKey(8, 0))).toBe(true);    // plain open ground
+  it('drops a compound permanently once entered, leaving the others alone', () => {
+    const fogged = fogHexes(world, new Set(['alpha']));
+    expect(fogged.has(K(0, 0))).toBe(false);
+    expect(fogged.has(K(40, 0))).toBe(true);
+    expect(fogged.size).toBe(19);
   });
 
-  it('reveals a disc centred on the cell, so the shape does not depend on exact position', () => {
-    const cell = openCellKey(50, 50);
-    const a = regionVisibleHexes(cell, world);
-    const b = regionVisibleHexes(regionKeyAt(52, 52, buildFogWorld([])), world);
-    expect(b.size).toBe(a.size);
-  });
-});
-
-describe('breachRevealHexes', () => {
-  const center = { q: 0, r: 0 };
-  const world = buildFogWorld([discBase('base0', center)]);
-  // One opening, on the east side of the compound, expressed as a short world-space segment.
-  const east = hexToPixel(2, 0);
-  const opening = [{ x0: east.x, y0: east.y - 20, x1: east.x, y1: east.y + 20 }];
-
-  it('with no openings, reveals nothing', () => {
-    expect(breachRevealHexes('base0', world, []).size).toBe(0);
-  });
-
-  it('is GENEROUS by design — an open compound is largely revealed through one gap', () => {
-    // This is the caveat Jackson was shown and accepted: the union over ALL exterior angles means
-    // anything with an unobstructed line to any part of the gap is lit.
-    const revealed = breachRevealHexes('base0', world, opening);
-    expect(revealed.size).toBeGreaterThan(10);
-    expect(revealed.has(axialKey(0, 0))).toBe(true);
-  });
-
-  it('respects still-standing spans — a breach does not light what an intact wall hides', () => {
-    const revealed = breachRevealHexes('base0', world, opening, {
-      segmentBlocked: () => true,     // every line into the yard crosses an intact span
-    });
-    expect(revealed.size).toBe(0);
-  });
-
-  it('respects hard cover inside the yard', () => {
-    const blocked = breachRevealHexes('base0', world, opening, {
-      terrainAt: () => 'alertTower',   // hard cover: blocksLOS, impassable
-    });
-    const open = breachRevealHexes('base0', world, opening);
-    expect(blocked.size).toBeLessThan(open.size);
-  });
-
-  it('honours the penetration cap when one is set (the tuning knob)', () => {
-    const shallow = breachRevealHexes('base0', world, opening, { maxDepth: 1 });
-    const full = breachRevealHexes('base0', world, opening);
-    expect(shallow.size).toBeLessThan(full.size);
-  });
-
-  it('reveals nothing for a base it does not know', () => {
-    expect(breachRevealHexes('nope', world, opening).size).toBe(0);
+  it('is empty when every compound has been entered', () => {
+    expect(fogHexes(world, new Set(['alpha', 'beta'])).size).toBe(0);
   });
 });
 
-describe('soft edges', () => {
-  it('ramps alpha over several rings out from the lit frontier', () => {
-    const visible = new Set([axialKey(0, 0)]);
-    const depths = softFogDepths(visible);
-    expect(depths.get(axialKey(1, 0))).toBe(1);
-    expect(depths.get(axialKey(2, 0))).toBe(2);
-    expect(depths.get(axialKey(FOG_SOFT_STEPS + 1, 0))).toBeUndefined();
+describe('fogEdgeDepths / fogAlphaFor — the softened edge', () => {
+  const world = buildFogWorld([base('alpha', { q: 0, r: 0 }, 6)]);
+  const fogged = fogHexes(world, new Set());
+  const depths = fogEdgeDepths(fogged);
 
-    const near = fogAlphaFor(axialKey(1, 0), { visible, known: new Set(), depths });
-    const mid = fogAlphaFor(axialKey(2, 0), { visible, known: new Set(), depths });
-    const far = fogAlphaFor(axialKey(9, 0), { visible, known: new Set(), depths });
-    expect(near).toBeLessThan(mid);
-    expect(mid).toBeLessThan(far);
-    expect(far).toBeCloseTo(FOG_ALPHA);
+  it('ramps depth inward from the lit boundary', () => {
+    expect(depths.get(K(5, 0))).toBe(1);            // touches the outline ring
+    expect(depths.get(K(4, 0))).toBe(2);
+    expect(depths.get(K(3, 0))).toBe(3);
+    expect(depths.has(K(0, 0))).toBe(false);        // deeper than FOG_SOFT_STEPS: full ceiling
   });
 
-  it('is softer than #306 ever was — the ceiling dropped well below its 0.8', () => {
-    expect(FOG_ALPHA).toBeLessThan(0.8);
+  it('turns that ramp into a gradient instead of a stencil cut', () => {
+    const a = (q, r) => fogAlphaFor(K(q, r), { fogged, depths });
+    expect(a(6, 0)).toBe(0);                        // outline — not fogged at all
+    expect(a(5, 0)).toBeCloseTo(FOG_ALPHA / 3);
+    expect(a(4, 0)).toBeCloseTo(FOG_ALPHA * 2 / 3);
+    expect(a(3, 0)).toBeCloseTo(FOG_ALPHA);
+    expect(a(0, 0)).toBe(FOG_ALPHA);
+    expect(a(5, 0)).toBeLessThan(a(4, 0));
+    expect(a(4, 0)).toBeLessThan(a(3, 0));
   });
 
-  it('lit hexes are not dimmed at all', () => {
-    const visible = new Set([axialKey(0, 0)]);
-    expect(fogAlphaFor(axialKey(0, 0), { visible })).toBe(0);
+  it('never exceeds the 0.62 ceiling anywhere', () => {
+    for (const k of fogged) expect(fogAlphaFor(k, { fogged, depths })).toBeLessThanOrEqual(FOG_ALPHA);
+    expect(FOG_ALPHA).toBe(0.62);
+    expect(FOG_SOFT_STEPS).toBe(3);
   });
 
-  it('remembered terrain sits between lit and never-seen — the run-long map memory', () => {
-    const visible = new Set();
-    const known = new Set([axialKey(4, 0)]);
-    const a = fogAlphaFor(axialKey(4, 0), { visible, known, depths: new Map() });
-    expect(a).toBe(KNOWN_ALPHA);
-    expect(a).toBeGreaterThan(0);
-    expect(a).toBeLessThan(FOG_ALPHA);
-  });
-
-  it('the soft ramp only ever lightens a remembered hex, never darkens it', () => {
-    const visible = new Set([axialKey(0, 0)]);
-    const known = new Set([axialKey(1, 0)]);
-    const depths = softFogDepths(visible);
-    expect(fogAlphaFor(axialKey(1, 0), { visible, known, depths })).toBeLessThanOrEqual(KNOWN_ALPHA);
+  it('gives open ground alpha 0 — there is no open-world fog', () => {
+    expect(fogAlphaFor(K(99, 99), { fogged, depths })).toBe(0);
   });
 });
 
 describe('enemyVisibleInFog', () => {
-  const hexKeyOf = (x, y) => axialKey(x, y);   // tests address enemies by hex directly
-  const lit = new Set([axialKey(0, 0)]);
+  const fogged = new Set([K(0, 0)]);
+  const hexKeyOf = () => K(0, 0);                   // every enemy below sits in the fogged hex
+  const opts = (extra) => ({ fogged, hexKeyOf, ...extra });
 
-  it('hides a ground enemy standing in fog', () => {
-    expect(enemyVisibleInFog({ x: 9, y: 9 }, { visible: lit, hexKeyOf })).toBe(false);
+  it('hides a ground enemy inside an unentered compound', () => {
+    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts())).toBe(false);
   });
 
-  it('shows a ground enemy inside the lit region', () => {
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, { visible: lit, hexKeyOf })).toBe(true);
+  it('always shows an airborne enemy', () => {
+    expect(enemyVisibleInFog({ x: 0, y: 0, flying: true }, opts())).toBe(true);
+    // grounded flyer is still a ground unit
+    expect(enemyVisibleInFog({ x: 0, y: 0, flying: true, airborne: false }, opts())).toBe(false);
   });
 
-  it('always shows an airborne enemy — Jackson: "except for airborn enemies that have launched"', () => {
-    expect(enemyVisibleInFog({ x: 9, y: 9, flying: true }, { visible: lit, hexKeyOf })).toBe(true);
+  it('always shows a wall turret — it reads from both sides of the ring', () => {
+    expect(enemyVisibleInFog({ x: 0, y: 0, spanKey: 'e7' }, opts())).toBe(true);
   });
 
-  it('hides a flyer that has not launched yet', () => {
-    expect(enemyVisibleInFog(
-      { x: 9, y: 9, flying: true, airborne: false }, { visible: lit, hexKeyOf },
-    )).toBe(false);
+  it('shows anything outside the fogged set, i.e. the whole open world', () => {
+    expect(enemyVisibleInFog({ x: 9e3, y: 9e3 }, opts({ hexKeyOf: () => K(50, 50) }))).toBe(true);
   });
 
-  it('always shows a wall turret — it sits ON the boundary, in both regions', () => {
-    expect(enemyVisibleInFog({ x: 9, y: 9, spanKey: '1,1/2,1' }, { visible: lit, hexKeyOf })).toBe(true);
+  it('shows an awake enemy with a firing lane — if it can shoot him, he can see it', () => {
+    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts({ losClear: true, awake: true }))).toBe(true);
+    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts({ losClear: true, awake: false }))).toBe(false);
+    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts({ losClear: false, awake: true }))).toBe(false);
   });
 
-  // The symmetry rule, and it is the one that guarantees the player is never shot by something he
-  // cannot see: since #316 every unit needs a clear lane before it fires, so "has a lane and is
-  // awake" is exactly "could be shooting me".
-  it('shows an awake enemy with a firing lane even from deep fog', () => {
-    expect(enemyVisibleInFog(
-      { x: 9, y: 9 }, { visible: lit, hexKeyOf, losClear: true, awake: true },
-    )).toBe(true);
+  it('shows an enemy the breach peek reaches, and only that one', () => {
+    const peekVisible = (x) => x === 100;
+    expect(enemyVisibleInFog({ x: 100, y: 0 }, opts({ peekVisible }))).toBe(true);
+    expect(enemyVisibleInFog({ x: 200, y: 0 }, opts({ peekVisible }))).toBe(false);
   });
 
-  it('does NOT show a dormant enemy that merely happens to have a clear lane', () => {
-    expect(enemyVisibleInFog(
-      { x: 9, y: 9 }, { visible: lit, hexKeyOf, losClear: true, awake: false },
-    )).toBe(false);
+  it('gates nothing before any fog exists', () => {
+    expect(enemyVisibleInFog({ x: 0, y: 0 }, { fogged: null, hexKeyOf })).toBe(true);
+    expect(enemyVisibleInFog({ x: 0, y: 0 }, { fogged: new Set(), hexKeyOf })).toBe(true);
+  });
+});
+
+// The peek's defining property, and the thing v1 got wrong: what you see through a hole depends on
+// WHERE YOU STAND. v1 unioned over all exterior angles, which lit nearly the whole yard from one
+// breach. Here: a wall with a gap, and a target that is only visible from the right side of it.
+describe('breach peek — position-dependent, by raycast', () => {
+  // Two collinear wall spans on x-ish, with a gap between y=-20 and y=20.
+  const wall = [
+    { x0: 0, y0: -400, x1: 0, y1: -20 },
+    { x0: 0, y0: 20, x1: 0, y1: 400 },
+  ];
+  const target = { x: 300, y: 0 };   // just inside, straight through the gap
+
+  it('sees the target through the gap when lined up with it', () => {
+    expect(pointVisibleFrom(-300, 0, target.x, target.y, wall)).toBe(true);
   });
 
-  it('does not gate anything before the fog has been computed', () => {
-    expect(enemyVisibleInFog({ x: 9, y: 9 }, { visible: null, hexKeyOf })).toBe(true);
+  it('LOSES the target after moving along the wall — the peek swings with the player', () => {
+    expect(pointVisibleFrom(-300, 300, target.x, target.y, wall)).toBe(false);
+    expect(pointVisibleFrom(-300, -300, target.x, target.y, wall)).toBe(false);
   });
 
-  it('is false for a missing enemy rather than throwing', () => {
-    expect(enemyVisibleInFog(null, { visible: lit, hexKeyOf })).toBe(false);
+  it('reaches a DIFFERENT slice of the yard from each vantage point', () => {
+    const yard = [];
+    for (let y = -200; y <= 200; y += 10) yard.push({ x: 300, y });
+    const seen = (px, py) => yard.filter((t) => pointVisibleFrom(px, py, t.x, t.y, wall)).length;
+    const north = yard.filter((t) => pointVisibleFrom(-300, -200, t.x, t.y, wall)).map((t) => t.y);
+    const south = yard.filter((t) => pointVisibleFrom(-300, 200, t.x, t.y, wall)).map((t) => t.y);
+    expect(north.length).toBeGreaterThan(0);
+    expect(south.length).toBeGreaterThan(0);
+    expect(north).not.toEqual(south);
+    // Standing north of the gap you see the SOUTHERN yard through it, and vice versa.
+    expect(Math.max(...north)).toBeGreaterThan(Math.max(...south));
+    // And a partial reveal is genuinely partial, from every vantage.
+    for (const [px, py] of [[-300, -200], [-300, 0], [-300, 200]]) {
+      expect(seen(px, py)).toBeLessThan(yard.length);
+    }
+  });
+
+  it('sees nothing through an unbroken wall', () => {
+    const solid = [{ x0: 0, y0: -400, x1: 0, y1: 400 }];
+    expect(pointVisibleFrom(-300, 0, target.x, target.y, solid)).toBe(false);
   });
 });
