@@ -36,9 +36,23 @@ import { coverBlocksForRay } from './terrain.js';
 // Returns a Set of axial keys — every hex within `radius` of `center` the viewer can see,
 // always including the viewer's own hex.
 export function computeVisibleHexes(center, radius, terrainAt) {
+  const disc = range(center, radius);
   const visible = new Set();
+  // Fast path, and it is the COMMON path: if nothing in the disc blocks a ray at all, every hex
+  // is visible and there is no point walking ~600 sight lines to prove it. Open ground, and any
+  // ground whose only cover is soft (forest/scrub, which a mech sees over), lands here — which in
+  // this game is most of the map most of the time. One flat pass of cheap lookups replaces the
+  // whole O(R^3) walk, and the caller skips its overlay redraw too since nothing is dimmed.
+  let anyBlocker = false;
+  for (const h of disc) {
+    if (coverBlocksForRay(terrainAt(h.q, h.r), false)) { anyBlocker = true; break; }
+  }
+  if (!anyBlocker) {
+    for (const h of disc) visible.add(axialKey(h.q, h.r));
+    return visible;
+  }
   visible.add(axialKey(center.q, center.r));
-  for (const h of range(center, radius)) {
+  for (const h of disc) {
     const k = axialKey(h.q, h.r);
     if (visible.has(k)) continue;
     if (hexLineClear(center, h, terrainAt)) visible.add(k);

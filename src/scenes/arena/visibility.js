@@ -110,12 +110,21 @@ export const VisibilityMixin = {
   _drawVisibilityOverlay(center, radius) {
     const g = this.fogFx;
     g.clear();
+    // Nothing is un-sighted (the whole disc is visible — open ground, the common case): the clear
+    // above is the entire redraw, no polygon fills at all.
+    if (this.visibleHexes.size >= 3 * radius * (radius + 1) + 1) return;
     g.fillStyle(DIM_COLOR, DIM_ALPHA);
+    // One reused 6-point buffer rather than a fresh `corners.map(...)` array of fresh objects per
+    // hex — Phaser reads the points synchronously inside fillPoints, so mutating and re-passing
+    // the same array is safe, and it turns a few hundred short-lived allocations per redraw into
+    // zero. Same reason the hex-corner offsets are computed once outside the loop.
     const corners = hexCorners(DIM_HEX_SIZE);
+    const buf = corners.map(() => ({ x: 0, y: 0 }));
     for (const hx of range(center, radius)) {
       if (this.visibleHexes.has(axialKey(hx.q, hx.r))) continue;
       const p = hexToPixel(hx.q, hx.r);
-      g.fillPoints(corners.map((c) => ({ x: p.x + c.x, y: p.y + c.y })), true, true);
+      for (let i = 0; i < 6; i++) { buf[i].x = p.x + corners[i].x; buf[i].y = p.y + corners[i].y; }
+      g.fillPoints(buf, true, true);
     }
   },
 
