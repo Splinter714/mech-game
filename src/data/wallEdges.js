@@ -11,12 +11,22 @@
 import { HEX_SIZE, axialKey, pixelToHex, neighbors, hexesAlongSegment } from './hexgrid.js';
 import { edgeKey, edgeEndpoints, segmentCrossT, pointSegmentDistance } from './hexEdges.js';
 
-// HP per SPAN (one hex edge). Lower than the old whole-hex `wallSegment`'s 55: an edge span is a
-// narrower thing to shoot and, since the mech collides as a point against terrain, breaching just
-// ONE span already opens a drivable gap (a hex edge is HEX_SIZE ≈ 48px long, and the two flanking
-// spans only eat WALL_THICKNESS_PX/2 off each end of it). The gate's toughness comes from having to
-// stand and grind a span down under fire, not from needing several.
-export const WALL_EDGE_HP = 45;
+// HP per SPAN (one hex edge) — carried over unchanged from the tile version's per-segment 55, the
+// sturdiest destructible structure in the game (above alertTower's 25, dockClosed's 30, objective's
+// 40), so the gate is no weaker than the one that was playtested. Since the mech collides as a
+// POINT against terrain and walls alike, breaching just ONE span already opens a drivable gap (a
+// hex edge is HEX_SIZE ≈ 48px long and its two flanking spans only eat WALL_THICKNESS_PX/2 off each
+// end), so the toughness lives in the per-span pool rather than in needing several. Owner: tunable.
+export const WALL_EDGE_HP = 55;
+
+// #288: how much of the normal building-STOMP rate a wall takes when the mech simply leans on it
+// (scenes/arena/world.js `_stompBuildingAt`). A wall is stompable like any other structure — that
+// affordance is unchanged — but a hardened blast wall shouldn't be a shack: at the full stomp rate
+// (STOMP_DPS 45) a span would fall after barely a second of pressing against it, which makes the
+// gate something you drive through rather than something you shoot through. At a quarter rate it's
+// a genuine several-second grind under fire, so shooting stays the sensible route while ramming is
+// still a desperate last resort. Owner: tunable.
+export const WALL_STOMP_FACTOR = 0.25;
 
 // How thick a wall reads/collides, in px, centred on the hex boundary — ~30% of a hex edge's own
 // length, so it looks like a substantial blast wall straddling the line without visibly eating into

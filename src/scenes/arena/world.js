@@ -9,7 +9,7 @@ import {
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_THICKNESS_PX,
+  WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
@@ -529,7 +529,7 @@ export const WorldMixin = {
     // wider than the wall's own painted thickness so a round detonating against its face — which
     // stops a hair short of the centreline — still counts as hitting it.
     const wall = nearestWallEdge(this.wallEdges, x, y, WALL_THICKNESS_PX);
-    if (wall) return this._damageWallEdge(wall, amount);
+    if (wall) return this._damageWallEdge(wall, opts.stomp ? amount * WALL_STOMP_FACTOR : amount);
     const h = pixelToHex(x, y);
     const k = axialKey(h.q, h.r);
     const store = this.buildingHp.has(k) ? this.buildingHp : (this.coverHp.has(k) ? this.coverHp : null);
@@ -617,7 +617,10 @@ export const WorldMixin = {
   _stompBuildingAt(x, y, dt) {
     const speedFrac = Math.min(1, this.speed / Math.max(1, this.mech.movement.maxSpeed));
     const dmg = crushDamage(STOMP_DPS, dt, speedFrac);
-    if (dmg > 0) this._damageBuildingAt(x, y, dmg);
+    // #288: `stomp` marks this as the mech LEANING on the structure rather than shooting it, so a
+    // wall span can scale it down (see WALL_STOMP_FACTOR) without changing how anything else
+    // stomps. Every other destructible reads the flag and ignores it.
+    if (dmg > 0) this._damageBuildingAt(x, y, dmg, { stomp: true });
   },
 
   // Debris + fireball when an outpost is flattened (#41): a bright flash, an expanding shock ring,
