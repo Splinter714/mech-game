@@ -99,6 +99,17 @@ export default defineConfig(({ command }) => {
       // checkout globs those copies too and inflates the reported counts. Keep vitest's
       // built-in excludes and add the worktree/.git trees.
       exclude: [...configDefaults.exclude, '**/.claude/worktrees/**', '**/.git/**'],
+      // #325: the worldgen invariant sweeps (#288 wall sealing, #308 base spacing) each
+      // generate dozens of full worlds and flood-fill them, running 1-3s on an idle machine.
+      // Vitest's 5s default left almost no headroom, so whenever the box was busy — several
+      // agent worktrees running tests at once, plus a live playtest — those tests blew the
+      // wall clock and reported as failures. The assertions themselves are fully seeded and
+      // deterministic (verified: identical output across repeated passes over the same seed
+      // families), so the red was pure timing noise, and it poisoned every agent's merge
+      // gate. Give the suite real headroom instead of trimming the sweeps or weakening the
+      // invariants — a slow honest test beats a fast lenient one.
+      testTimeout: 30000,
+      hookTimeout: 30000,
     },
   };
 });
