@@ -220,6 +220,67 @@ const report = await page.evaluate(async () => {
   }
   out.stateChangesPerGate_30s = [...flips.values()];
   out.maxStateChanges_30s = Math.max(0, ...flips.values());
+
+  // ── 7. THE TANK CASE (playtest 2) ─────────────────────────────────────────────────────
+  // Jackson: "I don't see the gates actually opening for the tanks when they seem to be wanting
+  // it." Tanks are the population that matters most (most of a world's ground movers), and the
+  // cause was that a demand search sharing the movement router's 400-node cap came back
+  // `complete: false` for exactly these longer routes and silently registered nothing.
+  //
+  // So this measures the reported case head-on: find a base whose garrison actually contains
+  // TANKS, stand where those tanks can reach, and confirm both that they register demand and that
+  // their base's gate opens.
+  const { isPassable: passable2 } = await import('/src/data/terrain.js');
+  const tankBase = a.bases.find((b) => a.enemies.some(
+    (e) => e.baseId === b.id && e.kind === 'tank' && a._isGateDemandUnit(e),
+  ));
+  out.foundBaseWithTankGarrison = !!tankBase;
+  if (tankBase) {
+    // Full reset of the gate subsystem, not just the `open` flags: clearing the flags alone leaves
+    // each state machine still in its GATE_OPEN phase, so the next tick re-asserts `open` and the
+    // episode measures 0ms every time. `_initGates` rebuilds the states, the demand ledger, and the
+    // span flags together, which is the only clean starting line.
+    a._initGates();
+    a._wakeBase(tankBase.id);
+    await new Promise((r) => requestAnimationFrame(r));
+    const tc = hexToPixel(tankBase.center.q, tankBase.center.r);
+    const tGates = gates.filter((g) => g.baseId === tankBase.id && !g.destroyed);
+    out.tankGarrisonSize = a.enemies.filter(
+      (e) => e.baseId === tankBase.id && e.kind === 'tank' && a._isGateDemandUnit(e),
+    ).length;
+
+    // Stand outside one of this base's own gates, on genuinely passable ground.
+    let tSpot = null;
+    for (const g of tGates) {
+      const gmx = (g.x0 + g.x1) / 2, gmy = (g.y0 + g.y1) / 2;
+      const dd = Math.hypot(gmx - tc.x, gmy - tc.y) || 1;
+      const nx = (gmx - tc.x) / dd, ny = (gmy - tc.y) / dd;
+      for (let d = 60; d <= 400; d += 20) {
+        const x = gmx + nx * d, y = gmy + ny * d;
+        const h = pixelToHex(x, y);
+        if (passable2(a.terrain.get(axKey(h.q, h.r)))) { tSpot = { x, y }; break; }
+      }
+      if (tSpot) break;
+    }
+    if (tSpot) { a.px = tSpot.x; a.py = tSpot.y; }
+
+    // Reset the scan counters so what we measure is this episode only.
+    a._gateDemandStats = { scans: 0, searches: 0, complete: 0, incomplete: 0, noted: 0,
+      nullGate: 0, eligible: 0, expandedTotal: 0, expandedMax: 0, byKind: {} };
+    const tT0 = performance.now();
+    let tankGateOpenedAt = null;
+    while (performance.now() - tT0 < 15000 && tankGateOpenedAt === null) {
+      await new Promise((r) => requestAnimationFrame(r));
+      if (tGates.some((g) => g.open)) tankGateOpenedAt = Math.round(performance.now() - tT0);
+    }
+    out.tankGateOpenedAtMs = tankGateOpenedAt;
+    const ts = a._gateDemandStats;
+    out.tankDemandStats = ts.byKind.tank ?? null;
+    // The specific failure mode being regression-tested: demand searches that fall short of the
+    // goal. Under the 400-node cap this was ~25% of all searches; it should now be ~0.
+    out.demandIncompleteRate = ts.searches ? +(ts.incomplete / ts.searches).toFixed(3) : null;
+    out.demandExpandedPerSec = Math.round(ts.expandedTotal / ((performance.now() - tT0) / 1000));
+  }
   return out;
 });
 
