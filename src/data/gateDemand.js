@@ -54,11 +54,21 @@ import { SPAN_ROLE_GATE } from './wallEdges.js';
 // door. A unit's route is re-planned on a budget and a throttle (hexRoute's `ROUTE_REPLAN_MS`,
 // `budgetPerTick`), it flips between routed and straight-line steering as `clearLine` re-tests, and
 // a unit walking THROUGH the mouth stops requesting the gate for the frames it is inside it. Each
-// of those is a momentary gap in a demand that has not really gone away. 1500ms comfortably spans
-// all of them (a whole replan cadence plus slack) while still being far shorter than the minimum
-// open time, so it never delays a genuine close by anything the player would notice. Owner:
-// tunable — raise it if gates ever visibly hunt, lower it if they linger after a sortie is done.
-export const GATE_DEMAND_GRACE_MS = 1500;
+// of those is a momentary gap in a demand that has not really gone away.
+//
+// It must ALSO span the scan's own round-robin cycle, which is the constraint that actually sizes
+// it. The scene asks a few units per scan and rotates through the garrison, so any given unit is
+// re-asked once per (eligible units / units-per-second) seconds. Measured worst case in a real
+// world: 35 eligible ground movers across five woken bases, at 24 units/sec, is a ~1.5s cycle. A
+// gate wanted by only a FEW units — a depleted garrison late in a fight, which is exactly when a
+// sortie matters — is refreshed only once per cycle, so a grace shorter than the cycle would let
+// its request expire and the door would hunt. 3000ms is double that worst case.
+//
+// Raising it costs nothing visible: it can only delay a CLOSE, and `GATE_MIN_OPEN_MS` (7000) is
+// already a longer floor than this, so the extra grace is entirely hidden inside a hold the gate
+// was going to observe anyway. Owner: tunable — raise it if gates ever visibly hunt, lower it if
+// they linger after a sortie is plainly done.
+export const GATE_DEMAND_GRACE_MS = 3000;
 
 // Which GATE span, if any, does this route ask for? Walks the route edge by edge from the unit's
 // own hex and returns the key of the first standing gate span it crosses, or null if it crosses

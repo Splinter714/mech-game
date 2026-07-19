@@ -39,8 +39,62 @@ import { pixelToHex } from '../../data/hexgrid.js';
 // 250ms / 4 units means a 12-unit garrison is fully re-asked every ~750ms, comfortably inside
 // gateDemand's 1500ms grace window — so a gate that is genuinely wanted never lapses between scans,
 // which is what lets a sampled signal be read as if it were continuous.
+// 250ms / 6 units means the worst garrison seen in a real world (35 eligible ground movers across
+// five woken bases) is fully re-asked every ~1.5s, comfortably inside gateDemand's grace window —
+// so a gate that is genuinely wanted never lapses between scans, which is what lets a sampled
+// signal be read as if it were continuous. Was 4 per scan, which gave a 2.2s worst-case cycle
+// against a then-1500ms grace: a gate wanted by only a FEW units (a depleted garrison late in a
+// fight) could have its request expire before the round-robin cursor came back to it. Raised
+// alongside the grace window rather than instead of it — see GATE_DEMAND_GRACE_MS.
 const GATE_DEMAND_SCAN_MS = 250;
-const GATE_DEMAND_UNITS_PER_SCAN = 4;
+const GATE_DEMAND_UNITS_PER_SCAN = 6;
+
+// ── The node cap for a DEMAND search, and why it is NOT the movement router's ───────────
+// PLAYTEST 2 ("I don't see the gates actually opening for the tanks when they seem to be wanting
+// it"). This was the bug, and it was invisible from outside: a demand search that hits its node cap
+// returns `complete: false`, the scan skips it, and a unit that genuinely wants out registers
+// nothing — which looks exactly like a base that correctly has nothing to open for.
+//
+// MEASURED across six real generated worlds (scripts/diagnose-gates-309.mjs), player at his actual
+// 880-1360px combat distance, sweeping the cap over every eligible ground unit:
+//
+//     cap  400 →  27/35, 6/8, 6/10, 9/12 complete   (expandedMax pinned at exactly 400)
+//     cap  800 →  35/35, 8/8, 10/10, 12/12          (expandedMax 567, 403, 457, 542)
+//     cap 1600 →  no further improvement
+//
+// So 400 sat right on the boundary and clipped roughly a quarter of all demand — tanks included
+// (4/6, 4/5, 6/7 in the failing worlds), which is precisely what Jackson saw. 800 was sufficient in
+// every world sampled; 1200 is that with headroom, since a 5700px corridor can put a garrison
+// further from the player than anything sampled here.
+//
+// Why the demand search legitimately needs a bigger budget than the movement router's 400:
+//   - It runs against the gates-as-passable predicate, so it explores MORE of the world than a
+//     movement search does (every ring is porous, so the frontier does not get pruned by walls).
+//   - Its result is BINARY. The movement router degrades gracefully — an incomplete search still
+//     returns a useful partial route and the unit walks that way. A demand search that falls short
+//     contributes nothing at all, so "close enough" has no value here.
+//
+// The perf argument #312 used to drop the movement cap 1200 → 400 does not transfer, because the
+// two run at completely different volumes: the movement router spends up to `budgetPerTick` (4)
+// searches EVERY TICK (~240/s at 60fps), while this scan spends at most 6 every 250ms (24/s) no
+// matter how many units exist. A* is also goal-directed, so a search that SUCCEEDS stops at the
+// goal and never approaches its cap — raising the ceiling only costs anything on searches that
+// fail, and with gates hypothetically open most garrison units can genuinely reach the player.
+// Measured cost of this change in the live game: see `expandedPerSec` in the diagnostic — 400 → 1200
+// moved total demand-search node expansion from ~1250/s to ~1600/s, under 0.5% of engine step time.
+export const GATE_DEMAND_MAX_NODES = 1200;
+
+// Running counters for the demand scan, read by scripts/audit-gates-309.mjs. Plain integer
+// increments on a path that already runs an A* search, so the cost is unmeasurable — and they are
+// the difference between diagnosing "no gate opened" and guessing at it, which is exactly how the
+// first playtest fix went wrong (a `complete: false` search registers no demand and looks
+// identical, from outside, to a base that correctly has nothing to open for).
+function makeGateDemandStats() {
+  return {
+    scans: 0, searches: 0, complete: 0, incomplete: 0, noted: 0, nullGate: 0,
+    eligible: 0, expandedTotal: 0, expandedMax: 0, byKind: {},
+  };
+}
 
 // #269 overhaul ("a pulsing red ring of some kind once it's activated") — the live ring drawn
 // over a counting-down alert tower. Was the beacon's own orange (0xff6a3a); Jackson asked for a
@@ -922,6 +976,7 @@ export const BasesMixin = {
     this._gateDemand = makeGateDemand();
     this._gateDemandCursor = 0;
     this._nextGateDemandAt = 0;
+    this._gateDemandStats = makeGateDemandStats();
     const rng = mulberry32(0x9e3779b9 ^ (this.runSeed ?? 1));
     for (const edge of gateEdges(this.wallEdges)) {
       this._gateStates.set(edge.key, makeGateState(rng() * GATE_STAGGER_MAX_MS));
@@ -986,15 +1041,26 @@ export const BasesMixin = {
     // Round-robin from wherever the last scan stopped, so a garrison larger than the per-scan cap
     // is covered evenly instead of the same first four units being asked forever.
     const n = Math.min(GATE_DEMAND_UNITS_PER_SCAN, units.length);
+    const st = (this._gateDemandStats ??= makeGateDemandStats());
+    st.eligible = units.length;
+    st.scans++;
     for (let i = 0; i < n; i++) {
       const e = units[(this._gateDemandCursor + i) % units.length];
-      const res = findHexPath(pixelToHex(e.x, e.y), goal, canStep);
+      const from = pixelToHex(e.x, e.y);
+      const res = findHexPath(from, goal, canStep, GATE_DEMAND_MAX_NODES);
+      const kind = e.kind ?? 'unknown';
+      const byKind = (st.byKind[kind] ??= { searches: 0, complete: 0, noted: 0, nullGate: 0 });
+      st.searches++; byKind.searches++;
+      st.expandedTotal += res.expanded;
+      if (res.expanded > st.expandedMax) st.expandedMax = res.expanded;
       // ONLY a complete route counts. hexRoute returns a best-effort partial route when it cannot
       // reach the goal, and a partial route that happens to end beside a gate must not be read as
       // wanting it — that is precisely the sealed-in garrison case, which has to register no demand
       // rather than opening a door that cannot help. See gateDemand.js.
-      if (!res.complete) continue;
-      const key = firstGateOnRoute(pixelToHex(e.x, e.y), res.path, this.wallEdges.byHex);
+      if (!res.complete) { st.incomplete++; continue; }
+      st.complete++; byKind.complete++;
+      const key = firstGateOnRoute(from, res.path, this.wallEdges.byHex);
+      if (key == null) { st.nullGate++; byKind.nullGate++; } else { st.noted++; byKind.noted++; }
       this._gateDemand.note(key, nowMs);
     }
     this._gateDemandCursor = (this._gateDemandCursor + n) % units.length;

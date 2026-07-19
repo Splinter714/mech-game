@@ -15,11 +15,12 @@
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 
-import { BasesMixin } from './bases.js';
+import { BasesMixin, GATE_DEMAND_MAX_NODES } from './bases.js';
 import { WorldMixin } from './world.js';
 import { makeWallEdgeSet, gateEdges, WALL_EDGE_HP } from '../../data/wallEdges.js';
 import { axialKey, neighbors, hexToPixel } from '../../data/hexgrid.js';
 import { AWARE, DORMANT } from '../../data/awareness.js';
+import { findHexPath, ROUTE_MAX_NODES } from '../../data/hexRoute.js';
 import {
   GATE_REACTION_MS, GATE_OPENING_MS, GATE_MIN_OPEN_MS, GATE_CLOSING_MS, GATE_STAGGER_MAX_MS,
 } from '../../data/gateCycle.js';
@@ -247,6 +248,97 @@ describe('#309 gate wiring', () => {
     // A swept drive straight through the mouth crosses nothing solid.
     expect(s._blockedAlongSegment(hexToPixel(A.q, A.r).x, hexToPixel(A.q, A.r).y,
       hexToPixel(NB[3].q, NB[3].r).x, hexToPixel(NB[3].q, NB[3].r).y)).toBe(false);
+  });
+
+  // ── PLAYTEST 2 REGRESSION (2026-07-19) ───────────────────────────────────────────────
+  // "I don't see the gates actually opening for the tanks when they seem to be wanting it."
+  //
+  // Cause: the demand search shared the movement router's `ROUTE_MAX_NODES` (400), which #312
+  // lowered from 1200 for performance. That is fine for MOVEMENT, which degrades gracefully — an
+  // incomplete search still yields a useful partial route. It is not fine for DEMAND, whose result
+  // is binary: a search that hits the cap returns `complete: false`, the scan skips it, and a unit
+  // that genuinely wants out registers nothing. Measured in six real worlds, this silently swallowed
+  // roughly a quarter of all demand, tanks included.
+  //
+  // This test builds a world where the route out is genuinely longer than the movement cap can
+  // follow, proves the regime is real (the same search IS incomplete at ROUTE_MAX_NODES), and then
+  // asserts the gate opens anyway.
+  describe('a garrison whose route out is longer than the movement router can search', () => {
+    // A one-hex-wide serpentine corridor leading away from the gate. One hex wide and winding, so
+    // A* has no choice but to expand essentially every hex in it — which is how the test reaches a
+    // node count above the movement cap without needing a huge map.
+    //
+    // It runs WESTWARD (decreasing q) from the gate's own neighbour, i.e. directly away from the
+    // compound. That direction is load-bearing: an eastward corridor would run straight back
+    // through the origin hex, and the ring's own wall spans would cut it there, so the route would
+    // be blocked for a reason that has nothing to do with the node cap this test is about.
+    function serpentine(from, width = 30, rows = 30) {
+      const out = [];
+      for (let row = 0; row <= rows; row++) {
+        if (row % 2 === 0) {
+          for (let i = 0; i <= width; i++) out.push({ q: from.q - i, r: from.r + row });
+        } else {
+          // The single step-across hex joining one run to the next, alternating ends.
+          const i = ((row - 1) / 2) % 2 === 0 ? width : 0;
+          out.push({ q: from.q - i, r: from.r + row });
+        }
+      }
+      return out;
+    }
+
+    function makeCorridorScene() {
+      const terrain = new Map();
+      // Everything impassable by default, so the corridor is the ONLY way through.
+      for (let q = -40; q <= 60; q++) for (let r = -40; r <= 60; r++) terrain.set(axialKey(q, r), 'lava');
+      terrain.set(axialKey(A.q, A.r), 'grass');                       // the compound interior
+      const corridor = serpentine(NB[3]);
+      for (const h of corridor) terrain.set(axialKey(h.q, h.r), 'grass');
+      const exit = corridor[corridor.length - 1];
+
+      const scene = Object.assign({}, WorldMixin, BasesMixin, {
+        terrain,
+        wallEdges: makeWallEdgeSet(NB.map((n, i) => ({
+          a: A, b: n, baseId: 'base0', ...(i === 3 ? { role: 'gate' } : {}),
+        }))),
+        buildingHp: new Map(), coverHp: new Map(),
+        enemies: [garrison()], bases: [],
+        px: hexToPixel(exit.q, exit.r).x, py: hexToPixel(exit.q, exit.r).y,
+        _wokenBases: new Set(),
+        time: { now: 0 },
+        tweens: { add: (cfg) => { if (cfg.onComplete) cfg.onComplete(); return {}; } },
+        add: { circle: () => fakeGameObject(), rectangle: () => fakeGameObject() },
+        redraws: 0,
+        _redrawWallEdges() { scene.redraws++; },
+        _invalidateVisibility() {},
+        _outpostCollapseFx() {},
+      });
+      scene._initGates();
+      return { scene, exit };
+    }
+
+    // First: prove the test is actually in the regime it claims to be. If this ever stops being
+    // true the regression test below has quietly stopped testing anything.
+    it('is a route the MOVEMENT cap genuinely cannot complete', () => {
+      const { scene, exit } = makeCorridorScene();
+      const canStep = (a, b, k) => scene._canEnemyStepGatesOpen(a, b, k);
+      const atMovementCap = findHexPath(A, exit, canStep, ROUTE_MAX_NODES);
+      expect(atMovementCap.complete).toBe(false);          // this is the bug's regime
+      const atDemandCap = findHexPath(A, exit, canStep, GATE_DEMAND_MAX_NODES);
+      expect(atDemandCap.complete).toBe(true);             // …and the demand cap clears it
+    });
+
+    it('still opens the gate — the demand search gets its own, larger budget', () => {
+      const { scene } = makeCorridorScene();
+      scene._wokenBases.add('base0');
+      run(scene, SURELY_OPEN_MS);
+      expect(theGate(scene).open).toBe(true);
+    });
+
+    // The invariant behind the fix, stated directly: demand must never be searched on a smaller
+    // budget than movement, or a unit can plan its way out and still fail to ask for the door.
+    it('the demand budget is larger than the movement budget', () => {
+      expect(GATE_DEMAND_MAX_NODES).toBeGreaterThan(ROUTE_MAX_NODES);
+    });
   });
 
   // …but the PLAYER cannot cause one to open. He is not a garrison unit, so parking on the mouth
