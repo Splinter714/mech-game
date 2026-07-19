@@ -15,7 +15,7 @@ import {
   placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind,
   TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
-  placeBaseWalls, nearestSpinePoint, WALL_LINE_SETBACK_PX,
+  placeBaseWalls, BASE_FOOTPRINT_RADIUS,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
@@ -315,7 +315,9 @@ describe('generateTerrain', () => {
         // biome-specific "outpost" role or a stamped helipad id to allow here.
         // #278: grassland now has its own in-map `hazard` (mud), like every other biome.
         GRASSLAND.groundA, GRASSLAND.groundB, GRASSLAND.channel, GRASSLAND.cover, GRASSLAND.hazard,
-        'dock', 'alertTower', 'turretEmplacement', 'objective',
+        // #288 (ring placement): `baseYard` is the base compound's paved floor, stamped across
+        // each base's whole hex footprint so the wall ring has base infrastructure behind it.
+        'dock', 'alertTower', 'turretEmplacement', 'objective', 'baseYard',
       ]);
       for (const id of terrain.values()) expect(validIds.has(id)).toBe(true);
     });
@@ -1337,62 +1339,35 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
   });
 });
 
-// #288 (REBUILT as edge geometry — the first pass's tile version failed playtest: "I wanted walls
-// to be only on the lines between hexes, not new hexes; more like thickened hex boundaries"): a
-// wall LINE across every base's approach, made of independently-destructible spans that sit on the
-// BOUNDARIES between hexes and consume no tile of play space. Placement intent is unchanged from
-// the tile version — a barrier spanning the way in, perpendicular to the LOCAL spine tangent (the
-// corridor curves, so "spans the width" only means anything relative to the spine's own direction
-// there), on the approach side of the base — so these tests mirror the old ones' claims, restated
-// in terms of edges.
-describe('placeBaseWalls (#288: base approach wall, as hex EDGES)', () => {
+// #288 (placement RE-SPECCED 2026-07-19 — "instead of a line across the corridor, let's do a full
+// ring around the base"): each base's wall is now the OUTLINE OF ITS OWN COMPOUND FOOTPRINT — a
+// full ring completely encircling it, sealed, hugging it tightly. The previous line-across-the-
+// approach tests are gone with the construction they pinned (a BFS level set of walking distance
+// from spawn, plus WALL_LINE_SETBACK_PX); what survives, and is restated here for a ring, is the
+// load-bearing property both specs shared: THE WALL MUST ACTUALLY SEAL. Two earlier constructions
+// of the wall LINE leaked on real curved seeds, so it is tested here directly, on synthetic
+// geometry and on the real corridor pipeline alike.
+describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDGES)', () => {
   const B = GRASSLAND;
 
-  // A perfectly straight synthetic spine (zero curviness) at a given heading — lets the
-  // geometry assertions below check against the EXACT tangent/perpendicular instead of a
-  // numerically-estimated one, so "perpendicular to the local tangent" is verified precisely.
-  function straightSpine(angleRad, { length = 2000, rearPad = 400, step = 24 } = {}) {
-    const dirX = Math.cos(angleRad), dirY = Math.sin(angleRad);
-    const points = [];
-    for (let u = -rearPad; u <= length; u += step) points.push({ x: dirX * u, y: dirY * u, u });
-    return { points, startAngle: angleRad, length, rearPad };
-  }
-
-  // A generous disc of plain ground, big enough to cover any anchor/width this describe block's
-  // tests place a synthetic base+wall inside.
+  // A generous disc of plain ground, big enough to cover any footprint these tests place inside.
   function fillGroundDisc(radiusHex = 45) {
     const T = new Map();
     for (const h of range({ q: 0, r: 0 }, radiusHex)) T.set(axialKey(h.q, h.r), B.groundA);
     return T;
   }
 
-  // The same disc trimmed to a straight CORRIDOR of the real half-width along `angle` — the shape
-  // the wall geometry is actually meant for. (A wall is built as a level set of walking distance
-  // from spawn, so its shape is the shape of the playable area's cross-section: in a corridor
-  // that's a line across the way in, which is the whole point; in an untrimmed disc it would
-  // correctly-but-uselessly be a huge arc, since a disc has no "way in" to block.)
-  // Bounded at both ends the way a real corridor is (`straightSpine`'s own rearPad/length), so the
-  // walking-distance front can't wander off into ground that exists behind spawn.
-  function corridorStrip(angle, { radiusHex = 45, rearPad = 400, length = 2000 } = {}) {
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
-    const T = new Map();
-    for (const h of range({ q: 0, r: 0 }, radiusHex)) {
-      const p = hexToPixel(h.q, h.r);
-      const along = p.x * dirX + p.y * dirY;
-      const across = p.x * -dirY + p.y * dirX;
-      if (Math.abs(across) <= CORRIDOR_HALF_WIDTH_PX && along >= -rearPad - HEX_STEP_PX && along <= length) {
-        T.set(axialKey(h.q, h.r), B.groundA);
-      }
-    }
-    return T;
-  }
+  // A synthetic base with a full, unclipped radius-`BASE_FOOTPRINT_RADIUS` footprint disc.
+  const discBase = (center, id = 'b') => ({
+    id, center, footprint: range(center, BASE_FOOTPRINT_RADIUS).map((h) => ({ q: h.q, r: h.r })),
+  });
 
   // Can you WALK from `start` to `goal` across the playable set without crossing a standing wall
   // span? A plain hex BFS whose only extra rule is that a step between two hexes is refused when
   // that step's own edge is walled — which is exactly what the arena's movement collision enforces
-  // in pixel space. This is the load-bearing check for the whole feature: a wall that doesn't
-  // actually SEAL is just decoration.
-  function reachable(T, walledKeys, start, goal, limit = 20000) {
+  // in pixel space. This is THE load-bearing check for the whole feature: a wall that doesn't
+  // actually seal is just decoration.
+  function reachable(T, walledKeys, start, goal, limit = 40000) {
     const goalKey = axialKey(goal.q, goal.r);
     const seen = new Set([axialKey(start.q, start.r)]);
     const queue = [start];
@@ -1414,146 +1389,132 @@ describe('placeBaseWalls (#288: base approach wall, as hex EDGES)', () => {
 
   const walledKeySet = (wall) => new Set(wall.edges.map((e) => edgeKey(e.a, e.b)));
 
-  it('places a non-empty wall for a base near the spine, and no-ops gracefully without one', () => {
-    const spine = straightSpine(0);
-    const bases = [{ id: 'b', center: pixelToHex(1000, 0) }];
-    const walls = placeBaseWalls(corridorStrip(0), bases, spine);
+  it('rings a base with a footprint, and no-ops gracefully without one', () => {
+    const T = fillGroundDisc();
+    const center = pixelToHex(1000, 0);
+    const walls = placeBaseWalls(T, [discBase(center)]);
     expect(walls.length).toBe(1);
     expect(walls[0].baseId).toBe('b');
-    expect(walls[0].edges.length).toBeGreaterThan(2);
-    expect(placeBaseWalls(corridorStrip(0), bases, null)).toEqual([]);
-    expect(placeBaseWalls(corridorStrip(0), [], spine)).toEqual([]);
+    // A radius-2 hex disc's boundary is its outer ring (12 hexes), each contributing the edges
+    // that face outward: the 6 CORNER hexes have 3 outward edges each, the 6 SIDE hexes 2 —
+    // 6*3 + 6*2 = 30. Pinned exactly, because this number IS the ring's literal shape.
+    expect(walls[0].edges.length).toBe(30);
+    expect(placeBaseWalls(T, [])).toEqual([]);
+    expect(placeBaseWalls(T, [{ id: 'b', center, footprint: [] }])).toEqual([]);
+    expect(placeBaseWalls(T, [{ id: 'b', center }])).toEqual([]);
   });
 
-  // The defining property of the rebuild: a wall belongs to the LINE BETWEEN two hexes, so it
-  // consumes no tile. The terrain map must come back byte-identical — this is what makes the
-  // whole "the wall ate this base's dock/turret/objective" problem class (which the tile version
-  // had to reason about at length) structurally impossible.
+  // The defining property of the edge rebuild, unchanged by the re-spec: a wall belongs to the LINE
+  // BETWEEN two hexes, so it consumes no tile. The terrain map must come back byte-identical.
   it('writes NOTHING to the terrain map — an edge wall occupies no hex', () => {
     const T = fillGroundDisc();
     const before = new Map(T);
-    const spine = straightSpine(0.4);
-    placeBaseWalls(T, [{ id: 'b', center: pixelToHex(Math.cos(0.4) * 1000, Math.sin(0.4) * 1000) }], spine);
+    placeBaseWalls(T, [discBase(pixelToHex(900, 400))]);
     expect(T.size).toBe(before.size);
     for (const [k, v] of before) expect(T.get(k)).toBe(v);
   });
 
-  // Edge identity: each entry names two genuinely ADJACENT hexes, `a` is always the base-side one,
-  // and no edge is listed twice (the same boundary named from either side canonicalises to one
-  // span with one HP pool, never two half-walls).
-  it('every edge is a real adjacent hex pair, base-side first, with no duplicates', () => {
-    const angle = 1.1;
-    const spine = straightSpine(angle);
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
-    const [wall] = placeBaseWalls(corridorStrip(angle), [{ id: 'b', center: pixelToHex(dirX * 1100, dirY * 1100) }], spine);
+  // Edge identity: each entry names two genuinely ADJACENT hexes, `a` is always the base-side one
+  // (which is what makes the "nothing natural behind a span" invariant checkable), and no edge is
+  // listed twice.
+  it('every edge is a real adjacent hex pair, footprint-side first, with no duplicates', () => {
+    const center = pixelToHex(1100, -300);
+    const base = discBase(center);
+    const inside = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+    const [wall] = placeBaseWalls(fillGroundDisc(), [base]);
     const keys = new Set();
     for (const e of wall.edges) {
       expect(distance(e.a, e.b)).toBe(1);
-      const pa = hexToPixel(e.a.q, e.a.r), pb = hexToPixel(e.b.q, e.b.r);
-      // `a` sits farther along the corridor (toward the base) than `b` — every span faces the
-      // same way, which is what makes the line a coherent front rather than a scatter.
-      expect(pa.x * dirX + pa.y * dirY).toBeGreaterThan(pb.x * dirX + pb.y * dirY);
+      expect(inside.has(axialKey(e.a.q, e.a.r))).toBe(true);    // `a` = base side, always
+      expect(inside.has(axialKey(e.b.q, e.b.r))).toBe(false);   // `b` = outside, always
       const k = edgeKey(e.a, e.b);
       expect(keys.has(k)).toBe(false);
       keys.add(k);
     }
   });
 
-  // The wall runs ACROSS the corridor (perpendicular to the local tangent), not along it: spread
-  // measured across the tangent must dwarf spread measured along it.
-  it('runs PERPENDICULAR to the local spine tangent, not along it', () => {
-    for (const angle of [0, 0.7, 1.9, -2.4]) {
-      const spine = straightSpine(angle);
-      const dirX = Math.cos(angle), dirY = Math.sin(angle);
-      const [wall] = placeBaseWalls(corridorStrip(angle), [{ id: 'b', center: pixelToHex(dirX * 1200, dirY * 1200) }], spine);
-      const along = [], across = [];
-      for (const e of wall.edges) {
-        const m = { x: (hexToPixel(e.a.q, e.a.r).x + hexToPixel(e.b.q, e.b.r).x) / 2,
-                    y: (hexToPixel(e.a.q, e.a.r).y + hexToPixel(e.b.q, e.b.r).y) / 2 };
-        along.push(m.x * dirX + m.y * dirY);
-        across.push(m.x * -dirY + m.y * dirX);
-      }
-      expect(Math.max(...across) - Math.min(...across)).toBeGreaterThan(CORRIDOR_HALF_WIDTH_PX * 1.5);
-      expect(Math.max(...along) - Math.min(...along)).toBeLessThan(150);
+  // A RING, not a line: the spans surround the base on every side. Checked by bearing coverage —
+  // sort every span's midpoint by its angle around the base centre and assert no angular gap
+  // bigger than a single hex's worth of arc. A line across one approach would leave a ~180° hole.
+  it('ENCIRCLES the base — spans cover every bearing, with no angular gap', () => {
+    for (const [px, py] of [[1000, 0], [-800, 600], [300, -1200], [-1500, -400]]) {
+      const center = pixelToHex(px, py);
+      const [wall] = placeBaseWalls(fillGroundDisc(), [discBase(center)]);
+      const c = hexToPixel(center.q, center.r);
+      const angles = wall.edges
+        .map((e) => { const m = edgeMidpoint(e.a, e.b); return Math.atan2(m.y - c.y, m.x - c.x); })
+        .sort((a, b) => a - b);
+      let maxGap = angles[0] + Math.PI * 2 - angles[angles.length - 1];
+      for (let i = 1; i < angles.length; i++) maxGap = Math.max(maxGap, angles[i] - angles[i - 1]);
+      expect(maxGap).toBeLessThan(Math.PI / 4);   // < 45°: no side is unwalled
     }
   });
 
-  it('spans the corridor\'s full playable width (≈ 2 * CORRIDOR_HALF_WIDTH_PX)', () => {
-    const angle = 0.9;
-    const spine = straightSpine(angle);
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
-    const [wall] = placeBaseWalls(corridorStrip(angle), [{ id: 'b', center: pixelToHex(dirX * 1200, dirY * 1200) }], spine);
-    const pts = wall.edges.map((e) => edgeMidpoint(e.a, e.b));
-    let maxSpan = 0;
-    for (const a of pts) for (const b of pts) maxSpan = Math.max(maxSpan, Math.hypot(a.x - b.x, a.y - b.y));
-    // A walking-distance front is a rounded contour, not a ruled line, so it curls back slightly
-    // where it meets the corridor's sides — it spans the great majority of the width rather than
-    // exactly all of it. What matters is that nothing walkable gets past it, which the sealing
-    // test below asserts directly.
-    const fullWidth = CORRIDOR_HALF_WIDTH_PX * 2;
-    expect(maxSpan).toBeGreaterThan(fullWidth * 0.8);
-    expect(maxSpan).toBeLessThanOrEqual(fullWidth + HEX_STEP_PX * 3);
+  // HUGS the base: every span sits within roughly the footprint radius of the centre — there is no
+  // setback anymore and no dead ground inside the ring. (This is the direct restatement of the
+  // 2026-07-19 playtest complaint that the wall sat "too far from the actual bases".)
+  it('HUGS the base — no span sits farther out than the footprint radius', () => {
+    const center = pixelToHex(1000, 0);
+    const [wall] = placeBaseWalls(fillGroundDisc(), [discBase(center)]);
+    const c = hexToPixel(center.q, center.r);
+    for (const e of wall.edges) {
+      const m = edgeMidpoint(e.a, e.b);
+      // The far face of the outermost footprint ring — nothing beyond it, and nothing loitering
+      // near the centre either (a ring, not a blob).
+      const d = Math.hypot(m.x - c.x, m.y - c.y);
+      expect(d).toBeLessThanOrEqual((BASE_FOOTPRINT_RADIUS + 0.6) * HEX_STEP_PX);
+      expect(d).toBeGreaterThan((BASE_FOOTPRINT_RADIUS - 0.5) * HEX_STEP_PX);
+    }
   });
 
-  // The half-plane-cut construction (see `placeBaseWalls`) is sealed by definition, and this is the
-  // assertion that pins it: with the wall standing there is NO walkable route from the spawn side
-  // to the base side. The tile version needed a whole gap-patching pass (`closeWallGaps` /
-  // `geodesicDiamond`) to reach the same guarantee, and this is the property those existed to
-  // protect — restated for edges, where it now holds structurally.
-  it('SEALS the approach: no walkable route past a standing wall, at any spine heading', () => {
-    for (const angle of [0, 0.5, 1.3, 2.2, -0.8, -2.9]) {
-      const spine = straightSpine(angle);
-      const dirX = Math.cos(angle), dirY = Math.sin(angle);
-      const T = corridorStrip(angle);
-      const baseHex = pixelToHex(dirX * 1200, dirY * 1200);
-      const [wall] = placeBaseWalls(T, [{ id: 'b', center: baseHex }], spine);
+  it('SEALS the base: no walkable route in from anywhere outside, at any position', () => {
+    for (const [px, py] of [[1000, 0], [-800, 600], [300, -1200], [-1500, -400], [0, 0]]) {
+      const T = fillGroundDisc();
+      const center = pixelToHex(px, py);
+      const [wall] = placeBaseWalls(T, [discBase(center)]);
       const walled = walledKeySet(wall);
-      const spawnHex = pixelToHex(dirX * -200, dirY * -200);
-      expect(T.has(axialKey(spawnHex.q, spawnHex.r))).toBe(true);
-      expect(reachable(T, walled, spawnHex, baseHex)).toBe(false);
-      // …and with the wall gone entirely, the same route is walkable — proving the block above is
-      // the WALL's doing and not some accident of the trimmed disc.
-      expect(reachable(T, new Set(), spawnHex, baseHex)).toBe(true);
+      // Probe from every direction, well outside the ring — none of them can walk in.
+      for (const angle of [0, 1, 2, 3, 4, 5]) {
+        const from = pixelToHex(px + Math.cos(angle) * 600, py + Math.sin(angle) * 600);
+        expect(T.has(axialKey(from.q, from.r))).toBe(true);
+        expect(reachable(T, walled, from, center)).toBe(false);
+        // …and with the wall gone the same route IS walkable, proving the block is the wall's
+        // doing and not an accident of the disc.
+        expect(reachable(T, new Set(), from, center)).toBe(true);
+      }
     }
   });
 
-  // Per-span destruction, restated for edges: knocking out ONE span opens a breach you can drive
-  // through, while every other span still stands. (The mech collides as a POINT against terrain
-  // and walls alike, so a single hex edge — HEX_SIZE ≈ 48px long — is already a drivable gap; the
-  // tile version's `WALL_BREACH_GAP_SEGMENTS` framing is gone with the tiles.)
-  it('destroying ONE span opens a walkable breach; the rest of the wall still stands', () => {
-    const angle = 0.3;
-    const spine = straightSpine(angle);
-    const dirX = Math.cos(angle), dirY = Math.sin(angle);
-    const T = corridorStrip(angle);
-    const baseHex = pixelToHex(dirX * 1200, dirY * 1200);
-    const spawnHex = pixelToHex(dirX * -200, dirY * -200);
-    const [wall] = placeBaseWalls(T, [{ id: 'b', center: baseHex }], spine);
+  // Per-span destruction: knocking out ONE span opens a breach you can drive through, while every
+  // other span still stands. With a sealed ring this is now the ONLY way in (the owner confirmed
+  // that's deliberate — #309's gates are enemies-only), so it's also the anti-soft-lock guarantee.
+  it('breaching ONE span opens the ONLY way in; the rest of the ring still stands', () => {
+    const T = fillGroundDisc();
+    const center = pixelToHex(1000, 0);
+    const outside = pixelToHex(400, 0);
+    const [wall] = placeBaseWalls(T, [discBase(center)]);
     const walled = walledKeySet(wall);
-    expect(reachable(T, walled, spawnHex, baseHex)).toBe(false);
-
-    // Breach the span nearest the corridor's centreline (the one a player driving straight in
-    // would actually be shooting at).
-    const centred = [...wall.edges].sort((e1, e2) => {
-      const m1 = edgeMidpoint(e1.a, e1.b), m2 = edgeMidpoint(e2.a, e2.b);
-      return Math.abs(m1.x * -dirY + m1.y * dirX) - Math.abs(m2.x * -dirY + m2.y * dirX);
-    })[0];
-    walled.delete(edgeKey(centred.a, centred.b));
-    expect(reachable(T, walled, spawnHex, baseHex)).toBe(true);
-    expect(walled.size).toBe(wall.edges.length - 1);   // exactly one span went down, not the row
+    expect(reachable(T, walled, outside, center)).toBe(false);
+    // Breach any single span — every one of them must be sufficient on its own, since the player
+    // gets to pick which face of the ring to attack.
+    for (const e of wall.edges) {
+      const breached = new Set(walled);
+      breached.delete(edgeKey(e.a, e.b));
+      expect(breached.size).toBe(wall.edges.length - 1);   // exactly one span went down
+      expect(reachable(T, breached, outside, center)).toBe(true);
+    }
   });
 
   // Full-pipeline coverage: the real generateSpine/corridorHexSet/generateTerrain path (not the
-  // synthetic straight-spine the precision geometry checks above use) actually places a wall for
-  // every base it generates, across many seeds/corridor orientations.
+  // synthetic discs above) across many seeds, corridor orientations and biomes.
   describe('on the real corridor pipeline (generateTerrain)', () => {
-    function realTerrainArgs(seed) {
+    function realTerrainArgs(seed, biome = GRASSLAND) {
       const { spine, includedKeys, spawnHex } = buildCorridor(seed);
       const boundaryRing = boundaryRingKeys(null, { insideKeys: includedKeys });
-      return { seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, includedKeys, boundaryRing, spine, safeCenter: spawnHex };
+      return { seed, worldRadius: MAX_WORLD_RADIUS, biome, includedKeys, boundaryRing, spine, safeCenter: spawnHex };
     }
 
-    it('every base gets a non-empty wall, and generateTerrain returns the flattened edge list', () => {
+    it('every base gets a non-empty ring, and generateTerrain returns the flattened edge list', () => {
       for (let seed = 1; seed <= 40; seed++) {
         const { bases, wallEdges, terrain } = generateTerrain(realTerrainArgs(seed * 13 + 3));
         expect(bases.length).toBe(BASE_COUNT);
@@ -1563,10 +1524,7 @@ describe('placeBaseWalls (#288: base approach wall, as hex EDGES)', () => {
           total += base.wallEdges.length;
           for (const e of base.wallEdges) {
             expect(distance(e.a, e.b)).toBe(1);
-            // Both hexes a span separates are real, PASSABLE play space — the wall never sits
-            // between two impassable tiles (pointless) and never eats a tile of its own.
             expect(terrain.has(axialKey(e.a.q, e.a.r))).toBe(true);
-            expect(terrain.has(axialKey(e.b.q, e.b.r))).toBe(true);
           }
         }
         expect(wallEdges.length).toBe(total);
@@ -1575,61 +1533,104 @@ describe('placeBaseWalls (#288: base approach wall, as hex EDGES)', () => {
       }
     });
 
-    // The wall sits on the APPROACH side — between spawn and the base, not behind it or on top of
-    // it — and it belongs to THAT base rather than being parked somewhere random down the corridor.
-    // Stated in WALKING distance (an independent BFS here, mirroring what the generator does), not
-    // in spine progress: the wall is a walking-distance front, and on the inside of a sharp bend a
-    // span at the corridor's far lateral edge can project to slightly higher spine progress than
-    // the base centre while being plainly, walkably, in front of it.
-    it('sits on the APPROACH side, local to its own base', () => {
-      for (let seed = 1; seed <= 25; seed++) {
-        const args = realTerrainArgs(seed * 7 + 11);
-        const { bases, terrain } = generateTerrain(args);
-        const spawnHex = spineSpawnHex(args.spine);
-        // Hop distance from spawn to every passable hex.
-        const hops = new Map([[axialKey(spawnHex.q, spawnHex.r), 0]]);
-        const queue = [spawnHex];
-        for (let i = 0; i < queue.length; i++) {
-          const cur = queue[i];
-          const d = hops.get(axialKey(cur.q, cur.r)) + 1;
-          for (const n of neighbors(cur.q, cur.r)) {
-            const nk = axialKey(n.q, n.r);
-            if (hops.has(nk) || !terrain.has(nk) || !isPassable(terrain.get(nk))) continue;
-            hops.set(nk, d);
-            queue.push(n);
-          }
-        }
-        for (const base of bases) {
-          const baseHops = hops.get(axialKey(base.center.q, base.center.r))
-            ?? Math.min(...neighbors(base.center.q, base.center.r)
-              .map((n) => hops.get(axialKey(n.q, n.r)) ?? Infinity));
-          const basePx = hexToPixel(base.center.q, base.center.r);
-          for (const e of base.wallEdges) {
-            // Strictly nearer spawn on foot than the base is — every span, no exceptions.
-            expect(hops.get(axialKey(e.b.q, e.b.r))).toBeLessThan(baseHops);
-            // …and near enough to read as this base's own gate rather than unrelated scenery.
-            const m = edgeMidpoint(e.a, e.b);
-            expect(Math.hypot(m.x - basePx.x, m.y - basePx.y))
-              .toBeLessThan(WALL_LINE_SETBACK_PX * 3 + CORRIDOR_HALF_WIDTH_PX * 2);
+    // THE NEW INVARIANT, and the whole reason the base footprint is paved: "the bases should flow
+    // with no natural hexes directly behind each wall segment". Behind every span (its `a` side)
+    // must be BASE infrastructure, never ordinary terrain — checked over every base of every seed
+    // in every biome, since the paving has to survive whatever the biome dropped there.
+    it('no ORDINARY TERRAIN hex sits directly behind any span — the base backs onto every one', () => {
+      for (const biomeId of ['grassland', 'desert', 'arctic', 'urban', 'volcanic']) {
+        const biome = getBiome(biomeId);
+        for (let seed = 1; seed <= 12; seed++) {
+          const { bases, terrain } = generateTerrain(realTerrainArgs(seed * 29 + 7, biome));
+          for (const base of bases) {
+            for (const e of base.wallEdges) {
+              const id = terrain.get(axialKey(e.a.q, e.a.r));
+              expect(TERRAIN[id]?.category).toBe('base');
+            }
           }
         }
       }
     });
 
-    // …and it genuinely gates the base on the REAL corridor too, not just on a synthetic straight
-    // one: the base's own centre is unreachable on foot from spawn while its wall stands.
-    it('gates its base on the real corridor: unreachable from spawn while the wall stands', () => {
-      for (let seed = 1; seed <= 12; seed++) {
+    // …and the whole footprint inside the ring is base infrastructure too, not just the rim: no
+    // dead natural ground anywhere inside the compound.
+    it('the entire footprint inside the ring is base infrastructure', () => {
+      for (let seed = 1; seed <= 15; seed++) {
+        const { bases, terrain } = generateTerrain(realTerrainArgs(seed * 31 + 2));
+        for (const base of bases) {
+          expect(base.footprint.length).toBeGreaterThan(0);
+          for (const h of base.footprint) {
+            expect(TERRAIN[terrain.get(axialKey(h.q, h.r))]?.category).toBe('base');
+          }
+        }
+      }
+    });
+
+    // The seal, on the REAL corridor: no base's centre — nor its objective, the thing the mission
+    // actually requires you to destroy — is reachable on foot from spawn while its ring stands.
+    // This is the property two earlier wall-LINE constructions got wrong on curved seeds.
+    it('SEALS on the real corridor: spawn cannot walk to any base centre or objective', () => {
+      for (let seed = 1; seed <= 20; seed++) {
         const args = realTerrainArgs(seed * 17 + 5);
         const { bases, terrain } = generateTerrain(args);
         const spawnHex = spineSpawnHex(args.spine);
-        // The FIRST base along the corridor — the one whose wall the player meets first, with no
-        // other base's wall confusing the result.
-        const first = [...bases].sort((a, b) =>
-          spineProgressHexOf(args.spine, a.center.q, a.center.r) - spineProgressHexOf(args.spine, b.center.q, b.center.r))[0];
-        const walled = new Set(first.wallEdges.map((e) => edgeKey(e.a, e.b)));
-        expect(reachable(terrain, walled, spawnHex, first.center)).toBe(false);
+        for (const base of bases) {
+          const walled = new Set(base.wallEdges.map((e) => edgeKey(e.a, e.b)));
+          expect(reachable(terrain, walled, spawnHex, base.center)).toBe(false);
+          if (base.objectiveHex) expect(reachable(terrain, walled, spawnHex, base.objectiveHex)).toBe(false);
+        }
+      }
+    });
+
+    // ANTI-SOFT-LOCK. The objective sits inside a sealed ring, so the run is only winnable if
+    // (a) every base HAS a real objective inside its own ring, and (b) breaching a single span of
+    // that ring is enough to reach it. Both checked directly, per base, per seed: with all the
+    // OTHER bases' rings standing (so nothing is accidentally reachable via a neighbour's gap),
+    // knock out one span of this base's ring and walk in from spawn.
+    it('cannot soft-lock: every objective is inside its own ring and reachable after ONE breach', () => {
+      for (let seed = 1; seed <= 20; seed++) {
+        const args = realTerrainArgs(seed * 23 + 9);
+        const { bases, terrain } = generateTerrain(args);
+        const spawnHex = spineSpawnHex(args.spine);
+        const allWalls = bases.flatMap((b) => b.wallEdges);
+        for (const base of bases) {
+          const inside = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+          const target = base.objectiveHex ?? base.center;
+          // (a) the objective is genuinely inside the compound this ring encloses.
+          expect(inside.has(axialKey(target.q, target.r))).toBe(true);
+          // (b) SOME span of this base's own ring, once breached, opens a route from spawn — with
+          // every other base's ring (and every other span of this one) still standing.
+          const opened = base.wallEdges.some((breach) => {
+            const walled = new Set(allWalls.map((e) => edgeKey(e.a, e.b)));
+            walled.delete(edgeKey(breach.a, breach.b));
+            // The objective hex itself is an impassable structure, so walk to a NEIGHBOUR of it —
+            // which is what "reach it and shoot it" means in practice.
+            return neighbors(target.q, target.r).some((n) =>
+              terrain.has(axialKey(n.q, n.r)) && isPassable(terrain.get(axialKey(n.q, n.r)))
+                && reachable(terrain, walled, spawnHex, n));
+          });
+          expect(opened).toBe(true);
+        }
+      }
+    });
+
+    // A degenerate ring (zero-length, or a footprint so clipped the compound vanishes) would be
+    // both a visual bug and a soft-lock risk, so the footprint is pinned to a sane size — a
+    // radius-2 disc is 19 hexes, and clipping at the corridor's edge should never take most of it.
+    it('never produces a degenerate footprint or ring', () => {
+      for (let seed = 1; seed <= 40; seed++) {
+        const { bases } = generateTerrain(realTerrainArgs(seed * 13 + 3));
+        for (const base of bases) {
+          expect(base.footprint.length).toBeGreaterThanOrEqual(7);
+          expect(base.footprint.length).toBeLessThanOrEqual(range(base.center, BASE_FOOTPRINT_RADIUS).length);
+          expect(base.wallEdges.length).toBeGreaterThanOrEqual(6);
+          // Structures never land outside the ring meant to protect them.
+          const inside = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+          for (const d of base.docks) expect(inside.has(axialKey(d.q, d.r))).toBe(true);
+          for (const t of base.turrets) expect(inside.has(axialKey(t.q, t.r))).toBe(true);
+        }
       }
     });
   });
 });
+

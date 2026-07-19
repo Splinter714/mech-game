@@ -115,6 +115,27 @@ export const TERRAIN = {
   // landing marking whether or not anything is currently standing on it.
   dock:      { id: 'dock',      tex: 'hex_dock',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'base', movement: 'full', cover: 'open' },
+  // #288 (placement re-spec: "a full ring around the base... the bases should flow with no natural
+  // hexes directly behind each wall segment"): the base's own PAVED YARD — the compound floor that
+  // fills out a base's hex footprint wherever a dock/turret/objective didn't already claim a hex.
+  //
+  // This exists because the wall is now the OUTLINE OF THE BASE'S FOOTPRINT (worldgen.js
+  // `baseFootprint`/`placeBaseWalls`). Before this, a "base" was just the handful of scattered
+  // structure hexes that happened to land on valid ground, so its outline was ragged and mostly
+  // bordered plain grass — exactly the "natural hexes directly behind the wall" the owner
+  // rejected. Stamping the whole footprint as yard makes the base a solid, compact, deliberate
+  // COMPOUND: every hex inside the ring is fabricated ground, so every span backs onto base
+  // infrastructure by construction, and the ring itself comes out a clean hexagonal fortification
+  // instead of tracing whatever shape the RNG dropped buildings in.
+  //
+  // Gameplay-wise it is bare drivable ground and nothing more — full movement, open cover, no HP.
+  // It must NOT be an obstacle: once the player breaches the wall the interior has to be a real
+  // arena to fight across. `setDressing: true` keeps it out of the mission-objective pool (it has
+  // no HP to be an objective anyway, but the flag states the intent). `category: 'base'` is what
+  // makes it count as base infrastructure for the ring's "nothing natural behind a span"
+  // invariant, and gives it the shared neutral BASE_INFRA concrete tone in every biome.
+  baseYard:  { id: 'baseYard',  tex: 'hex_baseYard',  passable: true,  blocksLOS: false, speedFactor: 1,
+               category: 'base', movement: 'full', cover: 'open', setDressing: true },
   // #269 playtest follow-up ("docks need real open/closed visual + LOS/destructibility states,
   // not just a resupply FX overlay") — the CLOSED state of a dock hex. A dock starts (and
   // reopens after each resupply) as the plain `dock` entry above; the moment its docked
