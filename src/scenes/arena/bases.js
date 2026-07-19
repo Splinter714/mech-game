@@ -26,7 +26,9 @@ import {
   makeGateState, tickGate, gatePassable, GATE_STAGGER_MAX_MS,
   GATE_OPENING, GATE_OPENING_MS, GATE_CLOSING, GATE_CLOSING_MS,
 } from '../../data/gateCycle.js';
-import { makeGateDemand, firstGateOnRoute } from '../../data/gateDemand.js';
+import {
+  makeGateDemand, gateRequestOnRoute, remainingToGate, requestsGate, trackApproach,
+} from '../../data/gateDemand.js';
 import { findHexPath } from '../../data/hexRoute.js';
 import { pixelToHex } from '../../data/hexgrid.js';
 
@@ -83,6 +85,7 @@ const GATE_DEMAND_UNITS_PER_SCAN = 6;
 // Measured cost of this change in the live game: see `expandedPerSec` in the diagnostic — 400 → 1200
 // moved total demand-search node expansion from ~1250/s to ~1600/s, under 0.5% of engine step time.
 export const GATE_DEMAND_MAX_NODES = 1200;
+
 
 // Running counters for the demand scan, read by scripts/audit-gates-309.mjs. Plain integer
 // increments on a path that already runs an A* search, so the cost is unmeasurable — and they are
@@ -969,6 +972,7 @@ export const BasesMixin = {
     this._gateDemand = makeGateDemand();
     this._gateDemandCursor = 0;
     this._nextGateDemandAt = 0;
+    this._gateClockMs = 0;
     this._gateDemandStats = makeGateDemandStats();
     const rng = mulberry32(0x9e3779b9 ^ (this.runSeed ?? 1));
     for (const edge of gateEdges(this.wallEdges)) {
@@ -1050,13 +1054,59 @@ export const BasesMixin = {
       // reach the goal, and a partial route that happens to end beside a gate must not be read as
       // wanting it — that is precisely the sealed-in garrison case, which has to register no demand
       // rather than opening a door that cannot help. See gateDemand.js.
-      if (!res.complete) { st.incomplete++; continue; }
+      if (!res.complete) { st.incomplete++; e._gateIntent = null; continue; }
       st.complete++; byKind.complete++;
-      const key = firstGateOnRoute(from, res.path, this.wallEdges.byHex);
-      if (key == null) { st.nullGate++; byKind.nullGate++; } else { st.noted++; byKind.noted++; }
-      this._gateDemand.note(key, nowMs);
+      // #309 playtest 3: the scan no longer registers demand directly. It establishes INTENT —
+      // which door this unit wants and how far it still has to walk to reach it — and the cheap
+      // per-frame pass below decides when that intent has come close enough to be a request. The
+      // expensive question (which door) is asked on the throttle; the cheap one (how close am I)
+      // is asked every frame, which is what makes the timing tight rather than sampled.
+      const req = gateRequestOnRoute(from, res.path, this.wallEdges.byHex);
+      if (req == null) { st.nullGate++; byKind.nullGate++; e._gateIntent = null; continue; }
+      st.noted++; byKind.noted++;
+      e._gateIntent = { key: req.key, pathPx: req.pathPx, x: e.x, y: e.y };
     }
     this._gateDemandCursor = (this._gateDemandCursor + n) % units.length;
+  },
+
+  // The per-frame half of demand: turn standing INTENT into an actual request, but only for units
+  // that are nearly there. Cheap by construction — a hypot per unit that has an intent, no graph
+  // search — which is what lets it run every frame instead of on the scan's throttle. That matters:
+  // if the "am I close yet" test were sampled at the scan rate, a unit could cross the threshold
+  // just after being asked and not register until a second later, and the door would open late.
+  _noteGateDemandInRange(nowMs) {
+    const st = this._gateDemandStats;
+    if (st) st.inRange = 0;
+    for (const e of this.enemies ?? []) {
+      const intent = e._gateIntent;
+      if (!intent) continue;
+      if (!this._isGateDemandUnit(e)) { e._gateIntent = null; continue; }
+      const edge = this.wallEdges?.edges?.get(intent.key);
+      if (!edge || edge.destroyed) { e._gateIntent = null; continue; }
+      const mouthX = (edge.x0 + edge.x1) / 2, mouthY = (edge.y0 + edge.y1) / 2;
+      const remaining = remainingToGate(e.x, e.y, intent, mouthX, mouthY);
+      // Two different distances, deliberately, because they answer different questions.
+      //
+      // The RATE is tracked on the straight-line distance to the mouth, which changes smoothly with
+      // the unit's actual motion. `remaining` cannot be used for it: that value is partly derived
+      // from the cached route, so every time the throttled scan refreshes a unit's intent it steps
+      // discontinuously, and differentiating a step produces a large spurious closing rate that
+      // pops the door open early. (Measured: it inflated the test corridor's lead from ~1.1s to
+      // 3.7s.) Straight-line distance has no such seams.
+      //
+      // The DISTANCE test still uses `remaining`, which accounts for a winding route and is never
+      // smaller than the straight line — so where the two differ, the door opens earlier rather
+      // than later, which is the direction to be wrong in.
+      const direct = Math.hypot(mouthX - e.x, mouthY - e.y);
+      // Track how fast that distance is SHRINKING, not how big it is. A garrison holding its
+      // standoff position near its own wall sits at a constant distance from the doorway and does
+      // not want it; a unit that has committed to coming out closes on it steadily and does. Those
+      // two are indistinguishable by position and obvious by motion — see gateDemand.js.
+      e._gateApproach = trackApproach(e._gateApproach, direct, nowMs);
+      if (!requestsGate(remaining, e._gateApproach.rate)) continue;
+      if (st) st.inRange++;
+      this._gateDemand.note(intent.key, nowMs);
+    }
   },
 
   // Per-frame tick, called from ArenaScene.update() alongside `_updateDockResupply`. Drives every
@@ -1071,8 +1121,24 @@ export const BasesMixin = {
   // that he has also permanently denied the base one of its two sally ports.
   _updateGates(dt) {
     if (!this._gateStates || !this._gateStates.size) return;
-    const nowMs = this.time?.now ?? 0;
-    this._updateGateDemand(nowMs);
+    // ── One clock for the whole gate subsystem ──────────────────────────────────────────
+    // Everything here — the demand ledger's grace window, the scan throttle, and the state
+    // machine's own timers — advances on the SAME accumulated `dt` the scene gives us, rather than
+    // some of it on `dt` and the rest on `this.time.now`.
+    //
+    // Those two clocks are not the same clock. ArenaScene clamps its delta
+    // (`Math.min(0.05, delta / 1000)`) so a frame hitch cannot produce an enormous physics step,
+    // while `time.now` keeps running in real time. At a healthy frame rate the difference is nil,
+    // but on a struggling one they diverge badly: demand notes would expire on the real clock while
+    // the doors reacted on the slowed one, so a gate could sit refusing to open while a unit stood
+    // in front of it. Using the clamped clock throughout also means gate timings stay in step with
+    // UNIT MOVEMENT, which is integrated from the very same `dt` — and "is the door open by the
+    // time the unit arrives" is a question about those two things relative to each other, not about
+    // wall time.
+    this._gateClockMs = (this._gateClockMs ?? 0) + Math.max(0, dt) * 1000;
+    const nowMs = this._gateClockMs;
+    this._updateGateDemand(nowMs);        // throttled: WHICH door does each unit want
+    this._noteGateDemandInRange(nowMs);   // every frame: is anyone close enough to ask for it yet
     let redraw = false;
     for (const edge of gateEdges(this.wallEdges)) {
       const state = this._gateStates.get(edge.key);

@@ -45,30 +45,89 @@
 // hexRoute returns a best-effort PARTIAL route on failure (a unit walks to the inside of its own
 // wall and holds), and a partial route that happens to end near a gate must not count as wanting
 // it. Only `complete` routes are ever handed to `firstGateOnRoute`.
-import { axialKey } from './hexgrid.js';
+import { axialKey, hexToPixel } from './hexgrid.js';
 import { SPAN_ROLE_GATE } from './wallEdges.js';
 
+// ── PLAYTEST 3: "just in time", not "as soon as somebody decides" ───────────────────────
+// Jackson: "gates appear to be opening WAAAAAAY in advance of a ground unit needing to pass through
+// it. like it opens when the pathing is decided, but it should open at the last moment when it
+// needs to pass through instead."
+//
+// He is describing exactly what the code did. Demand fired the instant a unit's route CROSSED a
+// gate span, with no notion of where along that route the unit actually was — so a tank waking up
+// deep in a compound opened the door immediately and then trudged across the yard while it stood
+// wide open. The route-crossing test answers "WHICH door do I want", which is the right question;
+// it just isn't the whole question. "WHEN do I want it" is the missing half, and the constants
+// below are that half. See the block above GATE_AT_DOOR_PX for how the answer was arrived at — it
+// took two wrong shapes before the right one, and both wrong shapes were found by measurement.
 // How long a gate keeps counting as "wanted" after the last unit that asked for it stopped asking.
 // This is the primary anti-flicker device and it lives HERE, on the demand signal, rather than in
 // the gate's state machine — because the churn it absorbs is a property of the demand, not of the
 // door. A unit's route is re-planned on a budget and a throttle (hexRoute's `ROUTE_REPLAN_MS`,
-// `budgetPerTick`), it flips between routed and straight-line steering as `clearLine` re-tests, and
-// a unit walking THROUGH the mouth stops requesting the gate for the frames it is inside it. Each
-// of those is a momentary gap in a demand that has not really gone away.
+// `budgetPerTick`), its closing rate is a smoothed estimate that can dip for a sample as it rounds
+// a corner or is shoved, and a unit walking THROUGH the mouth stops requesting the gate for the
+// frames it is inside it. Each of those is a momentary gap in a demand that has not really gone
+// away.
 //
-// It must ALSO span the scan's own round-robin cycle, which is the constraint that actually sizes
-// it. The scene asks a few units per scan and rotates through the garrison, so any given unit is
-// re-asked once per (eligible units / units-per-second) seconds. Measured worst case in a real
-// world: 35 eligible ground movers across five woken bases, at 24 units/sec, is a ~1.5s cycle. A
-// gate wanted by only a FEW units — a depleted garrison late in a fight, which is exactly when a
-// sortie matters — is refreshed only once per cycle, so a grace shorter than the cycle would let
-// its request expire and the door would hunt. 3000ms is double that worst case.
+// It must ALSO span the scan's own round-robin cycle: the scene asks a few units per scan and
+// rotates through the garrison, so any given unit's INTENT is refreshed only once per cycle.
+// Measured worst case in a real world: 35 eligible ground movers at 24 units/sec is a ~1.5s cycle.
+// 3000ms is double that.
 //
 // Raising it costs nothing visible: it can only delay a CLOSE, and `GATE_MIN_OPEN_MS` (7000) is
 // already a longer floor than this, so the extra grace is entirely hidden inside a hold the gate
 // was going to observe anyway. Owner: tunable — raise it if gates ever visibly hunt, lower it if
 // they linger after a sortie is plainly done.
 export const GATE_DEMAND_GRACE_MS = 3000;
+
+export const GATE_OPEN_LEAD_MS = 2500;
+
+// A unit this close is treated as AT the door and asks for it unconditionally. This is the
+// fallback that stops the closing-rate rule below from having a hole in it: a unit that reaches a
+// shut gate is physically stopped by it, its closing rate collapses to zero, and a pure rate rule
+// would then refuse to open the very door it is standing against. 70px is about a hex and a half —
+// near enough that "it is at the doorway" is unambiguous, far enough to cover a unit jostling
+// against the span. It should rarely be the rule that fires; if it is firing often, the lead time
+// is too short and doors are opening late.
+export const GATE_AT_DOOR_PX = 70;
+
+// The minimum closing rate (px/sec) that counts as genuinely approaching rather than milling about.
+// Units jitter, get shoved by collisions, and orbit their standoff position, all of which produce
+// small non-zero closing rates in both directions; this is the floor that keeps that noise from
+// reading as an approach.
+export const GATE_MIN_CLOSING_PX_PER_SEC = 12;
+
+// ── Why the trigger is a RATE and not a distance ────────────────────────────────────────
+// The first attempt at "just in time" used distance: ask for the door once you are within N px or
+// N seconds of it. Both variants failed, in opposite directions, and MEASURING them is what showed
+// why (scripts/measure-gate-lead-309.mjs):
+//
+//   Pure ETA, no floor  — a woken garrison does not queue at its gate. Its units settle at combat
+//     standoff positions near the inside of their own wall and HOLD there, typically 110-180px from
+//     the doorway. Their distance barely changes, so a travel-time rule never fires and the gate
+//     stays shut forever. Strictly worse than the behaviour being fixed.
+//   Distance floor of 220px — fires immediately for that same loitering population and then never
+//     stops, because they never leave the radius. Measured open duty cycle: 0.95. A door that is
+//     open 95% of the time is the most extreme possible version of the original complaint.
+//
+// The thing both miss is that a loitering unit is not about to use the door, and a unit driving at
+// the door is — and those two are indistinguishable by position while being obvious by MOTION. So
+// the question asked is "is this unit actually closing on its gate, and will it arrive within the
+// lead window at the rate it is currently closing". A unit holding station has a closing rate of
+// roughly zero and an infinite ETA, so it asks for nothing and the gate stays shut. A unit that
+// commits to leaving starts closing immediately, and the doors are open by the time it arrives.
+//
+// This also cannot deadlock, which is the property that killed the pure-ETA version. The trigger is
+// the unit's own movement, and that movement does not depend on the gate being open: route planning
+// stages THROUGH a shut gate (scenes/arena/enemies.js `_canEnemyStep`), so a unit heading for the
+// player drives at the doorway whether or not it has opened yet.
+//
+// Sizing the lead. The mechanism costs a fixed 1400ms between the first request and a walkable
+// doorway (GATE_REACTION_MS 600 + GATE_OPENING_MS 800). 2500ms leaves ~1100ms of slack for a unit
+// that accelerates as it commits, or crosses slow terrain, or has to round a corner inside its own
+// compound. Erring early is deliberate: opening a beat early costs a little realism, while opening
+// late means a unit walks into a shut door and stalls, which reads as broken pathing. Owner:
+// tunable — lower it if doors still visibly anticipate, raise it if units ever bunch at a gate.
 
 // Which GATE span, if any, does this route ask for? Walks the route edge by edge from the unit's
 // own hex and returns the key of the first standing gate span it crosses, or null if it crosses
@@ -82,22 +141,102 @@ export const GATE_DEMAND_GRACE_MS = 3000;
 //
 // Destroyed gates are skipped, not returned: a blown gate is a permanent hole, so a route through
 // one needs nothing opened. Pure — reads `byHex` and the path, mutates nothing.
-export function firstGateOnRoute(start, path, byHex) {
+export function gateRequestOnRoute(start, path, byHex, pixelOf = hexToPixel) {
   if (!byHex || !path || path.length === 0) return null;
   let from = start;
+  let fromPx = pixelOf(from.q, from.r);
+  let acc = 0;                     // pixel distance along the route so far, hex centre to hex centre
   for (const to of path) {
+    const toPx = pixelOf(to.q, to.r);
+    const step = Math.hypot(toPx.x - fromPx.x, toPx.y - fromPx.y);
     const spans = byHex.get(axialKey(from.q, from.r));
     if (spans) {
       for (const e of spans) {
         if (e.role !== SPAN_ROLE_GATE || e.destroyed) continue;
         const onThisEdge = (e.a.q === to.q && e.a.r === to.r) || (e.b.q === to.q && e.b.r === to.r);
-        if (onThisEdge) return e.key;
+        // The doorway sits on the BOUNDARY between these two hexes, so the distance to it is the
+        // distance to `from` plus half of the step that crosses it.
+        if (onThisEdge) return { key: e.key, pathPx: acc + step / 2 };
       }
     }
+    acc += step;
     from = to;
+    fromPx = toPx;
   }
   return null;
 }
+
+// The key-only form, kept because it is the question most callers (and the audit scripts) actually
+// have, and because it reads better at the call sites that do not care how far away the door is.
+export function firstGateOnRoute(start, path, byHex) {
+  return gateRequestOnRoute(start, path, byHex)?.key ?? null;
+}
+
+// How far a unit still has to travel to reach the gate it asked for, in pixels.
+//
+// The route behind `pathPx` was computed when the unit was last SAMPLED (the demand scan is
+// throttled and round-robins, so that can be a second or so ago), and re-running A* every frame to
+// keep it exact is precisely the cost that throttling exists to avoid. So this reconstructs the
+// remaining distance cheaply, and does it in a way that fails EARLY in both directions:
+//
+//   pathPx - travelled  — travelled is measured as straight-line displacement from where the unit
+//     stood at sample time, which can only UNDER-state progress along a winding route. So this term
+//     over-states what is left, and the door opens sooner rather than later.
+//   euclidean to mouth  — a floor that catches the stale-intent case: a unit that has already gone
+//     THROUGH the gate and walked away would otherwise sit at `pathPx - travelled <= 0` forever and
+//     hold the door open until the next scan cleared its intent. Its straight-line distance grows,
+//     so taking the larger of the two lets it correctly stop asking.
+//
+// Taking the max means whichever estimate is more cautious wins, which is the behaviour we want on
+// both ends of a sortie.
+export function remainingToGate(unitX, unitY, intent, mouthX, mouthY) {
+  if (!intent) return Infinity;
+  const travelled = Math.hypot(unitX - intent.x, unitY - intent.y);
+  const alongPath = intent.pathPx - travelled;
+  const direct = Math.hypot(mouthX - unitX, mouthY - unitY);
+  return Math.max(alongPath, direct);
+}
+
+// Does this unit want its door opened right now? See the block above GATE_AT_DOOR_PX for why this
+// is a question about MOTION rather than position.
+//
+//   `remainingPx`      — how far it still has to travel (`remainingToGate`)
+//   `closingPxPerSec`  — how fast that distance is shrinking; zero or negative means holding
+//                        station or moving away, and neither of those wants a door
+export function requestsGate(remainingPx, closingPxPerSec, {
+  leadMs = GATE_OPEN_LEAD_MS,
+  atDoorPx = GATE_AT_DOOR_PX,
+  minClosing = GATE_MIN_CLOSING_PX_PER_SEC,
+} = {}) {
+  if (!(remainingPx >= 0)) return false;
+  if (remainingPx <= atDoorPx) return true;          // standing at it — open regardless of motion
+  if (!(closingPxPerSec > minClosing)) return false; // loitering, or walking away
+  return (remainingPx / closingPxPerSec) * 1000 <= leadMs;
+}
+
+// Fold a fresh distance sample into a unit's smoothed closing rate. Sampling is throttled and the
+// result exponentially smoothed because a per-frame difference of two positions is mostly noise at
+// these speeds — a unit nudged by a collision can show a huge instantaneous closing rate for one
+// frame, which would pop a door open for no reason.
+//
+// Returns the new approach record; pass the previous one back in each time.
+export function trackApproach(prev, distPx, nowMs, {
+  sampleMs = APPROACH_SAMPLE_MS, alpha = APPROACH_SMOOTHING,
+} = {}) {
+  if (!prev) return { dist: distPx, atMs: nowMs, rate: 0 };
+  const dtMs = nowMs - prev.atMs;
+  if (dtMs < sampleMs) return prev;
+  const instant = ((prev.dist - distPx) / dtMs) * 1000;
+  return { dist: distPx, atMs: nowMs, rate: prev.rate * (1 - alpha) + instant * alpha };
+}
+
+// How often (ms) the closing rate is re-sampled, and how much a new sample moves the smoothed
+// value. 200ms is long enough that real movement dominates positional noise, short enough that a
+// unit committing to a sortie is detected within a fraction of the lead window. 0.5 reaches ~90% of
+// a step change in three samples (~600ms), which is a reasonable trade between reacting promptly to
+// a unit setting off and not reacting to a single shove.
+export const APPROACH_SAMPLE_MS = 200;
+export const APPROACH_SMOOTHING = 0.5;
 
 // The demand signal itself: a tiny per-gate "when was this last asked for" ledger with the grace
 // window folded in. The scene notes demand as it discovers it (one `note` per unit whose route
