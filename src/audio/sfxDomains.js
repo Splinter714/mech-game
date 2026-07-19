@@ -12,8 +12,11 @@
 // (proven generic by #177) doesn't care that these aren't fire/trajectory/impact.
 //
 // #188: sprintOn/sprintOff replaced the old ability-specific dash/shield cues (equipment.js
-// removed) — Sprint is a hardcoded toggle, not a mounted item, so its cues live here in the
-// generic UI domain instead of a bespoke ability-cue system.
+// removed) — the movement ability is a hardcoded built-in, not a mounted item, so its cues live
+// here in the generic UI domain instead of a bespoke ability-cue system. They are still live
+// despite the name: Sprint is Overclock-only since #261 but still fires them on its
+// auto-activation/expiry, and #261's Dash reuses the same pair for its burst start/end (see
+// scenes/arena/firing.js `_handleSprint` / `_handleDash`).
 //
 // #196: the single shared `powerupPickup` entry was replaced with 5 per-powerup entries
 // (one per src/data/powerups.js POWERUPS id) so each buff's "acquired" cue is independently

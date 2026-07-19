@@ -37,8 +37,10 @@ import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory 
 // corridor, not just a higher count — "a longer run should feel like a longer trek, not a more
 // crowded one." So this constant does NOT stand alone: `CORRIDOR_LENGTH_PX` below is derived from
 // it via `CORRIDOR_LENGTH_PER_BASE_PX`, which pins the per-base share of corridor (and therefore
-// the calm travel gap between encounters, #283) at exactly what 3 bases got out of the old
-// 3400px. Changing BASE_COUNT alone can't compress the run any more — the corridor grows with it.
+// the calm travel gap between encounters, #283). That share was originally what 3 bases got out
+// of the old 3400px corridor; #340 raised it to 4800px, sized off `MIN_BASE_SEPARATION_PX`
+// arithmetic (see both constants below). Changing BASE_COUNT alone can't compress the run any
+// more — the corridor grows with it.
 export const BASE_COUNT = 5;
 
 // Docks per base: a small cluster (not a wall of enemies) — mirrors the old SQUAD_BASE/GROWTH
@@ -1097,9 +1099,12 @@ export const CORRIDOR_HALF_WIDTH_PX = 250;
 // pinned at what the shipped 3-base/3400px corridor actually gave each base (3400/3 ≈ 1133px,
 // rounded to 1140), which is the quantity that determines the FEEL Jackson asked to preserve:
 // how far you travel between encounters. Everything downstream is sized off that share rather
-// than off total length — `placeBases` stratifies one base per 1/`baseCount` slice (so a slice is
-// still ~1140px), and `MIN_GAP_PROGRESS_PX`'s 600px floor was itself sized against a ~1130px
-// slice (see its comment), so both stay exactly as valid at 5 bases as they were at 3.
+// than off total length — `placeBases` stratifies one base per 1/`baseCount` slice (which at the
+// time was still ~1140px), and `MIN_GAP_PROGRESS_PX`'s 600px floor was itself sized against a
+// ~1130px slice (see its comment), so both stayed exactly as valid at 5 bases as they were at 3.
+// (HISTORY as of #340, which raised the share to 4800: a slice is now 4800px, not ~1140px. The
+// #340 block immediately below supersedes the numbers in this paragraph — the ARGUMENT above
+// still holds, the quantities no longer do.)
 //
 // #340 (Jackson 2026-07-19: "Neighboring bases - honestly we need to file a separate issue to
 // spread things out way more anyway"; on the fork, he chose LONGER CORRIDOR, keep BASE_COUNT at 5 —
@@ -1118,9 +1123,11 @@ export const CORRIDOR_HALF_WIDTH_PX = 250;
 // open ground beyond that." Wall turrets sit ON the ring, so between two adjacent base CENTRES the
 // budget is: 500 (this base's half-length) + 900 (its turrets' reach) + 900 (the next base's) +
 // 500 (its half-length) = 2800px just to make the two envelopes TOUCH, with zero neutral ground.
-// `MIN_GAP_PROGRESS_PX` is therefore raised to 3400 (below) — 2800 of envelope plus 600px of
-// ground no turret anywhere can reach, deliberately the same 600px that used to be the whole
-// calm-gap budget. This constant is the SLICE that floor has to fit inside: `placeBases`
+// The base-to-base floor is therefore 3400px — 2800 of envelope plus 600px of ground no turret
+// anywhere can reach, deliberately the same 600px that used to be the whole calm-gap budget. It
+// lives in its OWN constant, `MIN_BASE_SEPARATION_PX` (below); `MIN_GAP_PROGRESS_PX` was NOT
+// raised and is still 600 — overloading it broke `placeGapTowers`, see both constants' comments.
+// This constant is the SLICE that floor has to fit inside: `placeBases`
 // stratifies one base per 1/`baseCount` slice and needs real headroom above the floor for its
 // random pick (the shipped ratio was 600/1140 ≈ 0.53), so 3400/4800 ≈ 0.71 keeps a comparable
 // margin. Wall-turret range (900) is deliberately NOT touched — the issue says revisit it only if

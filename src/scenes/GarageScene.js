@@ -22,7 +22,7 @@ import { SFX_UI_GROUPS, resolveSfxUiEntry } from '../audio/sfxDomains.js';
 import { Audio } from '../audio/index.js';
 
 // The mech lab. The build is four weapon skill slots (#188: the old fifth "ability" slot —
-// centerTorso, jumpJet/bubbleShield — is gone; Sprint is a hardcoded L3/Space toggle, never
+// centerTorso, jumpJet/bubbleShield — is gone; #261: L3/Space is a hardcoded Dash, never
 // mounted), shown as a row of square "skill button" tiles
 // (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
 // a tile to edit that slot: the catalog (the SHARED WeaponCardList, formerly also hosted by the

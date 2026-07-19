@@ -300,8 +300,8 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // Skill tiles: live ammo on each weapon (#188: the old per-slot ability cooldown/shield
-    // display is gone along with the ability slot — Sprint's state renders in its own fuel
-    // bar below instead, since it isn't tied to a body location any more).
+    // display is gone along with the ability slot — #261: the always-available Dash renders in
+    // its own cooldown bar below instead, since it isn't tied to a body location any more).
     const mode = this.registry.get('inputMode') === 'pad' ? 'pad' : 'kbm';
     const weapons = mech.weapons();
     for (const loc of TILE_ORDER) {

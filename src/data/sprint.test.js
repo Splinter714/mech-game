@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-  initialSprintState, toggleSprint, holdSprint, updateSprintFuel,
+  initialSprintState, updateSprintFuel,
   SPRINT_FUEL_MAX, SPRINT_DRAIN_RATE, SPRINT_REGEN_RATE,
 } from './sprint.js';
 
-describe('Sprint (#188) — press-to-toggle fuel state machine', () => {
+describe('Sprint (#188, Overclock-only since #261) — fuel state machine', () => {
   it('starts inactive with a full tank', () => {
     const s = initialSprintState();
     expect(s.active).toBe(false);
@@ -50,54 +50,19 @@ describe('Sprint (#188) — press-to-toggle fuel state machine', () => {
     expect(state.fuel).toBe(2);
   });
 
-  describe('toggleSprint', () => {
-    it('turning ON succeeds when there is fuel', () => {
-      expect(toggleSprint(false, 0.01)).toBe(true);
-      expect(toggleSprint(false, SPRINT_FUEL_MAX)).toBe(true);
-    });
-
-    it('turning ON with 0 fuel does nothing — cannot sprint on empty', () => {
-      expect(toggleSprint(false, 0)).toBe(false);
-    });
-
-    it('turning OFF always succeeds, regardless of remaining fuel', () => {
-      expect(toggleSprint(true, 0)).toBe(false);
-      expect(toggleSprint(true, SPRINT_FUEL_MAX)).toBe(false);
-    });
-  });
-
-  describe('holdSprint (#188 keyboard hold-to-sprint split)', () => {
-    it('active while held with fuel available', () => {
-      expect(holdSprint(true, SPRINT_FUEL_MAX)).toBe(true);
-      expect(holdSprint(true, 0.01)).toBe(true);
-    });
-
-    it('inactive the instant it is not held, regardless of fuel', () => {
-      expect(holdSprint(false, SPRINT_FUEL_MAX)).toBe(false);
-      expect(holdSprint(false, 0)).toBe(false);
-    });
-
-    it('cannot hold-sprint on an empty tank', () => {
-      expect(holdSprint(true, 0)).toBe(false);
-    });
-  });
-
-  it('end-to-end: toggle on, drain to empty, forced off, then regen back up', () => {
+  // #261 removed the player's own trigger, so this drives the state machine the way the only
+  // remaining caller does (Overclock force-activating it, arena/firing.js `_handleSprint`):
+  // set active directly, drain to empty, get forced off, regen back up.
+  it('end-to-end: forced on, drain to empty, forced off, then regen back up', () => {
     let state = initialSprintState(4); // cap 4, so drain rate 1/s empties it in 4s
-    state.active = toggleSprint(state.active, state.fuel);
-    expect(state.active).toBe(true);
+    state.active = true;
 
     for (let i = 0; i < 4; i++) state = updateSprintFuel(state, 1, { cap: 4 });
     expect(state.fuel).toBe(0);
     expect(state.active).toBe(false); // forced off at empty
 
-    // Can't re-toggle on immediately at 0 fuel.
-    expect(toggleSprint(state.active, state.fuel)).toBe(false);
-
-    // Regenerate a bit, then re-toggle succeeds.
+    // Regenerates back up once inactive.
     state = updateSprintFuel(state, 1, { cap: 4 });
     expect(state.fuel).toBeGreaterThan(0);
-    state.active = toggleSprint(state.active, state.fuel);
-    expect(state.active).toBe(true);
   });
 });
