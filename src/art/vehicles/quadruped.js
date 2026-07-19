@@ -27,7 +27,7 @@
 // actual facing and movement direction — are untouched; only the leg's own drawn reach/stride
 // axis rotated.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, poly } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC, poly, armorShell } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
 
 // A single tapered leg segment (hip/knee -> knee/foot), drawn as an outline poly with a
@@ -95,7 +95,7 @@ function legSwing(frame, legKey) {
 // pair angled forward, rear pair angled back) reads as a quadruped rather than tank tracks.
 // `frame` (0-3) drives the walk-cycle leg swing (see legSwing above); frame 0 is the neutral/
 // static pose used everywhere a single texture is still expected (art previews, etc).
-function drawHull(sg, accent, frame = 0) {
+function drawHull(sg, accent, frame = 0, armored = false) {
   // Ground shadow — wide, to match the four-point footprint.
   ellipseC(sg, 0, 5, 32, 28, V.deep, 0.35);
 
@@ -120,11 +120,15 @@ function drawHull(sg, accent, frame = 0) {
   for (const y of [8, 10, 12]) rectC(sg, 0, y, 17, 1.2, V.tread, 0.8);
   // Hazard accent stripe.
   rectC(sg, 0, -12, 14, 1.6, accent, 0.7);
+  // #300: while the unit's armor pool is > 0, overlay the SHARED plating primitive
+  // (mechPrims' `armorShell`, identical to the player/enemy mech's) over the hull tub. Legs are
+  // left bare — they read as running gear, and the armor pool is unit-wide, not per-limb.
+  if (armored) armorShell(sg, 0, 0, 34, 29);
 }
 
 // Rotating turret: a flatter, boxier housing than tank's rounded cast turret (distinct
 // silhouette), a rear "deploy hatch" panel, a sensor eye, and a forward gun barrel.
-function drawTurret(sg, accent) {
+function drawTurret(sg, accent, armored = false) {
   const A = accentGlow(accent);
   // Turret housing.
   roundC(sg, 0, 1, 19, 15, V.outline, 4);
@@ -145,6 +149,8 @@ function drawTurret(sg, accent) {
   // Muzzle glow.
   ellipseC(sg, 0, -28, 2.4, 1.9, A.hot, 0.85);
   ellipseC(sg, 0, -28, 3.8, 2.9, A.halo, 0.3);
+  // #300: shared plating overlay on the turret housing (see drawHull).
+  if (armored) armorShell(sg, 0, 1, 16, 12);
 }
 
 // #152: how many walk-cycle hull frames this unit draws (mirrors the player mech's 4-frame
@@ -153,14 +159,17 @@ function drawTurret(sg, accent) {
 // instead of duplicating the number "4".
 export const QUADRUPED_LEG_FRAMES = 4;
 
-export function drawQuadruped(scene, key, def) {
+// `opts.armored` (#300) draws the shared armorShell plating over the hull tub + turret housing
+// (on EVERY walk-cycle frame, so the gait keeps animating while plated).
+export function drawQuadruped(scene, key, def, opts = {}) {
   const accent = def.themeColor ?? V.rim;
+  const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
   // #152: a 4-frame walk cycle, same convention as the player mech's `<key>_hull_0..3` (see
   // mechArt.js buildMechTextures) — the arena swaps between these based on ground speed instead
   // of a single static hull texture, so the Broodwalker's legs visibly cycle as it walks.
   for (let f = 0; f < QUADRUPED_LEG_FRAMES; f++) {
-    gen(scene, `${key}_hull_${f}`, D, D, (g) => drawHull(scaledGraphics(g), accent, f));
+    gen(scene, `${key}_hull_${f}`, D, D, (g) => drawHull(scaledGraphics(g), accent, f, armored));
   }
-  gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent));
+  gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent, armored));
 }

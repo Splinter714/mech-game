@@ -3,7 +3,7 @@
 // barrel (aims at the player independently). Reads unmistakably as a tank: tracks down each
 // side, a boxy sloped glacis at the front, a rounded turret with a big gun.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, poly } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC, poly, armorShell } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
 
 // Hull + two tracks, drawn pointing "up" (−y = forward). The front is a sloped glacis (tough
@@ -15,7 +15,7 @@ import { VEHICLE as V, accentGlow } from './palette.js';
 // y-extent, so the outer silhouette is now ~29px wide by ~44px tall (~1:1.5, clearly
 // longer-than-wide) while keeping the same visual language (tracks down each side, sloped
 // glacis front, rear engine deck) — a proportion tweak, not a redesign.
-function drawHull(sg, accent) {
+function drawHull(sg, accent, armored = false) {
   // Ground shadow.
   ellipseC(sg, 0, 5, 28, 38, V.deep, 0.35);
 
@@ -42,10 +42,15 @@ function drawHull(sg, accent) {
   for (const y of [11, 13, 15]) rectC(sg, 0, y, 10, 1, V.tread, 0.8);
   // A hazard accent stripe on the glacis.
   rectC(sg, 0, -13, 8, 1.4, accent, 0.7);
+  // #300: while the unit's armor pool is > 0, overlay the SHARED plating primitive (mechPrims'
+  // `armorShell` — the very same function the player mech and enemy mechs draw) over the hull
+  // tub, so a reworked armor look propagates everywhere in one edit. Sized to the tub's own
+  // silhouette (not the tracks — treads read as running gear, not plating).
+  if (armored) armorShell(sg, 0, 0.5, 15.5, 33);
 }
 
 // Rotating turret: a rounded cast body, a mantlet, a long forward gun, and a commander hatch.
-function drawTurret(sg, accent) {
+function drawTurret(sg, accent, armored = false) {
   const A = accentGlow(accent);
   // Turret body.
   roundC(sg, 0, 0, 21.6, 18.6, V.halo, 6.8);   // #129: legibility halo (outer ring)
@@ -71,11 +76,16 @@ function drawTurret(sg, accent) {
   rectC(sg, 0, -30, 5, 3.5, V.bodyDk);
   ellipseC(sg, 0, -31, 2.6, 2, A.hot, 0.85);
   ellipseC(sg, 0, -31, 4, 3, A.halo, 0.3);
+  // #300: shared plating overlay on the turret mass (see drawHull) — the gun barrel is left
+  // bare, same reasoning as the tracks.
+  if (armored) armorShell(sg, 0, 0, 17, 14);
 }
 
-export function drawTank(scene, key, def) {
+// `opts.armored` (#300) draws the shared armorShell plating over the hull tub + turret body.
+export function drawTank(scene, key, def, opts = {}) {
   const accent = def.themeColor ?? V.rim;
+  const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
-  gen(scene, `${key}_hull`, D, D, (g) => drawHull(scaledGraphics(g), accent));
-  gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent));
+  gen(scene, `${key}_hull`, D, D, (g) => drawHull(scaledGraphics(g), accent, armored));
+  gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent, armored));
 }

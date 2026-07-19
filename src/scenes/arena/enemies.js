@@ -25,7 +25,7 @@ import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
-import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
+import { buildMechTextures, reskinMech, buildVehicleTextures, vehicleTextureSet, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE } from '../../data/hexgrid.js';
 import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
@@ -123,7 +123,8 @@ const TRACKED_BREAK_CHANCE = 0.7;   // odds a tracked enemy juke-breaks its curr
 
 // #161: a non-mech KIND's textures depend only on its art builder + accent colour (def.art +
 // def.themeColor), both fixed per ENEMY_KINDS entry — never varied per spawned instance (no
-// reskin/theme-swap mechanic exists for vehicles; see the comment on _resetEnemies). So every
+// per-instance texture MUTATION happens for vehicles — #300's armor plating is a second, equally
+// shared texture set that a unit re-points at, not a per-unit re-raster). So every
 // live unit of the same kind+theme is pixel-identical and can safely share ONE texture set,
 // keyed off that visual identity instead of the old per-spawn `enemy${seq}` key. Distinct kinds
 // with the same themeColor still get distinct keys (the art id is part of the key), and a kind
@@ -249,9 +250,13 @@ export const EnemiesMixin = {
     if (!this.textures.exists(`${key}_turret`)) buildVehicleTextures(this, key, def);
     const body = new HpBody(def);
     const angle = Math.PI / 2;
-    const view = this._makeVehicleView(key, x, y, angle, def);
+    // #300: `texKey` is the set this unit is CURRENTLY rendering from — the plated variant while
+    // its armor pool holds, the bare `key` once it breaks (see _reskinVehicle). For an unarmored
+    // kind it's just `key`, so nothing changes for them.
+    const texKey = vehicleTextureSet(key, body);
+    const view = this._makeVehicleView(texKey, x, y, angle, def);
     const e = {
-      key, mech: body, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: 0,
+      key, texKey, mech: body, view, x, y, vx: 0, vy: 0, angle, turret: angle, fireCd: 0,
       spawnX: x, spawnY: y, typeId, kind: def.kind, kindDef: def, flying: !!def.flying,
       behavior: def.behavior, handed: Math.random() < 0.5 ? 1 : -1,
       rotorSpin: 0,           // flyers spin their rotor overlay
@@ -478,6 +483,21 @@ export const EnemiesMixin = {
   // Restore every enemy to full health at its spawn point (in place, no re-deploy). Mech and
   // non-mech units share the same repair/reposition; only the fireCd shape (map vs. number) and
   // the texture reskin (mechs re-draw damage stumps; vehicles have static textures) differ.
+  // #300: point a non-mech unit's sprites at the texture set matching its CURRENT armor state
+  // (plated vs bare). This is the vehicle analogue of `reskinMech` — but where a mech re-rasterises
+  // its per-instance textures, a vehicle's textures are shared kind-wide and immutable, so both
+  // looks were pre-built on spawn (art/vehicles/index.js) and this just re-points the sprites.
+  // Called on an `armorBrokeNow` hit (combat.js) and on repair (_resetEnemies). Cheap and
+  // idempotent: a no-op when the resolved set is already the one in use.
+  _reskinVehicle(e) {
+    const next = vehicleTextureSet(e.key, e.mech);
+    if (next === e.texKey) return;
+    e.texKey = next;
+    const hullKey = e.kindDef.legFrames ? `${next}_hull_${e.hullFrame ?? 0}` : `${next}_hull`;
+    e.view.hull.setTexture(hullKey);
+    e.view.turret.setTexture(`${next}_turret`);
+  },
+
   _resetEnemies() {
     for (const e of this.enemies) {
       e.mech.repairAll();
@@ -491,6 +511,7 @@ export const EnemiesMixin = {
       } else {
         e.fireCd = 0;            // vehicles use a single numeric cooldown
         e.burstShotsFired = 0;   // #243: fresh burst window (trigger discipline, _fireVehicleWeapon)
+        this._reskinVehicle(e);  // #300: repairAll restored its armor — put the plating back on
       }
     }
   },
@@ -935,7 +956,7 @@ export const EnemiesMixin = {
           e.hullFrame = (e.hullFrame + 1) % e.kindDef.legFrames;
         }
       }
-      e.view.hull.setTexture(`${e.key}_hull_${e.hullFrame}`);
+      e.view.hull.setTexture(`${e.texKey}_hull_${e.hullFrame}`);
     }
 
     // Render. Hull faces travel/hull-facing; turret faces its gun; flyers spin their rotor overlay
