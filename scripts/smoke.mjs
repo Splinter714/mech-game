@@ -1342,8 +1342,11 @@ try {
     }
 
     // #113: ALL ground units (mech, tank, turret, infantry) must render BELOW the player
-    // (DEPTH.GROUND_UNITS < DEPTH.UNITS); flying units (helicopter, drone) stay at the player's
-    // own tier. Check one of each real view kind against the live player view's depth.
+    // (DEPTH.GROUND_UNITS < DEPTH.UNITS). #327: flying units (helicopter, drone) render ABOVE the
+    // player, so an aircraft visibly passes OVER the mechs it flies across — but still BELOW
+    // PROJECTILES, so rounds and impact FX draw over them. (This assertion used to require flyers
+    // to SHARE the player's tier, which was #306's rule; #316 moved them below the player and
+    // #327 moved them above it. Checked here on the LIVE views, in the real running game.)
     const s113 = {};
     {
       // Spawn a FRESH enemy mech directly rather than trusting `a.enemies[0]` — by this point in
@@ -1360,8 +1363,12 @@ try {
       s113.playerAboveTank = tank113.view.depth < a.playerView.depth;
       s113.playerAboveTurret = turret113.view.depth < a.playerView.depth;
       s113.playerAboveInfantry = trooper113.view.depth < a.playerView.depth;
-      s113.flyerSharesPlayerDepth = heli113.view.depth === a.playerView.depth
-        && drone113.view.depth === a.playerView.depth;
+      s113.flyerAbovePlayer = heli113.view.depth > a.playerView.depth
+        && drone113.view.depth > a.playerView.depth;
+      // ...but not so high that shots sort under them — compared against the LIVE projectile
+      // Graphics object actually in the scene, not a re-imported constant.
+      s113.flyerBelowProjectiles = heli113.view.depth < a.projFx.depth
+        && drone113.view.depth < a.projFx.depth;
       a._removeEnemy(enemyMech);
       a._removeEnemy(tank113); a._removeEnemy(turret113); a._removeEnemy(trooper113);
       a._removeEnemy(heli113); a._removeEnemy(drone113);
@@ -1611,7 +1618,8 @@ try {
   if (!arena.s113.playerAboveTank) fail('#113 a tank\'s depth is not below the player\'s');
   if (!arena.s113.playerAboveTurret) fail('#113 a turret\'s depth is not below the player\'s');
   if (!arena.s113.playerAboveInfantry) fail('#113 an infantry trooper\'s depth is not below the player\'s');
-  if (!arena.s113.flyerSharesPlayerDepth) fail('#113 a flying unit (helicopter/drone) does not share the player\'s depth tier');
+  if (!arena.s113.flyerAbovePlayer) fail('#327 a flying unit (helicopter/drone) does not render ABOVE the player — aircraft would draw underneath the mechs they fly over');
+  if (!arena.s113.flyerBelowProjectiles) fail('#327 a flying unit renders at or above the projectile layer — shots/impact FX would be hidden behind aircraft');
 
   // #94: turret rework — artillery-style indirect fire, no LOS needed, insane range.
   if (!arena.s94.wallBlocksLos) fail('#94 test setup: the planted wall hex did not actually block LOS');
