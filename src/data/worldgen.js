@@ -90,7 +90,29 @@ export const TURRET_EMPLACEMENTS_PER_BASE_MAX = 2;
 // late pool bleeds in. Kept to just these two soft vehicle kinds (no quadruped, no mechs) so the
 // early tier stays the SOFT opener half of the escalation — mechs/quadruped remain late-only per
 // `BASE_LATE_KIND_POOL` below, preserving the early→late difficulty ramp `baseLateFraction` drives.
-export const BASE_EARLY_KIND_POOL = ['tank', 'helicopter'];
+//
+// #314 (Jackson 2026-07-19: "add a burst of drones to the potential spawns for a dock; maybe like
+// 10 of them? same for infantry, maybe like 10 of them?"): `'drone'` is BACK in the pool — but as
+// a fundamentally different thing than the single standalone drone #269 removed. A drone dock is
+// now a SWARM dock (`DOCK_SWARM_COUNT` = 10 bodies, see `dockCountFor`), so it doesn't re-create
+// the "redundant with the quadruped's own drone-deploy" problem #269 was solving; it's a set-piece
+// burst, not a lone escort. `'infantry'` joins for the same reason (infantry are already live in
+// every run via the alert-tower patrol, scenes/arena/bases.js `TOWER_PATROL_KIND_ID` — this adds
+// nothing that was switched off; #239 only ever disabled the 28-strong `infantryMob`).
+//
+// WEIGHTING (#314, deliberate, and measured — see below): both swarm kinds are ONE entry each
+// against tank ×8 / helicopter ×8, i.e. ~1/18 of early draws apiece. A swarm dock is worth 10x a
+// normal dock's body count, so equal weighting is nothing like equal density — a first cut at
+// ×3/×3 measured out at 64% of bases fielding a swarm and average base population tripling from
+// ~4 bodies to ~12, which is exactly the "too dense once every dock hex filled" verdict #269's
+// playtest handed down (that's why it tuned every dock to a single unit in the first place).
+// Thin weighting plus the one-swarm-per-base cap in `placeBases` keeps a swarm a memorable
+// occasional set-piece, and keeps the tank/helicopter mix #269 asked for as the early texture.
+export const BASE_EARLY_KIND_POOL = [
+  'tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'tank',
+  'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter',
+  'drone', 'infantry',
+];
 // #269 playtest follow-up ("where did all the enemy mechs go?" / "fold mechs into the dock
 // system"): mechs (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery, the full
 // tactical-AI Mech roster) are now dockable too, but ONLY in the LATE pool — they're the
@@ -117,9 +139,30 @@ export const BASE_EARLY_KIND_POOL = ['tank', 'helicopter'];
 // EARLY pool and the per-dock count, not by touching the already-thin late tank slot). Mech roster
 // (raider ×2, skirmisher/sniper/artillery ×1 each = 5/10) still dominates late, keeping the
 // escalation intent intact.
+//
+// #314: `drone`/`infantry` swarm docks are available in the LATE pool too ("a swarm can show up at
+// any point in a run"), at the same deliberately-thin 1 entry each. Every pre-existing late entry
+// is doubled so the ORIGINAL late mix (helicopter 3 : quadruped 1 : tank 1 : raider 2 :
+// skirmisher/sniper/artillery 1 each) is preserved EXACTLY in relative terms while the two swarm
+// kinds land at 1/22 of draws apiece — same density reasoning as the early pool's comment above.
 export const BASE_LATE_KIND_POOL = [
   'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'quadruped', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'drone', 'infantry',
 ];
+
+// #314: is this dock kind a SWARM dock (a `DOCK_SWARM_COUNT` burst rather than a single body)?
+// One predicate, used by both `dockCountFor` (how many) and `placeBases` (the per-base cap).
+export function isSwarmDockKind(kindId) {
+  return kindId === 'drone' || kindId === 'infantry';
+}
+
+// #314: how many bodies a SWARM dock (drone / infantry) hosts — Jackson's "maybe like 10 of them?"
+// taken literally, a flat 10 rather than a random band so the burst is a predictable set-piece.
+// Deliberately far below the existing cluster expansions (`SWARM_SIZE` = 18 drones,
+// `INFANTRY_MOB_SIZE` = 28 troopers, data/enemyKinds.js) — those composition ids are NOT reused
+// here precisely because they'd give 18/28 instead of the requested 10.
+export const DOCK_SWARM_COUNT = 10;
 
 // #269 playtest follow-up (dock composition): "2-3 tanks should dock on ONE dock hex" / "2
 // helicopters should dock on ONE dock hex" — a dock is now a KIND + COUNT, not just a kind
@@ -132,7 +175,14 @@ export const BASE_LATE_KIND_POOL = [
 // (rather than collapsing to a bare `return 1`) as explicit re-tuning seams: bumping tanks or
 // helicopters back to a cluster later is a one-line change on its own branch. `rng` likewise
 // stays in the signature (callers pass it) so re-adding a randomized count is drop-in.
+//
+// #314 is the first actual USE of that seam: `drone` and `infantry` — the two weakest kinds in the
+// game (3 HP each post-#299) — are the deliberate exception to the flat-1 rule, hosting a
+// `DOCK_SWARM_COUNT` burst instead. #269's density verdict is about how much ARMOUR a base fields;
+// ten 3-HP bodies is a cloud the player shreds, not ten more tanks, so it doesn't reopen that.
+// Everything else stays at exactly 1.
 export function dockCountFor(kindId, rng) {
+  if (isSwarmDockKind(kindId)) return DOCK_SWARM_COUNT;  // #314: a ~10-body burst from one dock
   if (kindId === 'tank') return 1;         // #269: "1 tank per dock" — a lone tank, no cluster
   if (kindId === 'helicopter') return 1;   // #269: "1 helicopter per dock" — a single gunship
   return 1;                                // every other dockable kind (quadruped, mechs) is a single unit
@@ -241,7 +291,18 @@ export function placeBases(
       const k = axialKey(h.q, h.r);
       if (!T.has(k) || !isGround(k)) continue;
       const pool = rng() < frac ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
-      const kindId = pool[Math.floor(rng() * pool.length)];
+      let kindId = pool[Math.floor(rng() * pool.length)];
+      // #314 density cap: AT MOST ONE swarm dock per base. A swarm dock fields 10 bodies where
+      // every other dock fields 1, so two or three of them on the same base stops reading as "a
+      // swarm defends this base" and becomes an unreadable wall of bodies — the exact failure
+      // #269's playtest called out when it tuned docks down to a single unit. Pool weighting alone
+      // can't guarantee this (a base draws several docks independently), so once a base has its
+      // swarm, further swarm draws fall back to a NON-swarm kind from the same pool rather than
+      // being dropped — the base keeps its full dock count, it just doesn't stack bursts.
+      if (isSwarmDockKind(kindId) && docks.some((d) => isSwarmDockKind(d.kindId))) {
+        const plain = pool.filter((id) => !isSwarmDockKind(id));
+        kindId = plain[Math.floor(rng() * plain.length)];
+      }
       T.set(k, 'dock');
       docks.push({ q: h.q, r: h.r, kindId, count: dockCountFor(kindId, rng) });
     }

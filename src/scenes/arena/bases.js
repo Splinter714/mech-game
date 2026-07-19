@@ -113,6 +113,31 @@ const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', turretEmplacem
 // stay visually distinct as several units rather than reading as one blob.
 const DOCK_HUDDLE_OFFSET = 16;
 
+// #314 (swarm docks: 10 drones / 10 infantry from ONE dock hex): a single ring of
+// `DOCK_HUDDLE_OFFSET` can only seat a handful of bodies before they stack on top of each other,
+// so a cluster bigger than `DOCK_RING_CAPACITY` spills onto successive concentric rings, each
+// `DOCK_RING_STEP` further out. Same shape `_spawnInfantryMob` (scenes/arena/enemies.js) already
+// uses for its 28-trooper mob, with the same intent — a dense knot the player plows through, not a
+// wide disc. Ten bodies fills ring 0 (6) plus 4 on ring 1, i.e. everything stays within 32px of the
+// dock's centre pixel: still comfortably inside the dock's own hex and inside the base's walls
+// (#288's sealed ring), so a swarm dock can't leak units outside the compound it's defending.
+const DOCK_RING_CAPACITY = 6;
+const DOCK_RING_STEP = 16;
+
+// Where the i-th of `count` units in a dock cluster sits relative to the dock's centre pixel.
+// count === 1 is dead centre (unchanged); anything more is scattered around concentric rings. The
+// constant `Math.PI / 4` phase offset (and the per-ring 0.4 twist) matches the existing dock/turret
+// huddle look — no unit directly north, and successive rings don't line up spoke-on-spoke.
+function dockClusterOffset(i, count) {
+  if (count <= 1) return { dx: 0, dy: 0 };
+  const ring = Math.floor(i / DOCK_RING_CAPACITY);
+  const idxInRing = i % DOCK_RING_CAPACITY;
+  const ringCount = Math.min(DOCK_RING_CAPACITY, count - ring * DOCK_RING_CAPACITY);
+  const a = (idxInRing / ringCount) * Math.PI * 2 + Math.PI / 4 + ring * 0.4;
+  const r = DOCK_HUDDLE_OFFSET + ring * DOCK_RING_STEP;
+  return { dx: Math.cos(a) * r, dy: Math.sin(a) * r };
+}
+
 // #269 Part 2 ("dock open/closed states"): how close a dock's own live unit(s) (matched by
 // `dockKey`) must stay to the dock's own pixel centre for the hex to still read as OCCUPIED. A
 // DORMANT cluster sits within `DOCK_HUDDLE_OFFSET` (16px) of centre, well inside this; the
@@ -176,9 +201,17 @@ export const BasesMixin = {
         this._dockResupplyMeta.set(dockKey, { baseId: base.id, kindId: dock.kindId, x, y });
         this._dockResupplyStates.set(dockKey, makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, dockRng));
         for (let i = 0; i < count; i++) {
-          const a = (i / count) * Math.PI * 2 + Math.PI / 4;
-          const px = count > 1 ? x + Math.cos(a) * DOCK_HUDDLE_OFFSET : x;
-          const py = count > 1 ? y + Math.sin(a) * DOCK_HUDDLE_OFFSET : y;
+          // #314: offsets come from `dockClusterOffset` (concentric rings) so a 10-strong swarm
+          // dock seats every body without stacking, and each point is snapped through
+          // `nearestValidPixel` (data/spawnPlacement.js — the same #115 fix `_spawnInfantryMob`
+          // uses) so an outer-ring unit can never land off-map or on impassable terrain. A no-op
+          // for the count === 1 case (dead centre of an already-validated dock hex).
+          const { dx, dy } = dockClusterOffset(i, count);
+          const snapped = count > 1
+            ? nearestValidPixel(this.terrain, this.worldRadius, x + dx, y + dy)
+            : { x, y };
+          const px = snapped.x;
+          const py = snapped.y;
           // #269 playtest follow-up: a mech-kind dock (dockCountFor always returns 1 for a mech
           // id — the default branch, since mechs aren't tank/helicopter) goes through
           // `_spawnMech`; every other kind keeps using `_spawnKind` exactly as before.

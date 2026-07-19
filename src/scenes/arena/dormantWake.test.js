@@ -17,11 +17,32 @@ import { Mech } from '../../data/Mech.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE, UNAWARE, detectionRangeFor } from '../../data/awareness.js';
-import { hexToPixel, axialKey } from '../../data/hexgrid.js';
+import { hexToPixel, axialKey, pixelToHex } from '../../data/hexgrid.js';
+import { dockCountFor, DOCK_SWARM_COUNT } from '../../data/worldgen.js';
+import { isPassable } from '../../data/terrain.js';
 import { makeLock } from '../../data/targetlock.js';
 
+// A small all-passable terrain map — the real scene always has `terrain`/`worldRadius` set by
+// `_buildWorld`, and `_spawnDormantUnits` reads them (#314: dock-cluster points are snapped through
+// `nearestValidPixel`), so the stub scene needs them too or every cluster point collapses onto one
+// fallback hex. `blocked` marks hexes impassable, for the tests that check the snapping works.
+function groundTerrain(radius, blocked = []) {
+  const t = new Map();
+  for (let q = -radius; q <= radius; q++) {
+    for (let r = -radius; r <= radius; r++) {
+      if (Math.abs(q + r) > radius) continue;
+      t.set(axialKey(q, r), 'grass');
+    }
+  }
+  for (const { q, r } of blocked) t.set(axialKey(q, r), 'deepWater');
+  return t;
+}
+
 function makeScene() {
-  const scene = { time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [] };
+  const scene = {
+    time: { now: 0 }, enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [],
+    worldRadius: 8, terrain: groundTerrain(8),
+  };
   Object.assign(scene, EnemiesMixin, BasesMixin);
   scene._initAlertTowers();   // sets up `_wokenBases` (real production init, not hand-rolled)
   return scene;
@@ -352,6 +373,66 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     }];
     scene._spawnDormantUnits();
     expect(scene.enemies.length).toBe(1);
+  });
+
+  // #314: a drone/infantry dock hosts a DOCK_SWARM_COUNT burst, not a single body. These cover the
+  // scene-side consequences of that: the right number of units actually spawn from ONE dock hex,
+  // they all share the dock's identity (so `_wakeBase` still wakes them as one group), and no unit
+  // is stacked on another or dumped onto impassable terrain.
+  describe('#314 swarm docks (10 drones / 10 infantry from one dock hex)', () => {
+    function swarmScene(kindId, { blocked = [] } = {}) {
+      const scene = makeSceneWithSpawnStubs();
+      scene.worldRadius = 8;
+      scene.terrain = groundTerrain(8, blocked);
+      scene.bases = [{
+        id: 'base0', center: { q: 0, r: 0 },
+        docks: [{ q: 0, r: 0, kindId, count: dockCountFor(kindId, () => 0.5) }], turrets: [],
+      }];
+      scene._spawnDormantUnits();
+      return scene;
+    }
+
+    for (const kindId of ['drone', 'infantry']) {
+      it(`a ${kindId} dock spawns DOCK_SWARM_COUNT dormant units from a single dock hex`, () => {
+        const scene = swarmScene(kindId);
+        expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+        const dockKey = axialKey(0, 0);
+        for (const e of scene.enemies) {
+          expect(e.typeId).toBe(kindId);
+          expect(e.awareness).toBe(DORMANT);
+          expect(e.baseId).toBe('base0');
+          // One shared dockKey, so `_wakeBase`/the dock open-closed state treat them as one group.
+          expect(e.dockKey).toBe(dockKey);
+        }
+      });
+
+      it(`a ${kindId} swarm huddles tightly around the dock without stacking bodies`, () => {
+        const scene = swarmScene(kindId);
+        const { x: cx, y: cy } = hexToPixel(0, 0);
+        const seen = new Set();
+        for (const e of scene.enemies) {
+          // Concentric rings, not one overloaded ring: every body is a distinct point...
+          const at = `${Math.round(e.x)},${Math.round(e.y)}`;
+          expect(seen.has(at)).toBe(false);
+          seen.add(at);
+          // ...and the whole cluster stays a tight knot near the dock centre, so a swarm dock
+          // can't leak units out past the base it's defending.
+          expect(Math.hypot(e.x - cx, e.y - cy)).toBeLessThanOrEqual(48);
+        }
+      });
+    }
+
+    it('every swarm body lands on passable terrain even when the cluster overlaps a blocked hex', () => {
+      // Block the ring of hexes around the dock; the naive ring offsets would put outer-ring
+      // bodies onto them, so this only passes because each point is snapped (#115's fix).
+      const blocked = [{ q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 1 }, { q: -1, r: 0 }, { q: 0, r: -1 }, { q: 1, r: -1 }];
+      const scene = swarmScene('infantry', { blocked });
+      expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+      for (const e of scene.enemies) {
+        const h = pixelToHex(e.x, e.y);
+        expect(isPassable(scene.terrain.get(axialKey(h.q, h.r)))).toBe(true);
+      }
+    });
   });
 
   it('_wakeBase flips a docked mech to AWARE and unconditionally sets holdGround, for every archetype', () => {

@@ -12,7 +12,7 @@ import {
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX,
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
-  placeBases, placeGapTowers, dockCountFor,
+  placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind,
   TURRET_EMPLACEMENTS_PER_BASE_MIN, TURRET_EMPLACEMENTS_PER_BASE_MAX,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
   placeBaseWalls, nearestSpinePoint, WALL_LINE_SETBACK_PX,
@@ -793,14 +793,62 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     });
   });
 
-  it('#269 playtest follow-up: drone and turret never appear in the dock kind pools', () => {
-    expect(BASE_EARLY_KIND_POOL).not.toContain('drone');
+  it('#269 playtest follow-up: turret never appears in the dock kind pools (its own emplacement hex)', () => {
     expect(BASE_EARLY_KIND_POOL).not.toContain('turret');
-    expect(BASE_LATE_KIND_POOL).not.toContain('drone');
     expect(BASE_LATE_KIND_POOL).not.toContain('turret');
   });
 
-  it('#269 playtest follow-up: dockCountFor is a flat 1 per dock for every kind (1 tank / 1 helicopter)', () => {
+  it('#314: drone and infantry swarm docks are available in BOTH pools', () => {
+    for (const pool of [BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL]) {
+      expect(pool).toContain('drone');
+      expect(pool).toContain('infantry');
+    }
+  });
+
+  it('#314: the swarm kinds are thinly weighted — never the bulk of either pool (density, per #269)', () => {
+    for (const pool of [BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL]) {
+      const swarms = pool.filter(isSwarmDockKind).length;
+      // One entry each; a swarm dock is 10x a normal dock's bodies, so it stays a rare set-piece.
+      expect(swarms).toBe(2);
+      expect(swarms / pool.length).toBeLessThan(0.12);
+    }
+  });
+
+  it('#314: doubling the late pool preserved the #269 relative mix exactly', () => {
+    const plain = BASE_LATE_KIND_POOL.filter((k) => !isSwarmDockKind(k));
+    const count = (k) => plain.filter((x) => x === k).length;
+    // #269's ratios (helicopter 3 : quadruped 1 : tank 1 : raider 2 : the three specialists 1 each),
+    // just doubled — helicopter still beats tank, mechs still dominate late.
+    expect(count('helicopter')).toBe(6);
+    expect(count('quadruped')).toBe(2);
+    expect(count('tank')).toBe(2);
+    expect(count('raider')).toBe(4);
+    for (const m of ['skirmisher', 'sniper', 'artillery']) expect(count(m)).toBe(2);
+    expect(count('helicopter')).toBeGreaterThan(count('tank'));
+  });
+
+  it('#314 density cap: a base never fields more than ONE swarm dock', () => {
+    // #269 tuned docks down to a single unit because a base read too dense; a swarm dock is 10
+    // bodies, so stacking two on one base would blow straight through that. Swept over many seeds
+    // so the cap is exercised on the bases that actually draw a second swarm.
+    let sawSwarm = 0;
+    for (let seed = 1; seed <= 80; seed++) {
+      const { bases } = generateTerrain({
+        seed, worldRadius: 14, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
+      });
+      for (const base of bases) {
+        const swarmDocks = base.docks.filter((d) => isSwarmDockKind(d.kindId));
+        expect(swarmDocks.length).toBeLessThanOrEqual(1);
+        // The cap replaces the kind, it never drops the dock — every dock still has a real kind.
+        for (const d of base.docks) expect(d.count).toBe(dockCountFor(d.kindId, () => 0.5));
+        if (swarmDocks.length === 1) sawSwarm++;
+      }
+    }
+    // Sanity: swarm docks do actually generate (the cap isn't silently suppressing all of them).
+    expect(sawSwarm).toBeGreaterThan(0);
+  });
+
+  it('#269/#314: dockCountFor is a flat 1 per dock except the two weak swarm kinds', () => {
     const lowRng = () => 0;      // floors every roll to its minimum
     const highRng = () => 0.999; // ceilings every roll to just under its max
     // "tone it down to 1 tank per dock and 1 helicopter per dock" — every dock hosts one body.
@@ -810,6 +858,14 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     expect(dockCountFor('helicopter', highRng)).toBe(1);
     expect(dockCountFor('quadruped', lowRng)).toBe(1);
     expect(dockCountFor('quadruped', highRng)).toBe(1);
+    // #314: drone/infantry are the deliberate exception — a flat ~10-body burst, rng-independent.
+    expect(DOCK_SWARM_COUNT).toBe(10);
+    for (const rng of [lowRng, highRng]) {
+      expect(dockCountFor('drone', rng)).toBe(DOCK_SWARM_COUNT);
+      expect(dockCountFor('infantry', rng)).toBe(DOCK_SWARM_COUNT);
+    }
+    // Deliberately NOT the existing cluster-expansion sizes (SWARM_SIZE 18 / INFANTRY_MOB_SIZE 28).
+    expect(DOCK_SWARM_COUNT).toBeLessThan(18);
   });
 
   it('#269 playtest follow-up: early pool mixes tank + helicopter (not wall-to-wall tanks), late pool weights helicopter up', () => {
@@ -821,9 +877,12 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     for (const mech of ['raider', 'skirmisher', 'sniper', 'artillery']) {
       expect(BASE_EARLY_KIND_POOL).not.toContain(mech);
     }
-    // Late pool: helicopter weighting raised from 2 to 3 entries.
+    // Late pool: helicopter weighting raised from 2 to 3 entries — expressed as a RATIO against
+    // tank since #314 doubled every pre-existing late entry (see its own test below), which
+    // preserves #269's relative mix but not the raw entry counts.
     const heliLate = BASE_LATE_KIND_POOL.filter((k) => k === 'helicopter').length;
-    expect(heliLate).toBe(3);
+    const quadLate = BASE_LATE_KIND_POOL.filter((k) => k === 'quadruped').length;
+    expect(heliLate / quadLate).toBe(3);
     // ...and helicopter is now more common than tank in the late pool.
     const tankLate = BASE_LATE_KIND_POOL.filter((k) => k === 'tank').length;
     expect(heliLate).toBeGreaterThan(tankLate);
