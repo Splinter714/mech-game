@@ -55,9 +55,20 @@ export const POWERUPS = {
   // 4) INSTANT whole-mech proportional armor repair (no timer). Restores a fraction of EACH
   //    damaged location's MISSING armor, so every hurt location gets some back scaled to what
   //    it's missing. `repairFrac` is that fraction.
+  //    #315: NOT a random drop any more. `weight: 0` takes it out of `pickPowerupType`'s pool
+  //    entirely (see POWERUP_POOL_IDS below) — it used to carry the HIGHEST weight of any
+  //    powerup (1.2 of 5.2, ~23% of every drop), making repair a constant trickle from ordinary
+  //    kills. It is now awarded GUARANTEED, exactly one per base, when the player destroys that
+  //    base's objective hex (scenes/arena/bases.js `_onTerrainCollapsed`). Still INSTANT.
+  //    Colour is the palette's only ACHROMATIC entry (#315): every hue was already spoken for
+  //    (gold/red-orange/green/cyan/violet) and the old light blue 0x8ad0ff sat right next to
+  //    Shield's 0x5ec8e0. A gunmetal silver reads as bare armour plating and can't be mistaken
+  //    for any coloured pickup. Deliberately NOT pure white — arctic snow ground is 0xd9e6ef
+  //    and a white beacon washes out on it; this keeps enough grey to stay legible on snow and
+  //    pale desert sand while still reading bright against every dark biome.
   armorPatch: {
-    id: 'armorPatch', label: 'ARMOR PATCH', color: 0x8ad0ff, weight: 1.2,
-    instant: true, effect: 'armorPatch', repairFrac: 0.5,
+    id: 'armorPatch', label: 'ARMOR PATCH', color: 0x9fa8b2, weight: 0,
+    objectiveOnly: true, instant: true, effect: 'armorPatch', repairFrac: 0.5,
   },
   // 5) #246 (reworked from #187's fixed damage-absorb pool): the mech's own native shield
   //    layer (see ArenaScene's PLAYER_SHIELD baseline config) gets instantly filled to full AND
@@ -181,16 +192,22 @@ export function dropChanceForKill(toughness, isCrush = false) {
 // Ordered id list (stable) — used by the weighted pick and by any UI that wants a fixed order.
 export const POWERUP_IDS = Object.keys(POWERUPS);
 
+// #315: the subset of ids that can come out of a RANDOM drop — everything with a positive
+// weight. An entry with `weight: 0` (today only `armorPatch`, which is awarded exclusively for
+// destroying a base objective) is excluded from the pool outright rather than merely being
+// improbable, so the zero-weight case can never leak through the loop's fallback below.
+export const POWERUP_POOL_IDS = POWERUP_IDS.filter((id) => (POWERUPS[id].weight || 0) > 0);
+
 // Weighted random pick of a powerup id. `rng` is a 0..1 source (defaults to Math.random) so
-// the pick is deterministic under test. Returns a POWERUPS id.
+// the pick is deterministic under test. Returns a POWERUPS id from POWERUP_POOL_IDS.
 export function pickPowerupType(rng = Math.random) {
-  const total = POWERUP_IDS.reduce((a, id) => a + (POWERUPS[id].weight || 0), 0);
+  const total = POWERUP_POOL_IDS.reduce((a, id) => a + (POWERUPS[id].weight || 0), 0);
   let roll = rng() * total;
-  for (const id of POWERUP_IDS) {
+  for (const id of POWERUP_POOL_IDS) {
     roll -= POWERUPS[id].weight || 0;
     if (roll < 0) return id;
   }
-  return POWERUP_IDS[POWERUP_IDS.length - 1];
+  return POWERUP_POOL_IDS[POWERUP_POOL_IDS.length - 1];
 }
 
 // Is this type an instant (no-timer) powerup?

@@ -225,7 +225,10 @@ export const PowerupsMixin = {
   _applyInstantPowerup(typeId) {
     if (typeId === 'armorPatch') {
       const restored = this.mech.repairArmor(POWERUPS.armorPatch.repairFrac);
-      if (restored > 0) this._floatText(this.px, this.py - 20, `+${Math.round(restored)} armor`, '#8ad0ff');
+      // #315: derived from the entry's own colour, not a second hardcoded copy of it — the old
+      // literal '#8ad0ff' silently kept the retired light blue when the palette moved to silver.
+      const col = '#' + POWERUPS.armorPatch.color.toString(16).padStart(6, '0');
+      if (restored > 0) this._floatText(this.px, this.py - 20, `+${Math.round(restored)} armor`, col);
     }
   },
 
