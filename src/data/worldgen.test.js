@@ -1725,6 +1725,140 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       }
     });
 
+  // ── #309: GATE assignment ──────────────────────────────────────────────────────────────
+  // A gate is one of the ring's OWN spans flagged `role: 'gate'`, not a separate structure — so
+  // these tests are about which spans get flagged, and (crucially) that flagging one changes
+  // nothing whatsoever about the ring's shape or its seal on the hex graph. The seal in PIXEL
+  // space, with gates actually OPEN, is proved in scenes/arena/wallEdgeWorld.test.js.
+  describe('#309: two gates per ring, on opposite sides, opening onto passable ground', () => {
+    it('flags exactly two spans of a ring as gates', () => {
+      const T = fillGroundDisc();
+      const base = discBase({ q: 12, r: -4 });
+      const [ring] = placeBaseWalls(T, [base]);
+      expect(ring.edges.filter((e) => e.role === 'gate').length).toBe(2);
+    });
+
+    // The ring is IDENTICAL with gates and without — same spans, same count. A gate does not
+    // remove a span or leave a hole in the definition; it only annotates one. This is the property
+    // that lets #288's whole seal proof carry over untouched.
+    it('adds and removes nothing — the ring is the same set of spans it always was', () => {
+      const T = fillGroundDisc();
+      const base = discBase({ q: 12, r: -4 });
+      const [ring] = placeBaseWalls(T, [base]);
+      const inside = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+      // Still exactly the footprint's boundary: every span has its base side in, far side out.
+      for (const e of ring.edges) {
+        expect(inside.has(axialKey(e.a.q, e.a.r))).toBe(true);
+        expect(inside.has(axialKey(e.b.q, e.b.r))).toBe(false);
+      }
+      // And the graph seal is untouched by the annotation — a gate is closed geometry here.
+      const walled = new Set(ring.edges.map((e) => edgeKey(e.a, e.b)));
+      expect(reachable(T, walled, { q: 0, r: 0 }, base.center)).toBe(false);
+    });
+
+    // Opposite sides, so a sortie can come at the player from two headings he cannot both cover.
+    it('puts the two gates on roughly opposite sides of the compound', () => {
+      const T = fillGroundDisc();
+      for (const center of [{ q: 12, r: -4 }, { q: -9, r: 14 }, { q: 20, r: 0 }, { q: 5, r: 5 }]) {
+        const base = discBase(center);
+        const [ring] = placeBaseWalls(T, [base]);
+        const gates = ring.edges.filter((e) => e.role === 'gate');
+        expect(gates.length).toBe(2);
+        const c = hexToPixel(center.q, center.r);
+        const bearing = (e) => {
+          const o = hexToPixel(e.b.q, e.b.r);
+          return Math.atan2(o.y - c.y, o.x - c.x);
+        };
+        const [b0, b1] = gates.map(bearing);
+        const sep = Math.abs(Math.atan2(Math.sin(b0 - b1), Math.cos(b0 - b1)));
+        // A radius-2 ring only offers so many discrete outward bearings, so "opposite" means
+        // within a hex-direction step of 180°, not exactly 180°.
+        expect(sep).toBeGreaterThan(Math.PI * 0.6);
+      }
+    });
+
+    // One gate faces the APPROACH — back toward the origin, where the run spawns. That is the one
+    // the player will actually meet, and it is what makes the sortie land in front of him.
+    it('faces one gate back toward spawn, the side the player arrives from', () => {
+      const T = fillGroundDisc();
+      for (const center of [{ q: 14, r: -5 }, { q: -11, r: 16 }, { q: 22, r: 2 }]) {
+        const base = discBase(center);
+        const [ring] = placeBaseWalls(T, [base]);
+        const c = hexToPixel(center.q, center.r);
+        const approach = Math.atan2(-c.y, -c.x);
+        const gates = ring.edges.filter((e) => e.role === 'gate');
+        const offsets = gates.map((e) => {
+          const o = hexToPixel(e.b.q, e.b.r);
+          const d = Math.atan2(o.y - c.y, o.x - c.x) - approach;
+          return Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
+        });
+        // The ring's spans sit on discrete bearings, so the best one can be up to ~30° off the
+        // exact approach line — well within "this gate faces the way he is coming from."
+        expect(Math.min(...offsets)).toBeLessThan(Math.PI / 5);
+      }
+    });
+
+    // FORGIVING GEOMETRY (#312 is not built — units steer in straight lines): a gate must never
+    // open onto terrain a unit cannot stand on, or the sortie walks into a cliff.
+    it('never puts a gate on a span whose outer side is impassable', () => {
+      const T = fillGroundDisc();
+      const base = discBase({ q: 12, r: -4 });
+      // Wall off a big arc of the compound's surroundings with impassable rock, including the
+      // whole approach side, and confirm no gate lands on it.
+      const c = hexToPixel(base.center.q, base.center.r);
+      for (const h of range(base.center, BASE_FOOTPRINT_RADIUS + 2)) {
+        const p = hexToPixel(h.q, h.r);
+        if (p.x < c.x) T.set(axialKey(h.q, h.r), B.mountain ?? 'mountain');
+      }
+      const [ring] = placeBaseWalls(T, [base]);
+      for (const e of ring.edges.filter((g) => g.role === 'gate')) {
+        expect(isPassable(T.get(axialKey(e.b.q, e.b.r)))).toBe(true);
+      }
+    });
+
+    // Degradation, not breakage: a base with no passable ground anywhere outside its ring gets NO
+    // gate and stays the purely passive fortress it was before this issue — never a gate opening
+    // into a mesa.
+    it('gives a fully-walled-in base no gate at all rather than a bad one', () => {
+      const T = fillGroundDisc();
+      const base = discBase({ q: 12, r: -4 });
+      for (const h of range(base.center, BASE_FOOTPRINT_RADIUS + 2)) {
+        const k = axialKey(h.q, h.r);
+        if (!base.footprint.some((f) => axialKey(f.q, f.r) === k)) T.set(k, B.mountain ?? 'mountain');
+      }
+      const [ring] = placeBaseWalls(T, [base]);
+      expect(ring.edges.filter((e) => e.role === 'gate').length).toBe(0);
+    });
+
+    // On the REAL generated corridor, across many seeds — the placement rules have to survive
+    // actual base footprints (which get clipped by the corridor) and actual terrain.
+    it('holds on real generated worlds across seeds', () => {
+      const gateCounts = [];
+      for (let seed = 1; seed <= 20; seed++) {
+        const { terrain, bases } = generateTerrain(realTerrainArgs(seed * 17 + 5));
+        for (const base of bases) {
+          const gates = (base.wallEdges ?? []).filter((e) => e.role === 'gate');
+          // At most two, and every one of them opens onto ground a unit can actually stand on.
+          expect(gates.length).toBeLessThanOrEqual(2);
+          gateCounts.push(gates.length);
+          for (const e of gates) {
+            const k = axialKey(e.b.q, e.b.r);
+            expect(terrain.has(k) && isPassable(terrain.get(k))).toBe(true);
+          }
+          // Every gate is a real span of this base's own ring — not an invented edge.
+          const ringKeys = new Set((base.wallEdges ?? []).map((e) => edgeKey(e.a, e.b)));
+          for (const e of gates) expect(ringKeys.has(edgeKey(e.a, e.b))).toBe(true);
+        }
+      }
+      // …and the bound above is not passing vacuously: on real corridor terrain essentially every
+      // base really does get its full pair of sally ports, so the mechanic is present in play
+      // rather than being quietly degraded away by clipped footprints or awkward terrain.
+      expect(gateCounts.length).toBeGreaterThan(50);
+      const full = gateCounts.filter((n) => n === 2).length;
+      expect(full / gateCounts.length).toBeGreaterThan(0.95);
+    });
+  });
+
     // A degenerate ring (zero-length, or a footprint so clipped the compound vanishes) would be
     // both a visual bug and a soft-lock risk, so the footprint is pinned to a sane size — a
     // radius-2 disc is 19 hexes, and clipping at the corridor's edge should never take most of it.

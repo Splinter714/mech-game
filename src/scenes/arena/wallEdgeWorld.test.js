@@ -8,7 +8,7 @@
 // world.test.js does.
 import { describe, it, expect } from 'vitest';
 import { WorldMixin } from './world.js';
-import { makeWallEdgeSet, WALL_EDGE_HP, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
+import { makeWallEdgeSet, WALL_EDGE_HP, WALL_THICKNESS_PX, gateEdges, setGateOpen } from '../../data/wallEdges.js';
 import { edgeMidpoint } from '../../data/hexEdges.js';
 import { hexToPixel, pixelToHex, axialKey, neighbors, HEX_SIZE } from '../../data/hexgrid.js';
 
@@ -272,5 +272,179 @@ describe('#288 a RING seals in pixel space, not just on the hex graph', () => {
         expect(inside(x, y)).toBe(true);
       }
     }
+  });
+
+  // ── #309: THE SAME SEAL, WITH GATES PRESENT AND STANDING WIDE OPEN ────────────────────
+  // This is the single most important property of the gate mechanic. #309's spec is that the gate
+  // is a SALLY PORT: enemies come out, the player never gets in, and breaching a span stays his
+  // only route inside. So every probe #288 ran against a blank ring is re-run here against a ring
+  // whose gates are OPEN — if any of these leak, the whole design is defeated, because an
+  // unbreached base would no longer be something he has to break into.
+  //
+  // The seal survives by CONSTRUCTION rather than by tuning: `_blockedAlongSegment` (the player's
+  // movement query) never passes `passOpenGates`, so `blocksSpan` (data/wallEdges.js) reports an
+  // open gate as solid to it exactly as it reports a shut one. There is no geometry involved and
+  // therefore no angle, speed, or vertex that can defeat it.
+  describe('#309 gates do not break the seal — an OPEN gate is still solid to the player', () => {
+    // The radius-2 ring again, with two spans on opposite sides flagged as gates and cranked open
+    // — the real live state the player meets when he wakes a base.
+    function openGatedScene() {
+      const defs = ringDefs();
+      // Two spans as far apart as the def list allows: the first, and the one halfway round.
+      defs[0].role = 'gate';
+      defs[Math.floor(defs.length / 2)].role = 'gate';
+      const s = makeScene(defs);
+      const gates = gateEdges(s.wallEdges);
+      expect(gates.length).toBe(2);
+      for (const g of gates) expect(setGateOpen(s.wallEdges, g, true)).toBe(true);
+      // Sanity: they really are open, or every assertion below would pass vacuously.
+      for (const g of gates) expect(g.open).toBe(true);
+      return { s, gates };
+    }
+
+    it('no straight dash from the centre escapes, at any bearing or speed, with both gates open', () => {
+      const { s } = openGatedScene();
+      const c = centre({ q: 0, r: 0 });
+      for (let i = 0; i < 720; i++) {
+        const a = (i / 720) * Math.PI * 2;
+        for (const dist of [300, 400, 5000]) {
+          const x = c.x + Math.cos(a) * dist, y = c.y + Math.sin(a) * dist;
+          expect(s._blockedAlongSegment(c.x, c.y, x, y)).toBe(true);
+        }
+      }
+    });
+
+    it('…and no dash from OUTSIDE gets in through an open gate, either', () => {
+      const { s } = openGatedScene();
+      const c = centre({ q: 0, r: 0 });
+      for (let i = 0; i < 720; i++) {
+        const a = (i / 720) * Math.PI * 2;
+        const from = { x: c.x + Math.cos(a) * 300, y: c.y + Math.sin(a) * 300 };
+        expect(s._blockedAlongSegment(from.x, from.y, c.x, c.y)).toBe(true);
+      }
+    });
+
+    // The most pointed version of the same check: aim the player STRAIGHT at the middle of an open
+    // gate, from outside, dead on the normal. This is the exact approach a player would try the
+    // moment he sees a gate stand open, so it is the one that must not work.
+    it('driving dead-on into the mouth of an open gate stops the player', () => {
+      const { s, gates } = openGatedScene();
+      const c = centre({ q: 0, r: 0 });
+      for (const g of gates) {
+        const m = { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 };
+        const ux = (m.x - c.x) / (Math.hypot(m.x - c.x, m.y - c.y) || 1);
+        const uy = (m.y - c.y) / (Math.hypot(m.x - c.x, m.y - c.y) || 1);
+        // From well outside, straight through the gate's midpoint, to the compound's centre.
+        expect(s._blockedAlongSegment(m.x + ux * 400, m.y + uy * 400, c.x, c.y)).toBe(true);
+        // And the point query — the gate's own band is solid ground he cannot stand in.
+        expect(s._blocked(m.x, m.y)).toBe(true);
+      }
+    });
+
+    // The other half of the mechanic, and the one that makes the base able to fight back: the SAME
+    // open gate is walkable for an enemy. The two queries differ at the gate and nowhere else.
+    it('an enemy CAN cross the same open gate the player cannot', () => {
+      const { s, gates } = openGatedScene();
+      for (const g of gates) {
+        const m = { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 };
+        expect(s._blocked(m.x, m.y)).toBe(true);          // player: solid
+        expect(s._blockedForEnemy(m.x, m.y)).toBe(false); // enemy: through you go
+      }
+    });
+
+    it('a CLOSED gate is solid to the enemy too — the sally port only works while it is open', () => {
+      const { s, gates } = openGatedScene();
+      for (const g of gates) {
+        setGateOpen(s.wallEdges, g, false);
+        const m = { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 };
+        expect(s._blockedForEnemy(m.x, m.y)).toBe(true);
+      }
+    });
+
+    it('a plain span is solid to the enemy no matter what — only GATES ever open', () => {
+      const { s } = openGatedScene();
+      const plain = [...s.wallEdges.edges.values()].filter((e) => e.role !== 'gate');
+      // Try to open one anyway: `setGateOpen` must refuse, because the role is the gate.
+      expect(setGateOpen(s.wallEdges, plain[0], true)).toBe(false);
+      const m = { x: (plain[0].x0 + plain[0].x1) / 2, y: (plain[0].y0 + plain[0].y1) / 2 };
+      expect(s._blockedForEnemy(m.x, m.y)).toBe(true);
+    });
+
+    // The SORTIE itself, driven frame by frame through the real enemy collide-and-slide rule (the
+    // mirror of #288's "trapped inside" test above, which asserted the opposite outcome on a
+    // gateless ring). A garrison unit steering flat-out at a player outside must actually GET OUT
+    // through the open gate — no waypoint, no pathfinding (#312 is not built), just the straight-
+    // line steering it already has, which is precisely why the gate geometry has to be forgiving.
+    it('a garrison unit steers out through an open gate and reaches the player outside', () => {
+      const { s, gates } = openGatedScene();
+      const c = centre({ q: 0, r: 0 });
+      const outsideRing = (x, y) => {
+        const h = pixelToHex(x, y);
+        return Math.max(Math.abs(h.q), Math.abs(h.r), Math.abs(h.q + h.r)) > 2;
+      };
+      let escaped = 0;
+      for (const g of gates) {
+        // The player stands out beyond this gate, on its own outward normal — the natural case the
+        // gate placement is chosen for (worldgen `assignGates` puts one gate on the approach).
+        const m = { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 };
+        const d0 = Math.hypot(m.x - c.x, m.y - c.y) || 1;
+        const target = { x: c.x + ((m.x - c.x) / d0) * 420, y: c.y + ((m.y - c.y) / d0) * 420 };
+        let x = c.x, y = c.y;
+        for (let frame = 0; frame < 400; frame++) {
+          const d = Math.hypot(target.x - x, target.y - y) || 1;
+          const vx = ((target.x - x) / d) * 4, vy = ((target.y - y) / d) * 4;
+          let nx = x + vx, ny = y + vy;
+          if (s._blockedForEnemy(nx, ny)) {
+            if (!s._blockedForEnemy(x + vx, y)) ny = y;
+            else if (!s._blockedForEnemy(x, y + vy)) nx = x;
+            else { nx = x; ny = y; }
+          }
+          x = nx; y = ny;
+          if (outsideRing(x, y)) { escaped++; break; }
+        }
+      }
+      expect(escaped).toBe(gates.length);
+    });
+
+    // …and the counterpart that proves the gate is what did it: shut the gates, run the identical
+    // drive, and the unit is trapped exactly as #288's test says it should be.
+    it('…and with the gates shut, that same unit is trapped inside', () => {
+      const { s, gates } = openGatedScene();
+      for (const g of gates) setGateOpen(s.wallEdges, g, false);
+      const c = centre({ q: 0, r: 0 });
+      const g = gates[0];
+      const m = { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 };
+      const d0 = Math.hypot(m.x - c.x, m.y - c.y) || 1;
+      const target = { x: c.x + ((m.x - c.x) / d0) * 420, y: c.y + ((m.y - c.y) / d0) * 420 };
+      let x = c.x, y = c.y;
+      for (let frame = 0; frame < 400; frame++) {
+        const d = Math.hypot(target.x - x, target.y - y) || 1;
+        const vx = ((target.x - x) / d) * 4, vy = ((target.y - y) / d) * 4;
+        let nx = x + vx, ny = y + vy;
+        if (s._blockedForEnemy(nx, ny)) {
+          if (!s._blockedForEnemy(x + vx, y)) ny = y;
+          else if (!s._blockedForEnemy(x, y + vy)) nx = x;
+          else { nx = x; ny = y; }
+        }
+        x = nx; y = ny;
+        const h = pixelToHex(x, y);
+        expect(Math.max(Math.abs(h.q), Math.abs(h.r), Math.abs(h.q + h.r))).toBeLessThanOrEqual(2);
+      }
+    });
+
+    // A gate is a span like any other: same HP pool, shootable down, and once down it is a
+    // permanent ordinary breach — which is the answer to "what if he destroys a CLOSED gate".
+    it('a gate span is destructible like any other, and a destroyed gate is a permanent breach', () => {
+      const { s, gates } = openGatedScene();
+      const g = gates[0];
+      setGateOpen(s.wallEdges, g, false);
+      expect(g.maxHp).toBe(WALL_EDGE_HP);          // no special toughness either way
+      s._damageWallEdge(g, WALL_EDGE_HP);
+      expect(g.destroyed).toBe(true);
+      const m = { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 };
+      expect(s._blocked(m.x, m.y)).toBe(false);    // the PLAYER can now walk through it
+      // …and it can never be re-opened/re-closed as a gate again — it is just a hole now.
+      expect(setGateOpen(s.wallEdges, g, true)).toBe(false);
+    });
   });
 });

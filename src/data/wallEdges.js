@@ -47,6 +47,56 @@ export const WALL_STOMP_FACTOR = 0.25;
 // enough to step over a 14px band from tunnelling.
 export const WALL_THICKNESS_PX = 14;
 
+// ── Span ROLE (#309) ────────────────────────────────────────────────────────────────────
+// A span is otherwise identical whatever it does — same HP pool, same geometry, same index — so
+// what a particular span IS gets expressed as a plain string `role` rather than as a subclass or a
+// parallel structure. `wall` is the default (a plain blank span); `gate` is #309's sally port. This
+// is deliberately open-ended: #310 mounts rail-lance turrets on spans, which is the same shape
+// again (`role: 'turret'`), and any future span variant slots in without touching construction,
+// indexing, damage, or the seal.
+//
+// The ONE behavioural hook a role gets is `open`: a span whose role opens can, while open, be
+// stepped through — but ONLY by a query that explicitly opts in via `passOpenGates`. Every default
+// query still treats it as solid, which is exactly what keeps #288's seal proof valid with gates
+// present (see `blocksMovement` below).
+export const SPAN_ROLE_WALL = 'wall';
+export const SPAN_ROLE_GATE = 'gate';
+
+// Does this span block an actor RIGHT NOW? Destroyed spans block nothing (that's a breach). An open
+// gate blocks everyone EXCEPT a caller that has explicitly asked to pass open gates — the enemy
+// movement integrator, and the sight/fire queries. The player's own movement never passes that
+// flag, so a gate is impassable to him whether it is open or shut: #309's enemies-only sally port.
+//
+// FOR OTHER SYSTEMS CONSUMING SPANS (#306's raycast shadows, #310's wall-mounted turrets): this is
+// the canonical "is this span solid" predicate — prefer it over reading `destroyed`/`open` by hand
+// so a new role can never be solid to one system and not another. A shadow caster wants
+// `blocksSpan(edge, true)`: an OPEN gate is a real opening, so it should cast no shadow, exactly as
+// it blocks neither sight nor fire (world.js `_wallEdgeDistance`/`_isWall`). The span's own state is
+// plain readable data either way — `role`, `open` (fully open, passable), and `openFrac` (0..1, the
+// leaves' animated travel, for anything that wants to fade a shadow as the doors move).
+export function blocksSpan(edge, passOpenGates = false) {
+  if (!edge || edge.destroyed) return false;
+  if (passOpenGates && edge.role === SPAN_ROLE_GATE && edge.open) return false;
+  return true;
+}
+
+// Set a gate span's open/closed state. A no-op on a non-gate or a destroyed span — a blown gate is
+// just a breach and can never re-close, which is the answer to "what if the player destroys a
+// closed gate": the span dies like any other and the hole it leaves is permanent.
+export function setGateOpen(set, edge, open) {
+  if (!edge || edge.role !== SPAN_ROLE_GATE || edge.destroyed) return false;
+  edge.open = !!open;
+  return edge.open;
+}
+
+// Every gate span in the set (standing or not), optionally filtered to one base.
+export function gateEdges(set, baseId = null) {
+  if (!set) return [];
+  return [...set.edges.values()].filter(
+    (e) => e.role === SPAN_ROLE_GATE && (baseId == null || e.baseId === baseId),
+  );
+}
+
 // ── Construction ────────────────────────────────────────────────────────────────────────
 // Build the run's live wall state from a plain list of edge definitions (`{ a, b, baseId }`, where
 // `a`/`b` are adjacent axial coords — worldgen.js `placeBaseWalls` produces these). Each edge gets
@@ -65,6 +115,10 @@ export function makeWallEdgeSet(defs = [], hp = WALL_EDGE_HP) {
     if (edges.has(key)) continue;
     const rec = {
       key, a: { q: a.q, r: a.r }, b: { q: b.q, r: b.r }, baseId: def.baseId ?? null,
+      // #309: role travels on the DEF (worldgen decides which spans are gates), so nothing
+      // downstream has to re-derive it geometrically. A gate starts CLOSED — a base the player
+      // hasn't woken is a shut fortress.
+      role: def.role ?? SPAN_ROLE_WALL, open: false,
       hp, maxHp: hp, destroyed: false, ...pts,
     };
     edges.set(key, rec);
@@ -87,16 +141,19 @@ export function liveWallEdges(set) {
 // Candidate edges near a world point: the edges of the hex under it plus those of its 6 neighbours.
 // A wall within half-thickness of a point is always incident to that point's own hex or an adjacent
 // one, so this is complete, not a heuristic.
-function candidatesNear(set, x, y, out) {
+function candidatesNear(set, x, y, out, passOpenGates = false) {
   const h = pixelToHex(x, y);
-  collectHex(set, h.q, h.r, out);
-  for (const n of neighbors(h.q, h.r)) collectHex(set, n.q, n.r, out);
+  collectHex(set, h.q, h.r, out, passOpenGates);
+  for (const n of neighbors(h.q, h.r)) collectHex(set, n.q, n.r, out, passOpenGates);
 }
 
-function collectHex(set, q, r, out) {
+// #309: the single choke point where "is this span solid to THIS caller" is decided — every query
+// below funnels through here, so an open gate can never leak into one query's notion of solidity
+// while staying solid in another's.
+function collectHex(set, q, r, out, passOpenGates = false) {
   const list = set.byHex.get(axialKey(q, r));
   if (!list) return;
-  for (const e of list) if (!e.destroyed) out.add(e);
+  for (const e of list) if (blocksSpan(e, passOpenGates)) out.add(e);
 }
 
 // Candidate edges a straight segment could possibly cross. If a segment crosses the boundary
@@ -107,11 +164,11 @@ function collectHex(set, q, r, out) {
 // at grazing angles: if it ever skipped BOTH hexes flanking one edge, that edge would otherwise be
 // missed. Cheap — the whole thing is a handful of Map lookups that miss immediately on a map with
 // no walls near the ray.
-function candidatesAlong(set, x0, y0, x1, y1) {
+function candidatesAlong(set, x0, y0, x1, y1, passOpenGates = false) {
   const out = new Set();
   for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
-    collectHex(set, h.q, h.r, out);
-    for (const n of neighbors(h.q, h.r)) collectHex(set, n.q, n.r, out);
+    collectHex(set, h.q, h.r, out, passOpenGates);
+    for (const n of neighbors(h.q, h.r)) collectHex(set, n.q, n.r, out, passOpenGates);
   }
   return out;
 }
@@ -120,10 +177,10 @@ function candidatesAlong(set, x0, y0, x1, y1) {
 // The standing wall a world point is INSIDE (within half the wall's thickness of its span), or
 // null. This is the point-shaped query: it's what lets the existing `_blocked`/`_isWall`/8px-ray
 // machinery treat an edge wall as solid without any of it learning what an edge is.
-export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX) {
+export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, passOpenGates = false) {
   if (!set || set.edges.size === 0) return null;
   const cand = new Set();
-  candidatesNear(set, x, y, cand);
+  candidatesNear(set, x, y, cand, passOpenGates);
   const half = thickness / 2;
   let best = null, bestD = Infinity;
   for (const e of cand) {
@@ -149,9 +206,9 @@ export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX) {
 // parking inside it. Deliberately NOT symmetric: a path that merely STARTS inside the band is not a
 // contact, or a unit that ended up parked in the band would be frozen in place with no move (not
 // even a retreat) available to it — it just has to not cross the centreline to get out.
-export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX) {
+export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, passOpenGates = false) {
   if (!set || set.edges.size === 0) return null;
-  const cand = candidatesAlong(set, x0, y0, x1, y1);
+  const cand = candidatesAlong(set, x0, y0, x1, y1, passOpenGates);
   if (cand.size === 0) return null;
   const len = Math.hypot(x1 - x0, y1 - y0);
   const half = thickness / 2;

@@ -175,6 +175,9 @@ export const WorldMixin = {
     // consult this set alongside the terrain map.
     this.wallEdges = makeWallEdgeSet(wallEdges ?? []);
     this._wallGfx = null;
+    // #309: one sally-port cycle per gate span, all shut. Must run after the set exists and
+    // before the first `_updateGates` tick.
+    this._initGates?.();
 
     this.terrain = terrain;
     this.buildingHp = buildingHp;   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
@@ -281,7 +284,9 @@ export const WorldMixin = {
   // same tolerance the rest of the mixin already shows toward partially-stubbed scene objects.
   _redrawWallEdges() {
     if (!this.wallEdges || typeof this._wallGfx?.clear !== 'function') return;
-    drawWallEdges(this._wallGfx, [...this.wallEdges.edges.values()], WALL_THICKNESS_PX);
+    // #309: `time.now` drives the gate barrier field's pulse — a gate redraws every frame while
+    // any of them is open (bases.js `_updateGates`), so the field visibly breathes.
+    drawWallEdges(this._wallGfx, [...this.wallEdges.edges.values()], WALL_THICKNESS_PX, this.time?.now ?? 0);
   },
 
   // #155: hide every tile GameObject outside the camera's current view (+ margin), show every
@@ -363,7 +368,7 @@ export const WorldMixin = {
   _isWall(x, y, transparent = null, smallUnitInvolved = false) {
     const k = this._hexKeyAt(x, y);
     if (shotBlockedAt(this.terrain.get(k), k, transparent, smallUnitInvolved)) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y);
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, true);   // #309: see through an open gate
   },
 
   // #168: like `_isWall`, but the see-through set is the UNION of a shared per-frame Set (all
@@ -381,7 +386,7 @@ export const WorldMixin = {
       (sharedTransparent != null && sharedTransparent.has(k)) ||
       (originHexes != null && originHexes.includes(k));
     if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y);   // #288 — see `_isWall`
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, true);   // #288/#309 — see `_isWall`
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's
@@ -398,9 +403,22 @@ export const WorldMixin = {
   // is what the ENEMY movement integrators use (their per-frame steps are small relative to the
   // wall's thickness); the player's own movement goes through the swept `_blockedAlongSegment`
   // below, which is exact at any speed.
-  _blocked(x, y) {
+  // #309: `passOpenGates` defaults to FALSE, and that default is load-bearing. Every caller that
+  // does not explicitly opt in — the player's movement, the powerup placement scan, and both of
+  // #288's seal proofs — sees a gate as solid whether it is open or shut. Only the enemy movement
+  // integrator opts in, via `_blockedForEnemy` below. There is no path by which the player's
+  // chassis reaches the `true` branch.
+  _blocked(x, y, passOpenGates = false) {
     if (!isPassable(this._terrainAt(x, y))) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y);
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, passOpenGates);
+  },
+
+  // #309: the ENEMY form of `_blocked` — identical in every respect except that an open gate span
+  // is walkable. Named rather than a bare `_blocked(x, y, true)` at each site so "who is allowed
+  // through a gate" is one greppable decision, and so the seal tests can assert the two forms
+  // differ exactly at an open gate and nowhere else.
+  _blockedForEnemy(x, y) {
+    return this._blocked(x, y, true);
   },
 
   // #159: is any hex along the straight PIXEL path from (x0,y0) to (x1,y1) impassable? A
@@ -608,7 +626,9 @@ export const WorldMixin = {
   // #288: the first standing wall span a swept step crosses, as `{ edge, x, y, dist }` or null —
   // the projectile-facing form of the same crossing test movement uses (projectiles.js).
   _wallEdgeHit(x0, y0, x1, y1) {
-    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
+    // #309: an open gate does not stop a round — the opening is a real opening. Rounds still stop
+    // on the gate's own leaves while it is shut, so the span is shootable-down like any other.
+    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, true);
   },
 
   // #288: the standing wall spans, for tests/debug and for anything that needs the live geometry.
@@ -693,8 +713,13 @@ export const WorldMixin = {
   // deliberately skips samples that land in the same hex as the last one) — coarsely enough that a
   // ray could otherwise slip past a span it genuinely crosses. Returns Infinity on a wall-free map
   // after a single Map-size check, so this costs nothing where there are no walls.
+  // #309: sight and fire pass through an OPEN gate (the `true` below). That is the half of the
+  // gate mechanic that lets a base fight back the moment it rouses, before a single unit has
+  // walked out — and it is also what sells the fiction that stops the open gate reading as a bug:
+  // the opening is genuinely open, you can see through it and shoot through it, and the thing
+  // stopping your chassis is the barrier field across it, not a hole that inexplicably isn't one.
   _wallEdgeDistance(x0, y0, x1, y1) {
-    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
+    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, true);
     return hit ? hit.dist : Infinity;
   },
 
