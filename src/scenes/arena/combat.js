@@ -159,7 +159,8 @@ export const CombatMixin = {
   // Apply `damage` to enemy `e`'s part nearest the world point (x, y). Works for BOTH a mech
   // (parts positioned via mechLayout, re-skinned to show damage) and a non-mech HpBody unit
   // (#68: parts carry their own {x,y}; single-pool, so the nearest part only decides where the
-  // damage number floats — the whole unit shares the hp — and its textures are static, no reskin).
+  // damage number floats — the whole unit shares the hp — and #300's armor "reskin" is a
+  // texture-set swap, not a re-raster).
   // `isCrush` (#106) marks a CRUSH/stomp kill — the player driving over a small ground unit
   // (world.js `_crushGroundEnemyAt`) rather than shooting it. Every weapon-damage caller leaves
   // it false; it only changes the powerup drop roll below (a free kill shouldn't pay out like a
@@ -189,12 +190,15 @@ export const CombatMixin = {
     const res = e.mech.applyDamage(best, damage);
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke
     // or lost its armor plating (#246 armor-shell overlay), not on every single hit. Vehicle
-    // (non-mech) kinds have static textures regardless (no reskin path at all).
+    // (non-mech) kinds instead swap between two pre-built shared texture sets — see below.
     // #240: `artScale` must be carried through the reskin — a mech built on a finer texture
     // grid (the boss) would otherwise be silently re-generated at the global ART_SCALE the
     // first time a part broke, changing its texture size and shrinking it mid-fight.
     // `e.artScale` is undefined for every ordinary mech, so this is a no-op for them.
     if (isMech && (res.destroyed || res.armorBrokeNow)) reskinMech(this, e.key, e.mech, { theme: 'enemy', artScale: e.artScale });
+    // #300: a non-mech unit (tank/quadruped) with an armor pool swaps from its PLATED texture set
+    // to the bare one the moment that pool empties, so the player sees the plating strip off.
+    else if (!isMech && res.armorBrokeNow) this._reskinVehicle(e);
     // #83: no floating damage number on enemy hits either — damage still applies above (res),
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     // #201: same shared part-loss cue as the player path above.

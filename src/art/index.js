@@ -9,7 +9,7 @@ import { buildMountIconTextures } from './mounts/icons.js';
 
 export { buildMechTextures, reskinMech, mechLayout, DESIGN, ART_SCALE, ARM_LOCATIONS, SIDE_TORSO_LOCATIONS, PIVOT_LOCATIONS, PART_PIVOT, armSpriteTransform, partSpriteTransform } from './mechArt.js';
 // Non-mech unit textures (turret / tank / drone / helicopter), built per-unit on spawn.
-export { buildVehicleTextures } from './vehicles/index.js';
+export { buildVehicleTextures, vehicleTextureSet, ARMORED_SUFFIX } from './vehicles/index.js';
 export { HEX_TEX_W, HEX_TEX_H } from './hexArt.js';
 // Shared projectile/beam art — used live by the arena and as still icons by the garage.
 export { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, projectileKind, itemFxKey } from './projectileArt.js';
