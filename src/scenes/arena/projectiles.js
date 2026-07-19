@@ -138,6 +138,27 @@ export const ProjectilesMixin = {
           this._impactFx(wallHit.x, wallHit.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }
+        // #317 THE TARGETED-HEX RULE: a round whose TARGET is a destructible hex impacts that hex
+        // the moment it enters it, regardless of whether that terrain would normally stop a ray.
+        // This is checked BEFORE the cover test and is deliberately independent of it — soft cover
+        // correctly does NOT block a mech's ray (`softCoverBlocksLOS`), so `_isWallForRound` below
+        // returns false for a forest hex and the round used to sail straight over the very tile the
+        // reticle was locked on. The own-hex `transparent` exemption could never rescue this: it
+        // makes a hex MORE see-through, which for soft cover was already a no-op.
+        //
+        // Scoped as tightly as possible so the soft tier keeps its whole point: it fires only for
+        // the ONE hex this round was aimed at (`targetHexKey`, stamped at spawn from the live
+        // converge/lock pick), and only while that hex is still standing. A round merely flying
+        // PAST other foliage on its way to a distant enemy is untouched and still sails over it.
+        if (p.targetHexKey
+            && this._hexKeyAt(p.x, p.y) === p.targetHexKey
+            && this._destructibleStandingAt?.(p.targetHexKey)) {
+          p.dead = true;
+          p.stopTrajectorySfx?.();
+          this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
+          this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+          continue;
+        }
         const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
         if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes, p.smallUnitInvolved)) {
           p.dead = true;
@@ -158,6 +179,16 @@ export const ProjectilesMixin = {
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
           if (enemyShot) this._damagePlayerAt(dmg);
           else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
+        }
+        // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
+        // design — it never runs the in-flight wall test at all — so it used to land on a targeted
+        // forest/outpost hex and do nothing but play an impact puff. If this round came down inside
+        // the hex it was aimed at, it damages it. Same tight scoping as the direct-fire rule above:
+        // only its own target hex, only while standing.
+        if (p.targetHexKey
+            && this._hexKeyAt(p.x, p.y) === p.targetHexKey
+            && this._destructibleStandingAt?.(p.targetHexKey)) {
+          this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
         }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
         if (p.ground) this.firePatches.push({ x: p.x, y: p.y, r: p.ground.radius, dps: p.ground.dps, until: this.time.now + p.ground.duration * 1000, nextTick: this.time.now + 500 });

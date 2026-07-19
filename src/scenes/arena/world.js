@@ -651,13 +651,44 @@ export const WorldMixin = {
   // terrain the map has overall. Feeds the direct-fire convergence fallback (#250: destructible
   // terrain is a convergence target, but only below any live enemy — see shared.js
   // `pickConvergeTarget`, called from targeting.js `_updateLock`).
-  _destructibleHexesNear(x, y, maxDist) {
+  // #317 renamed from `_destructibleHexesNear`: each candidate now carries its IDENTITY, not just a
+  // bare {x,y} point — a hex candidate is `{ x, y, hexKey }`. Firing needs that key to answer "is
+  // this hex the one the player is actually aimed at", which is a different question from "does
+  // this terrain block a ray" and has to be able to stop a shot the terrain rule would let sail
+  // past (see shared.js `targetHexKeyOf`). The generic name anticipates non-hex targets.
+  // Nothing downstream may assume a hex key: `pickConvergeTarget`/`nearestToAimLine` score on x/y
+  // alone, and firing.js discriminates on which key is present.
+  _destructibleTargetsNear(x, y, maxDist) {
     const pts = [];
     for (const h of hexesWithinPixelRadius(x, y, maxDist)) {
       const k = axialKey(h.q, h.r);
-      if (this.buildingHp.has(k) || this.coverHp.has(k)) pts.push(hexToPixel(h.q, h.r));
+      if (this.buildingHp.has(k) || this.coverHp.has(k)) {
+        const p = hexToPixel(h.q, h.r);
+        pts.push({ x: p.x, y: p.y, hexKey: k });
+      }
     }
     return pts;
+  },
+
+  // #317: is the destructible terrain hex `key` still STANDING? Membership in either HP map is
+  // exactly that fact — both delete the key the instant `_damageBuildingAt` collapses it to rubble.
+  // Used by the targeted-hex impact rule (projectiles.js/firing.js) so a shot only stops in its
+  // target hex while there is actually something there left to hit.
+  _destructibleStandingAt(key) {
+    return this.buildingHp.has(key) || this.coverHp.has(key);
+  },
+
+  // #317: distance from (x0,y0) along `angle` to the first sample inside hex `key`, or Infinity if
+  // the ray never enters it within `maxT`. The hitscan counterpart of the projectile's per-step
+  // "am I in my target hex yet" test — a beam does not travel in steps, so its stopping point has
+  // to be solved up front, exactly as `_wallDistance` solves the cover blocker's.
+  _targetHexDistance(x0, y0, angle, maxT, key) {
+    if (!key) return Infinity;
+    const cx = Math.cos(angle), cy = Math.sin(angle);
+    for (let t = 8; t < maxT; t += 8) {
+      if (this._hexKeyAt(x0 + cx * t, y0 + cy * t) === key) return t;
+    }
+    return Infinity;
   },
 
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush

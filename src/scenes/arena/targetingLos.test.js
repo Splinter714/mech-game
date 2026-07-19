@@ -21,7 +21,7 @@ function makeScene(visibleHexes) {
     lock: { target: null }, _reticlePos: null,
     visibleHexes,
     _hexKeyAt(x, y) { const h = pixelToHex(x, y); return axialKey(h.q, h.r); },
-    _destructibleHexesNear() { return []; },
+    _destructibleTargetsNear() { return []; },
   });
   return s;
 }
