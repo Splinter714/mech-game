@@ -24,8 +24,16 @@ import {
   isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH,
 } from './shared.js';
 
-// #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). A
-// building has 60 HP, so ~1.5–2s of leaning at speed flattens it. Owner: tunable.
+// #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). Sized
+// against ordinary walk-through cover (forest/wreck 40, scrub/drift/fumarole 30, all unchanged by
+// #313), so ~1s of leaning at speed flattens a bush or a wreck. Base STRUCTURES are a different
+// story after #313's retune — a sealed dock or objective at 200 takes several seconds of leaning,
+// and a wall span takes the extra WALL_STOMP_FACTOR quarter-rate penalty on top. Note the nominal
+// rate here is NOT what a structure actually experiences: `speedFrac` below collapses once the
+// mech stalls against the thing it's pushing on, so real stomp times run far longer than
+// hp/STOMP_DPS suggests (#313 measured 51s to ram a 200hp wall span vs 1.8s to shoot it). That
+// gap is the intent — stomping stays for incidental scenery, shooting is how you take down a
+// fortification. Owner: tunable.
 const STOMP_DPS = 45;
 
 // #155: tile-visibility culling. Phaser does no camera-frustum culling of its own, and the

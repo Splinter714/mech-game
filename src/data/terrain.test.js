@@ -83,7 +83,7 @@ describe('terrain table (#41 full model)', () => {
     expect(TERRAIN.alertTower.passable).toBe(false);
     expect(TERRAIN.alertTower.blocksLOS).toBe(true);
     expect(isDestructible('alertTower')).toBe(true);
-    expect(TERRAIN.alertTower.hp).toBe(25);
+    expect(TERRAIN.alertTower.hp).toBe(75);   // #313 retune, was 25
     expect(isMissionObjective('alertTower')).toBe(false);
     expect(isBaseCategory('alertTower')).toBe(true);
   });
@@ -586,8 +586,8 @@ describe('#287: turretEmplacement is a genuine destructible structure', () => {
 
   it('carries real HP, between the alert tower and the base objective', () => {
     expect(isDestructible('turretEmplacement')).toBe(true);
-    expect(TERRAIN.turretEmplacement.hp).toBe(30);
-    expect(buildingHp('turretEmplacement')).toBe(30);
+    expect(TERRAIN.turretEmplacement.hp).toBe(150);   // #313 retune, was 30
+    expect(buildingHp('turretEmplacement')).toBe(150);
     expect(buildingHp('turretEmplacement')).toBeGreaterThan(buildingHp('alertTower'));
     expect(buildingHp('turretEmplacement')).toBeLessThan(buildingHp('objective'));
   });
@@ -612,15 +612,20 @@ describe('#287: turretEmplacement is a genuine destructible structure', () => {
     expect(isBaseCategory('turretRubble')).toBe(false);
   });
 
-  it('the full damage->collapse transition: 30 hp absorbs hits, then flattens to turretRubble', () => {
-    let hp = buildingHp('turretEmplacement');
-    let step = damageBuilding(hp, 12);
-    expect(step.destroyed).toBe(false);
-    expect(step.hp).toBe(18);
-    step = damageBuilding(step.hp, 12);
-    expect(step.destroyed).toBe(false);
-    expect(step.hp).toBe(6);
-    step = damageBuilding(step.hp, 12);
+  it('the full damage->collapse transition: it absorbs hits, then flattens to turretRubble', () => {
+    // Written against `buildingHp` rather than hard-coded steps so a balance retune (#313 took
+    // this hex 30 -> 150) changes ONE number in terrain.js, not an arithmetic chain in here.
+    const hp = buildingHp('turretEmplacement');
+    const bite = 12;
+    let step = { hp, destroyed: false };
+    const bitesToKill = Math.ceil(hp / bite);
+    for (let i = 1; i < bitesToKill; i++) {
+      step = damageBuilding(step.hp, bite);
+      expect(step.destroyed).toBe(false);
+      expect(step.hp).toBe(hp - i * bite);
+    }
+    // ...and the next bite is the killing blow, exactly.
+    step = damageBuilding(step.hp, bite);
     expect(step.destroyed).toBe(true);
     expect(step.hp).toBe(0);
     // What the scene swaps the hex to on that killing blow.
@@ -643,5 +648,51 @@ describe('#287: turretEmplacement is a genuine destructible structure', () => {
     // ...but an emplacement between shooter and target still blocks, for either size tier.
     expect(shotBlockedAt('turretEmplacement', key, new Set(['9,9']))).toBe(true);
     expect(shotBlockedAt('turretEmplacement', key, new Set(['9,9']), true)).toBe(true);
+  });
+});
+
+describe('#313 destructible-structure HP retune (owner-confirmed values)', () => {
+  // Before #313 every destructible structure was more fragile than the CHEAPEST combat unit:
+  // against #299's toughness scale (tank 80, quadruped 150, light mech 200, sniper 350, player
+  // 600) an objective sat at 40 — half a tank — so a four-weapon mech in the ~22-30 DPS band
+  // deleted any fortification in well under a second. These are the exact values the owner
+  // settled on after reviewing the real numbers; the objective in particular was offered 400 and
+  // he revised it DOWN to 200. Pinned here so a future balance pass has to change them
+  // deliberately rather than drift.
+  it('pins the base-infrastructure HP values', () => {
+    expect(buildingHp('alertTower')).toBe(75);
+    expect(buildingHp('turretEmplacement')).toBe(150);
+    expect(buildingHp('dockClosed')).toBe(200);
+    expect(buildingHp('objective')).toBe(200);
+  });
+
+  it('leaves ordinary cover terrain untouched — the retune was structures only', () => {
+    // The owner expressed no preference on cover, so forest/scrub/drift/wreck/fumarole keep the
+    // values they were playtested at. Walk-through cover you clear incidentally SHOULD stay cheap.
+    expect(buildingHp('forest')).toBe(40);
+    expect(buildingHp('wreck')).toBe(40);
+    expect(buildingHp('scrub')).toBe(30);
+    expect(buildingHp('drift')).toBe(30);
+    expect(buildingHp('fumarole')).toBe(30);
+  });
+
+  it('keeps the alert tower the most snipeable structure, and cover cheaper still', () => {
+    // The ordering is the design intent, independent of the exact numbers: racing the tower's
+    // wake countdown has to stay viable, so it must remain the softest STRUCTURE — while still
+    // sitting above every piece of incidental cover.
+    const tower = buildingHp('alertTower');
+    for (const id of ['turretEmplacement', 'dockClosed', 'objective']) {
+      expect(buildingHp(id)).toBeGreaterThan(tower);
+    }
+    for (const id of ['forest', 'wreck', 'scrub', 'drift', 'fumarole']) {
+      expect(buildingHp(id)).toBeLessThan(tower);
+    }
+  });
+
+  it('puts every structure at or above the cheapest combat unit (the whole point of #313)', () => {
+    const CHEAPEST_UNIT_TOUGHNESS = 80;   // #299's tank
+    for (const id of ['turretEmplacement', 'dockClosed', 'objective']) {
+      expect(buildingHp(id)).toBeGreaterThanOrEqual(CHEAPEST_UNIT_TOUGHNESS);
+    }
   });
 });
