@@ -532,6 +532,35 @@ export function groundEnemyRadius(e) {
   return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
 }
 
+// #320: how big a unit is TO A WALL. Deliberately a separate number from `groundEnemyRadius`
+// above, in the same spirit as `crushTriggerRadius` below — one physical body, three questions
+// ("can I be crushed", "do I block that unit", "do I fit through there"), each entitled to its own
+// tuned answer rather than one radius forced to serve all of them.
+//
+// Why it is capped rather than just being the unit radius. A wall span is one hex edge, 48px, and
+// a breach in it is the ONLY way into a base (#288/#313). Colliding at the full 28px mech radius
+// makes that hole a needle. Measured in the real game, driving the real integrator at a real
+// breach across 7 approach angles x 5 lateral offsets (scripts/audit-wall-hitbox-320.mjs):
+//
+//     wall radius   0    8    12   16   18   20   22   24   28
+//     got through  35/35 35   33   31   31   31   31   29   19      (of 35 approaches)
+//
+// The cliff at 28 is the corner chamfer saturating: once a span is shorter than 2R it collapses to
+// its midpoint and the barrier becomes a chain of 35px discs, which is wider than the gap between
+// them. 20 sits on the flat of that curve — it costs only a few extreme grazing approaches versus
+// the old point model, while stopping a mech's centre 27px off the centreline, which is past the
+// drawn torso (half-width ~23px at ARENA_MECH_SCALE) so nothing chunky visibly overlaps the plate.
+// Every vehicle kind is already smaller than this and so is unaffected by the cap — a tank's ~14px
+// footprint clears the plate with room to spare, which is the "tanks poke through" report itself.
+// Owner: tunable. Raising it tightens breaches (see the table); lowering it lets big units lean
+// further into a wall before stopping.
+export const WALL_COLLIDE_RADIUS_MAX = 20;
+export function wallCollideRadius(e) {
+  return Math.min(groundEnemyRadius(e), WALL_COLLIDE_RADIUS_MAX);
+}
+// The player is drawn at the same scale as an enemy mech, so he takes the same treatment.
+export const PLAYER_WALL_COLLIDE_RADIUS = Math.min(ENEMY_COLLIDE_RADIUS_MECH, WALL_COLLIDE_RADIUS_MAX);
+
 // #112 (playtest 2026-07-10: "the stomp hitbox... needs to be bigger"): the crush-trigger check
 // (world.js `_crushTargetAt`, called from locomotion.js `_drive`) used to test the player's
 // point position against `groundEnemyRadius(e)` alone — i.e. the PLAYER contributed zero radius

@@ -37,7 +37,7 @@ import { isWaterTerrain, isPassable } from '../../data/terrain.js';
 import { makeRouter } from '../../data/hexRoute.js';
 import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, wallCollideRadius } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -56,7 +56,11 @@ import { shieldPresent } from '../../data/shield.js';
 // #309 playtest: an open gate is passable to EVERYONE now, so there is no longer an enemy-specific
 // form of the scene's `_blocked` to route through — this is the plain query, kept as a named helper
 // only because the many hand-rolled scene stubs across the test suite may omit `_blocked` entirely.
-const blockedForEnemy = (scene, x, y) => scene._blocked(x, y);
+// #320: `radius` is the moving unit's own body radius, so a tank stops with its hull against the
+// plate instead of parked halfway through it. Passed per-unit (`wallCollideRadius`) rather than as
+// one flat constant, since a turret's footprint and an infantry trooper's differ by 4x. Defaults to
+// 0 so the many hand-rolled scene stubs, and any point-shaped caller, behave exactly as before.
+const blockedForEnemy = (scene, x, y, radius = 0) => scene._blocked(x, y, radius);
 
 const SQRT3 = Math.sqrt(3);   // pointy-top hex horizontal spacing factor (matches hexgrid.js)
 
@@ -1009,7 +1013,7 @@ export const EnemiesMixin = {
       // while it is open, and their existing straight-line steering at the player carries them
       // through it. (The player's movement integrator, locomotion.js, calls `_blockedAlongSegment`,
       // which has no such opt-in — see world.js.)
-      const blocked = (x, y) => blockedForEnemy(this, x, y) || this._blockedByOtherGroundUnit(e, x, y);
+      const blocked = (x, y) => blockedForEnemy(this, x, y, wallCollideRadius(e)) || this._blockedByOtherGroundUnit(e, x, y);
       if (blocked(nx, ny)) {
         if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
         else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }
@@ -1072,7 +1076,6 @@ export const EnemiesMixin = {
       // no longer influences the fired shot.
       const aim = e.turret;
       if (cd <= 0 && canFire) {
-        e.mech.consumeAmmo(w.location, w.index, 1);
         const aimErr = (Math.random() - 0.5) * 0.12;
         // #109: a real per-location muzzle (same math as the player's `_muzzle`), keyed off
         // which body location actually mounts this weapon — not a fixed near-centre offset.
@@ -1081,6 +1084,18 @@ export const EnemiesMixin = {
         // #233: spawn from the weapon art's actual muzzle tip, not the part's bare front edge.
         const tipOffset = mechMuzzleTipOffset(e.mech, w.location, part);
         const { x: mx2, y: my2 } = partMuzzle(part, e.x, e.y, e.turret, disp, tipOffset);
+        // #320: same guard the player gets (firing.js / world.js `_muzzleWallBlocked`) — an enemy
+        // mech pressed against a span must not fire from a muzzle that has poked through to the
+        // far side. Symmetry matters here: the garrison hugging its own wall is exactly the unit
+        // most likely to hit this, and a defender shooting through its own parapet would read as
+        // far more broken than the player doing it.
+        //
+        // `continue`, and BEFORE `consumeAmmo` (which moved down a line for exactly this): the
+        // shot never happens at all, so it must not cost a round, and neither the cooldown nor the
+        // rest of this unit's frame may be skipped. The unit simply keeps trying — which is right,
+        // since a step in any direction clears the muzzle.
+        if (this._muzzleWallBlocked?.(e.x, e.y, mx2, my2)) continue;
+        e.mech.consumeAmmo(w.location, w.index, 1);
         const fireAngle = aim + aimErr;
         // #117: route through the SAME delivery-type decision the player's fireWeapon makes
         // (planEmissions), instead of unconditionally spawning a travelling projectile — a
@@ -1145,6 +1160,11 @@ export const EnemiesMixin = {
     // snapped off its own parapet onto neighbouring ground on frame 1.
     // #309: the enemy form here too — a unit part-way through an open gate is standing legally,
     // not stuck, and must not be picked up by the stuck-unit rescue and teleported off its sortie.
+    // #320: deliberately radius-0 (point) here, unlike the movement integrators. This is the
+    // stuck-unit RESCUE, and "stuck" must mean the unit's CENTRE is genuinely inside geometry —
+    // a unit whose body merely overlaps an inflated wall is standing legitimately close to it and
+    // must not be teleported away. Inflating this would yank every wall-hugging garrison unit off
+    // its post the frame the wall spawned.
     if (!e.flying && !e.emplaced && blockedForEnemy(this, e.x, e.y)) {
       const p = nearestValidPixel(this.terrain, this.worldRadius, e.x, e.y);
       e.x = p.x; e.y = p.y; e.vx = 0; e.vy = 0;
@@ -1230,7 +1250,7 @@ export const EnemiesMixin = {
       // while it is open, and their existing straight-line steering at the player carries them
       // through it. (The player's movement integrator, locomotion.js, calls `_blockedAlongSegment`,
       // which has no such opt-in — see world.js.)
-      const blocked = (x, y) => blockedForEnemy(this, x, y) || this._blockedByOtherGroundUnit(e, x, y);
+      const blocked = (x, y) => blockedForEnemy(this, x, y, wallCollideRadius(e)) || this._blockedByOtherGroundUnit(e, x, y);
       if (blocked(nx, ny)) {
         if (!blocked(e.x + e.vx * dt, e.y)) { ny = e.y; e.vy = 0; }
         else if (!blocked(e.x, e.y + e.vy * dt)) { nx = e.x; e.vx = 0; }

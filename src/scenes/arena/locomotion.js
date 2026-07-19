@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, approach, backwardSpeedScale, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, backwardSpeedScale, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
@@ -216,7 +216,12 @@ export const LocomotionMixin = {
     const stepDt = dt / steps;
     for (let s = 0; s < steps; s++) {
       const ox = this.px, oy = this.py;
-      const groundBlocked = (x, y) => this._blockedAlongSegment(ox, oy, x, y) || !!this._blockedByGroundEnemy(x, y);
+      // #320: the player's chassis collides with a wall at its BODY radius, not as a point.
+      // `PLAYER_WALL_COLLIDE_RADIUS` (shared.js) rather than the full `ENEMY_COLLIDE_RADIUS_MECH`
+      // — see that constant for the measured reason a wall gets a slightly smaller body than
+      // another unit does, and for the table of what each value costs at a breach. Terrain and
+      // enemy-circle blocking are untouched; only the wall half of the sweep inflates.
+      const groundBlocked = (x, y) => this._blockedAlongSegment(ox, oy, x, y, PLAYER_WALL_COLLIDE_RADIUS) || !!this._blockedByGroundEnemy(x, y);
       let nx = this.px + this.vx * stepDt, ny = this.py + this.vy * stepDt;
       // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
       // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
@@ -244,7 +249,7 @@ export const LocomotionMixin = {
       const enemyHit = this._blockedByGroundEnemy(nx, ny);
       // #159: swept, not endpoint-only — walks every hex between (ox,oy) and (nx,ny), so a wall
       // this substep would have crossed through (not just ended inside) still blocks correctly.
-      if (this._blockedAlongSegment(ox, oy, nx, ny) || enemyHit) {
+      if (this._blockedAlongSegment(ox, oy, nx, ny, PLAYER_WALL_COLLIDE_RADIUS) || enemyHit) {
         // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
         // pressing against them (damage scaled by how hard it's driving in). Once flattened to
         // rubble the hex becomes passable and the mech rolls over it. Uses `stepDt` (not the full

@@ -6,7 +6,7 @@ import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
   WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
 } from './wallEdges.js';
-import { edgeKey, edgeEndpoints, edgeMidpoint } from './hexEdges.js';
+import { edgeKey, edgeEndpoints, edgeMidpoint, pointSegmentDistance } from './hexEdges.js';
 import { HEX_SIZE, hexToPixel, neighbors } from './hexgrid.js';
 
 const A = { q: 0, r: 0 };
@@ -253,5 +253,168 @@ describe('#313 wall-span HP retune — the gate is a commitment, not a speed bum
     const bestCaseRammingSeconds = WALL_EDGE_HP / (STOMP_DPS * WALL_STOMP_FACTOR);
     expect(WALL_STOMP_FACTOR).toBe(0.25);
     expect(bestCaseRammingSeconds).toBeGreaterThan(10);
+  });
+});
+
+// ── #320: collision inflation by body radius ────────────────────────────────────────────
+// Playtest: tanks visibly poked through walls, and you could shoot over one by standing close.
+// Both because every query treated a unit as a POINT. These pin the three things that have to be
+// true at once: bodies stop at their own width, the seal cannot weaken, and a breach stays drivable.
+describe('#320 wall collision inflated by body radius', () => {
+  const half = WALL_THICKNESS_PX / 2;
+
+  // A whole RING around A, so ring vertices (where two spans meet at 120°) are real, and a breach
+  // is a genuine one-hex-edge hole with standing spans either side of it.
+  const ring = () => makeWallEdgeSet(neighbors(A.q, A.r).map((n) => ({ a: A, b: n, baseId: 'b' })));
+
+  // Distance from a point to a span's centreline, via the same primitive the queries use.
+  const distTo = (e, x, y) => pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x, y);
+
+  it('a unit of radius R is stopped exactly when its BODY meets the plate — centre at R + 7', () => {
+    const set = oneWall();
+    const e = [...set.edges.values()][0];
+    const m = edgeMidpoint(A, B);
+    // Unit normal of the span, so we can step straight off its face.
+    const dx = e.x1 - e.x0, dy = e.y1 - e.y0, len = Math.hypot(dx, dy);
+    const nx = -dy / len, ny = dx / len;
+    for (const R of [0, 8, 14, 24, 28]) {
+      const stop = R + half;
+      // Just INSIDE the body's reach → blocked.
+      const inX = m.x + nx * (stop - 0.5), inY = m.y + ny * (stop - 0.5);
+      expect(wallEdgeAt(set, inX, inY, WALL_THICKNESS_PX, null, R)).toBeTruthy();
+      expect(distTo(e, inX, inY)).toBeCloseTo(stop - 0.5, 6);
+      // Just OUTSIDE it → clear. This is the half that proves inflation isn't unbounded.
+      const outX = m.x + nx * (stop + 0.5), outY = m.y + ny * (stop + 0.5);
+      expect(wallEdgeAt(set, outX, outY, WALL_THICKNESS_PX, null, R)).toBeNull();
+    }
+  });
+
+  it('radius 0 is bit-for-bit the original point query — rounds and sight rays are untouched', () => {
+    const set = ring();
+    for (let i = 0; i < 400; i++) {
+      const a = (i / 400) * Math.PI * 2;
+      for (const d of [10, 30, 47, 60, 90]) {
+        const x = Math.cos(a) * d, y = Math.sin(a) * d;
+        expect(!!wallEdgeAt(set, x, y, WALL_THICKNESS_PX, null, 0))
+          .toBe(!!wallEdgeAt(set, x, y, WALL_THICKNESS_PX));
+      }
+    }
+  });
+
+  // The seal proof. Inflation must be a strict SUPERSET of the point-form band — anything solid to
+  // a point is solid to a body — or #288's 720-bearing probes would have a hole punched in them by
+  // the very shortening that keeps breaches drivable.
+  it('is a strict superset of the point-form seal at every radius, including ring VERTICES', () => {
+    const set = ring();
+    const live = [...set.edges.values()];
+    const solidAt = (x, y, R) => !!wallEdgeAt(set, x, y, WALL_THICKNESS_PX, null, R);
+    let probed = 0;
+    for (let i = 0; i < 720; i++) {
+      const a = (i / 720) * Math.PI * 2;
+      for (let d = 0; d < 120; d += 1) {
+        const x = Math.cos(a) * d, y = Math.sin(a) * d;
+        if (!solidAt(x, y, 0)) continue;
+        probed++;
+        for (const R of [8, 14, 24, 28, 40]) expect(solidAt(x, y, R)).toBe(true);
+      }
+    }
+    expect(probed).toBeGreaterThan(500);
+    // Vertices explicitly: the corner case where shortening pulls BOTH spans back off the same
+    // point. Each span's capsule still covers it, with `half` to spare.
+    for (const e of live) {
+      for (const [vx, vy] of [[e.x0, e.y0], [e.x1, e.y1]]) {
+        for (const R of [8, 14, 24, 28, 40]) {
+          expect(wallEdgeAt(set, vx, vy, WALL_THICKNESS_PX, null, R)).toBeTruthy();
+        }
+      }
+    }
+  });
+
+  // The regression #288/#313 care about most: breaching ONE span must still open a drivable gap,
+  // for the LARGEST ground unit. Naive inflation (no shortening) seals it for any R > 17.
+  it('a breached span stays traversable by the largest ground unit (R = 20)', () => {
+    const set = ring();
+    const spans = [...set.edges.values()];
+    const breach = spans[0];
+    damageWallEdge(set, breach, WALL_EDGE_HP);
+    expect(breach.destroyed).toBe(true);
+
+    const R = 20;                                    // PLAYER_WALL_COLLIDE_RADIUS — the biggest wall body
+    const inside = hexToPixel(breach.a.q, breach.a.r);
+    const outside = hexToPixel(breach.b.q, breach.b.r);
+    const free = (x, y) => !wallEdgeAt(set, x, y, WALL_THICKNESS_PX, null, R);
+    expect(free(outside.x, outside.y)).toBe(true);
+
+    // Flood fill on a 1px lattice from outside to inside, through free space only. If inflation had
+    // sealed the hole this finds no route.
+    const key = (i, j) => `${i},${j}`;
+    const gi = Math.round(inside.x), gj = Math.round(inside.y);
+    const seen = new Set([key(Math.round(outside.x), Math.round(outside.y))]);
+    let frontier = [[Math.round(outside.x), Math.round(outside.y)]];
+    let reached = false;
+    while (frontier.length && !reached) {
+      const next = [];
+      for (const [i, j] of frontier) {
+        if (i === gi && j === gj) { reached = true; break; }
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ni = i + di, nj = j + dj, k = key(ni, nj);
+          if (seen.has(k) || Math.abs(ni) > 220 || Math.abs(nj) > 220) continue;
+          seen.add(k);
+          if (free(ni, nj)) next.push([ni, nj]);
+        }
+      }
+      frontier = next;
+    }
+    expect(reached).toBe(true);
+  });
+
+  it('an INTACT ring admits nobody, at any radius — the breach above is the hole, not the model', () => {
+    const set = ring();
+    const spans = [...set.edges.values()];
+    for (const R of [0, 14, 28]) {
+      const free = (x, y) => !wallEdgeAt(set, x, y, WALL_THICKNESS_PX, null, R);
+      // Walk straight in across each span's midpoint; every bearing must meet solid geometry.
+      for (const e of spans) {
+        const mx = (e.x0 + e.x1) / 2, my = (e.y0 + e.y1) / 2;
+        const d = Math.hypot(mx, my) || 1;
+        let hit = false;
+        for (let t = 1.6; t >= 0; t -= 0.02) if (!free((mx / d) * d * t, (my / d) * d * t)) { hit = true; break; }
+        expect(hit).toBe(true);
+      }
+    }
+  });
+
+  it('the swept crossing test inflates too — a step that ENDS with the body on the plate is a contact', () => {
+    const set = oneWall();
+    const e = [...set.edges.values()][0];
+    const m = edgeMidpoint(A, B);
+    const dx = e.x1 - e.x0, dy = e.y1 - e.y0, len = Math.hypot(dx, dy);
+    const nx = -dy / len, ny = dx / len;
+    const R = 28;
+    const from = { x: m.x + nx * 140, y: m.y + ny * 140 };
+    // Ends with the body's edge on the plate → blocked, even though the CENTRE is 34px clear.
+    const near = { x: m.x + nx * (R + half - 1), y: m.y + ny * (R + half - 1) };
+    expect(wallEdgeCrossing(set, from.x, from.y, near.x, near.y, WALL_THICKNESS_PX, null, R)).toBeTruthy();
+    // Point-form (radius 0) at the same spot is NOT a contact — that gap is exactly the bug.
+    expect(wallEdgeCrossing(set, from.x, from.y, near.x, near.y, WALL_THICKNESS_PX, null, 0)).toBeNull();
+    // And stopping fully clear of the body's reach is still free movement.
+    const clear = { x: m.x + nx * (R + half + 2), y: m.y + ny * (R + half + 2) };
+    expect(wallEdgeCrossing(set, from.x, from.y, clear.x, clear.y, WALL_THICKNESS_PX, null, R)).toBeNull();
+  });
+
+  it('no speed out-steps an inflated span — the anti-tunnelling clause survives inflation', () => {
+    const set = oneWall();
+    const ca = hexToPixel(A.q, A.r), cb = hexToPixel(B.q, B.r);
+    const ux = (cb.x - ca.x) / HEX_SIZE, uy = (cb.y - ca.y) / HEX_SIZE;
+    const m = edgeMidpoint(A, B);
+    for (const speed of [20, 100, 1000, 20000]) {
+      for (const R of [0, 14, 28]) {
+        const hit = wallEdgeCrossing(
+          set, m.x - ux * speed, m.y - uy * speed, m.x + ux * speed, m.y + uy * speed,
+          WALL_THICKNESS_PX, false, R,
+        );
+        expect(hit).toBeTruthy();
+      }
+    }
   });
 });
