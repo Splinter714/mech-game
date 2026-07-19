@@ -126,6 +126,20 @@ export const ProjectilesMixin = {
       // a flying enemy (firing.js `fireWeapon` reads `this.convergeTarget.flying`) — this check
       // doesn't care which owner fired the round, only the flag, so no change was needed here.
       if (!p.arc && !p.ignoresCover) {
+        // #288: base wall spans live on the boundaries BETWEEN hexes, so there's no tile under the
+        // round to look up — and a fast round covers far more ground in one step than the wall's
+        // ~14px thickness, so a point check at the step's endpoint could step clean over it. Test
+        // the whole step as a SEGMENT against the wall line (same swept principle as the
+        // `segmentPointDistance` target check just below), and detonate at the exact crossing point
+        // so the impact FX lands on the wall's face rather than somewhere past it.
+        const wallHit = this._wallEdgeHit?.(prevX, prevY, p.x, p.y);
+        if (wallHit) {
+          p.dead = true;
+          p.stopTrajectorySfx?.();
+          this._damageWallEdge(wallHit.edge, p.damage);
+          this._impactFx(wallHit.x, wallHit.y, p.color, p.kind, p.splash, p.weaponId);
+          continue;
+        }
         const sharedTransparent = enemyShot ? playerTransparent : enemyTransparent;
         if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes, p.smallUnitInvolved)) {
           p.dead = true;
