@@ -23,12 +23,9 @@
 //    never enters `active`/`buffModifiers` — the arena mixin just calls `mech.boostShield`
 //    directly (scenes/arena/powerups.js `_activatePowerup`).
 
-// #106: the drop-chance bounds are derived from the LIVE enemy roster (see `dropBounds`
-// below), so these registries are imported here rather than the bounds being hand-typed.
-import { ENEMIES } from './enemies.js';
-import { ENEMY_KINDS } from './enemyKinds.js';
-import { Mech } from './Mech.js';
-import { HpBody } from './HpBody.js';
+// #106: the drop-chance bounds are derived from the LIVE enemy roster (see `dropBounds` below).
+// #301: that derivation now lives in data/rosterBounds.js, shared with the death-explosion tiers.
+import { rosterToughnessBounds, liveToughnessBounds } from './rosterBounds.js';
 
 // ── The powerup catalog (owner: tune) ───────────────────────────────────────────────────
 // Each entry: id, label (HUD), color (collectible + HUD), weight (relative drop odds), and
@@ -151,35 +148,14 @@ export const CRUSH_KILL_DROP_CHANCE = 0.03;
 // harmless to leave as a documented "typical" reference point).
 export const DROP_CHANCE = 0.75;
 
-// The toughness of one roster entry, whatever kind it is. Both body types expose `.toughness`
-// (structure + armor + shield) — see Mech.js / HpBody.js — so this is a straight read.
-function rosterToughnesses(enemies = ENEMIES, kinds = ENEMY_KINDS) {
-  const out = [];
-  for (const def of Object.values(enemies || {})) {
-    try { out.push(new Mech(def).toughness); } catch { /* skip a malformed entry */ }
-  }
-  for (const def of Object.values(kinds || {})) {
-    try { out.push(new HpBody(def).toughness); } catch { /* skip a malformed entry */ }
-  }
-  return out.filter((v) => Number.isFinite(v) && v > 0);
-}
-
 // Floor/ceiling for the drop curve, DERIVED from a roster rather than hardcoded (#106): the
-// least- and most-tough units that exist. Exported (and parameterized) so tests can prove the
-// endpoints actually track the roster by passing a stubbed one. Pure — no memo-state leaks.
-export function dropBoundsForRoster(enemies = ENEMIES, kinds = ENEMY_KINDS) {
-  const all = rosterToughnesses(enemies, kinds);
-  if (!all.length) return { floor: 0, ceil: 1 };
-  return { floor: Math.min(...all), ceil: Math.max(...all) };
-}
-
-// The live roster's bounds, computed lazily ONCE on first use (the registries are static data,
-// and building a few Mechs at module-eval time would be needless import-order coupling).
-let _liveBounds = null;
-export function dropBounds() {
-  if (!_liveBounds) _liveBounds = dropBoundsForRoster();
-  return _liveBounds;
-}
+// least- and most-tough units that exist. #301 moved the derivation itself into
+// data/rosterBounds.js, since the death-explosion size/sound tiers needed exactly the same
+// numbers and a second near-copy would just be a fresh source of drift — these two names stay
+// as the drop path's vocabulary for it. Still parameterized/pure so tests can prove the
+// endpoints track the roster by passing a stubbed one.
+export const dropBoundsForRoster = rosterToughnessBounds;
+export const dropBounds = liveToughnessBounds;
 
 // Difficulty-scaled powerup drop chance for a kill of the given `toughness` (structure + armor
 // + shield — `body.toughness`). Pure — no enemy-kind branching, no Phaser — so it's unit-
