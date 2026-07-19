@@ -16,32 +16,30 @@
 // enough that clearing a dock and immediately re-engaging its base doesn't feel like an
 // instant respawn in your face, but short enough that a multi-dock base fight (which
 // realistically runs well past 18s once you're fighting through several docks + a turret)
-// will plausibly see a dock reopen and cycle a fresh unit more than once. Paired with the
-// higher `DOCK_RESUPPLY_MAX_PER_DOCK` below so the faster cadence isn't wasted hitting a cap
-// of 1. Owner: tunable via playtest.
+// will plausibly see a dock reopen and cycle a fresh unit more than once. #326 then removed the
+// per-dock lifetime cap that used to be paired with this, so the cadence now compounds for the
+// whole fight rather than being spent after three cycles. Owner: tunable via playtest.
 export const DOCK_RESUPPLY_COOLDOWN_MS = 18000;
 
-// How many extra units a single dock can ever produce over its lifetime, beyond its original
-// assignment. #269 playtest follow-up: with the cooldown above cut roughly in half, keeping
-// this at 1 would still cap the whole mechanic at exactly one bonus unit ever — the shorter
-// cooldown would never actually matter beyond the first reopen. Raised to 3 so a dock that
-// stays contested (player keeps clearing it, base stays awake) can meaningfully escalate
-// across a sustained assault instead of going quiet after a single extra unit. Not raised
-// further: a dock is also destructible once closed (see `spendDockResupply` below) and gets
-// permanently retired if destroyed mid-cycle, so in practice most docks won't ever reach a
-// high cap anyway — 3 gives "escalating" room without turning an uncontested dock into an
-// infinite farm spot. Owner: tunable via playtest (issue explicitly allows 1-2, judgement
-// call to go slightly above that given the cooldown change).
-// #323: this budget is counted in BODIES, not in fires. That distinction did not matter while
-// every resupply delivered exactly one unit, but #314's swarm docks (`DOCK_SWARM_COUNT` = 10
-// drones/infantry from one hex) make it decisive: if 3 kept meaning "three fires" and each fire
-// now delivered a full swarm, a single swarm dock would produce 30 extra bodies on top of its
-// opening 10 — 40 from one hex, which is precisely the density blowout #269's playtest verdict
-// corrected and #314 then re-tuned its pool weighting to avoid. Counting bodies instead makes the
-// same constant mean "a swarm dock resupplies ONCE, at full strength" (10 bodies overruns the
-// 3-body budget in a single fire and retires the dock) while leaving every single-body dock's
-// behaviour exactly as it was — three separate reinforcements over a sustained assault.
-export const DOCK_RESUPPLY_MAX_PER_DOCK = 3;
+// #326: THERE IS NO LIFETIME BUDGET. A dock reinforces indefinitely, at the cadence above, until
+// it is DESTROYED. The old `DOCK_RESUPPLY_MAX_PER_DOCK` (3 — bodies after #323, fires before it)
+// is gone entirely, as is #314's one-swarm-per-base cap and #323's first-resupply-only swarm
+// guard. Jackson: "do we need reinforcement caps in the game at all? for any unit type? I don't
+// think so" and, on the per-base swarm cap, "drop it — let bases have several".
+//
+// This is a design change, not just a deleted constant. While reinforcements ran dry on their own,
+// IGNORING a dock was viable — you could out-wait it. Now the only thing that stops a dock is
+// blowing its closed dome open (`dockClosed`, 200 HP, #313 — see `spendDockResupply` below, which
+// is now the ONLY path to retirement). That makes docks the real objective and gives the player a
+// genuine choice against the objective hex (#269): grind the docks, or rush the objective and
+// leave.
+//
+// What deliberately DOES stay is all the PACING machinery, which is about rhythm rather than
+// budget: the ±15% cooldown jitter and 0.8-1.0 phase offset below (#311/#323), and the `cleared` gate
+// in `tickDockResupply` (a dock can't fire into its own occupied hex). Those are what keep an
+// uncapped dock a steady drumbeat instead of a firehose — an occupied dock simply holds at zero
+// until its last body leaves the pad, so pressure self-limits at roughly one wave per dock at a
+// time no matter how long the fight runs.
 
 // #311: per-dock cooldown variance. Every dock used to share the flat constant above AND to be
 // constructed/woken in the same pass, so a base's docks stayed perfectly in phase for a whole
@@ -92,7 +90,10 @@ export function makeDockResupplyState(cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS, rn
   // `startMs` is remembered separately because the `!awake` branch of `tickDockResupply` restores
   // a not-yet-woken dock to its UNSTARTED value — which, post-#311, is this dock's phase offset,
   // not a full cooldown. Without it a single dormant tick would wipe the phase roll.
-  return { remainingMs: startMs, count: 0, cooldownMs: jittered, startMs };
+  // #326: `count` survives the budget's removal as a pure LIFETIME TALLY — nothing gates on it any
+  // more (it's telemetry: "how many waves has this dock sent?"). What gates now is `retired`, set
+  // only by `spendDockResupply` when the dock is destroyed.
+  return { remainingMs: startMs, count: 0, cooldownMs: jittered, startMs, retired: false };
 }
 
 // Advance one tick for a single dock. Two separate concerns, deliberately split:
@@ -107,10 +108,11 @@ export function makeDockResupplyState(cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS, rn
 //     still occupied. If the cooldown reaches zero while the dock is still occupied, the tick
 //     holds at `remainingMs: 0` (cooldown fully elapsed, not restarted) and waits for `cleared`
 //     to go true on a later tick, at which point it fires immediately with no extra wait.
-// Once `count` hits `maxPerDock`, every further tick is a no-op forever (`ready` stays false) —
-// the dock is spent. Pure: always returns a NEW state object, never mutates `state`.
+// #326: the ONE terminal condition is `retired` (the dock was destroyed). There is no longer any
+// lifetime budget — an intact dock cycles forever. Pure: always returns a NEW state object, never
+// mutates `state`.
 export function tickDockResupply(
-  state, { awake, cleared, dt }, cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS, maxPerDock = DOCK_RESUPPLY_MAX_PER_DOCK,
+  state, { awake, cleared, dt }, cooldownMs = DOCK_RESUPPLY_COOLDOWN_MS,
 ) {
   // #311: a state built by `makeDockResupplyState` carries its OWN jittered interval; the
   // `cooldownMs` argument is only the fallback for a hand-rolled/legacy state that lacks one.
@@ -120,16 +122,17 @@ export function tickDockResupply(
   // The value an un-started dock sits at — its #311 phase offset, or a full cooldown for a state
   // that predates the phase roll.
   const unstartedMs = state.startMs ?? cd;
-  // Spent — strip any stale `ready` from the tick that just fired (this is the very next call
-  // after that one) so the caller never re-reads `ready: true` a second time and double-spawns.
-  if (state.count >= maxPerDock) {
-    return { remainingMs: state.remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
+  // #326: RETIRED — the dock was destroyed. Every further tick is a no-op forever. This also
+  // strips any stale `ready` from the tick that just fired (this is the very next call after that
+  // one) so the caller never re-reads `ready: true` a second time and double-spawns.
+  if (state.retired) {
+    return { remainingMs: state.remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs, retired: true };
   }
   if (!awake) {
     // Base hasn't woken yet — hold at its unstarted value rather than ticking or draining; the
     // countdown only ever runs once the base is awake.
-    if (!state.remainingMs || state.remainingMs === unstartedMs) return state;
-    return { remainingMs: unstartedMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
+    if (!state.remainingMs || state.remainingMs === unstartedMs) return { ...state, ready: false };
+    return { remainingMs: unstartedMs, count: state.count, cooldownMs: cd, startMs: unstartedMs, retired: false };
   }
   const remainingMs = Math.max(0, state.remainingMs - Math.max(0, dt) * 1000);
   if (remainingMs <= 0) {
@@ -137,41 +140,33 @@ export function tickDockResupply(
     // into an occupied hex isn't possible. If still occupied, hold at 0 (already-elapsed) rather
     // than restarting the cooldown, so resupply fires the instant `cleared` goes true with no
     // extra wait.
-    if (!cleared) return { remainingMs: 0, count: state.count, cooldownMs: cd, startMs: unstartedMs };
+    // #326: this `cleared` gate is now doing much heavier lifting than it used to. With no
+    // lifetime budget, it is the mechanism that stops an uncapped dock becoming a firehose — a
+    // dock that just dumped a 10-strong swarm cannot cycle again until every one of those bodies
+    // has left or died, so a base's standing pressure is bounded by its docks' CURRENT waves, not
+    // by elapsed time. It is why "indefinite" doesn't mean "unbounded".
+    if (!cleared) return { remainingMs: 0, count: state.count, cooldownMs: cd, startMs: unstartedMs, retired: false };
     // Recharges to this dock's OWN interval (#311), not the shared constant — no phase re-roll:
     // the docks are already out of step by now and re-rolling each cycle would only add churn.
-    // #323: this charges ONE body — the safe floor. A fire that turns out to deliver a whole
-    // swarm charges the rest through `chargeDockResupply` below, once the scene has drawn the
-    // kind and knows the real body count. Billing the floor here rather than trusting the caller
-    // to bill at all means a caller that forgets can only ever under-charge to the pre-#323
-    // behaviour, never leave a dock resupplying forever.
-    return { remainingMs: cd, count: state.count + 1, cooldownMs: cd, startMs: unstartedMs, ready: true };
+    // #326: `count` is incremented as a lifetime wave tally only — nothing is being spent.
+    return { remainingMs: cd, count: state.count + 1, cooldownMs: cd, startMs: unstartedMs, retired: false, ready: true };
   }
-  return { remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
+  return { remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs, retired: false };
 }
 
 // #269 Part 2 ("dock open/closed states"): a CLOSED dock is destructible — destroying it must
-// permanently retire its ability to ever resupply again, even if it hadn't reached
-// `maxPerDock` yet (a real tactical choice: blow the dome open before it can pop out
-// reinforcements). Scenes/arena/bases.js hooks this into world.js's generic destructible-
-// terrain collapse path (`_damageBuildingAt` → `_onTerrainCollapsed`) rather than adding
-// dock-specific destruction handling there. Pure: forces `count` to `maxPerDock` so every future
-// `tickDockResupply` call hits the already-spent early return above and forever reports
-// `ready: false`; `remainingMs` is carried through unchanged (irrelevant once spent).
-export function spendDockResupply(state, maxPerDock = DOCK_RESUPPLY_MAX_PER_DOCK) {
-  return { remainingMs: state.remainingMs, count: maxPerDock, cooldownMs: state.cooldownMs, startMs: state.startMs };
-}
-
-// #323: bill a fire that delivered more than one body. `tickDockResupply` already charged 1 (the
-// floor it can guarantee without knowing what the scene will actually spawn), so this adds the
-// remaining `bodies - 1`. Called by scenes/arena/bases.js's `_resupplyDock` right after it has
-// drawn the dock's kind and resolved that kind's `dockCountFor` count.
+// permanently retire its ability to ever resupply again. Scenes/arena/bases.js hooks this into
+// world.js's generic destructible-terrain collapse path (`_damageBuildingAt` →
+// `_onTerrainCollapsed`) rather than adding dock-specific destruction handling there.
 //
-// Split out rather than folded into the tick because the body count is not knowable at tick time:
-// since a dock re-draws its kind from the base's pool on every resupply, the same dock can deliver
-// 1 body one cycle and a 10-strong swarm the next. Pure: returns a new state, never mutates.
-export function chargeDockResupply(state, bodies) {
-  const extra = Math.max(0, Math.round(bodies) - 1);
-  if (!extra) return state;
-  return { ...state, count: state.count + extra };
+// #326: this is now the ONLY way a dock ever stops. Where it used to be an optional shortcut past
+// a budget that would have run out anyway, destroying the dome is the player's entire lever on
+// reinforcements — so the flag it sets is deliberately a dedicated, unambiguous `retired: true`
+// rather than the old trick of forcing `count` up to a cap. `remainingMs`/`count` are carried
+// through unchanged (both irrelevant once retired, and `count` stays honest as a lifetime tally).
+export function spendDockResupply(state) {
+  return {
+    remainingMs: state.remainingMs, count: state.count,
+    cooldownMs: state.cooldownMs, startMs: state.startMs, retired: true,
+  };
 }

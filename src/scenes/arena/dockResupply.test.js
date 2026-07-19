@@ -19,7 +19,7 @@ import {
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, DOCK_SWARM_COUNT, dockCountFor,
 } from '../../data/worldgen.js';
 import {
-  DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK,
+  DOCK_RESUPPLY_COOLDOWN_MS,
   DOCK_RESUPPLY_COOLDOWN_JITTER, DOCK_RESUPPLY_PHASE_MIN,
 } from '../../data/dockResupply.js';
 
@@ -360,13 +360,33 @@ describe('#323: dock resupply delivers a full swarm, not a single body', () => {
     scene._runScheduled();
     expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
 
-    // 10 bodies overruns the 3-BODY budget, so the dock is spent — clearing it again and waiting
-    // out another full cooldown must produce nothing. This is what stops a swarm dock yielding
-    // 3 x 10 = 30 extra bodies and re-creating #269's density blowout.
+    // #326: no body budget any more — clear the swarm and the dock sends another full one. This
+    // is the deliberate design change: a swarm dock is a standing threat until it is destroyed.
     clearDock(scene, dockKey);
     scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
-    expect(scene.enemies.length).toBe(0);
+    expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+  });
+
+  // #326's "swarm density" question, at the scene level: what is the worst-case number of live
+  // bodies a swarm dock can present at one time? The `cleared` gate is the answer — a dock cannot
+  // fire while its own previous wave is still standing, so waves never stack.
+  it('#326: an uncapped swarm dock never stacks waves — the `cleared` gate bounds live bodies at one swarm', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'drone', count: DOCK_SWARM_COUNT })];
+    scene._spawnDormantUnits();
+    pinDockDraw(scene, 'drone');
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+
+    // Leave the wave alive and run a long time — many cooldowns' worth. Not one extra body may
+    // appear, because the dock hex is still occupied by its own drones.
+    for (let i = 0; i < 20; i++) {
+      scene._updateDockResupply(PAST_COOLDOWN_S);
+      scene._runScheduled();
+    }
+    expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
   });
 });
 
@@ -387,14 +407,13 @@ describe('#323: a dock re-draws its kind from the base pool on resupply', () => 
 
     expect(scene.enemies.length).toBe(1);
     expect(scene.enemies[0].typeId).toBe('helicopter');
-    // The meta is written back, so the base's live composition reflects the redraw — that is what
-    // the one-swarm-per-base cap is evaluated against on later resupplies.
+    // The meta is written back, so the base's live composition reflects the redraw.
     expect(scene._dockResupplyMeta.get(dockKey).kindId).toBe('helicopter');
   });
 
-  it('a base already fielding a swarm dock never redraws a SECOND swarm (#314 density cap)', () => {
+  it('#326: a base CAN come to field several swarm docks — the per-base cap is gone', () => {
     const scene = makeScene();
-    // Two docks on one base: one is already a swarm dock, the other tries to draw a swarm.
+    // Two docks on one base: one is already a swarm dock, the other draws a swarm too.
     scene.bases = [{
       id: 'base0',
       center: { q: 0, r: 0 },
@@ -410,42 +429,39 @@ describe('#323: a dock re-draws its kind from the base pool on resupply', () => 
     scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
 
-    // The swarm draw was rejected and fell back to a non-swarm kind from the same pool, so the
-    // base still fields exactly one swarm dock.
+    // The swarm draw stands: the base now fields TWO swarm docks, exactly what Jackson asked for.
     const kinds = [...scene._dockResupplyMeta.values()].map((m) => m.kindId);
-    expect(kinds.filter((k) => k === 'drone' || k === 'infantry').length).toBe(1);
+    expect(kinds.filter((k) => k === 'drone' || k === 'infantry').length).toBe(2);
     const fresh = scene.enemies.filter((e) => e.dockKey === tankKey);
-    expect(fresh.length).toBe(1);
-    expect(['drone', 'infantry']).not.toContain(fresh[0].typeId);
+    expect(fresh.length).toBe(DOCK_SWARM_COUNT);
   });
 
-  it('a dock that has already spent budget cannot redraw into a swarm (no 12-body dock)', () => {
+  it('#326: any resupply may draw a swarm, not just a dock\'s first — no first-cycle-only guard', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
 
-    // First resupply: an ordinary single body, spending 1 of the 3-body budget.
+    // First resupply: an ordinary single body. Pre-#326 this alone disqualified later swarms.
     pinDockDraw(scene, 'tank');
     clearDock(scene, dockKey);
     scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
     expect(scene.enemies.length).toBe(1);
 
-    // Second resupply tries to draw a swarm. `allowSwarm` is false now, so it must fall back to a
-    // single body rather than dumping 10 more on top of the one already delivered.
+    // Second resupply draws a swarm — and gets a full-strength one.
     pinDockDraw(scene, 'drone');
     clearDock(scene, dockKey);
     scene._updateDockResupply(PAST_COOLDOWN_S);
     scene._runScheduled();
-    expect(scene.enemies.length).toBe(1);
-    expect(['drone', 'infantry']).not.toContain(scene.enemies[0].typeId);
+    expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+    expect(scene.enemies[0].typeId).toBe('drone');
   });
 });
 
-describe('#269 §3 dock resupply: per-dock cap', () => {
-  it('a dock resupplies at most DOCK_RESUPPLY_MAX_PER_DOCK times over its lifetime, never more', () => {
+describe('#326 dock resupply: no lifetime cap', () => {
+  it('a dock keeps resupplying indefinitely as long as it is intact', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
@@ -453,21 +469,40 @@ describe('#269 §3 dock resupply: per-dock cap', () => {
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
 
-    // Drain the cap: clear the dock and wait past cooldown, `DOCK_RESUPPLY_MAX_PER_DOCK` times —
-    // each one should produce exactly one fresh unit.
-    for (let i = 0; i < DOCK_RESUPPLY_MAX_PER_DOCK; i++) {
+    // 25 clear-and-wait cycles — far past the old 3-body budget. EVERY one must deliver.
+    for (let i = 0; i < 25; i++) {
+      clearDock(scene, dockKey);
+      scene._updateDockResupply(PAST_COOLDOWN_S);
+      scene._runScheduled();
+      expect(scene.enemies.length).toBe(1);
+    }
+    expect(scene._dockResupplyStates.get(dockKey).count).toBe(25);
+  });
+
+  it('destroying the dock mid-stream stops it — the player\'s only lever actually works', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+
+    // Let it prove it is still pumping, several cycles in.
+    for (let i = 0; i < 5; i++) {
       clearDock(scene, dockKey);
       scene._updateDockResupply(PAST_COOLDOWN_S);
       scene._runScheduled();
       expect(scene.enemies.length).toBe(1);
     }
 
-    // Clear it once more and wait well past another full cooldown — the cap is spent, must NOT
-    // resupply again.
-    clearDock(scene, dockKey);
-    scene._updateDockResupply(PAST_COOLDOWN_S);
-    scene._runScheduled();
-    expect(scene.enemies.length).toBe(0);
+    // Now blow the dome open, and give it many more chances than it would ever get in a real fight.
+    scene._onTerrainCollapsed(dockKey);
+    for (let i = 0; i < 25; i++) {
+      clearDock(scene, dockKey);
+      scene._updateDockResupply(PAST_COOLDOWN_S);
+      scene._runScheduled();
+      expect(scene.enemies.length).toBe(0);
+    }
   });
 });
 
@@ -571,7 +606,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     scene._runScheduled();
 
     expect(scene.enemies.length).toBe(0);
-    expect(scene._dockResupplyStates.get(dockKey).count).toBeGreaterThanOrEqual(1);
+    expect(scene._dockResupplyStates.get(dockKey).retired).toBe(true);
   });
 
   it('_onTerrainCollapsed is a no-op for a hex this scene has no dock-resupply state for', () => {
@@ -606,9 +641,9 @@ describe('#269 Part 2: dock open/closed states', () => {
     expect(scene.buildingHp.has(dockKey)).toBe(false);
     expect(scene.enemies.length).toBe(1);
 
-    // 3) That fresh unit walks off / dies too → closes again. The OPEN/CLOSED visual cycle has
-    // no cap of its own — it just tracks physical occupancy — independent of
-    // `DOCK_RESUPPLY_MAX_PER_DOCK`, which only limits how many more times resupply can refill it.
+    // 3) That fresh unit walks off / dies too → closes again. The OPEN/CLOSED visual cycle just
+    // tracks physical occupancy, and post-#326 it is the only cycle there is — this open ⇄ closed
+    // ⇄ reopened loop now repeats for the whole fight, until the dome is destroyed.
     clearDock(scene, dockKey);
     scene._updateDockOpenClose();
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');
@@ -686,5 +721,38 @@ describe('#311: a base\'s docks are staggered, not synchronized', () => {
     }
     expect(firstFire.size).toBe(4);
     expect(new Set(firstFire.values()).size).toBe(4);
+  });
+});
+
+// #326 playtest bug (Jackson: "z-ordering on docks reinforcing animation is bad... it's too high
+// compared to the units that are coming out"). A dock hatch is a hole in the ground, so every part
+// of its FX must sort BELOW the units standing on it. These pin the ordering as data — the visual
+// bug was that a unit rendered under its own hatch doors, which is exactly a depth comparison.
+import { DEPTH } from './shared.js';
+
+describe('#326: dock FX z-ordering — a unit is never hidden by its own hatch', () => {
+  it('every dock FX sub-layer sorts below the lowest unit tier', () => {
+    // The four sub-offsets `_resupplyDock`/`_closeDockFx` actually use (shaft, doors, platform,
+    // glow / plate, rim). All must clear GROUND_UNITS, the lowest tier any unit renders on.
+    for (const offset of [0, 0.1, 0.2, 0.3]) {
+      expect(DEPTH.DOCK_FX + offset).toBeLessThan(DEPTH.GROUND_UNITS);
+    }
+    // ...and therefore below every heavier unit tier too.
+    expect(DEPTH.DOCK_FX).toBeLessThan(DEPTH.LARGE_GROUND_UNITS);
+    expect(DEPTH.DOCK_FX).toBeLessThan(DEPTH.FLYING_UNITS);
+    expect(DEPTH.DOCK_FX).toBeLessThan(DEPTH.UNITS);
+  });
+
+  it('still sits above the terrain it is cut into, and keeps its own internal order', () => {
+    expect(DEPTH.DOCK_FX).toBeGreaterThan(DEPTH.TERRAIN);
+    expect(DEPTH.DOCK_FX).toBeGreaterThanOrEqual(DEPTH.GROUND_FX);
+    // The regression this guards against is a re-tier that flattens the sub-offsets: the glow must
+    // stay above the platform, above the doors, above the shaft.
+    expect(DEPTH.DOCK_FX + 0.3).toBeGreaterThan(DEPTH.DOCK_FX + 0.2);
+  });
+
+  it('the dock FX are NOT on the impact-effects tier any more', () => {
+    // The literal bug: they were built on IMPACT_FX (5), far above every unit.
+    expect(DEPTH.DOCK_FX).toBeLessThan(DEPTH.IMPACT_FX);
   });
 });
