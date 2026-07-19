@@ -14,6 +14,11 @@ const SQRT3 = Math.sqrt(3);
 // terrain entries can reuse it instead of re-deriving a color.
 export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x40444a };
 
+// #287: the ashen debris tone shared by the generic `rubble` tile and the dedicated
+// `turretRubble` wreck of a destroyed turret emplacement — hoisted out of PAL so both entries
+// read from one value instead of the second re-deriving it.
+const RUBBLE_COLOR = { fill: 0x2f3138, edge: 0x212329 };
+
 // #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
 // (hexgrid.hexToPixel, e.g. HEX_SIZE*SQRT3 for same-row neighbours) — but that spacing is
 // IRRATIONAL, so on-screen it never lands on a whole device pixel. Phaser's `pixelArt: true`
@@ -58,7 +63,7 @@ const PAL = {
   deepWater:{ fill: 0x163a58, edge: 0x0f2c45 },
   forest:   { fill: 0x223f20, edge: 0x18311a },
   // Rubble: the ashen debris a flattened destructible hex leaves behind.
-  rubble:   { fill: 0x2f3138, edge: 0x212329 },
+  rubble:   RUBBLE_COLOR,
   // #227: a destroyed forest hex — charred plant debris, distinct from the generic rubble.
   forestRubble:{ fill: 0x241f16, edge: 0x1a1610 },
   // #278: grassland's own in-map hazard — a boggy mud patch. Warm dark brown, distinct from
@@ -88,6 +93,11 @@ const PAL = {
   // category:'base' entries — the DETAIL painter below (a red weapon-pad ring + crosshair) is
   // what makes it read as visually distinct from `dock`'s amber "H" landing-pad marking.
   turretEmplacement: BASE_INFRA_COLOR,
+  // #287: the destroyed state of that bunker (terrain.js `turretRubble`). Shares the generic
+  // `rubble` fill/edge tone (it IS wreckage now, not standing base infrastructure — and it's
+  // `category: 'terrain'`, so it must not read as intact base infra), with its own DETAIL
+  // painter below carrying the "this was a turret emplacement" specifics.
+  turretRubble: RUBBLE_COLOR,
   // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): the
   // dedicated destructible `objective` base hex (data/terrain.js) each base's mission marker now
   // points at. Same shared base-infra fill as its siblings — the DETAIL painter below (a squared
@@ -101,12 +111,6 @@ const PAL = {
   // player can tell open vs. closed apart at a glance even before the DETAIL painter's dome icon
   // registers.
   dockClosed: { fill: 0x33383e, edge: 0x22262c },
-  // #288 (base front-wall design): the wall SEGMENT hex (terrain.js `wallSegment`) — a genuine
-  // barrier/barricade, so it gets its own darker steel-plate tone rather than the neutral
-  // BASE_INFRA_COLOR every passable/marker base-infra hex shares — distinct enough at a glance
-  // (even before the DETAIL painter's rib/hazard-stripe shape registers) from dock/objective's
-  // lighter concrete and dockClosed's own dark-blue-grey dome tone.
-  wallSegment: { fill: 0x34383e, edge: 0x212429 },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -558,10 +562,12 @@ const DETAIL = {
   // #287 (playtest follow-up): the turret-emplacement placement marker (data/terrain.js
   // `turretEmplacement`) — upgraded from a flat painted disc/ring decal to a raised bunker
   // platform so a turret unit standing here reads as rooted into a built defensive position,
-  // not parked on empty ground. Still PASSABLE/open-cover terrain (unchanged in terrain.js) —
-  // deliberately kept LOW and ringed rather than solid/walled like `hex_objective` or
-  // `hex_dockClosed`, so it reads as "built-up platform you drive across/around," not a hard
-  // structure. Layering: a wide soft rim-shadow ring sells "raised above ground level", a
+  // not parked on empty ground. #287 (second playtest — the raised look alone wasn't enough):
+  // the hex is now genuinely impassable, hard-cover and HP-bearing (terrain.js), so the art was
+  // pushed the rest of the way to match — a visible wall face under the deck and a crenellated
+  // parapet ring, so it reads as a casemate you have to blow open, not a platform you drive
+  // across. `hex_turretRubble` below is its destroyed state. Layering: a wide soft rim-shadow
+  // ring plus a cast ground shadow sell "raised above grade", a
   // concrete slab with a bevelled highlight/shadow edge gives it 3-D thickness, a ring of
   // angled armor plates (chamfered rects around the perimeter, echoing the rubble/objective
   // family's layered-rect language) stands in for sandbag/plating cover, and a smaller inner
@@ -594,8 +600,14 @@ const DETAIL = {
   },
   hex_turretEmplacement: (sg) => {
     const r = 13.5;
-    sg.fillStyle(0x000000, 0.28); sg.fillEllipse(C.cx + 1.5, C.cy + 3, r * 2.3, r * 1.7);       // ground shadow, offset — platform sits above grade
+    sg.fillStyle(0x000000, 0.34); sg.fillEllipse(C.cx + 2, C.cy + 4.5, r * 2.4, r * 1.8);       // ground shadow, offset — bunker sits well above grade
     sg.fillStyle(0x000000, 0.2);  sg.fillCircle(C.cx, C.cy + 1.5, r * 1.12);                     // rim shadow — reads as the raised edge overhanging the ground
+    // #287: the bunker is now a genuine impassable, HP-bearing structure (terrain.js), so it has
+    // to read as one — a visible WALL FACE below the deck (the near side of the casemate, seen
+    // from above at a slight angle) plus a heavier cast shadow give it real height instead of
+    // the old low drive-over platform silhouette.
+    sg.fillStyle(0x2a2d33, 1);    sg.fillEllipse(C.cx, C.cy + 3.6, r * 2, r * 1.25);              // wall face, in shadow
+    sg.fillStyle(0x3c4047, 1);    sg.fillEllipse(C.cx - 1, C.cy + 2.4, r * 1.9, r * 1.15);        // wall face, upper (lit) band
     sg.fillStyle(0x494e55, 1);    sg.fillCircle(C.cx, C.cy, r);                                  // concrete base slab
     sg.fillStyle(0x373b41, 0.9);  sg.fillCircle(C.cx + 1.4, C.cy + 1.4, r * 0.96);                // bottom-right bevel shadow — gives the slab thickness
     sg.fillStyle(0x565b63, 1);    sg.fillCircle(C.cx - 0.6, C.cy - 0.9, r * 0.88);                // top surface, lit
@@ -607,7 +619,11 @@ const DETAIL = {
     for (let i = 0; i < plateCount; i++) {
       const a = (i / plateCount) * Math.PI * 2 + 0.25;
       const px = C.cx + Math.cos(a) * plateR, py = C.cy + Math.sin(a) * plateR * 0.6;
-      armorPlate(sg, px, py, a + Math.PI / 2, r * 0.42, r * 0.22, i % 2 === 0 ? 0x3a3e44 : 0x454a51, 0.95);
+      // #287: taller plates (a crenellated parapet rather than a low kerb) now that this is a
+      // real structure — each merlon also gets a lit top edge so the ring reads as standing UP
+      // off the deck rather than being painted onto it.
+      armorPlate(sg, px, py, a + Math.PI / 2, r * 0.44, r * 0.34, i % 2 === 0 ? 0x3a3e44 : 0x454a51, 1);
+      armorPlate(sg, px, py - r * 0.13, a + Math.PI / 2, r * 0.44, r * 0.09, 0x646a73, 0.85);
     }
 
     sg.fillStyle(0x30343a, 1); sg.fillCircle(C.cx, C.cy + 0.5, r * 0.5);                          // inner gun deck (recessed)
@@ -619,6 +635,39 @@ const DETAIL = {
     sg.fillStyle(0xd8342a, 0.9);                                                                    // small armed-position bolts, not a dominant ring
     sg.fillCircle(C.cx - r * 0.42, C.cy + 0.5, 1);
     sg.fillCircle(C.cx + r * 0.42, C.cy + 0.5, 1);
+  },
+  // #287: the WRECK of a turret emplacement (terrain.js `turretRubble`) — what the bunker
+  // collapses into. Deliberately readable as "this specific thing was destroyed" rather than the
+  // generic `hex_rubble` masonry heap: the parapet ring survives only as a broken arc of stubs,
+  // the gun deck is a scorched crater, and the gun's mount lies toppled across the debris.
+  hex_turretRubble: (sg) => {
+    const r = 13.5;
+    sg.fillStyle(0x17191d, 0.85); sg.fillEllipse(C.cx, C.cy + 1.5, r * 2.4, r * 1.8);           // scorched footprint — matches the intact bunker's own footprint
+    sg.fillStyle(0x2b2e34, 0.9);  sg.fillCircle(C.cx, C.cy, r * 0.98);                           // cracked-open slab remains
+    sg.fillStyle(0x101215, 0.9);  sg.fillEllipse(C.cx, C.cy + 0.5, r * 0.5, r * 0.4);            // blown-out gun-deck crater
+
+    // Broken parapet: only some of the 8 merlons are left standing, and the survivors are
+    // shorter and unevenly canted — the gaps are what read as "this got blown apart".
+    const standing = [0, 1, 3, 6];
+    for (const i of standing) {
+      const a = (i / 8) * Math.PI * 2 + 0.25;
+      const px = C.cx + Math.cos(a) * r * 0.8, py = C.cy + Math.sin(a) * r * 0.8 * 0.6;
+      armorPlate(sg, px, py, a + Math.PI / 2 + (i % 2 ? 0.3 : -0.35), r * 0.34, r * 0.2, 0x33373d, 1);
+      armorPlate(sg, px, py - r * 0.07, a + Math.PI / 2 + (i % 2 ? 0.3 : -0.35), r * 0.34, r * 0.06, 0x4e535a, 0.7);
+    }
+
+    // Scattered concrete chunks over the wreck.
+    const rnd = seeded(9871);
+    for (let i = 0; i < 7; i++) {
+      const dx = (rnd() - 0.5) * 30, dy = (rnd() - 0.5) * 21;
+      const w = 3.5 + rnd() * 4.5, h = 3 + rnd() * 3;
+      sg.fillStyle(0x3a3d44, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
+      sg.fillStyle(0x4c4f57, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.2);
+    }
+
+    // The toppled gun: a barrel lying flat across the debris, still attached to a tipped mount.
+    sg.fillStyle(0x21242a, 1); sg.fillCircle(C.cx - 3, C.cy + 3, r * 0.18);                       // tipped mount hub
+    armorPlate(sg, C.cx + 2.5, C.cy - 1, -0.55, r * 0.95, r * 0.11, 0x5a6069, 1);
   },
   // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette topped with a
   // bold red target-ring beacon, so it reads unmistakably as "the real objective," distinct from
@@ -633,48 +682,6 @@ const DETAIL = {
     sg.fillStyle(0xd8342a, 0.95); sg.fillCircle(C.cx, C.cy - 13, 4.2);                          // target ring (outer)
     sg.fillStyle(0x25282e, 1);    sg.fillCircle(C.cx, C.cy - 13, 2.8);                          // target ring (punch-through)
     sg.fillStyle(0xff5a3a, 1); sg.fillCircle(C.cx, C.cy - 13, 1.6);                            // beacon core
-  },
-
-  // #288 (base front-wall design): one SEGMENT of a base's approach-edge wall row
-  // (data/worldgen.js `placeBaseWalls`) — needs to read as a genuine defensive barrier/barricade,
-  // distinct from every other base-infra hex's shape (dock's flat pad, dockClosed's domed hatch,
-  // turretEmplacement's round gun platform, alertTower's slim mast, objective's squat bunker).
-  // The wall's own ROW can run in ANY direction relative to the hex grid (perpendicular to
-  // whatever the local spine tangent happens to be at that base — #288's whole geometry point),
-  // and hex art has no per-instance rotation hook (every fn draws in a fixed local frame, tiled
-  // with no per-hex transform) — so this is drawn close to hex-radially-symmetric (a big
-  // HESCO/blast-wall slab nearly filling the tile via `hexCorners`, ringed by upright armor ribs
-  // rather than a single directional rectangle) so a row of these reads as one continuous
-  // barrier no matter which way the row actually runs across the grid.
-  hex_wallSegment: (sg) => {
-    sg.fillStyle(0x000000, 0.32); sg.fillEllipse(C.cx + 1.5, C.cy + 3, 34, 20);                 // ground shadow
-    sg.fillStyle(0x2a2d32, 1);                                                                    // outer slab (near-full hex footprint)
-    sg.fillPoints(hexCorners(HEX_SIZE * 0.92).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
-    sg.fillStyle(0x3a3f46, 1);                                                                    // top-lit inset face
-    sg.fillPoints(hexCorners(HEX_SIZE * 0.78).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y - 1.5 })), true);
-    // Corrugated vertical armor ribs across the face — alternating tone plates, upright (a wall,
-    // not a bunker roof), shortening toward the tile's pointed left/right ends so they stay
-    // inside the hex silhouette.
-    const ribCount = 7;
-    for (let i = 0; i < ribCount; i++) {
-      const t = (i / (ribCount - 1)) - 0.5;
-      const rx = C.cx + t * HEX_SIZE * 1.25;
-      const rh = 25 - Math.abs(t) * 14;
-      if (rh <= 4) continue;
-      sg.fillStyle(i % 2 === 0 ? 0x454b53 : 0x333840, 0.92);
-      sg.fillRect(rx - 2.4, C.cy - rh / 2, 4.8, rh);
-    }
-    // Black/amber hazard stripe band across the upper face — the "defensive gate" read.
-    sg.fillStyle(0x18191d, 0.92); sg.fillRect(C.cx - HEX_SIZE * 0.7, C.cy - 15.5, HEX_SIZE * 1.4, 6);
-    for (let i = 0; i < 6; i++) {
-      sg.fillStyle(0xc99a2c, 0.85);
-      sg.fillRect(C.cx - HEX_SIZE * 0.7 + i * (HEX_SIZE * 1.4 / 6) + 1.5, C.cy - 15.5, 4, 6);
-    }
-    // Corner buttress bolts pinning the slab down.
-    for (const [dx, dy] of [[-15, -6], [15, -6], [-15, 9], [15, 9]]) {
-      sg.fillStyle(0x121317, 0.9); sg.fillCircle(C.cx + dx, C.cy + dy, 2.1);
-      sg.fillStyle(0x6a7078, 0.8); sg.fillCircle(C.cx + dx - 0.4, C.cy + dy - 0.4, 0.9);
-    }
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────

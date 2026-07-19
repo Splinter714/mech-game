@@ -99,7 +99,9 @@ function makeKindEnemy(weaponId, weaponOverride = null) {
     weaponId,
   };
   if (weaponOverride) kindDef.weaponOverride = weaponOverride;
-  return { key: 'testKind', kind: 'turret', fireCd: 0, x: 100, y: 0, kindDef };
+  // #305: cooldown + burst state are per WEAPON SLOT now; a single-weapon kindDef
+  // normalises to one slot named DEFAULT_SLOT ('main'), so these tests read/write that key.
+  return { key: 'testKind', kind: 'turret', slotCd: {}, slotBurst: {}, x: 100, y: 0, kindDef };
 }
 
 describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech fix (#123)', () => {
@@ -147,15 +149,15 @@ describe('_fireVehicleWeapon branches on delivery type, matching the #117 mech f
   it('respects the fireCd gate (does not fire while on cooldown) and sets cadence after firing', () => {
     const { scene, calls } = makeScene();
     const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
-    e.fireCd = 500;                 // still cooling down
+    e.slotCd.main = 500;                 // still cooling down
 
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(0);   // gated — nothing fired
 
-    e.fireCd = 0;
+    e.slotCd.main = 0;
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(1);
-    expect(e.fireCd).toBe(PROJECTILE_WEAPON.cycleTime);   // cadence from the resolved weapon (#241/#243)
+    expect(e.slotCd.main).toBe(PROJECTILE_WEAPON.cycleTime);   // cadence from the resolved weapon (#241/#243)
   });
 });
 
@@ -178,11 +180,11 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     // every entry in plan.shots), not just one, per the actual dispatch fix.
     expect(calls.projectile.length).toBe(2);
     const expected = scene._fireInterval(STREAM_WEAPON, {});
-    expect(e.fireCd).toBeCloseTo(expected, 6);
+    expect(e.slotCd.main).toBeCloseTo(expected, 6);
     // Sanity: this is the actual bug fix — the resolved cadence is nowhere near the old flat
     // 1900ms/1000ms timers; machineGun's fireRate: 18 resolves to ~55.6ms/shot.
-    expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
-    expect(e.fireCd).toBeLessThan(100);
+    expect(e.slotCd.main).toBeCloseTo(1000 / 18, 6);
+    expect(e.slotCd.main).toBeLessThan(100);
   });
 
   it('a non-stream (cycleTime-driven) weapon resolves via _fireInterval\'s cycleTime branch', () => {
@@ -192,8 +194,8 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     scene._fireVehicleWeapon(e, {}, 0);
 
     expect(calls.projectile.length).toBe(1);
-    expect(e.fireCd).toBeCloseTo(scene._fireInterval(PROJECTILE_WEAPON, {}), 6);
-    expect(e.fireCd).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 1500ms — the weapon's own cadence
+    expect(e.slotCd.main).toBeCloseTo(scene._fireInterval(PROJECTILE_WEAPON, {}), 6);
+    expect(e.slotCd.main).toBeCloseTo(PROJECTILE_WEAPON.cycleTime, 6);   // 1500ms — the weapon's own cadence
   });
 
   it('a weaponOverride cycleTime slows a single-shot weapon\'s cadence in the weapon\'s own terms (tank/quadruped shape)', () => {
@@ -203,7 +205,7 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     scene._fireVehicleWeapon(e, {}, 0);
 
     expect(calls.projectile.length).toBe(1);
-    expect(e.fireCd).toBe(3100);   // the override's cadence, not the base 2600
+    expect(e.slotCd.main).toBe(3100);   // the override's cadence, not the base 2600
   });
 
   it('a weaponOverride delivery.fireRate retunes a stream weapon\'s cadence (drone/infantry shape)', () => {
@@ -215,18 +217,18 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     // #269 playtest follow-up (streams bug fix): the override only retunes fireRate, so the
     // base weapon's twin-lane count: 2 still applies — both lanes fire per trigger pull.
     expect(calls.projectile.length).toBe(2);
-    expect(e.fireCd).toBeCloseTo(500, 6);   // 1000/2 — the override's rate, not the base 18/sec
+    expect(e.slotCd.main).toBeCloseTo(500, 6);   // 1000/2 — the override's rate, not the base 18/sec
   });
 
   it('the live helicopter kind (enemyKinds.js) resolves machineGun\'s true stream cadence, twin-lane', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
     const { resolveWeapon } = await import('../../data/weapons.js');
-    expect(ENEMY_KINDS.helicopter.weaponId).toBe(STREAM_WEAPON_ID);
+    expect(ENEMY_KINDS.helicopter.weapons.flank.weaponId).toBe(STREAM_WEAPON_ID);
     // #269 playtest follow-up: back to twin tracer lanes, matching the player's Repeater —
     // no delta from the player's weapon anymore; damage and fireRate stay the player's too.
-    expect(ENEMY_KINDS.helicopter.weaponOverride).toEqual({ delivery: { count: 2 } });
+    expect(ENEMY_KINDS.helicopter.weapons.flank.weaponOverride).toEqual({ delivery: { count: 2 } });
 
-    const resolved = resolveWeapon(ENEMY_KINDS.helicopter.weaponId, ENEMY_KINDS.helicopter.weaponOverride);
+    const resolved = resolveWeapon(ENEMY_KINDS.helicopter.weapons.flank.weaponId, ENEMY_KINDS.helicopter.weapons.flank.weaponOverride);
     expect(resolved.delivery.count).toBe(2);
     expect(resolved.damage).toBe(STREAM_WEAPON.damage);
     expect(resolved.delivery.fireRate).toBe(18);   // cadence untouched — full 18/sec during a burst
@@ -330,7 +332,7 @@ describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired si
 
     // Advance time past the throttle window — the next shot gets its own cue again.
     scene.time.now += 100;
-    e1.fireCd = 0;
+    e1.slotCd.main = 0;
     scene._fireVehicleWeapon(e1, {}, 0);
     expect(scheduleFireCues).toHaveBeenCalledTimes(2);
   });
@@ -368,7 +370,7 @@ describe('_fireVehicleWeapon now schedules a fire cue (#200 — enemies fired si
     // attempt regardless of whether the fire-cue throttle above let the cue through, so the
     // blocked attempt above still armed it.)
     scene.time.now += burstSpan + SOUND_THROTTLE_MS;
-    e2.fireCd = 0;
+    e2.slotCd.main = 0;
     scene._fireVehicleWeapon(e2, {}, 0);
     expect(scheduleFireCues).toHaveBeenCalledTimes(2);
   });
@@ -396,7 +398,7 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     expect(fired.id).toBe(STREAM_WEAPON_ID);
     expect(fired.delivery.count).toBe(STREAM_WEAPON.delivery.count);
     // #241/#243 composition: cadence derives from the RESOLVED weapon — 1000/9, not 1000/18.
-    expect(e.fireCd).toBeCloseTo(1000 / 9, 6);
+    expect(e.slotCd.main).toBeCloseTo(1000 / 9, 6);
     // The shared base entry the player mounts is unchanged.
     expect(STREAM_WEAPON.damage).toBe(0.889);   // #259 DPS-squish retune (was 1.667)
     expect(STREAM_WEAPON.delivery.fireRate).toBe(18);
@@ -409,7 +411,7 @@ describe('_fireVehicleWeapon resolves the kind\'s weaponOverride (#243)', () => 
     scene._fireVehicleWeapon(e, {}, 0);
 
     expect(calls.projectile[0].w.weapon).toBe(STREAM_WEAPON);   // the very same registry object
-    expect(e.fireCd).toBeCloseTo(1000 / 18, 6);
+    expect(e.slotCd.main).toBeCloseTo(1000 / 18, 6);
   });
 
   it('the live drone kind resolves the bare Plasma Lance stream (no override, full damage)', async () => {
@@ -439,13 +441,13 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     const { scene, calls } = makeScene();
     const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // no burst fields
     for (let i = 0; i < 20; i++) {
-      e.fireCd = 0;
+      e.slotCd.main = 0;
       scene.time.now += 1000;
       scene._fireVehicleWeapon(e, {}, 0);
-      expect(e.fireCd).toBe(PROJECTILE_WEAPON.cycleTime);   // always the plain cadence, never a rest
+      expect(e.slotCd.main).toBe(PROJECTILE_WEAPON.cycleTime);   // always the plain cadence, never a rest
     }
     expect(calls.projectile.length).toBe(20);
-    expect(e.burstShotsFired ?? 0).toBe(0);          // counter never engaged
+    expect(e.slotBurst.main ?? 0).toBe(0);          // counter never engaged
   });
 
   it('a kind with burstShots stops after N shots — the Nth shot\'s cooldown becomes burstRestMs', () => {
@@ -455,26 +457,26 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     e.kindDef.burstRestMs = 900;
 
     for (let i = 0; i < 2; i++) {
-      e.fireCd = 0;
+      e.slotCd.main = 0;
       scene.time.now += 1000;
       scene._fireVehicleWeapon(e, {}, 0);
-      expect(e.fireCd).toBe(200);                    // within-burst spacing = normal cadence
+      expect(e.slotCd.main).toBe(200);                    // within-burst spacing = normal cadence
     }
-    e.fireCd = 0;
+    e.slotCd.main = 0;
     scene.time.now += 1000;
     scene._fireVehicleWeapon(e, {}, 0);              // 3rd shot completes the burst
     expect(calls.projectile.length).toBe(3);
-    expect(e.fireCd).toBe(900);                      // rest replaces the per-shot cadence
-    expect(e.burstShotsFired).toBe(0);               // re-armed for the next burst
+    expect(e.slotCd.main).toBe(900);                      // rest replaces the per-shot cadence
+    expect(e.slotBurst.main).toBe(0);               // re-armed for the next burst
 
     // Still on rest cooldown — no shot; once it elapses, the next burst starts normally.
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(3);
-    e.fireCd = 0;                                    // rest elapsed
+    e.slotCd.main = 0;                                    // rest elapsed
     scene.time.now += 1000;
     scene._fireVehicleWeapon(e, {}, 0);
     expect(calls.projectile.length).toBe(4);
-    expect(e.fireCd).toBe(200);                      // back to within-burst cadence
+    expect(e.slotCd.main).toBe(200);                      // back to within-burst cadence
   });
 
   it('burstRestMs defaults to 1000 when only burstShots is set', () => {
@@ -482,14 +484,14 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     const e = makeKindEnemy(PROJECTILE_WEAPON_ID, { cycleTime: 200 });
     e.kindDef.burstShots = 1;
     scene._fireVehicleWeapon(e, {}, 0);
-    expect(e.fireCd).toBe(1000);
+    expect(e.slotCd.main).toBe(1000);
   });
 
   it('the live helicopter and drone kinds opt in: bounded bursts with a real rest', async () => {
     const { ENEMY_KINDS } = await import('../../data/enemyKinds.js');
     // #243 playtest follow-up: 15-shot single-lane squeeze (~0.83s at 18/sec), 1.2s rest.
-    expect(ENEMY_KINDS.helicopter.burstShots).toBe(15);
-    expect(ENEMY_KINDS.helicopter.burstRestMs).toBe(1200);
+    expect(ENEMY_KINDS.helicopter.weapons.flank.burstShots).toBe(15);
+    expect(ENEMY_KINDS.helicopter.weapons.flank.burstRestMs).toBe(1200);
     // Drone (#243 latest follow-up): fires one Plasma Lance bolt at a time, then a snappy
     // 400ms rest before the next single bolt (was a 7-bolt stutter with a 700ms rest).
     expect(ENEMY_KINDS.drone.burstShots).toBe(1);

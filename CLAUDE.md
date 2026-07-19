@@ -44,7 +44,11 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     `weaponOverride` in `enemyKinds.js` (e.g. the drone's weakened Repeater). Enemy-vehicle
     fire cadence always derives from the resolved weapon's own timing (`_fireInterval` —
     no per-kind fire timer; tune cadence via `weaponOverride` `cycleTime`/`fireRate`), with
-    optional kind-level trigger discipline (`burstShots`/`burstRestMs`). Fine-grained
+    optional kind-level trigger discipline (`burstShots`/`burstRestMs`). A kind that needs
+    MORE than one gun declares a map of weapon **slots** instead (`weapons: { nose: {...},
+    flank: {...} }`, `kindWeapons.js`) — each slot carrying its own weapon/override/range/
+    trigger discipline, with cadence and burst counters tracked per slot; the behaviour names
+    the live slot and scene code stays free of weapon-id literals. Fine-grained
     delivery feel (spread stagger, speed-jitter band, homing turn radius, weak-seek
     strength/radius, burst stagger) is per-weapon tunable via optional `delivery` fields
     that default to the shared constants in `delivery.js`.

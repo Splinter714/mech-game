@@ -274,25 +274,33 @@ describe('#257 fireWeapon: the player\'s own shot ignores cover when aimed at a 
   it('no convergence target ⇒ ignoreCover: false (unchanged)', () => {
     const scene = makeFireWeaponScene({ convergeTarget: null });
     scene.fireWeapon(PLAYER_HITSCAN_W);
-    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false);
+    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
+    // ignoreCover ARG specifically rather than the whole call shape.
+    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
   });
 
   it('converged on a GROUND enemy ⇒ ignoreCover: false (unchanged)', () => {
     const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
     scene.fireWeapon(PLAYER_HITSCAN_W);
-    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false);
+    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
+    // ignoreCover ARG specifically rather than the whole call shape.
+    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
   });
 
   it('converged on a #250 destructible hex (no .flying) ⇒ ignoreCover: false (unchanged)', () => {
     const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0 } });
     scene.fireWeapon(PLAYER_HITSCAN_W);
-    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false);
+    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
+    // ignoreCover ARG specifically rather than the whole call shape.
+    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
   });
 
   it('converged on a FLYING enemy ⇒ the hitscan beam gets ignoreCover: true', () => {
     const scene = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: true, mech: {} } });
     scene.fireWeapon(PLAYER_HITSCAN_W);
-    expect(scene._fireHitscan).toHaveBeenCalledWith(PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', true);
+    // #307 added trailing args (smallUnitInvolved, the lane descriptor), so assert on the
+    // ignoreCover ARG specifically rather than the whole call shape.
+    expect(scene._fireHitscan.mock.calls[0].slice(0, 7)).toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', true]);
   });
 
   it('converged on a FLYING enemy ⇒ the spawned projectile gets ignoreCover: true', () => {
