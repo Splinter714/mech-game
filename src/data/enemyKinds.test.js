@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE, isEnemyKind } from './enemyKinds.js';
 import { getWeapon, resolveWeapon, WEAPONS } from './weapons.js';
 import { HpBody } from './HpBody.js';
+import { Mech } from './Mech.js';
+import { ENEMIES } from './enemies.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('defines the six expected kinds', () => {
@@ -53,7 +55,8 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
 
   it('#97: infantry is smaller and weaker than the drone — the weakest unit in the game', () => {
     expect(ENEMY_KINDS.infantry.scale).toBeLessThan(ENEMY_KINDS.drone.scale);
-    expect(ENEMY_KINDS.infantry.hp).toBeLessThan(ENEMY_KINDS.drone.hp);
+    // #299 put infantry and drone on the same floor (3 each), so this is now <=, not <.
+    expect(ENEMY_KINDS.infantry.hp).toBeLessThanOrEqual(ENEMY_KINDS.drone.hp);
     for (const id of ENEMY_KIND_IDS) {
       if (id === 'infantry') continue;
       expect(ENEMY_KINDS.infantry.hp, `infantry vs ${id}`).toBeLessThanOrEqual(ENEMY_KINDS[id].hp);
@@ -155,10 +158,12 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     // "comparable to or slower than tank" — tank's own maxSpeed is 52.
     expect(q.move.maxSpeed).toBeLessThanOrEqual(ENEMY_KINDS.tank.move.maxSpeed);
     expect(q.move.maxSpeed).toBeGreaterThan(0);
-    // Tougher than tank (160) but well under a heavy mech's ~616-hp pool — a real but beatable
-    // objective target, not a brick wall.
-    expect(q.hp).toBeGreaterThan(ENEMY_KINDS.tank.hp);
-    expect(q.hp).toBeLessThan(616);
+    // #299 rebalance: the comparison is now on TOTAL toughness (all three layers), not the bare
+    // hp pool — the Broodwalker's 50 structure ties the tank's, and its lead comes from the armor
+    // and shield stacked on top (150 vs 80). It now sits BELOW a light mech (200) rather than near
+    // heavy-mech tough, which was an explicit, confirmed owner decision.
+    expect(new HpBody(q).toughness).toBeGreaterThan(new HpBody(ENEMY_KINDS.tank).toughness);
+    expect(new HpBody(q).toughness).toBeLessThan(new Mech(ENEMIES.raider).toughness);
     // A real weapon mount, same as every other kind.
     expect(getWeapon(q.weaponId)).toBeTruthy();
     // #147: the deploy mechanic was reworked into a SWARM — a batch of several units per tick,

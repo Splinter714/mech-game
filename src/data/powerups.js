@@ -117,10 +117,12 @@ export const POWERUPS = {
 // are unaffected by the exponent (0**k = 0, 1**k = 1), so the floor is still MIN_DROP_CHANCE
 // and the toughest kill in the game is still MAX_DROP_CHANCE.
 //
-// Resulting curve across today's roster (toughness → chance):
-//   infantry 6 → 5%      drone 14 → 5%       turret 90 → 13%    helicopter 100 → 14%
-//   light mech 184 → 29% tank 200 → 33%      medium mech 290 → 54%
-//   quadruped 370 → 77%  heavy mech 430 → 95%
+// Resulting curve across today's roster, post-#299 (toughness → chance):
+//   infantry 3 → 5%      drone 3 → 5%        turret 50 → 8%     helicopter 50 → 8%
+//   tank 80 → 10%        quadruped 150 → 19% light mech 200 → 27%
+//   medium mech 350 → 58% heavy mech 500 → 95%
+// #299 changed none of this file — every figure above moved purely because the derived bounds
+// did. Chaff (vehicles) now sits low on the curve and mech kills carry the drops.
 // These numbers are DERIVED, not hand-solved — they're what the formula produces for the
 // current roster, and they'll shift on their own when the roster does.
 //

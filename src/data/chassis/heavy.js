@@ -5,8 +5,9 @@ export const HEAVY_CONFIG = {
   id: 'heavy',
   name: 'Bulwark',
   weightClass: 'heavy',
-  baseArmor: 96,
-  baseHp: 52,
+  // #299 balance pass (owner-set totals): 200 structure / 225 armor / 75 shield = 500 total.
+  totalArmor: 225,
+  totalHp: 200,
   // Blocky bruiser silhouette (#24): a small head sunk BACK between huge shoulder
   // pauldrons, arms hung low/forward in a siege stance, broad torso, thick stubby limbs,
   // a narrow planted stance, with rear exhaust stacks — the immovable object.

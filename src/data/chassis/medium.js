@@ -4,8 +4,11 @@ export const MEDIUM_CONFIG = {
   id: 'medium',
   name: 'Trooper',
   weightClass: 'medium',
-  baseArmor: 64,
-  baseHp: 36,
+  // #299 balance pass (owner-set totals): the ENEMY medium chassis (the Warden sniper) —
+  // 150 structure / 150 armor / 50 shield = 350 total. The PLAYER's medium is a separate
+  // chassis entry (mediumPlayer.js) at 200/300/100; see that file for why they had to split.
+  totalArmor: 150,
+  totalHp: 150,
   art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },
   movement: {
     // #3 MechWarrior-feel pass. The workhorse: noticeably more ponderous than a light —

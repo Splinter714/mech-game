@@ -2,11 +2,11 @@
 // which never rotates) with a stubby rotating gun housing + barrel on top (the TURRET, which
 // tracks the player). Reads as "rooted gun tower" — wider at the base, gun sticking forward.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, poly, glowBar } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC, poly, glowBar, armorShell } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
 
 // The immobile base: an octagonal armoured pad with bolt studs and an ammo drum, sitting low.
-function drawBase(sg, accent) {
+function drawBase(sg, accent, armored = false) {
   // Ground shadow / footing.
   ellipseC(sg, 0, 8, 30, 12, V.deep, 0.9);
   // Octagonal base plate. #129: a legibility-halo pass drawn first, oversized, behind the
@@ -20,10 +20,14 @@ function drawBase(sg, accent) {
   // Ammo drum on the base (warm accent so it reads as ordnance).
   roundC(sg, -8, 10, 8, 6, V.tread, 2);
   rectC(sg, -8, 10, 6, 3.5, accent, 0.8);
+  // #299/#300: the turret gained a real armor pool in the #299 balance pass (35 structure + 15
+  // armor), so it now honours `opts.armored` like the tank and Broodwalker do — plating brackets
+  // over the base plate that vanish the moment the pool breaks. Sized to the octagonal pad.
+  if (armored) armorShell(sg, 0, 6, 24, 18);
 }
 
 // The rotating gun: a rounded housing + a heavy forward barrel with a hot muzzle.
-function drawGun(sg, accent) {
+function drawGun(sg, accent, armored = false) {
   const A = accentGlow(accent);
   // Housing (the pivoting mass).
   roundC(sg, 0, 0, 17.6, 14.6, V.halo, 4.8);   // #129
@@ -42,11 +46,13 @@ function drawGun(sg, accent) {
   // Muzzle glow.
   ellipseC(sg, 0, -22, 3, 2.4, A.hot, 0.9);
   ellipseC(sg, 0, -22, 4.5, 3.4, A.halo, 0.35);
+  if (armored) armorShell(sg, 0, 0, 15, 12);   // #299: plating over the rotating gun housing
 }
 
-export function drawTurret(scene, key, def) {
+export function drawTurret(scene, key, def, opts = {}) {
   const accent = def.themeColor ?? V.rim;
+  const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
-  gen(scene, `${key}_hull`, D, D, (g) => drawBase(scaledGraphics(g), accent));
-  gen(scene, `${key}_turret`, D, D, (g) => drawGun(scaledGraphics(g), accent));
+  gen(scene, `${key}_hull`, D, D, (g) => drawBase(scaledGraphics(g), accent, armored));
+  gen(scene, `${key}_turret`, D, D, (g) => drawGun(scaledGraphics(g), accent, armored));
 }

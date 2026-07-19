@@ -95,7 +95,11 @@ export const ENEMY_KINDS = {
   turret: {
     name: 'Sentry Turret',
     kind: 'turret',
-    hp: 90,
+    // #299 balance pass (owner-set): 35 structure + 15 armor = 50 total, down from a flat 90.
+    // Armor-only, NO shield — the owner explicitly corrected an earlier "turrets get shields"
+    // to "no shields at all, just armor", so the 15 lands in the armor pool.
+    hp: 35,
+    armor: 15,
     parts: {
       base: { x: 0, y: 6, w: 26, h: 16 },
       gun: { x: 0, y: -8, w: 12, h: 20 },
@@ -172,12 +176,13 @@ export const ENEMY_KINDS = {
   tank: {
     name: 'Battle Tank',
     kind: 'tank',
-    hp: 160,
+    // #299 balance pass (owner-set): 50 structure + 30 armor = 80 total, down from 160+40=200.
+    hp: 50,
     // #246: HP+ARMOR (no shield) — an armored ground vehicle is the natural "has plating, no
     // energy shielding" profile, and exercises the HpBody armor layer (data/HpBody.js/
     // data/shield.js): its 40-point armor pool absorbs hits before hp same as a mech's
     // per-location armor, just as one flat unit-wide pool (HpBody has no per-location split).
-    armor: 40,
+    armor: 30,       // #299: 40 -> 30
     parts: {
       // #294: hull w/h narrowed + lengthened to match the art's new less-square silhouette
       // (art/vehicles/tank.js drawHull — tracks moved from sx ±13 to ±10, hull tub lengthened
@@ -222,7 +227,7 @@ export const ENEMY_KINDS = {
   drone: {
     name: 'Recon Drone',
     kind: 'drone',
-    hp: 14,
+    hp: 3,                  // #299 balance pass (owner-set): 3, down from 14 — chaff, dies instantly.
     parts: {
       body: { x: 0, y: 0, w: 12, h: 12 },
     },
@@ -274,13 +279,15 @@ export const ENEMY_KINDS = {
   helicopter: {
     name: 'Gunship',
     kind: 'helicopter',
-    hp: 70,
+    // #299 balance pass (owner-set): 35 structure + 15 shield = 50 total, down from 70+30=100.
+    hp: 35,
     // #246: HP+SHIELD (no armor) — a thin-skinned aerial unit with a small deflector rather
     // than plating; regens fast (it's evasive and often out of the fight between passes) but
     // the pool itself is modest, so a sustained pass still breaks through it quickly. Exercises
     // the HpBody shield layer (data/shield.js) with a DIFFERENT tuning than the player/
     // Broodwalker below, showing the config is genuinely per-kind.
-    shield: { max: 30, regenPerSec: 3, pauseMs: 900 },
+    // #299: pool 30 -> 15 (owner-set); regen tuning left exactly as it was.
+    shield: { max: 15, regenPerSec: 3, pauseMs: 900 },
     parts: {
       fuselage: { x: 0, y: 2, w: 14, h: 30 },
       cockpit: { x: 0, y: -12, w: 12, h: 12 },
@@ -333,7 +340,11 @@ export const ENEMY_KINDS = {
   quadruped: {
     name: 'Broodwalker',
     kind: 'quadruped',
-    hp: 260,                // #130 (owner: tune): tougher than tank's 160, but well under a
+    // #299 balance pass (owner-set): 50 structure / 50 armor / 50 shield = 150 total, a hard cut
+    // from 260+60+50=370. This deliberately drops the Broodwalker BELOW a light mech (200), where
+    // it used to sit near heavy-mech tough. Flagged to the owner as a big change to that fight and
+    // confirmed. The old sizing rationale below is kept for history but no longer describes it.
+    hp: 50,                 // #130 (owner: tune): tougher than tank's 160, but well under a
                              // heavy mech's ~616-hp pool (artillery's 'heavy' chassis; #273
                              // moved sniper off 'heavy' onto 'medium') — a real but beatable
                              // objective target, not a brick wall.
@@ -342,8 +353,8 @@ export const ENEMY_KINDS = {
     // (shield-only) so the roster exercises every layer-combo the design calls for. Slower
     // shield regen than the helicopter's (it's a ground brawler that stays in the fight, not
     // an evasive flyer) but a bigger pool and a longer post-hit pause.
-    armor: 60,
-    shield: { max: 50, regenPerSec: 1.5, pauseMs: 1500 },
+    armor: 50,       // #299: 60 -> 50
+    shield: { max: 50, regenPerSec: 1.5, pauseMs: 1500 },   // #299: pool unchanged at 50
     parts: {
       hull: { x: 0, y: 2, w: 34, h: 30 },
       turret: { x: 0, y: -8, w: 20, h: 18 },
@@ -422,7 +433,7 @@ export const ENEMY_KINDS = {
   infantry: {
     name: 'Trooper',
     kind: 'infantry',
-    hp: 6,                 // weaker than drone's 14 — dies in one or two hits from almost anything
+    hp: 3,                 // #299 balance pass (owner-set): 3, matching the drone — the floor of the roster
     parts: {
       body: { x: 0, y: 0, w: 8, h: 12 },
     },

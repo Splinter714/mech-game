@@ -1,7 +1,7 @@
 // #240 — the boss chassis. A siege colossus roughly 10x the player's medium mech on screen
 // (see data/boss.js BOSS_SCALE, which owns the DISPLAY multiple; this file owns its stats and
 // locomotion feel). Deliberately NOT reachable from the garage — the chassis switcher is
-// disabled (#248 forces every player mech onto 'medium'), and nothing adds this id to a
+// disabled (#248 forces every player mech onto 'mediumPlayer'), and nothing adds this id to a
 // player-facing list, so it exists purely as the boss's stat block.
 //
 // Stats: baseArmor/baseHp are expanded per-location by chassis/index.js's FACTORS, so a side
@@ -20,8 +20,11 @@ export const COLOSSUS_CONFIG = {
   id: 'colossus',
   name: 'Colossus',
   weightClass: 'colossus',
-  baseArmor: 420,
-  baseHp: 260,
+  // #299: converted from the old per-location baseArmor/baseHp (420/260) to whole-chassis
+  // totals. These are the EXACT sums the old baselines expanded to, so the boss's stat block
+  // is unchanged by the balance pass — it was not part of #299's table.
+  totalArmor: 1218,
+  totalHp: 754,
   art: { bodyLen: 44, bodyWid: 38, accent: 0xd63a3a },
   movement: {
     accel: 40, decel: 30, maxSpeed: 26, turnRate: 0.22,

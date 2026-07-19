@@ -105,7 +105,7 @@ describe('an armored vehicle strips its plating when the armor pool empties (#30
     e.texKey = BASE_KEY;
     e.view.hull.tex = `${BASE_KEY}_hull`;
     const scene = makeScene(e);
-    scene._damageEnemyAt(e, 0, 0, 3);
+    scene._damageEnemyAt(e, 0, 0, 1);   // #299: a drone only has 3 hp — keep it alive
     expect(e.texKey).toBe(BASE_KEY);
     expect(e.view.hull.tex).toBe(`${BASE_KEY}_hull`);
   });

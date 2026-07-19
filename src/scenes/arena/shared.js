@@ -198,9 +198,11 @@ export function deathScaleFor(e, bounds = liveToughnessBounds()) {
 // question on #301, deliberately not touched here). The cut points are expressed as FRACTIONS
 // of the derived range, preserving #107's original relative calibration (its 50/300/550 cuts
 // sat at ~0.06/0.48/0.89 of the then-assumed 14..616 span) while letting the endpoints move with
-// the roster. Against today's derived 6..430: infantry 6 / drone 14 ⇒ small; turret 90 /
-// helicopter 100 / light mech 184 / tank 200 ⇒ medium; medium mech 290 / quadruped 370 ⇒ large;
-// heavy mech 430 ⇒ massive — the top tier is reachable again, by exactly the toughest unit.
+// the roster. Against the post-#299 derived 3..500: infantry / drone 3 ⇒ small; turret 50 /
+// helicopter 50 / tank 80 / quadruped 150 / light mech 200 ⇒ medium; medium mech 350 ⇒ large;
+// heavy mech 500 ⇒ massive — the top tier is still reachable, by exactly the toughest unit.
+// #299 retuned the entire roster and this file needed no edit: the cuts are fractions of a
+// derived span, so the tiers re-sorted themselves.
 const CATEGORY_CUTS = [
   [0.06, 'small'],
   [0.48, 'medium'],

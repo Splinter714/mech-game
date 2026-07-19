@@ -32,7 +32,11 @@ import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 // the Shield POWERUP (data/powerups.js) is what makes the shield feel powerful for a while.
 // `pauseMs` is the brief (not shooter-style multi-second) regen interrupt on any hit that
 // reaches the shield, per the #246 decision.
-const PLAYER_SHIELD = { max: 50, regenPerSec: 2, pauseMs: 1200 };
+// #299: `max` raised 50 -> 100 as part of the owner-set balance table (player = 200 structure /
+// 300 armor / 100 shield = 600). Regen behaviour deliberately unchanged (2/sec, 1200ms pause):
+// the pool got bigger, the trickle did not, so it still reads as breathing room rather than a
+// second health bar — it just now takes 50s rather than 25s to refill from empty.
+const PLAYER_SHIELD = { max: 100, regenPerSec: 2, pauseMs: 1200 };
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim

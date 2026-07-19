@@ -11,7 +11,7 @@
 // This module is the single derivation, so there is one place that answers "what is the range of
 // toughness in the live game" and no near-copies to drift apart again. Retuning enemy health, or
 // adding/removing a unit, needs NO edit in any consumer — the endpoints move on their own (which
-// is what makes #299's coming HP retune a no-op here).
+// is what made #299's HP retune a no-op here).
 //
 // TOUGHNESS, not `maxHp`: `body.toughness` (structure + armor + shield) is exposed identically by
 // `Mech` and the non-mech `HpBody`, so there's no per-kind branching at any call site. `maxHp`
@@ -46,8 +46,12 @@ export function rosterToughnessBounds(enemies = ENEMIES, kinds = ENEMY_KINDS) {
 }
 
 // The LIVE roster's bounds, computed lazily ONCE on first use (the registries are static data, and
-// building a few Mechs at module-eval time would be needless import-order coupling). Today this
-// derives to floor 6 (infantry) and ceiling 430 (the artillery mech on the heavy chassis).
+// building a few Mechs at module-eval time would be needless import-order coupling). Post-#299 this
+// derives to floor 3 (infantry/drone, tied) and ceiling 500 (the artillery mech on the heavy
+// chassis). #299 retuned every unit in the roster and needed ZERO edits here or in either
+// consumer, which is exactly what this module was built for. Note the PLAYER's mech (600) sits
+// deliberately OUTSIDE the span: only ENEMIES + ENEMY_KINDS are read, so "ceiling" means the
+// toughest thing you FIGHT.
 let _liveBounds = null;
 export function liveToughnessBounds() {
   if (!_liveBounds) _liveBounds = rosterToughnessBounds();

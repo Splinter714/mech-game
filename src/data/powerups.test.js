@@ -164,23 +164,23 @@ const mechToughness = (id) => new Mech(ENEMIES[id]).toughness;
 describe('#106: toughness = structure + armor + shield, uniformly across body types', () => {
   it('counts a vehicle\'s ARMOR pool, which the old maxHp signal ignored', () => {
     const tank = new HpBody(ENEMY_KINDS.tank);
-    expect(tank.maxHp).toBe(160);        // structure only — unchanged meaning
-    expect(tank.toughness).toBe(200);    // + its 40-point armor pool
+    expect(tank.maxHp).toBe(50);         // structure only — unchanged meaning (#299: 160 -> 50)
+    expect(tank.toughness).toBe(80);     // + its 30-point armor pool (#299)
   });
 
   it('counts a vehicle\'s SHIELD pool too (helicopter: hp + shield, no armor)', () => {
     const heli = new HpBody(ENEMY_KINDS.helicopter);
-    expect(heli.maxHp).toBe(70);
-    expect(heli.toughness).toBe(100);    // + its 30-point shield
+    expect(heli.maxHp).toBe(35);         // #299: 70 -> 35
+    expect(heli.toughness).toBe(50);     // + its 15-point shield (#299)
   });
 
-  it('counts all three layers at once (quadruped: 260 hp + 60 armor + 50 shield)', () => {
-    expect(new HpBody(ENEMY_KINDS.quadruped).toughness).toBe(370);
+  it('counts all three layers at once (quadruped: 50 hp + 50 armor + 50 shield)', () => {
+    expect(new HpBody(ENEMY_KINDS.quadruped).toughness).toBe(150);
   });
 
   it('leaves maxHp alone on both body types (other consumers rely on its current meaning)', () => {
-    expect(new HpBody(ENEMY_KINDS.quadruped).maxHp).toBe(260);
-    expect(new Mech({ chassisId: 'heavy' }).maxHp).toBe(430);
+    expect(new HpBody(ENEMY_KINDS.quadruped).maxHp).toBe(50);
+    expect(new Mech({ chassisId: 'heavy' }).maxHp).toBe(425);
   });
 
   it('for a shieldless mech, toughness equals its armor+structure maxHp', () => {
@@ -200,12 +200,17 @@ describe('#106: toughness = structure + armor + shield, uniformly across body ty
 });
 
 describe('#106: drop-curve bounds are DERIVED from the live roster, not hardcoded', () => {
-  it('derives floor = the weakest unit (infantry, 6) and ceil = the toughest (heavy mech, 430)', () => {
+  // #299 re-tiered the whole roster and this test needed NO structural change — only the two
+  // literals below, which exist purely to pin what the derivation currently produces. The floor
+  // is now infantry/drone (both 3) and the ceiling the artillery mech (500). Note the PLAYER's
+  // mech (600) is deliberately NOT in this range: rosterBounds reads ENEMIES + ENEMY_KINDS, and
+  // the player is neither, so the ceiling tracks the toughest thing you FIGHT.
+  it('derives floor = the weakest unit (infantry, 3) and ceil = the toughest (heavy mech, 500)', () => {
     const { floor, ceil } = dropBounds();
     expect(floor).toBe(kindToughness('infantry'));
     expect(ceil).toBe(mechToughness('artillery'));
-    expect(floor).toBe(6);
-    expect(ceil).toBe(430);
+    expect(floor).toBe(3);
+    expect(ceil).toBe(500);
   });
 
   it('the endpoints MOVE when the roster does (proving they are derived, not typed in)', () => {
@@ -234,16 +239,19 @@ describe('#106: drop-curve bounds are DERIVED from the live roster, not hardcode
 describe('#106: the convex drop curve over the current roster', () => {
   // The confirmed target table (Jackson, 2026-07-18). Computed from DERIVED bounds — nothing
   // here is a hand-typed floor/ceiling.
+  // #299 re-tuned every toughness in the roster; the curve itself was NOT touched, and the
+  // chances below simply follow from the new 3..500 derived span. That's the property this file
+  // is really asserting — see the "endpoints MOVE when the roster does" test above.
   const TABLE = [
-    ['infantry', kindToughness('infantry'), 6, 0.05],
-    ['drone', kindToughness('drone'), 14, 0.05],
-    ['turret', kindToughness('turret'), 90, 0.13],
-    ['helicopter', kindToughness('helicopter'), 100, 0.14],
-    ['light mech', mechToughness('raider'), 184, 0.29],
-    ['tank', kindToughness('tank'), 200, 0.33],
-    ['medium mech', mechToughness('sniper'), 290, 0.54],
-    ['quadruped', kindToughness('quadruped'), 370, 0.77],
-    ['heavy mech', mechToughness('artillery'), 430, 0.95],
+    ['infantry', kindToughness('infantry'), 3, 0.05],
+    ['drone', kindToughness('drone'), 3, 0.05],
+    ['turret', kindToughness('turret'), 50, 0.08],
+    ['helicopter', kindToughness('helicopter'), 50, 0.08],
+    ['tank', kindToughness('tank'), 80, 0.10],
+    ['quadruped', kindToughness('quadruped'), 150, 0.19],
+    ['light mech', mechToughness('raider'), 200, 0.27],
+    ['medium mech', mechToughness('sniper'), 350, 0.58],
+    ['heavy mech', mechToughness('artillery'), 500, 0.95],
   ];
 
   for (const [label, toughness, expectedToughness, expectedChance] of TABLE) {

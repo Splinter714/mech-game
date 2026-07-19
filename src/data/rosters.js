@@ -18,10 +18,12 @@ export const ROSTERS = {
     // saves that picked light/heavy before this change, onto medium. This is a UI-level
     // restriction: the light/heavy chassis data (chassis/light.js, chassis/heavy.js) is
     // untouched, so removing this one-line migrate hook fully re-enables them later.
-    migrate: (data) => ({ ...data, chassisId: 'medium' }),
+    // #299: the target is now 'mediumPlayer' — the player's own medium-class stat block
+    // (chassis/mediumPlayer.js, 200/300/100) rather than the enemy medium the Warden uses.
+    migrate: (data) => ({ ...data, chassisId: 'mediumPlayer' }),
     defaultRoster: () => ({
       [ACTIVE_MECH_KEY]: {
-        chassisId: 'medium',
+        chassisId: 'mediumPlayer',
         name: 'Trooper-01',
         mounts: {
           rightArm: ['autocannon'],

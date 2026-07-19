@@ -82,12 +82,14 @@ describe('explosion bounds track the roster (#301)', () => {
 
   it('re-tiers the same enemy when the roster bounds change', () => {
     const stubbed = rosterToughnessBounds({}, stubKinds);
-    const e = enemyWithToughness(430);
+    const e = enemyWithToughness(500);   // #299: the artillery mech, top of the live roster
     // Top of today's live roster ⇒ the biggest boom…
     expect(explosionCategoryFor(e)).toBe('massive');
     expect(deathScaleFor(e)).toBeCloseTo(DEATH_SCALE_MAX, 5);
-    // …but middling in a roster whose toughest unit is 1000.
-    expect(explosionCategoryFor(e, stubbed)).toBe('medium');
+    // …but middling in a roster whose toughest unit is 1000 (500 of a 10..1000 span sits just
+    // under halfway, so it drops out of the top tier — which is the point being asserted).
+    expect(explosionCategoryFor(e, stubbed)).not.toBe('massive');
+    expect(explosionCategoryFor(e, stubbed)).toBe('large');
     expect(deathScaleFor(e, stubbed)).toBeLessThan(DEATH_SCALE_MAX);
     // …and the stub roster's own toughest unit takes the top tier there.
     expect(explosionCategoryFor(enemyWithToughness(1000), stubbed)).toBe('massive');

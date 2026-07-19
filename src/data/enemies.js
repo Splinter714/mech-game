@@ -6,12 +6,32 @@
 // range to pick a ROLE (brawler presses in, sniper kites, skirmisher flanks mid-range), so
 // giving enemies distinct loadouts makes them read as behaving differently — not one orbit.
 export const ENEMIES = {
+// #299: enemy mechs get a full-body SHIELD for the first time (they had none before this pass).
+// The pool sizes are the owner's (light 25 / medium 50 / heavy 75); the REGEN tuning below is
+// the builder's, chosen so the shield actually enforces "burst it down" rather than being a flat
+// extra health bar:
+//
+//   * `pauseMs` is the real lever. Any hit that touches the shield restarts the pause, so under
+//     ANY sustained fire the shield never ticks at all — it only comes back if you break off or
+//     lose the target. That's what makes bursting correct and chipping wrong.
+//   * `regenPerSec` then decides how punishing a disengage is, and scales INVERSELY with weight
+//     class so each archetype's shield reinforces how it already fights. The light raider/
+//     stalker refill in ~10s: they flank and break contact constantly, so letting one slip away
+//     really does cost you the progress. The medium Warden (~20s) kites, so its shield is a
+//     partial reset on a long backpedal. The heavy Mortarhead (~37.5s) camps behind cover and is
+//     the slowest to recover — its 75 pool is effectively a one-time buffer per engagement, which
+//     is the right read for a siege unit you grind down.
+//   * All three are slower per-point than the player's own shield (2/sec into a 100 pool) except
+//     the lights, which are faster — deliberately, since a light is the one enemy that can
+//     reliably choose to leave the fight.
+
   // Mid-range flanker: an autocannon (opt 347, was 220 before #135's range-floor pass) +
   // cluster salvo (opt 660). The original Raider — a skirmisher that fights at a middling
   // standoff and flanks.
   raider: {
     chassisId: 'light',
     name: 'Raider',
+    shield: { max: 25, regenPerSec: 2.5, pauseMs: 1000 },   // #299: full refill ~10s
     mounts: { rightArm: ['autocannon'], leftTorso: ['clusterRocket'] },
   },
 
@@ -27,6 +47,7 @@ export const ENEMIES = {
   skirmisher: {
     chassisId: 'light',
     name: 'Stalker',
+    shield: { max: 25, regenPerSec: 2.5, pauseMs: 1000 },   // #299: full refill ~10s
     mounts: { rightArm: ['shotgun'], leftArm: ['machineGun'] },
   },
 
@@ -56,6 +77,7 @@ export const ENEMIES = {
   sniper: {
     chassisId: 'medium',
     name: 'Warden',
+    shield: { max: 50, regenPerSec: 2.5, pauseMs: 1200 },   // #299: full refill ~20s
     mounts: { rightArm: ['plasmaLance'], leftTorso: ['clusterRocket'] },
   },
 
@@ -77,6 +99,7 @@ export const ENEMIES = {
   artillery: {
     chassisId: 'heavy',
     name: 'Mortarhead',
+    shield: { max: 75, regenPerSec: 2, pauseMs: 1500 },     // #299: full refill ~37.5s
     mounts: { rightTorso: ['plasmaCannon'], leftTorso: ['napalm'] },
   },
 };

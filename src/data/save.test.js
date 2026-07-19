@@ -21,7 +21,7 @@ describe('garage persistence', () => {
   it('loads the default build, then persists and reloads edits + damage', () => {
     const all = loadAllMechs();
     expect(all.mech1).toBeDefined();
-    expect(all.mech1.chassisId).toBe('medium');
+    expect(all.mech1.chassisId).toBe('mediumPlayer');
 
     all.mech1.unmount('leftTorso', 0);
     all.mech1.mount('leftTorso', 'pulseLaser');
@@ -36,12 +36,12 @@ describe('garage persistence', () => {
 
   // #248: light/heavy chassis are disabled for now — every mech, including one saved before
   // this change with a non-medium chassisId, is forced onto medium on load.
-  it('force-migrates a pre-existing non-medium save onto medium', () => {
+  it('force-migrates a pre-existing non-medium save onto the player medium chassis', () => {
     globalThis.localStorage.setItem('mech-game-mechs-v1', JSON.stringify({
       mech1: { chassisId: 'heavy', name: 'Old Save', mounts: {} },
     }));
     const all = loadAllMechs();
-    expect(all.mech1.chassisId).toBe('medium');
+    expect(all.mech1.chassisId).toBe('mediumPlayer');
   });
 });
 
