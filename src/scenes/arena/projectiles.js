@@ -191,6 +191,8 @@ export const ProjectilesMixin = {
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
         }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+        // #319: the patch carries NO owner on purpose — burning ground is a hazard that
+        // burns whoever stands in it, including whoever lit it (see _updateFirePatches).
         if (p.ground) this.firePatches.push({ x: p.x, y: p.y, r: p.ground.radius, dps: p.ground.dps, until: this.time.now + p.ground.duration * 1000, nextTick: this.time.now + 500 });
         continue;
       }
@@ -312,14 +314,27 @@ export const ProjectilesMixin = {
     for (const fp of this.firePatches) {
       if (now >= fp.nextTick) {
         fp.nextTick += 500;
-        // #87: iterate a SNAPSHOT — a killing tick now tears the enemy down and splices it out
-        // of `this.enemies` synchronously (no more delayed removal), which would otherwise skip
-        // whichever enemy shifts into the removed slot mid-iteration.
+        const tick = Math.max(1, Math.round(fp.dps * 0.5));
+        // #319: burning ground is INDISCRIMINATE — it belongs to nobody and burns whatever
+        // stands in it, owner included. The bug was that the loop damaged only enemies and
+        // never called `_damagePlayerAt`, so enemy-fired napalm (the artillery mech's entire
+        // payload) burned its own escort and left the player untouched — which is what the
+        // playtest reported. Rather than scope the burn to the opposing side, the owner's
+        // call is that fire is a ground hazard: your own napalm hurts you too, and an
+        // artillery mech that lobs it into its own crowd cooks that crowd. So there is
+        // deliberately no owner on a patch — this is the whole fix.
+        if (!this.mech.isDestroyed() && Math.hypot(this.px - fp.x, this.py - fp.y) < fp.r) {
+          this._damagePlayerAt(tick);
+        }
+        // #87: iterate a SNAPSHOT — a killing tick tears the enemy down and splices it out
+        // of `this.enemies` synchronously, which would otherwise skip whichever enemy
+        // shifts into the removed slot mid-iteration.
         for (const e of [...this.enemies]) {
           if (!e.mech.isDestroyed() && Math.hypot(e.x - fp.x, e.y - fp.y) < fp.r) {
-            this._damageEnemyAt(e, e.x, e.y, Math.max(1, Math.round(fp.dps * 0.5)), 0xff7a18);
+            this._damageEnemyAt(e, e.x, e.y, tick, 0xff7a18);
           }
         }
+        // Cover burns the same way — flame clears foliage whoever lit it.
         for (const h of hexesWithinPixelRadius(fp.x, fp.y, fp.r)) {
           if (!this.coverHp.has(axialKey(h.q, h.r))) continue;
           const c = hexToPixel(h.q, h.r);
