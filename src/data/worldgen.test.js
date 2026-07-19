@@ -280,8 +280,11 @@ describe('generateTerrain', () => {
     // #279: the buildingHp/coverHp split keys off `isPassable`, not the LOS cover tier — forest
     // (GRASSLAND.cover) is soft, passable walk-through cover, so it lands in `coverHp`, not
     // `buildingHp`. (Keying off passability is robust regardless of the soft/hard tier.)
+    // #287: `turretEmplacement` joined that set — it used to be a passable, non-destructible
+    // placement marker and so never appeared in either map; it's now a genuine impassable,
+    // HP-bearing bunker, which puts every world-gen-stamped emplacement hex into `buildingHp`.
     for (const k of buildingHp.keys()) {
-      expect(['alertTower', 'objective']).toContain(terrain.get(k));
+      expect(['alertTower', 'objective', 'turretEmplacement']).toContain(terrain.get(k));
     }
     for (const k of coverHp.keys()) expect(terrain.get(k)).toBe(GRASSLAND.cover);
   });

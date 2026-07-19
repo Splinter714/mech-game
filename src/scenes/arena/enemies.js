@@ -1015,7 +1015,11 @@ export const EnemiesMixin = {
     // predating the #114/#115 spawn-time validation, or terrain that shrank/shifted under it),
     // snapping it back onto the nearest valid ground rather than leaving it permanently stranded
     // outside the playable area. Flyers are exempt — they narratively ignore ground terrain.
-    if (!e.flying && this._blocked(e.x, e.y)) {
+    // #287: `e.emplaced` (a base turret garrisoning its own `turretEmplacement` bunker — set in
+    // bases.js `_spawnDormantUnits`) is exempt: that hex is deliberately impassable now, and the
+    // turret standing on it is not stranded, it's manning the structure. Without this exemption
+    // every base turret would be snapped off its own bunker onto neighbouring ground on frame 1.
+    if (!e.flying && !e.emplaced && this._blocked(e.x, e.y)) {
       const p = nearestValidPixel(this.terrain, this.worldRadius, e.x, e.y);
       e.x = p.x; e.y = p.y; e.vx = 0; e.vy = 0;
     }

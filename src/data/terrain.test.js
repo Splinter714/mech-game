@@ -568,3 +568,80 @@ describe('#269 §1 soft-cover size-tier plumbing', () => {
     expect(shotBlockedAt('alertTower', '3,-1', exempt, true)).toBe(false); // #279: own-hex exemption generalized here too
   });
 });
+
+// #287 (playtest 2026-07-18: "it should BE a hex that fully gets destroyed into rubble") — the
+// turret emplacement stopped being a passable placement marker and became a real HP-bearing
+// bunker, mirroring the `objective`/`dockClosed`/`alertTower` precedent tested above.
+describe('#287: turretEmplacement is a genuine destructible structure', () => {
+  it('is an impassable, LOS-blocking hard-cover structure, not walk-through ground', () => {
+    expect(TERRAIN.turretEmplacement.passable).toBe(false);
+    expect(TERRAIN.turretEmplacement.blocksLOS).toBe(true);
+    expect(isPassable('turretEmplacement')).toBe(false);
+    expect(blocksLOS('turretEmplacement')).toBe(true);
+    expect(movementTier('turretEmplacement')).toBe('none');
+    expect(coverTier('turretEmplacement')).toBe('hard');
+    expect(isSoftCover('turretEmplacement')).toBe(false);
+    expect(isBaseCategory('turretEmplacement')).toBe(true);
+  });
+
+  it('carries real HP, between the alert tower and the base objective', () => {
+    expect(isDestructible('turretEmplacement')).toBe(true);
+    expect(TERRAIN.turretEmplacement.hp).toBe(30);
+    expect(buildingHp('turretEmplacement')).toBe(30);
+    expect(buildingHp('turretEmplacement')).toBeGreaterThan(buildingHp('alertTower'));
+    expect(buildingHp('turretEmplacement')).toBeLessThan(buildingHp('objective'));
+  });
+
+  it('collapses into its own dedicated turretRubble, not the generic rubble', () => {
+    expect(rubbleFor('turretEmplacement')).toBe('turretRubble');
+    expect(rubbleFor('turretEmplacement')).not.toBe(RUBBLE);
+    expect(TERRAIN.turretRubble).toBeDefined();
+    expect(TERRAIN.turretRubble.tex).not.toBe(TERRAIN.turretEmplacement.tex);
+    expect(TERRAIN.turretRubble.tex).not.toBe(TERRAIN.rubble.tex);
+  });
+
+  it('leaves rubble that is passable, slow, open ground with no HP of its own', () => {
+    expect(isPassable('turretRubble')).toBe(true);
+    expect(blocksLOS('turretRubble')).toBe(false);
+    expect(movementTier('turretRubble')).toBe('slow');
+    expect(coverTier('turretRubble')).toBe('open');
+    expect(terrainSpeedFactor('turretRubble')).toBe(SLOW_MOVEMENT_FACTOR);
+    expect(isDestructible('turretRubble')).toBe(false);
+    expect(buildingHp('turretRubble')).toBe(0);
+    // Wreckage, not standing base infrastructure — so it must not read as base-category art.
+    expect(isBaseCategory('turretRubble')).toBe(false);
+  });
+
+  it('the full damage->collapse transition: 30 hp absorbs hits, then flattens to turretRubble', () => {
+    let hp = buildingHp('turretEmplacement');
+    let step = damageBuilding(hp, 12);
+    expect(step.destroyed).toBe(false);
+    expect(step.hp).toBe(18);
+    step = damageBuilding(step.hp, 12);
+    expect(step.destroyed).toBe(false);
+    expect(step.hp).toBe(6);
+    step = damageBuilding(step.hp, 12);
+    expect(step.destroyed).toBe(true);
+    expect(step.hp).toBe(0);
+    // What the scene swaps the hex to on that killing blow.
+    expect(rubbleFor('turretEmplacement')).toBe('turretRubble');
+  });
+
+  it('is destructible but deliberately NOT mission-objective eligible (setDressing)', () => {
+    // A base has one dedicated `objective` hex; its turret bunkers must not compete for the
+    // marker now that they're destructible (which is what `isMissionObjective` keys off).
+    expect(TERRAIN.turretEmplacement.setDressing).toBe(true);
+    expect(isMissionObjective('turretEmplacement')).toBe(false);
+    expect(isMissionObjective('objective')).toBe(true);
+  });
+
+  it('does not protect its own occupant: a turret garrisoning the bunker is still shootable', () => {
+    // #279 generalized own-hex transparency across BOTH cover tiers precisely so a passable-or-
+    // occupied HARD-cover hex like this works — otherwise the emplaced turret would be immune.
+    const key = '2,-3';
+    expect(shotBlockedAt('turretEmplacement', key, new Set([key]))).toBe(false);
+    // ...but an emplacement between shooter and target still blocks, for either size tier.
+    expect(shotBlockedAt('turretEmplacement', key, new Set(['9,9']))).toBe(true);
+    expect(shotBlockedAt('turretEmplacement', key, new Set(['9,9']), true)).toBe(true);
+  });
+});

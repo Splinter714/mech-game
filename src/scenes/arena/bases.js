@@ -198,6 +198,14 @@ export const BasesMixin = {
         e.awareness = DORMANT;
         e.baseId = base.id;
         e.dockKey = axialKey(turret.q, turret.r);
+        // #287: the emplacement hex is now an impassable, HP-bearing bunker (terrain.js
+        // `turretEmplacement`), so this turret is standing on terrain that `_blocked` reports
+        // as blocked. `emplaced` marks it as legitimately garrisoning that structure, which
+        // exempts it from enemies.js's "recover a ground unit stranded on impassable terrain"
+        // snap-back (#115) — without it, every base turret would be shoved off its own bunker
+        // onto a neighbouring hex on the first frame. It's also how `_onTerrainCollapsed` below
+        // finds the occupant to destroy when the bunker itself is blown open.
+        e.emplaced = true;
         // #283 audit: see the matching comment on the dock loop above — the turret emplacement
         // is the biggest beneficiary of this cap (2880px -> 320px), though every dormant kind's
         // proximity-wake radius now shares this same 320px envelope (awareness.js
@@ -606,9 +614,37 @@ export const BasesMixin = {
   // resupply (`spendDockResupply`, data/dockResupply.js) the instant its closed dome is
   // destroyed — a real tactical payoff for blowing it open before it can produce reinforcements,
   // even if it hadn't used its one resupply yet.
+  // #287: ...and, on the same hook, a collapsing turret emplacement takes its GARRISON with it.
+  // DELIBERATE CALL: Jackson asked for a hex that "fully gets destroyed into rubble" — an
+  // emplacement that's gone shouldn't leave its gun hovering intact over the crater, and the
+  // alternative (the turret survives, now standing on passable rubble) would read as the
+  // structure having been cosmetic after all, which is the exact complaint this issue exists to
+  // fix. So blowing the bunker open is a genuine second way to kill the turret, alongside
+  // shooting the turret unit itself (which has its own armor/structure since #299) — the hex's
+  // 30 hp and the unit's 35 structure / 15 armor are two separate health pools, and destroying
+  // EITHER one removes the emplacement from the fight.
   _onTerrainCollapsed(hexKey) {
     const state = this._dockResupplyStates?.get(hexKey);
     if (state) this._dockResupplyStates.set(hexKey, spendDockResupply(state));
+    this._killEmplacedAt(hexKey);
+  },
+
+  // Destroy every emplaced turret garrisoning `hexKey`. Iterates a COPY of `this.enemies`
+  // because `_damageEnemyAt`'s kill path splices the array. Routed through `_damageEnemyAt`
+  // rather than a bespoke teardown so the death FX, the base-wake-on-damage cascade, the
+  // powerup drop roll and the win-condition bookkeeping all behave exactly as they do for a
+  // turret killed by direct fire.
+  _killEmplacedAt(hexKey) {
+    for (const e of [...(this.enemies ?? [])]) {
+      if (!e.emplaced || e.dockKey !== hexKey || e.mech.isDestroyed()) continue;
+      // `toughness` (structure + armor + shield, uniform across Mech/HpBody) — NOT `hp`. Since
+      // #299 the turret carries an ARMOR pool (15) on top of its structure (35), and
+      // `_damageEnemyAt` routes the hit through `applyDamage`, which spends armor first — so an
+      // `hp + 1` bite (the figure `_crushGroundEnemyAt` gets away with for unarmored small units)
+      // leaves an armored turret standing on its own crater. Caught in live verification, not by
+      // the unit tests, which stub `_damageEnemyAt`.
+      this._damageEnemyAt(e, e.x, e.y, (e.mech.toughness ?? e.mech.maxHp) + 1, 0xffb347);
+    }
   },
 
   // A steel dome sealing shut over a vacated dock hex: a dark plate scales in from nothing to
