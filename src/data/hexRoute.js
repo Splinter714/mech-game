@@ -27,7 +27,15 @@ import { axialKey, neighbors, distance, hexToPixel } from './hexgrid.js';
 // bounded amount rather than sweeping the whole map. On exhaustion the search still returns its
 // BEST partial route (see below), so hitting the cap degrades into "walk as far that way as you
 // can" rather than into "give up and stall".
-export const ROUTE_MAX_NODES = 1200;
+// MEASURED, not guessed (scripts/audit-routing-312.mjs, paired A/B on a real 130-unit fight): at
+// 1200 this cost +12.3% engine step time. The expensive searches are the ones that never find the
+// goal — a sealed garrison sweeps its entire reachable pocket before giving up — and with #288's
+// rings sealed and #309's gates shut most of the time, those are the COMMON case, not the rare
+// one. 400 bounds that worst case to roughly a third while still being far more than any real
+// route needs (the whole world disc is a few dozen hexes across, and a complete route is found
+// long before the cap because A* is goal-directed). Dropping to 400 took the same measurement to
+// +2.6%. Owner: tunable, but raise it only with a fresh A/B.
+export const ROUTE_MAX_NODES = 400;
 
 // A unit re-plans on this cadence even when nothing invalidated its route — the world has moving
 // goals (the player), so a path computed against where he stood two seconds ago goes stale on its
@@ -143,8 +151,13 @@ export function findHexPath(start, goal, canStep, maxNodes = ROUTE_MAX_NODES) {
     expanded++;
 
     for (const n of neighbors(cur.q, cur.r)) {
-      if (!canStep(cur, n)) continue;
+      // The neighbour's key is computed HERE and handed to `canStep` as a third argument. The
+      // predicate needs it anyway (to look the destination terrain up) and so does the `seen` map,
+      // and at ~6 keys per expansion across a few hundred expansions per search this string
+      // building was measurable in the live profile. `cur.key` is likewise already known, so the
+      // predicate never has to rebuild either side of the step.
       const nk = axialKey(n.q, n.r);
+      if (!canStep(cur, n, nk)) continue;
       const g = cur.g + 1;
       const prev = seen.get(nk);
       if (prev && prev.g <= g) continue;

@@ -36,7 +36,6 @@ import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain, isPassable } from '../../data/terrain.js';
 import { makeRouter } from '../../data/hexRoute.js';
 import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
-import { edgeKey } from '../../data/hexEdges.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
 import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
@@ -820,12 +819,22 @@ export const EnemiesMixin = {
   // `blocksSpan(edge, true)` — the ENEMY form, matching `_blockedForEnemy` (world.js). Enemies may
   // walk through their own base's OPEN gate, so routing has to agree: use the player's form here
   // and a garrison unit would refuse to path out through a doorway that is standing wide open.
-  _canEnemyStep(from, to) {
-    if (!isPassable(this.terrain.get(axialKey(to.q, to.r)))) return false;
+  // This is the hottest function in the feature — it runs six times per expanded node — so it is
+  // written to allocate nothing. `toKey` is passed in already built by the search, and the span
+  // lookup goes through `byHex` (which indexes every span under BOTH its flanking hexes) rather
+  // than through `edgeKey`: building a canonical edge key allocates three strings per call, and
+  // in the live profile that alone was a meaningful slice of the frame. Since every span in
+  // `byHex[from]` has `from` as one endpoint, "is this the span between from and to" is just a
+  // numeric compare against its OTHER endpoint. The list is at most six long.
+  _canEnemyStep(from, to, toKey) {
+    if (!isPassable(this.terrain.get(toKey ?? axialKey(to.q, to.r)))) return false;
     const set = this.wallEdges;
-    if (set && set.edges.size > 0) {
-      const edge = set.edges.get(edgeKey(from, to));
-      if (edge && blocksSpan(edge, true)) return false;
+    if (!set || set.edges.size === 0) return true;
+    const spans = set.byHex.get(from.key ?? axialKey(from.q, from.r));
+    if (!spans) return true;                       // no wall touches this hex at all — the common case
+    for (const e of spans) {
+      const onThisEdge = (e.a.q === to.q && e.a.r === to.r) || (e.b.q === to.q && e.b.r === to.r);
+      if (onThisEdge && blocksSpan(e, true)) return false;
     }
     return true;
   },
@@ -1148,7 +1157,22 @@ export const EnemiesMixin = {
     const dist = Math.hypot(dxp, dyp) || 1;
     const bearing = Math.atan2(dyp, dxp);
     const ux = dxp / dist, uy = dyp / dist;
-    const ctx = { dt, delta, dxp, dyp, dist, bearing, ux, uy };
+    // #312: `ux/uy` is the true bearing to the player and stays that — it is what every kind's
+    // gun AIMS along (`aimAndFire`), and aiming must always point at the player himself, never at
+    // a waypoint. `tux/tuy` is the separate TRAVEL heading: the same vector routed around walls
+    // and blocking terrain. The ground movement intents (tank/infantry/quadruped) build their
+    // advance and strafe components off the travel heading; everything else is untouched.
+    //
+    // This matters far more than the mech path does: a real generated world runs about 3 mechs to
+    // 45 ground vehicles (measured — scripts/audit-routing-312.mjs), so tanks and infantry ARE the
+    // population the owner watches bump into walls. Flyers are skipped (they pass over ground
+    // obstacles) and so are turrets (`move` is absent — they cannot travel at all), which keeps
+    // the router off ~40% of the roster for free.
+    const ctx = { dt, delta, dxp, dyp, dist, bearing, ux, uy, tux: ux, tuy: uy };
+    if (!e.flying && e.kindDef?.move?.maxSpeed) {
+      const routed = this._routedIntent(e, this.px, this.py);
+      ctx.tux = routed.mx; ctx.tuy = routed.my;
+    }
 
     // #103 awareness: distance-only detection (+ noise) for non-mech kinds — deliberately
     // simpler than the mech path's LOS check, since these often spawn in numbers (drone swarms,
