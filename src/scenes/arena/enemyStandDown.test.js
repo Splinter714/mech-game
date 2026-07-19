@@ -96,7 +96,7 @@ describe('#304 where a stood-down unit withdraws to', () => {
     expect(scene._standDownGoal({ baseId: null, spawnX: 120, spawnY: -40 })).toEqual({ x: 120, y: -40 });
   });
 
-  it('survives a baseId whose base no longer exists, and the boss arena (no bases at all)', () => {
+  it('survives a baseId whose base no longer exists, and an arena with no bases at all', () => {
     const scene = makeScene({ bases: [] });
     scene.bases = undefined;
     expect(scene._standDownGoal({ baseId: 'base9', spawnX: 7, spawnY: 8 })).toEqual({ x: 7, y: 8 });

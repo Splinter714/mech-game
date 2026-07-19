@@ -4,24 +4,19 @@ import { LIGHT_CONFIG } from './light.js';
 import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
 import { MEDIUM_PLAYER_CONFIG } from './mediumPlayer.js';
-import { COLOSSUS_CONFIG } from './colossus.js';
 
 describe('CHASSIS — weight-class movement stats', () => {
-  // #240 added 'colossus' — the boss's stat block (data/chassis/colossus.js). It's registered
-  // like any other chassis but is deliberately never player-selectable, so the three PLAYER
-  // weight classes are still exactly light/medium/heavy and every tuning assertion below
-  // (which is about the player's speed spread) is unaffected.
-  // #299 added 'mediumPlayer' on the same footing — the PLAYER's own medium-class stat block,
-  // separated from the enemy medium the Warden rides (see chassis/mediumPlayer.js). It's a
-  // stat variant of 'medium', not a fourth weight class, and shares medium's movement verbatim.
+  // #299 added 'mediumPlayer' — the PLAYER's own medium-class stat block, separated from the
+  // enemy medium the Warden rides (see chassis/mediumPlayer.js). It's a stat variant of
+  // 'medium', not a fourth weight class, and shares medium's movement verbatim.
   it('defines the three expected player weight classes', () => {
-    expect(CHASSIS_IDS.filter((id) => id !== 'colossus' && id !== 'mediumPlayer').sort()).toEqual(['heavy', 'light', 'medium']);
+    expect(CHASSIS_IDS.filter((id) => id !== 'mediumPlayer').sort()).toEqual(['heavy', 'light', 'medium']);
   });
 
   // #299: the whole-chassis totals are now an exact contract, not "whatever the per-location
   // rounding produced". This is the invariant that lets the balance table be stated as totals.
   it('#299: per-location armor/HP sums EXACTLY to the config totals, for every chassis', () => {
-    const CONFIGS = [LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG, MEDIUM_PLAYER_CONFIG, COLOSSUS_CONFIG];
+    const CONFIGS = [LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG, MEDIUM_PLAYER_CONFIG];
     for (const cfg of CONFIGS) {
       const locs = Object.values(makeChassis(cfg).locations);
       expect(locs.reduce((s, l) => s + l.maxArmor, 0), `${cfg.id} armor`).toBe(cfg.totalArmor);
@@ -41,13 +36,6 @@ describe('CHASSIS — weight-class movement stats', () => {
   it('#299: mediumPlayer is a stat variant of medium, not a new weight class', () => {
     expect(CHASSIS.mediumPlayer.weightClass).toBe('medium');
     expect(CHASSIS.mediumPlayer.movement).toEqual(CHASSIS.medium.movement);
-  });
-
-  it('#240: the boss chassis is registered but is not a player weight class', () => {
-    expect(CHASSIS.colossus).toBeDefined();
-    expect(CHASSIS.colossus.weightClass).toBe('colossus');
-    // A slow siege platform — it must never out-run the slowest player chassis.
-    expect(CHASSIS.colossus.movement.maxSpeed).toBeLessThan(CHASSIS.heavy.movement.maxSpeed);
   });
 
   it('#159: heavy maxSpeed now matches light\'s OLD (pre-#159) maxSpeed of 135', () => {

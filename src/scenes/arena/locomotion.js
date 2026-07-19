@@ -75,17 +75,13 @@ export const LocomotionMixin = {
   // and stays at DEPTH.UNITS; every enemy mech (enemies.js `_spawnMech`) leaves it false. A mech is
   // always a LARGE ground unit (`small=false`), so an enemy mech renders at DEPTH.LARGE_GROUND_UNITS
   // — below the player but ABOVE the cover canopy, so it towers over tree tops (see `unitDepth`).
-  // #240: `scale` is the sprite scale for THIS unit — every ordinary mech omits it and gets
-  // ARENA_MECH_SCALE, byte-identically to before; only the boss passes its own (much larger)
-  // one. See arena/shared.js `mechViewScale`/`mechDispUnit` for how scale and texture
-  // super-sampling trade off against each other.
-  _makeMechView(key, x, y, angle, isPlayer = false, scale = ARENA_MECH_SCALE) {
-    const hull = this.add.sprite(0, 0, `${key}_hull_0`).setScale(scale);
-    const torL = this.add.sprite(0, 0, `${key}_leftTorso`).setScale(scale);
-    const torR = this.add.sprite(0, 0, `${key}_rightTorso`).setScale(scale);
-    const armL = this.add.sprite(0, 0, `${key}_leftArm`).setScale(scale);
-    const armR = this.add.sprite(0, 0, `${key}_rightArm`).setScale(scale);
-    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(scale);
+  _makeMechView(key, x, y, angle, isPlayer = false) {
+    const hull = this.add.sprite(0, 0, `${key}_hull_0`).setScale(ARENA_MECH_SCALE);
+    const torL = this.add.sprite(0, 0, `${key}_leftTorso`).setScale(ARENA_MECH_SCALE);
+    const torR = this.add.sprite(0, 0, `${key}_rightTorso`).setScale(ARENA_MECH_SCALE);
+    const armL = this.add.sprite(0, 0, `${key}_leftArm`).setScale(ARENA_MECH_SCALE);
+    const armR = this.add.sprite(0, 0, `${key}_rightArm`).setScale(ARENA_MECH_SCALE);
+    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(ARENA_MECH_SCALE);
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
     const c = this.add.container(x, y, [hull, torL, torR, armL, armR, turret]);
@@ -108,10 +104,7 @@ export const LocomotionMixin = {
   // short way around the ±π seam (a lock-flip must not spin the long way). `targets` may omit a
   // loc (treated as 0). Enemies pass all-0 targets, which the smoothing handles cleanly (stays
   // 0, no drift). Falls back to snapping if dt is absent/NaN so the first frame can't produce NaN.
-  // #240: `artScale` (optional, defaults to the global ART_SCALE inside partSpriteTransform)
-  // is the super-sampling grid this mech's textures were built on — only the boss passes a
-  // non-default one; every other caller's behaviour is unchanged.
-  _syncTilts(view, mech, angle, scale, baseX, baseY, targets, dt, artScale) {
+  _syncTilts(view, mech, angle, scale, baseX, baseY, targets, dt) {
     const a = 1 - Math.exp(-TILT_SMOOTH_K * dt);
     const smooth = Number.isFinite(a) ? Phaser.Math.Clamp(a, 0, 1) : 1;
     const t = view._tilt;
@@ -120,19 +113,19 @@ export const LocomotionMixin = {
       const delta = Phaser.Math.Angle.Wrap(target - t[loc]);
       t[loc] = Phaser.Math.Angle.Wrap(t[loc] + delta * smooth);
     }
-    this._syncPivots(view, mech, angle, scale, baseX, baseY, t, artScale);
+    this._syncPivots(view, mech, angle, scale, baseX, baseY, t);
   },
 
   // Place + pivot a mech view's four off-centre part sprites (side torsos + arms) toward their
   // convergence tilt. The sprites are children of the container (local origin = centre), so
   // callers pass baseX = baseY = 0. `tilts` maps a loc → its convergence tilt (0 = straight).
-  _syncPivots(view, mech, angle, scale, baseX, baseY, tilts, artScale) {
+  _syncPivots(view, mech, angle, scale, baseX, baseY, tilts) {
     const parts = [
       [view.torL, 'leftTorso'], [view.torR, 'rightTorso'],
       [view.armL, 'leftArm'], [view.armR, 'rightArm'],
     ];
     for (const [sprite, loc] of parts) {
-      const t = partSpriteTransform(mech, loc, angle, scale, artScale);
+      const t = partSpriteTransform(mech, loc, angle, scale);
       sprite.setOrigin(t.ox, t.oy);
       sprite.setPosition(baseX + t.dx, baseY + t.dy);
       sprite.rotation = t.rot + (tilts[loc] || 0);
