@@ -17,6 +17,16 @@
 //   muzzlePart which entry in `parts` a shot actually spawns from (#109) — the gun/barrel/nose,
 //              not the unit's centre. Falls back to the first `parts` entry if omitted.
 //   weaponId   which WEAPONS entry this unit fires (its delivery drives the projectile).
+//   weapons    #305: the MULTI-WEAPON form. A kind that needs more than one gun declares a map
+//              of SLOTS instead of the single top-level weaponId — `weapons: { nose: {...},
+//              flank: {...} }` — where each slot carries its OWN weaponId, weaponOverride,
+//              fireRange and burstShots/burstRestMs (every field below that describes a gun is
+//              per-slot in this form). `defaultWeaponSlot` names the one a caller gets when it
+//              doesn't ask. Slot keys are MOUNT/ROLE names, never weapon names, so weapon ids
+//              still never leak out of this file. A kind with no `weapons` map is normalised
+//              into one synthesised slot from its top-level fields, so every single-weapon kind
+//              is unchanged. See data/kindWeapons.js for the seam and the helicopter below for
+//              the live example (its live slot is chosen by FACING — data/gunshipCycle.js).
 //   weaponOverride  #243: optional PARTIAL override merged onto the base weapon for THIS kind
 //              only (resolveWeapon, data/weapons.js): top-level fields shallow-merge, the nested
 //              `delivery` object also shallow-merges, and the base WEAPONS entry is never

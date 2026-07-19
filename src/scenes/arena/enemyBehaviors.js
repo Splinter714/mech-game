@@ -35,8 +35,11 @@ const rand = (a, b) => a + Math.random() * (b - a);
 function aimAndFire(scene, e, ctx, { needLos, slot = undefined, fire = true }) {
   const def = e.kindDef;
   e.turret = rotateToward(e.turret, ctx.bearing, def.move.turretSlew, ctx.dt);
-  if (!fire) return;
+  // Record the live slot BEFORE the hold-fire bail, so `e.weaponSlot` always reflects what the
+  // unit is currently pointing (null while holding fire) rather than going stale on the last gun
+  // it happened to shoot.
   e.weaponSlot = slot;
+  if (!fire) return;
   // Range comes from the LIVE slot (each gun has its own reach) rather than the kind as a whole.
   const mount = kindWeaponSlot(def, slot);
   // #304: `_enemyFireAllowed()` = the #28 debug toggle AND "the player isn't dead (past the
