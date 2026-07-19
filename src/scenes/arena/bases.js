@@ -16,8 +16,8 @@ import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH, strokeHexRing } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
-import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
-import { mulberry32 } from '../../data/worldgen.js';
+import { makeDockResupplyState, tickDockResupply, spendDockResupply, chargeDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
+import { mulberry32, drawDockKind, dockCountFor, baseLateFraction, isSwarmDockKind } from '../../data/worldgen.js';
 import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../data/terrain.js';
@@ -158,6 +158,47 @@ function dockClusterOffset(i, count) {
   return { dx: Math.cos(a) * r, dy: Math.sin(a) * r };
 }
 
+// #323: THE one place that turns "this dock owes N bodies of kind K at pixel (x, y)" into actual
+// spawned units. Both spawn paths call it — `_spawnDormantUnits` at deploy time and
+// `_resupplyDock` mid-fight — because they had already diverged once: #314 taught the initial
+// spawn about swarm counts and cluster rings, #311 reworked resupply's timing, and neither
+// noticed resupply was still making a single bare `_spawnKind` call. So a swarm dock opened with
+// its full 10 and then trickled back one body at a time, which is the bug Jackson reported. With
+// the count lookup, the ring layout, the terrain snapping and the kind dispatch all living here,
+// the two paths cannot drift apart again without both changing together.
+//
+// `awareness` is the one genuine difference between the callers and is passed in: a deploy-time
+// cluster is DORMANT (inert until its base wakes), a resupply cluster is AWARE (its base is
+// already fighting, so a fresh unit joins the fight immediately rather than standing inert).
+export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, awareness }) {
+  const spawned = [];
+  for (let i = 0; i < count; i++) {
+    // Offsets come from `dockClusterOffset` (concentric rings) so a 10-strong swarm seats every
+    // body without stacking, and each point is snapped through `nearestValidPixel`
+    // (data/spawnPlacement.js — the same #115 fix `_spawnInfantryMob` uses) so an outer-ring unit
+    // can never land off-map or on impassable terrain. A no-op for the count === 1 case (dead
+    // centre of an already-validated dock hex).
+    const { dx, dy } = dockClusterOffset(i, count);
+    const snapped = count > 1 ? nearestValidPixel(scene.terrain, scene.worldRadius, x + dx, y + dy) : { x, y };
+    // #269 playtest follow-up: a mech-kind dock goes through `_spawnMech` (the full Mech +
+    // tactical-AI-state constructor); every other kind through `_spawnKind` (HpBody + simple
+    // per-kind behaviour). `isEnemyKind` is the same predicate `_spawnEnemy`'s own dispatcher
+    // uses to tell the two apart, reused rather than reinvented.
+    const e = isEnemyKind(kindId) ? scene._spawnKind(snapped.x, snapped.y, kindId) : scene._spawnMech(snapped.x, snapped.y, kindId);
+    e.awareness = awareness;
+    e.baseId = baseId;
+    e.dockKey = dockKey;
+    // #283 audit: cap the DORMANT proximity-wake radius (data/awareness.js
+    // `PROXIMITY_WAKE_RANGE_CAP` has the full reasoning) — a no-op for every kind whose
+    // `detectRange` was already below the cap (tank/helicopter/quadruped/mech); the turret kinds'
+    // wildly larger combat-range-derived values are the ones it bites on. Only meaningful for a
+    // dormant unit — an AWARE resupply unit is already engaged and never consults its wake radius.
+    if (awareness === DORMANT) e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
+    spawned.push(e);
+  }
+  return spawned;
+}
+
 // #269 Part 2 ("dock open/closed states"): how close a dock's own live unit(s) (matched by
 // `dockKey`) must stay to the dock's own pixel centre for the hex to still read as OCCUPIED. A
 // DORMANT cluster sits within `DOCK_HUDDLE_OFFSET` (16px) of centre, well inside this; the
@@ -211,43 +252,30 @@ export const BasesMixin = {
     // world seed (set by `_buildWorld`, world.js) so a seeded run reproduces the same staggering
     // — the same reason worldgen.js threads a `mulberry32` rng rather than calling `Math.random`.
     // Falls back to a random draw only when there's no seed (a test stub that never built a world).
-    const dockRng = mulberry32(((this._worldSeed ?? Math.floor(Math.random() * 0x100000000)) ^ 0x00c0ffee) >>> 0);
-    for (const base of this.bases ?? []) {
+    // #323: kept on the scene (not just local) because mid-fight resupply now re-draws each
+    // dock's kind from the base's pool, and that draw must come from the SAME seeded stream so a
+    // seeded run stays reproducible end-to-end rather than only up to the first reinforcement.
+    this._dockRng = mulberry32(((this._worldSeed ?? Math.floor(Math.random() * 0x100000000)) ^ 0x00c0ffee) >>> 0);
+    const dockRng = this._dockRng;
+    const baseList = this.bases ?? [];
+    for (let bi = 0; bi < baseList.length; bi++) {
+      const base = baseList[bi];
       for (const dock of base.docks) {
         const { x, y } = hexToPixel(dock.q, dock.r);
-        const count = dock.count ?? 1;
         const dockKey = axialKey(dock.q, dock.r);
-        this._dockResupplyMeta.set(dockKey, { baseId: base.id, kindId: dock.kindId, x, y });
+        // #323: `lateFraction` is this BASE's position on the early→late difficulty ramp
+        // (worldgen.js `baseLateFraction`), captured here so `_resupplyDock` can re-draw from the
+        // same difficulty-appropriate pool mix world-gen used, without needing the base's index.
+        this._dockResupplyMeta.set(dockKey, {
+          baseId: base.id, kindId: dock.kindId, x, y, lateFraction: baseLateFraction(bi, baseList.length),
+        });
         this._dockResupplyStates.set(dockKey, makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, dockRng));
-        for (let i = 0; i < count; i++) {
-          // #314: offsets come from `dockClusterOffset` (concentric rings) so a 10-strong swarm
-          // dock seats every body without stacking, and each point is snapped through
-          // `nearestValidPixel` (data/spawnPlacement.js — the same #115 fix `_spawnInfantryMob`
-          // uses) so an outer-ring unit can never land off-map or on impassable terrain. A no-op
-          // for the count === 1 case (dead centre of an already-validated dock hex).
-          const { dx, dy } = dockClusterOffset(i, count);
-          const snapped = count > 1
-            ? nearestValidPixel(this.terrain, this.worldRadius, x + dx, y + dy)
-            : { x, y };
-          const px = snapped.x;
-          const py = snapped.y;
-          // #269 playtest follow-up: a mech-kind dock (dockCountFor always returns 1 for a mech
-          // id — the default branch, since mechs aren't tank/helicopter) goes through
-          // `_spawnMech`; every other kind keeps using `_spawnKind` exactly as before.
-          const e = isEnemyKind(dock.kindId) ? this._spawnKind(px, py, dock.kindId) : this._spawnMech(px, py, dock.kindId);
-          // A DORMANT unit is genuinely inert (see enemies.js `_updateEnemy`'s early return on
-          // this state) — never through UNAWARE's idle-wander first. `baseId`/`dockKey` are
-          // how `_wakeBase` finds "every unit belonging to this base/dock" and are otherwise
-          // unused.
-          e.awareness = DORMANT;
-          e.baseId = base.id;
-          e.dockKey = dockKey;
-          // #283 audit: cap the DORMANT proximity-wake radius (data/awareness.js
-          // `PROXIMITY_WAKE_RANGE_CAP`'s own comment has the full reasoning) — a no-op for every
-          // kind whose `detectRange` was already below the cap (tank/helicopter/quadruped/mech);
-          // the turret kinds' wildly larger combat-range-derived values are the ones it bites on.
-          e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
-        }
+        // #323: the whole cluster now goes through the ONE shared placement seam, the same one
+        // `_resupplyDock` calls — see `spawnDockCluster` above for why.
+        spawnDockCluster(this, {
+          x, y, kindId: dock.kindId, count: dock.count ?? 1,
+          baseId: base.id, dockKey, awareness: DORMANT,
+        });
       }
     }
     this._spawnWallTurrets();
@@ -651,9 +679,12 @@ export const BasesMixin = {
       if (!state) continue;
       const awake = this._wokenBases.has(meta.baseId);
       const cleared = !this.enemies.some((e) => e.dockKey === dockKey);
+      // #323: captured BEFORE the tick charges its 1-body floor. A swarm redraw is only allowed
+      // on a dock's FIRST resupply — see `_resupplyDock`'s `allowSwarm` reasoning.
+      const spentBefore = state.count;
       const next = tickDockResupply(state, { awake, cleared, dt });
       this._dockResupplyStates.set(dockKey, next);
-      if (next.ready) this._resupplyDock(dockKey, meta);
+      if (next.ready) this._resupplyDock(dockKey, meta, { allowSwarm: spentBefore === 0 });
     }
   },
 
@@ -771,8 +802,38 @@ export const BasesMixin = {
   // #269 playtest follow-up ("fold mechs into the dock system"): `meta.kindId` mirrors
   // `_spawnDormantUnits`'s own branch — a mech-kind dock resupplies through `_spawnMech`, every
   // other kind through `_spawnKind`, both via the same `isEnemyKind` predicate.
-  _resupplyDock(dockKey, meta) {
-    const { x, y, kindId } = meta;
+  // #323 (Jackson: "a dock should not be locked into its original type; it should pull from that
+  // base difficulty's pool at the correct ratios"): the kind is RE-DRAWN here on every resupply,
+  // through worldgen.js's `drawDockKind` — the same weighted draw `placeBases` uses, against this
+  // base's own `lateFraction` (recorded in `meta` at spawn time), so the reinforcement mix matches
+  // the base's difficulty rather than being frozen to whatever the dock opened with. Nothing
+  // visual is tied to the original kind: the hex terrain and the elevator FX below are generic
+  // `dock`/`dockClosed`, and placement/cluster/flyer handling all follow from the DRAWN kind
+  // because `spawnDockCluster` re-derives everything from it.
+  //
+  // Two density guards ride along, both protecting #314's work rather than reopening it:
+  //   - `hasSwarm` — the one-swarm-per-base cap, evaluated against the base's LIVE dock kinds (the
+  //     redraw writes `meta.kindId` back, so the map always reflects current composition). A
+  //     non-swarm dock CAN become a swarm dock mid-fight, but only if no dock in that base is
+  //     already a swarm one; a base never fields two swarm docks at once, exactly as at world-gen.
+  //   - `allowSwarm` — a swarm redraw is only permitted on a dock's FIRST resupply. Otherwise a
+  //     dock could spend two single-body cycles and then still draw a 10-body swarm on its third,
+  //     delivering 12 bodies against a 3-body budget. Restricting it to the first cycle caps any
+  //     one dock's total reinforcement at max(3 singles, 1 swarm of 10) = 10 bodies.
+  _resupplyDock(dockKey, meta, { allowSwarm = true } = {}) {
+    const { x, y } = meta;
+    const hasSwarm = [...this._dockResupplyMeta.values()]
+      .some((m) => m.baseId === meta.baseId && m !== meta && isSwarmDockKind(m.kindId));
+    const rng = this._dockRng ?? Math.random;
+    const kindId = drawDockKind(rng, meta.lateFraction ?? 0, { hasSwarm: hasSwarm || !allowSwarm });
+    meta.kindId = kindId;
+    // #323 (the original bug): resupply used to make a single bare `_spawnKind` call, so a swarm
+    // dock trickled back one body at a time instead of the burst it opened with. The count now
+    // comes from the same `dockCountFor` the initial spawn uses, and the budget is charged in
+    // BODIES so a full swarm retires the dock rather than repeating three times.
+    const count = dockCountFor(kindId, rng);
+    const state = this._dockResupplyStates.get(dockKey);
+    if (state) this._dockResupplyStates.set(dockKey, chargeDockResupply(state, count));
     // #269 Part 2 ("dock open/closed states"): a dock that's currently CLOSED (the normal case —
     // its original unit(s) walked off/died and `_updateDockOpenClose` already sealed it, see
     // above) reopens right here, at the same moment this elevator sequence kicks off — the
@@ -807,10 +868,10 @@ export const BasesMixin = {
         // ACTIVE — no dormant/wake step, matching "the base is already fighting."
         this.tweens.add({ targets: [platform, glow], y: `-=${riseFrom}`, duration: 450, ease: 'Sine.easeOut' });
         this.time.delayedCall(220, () => {
-          const e = isEnemyKind(kindId) ? this._spawnKind(x, y, kindId) : this._spawnMech(x, y, kindId);
-          e.awareness = AWARE;
-          e.baseId = meta.baseId;
-          e.dockKey = dockKey;
+          // #323: the SAME shared placement seam the initial dormant spawn uses — cluster rings,
+          // terrain snapping and mech/kind dispatch all come from there, so a swarm resupply
+          // arrives as a properly-seated burst. AWARE, not DORMANT: the base is already fighting.
+          spawnDockCluster(this, { x, y, kindId, count, baseId: meta.baseId, dockKey, awareness: AWARE });
         });
         // Stage 3: once the platform has surfaced, doors close back over the (now empty) shaft.
         this.time.delayedCall(500, () => {

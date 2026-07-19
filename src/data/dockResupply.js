@@ -32,6 +32,15 @@ export const DOCK_RESUPPLY_COOLDOWN_MS = 18000;
 // high cap anyway — 3 gives "escalating" room without turning an uncontested dock into an
 // infinite farm spot. Owner: tunable via playtest (issue explicitly allows 1-2, judgement
 // call to go slightly above that given the cooldown change).
+// #323: this budget is counted in BODIES, not in fires. That distinction did not matter while
+// every resupply delivered exactly one unit, but #314's swarm docks (`DOCK_SWARM_COUNT` = 10
+// drones/infantry from one hex) make it decisive: if 3 kept meaning "three fires" and each fire
+// now delivered a full swarm, a single swarm dock would produce 30 extra bodies on top of its
+// opening 10 — 40 from one hex, which is precisely the density blowout #269's playtest verdict
+// corrected and #314 then re-tuned its pool weighting to avoid. Counting bodies instead makes the
+// same constant mean "a swarm dock resupplies ONCE, at full strength" (10 bodies overruns the
+// 3-body budget in a single fire and retires the dock) while leaving every single-body dock's
+// behaviour exactly as it was — three separate reinforcements over a sustained assault.
 export const DOCK_RESUPPLY_MAX_PER_DOCK = 3;
 
 // #311: per-dock cooldown variance. Every dock used to share the flat constant above AND to be
@@ -51,7 +60,23 @@ export const DOCK_RESUPPLY_COOLDOWN_JITTER = 0.15;
 // respawn in your face", and a uniform 0-1 phase would let a dock pop a fresh unit a second or
 // two after its base wakes. 0.5-1.0 gives a first resupply somewhere in ~7.7-20.7s — plenty of
 // spread to break the lockstep, with a real floor before anything can reappear. Owner: tunable.
-export const DOCK_RESUPPLY_PHASE_MIN = 0.5;
+//
+// #323 playtest follow-up (Jackson: "docks are correctly refilling at different times from one
+// another, but it seems like their actual cooldowns are massively different in some cases"). The
+// desync worked; its MAGNITUDE was the problem. A phase band of 0.5-1.0 made the FIRST refill
+// after a base wakes land anywhere in ~7.7-20.7s — a 2.7x spread — while every later cycle
+// recharges to the dock's own interval, a mild ±15% (15.3-20.7s). Two docks could therefore open
+// 13 seconds apart and then settle into near-identical cadences, which reads as "these docks have
+// wildly different cooldowns," not as "these docks are offset from each other."
+//
+// Narrowed to 0.8-1.0. The first refill now lands in ~12.2-20.7s and, more importantly, the phase
+// term itself contributes only a 1.25x spread against the interval jitter's 1.35x — so the
+// opening cycle's spread is now the same order as the steady-state spread the player then
+// experiences for the rest of the fight. That consistency is what makes it read as stagger rather
+// than inconsistency: no dock is ever dramatically faster than its neighbour, they are just
+// offset. Still a real desync — up to ~4s of separation on the first cycle, comfortably enough to
+// break the synchronized pulse #311 was fixing. Owner: tunable.
+export const DOCK_RESUPPLY_PHASE_MIN = 0.8;
 export const DOCK_RESUPPLY_PHASE_MAX = 1;
 
 // Fresh per-dock resupply state, with #311's two per-dock rolls baked in at construction:
@@ -115,6 +140,11 @@ export function tickDockResupply(
     if (!cleared) return { remainingMs: 0, count: state.count, cooldownMs: cd, startMs: unstartedMs };
     // Recharges to this dock's OWN interval (#311), not the shared constant — no phase re-roll:
     // the docks are already out of step by now and re-rolling each cycle would only add churn.
+    // #323: this charges ONE body — the safe floor. A fire that turns out to deliver a whole
+    // swarm charges the rest through `chargeDockResupply` below, once the scene has drawn the
+    // kind and knows the real body count. Billing the floor here rather than trusting the caller
+    // to bill at all means a caller that forgets can only ever under-charge to the pre-#323
+    // behaviour, never leave a dock resupplying forever.
     return { remainingMs: cd, count: state.count + 1, cooldownMs: cd, startMs: unstartedMs, ready: true };
   }
   return { remainingMs, count: state.count, cooldownMs: cd, startMs: unstartedMs };
@@ -130,4 +160,18 @@ export function tickDockResupply(
 // `ready: false`; `remainingMs` is carried through unchanged (irrelevant once spent).
 export function spendDockResupply(state, maxPerDock = DOCK_RESUPPLY_MAX_PER_DOCK) {
   return { remainingMs: state.remainingMs, count: maxPerDock, cooldownMs: state.cooldownMs, startMs: state.startMs };
+}
+
+// #323: bill a fire that delivered more than one body. `tickDockResupply` already charged 1 (the
+// floor it can guarantee without knowing what the scene will actually spawn), so this adds the
+// remaining `bodies - 1`. Called by scenes/arena/bases.js's `_resupplyDock` right after it has
+// drawn the dock's kind and resolved that kind's `dockCountFor` count.
+//
+// Split out rather than folded into the tick because the body count is not knowable at tick time:
+// since a dock re-draws its kind from the base's pool on every resupply, the same dock can deliver
+// 1 body one cycle and a 10-strong swarm the next. Pure: returns a new state, never mutates.
+export function chargeDockResupply(state, bodies) {
+  const extra = Math.max(0, Math.round(bodies) - 1);
+  if (!extra) return state;
+  return { ...state, count: state.count + extra };
 }

@@ -200,6 +200,29 @@ export function baseLateFraction(baseIndex, baseCount) {
   return baseIndex / (baseCount - 1);
 }
 
+// #323: THE weighted draw of a dock's kind — "which unit does this base field in this dock?".
+// Extracted so `placeBases` (world-gen time) and scenes/arena/bases.js's `_resupplyDock`
+// (mid-fight, because Jackson asked that "a dock should not be locked into its original type; it
+// should pull from that base difficulty's pool at the correct ratios") produce kinds from the SAME
+// distribution rather than one of them re-deriving it.
+//
+// The ratios live in the pools themselves — both are plain arrays whose ENTRIES ARE REPEATED to
+// weight them (#308 doubled every pre-existing late-pool entry precisely so #269's relative mix
+// survived adding the swarm kinds thin). A uniform pick over the array therefore already IS the
+// intended weighting, and going through this function is what guarantees a caller can't
+// accidentally flatten it by de-duplicating or hand-rolling its own table.
+//
+// `hasSwarm` is #314's one-swarm-per-base density cap, threaded through rather than reimplemented:
+// when the base already fields a swarm dock, a swarm draw falls back to a non-swarm kind from the
+// same pool, so the base keeps its full dock count but never stacks bursts.
+export function drawDockKind(rng, lateFraction, { hasSwarm = false } = {}) {
+  const pool = rng() < lateFraction ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
+  const kindId = pool[Math.floor(rng() * pool.length)];
+  if (!hasSwarm || !isSwarmDockKind(kindId)) return kindId;
+  const plain = pool.filter((id) => !isSwarmDockKind(id));
+  return plain[Math.floor(rng() * plain.length)];
+}
+
 // Place `baseCount` bases into the terrain map `T` (mutated in place): each base is a small
 // cluster of `dock` hexes (one dormant enemy KIND+COUNT pre-assigned per dock — world-gen
 // PLACEMENT DATA, not a new terrain entry per kind, per the issue), plus a small cluster of
@@ -404,8 +427,6 @@ export function placeBases(
       if (docks.length >= dockCount) break;
       const k = axialKey(h.q, h.r);
       if (!isFree(k)) continue;
-      const pool = rng() < frac ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
-      let kindId = pool[Math.floor(rng() * pool.length)];
       // #314 density cap: AT MOST ONE swarm dock per base. A swarm dock fields 10 bodies where
       // every other dock fields 1, so two or three of them on the same base stops reading as "a
       // swarm defends this base" and becomes an unreadable wall of bodies — the exact failure
@@ -413,10 +434,9 @@ export function placeBases(
       // can't guarantee this (a base draws several docks independently), so once a base has its
       // swarm, further swarm draws fall back to a NON-swarm kind from the same pool rather than
       // being dropped — the base keeps its full dock count, it just doesn't stack bursts.
-      if (isSwarmDockKind(kindId) && docks.some((d) => isSwarmDockKind(d.kindId))) {
-        const plain = pool.filter((id) => !isSwarmDockKind(id));
-        kindId = plain[Math.floor(rng() * plain.length)];
-      }
+      // #323: the draw + that fallback both live in `drawDockKind` above now, shared with
+      // mid-fight resupply so the two paths can't drift into different distributions.
+      const kindId = drawDockKind(rng, frac, { hasSwarm: docks.some((d) => isSwarmDockKind(d.kindId)) });
       T.set(k, 'dock');
       docks.push({ q: h.q, r: h.r, kindId, count: dockCountFor(kindId, rng) });
     }

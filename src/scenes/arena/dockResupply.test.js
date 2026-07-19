@@ -16,6 +16,9 @@ import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { ENEMIES } from '../../data/enemies.js';
 import { DORMANT, AWARE } from '../../data/awareness.js';
 import {
+  BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, DOCK_SWARM_COUNT, dockCountFor,
+} from '../../data/worldgen.js';
+import {
   DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK,
   DOCK_RESUPPLY_COOLDOWN_JITTER, DOCK_RESUPPLY_PHASE_MIN,
 } from '../../data/dockResupply.js';
@@ -109,11 +112,32 @@ function clearDock(scene, dockKey) {
   scene.enemies = scene.enemies.filter((e) => e.dockKey !== dockKey);
 }
 
+// #323: a dock now RE-DRAWS its kind from its base's pool on every resupply (Jackson: "a dock
+// should not be locked into its original type"), so what a resupply spawns is no longer implied
+// by the dock's original kind — it comes from `scene._dockRng`. Left unpinned these tests would
+// be genuinely flaky: an early-pool draw hits a swarm kind (`drone`/`infantry`, 2 of 18 entries)
+// about 11% of the time and would deliver 10 bodies where the test expected 1.
+//
+// This pins the draw by feeding `drawDockKind` (data/worldgen.js) the exact two rolls that select
+// a chosen kind: the first decides EARLY vs LATE pool against the base's `lateFraction`, the
+// second indexes into that pool. The sequence cycles, so a test that fires several resupplies
+// gets the same kind each time. `dockCountFor` consumes no rolls, so two per fire stays aligned.
+function pinDockDraw(scene, kindId, { late = false } = {}) {
+  const pool = late ? BASE_LATE_KIND_POOL : BASE_EARLY_KIND_POOL;
+  const idx = pool.indexOf(kindId);
+  if (idx < 0) throw new Error(`pinDockDraw: '${kindId}' is not in the ${late ? 'late' : 'early'} pool`);
+  // late: 0 < lateFraction (tests set it to 1) → late pool. early: 0.999 < 0 is false → early pool.
+  const seq = [late ? 0 : 0.999, (idx + 0.5) / pool.length];
+  let i = 0;
+  scene._dockRng = () => seq[i++ % seq.length];
+}
+
 describe('#269 §3 dock resupply: trigger gating', () => {
   it('does NOT resupply a cleared dock whose base was never woken (still fully dormant)', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase()];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);   // dock cleared, but base never woken
 
@@ -129,6 +153,7 @@ describe('#269 §3 dock resupply: trigger gating', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ count: 1 })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');   // base is awake, but the dormant unit is still alive
 
     scene._updateDockResupply(PAST_COOLDOWN_S);
@@ -148,6 +173,7 @@ describe('#269 playtest follow-up: resupply cooldown progress is decoupled from 
     const scene = makeScene();
     scene.bases = [oneDockBase({ count: 1 })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');   // awake, original unit still alive/occupying the dock
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
 
@@ -164,6 +190,7 @@ describe('#269 playtest follow-up: resupply cooldown progress is decoupled from 
     const scene = makeScene();
     scene.bases = [oneDockBase({ count: 1 })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
 
@@ -189,6 +216,7 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase()];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
@@ -203,6 +231,7 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
@@ -218,6 +247,7 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'helicopter' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     clearDock(scene, dockKey);
@@ -234,12 +264,16 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
 });
 
 describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
-  it('a mech-kind dock (e.g. sniper) resupplies via _spawnMech, spawned directly AWARE', () => {
+  it('a resupply that DRAWS a mech kind (e.g. sniper) spawns via _spawnMech, directly AWARE', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'sniper' })];
     scene._spawnDormantUnits();
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    // #323: mechs live ONLY in the late pool, which a base reaches via its `lateFraction` — a
+    // lone base sits at 0 (pure early pool), so this forces the late end of the difficulty ramp.
+    scene._dockResupplyMeta.get(dockKey).lateFraction = 1;
+    pinDockDraw(scene, 'sniper', { late: true });
     clearDock(scene, dockKey);
 
     scene._updateDockResupply(PAST_COOLDOWN_S);
@@ -255,11 +289,167 @@ describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
   });
 });
 
+// #323 — the reported bug: a swarm dock opened with its full 10 bodies but trickled back one at a
+// time, because `_resupplyDock` made a single bare `_spawnKind` call while only the initial spawn
+// knew about `dockCountFor`/cluster offsets. These mirror the initial-spawn coverage in
+// dormantWake.test.js, on the resupply path.
+describe('#323: dock resupply delivers a full swarm, not a single body', () => {
+  for (const kindId of ['drone', 'infantry']) {
+    it(`a resupply drawing '${kindId}' spawns dockCountFor bodies, not 1`, () => {
+      const scene = makeScene();
+      scene.bases = [oneDockBase({ kindId: 'tank' })];
+      scene._spawnDormantUnits();
+      scene._wakeBase('base0');
+      const dockKey = [...scene._dockResupplyMeta.keys()][0];
+      pinDockDraw(scene, kindId);
+      clearDock(scene, dockKey);
+
+      scene._updateDockResupply(PAST_COOLDOWN_S);
+      scene._runScheduled();
+
+      expect(dockCountFor(kindId)).toBe(DOCK_SWARM_COUNT);
+      expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+      for (const e of scene.enemies) {
+        expect(e.typeId).toBe(kindId);
+        expect(e.awareness).toBe(AWARE);
+        expect(e.dockKey).toBe(dockKey);
+        expect(e.baseId).toBe('base0');
+      }
+    });
+  }
+
+  it('the swarm is laid out on cluster offsets — no two bodies stacked on the same pixel', () => {
+    const scene = makeScene();
+    // Unlike the rest of this file (which deliberately leaves `terrain` empty — see makeScene),
+    // the cluster layout needs REAL passable ground: `nearestValidPixel` snaps every ring offset
+    // to the nearest passable hex, and against an empty map every point is "impassable" and
+    // collapses onto the same fallback. Mirrors dormantWake.test.js's swarm-cluster setup.
+    scene.worldRadius = 8;
+    for (let q = -8; q <= 8; q++) {
+      for (let r = -8; r <= 8; r++) {
+        if (Math.abs(q + r) <= 8) scene.terrain.set(`${q},${r}`, 'grass');
+      }
+    }
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    pinDockDraw(scene, 'drone');
+    clearDock(scene, dockKey);
+
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+
+    const spots = new Set(scene.enemies.map((e) => `${e.x.toFixed(2)},${e.y.toFixed(2)}`));
+    expect(spots.size).toBe(DOCK_SWARM_COUNT);
+    // Every body stays within the outermost ring of the dock's own centre pixel (#314's
+    // containment guarantee — a swarm dock must not leak units outside the base's walls).
+    for (const e of scene.enemies) expect(Math.hypot(e.x, e.y)).toBeLessThanOrEqual(33);
+  });
+
+  it('the BODY budget retires a swarm dock after ONE full-strength resupply', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    pinDockDraw(scene, 'drone');
+
+    clearDock(scene, dockKey);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+    expect(scene.enemies.length).toBe(DOCK_SWARM_COUNT);
+
+    // 10 bodies overruns the 3-BODY budget, so the dock is spent — clearing it again and waiting
+    // out another full cooldown must produce nothing. This is what stops a swarm dock yielding
+    // 3 x 10 = 30 extra bodies and re-creating #269's density blowout.
+    clearDock(scene, dockKey);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+    expect(scene.enemies.length).toBe(0);
+  });
+});
+
+// #323 item 2 (Jackson: "a dock should not be locked into its original type; it should pull from
+// that base difficulty's pool at the correct ratios").
+describe('#323: a dock re-draws its kind from the base pool on resupply', () => {
+  it('a tank dock can resupply as a DIFFERENT kind from the same base pool', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    pinDockDraw(scene, 'helicopter');
+    clearDock(scene, dockKey);
+
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+
+    expect(scene.enemies.length).toBe(1);
+    expect(scene.enemies[0].typeId).toBe('helicopter');
+    // The meta is written back, so the base's live composition reflects the redraw — that is what
+    // the one-swarm-per-base cap is evaluated against on later resupplies.
+    expect(scene._dockResupplyMeta.get(dockKey).kindId).toBe('helicopter');
+  });
+
+  it('a base already fielding a swarm dock never redraws a SECOND swarm (#314 density cap)', () => {
+    const scene = makeScene();
+    // Two docks on one base: one is already a swarm dock, the other tries to draw a swarm.
+    scene.bases = [{
+      id: 'base0',
+      center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'drone', count: DOCK_SWARM_COUNT }, { q: 2, r: 0, kindId: 'tank', count: 1 }],
+      turrets: [],
+    }];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const tankKey = [...scene._dockResupplyMeta.keys()][1];
+    pinDockDraw(scene, 'infantry');
+    clearDock(scene, tankKey);
+
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+
+    // The swarm draw was rejected and fell back to a non-swarm kind from the same pool, so the
+    // base still fields exactly one swarm dock.
+    const kinds = [...scene._dockResupplyMeta.values()].map((m) => m.kindId);
+    expect(kinds.filter((k) => k === 'drone' || k === 'infantry').length).toBe(1);
+    const fresh = scene.enemies.filter((e) => e.dockKey === tankKey);
+    expect(fresh.length).toBe(1);
+    expect(['drone', 'infantry']).not.toContain(fresh[0].typeId);
+  });
+
+  it('a dock that has already spent budget cannot redraw into a swarm (no 12-body dock)', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+
+    // First resupply: an ordinary single body, spending 1 of the 3-body budget.
+    pinDockDraw(scene, 'tank');
+    clearDock(scene, dockKey);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+    expect(scene.enemies.length).toBe(1);
+
+    // Second resupply tries to draw a swarm. `allowSwarm` is false now, so it must fall back to a
+    // single body rather than dumping 10 more on top of the one already delivered.
+    pinDockDraw(scene, 'drone');
+    clearDock(scene, dockKey);
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    scene._runScheduled();
+    expect(scene.enemies.length).toBe(1);
+    expect(['drone', 'infantry']).not.toContain(scene.enemies[0].typeId);
+  });
+});
+
 describe('#269 §3 dock resupply: per-dock cap', () => {
   it('a dock resupplies at most DOCK_RESUPPLY_MAX_PER_DOCK times over its lifetime, never more', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
 
@@ -292,6 +482,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     scene.terrain.set(dockKey, 'dock');
 
@@ -305,6 +496,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     scene.terrain.set(dockKey, 'dock');
@@ -324,6 +516,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     scene.terrain.set(dockKey, 'dock');
@@ -339,6 +532,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     scene.terrain.set(dockKey, 'dock');
@@ -358,6 +552,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     scene.terrain.set(dockKey, 'dock');
@@ -383,6 +578,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     // Some unrelated destructible hex (an ordinary outpost) collapsing must not throw or touch
     // dock bookkeeping at all.
     expect(() => scene._onTerrainCollapsed('99,99')).not.toThrow();
@@ -392,6 +588,7 @@ describe('#269 Part 2: dock open/closed states', () => {
     const scene = makeScene();
     scene.bases = [oneDockBase({ kindId: 'tank' })];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     scene.terrain.set(dockKey, 'dock');
@@ -441,6 +638,7 @@ describe('#311: a base\'s docks are staggered, not synchronized', () => {
     const scene = makeScene();
     scene.bases = [multiDockBase()];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
 
     const states = [...scene._dockResupplyStates.values()];
     expect(states.length).toBe(4);
@@ -460,6 +658,7 @@ describe('#311: a base\'s docks are staggered, not synchronized', () => {
       scene._worldSeed = seed;
       scene.bases = [multiDockBase()];
       scene._spawnDormantUnits();
+      pinDockDraw(scene, 'tank');
       return [...scene._dockResupplyStates.values()].map((s) => [s.cooldownMs, s.remainingMs]);
     };
     expect(build(777)).toEqual(build(777));
@@ -470,6 +669,7 @@ describe('#311: a base\'s docks are staggered, not synchronized', () => {
     const scene = makeScene();
     scene.bases = [multiDockBase()];
     scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
     scene._wakeBase('base0');
     for (const dockKey of scene._dockResupplyMeta.keys()) clearDock(scene, dockKey);
 

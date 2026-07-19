@@ -12,7 +12,7 @@ import {
   CORRIDOR_HALF_WIDTH_PX, CORRIDOR_LENGTH_PX, CORRIDOR_REAR_PAD_PX, CORRIDOR_LENGTH_PER_BASE_PX,
   BASE_COUNT, DOCKS_PER_BASE_MIN, DOCKS_PER_BASE_MAX,
   BASE_EARLY_KIND_POOL, BASE_LATE_KIND_POOL, baseLateFraction,
-  placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind,
+  placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind, drawDockKind,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
   placeBaseWalls, BASE_FOOTPRINT_RADIUS,
 } from './worldgen.js';
@@ -1870,3 +1870,48 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
   });
 });
 
+
+// #323: `drawDockKind` is the one weighted draw shared by world-gen placement and mid-fight dock
+// resupply, so a dock's reinforcements match its base's difficulty at the same ratios it opened
+// with. These lock the properties both callers depend on.
+describe('#323 drawDockKind (shared by placeBases and dock resupply)', () => {
+  const constRng = (v) => () => v;
+
+  it('picks from the EARLY pool below the base lateFraction, the LATE pool above it', () => {
+    // lateFraction 0 (the first base) can never reach the late pool...
+    expect(BASE_EARLY_KIND_POOL).toContain(drawDockKind(constRng(0), 0));
+    // ...and lateFraction 1 (the last base) always does.
+    expect(BASE_LATE_KIND_POOL).toContain(drawDockKind(constRng(0), 1));
+  });
+
+  it('preserves the pools\' repetition weighting rather than flattening to distinct kinds', () => {
+    // #308 weights both pools by REPEATING entries, so a uniform index draw already is the
+    // intended mix. Sampling the early pool must reproduce tank/helicopter dominance (8/18 each)
+    // with the swarm kinds thin (1/18 each) — a de-duplicated table would give ~25% each.
+    const counts = {};
+    for (let i = 0; i < BASE_EARLY_KIND_POOL.length * 100; i++) {
+      const r = (i % BASE_EARLY_KIND_POOL.length + 0.5) / BASE_EARLY_KIND_POOL.length;
+      let n = 0;
+      const kind = drawDockKind(() => (n++ === 0 ? 1 : r), 0);
+      counts[kind] = (counts[kind] ?? 0) + 1;
+    }
+    expect(counts.tank).toBe(counts.helicopter);
+    expect(counts.tank / counts.drone).toBe(8);
+    expect(counts.drone).toBe(counts.infantry);
+  });
+
+  it('falls back to a NON-swarm kind when the base already fields a swarm dock (#314 cap)', () => {
+    // Force a swarm draw (early-pool index 16 = 'drone'), with the base already holding a swarm.
+    const swarmDraw = () => { let n = 0; return () => (n++ === 0 ? 1 : 16.5 / BASE_EARLY_KIND_POOL.length); };
+    expect(isSwarmDockKind(drawDockKind(swarmDraw(), 0))).toBe(true);
+    expect(isSwarmDockKind(drawDockKind(swarmDraw(), 0, { hasSwarm: true }))).toBe(false);
+  });
+
+  it('always returns a real kind from the pool it drew, never undefined', () => {
+    const rng = mulberry32(99);
+    for (let i = 0; i < 500; i++) {
+      const kind = drawDockKind(rng, i / 500, { hasSwarm: i % 2 === 0 });
+      expect([...BASE_EARLY_KIND_POOL, ...BASE_LATE_KIND_POOL]).toContain(kind);
+    }
+  });
+});

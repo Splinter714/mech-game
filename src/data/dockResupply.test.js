@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeDockResupplyState, tickDockResupply, spendDockResupply,
-  DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK,
+  DOCK_RESUPPLY_COOLDOWN_MS, DOCK_RESUPPLY_MAX_PER_DOCK, chargeDockResupply,
   DOCK_RESUPPLY_COOLDOWN_JITTER, DOCK_RESUPPLY_PHASE_MIN, DOCK_RESUPPLY_PHASE_MAX,
 } from './dockResupply.js';
 
@@ -230,5 +230,69 @@ describe('#311 dock resupply jitter: per-dock cooldown + starting phase', () => 
     expect(b.cooldownMs).toBeGreaterThanOrEqual(LO);
     // Astronomically unlikely to collide; guards against the rng being ignored entirely.
     expect(a.cooldownMs).not.toBe(b.cooldownMs);
+  });
+});
+
+// #323 — the resupply BODY budget. `tickDockResupply` charges a floor of 1 per fire; the scene
+// bills the rest once it knows how many bodies the drawn kind actually delivers.
+describe('#323: chargeDockResupply — the budget is counted in BODIES, not fires', () => {
+  it('a 1-body fire costs nothing extra — a normal dock keeps all its cycles', () => {
+    const state = { remainingMs: 0, count: 1, cooldownMs: 18000, startMs: 18000 };
+    expect(chargeDockResupply(state, 1).count).toBe(1);
+    // Identity-preserving when there's nothing to bill, so the caller can charge unconditionally.
+    expect(chargeDockResupply(state, 1)).toBe(state);
+  });
+
+  it('a full swarm fire bills the remaining bodies and overruns the cap in one go', () => {
+    // Post-tick state: the tick already charged its 1-body floor.
+    const state = { remainingMs: 18000, count: 1, cooldownMs: 18000, startMs: 18000 };
+    const charged = chargeDockResupply(state, 10);
+    expect(charged.count).toBe(10);
+    expect(charged.count).toBeGreaterThanOrEqual(DOCK_RESUPPLY_MAX_PER_DOCK);
+    // Spent: the dock can never resupply again, so one swarm dock yields 10 extra bodies, not 30.
+    expect(tickDockResupply(charged, { awake: true, cleared: true, dt: 999 }).ready).toBeFalsy();
+  });
+
+  it('never mutates the state it is given', () => {
+    const state = { remainingMs: 18000, count: 1, cooldownMs: 18000, startMs: 18000 };
+    chargeDockResupply(state, 10);
+    expect(state.count).toBe(1);
+  });
+
+  it('carries the per-dock #311 rolls through, so billing never resets a dock cadence', () => {
+    const state = makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, seqRng(7));
+    const charged = chargeDockResupply({ ...state, count: 1 }, 10);
+    expect(charged.cooldownMs).toBe(state.cooldownMs);
+    expect(charged.startMs).toBe(state.startMs);
+  });
+});
+
+// #323 item 1 (Jackson: "their actual cooldowns are massively different in some cases"). The #311
+// desync is kept; its magnitude is narrowed so the FIRST refill's spread is the same order as the
+// steady-state spread, reading as stagger rather than as inconsistent cooldowns.
+describe('#323: the phase band is a de-synchroniser, not a second cooldown', () => {
+  it('the first refill spread stays close to the steady-state spread', () => {
+    const lo = DOCK_RESUPPLY_COOLDOWN_MS * (1 - DOCK_RESUPPLY_COOLDOWN_JITTER);
+    const hi = DOCK_RESUPPLY_COOLDOWN_MS * (1 + DOCK_RESUPPLY_COOLDOWN_JITTER);
+    const firstSpread = (hi * DOCK_RESUPPLY_PHASE_MAX) / (lo * DOCK_RESUPPLY_PHASE_MIN);
+    const steadySpread = hi / lo;
+    // Pre-#323 the first-refill spread was ~2.7x against a ~1.35x steady state — a 2x mismatch,
+    // which is what read as "these docks have wildly different cooldowns". Hold it under 1.5x of
+    // the steady-state spread so the opening cycle can never again feel like a different mechanic.
+    expect(firstSpread).toBeLessThan(steadySpread * 1.5);
+  });
+
+  it('still meaningfully desynchronises — the phase is never a no-op', () => {
+    expect(DOCK_RESUPPLY_PHASE_MIN).toBeLessThan(DOCK_RESUPPLY_PHASE_MAX);
+    // At least ~2s of separation is available between two otherwise identical docks.
+    const separationMs = DOCK_RESUPPLY_COOLDOWN_MS * (DOCK_RESUPPLY_PHASE_MAX - DOCK_RESUPPLY_PHASE_MIN);
+    expect(separationMs).toBeGreaterThanOrEqual(2000);
+  });
+
+  it('a dock still never resupplies almost immediately after its base wakes', () => {
+    // The floor the phase band guarantees — the original 18s reasoning ("not an instant respawn
+    // in your face") must survive the narrowing.
+    const earliestMs = DOCK_RESUPPLY_COOLDOWN_MS * (1 - DOCK_RESUPPLY_COOLDOWN_JITTER) * DOCK_RESUPPLY_PHASE_MIN;
+    expect(earliestMs).toBeGreaterThan(10000);
   });
 });
