@@ -119,8 +119,13 @@ function tankMoveIntent(e, ctx, def) {
   if (ctx.dist > standoff * 1.15) radial = 1;          // advance
   else if (ctx.dist < standoff * 0.7) radial = -0.8;   // reverse (keep the gun's distance)
   const strafe = (e.handed || 1) * 0.25;
-  let mx = ctx.ux * radial - ctx.uy * strafe;
-  let my = ctx.uy * radial + ctx.ux * strafe;
+  // #312: TRAVEL heading (routed around walls/blocking terrain), not the raw bearing to the
+  // player — see `_updateVehicle`'s ctx comment. `tux/tuy` equals `ux/uy` whenever the line is
+  // clear, so an unobstructed tank drives exactly as it did before. The strafe stays perpendicular
+  // to travel, which is what it always meant.
+  const tux = ctx.tux ?? ctx.ux, tuy = ctx.tuy ?? ctx.uy;   // #312 fallback: unrouted callers
+  let mx = tux * radial - tuy * strafe;
+  let my = tuy * radial + tux * strafe;
   const m = Math.hypot(mx, my) || 1;
   mx /= m; my /= m;
   return { mx, my, active: Math.abs(radial) + Math.abs(strafe) > 0 };
@@ -425,8 +430,10 @@ function quadrupedMoveIntent(e, ctx, def) {
   if (ctx.dist > standoff * 1.15) radial = 1;
   else if (ctx.dist < standoff * 0.7) radial = -0.8;
   const strafe = (e.handed || 1) * 0.2;
-  let mx = ctx.ux * radial - ctx.uy * strafe;
-  let my = ctx.uy * radial + ctx.ux * strafe;
+  // #312: routed travel heading — see tankMoveIntent above.
+  const tux = ctx.tux ?? ctx.ux, tuy = ctx.tuy ?? ctx.uy;   // #312 fallback: unrouted callers
+  let mx = tux * radial - tuy * strafe;
+  let my = tuy * radial + tux * strafe;
   const m = Math.hypot(mx, my) || 1;
   mx /= m; my /= m;
   return { mx, my, active: Math.abs(radial) + Math.abs(strafe) > 0 };
@@ -503,8 +510,10 @@ function infantryMoveIntent(e, ctx, def) {
   let mx, my;
   if (ctx.dist > standoff * 1.2) {
     // Advance, with a little lateral jitter so the mob doesn't funnel into one file.
-    mx = ctx.ux + Math.cos(e._orbitAng) * 0.35;
-    my = ctx.uy + Math.sin(e._orbitAng) * 0.35;
+    // #312: routed travel heading — see tankMoveIntent. Infantry are the single largest ground
+    // population on a generated map, so this is where routing is most visible.
+    mx = (ctx.tux ?? ctx.ux) + Math.cos(e._orbitAng) * 0.35;
+    my = (ctx.tuy ?? ctx.uy) + Math.sin(e._orbitAng) * 0.35;
   } else {
     // Close enough to shoot — mill loosely rather than standing dead still.
     mx = Math.cos(e._orbitAng) * 0.5;

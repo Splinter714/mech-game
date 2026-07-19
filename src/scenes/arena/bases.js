@@ -936,7 +936,11 @@ export const BasesMixin = {
       if (next.justClosed) this._gateCloseFx(edge);
       // A gate opening or shutting changes what can be seen through it, so the cached field of
       // view is stale — same invalidation a breached span triggers (world.js `_damageWallEdge`).
-      if (next.justOpened || next.justClosed) this._invalidateVisibility?.();
+      // #312: and what can be WALKED through it — a gate opening is a route appearing, a gate
+      // shutting is one vanishing. This is a recurring invalidation (a gate cycles roughly every
+      // 15s while its base is awake), which is exactly why it is a single counter bump and why
+      // the resulting replans are spread across frames by the router's per-tick budget.
+      if (next.justOpened || next.justClosed) { this._invalidateVisibility?.(); this._invalidateRoutes?.(); }
     }
     // Redraw every frame while any gate is mid-cycle or lit, so the leaves animate and the
     // barrier field pulses; otherwise only on an actual transition.
