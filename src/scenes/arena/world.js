@@ -8,7 +8,7 @@ import {
   shotBlockedAt, flameCoverDamage, coverBlocksForRay,
 } from '../../data/terrain.js';
 import {
-  makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
+  makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
   WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
@@ -411,9 +411,13 @@ export const WorldMixin = {
   // enemy form. An open gate is passable to everyone, so the `passOpenGates` argument this used to
   // take — and the `_blockedForEnemy` alias that opted into it — are gone. A gate the player can
   // see standing open is one he can drive through; what he cannot do is cause it to open.
-  _blocked(x, y) {
+  // #320: `radius` is the moving unit's own body radius (`wallCollideRadius`, shared.js). It
+  // defaults to 0, so every point-shaped caller — powerup placement, spawn scans, both of #288's
+  // seal proofs — is bit-for-bit unchanged; only the movement integrators opt in, and they pass
+  // the radius of the specific unit being moved rather than one flat value.
+  _blocked(x, y, radius = 0) {
     if (!isPassable(this._terrainAt(x, y))) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX);
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, null, radius);
   },
 
   // #159: is any hex along the straight PIXEL path from (x0,y0) to (x1,y1) impassable? A
@@ -428,11 +432,15 @@ export const WorldMixin = {
   // #288: the wall half of this is a true SEGMENT-CROSSING test, not a lookup — a wall lives on a
   // line between hexes and has no tile to look up, and its 14px painted thickness is far thinner
   // than a fast mech's frame movement, so only "did this step cross the span" is safe at any speed.
-  _blockedAlongSegment(x0, y0, x1, y1) {
+  // #320: `radius` inflates only the WALL half of this test — the terrain half stays a hex-tile
+  // lookup, because a tile obstacle is a whole hex and the mech has always been allowed to stand
+  // with its shoulders over a neighbouring tile's border. Walls are the thing that reads wrong
+  // when a body overlaps them, because a wall IS the border.
+  _blockedAlongSegment(x0, y0, x1, y1, radius = 0) {
     for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
       if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return true;
     }
-    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1);
+    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, null, radius);
   },
 
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying
@@ -637,6 +645,33 @@ export const WorldMixin = {
     // #309: an open gate does not stop a round — the opening is a real opening. Rounds still stop
     // on the gate's own leaves while it is shut, so the span is shootable-down like any other.
     return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX);
+  },
+
+  // #320, the SECOND half of "I'm able to shoot OVER walls if I stand real close." Inflating
+  // movement by body radius fixes most of it, but not by construction: a shot leaves the weapon's
+  // real art tip (`_muzzle`), which sits forward of the mech's centre by the part layout plus the
+  // weapon's own `muzzleForward`, and nothing guarantees that reach is shorter than the radius the
+  // body now stops at. Measured in the real game, a long arm weapon on a mech parked as close as
+  // the game allows DOES still get its tip across the plate — and then the round's ray STARTS on
+  // the far side and never crosses the span, so the wall isn't failing to stop the shot, it never
+  // gets asked.
+  //
+  // Of the issue's two options — block the shot, or re-origin the blocking ray at the body centre —
+  // this is the first, and deliberately. Re-origining would change the geometry of EVERY shot in
+  // the game (spawn point, spread lateral offsets, convergence, beam endpoints, muzzle FX and
+  // positional audio all key off the muzzle), to fix a case that only arises when a wall is
+  // physically between the barrel and the chest. This guard is inert otherwise: a single swept
+  // test over the few centimetres from centre to tip, which can only trip when a STANDING span
+  // actually separates the two. Legitimate close-range fire — hugging a wall and shooting along
+  // it, over a breach, through an open gate mouth, or at anything not across a plate — is
+  // completely unaffected.
+  //
+  // Uses `wallEdgeSeparating`, NOT `wallEdgeCrossing`: only a span the barrel has genuinely got to
+  // the far side of counts. A muzzle merely buried in the plate is a gun pressed against a wall,
+  // and that shot must still go off so the player can breach a wall he is leaning on.
+  _muzzleWallBlocked(cx, cy, mx, my) {
+    if (!this.wallEdges) return false;
+    return !!wallEdgeSeparating(this.wallEdges, cx, cy, mx, my);
   },
 
   // #288: the standing wall spans, for tests/debug and for anything that needs the live geometry.

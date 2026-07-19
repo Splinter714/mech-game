@@ -92,23 +92,33 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
     expect(unitDepth(true, false, true)).toBe(DEPTH.UNITS);
   });
 
-  // #316 (reverses #306's depth choice): flyers used to share the player's DEPTH.UNITS tier,
-  // which sat ABOVE LOS_DIM and was the whole reason a flyer over an un-sighted area stayed
-  // bright. #316 removed every flying exemption, so they drop to their own FLYING_UNITS tier —
-  // still above all ground units and the canopy, but BELOW the dimming overlay.
-  it('#316: puts a flying enemy (helicopter/drone) at DEPTH.FLYING_UNITS, NOT the player tier, regardless of size', () => {
+  // #327 (re-reverses #316's depth choice): #316 dropped flyers to their own tier BELOW LOS_DIM so
+  // the fog overlay dimmed them like ground units, but that also put them below the player — an
+  // aircraft drew UNDERNEATH the mech it flew over, which read wrong in play. LOS dimming is off,
+  // so #327 raises flyers ABOVE the player instead. They keep their own tier (not shared with the
+  // player) and stay below PROJECTILES so shots and FX still draw over them.
+  it('#327: puts a flying enemy (helicopter/drone) at DEPTH.FLYING_UNITS, its own tier, regardless of size', () => {
     expect(unitDepth(false, true, false)).toBe(DEPTH.FLYING_UNITS);
     expect(unitDepth(false, true, true)).toBe(DEPTH.FLYING_UNITS);
     expect(DEPTH.FLYING_UNITS).not.toBe(DEPTH.UNITS);
   });
 
-  it('#316: FLYING_UNITS sits below the LOS dimming layer, so flyers get dimmed like ground units', () => {
-    expect(DEPTH.FLYING_UNITS).toBeLessThan(DEPTH.LOS_DIM);
-    // ...while the player stays above it and is never dimmed.
+  it('#327: FLYING_UNITS sits ABOVE the player, so aircraft visibly pass over mechs', () => {
+    expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.UNITS);
+    // ...and the player still sits above the dimming layer and is never dimmed.
     expect(DEPTH.UNITS).toBeGreaterThan(DEPTH.LOS_DIM);
+    // Accepted trade (#327): flyers are now above LOS_DIM too, so if dimming is ever re-enabled
+    // they'd stay bright over un-sighted ground. Pinned so a future LOS change has to face it.
+    expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.LOS_DIM);
   });
 
-  it('#316: FLYING_UNITS still sits above the cover canopy and every ground unit tier', () => {
+  it('#327: projectiles, impact FX and world UI still draw ABOVE flyers', () => {
+    expect(DEPTH.FLYING_UNITS).toBeLessThan(DEPTH.PROJECTILES);
+    expect(DEPTH.FLYING_UNITS).toBeLessThan(DEPTH.IMPACT_FX);
+    expect(DEPTH.FLYING_UNITS).toBeLessThan(DEPTH.WORLD_UI);
+  });
+
+  it('#327: FLYING_UNITS still sits above the cover canopy and every ground unit tier', () => {
     expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.COVER_CANOPY);
     expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.LARGE_GROUND_UNITS);
     expect(DEPTH.FLYING_UNITS).toBeGreaterThan(DEPTH.GROUND_UNITS);
@@ -126,17 +136,19 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
     expect(DEPTH.LARGE_GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
   });
 
-  it('#289/#316: the full layering is small (2) < canopy (2.5) < large (2.75) < flyers (2.8) < dimming (2.9) < player (3)', () => {
+  it('#289/#327: the full layering is small (2) < canopy (2.5) < large (2.75) < dimming (2.9) < player (3) < flyers (3.5) < projectiles (4)', () => {
     expect(DEPTH.GROUND_UNITS)
       .toBeLessThan(DEPTH.COVER_CANOPY);
     expect(DEPTH.COVER_CANOPY)
       .toBeLessThan(DEPTH.LARGE_GROUND_UNITS);
     expect(DEPTH.LARGE_GROUND_UNITS)
-      .toBeLessThan(DEPTH.FLYING_UNITS);
-    expect(DEPTH.FLYING_UNITS)
       .toBeLessThan(DEPTH.LOS_DIM);
     expect(DEPTH.LOS_DIM)
       .toBeLessThan(DEPTH.UNITS);
+    expect(DEPTH.UNITS)
+      .toBeLessThan(DEPTH.FLYING_UNITS);
+    expect(DEPTH.FLYING_UNITS)
+      .toBeLessThan(DEPTH.PROJECTILES);
   });
 
   it('a hypothetical flying player still resolves to DEPTH.UNITS (isPlayer wins either way)', () => {

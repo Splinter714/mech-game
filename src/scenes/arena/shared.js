@@ -133,19 +133,21 @@ export const DEPTH = {
   // (WORLD_UI = 6) stay bright as navigational aids — a deliberate call, see visibility.js.
   // Another fractional slot, for the same "don't renumber every existing tier" reason 2.5/2.75
   // use (#289).
-  // #316: FLYING enemy views (helicopter, drone). Originally these shared the player's UNITS (3)
-  // tier, which sat ABOVE LOS_DIM and was #306's entire "flyers stay bright over un-sighted
-  // ground" implementation. #316 reverses that decision — there is no flying exemption anywhere,
-  // so a flyer must be dimmed by the LOS overlay exactly like a ground unit. That means splitting
-  // flyers out of UNITS into their own tier strictly BELOW LOS_DIM (2.9), while still ABOVE
-  // COVER_CANOPY (2.5) and LARGE_GROUND_UNITS (2.75) so they visually fly over tree tops and tower
-  // over ground units. 2.8 is the only band satisfying all three. Another fractional slot, for the
-  // same "don't renumber every existing tier" reason 2.5/2.75/2.9 use (#289).
-  FLYING_UNITS: 2.8,
   LOS_DIM: 2.9,
-  UNITS: 3,        // the player — the one unit that is never dimmed and is never obscured by
-                      // anything else in the world. (Before #316 flying enemies shared this tier;
-                      // they now sit at FLYING_UNITS, just under the dimming layer.)
+  UNITS: 3,           // the player — never dimmed, and never obscured by any GROUND unit.
+                      // (Flyers deliberately DO pass over the player — see FLYING_UNITS.)
+  // #327: FLYING enemy views (helicopter, drone) render ABOVE the player. History: #306 gave them
+  // the player's UNITS (3) tier so the LOS overlay passed under them; #316 dropped them to 2.8,
+  // strictly BELOW LOS_DIM (2.9), so the fog dimmed them like any ground unit. In play that read
+  // wrong — an airborne unit drew UNDERNEATH the mech it was flying over. LOS dimming is currently
+  // switched off, and Jackson's call on #327 was "don't care [about the fog], just fix the
+  // z-order", so flyers now sit at 3.5: above the player (3), below projectiles (4) so rounds,
+  // impact FX and world UI still draw over them.
+  // OPEN THREAD: this puts flyers ABOVE LOS_DIM again, which means if LOS dimming is ever
+  // re-enabled a flyer over un-sighted ground will stay bright — the exact thing #316 fixed. That
+  // trade was accepted knowingly. Whoever turns the dimming back on has to re-decide it (options:
+  // raise LOS_DIM above 3.5, or dim flyers per-entity instead of via the single overlay).
+  FLYING_UNITS: 3.5,
   PROJECTILES: 4,     // in-flight rounds, persistent beams, muzzle flash / melee slash — flying
                       // over the units they're headed toward or past.
   IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text
@@ -154,11 +156,11 @@ export const DEPTH = {
                       // beacons — always legible above units and FX.
 };
 
-// #113/#289/#316: which DEPTH tier a unit's view belongs at. The PLAYER alone stays at DEPTH.UNITS
-// (3), above the LOS dimming layer. A FLYING enemy (helicopter, drone) renders at
-// DEPTH.FLYING_UNITS (2.8) — above every ground unit and the cover canopy, so it still flies over
-// tree tops and towers over ground units, but BELOW LOS_DIM (2.9) so #316's "no flying exemption
-// anywhere" holds and a flyer in an un-sighted area is dimmed like anything else. Every non-flying
+// #113/#289/#327: which DEPTH tier a unit's view belongs at. The PLAYER stays at DEPTH.UNITS
+// (3), above the LOS dimming layer and above every ground unit. A FLYING enemy (helicopter, drone)
+// renders at DEPTH.FLYING_UNITS (3.5) — above the player and every ground unit, so an aircraft
+// visibly passes OVER the mechs it flies across (#327), but below PROJECTILES (4) so rounds,
+// impact FX and world UI still draw over it. Every non-flying
 // (ground) ENEMY unit renders below that, and #289 splits ground units by SIZE tier so they sort
 // correctly against the cover canopy (COVER_CANOPY = 2.5): SMALL ground units (tank/infantry —
 // `small === true`) stay at DEPTH.GROUND_UNITS (2, below the canopy, so they peek out from UNDER
@@ -551,6 +553,35 @@ export function groundEnemyRadius(e) {
   if (e.kind === 'mech' || e.kind === undefined) return ENEMY_COLLIDE_RADIUS_MECH;
   return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
 }
+
+// #320: how big a unit is TO A WALL. Deliberately a separate number from `groundEnemyRadius`
+// above, in the same spirit as `crushTriggerRadius` below — one physical body, three questions
+// ("can I be crushed", "do I block that unit", "do I fit through there"), each entitled to its own
+// tuned answer rather than one radius forced to serve all of them.
+//
+// Why it is capped rather than just being the unit radius. A wall span is one hex edge, 48px, and
+// a breach in it is the ONLY way into a base (#288/#313). Colliding at the full 28px mech radius
+// makes that hole a needle. Measured in the real game, driving the real integrator at a real
+// breach across 7 approach angles x 5 lateral offsets (scripts/audit-wall-hitbox-320.mjs):
+//
+//     wall radius   0    8    12   16   18   20   22   24   28
+//     got through  35/35 35   33   31   31   31   31   29   19      (of 35 approaches)
+//
+// The cliff at 28 is the corner chamfer saturating: once a span is shorter than 2R it collapses to
+// its midpoint and the barrier becomes a chain of 35px discs, which is wider than the gap between
+// them. 20 sits on the flat of that curve — it costs only a few extreme grazing approaches versus
+// the old point model, while stopping a mech's centre 27px off the centreline, which is past the
+// drawn torso (half-width ~23px at ARENA_MECH_SCALE) so nothing chunky visibly overlaps the plate.
+// Every vehicle kind is already smaller than this and so is unaffected by the cap — a tank's ~14px
+// footprint clears the plate with room to spare, which is the "tanks poke through" report itself.
+// Owner: tunable. Raising it tightens breaches (see the table); lowering it lets big units lean
+// further into a wall before stopping.
+export const WALL_COLLIDE_RADIUS_MAX = 20;
+export function wallCollideRadius(e) {
+  return Math.min(groundEnemyRadius(e), WALL_COLLIDE_RADIUS_MAX);
+}
+// The player is drawn at the same scale as an enemy mech, so he takes the same treatment.
+export const PLAYER_WALL_COLLIDE_RADIUS = Math.min(ENEMY_COLLIDE_RADIUS_MECH, WALL_COLLIDE_RADIUS_MAX);
 
 // #112 (playtest 2026-07-10: "the stomp hitbox... needs to be bigger"): the crush-trigger check
 // (world.js `_crushTargetAt`, called from locomotion.js `_drive`) used to test the player's

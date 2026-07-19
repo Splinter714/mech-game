@@ -204,6 +204,14 @@ export const FiringMixin = {
         const baseAngle = aimAngle + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
+        // #320: the muzzle ended up on the far side of a standing span from the mech's own chest —
+        // the "shoot OVER walls if I stand real close" case. The round would otherwise spawn past
+        // the barrier and fly off unblocked. The shot is spent (ammo was consumed at plan time and
+        // the fire cue already played), it just doesn't come out — which reads as the wall
+        // stopping it. See world.js `_muzzleWallBlocked` for why this guards rather than
+        // re-origins the ray. Checked from the LATERAL muzzle actually used, so one lane of a
+        // spread can be eaten by a wall corner while its siblings get out.
+        if (this._muzzleWallBlocked?.(this.px, this.py, ox, oy)) return;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
         // #307: `lane`/`lateral` let a continuously-held beam own ONE persistent beam object
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
@@ -345,6 +353,13 @@ export const FiringMixin = {
     for (const live of lanes) {
       const off = live.lateral || 0;
       const mx = m.x + Math.cos(perp) * off, my = m.y + Math.sin(perp) * off;
+      // #320: a HELD beam whose emitter has drifted across a span as the mech walks/slews gets
+      // clamped to zero length rather than lancing out from the far side of the wall — the
+      // continuous-fire counterpart of the spawn-time guard above.
+      if (this._muzzleWallBlocked?.(this.px, this.py, mx, my)) {
+        live.x0 = mx; live.y0 = my; live.x1 = mx; live.y1 = my;
+        continue;
+      }
       const trace = traceHitscan(mx, my, angle, reach, this._liveEnemiesForTrace());
       let endDist = trace.endDist;
       const wallT = this._hitscanReach(mx, my, angle, endDist);
