@@ -6,6 +6,7 @@
 // immediately and follows #64's existing banked-vs-lost rules with no extra plumbing.
 import { SALVAGE_DROP_CHANCE, salvageAmount } from '../../data/shop.js';
 import { scatterOffset } from '../../data/hexgrid.js';
+import { DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
 import { Audio } from '../../audio/index.js';
 import { DEPTH } from './shared.js';
 
@@ -23,9 +24,9 @@ export const MAGNET_MIN_SPEED = 0.25;   // px/ms at the outer edge of the magnet
 export const MAGNET_MAX_SPEED = 0.6;    // px/ms right on top of the player — the drift accelerates in
 const BOB_PERIOD = 1300;
 const BOB_AMPLITUDE = 1.5;   // #228: smaller/calmer bounce than the powerup beacon's 4px
-// #88: same small scatter radius as powerups.js (arena/powerups.js DROP_SCATTER_RADIUS) so a
-// kill that drops both a powerup AND salvage spreads them apart rather than stacking.
-const DROP_SCATTER_RADIUS = 30;
+// #88: the scatter radius is shared with powerups (#336 moved the constant into
+// data/dropPlacement.js) so a kill that drops both a powerup AND salvage spreads them apart
+// rather than stacking, and both stay tame enough not to cross a wall.
 
 export const SalvageMixin = {
   _initSalvage() {
@@ -34,7 +35,7 @@ export const SalvageMixin = {
 
   // Roll the drop chance and, on success, drop a SCRAP pickup at an enemy's death position.
   // Called from the kill path (combat.js), same call site as _maybeDropPowerup.
-  _maybeDropSalvage(x, y) {
+  _maybeDropSalvage(x, y, flying = false) {
     if (Math.random() >= SALVAGE_DROP_CHANCE) return;
     const amount = salvageAmount();
     // #88: scatter the ideal drop point (same treatment as powerups.js spawnPowerup) so a kill
@@ -42,8 +43,11 @@ export const SalvageMixin = {
     // snap to reachable ground in case the scatter — or the kill site itself, e.g. a flyer over
     // water — landed somewhere the player can't walk to. `_reachableDropPos` lives on
     // PowerupsMixin but both mixins compose onto the same ArenaScene prototype.
+    // #336: anchored to the kill's own side of any wall (the player's, for a flyer) so scrap
+    // never lands through a base wall either.
     const scattered = scatterOffset(x, y, DROP_SCATTER_RADIUS);
-    const pos = this._reachableDropPos ? this._reachableDropPos(scattered.x, scattered.y) : scattered;
+    const ref = this._dropSideRef ? this._dropSideRef(x, y, flying) : null;
+    const pos = this._reachableDropPos ? this._reachableDropPos(scattered.x, scattered.y, ref) : scattered;
     const view = this._makeSalvageView(pos.x, pos.y);
     this.salvage.push({ x: pos.x, y: pos.y, amount, age: 0, view });
   },

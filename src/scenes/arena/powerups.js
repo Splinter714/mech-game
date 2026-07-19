@@ -16,8 +16,12 @@ import {
 // data/shield.js), not a scene-tracked pool — the powerup's job is just to tell the mech
 // "fill up, and boost yourself for a while" (Mech.boostShield). Kept out of
 // `buffModifiers`/`activePowerups` since its state lives on the mech, not a scene-level timer.
-import { pixelToHex, hexToPixel, axialKey, nearestHex, scatterOffset } from '../../data/hexgrid.js';
+import { axialKey, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
+// #336: the drop's placement geometry (scatter radius + the side-aware reachability search)
+// is pure and lives in data/dropPlacement.js; this file only supplies the scene's predicates.
+import { resolveDropPos, DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
+import { wallEdgeSeparating } from '../../data/wallEdges.js';
 import { BOUNDARY_RING_WIDTH } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
@@ -30,11 +34,8 @@ import {
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
-// #88: small random scatter applied to a drop's kill-site spawn point before the #73
-// reachable-ground snap, so simultaneous/nearby drops don't stack on the exact same pixel.
-// ~30px keeps the scatter well inside "still clearly at this kill site" (a hex is 48px) while
-// being comfortably bigger than PICKUP_RADIUS so two scattered drops usually don't overlap.
-const DROP_SCATTER_RADIUS = 30;
+// #88 scatter radius (now #336's tamed 12px) lives in data/dropPlacement.js, shared with
+// salvage.js so a kill dropping both spreads them by the same amount.
 
 export const PowerupsMixin = {
   // One-time init from ArenaScene.create(). Overlay state + the graphics layer collectibles
@@ -76,7 +77,7 @@ export const PowerupsMixin = {
 
   // Source-agnostic drop: place a world-space collectible of a weighted-random type at (x, y).
   // Enemy death calls this; a future facility / world resource can call the same entry point.
-  spawnPowerup(x, y, typeId = pickPowerupType()) {
+  spawnPowerup(x, y, typeId = pickPowerupType(), { flying = false } = {}) {
     const p = POWERUPS[typeId];
     if (!p) return null;
     // #88: scatter the ideal drop point a small random distance first, so a kill that drops
@@ -87,7 +88,8 @@ export const PowerupsMixin = {
     // world edge, where the player can never walk to the drop (and the scatter above could
     // itself wander into one of those). Relocate to the nearest REACHABLE ground so it's
     // always collectible; the drop stays as close to the (scattered) kill point as possible.
-    const pos = this._reachableDropPos(scattered.x, scattered.y);
+    // #336: that relocation is now anchored to the kill's own side of any wall.
+    const pos = this._reachableDropPos(scattered.x, scattered.y, this._dropSideRef(x, y, flying));
     const view = this._makePowerupView(pos.x, pos.y, p);
     const pk = { x: pos.x, y: pos.y, type: typeId, age: 0, view };
     this.powerups.push(pk);
@@ -100,17 +102,31 @@ export const PowerupsMixin = {
   // ring-by-ring from the death hex for the closest passable tile and use its centre. If (very
   // unlikely) nothing passable is found nearby, fall back to the always-open world centre so a
   // drop is NEVER stranded.
-  _reachableDropPos(x, y) {
-    if (this.terrain && this._blocked && !this._blocked(x, y)) return { x, y };
-    const start = pixelToHex(x, y);
-    const ok = (q, r) => isPassable(this.terrain?.get(axialKey(q, r)));
+  // #336: `ref` is the point whose side of a standing wall the drop must stay on — the death
+  // position for a ground kill, the PLAYER's position for a flyer (a flyer downed over a wall
+  // has no side of its own, so its drop lands where the player can reach it). Omitting it keeps
+  // the old side-agnostic behaviour, which is right for a drop with no meaningful side.
+  _reachableDropPos(x, y, ref = null) {
     // #158: `worldRadius * 2` alone assumed worldRadius is always much bigger than
     // BOUNDARY_RING_WIDTH (true pre-#158; no longer guaranteed once the playable interior
     // shrinks below the ring's own fixed depth) — see spawnPlacement.js `nearestValidHex`'s
     // matching fix/comment for the full reasoning.
     const searchSteps = (this.worldRadius ?? 20) * 2 + BOUNDARY_RING_WIDTH + 15;
-    const hex = nearestHex(start, ok, searchSteps) ?? { q: 0, r: 0 };
-    return hexToPixel(hex.q, hex.r);
+    const pos = resolveDropPos(x, y, {
+      ref,
+      blocked: this.terrain && this._blocked ? (px, py) => this._blocked(px, py) : null,
+      passable: (q, r) => isPassable(this.terrain?.get(axialKey(q, r))),
+      separated: (ax, ay, bx, by) => !!wallEdgeSeparating(this.wallEdges, ax, ay, bx, by),
+      maxSteps: searchSteps,
+    });
+    return { x: pos.x, y: pos.y };
+  },
+
+  // The side-anchor for a kill's drops (see `_reachableDropPos`). Shared by the powerup and
+  // salvage drop paths so both rewards from one kill land on the same side.
+  _dropSideRef(x, y, flying = false) {
+    if (flying) return { x: this.px, y: this.py };
+    return { x, y };
   },
 
   // Roll the drop chance and, on success, drop a powerup at an enemy's death position. Called
@@ -119,8 +135,11 @@ export const PowerupsMixin = {
   // shield (a uniform difficulty signal present on both Mech and the non-mech HpBody) — see
   // `dropChanceForKill` in data/powerups.js for the curve and its roster-derived bounds.
   // `isCrush` (#106) marks a stomp kill, which bypasses the curve for a flat tiny chance.
-  _maybeDropPowerup(x, y, toughness, isCrush = false) {
-    if (Math.random() < dropChanceForKill(toughness, isCrush)) this.spawnPowerup(x, y);
+  // `flying` (#336) marks a kill with no real side of a wall, so its drop follows the player's.
+  _maybeDropPowerup(x, y, toughness, isCrush = false, flying = false) {
+    if (Math.random() < dropChanceForKill(toughness, isCrush)) {
+      this.spawnPowerup(x, y, pickPowerupType(), { flying });
+    }
   },
 
   // The collectible's look: a high-contrast beacon so it's easy to spot across the dark arena.

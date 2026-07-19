@@ -208,10 +208,12 @@ export const CombatMixin = {
       // #90/#106: pass the kill's TOUGHNESS (structure + armor + shield — uniform across
       // Mech/HpBody) so the odds scale with how tough the enemy actually was, instead of a flat
       // roll; plus the crush flag, which swaps the curve for a flat tiny chance (#106).
-      this._maybeDropPowerup?.(dx, dy, e.mech.toughness ?? e.mech.maxHp, isCrush);
+      // #336: `e.flying` — a flyer downed over a base wall has no real side of its own, so its
+      // drops follow the PLAYER's side; a ground kill's follow its own death position.
+      this._maybeDropPowerup?.(dx, dy, e.mech.toughness ?? e.mech.maxHp, isCrush, !!e.flying);
       // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
       // in data/shop.js) — independent roll from the powerup drop, same kill site.
-      this._maybeDropSalvage?.(dx, dy);
+      this._maybeDropSalvage?.(dx, dy, !!e.flying);
       // Tear the corpse (view + generated textures) down and drop it out of `this.enemies` in
       // the SAME tick the kill registers — no delayed teardown, no frozen body sitting around.
       this._removeEnemy(e);
