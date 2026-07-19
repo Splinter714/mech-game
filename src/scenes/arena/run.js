@@ -18,7 +18,7 @@ import {
   makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver,
 } from '../../data/run.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
-import { saveRunCurrency } from '../../data/save.js';
+import { saveRunCurrency, markBiomeCleared } from '../../data/save.js';
 
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
 
@@ -91,6 +91,12 @@ export const RunMixin = {
     this._runAdvancing = true;
     this.run = status === 'dead' ? endRunOnDeath(this.run) : winRun(this.run);
     this.registry.set('run', this.run);
+
+    // #240: a SUCCESSFUL run in a biome is the boss-arena unlock currency. Recorded here, on
+    // the 'won' branch only — the 'dead' branch deliberately marks nothing, which is the whole
+    // "dying does not count" half of the rule. Skipped in the boss arena itself: it isn't one of
+    // the five biomes and beating the boss must never retroactively unlock its own entry.
+    if (status === 'won' && !this.bossMode && this.biomeId) markBiomeCleared(this.biomeId);
 
     const banked = (this.registry.get(RUN_CURRENCY_KEY) || 0) + this.run.currency;
     this.registry.set(RUN_CURRENCY_KEY, banked);

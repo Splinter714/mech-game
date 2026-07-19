@@ -7,10 +7,30 @@ import { getWeapon } from '../../data/weapons.js';
 import { CENTER } from '../../art/mechPrims.js';
 import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
 import { hexCorners } from '../../data/hexgrid.js';
+import { ART_SCALE } from '../../art/mechArt.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
 // and combat (mapping a hit point back to the nearest body part).
 export const ARENA_MECH_SCALE = 0.34;
+
+// #240: a mech unit's on-screen size is no longer a single global constant. Every mech in the
+// game still renders at exactly ARENA_MECH_SCALE — these helpers just make the size a PROPERTY
+// OF THE UNIT (defaulting to the old constant) so one oversized unit (the boss, at 10x) can
+// exist without every call site hardcoding the global. Three separate numbers matter and are
+// easy to conflate, so each has its own accessor:
+//
+//   viewScale — the sprite `setScale` value.
+//   artScale  — the super-sampling factor its TEXTURES were generated at (art/_frames.js
+//               ART_SCALE). The boss draws its textures on a much finer grid so a 10x sprite is
+//               still crisp instead of a blown-up 4x one; that means its viewScale is NOT
+//               simply 10 x ARENA_MECH_SCALE, and…
+//   dispUnit  — …the only number gameplay actually cares about: WORLD PIXELS PER DESIGN UNIT.
+//               This is what maps a hit point back onto a body part (combat.js) and places
+//               muzzles (enemies.js), and it's `viewScale * artScale` regardless of how the two
+//               were traded off against each other.
+export function mechViewScale(e) { return e?.viewScale ?? ARENA_MECH_SCALE; }
+export function mechArtScale(e) { return e?.artScale ?? ART_SCALE; }
+export function mechDispUnit(e) { return mechViewScale(e) * mechArtScale(e); }
 
 // #149 (follow-up to #138: "the map still feels huge" — but the owner's playtest clarified the
 // complaint isn't walking distance, it's PERCEIVED scale: "even standing still at spawn, the
@@ -462,7 +482,12 @@ export function circleContains(px, py, ex, ey, radius) {
 export const ENEMY_COLLIDE_RADIUS_MECH = 28;      // px — enemy mech chassis footprint
 export const ENEMY_COLLIDE_RADIUS_VEHICLE = 24;   // px — base non-mech ground-unit footprint
 export function groundEnemyRadius(e) {
-  if (e.kind === 'mech' || e.kind === undefined) return ENEMY_COLLIDE_RADIUS_MECH;
+  // #240: a mech's footprint now scales with its own drawn size (`mechViewScale`, which is
+  // ARENA_MECH_SCALE for every ordinary mech, so this is byte-identical for all of them) — the
+  // boss is 10x on screen and must collide/block at 10x, not at one flat mech radius.
+  if (e.kind === 'mech' || e.kind === undefined) {
+    return ENEMY_COLLIDE_RADIUS_MECH * (mechViewScale(e) / ARENA_MECH_SCALE);
+  }
   return ENEMY_COLLIDE_RADIUS_VEHICLE * (e.kindDef?.scale ?? 1);
 }
 

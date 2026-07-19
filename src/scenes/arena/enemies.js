@@ -31,7 +31,7 @@ import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance 
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain } from '../../data/terrain.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, mechDispUnit, mechViewScale } from './shared.js';
 import { makeLock, stepLock, hasLock } from '../../data/targetlock.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
@@ -774,10 +774,12 @@ export const EnemiesMixin = {
       const aim = e.turret;
       if (cd <= 0 && canFire) {
         e.mech.consumeAmmo(w.location, w.index, 1);
-        const aimErr = (Math.random() - 0.5) * 0.12;
+        // #240: aim spray is per-unit (`e.aimSpread`) so a unit can get WILDER over the course
+        // of a fight. Undefined for every ordinary enemy, which keeps the original 0.12 constant.
+        const aimErr = (Math.random() - 0.5) * (e.aimSpread ?? 0.12);
         // #109: a real per-location muzzle (same math as the player's `_muzzle`), keyed off
         // which body location actually mounts this weapon — not a fixed near-centre offset.
-        const disp = ARENA_MECH_SCALE * ART_SCALE;
+        const disp = mechDispUnit(e);   // #240: ARENA_MECH_SCALE * ART_SCALE for every ordinary mech
         const part = mechLayout(e.mech)[w.location];
         // #233: spawn from the weapon art's actual muzzle tip, not the part's bare front edge.
         const tipOffset = mechMuzzleTipOffset(e.mech, w.location, part);
@@ -807,7 +809,13 @@ export const EnemiesMixin = {
         // this fixes (this call site used to fire only shots[0], silently dropping a multi-
         // stream/spread/burst weapon's other lanes for every enemy mech kind).
         this._fireEnemyShots(w, plan, mx2, my2, fireAngle, e);
-        cd = this._fireInterval(w.weapon, {});   // #60: enemies don't get player buffs (identity mods)
+        // #240: `e.extraShots` fires the same volley again at a small angular offset — the visible
+        // half of an escalating unit (see data/boss.js `bossEscalation`). Undefined/0 for every
+        // ordinary enemy. `e.cadenceScale` (also defaulted to 1) tightens the cooldown alongside it.
+        for (let i = 1; i <= (e.extraShots ?? 0); i++) {
+          this._fireEnemyShots(w, plan, mx2, my2, fireAngle + (i % 2 ? 1 : -1) * 0.14 * i, e);
+        }
+        cd = this._fireInterval(w.weapon, {}) * (e.cadenceScale ?? 1);   // #60: enemies don't get player buffs (identity mods)
       }
       e.fireCd[w.location] = Math.max(0, cd);
     }
@@ -820,7 +828,7 @@ export const EnemiesMixin = {
     e.view.hull.rotation = e.angle + Math.PI / 2;
     e.view.turret.rotation = e.turret + Math.PI / 2;
     // Place + rotate all four pivoting parts each frame at the enemy's turret facing, tilt 0.
-    this._syncTilts(e.view, e.mech, e.turret, ARENA_MECH_SCALE, 0, 0, {}, dt);
+    this._syncTilts(e.view, e.mech, e.turret, mechViewScale(e), 0, 0, {}, dt, e.artScale);
   },
 
   // ── Non-mech unit update (#68) ────────────────────────────────────────────────────────
