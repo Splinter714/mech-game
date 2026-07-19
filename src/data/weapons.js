@@ -9,19 +9,25 @@
 //   path      'straight' | 'arcing'    (arcing = lobbed, not a straight line)
 //   guidance  'dumbfire' | 'lockon' | 'homing' | null
 //   pattern   'single' | 'spread' | 'stream'
-//   spreadCount / spreadAngle   pellets/missiles per shot + cone width (deg)
+//   count     #137: the ONE canonical "how many things one trigger pull emits" (default 1),
+//             replacing the old pattern-specific spreadCount / streams / burst.count /
+//             sprayCount fields. Each pattern expands the same number its own way:
+//             spread → a fan of `count` pellets across `spreadAngle`; stream → `count`
+//             parallel lanes (`streamSpacing` apart) or, if the weapon jitters, `count`
+//             randomly-angled particles per cadence tick; burst → `count` sequential
+//             sub-shots `burst.interval` ms apart. Because it's one field, the Barrage
+//             powerup can double it for every weapon at once (delivery.js `emissionCount`).
+//   spreadAngle   cone width (deg) a `spread` weapon's fan is spread across
 //   spreadJitter  degrees — randomizes each spread shot's angle (and adds a small random
 //             emission stagger) instead of an evenly-spaced, perfectly repeating fan; for
 //             weapons that should feel chaotic shot-to-shot (the flamethrower)
 //   cluster   spread rounds fly as a tight parallel clump (no fan) — dumbfire cluster
 //   fireRate  shots per second for a `stream` weapon (machine gun / beam laser)
-//   sprayCount { min, max } — a `stream` weapon's cadence tick launches a random handful
-//             of jittered particles at once (min..max) instead of exactly one, for a
-//             dense/wide continuous gout without changing the ammo cost per tick (the
-//             flamethrower)
-//   burst     { count, interval } — one trigger pull fires `count` rapid sub-shots
-//             `interval` ms apart. For a hitscan, that's `count` light pulses (pulse
-//             laser); for a projectile, `count` travelling rounds (streak pod)
+//   burst     { interval } — marks the weapon as a BURST and sets the ms gap between its
+//             sub-shots; how many there are is the shared `count` above. For a hitscan
+//             that's `count` light pulses (pulse laser); for a projectile, `count`
+//             travelling rounds (streak pod). `wubOn`/`wubOff` are a shorthand for
+//             `interval` (see `w()` below)
 //   wobble    'jostle' | 'weave' — cosmetic lateral wiggle on a homing round's flight path
 //   weakSeek  #213: a DELIBERATELY WEAK per-projectile tracking bias — distinct from
 //             `guidance: 'homing'` (a real lock-on that steers hard at a maintained target
@@ -57,17 +63,19 @@
 
 const DELIVERY_DEFAULTS = {
   hit: 'projectile', velocity: 500, path: 'straight', guidance: null,
-  pattern: 'single', spreadCount: 1, spreadAngle: 0, fireRate: 0, splash: 0,
+  pattern: 'single', count: 1, spreadAngle: 0, fireRate: 0, splash: 0,
 };
 
 function w(def) {
   const d = { ...DELIVERY_DEFAULTS, ...def.delivery };
-  // Burst shorthand: wubOn + wubOff → interval; totalDamage / count → per-wub damage.
+  // Burst shorthand: wubOn + wubOff → interval; totalDamage / count → per-sub-shot damage.
+  // (#137: `count` is now the shared top-level delivery field, not `burst.count` — `burst`
+  // keeps only its TIMING fields.)
   if (d.burst) {
     if (d.burst.wubOn != null) d.burst = { ...d.burst, interval: d.burst.wubOn + d.burst.wubOff };
   }
   const damage = def.totalDamage != null
-    ? def.totalDamage / (d.burst?.count ?? 1)
+    ? def.totalDamage / (d.burst ? Math.max(1, d.count ?? 1) : 1)
     : def.damage;
   return { ...def, damage, delivery: d };
 }
@@ -78,11 +86,11 @@ export const WEAPONS = {
   pulseLaser: w({   // every trigger pull = a rapid burst of light beam pulses
     id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
     // #259 DPS-squish: totalDamage 16 -> 66 to bring raw DPS up from ~5.33 to the ~22 band.
-    // DPS = damage(totalDamage/burst.count) x count / cycleTime(s): pre-retune
+    // DPS = damage(totalDamage/count) x count / cycleTime(s): pre-retune
     // (16/5)*5/3 = 5.33 dps -> (66/5)*5/3 = 22.0 dps.
     totalDamage: 66, range: { min: 0, opt: 340, max: 600 },
     ammoMax: 24, ammoRegen: 3.0, slots: 1, cycleTime: 3000,
-    delivery: { hit: 'hitscan', pattern: 'single', burst: { count: 5, wubOn: 25, wubOff: 50 } },
+    delivery: { hit: 'hitscan', pattern: 'single', count: 5, burst: { wubOn: 25, wubOff: 50 } },
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
     id: 'beamLaser', name: 'Beam Laser', category: 'energy',
@@ -138,9 +146,9 @@ export const WEAPONS = {
     // WEAK_SEEK_TURN_RATE (see delivery.js) nudged up so the seek reads a bit more.
     // #220: a small spreadJitter (2°) so the single-lane bolt stream sputters a little off
     // its perfectly straight line instead of every bolt tracking the exact same trajectory.
-    // This is a single-lane stream (no sprayCount/streams/cluster/spread), so in
-    // delivery.js's planEmissions() this hits the "single continuously-streamed shot"
-    // branch (n === 1, jitterRad truthy) — each bolt still gets exactly ONE shot per
+    // This is a single-lane stream (count 1, no cluster/spread), so in delivery.js's
+    // planEmissions() this hits the jittered-stream branch with count 1 — each bolt
+    // still gets exactly ONE shot per
     // cadence tick, just with its own small random angleOffset. Deliberately much smaller
     // than Flamethrower's 9° spray-cone jitter — this should read as a subtle sputter/
     // wobble on one bolt, not a fan; start conservative and go bigger only on playtest ask.
@@ -191,17 +199,22 @@ export const WEAPONS = {
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
     // #256 playtest rebalance: damage 2 -> 0.65 (revised target, see below). Flamethrower's
-    // DPS is fireRate(18) x sprayCount-average(3, from {min:2,max:4}) x damage, so
+    // DPS is fireRate(18) x count(3) x damage, so
     // 18*3*2 = 108 dps originally — a ~40%+ overshoot over Repeater's 72 dps (18 x
-    // streams(2) x damage(2)). A first pass dropped damage to 1.5 (81 dps), but the
+    // count(2) x damage(2)). A first pass dropped damage to 1.5 (81 dps), but the
     // corrected target is ~35 dps — well below Repeater, not a near-miss of it — so damage
     // came down further to 0.65: 18*3*0.65 = 35.1 dps.
     // #259 DPS-squish: damage 0.65 -> 0.5185 to bring raw DPS down from 35.1 to the ~28 band.
-    // DPS = fireRate(18) x sprayCount-average(3) x damage: 18*3*0.5185 = 28.0 dps.
+    // DPS = fireRate(18) x count(3) x damage: 18*3*0.5185 = 28.0 dps.
+    // #137: `count` was a random {min:2,max:4} spray range (average 3) before the delivery
+    // fields were unified; it's now a FIXED 3 — the same average, so this DPS math holds
+    // exactly instead of only on average, and damage is unchanged. The gout's chaos comes
+    // entirely from spreadJitter (9°) + makeProjectile's per-particle speed variance now
+    // rather than partly from count variance, which reads the same in motion at 18 ticks/sec.
     damage: 0.5185, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 150, ammoRegen: 22, slots: 2, cycleTime: 0,
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
-    // each popping a random 2-4 particles (sprayCount) instead of exactly one, so held
+    // each popping 3 particles (count) instead of exactly one, so held
     // fire reads as one dense, unbroken gout rather than a thin single-file tracer or a
     // series of pulses. fireRate sits below ammoRegen (18 < 22) so holding the trigger
     // never runs the magazine dry. spreadJitter is narrower than the original pulsed
@@ -216,7 +229,7 @@ export const WEAPONS = {
     // close-range identity (a short gout of flame) more than the other weapons touched by
     // #135 — applied per explicit instruction, but flagged as worth a follow-up
     // conversation about whether flamethrower should have been an exception.
-    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, sprayCount: { min: 2, max: 4 }, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
+    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, count: 3, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a
@@ -232,20 +245,20 @@ export const WEAPONS = {
   machineGun: w({   // sustained stream of small fast tracer rounds
     id: 'machineGun', name: 'Repeater', category: 'ballistic',
     // #256 playtest round 2: damage 2 -> 1.667 to bring DPS down from 72 to ~60.
-    // DPS = damage x streams(2) x fireRate(18): 2*2*18 = 72 -> 1.667*2*18 = 60.
+    // DPS = damage x count(2) x fireRate(18): 2*2*18 = 72 -> 1.667*2*18 = 60.
     // #259 DPS-squish: damage 1.667 -> 0.889 to bring raw DPS down from ~60 to the ~32 band.
-    // DPS = damage x streams(2) x fireRate(18): 1.667*2*18 = 60.01 -> 0.889*2*18 = 32.0 dps.
+    // DPS = damage x count(2) x fireRate(18): 1.667*2*18 = 60.01 -> 0.889*2*18 = 32.0 dps.
     damage: 0.889, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 80, ammoRegen: 14, slots: 1, cycleTime: 0,
-    // streams: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
+    // count: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
     // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
-    // `streams: 3` for a triple stream (widen streamSpacing to taste if the lanes crowd).
-    delivery: { hit: 'projectile', path: 'straight', velocity: 900, pattern: 'stream', fireRate: 18, streams: 2, streamSpacing: 5, kind: 'bullet', scale: 0.75 },
+    // `count: 3` for a triple stream (widen streamSpacing to taste if the lanes crowd).
+    delivery: { hit: 'projectile', path: 'straight', velocity: 900, pattern: 'stream', fireRate: 18, count: 2, streamSpacing: 5, kind: 'bullet', scale: 0.75 },
   }),
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
     // #259 DPS-squish: damage 3 -> 4.457 to bring raw DPS up from 17.5 to the ~26 band.
-    // DPS = damage x spreadCount(7) / cycleTime(s): 3*7/1.2 = 17.5 dps -> 4.457*7/1.2 = 26.0 dps.
+    // DPS = damage x count(7) / cycleTime(s): 3*7/1.2 = 17.5 dps -> 4.457*7/1.2 = 26.0 dps.
     damage: 4.457, range: { min: 0, opt: 338, max: 600 },
     ammoMax: 8, ammoRegen: 0.8, slots: 2, cycleTime: 1200,
     // #101 correction: an earlier pass jittered each pellet's LAUNCH angle for an "organic"
@@ -258,7 +271,7 @@ export const WEAPONS = {
     // range 320px @ 980px/s ≈ a third of Cluster Salvo's flight time): half the lateral
     // amplitude, double the frequency, so the wobble still reads as a visible sway rather
     // than a flat line over that short a flight.
-    delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', spreadCount: 7, spreadAngle: 7, kind: 'bullet', wobble: 'sway', wobbleAmplitude: 2.5, wobbleFrequency: 14 },
+    delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', count: 7, spreadAngle: 7, kind: 'bullet', wobble: 'sway', wobbleAmplitude: 2.5, wobbleFrequency: 14 },
   }),
   napalm: w({       // lobbed canister that bursts into a burning ground patch
     id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
@@ -297,19 +310,19 @@ export const WEAPONS = {
     // by the SAME factor so the constant-apex lob flight time (opt/velocity, firing.js
     // _spawnProjectile) stays unchanged — only the distance covered per second grows, not how
     // long a shot hangs in the air.
-    // #256 playtest rebalance: damage 4 -> 8. DPS = spreadCount(6) x damage / cycleTime(1.6s),
+    // #256 playtest rebalance: damage 4 -> 8. DPS = count(6) x damage / cycleTime(1.6s),
     // so 6*4/1.6 = 15 dps pre-rebalance -> 6*8/1.6 = 30 dps, meaningfully above the old
     // ~15-23 missile band but still under Flamethrower (81) and Repeater (72) since the
     // homing guidance is itself a strong utility advantage over straight DPS.
     // #256 playtest round 2: damage 8 -> 10.667 to land at ~40 dps (6*10.667/1.6 = 40).
     // #259 DPS-squish: damage 10.667 -> 6.933 to bring raw DPS down from ~40 to the ~26 band.
-    // DPS = spreadCount(6) x damage / cycleTime(s): 6*10.667/1.6 = 40.0 -> 6*6.933/1.6 = 26.0.
+    // DPS = count(6) x damage / cycleTime(s): 6*10.667/1.6 = 40.0 -> 6*6.933/1.6 = 26.0.
     damage: 6.933, range: { min: 280, opt: 1050, max: 1750 },
     ammoMax: 12, ammoRegen: 1.2, slots: 2, cycleTime: 1600,
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
     // salvo can clear cover; guidance blends in during descent (see projectiles.js).
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', spreadCount: 6, spreadAngle: 44, velocity: 1050, wobble: 'jostle', path: 'arcing' },
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 44, velocity: 1050, wobble: 'jostle', path: 'arcing' },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
@@ -319,30 +332,30 @@ export const WEAPONS = {
     // burst over cycleTime(1.8s): 5*6/1.8 = 16.7 dps pre-rebalance -> 9*6/1.8 = 30 dps.
     // #256 playtest round 2: damage 9 -> 12 to land at ~40 dps (12*6/1.8 = 40).
     // #259 DPS-squish: damage 12 -> 7.8 to bring raw DPS down from 40 to the ~26 band.
-    // DPS = burst.count(6) x damage / cycleTime(s): 12*6/1.8 = 40.0 -> 7.8*6/1.8 = 26.0.
+    // DPS = count(6) x damage / cycleTime(s): 12*6/1.8 = 40.0 -> 7.8*6/1.8 = 26.0.
     damage: 7.8, range: { min: 210, opt: 910, max: 1540 },
     ammoMax: 4, ammoRegen: 0.45, slots: 2, cycleTime: 1800,
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
     // path: 'arcing' (#57) — same loft-over-cover treatment as Swarm Rack.
-    delivery: { hit: 'projectile', guidance: 'homing', velocity: 1540, wobble: 'weave', burst: { count: 6, interval: 70 }, path: 'arcing' },
+    delivery: { hit: 'projectile', guidance: 'homing', velocity: 1540, wobble: 'weave', count: 6, burst: { interval: 70 }, path: 'arcing' },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
     // #77 tuning follow-up: range 3x'd (0/220/320 → 0/660/960, kept at the low end of the 3-4x
     // band since this one's a tight-clump dumbfire weapon, not a seeker); velocity scaled by the
     // same 3x so its (straight, non-arcing) travel time to max range doesn't balloon.
-    // #256 playtest rebalance: damage 5 -> 7. DPS = spreadCount(5) x damage / cycleTime(1.1s),
+    // #256 playtest rebalance: damage 5 -> 7. DPS = count(5) x damage / cycleTime(1.1s),
     // so 5*5/1.1 = 22.7 dps pre-rebalance -> 5*7/1.1 = 31.8 dps, landing this dumbfire
     // cluster in the same ~30 dps missile band as its two homing siblings above.
     // #256 playtest round 2: damage 7 -> 8.8 to land at ~40 dps (5*8.8/1.1 = 40).
     // #259 DPS-squish: damage 8.8 -> 6.16 to bring raw DPS down from 40 to the ~28 band.
-    // DPS = spreadCount(5) x damage / cycleTime(s): 8.8*5/1.1 = 40.0 -> 6.16*5/1.1 = 28.0.
+    // DPS = count(5) x damage / cycleTime(s): 8.8*5/1.1 = 40.0 -> 6.16*5/1.1 = 28.0.
     damage: 6.16, range: { min: 0, opt: 660, max: 960 },
     ammoMax: 10, ammoRegen: 1.2, slots: 1, cycleTime: 1100,
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
-    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', spreadCount: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },
+    delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', count: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },
   }),
 };
 
@@ -376,7 +389,7 @@ export function getWeapon(id) {
 //   • top-level fields shallow-merge (override wins): damage, cycleTime, ammoMax, range, …
 //   • the nested `delivery` object ALSO shallow-merges (field by field), so an override can
 //     retune just `fireRate` without restating the weapon's whole delivery profile;
-//   • every other nested object (range, burst, sprayCount, groundFire…) is replaced WHOLESALE
+//   • every other nested object (range, burst, groundFire…) is replaced WHOLESALE
 //     when overridden — restate all of its fields;
 //   • override values are FINAL values on the already-normalized weapon — the `w()` shorthand
 //     (totalDamage, burst wubOn/wubOff) is not re-run;

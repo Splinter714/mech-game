@@ -227,55 +227,54 @@ export function projectileKind(weapon) {
 //   angleOffset  radians off the aim line (spread fan, a cluster's tiny jitter, or stagger)
 //   lateral      px perpendicular to the shot (a cluster's parallel offset)
 // The caller turns each into a real shot from its current muzzle/aim.
-export function planEmissions(weapon) {
+//
+// #137: `opts.countMult` scales the weapon's `delivery.count` (see `emissionCount` below) —
+// the Barrage powerup passes 2 so EVERY pattern emits twice as many things per trigger pull
+// through its own existing expansion (a wider fan, more parallel lanes, a longer burst).
+export function planEmissions(weapon, { countMult = 1 } = {}) {
   const d = weapon.delivery || {};
   if (d.hit === 'contact') return { mode: 'contact', shots: [shot()] };
   const mode = d.hit === 'hitscan' ? 'hitscan' : 'projectile';
 
+  // The ONE canonical "how many things per trigger pull" number, already multiplied by any
+  // active buff. Every pattern below expands the SAME n in its own way.
+  const n = emissionCount(d, countMult);
+
   if (mode === 'hitscan') {
+    // Hitscan burst (Pulse Laser): n light pulses `burst.interval` ms apart.
     if (d.burst) {
       const shots = [];
-      for (let i = 0; i < d.burst.count; i++) shots.push(shot({ delay: i * d.burst.interval }));
+      for (let i = 0; i < n; i++) shots.push(shot({ delay: i * d.burst.interval }));
       return { mode, shots };
     }
     return { mode, shots: [shot()] };
   }
 
-  // Projectile: a single round, a fanned cone of `spreadCount`, or — for `cluster`
-  // weapons — a tight parallel clump (lateral offsets, ~parallel headings, no fan).
+  // Projectile: a single round, a fanned cone of n, or — for `cluster` weapons — a tight
+  // parallel clump (lateral offsets, ~parallel headings, no fan).
   // `spreadJitter` (degrees) randomizes each fan shot's angle and emission timing instead
   // of a perfectly even, repeating fan — used by weapons that should feel chaotic shot to
   // shot rather than reading as a clean mechanical pulse (Flamethrower, #46).
-  const n = d.pattern === 'spread' ? Math.max(1, d.spreadCount) : 1;
+  const fan = d.pattern === 'spread' ? n : 1;
   const jitterRad = ((d.spreadJitter || 0) * Math.PI) / 180;
 
-  // A continuous stream that also sprays a random handful of particles per cadence tick
-  // (Flamethrower): each tick launches `sprayCount.min`-`sprayCount.max` independently
-  // jittered rounds at once instead of exactly one, for a denser/wider gout — without
-  // changing the ammo cost per tick (ammo is spent once per fireWeapon() call, not per
-  // shot), so hold-to-fire sustain is unaffected by how many particles pop out.
-  if (d.sprayCount) {
-    const { min, max } = d.sprayCount;
-    const count = min + Math.floor(Math.random() * (max - min + 1));
-    const sprayShots = [];
-    for (let i = 0; i < count; i++) {
-      sprayShots.push(shot({ angleOffset: jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0 }));
-    }
-    return { mode, shots: sprayShots };
-  }
-
-  // Parallel-stream weapon (Repeater, `streams: N`): each cadence tick emits N rounds side by
-  // side in fixed lanes — a lateral offset centred on the aim line (like a cluster's parallel
-  // clump), all with angleOffset 0 so the lanes stay parallel and read as N distinct tracer
-  // streams, NOT a fanned cone. `streamSpacing` (px) tunes the lane gap. Single-stream
-  // weapons (no `streams`, or streams ≤ 1) skip this and fall through to the n = 1 case below.
-  if (d.pattern === 'stream' && d.streams > 1) {
-    const s = d.streams;
+  // Continuous-stream weapons. Two shapes, chosen by whether the weapon jitters:
+  //  • JITTERED (Flamethrower, Plasma Lance): each cadence tick pops n independently
+  //    angle-jittered particles at once, for a chaotic gout / sputtering bolt line rather
+  //    than a lane pattern. (#137 folded Flamethrower's old random `sprayCount {min,max}`
+  //    range into this fixed count — the chaos now comes purely from `spreadJitter`.)
+  //  • LANED (Repeater): n rounds side by side in fixed lanes — a lateral offset centred on
+  //    the aim line (like a cluster's parallel clump), all with angleOffset 0 so the lanes
+  //    stay parallel and read as n distinct tracer streams, NOT a fanned cone.
+  //    `streamSpacing` (px) tunes the lane gap.
+  // Either way the ammo cost is unchanged: ammo is spent once per fireWeapon() call, not per
+  // shot, so hold-to-fire sustain doesn't care how many particles pop out.
+  if (d.pattern === 'stream' && (jitterRad || n > 1)) {
     const spacing = d.streamSpacing || STREAM_SPACING;
     const streamShots = [];
-    for (let i = 0; i < s; i++) {
-      const c = i - (s - 1) / 2;                    // centred lane index: −…0…+
-      streamShots.push(shot({ lateral: c * spacing }));
+    for (let i = 0; i < n; i++) {
+      if (jitterRad) streamShots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad }));
+      else streamShots.push(shot({ lateral: (i - (n - 1) / 2) * spacing }));   // centred lane index: −…0…+
     }
     return { mode, shots: streamShots };
   }
@@ -286,14 +285,14 @@ export function planEmissions(weapon) {
   // #243: the max random emission stagger of a jittered spread is per-weapon tunable
   // (`delivery.spreadJitterDelay`, ms) — how raggedly a chaotic fan's shots leave the muzzle.
   const jitterDelay = d.spreadJitterDelay ?? SPREAD_JITTER_DELAY;
-  for (let i = 0; i < n; i++) {
-    const c = n > 1 ? (i - (n - 1) / 2) : 0;       // centred index: −…0…+
+  for (let i = 0; i < fan; i++) {
+    const c = fan > 1 ? (i - (fan - 1) / 2) : 0;   // centred index: −…0…+
     if (d.cluster) {
       shots.push(shot({ lateral: c * clusterSpacing }));
-    } else if (n > 1) {
+    } else if (fan > 1) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
       const fireDelay = jitterRad ? Math.random() * jitterDelay : 0;
-      shots.push(shot({ angleOffset: (c / (n - 1)) * cone + jitter, delay: fireDelay }));
+      shots.push(shot({ angleOffset: (c / (fan - 1)) * cone + jitter, delay: fireDelay }));
     } else if (jitterRad) {
       // A single continuously-streamed shot (Flamethrower, #46) still gets the same
       // per-shot angle jitter a multi-pellet spread would use — each rapid-fire particle
@@ -303,17 +302,17 @@ export function planEmissions(weapon) {
     } else shots.push(shot());
   }
 
-  // Projectile burst (Streak Pod, #50): one trigger pull unloads `burst.count` rounds in
-  // rapid succession instead of requiring the button held — replaces the single shot above
-  // with `count` delayed copies. Consecutive sub-shots alternate a tiny angular stagger (for
+  // Projectile burst (Streak Pod, #50): one trigger pull unloads n rounds in rapid
+  // succession instead of requiring the button held — replaces the single shot above
+  // with n delayed copies. Consecutive sub-shots alternate a tiny angular stagger (for
   // a 'weave' wobble weapon) so the stream reads as a packed, slightly offset column rather
   // than perfectly overlapping shots.
-  if (d.burst && n === 1) {
+  if (d.burst && fan === 1) {
     // #243: the alternating stagger is per-weapon tunable (`delivery.burstStaggerDeg`, °).
     const staggerRad = ((d.burstStaggerDeg ?? STREAK_STAGGER_DEG) * Math.PI) / 180;
     const staggered = wobbleKind(weapon) === 'weave';
     const out = [];
-    for (let i = 0; i < d.burst.count; i++) {
+    for (let i = 0; i < n; i++) {
       out.push(shot({ angleOffset: staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0, delay: i * d.burst.interval }));
     }
     return { mode, shots: out };
@@ -324,6 +323,18 @@ export function planEmissions(weapon) {
 
 function shot({ delay = 0, angleOffset = 0, lateral = 0 } = {}) {
   return { delay, angleOffset, lateral };
+}
+
+// #137: the ONE canonical "how many things does one trigger pull emit" number, replacing the
+// three pattern-specific fields this used to be split across (`spreadCount` for a fan,
+// `streams` for parallel lanes, `burst.count` for sequential pulses — plus Flamethrower's
+// random `sprayCount {min,max}` range, now a fixed count too). `delivery.count` defaults to 1;
+// each pattern in planEmissions expands the same number in its own geometric way, which is why
+// a single multiplier (Barrage's `countMult: 2`) doubles every weapon type with no per-weapon
+// special-casing. Rounded + floored at 1 so a fractional multiplier can never emit nothing.
+export function emissionCount(delivery, countMult = 1) {
+  const base = Math.max(1, delivery?.count ?? 1);
+  return Math.max(1, Math.round(base * (countMult || 1)));
 }
 
 // Build a round's kinematic state. The caller supplies `maxDist` (its own travel budget:

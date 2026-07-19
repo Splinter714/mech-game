@@ -121,7 +121,7 @@ describe('enemy direct-fire round direction follows the turret angle, not an ide
     scene._updateEnemy(e, 0.016, 16);
 
     // #269 playtest follow-up (streams/multi-shot bug fix): clusterRocket is a genuine 5-round
-    // cluster (delivery.cluster: true, spreadCount: 5) — the enemy fire loop now dispatches
+    // cluster (delivery.cluster: true, count: 5) — the enemy fire loop now dispatches
     // EVERY emission in the plan (see enemies.js `_fireEnemyShots`), so one trigger pull spawns
     // all 5 rounds (each with angleOffset 0, just a different lateral clump offset), not just
     // one like the old single-shot-only dispatch did.

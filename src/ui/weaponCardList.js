@@ -288,9 +288,9 @@ export class WeaponCardList {
     if (d.hit === 'hitscan') parts.push('hitscan');
     else if (d.hit === 'contact') parts.push('melee');
     else parts.push(`proj ${d.velocity}px/s${d.path === 'arcing' ? ' · arc' : ''}`);
-    if (d.pattern === 'spread') parts.push(`spread×${d.spreadCount}`);
-    else if (d.pattern === 'stream') parts.push(`stream ${d.fireRate}/s${d.sprayCount ? ` ×${d.sprayCount.min}-${d.sprayCount.max}` : ''}`);
-    if (d.burst) parts.push(`burst×${d.burst.count}`);
+    if (d.pattern === 'spread') parts.push(`spread×${d.count ?? 1}`);
+    else if (d.pattern === 'stream') parts.push(`stream ${d.fireRate}/s${(d.count ?? 1) > 1 ? ` ×${d.count}` : ''}`);
+    if (d.burst) parts.push(`burst×${d.count ?? 1}`);
     if (d.guidance === 'homing') parts.push('homing');
     const ammo = weapon.ammoMax == null ? '∞' : `${weapon.ammoMax} (+${weapon.ammoRegen}/s)`;
     const cadence = d.pattern === 'stream' ? `${d.fireRate}/s` : `${(weapon.cycleTime / 1000).toFixed(2)}s`;
@@ -382,7 +382,7 @@ export class WeaponCardList {
       card.cd -= delta;
       if (card.cd <= 0) {
         this._fire(card);
-        const burstDur = d.burst ? d.burst.count * (d.burst.wubOn ?? d.burst.interval) + (d.burst.count - 1) * (d.burst.wubOff ?? 0) : 0;
+        const burstDur = d.burst ? (d.count ?? 1) * (d.burst.wubOn ?? d.burst.interval) + ((d.count ?? 1) - 1) * (d.burst.wubOff ?? 0) : 0;
         card.cd = Math.max((w.cycleTime || 800) - burstDur, 250);
       }
     }

@@ -293,11 +293,11 @@ export const ENEMY_KINDS = {
     muzzleForward: -1,
     weaponId: 'machineGun',
     // #269 playtest follow-up: back to twin-lane — the player's Repeater fires a twin-lane
-    // (`streams: 2`) tracer stream, and the gunship now matches it (no damage override; same
+    // (`count: 2`) tracer stream, and the gunship now matches it (no damage override; same
     // per-round damage as before). Cadence itself is unchanged (machineGun's own fireRate 18
     // ⇒ ~55.6ms/tick via `_fireInterval`, per #241).
     weaponOverride: {
-      delivery: { streams: 2 },   // matches player's Repeater
+      delivery: { count: 2 },   // matches player's Repeater
     },
     fireRange: 460,
     // #243 trigger discipline (retuned in the playtest follow-up): post-#241 the gunship hosed

@@ -189,7 +189,7 @@ describe('#245 _fireVehicleWeapon threads the shooter\'s flying flag into both f
   });
 
   // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
-  // stream weapon (`delivery.streams: 2`) — `_fireVehicleWeapon` now dispatches EVERY emission
+  // stream weapon (`delivery.count: 2`) — `_fireVehicleWeapon` now dispatches EVERY emission
   // in the plan (see enemies.js `_fireEnemyShots`), so one trigger pull spawns TWO rounds, both
   // carrying the same owner/ignoreCover — not one, like the old single-shot-only dispatch did.
 
