@@ -104,6 +104,21 @@ export class Mech {
     return LOCATIONS.reduce((sum, loc) => sum + this.parts[loc].maxArmor + this.parts[loc].maxHp, 0);
   }
 
+  // #106: the canonical "how much total health does a kill represent" figure — EVERY damage
+  // layer the attacker has to chew through, structure + armor + shield, in the SAME units for
+  // every body type (Mech and the non-mech HpBody both expose it, so difficulty-scaled logic —
+  // the powerup drop curve, data/powerups.js — never branches on enemy kind). Deliberately a
+  // SEPARATE accessor from `maxHp` above rather than a redefinition of it: `maxHp` already has
+  // other consumers (the HUD's per-part bars, shared.js's death-explosion sizing) whose current
+  // meaning is fine, and `maxHp` on HpBody means only its single hp pool — so widening either
+  // would silently change unrelated behaviour. Reads the PRE-BOOST shield capacity when a
+  // Shield powerup is live (`_shieldBoost.baseMax`), so a temporary buff can't inflate a unit's
+  // rated toughness.
+  get toughness() {
+    const shieldMax = this._shieldBoost?.baseMax ?? (this.shield?.max ?? 0);
+    return this.maxHp + Math.max(0, shieldMax);
+  }
+
   // ── Damage & destruction ──────────────────────────────────────────────────
   // Apply `amount` damage to a location, through the FULL layer stack in order (#246):
   //   1) the full-mech SHIELD (this.shield) absorbs first, if present and > 0 — a shield hit

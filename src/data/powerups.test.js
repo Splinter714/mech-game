@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   POWERUPS, POWERUP_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
-  dropChanceForMaxHp, MIN_DROP_CHANCE, MAX_DROP_CHANCE,
+  dropChanceForToughness, dropChanceForKill, dropBounds, dropBoundsForRoster,
+  MIN_DROP_CHANCE, MAX_DROP_CHANCE, CRUSH_KILL_DROP_CHANCE,
 } from './powerups.js';
 import { Mech } from './Mech.js';
+import { HpBody } from './HpBody.js';
+import { ENEMY_KINDS } from './enemyKinds.js';
+import { ENEMIES } from './enemies.js';
 
 describe('powerup catalog', () => {
   it('has the #187 owner-approved roster (Surge cut, Shield added, #137 Barrage added) and NO Target Paint', () => {
@@ -144,78 +148,162 @@ describe('armorRepairPlan — whole-mech proportional repair (Armor Patch rework
   });
 });
 
-describe('dropChanceForMaxHp — #90/#106 difficulty-scaled powerup drop odds', () => {
-  it('gives the weakest real enemy (drone, hp 14) the MIN chance', () => {
-    expect(dropChanceForMaxHp(14)).toBeCloseTo(MIN_DROP_CHANCE, 5);
+
+// ── #106: the toughness-scaled drop curve ────────────────────────────────────────────────
+// Three things changed here in #106 and each is pinned below:
+//   1) the floor/ceiling are DERIVED from the live roster, not hardcoded;
+//   2) the curve is CONVEX (exp 1.5), so easy kills stay near the floor much longer;
+//   3) toughness = structure + armor + shield for EVERY body type (armor/shields used to be
+//      invisible on non-mech kinds, under-rating vehicles).
+// Plus the crush/stomp kill path, which bypasses the curve entirely.
+
+// The real toughness of one roster entry, read through the same accessors the game uses.
+const kindToughness = (id) => new HpBody(ENEMY_KINDS[id]).toughness;
+const mechToughness = (id) => new Mech(ENEMIES[id]).toughness;
+
+describe('#106: toughness = structure + armor + shield, uniformly across body types', () => {
+  it('counts a vehicle\'s ARMOR pool, which the old maxHp signal ignored', () => {
+    const tank = new HpBody(ENEMY_KINDS.tank);
+    expect(tank.maxHp).toBe(160);        // structure only — unchanged meaning
+    expect(tank.toughness).toBe(200);    // + its 40-point armor pool
   });
 
-  it('#106: the floor reads as appropriately rare (low single digits), not a coin flip', () => {
-    expect(MIN_DROP_CHANCE).toBeLessThanOrEqual(0.08);
-    expect(MIN_DROP_CHANCE).toBeGreaterThan(0);
+  it('counts a vehicle\'s SHIELD pool too (helicopter: hp + shield, no armor)', () => {
+    const heli = new HpBody(ENEMY_KINDS.helicopter);
+    expect(heli.maxHp).toBe(70);
+    expect(heli.toughness).toBe(100);    // + its 30-point shield
   });
 
-  it('gives the toughest real enemy (base heavy mech, maxHp 400) the MAX chance', () => {
-    expect(dropChanceForMaxHp(400)).toBeCloseTo(MAX_DROP_CHANCE, 5);
+  it('counts all three layers at once (quadruped: 260 hp + 60 armor + 50 shield)', () => {
+    expect(new HpBody(ENEMY_KINDS.quadruped).toughness).toBe(370);
   });
 
-  it('clamps below the floor and above the ceiling instead of extrapolating', () => {
-    expect(dropChanceForMaxHp(0)).toBe(MIN_DROP_CHANCE);
-    expect(dropChanceForMaxHp(1)).toBe(MIN_DROP_CHANCE);
-    expect(dropChanceForMaxHp(10000)).toBe(MAX_DROP_CHANCE);
+  it('leaves maxHp alone on both body types (other consumers rely on its current meaning)', () => {
+    expect(new HpBody(ENEMY_KINDS.quadruped).maxHp).toBe(260);
+    expect(new Mech({ chassisId: 'heavy' }).maxHp).toBe(430);
   });
 
-  it('treats missing/falsy input as zero hp (MIN chance), never NaN or negative', () => {
-    expect(dropChanceForMaxHp(undefined)).toBe(MIN_DROP_CHANCE);
-    expect(dropChanceForMaxHp(null)).toBe(MIN_DROP_CHANCE);
-    expect(dropChanceForMaxHp(-50)).toBe(MIN_DROP_CHANCE);
-  });
-
-  it('is monotonic — a tougher enemy never yields a LOWER chance than a weaker one', () => {
-    // The actual roster's maxHp spread, weakest to toughest (see enemyKinds.js + Mech.maxHp).
-    // #128: light/medium/heavy dropped to 172/270/400 when head/cockpit/centerTorso left the
-    // tracked damage locations (was 266/416/616).
-    const roster = [14, 70, 90, 160, 172, 270, 400]; // drone, heli, turret, tank, light, medium, heavy
-    let prev = -Infinity;
-    for (const hp of roster) {
-      const chance = dropChanceForMaxHp(hp);
-      expect(chance).toBeGreaterThanOrEqual(prev);
-      prev = chance;
+  it('for a shieldless mech, toughness equals its armor+structure maxHp', () => {
+    for (const c of ['light', 'medium', 'heavy']) {
+      const m = new Mech({ chassisId: c });
+      expect(m.toughness).toBe(m.maxHp);
     }
-    // Strictly increasing across this spread (no two tiers tie).
-    const chances = roster.map(dropChanceForMaxHp);
-    for (let i = 1; i < chances.length; i++) expect(chances[i]).toBeGreaterThan(chances[i - 1]);
   });
 
-  it('#106: weak/moderate kills (drone/heli/turret) drop meaningfully less than the old floor', () => {
-    // Old flat-linear floor was 0.35 — every one of these trivial-to-moderate kills should now
-    // sit well under that, with the drone (true floor) reading as low single digits.
-    expect(dropChanceForMaxHp(14)).toBeLessThan(0.1);   // drone
-    expect(dropChanceForMaxHp(70)).toBeLessThan(0.35);  // helicopter
-    expect(dropChanceForMaxHp(90)).toBeLessThan(0.35);  // turret
+  it('a live Shield powerup does not inflate a mech\'s rated toughness', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const before = m.toughness;
+    expect(before).toBe(m.maxHp + 40);
+    m.boostShield(2.5, 5000);
+    expect(m.toughness).toBe(before);    // reads the PRE-boost capacity
+  });
+});
+
+describe('#106: drop-curve bounds are DERIVED from the live roster, not hardcoded', () => {
+  it('derives floor = the weakest unit (infantry, 6) and ceil = the toughest (heavy mech, 430)', () => {
+    const { floor, ceil } = dropBounds();
+    expect(floor).toBe(kindToughness('infantry'));
+    expect(ceil).toBe(mechToughness('artillery'));
+    expect(floor).toBe(6);
+    expect(ceil).toBe(430);
   });
 
-  it('lands a medium mech (the likely most-common kill) close to the old flat 0.75 rate', () => {
-    // #106 bent the curve concave specifically so this "typical kill" sanity check from #90
-    // still holds even though the floor dropped from 0.35 to 0.05. #128 later moved the medium
-    // mech's real maxHp to 270 (was 416), and #230's torso-HP bump (see chassis/index.js
-    // FACTORS) moved it again to 290, but the floor/ceiling moved down in near-identical
-    // proportion each time, so this still lands in the same 0.7-0.8 band.
-    expect(dropChanceForMaxHp(290)).toBeGreaterThan(0.7);
-    expect(dropChanceForMaxHp(290)).toBeLessThan(0.8);
+  it('the endpoints MOVE when the roster does (proving they are derived, not typed in)', () => {
+    const stubKinds = {
+      pebble: { name: 'Pebble', hp: 3 },
+      brick: { name: 'Brick', hp: 100, armor: 50, shield: { max: 50 } },
+    };
+    const bounds = dropBoundsForRoster({}, stubKinds);
+    expect(bounds).toEqual({ floor: 3, ceil: 200 });
+    // …and the curve honours the injected bounds end to end.
+    expect(dropChanceForToughness(3, bounds)).toBeCloseTo(MIN_DROP_CHANCE, 5);
+    expect(dropChanceForToughness(200, bounds)).toBeCloseTo(MAX_DROP_CHANCE, 5);
+    // A roster retune (#299) needs no edit in powerups.js: halve everything, endpoints follow.
+    const halved = dropBoundsForRoster({}, {
+      pebble: { hp: 1.5 }, brick: { hp: 50, armor: 25, shield: { max: 25 } },
+    });
+    expect(halved).toEqual({ floor: 1.5, ceil: 100 });
   });
 
-  it('agrees with the real Mech.maxHp getter for each chassis', () => {
-    const light = new Mech({ chassisId: 'light' }).maxHp;
-    const medium = new Mech({ chassisId: 'medium' }).maxHp;
-    const heavy = new Mech({ chassisId: 'heavy' }).maxHp;
-    // #128: head/cockpit/centerTorso no longer contribute armor/structure to maxHp, so these
-    // are lower than the pre-#128 values (266/416/616). #230: side-torso FACTORS bumped
-    // 0.75 -> 0.85 (arms unchanged at 0.6) to close the gap between a torso's health and how
-    // much more often it gets hit, raising these from 172/270/400 to 184/290/430.
-    expect(light).toBe(184);
-    expect(medium).toBe(290);
-    expect(heavy).toBe(430);
-    expect(dropChanceForMaxHp(heavy)).toBeGreaterThan(dropChanceForMaxHp(medium));
-    expect(dropChanceForMaxHp(medium)).toBeGreaterThan(dropChanceForMaxHp(light));
+  it('degrades gracefully on an empty roster instead of producing NaN', () => {
+    const bounds = dropBoundsForRoster({}, {});
+    expect(Number.isFinite(dropChanceForToughness(50, bounds))).toBe(true);
+  });
+});
+
+describe('#106: the convex drop curve over the current roster', () => {
+  // The confirmed target table (Jackson, 2026-07-18). Computed from DERIVED bounds — nothing
+  // here is a hand-typed floor/ceiling.
+  const TABLE = [
+    ['infantry', kindToughness('infantry'), 6, 0.05],
+    ['drone', kindToughness('drone'), 14, 0.05],
+    ['turret', kindToughness('turret'), 90, 0.13],
+    ['helicopter', kindToughness('helicopter'), 100, 0.14],
+    ['light mech', mechToughness('raider'), 184, 0.29],
+    ['tank', kindToughness('tank'), 200, 0.33],
+    ['medium mech', mechToughness('sniper'), 290, 0.54],
+    ['quadruped', kindToughness('quadruped'), 370, 0.77],
+    ['heavy mech', mechToughness('artillery'), 430, 0.95],
+  ];
+
+  for (const [label, toughness, expectedToughness, expectedChance] of TABLE) {
+    it(`${label}: toughness ${expectedToughness} → ~${Math.round(expectedChance * 100)}%`, () => {
+      expect(toughness).toBe(expectedToughness);
+      expect(dropChanceForToughness(toughness)).toBeCloseTo(expectedChance, 2);
+    });
+  }
+
+  it('is CONVEX — the midpoint sits BELOW a straight line (was above, pre-#106)', () => {
+    const { floor, ceil } = dropBounds();
+    const mid = (floor + ceil) / 2;
+    const linearMid = (MIN_DROP_CHANCE + MAX_DROP_CHANCE) / 2;
+    expect(dropChanceForToughness(mid)).toBeLessThan(linearMid);
+  });
+
+  it('still hits exactly MIN at the floor and MAX at the ceiling', () => {
+    const { floor, ceil } = dropBounds();
+    expect(dropChanceForToughness(floor)).toBeCloseTo(MIN_DROP_CHANCE, 5);
+    expect(dropChanceForToughness(ceil)).toBeCloseTo(MAX_DROP_CHANCE, 5);
+  });
+
+  it('clamps outside the bounds and never returns NaN for junk input', () => {
+    expect(dropChanceForToughness(0)).toBe(MIN_DROP_CHANCE);
+    expect(dropChanceForToughness(-50)).toBe(MIN_DROP_CHANCE);
+    expect(dropChanceForToughness(undefined)).toBe(MIN_DROP_CHANCE);
+    expect(dropChanceForToughness(null)).toBe(MIN_DROP_CHANCE);
+    expect(dropChanceForToughness(10000)).toBe(MAX_DROP_CHANCE);
+  });
+
+  it('is strictly monotonic across the roster', () => {
+    const spread = TABLE.map(([, t]) => t).filter((t, i, a) => i === 0 || t > a[i - 1]);
+    const chances = spread.map((t) => dropChanceForToughness(t));
+    for (let i = 1; i < chances.length; i++) {
+      expect(chances[i]).toBeGreaterThanOrEqual(chances[i - 1]);
+    }
+  });
+});
+
+describe('#106: crush/stomp kills use a fixed, extremely low chance', () => {
+  it('is extremely low (a few percent) and well under even the floor of the curve', () => {
+    expect(CRUSH_KILL_DROP_CHANCE).toBeGreaterThan(0);
+    expect(CRUSH_KILL_DROP_CHANCE).toBeLessThanOrEqual(0.05);
+    expect(CRUSH_KILL_DROP_CHANCE).toBeLessThan(MIN_DROP_CHANCE);
+  });
+
+  it('a stomped tank and a stomped trooper roll the SAME chance despite wildly different toughness', () => {
+    const tank = kindToughness('tank');        // 200
+    const trooper = kindToughness('infantry'); // 6
+    expect(tank).not.toBe(trooper);
+    expect(dropChanceForKill(tank, true)).toBe(CRUSH_KILL_DROP_CHANCE);
+    expect(dropChanceForKill(trooper, true)).toBe(CRUSH_KILL_DROP_CHANCE);
+    // …and the stomped tank pays out far less than a tank you actually fought.
+    expect(dropChanceForKill(tank, true)).toBeLessThan(dropChanceForKill(tank, false));
+  });
+
+  it('leaves weapon kills on the curve, completely unchanged', () => {
+    for (const [, t] of [['tank', kindToughness('tank')], ['heavy', mechToughness('artillery')]]) {
+      expect(dropChanceForKill(t)).toBe(dropChanceForToughness(t));
+      expect(dropChanceForKill(t, false)).toBe(dropChanceForToughness(t));
+    }
   });
 });

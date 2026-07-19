@@ -11,7 +11,7 @@
 // type: a duplicate pickup of an active type just refreshes its remaining time.
 import Phaser from 'phaser';
 import {
-  POWERUPS, dropChanceForMaxHp, pickPowerupType, isInstant, durationMs, buffModifiers,
+  POWERUPS, dropChanceForKill, pickPowerupType, isInstant, durationMs, buffModifiers,
 } from '../../data/powerups.js';
 // #246: Shield is now a real layer living ON the Mech itself (this.mech.shield —
 // data/shield.js), not a scene-tracked pool — the powerup's job is just to tell the mech
@@ -187,11 +187,12 @@ export const PowerupsMixin = {
 
   // Roll the drop chance and, on success, drop a powerup at an enemy's death position. Called
   // from the kill path (combat.js). Kept here so the drop odds + spawn live in one place.
-  // #90: the odds now scale with `maxHp`, the killed enemy's max hit points (a uniform
-  // difficulty signal present on both Mech and the non-mech HpBody) — see
-  // `dropChanceForMaxHp` in data/powerups.js for the curve/bounds.
-  _maybeDropPowerup(x, y, maxHp) {
-    if (Math.random() < dropChanceForMaxHp(maxHp)) this.spawnPowerup(x, y);
+  // #90/#106: the odds scale with `toughness`, the killed enemy's total structure + armor +
+  // shield (a uniform difficulty signal present on both Mech and the non-mech HpBody) — see
+  // `dropChanceForKill` in data/powerups.js for the curve and its roster-derived bounds.
+  // `isCrush` (#106) marks a stomp kill, which bypasses the curve for a flat tiny chance.
+  _maybeDropPowerup(x, y, toughness, isCrush = false) {
+    if (Math.random() < dropChanceForKill(toughness, isCrush)) this.spawnPowerup(x, y);
   },
 
   // The collectible's look: a high-contrast beacon so it's easy to spot across the dark arena.

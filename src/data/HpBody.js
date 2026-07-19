@@ -53,6 +53,17 @@ export class HpBody {
     this._syncParts();
   }
 
+  // #106: total health across EVERY layer an attacker has to chew through — hp (structure) +
+  // armor + shield — mirroring `Mech.toughness` so the powerup drop curve (data/powerups.js)
+  // rates a vehicle and a mech on the same scale. Before this existed the drop curve read
+  // `.maxHp`, which here is ONLY the hp pool: a tank's 40-point armor and the gunship's
+  // 30-point shield were invisible, systematically under-rating vehicles against mechs (whose
+  // `maxHp` already summed armor+structure). `maxHp` itself is deliberately left alone — the
+  // HUD and other readers want "the hp pool," not the whole stack.
+  get toughness() {
+    return this.maxHp + this.maxArmor + Math.max(0, this.shield?.max ?? 0);
+  }
+
   // The location ids this body exposes (what the arena's damage mapper iterates).
   locations() { return Object.keys(this._layout); }
 

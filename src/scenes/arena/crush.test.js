@@ -211,3 +211,17 @@ describe('_stompBuildingAt — outpost stomp keeps its ORIGINAL gradual behavior
 function i0Calls(scene) {
   return scene._damageBuildingAt.mock.calls.length;
 }
+
+// #106: a crush kill must be TAGGED as such when it enters the damage pipeline, so the powerup
+// drop roll can swap the toughness curve for the flat CRUSH_KILL_DROP_CHANCE (a stomp is free —
+// it shouldn't pay out like a fought kill). This asserts the flag actually reaches
+// `_damageEnemyAt`; the chance math itself is covered in data/powerups.test.js.
+describe('#106: _crushGroundEnemyAt flags the kill as a crush', () => {
+  it('passes isCrush = true as the 6th arg to _damageEnemyAt', () => {
+    const { scene } = makeScene();
+    const tank = makeTank();
+    scene._crushGroundEnemyAt(tank);
+    expect(scene._damageEnemyAt).toHaveBeenCalledTimes(1);
+    expect(scene._damageEnemyAt.mock.calls[0][5]).toBe(true);
+  });
+});
