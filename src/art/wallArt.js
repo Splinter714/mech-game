@@ -7,7 +7,7 @@
 // Kept here in src/art/ (rather than inline in the scene) alongside the rest of the procedural art,
 // and written against the minimal Graphics surface (`clear/fillStyle/fillPoints/fillCircle`) so it
 // can be exercised with a plain recording stub in tests without Phaser.
-import { WALL_THICKNESS_PX } from '../data/wallEdges.js';
+import { WALL_THICKNESS_PX, spanTurretMount } from '../data/wallEdges.js';
 
 // Steel-plate palette — deliberately the same dark, cold, man-made family the removed
 // `wallSegment` tile used (0x34383e/0x212429), so the wall still reads as base infrastructure and
@@ -123,6 +123,61 @@ function drawGate(g, e, hw, timeMs) {
   for (const [ax, ay, bx, by] of leaves) g.fillCircle((ax + bx) / 2, (ay + by) / 2, hw * 0.3);
 }
 
+// #310 TURRET-SPAN PALETTE + PLINTH. A turret span must read as reinforced even with the gun
+// itself unrendered, for two reasons. First, the gun is a separate unit drawn on the units layer
+// and it DIES — once the player kills the gun but not the span, a plain span would be all that's
+// left, erasing any evidence there was ever an emplacement there. Second, the span's existing
+// damage art (the plate face narrowing as HP drops) is drawn along the span's centreline, and a
+// gun sitting on top of it needs something to sit ON or it reads as hovering.
+//
+// So a turret span gets a PLINTH: a widened armoured block at its midpoint, straddling the wall
+// line, which is what the gun's pintle mount (art/vehicles/wallTurret.js) visually bolts through.
+// It is drawn OUTBOARD-biased to meet the gun where it actually sits (data/wallEdges.js
+// TURRET_MOUNT_OFFSET_PX seats the unit clear of the wall's outer face), so mount and plinth line
+// up rather than the gun floating beside its own base.
+const TURRET_PLINTH = 0x3d444e;      // a heavier, lighter-toned block than the plate face
+const TURRET_PLINTH_LIT = 0x59616e;
+const TURRET_MARK = 0x5ac8e0;        // cold cyan, matching the Wall Lance's own themeColor
+
+// Draw the parapet plinth on one turret span. The outboard direction is taken from
+// `spanTurretMount` — the SAME function the scene uses to seat the actual gun — rather than being
+// recomputed here, so the block and the gun can never disagree about which way is out. A record
+// with no `a`/`b` hexes (a bare test stub) degrades to an unbiased block on the centreline.
+function drawTurretPlinth(g, e, hw) {
+  const mx = (e.x0 + e.x1) / 2, my = (e.y0 + e.y1) / 2;
+  const mount = spanTurretMount(e);
+  const on = mount ? Math.hypot(mount.x - mx, mount.y - my) || 1 : 1;
+  const ox = mount ? (mount.x - mx) / on : 0;
+  const oy = mount ? (mount.y - my) / on : 0;
+  const dx = e.x1 - e.x0, dy = e.y1 - e.y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const frac = e.maxHp ? Math.max(0, Math.min(1, e.hp / e.maxHp)) : 1;
+  // The block spans the middle ~44% of the span's length and is ~2.2x the wall's thickness,
+  // centred a little outboard. Wider than the wall on BOTH sides so it reads as a bastion
+  // thickening the line, not as a lump stuck to one face.
+  const halfLen = len * 0.22;
+  const cx = mx + ox * hw * 0.5, cy = my + oy * hw * 0.5;
+  const a = { x: cx - ux * halfLen, y: cy - uy * halfLen };
+  const b = { x: cx + ux * halfLen, y: cy + uy * halfLen };
+  g.fillStyle(0x000000, 0.34);
+  g.fillPoints(band(a.x, a.y + 3, b.x, b.y + 3, hw * 2.2), true);
+  g.fillStyle(WALL_DARK, 1);
+  g.fillPoints(band(a.x, a.y, b.x, b.y, hw * 2.2), true);
+  g.fillStyle(TURRET_PLINTH, 1);
+  g.fillPoints(band(a.x, a.y, b.x, b.y, hw * (0.9 + 0.8 * frac)), true);
+  g.fillStyle(TURRET_PLINTH_LIT, 0.3 + 0.5 * frac);
+  g.fillPoints(band(a.x, a.y - 1.5, b.x, b.y - 1.5, hw * 0.5 * frac), true);
+  // Corner posts at the plinth's two ends, so it caps cleanly into the plain wall either side.
+  g.fillStyle(WALL_POST, 1);
+  g.fillCircle(a.x, a.y, hw * 1.05);
+  g.fillCircle(b.x, b.y, hw * 1.05);
+  // A cyan emplacement mark at the centre — replacing the plain span's amber hazard pip, so the
+  // player can pick out which spans are armed from across the field before anything opens fire.
+  g.fillStyle(TURRET_MARK, 0.5 + 0.45 * frac);
+  g.fillCircle(cx, cy, hw * 0.44);
+}
+
 export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 0) {
   g.clear();
   const hw = thickness / 2;
@@ -130,7 +185,11 @@ export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 
   // none of which the plain-span passes know how to express.
   const standing = edges.filter((e) => !e.destroyed);
   const gates = standing.filter((e) => e.role === 'gate');
+  // #310: a turret span IS a plain span — it draws through every normal pass below and only gains
+  // a plinth on top, which is exactly the point: it is a wall that happens to carry a gun, not a
+  // different structure. (Contrast a gate, which has moving parts and must draw itself entirely.)
   const live = standing.filter((e) => e.role !== 'gate');
+  const turretSpans = standing.filter((e) => e.role === 'turret');
   // Pass 1: a soft drop shadow under the whole line, so it reads as standing UP off the ground
   // rather than being painted on it.
   g.fillStyle(0x000000, 0.3);
@@ -161,6 +220,9 @@ export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 
     g.fillStyle(HAZARD, 0.35 + 0.5 * frac);
     g.fillCircle((e.x0 + e.x1) / 2, (e.y0 + e.y1) / 2, hw * 0.3);
   }
-  // Pass 6 (#309): the gates, last, so a lit barrier field reads over the wall line beside it.
+  // Pass 6 (#310): the turret plinths, over the plain wall passes they sit on (and over the pass-5
+  // hazard pip, which the emplacement mark replaces).
+  for (const e of turretSpans) drawTurretPlinth(g, e, hw);
+  // Pass 7 (#309): the gates, last, so a lit barrier field reads over the wall line beside it.
   for (const e of gates) drawGate(g, e, hw, timeMs);
 }

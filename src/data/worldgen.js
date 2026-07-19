@@ -956,7 +956,9 @@ export function placeBaseWalls(T, bases) {
         edges.push({ a: { q, r }, b: { q: n.q, r: n.r } });   // `a` = the base side
       }
     }
-    if (edges.length) walls.push({ baseId: base.id, edges: assignGates(T, base, edges) });
+    // #310: turrets are assigned AFTER gates, and read the gate flags in order to avoid them —
+    // see `assignWallTurrets`. Order matters here and nowhere else.
+    if (edges.length) walls.push({ baseId: base.id, edges: assignWallTurrets(T, base, assignGates(T, base, edges)) });
   }
   return walls;
 }
@@ -1016,6 +1018,79 @@ function assignGates(T, base, edges) {
   const front = nearestTo(approach, null);
   const rear = nearestTo(approach + Math.PI, front?.e);
   for (const w of [front, rear]) if (w) w.e.role = 'gate';
+  return edges;
+}
+
+// ── #310: which spans of a ring mount a RAIL-LANCE TURRET ───────────────────────────────────
+// Same shape as `assignGates` above and deliberately so: a turret span is one of the ring's own
+// spans flagged `role: 'turret'` (data/wallEdges.js), keeping its HP pool, its geometry and its
+// contribution to the seal. The gun itself is a separate dormant enemy unit garrisoning the span
+// (scenes/arena/bases.js `_spawnWallTurrets`), not a property of the wall — so destroying the span
+// destroys the gun (the #287 precedent), while the wall stays a wall.
+//
+// HOW MANY: PROPORTIONAL to the ring, clamped — `round(eligible * TURRET_SPAN_FRACTION)` into
+// [MIN, MAX]. Not a fixed count, because base footprints differ in size and #308 now runs five of
+// them: a flat 3 would make a big compound feel under-defended and a small one feel like a
+// porcupine. Proportional keeps turret DENSITY along the wall roughly constant, so the wall reads
+// the same however big the base is. The clamp is what stops the proportion from doing anything
+// silly at the extremes — every ring gets at least two (one gun is a single blind spot away from
+// being no guns), and never more than five however large the compound, because past that the
+// approach stops having any survivable heading at all.
+//
+// WHERE THEY SIT: EVENLY SPREAD by bearing, with the first anchored on the player's APPROACH (the
+// same origin-facing bearing #309's front gate uses, and for the same reason — it needs no spine
+// argument and no progress derivation). The alternative, concentrating them on the approach face,
+// was considered and rejected: it makes flanking to the far side a completely safe answer, which
+// turns a fortification into a puzzle with one solution. Spread evenly, there is no free heading —
+// but because each gun's own wall blocks it from firing along the ring (see
+// TURRET_MOUNT_OFFSET_PX), only the two or three facing the player's arc can engage him at once.
+// So the ring is threatening from every side without ever bringing its whole armament to bear.
+//
+// ELIGIBILITY, two rules:
+//   - NEVER a gate span. A gate that is also a gun emplacement muddles both reads: the gate's
+//     whole visual job (#309) is "this is the moving part, this is where they come out", and
+//     bolting a gun on top makes the one span on the ring the player most needs to read at a
+//     glance into the busiest. They are also mechanically at odds — a gate wants to be approached
+//     (it is the sally port) and a turret wants to deny approach. Keeping them disjoint means
+//     every span on the ring says exactly one thing.
+//   - The OUTER hex must be passable ground, matching gate eligibility. A gun whose entire field
+//     of fire is the inside of a mesa is wasted, and worse, it is wasted INVISIBLY — the player
+//     never learns why that stretch of wall was harmless.
+// If nothing is eligible the ring simply gets no turrets, the same safe degradation as gates.
+const TURRET_SPAN_FRACTION = 0.22;
+const TURRET_SPANS_MIN = 2;
+const TURRET_SPANS_MAX = 5;
+
+function assignWallTurrets(T, base, edges) {
+  const c = hexToPixel(base.center.q, base.center.r);
+  const eligible = edges
+    .filter((e) => e.role !== 'gate' && isPassableOf(T?.get(axialKey(e.b.q, e.b.r))))
+    .map((e) => {
+      const o = hexToPixel(e.b.q, e.b.r);
+      return { e, bearing: Math.atan2(o.y - c.y, o.x - c.x) };
+    });
+  if (!eligible.length) return edges;
+  const count = Math.max(TURRET_SPANS_MIN, Math.min(TURRET_SPANS_MAX,
+    Math.round(eligible.length * TURRET_SPAN_FRACTION)));
+  const approach = Math.atan2(-c.y, -c.x);
+  const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  const taken = new Set();
+  // One evenly spaced target bearing per turret, starting at the approach; each claims the nearest
+  // still-unclaimed eligible span. A ring can have fewer eligible spans than the count asks for
+  // (a base hemmed in by terrain), in which case some targets find nothing left and the ring just
+  // gets fewer guns — never a duplicate, never a crash.
+  for (let i = 0; i < count; i++) {
+    const target = approach + (i * 2 * Math.PI) / count;
+    let best = null, bestD = Infinity;
+    for (const w of eligible) {
+      if (taken.has(w.e)) continue;
+      const d = angDiff(w.bearing, target);
+      if (d < bestD) { best = w; bestD = d; }
+    }
+    if (!best) break;
+    taken.add(best.e);
+    best.e.role = 'turret';
+  }
   return edges;
 }
 

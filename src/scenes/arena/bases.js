@@ -21,7 +21,7 @@ import { mulberry32 } from '../../data/worldgen.js';
 import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp } from '../../data/terrain.js';
-import { gateEdges, setGateOpen, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
+import { gateEdges, setGateOpen, turretEdges, spanTurretMount, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
 import { pointSegmentDistance } from '../../data/hexEdges.js';
 import {
   makeGateState, tickGate, gatePassable, GATE_STAGGER_MAX_MS,
@@ -257,6 +257,65 @@ export const BasesMixin = {
         // `PROXIMITY_WAKE_RANGE_CAP`'s own comment has the full reasoning).
         e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
       }
+    }
+    this._spawnWallTurrets();
+  },
+
+  // #310: seat one Wall Lance on every span flagged `role: 'turret'` (worldgen.js
+  // `assignWallTurrets` decides which). Called from `_spawnDormantUnits` above so wall guns join
+  // the base's garrison through the exact same path as its dock units and its emplacement
+  // turrets — same DORMANT start, same `baseId`, same proximity-wake cap.
+  //
+  // DORMANT, NOT ALWAYS-ON. This is the single most consequential behaviour choice in the issue
+  // and it follows #309's lead deliberately: that issue hung its sorties off `_wakeBase`
+  // specifically to avoid the game holding two disagreeing notions of whether a base is awake, and
+  // a wall gun is exactly the same kind of thing. An always-on turret would be the game's ONLY
+  // unit that shoots at a base the player has not yet triggered, which breaks the dormant-base
+  // fiction outright — you would be sniped, from 900px, by a fortress that the HUD, the win
+  // condition and every other unit inside it still consider asleep. It would also silently defeat
+  // the stealth window #269 built (destroy the alert tower before the countdown and the base never
+  // wakes), since the wall guns would have woken it for you. Dormant means the approach has a real
+  // shape: quiet, then the base notices, then the wall lights up.
+  _spawnWallTurrets() {
+    for (const edge of turretEdges(this.wallEdges)) {
+      const mount = spanTurretMount(edge);
+      if (!mount) continue;
+      const e = this._spawnKind(mount.x, mount.y, 'wallTurret');
+      e.awareness = DORMANT;
+      e.baseId = edge.baseId;
+      // #287's `emplaced` flag, reused verbatim and for the same reason: a wall gun is seated
+      // hard against its own wall band, which `_blocked` reports as impassable, so without this it
+      // would be shoved off its parapet by enemies.js's "recover a ground unit stranded on
+      // impassable terrain" snap-back (#115) on the very first frame.
+      e.emplaced = true;
+      // #310: the span this gun belongs to. The wall analogue of `dockKey` — it is how
+      // `_killWallTurretsOn` finds the occupant when the span underneath it is breached, and it
+      // is deliberately a SEPARATE field from `dockKey` so a wall-span key can never collide with
+      // a hex key in `_killEmplacedAt`'s lookup.
+      e.spanKey = edge.key;
+      e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
+    }
+  },
+
+  // #310: destroy every wall turret garrisoning `spanKey`. Hooked from world.js `_damageWallEdge`
+  // the instant a span collapses — the direct analogue of `_killEmplacedAt` above, and following
+  // #287's precedent exactly: a breached span should not leave its gun hovering intact over the
+  // gap. Blowing the span open is therefore a genuine SECOND way to kill the gun, alongside
+  // shooting the gun itself, and the two are separate health pools (the span's 200, the unit's 35
+  // structure + 15 armor) — destroy either and the emplacement is out of the fight.
+  //
+  // Routed through `_damageEnemyAt` rather than a bespoke teardown so the death FX, the powerup
+  // drop roll and the win-condition bookkeeping all behave exactly as for a turret killed by
+  // direct fire. Iterates a COPY of `this.enemies` because that kill path splices the array.
+  _killWallTurretsOn(spanKey) {
+    for (const e of [...(this.enemies ?? [])]) {
+      if (e.spanKey !== spanKey || e.mech.isDestroyed()) continue;
+      // `toughness` (structure + armor + shield) — NOT `hp`. This is #287's hard-won bug, and it
+      // bites identically here because the Wall Lance carries the same #299 armor pool (15) over
+      // its structure (35): `_damageEnemyAt` routes through `applyDamage`, which spends ARMOR
+      // FIRST, so an `hp + 1` bite (35+1) would be fully absorbed and leave the gun alive and
+      // firing on top of a span that no longer exists.
+      this._damageEnemyAt(e, e.x, e.y, (e.mech.toughness ?? e.mech.maxHp) + 1, 0x5ac8e0);
     }
   },
 

@@ -11,8 +11,8 @@ import { Mech } from './Mech.js';
 import { ENEMIES } from './enemies.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
-  it('defines the six expected kinds', () => {
-    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'infantry', 'quadruped', 'tank', 'turret']);
+  it('defines the seven expected kinds', () => {
+    expect(ENEMY_KIND_IDS.sort()).toEqual(['drone', 'helicopter', 'infantry', 'quadruped', 'tank', 'turret', 'wallTurret']);
   });
 
   it('every kind names a REAL weapon id (so no scene ever hardcodes one)', () => {

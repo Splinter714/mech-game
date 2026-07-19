@@ -8,7 +8,7 @@
 // line-of-sight, and weapon damage through the query functions below. Behaviour is deliberately
 // UNCHANGED from the tile version: destructible per span, blocks movement AND line-of-sight, you
 // shoot through to breach a gap and can walk around the ends. Only the geometry moved.
-import { HEX_SIZE, axialKey, pixelToHex, neighbors, hexesAlongSegment } from './hexgrid.js';
+import { HEX_SIZE, axialKey, pixelToHex, hexToPixel, neighbors, hexesAlongSegment } from './hexgrid.js';
 import { edgeKey, edgeEndpoints, segmentCrossT, pointSegmentDistance } from './hexEdges.js';
 
 // HP per SPAN (one hex edge). #313 (owner-confirmed retune): raised 55 → 200. Every destructible
@@ -61,6 +61,14 @@ export const WALL_THICKNESS_PX = 14;
 // present (see `blocksMovement` below).
 export const SPAN_ROLE_WALL = 'wall';
 export const SPAN_ROLE_GATE = 'gate';
+// #310: a span that carries a rail-lance gun on its parapet. Taking the role seam #309 left
+// open, exactly as invited above — a turret span is a NORMAL span in every mechanical respect
+// (same 200hp pool, same geometry, same index, same `blocksSpan` answer), and the gun is a
+// separate enemy unit garrisoning it, not a property of the wall. That separation is what keeps
+// the seal proof untouched: `blocksMovement`/`blocksSpan` never branch on this role, so a turret
+// span is passability-identical to a blank one, and #288's hex-graph and pixel-space seal tests
+// bind unchanged. It is decoration plus a garrison, never a change to the barrier itself.
+export const SPAN_ROLE_TURRET = 'turret';
 
 // Does this span block an actor RIGHT NOW? Destroyed spans block nothing (that's a breach). An open
 // gate blocks everyone EXCEPT a caller that has explicitly asked to pass open gates — the enemy
@@ -95,6 +103,48 @@ export function gateEdges(set, baseId = null) {
   return [...set.edges.values()].filter(
     (e) => e.role === SPAN_ROLE_GATE && (baseId == null || e.baseId === baseId),
   );
+}
+
+// #310: every turret-carrying span in the set (standing or not), optionally filtered to one base.
+// Mirrors `gateEdges` exactly — the scene uses it once at spawn time to seat a gun per span.
+export function turretEdges(set, baseId = null) {
+  if (!set) return [];
+  return [...set.edges.values()].filter(
+    (e) => e.role === SPAN_ROLE_TURRET && (baseId == null || e.baseId === baseId),
+  );
+}
+
+// #310: how far OUTBOARD of its span's centreline a wall turret's gun is seated, in px. This is
+// not a cosmetic nicety — it is what makes the gun able to shoot at all.
+//
+// Every unit in the game, flyers included since #316, must pass `aimAndFire`'s line-of-sight gate
+// before it opens fire (scenes/arena/enemyBehaviors.js). LOS is traced from the unit's own
+// position, and a gun seated exactly ON the span's centreline traces its outward ray from inside
+// (or precisely along) its own 14px-thick wall band — a degenerate case that at best relies on
+// `wallEdgeCrossing`'s "a path that merely STARTS inside the band is not a contact" clause, and at
+// worst has the turret permanently blinded by the very wall it is mounted on. Seating it clear of
+// the outer face removes the question entirely rather than depending on a boundary case.
+//
+// > half of WALL_THICKNESS_PX (7), so the mount sits fully outboard of the plate with a little
+// margin, and it reads correctly too: the gun overhangs the parapet's OUTER face, looking out over
+// the approach. The deliberate corollary is that its own wall blocks it from firing INTO the
+// compound — a perimeter gun that covers the ground outside the wall and nothing else, which is
+// what a wall gun should do. Once the player breaches and is inside, the ring's turrets on the far
+// side genuinely cannot shoot him through their own wall, and that is a real, earned reprieve.
+export const TURRET_MOUNT_OFFSET_PX = 13;
+
+// The world-space point a span's turret is seated at: the span's midpoint pushed OUTWARD (away
+// from the base-side hex `a`, toward the outer hex `b`) by TURRET_MOUNT_OFFSET_PX. Pure geometry,
+// derived from the record's own stored hexes, so nothing downstream has to know which side of a
+// span the compound is on. Returns null for a malformed record.
+export function spanTurretMount(edge, offset = TURRET_MOUNT_OFFSET_PX) {
+  if (!edge?.a || !edge?.b) return null;
+  const mx = (edge.x0 + edge.x1) / 2, my = (edge.y0 + edge.y1) / 2;
+  const inner = hexToPixel(edge.a.q, edge.a.r);
+  const outer = hexToPixel(edge.b.q, edge.b.r);
+  const dx = outer.x - inner.x, dy = outer.y - inner.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: mx + (dx / len) * offset, y: my + (dy / len) * offset };
 }
 
 // ── Construction ────────────────────────────────────────────────────────────────────────
