@@ -47,6 +47,7 @@ export const SFX_DOMAINS = {
     { id: 'powerupPickupOverclock', label: 'Pickup: Overclock', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupArmorPatch', label: 'Pickup: Armor Patch', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupShield', label: 'Pickup: Shield', stages: [['play', 'PLAY']] },
+    { id: 'powerupPickupBarrage', label: 'Pickup: Barrage', stages: [['play', 'PLAY']] },
     { id: 'sprintOn', label: 'Sprint On', stages: [['play', 'PLAY']] },
     { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
     { id: 'partDestroyed', label: 'Part Destroyed', stages: [['play', 'PLAY']] },
@@ -62,4 +63,26 @@ export const ALL_SFX_DOMAIN_ENTRIES = Object.values(SFX_DOMAINS).flat();
 // Look up one entry by id across every registered domain, or null if none matches.
 export function findSfxDomainEntry(id) {
   return ALL_SFX_DOMAIN_ENTRIES.find((e) => e.id === id) ?? null;
+}
+
+// #207: purely a DISPLAY grouping over SFX_DOMAINS.ui for the garage's dev-only sfx panel —
+// ids/labels/stages above are unchanged, and order within a group follows the id order here,
+// not SFX_DOMAINS.ui's own order. It lives here rather than in GarageScene so it's a pure,
+// importable module the unit tests can hold against SFX_DOMAINS.ui (#303: a Barrage id was
+// added to this list without its SFX_DOMAINS.ui entry, and the garage crashed on `.label`).
+export const SFX_UI_GROUPS = [
+  { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
+  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage'] },
+  { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
+  { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
+];
+
+// Resolve one SFX_UI_GROUPS id to its SFX_DOMAINS.ui entry, throwing a clear, id-naming error
+// instead of handing back undefined for a caller to die on later.
+export function resolveSfxUiEntry(id) {
+  const entry = SFX_DOMAINS.ui.find((e) => e.id === id);
+  if (!entry) {
+    throw new Error(`SFX_UI_GROUPS references '${id}', which has no entry in SFX_DOMAINS.ui — add one in src/audio/sfxDomains.js`);
+  }
+  return entry;
 }

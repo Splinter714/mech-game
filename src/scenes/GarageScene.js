@@ -18,7 +18,7 @@ import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
 import { Slider } from '../ui/slider.js';
 import { EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId } from '../audio/sfxParams.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
-import { SFX_DOMAINS } from '../audio/sfxDomains.js';
+import { SFX_UI_GROUPS, resolveSfxUiEntry } from '../audio/sfxDomains.js';
 import { Audio } from '../audio/index.js';
 
 // The mech lab. The build is four weapon skill slots (#188: the old fifth "ability" slot —
@@ -53,14 +53,9 @@ const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog sta
 const UI_ROW_H = 40;      // one subsection: its header line + one row of buttons
 const UI_ROW_GAP = 8;     // gap between stacked subsection rows
 const UI_GAP = 10;        // gap below the whole UI block before the autofire row
-// Purely a display grouping over SFX_DOMAINS.ui — ids/labels/stages there are unchanged.
-// Order within a group follows the id order below, not SFX_DOMAINS.ui's own order.
-const UI_GROUPS = [
-  { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
-  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage'] },
-  { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
-  { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
-];
+// The display grouping lives in ../audio/sfxDomains.js (SFX_UI_GROUPS) so it's a pure module
+// that unit tests can check against SFX_DOMAINS.ui — see #303.
+const UI_GROUPS = SFX_UI_GROUPS;
 // #197: a small toggle button for the weapon catalog's auto-fire demo SOUND (each card's
 // continuous live shot/beam animation always runs; this only mutes/unmutes the automatic
 // fire/trajectory/impact sound it would otherwise play) — sits in its own thin row between
@@ -527,14 +522,13 @@ export default class GarageScene extends Phaser.Scene {
   // need "every button", but each entry also remembers which group row it belongs to (`row`)
   // and its index within that row (`i`) for layout.
   _buildUiRow(region) {
-    const byId = new Map(SFX_DOMAINS.ui.map((entry) => [entry.id, entry]));
     this.uiHeaders = UI_GROUPS.map((group) => this.add.text(region.x, region.y, group.header, {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
     }));
     this.uiButtons = [];
     UI_GROUPS.forEach((group, row) => {
       group.ids.forEach((id, i) => {
-        const entry = byId.get(id);
+        const entry = resolveSfxUiEntry(id);
         const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
           .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
         const text = this.add.text(0, 0, entry.label, {
