@@ -76,6 +76,10 @@ export const TargetingMixin = {
     // #262: in 'building' focus mode a hex can outrank a live enemy, so the scan can't be skipped
     // just because an enemy exists — only skip it in the default 'enemy' mode, where
     // pickConvergeTarget would never consult it anyway.
+    // #318: the pool carries base WALL SPANS (edge-keyed) alongside destructible hexes now, both on
+    // the terrain side of the focus toggle — hence the rename to `_destructibleTargetsNear`. The
+    // 'enemy'-mode skip below is exactly what keeps a 25-30 span wall ring from ever outranking a
+    // live enemy: in that mode `pickConvergeTarget` returns the enemy without consulting this list.
     const hexCandidates = (aimE && this.focusMode !== 'building')
       ? [] : this._destructibleTargetsNear(this.px, this.py, CONVERGE_DIST);
     this.convergeTarget = pickConvergeTarget(

@@ -1,4 +1,5 @@
-// #317 — a shot aimed at a targeted destructible hex must actually impact it.
+// #317 + #318 — what the convergence/lock system can target, and what a shot aimed at it actually
+// hits.
 //
 // #317: soft cover was a legitimate lock target that could never be hit. `softCoverBlocksLOS`
 // correctly returns false for a LARGE unit (a mech shoots clean over foliage — the whole point of
@@ -7,7 +8,10 @@
 // asks "is this my target" as a SEPARATE question from "does this terrain block", so it can stop a
 // shot the terrain rule would let sail past — but only for the one hex actually aimed at.
 //
-// Driven against the REAL mixins (WorldMixin + ProjectilesMixin + TargetingMixin) on a
+// #318: base wall spans are edge-keyed geometry (#288) and so were invisible to the hex-keyed
+// convergence pool, despite being the most-destroyed thing in the game.
+//
+// Both are driven against the REAL mixins (WorldMixin + ProjectilesMixin + TargetingMixin) on a
 // minimal fake ArenaScene, so this pins the wired behaviour rather than a re-implementation.
 import { describe, it, expect, vi } from 'vitest';
 import { WorldMixin } from './world.js';
@@ -146,5 +150,78 @@ describe('#317 the tiers and units the fix must not disturb', () => {
     // Untargeted: hard cover stops the round on its own merits, exactly as before this change.
     fireAt(s, centre(h), null);
     expect(s.buildingHp.get(k)).toBeLessThan(before);
+  });
+});
+
+describe('#318 wall spans are convergence/lock targets', () => {
+  const A = { q: 0, r: 0 };
+  const B = neighbors(A.q, A.r)[0];
+  const spanDefs = [{ a: { q: 3, r: 0 }, b: neighbors(3, 0)[0] }];
+
+  it('a standing span appears in the pool, keyed by EDGE and positioned at its midpoint', () => {
+    const s = makeScene({ wallDefs: spanDefs });
+    const pool = s._destructibleTargetsNear(0, 0, 2000);
+    const span = pool.find((c) => c.edgeKey);
+    expect(span).toBeTruthy();
+    expect(span.hexKey).toBeUndefined();          // edge-keyed identity, NOT hex-keyed
+    const m = edgeMidpoint(spanDefs[0].a, spanDefs[0].b);
+    expect(span.x).toBeCloseTo(m.x, 3);
+    expect(span.y).toBeCloseTo(m.y, 3);
+  });
+
+  it('a DESTROYED span drops out of the pool', () => {
+    const s = makeScene({ wallDefs: spanDefs });
+    for (const e of s._liveWallEdges()) s._damageWallEdge(e, 99999);
+    expect(s._destructibleTargetsNear(0, 0, 2000).some((c) => c.edgeKey)).toBe(false);
+  });
+
+  it('destructible HEXES still carry a hex key alongside the spans', () => {
+    const h = { q: 4, r: 0 };
+    const s = makeScene({ hexes: [{ h, id: SOFT }], wallDefs: spanDefs });
+    const pool = s._destructibleTargetsNear(0, 0, 2000);
+    expect(pool.some((c) => c.hexKey === keyOf(h))).toBe(true);
+    expect(pool.some((c) => c.edgeKey)).toBe(true);
+  });
+
+  it('the lock converges on a span when there is no enemy — reticle sits on the wall', () => {
+    const s = makeScene({ wallDefs: spanDefs });
+    s._updateLock(0.016);
+    expect(s.convergeTarget?.edgeKey).toBeTruthy();
+    expect(s.lock.target).toBe(s.convergeTarget);
+    const m = edgeMidpoint(spanDefs[0].a, spanDefs[0].b);
+    expect(s._lockAimPoint().x).toBeCloseTo(m.x, 3);
+  });
+
+  it('an ENEMY still outranks a whole wall ring in the default focus mode', () => {
+    // The failure this guards against: a ring is 25-30 spans, and standing next to one must never
+    // pull the reticle off a mech that is shooting you.
+    const ring = [];
+    for (const n of neighbors(A.q, A.r)) ring.push({ a: A, b: n });
+    const s = makeScene({ wallDefs: ring });
+    const enemy = { x: 600, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
+    s.enemies = [enemy];
+    s.visibleHexes = new Set([s._hexKeyAt(0, 0), s._hexKeyAt(600, 0)]);
+    s._updateLock(0.016);
+    expect(s.convergeTarget).toBe(enemy);
+  });
+
+  it("but 'building' focus mode DOES prefer the span — spans ride the terrain side of #262", () => {
+    const s = makeScene({ wallDefs: spanDefs });
+    const enemy = { x: 600, y: 0, vx: 0, vy: 0, mech: { isDestroyed: () => false } };
+    s.enemies = [enemy];
+    s.visibleHexes = new Set([s._hexKeyAt(0, 0), s._hexKeyAt(600, 0)]);
+    s.focusMode = 'building';
+    s._updateLock(0.016);
+    expect(s.convergeTarget?.edgeKey).toBeTruthy();
+  });
+
+  it('a round aimed at a span detonates on it and chips its HP (spans were always hittable)', () => {
+    const s = makeScene({ wallDefs: spanDefs });
+    const edge = s._liveWallEdges()[0];
+    const before = edge.hp;
+    const m = edgeMidpoint(spanDefs[0].a, spanDefs[0].b);
+    const round = fireAt(s, m, null);
+    expect(round.dead).toBe(true);
+    expect(s._liveWallEdges()[0].hp).toBeLessThan(before);
   });
 });
