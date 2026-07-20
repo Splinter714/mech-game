@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -407,8 +407,12 @@ describe('Swarm Rack wide-angle-offset flight (#77 follow-up regression guard)',
   // plasmaCannon/napalm now tune `delivery.homingBlendStart` to engage well before ASCENT_END,
   // WITHOUT touching the shared default the missile family (swarmRack/streakPod) still relies on.
   describe('per-weapon homing-blend engagement point (#252 follow-up round 2)', () => {
+    // #376 moved swarmRack/streakPod off the shared default (they now engage from launch), so
+    // this uses a weapon that carries no override at all — the point is the DEFAULTING, not the
+    // weapon.
     it('a weapon with no homingBlendStart stamps the shared ASCENT_END default onto its rounds', () => {
-      const p = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 400 });
+      expect(WEAPONS.clusterRocket.delivery.homingBlendStart).toBeUndefined();
+      const p = makeProjectile(WEAPONS.clusterRocket, 0, 0, 0, { maxDist: 400 });
       expect(p.blendStart).toBe(ASCENT_END);
     });
 
@@ -431,13 +435,28 @@ describe('Swarm Rack wide-angle-offset flight (#77 follow-up regression guard)',
       expect(arcHomingBlend((ASCENT_END + 0.05))).toBeGreaterThan(0);
     });
 
-    it("swarmRack/streakPod's own engagement point is untouched by the lob weapons' tuning", () => {
-      expect(WEAPONS.swarmRack.delivery.homingBlendStart).toBeUndefined();
-      expect(WEAPONS.streakPod.delivery.homingBlendStart).toBeUndefined();
+    // #376 (replaces this test's old assertion that the missile family sat on the shared
+    // default): Jackson asked for tracking that engages "much earlier" — settled mid-task as
+    // "the seeker should engage ASAP, but hopefully still apex." So swarmRack/streakPod now
+    // stamp blendStart 0: the seeker is live from the muzzle and steers through the whole
+    // flight, climb included. The loft survives untouched because it is faked by a sprite-scale
+    // pulse keyed to dist/maxDist (projectiles.js _drawProjectile) — steering only ever acts in
+    // the horizontal plane, so it physically cannot flatten an arc that has no vertical
+    // component to fight. The 0.35 blend SPAN is deliberately left alone: authority still ramps
+    // 0 -> 1 over the first third of flight, which is the "smoother" half of the ask.
+    it('swarmRack/streakPod engage their seeker from launch (#376), ramping in over the shared span', () => {
+      expect(WEAPONS.swarmRack.delivery.homingBlendStart).toBe(0);
+      expect(WEAPONS.streakPod.delivery.homingBlendStart).toBe(0);
       const swarm = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 400 });
       const streak = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 400 });
-      expect(swarm.blendStart).toBe(ASCENT_END);
-      expect(streak.blendStart).toBe(ASCENT_END);
+      expect(swarm.blendStart).toBe(0);
+      expect(streak.blendStart).toBe(0);
+      // Already steering a little just off the muzzle, where it used to be fully dumb...
+      expect(arcHomingBlend(0.05, swarm.blendStart)).toBeGreaterThan(0);
+      expect(arcHomingBlend(0.05, ASCENT_END)).toBe(0);
+      // ...but not snapping: it takes the full HOMING_BLEND_SPAN to reach full authority.
+      expect(arcHomingBlend(0.05, swarm.blendStart)).toBeLessThan(1);
+      expect(arcHomingBlend(HOMING_BLEND_SPAN, swarm.blendStart)).toBe(1);
     });
   });
 });

@@ -185,10 +185,23 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
     for (const [, w] of limited) expect(w.category).not.toBe('melee');
   });
 
+  // #376 — DELIBERATE, NARROW WIDENING OF #372's UPPER BOUND for the four slow-cycled arcing
+  // weapons. Jackson asked for "slightly more ammo" on all missiles (they were hitting #238's
+  // 3s empty lockout constantly). Because a magazine only ever buys WHOLE trigger pulls, and
+  // these weapons cycle at 1.5-1.8s, one extra pull is worth a full 1.5-1.8s of burst — there
+  // is no way to grant a single extra shot and stay under 7.0s. The choice was: bump the
+  // magazine and let these four land at 7.2-8.0s, or bump the magazine and cut regen to hold
+  // the pull count (a pure downgrade — same burst, slower recovery). We took the extra shot.
+  // clusterRocket's faster 1.1s cycle DID let its extra pull land inside the original window
+  // (6.6s), so it is not listed here. #372's rule and its intent stand for everything else.
+  const BURST_MAX_SECONDS = {
+    swarmRack: 8.0, streakPod: 7.2, napalm: 7.5, plasmaCannon: 8.0,
+  };
+
   it.each(limited)('%s holds fire for ~6s before running dry', (id, w) => {
     const secs = burstSeconds(w);
     expect(secs).toBeGreaterThanOrEqual(5.0);
-    expect(secs).toBeLessThanOrEqual(7.0);
+    expect(secs).toBeLessThanOrEqual(BURST_MAX_SECONDS[id] ?? 7.0);
   });
 
   it.each(limited)('%s regenerates meaningfully SLOWER than it consumes (the actual ask)', (id, w) => {

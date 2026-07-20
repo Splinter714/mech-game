@@ -24,6 +24,14 @@
 // type, so this resolves to a hashed URL). The source WAV (96kHz/24-bit stereo, ~1.8MB) was
 // converted with macOS `afconvert` to 48kHz stereo AAC at ~192kbps (~64KB) for web delivery.
 import bitBombExplosion from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
+// #376 — DELIBERATE DUPLICATE IMPORT, DO NOT DRY THIS BACK TOGETHER. Jackson: "give the swarm
+// rack the exact same baked in sound as the cluster salvo, duplicate it, don't actually link
+// their code to be the same in case I change one or the other in the future." Swarm Rack gets
+// its OWN import binding and its OWN recipe entry below, so re-pointing either weapon at a
+// different asset (or retuning its startMs/trimMs/processing) can never touch the other. The
+// two happening to name the same file today is a coincidence to be preserved, not a shared
+// constant to be factored out.
+import swarmRackBitBomb from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
 // #268: plasmaLance's FIRE cue — swapped from "Bass wave.wav" to "DSGNImpt_EXPLOSION-Mecha
 // Multiple Bangs_HY_PC-001.wav" from the same Helton Yan pack (stereo 44.1kHz, 2.826s full
 // length). Converted with macOS `afconvert` to 48kHz stereo AAC/.m4a (~38KB). Played back with a
@@ -154,6 +162,15 @@ export const BAKED_SFX = {
   // file, no trim, no processing — just the raw explosion as clusterRocket's fire cue.
   'clusterRocket::fire': {
     asset: bitBombExplosion,
+    startMs: 0,
+    trimMs: null,
+    processing: null,
+  },
+  // #376: an INDEPENDENT COPY of clusterRocket::fire's recipe, not a reference to it — see the
+  // duplicate-import note at the top of this file for why. Field-for-field identical today on
+  // purpose; either entry may drift from the other later without coordination.
+  'swarmRack::fire': {
+    asset: swarmRackBitBomb,
     startMs: 0,
     trimMs: null,
     processing: null,

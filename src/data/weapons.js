@@ -200,7 +200,8 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 18 -> 32 to bring raw DPS up from 11.25 to the ~20 band.
     // DPS = damage / cycleTime(s): 18/1.6 = 11.25 dps -> 32/1.6 = 20.0 dps.
     damage: 32, range: { min: 0, opt: 480, max: 820 },
-    ammoMax: 3, ammoRegen: 0.27, slots: 2, cycleTime: 1600,   // #372: ~6.4s hold
+    // #376: ammoMax 3 -> 4 with regen 0.27 -> 0.22 — one extra pull (4 -> 5, 6.4s -> 8.0s).
+    ammoMax: 4, ammoRegen: 0.22, slots: 2, cycleTime: 1600,   // #376: ~8.0s hold
     // #252 playtest follow-up: "lobbed weapons should actually seek, not just fly to the spot
     // targeted when the shot was initiated." NOT `guidance: 'homing'` — that would flip
     // canFireWeapon's no-lock-no-fire gate on (targetlock.js only special-cases
@@ -224,7 +225,11 @@ export const WEAPONS = {
     // played timing: 0.15 starts the curve-in well before apex (full tracking by the 50% mark,
     // i.e. around apex, instead of by 75%) — noticeably earlier without being an instant
     // hard-turn off the muzzle, which would look wrong for a heavy lobbed round.
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 320, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0.15 },
+    // #376: velocity 320 -> 400 and homingBlendStart 0.15 -> 0, for the same reasons spelled
+    // out on napalm above — `velocity` is now the bolt's literal speed at every range rather
+    // than its speed at optimal only, and the seeker is live from launch. homingTurnRadius
+    // stays 140 so it still reads as a heavy lobbed bolt, not a snapping missile.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 400, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0 },
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',
@@ -314,7 +319,8 @@ export const WEAPONS = {
     // duration below) stays a separate bonus, untouched by this retune, per the #259 audit's
     // explicit call-out that napalm's low headline DPS undercounted its splash/burn utility.
     damage: 27, range: { min: 50, opt: 500, max: 780 },
-    ammoMax: 3, ammoRegen: 0.30, slots: 2, cycleTime: 1500,   // #372: ~6.0s hold
+    // #376: ammoMax 3 -> 4 with regen 0.30 -> 0.22 — one extra pull (4 -> 5, 6.0s -> 7.5s).
+    ammoMax: 4, ammoRegen: 0.22, slots: 2, cycleTime: 1500,   // #376: ~7.5s hold
     // #252 playtest follow-up — see plasmaCannon's comment above for the full rationale:
     // `tracksLock: true`, not `guidance: 'homing'`, so this still fires unconditionally with no
     // lock (canFireWeapon is untouched), but steers at the lock's live target through the
@@ -325,7 +331,15 @@ export const WEAPONS = {
     // rationale: `homingBlendStart: 0.15` engages the seeker much earlier than the missile
     // family's shared 0.4 default (full tracking by the ~50% mark, near apex, instead of 75%),
     // so it reads as correcting well before the last stretch rather than last-minute.
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 300, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 }, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0.15 },
+    // #376: velocity 300 -> 380 and homingBlendStart 0.15 -> 0. Under the new constant-
+    // horizontal-speed rule (firing.js) `velocity` is now the shell's literal speed at every
+    // range; 300 was its speed at OPTIMAL range only, with a max-range shot previously flying
+    // ~470. 380 is roughly that old mid-band, so a long lob doesn't crawl now that it no
+    // longer speeds up with distance. It stays far below the missile family's 1000 — this is
+    // still a heavy, slow, visibly-lobbed canister. The seeker now steers from launch like
+    // the missiles do, but homingTurnRadius stays a lazy 140 so it corrects gradually across
+    // the whole flight rather than snapping — the "heavy shell nudging itself on" read.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 380, splash: 30, kind: 'fire', groundFire: { radius: 46, dps: 8, duration: 4 }, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0 },
   }),
   // #244: siegeShell (the #94 sentry-turret artillery round) was deleted from this registry —
   // it was mechanically identical to napalm (both arcing projectile + splash + groundFire
@@ -351,11 +365,30 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 10.667 -> 6.933 to bring raw DPS down from ~40 to the ~26 band.
     // DPS = count(6) x damage / cycleTime(s): 6*10.667/1.6 = 40.0 -> 6*6.933/1.6 = 26.0.
     damage: 6.933, range: { min: 280, opt: 1050, max: 1750 },
-    ammoMax: 3, ammoRegen: 0.27, slots: 2, cycleTime: 1600,   // #372: ~6.4s hold
+    // #376: ammoMax 3 -> 4 with regen 0.27 -> 0.20, buying one extra trigger pull per held
+    // burst (4 -> 5 pulls, 6.4s -> 8.0s) — see weapons.test.js's #376 note on why the slow
+    // cycled missiles can't gain a shot inside #372's 5-7s window.
+    ammoMax: 4, ammoRegen: 0.20, slots: 2, cycleTime: 1600,   // #376: ~8.0s hold
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
-    // salvo can clear cover; guidance blends in during descent (see projectiles.js).
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 44, velocity: 1050, wobble: 'jostle', path: 'arcing' },
+    // salvo can clear cover.
+    // #376 playtest pass, three changes here:
+    //   * spreadAngle 44 -> 14. "Not fan out so silly" — the salvo now leaves the rack as a
+    //     loose clump much closer to Cluster Salvo's tight character, with the 'jostle'
+    //     wobble left fully intact so it still warbles on the way in.
+    //   * velocity 1050 -> 1000. Under #376's constant-horizontal-speed rule (firing.js) this
+    //     IS the round's real speed at every range, so it is now directly comparable to
+    //     Cluster Salvo's 1140 and sits deliberately just below it, as asked. The old 1050
+    //     was NOT a real speed: #77 picked it by scaling velocity 3.5x alongside range purely
+    //     to hold the (now-removed) constant flight time, so it has been re-derived, not nudged.
+    //   * homingBlendStart 0 — the seeker is live from the muzzle instead of waking up at the
+    //     shared 0.4 (past apex) default. That engagement point, NOT the turn rate, is what
+    //     made tracking feel weak: at 1000 px/s the round's steering rate already pins to the
+    //     engine's HOMING_TURN_MAX ceiling (9.0 rad/s) with the default 64px radius, so
+    //     tightening homingTurnRadius here would be a literal no-op and is deliberately not
+    //     done. The 0.35 blend span is untouched, so authority still ramps in smoothly over
+    //     the first third of flight rather than snapping on at the muzzle.
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 1000, wobble: 'jostle', path: 'arcing', homingBlendStart: 0 },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
@@ -367,11 +400,18 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 12 -> 7.8 to bring raw DPS down from 40 to the ~26 band.
     // DPS = count(6) x damage / cycleTime(s): 12*6/1.8 = 40.0 -> 7.8*6/1.8 = 26.0.
     damage: 7.8, range: { min: 210, opt: 910, max: 1540 },
-    ammoMax: 2, ammoRegen: 0.33, slots: 2, cycleTime: 1800,   // #372: ~5.4s hold
+    // #376: ammoMax 2 -> 3 with regen 0.33 -> 0.25 — one extra pull per burst (3 -> 4,
+    // 5.4s -> 7.2s).
+    ammoMax: 3, ammoRegen: 0.25, slots: 2, cycleTime: 1800,   // #376: ~7.2s hold
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
     // path: 'arcing' (#57) — same loft-over-cover treatment as Swarm Rack.
-    delivery: { hit: 'projectile', guidance: 'homing', velocity: 1540, wobble: 'weave', count: 6, burst: { interval: 70 }, path: 'arcing' },
+    // #376: velocity 1540 -> 1000, matching Swarm Rack and sitting just under Cluster Salvo's
+    // 1140 — every missile now flies at one identical horizontal speed regardless of range
+    // (the old 1540 was #77's 3.5x range-scaled number, chosen for the removed constant-flight-
+    // time rule). Seeker tuning matches Swarm Rack: live from launch (homingBlendStart 0),
+    // same smooth 0.35 ramp-in, turn rate left at the engine ceiling it already pins to.
+    delivery: { hit: 'projectile', guidance: 'homing', velocity: 1000, wobble: 'weave', count: 6, burst: { interval: 70 }, path: 'arcing', homingBlendStart: 0 },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
@@ -385,7 +425,11 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 8.8 -> 6.16 to bring raw DPS down from 40 to the ~28 band.
     // DPS = count(5) x damage / cycleTime(s): 8.8*5/1.1 = 40.0 -> 6.16*5/1.1 = 28.0.
     damage: 6.16, range: { min: 0, opt: 660, max: 960 },
-    ammoMax: 3, ammoRegen: 0.54, slots: 1, cycleTime: 1100,   // #372: ~5.5s hold
+    // #376: ammoMax 3 -> 4 with regen 0.54 -> 0.40 — one extra pull (5 -> 6), and the only
+    // missile whose faster 1.1s cycle lets the extra shot land INSIDE #372's 5-7s window.
+    // Its velocity (1140) is untouched: it's the straight-flying reference every other
+    // missile was pulled just below.
+    ammoMax: 4, ammoRegen: 0.40, slots: 1, cycleTime: 1100,   // #376: ~6.6s hold
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', count: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },

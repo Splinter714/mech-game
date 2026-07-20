@@ -605,19 +605,28 @@ export const FiringMixin = {
       // that function's comment for why using the shot's own angle here regressed both missile
       // range and Swarm Rack's flight path.
       maxDist = arcMaxDist(x, y, aimAngle, tgt, maxRange, w.weapon.range?.opt ?? 160);
-      // Constant-apex lobs: hold flight time fixed so every arc peaks at the same height —
-      // a far shot therefore launches faster. The weapon's `velocity` is calibrated at its
-      // optimal range (T = opt / velocity), and that same airtime is reused at any range.
-      const opt = w.weapon.range?.opt || maxDist;
-      const flightTime = opt / speed;
-      speed = maxDist / flightTime;
+      // #376: CONSTANT HORIZONTAL SPEED. This deliberately replaces the old constant-apex
+      // rule ("hold flight time fixed so every arc peaks at the same height", which derived
+      // speed as maxDist / (opt / velocity)). That made velocity a function of RANGE — a
+      // target twice as far away got a literally twice-as-fast missile, which is exactly the
+      // "weirdly fast when the target is further away" Jackson reported in playtest.
+      // Now the weapon's `velocity` IS the speed at every range; flight TIME grows with
+      // range instead. The visible loft is unaffected: the arc is faked by a sprite-scale
+      // pulse (projectiles.js _drawProjectile) driven by the flight FRACTION dist/maxDist,
+      // not by elapsed time, so every lob still peaks at the same apparent height at the
+      // midpoint of its flight — a far shot simply takes longer to get there. Same for
+      // arcHomingBlend (delivery.js), which is also fraction-keyed. Nothing that depended on
+      // "constant apex" was actually depending on constant flight TIME.
+      // (No speed line here at all any more — `speed` stays the weapon's own `velocity`.)
     }
     // Homing rounds steer toward `seekTarget` (the lock) each frame. A player round only homes
     // when it actually has a lock; without one it dumb-fires straight. Enemy rounds keep their
     // intrinsic homing (they chase the player downrange).
     const round = makeProjectile(w.weapon, x, y, angle, { maxDist });
-    // Constant-flight-time lobs: override the round's speed with the per-shot value computed
-    // above so every arc peaks at the same height (a far shot launches faster).
+    // #376: a lob now flies at its weapon's own `velocity`, identical at every range (see the
+    // constant-horizontal-speed comment above). This block is kept — rather than deleted — so
+    // the turn-rate re-derive below still runs for arcing rounds, and so a future per-shot
+    // speed rule has one place to live.
     if (d.path === 'arcing') {
       round.speed = speed;
       round.vx = Math.cos(angle) * speed;
