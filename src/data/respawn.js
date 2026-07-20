@@ -62,7 +62,26 @@ export function tickRespawn(state, dtMs, msSinceAnyPlayerHit = Infinity) {
 // furthest away, which puts the returning player on the opposite side of the screen from the
 // fighting. That is the same intent as the out-of-combat gate, applied in space instead of time.
 // With no threats at all every edge scores identically and the first (top) wins deterministically.
-export function pickRespawnPoint(view, threats = [], margin = 60) {
+//
+// #348 (playtest 2026-07-19: "the respawned mech was spawned outside of the corridor in the
+// 'impassible terrain'"): threat distance alone is NOT enough to pick a point. #340 made the world
+// a long narrow lane whose lateral half-width is much SMALLER than the camera view, so the left
+// and right edge midpoints of the view are routinely outside the corridor entirely — and the
+// safest-from-threats edge is very often exactly one of those, since that is where the enemies
+// aren't. The player then materialised stranded in impassable terrain.
+//
+// The rule now takes an optional `isValid(x, y)` predicate (the caller reads it off the live
+// terrain map) and prefers the SAFEST VALID candidate rather than merely the safest one. The
+// preference order is unchanged where it can be honoured; validity is a filter on top of it, not
+// a replacement for it. Fallback is progressive rather than failing outright:
+//   1. safest edge midpoint that is valid,
+//   2. the view centre (in a narrow corridor the lane runs through the middle of the view, so
+//      the centre is the most likely point to still be on playable ground),
+//   3. the safest edge regardless of validity — the caller still snaps the result to the nearest
+//      passable hex, so this is a starting point for that search, never a final answer.
+// With no predicate at all the behaviour is exactly the pre-#348 rule.
+export function pickRespawnPoint(view, threats = [], opts = {}) {
+  const { margin = 60, isValid = null } = typeof opts === 'number' ? { margin: opts } : opts;
   const { x, y, width, height } = view;
   const candidates = [
     { x: x + width / 2, y: y + margin },
@@ -70,11 +89,19 @@ export function pickRespawnPoint(view, threats = [], margin = 60) {
     { x: x + width / 2, y: y + height - margin },
     { x: x + margin, y: y + height / 2 },
   ];
-  let best = candidates[0], bestScore = -Infinity;
-  for (const c of candidates) {
+  const threatDist = (c) => {
     let score = Infinity;
     for (const t of threats) score = Math.min(score, Math.hypot(t.x - c.x, t.y - c.y));
-    if (score > bestScore) { bestScore = score; best = c; }
-  }
-  return best;
+    return score;
+  };
+  // Safest first, ties broken by the candidates' original (deterministic) order.
+  const ranked = candidates
+    .map((c, i) => ({ c, i, score: threatDist(c) }))
+    .sort((a, b) => (b.score - a.score) || (a.i - b.i))
+    .map((e) => e.c);
+  if (!isValid) return ranked[0];
+  for (const c of ranked) if (isValid(c.x, c.y)) return c;
+  const centre = { x: x + width / 2, y: y + height / 2 };
+  if (isValid(centre.x, centre.y)) return centre;
+  return ranked[0];
 }

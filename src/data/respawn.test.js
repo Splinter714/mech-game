@@ -108,3 +108,52 @@ describe('pickRespawnPoint — the far edge of the current view', () => {
     expect(p.x).toBeGreaterThan(5000);
   });
 });
+
+// #348 (playtest 2026-07-19: respawn placed a mech outside the corridor, in impassable terrain).
+// The safest-from-threats edge of the view is frequently NOT playable ground since #340 made the
+// world a lane narrower than the camera view — so the choice is now filtered by validity.
+describe('pickRespawnPoint — constrained to ground the player can stand on (#348)', () => {
+  const VIEW = { x: 0, y: 0, width: 1000, height: 600 };
+  // A #340-shaped corridor: a horizontal lane far narrower than the view is tall.
+  const inCorridor = (x, y) => y > 250 && y < 350;
+
+  it('never returns a point outside the corridor when a valid candidate exists', () => {
+    // Threat pinned to the bottom edge, so the UNCONSTRAINED winner is the top edge midpoint —
+    // which is outside the lane. The constrained rule must reject it.
+    const p = pickRespawnPoint(VIEW, [{ x: 500, y: 600 }], { isValid: inCorridor });
+    expect(inCorridor(p.x, p.y)).toBe(true);
+  });
+
+  it('still prefers the SAFEST of the valid candidates, not merely the first valid one', () => {
+    // Both left and right edge midpoints are in the lane; the threat hugs the left edge.
+    const p = pickRespawnPoint(VIEW, [{ x: 0, y: 300 }], { isValid: inCorridor });
+    expect(p.x).toBeGreaterThan(VIEW.width / 2);
+    expect(inCorridor(p.x, p.y)).toBe(true);
+  });
+
+  it('falls back to the view centre when no edge midpoint is valid', () => {
+    // A lane so narrow that only the very middle of the view is on playable ground.
+    const pinhole = (x, y) => Math.abs(x - 500) < 20 && Math.abs(y - 300) < 20;
+    const p = pickRespawnPoint(VIEW, [{ x: 0, y: 0 }], { isValid: pinhole });
+    expect(pinhole(p.x, p.y)).toBe(true);
+  });
+
+  it('falls back progressively rather than failing when nothing at all is valid', () => {
+    const p = pickRespawnPoint(VIEW, [{ x: 0, y: 300 }], { isValid: () => false });
+    // Still a usable point (the caller snaps it to the nearest passable hex), and still the
+    // safest edge — the original intent survives the degenerate case.
+    expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+    expect(p.x).toBeGreaterThan(VIEW.width / 2);
+  });
+
+  it('is unchanged from the pre-#348 rule when no predicate is given', () => {
+    expect(pickRespawnPoint(VIEW, [{ x: 0, y: 300 }])).toEqual(
+      pickRespawnPoint(VIEW, [{ x: 0, y: 300 }], {}),
+    );
+  });
+
+  it('still accepts a bare margin number as the third argument', () => {
+    const p = pickRespawnPoint(VIEW, [{ x: 500, y: 600 }], 100);
+    expect(p.y).toBeCloseTo(100, 6);
+  });
+});

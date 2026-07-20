@@ -21,6 +21,9 @@ import {
   makeRespawnState, pickRespawnPoint, startRespawn, tickRespawn,
 } from '../../data/respawn.js';
 import { separatePlayers } from '../../data/playerCollision.js';
+import { nearestValidPixel } from '../../data/spawnPlacement.js';
+import { axialKey, pixelToHex } from '../../data/hexgrid.js';
+import { isPassable } from '../../data/terrain.js';
 import { livePlayersOf, playersOf, primaryPlayerOf } from './players.js';
 import { DEPTH, PLAYER_WALL_COLLIDE_RADIUS } from './shared.js';
 import { Audio } from '../../audio/index.js';
@@ -31,6 +34,33 @@ import { Audio } from '../../audio/index.js';
 const MARKER_RADIUS = 30;
 
 export const CoopMixin = {
+  // #348: the two shared "can a player be HERE?" primitives behind both co-op placements
+  // (respawn and the mid-sortie joiner). `_isPassablePos` is the cheap map-lookup predicate;
+  // `_validPlayerPos` snaps an arbitrary point to the nearest place a mech can actually stand.
+  //
+  // The snap goes through `nearestValidPixel`, whose ring search is capped by the FIXED,
+  // world-independent `MAX_SEARCH_STEPS` (#345 — a budget derived from the world size is what
+  // froze the game for minutes once #340 grew the corridor). Nothing here reintroduces one.
+  _isPassablePos(x, y) {
+    if (!this.terrain) return true;   // no terrain (unit-test scenes / pre-worldgen) → no constraint
+    const h = pixelToHex(x, y);
+    return isPassable(this.terrain.get(axialKey(h.q, h.r)));
+  },
+
+  // The one "could this player have DRIVEN from where they are to (x, y)?" test, shared by every
+  // co-op displacement — the teammate shove and the leash clamp. It is locomotion's own swept
+  // wall/terrain check at the same `PLAYER_WALL_COLLIDE_RADIUS` (#320), so nothing in co-op can
+  // put a mech somewhere its own movement would have refused to go.
+  _canMoveTo() {
+    if (!this._blockedAlongSegment) return () => true;
+    return (p, x, y) => !this._blockedAlongSegment(p.x, p.y, x, y, PLAYER_WALL_COLLIDE_RADIUS);
+  },
+
+  _validPlayerPos(pt) {
+    if (!this.terrain) return pt;
+    return nearestValidPixel(this.terrain, this.worldRadius, pt.x, pt.y);
+  },
+
   // Build ONE player: its mech, its own textures (accent-tinted per player), its view, its
   // ground marker, its controls, and its own copies of the input-shaped state phase 1 left
   // shared. `index` is both the player id and the pad index it reads.
@@ -104,7 +134,12 @@ export const CoopMixin = {
     // the SOURCE of the build, not this wiring.
     const mech = this._mechForPlayer(index);
     // Drop in alongside player 1, just far enough not to overlap, and well inside the leash.
-    const player = this._makePlayerAt(index, host.x + 70, host.y + 70, mech);
+    // #348: that fixed +70/+70 offset is the same class of bug as the respawn one — in #340's
+    // narrow corridor a host hugging the lane edge would put the joiner straight into impassable
+    // terrain. Snap it to reachable ground (host's own position is passable by construction, so
+    // the search terminates immediately in the normal case).
+    const spot = this._validPlayerPos({ x: host.x + 70, y: host.y + 70 });
+    const player = this._makePlayerAt(index, spot.x, spot.y, mech);
     player.angle = host.angle;
     player.turretAngle = host.turretAngle;
     playersOf(this).push(player);
@@ -143,8 +178,7 @@ export const CoopMixin = {
   _separatePlayers() {
     const live = livePlayersOf(this);
     if (live.length < 2) return 0;
-    const canMove = (p, x, y) => !this._blockedAlongSegment(p.x, p.y, x, y, PLAYER_WALL_COLLIDE_RADIUS);
-    return separatePlayers(live, { canMove });
+    return separatePlayers(live, { canMove: this._canMoveTo() });
   },
 
   // ── The shared leashed camera ──
@@ -157,7 +191,11 @@ export const CoopMixin = {
     const live = livePlayersOf(this);
     const focus = leashFocus(players, (p) => !p.dead);
     if (!focus) return;
-    if (live.length > 1) clampToLeash(live, focus, LEASH_RADIUS);
+    // #348: the clamp is clipped through the SAME swept wall/terrain test the player's own
+    // locomotion and the teammate shove use, so the leash can never drag a mech through a
+    // corridor boundary or a base wall. Terrain wins over the leash when they conflict — a
+    // player may stay briefly outside the radius, which the centroid framing below tolerates.
+    if (live.length > 1) clampToLeash(live, focus, LEASH_RADIUS, { canMove: this._canMoveTo() });
     // Re-derive the focus from the clamped positions so the anchor sits on where they actually
     // are rather than where they were about to be.
     const framed = leashFocus(players, (p) => !p.dead) ?? focus;
@@ -217,7 +255,14 @@ export const CoopMixin = {
     const threats = (this.enemies ?? [])
       .filter((e) => !e.mech.isDestroyed())
       .map((e) => ({ x: e.x, y: e.y }));
-    const pt = pickRespawnPoint(view, threats);
+    // #348: constrain the choice to ground the player can actually stand on. The predicate is the
+    // same passability test every other placement in the game uses, and the winner is then snapped
+    // through `nearestValidPixel` so the result is guaranteed passable even in the degenerate case
+    // where no candidate (nor the view centre) was valid. That search is bounded by
+    // `MAX_SEARCH_STEPS` — a FIXED cap, deliberately not derived from the world size (#345).
+    const pt = this._validPlayerPos(pickRespawnPoint(view, threats, {
+      isValid: (x, y) => this._isPassablePos(x, y),
+    }));
     player.mech.repairAll();
     player.mech.tickShield?.(0);
     player.x = pt.x; player.y = pt.y;

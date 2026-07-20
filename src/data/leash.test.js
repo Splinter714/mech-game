@@ -96,3 +96,70 @@ describe('clampToLeash — the hard stop', () => {
     }
   });
 });
+
+// #348 (playtest 2026-07-19): "multiplayer leash can pull the other player through the boundary
+// of the corridor" and "through ANY kind of blocking cover, e.g. base walls". The clamp ran after
+// locomotion had already resolved collision, so the position it wrote was never re-checked.
+describe('the leash clamp is clipped by walls and terrain (#348)', () => {
+  const P = (x, y, vx = 0, vy = 0) => ({ x, y, vx, vy });
+  const FOCUS = { x: 0, y: 0 };
+
+  it('never places a player somewhere they could not have driven', () => {
+    // A wall along x = 100: nothing may be placed to its left. The clamp target is well past it.
+    const canMove = (p, x) => x >= 100;
+    const p = P(400, 0);
+    const others = [P(-400, 0), p];
+    clampToLeash(others, FOCUS, LEASH_RADIUS, { canMove });
+    expect(canMove(p, p.x, p.y)).toBe(true);
+  });
+
+  it('accepts a player left OUTSIDE the radius when a wall blocks the correction', () => {
+    // Terrain wins over the leash. The overshoot is the correct outcome, not a failure.
+    const canMove = (p, x) => x >= 350;
+    const p = P(400, 0);
+    clampToLeash([P(-400, 0), p], FOCUS, LEASH_RADIUS, { canMove });
+    expect(Math.hypot(p.x - FOCUS.x, p.y - FOCUS.y)).toBeGreaterThan(LEASH_RADIUS);
+    expect(canMove(p, p.x, p.y)).toBe(true);
+  });
+
+  it('still moves the player as far inward as collision allows, not zero', () => {
+    const canMove = (p, x) => x >= 350;
+    const p = P(400, 0);
+    clampToLeash([P(-400, 0), p], FOCUS, LEASH_RADIUS, { canMove });
+    expect(p.x).toBeLessThan(400);
+  });
+
+  it('leaves the player exactly put when even a hair of the correction is blocked', () => {
+    const p = P(400, 0);
+    clampToLeash([P(-400, 0), p], FOCUS, LEASH_RADIUS, { canMove: () => false });
+    expect(p).toMatchObject({ x: 400, y: 0 });
+  });
+
+  it('still strips the outward velocity even when the move was blocked, so nothing keeps pushing out', () => {
+    const p = P(400, 0, 50, 20);
+    clampToLeash([P(-400, 0), p], FOCUS, LEASH_RADIUS, { canMove: () => false });
+    expect(p.vx).toBeCloseTo(0, 6);
+    expect(p.vy).toBeCloseTo(20, 6);   // tangential motion survives — the player stays steerable
+  });
+
+  it('is byte-identical to the old hard clamp when nothing is blocking', () => {
+    const open = P(400, 0), plain = P(400, 0);
+    clampToLeash([P(-400, 0), open], FOCUS, LEASH_RADIUS, { canMove: () => true });
+    clampToLeash([P(-400, 0), plain], FOCUS, LEASH_RADIUS);
+    expect(open).toMatchObject({ x: plain.x, y: plain.y });
+    expect(Math.hypot(open.x, open.y)).toBeCloseTo(LEASH_RADIUS, 6);
+  });
+
+  it('uses a FIXED clip budget — the cost does not scale with the world (#345)', () => {
+    const calls = [];
+    const canMove = (p, x, y) => { calls.push([x, y]); return false; };
+    // A correction spanning an enormous distance must cost no more predicate calls than a tiny
+    // one: the bisection is a constant number of steps, not a walk over world-sized space.
+    clampToLeash([P(-1e6, 0), P(1e6, 0)], FOCUS, LEASH_RADIUS, { canMove });
+    const far = calls.length;
+    calls.length = 0;
+    clampToLeash([P(-400, 0), P(400, 0)], FOCUS, LEASH_RADIUS, { canMove });
+    expect(calls.length).toBe(far);
+    expect(far).toBeLessThan(16);
+  });
+});

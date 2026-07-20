@@ -45,17 +45,64 @@ export function leashFocus(players, alive = () => true) {
 // Mutates the players in place (the arena's per-frame drive does the same) and returns how
 // many were clamped, which is the only thing a caller/test needs to know afterwards.
 // A single player is never clamped: they ARE the centroid, so their distance from it is 0.
-export function clampToLeash(players, focus, radius = LEASH_RADIUS) {
+// #348 (playtest 2026-07-19: "multiplayer leash can pull the other player through the boundary
+// of the corridor" — and, sharpening it, "through ANY kind of blocking cover, e.g. base walls"):
+// this clamp used to teleport. It runs AFTER locomotion has already resolved the frame's terrain
+// and wall collision, so the position it wrote was never re-checked against anything — which
+// dragged mechs through corridor boundaries, hard cover and base walls alike, silently defeating
+// #320's wall body-radius collision.
+//
+// The fix is the pattern the player-collision push (data/playerCollision.js) already established
+// and proved: an optional `canMove(player, x, y)` predicate, wired by the scene to the SAME swept
+// wall/terrain test locomotion itself uses. The correction is clipped through it, so the leash can
+// never place a mech somewhere it could not have driven.
+//
+// TERRAIN AND WALLS WIN over the leash. That is a real change in what the leash guarantees: when
+// a wall blocks the correction, a player CAN remain beyond `radius`, so "no player exceeds the
+// leash radius" is no longer an invariant that always holds after this call. It is a transient
+// overshoot the camera framing has to tolerate — and it is the right trade, because a briefly
+// over-stretched leash is a far smaller problem than a mech standing inside a wall. It also
+// self-corrects: the outward velocity strip below still happens, so nothing keeps pushing out.
+//
+// When the full correction is blocked the player is moved as far along it as collision allows —
+// found by a fixed CLIP_STEPS-step bisection. That budget is a constant and deliberately NOT
+// derived from the world size (#345: a world-scaled search budget is what froze the game for
+// minutes once #340 lengthened the corridor).
+const CLIP_STEPS = 6;
+
+// The furthest point along p → (tx, ty) that `canMove` still allows. Returns null if even the
+// first fraction is blocked, meaning the player simply stays put this frame.
+function clippedTowards(p, tx, ty, canMove) {
+  if (canMove(p, tx, ty)) return { x: tx, y: ty };
+  let lo = 0, hi = 1;
+  for (let i = 0; i < CLIP_STEPS; i++) {
+    const mid = (lo + hi) / 2;
+    const mx = p.x + (tx - p.x) * mid, my = p.y + (ty - p.y) * mid;
+    if (canMove(p, mx, my)) lo = mid; else hi = mid;
+  }
+  if (lo <= 0) return null;
+  return { x: p.x + (tx - p.x) * lo, y: p.y + (ty - p.y) * lo };
+}
+
+export function clampToLeash(players, focus, radius = LEASH_RADIUS, opts = {}) {
   if (!focus || !(players?.length > 1)) return 0;
+  const { canMove = null } = opts;
   let clamped = 0;
   for (const p of players) {
     const dx = p.x - focus.x, dy = p.y - focus.y;
     const d = Math.hypot(dx, dy);
     if (!(d > radius)) continue;
     const ux = dx / d, uy = dy / d;
-    p.x = focus.x + ux * radius;
-    p.y = focus.y + uy * radius;
-    // Strip only the outward radial component; inward motion and sliding are untouched.
+    const tx = focus.x + ux * radius, ty = focus.y + uy * radius;
+    if (!canMove) {
+      p.x = tx; p.y = ty;
+    } else {
+      const spot = clippedTowards(p, tx, ty, canMove);
+      if (spot) { p.x = spot.x; p.y = spot.y; }
+    }
+    // Strip only the outward radial component; inward motion and sliding are untouched. This
+    // happens even when the move was clipped — the player is over the leash either way, and
+    // keeping them steerable back inward is the point.
     const radial = (p.vx ?? 0) * ux + (p.vy ?? 0) * uy;
     if (radial > 0) { p.vx -= radial * ux; p.vy -= radial * uy; }
     clamped += 1;
