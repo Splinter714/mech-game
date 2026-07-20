@@ -241,6 +241,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scene.stop('HudScene');
       Audio.stopAllHeld();   // #53: don't leave a flamethrower/beam-laser loop running into the garage
+      Audio.stopSiren();     // #385: don't leave an alert-tower siren running into the garage / next run
       // #56: any in-flight rounds still looping their trajectory cue (didn't get to impact
       // before the scene tore down) need their loops stopped too, or they'd run forever.
       for (const p of this.projectiles) p.stopTrajectorySfx?.();

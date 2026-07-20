@@ -83,3 +83,27 @@ export function tickAlertTower(state, { activate, dt }, countdownMs = ALERT_COUN
   if (remainingMs <= 0) return { countingDown: true, remainingMs: 0, triggered: true, fraction: 1 };
   return { countingDown: true, remainingMs, triggered: false, fraction };
 }
+
+// #385 — the pure "which tower is the siren source" rule. Once an alert tower has SIGNALED (its
+// countdown completed and woke its base — scenes/arena/bases.js records it the frame
+// `tickAlertTower` returns `triggered`), it keeps sirening + pulsing red until destroyed. The
+// PULSE is per-tower, but only ONE siren VOICE plays at a time so a 24,000px run's many signaled
+// towers don't stack into a wall of noise. That voice is driven by the NEAREST signaled-alive
+// tower to the audio LISTENER (the local player — scenes/arena/players.js `listenerOf`, still the
+// audio-listener seam post-#364's co-op split). This function is that selection, kept pure and
+// unit-testable: given the signaled-alive towers (each `{ x, y, ... }`) and the listener's
+// position, return the nearest tower (the SAME object reference passed in, so the caller reads
+// its position/key straight back off it), or `null` when there are none — at which point the
+// caller stops the siren. The caller passes a FRESH list every frame, so a tower dying simply
+// drops out of the input and the next-nearest is returned automatically; reassignment needs no
+// state kept here. Ties resolve to the first tower seen (stable, order-of-iteration).
+export function pickSirenSource(towers, listenerX, listenerY) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const t of towers || []) {
+    if (!t) continue;
+    const dist = Math.hypot(t.x - listenerX, t.y - listenerY);
+    if (dist < bestDist) { bestDist = dist; best = t; }
+  }
+  return best;
+}

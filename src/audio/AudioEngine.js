@@ -93,6 +93,9 @@ export class AudioEngine {
     // simultaneous held weapons (e.g. flamethrower in one arm, beam laser in the other)
     // don't collide. Keyed by location; value is the stop() closure Sfx.startHeld returned.
     this._heldSounds = new Map();
+    // #385 — the ONE continuous alert siren (nearest signaled-alive alert tower). A single held
+    // voice, not one-per-tower; null when nothing is sirening. See updateSiren/stopSiren below.
+    this._siren = null;
     // Combat music ducking (#108) — timestamps (ctx.currentTime) of recent weapon-fire/
     // impact/explosion cues; see duck.js's duckGainAt for how these shape the music gain.
     this._duckTriggers = [];
@@ -454,6 +457,27 @@ export class AudioEngine {
     this._resume();
     if (!this.ready) return;
     Sfx.alertPulse(this, fraction, pos);
+  }
+
+  // #385 — the continuous alert siren for a tower that has SIGNALED and stays live until
+  // destroyed. ONE voice only: the scene (scenes/arena/bases.js) calls this every frame with the
+  // nearest signaled-alive tower's `{ x, y, listenerX, listenerY }`, lazily starting the single
+  // held loop and steering its position/attenuation — no per-tower loops. Call stopSiren() when
+  // no signaled-alive tower remains, or on run end / return-to-garage.
+  updateSiren(pos) {
+    this._resume();
+    if (!this.ready) return;
+    if (!this._siren) this._siren = Sfx.startSiren(this);
+    if (this._siren) Sfx.setSirenPos(this, this._siren, pos);
+  }
+
+  // Stop the siren voice if one is playing (safe to call when none is — a no-op). Called when the
+  // last signaled-alive tower dies/none remain, and on scene shutdown so it never bleeds into the
+  // Garage or the next run.
+  stopSiren() {
+    if (!this._siren) return;
+    this._siren.stop();
+    this._siren = null;
   }
 
   // ── Held/looping fire sound (#53) ──────────────────────────────────────────────────────

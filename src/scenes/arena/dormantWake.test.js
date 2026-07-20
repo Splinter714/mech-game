@@ -696,6 +696,7 @@ describe('#284: alert tower wake-trigger uses its own linked baseId, not geometr
     scene.alertTowerHexes = [{ ...towerHex, baseId: 'base0' }];   // ...but the tower is base0's own
     scene.terrain = new Map([[axialKey(towerHex.q, towerHex.r), 'alertTower']]);
     scene._initAlertTowers();   // re-init now that alertTowerHexes/terrain are populated
+    scene._updateSignaledPulse = () => {};   // #385: pure-graphics pulse, out of scope here (no `this.add`)
 
     const base0Unit = makeDockedUnit('turret', { baseId: 'base0' });
     const base1Unit = makeDockedUnit('turret', { baseId: 'base1' });
@@ -732,6 +733,10 @@ describe('#269 overhaul: alert-tower activation triggers + sticky countdown (_up
     // it's purely visual and out of scope for these activation/countdown-logic tests, so stub it
     // to a no-op (the #284 completion test avoided it by finishing the countdown in a single tick).
     scene._updateAlertFx = () => {};
+    // Likewise the #385 continuous post-signal pulse ring (`_updateSignaledPulse`) is pure Phaser
+    // graphics, out of scope for these countdown/activation-logic tests — stub it to a no-op so a
+    // completing countdown (which now records the tower as signaled) doesn't need `this.add`.
+    scene._updateSignaledPulse = () => {};
     const unit = makeDockedUnit('turret', { baseId: 'base0' });
     unit.x = 99999; unit.y = 99999;   // nowhere near the tower or the player
     scene.enemies.push(unit);
@@ -810,6 +815,35 @@ describe('#269 overhaul: alert-tower activation triggers + sticky countdown (_up
     scene.px = x + 400; scene.py = y;   // 400px: outside old 320 radius, inside new 480 radius
     scene._updateAlertTowers(0.1);
     expect(scene._alertTowerStates.get(KEY).countingDown).toBe(true);
+  });
+
+  // #385: once the countdown COMPLETES, the tower is recorded as SIGNALED — it keeps pulsing red
+  // and is a siren candidate until destroyed, and its spool-up countdown state is gone.
+  it('a completed countdown records the tower as SIGNALED (still standing) and clears its spool-up state', () => {
+    const { scene } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    scene.px = x; scene.py = y;
+    scene._updateAlertTowers(30);                        // one big tick past the full countdown
+    expect(scene._alertTowerStates.has(KEY)).toBe(false); // no longer spooling up
+    expect(scene._signaledTowers.has(KEY)).toBe(true);    // now a live, signaled tower
+    // Position stashed for the pulse + nearest-siren selection.
+    expect(scene._signaledTowers.get(KEY)).toEqual({ x, y });
+  });
+
+  // #385: a SIGNALED tower keeps ticking as signaled-alive across frames until it is destroyed —
+  // then it drops out (neither pulses nor sirens). This is the "stops on tower death" path.
+  it('a SIGNALED tower is dropped the frame it is destroyed (stops pulsing + sirening)', () => {
+    const { scene } = makeTowerScene();
+    const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+    scene.px = x; scene.py = y;
+    scene._updateAlertTowers(30);                        // signal it
+    expect(scene._signaledTowers.has(KEY)).toBe(true);
+    scene.px = 88888; scene.py = 88888;                  // player leaves — signaled tower stays live
+    scene._updateAlertTowers(0.1);
+    expect(scene._signaledTowers.has(KEY)).toBe(true);    // still lit + sirening after signaling
+    scene.terrain.set(KEY, 'rubble');                    // tower destroyed
+    scene._updateAlertTowers(0.1);
+    expect(scene._signaledTowers.has(KEY)).toBe(false);   // gone — silent + unlit
   });
 });
 

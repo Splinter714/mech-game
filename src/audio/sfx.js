@@ -576,6 +576,101 @@ export function alertPulse(e, fraction, pos = null) {
   e.noise(bus, { dur: 0.045, gain: 0.05 + f * 0.09, type: 'highpass', freq: 3400 }); // digital "chirp" edge
 }
 
+// #385 — the CONTINUOUS alert siren, for a tower that has already SIGNALED (woken its base) and
+// stays live until destroyed. Unlike alertPulse above (a one-shot beep re-fired on a timer while
+// the countdown SPOOLS UP), this is a genuinely HELD, looping source — the same held/loop pattern
+// as the flamethrower/beam-laser fire loops (startLoopLayers): oscillators left running until an
+// explicit stop, so nothing is re-triggered per frame. Only ONE of these ever exists at a time
+// (AudioEngine holds a single `_siren` handle); scenes/arena/bases.js picks the nearest
+// signaled-alive tower each frame (data/alertTower.js `pickSirenSource`) and steers this one
+// voice's POSITION with setSirenPos below — so the voice reassigns to a nearer tower, and tracks
+// the moving listener, with no restart. Returns a handle `{ stop, posGain, pan }`; `null` if the
+// context isn't up. The wail: two saw voices a fifth apart, their pitch swept up and down by a
+// shared slow LFO (an air-raid rise/fall), through a master attack-ramped gain into a persistent
+// positional gain(+pan) stage that setSirenPos updates live for distance falloff.
+const SIREN_BASE_HZ = 520;      // fundamental of the lower siren voice
+const SIREN_WAIL_HZ = 0.55;     // LFO rate — ~one full up/down wail cycle every ~1.8s
+const SIREN_WAIL_DEPTH = 90;    // Hz the pitch swings +/- around the base as it wails
+const SIREN_GAIN = 0.16;        // master voice gain BEFORE positional distance attenuation
+export function startSiren(e) {
+  const ctx = e.ctx;
+  if (!ctx) return null;
+  const t = e._now();
+  // Persistent positional stage: distance gain -> optional stereo pan -> sfx bus. setSirenPos
+  // writes both live each frame; kept as standing nodes (not rebuilt) so steering the voice never
+  // restarts the loop. Starts at unity — setSirenPos on the very next frame sets the real value.
+  const posGain = ctx.createGain();
+  posGain.gain.value = 1;
+  let pan = null;
+  if (typeof ctx.createStereoPanner === 'function') {
+    pan = ctx.createStereoPanner();
+    pan.pan.value = 0;
+    posGain.connect(pan).connect(e.sfx);
+  } else {
+    posGain.connect(e.sfx);
+  }
+  // Master gain with a short attack ramp (click-safe loop start), feeding the positional stage.
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0.0001, t);
+  master.gain.exponentialRampToValueAtTime(SIREN_GAIN, t + 0.12);
+  master.connect(posGain);
+  // The shared wail LFO -> depth gain -> each oscillator's frequency, so both voices rise/fall
+  // together like a real siren rather than droning flat.
+  const lfo = ctx.createOscillator();
+  lfo.type = 'triangle';
+  lfo.frequency.value = SIREN_WAIL_HZ;
+  const lfoDepth = ctx.createGain();
+  lfoDepth.gain.value = SIREN_WAIL_DEPTH;
+  lfo.connect(lfoDepth);
+  const oscs = [];
+  for (const [mult, g] of [[1, 0.6], [1.5, 0.4]]) {
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = SIREN_BASE_HZ * mult;
+    if (lfoDepth.connect) lfoDepth.connect(osc.frequency);
+    const vg = ctx.createGain();
+    vg.gain.value = g;
+    osc.connect(vg).connect(master);
+    osc.start(t);
+    oscs.push(osc);
+  }
+  lfo.start(t);
+  let stopped = false;
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    const now = e.ctx ? e._now() : t;
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), now);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+    for (const osc of oscs) { try { osc.stop(now + 0.14); } catch { /* already stopped */ } }
+    try { lfo.stop(now + 0.14); } catch { /* already stopped */ }
+    setTimeout(() => {
+      try {
+        for (const osc of oscs) osc.disconnect();
+        lfoDepth.disconnect(); lfo.disconnect(); master.disconnect();
+        pan?.disconnect(); posGain.disconnect();
+      } catch { /* already gone */ }
+    }, 200);
+  }
+  return { stop, posGain, pan };
+}
+
+// Steer the single live siren voice to a source position for distance falloff (+ stereo pan),
+// using the same `{ x, y, listenerX, listenerY }` pair every world-anchored cue takes
+// (data/positionalAudio.js). Called every frame with the CURRENT nearest signaled-alive tower —
+// so both reassignment (a nearer tower, or the previous one dying) and the moving listener are
+// just a new target here, no loop restart. A missing/partial pos is a no-op (leaves the last
+// value). `setTargetAtTime` glides to avoid a click when the source jumps between towers.
+export function setSirenPos(e, siren, pos) {
+  if (!siren || !e.ctx) return;
+  if (!pos || pos.x == null || pos.y == null || pos.listenerX == null || pos.listenerY == null) return;
+  const now = e._now();
+  const gain = distanceGain(pos.x, pos.y, pos.listenerX, pos.listenerY);
+  siren.posGain.gain.setTargetAtTime(gain, now, 0.05);
+  if (siren.pan) siren.pan.pan.setTargetAtTime(stereoPan(pos.x, pos.y, pos.listenerX, pos.listenerY), now, 0.05);
+}
+
 // Explosion (#36, tunable data per #100) — a broken-off part / the player's own MECH DOWN.
 // `scale` 0.3..1.6 sizes the blast (a couple of fixed intensities — #107 moved the actual
 // per-KILL boom, which used to drive this via `deathScaleFor`, onto the discrete category path

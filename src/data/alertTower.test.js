@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeAlertState, tickAlertTower, ALERT_COUNTDOWN_MS, ALERT_DETECT_RADIUS } from './alertTower.js';
+import { makeAlertState, tickAlertTower, ALERT_COUNTDOWN_MS, ALERT_DETECT_RADIUS, pickSirenSource } from './alertTower.js';
 
 describe('alert tower countdown state machine (#269 §5)', () => {
   it('starts idle, not counting down, full countdown remaining', () => {
@@ -118,6 +118,56 @@ describe('alert tower countdown state machine (#269 §5)', () => {
       expect(after).toBeGreaterThan(0);
       s = tickAlertTower(s, { activate: false, dt: 0.1 }, 1000);
       expect(s.fraction).toBeGreaterThanOrEqual(after);
+    });
+  });
+
+  // #385 — the single-siren source selection. The scene feeds this the signaled-alive towers and
+  // the audio listener's position each frame; it picks the ONE tower whose siren plays.
+  describe('pickSirenSource — nearest signaled-alive tower to the listener (#385)', () => {
+    it('returns null when there are no signaled-alive towers (siren stops)', () => {
+      expect(pickSirenSource([], 0, 0)).toBe(null);
+      expect(pickSirenSource(null, 0, 0)).toBe(null);
+      expect(pickSirenSource(undefined, 500, 500)).toBe(null);
+    });
+
+    it('returns the sole tower when only one has signaled', () => {
+      const t = { key: 'a', x: 300, y: -200 };
+      expect(pickSirenSource([t], 0, 0)).toBe(t);
+    });
+
+    it('picks the nearest tower to the listener, not the farthest', () => {
+      const near = { key: 'near', x: 100, y: 0 };
+      const far = { key: 'far', x: 2000, y: 0 };
+      expect(pickSirenSource([far, near], 0, 0)).toBe(near);
+      // order-independent: same answer regardless of input ordering
+      expect(pickSirenSource([near, far], 0, 0)).toBe(near);
+    });
+
+    it('re-picks relative to the listener, so moving the listener can reassign the voice', () => {
+      const left = { key: 'left', x: -500, y: 0 };
+      const right = { key: 'right', x: 500, y: 0 };
+      const towers = [left, right];
+      expect(pickSirenSource(towers, -400, 0)).toBe(left);   // listener near the left tower
+      expect(pickSirenSource(towers, 400, 0)).toBe(right);   // listener walked toward the right tower
+    });
+
+    it('reassigns to the next-nearest when the nearest tower dies (drops out of the list)', () => {
+      const a = { key: 'a', x: 100, y: 0 };
+      const b = { key: 'b', x: 800, y: 0 };
+      const c = { key: 'c', x: 1500, y: 0 };
+      expect(pickSirenSource([a, b, c], 0, 0)).toBe(a);
+      // `a` destroyed — caller passes the fresh (shorter) list; voice moves to the next nearest.
+      expect(pickSirenSource([b, c], 0, 0)).toBe(b);
+      // `b` destroyed too — down to the last one.
+      expect(pickSirenSource([c], 0, 0)).toBe(c);
+      // all gone — silent.
+      expect(pickSirenSource([], 0, 0)).toBe(null);
+    });
+
+    it('uses 2D distance (nearest by hypot, not by a single axis)', () => {
+      const axisClose = { key: 'axis', x: 400, y: 0 };      // 400 away
+      const diagClose = { key: 'diag', x: 200, y: 200 };    // ~283 away
+      expect(pickSirenSource([axisClose, diagClose], 0, 0)).toBe(diagClose);
     });
   });
 });

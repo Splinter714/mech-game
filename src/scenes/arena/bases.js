@@ -10,7 +10,7 @@
 // "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WINDOW_MS, NOISE_AGGRO_RANGE } from '../../data/awareness.js';
-import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
+import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS, pickSirenSource } from '../../data/alertTower.js';
 import { isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
 import { DEPTH, strokeHexRing, wallCollideRadius, PLAYER_WALL_COLLIDE_RADIUS } from './shared.js';
@@ -133,6 +133,18 @@ const ALERT_RING_PULSE_ALPHA = 0.3;   // +/- alpha the ring throbs around its es
 // about-to-happen alarm.
 const ALERT_PULSE_INTERVAL_MAX_MS = 520;
 const ALERT_PULSE_INTERVAL_MIN_MS = 120;
+
+// #385 — the CONTINUOUS post-signal red pulse. Once a tower has SIGNALED (its countdown fired and
+// woke the base), it stays lit until destroyed: a steady red hexring that beats at a fixed
+// cadence (no more escalation — the countdown is over, this is a persistent "this tower is live"
+// marker). Drawn per-tower on EVERY signaled-alive tower (visual doesn't fatigue like stacked
+// audio does — only the SIREN is deduped to the nearest one). Sits between the escalation ring's
+// min/max size so it reads as clearly "on" without pretending to still be counting down.
+const SIGNALED_RING_RADIUS = 26;
+const SIGNALED_RING_ALPHA = 0.8;
+const SIGNALED_RING_PULSE_PERIOD_MS = 760;   // steady alarm beat, slightly slower than the spool-up
+const SIGNALED_RING_PULSE_RADIUS = 5;        // +/- px the radius throbs
+const SIGNALED_RING_PULSE_ALPHA = 0.3;       // +/- alpha the ring throbs
 
 // #285 ("units at a base shouldn't all snap into motion in the same instant"): the randomized
 // per-unit delay (ms) `_wakeBase` stamps onto `e.reactDelayMs` before a newly-woken unit's
@@ -496,6 +508,13 @@ export const BasesMixin = {
     // sticky, a single frame in this set is enough to commit the tower forever; the entry is
     // cleared as soon as it's consumed (and when the tower's state is dropped on destruction).
     this._alertTowerDamaged = new Set();
+    // #385: towers that have already SIGNALED (countdown completed, base woken) and are still
+    // standing. key -> { x, y }. Populated the frame `tickAlertTower` reports `triggered`, dropped
+    // when the tower is destroyed. These are the ones that pulse red continuously and are
+    // candidates for the single nearest-tower siren. `_signaledFx` holds their per-tower pulse
+    // rings (one per signaled-alive tower), created lazily and torn down on death.
+    this._signaledTowers = new Map();
+    this._signaledFx = new Map();
   },
 
   // #269 overhaul Part 1: a standing alert-tower hex just took damage (world.js `_damageBuildingAt`,
@@ -512,7 +531,18 @@ export const BasesMixin = {
   // map the instant this notices, so an already-in-progress countdown can never complete after
   // the tower is gone; that's the whole "destroy it before the call completes" stealth window.
   _updateAlertTowers(dt) {
-    if (!this._alertTowerStates || !this._alertTowerStates.size) return;
+    // Two independent populations tick here: towers still SPOOLING UP (`_alertTowerStates`, the
+    // escalating countdown FX) and towers that have already SIGNALED and stay live until destroyed
+    // (`_signaledTowers`, the continuous red pulse + the single siren). Once every tower has
+    // signaled the first map is empty but the second isn't — so the signaled pass must NOT sit
+    // behind the spool-up map's early-out.
+    if (this._alertTowerStates && this._alertTowerStates.size) this._updateSpoolingTowers(dt);
+    this._updateSignaledTowers(dt);
+  },
+
+  // The countdown/spool-up pass: every tower still working toward triggering its base. Unchanged
+  // #269 behaviour, split out of `_updateAlertTowers` so the signaled pass can run independently.
+  _updateSpoolingTowers(dt) {
     // #269 overhaul Part 1: is there a "live" player gunshot this frame (within NOISE_WINDOW_MS)?
     // Computed once per frame here — same `_lastFireAt` recency test `_maybeProximityWake`/
     // enemies.js `_updateVehicle` use — then each tower checks its own distance to that shot below.
@@ -546,6 +576,9 @@ export const BasesMixin = {
         this._alertTowerStates.delete(key);   // one-shot — nothing left to tick once it fires
         this._freeAlertFx(key);               // #269 playtest follow-up: countdown complete — swap FX for the real alert
         this._triggerAlert(this._alertTowerBaseId?.get(key));
+        // #385: this tower has now SIGNALED — it keeps pulsing red + is a siren candidate until
+        // destroyed. Record its position for the continuous-pulse + nearest-siren pass below.
+        this._signaledTowers?.set(key, { x, y });
       } else {
         this._alertTowerStates.set(key, next);
         this._updateAlertFx(key, x, y, next, dt);
@@ -624,6 +657,65 @@ export const BasesMixin = {
     if (!fx) return;
     fx.ring.destroy();
     this._alertTowerFx.delete(key);
+  },
+
+  // #385: per-frame pass over towers that have SIGNALED and are still standing. Each one pulses
+  // red continuously (per-tower, visual doesn't fatigue); a destroyed tower is dropped here (its
+  // hex has collapsed to rubble) and goes silent + unlit. Then, across the survivors, drive
+  // EXACTLY ONE siren voice from the nearest signaled-alive tower to the audio listener — a
+  // destroyed nearest tower simply drops out of `alive`, so `pickSirenSource` reassigns the voice
+  // to the next nearest, or stops it when none remain.
+  _updateSignaledTowers(dt) {
+    const alive = [];
+    if (this._signaledTowers) {
+      for (const [key, pos] of [...this._signaledTowers]) {
+        if (this.terrain.get(key) !== 'alertTower') {
+          this._signaledTowers.delete(key);   // destroyed — neither pulses nor sirens
+          this._freeSignaledPulse(key);
+          continue;
+        }
+        this._updateSignaledPulse(key, pos.x, pos.y, dt);
+        alive.push(pos);
+      }
+    }
+    // Exactly one siren voice: the nearest signaled-alive tower to the LOCAL player (the audio
+    // listener — `listenerOf`, still the co-op audio seam post-#364). None left -> stop it.
+    const { listenerX, listenerY } = listenerOf(this);
+    const src = pickSirenSource(alive, listenerX, listenerY);
+    if (src) Audio.updateSiren({ x: src.x, y: src.y, listenerX, listenerY });
+    else Audio.stopSiren();
+  },
+
+  // #385: the continuous red pulse for ONE signaled-alive tower — a steady hexring that beats on a
+  // fixed cadence (the countdown is over; this is a persistent "live" marker, not the escalating
+  // spool-up ring). Same `Graphics` + `strokeHexRing` redraw-each-tick approach as `_updateAlertFx`
+  // (see its comment for why it's re-stroked rather than tweened), just without the fraction-driven
+  // escalation. Created lazily the first frame this tower is seen signaled-alive.
+  _updateSignaledPulse(key, x, y, dt) {
+    let fx = this._signaledFx.get(key);
+    if (!fx) {
+      const ring = this.add.graphics().setPosition(x, y).setDepth(DEPTH.WORLD_UI);
+      strokeHexRing(ring, SIGNALED_RING_RADIUS, 3, ALERT_RING_COLOR, SIGNALED_RING_ALPHA);
+      fx = { ring, throbMs: 0 };
+      this._signaledFx.set(key, fx);
+    }
+    fx.throbMs += Math.max(0, dt) * 1000;
+    const throb = Math.sin((fx.throbMs / SIGNALED_RING_PULSE_PERIOD_MS) * Math.PI * 2);   // -1..1
+    strokeHexRing(
+      fx.ring,
+      Math.max(1, SIGNALED_RING_RADIUS + SIGNALED_RING_PULSE_RADIUS * throb),
+      3,
+      ALERT_RING_COLOR,
+      Math.max(0, Math.min(1, SIGNALED_RING_ALPHA + SIGNALED_RING_PULSE_ALPHA * throb)),
+    );
+  },
+
+  // #385: tear down one signaled tower's continuous pulse ring (tower destroyed).
+  _freeSignaledPulse(key) {
+    const fx = this._signaledFx?.get(key);
+    if (!fx) return;
+    fx.ring.destroy();
+    this._signaledFx.delete(key);
   },
 
   // §6: the countdown completed — wake the ONE base this tower is linked to. #284: `baseId` is
