@@ -9,10 +9,22 @@
 //        threaded `ignoreCover: true`, so the player's own rounds passed through walls when aimed
 //        at a flyer.
 //
-// Jackson played it and found the resulting targeting rules confusing. #316 removes BOTH
-// directions, and does it structurally: the `ignoreCover` parameter, the `ignoresCover` round
-// stamp, and `aimAndFire`'s `needLos` option are all GONE from the source, not merely always
-// passed false. There is no flying exemption left anywhere to regress to.
+// Jackson played it and found the resulting targeting rules confusing. #316 removed BOTH
+// directions structurally — the `ignoreCover` parameter, the `ignoresCover` round stamp, and
+// `aimAndFire`'s `needLos` option all left the source rather than being passed false.
+//
+// ── #338 restores ONE of those two directions, deliberately and narrowly ──
+// #316's removal was too wide in one specific place. Targeting exempts airborne enemies from the
+// sight gate BY RULE, so the player could still lock a helicopter over a base wall — and then
+// watch every shot splash on the stone, because firing exempted nobody BY GEOMETRY. Two rules in
+// two files, disagreeing by construction. Jackson's invariant: "you should only be able to lock
+// what you could actually hit."
+//
+// So `targetCoverExempt` (data/visibility.js) is now THE predicate, and both target eligibility
+// and the shot call it. What came back is only #257's direction (the player's shots AT an airborne
+// LOCKED target), and only via that shared call. #245's direction — a flying SHOOTER's rounds
+// passing through walls — stays gone, as does `needLos`. Everything below that asserts a flying
+// enemy's own fire respects cover is therefore still live and still correct.
 //
 // The rule flyers now follow is exactly a ground mech's: HARD cover (walls, structures) blocks
 // them; SOFT cover (forest/scrub) does not — because both flyer kinds are `size: 'large'`, so
@@ -96,14 +108,16 @@ describe('#316 in-flight projectile: EVERY round respects terrain cover (reverse
     expect(scene._damagePlayerAt).not.toHaveBeenCalled();
   });
 
-  // Belt-and-braces on the structural removal: even if some future caller resurrected the old
-  // stamp and set it on a round, projectiles.js no longer reads it, so cover still stops the
-  // round. The exemption cannot come back by accident.
-  it('a stale `ignoresCover: true` stamp is ignored — the flag no longer exempts anything', () => {
+  // #338 reinstates the `ignoresCover` stamp that #316 deleted, so projectiles.js reads it again —
+  // but ONLY the player's `_spawnProjectile` can ever set it, and only while the locked target is
+  // airborne (see the spawn describe below). The stamp is now the shot half of the one predicate
+  // that also decides eligibility, not the shooter-side "flying enemies shoot through walls" rule
+  // #245/#257 had. This test therefore only proves the flag is WIRED; the tests above and below
+  // are what prove no enemy round and no ground-target shot can obtain it.
+  it('#338: a round carrying the `ignoresCover` stamp passes through the wall again', () => {
     const scene = makeProjectileScene();
     runRound(scene, 'enemy', { ignoresCover: true });
-    expect(scene._damageBuildingAt).toHaveBeenCalled();
-    expect(scene._damagePlayerAt).not.toHaveBeenCalled();
+    expect(scene._damageBuildingAt).not.toHaveBeenCalled();   // never detonated on the cover
   });
 
   it('a PLAYER round detonates on the wall (unchanged)', () => {
@@ -248,12 +262,22 @@ describe('#316 _spawnProjectile stamps no cover-exemption flag on the round', ()
   }
   const w = { weapon: STRAIGHT_PROJECTILE, location: 'rightArm', index: 0 };
 
-  it('neither an enemy nor a player round carries `ignoresCover` at all', () => {
+  // #338: the stamp is back, but derived from the ONE shared predicate rather than from who is
+  // shooting. With no lock at all — and with a ground target — no round gets it, which is what
+  // keeps cover real for everything on the deck.
+  it('#338: no target and a GROUND target both yield `ignoresCover: false`', () => {
     const scene = makeSpawnScene();
-    const enemyRound = scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0);
-    const playerRound = scene._spawnProjectile(w, 0, 0, 0);
-    expect(enemyRound.ignoresCover).toBeUndefined();
-    expect(playerRound.ignoresCover).toBeUndefined();
+    expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0).ignoresCover).toBe(false);
+    expect(scene._spawnProjectile(w, 0, 0, 0).ignoresCover).toBe(false);
+    scene.convergeTarget = { x: 400, y: 0, mech: {} };
+    expect(scene._spawnProjectile(w, 0, 0, 0).ignoresCover).toBe(false);
+  });
+
+  it('#338: a locked AIRBORNE target stamps the exemption — on the PLAYER\'s round only', () => {
+    const scene = makeSpawnScene();
+    scene.convergeTarget = { x: 400, y: 0, flying: true, mech: {} };
+    expect(scene._spawnProjectile(w, 0, 0, 0).ignoresCover).toBe(true);
+    expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0).ignoresCover).toBe(false);
   });
 
   // Guards the positional-arg shift: dropping `ignoreCover` moved #269's `smallUnitInvolved`

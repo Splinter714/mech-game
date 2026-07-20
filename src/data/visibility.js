@@ -115,13 +115,14 @@ export function hexLineClear(a, b, terrainAt) {
 // which made flyers lockable through anything, matching #245/#257's firing exemptions and #306's
 // "flyers draw above the dimming overlay" rendering rule. Jackson found the resulting rules
 // confusing in play — "let's stop being able to shoot them beyond cover also; let's let cover be
-// actual cover" — so all three went away together. The three rules still AGREE, just at the
-// opposite setting: a flyer behind hard cover is dimmed, can't shoot you, and can't be locked.
+// actual cover" — so all three went away together.
 //
-// Note this gate is what makes point 2 of #316 real. Removing `firing.js`'s `ignoreCover` only
-// stopped the player's ROUNDS from passing through walls; without this change the convergence
-// system would still happily acquire and track a flyer it has no sight of, which is the
-// "targeting selection is confusing" half of the complaint.
+// #338 PUTS THE FLYER EXCEPTION BACK, as the first line of the function, but sourced from the
+// shared `targetCoverExempt` below rather than written inline here. That distinction is the entire
+// issue: #316 removed this line and firing.js's `ignoreCover` together, but the fog rule
+// (`enemyVisibleInFog`, data/fogRegions.js) went on exempting airborne enemies — so the LIVE
+// targeting path said yes to a helicopter over a base wall while the shot said no. Routing both
+// through one function makes that disagreement unwriteable.
 //
 // Soft cover is not special-cased here either, and doesn't need to be: `computeVisibleHexes`
 // builds `visible` from `coverBlocksForRay`, which already lets a LARGE unit see over soft cover —
@@ -130,6 +131,42 @@ export function hexLineClear(a, b, terrainAt) {
 // Pure so the rule is unit-testable without a scene: `hexKeyOf` maps the enemy's world position
 // to its axial key, `visible` is the computed set.
 export function enemyTargetable(enemy, visible, hexKeyOf) {
+  if (targetCoverExempt(enemy)) return true;   // #338 — the shared rule; see below
   if (!visible) return true;          // no FOV computed yet ⇒ don't silently disable targeting
   return visible.has(hexKeyOf(enemy.x, enemy.y));
+}
+
+// ── #338: THE ONE PREDICATE ──────────────────────────────────────────────────────────────
+// Jackson's invariant: "you should only be able to lock what you could actually hit." The flyer
+// bug existed because target ELIGIBILITY and the SHOT were derived independently — targeting
+// exempted airborne enemies from the sight gate by rule (here, and `enemyVisibleInFog` rule 1 in
+// fogRegions.js), while firing exempted nobody by geometry (#316 deleted firing.js's
+// `ignoreCover`). Two rules in two files, disagreeing by construction: lock says yes, shot says no.
+//
+// This is that rule, written once. Both sides now call it, so flyers are exempt on BOTH or
+// NEITHER and the disagreement is not expressible. Its consumers:
+//   • target eligibility — `enemyTargetable` above (the no-fog fallback) and `enemyVisibleInFog`
+//     (data/fogRegions.js), which together decide what `_updateLock` may acquire.
+//   • the shot — `_shotIgnoresCover` (scenes/arena/firing.js), gating the hitscan wall trace and
+//     the `ignoresCover` stamp an in-flight round carries.
+//
+// It is deliberately NOT "shots ignore geometry". Ground targets are gated in both places exactly
+// as before: a tank behind a boulder still takes no hits through it. Only AIRBORNE targets are
+// exempt, which is what Jackson chose ("that might work better now that I'm changing locking
+// behavior") — and it is a much narrower licence than it was when this was last true, because
+// #322's 20°-cone/nearest-wins/1750px gate and #337's "nobody targets what they can't see" have
+// since made the set of flyers you can legitimately lock small.
+//
+// Three places where lock and shot still legitimately disagree, and MUST keep disagreeing — they
+// are the simulation being honest about geometry, not the rules contradicting each other:
+//   1. The target moves after you fire (locked in the open, ducks behind a wall mid-flight). The
+//      alternative is homing rounds phasing through terrain.
+//   2. The muzzle is not the eye — weapons sit offset from the mech's centre (#320), so you can
+//      see what your left arm cannot shoot past.
+//   3. Partial cover — a mech's head over a wall is visible while a flat shot into it hits stone.
+//
+// `airborne !== false` mirrors `enemyVisibleInFog`: a flying kind that is currently grounded
+// (landed/downed) is NOT exempt — it's a ground target while it's on the ground.
+export function targetCoverExempt(target) {
+  return !!(target && target.flying && target.airborne !== false);
 }
