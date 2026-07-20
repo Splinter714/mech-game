@@ -1,7 +1,7 @@
 // #378 — the magnetic pickup pull, as WIRED into the two collectible kinds:
 //   1. powerups now have one at all (the ask), on a gentler table than scrap's;
-//   2. neither kind may drag a drop through a wall (#336 put drops on the correct side of a base
-//      wall; an ungated magnet would pull them straight back through);
+//   2. the pull deliberately IGNORES walls for both kinds (Jackson, 2026-07-20: "magnet should
+//      pull through walls") — a drop inside a compound drifts out to a player outside it;
 //   3. both magnetise to the NEAREST LIVE player and are collectable by either (the co-op gap —
 //      salvage.js's "one player today" comment was stale after #347/#348/#349).
 import { describe, it, expect, vi } from 'vitest';
@@ -101,46 +101,42 @@ describe('#378 — powerups get a magnet (the ask)', () => {
   });
 });
 
-describe('#378 — the pull respects walls (#336 must not be undone)', () => {
-  // A vertical wall at x = 50: any segment crossing it is blocked.
-  const wallAtX50 = (x0, _y0, x1) => (x0 - 50) * (x1 - 50) < 0;
+describe('#378 — the pull goes THROUGH walls, deliberately', () => {
+  // A scene that would report EVERY segment as wall-blocked. Nothing in the pull path consults
+  // it — this double exists precisely to prove the pull doesn't ask.
+  const blockEverything = () => true;
 
-  it('does not drift SCRAP that is walled off from the player', () => {
-    const scene = makeScene({ players: [player(0, 0, 0)], blocked: wallAtX50 });
-    const s = scrap(100, 0);   // player at x=0, wall at x=50, drop at x=100
-    scene.salvage.push(s);
-    scene._updateSalvage(16);
-    expect(s.x).toBe(100);
-    expect(s.y).toBe(0);
-  });
-
-  it('does not drift a POWERUP that is walled off from the player', () => {
-    const scene = makeScene({ players: [player(0, 0, 0)], blocked: wallAtX50 });
-    const pk = powerup(100, 0);
-    scene.powerups.push(pk);
-    scene._updatePowerups(16);
-    expect(pk.x).toBe(100);
-  });
-
-  it('still drifts both kinds when the wall is not between them and the player', () => {
-    // Both player and drop on the far side of the wall — nothing crossed.
-    const scene = makeScene({ players: [player(0, 200, 0)], blocked: wallAtX50 });
-    const s = scrap(300, 0);
-    const pk = powerup(300, 0);
-    scene.salvage.push(s);
-    scene.powerups.push(pk);
-    scene._updateSalvage(16);
-    scene._updatePowerups(16);
-    expect(s.x).toBeLessThan(300);
-    expect(pk.x).toBeLessThan(300);
-  });
-
-  it('drifts normally on a scene double that models no walls at all', () => {
-    const scene = makeScene({ players: [player(0, 0, 0)] });   // no _blockedAlongSegment
+  it('drifts SCRAP toward a player on the far side of a wall', () => {
+    const scene = makeScene({ players: [player(0, 0, 0)], blocked: blockEverything });
     const s = scrap(100, 0);
     scene.salvage.push(s);
     scene._updateSalvage(16);
     expect(s.x).toBeLessThan(100);
+  });
+
+  it('drifts a POWERUP toward a player on the far side of a wall', () => {
+    const scene = makeScene({ players: [player(0, 0, 0)], blocked: blockEverything });
+    const pk = powerup(100, 0);
+    scene.powerups.push(pk);
+    scene._updatePowerups(16);
+    expect(pk.x).toBeLessThan(100);
+  });
+
+  it('never consults the swept wall test at all', () => {
+    const spy = vi.fn(() => true);
+    const scene = makeScene({ players: [player(0, 0, 0)], blocked: spy });
+    scene.salvage.push(scrap(100, 0));
+    scene.powerups.push(powerup(100, 0));
+    scene._updateSalvage(16);
+    scene._updatePowerups(16);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('walls do not leave a drop lodged out of reach — it closes into pickup range', () => {
+    const scene = makeScene({ players: [player(0, 0, 0)], blocked: blockEverything });
+    scene.salvage.push(scrap(150, 0));
+    for (let i = 0; i < 500 && scene.salvage.length; i++) scene._updateSalvage(16);
+    expect(scene.salvage.length).toBe(0);   // collected, not stuck against the wall
   });
 });
 

@@ -42,26 +42,27 @@ describe('magnetPull — the shared pull rule (#378)', () => {
     expect(magnetPull({ x: 1, y: 1 }, { x: 0, y: 0 }, 16, null)).toBeNull();
   });
 
-  // --- the wall rule (#336 must not be undone) ---
+  // --- walls (Jackson's 2026-07-20 reversal: the pull goes THROUGH them, on purpose) ---
 
-  it('does not drift at all when a wall separates the drop from the target', () => {
-    const blocked = () => false;   // canReach says "no"
-    expect(magnetPull({ x: 100, y: 0 }, { x: 0, y: 0 }, 16, SCRAP_MAGNET, { canReach: blocked }))
-      .toBeNull();
-  });
-
-  it('still drifts when the path is clear', () => {
-    const clear = () => true;
-    const out = magnetPull({ x: 100, y: 0 }, { x: 0, y: 0 }, 16, SCRAP_MAGNET, { canReach: clear });
+  it('pulls straight through walls — geometry is deliberately not consulted', () => {
+    // The rule takes no reachability predicate at all: a drop inside a compound drifts out to a
+    // player standing outside it. Jackson: "magnet should pull through walls."
+    const out = magnetPull({ x: 100, y: 0 }, { x: 0, y: 0 }, 16, SCRAP_MAGNET);
     expect(out.x).toBeLessThan(100);
   });
 
-  it('tests reachability against the TARGET, not the one-frame step', () => {
-    const seen = [];
-    magnetPull({ x: 100, y: 0 }, { x: 0, y: 0 }, 16, SCRAP_MAGNET, {
-      canReach: (d, x, y) => { seen.push([x, y]); return true; },
-    });
-    expect(seen).toEqual([[0, 0]]);
+  it('converges all the way onto the target rather than stalling short of it', () => {
+    // The anti-requirement of pulling through walls: a drop must never lodge against the inside
+    // face of a wall just out of reach. Since the drift is pure position assignment toward the
+    // player's own position, iterating always lands ON the player.
+    let d = { x: 200, y: 0 };
+    const target = { x: 0, y: 0 };
+    for (let i = 0; i < 2000; i++) {
+      const out = magnetPull(d, target, 16, SCRAP_MAGNET);
+      if (!out) break;
+      d = out;
+    }
+    expect(Math.hypot(d.x - target.x, d.y - target.y)).toBeLessThan(1);
   });
 
   // --- the two tuning tables ---
