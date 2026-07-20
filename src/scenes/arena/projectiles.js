@@ -3,7 +3,7 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
@@ -99,6 +99,26 @@ export const ProjectilesMixin = {
         } else if (blend < 1) {
           restoreTurn = p.turn;
           p.turn = p.turn * blend;
+        }
+      }
+      // #377 follow-up — SALVO SEPARATION. A round carrying its own `aimOffset` steers at a
+      // point pushed slightly sideways off the true target (perpendicular to its own line to
+      // it), so the six rounds of a Swarm Rack salvo hold visible separation instead of all
+      // collapsing onto one aim point the moment the seeker goes live. The offset fades to
+      // zero over the converge window (salvoConvergeFalloff — full authority through cruise,
+      // gone before impact), so they tighten onto the real target at the last moment and all
+      // still connect. Applied BEFORE leadAngle so the intercept solution is computed against
+      // the offset point, and left out of `tx/ty` entirely so hit detection is untouched.
+      if (p.aimOffset && homingActive) {
+        const f = salvoConvergeFalloff(p.dist / p.maxDist);
+        if (f > 0) {
+          const dx = hx - p.x, dy = hy - p.y;
+          const len = Math.hypot(dx, dy);
+          if (len > 1e-6) {
+            const off = p.aimOffset * f;
+            hx += (-dy / len) * off;
+            hy += (dx / len) * off;
+          }
         }
       }
       // Steer toward an INTERCEPT point (#77): lead a live moving enemy so the round commits to a

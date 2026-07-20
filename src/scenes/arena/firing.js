@@ -622,7 +622,10 @@ export const FiringMixin = {
     // Homing rounds steer toward `seekTarget` (the lock) each frame. A player round only homes
     // when it actually has a lock; without one it dumb-fires straight. Enemy rounds keep their
     // intrinsic homing (they chase the player downrange).
-    const round = makeProjectile(w.weapon, x, y, angle, { maxDist });
+    // #377 follow-up: `angleOffset` (this shot's own offset off the salvo centre bearing) is
+    // handed through so a fanned salvo can give each round its own late-converging aim offset
+    // — see salvoAimOffset. Every non-fanned caller passes the default 0 and is unaffected.
+    const round = makeProjectile(w.weapon, x, y, angle, { maxDist, angleOffset });
     // #376: a lob now flies at its weapon's own `velocity`, identical at every range (see the
     // constant-horizontal-speed comment above). This block is kept — rather than deleted — so
     // the turn-rate re-derive below still runs for arcing rounds, and so a future per-shot

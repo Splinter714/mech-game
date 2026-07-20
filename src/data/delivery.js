@@ -227,6 +227,50 @@ export function arcLoft(t, profile = 'lob') {
   return cruiseEnd * (0.5 + 0.5 * Math.cos(Math.PI * k));   // abrupt terminal plunge
 }
 
+// ── Salvo separation: converge at the last moment (#377 follow-up) ───────────────────────
+// Jackson, after the speed/arc pass landed: "can we keep slight separation of the individual
+// missiles warbling until last minute they converge on the target?"
+//
+// The cause of the collapse is the seeker, not the launch fan. Swarm Rack sets
+// `homingBlendStart: 0`, so all six rounds have full steering authority by t=0.35 and every
+// one of them resolves onto the SAME aim point almost immediately — the 14° fan and the
+// 'jostle' wobble get erased before they can read, and the salvo flies as a single line.
+//
+// The fix keeps the strong tracking he says feels good (every round IS steering the whole
+// way) and just gives each round its own slightly-offset aim point, which then decays to the
+// true target late. Two pure pieces:
+//
+//   * `salvoAimOffset` — the round's own lateral offset in px, taken from its position in the
+//     launch fan (`angleOffset` / half-cone, a centred −1…+1) times the weapon's
+//     `delivery.salvoSpread`. Deterministic per round, NOT re-rolled per frame — a re-roll
+//     would read as jitter, and warble is the 'jostle' wobble's job. The outermost missile in
+//     the fan aims furthest off, so the salvo holds the shape it launched in.
+//   * `salvoConvergeFalloff` — how much of that offset still applies at flight fraction `t`:
+//     full through the cruise, then a cosine decay to exactly zero over the converge window.
+//     It finishes at `SALVO_CONVERGE_END`, deliberately short of impact, so every round has
+//     real flight left to settle onto the true target and all six still HIT.
+//
+// The window opens with the mortar arc's terminal dive (MORTAR_FALL_START), so the salvo
+// tightening and the rounds falling out of the sky are the same beat.
+export const SALVO_CONVERGE_START = MORTAR_FALL_START;   // 0.80 — offsets hold full until here
+export const SALVO_CONVERGE_END = 0.93;                  // fully converged, with flight left to settle
+
+export function salvoConvergeFalloff(t) {
+  if (t <= SALVO_CONVERGE_START) return 1;
+  if (t >= SALVO_CONVERGE_END) return 0;
+  const k = (t - SALVO_CONVERGE_START) / (SALVO_CONVERGE_END - SALVO_CONVERGE_START);
+  return 0.5 + 0.5 * Math.cos(Math.PI * k);
+}
+
+export function salvoAimOffset(d, angleOffset) {
+  const spread = d.salvoSpread || 0;                     // opt-in per weapon; 0 = off (the default)
+  if (!spread || !angleOffset) return 0;
+  const halfCone = (((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180) / 2;
+  if (!halfCone) return 0;
+  const fanPos = Math.max(-1, Math.min(1, angleOffset / halfCone));   // −1 … +1 across the fan
+  return spread * fanPos;
+}
+
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
 
 // Swarm Rack (#49): all 6 missiles launch at once from the same point but fan out at
@@ -397,7 +441,11 @@ export function emissionCount(delivery, countMult = 1) {
 // Build a round's kinematic state. The caller supplies `maxDist` (its own travel budget:
 // the arena's target/lob distance, the Lab's stage width) and may tack on scene-specific
 // fields (owner, trail) afterward.
-export function makeProjectile(weapon, x, y, angle, { maxDist }) {
+// `angleOffset` (#377 follow-up, optional): this shot's own offset off the salvo's centre
+// bearing — what planEmissions handed the caller for this round of a fanned spread. Only used
+// to derive the round's late-converging aim offset (salvoAimOffset above); a caller that omits
+// it, or a weapon with no `salvoSpread`, gets 0 and the old behaviour exactly.
+export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }) {
   const d = weapon.delivery || {};
   // A jittered-spread weapon (Flamethrower, #46) also gets a per-particle speed variance so
   // the flame front looks ragged/chaotic rather than a uniform wall advancing in lockstep.
@@ -431,6 +479,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.
     arcProfile: d.arcProfile || 'lob',
+    // #377 follow-up: this round's own lateral aim offset (px), fixed for its whole flight and
+    // faded out late by salvoConvergeFalloff — see salvoAimOffset above. 0 for every weapon
+    // that doesn't opt in via `delivery.salvoSpread`.
+    aimOffset: salvoAimOffset(d, angleOffset),
     // Turn rate is derived from speed (#77) so the round can always corner within a fixed radius
     // instead of orbiting a target it's too fast to turn onto. Arcing lobs override `speed` after
     // this (firing.js) and re-derive `turn` from the new speed (passing the same per-weapon

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, MORTAR_RISE_END, MORTAR_FALL_START } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, MORTAR_RISE_END, MORTAR_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START, SALVO_CONVERGE_END } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -943,5 +943,92 @@ describe('#377 arc loft profiles', () => {
      expect(arcHomingBlend(MORTAR_FALL_START, start)).toBe(1);
      expect(arcHomingBlend(start + HOMING_BLEND_SPAN, start)).toBe(1);
      expect(start + HOMING_BLEND_SPAN).toBeLessThan(MORTAR_FALL_START);
+  });
+});
+
+// ── #377 follow-up: the salvo holds separation, then converges late ───────────────────────
+// Jackson: "can we keep slight separation of the individual missiles warbling until last
+// minute they converge on the target?" The rounds keep full steering authority throughout —
+// they just steer at slightly different points until the terminal dive.
+describe('#377 follow-up — salvo separation with a late converge', () => {
+  const swarm = WEAPONS.swarmRack.delivery;
+  const halfCone = ((swarm.spreadAngle * Math.PI) / 180) / 2;
+
+  it('offsets a round by its own position in the launch fan — outermost furthest off, ' +
+     'opposite sides of the fan offset opposite ways, centre unoffset', () => {
+    expect(salvoAimOffset(swarm, halfCone)).toBeCloseTo(swarm.salvoSpread, 6);
+    expect(salvoAimOffset(swarm, -halfCone)).toBeCloseTo(-swarm.salvoSpread, 6);
+    expect(salvoAimOffset(swarm, 0)).toBe(0);
+    // An inner round of the fan sits proportionally closer to the true aim point.
+    expect(Math.abs(salvoAimOffset(swarm, halfCone * 0.2)))
+      .toBeLessThan(Math.abs(salvoAimOffset(swarm, halfCone * 0.6)));
+  });
+
+  it('is opt-in per weapon: no salvoSpread means no offset at all (every other weapon)', () => {
+    for (const id of ['streakPod', 'napalm', 'plasmaCannon', 'clusterRocket']) {
+      expect(WEAPONS[id].delivery.salvoSpread).toBeUndefined();
+      expect(salvoAimOffset(WEAPONS[id].delivery, 0.3)).toBe(0);
+    }
+  });
+
+  it('the whole salvo spans a SLIGHT separation — real, but nowhere near the 44° fan #376 ' +
+     'removed', () => {
+    const extremes = salvoAimOffset(swarm, halfCone) - salvoAimOffset(swarm, -halfCone);
+    expect(extremes).toBeGreaterThan(40);    // visible
+    expect(extremes).toBeLessThan(120);      // still one clump, not a wall
+  });
+
+  it('holds full separation through the whole cruise, and starts converging exactly when the ' +
+     'mortar arc starts its dive', () => {
+    for (const t of [0, 0.2, 0.5, 0.7, SALVO_CONVERGE_START]) {
+      expect(salvoConvergeFalloff(t)).toBe(1);
+    }
+    expect(SALVO_CONVERGE_START).toBe(MORTAR_FALL_START);
+    expect(salvoConvergeFalloff(SALVO_CONVERGE_START + 0.01)).toBeLessThan(1);
+  });
+
+  it('converges to EXACTLY zero, and does so before impact so the rounds still connect', () => {
+    expect(salvoConvergeFalloff(SALVO_CONVERGE_END)).toBe(0);
+    expect(salvoConvergeFalloff(0.99)).toBe(0);
+    expect(salvoConvergeFalloff(1)).toBe(0);
+    expect(SALVO_CONVERGE_END).toBeLessThan(1);   // settle time left over — reliability
+  });
+
+  it('decays monotonically once it starts (tightening in, never re-spreading)', () => {
+    let prev = Infinity;
+    for (let t = SALVO_CONVERGE_START; t <= 1; t += 0.005) {
+      const f = salvoConvergeFalloff(t);
+      expect(f).toBeLessThanOrEqual(prev + 1e-9);
+      prev = f;
+    }
+  });
+
+  it('makeProjectile stamps the offset per round from its own angleOffset, and defaults to ' +
+     '0 for a caller that passes none', () => {
+    const outer = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900, angleOffset: halfCone });
+    const inner = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900, angleOffset: -halfCone });
+    expect(outer.aimOffset).toBeCloseTo(48, 6);
+    expect(inner.aimOffset).toBeCloseTo(-48, 6);
+    expect(makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900 }).aimOffset).toBe(0);
+    // A weapon that never opted in gets 0 even when it IS fanned.
+    expect(makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 900, angleOffset: 0.2 }).aimOffset).toBe(0);
+  });
+
+  it('the six rounds of one real salvo get six DISTINCT offsets, symmetric about the aim ' +
+     'line, none exceeding the tuned spread', () => {
+    const { shots } = planEmissions(WEAPONS.swarmRack);
+    const offsets = shots.map((s) => salvoAimOffset(swarm, s.angleOffset));
+    expect(offsets.length).toBe(6);
+    expect(new Set(offsets).size).toBe(6);
+    expect(offsets.reduce((a, b) => a + b, 0)).toBeCloseTo(0, 6);   // symmetric
+    for (const o of offsets) expect(Math.abs(o)).toBeLessThanOrEqual(swarm.salvoSpread + 1e-9);
+    // ...and the extremes really are the tuned spread, so the salvo uses its full width.
+    expect(Math.max(...offsets)).toBeCloseTo(swarm.salvoSpread, 6);
+  });
+
+  it('does NOT touch homing authority — the seeker is live from the muzzle exactly as #377 ' +
+     'left it, since Jackson said tracking already feels good', () => {
+    expect(WEAPONS.swarmRack.delivery.homingBlendStart).toBe(0);
+    expect(arcHomingBlend(0.5, 0)).toBe(1);
   });
 });

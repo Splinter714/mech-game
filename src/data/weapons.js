@@ -416,7 +416,17 @@ export const WEAPONS = {
     //     The seeker ramp is unaffected and does not desync: homingBlendStart 0 + the 0.35
     //     span means steering is fully live by t=0.35 — inside the flat cruise, well before
     //     the terminal dive at t=0.80 — so the round is done correcting when it drops.
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 500, wobble: 'jostle', path: 'arcing', homingBlendStart: 0, arcProfile: 'mortar' },
+    // #377 follow-up: salvoSpread 48. "Can we keep slight separation of the individual
+    // missiles warbling until last minute they converge on the target?" With
+    // homingBlendStart 0 all six rounds resolved onto one aim point almost immediately and
+    // the salvo read as a single line — the fan and the jostle wobble were being erased by
+    // the seeker, not by anything wrong with the fan. Each round now steers at a point up to
+    // 48px to the side of the true target (which side, and how far, follows its own position
+    // in the launch fan, so the salvo holds its shape), and that offset decays to zero across
+    // t=0.80 -> 0.93 — the same beat as the mortar dive, with flight left over to settle so
+    // all six still connect. Tracking authority itself is UNTOUCHED: he said tracking feels
+    // good, so the rounds steer just as hard as before, only at slightly different points.
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 500, wobble: 'jostle', path: 'arcing', homingBlendStart: 0, arcProfile: 'mortar', salvoSpread: 48 },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',

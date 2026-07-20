@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ProjectilesMixin } from './projectiles.js';
 import { WEAPONS } from '../../data/weapons.js';
-import { makeProjectile } from '../../data/delivery.js';
+import { makeProjectile, planEmissions } from '../../data/delivery.js';
 
 function makeEnemy(id, x, y, destroyed = false) {
   return { id, x, y, vx: 0, vy: 0, mech: { isDestroyed: () => destroyed } };
@@ -187,5 +187,70 @@ describe('_buildEnemyIndex().nearest matches a brute-force nearest scan (#168)',
         expect(got).toBe(want);   // object identity — same handle, not merely same position
       }
     }
+  });
+});
+
+// #377 follow-up — "keep slight separation of the individual missiles warbling until last
+// minute they converge on the target." The pure curves are unit-tested in delivery.test.js;
+// what matters HERE is the emergent flight behaviour of a whole real salvo: does it actually
+// stay spread through the cruise, does it actually tighten at the end, and — the thing that
+// would ruin the change — does every round still land on the target?
+describe('#377 follow-up: a Swarm Rack salvo separates in flight and converges late', () => {
+  // Fire a real 6-round Swarm Rack salvo at a stationary enemy and record, each frame, how far
+  // apart the outermost rounds are and how far along their flight they are.
+  const flySalvo = (target, maxDist) => {
+    const { shots } = planEmissions(WEAPONS.swarmRack);
+    const rounds = shots.map((s) => {
+      const r = makeProjectile(WEAPONS.swarmRack, 0, 0, s.angleOffset, { maxDist, angleOffset: s.angleOffset });
+      r.owner = 'player';
+      r.seekTarget = target;
+      r.trail = [];
+      return r;
+    });
+    const { scene, damaged } = makeScene({ enemies: [target], projectiles: [...rounds] });
+    const samples = [];
+    for (let i = 0; i < 2000 && scene.projectiles.length; i++) {
+      const live = scene.projectiles;
+      const t = Math.max(...live.map((p) => p.dist / p.maxDist));
+      const xs = live.map((p) => p.x), ys = live.map((p) => p.y);
+      const width = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      samples.push({ t, width, live: live.length });
+      scene._updateProjectiles(0.016);
+    }
+    return { samples, damaged };
+  };
+
+  const widthNear = (samples, t) =>
+    samples.reduce((best, s) => (Math.abs(s.t - t) < Math.abs(best.t - t) ? s : best)).width;
+
+  it('holds a visible gap between the missiles through the cruise, then tightens to nearly ' +
+     'nothing by the time they arrive', () => {
+    const { samples } = flySalvo(makeEnemy('t', 900, 0), 900);
+    const cruise = widthNear(samples, 0.6);
+    const arrival = samples[samples.length - 1].width;
+    expect(cruise).toBeGreaterThan(30);          // genuinely separated mid-flight
+    expect(arrival).toBeLessThan(cruise * 0.5);  // and genuinely converged by the end
+  });
+
+  it('every one of the six still HITS — a late converge must not turn the salvo into a ' +
+     'scatter of misses', () => {
+    const { damaged } = flySalvo(makeEnemy('t', 900, 0), 900);
+    expect(damaged.filter((d) => d.target === 't').length).toBe(6);
+  });
+
+  it('still converges reliably at short range, where there is far less flight to settle in', () => {
+    const { damaged } = flySalvo(makeEnemy('t', 320, 0), 320);
+    expect(damaged.filter((d) => d.target === 't').length).toBe(6);
+  });
+
+  it('leaves a weapon that never opted in flying exactly as it did — a Streak Pod volley is ' +
+     'not spread by this at all', () => {
+    const target = makeEnemy('t', 900, 0);
+    const { shots } = planEmissions(WEAPONS.streakPod);
+    for (const s of shots) {
+      const r = makeProjectile(WEAPONS.streakPod, 0, 0, s.angleOffset, { maxDist: 900, angleOffset: s.angleOffset });
+      expect(r.aimOffset).toBe(0);
+    }
+    expect(target.id).toBe('t');
   });
 });
