@@ -289,7 +289,9 @@ export default class ArenaScene extends Phaser.Scene {
     // to draw a full readout for each of them. Republished every frame, so a mid-sortie START
     // join appears in it (and therefore on the HUD) the frame the joiner lands. `playerWorld`
     // above stays primary-only; `playerWorlds` is its per-player twin for the minimap markers.
-    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p, DASH_COOLDOWN)));
+    // #368: the snapshot now also carries each player's own lock point, so it is published
+    // BELOW, right after `_updateLock` has picked this frame's targets — publishing it here
+    // would hand the HUD a one-frame-stale chevron position.
     this.registry.set('playerWorlds', this.players.map((p) => ({
       x: p.x, y: p.y, angle: p.turretAngle, color: p.color, dead: !!p.dead,
     })));
@@ -353,8 +355,14 @@ export default class ArenaScene extends Phaser.Scene {
     // `objectiveWorld` above. Reuses `_lockAimPoint()` (targeting.js), the same query the
     // homing/reticle code already reads, so the arrow can never disagree with what's actually
     // targeted (hides itself the instant the target dies or there's no target, same as that query).
+    // #368: the per-player twin is `hudPlayers[i].lock` (published above via hudPlayerSnapshot),
+    // which is what the HUD actually draws chevrons from now. This singleton stays as the
+    // primary-only fallback for the pre-`hudPlayers` path (see HudScene `_playerSnapshots`).
     const lockPt = this._lockAimPoint();
     this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
+    // #366/#368: the per-player HUD snapshot — panels AND off-screen lock chevrons — published
+    // here so each player's `lock` is this frame's pick, not last frame's.
+    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p, DASH_COOLDOWN)));
     for (const player of this.players) this._stepGait(dt, player);
     this._updatePlayerMarkers();   // #348: keep each identifying ring under its own mech
     for (const player of this.players) {

@@ -114,6 +114,18 @@ export function panelStatusText(snapshot) {
   return `DOWN — RESPAWN ${(r.remainingMs / 1000).toFixed(1)}s`;
 }
 
+// #368: the world point of a player's OWN current lock target, as a plain `{x,y}` copy (or null
+// when there is no target / it just died). Mirrors targeting.js `_lockAimPoint`'s liveness rule
+// exactly — the difference is deliberate: that one hands back the LIVE enemy handle because homing
+// rounds must keep following it, while the HUD only ever wants this frame's position, and copying
+// keeps the published snapshot free of scene internals.
+export function lockPointOf(p) {
+  const t = p?.convergeTarget;
+  if (!t) return null;
+  if (t.mech && t.mech.isDestroyed()) return null;
+  return { x: t.x, y: t.y };
+}
+
 // The per-frame snapshot ONE player publishes to the HUD. Everything the HUD needs about a
 // player and nothing else, so the HUD never reaches into scene internals (and so a test can
 // build one by hand). Pure — the caller passes the dash cooldown maximum.
@@ -123,6 +135,9 @@ export function hudPlayerSnapshot(p, dashCooldownMax) {
     color: p.color,
     mech: p.mech,
     dead: !!p.dead,
+    // #368: each player's own off-screen lock chevron rides this same channel rather than a
+    // second parallel one — the count-change rebuild in HudScene then covers the chevrons too.
+    lock: lockPointOf(p),
     dash: {
       active: !!p.dash?.active,
       cooldown: p.dash?.cooldown ?? 0,

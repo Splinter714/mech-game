@@ -7,7 +7,8 @@
 //  2. A downed player's panel says what it is waiting on rather than sitting at a stale zero.
 import { describe, it, expect } from 'vitest';
 import {
-  hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, hudPlayerSnapshot, HUD_COLUMN_W,
+  hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, hudPlayerSnapshot, lockPointOf,
+  HUD_COLUMN_W,
 } from './hudLayout.js';
 
 const W = 1280;
@@ -180,5 +181,38 @@ describe('hudPlayerSnapshot — what each player publishes to the HUD', () => {
     const s = hudPlayerSnapshot({ id: 0, color: 1, mech: null }, 4);
     expect(s.dash).toEqual({ active: false, cooldown: 0, max: 4 });
     expect(s.respawn).toBe(null);
+  });
+});
+
+// #368 — the off-screen lock chevron is per player now, so each player's own target point rides
+// its own HUD snapshot. `lockPointOf` is the pure half of that.
+describe('lockPointOf — one player\'s own lock target', () => {
+  it('is null with no target at all', () => {
+    expect(lockPointOf({ id: 0 })).toBe(null);
+    expect(lockPointOf(null)).toBe(null);
+  });
+
+  it('is a static target\'s point', () => {
+    expect(lockPointOf({ convergeTarget: { x: 300, y: -120 } })).toEqual({ x: 300, y: -120 });
+  });
+
+  it('is a live enemy\'s CURRENT position, copied rather than aliased', () => {
+    const enemy = { x: 10, y: 20, mech: { isDestroyed: () => false } };
+    const pt = lockPointOf({ convergeTarget: enemy });
+    expect(pt).toEqual({ x: 10, y: 20 });
+    expect(pt).not.toBe(enemy);
+    enemy.x = 999;
+    expect(pt.x).toBe(10);   // the published snapshot is this frame's, not a live handle
+  });
+
+  it('goes null the moment the targeted enemy dies — the chevron hides itself', () => {
+    const enemy = { x: 10, y: 20, mech: { isDestroyed: () => true } };
+    expect(lockPointOf({ convergeTarget: enemy })).toBe(null);
+  });
+
+  it('is what hudPlayerSnapshot publishes as `lock`', () => {
+    const s = hudPlayerSnapshot({ id: 1, color: 2, mech: null, convergeTarget: { x: 7, y: 8 } }, 4);
+    expect(s.lock).toEqual({ x: 7, y: 8 });
+    expect(hudPlayerSnapshot({ id: 0, color: 1, mech: null }, 4).lock).toBe(null);
   });
 });

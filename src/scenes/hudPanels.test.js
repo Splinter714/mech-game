@@ -214,3 +214,115 @@ describe('HudScene panels — per player readouts', () => {
     expect(scene.panels[1].skillBar.visible).toBe(false);
   });
 });
+
+// ── #368: the off-screen lock chevron, per player ────────────────────────────────────────────
+//
+// The bug: `lockWorld` was published from the primary player only, so player 2 got no off-screen
+// indicator for their own target. The fix rides the same `hudPlayers` snapshot array the panels
+// do. What is pinned here is (1) SOLO IS UNCHANGED — one chevron, today's colour, today's
+// margins, written as RAW NUMBERS rather than re-derived from the module — and (2) co-op paints
+// one per player, in each player's own colour.
+
+const LOCK_RETICLE_COLOR = 0xe2533a;   // deliberately a literal: solo must keep exactly this
+
+// Records what `_paintEdgeIndicator` was asked to draw, so a test can read off the chevrons.
+function lockScene(hudPlayers) {
+  const { scene, registry } = fakeScene(hudPlayers);
+  scene._syncPanels();                       // builds `_layout`, which the margins come from
+  let cleared = 0;
+  scene.lockWayGfx = stub({ kind: 'graphics' });
+  scene.lockWayGfx.clear = () => { cleared++; return scene.lockWayGfx; };
+  scene._tileTop = 700;
+  scene.wayMargins = { top: 116, right: 24, bottom: 800 - 700 + 12, left: 24 };
+  scene.lockWayMargins = {
+    top: scene.wayMargins.top + 16, right: scene.wayMargins.right + 16,
+    bottom: scene.wayMargins.bottom + 16, left: scene.wayMargins.left + 16,
+  };
+  const painted = [];
+  // Mirrors the real `_paintEdgeIndicator`'s early return: no point means no chevron drawn.
+  scene._paintEdgeIndicator = (g, point, margin, color) => {
+    if (point) painted.push({ g, point, margin, color });
+  };
+  return { scene, registry, painted, clears: () => cleared };
+}
+
+function withLock(id, lock, extra = {}) {
+  return { ...snap(id, extra), lock };
+}
+
+describe('HudScene lock chevron — solo is byte-identical', () => {
+  it('paints exactly one chevron, at today\'s point, colour and margins (raw numbers)', () => {
+    const { scene, painted } = lockScene([withLock(0, { x: 4000, y: -250 })]);
+    scene._updateLockArrow(scene._playerSnapshots());
+
+    expect(painted).toHaveLength(1);
+    expect(painted[0].point).toEqual({ x: 4000, y: -250 });
+    expect(painted[0].color).toBe(0xe2533a);            // NOT the player-1 palette colour
+    expect(painted[0].margin).toEqual({ top: 132, right: 40, bottom: 128, left: 40 });
+    expect(painted[0].g).toBe(scene.lockWayGfx);
+  });
+
+  it('clears the layer every frame, and paints nothing with no target', () => {
+    const { scene, painted, clears } = lockScene([withLock(0, null)]);
+    scene._updateLockArrow(scene._playerSnapshots());
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(clears()).toBe(2);
+    expect(painted).toHaveLength(0);
+  });
+
+  it('still draws from the pre-hudPlayers singleton channel when that is all there is', () => {
+    const { scene, registry, painted } = lockScene(null);
+    registry.set('playerMech', new Mech({ chassisId: 'medium' }));
+    registry.set('lockWorld', { x: 12, y: 34 });
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted).toHaveLength(1);
+    expect(painted[0].point).toEqual({ x: 12, y: 34 });
+    expect(painted[0].color).toBe(0xe2533a);
+  });
+});
+
+describe('HudScene lock chevron — co-op', () => {
+  it('paints one chevron PER PLAYER, each at its own target', () => {
+    const { scene, painted } = lockScene([
+      withLock(0, { x: 100, y: 100 }),
+      withLock(1, { x: -900, y: 50 }),
+    ]);
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted.map((p) => p.point)).toEqual([{ x: 100, y: 100 }, { x: -900, y: 50 }]);
+  });
+
+  it('colours them per player once there is somebody to be told apart from', () => {
+    const { scene, painted } = lockScene([
+      withLock(0, { x: 100, y: 100 }),
+      withLock(1, { x: -900, y: 50 }),
+    ]);
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted.map((p) => p.color)).toEqual([PLAYER_COLORS[0], PLAYER_COLORS[1]]);
+    expect(painted[0].color).not.toBe(LOCK_RETICLE_COLOR);
+  });
+
+  it('draws only the player who HAS a target', () => {
+    const { scene, painted } = lockScene([withLock(0, null), withLock(1, { x: -900, y: 50 })]);
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted).toHaveLength(1);
+    expect(painted[0].color).toBe(PLAYER_COLORS[1]);
+  });
+
+  it('drops a downed player\'s chevron — they have no live pick', () => {
+    const down = withLock(1, { x: -900, y: 50 }, { dead: true, respawn: { remainingMs: 9000 } });
+    const { scene, painted } = lockScene([withLock(0, { x: 100, y: 100 }), down]);
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted).toHaveLength(1);
+    expect(painted[0].point).toEqual({ x: 100, y: 100 });
+  });
+
+  it('picks up a mid-sortie joiner\'s chevron the frame they land', () => {
+    const { scene, registry, painted } = lockScene([withLock(0, { x: 100, y: 100 })]);
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted).toHaveLength(1);
+    registry.set('hudPlayers', [withLock(0, { x: 100, y: 100 }), withLock(1, { x: -900, y: 50 })]);
+    scene._syncPanels();
+    scene._updateLockArrow(scene._playerSnapshots());
+    expect(painted).toHaveLength(3);   // 1 from the solo frame + 2 from the co-op frame
+  });
+});

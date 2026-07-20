@@ -15,7 +15,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 // #224 (temporary): WEAPON_TRAJECTORY_SOUNDS_ENABLED gates the in-flight trajectory loop
 // below — see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../../audio/fireCues.js';
-import { updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
+import { updateSprintFuel } from '../../data/sprint.js';
 import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
 import { targetHexKeyOf } from './shared.js';
 import { targetCoverExempt } from '../../data/visibility.js';
@@ -137,12 +137,12 @@ export const FiringMixin = {
     // expiry handoff.
     if (player.sprint.active && !wasActive) Audio.ui('sprintOn');
     else if (!player.sprint.active && wasActive) Audio.ui('sprintOff');
-    // #348: the HUD is the LOCAL player's HUD, so only the primary publishes to it.
-    if (player === primaryPlayerOf(this)) {
-      this.registry.set('sprintActive', player.sprint.active);
-      this.registry.set('sprintFuel', player.sprint.fuel);
-      this.registry.set('sprintFuelMax', SPRINT_FUEL_MAX);
-    }
+    // #368: the `sprintActive`/`sprintFuel`/`sprintFuelMax` publishes that used to sit here are
+    // GONE rather than made per-player. Nothing has read them since the HUD's sprint gauge was
+    // removed, and #343 deleted the player-facing Sprint controls entirely (Sprint is now an
+    // Overclock side effect, never something the player drives), so a per-player channel would
+    // just be dead weight in a co-op shape. The state itself still lives on `player.sprint`,
+    // which is where locomotion reads it.
   },
 
   // ── Dash (#261) ── a hardcoded, always-available ability on L3/Space — replaces the old
