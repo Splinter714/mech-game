@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Mech } from './Mech.js';
-import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from './enemies.js';
+import * as enemiesModule from './enemies.js';
+import { ENEMIES, ENEMY_ROTATION } from './enemies.js';
 import { CHASSIS_IDS } from './chassis/index.js';
 
 // #272: artillery/Mortarhead is meant to be an entrenched siege unit whose ENTIRE loadout is
@@ -79,13 +80,19 @@ describe('ENEMIES — mech archetype chassis assignment (#273)', () => {
     expect(shared).toEqual([2]); // exactly one chassis id used by exactly 2 archetypes
   });
 
-  it('ENEMY_ROTATION and DEFAULT_SQUAD still only reference real ENEMIES/kind ids (no typos from the edit)', () => {
+  it('ENEMY_ROTATION still only references real ENEMIES/kind ids (no typos from the edit)', () => {
     // Loose sanity check, not an exhaustive kind registry cross-check — just confirms the
     // archetype ids touched by this change (raider/skirmisher/sniper/artillery) still appear.
     for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
       expect(ENEMY_ROTATION).toContain(id);
     }
-    expect(DEFAULT_SQUAD).toContain('raider');
-    expect(DEFAULT_SQUAD).toContain('sniper');
+  });
+
+  // #344: `DEFAULT_SQUAD` was documented as retired in two files while still being exported AND
+  // still wired as `_spawnSquad`'s default argument. Traced: `_spawnSquad` had no call sites, so
+  // the table was genuinely dead and both it and the method were deleted. Guard the deletion so a
+  // future edit can't quietly reintroduce a second, unreachable opening-difficulty table.
+  it('DEFAULT_SQUAD is gone (#344 — dead opening-squad table, no call sites)', () => {
+    expect(enemiesModule.DEFAULT_SQUAD).toBeUndefined();
   });
 });

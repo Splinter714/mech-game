@@ -116,16 +116,16 @@ export default class ArenaScene extends Phaser.Scene {
 
     // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
     // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
-    // #254: moved here (was previously reset much later in create(), after `_spawnSquad()`
+    // #254: moved here (was previously reset much later in create(), after the opening spawn
     // below) — a spawn-time FX flourish (called from `_spawnKind` for every gunship in the
     // opening squad, #251-era; the helipad terrain that flourish was themed around has since
-    // been removed, #275) calls `_burst`/`_acquireImpactCircle` DURING `_spawnSquad()`,
+    // been removed, #275) calls `_burst`/`_acquireImpactCircle` DURING the opening spawn,
     // so on a Garage->Arena->Garage->Arena second deploy (ArenaScene is the same reused Scene
     // instance — see the #190 comment on `_debrisPool` below) that first burst was still reading
     // the FIRST session's stale `_impactPool`, recycling one of its destroyed Arc/Circle game
     // objects and throwing "Cannot set properties of null (setting 'radius')" the moment
     // `.setRadius()` touched its nulled-out internals. The reset must happen before anything in
-    // create() can call `_burst`, and `_spawnSquad()` is the earliest such call.
+    // create() can call `_burst`, and the opening spawn is the earliest such call.
     this._impactPool = [];
     this._impactRR = 0;
     this._impactSoundAt = {};
@@ -230,7 +230,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
-    // #254: the `_impactPool`/`_debrisPool` reset moved up above (before `_spawnSquad()`) — see
+    // #254: the `_impactPool`/`_debrisPool` reset moved up above (before the opening spawn) — see
     // the comment there for why. Nothing left to reset in this spot.
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
     this._initSalvage();                  // #65: SCRAP pickups dropped by destroyed enemies

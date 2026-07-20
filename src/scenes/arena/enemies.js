@@ -21,7 +21,7 @@
 // (LOS-gated, with lead) is preserved. Everything is gated by this.enemyMove / this.enemyFire.
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
-import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
+import { ENEMIES, ENEMY_ROTATION } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { allPlayersDeadIn, enemyTargetOf, listenerOf, targetPlayerFor } from './players.js';
 // #305: the multi-weapon seam. A kind may declare several weapon SLOTS; the behaviour names the
@@ -470,22 +470,12 @@ export const EnemiesMixin = {
     e.standDownGoal = null;       // #304: cached withdrawal point — transient, re-resolved on demand
   },
 
-  // #44 follow-up: the default opening squad — one of each mech type — dropped OFF-SCREEN so
-  // they walk into view and engage per their AI (the bombardier heads for cover, the brawler
-  // closes, etc.). Called once from ArenaScene.create() in place of the old single fixed spawn.
-  _spawnSquad(types = DEFAULT_SQUAD) {
-    for (const typeId of types) {
-      const p = this._offscreenSpawnPoint(typeId);
-      this._spawnEnemy(p.x, p.y, typeId);
-    }
-  },
-
   // A spawn point OUTSIDE the current camera viewport but inside the world disc, on a random
   // bearing from the player — so the enemy starts unseen and walks in. The camera follows the
   // player, so "off-view" is a radius from the player: half the visible world rect's diagonal,
   // plus OFFSCREEN_MARGIN. The viewport size in world units is the canvas size (game.scale)
   // divided by the camera's actual zoom. We read `cameras.main.zoom` (set synchronously in
-  // ArenaScene.create() before `_spawnSquad()` runs, so it's valid here) rather than the raw
+  // ArenaScene.create() before any spawn runs, so it's valid here) rather than the raw
   // `dpr`: #149 gave the arena its own `zoomFactor` on top of dpr (GAMEPLAY_ZOOM, arena/shared.js)
   // — before that, dpr and the camera's zoom were always the same number, so reading either
   // worked, but they can now diverge, and this math needs the REAL effective zoom to size the

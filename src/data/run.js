@@ -1,8 +1,11 @@
 // Run model (#64, reworked #269) — pure roguelite run-loop state, no Phaser.
 //
 // #269 (issue: base population rework) RETIRES the old fixed 5-stage squad-draw system
-// entirely: `squadForStage`/`DEFAULT_SQUAD`/`EARLY_POOL`/`LATE_POOL`/`STAGE_COUNT`/
+// entirely: `squadForStage`/`EARLY_POOL`/`LATE_POOL`/`STAGE_COUNT`/
 // `SQUAD_BASE`/`SQUAD_GROWTH`/`lateFraction`/`stageDescriptor`/`advanceStage` are all GONE.
+// (#344: enemies.js's `DEFAULT_SQUAD` and its `_spawnSquad()` consumer outlived this note as a
+// genuinely dead path — exported and wired as a default arg, but never called. Both now deleted,
+// so this paragraph's list is finally true of everything it names.)
 // Enemies are no longer squad-dropped off-camera near the player on mission-complete — they're
 // placed once, at world-gen time, dormant, inside real bases (data/worldgen.js `placeBases`),
 // woken by an alert tower's countdown (data/alertTower.js, scenes/arena/bases.js). There is no

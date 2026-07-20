@@ -136,27 +136,12 @@ export const ENEMY_ROTATION = [
   'carrier',
 ];
 
-// The default opening squad (#44 / #68 / #75 / #89): a mix of mechs and non-mech units so the
-// arena shows off the whole bestiary from the first frames. #89 rebalances this toward the
-// playtest ask "mechs less common, more helicopters/tanks, turrets in clusters" — non-mech units
-// are now the clear MAJORITY (6 of 8 entries) and mechs a minority (raider + sniper). Index 0
-// stays a mech (Raider) so the smoke test's mech-specific per-part damage assertions remain
-// meaningful. Order is the spawn order; the arena drops each just off-screen and they move in
-// per their AI (turrets just sit and guard).
-// #97: 'infantryMob' appended — the opening squad now shows off the new ground-swarm kind
-// alongside the drone swarm/turret nest. Profiled with the rest of the opening squad concurrent
-// (see #97 report) before landing on INFANTRY_MOB_SIZE; dial the mob size back if a future
-// profile run shows this combination doesn't hold ~60fps.
-// #239 (temporary): 'infantryMob' pulled back OUT of the opening squad while Jackson plans a
-// redesign of the kind — see the matching #239 note on ENEMY_ROTATION above. enemyKinds.js's
-// definition/art/behavior are untouched, so re-adding it here later is a one-line change.
-// #234: 'carrier' (the Broodhauler) is deliberately NOT added here. Per its own comments
-// (data/enemyKinds.js), it's framed as "tougher than a tank but well under a full mech's pool" —
-// a rarer, tougher escalation unit, not an opener. It got its real fix in ENEMY_ROTATION above
-// (regular-but-not-common cadence across a run); it also had a rare LATE_POOL slot at the time,
-// since retired with the rest of the squad-draw system by #269 (data/run.js). Every opening squad
-// seeing it would overexpose a unit meant to read as a
-// mid/late-run surprise.
-export const DEFAULT_SQUAD = [
-  'raider', 'helicopter', 'tank', 'turretNest', 'helicopter', 'tank', 'swarm', 'sniper',
-];
+// #344 (2026-07-19): `DEFAULT_SQUAD` — the old opening-squad table (#44/#68/#75/#89) — is GONE,
+// along with `scenes/arena/enemies.js`'s `_spawnSquad()` that it was the default argument of.
+// The contradiction the issue flagged (worldgen.js/run.js both calling it "retired" while it was
+// still exported and still wired as a default arg) resolved in favour of the comments: traced the
+// whole tree and `_spawnSquad` had ZERO call sites — #269 replaced the opening squad with
+// `_spawnDormantUnits` (bases.js), so nothing has spawned from this table since. What spawns at
+// run start is a base's dormant docks (`BASE_EARLY_KIND_POOL`/`dockCountFor`, data/worldgen.js)
+// plus the alert-tower patrols (`towerPatrolComposition`, same file) — that is where opening
+// difficulty is tuned, and now the only place.

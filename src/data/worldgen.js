@@ -26,7 +26,9 @@ import {
 import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory } from './terrain.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
-// stage/squad system, data/run.js's now-retired `squadForStage`/`DEFAULT_SQUAD`): enemies are no
+// stage/squad system, data/run.js's retired `squadForStage`, and data/enemies.js's `DEFAULT_SQUAD`
+// opening-squad table — the latter finally DELETED by #344, which confirmed by call-site trace
+// that nothing had spawned from it since this rework): enemies are no
 // longer squad-dropped off-camera near the player on mission-complete — they're placed once,
 // here, at world-gen time, dormant, inside a handful of real bases.
 //
@@ -110,7 +112,11 @@ export const DOCKS_PER_BASE_MAX = 8;
 // the "redundant with the carrier's own drone-deploy" problem #269 was solving; it's a set-piece
 // burst, not a lone escort. `'infantry'` joins for the same reason (infantry are already live in
 // every run via the alert-tower patrol, scenes/arena/bases.js `TOWER_PATROL_KIND_ID` — this adds
-// nothing that was switched off; #239 only ever disabled the 28-strong `infantryMob`).
+// nothing that was switched off; #239 only ever disabled the 28-strong `infantryMob`). (#357 later
+// made the tower patrol a MIXED, escalating force rather than pure infantry — see
+// `towerPatrolComposition` below — so "infantry are live in every run" now holds only for the
+// early towers. The point still stands: tier 0 is unchanged five infantry, so an infantry dock
+// still adds no kind the player wasn't already meeting.)
 //
 // WEIGHTING (#314, deliberate, and measured — see below): both swarm kinds are ONE entry each
 // against tank ×8 / helicopter ×8, i.e. ~1/18 of early draws apiece. A swarm dock is worth 10x a
@@ -206,6 +212,62 @@ export function dockCountFor(kindId, rng) {
 export function baseLateFraction(baseIndex, baseCount) {
   if (baseCount <= 1) return 0;
   return baseIndex / (baseCount - 1);
+}
+
+// #357 (Jackson 2026-07-19: "the patrols should be more than just infantry, maybe add tanks,
+// light mech, a few drones, 1 helicopter, or broodthing, depending on how far we are into the run
+// (like which number alert tower we're on)"): a tower patrol's COMPOSITION, keyed off which
+// alert tower along the run it guards. `placeGapTowers` pushes one tower per gap in corridor
+// order (gap 0 = spawn→base 0, and so on), so a tower's array INDEX already IS "which number
+// alert tower we're on" — no new progression state needed, and it reuses `baseLateFraction`'s
+// existing 0→1 run-progress shape rather than inventing a second escalation curve.
+//
+// FOUR TIERS, quartiles of that 0→1 fraction (`min(3, floor(f * 4))`, so the last tower's f == 1
+// clamps into the top tier instead of falling off the end). Count-agnostic: it reads the same
+// early→late ramp whether a run has 5 towers (today, one per base — BASE_COUNT) or some other
+// number later.
+//
+// The tiers (the playtest dial — every number here is meant to be tuned by play, not defended):
+//   0  infantry x5                                          the unchanged #269 opener
+//   1  infantry x5, tank                                    armour arrives
+//   2  infantry x4, tank x2, drone x3                       air joins; the drones make it mobile
+//   3  infantry x4, tank x2, drone x3, helicopter, raider    the gunship + a light mech
+//
+// SIZE GROWS TOO, not just composition (5 → 6 → 9 → 11). The issue explicitly left this open;
+// escalating only the mix would have made a late patrol a *different* five-unit fight rather than
+// a bigger one, which doesn't read as "further into the run" while driving past it. The ceiling
+// stays deliberately under a base's own population (5-8 docks, several of them swarm-sized) so
+// #269's "a patrol is clearly lighter than a base fight" framing survives the growth.
+//
+// 'raider' is the LIGHT MECH Jackson named — a full `ENEMIES` loadout id, not an ENEMY_KINDS id.
+// That's fine: the spawn side goes through `_spawnEnemy`'s existing `isEnemyKind` dispatcher
+// (scenes/arena/bases.js `_spawnTowerPatrols`), the same predicate the dock system already uses
+// to route mech-vs-kind, so no patrol-specific spawn plumbing exists.
+//
+// THE CARRIER IS DELIBERATELY OMITTED, though Jackson listed "broodthing". Since #328 the carrier
+// is UNARMED and its lifetime deploy cap is gone, so it is now an INFINITE drone source. In a base
+// that's fine — the base fight has a clearable objective that ends it. A patrol has no objective:
+// it sits in the calm gap between bases, and a carrier there would turn a fixed roadside fight
+// into an unbounded drone tap the player must either fully kill or outrun. That may be exactly the
+// late-run set piece he wants, but it's a different KIND of encounter than the other three tiers,
+// so it's flagged for his call rather than assumed. Adding it later is one entry in tier 3.
+export const TOWER_PATROL_TIERS = [
+  ['infantry', 'infantry', 'infantry', 'infantry', 'infantry'],
+  ['infantry', 'infantry', 'infantry', 'infantry', 'infantry', 'tank'],
+  ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'tank', 'drone', 'drone', 'drone'],
+  ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'tank',
+   'drone', 'drone', 'drone', 'helicopter', 'raider'],
+];
+
+// Which tier a given tower falls in, and the flat list of type ids to spawn for it. Returns a
+// COPY so a caller can't mutate the shared tier table.
+export function towerPatrolTier(towerIndex, towerCount) {
+  const f = baseLateFraction(towerIndex, towerCount);
+  return Math.min(TOWER_PATROL_TIERS.length - 1, Math.floor(f * TOWER_PATROL_TIERS.length));
+}
+
+export function towerPatrolComposition(towerIndex, towerCount) {
+  return TOWER_PATROL_TIERS[towerPatrolTier(towerIndex, towerCount)].slice();
 }
 
 // #323: THE weighted draw of a dock's kind — "which unit does this base field in this dock?".

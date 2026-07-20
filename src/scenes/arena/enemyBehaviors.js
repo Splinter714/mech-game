@@ -416,7 +416,7 @@ function helicopterBehavior(scene, e, ctx) {
 // rotation (flag-disabled, not deleted — flip it back to `true` to restore the drone+infantry
 // mix from #147, same disable-not-delete pattern #144 used for the aim-line).
 // #239: confirmed this already stays `false`, so the nest-deploy can't spawn infantry even
-// though infantryMob itself is separately pulled from ENEMY_ROTATION/DEFAULT_SQUAD/LATE_POOL
+// though infantryMob itself is separately pulled from ENEMY_ROTATION (DEFAULT_SQUAD/LATE_POOL are gone)
 // (data/enemies.js, data/run.js) pending a redesign — no change needed here for #239.
 const DEPLOY_INFANTRY = false;
 const CARRIER_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone'];

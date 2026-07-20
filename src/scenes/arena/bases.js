@@ -17,7 +17,9 @@ import { DEPTH, strokeHexRing } from './shared.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
-import { mulberry32, drawDockKind, dockCountFor, baseLateFraction } from '../../data/worldgen.js';
+import {
+  mulberry32, drawDockKind, dockCountFor, baseLateFraction, towerPatrolComposition,
+} from '../../data/worldgen.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../data/terrain.js';
 import { gateEdges, setGateOpen, turretEdges, spanTurretMount, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
@@ -159,6 +161,13 @@ const WAKE_REACT_STAGGER_MAX_MS = 380;
 // infantry patrol stays clearly lighter than that). Kept as a single flat count (not a rolled
 // range like `dockCountFor`) since the ask was just "meaningfully more," not a new escalation
 // curve.
+//
+// #357 (mixed + escalating patrols): the patrol is no longer a single kind x flat count. Its
+// composition now comes from `towerPatrolComposition(towerIndex, towerCount)` (data/worldgen.js),
+// which escalates by WHICH tower along the run it is — see that function for the tier table, the
+// size ramp, and why the carrier was left out. These two constants survive as the TIER-0 identity
+// (`TOWER_PATROL_TIERS[0]` is still exactly five infantry, so the first patrol of a run is
+// bit-for-bit what #269's playtest signed off on) and are what the existing tests pin.
 export const TOWER_PATROL_KIND_ID = 'infantry';
 export const TOWER_PATROL_COUNT = 5;
 
@@ -258,7 +267,8 @@ const DOCK_VACATE_RADIUS_PX = 60;
 export const BasesMixin = {
   // §4: spawn every base's docked units NOW, at deploy time, dormant — not lazily, not via the
   // old off-camera `_offscreenSpawnPoint`/squad system. Called once from ArenaScene.create(),
-  // in place of the old `_spawnSquad()` opening-squad call.
+  // in place of the old `_spawnSquad()` opening-squad call (that method and its `DEFAULT_SQUAD`
+  // table were deleted outright by #344, which confirmed they had no remaining call sites).
   //
   // #269 playtest follow-up ("fold mechs into the dock system"): a dock's `kindId` can now be
   // EITHER a non-mech ENEMY_KINDS id or a full mech loadout id (data/enemies.js `ENEMIES` — see
@@ -414,17 +424,30 @@ export const BasesMixin = {
   // actually placed, so `_idleMoveIntent`'s wander radius is centred on the SCATTERED point, not
   // the shared tower point — each patrol member wanders around its own huddle position, which
   // still reads as "loitering near the tower" as a group.
+  //
+  // #357: the huddle ring is now sized by the tier's OWN unit count rather than the flat
+  // `TOWER_PATROL_COUNT`, so a late 11-strong patrol spreads around its circle just as evenly as
+  // the 5-strong opener instead of overlapping. Spawning goes through `_spawnEnemy` (not
+  // `_spawnKind` directly) because a late tier includes a light MECH ('raider'), and `_spawnEnemy`
+  // is the existing `isEnemyKind` dispatcher that routes kind-vs-mech — the same one
+  // `_spawnDormantUnits` above already relies on for mech docks. Everything else is unchanged:
+  // patrol units still get NO `baseId`/`dockKey` and still spawn UNAWARE (both `_spawnKind` and
+  // `_spawnMech`/`_resetAiState` default to UNAWARE), so they remain outside the base wake/win
+  // bookkeeping exactly as before.
   _spawnTowerPatrols() {
-    for (const t of this.alertTowerHexes ?? []) {
+    const towers = this.alertTowerHexes ?? [];
+    towers.forEach((t, towerIndex) => {
       const { x: tx, y: ty } = hexToPixel(t.q, t.r);
       const { x, y } = nearestValidPixel(this.terrain, this.worldRadius, tx, ty);
-      for (let i = 0; i < TOWER_PATROL_COUNT; i++) {
-        const a = (i / TOWER_PATROL_COUNT) * Math.PI * 2 + Math.PI / 4;
-        const px = TOWER_PATROL_COUNT > 1 ? x + Math.cos(a) * TOWER_PATROL_HUDDLE_OFFSET : x;
-        const py = TOWER_PATROL_COUNT > 1 ? y + Math.sin(a) * TOWER_PATROL_HUDDLE_OFFSET : y;
-        this._spawnKind(px, py, TOWER_PATROL_KIND_ID);
+      const composition = towerPatrolComposition(towerIndex, towers.length);
+      const n = composition.length;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + Math.PI / 4;
+        const px = n > 1 ? x + Math.cos(a) * TOWER_PATROL_HUDDLE_OFFSET : x;
+        const py = n > 1 ? y + Math.sin(a) * TOWER_PATROL_HUDDLE_OFFSET : y;
+        this._spawnEnemy(px, py, composition[i]);
       }
-    }
+    });
   },
 
   // §5: one alert-tower countdown state per standing `alertTower` hex, keyed by hex key.

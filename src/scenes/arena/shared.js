@@ -53,7 +53,7 @@ export const UI_HIGHLIGHT_COLOR = 0xffb84a;
 // layers relied on Phaser's default same-depth tiebreak (scene display-list ADD ORDER) instead
 // of a real `setDepth()` — which happened to read right only by accident of when each thing got
 // created relative to the player. That broke down as more layers piled on: enemy views are
-// spawned (`_spawnSquad`) AFTER `this.playerView` is created (ArenaScene.create()), so a tank
+// spawned AFTER `this.playerView` is created (ArenaScene.create()), so a tank
 // unconditionally rendered over the player on overlap; napalm's burning-ground decal was drawn
 // into the SAME graphics object as in-flight projectiles (`projFx`), which is itself created
 // after both the player view and every enemy view, so the fire patch painted over both too.

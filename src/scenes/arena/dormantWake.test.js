@@ -11,6 +11,7 @@ vi.mock('phaser', () => ({
 
 import { EnemiesMixin } from './enemies.js';
 import { BasesMixin, TOWER_PATROL_COUNT } from './bases.js';
+import { towerPatrolComposition, TOWER_PATROL_TIERS } from '../../data/worldgen.js';
 import { CombatMixin } from './combat.js';
 import { HpBody } from '../../data/HpBody.js';
 import { Mech } from '../../data/Mech.js';
@@ -505,13 +506,31 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
       scene.enemies.push(e);
       return e;
     };
+    // #357: a late tier includes a light MECH ('raider'), so the patrol spawner now goes through
+    // `_spawnEnemy`'s kind-vs-mech dispatcher. Stub it the same lightweight way — a mech id just
+    // gets a `kind: 'mech'` body stand-in; what's in scope here is still
+    // spawnX/spawnY/awareness/baseId shape, not Phaser texture/view building.
+    scene._spawnEnemy = (x, y, typeId) => {
+      if (ENEMY_KINDS[typeId]) return scene._spawnKind(x, y, typeId);
+      const e = {
+        key: `${typeId}Test`, mech: null, kind: 'mech',
+        x, y, spawnX: x, spawnY: y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: {},
+        typeId, awareness: UNAWARE,
+      };
+      scene.enemies.push(e);
+      return e;
+    };
     return scene;
   }
 
-  it('spawns TOWER_PATROL_COUNT patrol units per alert tower, starting UNAWARE with no baseId/dockKey', () => {
-    const scene = makeSceneWithSpawnStub([{ q: 0, r: 0 }, { q: 4, r: -2 }]);
+  // #357: patrol size is no longer a flat per-tower constant — it escalates by tower index, so
+  // the expected headcount is the sum of each tower's own tier composition.
+  it('spawns each tower its tier composition, starting UNAWARE with no baseId/dockKey', () => {
+    const towers = [{ q: 0, r: 0 }, { q: 4, r: -2 }];
+    const scene = makeSceneWithSpawnStub(towers);
     scene._spawnTowerPatrols();
-    expect(scene.enemies.length).toBe(2 * TOWER_PATROL_COUNT);
+    const expected = towers.reduce((n, _t, i) => n + towerPatrolComposition(i, towers.length).length, 0);
+    expect(scene.enemies.length).toBe(expected);
     for (const e of scene.enemies) {
       expect(e.awareness).toBe(UNAWARE);
       expect(e.baseId).toBeUndefined();
@@ -526,6 +545,64 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
   it('TOWER_PATROL_COUNT is a real squad size (more than a lone trooper, short of a base-sized fight)', () => {
     expect(TOWER_PATROL_COUNT).toBeGreaterThanOrEqual(4);
     expect(TOWER_PATROL_COUNT).toBeLessThanOrEqual(6);
+  });
+
+  // #357: the escalation rules themselves. These are the merge gate for the composition change —
+  // the exact per-tier roster is a playtest DIAL (expect Jackson to move the numbers), so these
+  // pin the SHAPE that must survive any retune, not the specific counts.
+  describe('#357: tower patrol composition escalates by alert-tower index', () => {
+    it('tier 0 is still exactly the #269 five-infantry opener', () => {
+      expect(TOWER_PATROL_TIERS[0]).toEqual(Array(TOWER_PATROL_COUNT).fill('infantry'));
+      expect(towerPatrolComposition(0, 5)).toEqual(TOWER_PATROL_TIERS[0]);
+    });
+
+    it('the last tower of a run draws the heaviest tier, the first the lightest', () => {
+      expect(towerPatrolComposition(0, 5)).toEqual(TOWER_PATROL_TIERS[0]);
+      expect(towerPatrolComposition(4, 5)).toEqual(TOWER_PATROL_TIERS[TOWER_PATROL_TIERS.length - 1]);
+    });
+
+    it('SIZE grows monotonically across the tiers, not just the mix', () => {
+      const sizes = TOWER_PATROL_TIERS.map((t) => t.length);
+      for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1]);
+    });
+
+    it('composition is mixed beyond infantry from tier 1 on, and only tier 0 is infantry-only', () => {
+      expect(new Set(TOWER_PATROL_TIERS[0]).size).toBe(1);
+      for (let i = 1; i < TOWER_PATROL_TIERS.length; i++) {
+        expect(new Set(TOWER_PATROL_TIERS[i]).size).toBeGreaterThan(1);
+      }
+    });
+
+    it('every id in every tier is a real ENEMY_KINDS kind or a real ENEMIES mech loadout', () => {
+      for (const tier of TOWER_PATROL_TIERS) {
+        for (const id of tier) {
+          expect(Boolean(ENEMY_KINDS[id]) || Boolean(ENEMIES[id])).toBe(true);
+        }
+      }
+    });
+
+    it('no tier fields a carrier — an unarmed, uncapped drone source would make a patrol an endless tap (#328), flagged for the owner rather than assumed', () => {
+      for (const tier of TOWER_PATROL_TIERS) expect(tier).not.toContain('carrier');
+    });
+
+    it('a run with a single tower still gets the light opener, never the heaviest tier', () => {
+      expect(towerPatrolComposition(0, 1)).toEqual(TOWER_PATROL_TIERS[0]);
+    });
+
+    it('every tower index of a real-length run resolves to a valid tier (no undefined off the end)', () => {
+      for (const count of [1, 2, 3, 5, 8]) {
+        for (let i = 0; i < count; i++) {
+          expect(Array.isArray(towerPatrolComposition(i, count))).toBe(true);
+          expect(towerPatrolComposition(i, count).length).toBeGreaterThan(0);
+        }
+      }
+    });
+
+    it('returns a fresh copy so a caller cannot mutate the shared tier table', () => {
+      const a = towerPatrolComposition(0, 5);
+      a.push('tank');
+      expect(towerPatrolComposition(0, 5)).toEqual(TOWER_PATROL_TIERS[0]);
+    });
   });
 
   // #269 playtest follow-up round 2: a multi-unit patrol must scatter around the tower's landing
