@@ -292,6 +292,19 @@ export const BAKED_SFX = {
     fadeOutMs: 830,
     processing: null,
   },
+  // shotgun's FIRE cue, reusing the SAME "Mecha DAMAGED 2.wav" source file (Helton Yan's Pixel
+  // Combat pack) already imported above as mechDestroyed2 for mechDestroyed/autocannon (no new
+  // asset file needed). Played back as a 790ms window from the start of the file (startMs 0,
+  // trimMs 790 — a 0ms→790ms play window) with a 1030ms fade-out that exceeds the played window
+  // and is clamped at playback (same as the plasmaLance/pulseLaser precedents note). No pitch/
+  // filter/reverb processing.
+  'shotgun::fire': {
+    asset: mechDestroyed2,
+    startMs: 0,
+    trimMs: 790,
+    fadeOutMs: 1030,
+    processing: null,
+  },
 };
 
 // Decoded AudioBuffer cache — the only thing playback (sfx.js) ever reads, synchronously.
