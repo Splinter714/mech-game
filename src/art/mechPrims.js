@@ -24,7 +24,19 @@ const THEMES = {
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
   },
 };
-export const themeFor = (opts) => THEMES[opts?.theme] ?? THEMES.player;
+// #348 (local co-op, player identification): an optional per-OWNER accent layered on top of a
+// faction palette. Two mechs on the same side must be told apart at a glance, and the theme
+// table is already the one place a mech's colour is decided — so rather than bolt on a parallel
+// tinting mechanism, an `accent` recolours the palette's RIM tones (the lit top edges of every
+// plate). That reads as "same machine, different unit markings" instead of "different faction":
+// the body/shadow tones, the reactor purple and every weapon-category neon are untouched, so a
+// loadout still reads exactly as it did. `accent` omitted/null returns the base theme object
+// itself, unchanged and uncloned — which is what player 1 and every enemy get.
+export const themeFor = (opts) => {
+  const base = THEMES[opts?.theme] ?? THEMES.player;
+  if (!opts?.accent) return base;
+  return { ...base, rim: opts.accent, rimHi: opts.accent };
+};
 
 // The mech's own power glow (not a weapon).
 export const REACTOR = { halo: 0x7a2ed6, core: 0xb15cff, hot: 0xecd6ff, edge: 0x8a4ad6 };

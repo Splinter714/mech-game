@@ -145,7 +145,7 @@ export const LocomotionMixin = {
     if (!ids.length) return 0;
     const w = { weapon: getWeapon(ids[0]), location: loc };
     const m = this._muzzle(loc, player);
-    const fireAngle = this._fireAngle(w, m);
+    const fireAngle = this._fireAngle(w, m, player);
     return Phaser.Math.Angle.Wrap(fireAngle - player.turretAngle);
   },
 
@@ -180,9 +180,8 @@ export const LocomotionMixin = {
   // scene accessors alias exactly that same storage for players[0], so for one player this is a
   // literally equivalent substitution, not a behavioural rewrite.
   //
-  // NOTE for phase 2: `this.sprint`/`this.dash`/`this.fireCooldowns` are still SCENE-level and
-  // must move onto the player alongside a second `intent` source — they are input-shaped state,
-  // so they belong with the second controller (explicitly phase 2), not here.
+  // #348 did exactly what that note said: `sprint`/`dash`/`fireCooldowns` now live on the
+  // PLAYER, alongside its own `intent` from its own controller.
   _drive(intent, dt, player = primaryPlayerOf(this)) {
     const p = player;
     const mv = p.mech.movement;
@@ -200,8 +199,8 @@ export const LocomotionMixin = {
     // (data/dash.js). The two are independent sources and simply multiply together if both
     // happen to be active at once (e.g. the player dashes while Overclock's forced Sprint is
     // also running) — there's no special-casing needed, each just contributes its own factor.
-    const sprintMult = this.sprint?.active ? SPRINT_SPEED_MULT : 1;
-    const dashMult = this.dash?.active ? DASH_SPEED_MULT : 1;
+    const sprintMult = p.sprint?.active ? SPRINT_SPEED_MULT : 1;
+    const dashMult = p.dash?.active ? DASH_SPEED_MULT : 1;
     // #3 weight inertia drives the accel curve.
     const maxSp = mv.maxSpeed * legF * backScale * terrainScale * sprintMult * dashMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
@@ -309,7 +308,8 @@ export const LocomotionMixin = {
     p.turretAngle = INSTANT_TURNING
       ? aim
       : rotateToward(p.turretAngle, aim, mv.turretSlew, dt);
-    this.registry.set('inputMode', intent.mode);
+    // #348: the HUD's input-mode hint belongs to the LOCAL player's device.
+    if (p === primaryPlayerOf(this)) this.registry.set('inputMode', intent.mode);
   },
 
   // Stompy stepped gait: advance the walk frames with speed, kick a footfall FX (+ sound)

@@ -3,7 +3,9 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
-import { livePlayersOf, primaryPlayerOf } from './players.js';
+import {
+  isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
+} from './players.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
@@ -28,8 +30,10 @@ export const FiringMixin = {
   // every enemy shooter (#316's rule, untouched). Ground picks return false here, so a shot at a
   // tank behind a boulder is blocked exactly as before; this opens a lane only while the thing
   // you have locked is genuinely in the air.
-  _shotIgnoresCover(owner = 'player') {
-    return owner === 'player' && targetCoverExempt(this.convergeTarget);
+  // #348: `player` is the SHOOTER, because the converge pick is now per-player — two players
+  // aiming at different things must not share one cover exemption.
+  _shotIgnoresCover(owner = 'player', player = primaryPlayerOf(this)) {
+    return owner === 'player' && targetCoverExempt(player.convergeTarget);
   },
 
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -37,25 +41,23 @@ export const FiringMixin = {
   // #347: fires ONE player's slots. `player` defaults to the primary, so every existing caller
   // and test double is unchanged; ArenaScene.update() passes each player explicitly.
   //
-  // SCOPE NOTE — deliberately partial, and this is the honest boundary of phase 1. The weapon
-  // SOURCE is now per-player (`player.mech.weapons()`), but the rest of the firing chain is
-  // still primary-scoped: `this.fireCooldowns` is one shared map, `this.convergeTarget` is one
-  // shared aim pick, and `fireWeapon`/`_muzzle` default to the primary player. All three are
-  // driven by INPUT and AIM, which means splitting them is inseparable from adding a second
-  // controller and a second reticle — explicitly phase 2. Leaving them shared is exactly
-  // today's behaviour for one player rather than a half-migration that could drift.
+  // #348 closes phase 1's scope note: the whole firing chain is per-player now. The cooldown
+  // map, the held-audio map, the aim pick and the muzzle geometry all come off `player`, because
+  // all of them are downstream of one device's buttons and one turret's facing — which is
+  // exactly why phase 1 could not split them until there was a second controller to split for.
   _handleFiring(intent, delta, player = primaryPlayerOf(this)) {
-    this._heldAudio ??= {};
+    player.heldAudio ??= {};
+    player.fireCooldowns ??= {};
     // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
     // can measure our code-path cost from here to the audio node's start().
     Audio.markTrigger();
     for (const w of player.mech.weapons()) {
-      let cd = (this.fireCooldowns[w.location] ?? 0) - delta;
+      let cd = (player.fireCooldowns[w.location] ?? 0) - delta;
       if (intent.fire[w.location] && cd <= 0 && w.ready) {
-        this.fireWeapon(w);
+        this.fireWeapon(w, player);
         cd = this._fireInterval(w.weapon);
       }
-      this.fireCooldowns[w.location] = Math.max(0, cd);
+      player.fireCooldowns[w.location] = Math.max(0, cd);
 
       // Continuous beam visual tracking (#86): a held sustained/stream hitscan (the beam
       // laser) only re-pins its beam line on the block above, which runs at the WEAPON's own
@@ -63,17 +65,20 @@ export const FiringMixin = {
       // between angles as the turret swept instead of following it smoothly. This runs every
       // render frame regardless of cadence and re-aims the beam's existing line at the current
       // muzzle/angle; it's purely visual — damage still only applies on the cadence above.
-      if (intent.fire[w.location] && w.ready && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w);
+      if (intent.fire[w.location] && w.ready && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w, player);
 
       // Held/looping fire sound (#53): a genuinely continuous weapon (flamethrower/beam
       // laser, hasHeldSfx) starts its loop on the rising edge (button just pressed) and
       // stops it on the falling edge — button released, OR the weapon ran dry / went
       // offline while held (ammo depleted, part destroyed).
       const held = intent.fire[w.location] && w.ready && hasHeldSfx(w.weapon.id);
-      const wasHeld = this._heldAudio[w.location];
-      if (held && !wasHeld) Audio.startHeld(w.location, w.weapon.id);
-      else if (!held && wasHeld) Audio.stopHeld(w.location);
-      this._heldAudio[w.location] = held;
+      // #348: the held-loop key is per player — two players holding the same weapon in the
+      // same slot each own their own loop instead of stopping each other's.
+      const audioKey = `${player.id}:${w.location}`;
+      const wasHeld = player.heldAudio[w.location];
+      if (held && !wasHeld) Audio.startHeld(audioKey, w.weapon.id);
+      else if (!held && wasHeld) Audio.stopHeld(audioKey);
+      player.heldAudio[w.location] = held;
     }
   },
 
@@ -99,38 +104,45 @@ export const FiringMixin = {
   //   - If Overclock's duration ends while the flag is STILL set, hand control back exactly as
   //     if Overclock had never touched Sprint: force it off (there's no player-manual state to
   //     fall back to any more — see sprintOverclock.test.js for the coverage that remains).
-  _handleSprint(_intent, delta) {
+  // #348: per player — each carries its own sprint state and its own Overclock edge tracking.
+  // (The BUFF OVERLAY that drives it, `_buffMods`, is still scene-level — see the report: making
+  // powerup buffs per-player has not been put to Jackson, so it is deliberately left as-is and
+  // both players currently share one Overclock window.)
+  _handleSprint(_intent, delta, player = primaryPlayerOf(this)) {
     const dt = delta / 1000;
     const overclockActive = !!this._buffMods?.().overclockActive;
-    const overclockRisingEdge = overclockActive && !this._overclockWasActive;
-    this._overclockWasActive = overclockActive;
+    const overclockRisingEdge = overclockActive && !player.overclockWasActive;
+    player.overclockWasActive = overclockActive;
 
     if (overclockRisingEdge) {
-      this.sprint.active = true;
-      this._sprintForcedByOverclock = true;
+      player.sprint.active = true;
+      player.sprintForcedByOverclock = true;
     }
 
     // Free ride only while Overclock is the reason Sprint is currently on — skip the fuel
     // state machine entirely rather than passing drainRate: 0, since updateSprintFuel's
     // empty-tank check (`fuel <= 0 ⇒ active = false`) fires independent of drain rate.
-    const wasActive = this.sprint.active;
-    if (!(this._sprintForcedByOverclock && this.sprint.active)) {
-      this.sprint = updateSprintFuel(this.sprint, dt);
+    const wasActive = player.sprint.active;
+    if (!(player.sprintForcedByOverclock && player.sprint.active)) {
+      player.sprint = updateSprintFuel(player.sprint, dt);
     }
 
     // Overclock's window closed — hand it back off (no player-manual sprint left to defer to).
-    if (!overclockActive && this._sprintForcedByOverclock) {
-      this.sprint.active = false;
-      this._sprintForcedByOverclock = false;
+    if (!overclockActive && player.sprintForcedByOverclock) {
+      player.sprint.active = false;
+      player.sprintForcedByOverclock = false;
     }
 
     // A cue on every real active/inactive transition — Overclock's auto-activation or its
     // expiry handoff.
-    if (this.sprint.active && !wasActive) Audio.ui('sprintOn');
-    else if (!this.sprint.active && wasActive) Audio.ui('sprintOff');
-    this.registry.set('sprintActive', this.sprint.active);
-    this.registry.set('sprintFuel', this.sprint.fuel);
-    this.registry.set('sprintFuelMax', SPRINT_FUEL_MAX);
+    if (player.sprint.active && !wasActive) Audio.ui('sprintOn');
+    else if (!player.sprint.active && wasActive) Audio.ui('sprintOff');
+    // #348: the HUD is the LOCAL player's HUD, so only the primary publishes to it.
+    if (player === primaryPlayerOf(this)) {
+      this.registry.set('sprintActive', player.sprint.active);
+      this.registry.set('sprintFuel', player.sprint.fuel);
+      this.registry.set('sprintFuelMax', SPRINT_FUEL_MAX);
+    }
   },
 
   // ── Dash (#261) ── a hardcoded, always-available ability on L3/Space — replaces the old
@@ -140,20 +152,23 @@ export const FiringMixin = {
   // itself is a no-op in that case — see data/dash.js). The pure state machine
   // (active/burstRemaining/cooldown) lives entirely in data/dash.js; this just wires the press
   // + per-frame tick and publishes the live state for the HUD's cooldown indicator.
-  _handleDash(intent, delta) {
+  // #348: per player — each player's own L3/Space, own burst, own cooldown.
+  _handleDash(intent, delta, player = primaryPlayerOf(this)) {
     const dt = delta / 1000;
-    const wasActive = this.dash.active;
-    if (intent.dashPressed) this.dash = triggerDash(this.dash);
-    this.dash = updateDash(this.dash, dt);
+    const wasActive = player.dash.active;
+    if (intent.dashPressed) player.dash = triggerDash(player.dash);
+    player.dash = updateDash(player.dash, dt);
 
     // Reuse the existing sprint-on/off cues for the dash's start/end — same "movement ability
     // just engaged/disengaged" cue language, no new SFX plumbing needed for a ~0.2s burst.
-    if (this.dash.active && !wasActive) Audio.ui('sprintOn');
-    else if (!this.dash.active && wasActive) Audio.ui('sprintOff');
+    if (player.dash.active && !wasActive) Audio.ui('sprintOn');
+    else if (!player.dash.active && wasActive) Audio.ui('sprintOff');
 
-    this.registry.set('dashActive', this.dash.active);
-    this.registry.set('dashCooldown', this.dash.cooldown);
-    this.registry.set('dashCooldownMax', DASH_COOLDOWN);
+    if (player === primaryPlayerOf(this)) {
+      this.registry.set('dashActive', player.dash.active);
+      this.registry.set('dashCooldown', player.dash.cooldown);
+      this.registry.set('dashCooldownMax', DASH_COOLDOWN);
+    }
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the
@@ -171,7 +186,11 @@ export const FiringMixin = {
 
   // Fire one weapon. Hitscan/contact resolve instantly (a beam); projectile weapons
   // spawn travelling rounds that respect velocity, arc, and spread.
-  fireWeapon(w) {
+  // #348: `player` is who pulled the trigger. Everything below that used to read a scene
+  // singleton — the converge pick, the ammo pool, the muzzle geometry, the noise source, the
+  // beam-lane key — now reads that player, so two players firing the same weapon in the same
+  // frame never touch each other's state.
+  fireWeapon(w, player = primaryPlayerOf(this)) {
     if (!this.scene.isActive()) return;
     // #77, rework #252, #341: a tracking (homing) weapon with no target (i.e. convergence has
     // nothing picked this frame) does not fire — no dumbfire fallback. The trigger pull is a no-op:
@@ -179,7 +198,7 @@ export const FiringMixin = {
     // (targeting.js `_updateLock`) is the one target concept — the same pick the reticle draws and
     // homing rounds seek. See data/targetlock.js `canFireWeapon` for exactly which deliveries this
     // gates (only guidance: 'homing' — direct-fire and dumbfire/arcing-lob weapons are unaffected).
-    if (!canFireWeapon(w.weapon, this.convergeTarget)) return;
+    if (!canFireWeapon(w.weapon, player.convergeTarget)) return;
     // #316 reverses #245/#257: there used to be a cover exemption here — when the player's
     // convergence pick was a FLYING enemy, the player's shot ignored terrain cover (mirroring
     // #245, which let a flyer's own shots ignore it). Both directions are gone. Cover is cover
@@ -193,16 +212,14 @@ export const FiringMixin = {
     // 0.5 ammo/shot — exactly offsetting the faster rate for a net-neutral ammo economy,
     // distinct from Overcharge's true unlimited ammo. Outside Overdrive cycleMult is 1, so
     // this is the same flat 1-ammo spend as before.
-    if (!mods.freeAmmo) this.mech.consumeAmmo(w.location, w.index, mods.cycleMult ?? 1);
+    if (!mods.freeAmmo) player.mech.consumeAmmo(w.location, w.index, mods.cycleMult ?? 1);
     // #103 noise-aggro: a real shot just went off at the player's position — unaware enemies
     // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
     // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.
     this._lastFireAt = this.time.now;
-    // #347: the NOISE source that wakes enemies — whoever fired. Primary-scoped for now, in
-    // step with the rest of the firing chain above; one player makes it identical.
-    const shooter = primaryPlayerOf(this);
-    this._lastFireX = shooter.x;
-    this._lastFireY = shooter.y;
+    // #347/#348: the NOISE source that wakes enemies — whoever actually fired.
+    this._lastFireX = player.x;
+    this._lastFireY = player.y;
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
@@ -217,7 +234,7 @@ export const FiringMixin = {
     // retire any beam whose lane no longer exists rather than leaving it hanging in place
     // (it would otherwise sit frozen at its last position until its ttl ran out).
     if (plan.mode === 'hitscan' && this._isHeldBeam(w.weapon)) {
-      this._retireStaleBeamLanes('player', w.location, plan.shots.length);
+      this._retireStaleBeamLanes(playerBeamKey(player), w.location, plan.shots.length);
     }
     // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
     // trajectory beat) are scheduled in one shared place (audio/fireCues.js) that the Weapon
@@ -228,8 +245,8 @@ export const FiringMixin = {
     for (const [lane, s] of plan.shots.entries()) {
       const go = () => {
         if (!this.scene.isActive()) return;
-        const m = this._muzzle(w.location);
-        const aimAngle = this._fireAngle(w, m);
+        const m = this._muzzle(w.location, player);
+        const aimAngle = this._fireAngle(w, m, player);
         const baseAngle = aimAngle + s.angleOffset;
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
@@ -240,18 +257,18 @@ export const FiringMixin = {
         // stopping it. See world.js `_muzzleWallBlocked` for why this guards rather than
         // re-origins the ray. Checked from the LATERAL muzzle actually used, so one lane of a
         // spread can be eaten by a wall corner while its siblings get out.
-        if (this._muzzleWallBlocked?.(this.px, this.py, ox, oy)) return;
-        if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle);
+        if (this._muzzleWallBlocked?.(player.x, player.y, ox, oy)) return;
+        if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle, 'player', player);
         // #307: `lane`/`lateral` let a continuously-held beam own ONE persistent beam object
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
         // (two shots fired, one line drawn).
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', 'player', false, { lane, lateral: s.lateral });
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), false, { lane, lateral: s.lateral, shooter: player });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle);
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, false, player);
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -277,7 +294,10 @@ export const FiringMixin = {
   // and damages via `_damageEnemyAt`; an enemy sweeps against the single player point and
   // damages via `_damagePlayerAt` — same forward-ray math either way, just a different
   // target set/damage sink.
-  _melee(w, mx, my, angle, owner = 'player') {
+  // #348: FRIENDLY FIRE IS ON (Jackson). A player's melee sweep therefore scores the other live
+  // players alongside the enemies, in exactly the same arc, and the nearest thing in the arc is
+  // what gets hit — whichever side it is on. `shooter` is excluded from its own sweep.
+  _melee(w, mx, my, angle, owner = 'player', shooter = primaryPlayerOf(this)) {
     const reach = w.weapon.range.max || 32;
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     let target = null, t = 0;
@@ -290,8 +310,11 @@ export const FiringMixin = {
         if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = p; t = tt; }
       }
     } else {
-      for (const e of this.enemies) {
-        if (e.mech.isDestroyed()) continue;
+      const candidates = [
+        ...this.enemies.filter((e) => !e.mech.isDestroyed()),
+        ...otherLivePlayers(this, shooter),
+      ];
+      for (const e of candidates) {
         const ex = e.x - mx, ey = e.y - my, tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
         if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
       }
@@ -299,7 +322,7 @@ export const FiringMixin = {
     const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
     if (target) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      if (owner === 'enemy') this._damagePlayerAt(dmg, target);
+      if (owner === 'enemy' || isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
     }
     // Animate the crescent across a few frames, then clear.
@@ -342,14 +365,20 @@ export const FiringMixin = {
   // is the only possible target, represented as a one-item candidate list so `traceHitscan`
   // (which only knows about a generic {x,y,destroyed,ref} candidate array) doesn't need to
   // know who's shooting at whom.
-  _liveTargetsForTrace(owner) {
+  // #348: for a PLAYER's shot the candidate list now also carries the other live players, which
+  // is the whole of friendly fire on the hitscan path — a beam simply finds a teammate in the
+  // way and stops on them, scored by the same nearest-along-the-ray rule as an enemy.
+  _liveTargetsForTrace(owner, shooter = null) {
     if (owner === 'enemy') {
       // #347: every LIVE player is a candidate, each carrying itself as `ref` so the hit
       // resolution downstream knows WHICH player the ray struck. One player today, so this is
       // the same one-item list `traceHitscan` has always been handed.
       return livePlayersOf(this).map((p) => ({ x: p.x, y: p.y, destroyed: false, ref: p }));
     }
-    return this._liveEnemiesForTrace();
+    const allies = shooter
+      ? otherLivePlayers(this, shooter).map((p) => ({ x: p.x, y: p.y, destroyed: false, ref: p }))
+      : [];
+    return [...this._liveEnemiesForTrace(), ...allies];
   },
 
   // How far a beam/wall-blocked ray from `muzzle` at `angle` actually reaches, honoring cover.
@@ -362,7 +391,11 @@ export const FiringMixin = {
   // it is mounted on — see wallEdges.js `wallEdgeCrossing`'s `ignoreKey`. Null for every other
   // shooter, so no one else's beam gains a way through a wall.
   _hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved = false, ignoreSpanKey = null) {
-    const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY), this._hexKeyAt(this.px, this.py)]);
+    // #348: every LIVE player's own hex, not just the local one — with friendly fire on, a
+    // teammate standing in forest is a legitimate target and their hex must be see-through for
+    // the same reason an enemy's is.
+    const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY)]);
+    for (const p of livePlayersOf(this)) transparent.add(this._hexKeyAt(p.x, p.y));
     for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
     return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent, smallUnitInvolved, ignoreSpanKey);
   },
@@ -376,12 +409,12 @@ export const FiringMixin = {
   // them, each from its own laterally-offset muzzle (the `lateral` the fire tick stamped on it).
   // With no Barrage there's exactly one lane (lateral 0) and this is the original single-beam
   // reposition, unchanged.
-  _trackHeldBeam(w) {
-    const prefix = `player:${w.location}:`;
+  _trackHeldBeam(w, player = primaryPlayerOf(this)) {
+    const prefix = `${playerBeamKey(player)}:${w.location}:`;
     const lanes = this.beams.filter((b) => typeof b.loc === 'string' && b.loc.startsWith(prefix));
     if (!lanes.length) return;
-    const m = this._muzzle(w.location);
-    const angle = this._fireAngle(w, m);
+    const m = this._muzzle(w.location, player);
+    const angle = this._fireAngle(w, m, player);
     const perp = angle + Math.PI / 2;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
     for (const live of lanes) {
@@ -390,16 +423,16 @@ export const FiringMixin = {
       // #320: a HELD beam whose emitter has drifted across a span as the mech walks/slews gets
       // clamped to zero length rather than lancing out from the far side of the wall — the
       // continuous-fire counterpart of the spawn-time guard above.
-      if (this._muzzleWallBlocked?.(this.px, this.py, mx, my)) {
+      if (this._muzzleWallBlocked?.(player.x, player.y, mx, my)) {
         live.x0 = mx; live.y0 = my; live.x1 = mx; live.y1 = my;
         continue;
       }
-      const trace = traceHitscan(mx, my, angle, reach, this._liveEnemiesForTrace());
+      const trace = traceHitscan(mx, my, angle, reach, this._liveTargetsForTrace('player', player));
       let endDist = trace.endDist;
       // #338: a HELD beam is re-pinned every render frame independently of the fire cadence, so it
       // needs the same cover-exemption branch the fire tick takes — otherwise the damage lands on
       // the airborne target while the drawn beam still stops dead at the wall.
-      const wallT = this._shotIgnoresCover() ? Infinity : this._hitscanReach(mx, my, angle, endDist);
+      const wallT = this._shotIgnoresCover('player', player) ? Infinity : this._hitscanReach(mx, my, angle, endDist);
       if (wallT < endDist) endDist = wallT;
       live.x0 = mx; live.y0 = my;
       live.x1 = mx + Math.cos(angle) * endDist;
@@ -436,14 +469,16 @@ export const FiringMixin = {
   // offset, remembered on the beam so `_trackHeldBeam` can re-derive that lane's own muzzle
   // every render frame. A single-lane hold is lane 0 with lateral 0 — i.e. exactly one
   // tracking object, preserving #86.
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', smallUnitInvolved = false, { lane = 0, lateral = 0, ignoreSpanKey = null } = {}) {
+  // `shooter` (#348, optional): the PLAYER firing, for the per-player converge pick and for
+  // friendly fire (they are excluded from their own candidate list).
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', smallUnitInvolved = false, { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
 
     // Project each living target onto the firing ray (forward `t`, perpendicular miss) and
     // take the nearest one actually struck.
-    const trace = traceHitscan(muzzleX, muzzleY, angle, reach, this._liveTargetsForTrace(owner));
+    const trace = traceHitscan(muzzleX, muzzleY, angle, reach, this._liveTargetsForTrace(owner, shooter));
     let target = trace.target?.ref ?? null;
     let t = trace.t;
     let hit = !!target;
@@ -466,7 +501,7 @@ export const FiringMixin = {
     // the shot half of the shared predicate; without it the player locks a helicopter over a base
     // wall (which targeting permits by rule) and watches every beam splash on the stone.
     const targetSpanKey = (target && typeof target === 'object' && target.spanKey) || null;
-    const wallT = this._shotIgnoresCover(owner) ? Infinity
+    const wallT = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this)) ? Infinity
       : this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved, ignoreSpanKey ?? targetSpanKey);
     let blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
@@ -475,7 +510,7 @@ export const FiringMixin = {
     // destructible hex and this ray enters it SHORTER than wherever the beam would otherwise end,
     // the beam terminates there instead. Without this a laser aimed at a locked forest hex passed
     // clean over it for exactly the same reason a bullet did — soft cover doesn't block a mech.
-    const tHexKey = owner === 'player' ? targetHexKeyOf(this.convergeTarget) : null;
+    const tHexKey = owner === 'player' ? targetHexKeyOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
     if (tHexKey && this._destructibleStandingAt?.(tHexKey)) {
       const tt = this._targetHexDistance(muzzleX, muzzleY, angle, endDist, tHexKey);
       if (tt < endDist) { endDist = tt; hit = false; blocked = true; }
@@ -499,7 +534,10 @@ export const FiringMixin = {
     }
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
+      // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
+      // player damage sink, not the enemy one.
       if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target));
+      else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
@@ -535,7 +573,10 @@ export const FiringMixin = {
   // `smallUnitInvolved` (#269, optional): stamped onto the round so projectiles.js's in-flight
   // cover check can pass it to `_isWallForRound` — see world.js `_isWall`. Enemy callers pass
   // `isSmallUnit(e)`; the player never does (always large).
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, smallUnitInvolved = false) {
+  // `shooter` (#348, optional): the PLAYER who fired, stamped onto the round so its own rounds
+  // can never friendly-fire back onto it, and so the round's seek/target-hex come from THAT
+  // player's aim rather than a scene singleton.
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, smallUnitInvolved = false, shooter = null) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -544,7 +585,7 @@ export const FiringMixin = {
     // lock is blind (LOS broken behind cover) it's the target's last-known + dead-reckoned
     // predicted position, so the round arcs over the wall onto where the target probably is. No
     // lock ⇒ no seek, the round dumb-fires straight. An enemy's blind lob passes `seekOverride`.
-    const seekTarget = seekOverride || (owner === 'player' ? this._lockAimPoint() : null);
+    const seekTarget = seekOverride || (owner === 'player' ? this._lockAimPoint(shooter ?? primaryPlayerOf(this)) : null);
     // An arcing round lobs to where its target actually is (else to optimal range); straight
     // rounds just run out at max range. This travel budget is what the kinematic round flies.
     let maxDist = maxRange;
@@ -611,18 +652,30 @@ export const FiringMixin = {
     // the whole fix: soft cover never blocks a mech's ray, so before this a locked forest hex was
     // targetable and literally unhittable. Player-only: an enemy has no convergence pick, and the
     // stamp is null for every other target kind, so nothing else changes behaviour.
-    const targetHexKey = owner === 'player' ? targetHexKeyOf(this.convergeTarget) : null;
+    const targetHexKey = owner === 'player' ? targetHexKeyOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
     // #338: the shot half of the shared predicate, resolved ONCE at spawn and carried by the round
     // (projectiles.js reads it in the in-flight cover check). Spawn-time, not per-frame, on purpose
     // — a shot commits to the geometry it was fired under, which is exactly the rule that keeps
     // case 1 of the issue honest: a round fired at a GROUND target locked in the open still splashes
     // on the wall that target ducks behind, rather than homing through terrain after it.
-    const ignoresCover = this._shotIgnoresCover(owner);
-    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover, smallUnitInvolved: !!smallUnitInvolved };
+    const ignoresCover = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this));
+    const pushed = {
+      ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover,
+      smallUnitInvolved: !!smallUnitInvolved,
+      // #348: who fired it, so friendly fire (projectiles.js) can skip the shooter themselves.
+      shooter: owner === 'player' ? (shooter ?? primaryPlayerOf(this)) : null,
+    };
     this.projectiles.push(pushed);
     return pushed;
   },
 };
+
+// #348: the beam-lane key prefix for one player. Two players holding the same weapon in the
+// same body location must own separate persistent beam objects, or the second silently
+// overwrites the first's endpoints (the #307 bug, one player up).
+// Player 1 keeps the bare `player` key it has always had, so nothing about single-player beam
+// behaviour (or the #86/#307 coverage of it) shifts; only later players get a suffix.
+function playerBeamKey(player) { return player?.id ? `player${player.id}` : 'player'; }
 
 // #347: the player a hitscan trace actually struck. `traceHitscan` hands back the candidate it
 // hit, whose `ref` is the player object itself (see `_liveTargetsForTrace`). Falls back to the

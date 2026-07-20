@@ -35,6 +35,8 @@ export function makePlayer({
     id,
     mech,
     textureKey,
+    // #348: this player's identifying colour — see PLAYER_COLORS below.
+    color: playerColor(id),
     // Pose.
     x, y, angle, turretAngle, aimX, aimY,
     // Motion.
@@ -43,9 +45,57 @@ export function makePlayer({
     stepMs: 0, hullFrame: 0,
     // Presentation + lifecycle.
     view: null,
+    marker: null,          // #348: the accent ring drawn under this mech
     dead: false,
+    // #348: INPUT-SHAPED state. Phase 1 (#347) deliberately left all of this SCENE-level and
+    // said why: splitting it is inseparable from adding a second controller, because every one
+    // of these is downstream of one device's buttons and one player's aim. Phase 2 adds that
+    // controller, so it moves here. `controls` is this player's own Controls instance;
+    // `fireCooldowns`/`heldAudio` are its own per-slot trigger state; `sprint`/`dash` its own
+    // movement abilities; `convergeTarget`/`aimEnemy`/`reticlePos` its own aim pick and reticle.
+    // (Left null/empty here rather than imported defaults so this module stays free of the
+    // sprint/dash/Controls dependencies; the scene fills them in as it builds each player.)
+    controls: null,
+    fireCooldowns: {},
+    heldAudio: {},
+    sprint: null,
+    dash: null,
+    sprintForcedByOverclock: false,
+    overclockWasActive: false,
+    convergeTarget: null,
+    aimEnemy: null,
+    reticlePos: null,
+    // #348: respawn bookkeeping. `respawn` is the pure clock (data/respawn.js); `lastHitAt` is
+    // the scene-clock timestamp of the last damage this player took, which is what feeds the
+    // out-of-combat gate.
+    respawn: null,
+    lastHitAt: -Infinity,
   };
 }
+
+// #348: player identification. Jackson: "we should add some color highlight or something to
+// identify which player is which". All art is procedural (zero asset files) and mechArt.js
+// already themes by FACTION (`player` gritty gunmetal vs `enemy` sleek white) — so rather than
+// invent a parallel mechanism, phase 2 extends that same theme system with an `accent` that
+// recolours a mech's rim highlights, and pairs it with a ground ring under each mech in the
+// same colour. The ring is what actually reads at a glance in a top-down fight; the rim tint is
+// what makes the two mechs look like different machines when they are stood next to each other.
+//
+// Player 1 keeps the EXISTING mech art untouched (its accent is null — Jackson already knows
+// what his mech looks like and this must not change it); it gains only the ring. Player 2 is
+// the one that gets tinted. Adding a third player is one more entry here.
+export const PLAYER_COLORS = [0x4fc3f7, 0xffb24a, 0x6dff9e, 0xff4fa3];
+
+// The rim-highlight accent per player, parallel to PLAYER_COLORS. `null` = leave the base
+// `player` theme exactly as it is.
+export const PLAYER_ACCENTS = [null, 0xffb24a, 0x6dff9e, 0xff4fa3];
+
+export function playerColor(id) { return PLAYER_COLORS[id % PLAYER_COLORS.length]; }
+export function playerAccent(id) { return PLAYER_ACCENTS[id % PLAYER_ACCENTS.length]; }
+
+// How many players the arena will accept. Two for now (Jackson: "2 for now, design for more") —
+// nothing below or in the scene wiring is written to two, this is the only cap.
+export const MAX_PLAYERS = 2;
 
 // A player is out of the fight when its mech is destroyed. `dead` is the scene's own latch
 // (set once, in combat.js, so the death FX/input-gate fire exactly once) — a player with no

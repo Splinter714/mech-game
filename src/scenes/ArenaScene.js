@@ -1,12 +1,9 @@
 import Phaser from 'phaser';
-import { buildMechTextures } from '../art/index.js';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { range } from '../data/hexgrid.js';
-import { Controls, PadEdges, PAD } from '../input/Controls.js';
+import { PadEdges, PAD } from '../input/Controls.js';
 import { TouchStickHud } from '../input/TouchStickHud.js';
-import { initialSprintState } from '../data/sprint.js';
-import { initialDashState } from '../data/dash.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
 import { CombatMixin } from './arena/combat.js';
@@ -22,8 +19,8 @@ import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { TerrainLabelsMixin } from './arena/terrainLabels.js';
 import { VisibilityMixin } from './arena/visibility.js';
-import { makePlayer } from '../data/players.js';
-import { cameraFocusOf, primaryPlayerOf } from './arena/players.js';
+import { CoopMixin } from './arena/coop.js';
+import { primaryPlayerOf } from './arena/players.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -87,13 +84,12 @@ export default class ArenaScene extends Phaser.Scene {
     // create()" pattern as `_initRun`/`_initMission` above. Without this, the first death of a
     // session permanently disabled movement/firing (update()'s `!this._playerDead` gate) on
     // every subsequent deploy, with no way to recover short of reloading the page.
-    // #347: the PLAYERS COLLECTION is built first, because `this.mech`/`this.px`/`this._playerDead`
-    // and friends are now delegating accessors onto `this.players[0]` (see the bottom of this
-    // file) — assigning any of them before the collection exists would have nowhere to write.
-    // Exactly one entry today; the pose fields are set to their real deploy values just below,
-    // through those same accessors, so the assignments read unchanged.
-    this.players = [makePlayer({ id: 0, textureKey: 'playerMech' })];
-    this._playerDead = false;
+    // #347/#348: the PLAYERS COLLECTION. `this.mech`/`this.px`/`this._playerDead` and friends are
+    // delegating accessors onto `this.players[0]` (see the bottom of this file), so the collection
+    // has to exist before any of them are touched. #348 fills it via `_makePlayerAt` (coop.js),
+    // which builds a player's mech textures, view, ground marker, own Controls and own copies of
+    // the per-player firing/movement state — so "add a player" really is one more call.
+    this.players = [];
     // Refs #304: same reason, for the enemy-side stand-down clock stamped off that flag
     // (enemies.js `_standDownActive`). Without this reset a redeploy after a death would find
     // an already-elapsed deadline still sitting on the reused scene instance and every enemy
@@ -102,8 +98,8 @@ export default class ArenaScene extends Phaser.Scene {
 
     // Player mech (repaired fresh for the sortie).
     this.allMechs = this.registry.get('allMechs');
-    this.mech = this.allMechs[ACTIVE_MECH_KEY];
-    this.mech.repairAll();
+    const activeMech = this.allMechs[ACTIVE_MECH_KEY];
+    activeMech.repairAll();
     // #324: the player's survivability buffer used to be applied HERE as `boostHealth(7)`, which
     // meant the chassis data said 600 while the mech on the field was 3500 — and several balance
     // passes were reasoned against the wrong figure. It now lives in the chassis totals
@@ -112,9 +108,11 @@ export default class ArenaScene extends Phaser.Scene {
     // #246: (re)establish the player's native shield baseline fresh each sortie — redeploy-safe
     // and idempotent (never compounds, always starts this deploy at full charge with no
     // lingering powerup boost from a prior run).
-    this.mech.configureShield(PLAYER_SHIELD);
-    this.registry.set('playerMech', this.mech);
-    buildMechTextures(this, 'playerMech', this.mech);
+    activeMech.configureShield(PLAYER_SHIELD);
+    // #348: remembered so a JOINING player's mech gets the identical native shield baseline —
+    // co-op must not hand player 2 a differently-durable machine (coop.js `_cloneActiveMech`).
+    this._playerShieldConfig = PLAYER_SHIELD;
+    this.registry.set('playerMech', activeMech);
 
     // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
     // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
@@ -161,23 +159,15 @@ export default class ArenaScene extends Phaser.Scene {
     // (`this._spawnPoint`, set by `_buildWorld()` above from `spineSpawnHex`) instead of world
     // origin — real corridor terrain is already carved back to there, so the player now walks
     // FORWARD through that stretch instead of it sitting unused behind them.
-    this.px = this._spawnPoint.x; this.py = this._spawnPoint.y;
-    this.angle = -Math.PI / 2;     // legs facing up
-    this.turretAngle = -Math.PI / 2;
-    this.aimX = 0; this.aimY = -200;   // world aim point weapons converge on
-    this.vx = 0; this.vy = 0;      // world-space velocity (twin-stick movement)
-    this.speed = 0;
-    this.stepMs = 0; this.hullFrame = 0;
-    // #113: the player is the one unit that stays at DEPTH.UNITS — every ground enemy renders
-    // below it (DEPTH.GROUND_UNITS) so it's never visually obscured.
-    this.playerView = this._makeMechView('playerMech', this.px, this.py, this.angle, true);
-
-    // #347: the camera follows whatever `cameraFocusOf` nominates — today the primary player's
-    // own view, i.e. exactly the previous `startFollow(this.playerView, …)`. Phase 2 replaces
-    // this with a shared leashed camera framing every player (`playersCentroidOf`), and this is
-    // the single line that changes. Deliberately NOT entrenching the single-follow assumption
-    // further: nothing else in the scene reads the camera target.
-    this.cameras.main.startFollow(cameraFocusOf(this).view, true, 0.12, 0.12);
+    // #348: player 1. `_makePlayerAt` (coop.js) builds the mech textures, the view (#113: the
+    // player is the one unit that stays at DEPTH.UNITS), the identifying ground ring, this
+    // player's own Controls (pad 0 + keyboard/mouse) and its own firing/movement state.
+    this.players.push(this._makePlayerAt(0, this._spawnPoint.x, this._spawnPoint.y, activeMech));
+    // #348: the SHARED LEASHED CAMERA. The camera follows an invisible anchor placed on the live
+    // players' centroid each frame, and data/leash.js hard-stops any player who tries to leave
+    // the frame that implies — Jackson chose a hard stop over a zoom-out or a rubber-band. With
+    // one player the anchor sits exactly on that player, so single-player framing is unchanged.
+    this._initCoop();
 
     // #269: the old off-screen opening squad (#44) is retired — every base's docked units are
     // placed HERE, at deploy time, dormant, at their fixed dock positions (no camera/player-
@@ -209,29 +199,19 @@ export default class ArenaScene extends Phaser.Scene {
       this._initTerrainLabels();
     }
 
-    this.controls = new Controls(this);
     // #346: screen-space overlay for the on-screen sticks. Only created on a touch-capable
     // device, and it draws nothing until a finger actually lands — desktop sees no change.
+    // #348: `this.controls` is now player 1's own Controls (an alias onto `players[0].controls`,
+    // built in `_makePlayerAt`) — every player has one, because every player has a device.
     this.touchStickHud = this.controls.touch ? new TouchStickHud(this) : null;
-    this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
-    this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
-    this.sprint = initialSprintState();   // #188: Overclock-only now (#261), see data/sprint.js
-    // #189: whether the CURRENT sprint-active state is because Overclock is forcing it, and
-    // last frame's Overclock-active reading (so activation is detected as a true rising edge)
-    // — see arena/firing.js `_handleSprint` for the full force/handoff state machine. #261:
-    // there's no more player-manual sprint state to reclaim it, only Overclock ever sets this.
-    this._sprintForcedByOverclock = false;
-    this._overclockWasActive = false;
-    this.dash = initialDashState();   // #261: hardcoded L3/Space burst + cooldown, see data/dash.js
-    // THE target (#62, rework #252, unified #341): `convergeTarget` (shared.js `pickConvergeTarget`
-    // — #322: the nearest in-cone candidate of any kind, enemy/hex/wall span, or null) is the single
-    // source of truth. Direct fire converges on it, homing/arcing weapons seek it, the reticle draws
-    // at it — there is no separate lock record mirroring it any more. `aimEnemy` is that same pick
-    // when it's a live enemy. Both set each frame in `_updateLock` (targeting.js). `_reticlePos` is
-    // the reticle's eased (sliding) drawn position — presentation only.
-    this.aimEnemy = null;
-    this.convergeTarget = null;
-    this._reticlePos = null;
+    this.padEdges = new PadEdges(this);   // rising-edge pad-0 buttons for one-shot actions
+    // #348: `fireCooldowns`, `sprint`, `dash`, `convergeTarget`/`aimEnemy`/`_reticlePos` used to
+    // be initialised HERE, scene-level. Phase 1 (#347) left them shared and said exactly why:
+    // every one of them is downstream of one device's buttons and one player's aim, so splitting
+    // them is inseparable from adding the second controller. That is this phase, so they are now
+    // per-player fields set up in `_makePlayerAt` (coop.js) — and the `this.*` names still work,
+    // as delegating accessors onto `players[0]` (bottom of this file), so nothing that only cares
+    // about the local player had to change.
     // #322 removed #262's enemy-vs-building focus toggle entirely (Jackson: "we don't want to need
     // enemy vs terrain mode anymore"). One rule now scores both pools, so there is nothing to flip;
     // F and R3 are unbound.
@@ -291,7 +271,18 @@ export default class ArenaScene extends Phaser.Scene {
   // order. The few lines of overlay drawing + ammo regen stay inline.
   update(_time, delta) {
     const dt = Math.min(0.05, delta / 1000);
-    const intent = this.controls.read();
+    // #348: ONE INTENT PER PLAYER. Phase 1 drove every player from a single shared intent
+    // because there was only one device; phase 2's whole point is that there are now two. Each
+    // player owns its own Controls (pad N, and the keyboard/mouse for player 1 only), so its
+    // intent is read here and threaded to that player's drive/firing/aim below — nothing
+    // downstream reads a scene-level input any more.
+    //
+    // The join check runs FIRST so a player who joined this very frame gets an intent read like
+    // everyone else, rather than spending its first frame absent from the map.
+    this._updateCoopJoin();   // #348: second controller asking in? START on gamepad 2.
+    const intents = new Map();
+    for (const player of this.players) intents.set(player, player.controls.read());
+    const intent = intents.get(primaryPlayerOf(this));
     this.touchStickHud?.draw(this.controls.touch);   // #346, presentation only
 
     // #80: the camera's world-space view rect, republished each frame so HudScene's edge-
@@ -340,18 +331,19 @@ export default class ArenaScene extends Phaser.Scene {
     // unconditionally below) is what owns the delayed return-to-garage transition; this only
     // freezes the player's own agency, not the run's bookkeeping.
     // #347: gated PER PLAYER, not on a scene flag — a dead player stops steering while the
-    // others keep playing. With one player this is the same single gate on the same single
-    // latch (`player.dead` IS what `this._playerDead` now reads). `intent` is still ONE input
-    // source: a second controller producing a second intent is explicitly phase 2, so every
-    // player is driven from the same intent here — which, with one player, is what it always was.
+    // others keep playing. #348: and driven by ITS OWN intent, from its own controller.
     for (const player of this.players) {
       if (player.dead) continue;
+      const pi = intents.get(player);
+      if (!pi) continue;
       // #188/#261: resolve Sprint (Overclock-only now) and Dash's burst/cooldown BEFORE _drive
       // so a same-frame press is reflected in this frame's speed multiplier, not delayed a frame.
-      this._handleSprint(intent, delta);
-      this._handleDash(intent, delta);
-      this._drive(intent, dt, player);
+      this._handleSprint(pi, delta, player);
+      this._handleDash(pi, delta, player);
+      this._drive(pi, dt, player);
     }
+    // #348: the hard-stop leash + the shared camera anchor, applied AFTER everyone has moved.
+    this._updateCoopCamera();
 
     // ── One-shot pad buttons (#28 AI toggles, #29 return to garage). #252: the manual R3/T
     // drop-lock action is retired — the lock has no maintained state to escape any more, it
@@ -365,7 +357,9 @@ export default class ArenaScene extends Phaser.Scene {
     // instantly (no charge-up, no maintain timer) — blind fire onto the target's last-known/
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
     // weapons seek it; direct weapons converge on the same live pick directly. ──
-    this._updateLock(dt);
+    // #348: per player — each has its own turret, so each picks its own target and draws its
+    // own reticle. Nothing about the pick is shared any more.
+    for (const player of this.players) this._updateLock(dt, player);
     // #260: live target's world position (or null), republished each frame so HudScene can
     // draw a matching off-screen arrow for the CURRENT target — same channel pattern as
     // `objectiveWorld` above. Reuses `_lockAimPoint()` (targeting.js), the same query the
@@ -374,8 +368,10 @@ export default class ArenaScene extends Phaser.Scene {
     const lockPt = this._lockAimPoint();
     this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
     for (const player of this.players) this._stepGait(dt, player);
+    this._updatePlayerMarkers();   // #348: keep each identifying ring under its own mech
     for (const player of this.players) {
-      if (!player.dead) this._handleFiring(intent, delta, player);
+      const pi = intents.get(player);
+      if (!player.dead && pi) this._handleFiring(pi, delta, player);
     }
     this._updateEnemies(dt, delta);
     // #269 §5: tick every standing alert tower's wake-countdown sensor.
@@ -402,6 +398,11 @@ export default class ArenaScene extends Phaser.Scene {
 
     // #66: has the objective been destroyed? Evaluate + publish the mission each frame.
     this._updateMission();
+    // #348: a downed co-op player's 20s clock + the out-of-combat gate. Runs BEFORE `_updateRun`
+    // so a player who is about to come back is already alive when the run asks whether everyone
+    // is down — otherwise a respawn landing on the same frame as the last death would still end
+    // the run. Only does anything with two or more players; a solo death is unchanged.
+    this._updateRespawns(delta);
     // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
     // the run on mission-complete, or end it on player destruction.
     this._updateRun();
@@ -416,8 +417,14 @@ export default class ArenaScene extends Phaser.Scene {
     // targets reads as a slide rather than a jump cut (`_updateLock`, targeting.js). Playtest
     // follow-up (#252): indirect fire now always tracks the live target through cover, so there's
     // no more distinct "firing blind" state/colour — always drawn "locked."
-    if (this._reticlePos) {
-      this._drawLockReticle(this._reticlePos.x, this._reticlePos.y);
+    // #348: one reticle PER PLAYER, drawn in that player's identifying colour so two reticles on
+    // screen are never ambiguous about whose aim they are.
+    for (const player of this.players) {
+      if (player.dead || !player.reticlePos) continue;
+      // Solo play keeps the familiar locked-red reticle exactly as it was — the colour only
+      // means something once there is a second one on screen to tell it apart from.
+      const tint = this.players.length > 1 ? player.color : null;
+      this._drawLockReticle(player.reticlePos.x, player.reticlePos.y, tint);
     }
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
@@ -474,7 +481,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin, CoopMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.
@@ -498,6 +505,19 @@ const PLAYER_FIELD_ALIASES = {
   stepMs: 'stepMs', hullFrame: 'hullFrame',
   playerView: 'view',
   _playerDead: 'dead',
+  // #348: the input-shaped state phase 1 left scene-level now lives on the player, so the same
+  // alias treatment applies — `this.fireCooldowns` still means "the local player's cooldowns",
+  // which is what every remaining reference (and every arena test double) already meant.
+  controls: 'controls',
+  fireCooldowns: 'fireCooldowns',
+  _heldAudio: 'heldAudio',
+  sprint: 'sprint',
+  dash: 'dash',
+  _sprintForcedByOverclock: 'sprintForcedByOverclock',
+  _overclockWasActive: 'overclockWasActive',
+  convergeTarget: 'convergeTarget',
+  aimEnemy: 'aimEnemy',
+  _reticlePos: 'reticlePos',
 };
 for (const [sceneField, playerField] of Object.entries(PLAYER_FIELD_ALIASES)) {
   Object.defineProperty(ArenaScene.prototype, sceneField, {
