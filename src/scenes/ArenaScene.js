@@ -21,6 +21,8 @@ import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
 import { primaryPlayerOf } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
+import { hudPlayerSnapshot } from '../data/hudLayout.js';
+import { DASH_COOLDOWN } from '../data/dash.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -282,6 +284,15 @@ export default class ArenaScene extends Phaser.Scene {
     // adds a `players` channel alongside this one instead of rerouting it.
     const hudPlayer = primaryPlayerOf(this);
     this.registry.set('playerWorld', { x: hudPlayer.x, y: hudPlayer.y, angle: hudPlayer.turretAngle });
+    // #366: the `players` channel phase 1 said phase 2+ would add. ONE snapshot per player —
+    // mech, colour, downed state, respawn clock, dash state — which is everything HudScene needs
+    // to draw a full readout for each of them. Republished every frame, so a mid-sortie START
+    // join appears in it (and therefore on the HUD) the frame the joiner lands. `playerWorld`
+    // above stays primary-only; `playerWorlds` is its per-player twin for the minimap markers.
+    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p, DASH_COOLDOWN)));
+    this.registry.set('playerWorlds', this.players.map((p) => ({
+      x: p.x, y: p.y, angle: p.turretAngle, color: p.color, dead: !!p.dead,
+    })));
     const enemyPos = [];
     for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyPos.push({ x: e.x, y: e.y });
     this.registry.set('enemyPositions', enemyPos);

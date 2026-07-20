@@ -8,6 +8,10 @@ import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { DASH_BIND } from '../input/Controls.js';
 import { AMMO_EMPTY_COOLDOWN } from '../data/Mech.js';
 import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
+import {
+  hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
+} from '../data/hudLayout.js';
+import { playerColor, showsPlayerColor } from '../data/players.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -185,80 +189,34 @@ export default class HudScene extends Phaser.Scene {
     // the inset-offset note on `lockWayMargins` below).
     this.lockWayGfx = this.add.graphics().setDepth(20);
 
-    // Per-part integrity column (player), top-left under the hints + stage/objective lines.
-    // #246: this used to be one collapsed armor+hp number per location — now a short label,
-    // then a two-segment BAR (armor first, then hp — see `_updatePartBars`) so the armor/hp
-    // split is actually visible, not just implied by a number. The mech-ART armor-shell overlay
-    // (mechArt.js) is the PRIMARY way this reads in the arena; this bar is a supporting HUD
-    // readout for players who want the exact numbers/proportions at a glance too.
-    this.add.text(16, 112, 'INTEGRITY', { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
-    this.partTexts = {};
-    this.partBarsGfx = this.add.graphics();
-    this._partRowY = {};
-    let y = 130;
-    for (const loc of LOCATIONS) {
-      this._partRowY[loc] = y;
-      // Short location code (static — doesn't need a per-frame update).
-      this.add.text(16, y, LOCATION_INFO[loc].short.padEnd(2), {
-        fontFamily: 'monospace', fontSize: '11px', color: C.dim,
-      }).setOrigin(0, 0.15);
-      // Numbers sit to the right of the bar, on the same row.
-      this.partTexts[loc] = this.add.text(16 + PART_BAR_X + PART_BAR_W + 8, y, '', {
-        fontFamily: 'monospace', fontSize: '11px', color: C.text,
-      }).setOrigin(0, 0.15);
-      y += PART_ROW_H;
-    }
-
-    // #246: full-mech SHIELD readout — its own row under the per-location bars. Hidden entirely
-    // (both bar and label) for a body with no native shield config at all (`mech.hasShield()`
-    // false), per the design decision that some enemies/loadouts simply have none; shown
-    // whenever a shield is present, whether that's the player's native baseline or a mid-run
-    // Shield-powerup boost — same bar, just a bigger max/faster fill while boosted.
-    this.shieldRowY = y + 4;
-    this.shieldLabel = this.add.text(16, this.shieldRowY, 'SHIELD', {
-      fontFamily: 'monospace', fontSize: '11px', color: C.accent,
-    }).setVisible(false);
-    this.shieldBarTrack = this.add.rectangle(
-      16 + PART_BAR_X, this.shieldRowY + 6, PART_BAR_W, PART_BAR_H, 0x0e1218,
-    ).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f).setVisible(false);
-    this.shieldBarFill = this.add.rectangle(
-      16 + PART_BAR_X, this.shieldRowY + 6, PART_BAR_W, PART_BAR_H, SHIELD_BAR_COLOR,
-    ).setOrigin(0, 0.5).setVisible(false);
-    this.shieldText = this.add.text(16 + PART_BAR_X + PART_BAR_W + 8, this.shieldRowY, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: C.text,
-    }).setOrigin(0, 0.15).setVisible(false);
-
-    // Skill bar — the shared garage tiles, centred along the bottom of the screen.
-    this.skillBar = this.add.container(0, 0);
-    this.skillRefs = {};
-    const mech = this.registry.get('playerMech');
-    const tiles = tileRow(this.W * 0.12, this.W * 0.76, { bottom: this.H - 10, maxSize: 92 });
-    for (const r of tiles) {
-      const id = mech?.mounts[r.loc]?.[0] ?? null;
-      this.skillRefs[r.loc] = drawSkillTile(this, this.skillBar, r, { loc: r.loc, itemId: id });
-    }
-
-    // #188/#261: Dash cooldown bar — a simple track+fill bar centred just above the skill-tile
-    // row (was Sprint's fuel bar; Sprint itself is Overclock-only now, see data/sprint.js and
-    // arena/firing.js's `_handleSprint`). Shows how close the next Dash is to being ready:
-    // empty/dim while on cooldown, filling back up, full + bright the instant it's ready again.
-    // Mirrors the tile row's own ammo-bar visual language (a dim track rectangle behind a
-    // colored fill), same as the per-weapon ammo bars in skillTiles.js.
-    const barW = Math.min(260, this.W * 0.32), barH = 8;
-    const barX = this.W / 2 - barW / 2, barY = tiles.length ? tiles[0].y - 22 : this.H - 32;
-    this.dashBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
-    this.dashBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
-    this.dashLabel = this.add.text(barX + barW / 2, barY - 12, '', {
-      fontFamily: 'monospace', fontSize: '10px', color: C.dim,
-    }).setOrigin(0.5, 1);
-    this._dashBarW = barW;
+    // #366: the PER-PLAYER panels — integrity column, shield row, skill-tile row and dash bar,
+    // one complete set per player on the field. Before this, every one of those read
+    // `registry.get('playerMech')`, which is only ever player 1's mech, so co-op's player 2 had
+    // no weapon, ammo or health readout at all. Jackson chose a FULL second HUD over a compact
+    // health-and-ammo strip.
+    //
+    // Geometry comes from the pure `hudLayout` (data/hudLayout.js), which returns exactly today's
+    // hardcoded numbers for a single player — so solo is untouched on every path — and mirrors a
+    // second column/row onto the right for co-op. The panels are rebuilt whenever the player
+    // COUNT changes, and the count is re-asked EVERY FRAME in `_syncPanels` rather than decided
+    // here at construction: that is what makes a mid-sortie START join on gamepad 2 grow the
+    // second HUD immediately (#348's ground-ring fix had exactly this bug, and the fix was the
+    // same — ask the rule every frame).
+    this.panels = [];
+    this._panelCount = 0;
+    this._syncPanels();
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
     // toolbar (its top edge + a little breathing room); top excludes the hints/objective text
     // block (INTEGRITY starts at y=112, so keep clear of that).
-    const tileTop = tiles.length ? tiles[0].y : this.H - 10;
-    this.wayMargins = { top: 116, right: 24, bottom: this.H - tileTop + 12, left: 24 };
+    // #366: `_tileTop` is published by the panel build (the tile row's own top edge), and the
+    // left/right insets come from the layout — a second, right-hand column has to be cleared too.
+    const tileTop = this._tileTop;
+    this.wayMargins = {
+      top: 116, right: this._layout.margins.right,
+      bottom: this.H - tileTop + 12, left: this._layout.margins.left,
+    };
     // #260: the lock-target arrow uses the same margins, bumped out a further 16px on every edge —
     // if the objective and the live lock target ever sit in the same off-screen direction at once,
     // this keeps the two chevrons from landing exactly on top of each other (simplest fix: draw at
@@ -274,6 +232,7 @@ export default class HudScene extends Phaser.Scene {
     // count/buff stack. It renders the WHOLE snaking corridor's silhouette (from `spineWorld`)
     // with live player/objective/enemy markers moving within it.
     const mmW = 152, mmH = 128;
+    this._miniSize = { w: mmW, h: mmH };
     this.miniBox = { x: this.W - 14 - mmW, y: tileTop - 12 - mmH, w: mmW, h: mmH };
     // Static layer: panel + corridor silhouette, drawn once the spine is known (it never changes
     // mid-run). Dynamic layer: the live markers, cleared/redrawn each frame. Both on the same
@@ -286,30 +245,191 @@ export default class HudScene extends Phaser.Scene {
     this._miniSpineRef = null; // identity of the spine snapshot the static layer was drawn from
   }
 
-  // Dev overlay label for the active input scheme. #346 added a third one, 'touch';
-  // anything else still reads as mouse+keyboard.
-  _inputModeLabel() {
-    const m = this.registry.get('inputMode');
-    return m === 'pad' ? 'CONTROLLER' : m === 'touch' ? 'TOUCH' : 'MOUSE + KB';
+  // ── #366: per-player panels ──────────────────────────────────────────────────────────────
+  //
+  // A PANEL is one player's whole readout: the integrity column (per-location armor/hp bars +
+  // numbers), the shield row, the four skill tiles with their live ammo, the dash bar, and the
+  // downed/respawn line. Everything here used to be one hardcoded set of objects fed from
+  // `registry.get('playerMech')`.
+
+  // The live per-player snapshots the arena publishes each frame (data/hudLayout.js
+  // `hudPlayerSnapshot`). Falls back to the old singleton channels so any path that drives the
+  // HUD without the arena's `hudPlayers` channel (older saves mid-transition, the smoke test's
+  // direct scene starts) still renders exactly one working panel rather than nothing.
+  _playerSnapshots() {
+    const published = this.registry.get('hudPlayers');
+    if (Array.isArray(published) && published.length) return published;
+    const mech = this.registry.get('playerMech');
+    if (!mech) return [];
+    return [{
+      id: 0,
+      color: playerColor(0),
+      mech,
+      dead: false,
+      dash: {
+        active: !!this.registry.get('dashActive'),
+        cooldown: this.registry.get('dashCooldown'),
+        max: this.registry.get('dashCooldownMax') || 1,
+      },
+      respawn: null,
+    }];
   }
 
-  update() {
-    const mech = this.registry.get('playerMech');
-    if (!mech) return;
+  // Asked EVERY frame (see the create()-time note): if the number of players changed, rebuild.
+  // Panel geometry is a function of the count alone, so a steady frame rebuilds nothing and a
+  // mid-sortie join is picked up on the frame it happens.
+  _syncPanels() {
+    const snapshots = this._playerSnapshots();
+    if (panelsNeedRebuild(this._panelCount, snapshots.length)) {
+      this._buildPanels(Math.max(1, snapshots.length), snapshots);
+    }
+    return snapshots;
+  }
 
-    // #296: dev-only overlays — the objects only exist under DEV (see create()), so their
-    // per-frame updates are gated behind the same flag (stripped from the production build).
-    if (import.meta.env.DEV) {
-      this.modeText.setText(this._inputModeLabel());
-      const aiMove = this.registry.get('aiMove') !== false;
-      const aiFire = this.registry.get('aiFire') !== false;
-      this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
+  _buildPanels(count, snapshots) {
+    for (const panel of this.panels ?? []) this._destroyPanel(panel);
+    this.panels = [];
+    this._layout = hudLayout(count, this.W);
+    for (const spec of this._layout.panels) {
+      this.panels.push(this._makePanel(spec, count, snapshots[spec.index]));
+    }
+    this._panelCount = this._layout.panels.length;
+    this._tileTop = this.panels[0].tileTop;
+    this._applyChromeLayout();
+  }
+
+  // Reposition the SHARED chrome that has to move out of a second panel's way. Guarded on each
+  // object existing because the first build runs mid-create(), before the minimap exists.
+  _applyChromeLayout() {
+    const { shared, margins } = this._layout;
+    this.dummyText?.setPosition(shared.enemyX, 16).setOrigin(shared.enemyOriginX, 0);
+    if (!this.wayMargins) return;   // first build: create() sets these itself, just below
+    this.wayMargins = {
+      top: 116, right: margins.right, bottom: this.H - this._tileTop + 12, left: margins.left,
+    };
+    this.lockWayMargins = {
+      top: this.wayMargins.top + 16, right: this.wayMargins.right + 16,
+      bottom: this.wayMargins.bottom + 16, left: this.wayMargins.left + 16,
+    };
+    if (this.miniBox && this._miniSize) {
+      this.miniBox = {
+        x: this.W - 14 - this._miniSize.w, y: this._tileTop - 12 - this._miniSize.h,
+        w: this._miniSize.w, h: this._miniSize.h,
+      };
+      this.miniLabel?.setPosition(this.miniBox.x + 6, this.miniBox.y + 4);
+      this._miniFit = null;          // force a re-fit against the moved box
+      this._miniSpineRef = null;
+    }
+  }
+
+  // Build one player's set of objects at the layout's coordinates. Creation ORDER mirrors the
+  // pre-#366 code exactly (header, bars layer, per-row labels + numbers, shield, tiles, dash) so
+  // a solo HUD is the same objects in the same draw order at the same positions as before.
+  _makePanel(spec, count, snapshot) {
+    const x = spec.columnX;
+    const color = snapshot?.color ?? playerColor(spec.index);
+    const colStr = '#' + color.toString(16).padStart(6, '0');
+    // #348's rule, reused: the identifying COLOUR only means something once there is a second
+    // player to be told apart from, so solo's header stays the plain dim 'INTEGRITY'.
+    const identify = showsPlayerColor(count);
+    const panel = {
+      index: spec.index, spec, columnX: x, color,
+      partTexts: {}, partRowY: {}, skillRefs: {}, extras: [],
+    };
+
+    panel.header = this.add.text(x, 112, panelLabel(spec.index, count), {
+      fontFamily: 'monospace', fontSize: '12px', color: identify ? colStr : C.dim,
+    });
+    panel.partBarsGfx = this.add.graphics();
+    let y = 130;
+    for (const loc of LOCATIONS) {
+      panel.partRowY[loc] = y;
+      panel.extras.push(this.add.text(x, y, LOCATION_INFO[loc].short.padEnd(2), {
+        fontFamily: 'monospace', fontSize: '11px', color: C.dim,
+      }).setOrigin(0, 0.15));
+      panel.partTexts[loc] = this.add.text(x + PART_BAR_X + PART_BAR_W + 8, y, '', {
+        fontFamily: 'monospace', fontSize: '11px', color: C.text,
+      }).setOrigin(0, 0.15);
+      y += PART_ROW_H;
+    }
+
+    panel.shieldRowY = y + 4;
+    panel.shieldLabel = this.add.text(x, panel.shieldRowY, 'SHIELD', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.accent,
+    }).setVisible(false);
+    panel.shieldBarTrack = this.add.rectangle(
+      x + PART_BAR_X, panel.shieldRowY + 6, PART_BAR_W, PART_BAR_H, 0x0e1218,
+    ).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f).setVisible(false);
+    panel.shieldBarFill = this.add.rectangle(
+      x + PART_BAR_X, panel.shieldRowY + 6, PART_BAR_W, PART_BAR_H, SHIELD_BAR_COLOR,
+    ).setOrigin(0, 0.5).setVisible(false);
+    panel.shieldText = this.add.text(x + PART_BAR_X + PART_BAR_W + 8, panel.shieldRowY, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.text,
+    }).setOrigin(0, 0.15).setVisible(false);
+
+    // A downed player must read as DOWN — WAITING/RESPAWN, not as a stale or zeroed column. The
+    // bars themselves keep showing the wreck truthfully; this line says why nothing is happening
+    // and how long it has left (data/hudLayout.js `panelStatusText`, off data/respawn.js's clock).
+    panel.statusText = this.add.text(x, panel.shieldRowY + 20, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.bad,
+    }).setVisible(false);
+
+    // Skill tiles for THIS player's own mech, in this panel's half of the bottom edge.
+    panel.skillBar = this.add.container(0, 0);
+    const tiles = tileRow(spec.tilesX, spec.tilesW, { bottom: this.H - 10, maxSize: 92 });
+    for (const r of tiles) {
+      const id = snapshot?.mech?.mounts?.[r.loc]?.[0] ?? null;
+      panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
+    }
+    panel.tileTop = tiles.length ? tiles[0].y : this.H - 10;
+
+    const barW = spec.dashW, barH = 8;
+    const barX = spec.dashCx - barW / 2, barY = panel.tileTop - 22;
+    panel.dashBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218)
+      .setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
+    panel.dashBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
+    panel.dashLabel = this.add.text(barX + barW / 2, barY - 12, '', {
+      fontFamily: 'monospace', fontSize: '10px', color: C.dim,
+    }).setOrigin(0.5, 1);
+    panel.dashBarW = barW;
+    return panel;
+  }
+
+  _destroyPanel(panel) {
+    const objs = [
+      panel.header, panel.partBarsGfx, panel.shieldLabel, panel.shieldBarTrack,
+      panel.shieldBarFill, panel.shieldText, panel.statusText, panel.skillBar,
+      panel.dashBarTrack, panel.dashBarFill, panel.dashLabel,
+      ...Object.values(panel.partTexts), ...panel.extras,
+    ];
+    for (const o of objs) o?.destroy();
+  }
+
+  // Which control glyphs a panel's tiles/dash bar should show. Player 1 owns the keyboard+mouse
+  // and so follows the live `inputMode`; every later player is gamepad-only by construction
+  // (scenes/arena/coop.js builds their Controls with `keyboard: false`), so their binds are
+  // always the pad's — showing them Q/E/LMB would be showing them keys they cannot press.
+  _panelMode(panel) {
+    if (panel.index > 0) return 'pad';
+    return this.registry.get('inputMode') === 'pad' ? 'pad' : 'kbm';
+  }
+
+  // One panel's per-frame refresh. `snapshot` missing = that player left the field (the panel is
+  // about to be rebuilt away next frame anyway) — hide rather than draw stale numbers.
+  _updatePanel(panel, snapshot) {
+    const mech = snapshot?.mech;
+    const present = !!mech;
+    panel.skillBar.setVisible(present);
+    panel.statusText.setVisible(false);
+    if (!present) {
+      panel.partBarsGfx.clear();
+      return;
     }
 
     // Skill tiles: live ammo on each weapon (#188: the old per-slot ability cooldown/shield
     // display is gone along with the ability slot — #261: the always-available Dash renders in
     // its own cooldown bar below instead, since it isn't tied to a body location any more).
-    const mode = this.registry.get('inputMode') === 'pad' ? 'pad' : 'kbm';
+    const mode = this._panelMode(panel);
     const weapons = mech.weapons();
     for (const loc of TILE_ORDER) {
       const id = mech.mounts[loc][0] ?? null;
@@ -334,16 +454,50 @@ export default class HudScene extends Phaser.Scene {
           opts.ammoFrac = w.ammo / w.weapon.ammoMax;
         }
       }
-      updateSkillTile(this.skillRefs[loc], opts);
+      updateSkillTile(panel.skillRefs[loc], opts);
     }
 
     // #188/#261: Dash cooldown bar — fill fraction + color track how close the next dash is to
-    // ready; the label shows the bind + READY/ACTIVE/COOLDOWN state, mirroring the old ability
-    // tile's READY/cooldown text.
-    this._updateDashBar();
+    // ready; the label shows the bind + READY/ACTIVE/COOLDOWN state.
+    this._updateDashBar(panel, snapshot.dash);
+    this._updatePartBars(panel, mech);
+    this._updateShieldBar(panel, mech);
 
-    this._updatePartBars(mech);
-    this._updateShieldBar(mech);
+    // Downed: dim this player's own controls (they cannot use them) and say what they are
+    // waiting on. Everything else in the panel keeps reading true.
+    const status = panelStatusText(snapshot);
+    panel.skillBar.setAlpha(snapshot.dead ? 0.3 : 1);
+    panel.dashBarFill.setAlpha(snapshot.dead ? 0.3 : 1);
+    if (status) panel.statusText.setText(status).setVisible(true);
+  }
+
+  // Dev overlay label for the active input scheme. #346 added a third one, 'touch';
+  // anything else still reads as mouse+keyboard.
+  _inputModeLabel() {
+    const m = this.registry.get('inputMode');
+    return m === 'pad' ? 'CONTROLLER' : m === 'touch' ? 'TOUCH' : 'MOUSE + KB';
+  }
+
+  update() {
+    // #366: re-ask the player list EVERY frame — this is what picks up a mid-sortie START join
+    // (or a garage co-op deploy) and grows the second panel without a redeploy.
+    const snapshots = this._syncPanels();
+    const mech = snapshots[0]?.mech;
+    if (!mech) return;
+
+    // #296: dev-only overlays — the objects only exist under DEV (see create()), so their
+    // per-frame updates are gated behind the same flag (stripped from the production build).
+    if (import.meta.env.DEV) {
+      this.modeText.setText(this._inputModeLabel());
+      const aiMove = this.registry.get('aiMove') !== false;
+      const aiFire = this.registry.get('aiFire') !== false;
+      this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
+    }
+
+    // #366: one pass per PANEL — its own tiles/ammo, its own integrity bars, its own shield row,
+    // its own dash bar, its own downed-and-waiting line. Solo runs this exactly once, over the
+    // same objects at the same coordinates the singleton HUD used.
+    for (const panel of this.panels) this._updatePanel(panel, snapshots[panel.index]);
 
     const total = this.registry.get('enemyCount') || 0;
     const alive = this.registry.get('enemiesAlive') ?? total;
@@ -537,12 +691,18 @@ export default class HudScene extends Phaser.Scene {
       }
     }
 
-    // Player: a facing chevron in the shared accent colour, oriented to the turret/aim heading
-    // (Refs #116: playtest feedback was that it should point where the mech is aiming, not where
-    // it's driving — `player.angle` is now ArenaScene's `turretAngle`, not the hull heading).
-    if (player) {
-      const m = toMini(player.x, player.y);
-      if (inBox(m)) drawChevron(g, m.x, m.y, player.angle, 6.5, MM.player, 1);
+    // Players: a facing chevron each, oriented to the turret/aim heading (Refs #116: playtest
+    // feedback was that it should point where the mech is aiming, not where it's driving —
+    // `angle` is ArenaScene's `turretAngle`, not the hull heading).
+    // #366: one marker PER player, in that player's identifying colour once there are two of
+    // them — the map was previously drawing only the primary, so a co-op partner was invisible
+    // on it. Solo keeps the single chevron in the shared accent exactly as before.
+    const worlds = this.registry.get('playerWorlds') ?? (player ? [player] : []);
+    const identify = showsPlayerColor(worlds.length);
+    for (const w of worlds) {
+      if (w.dead) continue;
+      const m = toMini(w.x, w.y);
+      if (inBox(m)) drawChevron(g, m.x, m.y, w.angle, 6.5, identify ? w.color : MM.player, 1);
     }
   }
 
@@ -551,19 +711,21 @@ export default class HudScene extends Phaser.Scene {
   // dash, filling back up to full as it becomes ready again; color/label reflect
   // ACTIVE/READY/COOLDOWN so the owner can read at a glance whether a dash is mid-burst, ready
   // to fire, or still recharging (and roughly how long is left).
-  _updateDashBar() {
-    const cooldown = this.registry.get('dashCooldown');
+  // #366: per panel — each player has their own L3/Space, own burst, own cooldown (arena/firing.js
+  // has tracked them per player since #348; only the HUD was still reading player 1's).
+  _updateDashBar(panel, dash) {
+    const cooldown = dash?.cooldown;
     if (cooldown == null) return;   // no player mech / dash state published yet
-    const max = this.registry.get('dashCooldownMax') || 1;
-    const active = !!this.registry.get('dashActive');
+    const max = dash.max || 1;
+    const active = !!dash.active;
     const frac = Phaser.Math.Clamp(1 - cooldown / max, 0, 1);   // 0 = just used, 1 = ready
-    this.dashBarFill.setSize(Math.max(1, this._dashBarW * frac), this.dashBarFill.height);
+    panel.dashBarFill.setSize(Math.max(1, panel.dashBarW * frac), panel.dashBarFill.height);
     const ready = cooldown <= 0;
     const color = active ? C.accent : ready ? C.good : C.warn;
-    this.dashBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
-    const bind = this.registry.get('inputMode') === 'pad' ? DASH_BIND.pad : DASH_BIND.key;
+    panel.dashBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
+    const bind = this._panelMode(panel) === 'pad' ? DASH_BIND.pad : DASH_BIND.key;
     const state = active ? 'DASHING' : ready ? 'READY' : `COOLDOWN ${cooldown.toFixed(1)}s`;
-    this.dashLabel.setText(`DASH (${bind})  ${state}`).setColor(color);
+    panel.dashLabel.setText(`DASH (${bind})  ${state}`).setColor(color);
   }
 
   // #246: per-location armor/hp split bar — TWO adjacent segments in one bar frame, armor
@@ -575,13 +737,13 @@ export default class HudScene extends Phaser.Scene {
   // reads here as the LEFT segment emptying before the right one starts to. This is the
   // supporting HUD readout; the PRIMARY at-a-glance armor read is the mech-art armor-shell
   // overlay on the mech itself (see mechArt.js).
-  _updatePartBars(mech) {
-    const g = this.partBarsGfx;
+  _updatePartBars(panel, mech) {
+    const g = panel.partBarsGfx;
     g.clear();
     for (const loc of LOCATIONS) {
       const p = mech.parts[loc];
-      const y = this._partRowY[loc];
-      const bx = 16 + PART_BAR_X;
+      const y = panel.partRowY[loc];
+      const bx = panel.columnX + PART_BAR_X;
       const totalMax = p.maxArmor + p.maxHp;
       const armorShare = totalMax > 0 ? p.maxArmor / totalMax : 0;
       const armorW = PART_BAR_W * armorShare;
@@ -614,7 +776,7 @@ export default class HudScene extends Phaser.Scene {
 
       const destroyed = mech.isPartDestroyed(loc);
       const col = destroyed ? C.bad : C.text;
-      this.partTexts[loc]
+      panel.partTexts[loc]
         .setText(destroyed ? 'DESTROYED' : `${Math.ceil(p.armor)}+${Math.ceil(p.hp)}/${p.maxArmor}+${p.maxHp}`)
         .setColor(col);
     }
@@ -625,17 +787,17 @@ export default class HudScene extends Phaser.Scene {
   // (`hasShield()` false — some enemy kinds and loadouts genuinely have none). Shown for the
   // player's baseline shield and, indistinguishably to the readout, a boosted one mid-powerup
   // (the bar's own max just grows/shrinks with `mech.shield.max`).
-  _updateShieldBar(mech) {
+  _updateShieldBar(panel, mech) {
     const has = mech.hasShield?.() ?? false;
-    this.shieldLabel.setVisible(has);
-    this.shieldBarTrack.setVisible(has);
-    this.shieldBarFill.setVisible(has);
-    this.shieldText.setVisible(has);
+    panel.shieldLabel.setVisible(has);
+    panel.shieldBarTrack.setVisible(has);
+    panel.shieldBarFill.setVisible(has);
+    panel.shieldText.setVisible(has);
     if (!has) return;
     const { hp, max } = mech.shield;
     const frac = max > 0 ? Phaser.Math.Clamp(hp / max, 0, 1) : 0;
-    this.shieldBarFill.setSize(Math.max(1, PART_BAR_W * frac), PART_BAR_H);
-    this.shieldText.setText(`${Math.ceil(hp)}/${Math.ceil(max)}`);
+    panel.shieldBarFill.setSize(Math.max(1, PART_BAR_W * frac), PART_BAR_H);
+    panel.shieldText.setText(`${Math.ceil(hp)}/${Math.ceil(max)}`);
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
@@ -658,8 +820,10 @@ export default class HudScene extends Phaser.Scene {
 
     const g = this.buffGfx;
     g.clear();
-    const R = 15;                 // ring radius
-    const cx = this.W - 16 - R;   // ring centre x (ring hugs the right edge)
+    const R = BUFF_RING_R;        // ring radius
+    // #366: the ring stack's anchor comes from the layout — top-right in solo (unchanged), moved
+    // to top-centre in co-op, where the right edge belongs to player 2's integrity column.
+    const cx = this._layout.shared.buffCx;
     const rowH = 2 * R + 10;
     let y = 44;
 
