@@ -454,13 +454,28 @@ export function aimAngleOffset(px, py, turretAngle, x, y) {
 // side — the thing that used to be structurally impossible.
 export const TARGET_CONE = 20 * Math.PI / 180;   // half-angle of the qualifying cone
 
-// The enemy's modest edge: an enemy is ranked as if it were this fraction of its true distance
-// away, so at COMPARABLE range a live enemy beats terrain, while terrain much closer than the
-// enemy still wins. 0.8 means an enemy at 1000px ranks like terrain at 800px — enough to break
-// "the wall and the mech are both roughly in front of me" toward the mech, not enough to bring
-// back "enemy always wins." PLAYTEST DIAL: lower = enemies win from farther out, 1.0 = pure
-// nearest-wins with no preference at all.
-export const ENEMY_RANGE_EDGE = 0.8;
+// The enemy's edge: an enemy is ranked as if it were this fraction of its true distance away, so
+// an enemy well BEYOND terrain still beats it, while terrain much closer than the enemy wins.
+//
+// #322 playtest follow-up: was 0.8, which lost the case the owner cares most about — "shoot flying
+// targets flying within/over their bases behind their walls." Solved from the real geometry rather
+// than picked: a base ring is ~479px ACROSS (`leash.js`), so a flyer anywhere inside a compound is
+// at most ~480px deeper than the wall span facing you. Standing a realistic 250-400px off that
+// wall, the worst-case ratio is (250 + 480) / 250 ≈ 2.9 — the deep-corner flyer is ~3x the wall's
+// distance. So the edge has to be under ~1/2.9 for the flyer to win at all, which is exactly why
+// 0.5 (floated in conversation) does NOT fix this: at 0.5 a flyer 700px out competes at 350px and
+// a 300px wall still takes the pick. 0.3 covers the whole compound depth from any realistic
+// standoff — a flyer out to 1000px beats a wall at 300px. Closer than ~150px to the wall the ratio
+// passes 3x again and the wall retakes the pick, which is the correct end of the dial: at that
+// range the wall IS the thing you are pointing at.
+//
+// Deliberately NOT absolute (the owner had enemy-always-wins removed: "enemy always wins has been
+// feeling really bad"). Terrain still wins whenever it is nearer than a third of the enemy's range,
+// which is the "this is clearly what I'm pointing at" case: point-blank demolition at 120px beats
+// a mech 400px away, and terrain inside ~525px beats an enemy at the 1750px targeting limit.
+//
+// PLAYTEST DIAL: lower = enemies win from farther out, 1.0 = pure nearest-wins with no preference.
+export const ENEMY_RANGE_EDGE = 0.3;
 
 // The pick: the best candidate among `enemies` and `terrain` (each entry a {x, y, ...}), or null.
 // PURE (no Phaser / no scene), so the priority rule is unit-testable on its own.
