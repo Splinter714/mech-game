@@ -5,7 +5,7 @@ import {
   isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
   isWaterTerrain, isMissionObjective,
   SLOW_MOVEMENT_FACTOR, movementTier, coverTier, isBaseCategory,
-  softCoverBlocksLOS, coverBlocksForRay,
+  softCoverBlocksLOS, coverBlocksForRay, NATURAL_TERRAIN_DESTRUCTIBLE,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -156,15 +156,76 @@ describe('terrain property resolvers', () => {
     expect(blocksLOS(undefined)).toBe(false);
   });
 
-  it('isDestructible + buildingHp: destructible hard cover and soft cover have HP; open ground does not', () => {
+  it('isDestructible + buildingHp: fabricated base structures have HP; natural terrain and open ground do not (#351)', () => {
     expect(isDestructible('alertTower')).toBe(true);
     expect(buildingHp('alertTower')).toBe(TERRAIN.alertTower.hp);
-    expect(isDestructible('forest')).toBe(true);   // #72 destructible soft cover
-    expect(buildingHp('forest')).toBe(TERRAIN.forest.hp);
+    // #351: natural terrain is permanent scenery now — see the dedicated describe block below.
+    expect(isDestructible('forest')).toBe(false);
+    expect(buildingHp('forest')).toBe(0);
     for (const id of ['grass', 'river', 'deepWater', 'rubble', undefined]) {
       expect(isDestructible(id)).toBe(false);
       expect(buildingHp(id)).toBe(0);
     }
+  });
+});
+
+// #351 (owner-confirmed experiment, 2026-07-19): "nature is permanent, their stuff isn't."
+// ALL natural terrain — forests/foliage AND boulders/rock — is indestructible and untargetable;
+// only fabricated `category: 'base'` structures stay destructible. Reversed by flipping the single
+// `NATURAL_TERRAIN_DESTRUCTIBLE` constant in terrain.js back to `true`.
+describe('#351 natural terrain is permanent scenery — indestructible + untargetable', () => {
+  it('is off by default (the experiment is live)', () => {
+    expect(NATURAL_TERRAIN_DESTRUCTIBLE).toBe(false);
+  });
+
+  it('no `category: terrain` entry is destructible or carries live HP, whatever its raw flags say', () => {
+    for (const t of Object.values(TERRAIN)) {
+      if (t.category !== 'terrain') continue;
+      expect(isDestructible(t.id)).toBe(false);
+      expect(buildingHp(t.id)).toBe(0);
+      expect(isMissionObjective(t.id)).toBe(false);
+    }
+  });
+
+  it('every soft-cover natural hex specifically — forests, foliage, rock debris — is now permanent', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(isDestructible(id)).toBe(false);
+      expect(buildingHp(id)).toBe(0);
+    }
+  });
+
+  it('leaves fabricated base structures fully destructible and targetable', () => {
+    for (const id of ['alertTower', 'dockClosed', 'objective']) {
+      expect(isDestructible(id)).toBe(true);
+      expect(buildingHp(id)).toBe(TERRAIN[id].hp);
+    }
+    // The objective is still the one non-set-dressing assault target.
+    expect(isMissionObjective('objective')).toBe(true);
+    expect(isMissionObjective('alertTower')).toBe(false);
+    expect(isMissionObjective('dockClosed')).toBe(false);
+  });
+
+  it('does NOT touch cover behaviour — the #279 soft tier is byte-for-byte unchanged', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(coverTier(id)).toBe('soft');
+      expect(isSoftCover(id)).toBe(true);
+      expect(blocksLOS(id)).toBe(true);
+      expect(isPassable(id)).toBe(true);
+      expect(coverBlocksForRay(id, false, true)).toBe(true);    // small unit still concealed
+      expect(coverBlocksForRay(id, false, false)).toBe(false);  // a mech still shoots clean over
+    }
+  });
+
+  it('keeps the #313 HP values as dead-but-intact data, so flipping the flag restores the old tuning', () => {
+    // Deliberately NOT deleted (issue #351 note): the raw declarations survive untouched.
+    expect(TERRAIN.forest.destructible).toBe(true);
+    expect(TERRAIN.forest.hp).toBe(40);
+    expect(TERRAIN.wreck.hp).toBe(40);
+    expect(TERRAIN.scrub.hp).toBe(30);
+    expect(TERRAIN.drift.hp).toBe(30);
+    expect(TERRAIN.fumarole.hp).toBe(30);
+    // ...and each still declares the rubble it WOULD collapse into.
+    expect(rubbleFor('forest')).toBe('forestRubble');
   });
 });
 
@@ -192,11 +253,14 @@ describe('#72 soft cover (forest/scrub/drift/wreck/fumarole) — own-hex transpa
     }
   });
 
-  it('every cover terrain is destructible, with LESS HP than a full base-infra structure, and flattens to passable no-cover ground', () => {
+  // #351 flipped natural terrain to permanent scenery, so these now assert the RAW declarations
+  // (`TERRAIN[id].hp`) rather than the live `buildingHp()` rule — the data that comes back if the
+  // `NATURAL_TERRAIN_DESTRUCTIBLE` flag is flipped back to `true`.
+  it('every cover terrain declares LESS HP than a full base-infra structure, and would flatten to passable no-cover ground', () => {
     for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
-      expect(isDestructible(id)).toBe(true);
-      expect(buildingHp(id)).toBeGreaterThan(0);
-      expect(buildingHp(id)).toBeLessThanOrEqual(TERRAIN.objective.hp);
+      expect(TERRAIN[id].destructible).toBe(true);
+      expect(TERRAIN[id].hp).toBeGreaterThan(0);
+      expect(TERRAIN[id].hp).toBeLessThanOrEqual(TERRAIN.objective.hp);
       const rub = rubbleFor(id);
       expect(isPassable(rub)).toBe(true);
       expect(blocksLOS(rub)).toBe(false);
@@ -253,15 +317,17 @@ describe('#72 soft cover (forest/scrub/drift/wreck/fumarole) — own-hex transpa
     // A napalm ground-fire patch (dps 8, ticking every 500ms) must burn a forest hex down
     // well within its 4s duration: per-tick terrain bite = flameCoverDamage(dps × 0.5).
     const perTick = flameCoverDamage(8 * 0.5);
-    let hp = buildingHp('forest'), ticks = 0, destroyed = false;
+    // #351: reads the raw declared HP — the flame-vs-cover MATH is still exercised (it governs
+    // base structures too, and is what the natural-terrain flag would restore).
+    let hp = TERRAIN.forest.hp, ticks = 0, destroyed = false;
     while (!destroyed && ticks < 100) { ({ hp, destroyed } = damageBuilding(hp, perTick)); ticks++; }
     expect(destroyed).toBe(true);
     expect(ticks * 0.5).toBeLessThanOrEqual(2);   // cleared in ≤2s of burning
   });
 
-  it('gunfire clears a forest hex in a few shots — feasible but not instant', () => {
+  it('a forest hex WOULD clear in a few shots if natural terrain were destructible again (#351: raw HP)', () => {
     // Autocannon-class hit: 16 damage. Forest must take more than 1 shot but not many.
-    let hp = buildingHp('forest'), shots = 0, destroyed = false;
+    let hp = TERRAIN.forest.hp, shots = 0, destroyed = false;
     while (!destroyed && shots < 50) { ({ hp, destroyed } = damageBuilding(hp, 16)); shots++; }
     expect(shots).toBeGreaterThan(1);
     expect(shots).toBeLessThanOrEqual(5);
@@ -606,11 +672,13 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
   it('leaves ordinary cover terrain untouched — the retune was structures only', () => {
     // The owner expressed no preference on cover, so forest/scrub/drift/wreck/fumarole keep the
     // values they were playtested at. Walk-through cover you clear incidentally SHOULD stay cheap.
-    expect(buildingHp('forest')).toBe(40);
-    expect(buildingHp('wreck')).toBe(40);
-    expect(buildingHp('scrub')).toBe(30);
-    expect(buildingHp('drift')).toBe(30);
-    expect(buildingHp('fumarole')).toBe(30);
+    // #351 made these values DEAD DATA (natural terrain is indestructible now) — asserted on the
+    // raw entries rather than `buildingHp()` so the retune survives intact for a revert.
+    expect(TERRAIN.forest.hp).toBe(40);
+    expect(TERRAIN.wreck.hp).toBe(40);
+    expect(TERRAIN.scrub.hp).toBe(30);
+    expect(TERRAIN.drift.hp).toBe(30);
+    expect(TERRAIN.fumarole.hp).toBe(30);
   });
 
   it('keeps the alert tower the most snipeable structure, and cover cheaper still', () => {
@@ -621,8 +689,9 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
     for (const id of ['dockClosed', 'objective']) {
       expect(buildingHp(id)).toBeGreaterThan(tower);
     }
+    // #351: cover's raw declared HP (it has no LIVE hp any more — natural terrain is permanent).
     for (const id of ['forest', 'wreck', 'scrub', 'drift', 'fumarole']) {
-      expect(buildingHp(id)).toBeLessThan(tower);
+      expect(TERRAIN[id].hp).toBeLessThan(tower);
     }
   });
 

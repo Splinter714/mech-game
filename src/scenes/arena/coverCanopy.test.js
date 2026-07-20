@@ -108,26 +108,50 @@ describe('#289 cover terrain ground/canopy split', () => {
     expect(DEPTH.LARGE_GROUND_UNITS).toBeLessThan(DEPTH.UNITS);
   });
 
-  it('collapsing a cover hex to rubble destroys its orphaned canopy overlay', () => {
+  // Find a cover hex in the built world and return its key + the pixel centre of its ground image
+  // (reuses the hex->pixel conversion the world build already did, rather than re-importing it).
+  function findCoverHex(scene) {
+    for (const [k, id] of scene.terrain) {
+      if (isCoverCanopyId(id)) {
+        const img = scene.tileImages.get(k);
+        return { key: k, x: img.x, y: img.y };
+      }
+    }
+    return null;
+  }
+
+  // #351: cover terrain is natural terrain, and natural terrain is now permanent scenery — so in
+  // real play a canopy is never orphaned, because its hex can never collapse. This is the live
+  // behaviour.
+  it('#351 a cover hex cannot be shot down at all, so its canopy simply persists', () => {
     const scene = makeScene();
     scene._buildWorld(12345);
-    let coverKey = null;
-    for (const [k, id] of scene.terrain) {
-      if (isCoverCanopyId(id)) { coverKey = k; break; }
-    }
-    expect(coverKey).toBeTruthy();
-    const canopyImg = scene.canopyImages.get(coverKey);
+    const cover = findCoverHex(scene);
+    expect(cover).toBeTruthy();
+    const canopyImg = scene.canopyImages.get(cover.key);
     expect(canopyImg).toBeTruthy();
-    const [q, r] = coverKey.split(',').map(Number);
-    const { x, y } = (() => {
-      // Reuse the same hex->pixel conversion the world build already used, via the ground image
-      // itself (avoids re-importing hexToPixel just for this).
-      const img = scene.tileImages.get(coverKey);
-      return { x: img.x, y: img.y };
-    })();
-    const destroyed = scene._damageBuildingAt(x, y, 100000); // one huge hit — guaranteed to collapse
+    const before = scene.terrain.get(cover.key);
+
+    const destroyed = scene._damageBuildingAt(cover.x, cover.y, 100000); // one huge hit
+    expect(destroyed).toBe(false);                       // nature is permanent
+    expect(scene.terrain.get(cover.key)).toBe(before);   // still foliage, never rubble
+    expect(canopyImg.destroyed).toBeFalsy();
+    expect(scene.canopyImages.has(cover.key)).toBe(true);
+  });
+
+  // The #289 cleanup path itself is still correct and still runs for anything that DOES collapse —
+  // and it is what the `NATURAL_TERRAIN_DESTRUCTIBLE` revert re-arms. Driven by forcing the hex
+  // into `coverHp` exactly as worldgen would have before #351.
+  it('the orphaned-canopy cleanup still fires for a cover hex that does collapse (#289, re-armed by a #351 revert)', () => {
+    const scene = makeScene();
+    scene._buildWorld(12345);
+    const cover = findCoverHex(scene);
+    const canopyImg = scene.canopyImages.get(cover.key);
+    scene.coverHp.set(cover.key, getTerrain(scene.terrain.get(cover.key)).hp);
+
+    const destroyed = scene._damageBuildingAt(cover.x, cover.y, 100000);
     expect(destroyed).toBe(true);
     expect(canopyImg.destroyed).toBe(true);
-    expect(scene.canopyImages.has(coverKey)).toBe(false);
+    expect(scene.canopyImages.has(cover.key)).toBe(false);
   });
 });

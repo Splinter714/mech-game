@@ -1054,6 +1054,15 @@ export function generateTerrain({
     // multiplier and "soft" collapse FX in `_damageBuildingAt` (world.js, which check
     // `store === this.coverHp`) wired correctly regardless of whether the walk-through cover is
     // the `soft` or `hard` tier — robust even though forest/scrub/drift/wreck/fumarole are `soft`.
+    //
+    // #351 (experiment — "nature is permanent, their stuff isn't"): `buildingHpOf` now returns 0
+    // for ALL natural (`category: 'terrain'`) terrain, so `coverHp` comes out EMPTY and only
+    // fabricated base structures land in `buildingHp`. That single fact is what makes natural
+    // terrain both indestructible and untargetable downstream — damage (`_damageBuildingAt`), the
+    // #322 convergence/lock candidate pool and #317's targeted-hex impact rule all read exactly
+    // these two maps. Reverse by flipping `NATURAL_TERRAIN_DESTRUCTIBLE` in terrain.js; nothing
+    // here needs to change. Note the `coverHp` map itself is deliberately KEPT (not removed) so
+    // the revert is a one-line flip and every downstream `coverHp` branch stays wired.
     if (hp > 0) (isPassableOf(id) ? coverHp : buildingHp).set(k, hp);
   }
   // #288: the run's wall EDGES, flattened across every base into one list of `{ a, b, baseId }`
