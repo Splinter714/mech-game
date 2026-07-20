@@ -153,6 +153,30 @@ describe('pickConvergeTarget — the enemy range edge (#322)', () => {
     expect(pickConvergeTarget(0, 0, 0, [enemy], [terrain])).toBe(enemy);
   });
 
+  // The case #322's follow-up exists to fix, stated as geometry rather than as a number: a base
+  // ring is ~479px across, so a flyer deep inside a compound sits up to ~480px past the wall span
+  // facing you. Pointed at it, it has to win — this is what makes #338's lock-following shots
+  // through a wall actually reachable in play.
+  it('a flyer anywhere inside a base beats the wall span in front of you', () => {
+    // Standoffs from a realistic engagement range down to the point where the ratio breaks: at a
+    // 150px standoff a far-corner flyer is 4x the wall's distance and the wall wins again, which
+    // is the deliberate non-absolute end of the dial (you are practically touching the wall).
+    for (const standoff of [250, 400, 600]) {
+      const wall = { x: standoff, y: 0 };
+      for (const depth of [0, 240, 480]) {          // near edge, centre, far edge of the ring
+        const flyer = { x: standoff + depth, y: 0 };
+        expect(pickConvergeTarget(0, 0, 0, [flyer], [wall])).toBe(flyer);
+      }
+    }
+  });
+
+  // The other half of the same dial: it must NOT be enemy-always-wins, which the owner had removed.
+  it('terrain you are practically touching still beats a mid-range enemy', () => {
+    const rock = { x: 120, y: 0 };
+    const mech = { x: 600, y: 0 };                  // 5x farther — well outside the edge
+    expect(pickConvergeTarget(0, 0, 0, [mech], [rock])).toBe(rock);
+  });
+
   it('a whole ring of wall spans cannot pull the pick off a mech you are pointed at', () => {
     // 28 spans on a circle around the player (as a base wall ring is) — only the couple ahead of
     // you are even in the cone, and the enemy you're aimed at is nearer than they are.
