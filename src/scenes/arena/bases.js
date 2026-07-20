@@ -952,6 +952,22 @@ export const BasesMixin = {
     return this.bases.every((base) => isBaseObjectiveDestroyed(base, this.buildingHp, this.enemies));
   },
 
+  // #355: the set of base ids whose objective hex is destroyed — "this base is beaten", which is
+  // the sole trigger for its gates latching open. Deliberately the OBJECTIVE alone, not "the base
+  // is cleared": docks and garrison may still be alive and shooting, and the gates fail open
+  // anyway. (Owner, confirmed: the objective hex being destroyed, ALONE.) A base with no real
+  // objective hex — worldgen's safe-zone re-validation can clear one back to open ground — falls
+  // through `isBaseObjectiveDestroyed` to its cleared-of-enemies fallback, which keeps this
+  // consistent with the mission/win checks for that rare case rather than leaving such a base's
+  // gates cycling forever.
+  _failedOpenBases() {
+    const set = new Set();
+    for (const base of this.bases ?? []) {
+      if (isBaseObjectiveDestroyed(base, this.buildingHp, this.enemies)) set.add(base.id);
+    }
+    return set;
+  },
+
   // ── #309: WALL GATES / the sally port ───────────────────────────────────────────────────
   // Build one cycle state per gate span. Called from `_buildWorld` (world.js) once the wall-edge
   // set exists. A ring's gates each get a slightly different starting offset so they don't crank
@@ -1137,6 +1153,15 @@ export const BasesMixin = {
     const nowMs = this._gateClockMs;
     this._updateGateDemand(nowMs);        // throttled: WHICH door does each unit want
     this._noteGateDemandInRange(nowMs);   // every frame: is anyone close enough to ask for it yet
+    // #355: which bases have lost their objective hex, and therefore have their gates latched
+    // permanently open (gateCycle.js `tickFailOpen`). Computed ONCE per tick rather than per gate,
+    // since #354 made a ring carry 2-5 of them and every gate on the same ring asks the same
+    // question. Derived, not stored: `isBaseObjectiveDestroyed` is the same predicate the win
+    // condition uses (`_allObjectivesDestroyed`), so the gates can never disagree with the mission
+    // about whether a base is beaten — and it is already one-way, since a destroyed hex never
+    // comes back into `buildingHp`. That is why this needs no `retired`-style flag of its own the
+    // way #326's docks did: a dock's retirement had no such standing world fact behind it.
+    const failedOpen = this._failedOpenBases();
     let redraw = false;
     for (const edge of gateEdges(this.wallEdges)) {
       const state = this._gateStates.get(edge.key);
@@ -1150,6 +1175,7 @@ export const BasesMixin = {
       const next = tickGate(state, {
         awake: this._wokenBases.has(edge.baseId),
         demand: !!this._gateDemand?.wanted(edge.key, nowMs),
+        failOpen: failedOpen.has(edge.baseId),
         dt,
       });
       if (next === state) continue;
