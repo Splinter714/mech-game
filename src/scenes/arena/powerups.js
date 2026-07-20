@@ -32,7 +32,7 @@ import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
 } from './shieldOutline.js';
-import { livePlayersOf, primaryPlayerOf } from './players.js';
+import { livePlayersOf, playersOf, primaryPlayerOf } from './players.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
@@ -55,27 +55,51 @@ export const PowerupsMixin = {
   // Shield powerup's colour. The player ALWAYS gets outline sprites built (unlike enemies, which
   // only do if their kind data configures a shield), because a zero-capacity chassis can gain a
   // shield mid-fight when the Shield powerup boosts it (Mech.boostShield).
+  //
+  // #364: PER PLAYER. This used to build exactly ONE outline set wired to `this.playerView` (the
+  // phase-1 accessor onto `players[0]`), so in co-op only player 1 could ever wear a bubble —
+  // player 2 had a real, correctly-configured shield (coop.js `_mechForPlayer`) with nothing to
+  // show for it. The outline now lives on the PLAYER (`player.shieldVisual`), which is the same
+  // per-view instancing shielded enemies already use (#302), so N players means N outlines.
   _initShieldVisual() {
-    this._shieldVisual = makeShieldOutline(this, this.playerView, {
+    for (const p of playersOf(this)) this._ensureShieldVisualFor(p);
+  },
+
+  // Build one player's outline set if it doesn't have one yet, and return it. Lazy rather than
+  // done at construction time on purpose: it is the single point that covers ALL the ways a
+  // player comes into existence — deploy, the mid-sortie START join, and the garage co-op flow
+  // (coop.js `_addPlayer`) — without any of those paths having to remember to call it.
+  _ensureShieldVisualFor(player) {
+    if (!player) return null;
+    if (player.shieldVisual) return player.shieldVisual;
+    const view = player.view ?? this.playerView;
+    if (!view) return null;   // no view yet (pre-spawn / a test double) — retried next frame
+    player.shieldVisual = makeShieldOutline(this, view, {
       keys: SHIELD_MECH_PART_KEYS,
       scale: ARENA_MECH_SCALE,
       color: POWERUPS.shield.color,
     });
+    return player.shieldVisual;
   },
 
   // #246: per-frame outline upkeep — called once from `_updatePowerups` below (same cadence as
   // the mech's own shield tick). The show/hide edge, the fraction-driven fade, and the #237
-  // early-exit-when-empty guarantee all live in `updateShieldOutline`.
+  // early-exit-when-empty guarantee all live in `updateShieldOutline` — and that early exit is
+  // per player, so a second player whose shield is down costs the same nothing player 1 does.
   _updateShieldVisual(delta) {
-    const p = primaryPlayerOf(this);
-    updateShieldOutline(this._shieldVisual, p?.view ?? this.playerView, p?.mech?.shield, delta);
+    for (const p of playersOf(this)) {
+      const sv = this._ensureShieldVisualFor(p);
+      updateShieldOutline(sv, p.view ?? this.playerView, p.mech?.shield, delta);
+    }
   },
 
   // #205: a brief outward pulse on the outline glow the instant it actually absorbs a hit —
   // reinforces the 'shielded' floating text (combat.js `_damagePlayerAt`) with something ON the
-  // mech itself.
-  _shieldHitFlash() {
-    flashShieldOutline(this, this._shieldVisual);
+  // mech itself. #364: flashes the outline of the player who was actually HIT (combat.js already
+  // passes them); a caller with no player still means the primary one.
+  _shieldHitFlash(player) {
+    const p = player ?? primaryPlayerOf(this);
+    flashShieldOutline(this, p?.shieldVisual);
   },
 
   // Source-agnostic drop: place a world-space collectible of a weighted-random type at (x, y).

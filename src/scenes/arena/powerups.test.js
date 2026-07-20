@@ -22,6 +22,7 @@ vi.mock('../../audio/index.js', () => ({ Audio: { ui: vi.fn() } }));
 vi.mock('phaser', () => ({ default: {} }));
 
 import { PowerupsMixin } from './powerups.js';
+import { playersOf } from './players.js';
 
 const SHIELD_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
 
@@ -53,16 +54,23 @@ function makeScene({ shieldHp = 0, shieldMax = 60 } = {}) {
     outlines[key] = fakeOutlineSprite();
     view[key] = fakeRealPart(key);
   }
-  return Object.assign(
+  const scene = Object.assign(
     {
       mech: { shield: { hp: shieldHp, max: shieldMax } },
       playerView: view,
-      _shieldVisual: { outlines, active: false, t: 0 },
       registry: { set: vi.fn() },
     },
     PowerupsMixin,
   );
+  // #364: the outline set lives on the PLAYER now, not the scene — one per player, so co-op's
+  // player 2 gets its own bubble. This scene is a legacy single-player double, so it goes on the
+  // adapter `playersOf` synthesizes for it (which is also what proves that path still works).
+  playersOf(scene)[0].shieldVisual = { outlines, active: false, t: 0 };
+  return scene;
 }
+
+// The outline set under test — player `i`'s.
+const sv = (scene, i = 0) => playersOf(scene)[i].shieldVisual;
 
 describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
   it('does NOT touch any outline sprite transform/texture when the shield is empty (inactive, steady state)', () => {
@@ -71,7 +79,7 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
     // visibility-edge transition, matching the steady-state "shield never picked up" case.
     scene._updateShieldVisual(16.67);
     for (const key of SHIELD_PART_KEYS) {
-      const o = scene._shieldVisual.outlines[key];
+      const o = sv(scene).outlines[key];
       o.setPosition.mockClear();
       o.setOrigin.mockClear();
       o.setTexture.mockClear();
@@ -83,7 +91,7 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
     scene._updateShieldVisual(16.67);
 
     for (const key of SHIELD_PART_KEYS) {
-      const o = scene._shieldVisual.outlines[key];
+      const o = sv(scene).outlines[key];
       expect(o.setPosition).not.toHaveBeenCalled();
       expect(o.setOrigin).not.toHaveBeenCalled();
       expect(o.setTexture).not.toHaveBeenCalled();
@@ -98,7 +106,7 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
     scene._updateShieldVisual(16.67);   // first frame: visibility edge fires + full re-pose
 
     for (const key of SHIELD_PART_KEYS) {
-      const o = scene._shieldVisual.outlines[key];
+      const o = sv(scene).outlines[key];
       expect(o.setVisible).toHaveBeenCalledWith(true);
       expect(o.setPosition).toHaveBeenCalled();
       expect(o.setAlpha).toHaveBeenCalled();
@@ -108,20 +116,20 @@ describe('_updateShieldVisual (#237 — FPS regression check on #205)', () => {
   it('shows the outlines on the 0→>0 edge and hides them again on the >0→0 edge, exactly once each', () => {
     const scene = makeScene({ shieldHp: 0 });
     scene._updateShieldVisual(16.67);   // starts inactive, no edge
-    for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).not.toHaveBeenCalled();
+    for (const key of SHIELD_PART_KEYS) expect(sv(scene).outlines[key].setVisible).not.toHaveBeenCalled();
 
     scene.mech.shield.hp = 50;
     scene.mech.shield.max = 50;
     scene._updateShieldVisual(16.67);   // 0 -> >0 edge: show
-    for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).toHaveBeenCalledWith(true);
+    for (const key of SHIELD_PART_KEYS) expect(sv(scene).outlines[key].setVisible).toHaveBeenCalledWith(true);
 
-    for (const key of SHIELD_PART_KEYS) scene._shieldVisual.outlines[key].setVisible.mockClear();
+    for (const key of SHIELD_PART_KEYS) sv(scene).outlines[key].setVisible.mockClear();
     scene._updateShieldVisual(16.67);   // still active, no edge, no extra setVisible call
-    for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).not.toHaveBeenCalled();
+    for (const key of SHIELD_PART_KEYS) expect(sv(scene).outlines[key].setVisible).not.toHaveBeenCalled();
 
     scene.mech.shield.hp = 0;
     scene._updateShieldVisual(16.67);   // >0 -> 0 edge: hide
-    for (const key of SHIELD_PART_KEYS) expect(scene._shieldVisual.outlines[key].setVisible).toHaveBeenCalledWith(false);
+    for (const key of SHIELD_PART_KEYS) expect(sv(scene).outlines[key].setVisible).toHaveBeenCalledWith(false);
   });
 });
 
