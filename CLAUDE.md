@@ -49,7 +49,11 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     MORE than one gun declares a map of weapon **slots** instead (`weapons: { nose: {...},
     flank: {...} }`, `kindWeapons.js`) — each slot carrying its own weapon/override/range/
     trigger discipline, with cadence and burst counters tracked per slot; the behaviour names
-    the live slot and scene code stays free of weapon-id literals. Fine-grained
+    the live slot and scene code stays free of weapon-id literals. An EMPLACED kind can also
+    opt into a real magazine with `ammoLimited: true` (`kindAmmo.js`) — per-slot ammo that
+    drains one round per trigger pull and trickles back via `ammoRegen`, so sustained fire
+    tapers and a player can SUPPRESS a wall turret by drawing its fire and breaking contact.
+    Deliberately scoped to `turret`/`wallTurret`; mobile kinds stay pure cadence. Fine-grained
     delivery feel (spread stagger, speed-jitter band, homing turn radius, weak-seek
     strength/radius, burst stagger) is per-weapon tunable via optional `delivery` fields
     that default to the shared constants in `delivery.js`.

@@ -506,3 +506,84 @@ describe('_fireVehicleWeapon trigger discipline (#243 burstShots/burstRestMs)', 
     }
   });
 });
+
+// #375: AMMO as a second limiter on the vehicle fire path, for the EMPLACED kinds only. Before
+// this, `turret`/`wallTurret` carried ammoMax/ammoRegen in their weaponOverride but
+// `_fireVehicleWeapon` never consumed anything — the data was inert. These tests cover the
+// consumption path itself and, crucially, that ammo COMPOSES with #243's trigger discipline
+// rather than fighting it.
+describe('_fireVehicleWeapon ammo (#375)', () => {
+  it('spends one round per trigger pull, from the slot that fired', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
+    e.slotAmmo = { main: 3 };
+
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(1);
+    expect(e.slotAmmo.main).toBe(2);
+  });
+
+  it('a DRY slot does not fire — that silence is the suppression the issue buys', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
+    e.slotAmmo = { main: 0.5 };            // mid-regen: not yet a whole round
+
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(0);
+    expect(e.slotAmmo.main).toBe(0.5);     // and nothing was spent
+  });
+
+  it('a dry slot burns NO cooldown — it resumes the instant a whole round regenerates', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);
+    e.slotAmmo = { main: 0 };
+
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(e.slotCd.main ?? 0).toBe(0);    // the ammo gate returns BEFORE the cadence is re-armed
+    e.slotAmmo.main = 1;                   // regen delivered a round
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(1);
+  });
+
+  it('running dry PAUSES a burst rather than cancelling it — the counter survives, and the rest still lands', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID, { cycleTime: 200 });
+    e.kindDef.burstShots = 3;
+    e.kindDef.burstRestMs = 900;
+    e.slotAmmo = { main: 2 };
+
+    for (let i = 0; i < 2; i++) {
+      e.slotCd.main = 0;
+      scene._fireVehicleWeapon(e, {}, 0);
+    }
+    expect(calls.projectile.length).toBe(2);
+    expect(e.slotBurst.main).toBe(2);      // two shots into a three-shot burst
+    expect(e.slotAmmo.main).toBe(0);
+
+    // Dry mid-burst: the third shot simply doesn't happen, and the burst counter is NOT reset
+    // or advanced — the two limiters are ANDed, neither one clobbers the other's state.
+    e.slotCd.main = 0;
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(2);
+    expect(e.slotBurst.main).toBe(2);
+
+    // A round regenerates: the burst RESUMES and its own rest interval still applies on the
+    // shot that completes it.
+    e.slotAmmo.main = 1;
+    scene._fireVehicleWeapon(e, {}, 0);
+    expect(calls.projectile.length).toBe(3);
+    expect(e.slotCd.main).toBe(900);
+    expect(e.slotBurst.main).toBe(0);
+  });
+
+  it('a kind with no magazine is completely unaffected (every mobile kind)', () => {
+    const { scene, calls } = makeScene();
+    const e = makeKindEnemy(PROJECTILE_WEAPON_ID);   // no slotAmmo at all
+    for (let i = 0; i < 12; i++) {
+      e.slotCd.main = 0;
+      scene._fireVehicleWeapon(e, {}, 0);
+    }
+    expect(calls.projectile.length).toBe(12);
+    expect(e.slotAmmo).toBeUndefined();
+  });
+});
