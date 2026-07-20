@@ -9,7 +9,10 @@ import { livePlayersOf, targetPlayerFor } from './players.js';
 import { scatterOffset } from '../../data/hexgrid.js';
 import { DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
 import { Audio } from '../../audio/index.js';
-import { DEPTH } from './shared.js';
+import { DEPTH, dropCanReach } from './shared.js';
+// #378: the pull rule itself is shared with powerups now — this file only supplies the target
+// player and the wall predicate. Scrap's tuning table is #226's playtested numbers, unmoved.
+import { magnetPull, SCRAP_MAGNET } from '../../data/magnet.js';
 
 const SALVAGE_COLOR = 0xf5c542;   // gold/amber — reads distinct from the powerup palette
 export const PICKUP_RADIUS = 26;
@@ -20,9 +23,11 @@ export const PICKUP_RADIUS = 26;
 // edge speed (0.15px/ms) took ~3x longer to close the full distance (same absolute speed,
 // 3x the distance), so both speeds are bumped up proportionally-ish to keep the drift feeling
 // snappy rather than sluggish over the wider capture area.
-export const MAGNET_RADIUS = 240;
-export const MAGNET_MIN_SPEED = 0.25;   // px/ms at the outer edge of the magnet radius
-export const MAGNET_MAX_SPEED = 0.6;    // px/ms right on top of the player — the drift accelerates in
+// #378: the numbers moved into data/magnet.js (SCRAP_MAGNET) when the rule became shared with
+// powerups; re-exported here unchanged so existing importers/tests keep their names.
+export const MAGNET_RADIUS = SCRAP_MAGNET.radius;
+export const MAGNET_MIN_SPEED = SCRAP_MAGNET.minSpeed;   // px/ms at the outer edge of the magnet radius
+export const MAGNET_MAX_SPEED = SCRAP_MAGNET.maxSpeed;   // px/ms right on top of the player
 const BOB_PERIOD = 1300;
 const BOB_AMPLITUDE = 1.5;   // #228: smaller/calmer bounce than the powerup beacon's 4px
 // #88: the scatter radius is shared with powerups (#336 moved the constant into
@@ -82,18 +87,15 @@ export const SalvageMixin = {
       // world position (s.x/s.y) creeps toward the player each frame, accelerating as it closes
       // in. This only moves the underlying position; the bob/spin below is layered on top of it
       // each frame, so the two never fight — the drop bobs while it drifts, same as while still.
-      // #347: SCRAP drifts toward — and is collected by — the nearest player, not "the player".
-      // One player today, so the same single magnet and the same collector as before.
+      // #347/#378: SCRAP drifts toward — and is collected by — the NEAREST LIVE player. In co-op
+      // that is a live per-drop choice: each drop magnetises to whichever player is closer right
+      // now, and either can pick it up (the collector search below iterates every live player).
+      // #378: gated on walls. #336 put drops on the correct side of a base wall in the first
+      // place; an ungated pull would drag them straight back through, so a drop with a wall
+      // between it and the nearest player simply doesn't drift.
       const near = targetPlayerFor(this, s);
-      const dx = near.x - s.x, dy = near.y - s.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 0 && dist <= MAGNET_RADIUS) {
-        const closeness = 1 - dist / MAGNET_RADIUS;   // 0 at the outer edge, →1 near the player
-        const speed = MAGNET_MIN_SPEED + (MAGNET_MAX_SPEED - MAGNET_MIN_SPEED) * closeness;
-        const step = Math.min(dist, speed * delta);
-        s.x += (dx / dist) * step;
-        s.y += (dy / dist) * step;
-      }
+      const moved = magnetPull(s, near, delta, SCRAP_MAGNET, { canReach: dropCanReach(this) });
+      if (moved) { s.x = moved.x; s.y = moved.y; }
 
       const t = s.age / BOB_PERIOD;
       const v = s.view;

@@ -25,14 +25,16 @@ import { isPassable } from '../../data/terrain.js';
 import { resolveDropPos, DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
 import { wallEdgeSeparating } from '../../data/wallEdges.js';
 import { Audio } from '../../audio/index.js';
-import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
+import { DEPTH, ARENA_MECH_SCALE, dropCanReach } from './shared.js';
+// #378: the magnetic pickup pull, shared with scrap (salvage.js) — same rule, gentler table.
+import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // #302: the shield-outline technique itself now lives in ONE shared place, driven by the player
 // here and by every shielded enemy in enemies.js — a rework of the shield look is a single edit
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
 } from './shieldOutline.js';
-import { livePlayersOf, playersOf, primaryPlayerOf } from './players.js';
+import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
@@ -206,11 +208,23 @@ export const PowerupsMixin = {
     for (let i = this.powerups.length - 1; i >= 0; i--) {
       const pk = this.powerups[i];
       pk.age += delta;
+
+      // #378: magnetic drift, the same mechanism scrap uses (data/magnet.js) on a deliberately
+      // gentler table — Jackson asked for "slightly lower" radius AND pull for powerups. Only the
+      // underlying world position moves; the bob/pulse below is layered on top each frame, so the
+      // beacon keeps breathing while it drifts. Toward the NEAREST LIVE player (co-op: whichever
+      // is closer right now), and gated on walls so #336's correct-side-of-the-wall placement
+      // can't be undone by dragging the drop back through.
+      const near = targetPlayerFor(this, pk);
+      const moved = magnetPull(pk, near, delta, POWERUP_MAGNET, { canReach: dropCanReach(this) });
+      if (moved) { pk.x = moved.x; pk.y = moved.y; }
+
       // Bob + pulse + spin. The container bobs; the ground glow is counter-offset so it stays
       // pooled on the floor while the beacon rises and falls above it.
       const t = pk.age / BOB_PERIOD;
       const bob = Math.sin(t * Math.PI * 2) * 4;
       const v = pk.view;
+      v.x = pk.x;        // #378: the beacon now tracks a MOVING drop, not a fixed spawn point
       v.y = pk.y + bob;
       // Fast, high-contrast pulse: the halo swells and brightens on the beat so it visibly
       // "breathes" against the dark ground; the core pumps a touch out of phase for life.

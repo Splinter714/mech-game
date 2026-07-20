@@ -580,6 +580,17 @@ export function wallCollideRadius(e) {
 // The player is drawn at the same scale as an enemy mech, so he takes the same treatment.
 export const PLAYER_WALL_COLLIDE_RADIUS = Math.min(ENEMY_COLLIDE_RADIUS_MECH, WALL_COLLIDE_RADIUS_MAX);
 
+// #378: the reachability predicate the magnetic pickup pull (data/magnet.js) is gated on, shared
+// by scrap (salvage.js) and powerups (powerups.js). Same swept `_blockedAlongSegment` test that
+// locomotion, the #348 leash clamp and #361's ground separation use — a drop is a point, so it
+// sweeps at radius 0 and can therefore still be pulled through a gap the player couldn't walk.
+// Returns a permissive predicate on a scene double with no world (the arena's hand-built test
+// doubles), so "no walls modelled" means "nothing blocks", never "nothing ever drifts".
+export function dropCanReach(scene) {
+  if (!scene?._blockedAlongSegment) return null;
+  return (drop, x, y) => !scene._blockedAlongSegment(drop.x, drop.y, x, y, 0);
+}
+
 // #112 (playtest 2026-07-10: "the stomp hitbox... needs to be bigger"): the crush-trigger check
 // (world.js `_crushTargetAt`, called from locomotion.js `_drive`) used to test the player's
 // point position against `groundEnemyRadius(e)` alone — i.e. the PLAYER contributed zero radius
