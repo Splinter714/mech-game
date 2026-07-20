@@ -663,9 +663,12 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
   // settled on after reviewing the real numbers; the objective in particular was offered 400 and
   // he revised it DOWN to 200. Pinned here so a future balance pass has to change them
   // deliberately rather than drift.
+  // #363 retuned dockClosed 200 -> 100 (owner-confirmed): #326 removed dock reinforcement caps and
+  // #333/#354 raised docks to 5-8 per base, so docks went from optional to mandatory and 200 each
+  // was a slog. alertTower and objective keep their #313 values.
   it('pins the base-infrastructure HP values', () => {
     expect(buildingHp('alertTower')).toBe(75);
-    expect(buildingHp('dockClosed')).toBe(200);
+    expect(buildingHp('dockClosed')).toBe(100);
     expect(buildingHp('objective')).toBe(200);
   });
 

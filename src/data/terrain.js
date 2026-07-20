@@ -153,16 +153,20 @@ export const TERRAIN = {
   // if it hadn't used up its one resupply yet). #286: passable-but-slow (not impassable) — a
   // sealed dome still lets a mech walk over/around it (same `SLOW_MOVEMENT_FACTOR` as any other
   // walk-through cover), it just no longer functions as a resupply point until it reopens.
-  // `hp: 200` (#313, owner-confirmed retune from 30) — well above alertTower's slim sensor mast
-  // (75), level with the objective: blowing a dome open before it can produce a reinforcement is
-  // meant to be a real tactical investment, not something you incidentally graze on the way past. Collapses to
+  // `hp: 100` (#363, owner-confirmed retune from #313's 200) — between alertTower's slim snipeable
+  // sensor mast (75) and the objective (200), no longer level with the objective. #313 set 200 for
+  // a world where docks were OPTIONAL: capped reinforcements, 3-5 per base, so blowing a dome was a
+  // real tactical investment you could also just skip. Since then #326 removed the reinforcement
+  // caps (a live dock produces enemies forever, so destroying it is the ONLY way to stop the tap)
+  // and #333/#354 raised docks to 5-8 per base — a base is now up to 8 domes the player MUST chew
+  // through, and 200 each made that a slog rather than a choice. Collapses to
   // the same uniform `rubble` every other base-infra hex uses (alertTower/objective/dockClosed)
   // so destroyed base infrastructure reads consistently. `setDressing: true` (same precedent as
   // `alertTower`) keeps it OUT of the mission-objective pool — it's a dynamic
   // occupancy state, never a placed assault objective. Owner: hp tunable via playtest.
   dockClosed:{ id: 'dockClosed',tex: 'hex_dockClosed', passable: true, blocksLOS: true,
                speedFactor: SLOW_MOVEMENT_FACTOR,
-               destructible: true, hp: 200, rubbleId: 'rubble', setDressing: true,
+               destructible: true, hp: 100, rubbleId: 'rubble', setDressing: true,
                category: 'base', movement: 'slow', cover: 'hard' },
   // #269 §3: a small, cheap, DESTRUCTIBLE sensor tower — the wake TRIGGER for the base-population
   // system (data/alertTower.js's pure countdown state machine + scenes/arena/bases.js's per-frame

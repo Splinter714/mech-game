@@ -29,7 +29,8 @@ export const DOCK_RESUPPLY_COOLDOWN_MS = 18000;
 //
 // This is a design change, not just a deleted constant. While reinforcements ran dry on their own,
 // IGNORING a dock was viable — you could out-wait it. Now the only thing that stops a dock is
-// blowing its closed dome open (`dockClosed`, 200 HP, #313 — see `spendDockResupply` below, which
+// blowing its closed dome open (`dockClosed`, 100 HP — #363 halved it from #313's 200 precisely
+// because this change made docks mandatory rather than ignorable — see `spendDockResupply` below, which
 // is now the ONLY path to retirement). That makes docks the real objective and gives the player a
 // genuine choice against the objective hex (#269): grind the docks, or rush the objective and
 // leave.
