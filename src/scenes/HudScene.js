@@ -273,6 +273,9 @@ export default class HudScene extends Phaser.Scene {
         max: this.registry.get('dashCooldownMax') || 1,
       },
       respawn: null,
+      // #368: the pre-`hudPlayers` singleton channel is still the fallback source for the
+      // off-screen lock chevron, so this path draws exactly the one chevron it always did.
+      lock: this.registry.get('lockWorld') ?? null,
     }];
   }
 
@@ -547,7 +550,7 @@ export default class HudScene extends Phaser.Scene {
 
     this._updateBuffHud();
     this._updateWayArrow();
-    this._updateLockArrow();
+    this._updateLockArrow(snapshots);
     this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
@@ -583,9 +586,21 @@ export default class HudScene extends Phaser.Scene {
   // entirely when there's no live target, and suppressed once the target is genuinely
   // on-screen (the live reticle itself is visible there — no need to double up), exactly
   // mirroring how the objective arrow behaves.
-  _updateLockArrow() {
-    const lockWorld = this.registry.get('lockWorld');
-    this._drawEdgeIndicator(this.lockWayGfx, lockWorld, this.lockWayMargins, LOCK_RETICLE_COLOR);
+  // #368: ONE chevron PER PLAYER, riding the same `hudPlayers` snapshot array the panels do
+  // (each snapshot carries its own `lock` point) rather than a second parallel channel — so a
+  // mid-sortie START join gets its chevron on the frame it lands, for free. In co-op each
+  // chevron takes its owner's identifying colour, gated on `showsPlayerColor` — the same rule
+  // the ground rings, reticles and panel headers use, so identification turns on everywhere at
+  // once. SOLO IS UNCHANGED: one snapshot, `showsPlayerColor(1) === false`, so it is exactly
+  // today's single red chevron at today's position.
+  _updateLockArrow(snapshots = this._playerSnapshots()) {
+    const identify = showsPlayerColor(snapshots.length);
+    this.lockWayGfx.clear();
+    for (const s of snapshots) {
+      if (s.dead) continue;   // a downed player has no live pick to point at
+      const color = identify ? (s.color ?? LOCK_RETICLE_COLOR) : LOCK_RETICLE_COLOR;
+      this._paintEdgeIndicator(this.lockWayGfx, s.lock, this.lockWayMargins, color);
+    }
   }
 
   // #260: shared geometry + pulse/glow drawing for an off-screen edge-direction chevron, factored
@@ -593,8 +608,14 @@ export default class HudScene extends Phaser.Scene {
   // rather than duplicating the shape/animation logic — only the Graphics layer, target world
   // point, margin set, and color differ per caller.
   _drawEdgeIndicator(g, worldPoint, margin, color) {
-    const view = this.registry.get('cameraView');
     g.clear();
+    this._paintEdgeIndicator(g, worldPoint, margin, color);
+  }
+
+  // The same thing WITHOUT the clear, so several chevrons can share one Graphics layer (#368's
+  // per-player lock arrows clear once, then paint one per player).
+  _paintEdgeIndicator(g, worldPoint, margin, color) {
+    const view = this.registry.get('cameraView');
     if (!worldPoint || !view) return;
     if (isPointInView(view, worldPoint)) return;
     const { x, y, angle } = edgeArrowPosition(view, this.W, this.H, worldPoint, margin);
