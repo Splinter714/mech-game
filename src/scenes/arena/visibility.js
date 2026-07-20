@@ -12,26 +12,22 @@
 //   1. THE FOGGED SET — the interiors of compounds not yet entered. Changes ONCE per compound, the
 //      moment the player drives inside, and never again for the run. There are no live interior
 //      shadows, so there is nothing that can pop.
-//   2. THE BREACH PEEK — a visibility polygon cast FROM THE PLAYER through whatever breaches and
-//      open gates exist, so the slice of yard he can see swings as he walks along the wall.
-//      Recomputed on movement, but only while he is OUTSIDE a compound that still has fog and an
-//      opening; the rest of the time it is not computed at all.
+//   2. THE BREACH PEEK — the ONE hex behind each nearby open span, so the sliver of yard he can see
+//      swings as he walks along the wall. Recomputed on movement, but only while he is OUTSIDE a
+//      compound that still has fog and an opening; the rest of the time it is not computed at all.
 //
-// ── Why a polygon rather than hexes ──
-// Jackson: "it shouldn't be hex by hex, it should be by raycast". data/shadowPolygon.js was built
-// for exactly this under #306 and is already unit-tested; v1 deleted it, and this restores it. The
-// cost objection that retired it was WHOLE-MAP scope every frame — bounded to PEEK_RADIUS_PX around
-// one compound, and only while standing outside a breached one, that objection evaporates.
+// ── v3: the peek is a hex set again, and that is not a regression ──
+// v2 cast a PEEK_RADIUS_PX (900px) visibility polygon from the player through the openings
+// (data/shadowPolygon.js) and cut it out of the fog as an inverted GeometryMask. Jackson played it:
+// "the auto-reveal on breach/gate is a bit too generous; maybe we just reveal the one hex inside
+// the breach or opening or something small like that". A 900px raycast sweep whose intended output
+// is a single hex is doing pointless work, so the sweep, the polygon and the mask are all DELETED
+// rather than retuned — see `peekHexes` in data/fogRegions.js.
 //
-// ── How the peek is rendered ──
-// The fog is a per-hex fill (that is what buys the soft ramp), and the peek has to cut a
-// straight-edged wedge THROUGH it at arbitrary angles. Rather than re-deciding per hex — which is
-// the exact hex-granularity Jackson rejected — the polygon becomes an INVERTED GeometryMask on the
-// fog layer: the fog draws everywhere the mask shape is not. One polygon, no per-hex arbitration,
-// and the wedge edge is true geometry at whatever angle the wall corner dictates.
-//
-// The mask is global to the layer, but that is not a leak: the polygon is bounded by every standing
-// wall span, so it can only ever reach into a compound through a real hole.
+// His earlier "it shouldn't be hex by hex, it should be by raycast" was about v1's coarse
+// 5-hex-block reveal disc popping as he drove; at one hex of depth there is no wedge geometry left
+// for a raycast to express, and the reveal is still directional (only openings you are standing
+// near light up). His own follow-up says as much: "at this scale the distinction barely matters".
 //
 // ── What v1 got right and is kept verbatim ──
 // One dark translucent layer at DEPTH.LOS_DIM (2.9), so terrain, ground FX, small units, the cover
@@ -45,10 +41,9 @@ import { fogOriginOf } from './players.js';
 import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { blocksSpan } from '../../data/wallEdges.js';
 import {
-  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, enemyVisibleInFog,
-  PEEK_RADIUS_PX, FOG_ALPHA, FOG_FEATHER_PX,
+  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, peekHexes, enemyVisibleInFog,
+  FOG_ALPHA, FOG_FEATHER_PX,
 } from '../../data/fogRegions.js';
-import { collectShadowSegments, computeVisibilityPolygon, pointVisibleFrom } from '../../data/shadowPolygon.js';
 import { DORMANT } from '../../data/awareness.js';
 
 // Near-black with a faint blue bias: darkens without tinting, so it won't fight the biome palettes
@@ -73,19 +68,14 @@ const HEX_OVERDRAW = 1.06;
 export const VisibilityMixin = {
   _initVisibility() {
     this.fogFx = this.add.graphics().setDepth(DEPTH.LOS_DIM);
-    // The mask shape is never itself rendered — Phaser reads its geometry only. Inverted, so the fog
-    // survives everywhere the peek polygon does NOT cover.
-    this._peekShape = this.make.graphics({ add: false });
-    this._peekMask = this._peekShape.createGeometryMask();
-    this._peekMask.setInvertAlpha(true);
     this._visibilityReady = true;
     // Precomputed once per run from `this.bases` (world.js `_buildWorld` fills it before create()).
     this.fogWorld = buildFogWorld(this.bases ?? []);
     this.enteredCompounds = new Set();
     this.foggedHexes = fogHexes(this.fogWorld, this.enteredCompounds);
     this._fogFrontier = fogFrontier(this.foggedHexes);
-    this._peekSegments = null;   // the blocker set the current polygon was swept from
-    this._fogDrawX = null;       // last position the overlay was drawn / the peek was swept from
+    this._peeked = new Set();    // the hexes currently visible through an opening (v3: one per hole)
+    this._fogDrawX = null;       // last position the overlay was drawn / the peek was resolved from
     this._fogDrawY = null;
   },
 
@@ -125,36 +115,20 @@ export const VisibilityMixin = {
   },
 
   // ── The breach peek ──────────────────────────────────────────────────────────────────
-  // Swept from the player's CURRENT position, which is the whole point — v1 unioned over every
-  // exterior angle and lit nearly the entire yard from a single hole, which is not "partial reveal".
-  // Skipped entirely when there is nothing to peek into: inside a compound, no fog left, or no
-  // opening anywhere. `blocksSpan` is the canonical solidity predicate, so a blown span and an open
-  // gate take the same path with no branch.
+  // Resolved from the player's CURRENT position, which is the whole point — v1 unioned over every
+  // exterior angle and lit nearly the entire yard from a single hole, which is not "partial reveal";
+  // v2 narrowed that to a polygon from where he stands, and v3 narrows it again to the single hex
+  // behind each opening he is standing next to. Skipped entirely when there is nothing to peek
+  // into: inside a compound, no fog left, or no opening anywhere. `blocksSpan` is the canonical
+  // solidity predicate, so a blown span and an open gate take the same path with no branch.
   _updatePeek(here) {
     const set = this.wallEdges;
     const worth = here == null && this.foggedHexes?.size && set?.edges?.size;
-    const openings = worth && [...set.edges.values()].some((e) => !blocksSpan(e));
-    if (!openings) {
-      this._peekSegments = null;
-      this.fogFx.clearMask();
-      return;
-    }
-    const o = fogOriginOf(this);   // #347: same single origin as `_updateVisibility`
-    const segs = collectShadowSegments(o.x, o.y, PEEK_RADIUS_PX,
-      (q, r) => this.terrain.get(axialKey(q, r)),
-      { wallEdges: [...set.edges.values()] });
-    const poly = segs.length ? computeVisibilityPolygon(o.x, o.y, segs, PEEK_RADIUS_PX) : [];
-    if (poly.length < 3) {
-      this._peekSegments = null;
-      this.fogFx.clearMask();
-      return;
-    }
-    this._peekSegments = segs;
-    const g = this._peekShape;
-    g.clear();
-    g.fillStyle(0xffffff, 1);
-    g.fillPoints(poly.map((p) => ({ x: p.x, y: p.y })), true, true);
-    this.fogFx.setMask(this._peekMask);
+    if (!worth) { this._peeked = new Set(); return; }
+    const open = [...set.edges.values()].filter((e) => !blocksSpan(e));
+    if (!open.length) { this._peeked = new Set(); return; }
+    // #347: same single origin as `_updateVisibility`.
+    this._peeked = peekHexes(this.foggedHexes, open, fogOriginOf(this));
   },
 
   // ── Drawing ──────────────────────────────────────────────────────────────────────────
@@ -172,7 +146,7 @@ export const VisibilityMixin = {
     const drawn = [];
     for (const h of range(center, this._drawRadius(view))) {
       const k = axialKey(h.q, h.r);
-      const a = fogAlphaFor(k, { fogged: this.foggedHexes });
+      const a = fogAlphaFor(k, { fogged: this.foggedHexes, peeked: this._peeked });
       if (a <= 0) continue;
       const p = hexToPixel(h.q, h.r);
       g.fillStyle(FOG_COLOR, a);
@@ -193,11 +167,12 @@ export const VisibilityMixin = {
   },
 
   // ── Consumers ────────────────────────────────────────────────────────────────────────
-  // Does the player's peek reach this world point? The SAME blocker segments the drawn polygon was
-  // swept from, so what he can see and what he can shoot cannot disagree.
+  // Does the player's peek reach this world point? The SAME hex set the fill was cut from, so what
+  // he can see and what he can shoot cannot disagree.
   _peekVisible(x, y) {
-    const o = fogOriginOf(this);
-    return !!this._peekSegments && pointVisibleFrom(o.x, o.y, x, y, this._peekSegments);
+    if (!this._peeked?.size) return false;
+    const h = pixelToHex(x, y);
+    return this._peeked.has(axialKey(h.q, h.r));
   },
 
   // Is this world point visible? The player's targeting gate for non-enemy things (hexes, wall

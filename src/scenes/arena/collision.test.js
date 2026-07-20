@@ -151,6 +151,19 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
       .toBeLessThan(DEPTH.PROJECTILES);
   });
 
+  // #337 v3: the fog now covers a compound's WHOLE footprint — including the ring of hexes its wall
+  // spans line — and fills it fully opaque. A wall gun left at LARGE_GROUND_UNITS would therefore be
+  // blacked out from outside, breaking "Wall turrets should be visible from inside or outside".
+  it('#337: puts a WALL-MOUNTED gun at DEPTH.WALLS, above the fog overlay but below the player', () => {
+    expect(unitDepth(false, false, false, true)).toBe(DEPTH.WALLS);
+    expect(unitDepth(false, false, true, true)).toBe(DEPTH.WALLS);   // size tier does not apply
+    expect(DEPTH.WALLS).toBeGreaterThan(DEPTH.LOS_DIM);
+    expect(DEPTH.WALLS).toBeLessThan(DEPTH.UNITS);
+    // …and it stays a positional override, not an identity one: the player and flyers win first.
+    expect(unitDepth(true, false, false, true)).toBe(DEPTH.UNITS);
+    expect(unitDepth(false, true, false, true)).toBe(DEPTH.FLYING_UNITS);
+  });
+
   it('a hypothetical flying player still resolves to DEPTH.UNITS (isPlayer wins either way)', () => {
     expect(unitDepth(true, true, false)).toBe(DEPTH.UNITS);
   });

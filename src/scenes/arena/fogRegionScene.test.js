@@ -7,7 +7,7 @@
 // there is nothing to rebuild out there at all.
 import { describe, it, expect } from 'vitest';
 import { VisibilityMixin } from './visibility.js';
-import { axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
+import { axialKey, hexToPixel, pixelToHex, neighbors, range } from '../../data/hexgrid.js';
 import { SPAN_ROLE_GATE } from '../../data/wallEdges.js';
 
 const view = { width: 1280, height: 800 };
@@ -15,12 +15,10 @@ const view = { width: 1280, height: 800 };
 // NOTE: the counters live on a mutable object rather than behind a getter — `Object.assign` COPIES a
 // getter's current value rather than the getter itself, so a getter here would freeze at 0.
 function makeScene({ bases = [], wallEdges = null, terrain = new Map(), enemies = [] } = {}) {
-  const counts = { fills: 0, strokes: 0, setMask: 0, clearMask: 0 };
+  const counts = { fills: 0, strokes: 0 };
   const graphics = () => ({
     setDepth() { return this; }, clear() {}, fillStyle() {}, fillPoints() { counts.fills++; },
     lineStyle() {}, strokePoints() { counts.strokes++; },
-    createGeometryMask() { return { setInvertAlpha() { return this; } }; },
-    setMask() { counts.setMask++; }, clearMask() { counts.clearMask++; },
   });
   const s = Object.assign(Object.create(VisibilityMixin), {
     px: 0, py: 0, bases, wallEdges, terrain, enemies,
@@ -57,9 +55,9 @@ describe('the open world is never fogged', () => {
   it('draws fog for a compound in view but never for the ground around it', () => {
     const s = makeScene({ bases: [compound('a', { q: 4, r: 0 }, 3)] });
     s._updateVisibility(view);
-    // 19 interior hexes, all within the ~13-ring draw radius; the outline and everything beyond it
-    // is alpha 0 and skipped.
-    expect(s.counts.fills).toBe(19);
+    // v3: the WHOLE 37-hex footprint, outline ring included (that ring being un-fogged was the
+    // "first ring inside the wall isn't blacked out" bug). Everything beyond it is alpha 0, skipped.
+    expect(s.counts.fills).toBe(37);
   });
 });
 
@@ -114,82 +112,111 @@ describe('entering a compound reveals it ONCE, for the run', () => {
   });
 });
 
-// A ring of spans around a small compound, one of which can be knocked out or opened.
+// The compound's real wall ring, built the way `placeBaseWalls` builds it (#288): one span per
+// footprint-hex/outside-hex boundary, with `a` on the base side. `mutate` can breach or open one.
 function ringEdges(centre, rad, mutate = () => {}) {
+  const fp = new Set(range(centre, rad).map((h) => axialKey(h.q, h.r)));
   const edges = new Map();
-  const c = hexToPixel(centre.q, centre.r);
-  const R = rad * 90;
-  const N = 24;
-  for (let i = 0; i < N; i++) {
-    const a0 = (i / N) * Math.PI * 2, a1 = ((i + 1) / N) * Math.PI * 2;
-    const e = {
-      key: `e${i}`, baseId: 'a', destroyed: false, role: 'wall', open: false,
-      x0: c.x + R * Math.cos(a0), y0: c.y + R * Math.sin(a0),
-      x1: c.x + R * Math.cos(a1), y1: c.y + R * Math.sin(a1),
-    };
-    mutate(e, i);
-    edges.set(e.key, e);
+  let i = 0;
+  for (const h of range(centre, rad)) {
+    for (const n of neighbors(h.q, h.r)) {
+      if (fp.has(axialKey(n.q, n.r))) continue;
+      const e = {
+        key: `e${i++}`, baseId: 'a', destroyed: false, role: 'wall', open: false,
+        a: { q: h.q, r: h.r }, b: { q: n.q, r: n.r },
+      };
+      mutate(e);
+      edges.set(e.key, e);
+    }
   }
   return { edges };
 }
+// Breach/open only the span between the two named hexes, leaving the rest of the ring standing.
+const onSpan = (a, b, apply) => (e) => {
+  if (e.a.q === a.q && e.a.r === a.r && e.b.q === b.q && e.b.r === b.r) apply(e);
+};
 
-describe('breach peek: a raycast from where the player is standing', () => {
+describe('breach peek: the one hex behind a nearby opening', () => {
   const bases = [compound('a', { q: 0, r: 0 }, 3)];
-  // Span 12 is the one on the far side from +x; span 0 faces +x. Breach span 0.
-  const breached = () => ringEdges({ q: 0, r: 0 }, 3, (e, i) => { if (i === 0) e.destroyed = true; });
+  const INNER = { q: 3, r: 0 }, OUTER = { q: 4, r: 0 };   // the span facing +x
+  const breached = () => ringEdges({ q: 0, r: 0 }, 3, onSpan(INNER, OUTER, (e) => { e.destroyed = true; }));
+  const K = (q, r) => axialKey(q, r);
 
-  it('does not mask the fog at all while every span stands', () => {
+  it('reveals nothing while every span stands', () => {
     const s = makeScene({ bases, wallEdges: ringEdges({ q: 0, r: 0 }, 3) });
-    Object.assign(s, at(9, 0));
+    Object.assign(s, at(5, 0));
     s._updateVisibility(view);
-    expect(s._peekSegments).toBe(null);
-    expect(s.counts.setMask).toBe(0);
-    expect(s.counts.clearMask).toBeGreaterThan(0);
+    expect(s._peeked.size).toBe(0);
   });
 
-  it('masks a peek polygon through a breach', () => {
+  it('reveals exactly ONE hex through a breach he is standing at', () => {
     const s = makeScene({ bases, wallEdges: breached() });
-    Object.assign(s, at(9, 0));
+    Object.assign(s, at(5, 0));
     s._updateVisibility(view);
-    expect(s._peekSegments).not.toBe(null);
-    expect(s.counts.setMask).toBeGreaterThan(0);
+    expect([...s._peeked]).toEqual([K(3, 0)]);
+    const p = hexToPixel(3, 0);
+    expect(s._peekVisible(p.x, p.y)).toBe(true);
+    expect(s._pointVisible(p.x, p.y)).toBe(true);          // …and it is targetable
+  });
+
+  it('leaves the rest of the yard dark — it is a peek through a hole, not a view of it', () => {
+    const s = makeScene({ bases, wallEdges: breached() });
+    Object.assign(s, at(5, 0));
+    s._updateVisibility(view);
+    const yard = range({ q: 0, r: 0 }, 3).filter((h) => !(h.q === 3 && h.r === 0));
+    for (const h of yard) {
+      const p = hexToPixel(h.q, h.r);
+      expect(s._pointVisible(p.x, p.y)).toBe(false);
+    }
+  });
+
+  it('cuts the peeked hex out of the drawn fill — one fewer than the full footprint', () => {
+    const s = makeScene({ bases, wallEdges: breached() });
+    Object.assign(s, at(5, 0));
+    s._updateVisibility(view);
+    expect(s.counts.fills).toBe(36);
   });
 
   it('treats an OPEN GATE identically to a breach — one code path, no branch', () => {
-    const gated = ringEdges({ q: 0, r: 0 }, 3, (e, i) => {
-      if (i === 0) { e.role = SPAN_ROLE_GATE; e.open = true; }
-    });
+    const gated = ringEdges({ q: 0, r: 0 }, 3,
+      onSpan(INNER, OUTER, (e) => { e.role = SPAN_ROLE_GATE; e.open = true; }));
     const s = makeScene({ bases, wallEdges: gated });
-    Object.assign(s, at(9, 0));
+    Object.assign(s, at(5, 0));
     s._updateVisibility(view);
-    expect(s._peekSegments).not.toBe(null);
-    expect(s.counts.setMask).toBeGreaterThan(0);
+    expect([...s._peeked]).toEqual([K(3, 0)]);
   });
 
-  // THE point of the redesign. v1 unioned over every exterior angle and lit nearly the whole yard
-  // from one hole; here the slice you get depends on where you stand, and it is always partial.
-  it('reveals a DIFFERENT, always-partial slice from each vantage point', () => {
-    const yard = range({ q: 0, r: 0 }, 2).map((h) => hexToPixel(h.q, h.r));
-    const sliceFrom = (q, r) => {
-      const s = makeScene({ bases, wallEdges: breached() });
-      Object.assign(s, at(q, r));
-      s._updateVisibility(view);
-      return yard.filter((p) => s._peekVisible(p.x, p.y)).map((p) => `${p.x | 0},${p.y | 0}`);
-    };
-    const east = sliceFrom(9, 0);
-    const northeast = sliceFrom(7, -5);
-    expect(east.length).toBeGreaterThan(0);
-    expect(east.length).toBeLessThan(yard.length);        // PARTIAL, not near-total
-    expect(northeast.length).toBeLessThan(yard.length);
-    expect(east.join()).not.toBe(northeast.join());       // and it swings as he moves
+  // Still position-dependent, which is what v1 got wrong (it unioned over every exterior angle and
+  // lit nearly the whole yard from one hole). At one hex of depth the reveal simply closes as he
+  // walks away from the hole.
+  it('closes again once he moves off the opening', () => {
+    const s = makeScene({ bases, wallEdges: breached() });
+    Object.assign(s, at(9, 0));                            // too far out
+    s._updateVisibility(view);
+    expect(s._peeked.size).toBe(0);
+    Object.assign(s, at(4, -6));                           // near the wall, but at a different face
+    s._updateVisibility(view);
+    expect(s._peeked.size).toBe(0);
   });
 
   it('stops peeking once he is inside — the compound is simply lit', () => {
     const s = makeScene({ bases, wallEdges: breached() });
     Object.assign(s, at(0, 0));
     s._updateVisibility(view);
-    expect(s._peekSegments).toBe(null);
+    expect(s._peeked.size).toBe(0);
     expect(s.foggedHexes.size).toBe(0);
+  });
+
+  it('shows a garrison enemy standing in the peeked hex, and only there', () => {
+    const seen = hexToPixel(3, 0), hidden = hexToPixel(0, 0);
+    const mk = (p) => ({ x: p.x, y: p.y, view: { visible: true, setVisible(v) { this.visible = v; } } });
+    const inPeek = mk(seen), deep = mk(hidden);
+    const s = makeScene({ bases, wallEdges: breached(), enemies: [inPeek, deep] });
+    Object.assign(s, at(5, 0));
+    s._updateVisibility(view);
+    s._syncEnemyFogVisibility();
+    expect(inPeek.view.visible).toBe(true);
+    expect(deep.view.visible).toBe(false);
   });
 });
 

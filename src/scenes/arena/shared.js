@@ -134,6 +134,13 @@ export const DEPTH = {
   // Another fractional slot, for the same "don't renumber every existing tier" reason 2.5/2.75
   // use (#289).
   LOS_DIM: 2.9,
+  // #337 v3: base perimeter WALLS and the wall turrets emplaced on them, just ABOVE LOS_DIM. The
+  // fog now covers a compound's whole footprint including the ring of hexes the walls line (fixing
+  // "the first ring of hexes inside the wall isn't blacked out at all") and fills it FULLY OPAQUE,
+  // so a wall drawn under the overlay would simply vanish. Lifting the perimeter over the fill is
+  // what keeps "Wall turrets should be visible from inside or outside, right?" true without
+  // punching a hole in the fog. Still below UNITS (3), so the player is never obscured.
+  WALLS: 2.95,
   UNITS: 3,           // the player — never dimmed, and never obscured by any GROUND unit.
                       // (Flyers deliberately DO pass over the player — see FLYING_UNITS.)
   // #327: FLYING enemy views (helicopter, drone) render ABOVE the player. History: #306 gave them
@@ -170,9 +177,13 @@ export const DEPTH = {
 // flyers, which the isPlayer/flying branches handle first. PURE so the tier-SELECTION logic is
 // unit-testable without touching Phaser; the two real call sites (locomotion.js `_makeMechView`,
 // enemies.js `_makeVehicleView`) feed this and call `setDepth()` with the result.
-export function unitDepth(isPlayer, flying, small = false) {
+// #337 v3: `wallMounted` (a gun emplaced on a wall span — `spanKey != null`, bases.js) overrides the
+// size tiers and returns DEPTH.WALLS, above the fog overlay, for the reason given on that constant.
+// Checked after the player/flyer branches, which are about who the unit IS rather than where it sits.
+export function unitDepth(isPlayer, flying, small = false, wallMounted = false) {
   if (isPlayer) return DEPTH.UNITS;
   if (flying) return DEPTH.FLYING_UNITS;
+  if (wallMounted) return DEPTH.WALLS;
   return small ? DEPTH.GROUND_UNITS : DEPTH.LARGE_GROUND_UNITS;
 }
 

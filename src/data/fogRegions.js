@@ -30,7 +30,7 @@
 //
 // The only hex-granular thing left is the fogged interior's own footprint and its soft edge ramp,
 // which is fine: that boundary IS the wall ring, a hex-aligned structure to begin with.
-import { axialKey, neighbors } from './hexgrid.js';
+import { axialKey, neighbors, hexToPixel } from './hexgrid.js';
 import { targetCoverExempt } from './visibility.js';
 
 // Fog darkness and softness. Jackson, after playtesting the 0.62 + 3-ring version: the interior
@@ -39,23 +39,52 @@ import { targetCoverExempt } from './visibility.js';
 // old ramp was ~144px of grey cloud — the opposite of what he asked for. So: ONE near-black fill
 // alpha everywhere inside, and the softness lives entirely in a 2-3px feather stroked at the
 // boundary by the renderer (scenes/arena/visibility.js). No depth tiering left.
-export const FOG_ALPHA = 0.92;      // the single interior fill alpha — near-black
+//
+// v3 (2026-07-19 playtest): 0.92 still wasn't stark enough — "the blackout should be even MORE
+// stark", the second such ask. So this is now FULLY OPAQUE. Deliberately not 0.98: he has asked
+// twice and splitting the difference a third time is how you get asked a fourth. Nothing inside an
+// unentered compound reads through at all; the only softness left is the pixel feather.
+export const FOG_ALPHA = 1;         // the single interior fill alpha — fully opaque
 export const FOG_FEATHER_PX = 3;    // width of the anti-aliased edge, in world px
 
-// How far the player can peek through an opening, in world px. Bounds the raycast so the sweep only
-// ever considers one compound's worth of geometry — which is exactly why the cost objection that
-// retired shadowPolygon.js under #306 (whole-map scope, every frame) does not apply here.
-export const PEEK_RADIUS_PX = 900;
+// ── v3: how big the breach/gate peek is ──────────────────────────────────────────────
+// How close the player must be to an opening, in world px, to see the one hex behind it. Measured
+// from the OUTER hex of the open span, so it is "walk up to the hole", not "stand in the yard next
+// door". ~2.5 hex steps.
+//
+// This replaces PEEK_RADIUS_PX (900) and the whole player-position visibility polygon with it.
+// Jackson: "the auto-reveal on breach/gate is a bit too generous; maybe we just reveal the one hex
+// inside the breach or opening or something small like that". A 900px raycast sweep whose intended
+// output is a single hex is doing pointless work, so the geometry is gone rather than shrunk — see
+// `peekHexes`. It reads as a peek through a hole because it is literally one hex deep.
+export const PEEK_RANGE_PX = 220;
 
 // ── World precompute ─────────────────────────────────────────────────────────────────
-// Built once per run from the base descriptors. `footprint` (worldgen.js) is the compound's hex set;
-// its OUTLINE is the ring of footprint hexes touching the outside, which is exactly where the wall
-// spans and their turrets sit. The outline is never fogged — Jackson, "Wall turrets should be
-// visible from inside or outside, right?"
+// Built once per run from the base descriptors. `footprint` (worldgen.js) is the compound's hex set.
+//
+// ── v3 BUG FIX: the fogged set is the WHOLE footprint ──
+// Jackson, playtesting v2: "the first ring of hexes inside the wall isn't blacked out at all." Two
+// candidate causes looked identical on screen; it was this one, not the feather.
+//
+// v2 fogged `footprint minus outline`, where the outline is the ring of footprint hexes touching
+// the outside. The reasoning was that the outline is "where the wall spans and their turrets sit",
+// so fogging it would hide the fortification. But walls are EDGE-owned (#288, data/wallEdges.js) —
+// `placeBaseWalls` emits a span for every footprint-hex/outside-hex boundary, with `a` = the base
+// side. So a wall span sits on the OUTER EDGE of an outline hex, and the outline hex itself is
+// ground fully INSIDE the wall. Excluding it wasn't lightening the first ring, it was leaving the
+// first ring genuinely un-fogged — exactly the reported symptom, and structurally, not by degree.
+//
+// The perimeter still reads, but that is now handled by DEPTH rather than by punching a hole in the
+// fog: the wall Graphics and the wall-turret views draw at DEPTH.WALLS, just above DEPTH.LOS_DIM
+// (scenes/arena/shared.js), so they sit ON TOP of the fill instead of needing a gap in it. That
+// preserves "Wall turrets should be visible from inside or outside, right?" without the gap — and
+// it has to, now that the fill is fully opaque.
+//
+// `outlines` is still computed and returned: it is the ring of hexes the walls line, and cheap.
 export function buildFogWorld(bases = []) {
   const owner = new Map();      // hex key -> baseId, over the whole footprint
   const footprints = new Map(); // baseId -> Set(key)
-  const interiors = new Map();  // baseId -> Set(key)  (footprint minus outline)
+  const interiors = new Map();  // baseId -> Set(key)  (v3: the whole footprint, walls included)
   const outlines = new Map();   // baseId -> Set(key)
   for (const base of bases) {
     const fp = new Set((base.footprint ?? []).map((h) => axialKey(h.q, h.r)));
@@ -67,9 +96,7 @@ export function buildFogWorld(bases = []) {
       if (neighbors(h.q, h.r).some((n) => !fp.has(axialKey(n.q, n.r)))) outline.add(axialKey(h.q, h.r));
     }
     outlines.set(base.id, outline);
-    const inner = new Set();
-    for (const k of fp) if (!outline.has(k)) inner.add(k);
-    interiors.set(base.id, inner);
+    interiors.set(base.id, new Set(fp));
   }
   return { owner, footprints, interiors, outlines, bases };
 }
@@ -92,6 +119,36 @@ export function fogHexes(world, entered = new Set()) {
   return out;
 }
 
+// ── The breach/gate peek (v3) ────────────────────────────────────────────────────────
+// The hexes an opening lets the player see into, given where he is standing: for each OPEN span
+// (breached or open gate) on a fogged compound, the single fogged hex immediately behind it, and
+// only while he is within PEEK_RANGE_PX of that span's outer hex.
+//
+// One hex deep, by construction — there is no radius that can grow it into a view of the yard, which
+// is the whole point. It is still directional: only the openings you are actually standing near
+// give anything up, so walking along a breached wall swings which sliver is lit, the property the
+// v2 polygon was there to buy. `openEdges` is the caller's already-filtered list of non-blocking
+// spans (`blocksSpan`, data/wallEdges.js), so a blown span and an open gate take the same path.
+//
+// Pure and set-valued, so the drawn fill and the targeting gate read the SAME answer — what he can
+// see and what he can shoot cannot disagree, same guarantee the shared segment list used to give.
+export function peekHexes(fogged, openEdges = [], origin = null) {
+  const out = new Set();
+  if (!fogged?.size || !origin) return out;
+  for (const e of openEdges ?? []) {
+    if (!e?.a || !e?.b) continue;
+    // A span is only a peek if it separates fog from not-fog; try it from both sides so the
+    // caller never has to know which of `a`/`b` is the base side.
+    for (const [inner, outer] of [[e.a, e.b], [e.b, e.a]]) {
+      const ik = axialKey(inner.q, inner.r);
+      if (!fogged.has(ik) || fogged.has(axialKey(outer.q, outer.r))) continue;
+      const p = hexToPixel(outer.q, outer.r);
+      if (Math.hypot(origin.x - p.x, origin.y - p.y) <= PEEK_RANGE_PX) out.add(ik);
+    }
+  }
+  return out;
+}
+
 // ── The feathered edge ───────────────────────────────────────────────────────────────
 // The fogged hexes that touch something un-fogged — i.e. the outline of the fogged shape, one hex
 // thick. These are the only hexes the renderer needs to stroke, and stroking them is the entire
@@ -106,10 +163,14 @@ export function fogFrontier(fogged) {
   return out;
 }
 
-// The alpha for one hex: flat. Un-fogged is 0 (the open world, an entered compound, any wall ring);
-// anything fogged is the single near-black ceiling.
-export function fogAlphaFor(key, { fogged } = {}) {
-  return fogged?.has(key) ? FOG_ALPHA : 0;
+// The alpha for one hex: flat. Un-fogged is 0 (the open world, or an entered compound); anything
+// fogged is opaque. v3: a hex currently peeked through an opening (`peekHexes`) reads 0 as well —
+// that is how the one-hex reveal is cut, replacing v2's inverted GeometryMask. No per-hex
+// arbitration is being reintroduced by that: the peek was always a set, it is just no longer
+// laundered through a polygon first.
+export function fogAlphaFor(key, { fogged, peeked } = {}) {
+  if (!fogged?.has(key)) return 0;
+  return peeked?.has(key) ? 0 : FOG_ALPHA;
 }
 
 // ── Entity visibility ────────────────────────────────────────────────────────────────

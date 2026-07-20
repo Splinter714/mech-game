@@ -361,7 +361,9 @@ export const WorldMixin = {
     for (const [k, edges] of byBase) {
       let g = this._wallGfxByBase.get(k);
       if (!g) {
-        g = this.add.graphics().setDepth(DEPTH.COVER_CANOPY);
+        // #337 v3: DEPTH.WALLS (2.95), lifted from COVER_CANOPY (2.5) — above the now fully-opaque
+        // fog overlay, which since v3 covers the ring of hexes these spans line. See DEPTH.WALLS.
+        g = this.add.graphics().setDepth(DEPTH.WALLS);
         // The `clear` check keeps this a no-op against the minimal `add.graphics()` stubs the
         // headless scene tests use (they only stand up the handful of Graphics methods their own
         // subject needs) — same tolerance the rest of the mixin already shows toward

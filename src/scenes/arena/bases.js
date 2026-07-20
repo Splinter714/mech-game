@@ -372,6 +372,10 @@ export const BasesMixin = {
       // is deliberately a SEPARATE field from `dockKey` so a wall-span key can never collide with
       // a hex key in any dock-keyed lookup.
       e.spanKey = edge.key;
+      // #337 v3: a wall gun draws with its wall, above the fog overlay — the fog now covers the
+      // ring of hexes the spans line and is fully opaque, so at its old LARGE_GROUND_UNITS tier it
+      // would be blacked out from outside. See DEPTH.WALLS / `unitDepth` (shared.js).
+      e.view?.setDepth?.(DEPTH.WALLS);
       e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
     }
   },
