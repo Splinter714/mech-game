@@ -30,7 +30,7 @@
 //
 // The only hex-granular thing left is the fogged interior's own footprint and its soft edge ramp,
 // which is fine: that boundary IS the wall ring, a hex-aligned structure to begin with.
-import { axialKey, neighbors, hexToPixel, distance, range } from './hexgrid.js';
+import { axialKey, neighbors, hexToPixel, pixelToHex } from './hexgrid.js';
 import { targetCoverExempt } from './visibility.js';
 
 // Fog darkness and softness. Jackson, after playtesting the 0.62 + 3-ring version: the interior
@@ -56,8 +56,10 @@ export const FOG_FEATHER_PX = 3;    // width of the anti-aliased edge, in world 
 // Jackson: "the auto-reveal on breach/gate is a bit too generous; maybe we just reveal the one hex
 // inside the breach or opening or something small like that". A 900px raycast sweep whose intended
 // output is a single hex is doing pointless work, so the geometry is gone rather than shrunk — see
-// `peekHexes`. It reads as a peek through a hole because it is a shallow cone, not a radius (#352
-// deepened that cone from a flat one hex to 1-3 hexes by proximity; see PEEK_MAX_DEPTH below).
+// `peekHexes`. It reads as a peek through a hole because it is a shallow flood fill THROUGH the
+// hole, not a radius (#352 deepened it from a flat one hex to 1-3 by proximity; see PEEK_MAX_DEPTH).
+// Since the 2026-07-20 follow-up this is no longer a CUTOFF — beyond it the peek floors at one hex
+// rather than closing — so read it as the ramp's SCALE, not its range.
 export const PEEK_RANGE_PX = 220;
 
 // ── #352: the peek DEEPENS as you close on the opening ───────────────────────────────
@@ -69,10 +71,14 @@ export const PEEK_RANGE_PX = 220;
 // PEEK_RANGE_PX still gives the v3 single hex, the middle third two, and pressed right up against
 // the hole three. Nothing about the shape changes — see `peekHexes`, it is still a cone drilled
 // straight through the opening, never a disc around the player and never a view of the yard.
+// #352 follow-up (2026-07-20 playtest): the ramp NO LONGER FALLS TO ZERO. Jackson: "make 1 hex
+// always visible regardless of how far back the player is". So PEEK_RANGE_PX stopped being a
+// cutoff and became purely the ramp's scale: 3 in the near third, 2 in the middle, 1 from the far
+// third out to any distance at all. A hole in a wall is a hole from across the map; how MUCH it
+// gives up is what closing on it buys.
 export const PEEK_MAX_DEPTH = 3;
 export function peekDepthFor(distPx) {
-  if (!(distPx <= PEEK_RANGE_PX)) return 0;
-  const t = Math.max(0, distPx) / PEEK_RANGE_PX;   // 0 at the opening, 1 at the edge of range
+  const t = Math.max(0, distPx || 0) / PEEK_RANGE_PX;  // 0 at the opening, 1 at the ramp's edge
   return Math.max(1, PEEK_MAX_DEPTH - Math.floor(t * PEEK_MAX_DEPTH));
 }
 
@@ -141,39 +147,96 @@ export function fogHexes(world, entered = new Set()) {
 // (breached or open gate) on a fogged compound, the single fogged hex immediately behind it, and
 // only while he is within PEEK_RANGE_PX of that span's outer hex.
 //
-// #352: "the single fogged hex" is now "the cone of up to `peekDepthFor(dist)` hexes behind it".
-// The shape is still bounded by construction rather than by a radius — every revealed hex must be
-// strictly farther from the opening than the last, so the set can only ever be a wedge drilled
-// through the hole (1, 4 or 9 hexes), never a disc around the player and never a view of the yard.
-// It is still directional: only the openings you are actually standing near
-// give anything up, so walking along a breached wall swings which sliver is lit, the property the
-// v2 polygon was there to buy. `openEdges` is the caller's already-filtered list of non-blocking
-// spans (`blocksSpan`, data/wallEdges.js), so a blown span and an open gate take the same path.
+// #352: "the single fogged hex" became "up to `peekDepthFor(dist)` hexes", as a WEDGE drilled
+// through the hole (each revealed hex strictly farther from the opening than the last).
+//
+// #352 follow-up (2026-07-20 playtest): Jackson saw that wedge and wants a DISC — "make it a 1-2-3
+// hex ring around the player, not just a cone through the opening". That is a real hazard, and the
+// only interesting thing in this function: a ring centred on the player, taken naively, lights
+// interior hexes THROUGH INTACT WALL the moment he stands near a hole with the ring overhanging
+// solid plate. The wedge constraint was blocking that implicitly; deleting it means blocking has to
+// be done on purpose.
+//
+// ── How intact wall still blocks ──
+// The reveal is a FLOOD FILL, not a radius test. Light spreads outward hex-to-hex from the player,
+// and the ONLY edge it may use to get from un-fogged ground into a fogged compound is one of the
+// `openEdges` the caller hands us. Every other fog/not-fog boundary crossing — i.e. every intact
+// wall span, since #337 v3 fogs the whole footprint and walls sit on its outer edges — is
+// impassable to the fill. Inside the fog and outside it, movement is free. So:
+//   • the opening is still the TRIGGER (nothing enters a compound except through a hole);
+//   • the ring is only the SHAPE (once inside, it spreads in every direction, a disc not a wedge);
+//   • an interior hex behind unbroken wall is never reached, no matter how close he stands.
+// No raycasts, no polygon, no wall geometry — the fog set and the open-span list already carry
+// everything the fill needs.
+//
+// ── The two sources ──
+// The fill is seeded at the PLAYER'S hex (cost 0) and at the hole's throat, the fogged hex just
+// inside the opening (cost 1), and reveals every fogged hex reached at cost <= depth. The throat
+// seed is what makes the always-one-hex floor work at any distance: at depth 1 the player's own
+// spread reaches nothing, and the throat alone lights up. Up close, at depth 3, his own spread is
+// what dominates and the shape is the ring around him he asked for.
+//
+// Monotone in depth by construction (a bigger budget only ever admits more hexes), so closing on a
+// hole never flickers anything off. `openEdges` is the caller's already-filtered list of
+// non-blocking spans (`blocksSpan`, data/wallEdges.js), so a blown span and an open gate take the
+// same path.
 //
 // Pure and set-valued, so the drawn fill and the targeting gate read the SAME answer — what he can
 // see and what he can shoot cannot disagree, same guarantee the shared segment list used to give.
+function crossingKey(ak, bk) { return ak < bk ? `${ak}|${bk}` : `${bk}|${ak}`; }
+
 export function peekHexes(fogged, openEdges = [], origin = null) {
   const out = new Set();
   if (!fogged?.size || !origin) return out;
+
+  // Collect the holes: spans that actually separate fog from not-fog. Tried from both sides so the
+  // caller never has to know which of `a`/`b` is the base side.
+  const passable = new Set();   // fog/not-fog crossings the fill is allowed to use
+  const throats = [];
   for (const e of openEdges ?? []) {
     if (!e?.a || !e?.b) continue;
-    // A span is only a peek if it separates fog from not-fog; try it from both sides so the
-    // caller never has to know which of `a`/`b` is the base side.
     for (const [inner, outer] of [[e.a, e.b], [e.b, e.a]]) {
       const ik = axialKey(inner.q, inner.r);
-      if (!fogged.has(ik) || fogged.has(axialKey(outer.q, outer.r))) continue;
-      const p = hexToPixel(outer.q, outer.r);
-      const dist = Math.hypot(origin.x - p.x, origin.y - p.y);
-      const depth = peekDepthFor(dist);
-      if (!depth) continue;
-      // The cone: every fogged hex within `depth - 1` steps of the inner hex that is also
-      // strictly FARTHER from the opening than that step count — i.e. lies away from the
-      // player, through the hole. The ranks are 1, 3 and 5 wide, so 1 / 4 / 9 hexes by depth.
-      for (const h of range(inner, depth - 1)) {
-        const k = axialKey(h.q, h.r);
-        if (!fogged.has(k)) continue;
-        if (distance(h, outer) !== distance(h, inner) + 1) continue;
-        out.add(k);
+      const ok = axialKey(outer.q, outer.r);
+      if (!fogged.has(ik) || fogged.has(ok)) continue;
+      passable.add(crossingKey(ik, ok));
+      throats.push({ inner, outer, ik });
+    }
+  }
+  if (!throats.length) return out;
+
+  const ph = pixelToHex(origin.x, origin.y);
+  const pk = axialKey(ph.q, ph.r);
+  // If he is somehow standing ON a fogged hex, don't seed the fill there: that would let it spread
+  // through the interior without ever passing an opening, which is exactly the invariant this
+  // function exists to hold. (In play the compound he is standing in is `entered`, so un-fogged.)
+  const seedPlayer = !fogged.has(pk);
+  for (const t of throats) {
+    const p = hexToPixel(t.outer.q, t.outer.r);
+    const depth = peekDepthFor(Math.hypot(origin.x - p.x, origin.y - p.y));
+    if (!depth) continue;
+    // Uniform-cost BFS. Seeds are pushed in nondecreasing cost order (0 then 1), so a plain queue
+    // is already a correct shortest-path expansion.
+    const cost = new Map();
+    const queue = [];
+    if (seedPlayer) { cost.set(pk, 0); queue.push({ q: ph.q, r: ph.r, d: 0 }); }
+    cost.set(t.ik, 1);
+    queue.push({ q: t.inner.q, r: t.inner.r, d: 1 });
+    out.add(t.ik);
+    for (let i = 0; i < queue.length; i++) {
+      const cur = queue[i];
+      if (cur.d >= depth) continue;
+      const curKey = axialKey(cur.q, cur.r);
+      const curFogged = fogged.has(curKey);
+      for (const n of neighbors(cur.q, cur.r)) {
+        const nk = axialKey(n.q, n.r);
+        if (cost.has(nk)) continue;
+        const nFogged = fogged.has(nk);
+        // THE BLOCKING RULE: you may only change sides through a listed opening.
+        if (curFogged !== nFogged && !passable.has(crossingKey(curKey, nk))) continue;
+        cost.set(nk, cur.d + 1);
+        queue.push({ q: n.q, r: n.r, d: cur.d + 1 });
+        if (nFogged) out.add(nk);
       }
     }
   }

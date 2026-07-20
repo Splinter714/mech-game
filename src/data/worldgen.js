@@ -756,12 +756,80 @@ export function placeBases(
     const candidates = [
       { q: center.q, r: center.r }, ...ring(center, 1), ...ring(center, 2), ...ring(center, 3),
     ].filter(inFootprint);
+    // #373 (2026-07-20 playtest — Jackson: "un-cluster the docks inside the base"): the ring 0-3
+    // candidate list above is a legacy of the radius-2 DISC compound. Against #333's superellipse
+    // (half-extents 6 along the corridor by 2.6 across it) rings 0-3 cover barely the middle third
+    // of the compound's length, so #354's 5-8 docks land shoulder-to-shoulder in the centre of a
+    // long empty yard — the cluster that got reported. Docks now draw from the whole compound
+    // INTERIOR instead, picked by a max-min spread (below) so they read as distributed
+    // infrastructure strung down the base's length.
+    //
+    // INTERIOR, not the raw footprint: a footprint hex with any neighbour outside the footprint is
+    // the apron directly behind the wall line, and #288/#333 deliberately keep structures one hex
+    // in from it (rings 0-3 never reached the outline, so this preserves a property that used to
+    // hold by accident). It also keeps a dock from being shot through its own wall span.
+    const interior = [];
+    for (const k of footprint) {
+      const [hq, hr] = k.split(',').map(Number);
+      if (neighbors(hq, hr).every((n) => footprint.has(axialKey(n.q, n.r)))) interior.push({ q: hq, r: hr });
+    }
+    // Fall back to the old ring list on a compound too small/clipped to have a real interior (the
+    // shrink ladder's bottom rungs, or a badly-clipped edge case) — a base must still get its docks.
+    const spreadPool = interior.length >= dockCount ? interior : candidates;
     // #288: the whole footprint is `baseYard` now, so `isGround` (which only recognises the biome's
     // two natural ground ids) would reject every candidate. "Free" for a structure means "still
     // bare yard" — i.e. no earlier loop has claimed it. Same first-come semantics as before.
     const isFree = (k) => T.get(k) === 'baseYard';
-    const docks = [];
+    // #373: the objective is stamped FIRST now (it used to be stamped last, after the docks, so it
+    // took whatever near-centre hex they left). With docks spread across the whole compound the two
+    // no longer compete for the same hexes, and the objective is the one structure that genuinely
+    // WANTS the middle — it's the mission marker's anchor and the thing you're driving in to kill,
+    // so it stays put on the centre-most free candidate rather than being spread out with the docks.
+    // Wall turrets are untouched here: they're placed by `assignWallTurrets` against the ring's own
+    // spans, which already follows the footprint outline and so already spreads with the compound.
+    let objectiveHex = null;
     for (const h of candidates) {
+      const k = axialKey(h.q, h.r);
+      if (!isFree(k)) continue;
+      T.set(k, 'objective');
+      objectiveHex = { q: h.q, r: h.r };
+      break;
+    }
+    if (!objectiveHex) {
+      T.set(axialKey(center.q, center.r), 'objective');
+      objectiveHex = { q: center.q, r: center.r };
+    }
+    // #373: MAX-MIN (farthest-point) spread. Repeatedly take the free candidate whose nearest
+    // already-placed structure is farthest away, seeded with the objective so the first dock pushes
+    // off the centre rather than sitting on it. That fills the compound's long axis evenly without
+    // any explicit geometry: on a 6x2.6 superellipse the picks walk out to the two ends first, then
+    // the flanks, then subdivide — which is exactly "distributed infrastructure" rather than a pile.
+    // Ties (common on a hex lattice) are broken by `rng`, so two bases with the same dock count
+    // still generate visibly different layouts instead of one canonical pattern.
+    //
+    // Deliberately NOT spread to the compound's absolute extremes with a minimum-separation rule:
+    // #356 made every dock a required kill, so the spread's diameter is directly the walking
+    // distance to clear a base. Max-min naturally packs the interior evenly instead of pushing to
+    // the corners, and the interior is ~10 hexes end to end, so clearing a base is a sweep down a
+    // compound you're already fighting through rather than a tour of its perimeter.
+    const spreadOrder = [];
+    {
+      const remaining = spreadPool.filter((h) => isFree(axialKey(h.q, h.r)));
+      const seeds = [objectiveHex];
+      while (spreadOrder.length < dockCount && remaining.length) {
+        let best = -1, bestD = -Infinity;
+        for (let idx = 0; idx < remaining.length; idx++) {
+          let d = Infinity;
+          for (const s of seeds) d = Math.min(d, distance(remaining[idx], s));
+          // Random tie-break: an equal-distance candidate wins with 50% probability.
+          if (d > bestD || (d === bestD && rng() < 0.5)) { bestD = d; best = idx; }
+        }
+        seeds.push(remaining[best]);
+        spreadOrder.push(remaining.splice(best, 1)[0]);
+      }
+    }
+    const docks = [];
+    for (const h of spreadOrder) {
       if (docks.length >= dockCount) break;
       const k = axialKey(h.q, h.r);
       if (!isFree(k)) continue;
@@ -778,27 +846,11 @@ export function placeBases(
     // see the constants' comment at the top of this file. A base's fixed guns are the wall
     // turrets (`assignWallTurrets` below), not a second cluster of interior bunkers.
     // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): one
-    // dedicated, DESTRUCTIBLE `objective` hex per base — the same near-centre candidate ring the
-    // docks above draw from (already-claimed candidates fail `isGround` naturally, so this
-    // only ever lands on whatever ground neither loop already took), stamped LAST so it never
-    // steals a dock/turret's spot. `_targetCurrentBase` (scenes/arena/mission.js) points the
-    // mission marker at this instead of the old `base.center` (just a geometric centroid, not
-    // necessarily even a real placed hex). Falls back to forcing it onto the base's own `center`
-    // hex if every candidate is already claimed — a base must always have a real objective hex for
-    // the marker to target; the centre is the best fallback since it's the base's own anchor point
-    // regardless of what else is on it.
-    let objectiveHex = null;
-    for (const h of candidates) {
-      const k = axialKey(h.q, h.r);
-      if (!isFree(k)) continue;
-      T.set(k, 'objective');
-      objectiveHex = { q: h.q, r: h.r };
-      break;
-    }
-    if (!objectiveHex) {
-      T.set(axialKey(center.q, center.r), 'objective');
-      objectiveHex = { q: center.q, r: center.r };
-    }
+    // dedicated, DESTRUCTIBLE `objective` hex per base. `_targetCurrentBase`
+    // (scenes/arena/mission.js) points the mission marker at this instead of the old `base.center`
+    // (just a geometric centroid, not necessarily even a real placed hex). #373 moved its placement
+    // ABOVE the dock spread — see there for why — and it keeps the same near-centre candidate ring
+    // and the same "force it onto `center`" fallback, so a base always has a real objective hex.
     // #288: `footprint` travels with the base — `placeBaseWalls` builds the wall ring as this
     // set's outline, and `generateTerrain` re-validates it against the final terrain map.
     bases.push({

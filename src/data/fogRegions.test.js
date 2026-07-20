@@ -179,16 +179,18 @@ describe('peekHexes — the breach/gate reveal', () => {
     expect([...seen]).toEqual([K(3, 0)]);           // one hex, not a slice of yard
   });
 
-  it('reveals nothing once he steps away — the peek swings with the player', () => {
-    expect(peekHexes(fogged, [opening], outside(9, 0)).size).toBe(0);
-    expect(peekHexes(fogged, [opening], outside(4, -6)).size).toBe(0);
+  // 2026-07-20: the floor. "make 1 hex always visible regardless of how far back the player is" —
+  // so stepping away narrows the peek to its single throat hex, but never closes it.
+  it('narrows to exactly one hex once he steps away — never to nothing', () => {
+    expect([...peekHexes(fogged, [opening], outside(9, 0))]).toEqual([K(3, 0)]);
+    expect([...peekHexes(fogged, [opening], outside(4, -6))]).toEqual([K(3, 0)]);
   });
 
-  it('is directional: standing at one hole does not open the one across the compound', () => {
+  it('is directional in DEPTH: the far hole still gives its one hex, but only that', () => {
     const seen = peekHexes(fogged, [opening, far], outside(4, 0));
     expect(seen.has(K(3, 0))).toBe(true);
-    expect(seen.has(K(0, 3))).toBe(false);
-    expect(seen.has(K(0, 2))).toBe(false);
+    expect(seen.has(K(0, 3))).toBe(true);       // the far hole's throat — the always-one floor
+    expect(seen.has(K(0, 2))).toBe(false);      // …but nothing deeper through it
   });
 
   it('works from either orientation of the span — the caller never picks a side', () => {
@@ -207,11 +209,13 @@ describe('peekHexes — the breach/gate reveal', () => {
     expect(peekHexes(fogged, [], outside(4, 0)).size).toBe(0);
   });
 
-  it('bounds the reveal to a walk-up-to-the-hole range, far smaller than v2 900px', () => {
+  it('keeps the ramp tight — PEEK_RANGE_PX is a scale now, not a cutoff', () => {
     expect(PEEK_RANGE_PX).toBeLessThan(300);
     const p = hexToPixel(4, 0);
     expect(peekHexes(fogged, [opening], { x: p.x + PEEK_RANGE_PX - 1, y: p.y }).size).toBe(1);
-    expect(peekHexes(fogged, [opening], { x: p.x + PEEK_RANGE_PX + 1, y: p.y }).size).toBe(0);
+    expect(peekHexes(fogged, [opening], { x: p.x + PEEK_RANGE_PX + 1, y: p.y }).size).toBe(1);
+    // …and it is still one hex from absurdly far away, rather than zero.
+    expect(peekHexes(fogged, [opening], { x: p.x + 40 * PEEK_RANGE_PX, y: p.y }).size).toBe(1);
   });
 
   // ── #352: the peek deepens as he closes on the hole ───────────────────────────────
@@ -222,7 +226,7 @@ describe('peekHexes — the breach/gate reveal', () => {
     return { x: p.x + PEEK_RANGE_PX * frac, y: p.y };
   };
 
-  it('deepens the cone as the player closes: 1 hex far, more up close', () => {
+  it('deepens as the player closes: 1 hex far, more up close', () => {
     const far = peekHexes(fogged, [opening], at(0.9));
     const mid = peekHexes(fogged, [opening], at(0.5));
     const near = peekHexes(fogged, [opening], at(0.05));
@@ -241,22 +245,51 @@ describe('peekHexes — the breach/gate reveal', () => {
     expect(peekDepthFor(PEEK_RANGE_PX * 0.5)).toBe(2);
     expect(peekDepthFor(PEEK_RANGE_PX * 0.9)).toBe(1);
     expect(peekDepthFor(PEEK_RANGE_PX)).toBe(1);
-    expect(peekDepthFor(PEEK_RANGE_PX + 1)).toBe(0);
+    // 2026-07-20: no cutoff to zero any more — the far third is the floor, at any distance.
+    expect(peekDepthFor(PEEK_RANGE_PX + 1)).toBe(1);
+    expect(peekDepthFor(PEEK_RANGE_PX * 100)).toBe(1);
   });
 
-  it('stays a cone THROUGH the hole — every revealed hex is deeper in than the last', () => {
+  // ── 2026-07-20: a DISC around the player, not a wedge through the hole ──────────────
+  // "make it a 1-2-3 hex ring around the player, not just a cone through the opening". The old
+  // wedge rule (every revealed hex strictly farther from the opening than from the throat) is gone;
+  // the reveal now spreads sideways once it is through the hole.
+  it('spreads sideways inside — it is a disc, not a wedge', () => {
     const seen = peekHexes(fogged, [opening], at(0));
-    for (const k of seen) {
-      const [q, r] = k.split(',').map(Number);
-      // Strictly farther from the opening's outer hex than from the hex just inside it.
-      expect(distance({ q, r }, { q: 4, r: 0 })).toBe(distance({ q, r }, { q: 3, r: 0 }) + 1);
-      // …and never so deep that it is a view of the yard: at most PEEK_MAX_DEPTH in.
-      expect(distance({ q, r }, { q: 4, r: 0 })).toBeLessThanOrEqual(PEEK_MAX_DEPTH);
-    }
-    // The compound's far side and its centre stay dark even standing in the gate.
+    // (3,-2) and (1,2) are lateral to the throat, not "straight through" it, and they read.
+    expect(seen.has(K(3, -2))).toBe(true);
+    expect(seen.has(K(1, 2))).toBe(true);
+    // Still a peek, not the yard: the compound's centre and far side stay dark from the gate.
     expect(seen.has(K(0, 0))).toBe(false);
     expect(seen.has(K(-3, 0))).toBe(false);
     expect(seen.size).toBeLessThan(fogged.size / 3);
+  });
+
+  // ── THE BLOCKING GUARANTEE ─────────────────────────────────────────────────────────
+  // A ring centred on the player would light interior hexes through solid plate. It doesn't,
+  // because the reveal is a flood fill that may only cross the fog boundary at a listed opening.
+  it('never reveals through INTACT WALL — a second compound with no opening stays black', () => {
+    const two = buildFogWorld([base('alpha', { q: 0, r: 0 }, 3), base('beta', { q: 6, r: 0 }, 1)]);
+    const foggedTwo = fogHexes(two, new Set());
+    // He is jammed in alpha's gate at full depth 3; beta's nearest hexes are 1-2 steps from him.
+    const seen = peekHexes(foggedTwo, [opening], at(0));
+    for (const h of range({ q: 6, r: 0 }, 1)) {
+      expect(seen.has(K(h.q, h.r))).toBe(false);      // no opening in beta's wall, no reveal
+    }
+    expect(distance({ q: 5, r: 0 }, { q: 4, r: 0 })).toBe(1);   // …and it really was in ring range
+  });
+
+  it('every revealed hex was reached THROUGH the opening — nothing leaks around the wall', () => {
+    for (const frac of [0, 0.05, 0.4, 0.5, 0.8, 0.95, 3]) {
+      const depth = peekDepthFor(PEEK_RANGE_PX * frac);
+      const seen = peekHexes(fogged, [opening], at(frac));
+      for (const k of seen) {
+        const [q, r] = k.split(',').map(Number);
+        expect(fogged.has(k)).toBe(true);
+        // Any path in costs 1 at the throat, so nothing can sit farther than depth-1 beyond it.
+        expect(distance({ q, r }, { q: 3, r: 0 })).toBeLessThanOrEqual(depth - 1);
+      }
+    }
   });
 
   it('never reveals a hex outside the fogged compound, however close he stands', () => {
