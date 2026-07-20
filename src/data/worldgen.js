@@ -845,10 +845,13 @@ export function placeBases(
 // unaffected by this redesign — they're just fed a different tower-position source now.
 export function placeGapTowers(
   rng, all, T, isGround, bases, progressOf = null, minGapProgress = MIN_GAP_PROGRESS_HEX,
+  // #359: the cap on the FIRST gap's window only — see `FIRST_TOWER_MAX_PROGRESS_PX`.
+  firstTowerMaxProgress = FIRST_TOWER_MAX_PROGRESS_HEX,
 ) {
   const alertTowers = [];
   const progress = progressOf || ((h) => distance(h, { q: 0, r: 0 }));
   let prevProgress = 0;   // the corridor start (spawn sits at spine u=0 / distance 0 from origin)
+  let gapIndex = 0;
   for (const base of bases ?? []) {
     const baseProgress = progress(base.center);
     // #269 playtest follow-up ("alert towers are too close to their linked base"): the floor used
@@ -876,7 +879,11 @@ export function placeGapTowers(
     const upper = Math.max(prevProgress, baseProgress);
     const buffer = Math.min(minGapProgress, (upper - lower) / 2);
     const lo = lower + buffer;
-    const hi = upper - buffer;
+    let hi = upper - buffer;
+    // #359: front-load the OPENING tripwire. Only the first gap is capped, and never below `lo`,
+    // so the 600px calm floor off spawn survives the clamp — on a gap so short that the cap would
+    // invert the window, this is a no-op and the buffered window stands as it was.
+    if (gapIndex === 0) hi = Math.max(lo, Math.min(hi, lower + firstTowerMaxProgress));
     let candidates = all.filter((h) => {
       const p = progress(h);
       return p >= lo && p <= hi && isGround(axialKey(h.q, h.r));
@@ -907,6 +914,7 @@ export function placeGapTowers(
       alertTowers.push({ q: h.q, r: h.r, baseId: base.id });
     }
     prevProgress = baseProgress;
+    gapIndex++;
   }
   return alertTowers;
 }
@@ -1403,19 +1411,41 @@ export function placeBaseWalls(T, bases) {
 // destroying a closed gate simply breaches it like any other span and leaves a permanent hole; and
 // it stays SOLID TO THE PLAYER whether open or shut, which is what preserves #288's seal.
 //
-// TWO gates per ring, on roughly OPPOSITE sides.
-//   - Why two and not one: a single gate is a fixed answer to the fight — the player parks off the
-//     one opening and farms whatever walks out of it. With one gate facing his approach and one
-//     behind, a garrison that sorties can come at him from two headings and he cannot cover both,
-//     which is the whole reason a fortification has more than one sally port.
-//   - Why not more: every gate is a span he can shoot open, and a ring with gates all round starts
-//     to read as a fence rather than a wall. Two is the smallest number that creates a flank.
+// HOW MANY — #354, SCALED TO RING SIZE. #309 fixed this at TWO, sized against the small rings of
+// the time, on the reasoning that two is the smallest count that creates a flank (one gate is a
+// fixed answer to the fight — the player parks off the single opening and farms whatever walks
+// out) while a ring with gates all round reads as a fence rather than a wall. Both halves of that
+// still hold; what changed is the ring. #333 grew compounds to ~6x12 hexes, whose rings run 54-68
+// spans, and #332 made garrisons actually SORTIE. Two mouths in a 60-span ring is one opening per
+// ~30 spans, and a big garrison heading for two doors reads as bunching at them rather than
+// pouring out — the #309 agent flagged exactly this as the gate funnel.
 //
-// WHERE THEY SIT. The first gate faces the player's APPROACH — the bearing from the base's centre
-// back toward the world origin, which is where the run spawns (the corridor spine starts at u=0 at
-// the origin, see `placeBases`). That is a cheap proxy for "the side he will arrive on" that needs
-// no spine argument and cannot be thrown off by a corridor that doubles back, unlike anything
-// derived from progress. The second gate is the span nearest the opposite bearing.
+// So the count is now PROPORTIONAL: one gate per `RING_SPANS_PER_GATE` spans, floored, clamped to
+// `[MIN_GATES_PER_RING, MAX_GATES_PER_RING]`. On today's 54-68 span rings that is 3-4 gates.
+// Jackson gave no number — 14 spans/gate is a PLAYTEST DIAL, picked so the biggest rings get
+// roughly double #309's two without the wall dissolving into fence. The clamps are the real
+// guarantees: a small ring never drops below #309's two, and no ring exceeds five however large
+// compounds grow later.
+//
+// WHERE THEY SIT — EVENLY SPREAD, ANCHORED ON THE APPROACH. The open question was "spread around
+// the ring" vs "concentrate on the approach side"; this takes SPREAD. Concentrating them all where
+// the player arrives just turns two doors into one wide mouth — the same funnel in a wider shape —
+// and hands him a single arc to camp, which is the failure #309's second gate existed to prevent.
+// Spreading keeps that point and scales it: with four gates a sortie comes at him from four
+// bearings and he cannot cover them all.
+//
+// The FIRST gate still faces the player's APPROACH — the bearing from the base's centre back
+// toward the world origin, which is where the run spawns (the corridor spine starts at u=0 at the
+// origin, see `placeBases`). That is a cheap proxy for "the side he will arrive on" that needs no
+// spine argument and cannot be thrown off by a corridor that doubles back, unlike anything derived
+// from progress. The remaining gates sit at even angular steps around from it, so there is always
+// one mouth facing him (the read #309 wanted) and the two-gate case degenerates to exactly #309's
+// original front/rear pair.
+//
+// This is deliberately now the SAME shape as `assignWallTurrets` below (#310): a clamped count
+// derived from the ring, even angular targets starting at the approach, each claiming the nearest
+// unclaimed eligible span. The two were already near-identical in spirit and #354 finished the
+// convergence — a change to how ring features spread should only have to be reasoned about once.
 //
 // FORGIVING GEOMETRY (#312 is not built — enemy movement is still straight-line steering, so a
 // unit that emerges facing its own wall will grind along it rather than path around). Two things
@@ -1440,19 +1470,38 @@ function assignGates(T, base, edges) {
   // The approach: back toward the origin, where the run spawns.
   const approach = Math.atan2(-c.y, -c.x);
   const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
-  const nearestTo = (target, exclude) => {
+  const nearestTo = (target, taken) => {
     let best = null, bestD = Infinity;
     for (const w of eligible) {
-      if (exclude && w.e === exclude) continue;
+      if (taken?.has(w.e)) continue;
       const d = angDiff(w.bearing, target);
       if (d < bestD) { best = w; bestD = d; }
     }
     return best;
   };
-  const front = nearestTo(approach, null);
-  const rear = nearestTo(approach + Math.PI, front?.e);
-  for (const w of [front, rear]) if (w) w.e.role = 'gate';
+  // #354: how many mouths this ring gets, from its own span count (see the header).
+  const n = gateCountForRing(edges.length);
+  // Even angular steps starting at the approach bearing. `chosen` excludes spans already taken, so
+  // a ring whose eligible spans are clustered (much of it walled in by terrain) degrades to
+  // "as many distinct openings as it can actually offer" rather than flagging one span twice.
+  const chosen = new Set();
+  for (let i = 0; i < n; i++) {
+    const w = nearestTo(approach + (i * 2 * Math.PI) / n, chosen);
+    if (!w) break;
+    chosen.add(w.e);
+    w.e.role = 'gate';
+  }
   return edges;
+}
+
+// #354: gates scale with the ring's span count — see `assignGates`' header for the reasoning and
+// for why these three numbers are playtest dials rather than derived constants.
+export const RING_SPANS_PER_GATE = 14;
+export const MIN_GATES_PER_RING = 2;
+export const MAX_GATES_PER_RING = 5;
+export function gateCountForRing(spanCount) {
+  const raw = Math.floor((spanCount ?? 0) / RING_SPANS_PER_GATE);
+  return Math.max(MIN_GATES_PER_RING, Math.min(MAX_GATES_PER_RING, raw));
 }
 
 // ── #310: which spans of a ring mount a RAIL-LANCE TURRET ───────────────────────────────────
@@ -1647,6 +1696,35 @@ export const MIN_GAP_PROGRESS_PX = 600;
 // fallback both already use, so `placeBases`/`placeGapTowers` can compare it directly against
 // `progressOf(...)` results without a separate px<->hex conversion at every call site.
 export const MIN_GAP_PROGRESS_HEX = MIN_GAP_PROGRESS_PX / HEX_STEP_PX; // ≈7.22
+
+// #359: HOW FAR THE OPENING RUN-IN MAY STRETCH BEFORE THE FIRST ALERT TOWER.
+//
+// Jackson, after playing #340's longer corridor: "the map is a bit too long now, especially the
+// dead time before first alert tower", and when asked which problem it actually is, "mainly the
+// opening — get me to the first tower faster." So TOTAL length is fine; the empty run-in at the
+// start is not. This constant is deliberately the lever that fixes only that.
+//
+// It is NOT a fourth spacing quantity to conflate with the two above (see #340's note and #343's
+// comment fix — `MIN_GAP_PROGRESS_PX` and `MIN_BASE_SEPARATION_PX` are different things and this
+// is a third, different again). Neither of those moves. `CORRIDOR_LENGTH_PER_BASE_PX` (4800),
+// `MIN_BASE_SEPARATION_PX` (3400) and wall-turret range (900) are all untouched, so #340's
+// arithmetic — bases sitting outside each other's turret envelopes — holds exactly as it did, and
+// #340's question 3 stays unanswered. This only reshapes WHERE INSIDE the first gap the tower is
+// allowed to land.
+//
+// What it fixes. `placeGapTowers` picks each gap's tower UNIFORMLY AT RANDOM from that gap's
+// buffered window. For gap 0 that window ran from `MIN_GAP_PROGRESS_PX` (600) past spawn to 600
+// short of base 0. Measured over 16 real seeds, base 0 lands at a median ~4100px, so that window
+// was ~600-3500px: a MEAN run-in of ~2050px of nothing and a bad roll giving ~3500px. That is the
+// dead time. Capping the far end at 1400px makes the opening tower land 600-1400px out, mean
+// ~1000px — roughly HALF the former average and a third of the former worst case — with the 600px
+// floor still intact, so the spawn area itself is never inside a detect bubble.
+//
+// It applies to the FIRST GAP ONLY. Every later gap keeps its full random window, so the pacing
+// between bases mid-run is exactly what it was — this is a front-loading of the opening tripwire,
+// not a general compression. 1400px is a playtest dial like every other placement constant here.
+export const FIRST_TOWER_MAX_PROGRESS_PX = 1400;
+export const FIRST_TOWER_MAX_PROGRESS_HEX = FIRST_TOWER_MAX_PROGRESS_PX / HEX_STEP_PX; // ≈16.9
 
 // #340: HOW FAR APART TWO BASES MUST SIT. Split out of `MIN_GAP_PROGRESS_PX` above, which
 // `placeBases` used to borrow. They were never the same quantity and #340 is what forced the two

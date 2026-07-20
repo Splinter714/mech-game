@@ -16,6 +16,8 @@ import {
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
   placeBaseWalls, BASE_FOOTPRINT_HALF_LENGTH, BASE_FOOTPRINT_HALF_WIDTH, footprintShape,
   MIN_BASE_SEPARATION_PX,
+  gateCountForRing, RING_SPANS_PER_GATE, MIN_GATES_PER_RING, MAX_GATES_PER_RING,
+  FIRST_TOWER_MAX_PROGRESS_PX, FIRST_TOWER_MAX_PROGRESS_HEX,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
@@ -1520,6 +1522,55 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       }
     });
 
+    // ── #359: the OPENING run-in is capped, and only the opening ────────────────────────────
+    // Jackson: "mainly the opening — get me to the first tower faster." Total corridor length,
+    // base spacing and wall-turret range all stay exactly as #340 set them; the only thing that
+    // moves is where inside the FIRST gap the tower may land.
+    describe('#359: the first alert tower is front-loaded', () => {
+      it('puts gap 0\'s tower inside the FIRST_TOWER_MAX_PROGRESS cap, still past the calm floor', () => {
+        for (const seed of [1, 2, 3, 42, 777]) {
+          const { all, T, isGround, progressOf } = buildSpaciousLine();
+          const rng = mulberry32(seed);
+          const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+          const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
+          const p = progressOf(alertTowers[0]);
+          expect(p).toBeGreaterThanOrEqual(MIN_GAP_PROGRESS_HEX - 1e-6);
+          expect(p).toBeLessThanOrEqual(FIRST_TOWER_MAX_PROGRESS_HEX + 1e-6);
+        }
+      });
+
+      // The cap is a FRONT-LOAD, not a general compression: every later gap keeps its full random
+      // window, so mid-run pacing is untouched. Without this, "get to the first tower faster"
+      // could quietly be implemented as "squash the whole corridor," which is exactly what the
+      // issue's answer rules out.
+      it('leaves every LATER gap free to place its tower beyond the cap', () => {
+        let anyBeyond = false;
+        for (const seed of [1, 2, 3, 42, 777]) {
+          const { all, T, isGround, progressOf } = buildSpaciousLine();
+          const rng = mulberry32(seed);
+          const { bases } = placeBases(rng, all, T, isGround, BASE_COUNT, progressOf);
+          const alertTowers = placeGapTowers(rng, all, T, isGround, bases, progressOf);
+          for (let i = 1; i < alertTowers.length; i++) {
+            const gapStart = progressOf(bases[i - 1].center);
+            if (progressOf(alertTowers[i]) - gapStart > FIRST_TOWER_MAX_PROGRESS_HEX) anyBeyond = true;
+          }
+        }
+        expect(anyBeyond).toBe(true);
+      });
+
+      // The cap is a FOURTH, separate quantity — the #340/#343 lesson about not conflating
+      // MIN_GAP_PROGRESS_PX with MIN_BASE_SEPARATION_PX applies to it too. It must sit strictly
+      // above the calm floor (or it would fight it) and strictly below the base separation (or it
+      // would be reshaping spacing rather than the run-in).
+      it('is its own quantity, distinct from the calm floor and the base separation', () => {
+        expect(FIRST_TOWER_MAX_PROGRESS_PX).toBeGreaterThan(MIN_GAP_PROGRESS_PX);
+        expect(FIRST_TOWER_MAX_PROGRESS_PX).toBeLessThan(MIN_BASE_SEPARATION_PX);
+        // And the levers #359 explicitly must NOT touch are still where #340 left them.
+        expect(CORRIDOR_LENGTH_PER_BASE_PX).toBe(4800);
+        expect(MIN_BASE_SEPARATION_PX).toBe(3400);
+      });
+    });
+
     it('base/tower COUNT is unaffected by the new floor (still exactly BASE_COUNT of each)', () => {
       for (const seed of [1, 2, 3, 42, 777]) {
         const { all, T, isGround, progressOf } = buildSpaciousLine();
@@ -1974,8 +2025,11 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
   // these tests are about which spans get flagged, and (crucially) that flagging one changes
   // nothing whatsoever about the ring's shape or its seal on the hex graph. The seal in PIXEL
   // space, with gates actually OPEN, is proved in scenes/arena/wallEdgeWorld.test.js.
-  describe('#309: two gates per ring, on opposite sides, opening onto passable ground', () => {
-    it('flags exactly two spans of a ring as gates', () => {
+  // #354 raised the count on LARGE rings; the synthetic radius-2 disc these use has 18 spans, so
+  // it still sits on the `MIN_GATES_PER_RING` floor of two and #309's original geometry tests
+  // (opposite sides, one facing the approach) read exactly as they always did.
+  describe('#309: gates on opposite sides, opening onto passable ground', () => {
+    it('flags exactly two spans of a small ring as gates', () => {
       const T = fillGroundDisc();
       const base = discBase({ q: 12, r: -4 });
       const [ring] = placeBaseWalls(T, [base]);
@@ -2074,6 +2128,30 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       expect(ring.edges.filter((e) => e.role === 'gate').length).toBe(0);
     });
 
+    // ── #354: the count scales with the ring ────────────────────────────────────────────────
+    describe('#354: gate count scales with ring size', () => {
+      it('gives one gate per RING_SPANS_PER_GATE spans, clamped both ways', () => {
+        // Small rings keep #309's two — the floor is what preserves "a flank exists" on any ring.
+        expect(gateCountForRing(0)).toBe(MIN_GATES_PER_RING);
+        expect(gateCountForRing(18)).toBe(MIN_GATES_PER_RING);
+        expect(gateCountForRing(RING_SPANS_PER_GATE * 2)).toBe(2);
+        // #333-sized rings (54-68 spans) get more, which is the issue.
+        expect(gateCountForRing(54)).toBe(3);
+        expect(gateCountForRing(68)).toBe(4);
+        // …and no ring ever dissolves into a fence, however large compounds grow later.
+        expect(gateCountForRing(10_000)).toBe(MAX_GATES_PER_RING);
+      });
+
+      it('is monotonic in ring size — a bigger wall never gets fewer mouths', () => {
+        let prev = 0;
+        for (let n = 0; n <= 200; n++) {
+          const g = gateCountForRing(n);
+          expect(g).toBeGreaterThanOrEqual(prev);
+          prev = g;
+        }
+      });
+    });
+
     // On the REAL generated corridor, across many seeds — the placement rules have to survive
     // actual base footprints (which get clipped by the corridor) and actual terrain.
     it('holds on real generated worlds across seeds', () => {
@@ -2082,9 +2160,14 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
         const { terrain, bases } = generateTerrain(realTerrainArgs(seed * 17 + 5));
         for (const base of bases) {
           const gates = (base.wallEdges ?? []).filter((e) => e.role === 'gate');
-          // At most two, and every one of them opens onto ground a unit can actually stand on.
-          expect(gates.length).toBeLessThanOrEqual(2);
-          gateCounts.push(gates.length);
+          // #354: the count is no longer a flat two — it scales with the ring's span count. Never
+          // MORE than the rule allows (the ring must stay a wall, not a fence); it may be fewer
+          // only where terrain leaves too few eligible spans, which the ratio below bounds.
+          const want = gateCountForRing((base.wallEdges ?? []).length);
+          expect(gates.length).toBeLessThanOrEqual(want);
+          expect(want).toBeGreaterThanOrEqual(MIN_GATES_PER_RING);
+          expect(want).toBeLessThanOrEqual(MAX_GATES_PER_RING);
+          gateCounts.push({ got: gates.length, want });
           for (const e of gates) {
             const k = axialKey(e.b.q, e.b.r);
             expect(terrain.has(k) && isPassable(terrain.get(k))).toBe(true);
@@ -2095,11 +2178,15 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
         }
       }
       // …and the bound above is not passing vacuously: on real corridor terrain essentially every
-      // base really does get its full pair of sally ports, so the mechanic is present in play
+      // base really does get its full set of sally ports, so the mechanic is present in play
       // rather than being quietly degraded away by clipped footprints or awkward terrain.
       expect(gateCounts.length).toBeGreaterThan(50);
-      const full = gateCounts.filter((n) => n === 2).length;
+      const full = gateCounts.filter(({ got, want }) => got === want).length;
       expect(full / gateCounts.length).toBeGreaterThan(0.95);
+      // #354: and the rule is actually BITING on real compounds — #333-sized rings are big enough
+      // that they ask for more than #309's flat two, which is the whole point of the issue. If
+      // this ever fails, compounds shrank and the gate count silently fell back to the floor.
+      expect(gateCounts.some(({ want }) => want > MIN_GATES_PER_RING)).toBe(true);
     });
   });
 

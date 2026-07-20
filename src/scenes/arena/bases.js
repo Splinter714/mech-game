@@ -954,10 +954,11 @@ export const BasesMixin = {
 
   // ── #309: WALL GATES / the sally port ───────────────────────────────────────────────────
   // Build one cycle state per gate span. Called from `_buildWorld` (world.js) once the wall-edge
-  // set exists. The two gates of a ring get slightly different starting offsets so they don't
-  // crank in perfect lockstep — the same de-synchronisation reasoning #311 applied to docks, and
-  // it matters more here: two gates opening on the same frame reads as one scripted event, while
-  // two opening a beat apart reads as a base reacting.
+  // set exists. A ring's gates each get a slightly different starting offset so they don't crank
+  // in perfect lockstep — the same de-synchronisation reasoning #311 applied to docks, and it
+  // matters more here: gates opening on the same frame read as one scripted event, while gates
+  // opening a beat apart read as a base reacting. (#354 made the count per-ring — 2 to 5 — so
+  // this loop is over however many spans `gateEdges` reports, never a fixed pair.)
   _initGates() {
     this._gateStates = new Map();
     this._gateDemand = makeGateDemand();
