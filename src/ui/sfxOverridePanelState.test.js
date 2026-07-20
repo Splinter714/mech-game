@@ -263,7 +263,7 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     expect(Array.isArray(SFX_DOMAINS.ui)).toBe(true);
     const expectedIds = [
       'equip', 'deploy', 'menuNav', 'scrapPickup',
-      'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock',
+      'powerupPickupOverdrive', 'powerupPickupOverclock',
       'powerupPickupArmorPatch', 'powerupPickupShield',
     ];
     for (const id of expectedIds) {

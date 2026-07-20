@@ -11,6 +11,7 @@ import { getWeapon } from './weapons.js';
 import * as loadout from './loadout.js';
 import {
   createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
+  grantTempShield, shieldTotalHp, shieldTotalMax,
 } from './shield.js';
 
 // #238: how long (seconds) a weapon slot is locked out after its magazine is fully
@@ -62,12 +63,6 @@ export class Mech {
     // the PLAYER a real baseline (see ArenaScene's deploy path) and the Shield powerup
     // (data/powerups.js) instantly fills + temporarily boosts whatever's configured here.
     this.shield = createShield(data.shield);
-    // Set only while a timed Shield-powerup boost is active (see boostShield/_clearShieldBoost
-    // below) — remembers the PRE-boost base so reverting on expiry is exact, never compounding
-    // across repeated pickups. (#324: `boostHealth` and its parallel baseMaxArmor/baseMaxHp
-    // capture are gone — the player's durability is plain chassis data now — so this is the only
-    // remaining "multiply a max, remember the base, revert exactly" mechanism in the model.)
-    this._shieldBoost = null;
   }
 
   // Magazine capacity for an item id (null = unlimited or non-weapon).
@@ -108,12 +103,11 @@ export class Mech {
   // SEPARATE accessor from `maxHp` above rather than a redefinition of it: `maxHp` already has
   // other consumers (the HUD's per-part bars, shared.js's death-explosion sizing) whose current
   // meaning is fine, and `maxHp` on HpBody means only its single hp pool — so widening either
-  // would silently change unrelated behaviour. Reads the PRE-BOOST shield capacity when a
-  // Shield powerup is live (`_shieldBoost.baseMax`), so a temporary buff can't inflate a unit's
-  // rated toughness.
+  // would silently change unrelated behaviour. Reads the BASE shield capacity only (`shield.max`),
+  // never the #381 temporary pool, so a Shield powerup can't inflate a unit's rated toughness —
+  // `shield.max` stays fixed at the base value while the temp pool lives entirely in `shield.temp`.
   get toughness() {
-    const shieldMax = this._shieldBoost?.baseMax ?? (this.shield?.max ?? 0);
-    return this.maxHp + Math.max(0, shieldMax);
+    return this.maxHp + Math.max(0, this.shield?.max ?? 0);
   }
 
   // ── Damage & destruction ──────────────────────────────────────────────────
@@ -136,7 +130,6 @@ export class Mech {
       };
     }
     const shieldRes = damageShield(this.shield, amount);
-    this._maybeFinalizeExpiredShieldBoost();
     const overflow = shieldRes.overflow;
     if (overflow <= 0) {
       return {
@@ -213,109 +206,43 @@ export class Mech {
   // layer a hit should hit — kept for symmetry/tests; normal combat goes through applyDamage,
   // which already checks the shield first).
   applyShieldDamage(amount) {
-    const res = damageShield(this.shield, amount);
-    this._maybeFinalizeExpiredShieldBoost();
-    return res;
+    return damageShield(this.shield, amount);
   }
   shieldFraction() { return shieldFraction(this.shield); }
   hasShield() { return shieldPresent(this.shield); }
+  // #381: total current hp / capacity INCLUDING the temporary pool — what the HUD bar and the
+  // in-world glow read so both GROW with a live temp pool and shrink as it is spent.
+  shieldTotalHp() { return shieldTotalHp(this.shield); }
+  shieldTotalMax() { return shieldTotalMax(this.shield); }
 
-  // Passive per-frame upkeep: shield regen (with its brief post-hit pause) and, if a timed
-  // Shield-powerup boost is active, counting its remaining duration down. Called once per
-  // frame alongside regenAmmo (dt in seconds, same convention).
-  //
-  // #271: when the boost timer runs out, the elevated capacity does NOT snap back to base
-  // instantly — it persists as a depleting-only buffer (`_shieldBoost.expired = true`) until
-  // damage brings `shield.hp` down to (or below) the pre-boost base max. Only then does it
-  // actually clamp `shield.max`/`regenPerSec` back to base and clear `_shieldBoost`. While
-  // expired-but-not-yet-decayed, regen is capped at base max (never regens back into the
-  // decaying extra) — see `_tickExpiredShieldBoost`.
+  // Passive per-frame upkeep: shield regen (with its brief post-hit pause) and the #381 temporary
+  // pool's own expiry countdown — both live in data/shield.js's `tickShield` now, so there is one
+  // place that knows the regen ceiling stays at base `max` and the temp pool never recharges.
+  // Called once per frame alongside regenAmmo (dt in seconds, same convention).
   tickShield(dt) {
-    if (this._shieldBoost && !this._shieldBoost.expired) {
-      this._shieldBoost.remainingMs -= dt * 1000;
-      if (this._shieldBoost.remainingMs <= 0) this._shieldBoost.expired = true;
-    }
-    if (this._shieldBoost && this._shieldBoost.expired) {
-      this._tickExpiredShieldBoost(dt);
-    } else {
-      tickShieldState(this.shield, dt);
-    }
+    tickShieldState(this.shield, dt);
   }
 
-  // Shield powerup pickup (#246 decision: BOTH effects, the strongest version) — instantly
-  // fills the shield to 100% of its (possibly boosted) capacity AND multiplies max capacity +
-  // regen rate by `mult` for `durationMs`. A duplicate pickup mid-boost just refreshes the
-  // timer against the SAME captured pre-boost base, so it never compounds across repeated
-  // pickups. No-op on a mech with no native shield at all.
-  //
-  // #271: this also covers a duplicate pickup mid-decay (after the previous boost's timer
-  // expired but `shield.hp` hasn't drained back to base yet) — `_shieldBoost` is still around
-  // in its "expired" sub-state at that point, so this just un-expires it and refreshes the
-  // timer against the SAME original `baseMax`/`baseRegenPerSec`, same as the still-active case.
-  // #339: how much boost time is still on the clock, in ms — 0 when no boost is live (including
-  // the post-expiry decay sub-state, which is a drain, not an active buff). The caller uses this
-  // to compute the STACKED total it then passes back into `boostShield`; the stacking policy
-  // itself stays in data/powerups.js (`stackedRemainingMs`) so all timed buffs share one rule
-  // and the model keeps its "set exactly what you're told" contract.
-  get shieldBoostRemainingMs() {
-    const b = this._shieldBoost;
-    return b && !b.expired ? Math.max(0, b.remainingMs || 0) : 0;
+  // #381: how much of the temporary-pool window is still on the clock, in ms — 0 when no pool is
+  // live. The scene reads this to compute the STACKED duration (data/powerups.js
+  // `stackedRemainingMs`) it passes back into `grantTempShield`, so all timed buffs share one
+  // stacking rule and the model keeps its "set exactly what you're told" contract.
+  get tempShieldRemainingMs() {
+    return (this.shield?.temp || 0) > 0 ? Math.max(0, this.shield.tempExpiryMs || 0) : 0;
   }
 
-  boostShield(mult, durationMs) {
-    if (!shieldPresent(this.shield)) return;
-    if (!this._shieldBoost) {
-      this._shieldBoost = {
-        mult, remainingMs: durationMs, expired: false,
-        baseMax: this.shield.max, baseRegenPerSec: this.shield.regenPerSec,
-      };
-    } else {
-      this._shieldBoost.remainingMs = durationMs;
-      this._shieldBoost.expired = false;
-    }
-    this.shield.max = Math.round(this._shieldBoost.baseMax * mult);
-    this.shield.regenPerSec = this._shieldBoost.baseRegenPerSec * mult;
-    fillShield(this.shield);
+  // Shield powerup pickup (#381, reworked from #246/#271's capacity/regen multiplier): grant an
+  // expendable TEMPORARY shield pool of `amount` ON TOP of the base max, expiring after
+  // `durationMs` if unspent, and top the base shield to full. The base `max`/`regenPerSec` are
+  // never touched, so the regen ceiling stays put and the temp pool sits outside the regen path
+  // entirely (it only ever drains — via damage, first, or the expiry timer). Magnitude does not
+  // compound across duplicate pickups (grantTempShield takes the max, not the sum); duration
+  // stacking is the caller's `durationMs`. Works even on a mech with no native shield config.
+  grantTempShield(amount, durationMs) {
+    grantTempShield(this.shield, amount, durationMs);
   }
 
-  // Depleting-only buffer tick, once the boost timer has expired but `shield.hp` is still above
-  // the pre-boost base max. Mirrors `tickShield`'s hit-pause handling from shield.js, but caps
-  // any regen at `baseMax` (never regens into the decaying extra) and only actually regens once
-  // hp has already dropped to base or below.
-  _tickExpiredShieldBoost(dt) {
-    const { baseMax, baseRegenPerSec } = this._shieldBoost;
-    if (this.shield.pauseRemaining > 0) {
-      this.shield.pauseRemaining = Math.max(0, this.shield.pauseRemaining - dt * 1000);
-    } else if (this.shield.hp <= baseMax) {
-      this.shield.hp = Math.min(baseMax, this.shield.hp + baseRegenPerSec * dt);
-    }
-    this._maybeFinalizeExpiredShieldBoost();
-  }
-
-  // If a shield boost has expired and `shield.hp` has (now) drained down to its pre-boost base
-  // max or below, finalize the clamp back to base max/base regen and clear `_shieldBoost`
-  // entirely — same end state as the old instant-snap `_clearShieldBoost`, just reached only
-  // once the extra capacity has actually been used up (#271), rather than the instant the timer
-  // ran out. Called both from the passive tick (regen/pause path) and right after any hit that
-  // damages the shield, so a hit that drains straight through the buffer in one shot finalizes
-  // immediately rather than waiting for the next frame's tick.
-  _maybeFinalizeExpiredShieldBoost() {
-    if (!this._shieldBoost?.expired) return;
-    const { baseMax, baseRegenPerSec } = this._shieldBoost;
-    if (this.shield.hp > baseMax) return;
-    this.shield.max = baseMax;
-    this.shield.regenPerSec = baseRegenPerSec;
-    this._shieldBoost = null;
-  }
-
-  _clearShieldBoost() {
-    this.shield.max = this._shieldBoost.baseMax;
-    this.shield.regenPerSec = this._shieldBoost.baseRegenPerSec;
-    this.shield.hp = Math.min(this.shield.hp, this.shield.max);
-    this._shieldBoost = null;
-  }
-
-  // Set/replace this mech's native shield config at runtime (fresh, full, no lingering boost).
+  // Set/replace this mech's native shield config at runtime (fresh, full, no lingering temp pool).
   // Opt-in and applied outside the shared chassis/enemy data: the arena uses this to give the
   // PLAYER a baseline shield (see ArenaScene's PLAYER_SHIELD) without touching the
   // constructor-time `data.shield` every mech (including enemy mechs) is built from. Idempotent:
@@ -324,7 +251,6 @@ export class Mech {
   // it now lives in the chassis data, and this shield config is the last such deploy-time patch.)
   configureShield(config) {
     this.shield = createShield(config);
-    this._shieldBoost = null;
   }
 
   // ── Mounting / build ──────────────────────────────────────────────────────
@@ -440,7 +366,7 @@ export class Mech {
   }
 
   // Restore a mech to pristine condition (used when deploying a fresh build): full
-  // health, full shield (any lingering timed boost from a prior sortie is cleared first so
+  // health, full shield (any lingering #381 temporary pool from a prior sortie is cleared first so
   // it can't leak across a redeploy), and full magazines.
   repairAll() {
     for (const loc of LOCATIONS) {
@@ -448,7 +374,8 @@ export class Mech {
       p.armor = p.maxArmor;
       p.hp = p.maxHp;
     }
-    if (this._shieldBoost) this._clearShieldBoost();
+    this.shield.temp = 0;
+    this.shield.tempExpiryMs = 0;
     this.shield.pauseRemaining = 0;
     fillShield(this.shield);
     this._initAmmo();

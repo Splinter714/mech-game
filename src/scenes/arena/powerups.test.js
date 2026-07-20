@@ -151,8 +151,8 @@ function fakeArena() {
     mech: {
       _remaining: 0,
       _repairs: 0,
-      get shieldBoostRemainingMs() { return this._remaining; },
-      boostShield(mult, ms) { this._mult = mult; this._remaining = ms; },
+      get tempShieldRemainingMs() { return this._remaining; },
+      grantTempShield(pool, ms) { this._pool = pool; this._remaining = ms; },
       repairArmor() { this._repairs++; return 10; },
     },
     _activatePowerup: PowerupsMixin._activatePowerup,
@@ -183,11 +183,11 @@ describe('#339: _activatePowerup stacks duration on duplicate pickups', () => {
     const s = fakeArena();
     let prev = 0;
     for (let i = 0; i < 12; i++) {
-      s._activatePowerup('overcharge');
-      expect(s.activePowerups.overcharge).toBeGreaterThanOrEqual(prev);
-      prev = s.activePowerups.overcharge;
+      s._activatePowerup('overclock');
+      expect(s.activePowerups.overclock).toBeGreaterThanOrEqual(prev);
+      prev = s.activePowerups.overclock;
     }
-    expect(prev).toBe(maxStackedMs('overcharge'));
+    expect(prev).toBe(maxStackedMs('overclock'));
   });
 
   it('does NOT change magnitude — the collapsed modifiers are identical however long it runs', () => {
@@ -198,24 +198,25 @@ describe('#339: _activatePowerup stacks duration on duplicate pickups', () => {
     expect(buffModifiers(s.activePowerups)).toEqual(once);
   });
 
-  it('Shield extends the on-mech boost window at the same boostMult', () => {
+  it('#381: Shield grants the temp pool at the same size and extends its window; it ALSO enters the active set for free ammo', () => {
     const s = fakeArena();
     s._activatePowerup('shield');
-    expect(s.mech._mult).toBe(POWERUPS.shield.boostMult);
+    expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);
     expect(s.mech._remaining).toBe(durationMs('shield'));
+    expect(s.activePowerups.shield).toBe(durationMs('shield'));   // #381: free-ammo window
     s._activatePowerup('shield');
-    expect(s.mech._mult).toBe(POWERUPS.shield.boostMult);   // same strength…
-    expect(s.mech._remaining).toBe(durationMs('shield') * 2); // …longer
-    // Shield still never enters the scene-level active set.
-    expect(s.activePowerups.shield).toBeUndefined();
+    expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);          // same pool size…
+    expect(s.mech._remaining).toBe(durationMs('shield') * 2);     // …longer window
+    expect(s.activePowerups.shield).toBe(durationMs('shield') * 2);
   });
 
-  it('Armor Patch simply applies again — no timer, never enters the active set', () => {
+  it('#381: Armor Patch repairs again on each pickup AND opens a free-ammo window (so it now enters the active set)', () => {
     const s = fakeArena();
     s._activatePowerup('armorPatch');
+    expect(s.activePowerups.armorPatch).toBe(durationMs('armorPatch'));  // #381: free-ammo window
     s._activatePowerup('armorPatch');
-    expect(s.mech._repairs).toBe(2);
-    expect(s.activePowerups.armorPatch).toBeUndefined();
+    expect(s.mech._repairs).toBe(2);                                     // repair still applies each time
+    expect(s.activePowerups.armorPatch).toBe(durationMs('armorPatch') * 2);
   });
 
   it('different types keep their own independent clocks', () => {

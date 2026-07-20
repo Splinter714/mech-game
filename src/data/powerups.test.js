@@ -11,28 +11,37 @@ import { ENEMY_KINDS } from './enemyKinds.js';
 import { ENEMIES } from './enemies.js';
 
 describe('powerup catalog', () => {
-  it('has the #187 owner-approved roster (Surge cut, Shield added, #137 Barrage added) and NO Target Paint', () => {
+  it('#381: Overcharge was folded into every powerup and removed; the rest are the owner-approved roster', () => {
     expect(POWERUP_IDS.sort()).toEqual(
-      ['armorPatch', 'overcharge', 'overclock', 'overdrive', 'shield', 'barrage'].sort(),
+      ['armorPatch', 'overclock', 'overdrive', 'shield', 'barrage'].sort(),
     );
+    expect(POWERUPS.overcharge).toBeUndefined();   // #381: no longer a separate pickup
     expect(POWERUPS.surge).toBeUndefined();
     expect(POWERUPS.doubleShot).toBeUndefined();   // #137's Barrage is the shot-count buff now
     expect(POWERUPS.targetPaint).toBeUndefined();
   });
 
-  it('marks Armor Patch as instant (no timer); Overcharge/Overdrive/Overclock are timed', () => {
+  it('#381: every timed powerup runs a UNIFORM 10-second window', () => {
+    for (const id of POWERUP_IDS) {
+      expect(POWERUPS[id].duration).toBe(10);
+      expect(durationMs(id)).toBe(10000);
+    }
+  });
+
+  it('marks Armor Patch as instant repair (applied on pickup) while STILL carrying a timed free-ammo window (#381); Overdrive/Overclock are timed', () => {
     expect(isInstant('armorPatch')).toBe(true);
-    for (const id of ['overcharge', 'overdrive', 'overclock']) {
+    expect(durationMs('armorPatch')).toBe(10000);   // #381: the free-ammo window
+    for (const id of ['overdrive', 'overclock']) {
       expect(isInstant(id)).toBe(false);
       expect(durationMs(id)).toBeGreaterThan(0);
     }
-    expect(durationMs('armorPatch')).toBe(0);
   });
 
-  it('#246: Shield is a timed boost (not instant) on top of its instant full-fill — has a real duration and a boostMult', () => {
+  it('#381: Shield is a timed powerup granting a temporary POOL (not a capacity/regen multiplier) — has a real duration and a tempPool, no boostMult', () => {
     expect(isInstant('shield')).toBe(false);
     expect(durationMs('shield')).toBeGreaterThan(0);
-    expect(POWERUPS.shield.boostMult).toBeGreaterThan(1);
+    expect(POWERUPS.shield.tempPool).toBeGreaterThan(0);
+    expect(POWERUPS.shield.boostMult).toBeUndefined();
   });
 
   it('#189: Overclock carries no numeric magnitude fields — its effect is force-Sprint, not a multiplier', () => {
@@ -69,7 +78,7 @@ describe('#315: armorPatch is absent from the weighted random pool', () => {
     expect(POWERUP_POOL_IDS).not.toContain('armorPatch');
     expect(POWERUP_IDS).toContain('armorPatch');
     expect(POWERUP_POOL_IDS.sort())
-      .toEqual(['overcharge', 'overdrive', 'overclock', 'shield', 'barrage'].sort());
+      .toEqual(['overdrive', 'overclock', 'shield', 'barrage'].sort());
   });
 
   it('can NEVER come out of pickPowerupType, at any rng value including the fallback edges', () => {
@@ -83,24 +92,26 @@ describe('#315: armorPatch is absent from the weighted random pool', () => {
     for (let i = 0; i < 20000; i++) expect(pickPowerupType()).not.toBe('armorPatch');
   });
 
-  it('the remaining five share the pool evenly — each is exactly 20%, since all carry weight 1', () => {
+  it('the remaining four share the pool evenly — each is exactly 25%, since all carry weight 1 (#381: was five, Overcharge removed)', () => {
     const counts = {};
     const N = 100000;
     for (let i = 0; i < N; i++) {
       const id = pickPowerupType(() => i / N);
       counts[id] = (counts[id] || 0) + 1;
     }
+    expect(POWERUP_POOL_IDS).toHaveLength(4);
     expect(Object.keys(counts).sort()).toEqual(POWERUP_POOL_IDS.slice().sort());
     for (const id of POWERUP_POOL_IDS) {
-      expect(counts[id] / N).toBeCloseTo(0.2, 3);
+      expect(counts[id] / N).toBeCloseTo(0.25, 3);
     }
   });
 
-  it('is still INSTANT (applies on pickup, never enters the active set) — unchanged by #315', () => {
+  it('#381: its repair is still INSTANT (applied on pickup) but it now opens a free-ammo window like every powerup', () => {
     expect(isInstant('armorPatch')).toBe(true);
-    expect(durationMs('armorPatch')).toBe(0);
+    expect(durationMs('armorPatch')).toBe(10000);
+    // Its active-set entry contributes free ammo (the universal #381 window) and nothing else.
     expect(buffModifiers({ armorPatch: 5000 }))
-      .toEqual({ freeAmmo: false, cycleMult: 1, countMult: 1, overclockActive: false });
+      .toEqual({ freeAmmo: true, cycleMult: 1, countMult: 1, overclockActive: false });
   });
 
   // #315 part 2: the palette's only ACHROMATIC entry, so it can't be confused with Shield's
@@ -131,20 +142,23 @@ describe('buffModifiers — collapsing the active overlay', () => {
   });
 
   it('ignores expired (non-positive remaining) entries', () => {
-    const m = buffModifiers({ overcharge: 0, overdrive: -5 });
+    const m = buffModifiers({ shield: 0, overdrive: -5 });
     expect(m.freeAmmo).toBe(false);
     expect(m.cycleMult).toBe(1);
   });
 
-  it('applies each timed buff to its own field', () => {
-    expect(buffModifiers({ overcharge: 500 }).freeAmmo).toBe(true);
+  it('#381: EVERY live powerup grants free ammo, on top of its own field', () => {
+    for (const id of POWERUP_IDS) {
+      expect(buffModifiers({ [id]: 500 }).freeAmmo).toBe(true);
+    }
     expect(buffModifiers({ overdrive: 500 }).cycleMult).toBe(POWERUPS.overdrive.cycleMult);
-    const oc = buffModifiers({ overclock: 500 });
-    expect(oc.overclockActive).toBe(true);
+    expect(buffModifiers({ overclock: 500 }).overclockActive).toBe(true);
+    // No live powerup ⇒ no free ammo.
+    expect(buffModifiers({}).freeAmmo).toBe(false);
   });
 
   it('stacks DIFFERENT types simultaneously (one-per-type overlay)', () => {
-    const m = buffModifiers({ overcharge: 500, overdrive: 500, overclock: 500, barrage: 500 });
+    const m = buffModifiers({ overdrive: 500, overclock: 500, barrage: 500 });
     expect(m.freeAmmo).toBe(true);
     expect(m.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
     expect(m.countMult).toBe(POWERUPS.barrage.countMult);
@@ -188,9 +202,9 @@ describe('buffModifiers — collapsing the active overlay', () => {
     });
   });
 
-  it('Shield never contributes to buffModifiers even when "active" would include it — it is tracked out-of-band', () => {
+  it('#381: Shield contributes ONLY free ammo to buffModifiers — its temp POOL lives on the mech, not the overlay', () => {
     const m = buffModifiers({ shield: 500 });
-    expect(m).toEqual({ freeAmmo: false, cycleMult: 1, countMult: 1, overclockActive: false });
+    expect(m).toEqual({ freeAmmo: true, cycleMult: 1, countMult: 1, overclockActive: false });
   });
 });
 
@@ -262,8 +276,8 @@ describe('#106: toughness = structure + armor + shield, uniformly across body ty
     const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
     const before = m.toughness;
     expect(before).toBe(m.maxHp + 40);
-    m.boostShield(2.5, 5000);
-    expect(m.toughness).toBe(before);    // reads the PRE-boost capacity
+    m.grantTempShield(150, 5000);        // #381: a big temporary pool on top
+    expect(m.toughness).toBe(before);    // still reads base capacity only, never the temp pool
   });
 });
 
@@ -451,16 +465,17 @@ describe('#339: duplicate pickups extend duration', () => {
   });
 
   it('never REDUCES an already-over-cap remaining time', () => {
-    const id = 'overcharge';
+    const id = 'overdrive';
     const over = maxStackedMs(id) + 5000;
     expect(stackedRemainingMs(id, over)).toBe(over);
   });
 
-  it('is a no-op for instant / unknown types (Armor Patch has no timer to extend)', () => {
-    expect(stackedRemainingMs('armorPatch', 0)).toBe(0);
-    expect(stackedRemainingMs('armorPatch', 9999)).toBe(0);
+  it('#381: Armor Patch now HAS a free-ammo timer to extend, so it stacks like the rest; only unknown types are no-ops', () => {
+    expect(stackedRemainingMs('armorPatch', 0)).toBe(durationMs('armorPatch'));
+    expect(stackedRemainingMs('armorPatch', durationMs('armorPatch'))).toBe(durationMs('armorPatch') * 2);
+    expect(maxStackedMs('armorPatch')).toBe(durationMs('armorPatch') * MAX_STACK_MULT);
     expect(stackedRemainingMs('nope', 1000)).toBe(0);
-    expect(maxStackedMs('armorPatch')).toBe(0);
+    expect(maxStackedMs('nope')).toBe(0);
   });
 
   it('MAGNITUDE does not compound: a longer-stacked buff has exactly the same modifiers', () => {
@@ -475,7 +490,7 @@ describe('#339: duplicate pickups extend duration', () => {
   });
 
   it('different types still stack independently (this changes nothing about cross-type stacking)', () => {
-    const mods = buffModifiers({ overdrive: 1, barrage: 1, overcharge: 1, overclock: 1 });
+    const mods = buffModifiers({ overdrive: 1, barrage: 1, shield: 1, overclock: 1 });
     expect(mods.cycleMult).toBe(POWERUPS.overdrive.cycleMult);
     expect(mods.countMult).toBe(POWERUPS.barrage.countMult);
     expect(mods.freeAmmo).toBe(true);
@@ -495,46 +510,44 @@ describe('#339: Armor Patch (instant) simply applies again', () => {
     const second = mech.repairArmor(frac);
     expect(second).toBeGreaterThan(0);            // it DOES do something the second time
     expect(second).toBeLessThan(first);           // …on the smaller remaining deficit
-    // Never enters the timed-buff world at all.
+    // The REPAIR is instant; #381 additionally gives it a free-ammo window (a real duration).
     expect(isInstant('armorPatch')).toBe(true);
-    expect(durationMs('armorPatch')).toBe(0);
+    expect(durationMs('armorPatch')).toBe(10000);
   });
 });
 
-describe('#339: Mech.shieldBoostRemainingMs exposes the boost clock for stacking', () => {
+describe('#381: Mech.tempShieldRemainingMs exposes the temp-pool clock for stacking', () => {
   const shieldMech = () => new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 2 } });
+  const pool = POWERUPS.shield.tempPool;
 
-  it('is 0 with no boost, and reports the live boost time once one is applied', () => {
+  it('is 0 with no pool, and reports the live window once one is granted', () => {
     const mech = shieldMech();
-    expect(mech.shieldBoostRemainingMs).toBe(0);
-    mech.boostShield(POWERUPS.shield.boostMult, durationMs('shield'));
-    expect(mech.shieldBoostRemainingMs).toBe(durationMs('shield'));
+    expect(mech.tempShieldRemainingMs).toBe(0);
+    mech.grantTempShield(pool, durationMs('shield'));
+    expect(mech.tempShieldRemainingMs).toBe(durationMs('shield'));
   });
 
-  it('a duplicate Shield extends the boost window at the SAME multiplier, not a bigger one', () => {
+  it('a duplicate Shield extends the window with the SAME pool size, not a bigger one (magnitude never compounds)', () => {
     const mech = shieldMech();
-    const mult = POWERUPS.shield.boostMult;
-    const baseMax = mech.shield.max;
 
-    mech.boostShield(mult, stackedRemainingMs('shield', mech.shieldBoostRemainingMs));
-    const boostedMax = mech.shield.max;
-    expect(boostedMax).toBe(Math.round(baseMax * mult));
+    mech.grantTempShield(pool, stackedRemainingMs('shield', mech.tempShieldRemainingMs));
+    expect(mech.shield.temp).toBe(pool);
+    expect(mech.shield.max).toBe(50);                                     // base never changes
 
-    // Second pickup, mid-boost.
-    mech.boostShield(mult, stackedRemainingMs('shield', mech.shieldBoostRemainingMs));
-    expect(mech.shieldBoostRemainingMs).toBe(durationMs('shield') * 2);   // longer…
-    expect(mech.shield.max).toBe(boostedMax);                              // …not stronger
-    expect(mech.shield.regenPerSec).toBe(boostedMax > 0 ? mech.shield.regenPerSec : 0);
+    // Second pickup, mid-window.
+    mech.grantTempShield(pool, stackedRemainingMs('shield', mech.tempShieldRemainingMs));
+    expect(mech.tempShieldRemainingMs).toBe(durationMs('shield') * 2);    // longer…
+    expect(mech.shield.temp).toBe(pool);                                  // …not a bigger pool
+    expect(mech.shield.max).toBe(50);                                     // base max still put
   });
 
-  it('capacity stays put no matter how many Shields are collected', () => {
+  it('the temporary pool size stays put no matter how many Shields are collected', () => {
     const mech = shieldMech();
-    const mult = POWERUPS.shield.boostMult;
-    const expectedMax = Math.round(mech.shield.max * mult);
     for (let i = 0; i < 8; i++) {
-      mech.boostShield(mult, stackedRemainingMs('shield', mech.shieldBoostRemainingMs));
-      expect(mech.shield.max).toBe(expectedMax);
+      mech.grantTempShield(pool, stackedRemainingMs('shield', mech.tempShieldRemainingMs));
+      expect(mech.shield.temp).toBe(pool);
+      expect(mech.shield.max).toBe(50);
     }
-    expect(mech.shieldBoostRemainingMs).toBe(maxStackedMs('shield'));
+    expect(mech.tempShieldRemainingMs).toBe(maxStackedMs('shield'));
   });
 });

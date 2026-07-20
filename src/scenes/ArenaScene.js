@@ -425,13 +425,13 @@ export default class ArenaScene extends Phaser.Scene {
     }
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
-    // Surge, which used to multiply this rate, was removed as redundant with Overcharge.)
+    // Surge, which used to multiply this rate, was removed as redundant with free ammo.)
     // #347: per player — each mech regenerates its own magazines and ticks its own shield.
     // One player today, so this is the same two calls it always was.
     for (const p of this.players) {
       p.mech.regenAmmo(dt);
-    // #246: passive shield regen (with its brief post-hit pause) + counting down any active
-    // Shield-powerup boost — see Mech.tickShield/boostShield (data/Mech.js).
+    // #246/#381: passive shield regen (with its brief post-hit pause) + counting down any active
+    // temporary-shield pool's expiry — see Mech.tickShield/grantTempShield (data/Mech.js).
       p.mech.tickShield(dt);
     }
   }

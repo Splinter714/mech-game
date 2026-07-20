@@ -814,9 +814,12 @@ export default class HudScene extends Phaser.Scene {
 
   // #246: full-mech shield readout — a single bar (same visual language as the per-location
   // bars above), hidden ENTIRELY (bar + label) when the mech has no native shield at all
-  // (`hasShield()` false — some enemy kinds and loadouts genuinely have none). Shown for the
-  // player's baseline shield and, indistinguishably to the readout, a boosted one mid-powerup
-  // (the bar's own max just grows/shrinks with `mech.shield.max`).
+  // (`hasShield()` false — some enemy kinds and loadouts genuinely have none).
+  // #381: the bar physically GROWS with a live TEMPORARY pool. The full base shield is `PART_BAR_W`
+  // wide; a temp pool on top widens BOTH the track and the fill in proportion to the total capacity
+  // (base 100 + 150 temp ⇒ a 2.5x-wide bar), and the readout number follows the track's right edge.
+  // As the temp pool is spent the bar shrinks back to base — the "truly grows, then you lose it"
+  // read. With no temp pool the maths reduces exactly to the old fixed-width bar.
   _updateShieldBar(panel, mech) {
     const has = mech.hasShield?.() ?? false;
     panel.shieldLabel.setVisible(has);
@@ -824,10 +827,16 @@ export default class HudScene extends Phaser.Scene {
     panel.shieldBarFill.setVisible(has);
     panel.shieldText.setVisible(has);
     if (!has) return;
-    const { hp, max } = mech.shield;
-    const frac = max > 0 ? Phaser.Math.Clamp(hp / max, 0, 1) : 0;
-    panel.shieldBarFill.setSize(Math.max(1, PART_BAR_W * frac), PART_BAR_H);
-    panel.shieldText.setText(`${Math.ceil(hp)}/${Math.ceil(max)}`);
+    const baseMax = mech.shield.max || 0;
+    const totalHp = mech.shieldTotalHp?.() ?? mech.shield.hp;
+    const totalMax = mech.shieldTotalMax?.() ?? mech.shield.max;
+    const growth = baseMax > 0 ? totalMax / baseMax : 1;     // >= 1 while a temp pool is live
+    const trackW = PART_BAR_W * growth;
+    const fillW = baseMax > 0 ? Phaser.Math.Clamp(PART_BAR_W * (totalHp / baseMax), 1, trackW) : 1;
+    panel.shieldBarTrack.setSize(trackW, PART_BAR_H);
+    panel.shieldBarFill.setSize(fillW, PART_BAR_H);
+    panel.shieldText.setX(panel.shieldBarTrack.x + trackW + 8);
+    panel.shieldText.setText(`${Math.ceil(totalHp)}/${Math.ceil(totalMax)}`);
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular

@@ -12,11 +12,11 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 
 import {
-  shieldOutlineActive, shieldOutlineAlpha, updateShieldOutline, SHIELD_VEHICLE_PART_KEYS,
-  shieldPartKeys,
+  shieldOutlineActive, shieldOutlineAlpha, shieldOutlineGrowth, updateShieldOutline,
+  SHIELD_VEHICLE_PART_KEYS, shieldPartKeys,
 } from './shieldOutline.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
-import { createShield, damageShield, tickShield } from '../../data/shield.js';
+import { createShield, damageShield, tickShield, grantTempShield } from '../../data/shield.js';
 
 function fakeOutlineSprite() {
   return {
@@ -27,6 +27,7 @@ function fakeOutlineSprite() {
     setPosition: vi.fn(function (x, y) { this.x = x; this.y = y; return this; }),
     setOrigin: vi.fn(function () { return this; }),
     setAlpha: vi.fn(function (a) { this.alpha = a; return this; }),
+    setScale: vi.fn(function (s) { this.scale = s; return this; }),
     rotation: 0,
   };
 }
@@ -63,6 +64,42 @@ describe('shieldOutlineActive', () => {
     tickShield(shield, 0.5);
     expect(shield.hp).toBeGreaterThan(0);
     expect(shieldOutlineActive(shield)).toBe(true);           // shell comes back
+  });
+});
+
+// #381: the glow SWELLS with a live temporary pool and is exactly 1 (no change) without one, so
+// every enemy outline is untouched. Pure growth curve, tested here without any sprites.
+describe('shieldOutlineGrowth (#381)', () => {
+  it('is 1 for a plain (temp-less) shield — enemies and un-buffed players never grow', () => {
+    expect(shieldOutlineGrowth({ max: 100, temp: 0 })).toBe(1);
+    expect(shieldOutlineGrowth({ max: 30 })).toBe(1);       // gunship: no temp field at all
+    expect(shieldOutlineGrowth(null)).toBe(1);
+    expect(shieldOutlineGrowth({ max: 0, temp: 0 })).toBe(1);
+  });
+
+  it('grows above 1 in proportion to the temp-to-base ratio', () => {
+    const g = shieldOutlineGrowth({ max: 100, temp: 150 });
+    expect(g).toBeGreaterThan(1);
+    // Bigger pool ⇒ bigger shell; shrinks back toward 1 as the pool is spent.
+    expect(shieldOutlineGrowth({ max: 100, temp: 150 }))
+      .toBeGreaterThan(shieldOutlineGrowth({ max: 100, temp: 40 }));
+  });
+
+  it('re-scales the outline sprites only when a temp pool changes the growth (via updateShieldOutline)', () => {
+    const { sv, view } = makeVehicleOutline();
+    const shield = createShield({ max: 100, regenPerSec: 0, pauseMs: 0 });
+    // No temp: active but growth stays 1, so setScale is never called.
+    updateShieldOutline(sv, view, shield, 16.67);
+    for (const key of SHIELD_VEHICLE_PART_KEYS) expect(sv.outlines[key].setScale).not.toHaveBeenCalled();
+
+    // Grant a temp pool: growth jumps, so the shell re-scales up.
+    grantTempShield(shield, 150, 10000);
+    updateShieldOutline(sv, view, shield, 16.67);
+    const grown = shieldOutlineGrowth(shield);
+    for (const key of SHIELD_VEHICLE_PART_KEYS) {
+      expect(sv.outlines[key].setScale).toHaveBeenCalledWith(sv.baseScale * grown);
+    }
+    expect(sv.grow).toBeCloseTo(grown, 5);
   });
 });
 

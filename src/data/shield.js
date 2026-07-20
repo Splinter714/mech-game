@@ -21,6 +21,13 @@ export function createShield(config) {
     regenPerSec: Math.max(0, config?.regenPerSec ?? 0),
     pauseMs: Math.max(0, config?.pauseMs ?? 0),
     pauseRemaining: 0,
+    // #381: TEMPORARY shield pool (D&D temp-HP). An expendable buffer sitting ON TOP of `max`,
+    // granted by the Shield powerup (`grantTempShield`). Damage eats this FIRST (damageShield),
+    // it NEVER regenerates (tickShield leaves it alone — regen only refills base `hp` to `max`),
+    // and any unspent remainder expires after `tempExpiryMs` runs out. Zero on every enemy and on
+    // a fresh player, so all the temp-aware branches below are no-ops unless a powerup is live.
+    temp: 0,
+    tempExpiryMs: 0,
   };
 }
 
@@ -34,11 +41,30 @@ export function shieldPresent(shield) {
 // what's left to pass through to the next layer (armor, then hp) on this SAME hit. Any hit that
 // actually reaches the shield (absorbed > 0) resets the regen pause, even on the hit that breaks
 // it (overflow > 0 too) — the pause is about "was just hit," not "is still up."
+//
+// #381: the TEMPORARY pool (`temp`) is the OUTERMOST layer — a hit spends it before touching the
+// base shield hp, so the expendable buffer always drains first and, once gone, is gone (regen
+// never refills it). A shield with `max <= 0` can still have a temp pool (a chassis with no
+// native shield that grabbed the powerup), so the guard admits either.
 export function damageShield(shield, amount) {
   const raw = Math.max(0, amount || 0);
-  if (!shieldPresent(shield) || raw <= 0) return { absorbed: 0, overflow: raw };
-  const absorbed = Math.min(shield.hp, raw);
-  shield.hp -= absorbed;
+  if (raw <= 0 || !shield || (shield.max <= 0 && (shield.temp || 0) <= 0)) {
+    return { absorbed: 0, overflow: raw };
+  }
+  let remaining = raw;
+  let absorbed = 0;
+  if (shield.temp > 0) {
+    const fromTemp = Math.min(shield.temp, remaining);
+    shield.temp -= fromTemp;
+    remaining -= fromTemp;
+    absorbed += fromTemp;
+  }
+  if (remaining > 0 && shield.hp > 0) {
+    const fromBase = Math.min(shield.hp, remaining);
+    shield.hp -= fromBase;
+    remaining -= fromBase;
+    absorbed += fromBase;
+  }
   if (absorbed > 0) shield.pauseRemaining = shield.pauseMs;
   return { absorbed, overflow: raw - absorbed };
 }
@@ -46,7 +72,18 @@ export function damageShield(shield, amount) {
 // Passive regen tick, `dt` in seconds (matches Mech.regenAmmo's convention). The hit-pause
 // counts down first; only once it reaches zero does the shield actually recharge, at
 // `regenPerSec` per second, capped at `max`.
+//
+// #381: the temporary pool is handled here ONLY as an expiry countdown — an unspent `temp`
+// remainder decays to nothing after `tempExpiryMs`. It is deliberately NEVER regenerated and
+// NEVER lifts the regen ceiling: base `hp` still only ever refills up to base `max`. The expiry
+// ticks independently of the hit-pause (it is a wall-clock powerup duration, not a combat state),
+// so it runs BEFORE the pause's early return.
 export function tickShield(shield, dt) {
+  if (!shield) return;
+  if (shield.temp > 0 && shield.tempExpiryMs > 0) {
+    shield.tempExpiryMs = Math.max(0, shield.tempExpiryMs - dt * 1000);
+    if (shield.tempExpiryMs <= 0) shield.temp = 0;
+  }
   if (!shieldPresent(shield)) return;
   if (shield.pauseRemaining > 0) {
     shield.pauseRemaining = Math.max(0, shield.pauseRemaining - dt * 1000);
@@ -61,9 +98,36 @@ export function fillShield(shield) {
   if (shieldPresent(shield)) shield.hp = shield.max;
 }
 
+// #381: grant a TEMPORARY shield pool of `amount`, expiring after `durationMs` if unspent. The
+// magnitude does NOT compound (a duplicate refreshes the pool to the same granted size, never a
+// bigger one — mirrors #339's duration-stacks-not-magnitude rule), while the duration is whatever
+// the caller passes (the stacking policy lives in data/powerups.js `stackedRemainingMs`). The
+// base shield is topped to full at the same time (the powerup's instant-fill half). Works even on
+// a zero-`max` body so a shieldless chassis can still wear a temp pool.
+export function grantTempShield(shield, amount, durationMs) {
+  if (!shield) return;
+  const grant = Math.max(0, amount || 0);
+  shield.temp = Math.max(shield.temp || 0, grant);
+  shield.tempExpiryMs = Math.max(0, durationMs || 0);
+  fillShield(shield);
+}
+
 // Fraction of shield remaining, 0..1 (0 for an absent shield) — for HUD/visual readouts.
 export function shieldFraction(shield) {
   return shieldPresent(shield) ? shield.hp / shield.max : 0;
+}
+
+// #381: TOTAL current shield hp / capacity INCLUDING the temporary pool — the numbers the HUD bar
+// and the in-world glow read so both visibly GROW when a temp pool is live (base 100 + temp 150 ⇒
+// a 250-wide bar) and shrink back as the pool is spent. Zero temp ⇒ identical to base hp/max, so
+// every enemy and an un-buffed player are unchanged.
+export function shieldTotalHp(shield) {
+  if (!shield) return 0;
+  return (shield.hp || 0) + (shield.temp || 0);
+}
+export function shieldTotalMax(shield) {
+  if (!shield) return 0;
+  return (shield.max || 0) + (shield.temp || 0);
 }
 
 // ── Damage-pipeline category-vs-layer seam (#246) ───────────────────────────────────────────

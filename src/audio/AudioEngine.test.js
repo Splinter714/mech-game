@@ -114,7 +114,7 @@ describe('AudioEngine (mock context)', () => {
   it('plays a UI/pickup cue for every registered ui-domain id without throwing', () => {
     for (const id of [
       'equip', 'deploy', 'returnToGarage', 'menuNav', 'scrapPickup',
-      'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock',
+      'powerupPickupOverdrive', 'powerupPickupOverclock',
       'powerupPickupArmorPatch', 'powerupPickupShield',
       'sprintOn', 'sprintOff',
       'partDestroyed', 'mechDestroyed',

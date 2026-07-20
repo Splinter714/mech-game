@@ -14,10 +14,11 @@ import {
   POWERUPS, dropChanceForKill, pickPowerupType, isInstant, durationMs, buffModifiers,
   stackedRemainingMs,
 } from '../../data/powerups.js';
-// #246: Shield is now a real layer living ON the Mech itself (this.mech.shield —
-// data/shield.js), not a scene-tracked pool — the powerup's job is just to tell the mech
-// "fill up, and boost yourself for a while" (Mech.boostShield). Kept out of
-// `buffModifiers`/`activePowerups` since its state lives on the mech, not a scene-level timer.
+// #246/#381: the shield is a real layer living ON the Mech itself (this.mech.shield —
+// data/shield.js), not a scene-tracked pool — the Shield powerup's job is to tell the mech to
+// grant a temporary pool for a while (Mech.grantTempShield). That temp pool state lives on the
+// mech; the powerup's free-ammo window (like every powerup's, #381) is the only part in the
+// scene-level `activePowerups`/`buffModifiers`.
 import { axialKey, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
 // The drop's placement geometry (scatter radius + the reachability search) is pure and lives in
@@ -55,7 +56,7 @@ export const PowerupsMixin = {
   // player-specific wiring — the player's six-part mech view, the mech display scale, and the
   // Shield powerup's colour. The player ALWAYS gets outline sprites built (unlike enemies, which
   // only do if their kind data configures a shield), because a zero-capacity chassis can gain a
-  // shield mid-fight when the Shield powerup boosts it (Mech.boostShield).
+  // shield mid-fight when the Shield powerup grants a temporary pool (Mech.grantTempShield).
   //
   // #364: PER PLAYER. This used to build exactly ONE outline set wired to `this.playerView` (the
   // phase-1 accessor onto `players[0]`), so in co-op only player 1 could ever wear a bubble —
@@ -250,35 +251,35 @@ export const PowerupsMixin = {
     this._updateShieldVisual(delta);
   },
 
-  // Apply a picked-up powerup. Three kinds, all now sharing ONE stacking rule (#339 — duration
-  // stacks, magnitude never does; see data/powerups.js `stackedRemainingMs`):
-  //  - Instant types (Armor Patch) have no timer at all, so 'extra duration' is meaningless for
-  //    them — they simply apply AGAIN, repairing more. That IS the stack for an instant.
-  //  - Shield (#246) is both an instant full-fill and a timed capacity/regen boost living on the
-  //    mech's own shield layer; the boost's remaining time is what stacks, at the same unchanged
-  //    `boostMult`, so a second Shield means a longer big-shield window, not a bigger one.
-  //  - Everything else is a plain timed buff whose per-type countdown accumulates.
+  // Apply a picked-up powerup. #381: EVERY powerup opens a 10s FREE-AMMO window in the scene
+  // overlay (`activePowerups`, what `buffModifiers` reads), stacked per the ONE shared rule
+  // (#339 — duration stacks, magnitude never does; data/powerups.js `stackedRemainingMs`). On top
+  // of that shared window each type layers its own effect:
+  //  - Armor Patch: an INSTANT proportional repair on pickup, plus the free-ammo window.
+  //  - Shield: an expendable TEMPORARY pool on the mech's own shield layer (Mech.grantTempShield),
+  //    for the SAME stacked span — magnitude (pool size) never compounds, only the window extends.
+  //  - Overdrive / Overclock / Barrage: their fire-rate / sprint / shot-count overlay, read back
+  //    out of the same overlay by `buffModifiers`.
   // `player` is WHO collected it (powerups.js `_updatePowerups`). Defaults to the primary
   // player so the existing tests/call sites that activate a buff with no collector still work.
   // Note the timed-buff overlay (`this.activePowerups`) is still SCENE-level, i.e. shared: that
   // is deliberate for phase 1 (it is exactly today's behaviour) and is the next thing phase 2
-  // must split, per-player, when a second player can pick one up.
+  // must split, per-player, when a second player can pick one up. (The temp shield pool, by
+  // contrast, already lives per-mech, so co-op players each carry their own.)
   _activatePowerup(typeId, player = primaryPlayerOf(this)) {
     const p = POWERUPS[typeId];
     if (!p) return;
-    // #196: each powerup type now has its OWN independently-tunable pickup cue (was one
-    // shared 'powerupPickup' cue for all five) — dispatch keyed off the actual type picked up.
+    // #196: each powerup type has its OWN independently-tunable pickup cue — dispatch keyed off
+    // the actual type picked up.
     Audio.ui('powerupPickup' + typeId[0].toUpperCase() + typeId.slice(1));
-    if (isInstant(typeId)) {
-      this._applyInstantPowerup(typeId, player);
-    } else if (p.effect === 'shield') {
-      // Same `boostMult` as ever (magnitude does NOT compound), for a stacked span of time.
-      player.mech.boostShield(
-        p.boostMult ?? 1,
-        stackedRemainingMs(typeId, player.mech.shieldBoostRemainingMs),
-      );
-    } else {
-      this.activePowerups[typeId] = stackedRemainingMs(typeId, this.activePowerups[typeId]);
+    // #381: the universal, stacked free-ammo window — opened for every type, instant ones included.
+    const windowMs = stackedRemainingMs(typeId, this.activePowerups[typeId]);
+    if (windowMs > 0) this.activePowerups[typeId] = windowMs;
+    // Each type's own effect on top of that window.
+    if (isInstant(typeId)) this._applyInstantPowerup(typeId, player);
+    if (p.effect === 'shield') {
+      // Magnitude (pool size) does NOT compound; the window is the stacked span computed above.
+      player.mech.grantTempShield(p.tempPool ?? 0, windowMs);
     }
     const col = '#' + p.color.toString(16).padStart(6, '0');
     this._floatText(player.x, player.y - 34, p.label, col);
