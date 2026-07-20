@@ -34,12 +34,13 @@ describe('biome registry (#67)', () => {
       expect(blocksLOS(b.channel)).toBe(false);
       // Deep: impassable (the lake analog) — #110: boundary-ring-only, never in-map.
       expect(isPassable(b.deep)).toBe(false);
-      // Cover: walk-through cover — passable AND blocks LOS. #275: also destructible, and its
-      // rubble is passable/non-cover (the biomes' `outpost` role/terrain was removed, but cover
-      // is still a real destructible with its own rubble collapse).
+      // Cover: walk-through cover — passable AND blocks LOS. #351 made every biome's cover
+      // INDESTRUCTIBLE (natural terrain is permanent scenery now); its cover CONTRACT is
+      // deliberately unchanged, which is what this assertion pins. The rubble it would collapse
+      // into is still declared and still passable/non-cover, ready if the flag is flipped back.
       expect(isPassable(b.cover)).toBe(true);
       expect(blocksLOS(b.cover)).toBe(true);
-      expect(isDestructible(b.cover)).toBe(true);
+      expect(isDestructible(b.cover)).toBe(false);
       const rub = rubbleFor(b.cover);
       expect(TERRAIN[rub]).toBeDefined();
       expect(isPassable(rub)).toBe(true);     // you can drive over the debris

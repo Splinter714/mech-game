@@ -39,7 +39,13 @@ function makeScene({ hexes = [], wallDefs = [] } = {}) {
   for (const { h, id } of hexes) {
     const k = axialKey(h.q, h.r);
     terrain.set(k, id);
-    (isSoftCover(id) ? cover : buildings).set(k, buildingHp(id));
+    // #351 made natural terrain indestructible, so `buildingHp('forest')` is 0 and worldgen no
+    // longer seeds it at all. These tests exercise the #317 IMPACT RULE — "a round stops in the hex
+    // it was aimed at, while that hex stands" — which is still fully live for base structures. So
+    // the harness seeds from the RAW declared HP, forcing a hex into the map to drive the rule
+    // directly. Whether natural terrain ever legitimately reaches these maps is a separate
+    // question, pinned by the `#351` block at the bottom of this file.
+    (isSoftCover(id) ? cover : buildings).set(k, TERRAIN[id].hp ?? buildingHp(id));
   }
   const scene = Object.assign(
     {}, WorldMixin, ProjectilesMixin, TargetingMixin,
@@ -280,5 +286,89 @@ describe('#318 wall spans are convergence/lock targets', () => {
     const round = fireAt(s, m, null);
     expect(round.dead).toBe(true);
     expect(s._liveWallEdges()[0].hp).toBeLessThan(before);
+  });
+});
+
+// #351 (owner-confirmed experiment, 2026-07-19): "nature is permanent, their stuff isn't."
+// ALL natural terrain — forests/foliage AND boulders/rock — is indestructible AND untargetable.
+// Both facts fall out of one place: `buildingHp()` returns 0 for `category: 'terrain'`, so worldgen
+// never seeds it into `coverHp`/`buildingHp`, and those maps are exactly what convergence candidacy
+// (#322), the targeted-hex impact rule (#317) and `_damageBuildingAt` all read.
+//
+// TO REVERSE: flip `NATURAL_TERRAIN_DESTRUCTIBLE` in data/terrain.js back to `true`.
+describe('#351 natural terrain is permanent scenery — untargetable and undamageable', () => {
+  // A scene built the way worldgen actually builds one: natural terrain stamped on the map, with
+  // the HP maps seeded from the LIVE `buildingHp()` rule rather than force-fed.
+  function realScene(hexes) {
+    const s = makeScene({});
+    const buildings = new Map(), cover = new Map();
+    for (const { h, id } of hexes) {
+      const k = keyOf(h);
+      s.terrain.set(k, id);
+      const hp = buildingHp(id);                       // the live rule — 0 for natural terrain
+      if (hp > 0) (isSoftCover(id) ? cover : buildings).set(k, hp);
+    }
+    s.buildingHp = buildings; s.coverHp = cover;
+    return s;
+  }
+
+  const far = { q: 4, r: 0 };
+
+  it('worldgen-style seeding puts no natural hex into either HP map', () => {
+    const s = realScene([{ h: far, id: SOFT }]);
+    expect(s.coverHp.size).toBe(0);
+    expect(s.buildingHp.size).toBe(0);
+    expect(s._destructibleStandingAt(keyOf(far))).toBe(false);
+  });
+
+  it('a forest hex is not a convergence/lock candidate (#322 pool)', () => {
+    const s = realScene([{ h: far, id: SOFT }]);
+    const pts = s._destructibleTargetsNear(0, 0, 4000);
+    expect(pts.some((p) => p.hexKey === keyOf(far))).toBe(false);
+  });
+
+  it('the #322 candidate pool copes with being EMPTY once natural terrain leaves it', () => {
+    const s = realScene([{ h: far, id: SOFT }]);
+    expect(s._destructibleTargetsNear(0, 0, 4000)).toEqual([]);
+    // The reticle update must not throw and must simply find nothing to converge on.
+    s.visibleHexes = new Set([s._hexKeyAt(0, 0)]);
+    expect(() => s._updateLock(0.016)).not.toThrow();
+    expect(s.convergeTarget ?? null).toBe(null);
+  });
+
+  it('no path damages it — not a stray round, not one aimed squarely AT it (#317)', () => {
+    for (const stamp of [null, keyOf(far)]) {
+      const s = realScene([{ h: far, id: SOFT }]);
+      const round = fireAt(s, centre(far), stamp);
+      expect(round.dead).toBeFalsy();                       // flew straight through
+      expect(s.terrain.get(keyOf(far))).toBe(SOFT);         // still forest, never rubble
+      expect(s.coverHp.size).toBe(0);
+    }
+  });
+
+  it('a direct stomp/splash call on a natural hex is a no-op', () => {
+    const s = realScene([{ h: far, id: SOFT }]);
+    const p = centre(far);
+    expect(s._damageBuildingAt(p.x, p.y, 100000)).toBe(false);
+    expect(s._damageBuildingAt(p.x, p.y, 100000, { flame: true })).toBe(false);
+    expect(s.terrain.get(keyOf(far))).toBe(SOFT);
+  });
+
+  it('their stuff is still fully destructible and targetable — base structures and wall spans', () => {
+    const s = realScene([{ h: far, id: HARD }]);
+    expect(s.buildingHp.get(keyOf(far))).toBe(TERRAIN[HARD].hp);
+    expect(s._destructibleTargetsNear(0, 0, 4000).some((p) => p.hexKey === keyOf(far))).toBe(true);
+    const p = centre(far);
+    expect(s._damageBuildingAt(p.x, p.y, 100000)).toBe(true);
+  });
+
+  it('COVER behaviour is untouched — a mech still shoots clean over foliage, a small unit does not', () => {
+    // The whole point of the experiment's scope: destructibility/targetability only.
+    expect(isSoftCover(SOFT)).toBe(true);
+    expect(coverBlocksForRay(SOFT, false, false)).toBe(false);  // mech / large unit sees over
+    expect(coverBlocksForRay(SOFT, false, true)).toBe(true);    // small unit still concealed
+    // And a round travelling past intact foliage is unaffected in either direction.
+    const s = realScene([{ h: { q: 2, r: 0 }, id: SOFT }]);
+    expect(fireAt(s, centre({ q: 6, r: 0 })).dead).toBeFalsy();
   });
 });

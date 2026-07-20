@@ -415,16 +415,52 @@ export function blocksLOS(id) {
   return tier === 'soft' || tier === 'hard';
 }
 
+// ── #351 (EXPERIMENT — owner-confirmed 2026-07-19: "nature is permanent, their stuff isn't") ──
+// Natural terrain (`category: 'terrain'`) is permanent scenery: it cannot be damaged and cannot be
+// TARGETED (convergence/lock never offers it, because targeting reads the same standing-HP maps).
+// Only fabricated `category: 'base'` structures — dockClosed/alertTower/objective, plus wall spans,
+// which are edge geometry and unaffected by anything here — stay destructible.
+//
+// This is DESTRUCTIBILITY + TARGETABILITY ONLY. Cover is untouched: `cover`/`blocksLOS`/
+// `isSoftCover`/`coverBlocksForRay` all read the `cover` tier, never `destructible`, so forest/
+// scrub/drift/wreck/fumarole remain exactly the soft cover they are today (#279 — a mech shoots
+// clean over them, a small ground unit is concealed by them).
+//
+// TO REVERSE: flip this one constant back to `true`. Nothing else was removed — every natural
+// destructible keeps its `destructible: true` / `hp` / `rubbleId` fields (#313's retuned HP values:
+// forest 40, wreck 40, scrub/drift/fumarole 30), so the old behaviour returns wholesale. Those
+// fields are intentionally dead data while the flag is off.
+//
+// Interactions noted while landing this:
+//   • #322's single convergence/lock candidate pool (wall spans + destructible hexes, with a 0.3
+//     enemy-range edge) simply gets fewer members; it was already allowed to be EMPTY — the
+//     off-base overworld has no destructibles at all today — and `pickConvergeTarget` returns null
+//     for an empty pool, which the reticle already handles.
+//   • #317's "a TARGETED destructible hex stops fire" path keys off `_destructibleStandingAt`,
+//     i.e. the same HP maps. With natural terrain never seeded into them, there is no remaining
+//     path that can damage or stop on it.
+export const NATURAL_TERRAIN_DESTRUCTIBLE = false;
+
+// #351: is this terrain destructible *right now*, accounting for the natural-terrain experiment
+// above? The per-entry `destructible` flag is the raw declaration; this is the live rule.
+function destructibleNow(t) {
+  if (!t || !t.destructible) return false;
+  if (!NATURAL_TERRAIN_DESTRUCTIBLE && t.category === 'terrain') return false;
+  return true;
+}
+
 // Is this a destructible outpost (has HP, becomes rubble when destroyed)?
 export function isDestructible(id) {
-  const t = id && TERRAIN[id];
-  return !!t && !!t.destructible;
+  return destructibleNow(id && TERRAIN[id]);
 }
 
 // Starting hit points for a freshly-seeded destructible hex (0 for non-destructible terrain).
+// Returning 0 is what keeps natural terrain out of worldgen's `buildingHp`/`coverHp` maps
+// entirely (#351) — and those maps are what damage, collapse-to-rubble, convergence candidacy
+// and lock all read, so one number here is the whole switch.
 export function buildingHp(id) {
   const t = id && TERRAIN[id];
-  return t && t.destructible ? (t.hp ?? 0) : 0;
+  return destructibleNow(t) ? (t.hp ?? 0) : 0;
 }
 
 // The default terrain id a destroyed building collapses into (grassland biome).
@@ -444,9 +480,12 @@ export function rubbleFor(id) {
 // combination — a destructible entry opts OUT of objective-eligibility with `setDressing: true`
 // rather than objectives opting in, so nothing else needs to change as new destructible terrain
 // is added.
+// #351: reads the LIVE destructibility rule, so natural terrain can never be picked as the
+// mission objective while the experiment is on (it already could not in practice — objectives are
+// drawn from the solid/impassable `buildingHp` bucket — but the two now agree by construction).
 export function isMissionObjective(id) {
   const t = id && TERRAIN[id];
-  return !!t && !!t.destructible && !t.setDressing;
+  return destructibleNow(t) && !t.setDressing;
 }
 
 // #72: soft cover — walk-through concealment that only blocks a SMALL ground unit's LOS (a
