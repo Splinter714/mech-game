@@ -13,7 +13,7 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
-import { isBaseCleared, baseClearState, baseMarkTargets, CLEAR_DONE } from '../../data/bases.js';
+import { isBaseCleared, baseClearState, baseMarkTargets, enemyMarkLift, CLEAR_DONE } from '../../data/bases.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR, strokeHexRing } from './shared.js';
 
 // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"): the
@@ -73,7 +73,12 @@ export function isBaseFullyCleared(base, buildingHp, enemies) {
 // sprite so it doesn't collide with the #370 shield outline on a drone.
 const DOCK_MARK_RADIUS = 30;
 const ENEMY_MARK_RADIUS = 6;
-const ENEMY_MARK_LIFT = 26;
+// The per-unit lift is a pure rule in data/bases.js (`enemyMarkLift`) — wall guns are anchored
+// differently from hex-sitting units, see that function's note.
+
+// #371 playtest follow-up ("all of the secondary objective markers should pulse"): the same
+// breathing tween the primary objective beacon uses (`_makeObjectiveMarker`), now on every marker.
+const MARK_PULSE = { scale: 1.35, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' };
 
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated `this.bases`.
@@ -239,7 +244,9 @@ export const MissionMixin = {
       // Floated above the unit rather than ringing it: at drone scale a ring would sit right on
       // top of the #370 shield outline. A small amber hex hovering overhead also stays distinct
       // from the off-screen lock chevron (#368) and the on-ground player colour discs (#348).
-      m.setPosition(e.x, e.y - ENEMY_MARK_LIFT);
+      // A WALL GUN is the exception (#371 follow-up) — it is anchored on its span, not in a hex,
+      // and gets no lift at all; the rule lives in `enemyMarkLift` (data/bases.js).
+      m.setPosition(e.x, e.y - enemyMarkLift(e));
       m.setVisible(this._enemyVisible ? this._enemyVisible(e) : true);
     }
     for (const [e, m] of this._enemyMarkers) {
@@ -248,15 +255,25 @@ export const MissionMixin = {
   },
 
   // One marker: the same amber pointy-top hex + dark/light double outline the objective marker
-  // uses (#129/#280 legibility against every biome), just at the requested size. Static — with a
-  // dock cluster or a drone swarm on screen at once, a pulse per marker would be noise, and the
-  // one pulsing marker stays reserved for the single primary objective.
+  // uses (#129/#280 legibility against every biome), just at the requested size.
+  //
+  // PULSING, as of the #371 playtest follow-up. The original round made these static on the theory
+  // that N breathing rings at once would read as noise and that the pulse should stay reserved for
+  // the single primary objective; Jackson has now seen it in play and asked for the opposite —
+  // "all of the secondary objective markers should pulse". The motion is what makes a marker catch
+  // the eye at the edge of vision, which is exactly the job a straggler marker has to do.
+  //
+  // No new distinction was invented to keep the primary readable: it is already a 30px hex wearing
+  // an OBJECTIVE label, and it is alone on screen at its step (`showObjective` is false for every
+  // step that draws these), so a shared pulse cannot confuse the two — they never coexist.
+  // The RINGS pulse, not the container, so a dock's label stays put and legible while it breathes.
   _makeMarkHex(x, y, radius, width, labelText) {
     const parts = [
       strokeHexRing(this.add.graphics(), radius * 1.1, width, 0xfbfdff, 0.85),
       strokeHexRing(this.add.graphics(), radius * 1.05, width * 0.7, 0x0b0e14, 0.85),
       strokeHexRing(this.add.graphics(), radius, width, UI_HIGHLIGHT_COLOR, 0.9),
     ];
+    this.tweens.add({ targets: [...parts], ...MARK_PULSE });
     if (labelText) {
       parts.push(this.add.text(0, -radius - 16, labelText, {
         fontFamily: 'monospace', fontSize: '11px',

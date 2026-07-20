@@ -211,16 +211,17 @@ describe('breach peek: the cone behind a nearby opening', () => {
   });
 
   // Still position-dependent, which is what v1 got wrong (it unioned over every exterior angle and
-  // lit nearly the whole yard from one hole). The cone narrows to one hex and then closes entirely
-  // as he walks away from the hole.
-  it('closes again once he moves off the opening', () => {
+  // lit nearly the whole yard from one hole). The reveal narrows back to the single throat hex as
+  // he walks away — and, since 2026-07-20, stops there rather than closing: "make 1 hex always
+  // visible regardless of how far back the player is".
+  it('narrows back to the one throat hex once he moves off the opening', () => {
     const s = makeScene({ bases, wallEdges: breached() });
-    Object.assign(s, at(9, 0));                            // too far out
+    Object.assign(s, at(9, 0));                            // far out
     s._updateVisibility(view);
-    expect(s._peeked.size).toBe(0);
+    expect(s._peeked.size).toBe(1);
     Object.assign(s, at(4, -6));                           // near the wall, but at a different face
     s._updateVisibility(view);
-    expect(s._peeked.size).toBe(0);
+    expect(s._peeked.size).toBe(1);
   });
 
   it('stops peeking once he is inside — the compound is simply lit', () => {

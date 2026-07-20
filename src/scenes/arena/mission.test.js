@@ -37,7 +37,9 @@ function fakeScene(overrides = {}) {
         setDepth() { return this; }, destroy() {}, setVisible(v) { this.visible = v; return this; }, setPosition(x, y) { this.x = x; this.y = y; return this; },
       }),
     },
-    tweens: { add: () => {}, killTweensOf: () => {} },
+    // #371 follow-up: record tween configs so the "every marker pulses" rule can be asserted.
+    tweens: { add: (cfg) => { scene._tweenCalls.push(cfg); return {}; }, killTweensOf: () => {} },
+    _tweenCalls: [],
     registry: {
       get: (k) => registryStore.get(k),
       set: (k, v) => registryStore.set(k, v),
@@ -331,5 +333,85 @@ describe('#371 spreading objective markers', () => {
     s._advanceObjective();
     expect(enemyCount(s)).toBe(0);
     expect(dockCount(s)).toBe(0);
+  });
+});
+
+// ── #371 playtest follow-up ───────────────────────────────────────────────────────────────────
+// Two by-eye complaints from Jackson: the little hexes sat wrong on wall turrets, and the
+// secondary markers should pulse like the primary rather than sitting static.
+describe('#371 follow-up — wall-turret marker anchor and the pulse on every marker', () => {
+  const dockBase = (id, docks) => ({
+    id, center: { q: 0, r: 0 }, docks, turrets: [], objectiveHex: { q: 0, r: 0 },
+  });
+  const hpFor = (hexes) => new Map(hexes.map((h) => [axialKey(h.q, h.r), 10]));
+
+  function sceneAt({ docksUp = [], enemies = [] } = {}) {
+    const scene = fakeScene({
+      bases: [dockBase('base0', [{ q: 1, r: 0 }, { q: 2, r: 0 }])],
+      enemies,
+      buildingHp: hpFor(docksUp),
+      run: makeRun(),
+    });
+    scene._initMission();
+    scene._updateMission();
+    return scene;
+  }
+
+  it('a WALL GUN is marked ON its mount, not floated above it', () => {
+    const wallGun = { baseId: 'base0', x: 100, y: 200, spanKey: '0,0|1,0' };
+    const s = sceneAt({ enemies: [wallGun] });
+    const m = s._enemyMarkers.get(wallGun);
+    expect(m.x).toBe(100);
+    expect(m.y).toBe(200);          // dead centre of the span, matching its view's anchor
+  });
+
+  it('a hex-sitting unit alongside it still floats — the fix is per-kind, not a blanket change', () => {
+    const tank = { baseId: 'base0', x: 100, y: 200 };
+    const wallGun = { baseId: 'base0', x: 300, y: 400, spanKey: '0,0|1,0' };
+    const s = sceneAt({ enemies: [tank, wallGun] });
+    expect(s._enemyMarkers.get(tank).y).toBeLessThan(200);
+    expect(s._enemyMarkers.get(wallGun).y).toBe(400);
+  });
+
+  it('the wall gun marker keeps tracking its mount across ticks (no drift back to a lift)', () => {
+    const wallGun = { baseId: 'base0', x: 100, y: 200, spanKey: '0,0|1,0' };
+    const s = sceneAt({ enemies: [wallGun] });
+    s._updateMission();
+    s._updateMission();
+    expect(s._enemyMarkers.get(wallGun).y).toBe(200);
+  });
+
+  it('EVERY enemy marker pulses, not just the primary objective', () => {
+    const enemies = Array.from({ length: 4 }, (_, i) => ({ baseId: 'base0', x: i * 10, y: 0 }));
+    const s = sceneAt({ enemies });
+    expect(s._enemyMarkers.size).toBe(4);
+    // 1 for the primary objective beacon + 1 per enemy marker.
+    expect(s._tweenCalls.length).toBe(5);
+    for (const cfg of s._tweenCalls) expect(cfg.repeat).toBe(-1);
+  });
+
+  it('DOCK markers pulse too', () => {
+    const s = sceneAt({ docksUp: [{ q: 1, r: 0 }, { q: 2, r: 0 }] });
+    expect(s._dockMarkers.size).toBe(2);
+    expect(s._tweenCalls.length).toBe(3);            // objective beacon + 2 docks
+    for (const cfg of s._tweenCalls) expect(cfg.repeat).toBe(-1);
+  });
+
+  it('the pulse is created ONCE per marker, not re-added every frame', () => {
+    const enemies = [{ baseId: 'base0', x: 0, y: 0 }];
+    const s = sceneAt({ enemies });
+    const after = s._tweenCalls.length;
+    s._updateMission();
+    s._updateMission();
+    expect(s._tweenCalls.length).toBe(after);
+  });
+
+  it('the pulse targets the RINGS, so a dock label stays put while the hex breathes', () => {
+    const s = sceneAt({ docksUp: [{ q: 1, r: 0 }] });
+    const marker = [...s._dockMarkers.values()][0];
+    const dockTween = s._tweenCalls[s._tweenCalls.length - 1];
+    expect(dockTween.targets.length).toBe(3);        // three rings
+    expect(marker.list.length).toBe(4);              // ...plus the DOCK label, untweened
+    expect(dockTween.targets).not.toContain(marker.list[3]);
   });
 });

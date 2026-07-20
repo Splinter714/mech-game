@@ -15,6 +15,7 @@ import {
   placeBases, placeGapTowers, dockCountFor, DOCK_SWARM_COUNT, isSwarmDockKind, drawDockKind,
   MIN_GAP_PROGRESS_PX, MIN_GAP_PROGRESS_HEX,
   placeBaseWalls, BASE_FOOTPRINT_HALF_LENGTH, BASE_FOOTPRINT_HALF_WIDTH, footprintShape,
+  MIN_DOCK_WALL_CLEARANCE,
   MIN_BASE_SEPARATION_PX,
   gateCountForRing, RING_SPANS_PER_GATE, MIN_GATES_PER_RING, MAX_GATES_PER_RING,
   FIRST_TOWER_MAX_PROGRESS_PX, FIRST_TOWER_MAX_PROGRESS_HEX,
@@ -1317,6 +1318,87 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     for (const id of [...BASE_EARLY_KIND_POOL, ...BASE_LATE_KIND_POOL]) {
       expect(disallowed.has(id)).toBe(false);
     }
+  });
+
+  // #373: THE CONTAINMENT INVARIANT — every dock and every objective sits strictly inside its own
+  // base's wall ring, with at least `MIN_DOCK_WALL_CLEARANCE` hexes of yard between it and the
+  // nearest hex outside the compound. Never asserted before #373, which is why the first cut of
+  // the dock spread could line the docks up against the inside of the ring without a test noticing
+  // ("the docks need to still be within the base walls").
+  //
+  // Asserted on the FULL `generateTerrain` rather than on `placeBases`, deliberately: the wall ring
+  // is built from the LATE RE-VALIDATED footprint (`generateTerrain` re-derives it against the
+  // final terrain after the safe-zone clear, and the BFS re-connect can shrink a compound), so
+  // `placeBases`' own footprint is not the one the ring ends up following. Run across several
+  // seeds on the real corridor so clipped compounds and the shrink ladder's smaller rungs are
+  // genuinely exercised, not just the roomy average case.
+  it('#373: every dock and objective sits strictly inside its base wall ring, clear of the wall', () => {
+    let checked = 0;
+    for (const seed of [1, 42, 451, 1234]) {
+      const { spine, includedKeys } = buildCorridor(seed);
+      const { bases } = generateTerrain({
+        seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
+        includedKeys, spine,
+      });
+      expect(bases.length).toBe(BASE_COUNT);
+      for (const base of bases) {
+        // The ring IS this set's outline (`placeBaseWalls`), so "inside the ring" is exactly
+        // "in the footprint" and clearance is hex-distance to the nearest hex outside it.
+        const fp = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+        expect(fp.size).toBeGreaterThan(0);
+        const clearanceOf = (h) => {
+          let d = Infinity;
+          for (const o of range(h, MIN_DOCK_WALL_CLEARANCE)) {
+            if (!fp.has(axialKey(o.q, o.r))) d = Math.min(d, distance(h, o));
+          }
+          return d;
+        };
+        for (const d of base.docks) {
+          expect(fp.has(axialKey(d.q, d.r))).toBe(true);
+          expect(clearanceOf(d)).toBeGreaterThanOrEqual(MIN_DOCK_WALL_CLEARANCE);
+          checked++;
+        }
+        expect(fp.has(axialKey(base.objectiveHex.q, base.objectiveHex.r))).toBe(true);
+        checked++;
+      }
+    }
+    // Guard the guard: if placement ever stops producing structures, the loops above pass vacuously.
+    expect(checked).toBeGreaterThan(50);
+  });
+
+  // #373 follow-up: the containment test above is a real invariant but it does NOT capture the
+  // regression that prompted it — measured on the shipped-then-reverted version, every dock was
+  // already inside the ring and already had its clearance. What was actually wrong is
+  // DISTRIBUTIONAL: a plain max-min spread drives picks to the region boundary, so 96% of docks
+  // (261/272 across 8 seeds) sat at EXACTLY the minimum clearance, tracing the inside of the wall.
+  // That is what "the docks need to still be within the base walls" was describing — docks pinned
+  // to the wall-adjacent layer rather than populating the compound.
+  //
+  // So this asserts docks are not all pinned to that layer: a real share of them sit DEEPER than
+  // the minimum. Aggregated across seeds rather than asserted per base, because a single thin or
+  // clipped compound legitimately has no deeper hex to offer — the claim is about the placement
+  // rule's behaviour over a run, not about any one base. Thresholded well below what the fix
+  // actually produces (~24%) and well above the boundary-hugging version (~4%).
+  it('#373: docks are not pinned to the wall-adjacent layer — a share sit deeper in the compound', () => {
+    let total = 0, deeper = 0;
+    for (const seed of [1, 42, 451, 1234]) {
+      const { spine, includedKeys } = buildCorridor(seed);
+      const { bases } = generateTerrain({
+        seed, worldRadius: MAX_WORLD_RADIUS, biome: GRASSLAND, safeCenter: { q: 0, r: 0 },
+        includedKeys, spine,
+      });
+      for (const base of bases) {
+        const fp = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
+        for (const d of base.docks) {
+          total++;
+          // Deeper than the minimum == no hex outside the footprint within MIN_DOCK_WALL_CLEARANCE.
+          const atMin = range(d, MIN_DOCK_WALL_CLEARANCE).some((o) => !fp.has(axialKey(o.q, o.r)));
+          if (!atMin) deeper++;
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(50);
+    expect(deeper / total).toBeGreaterThan(0.12);
   });
 
   it('generateTerrain returns bases/alertTowers consistent with the final terrain map', () => {

@@ -367,6 +367,18 @@ export function drawDockKind(rng, lateFraction) {
 export const BASE_FOOTPRINT_HALF_LENGTH = 6;
 export const BASE_FOOTPRINT_HALF_WIDTH = 2.6;
 
+// #373 playtest follow-up ("the docks need to still be within the base walls"): the minimum
+// hex-distance from a dock to the nearest hex OUTSIDE its base's footprint — i.e. how much yard
+// has to sit between a structure and its own wall ring. 1 means "may sit on the apron, touching
+// the wall"; 2 means "at least one full hex of yard behind the apron".
+//
+// 2 is the floor that makes a dock read as being INSIDE the base rather than built into its wall,
+// and it is also what the pre-#373 ring 0-3 candidate list happened to give (that list never
+// reached a compound's outline), so this pins down a property that used to hold by accident. Not
+// pushed to 3: on a compound only ~5-6 hexes across the lane, requiring 3 would leave a single
+// hex of eligible width down the centreline and collapse the spread back into a line.
+export const MIN_DOCK_WALL_CLEARANCE = 2;
+
 // #333: how square the compound's outline is — the exponent of the SUPERELLIPSE
 // |along/A|^n + |across/B|^n <= 1. n = 2 is a plain ellipse; n → ∞ is a rectangle.
 //
@@ -768,14 +780,59 @@ export function placeBases(
     // the apron directly behind the wall line, and #288/#333 deliberately keep structures one hex
     // in from it (rings 0-3 never reached the outline, so this preserves a property that used to
     // hold by accident). It also keeps a dock from being shot through its own wall span.
+    //
+    // #373 playtest follow-up (Jackson: "the docks need to still be within the base walls"): the
+    // first cut of this spread scored a candidate purely on its distance to the nearest already-
+    // placed structure. That is the textbook max-min objective, and its textbook behaviour is to
+    // drive every pick to the REGION BOUNDARY — the farthest point from a set of interior points
+    // is essentially always on the edge. So the docks came out lining the perimeter, tracing the
+    // inside of the wall ring with a single hex of yard behind them. Every one was still strictly
+    // inside the footprint (verified: 0 of 272 docks across 8 seeds fell outside the ring, and 0
+    // touched the wall line), so this was never a containment BUG — it read as one, which is the
+    // same problem. A base whose docks are all pressed against its own wall does not look like a
+    // base with docks in it.
+    //
+    // The fix is to give the wall a vote: `wallDist` below is each footprint hex's hex-distance to
+    // the nearest NON-footprint hex, and the spread's score is `min(wallDist, distance to nearest
+    // placed structure)`. Treating the wall as just another thing to stay away from keeps the same
+    // one-line max-min objective and the same even spacing between docks, but the boundary stops
+    // being the attractor — picks settle on the compound's own inner spine instead, which is where
+    // "distributed infrastructure inside a base" actually lives. It also makes the containment
+    // margin a tunable rather than an emergent accident (`MIN_DOCK_WALL_CLEARANCE`).
+    const wallDist = new Map();
+    {
+      const q = [];
+      for (const k of footprint) {
+        const [hq, hr] = k.split(',').map(Number);
+        if (!neighbors(hq, hr).every((n) => footprint.has(axialKey(n.q, n.r)))) {
+          wallDist.set(k, 1); q.push({ q: hq, r: hr, d: 1 });   // the apron layer, one hex off the wall
+        }
+      }
+      for (let i = 0; i < q.length; i++) {
+        for (const n of neighbors(q[i].q, q[i].r)) {
+          const nk = axialKey(n.q, n.r);
+          if (!footprint.has(nk) || wallDist.has(nk)) continue;
+          wallDist.set(nk, q[i].d + 1);
+          q.push({ q: n.q, r: n.r, d: q[i].d + 1 });
+        }
+      }
+    }
     const interior = [];
     for (const k of footprint) {
+      if ((wallDist.get(k) ?? 0) < MIN_DOCK_WALL_CLEARANCE) continue;
       const [hq, hr] = k.split(',').map(Number);
-      if (neighbors(hq, hr).every((n) => footprint.has(axialKey(n.q, n.r)))) interior.push({ q: hq, r: hr });
+      interior.push({ q: hq, r: hr });
     }
-    // Fall back to the old ring list on a compound too small/clipped to have a real interior (the
-    // shrink ladder's bottom rungs, or a badly-clipped edge case) — a base must still get its docks.
-    const spreadPool = interior.length >= dockCount ? interior : candidates;
+    // Fall back on a compound too small/clipped to hold `dockCount` cleared hexes (the shrink
+    // ladder's bottom rungs, or a badly-clipped edge case) — a base must still get its docks.
+    //
+    // #373 follow-up: the fallback is only ever taken when the compound has NO hex at all with the
+    // required clearance. `interior` is every cleared hex of the whole footprint, so it is by
+    // construction a superset of any cleared subset of the old ring 0-3 list — there is no middle
+    // rung to try. When it is empty the compound is degenerate (a bottom rung of the shrink ladder,
+    // or badly clipped) and we take the unfiltered ring list: a degenerate base loses the wall
+    // margin rather than losing its docks.
+    const spreadPool = interior.length ? interior : candidates;
     // #288: the whole footprint is `baseYard` now, so `isGround` (which only recognises the biome's
     // two natural ground ids) would reject every candidate. "Free" for a structure means "still
     // bare yard" — i.e. no earlier loop has claimed it. Same first-come semantics as before.
@@ -819,7 +876,10 @@ export function placeBases(
       while (spreadOrder.length < dockCount && remaining.length) {
         let best = -1, bestD = -Infinity;
         for (let idx = 0; idx < remaining.length; idx++) {
-          let d = Infinity;
+          // #373 follow-up: the WALL is a repelling seed too — see `wallDist`. Without this term
+          // max-min drives every pick onto the footprint's boundary and the docks end up lining
+          // the inside of the ring.
+          let d = wallDist.get(axialKey(remaining[idx].q, remaining[idx].r)) ?? Infinity;
           for (const s of seeds) d = Math.min(d, distance(remaining[idx], s));
           // Random tie-break: an equal-distance candidate wins with 50% probability.
           if (d > bestD || (d === bestD && rng() < 0.5)) { bestD = d; best = idx; }
