@@ -4,7 +4,7 @@
 // it must agree with `baseClearLabel` at every step, and it must pick up late spawns.
 import { describe, it, expect } from 'vitest';
 import {
-  baseClearState, baseClearLabel, baseMarkTargets,
+  baseClearState, baseClearLabel, baseMarkTargets, enemyMarkLift, ENEMY_MARK_LIFT,
   MARK_OBJECTIVE, MARK_BUILDING, MARK_SMALL,
 } from './bases.js';
 
@@ -102,5 +102,31 @@ describe('#371 objective marker targets', () => {
   it('a null base marks nothing rather than throwing', () => {
     const state = baseClearState(null);
     expect(baseMarkTargets(state, null).docks).toEqual([]);
+  });
+});
+
+// ── #371 playtest follow-up: where a marker sits on its unit ───────────────────────────────────
+// "small objective hexes are not on the right position for the wall turrets". Hex-sitting units
+// keep the float that clears their sprite; a wall gun is anchored ON its span (#310 mounts it at
+// the span midpoint with TURRET_MOUNT_OFFSET_PX = 0), so a screen-up lift would slide its marker
+// off the wall band onto whichever neighbouring hex happens to be upward.
+describe('#371 follow-up — enemy marker lift is per-anchor, not one constant', () => {
+  it('a hex-sitting unit (tank/drone/mech) keeps the 26px float clear of its sprite', () => {
+    expect(enemyMarkLift({ baseId: 'base0', x: 10, y: 20 })).toBe(ENEMY_MARK_LIFT);
+    expect(ENEMY_MARK_LIFT).toBeGreaterThan(0);
+  });
+
+  it('a WALL GUN gets no lift — its marker sits on the mount its view is anchored to', () => {
+    expect(enemyMarkLift({ baseId: 'base0', spanKey: '0,0|1,0', x: 10, y: 20 })).toBe(0);
+  });
+
+  it('keys on spanKey, not dockKey — a dock-spawned ground unit is still a hex-sitter', () => {
+    expect(enemyMarkLift({ baseId: 'base0', dockKey: '1,0' })).toBe(ENEMY_MARK_LIFT);
+  });
+
+  it('tolerates a missing/odd unit rather than throwing', () => {
+    expect(enemyMarkLift(null)).toBe(ENEMY_MARK_LIFT);
+    expect(enemyMarkLift(undefined)).toBe(ENEMY_MARK_LIFT);
+    expect(enemyMarkLift({ spanKey: null })).toBe(ENEMY_MARK_LIFT);
   });
 });

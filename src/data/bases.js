@@ -149,3 +149,29 @@ export function baseMarkTargets(state, base, { isDockStanding = () => false, ene
       return { size: null, showObjective: true, docks: [], enemies: [] };
   }
 }
+
+// #371 playtest follow-up ("small objective hexes are not on the right position for the wall
+// turrets"): how far ABOVE a marked enemy its little hex floats.
+//
+// The 26px lift was calibrated for units that sit in a HEX — a tank, a drone, a mech, all of them
+// centred on open ground with room overhead, where floating the hex clear of the sprite keeps it
+// off the #370 shield outline. A wall gun is not that unit. #310 mounts it with
+// TURRET_MOUNT_OFFSET_PX = 0, i.e. its view container is anchored EXACTLY on the span midpoint,
+// dead centre of the 14px wall band (and #337 v3 draws it, with its wall, on DEPTH.WALLS). It is
+// also the smallest unit on the field — `scale: 0.34` against the sentry's 0.42 precisely so it
+// doesn't swamp the line it rides.
+//
+// So a screen-up lift is wrong for it twice over. It floats ~19px of empty space above a ~13px
+// sprite, and — because the lift is screen-up while a span can run at any of six orientations —
+// it slides OFF the wall line onto whichever neighbouring hex happens to be upward, reading as a
+// marker on the hex beside the gun rather than on the gun. Zero lift puts the 6px hex centred on
+// the mount, sitting neatly within the 14px band, matching the anchor the view actually uses.
+//
+// Keyed on `spanKey` (bases.js `_spawnWallTurrets`) because that IS the "I am emplaced on a wall
+// span" fact — it is set for exactly the wall guns and nothing else, and it is deliberately
+// separate from `dockKey` so it can never be confused with a hex-keyed unit.
+export const ENEMY_MARK_LIFT = 26;
+
+export function enemyMarkLift(enemy) {
+  return enemy?.spanKey != null ? 0 : ENEMY_MARK_LIFT;
+}
