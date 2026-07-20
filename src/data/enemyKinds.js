@@ -389,8 +389,18 @@ export const ENEMY_KINDS = {
     // 'small' tier the way tank/infantry do.
     size: 'large',
     themeColor: 0xe0b13a,
-    scale: 0.52,           // #91: nudged down further (was 0.62) — "drones slightly smaller
-                           // again", now that the swarm (SWARM_SIZE below) reads even fuller.
+    scale: 0.44,           // #379: smaller AGAIN (was 0.52 per #91, 0.62 before that) —
+                           // "make drones even smaller". A ~15% shrink: enough to read as a
+                           // step down in a 10-strong swarm while staying clearly above the
+                           // infantry trooper's 0.38 (the smallest unit in the game, and #97
+                           // explicitly wanted troopers smaller than drones). PLAYTEST DIAL.
+    // #379: the drone is the one shielded kind whose two sprites are NOT both "the unit's body".
+    // Its hull is the airframe (booms + pod) and its turret sprite is the spinning-ROTOR blur
+    // overlay, so the default hull+turret outline glowed around four rotor discs — Jackson:
+    // "remove the shield glow from their rotors, but keep it on their body". Naming the outline
+    // parts here keeps that a DATA statement about this kind's art: every other shielded kind
+    // (helicopter, carrier) omits the field and keeps the shared hull+turret default untouched.
+    shieldOutlineParts: ['hull'],
   },
 
   // 4) HELICOPTER / VTOL — fast flyer. Ignores ground cover entirely (flies over walls, forest,

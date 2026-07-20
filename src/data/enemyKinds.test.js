@@ -336,3 +336,14 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(WEAPONS.napalm.damage).toBe(27);   // the player's napalm (#259-retuned) is untouched by the override
   });
 });
+
+// #379 (playtest): "make drones even smaller". The absolute number is a playtest dial, but the
+// ORDERING it has to respect isn't: a drone must stay visibly bigger than the infantry trooper,
+// which #97 explicitly asked to be the smallest thing on the field, and must have actually
+// shrunk from #91's 0.52.
+describe('drone sprite scale (#379)', () => {
+  it('is smaller than #91 left it but still above the infantry trooper', () => {
+    expect(ENEMY_KINDS.drone.scale).toBeLessThan(0.52);
+    expect(ENEMY_KINDS.drone.scale).toBeGreaterThan(ENEMY_KINDS.infantry.scale);
+  });
+});

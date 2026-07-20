@@ -52,7 +52,7 @@ import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 // #302: shielded enemies (helicopter 30, carrier 50 — enemyKinds.js) wear the SAME glowing
 // shield outline the player does, from the same shared implementation.
 import {
-  SHIELD_MECH_PART_KEYS, SHIELD_VEHICLE_PART_KEYS, makeShieldOutline, updateShieldOutline,
+  SHIELD_MECH_PART_KEYS, shieldPartKeys, makeShieldOutline, updateShieldOutline,
 } from './shieldOutline.js';
 import { shieldPresent } from '../../data/shield.js';
 
@@ -316,7 +316,11 @@ export const EnemiesMixin = {
     // turret — which reads as one shell around the whole unit. That's the honest depiction: an
     // HpBody has ONE unit-wide shield pool, not the player's per-location parts, so there's
     // nothing to draw per-part.
-    this._initEnemyShieldVisual(e, SHIELD_VEHICLE_PART_KEYS, vehicleScale(def));
+    // #379: a kind whose second sprite ISN'T body — the drone's `turret` is a spinning-rotor
+    // blur overlay, not a gun — names its own outline parts in data (`shieldOutlineParts`), so
+    // the glow hugs the airframe instead of ballooning around four rotor discs. Only the drone
+    // sets it today; every other kind falls through to the shared hull+turret default unchanged.
+    this._initEnemyShieldVisual(e, shieldPartKeys(def), vehicleScale(def));
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);

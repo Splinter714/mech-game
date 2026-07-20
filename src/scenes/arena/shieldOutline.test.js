@@ -13,7 +13,9 @@ vi.mock('phaser', () => ({ default: {} }));
 
 import {
   shieldOutlineActive, shieldOutlineAlpha, updateShieldOutline, SHIELD_VEHICLE_PART_KEYS,
+  shieldPartKeys,
 } from './shieldOutline.js';
+import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { createShield, damageShield, tickShield } from '../../data/shield.js';
 
 function fakeOutlineSprite() {
@@ -153,5 +155,25 @@ describe('updateShieldOutline (shared driver, driven here on a vehicle-shaped 2-
     expect(sv.t).toBeGreaterThan(0);
     updateShieldOutline(sv, view, { hp: 0, max: 30 }, 16.67);
     expect(sv.t).toBe(0);
+  });
+});
+
+// #379: which sprites the outline hugs is now a per-kind data statement. The drone opts out of
+// shadowing its rotor-blur overlay; the fix must NOT leak to any other shielded kind.
+describe('shieldPartKeys (#379)', () => {
+  it('defaults to the shared hull+turret pair for a kind that says nothing', () => {
+    expect(shieldPartKeys({})).toEqual(SHIELD_VEHICLE_PART_KEYS);
+    expect(shieldPartKeys(undefined)).toEqual(SHIELD_VEHICLE_PART_KEYS);
+  });
+
+  it('gives the DRONE a body-only (hull) outline — no glow around the rotor overlay', () => {
+    expect(shieldPartKeys(ENEMY_KINDS.drone)).toEqual(['hull']);
+  });
+
+  it('leaves every OTHER kind on the shared default, drone included as the only exception', () => {
+    for (const [id, def] of Object.entries(ENEMY_KINDS)) {
+      if (id === 'drone') continue;
+      expect(shieldPartKeys(def), id).toEqual(SHIELD_VEHICLE_PART_KEYS);
+    }
   });
 });

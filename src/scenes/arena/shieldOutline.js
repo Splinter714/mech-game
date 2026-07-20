@@ -41,6 +41,19 @@ export const SHIELD_COLOR = POWERUPS.shield.color;
 export const SHIELD_MECH_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
 export const SHIELD_VEHICLE_PART_KEYS = ['hull', 'turret'];
 
+// Which of a vehicle kind's sprites the outline should hug (#379). The default is both — for a
+// gunship or the carrier, hull + turret ARE the unit's body, so one shell around the pair is the
+// right read (see the note above). The exception is a kind whose second sprite isn't body at all:
+// the DRONE's `turret` is a translucent spinning-rotor blur overlay, so shadowing it drew a
+// glowing halo around four rotor discs — Jackson (#379): "remove the shield glow from their
+// rotors, but keep it on their body". Rather than special-casing a kind id in scene code, the
+// kind declares its own parts in `enemyKinds.js` (`shieldOutlineParts`); a kind that says nothing
+// keeps the shared default byte-for-byte, so the player mech, helicopter and carrier are all
+// untouched by this.
+export function shieldPartKeys(def) {
+  return def?.shieldOutlineParts ?? SHIELD_VEHICLE_PART_KEYS;
+}
+
 // #205 (playtest follow-up): how much bigger each outline duplicate is drawn than the real part
 // it shadows — just enough for a bright rim to peek out from behind every edge of the actual
 // silhouette, not a separate floating shape. The flash multiplier is the extra outward pop on an
