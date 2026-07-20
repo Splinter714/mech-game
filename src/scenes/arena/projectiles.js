@@ -123,7 +123,14 @@ export const ProjectilesMixin = {
       // (and the player's shots aimed AT a flyer) from this check entirely. That stamp is gone —
       // cover is cover for every shooter and every target. Only an ARCING round still lobs over,
       // which it always did on its own trajectory merits, unrelated to who fired it.
-      if (!p.arc) {
+      // #338 RESTORES a NARROW form of that stamp — narrow in a way #245/#257's never was. It is no
+      // longer a property of the SHOOTER (a flying enemy's rounds passing through walls); it is the
+      // shot half of the ONE predicate that also decides what may be locked (data/visibility.js
+      // `targetCoverExempt`), stamped player-side at spawn only while the locked target is airborne.
+      // Cover is still cover for every enemy shooter and for every ground target — this exists so
+      // that a helicopter the targeting rules let you lock over a base wall is a helicopter you can
+      // actually hit, rather than lock saying yes and the shot saying no.
+      if (!p.arc && !p.ignoresCover) {
         // #288: base wall spans live on the boundaries BETWEEN hexes, so there's no tile under the
         // round to look up — and a fast round covers far more ground in one step than the wall's
         // ~14px thickness, so a point check at the step's endpoint could step clean over it. Test

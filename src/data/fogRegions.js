@@ -31,6 +31,7 @@
 // The only hex-granular thing left is the fogged interior's own footprint and its soft edge ramp,
 // which is fine: that boundary IS the wall ring, a hex-aligned structure to begin with.
 import { axialKey, neighbors } from './hexgrid.js';
+import { targetCoverExempt } from './visibility.js';
 
 // Fog darkness and softness. Jackson, after playtesting the 0.62 + 3-ring version: the interior
 // must "be more plainly blacked out, not just light greying still showing base hex details", and
@@ -131,7 +132,9 @@ export function enemyVisibleInFog(enemy, {
   fogged, hexKeyOf, losClear = false, awake = false, peekVisible = null,
 } = {}) {
   if (!enemy) return false;
-  if (enemy.flying && enemy.airborne !== false) return true;   // 1
+  // 1 — #338: via the shared predicate (data/visibility.js), so what may be LOCKED and what a
+  // shot may pass through are literally the same decision rather than two rules that agree today.
+  if (targetCoverExempt(enemy)) return true;
   if (enemy.spanKey != null) return true;                      // 2
   if (!fogged || !fogged.size) return true;
   if (!fogged.has(hexKeyOf(enemy.x, enemy.y))) return true;    // 3

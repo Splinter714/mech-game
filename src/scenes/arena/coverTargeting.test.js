@@ -17,7 +17,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { WorldMixin } from './world.js';
 import { ProjectilesMixin } from './projectiles.js';
 import { TargetingMixin } from './targeting.js';
+import { FiringMixin } from './firing.js';
 import { targetHexKeyOf } from './shared.js';
+import { targetCoverExempt } from '../../data/visibility.js';
 import { WEAPONS } from '../../data/weapons.js';
 import { makeProjectile } from '../../data/delivery.js';
 import { makeWallEdgeSet } from '../../data/wallEdges.js';
@@ -69,17 +71,67 @@ const keyOf = (h) => axialKey(h.q, h.r);
 
 // Fire one player round from the origin toward `to`, optionally stamped as aimed at `targetHexKey`,
 // and step it until it dies or runs out of travel. Returns the round.
-function fireAt(scene, to, targetHexKey = null) {
+function fireAt(scene, to, targetHexKey = null, extra = {}) {
   const angle = Math.atan2(to.y, to.x);
   const round = makeProjectile(WEAPONS.autocannon, 0, 0, angle, { maxDist: 4000 });
   Object.assign(round, {
     owner: 'player', trail: [], seekTarget: null,
     originHexes: [scene._hexKeyAt(0, 0)], targetHexKey, smallUnitInvolved: false,
+    ...extra,
   });
   scene.projectiles = [round];
   for (let i = 0; i < 200 && !round.dead; i++) scene._updateProjectiles(0.016);
   return round;
 }
+
+// #338 — lock and shot are ONE predicate. The bug: targeting exempts airborne enemies from the
+// sight gate by rule, firing exempted nobody by geometry, so a helicopter over a base wall was
+// lockable and unhittable simultaneously. `targetCoverExempt` is now the single rule both consult;
+// `_shotIgnoresCover` is the firing-side call, and the round carries the answer as `ignoresCover`.
+describe('#338 a locked AIRBORNE target is shootable through cover; nothing else is', () => {
+  const firing = (convergeTarget) => Object.assign({}, FiringMixin, { convergeTarget });
+
+  it('the shot half asks the same question target eligibility does', () => {
+    const flyer = { x: 100, y: 0, flying: true, mech: {} };
+    expect(firing(flyer)._shotIgnoresCover('player')).toBe(targetCoverExempt(flyer));
+    expect(firing(flyer)._shotIgnoresCover('player')).toBe(true);
+  });
+
+  it('a GROUND target grants no exemption — cover is untouched for everything on the deck', () => {
+    expect(firing({ x: 100, y: 0, mech: {} })._shotIgnoresCover('player')).toBe(false);
+    expect(firing({ x: 100, y: 0, hexKey: '2,0' })._shotIgnoresCover('player')).toBe(false);
+    expect(firing(null)._shotIgnoresCover('player')).toBe(false);
+  });
+
+  it('a grounded flying kind grants no exemption either', () => {
+    expect(firing({ flying: true, airborne: false, mech: {} })._shotIgnoresCover('player')).toBe(false);
+  });
+
+  it('an ENEMY shot never takes the exemption — enemies do not lock, so there is no invariant to keep', () => {
+    expect(firing({ x: 100, y: 0, flying: true, mech: {} })._shotIgnoresCover('enemy')).toBe(false);
+  });
+
+  it('a round stamped ignoresCover flies through a HARD-cover hex that would otherwise stop it', () => {
+    const wall = { q: 3, r: 0 }, beyond = { q: 6, r: 0 };
+    const blocked = fireAt(makeScene({ hexes: [{ h: wall, id: HARD }] }), centre(beyond));
+    expect(blocked.dead).toBe(true);            // the control: cover stops an ordinary round
+
+    const s = makeScene({ hexes: [{ h: wall, id: HARD }] });
+    const k = keyOf(wall), before = s.buildingHp.get(k);
+    const round = fireAt(s, centre(beyond), null, { ignoresCover: true });
+    expect(round.dead).toBeFalsy();             // sailed past the building...
+    expect(s.buildingHp.get(k)).toBe(before);   // ...without chipping it on the way
+  });
+
+  it('a round stamped ignoresCover crosses a base WALL SPAN too — that is the helicopter case', () => {
+    const a = { q: 2, r: 0 }, b = { q: 2, r: -1 };
+    const mk = () => makeScene({ wallDefs: [{ a, b }] });
+    const mid = edgeMidpoint(a, b);
+    const past = { x: mid.x * 3, y: mid.y * 3 };
+    expect(fireAt(mk(), past).dead).toBe(true);                              // control: wall stops it
+    expect(fireAt(mk(), past, null, { ignoresCover: true }).dead).toBeFalsy();
+  });
+});
 
 describe('#317 target identity is asked separately from terrain blocking', () => {
   it('targetHexKeyOf reads a hex target, and is null for an enemy, a span, and nothing', () => {

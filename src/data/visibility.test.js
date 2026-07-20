@@ -1,6 +1,7 @@
 // #306: the player's field-of-view pass and the targeting rule it feeds.
 import { describe, it, expect } from 'vitest';
-import { computeVisibleHexes, hexLineClear, enemyTargetable } from './visibility.js';
+import { computeVisibleHexes, hexLineClear, enemyTargetable, targetCoverExempt } from './visibility.js';
+import { enemyVisibleInFog } from './fogRegions.js';
 import { axialKey, distance, hexToPixel, range } from './hexgrid.js';
 
 // A terrain lookup backed by a plain {key: id} map — everything unlisted is open grass.
@@ -117,18 +118,62 @@ describe('enemyTargetable', () => {
     expect(enemyTargetable({ x: 9, y: 9 }, seen, hexKeyOf)).toBe(false);
   });
 
-  // #316 reverses #306's flyer exception here (this test used to assert `true`): cover is cover
-  // for everyone, so a flyer the player has no sight of can't be locked any more than a tank can.
-  it('#316: REJECTS a FLYING enemy the player has no sight of, same as a ground enemy', () => {
-    expect(enemyTargetable({ x: 9, y: 9, flying: true }, seen, hexKeyOf)).toBe(false);
+  // #316 removed #306's flyer exception here; #338 restores it, but as the SHARED predicate rather
+  // than a rule local to this file — the shot now takes the same exemption, so lock and shot cannot
+  // disagree. (Under #316 this asserted `false`, and the resulting "lockable but unhittable"
+  // helicopter over a base wall is precisely the bug #338 fixes.)
+  it('#338: accepts an AIRBORNE enemy the player has no ground-level sight of', () => {
+    expect(enemyTargetable({ x: 9, y: 9, flying: true }, seen, hexKeyOf)).toBe(true);
   });
 
-  it('#316: accepts a FLYING enemy standing in a visible hex — the gate is sight, not flight', () => {
+  it('#338: a GROUNDED flying kind is a ground target — still gated by sight', () => {
+    expect(enemyTargetable({ x: 9, y: 9, flying: true, airborne: false }, seen, hexKeyOf)).toBe(false);
+  });
+
+  it('accepts a FLYING enemy standing in a visible hex — sight alone already suffices', () => {
     expect(enemyTargetable({ x: 1, y: 0, flying: true }, seen, hexKeyOf)).toBe(true);
   });
 
   it('does not gate at all before a field of view has been computed', () => {
     expect(enemyTargetable({ x: 9, y: 9 }, null, hexKeyOf)).toBe(true);
+  });
+});
+
+// #338 — THE SHARED PREDICATE. Jackson's invariant is "you should only be able to lock what you
+// could actually hit", and the failure it names is two independently-written rules: targeting
+// exempted flyers from the sight gate while firing exempted nobody, so a helicopter over a base
+// wall was lockable and unhittable at the same time. These assert the RULE itself; its two
+// consumers (target eligibility here + in fogRegions, and the shot in scenes/arena/firing.js)
+// call this one function, so the two can no longer drift.
+describe('targetCoverExempt (#338)', () => {
+  it('exempts an airborne enemy — the whole point: it is over whatever blocks ground-level sight', () => {
+    expect(targetCoverExempt({ flying: true })).toBe(true);
+    expect(targetCoverExempt({ flying: true, airborne: true })).toBe(true);
+  });
+
+  it('does NOT exempt a ground enemy — cover stays real, this is not "shots ignore geometry"', () => {
+    expect(targetCoverExempt({ flying: false })).toBe(false);
+    expect(targetCoverExempt({})).toBe(false);
+  });
+
+  it('does NOT exempt a flying kind that is currently grounded', () => {
+    expect(targetCoverExempt({ flying: true, airborne: false })).toBe(false);
+  });
+
+  it('does NOT exempt a static target (a destructible hex or wall span) or nothing at all', () => {
+    expect(targetCoverExempt({ x: 0, y: 0, hexKey: '2,3' })).toBe(false);
+    expect(targetCoverExempt({ x: 0, y: 0, edgeKey: '0,0|1,0' })).toBe(false);
+    expect(targetCoverExempt(null)).toBe(false);
+    expect(targetCoverExempt(undefined)).toBe(false);
+  });
+
+  it('agrees with the fog rule it feeds — one decision, two call sites', () => {
+    const args = { fogged: new Set(['9,9']), hexKeyOf: () => '9,9' };
+    const flyer = { x: 9, y: 9, flying: true };
+    const tank = { x: 9, y: 9 };
+    // The exempt one is visible-and-lockable through the fog; the non-exempt one is not.
+    expect(enemyVisibleInFog(flyer, args)).toBe(targetCoverExempt(flyer));
+    expect(enemyVisibleInFog(tank, args)).toBe(targetCoverExempt(tank));
   });
 });
 

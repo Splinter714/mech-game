@@ -15,8 +15,22 @@ import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel, SPRINT_FUEL_MAX } from '../../data/sprint.js';
 import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
 import { targetHexKeyOf } from './shared.js';
+import { targetCoverExempt } from '../../data/visibility.js';
 
 export const FiringMixin = {
+  // #338: the SHOT half of the one shared predicate (data/visibility.js `targetCoverExempt`) —
+  // the same call target eligibility makes, so "you should only be able to lock what you could
+  // actually hit" holds by construction instead of by two files happening to agree.
+  //
+  // Player-only, and keyed on the frame's live converge/lock pick — enemies have no lock, so
+  // there is no second side of the invariant to satisfy for them and cover stays absolute for
+  // every enemy shooter (#316's rule, untouched). Ground picks return false here, so a shot at a
+  // tank behind a boulder is blocked exactly as before; this opens a lane only while the thing
+  // you have locked is genuinely in the air.
+  _shotIgnoresCover(owner = 'player') {
+    return owner === 'player' && targetCoverExempt(this.convergeTarget);
+  },
+
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
   // auto-fires that location's weapon at its own cadence, gated by ammo. ──
   _handleFiring(intent, delta) {
@@ -363,7 +377,10 @@ export const FiringMixin = {
       }
       const trace = traceHitscan(mx, my, angle, reach, this._liveEnemiesForTrace());
       let endDist = trace.endDist;
-      const wallT = this._hitscanReach(mx, my, angle, endDist);
+      // #338: a HELD beam is re-pinned every render frame independently of the fire cadence, so it
+      // needs the same cover-exemption branch the fire tick takes — otherwise the damage lands on
+      // the airborne target while the drawn beam still stops dead at the wall.
+      const wallT = this._shotIgnoresCover() ? Infinity : this._hitscanReach(mx, my, angle, endDist);
       if (wallT < endDist) endDist = wallT;
       live.x0 = mx; live.y0 = my;
       live.x1 = mx + Math.cos(angle) * endDist;
@@ -412,8 +429,9 @@ export const FiringMixin = {
     let t = trace.t;
     let hit = !!target;
     let endDist = trace.endDist;
-    // Cover: a wall between muzzle and target stops the beam short. #316: no exceptions — a
-    // flying shooter's beam is blocked by hard cover exactly like a ground shooter's.
+    // Cover: a wall between muzzle and target stops the beam short. #316: a flying SHOOTER's beam
+    // is blocked by hard cover exactly like a ground shooter's (unchanged by #338 — see below,
+    // where the exemption is a property of the locked TARGET, not of who is firing).
     //
     // #310 (2026-07-19), ONE exception, and it is not a cover exemption: a beam aimed at a WALL
     // TURRET is not stopped by the span that turret is standing on. Since the gun was centred on
@@ -423,8 +441,14 @@ export const FiringMixin = {
     // #310 shipped the gun and the span as two separate health pools on purpose; this keeps them
     // that way. Scoped to the span under the thing you are actually aiming at, so it never opens a
     // lane through a wall to anything else — every other span still stops the beam dead.
+    //
+    // #338, the other exception, and this one IS a cover exemption — a deliberate one: when the
+    // player's locked target is airborne the beam is not clamped by the wall trace at all. That is
+    // the shot half of the shared predicate; without it the player locks a helicopter over a base
+    // wall (which targeting permits by rule) and watches every beam splash on the stone.
     const targetSpanKey = (target && typeof target === 'object' && target.spanKey) || null;
-    const wallT = this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved, ignoreSpanKey ?? targetSpanKey);
+    const wallT = this._shotIgnoresCover(owner) ? Infinity
+      : this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved, ignoreSpanKey ?? targetSpanKey);
     let blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     // #317, hitscan half of the targeted-hex rule: a beam has no per-step position to test, so its
@@ -485,8 +509,10 @@ export const FiringMixin = {
   // maxDist comment below for why this must be the centre bearing, not `angle` (this shot's own
   // launch heading). Defaults to `angle` for every single-shot caller (enemies, non-spread
   // weapons), where the two are identical anyway.
-  // (#245's `ignoreCover` param — stamping `ignoresCover` onto a flying enemy's round so the
-  // in-flight wall check skipped it — was removed by #316: every round respects cover.)
+  // (#245's `ignoreCover` PARAM — a caller stamping `ignoresCover` onto a flying enemy's round —
+  // was removed by #316 and stays removed. #338 re-derives that stamp below from the shared
+  // predicate instead: it is the player's LOCKED TARGET being airborne that opens the lane, never
+  // the shooter flying, so there is no parameter for a caller to pass.)
   // `smallUnitInvolved` (#269, optional): stamped onto the round so projectiles.js's in-flight
   // cover check can pass it to `_isWallForRound` — see world.js `_isWall`. Enemy callers pass
   // `isSmallUnit(e)`; the player never does (always large).
@@ -566,7 +592,13 @@ export const FiringMixin = {
     // targetable and literally unhittable. Player-only: an enemy has no convergence pick, and the
     // stamp is null for every other target kind, so nothing else changes behaviour.
     const targetHexKey = owner === 'player' ? targetHexKeyOf(this.convergeTarget) : null;
-    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, smallUnitInvolved: !!smallUnitInvolved };
+    // #338: the shot half of the shared predicate, resolved ONCE at spawn and carried by the round
+    // (projectiles.js reads it in the in-flight cover check). Spawn-time, not per-frame, on purpose
+    // — a shot commits to the geometry it was fired under, which is exactly the rule that keeps
+    // case 1 of the issue honest: a round fired at a GROUND target locked in the open still splashes
+    // on the wall that target ducks behind, rather than homing through terrain after it.
+    const ignoresCover = this._shotIgnoresCover(owner);
+    const pushed = { ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover, smallUnitInvolved: !!smallUnitInvolved };
     this.projectiles.push(pushed);
     return pushed;
   },

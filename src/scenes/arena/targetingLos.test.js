@@ -52,22 +52,25 @@ describe('targeting LOS gate (#306)', () => {
     expect(sc._lockAimPoint()).toBe(null);
   });
 
-  // #316 reverses #306's flyer exception (this test used to assert the flyer WAS acquired):
-  // "let's stop being able to shoot them beyond cover also; let's let cover be actual cover."
-  // The convergence pick now treats a flyer exactly like the ground enemy above it.
-  it('#316: REFUSES to acquire a FLYING enemy in an un-sighted hex, same as a ground enemy', () => {
+  // #316 removed #306's flyer exception here ("let's let cover be actual cover"), and this test
+  // asserted the flyer was REFUSED. #338 puts it back — but as the shared predicate
+  // (`targetCoverExempt`), which the SHOT consults too. That is the whole difference: under #316
+  // the lock said no; under #306 the lock said yes and the shot said no; now both say yes, so an
+  // airborne enemy the player can lock over a base wall is one he can actually hit.
+  it('#338: ACQUIRES an airborne enemy in an un-sighted hex — and the shot follows', () => {
     const flyer = enemy(400, 0, { flying: true });
     const sc = makeScene(new Set([keyAt(0, 0)]));
     sc.enemies = [flyer];
     sc._updateLock(0.016);
-    expect(sc.aimEnemy).toBe(null);
-    expect(sc.convergeTarget).toBe(null);
-    expect(sc.convergeTarget).toBe(null);
+    expect(sc.aimEnemy).toBe(flyer);
+    expect(sc.convergeTarget).toBe(flyer);
   });
 
-  // The complement: flight is no longer special in EITHER direction — a SIGHTED flyer is still
-  // perfectly lockable, so the change above isn't just "flyers became untargetable".
-  it('#316: still acquires a FLYING enemy that IS in a sighted hex', () => {
+  // The ground case is what proves this did not simply delete cover: same un-sighted hex, no
+  // exemption, still refused (the test above this one).
+
+  // The complement: a SIGHTED flyer was always lockable and still is.
+  it('still acquires a FLYING enemy that IS in a sighted hex', () => {
     const flyer = enemy(400, 0, { flying: true });
     const sc = makeScene(new Set([keyAt(0, 0), keyAt(400, 0)]));
     sc.enemies = [flyer];
