@@ -187,7 +187,10 @@ describe('mission completion is driven by the objective hex\'s destroyed state, 
     expect(scene.mission.status).toBe('active');   // still active — the hex, not the enemies, gates this
   });
 
-  it('destroying the objective hex (removed from buildingHp) completes the mission even with live defenders', () => {
+  // #356 REVERSED the "even with live defenders" half of this: destroying the objective hex is now
+  // the FIRST of three steps, not the whole mission. The hex still has to fall before anything
+  // else counts, which is what this now pins.
+  it('destroying the objective hex (removed from buildingHp) completes the mission once nothing is left defending', () => {
     const bases = [makeBaseWithObjective('base0', 0, 0, 3, -1)];
     const scene = fakeScene({
       bases,
@@ -202,6 +205,10 @@ describe('mission completion is driven by the objective hex\'s destroyed state, 
     // Simulate `_damageBuildingAt` collapsing the objective hex to rubble: its key is deleted
     // from `buildingHp`, enemies untouched.
     scene.buildingHp.delete(axialKey(3, -1));
+    scene._updateMission();
+    expect(scene.mission.status).toBe('active');   // #356: the defender still has to die
+
+    scene.enemies = [];
     scene._updateMission();
     expect(scene.mission.status).toBe('complete');
   });

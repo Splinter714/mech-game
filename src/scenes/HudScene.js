@@ -12,6 +12,7 @@ import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
 } from '../data/hudLayout.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
+import { baseClearLabel } from '../data/bases.js';
 
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
@@ -517,8 +518,16 @@ export default class HudScene extends Phaser.Scene {
     const mission = this.registry.get('mission');
     if (mission) {
       const complete = mission.status === 'complete';
+      // #356: the objective line now names the ONE thing the player has to do right now — destroy
+      // the objective, then destroy the docks, then eliminate what's left — instead of the bare
+      // mission type. The step and its wording both come from the pure model (data/bases.js
+      // `baseClearState`/`baseClearLabel`), which is what guarantees no enemy count is ever shown
+      // while a dock still stands: docks reinforce forever (#326), so a live count at that point
+      // would climb rather than fall.
+      const clear = this.registry.get('baseClear');
+      const line = clear ? baseClearLabel(clear) : mission.objective;
       this.objectiveText
-        .setText(`OBJECTIVE: ${mission.objective}${complete ? '  [COMPLETE]' : ''}`)
+        .setText(`OBJECTIVE: ${line}${complete ? '  [COMPLETE]' : ''}`)
         .setColor(complete ? C.good : C.warn);
       // #64: the mission-complete banner only makes sense mid-run (a stage cleared, more to
       // come) — once the run itself is over (run-over banner below takes precedence), suppress

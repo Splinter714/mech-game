@@ -253,6 +253,7 @@ describe('run/death flow across players (#347)', () => {
     mission: null,
     _runAdvancing: false,
     _allObjectivesDestroyed: () => false,
+    _allBasesFullyCleared: () => false,   // #356: the run's win check moved to the full per-base clear
     registry: { get: () => 0, set: vi.fn() },
     time: { delayedCall: vi.fn() },
   }, RunMixin);

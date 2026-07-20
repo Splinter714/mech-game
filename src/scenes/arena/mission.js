@@ -13,7 +13,7 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
-import { isBaseCleared } from '../../data/bases.js';
+import { isBaseCleared, baseClearState, CLEAR_DONE } from '../../data/bases.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR, strokeHexRing } from './shared.js';
 
 // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"): the
@@ -38,6 +38,33 @@ export function isBaseObjectiveDestroyed(base, buildingHp, enemies) {
   const hex = base.objectiveHex;
   if (!hex) return isBaseCleared(base.id, enemies);
   return !(buildingHp ?? new Map()).has(axialKey(hex.q, hex.r));
+}
+
+// #356: the full clear state of one base — objective, then docks, then the (now finite) garrison.
+// See data/bases.js `baseClearState` for why the requirement is ordered this way. This is the
+// scene-side adapter that supplies the two `buildingHp` facts the pure model can't know: whether
+// the objective hex is gone (`isBaseObjectiveDestroyed`, unchanged) and whether each dock hex is
+// still standing. Both are the same one-way "still in `buildingHp`" convention, so nothing here
+// needs its own destroyed-flag bookkeeping.
+//
+// Deliberately a standalone function rather than a mixin method: mission.js, bases.js and run.js
+// all need it, and the arena's hand-built test doubles never compose every mixin.
+export function baseClearStateOf(base, buildingHp, enemies) {
+  const hp = buildingHp ?? new Map();
+  return baseClearState(base, {
+    objectiveDestroyed: isBaseObjectiveDestroyed(base, hp, enemies),
+    isDockStanding: (d) => hp.has(axialKey(d.q, d.r)),
+    enemies,
+  });
+}
+
+// #356: the completion rule the mission and the run win check now BOTH use, replacing bare
+// `isBaseObjectiveDestroyed`. Note this composes deliberately with #355: gates still latch open on
+// the OBJECTIVE alone (owner's explicit call), which is now strictly a help rather than a
+// contradiction — the base opens up at step 1 and stays open for the dock/garrison sweep that
+// steps 2 and 3 ask for, instead of the player having to re-breach a sealed ring to finish it.
+export function isBaseFullyCleared(base, buildingHp, enemies) {
+  return baseClearStateOf(base, buildingHp, enemies).step === CLEAR_DONE;
 }
 
 export const MissionMixin = {
@@ -68,6 +95,9 @@ export const MissionMixin = {
     const targetHex = base ? (base.objectiveHex ?? base.center) : null;
     this.objectiveHex = targetHex ? axialKey(targetHex.q, targetHex.r) : null;
     this.mission = base ? makeMission('assault') : null;
+    // #356: drop any stale clear-step line when there's no base left to target, so the HUD can't
+    // keep showing the last base's requirement after the run has run off the end.
+    if (!base) this.registry.set('baseClear', null);
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);
@@ -133,7 +163,15 @@ export const MissionMixin = {
   // regardless, so there's nothing left for this to watch.
   _updateMission() {
     if (!this.mission) return;
-    const objectiveDestroyed = isBaseObjectiveDestroyed(this._objectiveBase, this.buildingHp, this.enemies);
+    // #356: completion is no longer "the objective hex fell" — it is the full ordered clear
+    // (objective → every dock → every remaining enemy of this base). `objectiveDestroyed` keeps
+    // its name because it is still what `evaluateMission` calls the completion signal; what
+    // changed is how much has to be true for it to be set.
+    const clear = baseClearStateOf(this._objectiveBase, this.buildingHp, this.enemies);
+    const objectiveDestroyed = clear.step === CLEAR_DONE;
+    // Publish the live step so HudScene can show the player exactly ONE requirement at a time —
+    // crucially, no enemy count until the last dock is down (see data/bases.js for why).
+    this.registry.set('baseClear', clear);
     const wasActive = this.mission.status === 'active';
     // #66: fail path deferred to #64 (the run loop) — no real playerDead signal yet, so this
     // always passes false and the mission can only ever go active → complete for now.

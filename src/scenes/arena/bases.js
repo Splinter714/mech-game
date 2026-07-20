@@ -20,7 +20,7 @@ import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPP
 import {
   mulberry32, drawDockKind, dockCountFor, baseLateFraction, towerPatrolComposition,
 } from '../../data/worldgen.js';
-import { isBaseObjectiveDestroyed } from './mission.js';
+import { isBaseObjectiveDestroyed, isBaseFullyCleared } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../data/terrain.js';
 import { gateEdges, setGateOpen, turretEdges, spanTurretMount, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
 import {
@@ -950,6 +950,19 @@ export const BasesMixin = {
   _allObjectivesDestroyed() {
     if (!this.bases || !this.bases.length) return false;
     return this.bases.every((base) => isBaseObjectiveDestroyed(base, this.buildingHp, this.enemies));
+  },
+
+  // #356: THE run win condition now — every base FULLY cleared (its objective destroyed, then
+  // every dock destroyed, then every remaining enemy of that base dead), not merely every
+  // objective hex destroyed. Because the objective advances base-by-base only on a full clear,
+  // by the time the player is at the last base every earlier one is already satisfied, so in
+  // practice this is "finish the last base properly" — which is exactly the ask: the run does not
+  // complete while enemies remain alive at the final objective.
+  // `_allObjectivesDestroyed` is kept as the distinct, weaker concept it always was (it is what
+  // #355's gates latch on, per base).
+  _allBasesFullyCleared() {
+    if (!this.bases || !this.bases.length) return false;
+    return this.bases.every((base) => isBaseFullyCleared(base, this.buildingHp, this.enemies));
   },
 
   // #355: the set of base ids whose objective hex is destroyed — "this base is beaten", which is

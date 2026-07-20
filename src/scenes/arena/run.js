@@ -63,7 +63,13 @@ export const RunMixin = {
     // `_allObjectivesDestroyed`), not just every enemy dead (`_allBasesCleared`, kept around as
     // a distinct, separately-tested concept but no longer what ends the run). Checked every
     // frame regardless of mission state (an outpost objective and a base are independent).
-    if (this._allObjectivesDestroyed()) { this._endRun('won'); return; }
+    // #356 (Jackson: "the mission shouldn't be fully complete until all enemies are dead at the
+    // last objective"): the win check is now the FULL per-base clear — objective, then every dock,
+    // then every remaining enemy of that base — for every base (`_allBasesFullyCleared`), not the
+    // weaker "every objective hex destroyed" (`_allObjectivesDestroyed`, still live as #355's
+    // gate-latch rule). Blowing the last objective hex therefore no longer ends the run while its
+    // garrison is still shooting at you.
+    if (this._allBasesFullyCleared()) { this._endRun('won'); return; }
 
     if (this.mission && this.mission.status === 'complete') this._advanceObjective();
   },
