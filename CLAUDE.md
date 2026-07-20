@@ -127,3 +127,18 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
 Foundation + a thin vertical slice of both the garage and the arena. Enemy AI + real combat
 and world collision have since shipped. Still deferred: full garage UX, full heat/ammo
 simulation, more chassis/assault class, squad control. See `~/.claude/plans/` for the plan.
+
+## Durable working context (checked-in memory)
+
+Cross-machine session memory lives in `.claude/memory/` so it travels with a clone (this repo
+is worked from multiple machines). On session start, read `.claude/memory/MEMORY.md` — its
+index points to the project's locked design decisions, the ship/deploy flow, the fast-lane
+tuning rule (skip the full test gate for pure data/feel tweaks; verify in play), and the
+sibling horse-game reference. Treat these as point-in-time notes: verify file/line claims
+against current code before asserting them.
+
+Jackson's cross-project working style (verify-by-playing, the green/yellow/red/blocked +
+ready-for-playtest kanban, "never write 'Jackson decided X'", dispatch-to-agents, the deploy
+ritual, durable-vs-per-instance approval) lives in the **user-level** `~/.claude/CLAUDE.md`,
+which is deliberately NOT committed here (it's cross-project and personal, and this repo is
+public). Copy it onto each machine you work from.
