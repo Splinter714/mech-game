@@ -9,9 +9,9 @@ import { livePlayersOf, targetPlayerFor } from './players.js';
 import { scatterOffset } from '../../data/hexgrid.js';
 import { DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
 import { Audio } from '../../audio/index.js';
-import { DEPTH, dropCanReach } from './shared.js';
+import { DEPTH } from './shared.js';
 // #378: the pull rule itself is shared with powerups now — this file only supplies the target
-// player and the wall predicate. Scrap's tuning table is #226's playtested numbers, unmoved.
+// player. Scrap's tuning table is #226's playtested numbers, unmoved.
 import { magnetPull, SCRAP_MAGNET } from '../../data/magnet.js';
 
 const SALVAGE_COLOR = 0xf5c542;   // gold/amber — reads distinct from the powerup palette
@@ -32,7 +32,7 @@ const BOB_PERIOD = 1300;
 const BOB_AMPLITUDE = 1.5;   // #228: smaller/calmer bounce than the powerup beacon's 4px
 // #88: the scatter radius is shared with powerups (#336 moved the constant into
 // data/dropPlacement.js) so a kill that drops both a powerup AND salvage spreads them apart
-// rather than stacking, and both stay tame enough not to cross a wall.
+// rather than stacking.
 
 export const SalvageMixin = {
   _initSalvage() {
@@ -49,11 +49,10 @@ export const SalvageMixin = {
     // snap to reachable ground in case the scatter — or the kill site itself, e.g. a flyer over
     // water — landed somewhere the player can't walk to. `_reachableDropPos` lives on
     // PowerupsMixin but both mixins compose onto the same ArenaScene prototype.
-    // #336: anchored to the kill's own side of any wall (the player's, for a flyer) so scrap
-    // never lands through a base wall either.
+    // (#336's same-side-of-the-wall anchoring was REMOVED 2026-07-20 — the magnet pulls through
+    // walls now, so a drop's side of a wall decides nothing. See data/dropPlacement.js.)
     const scattered = scatterOffset(x, y, DROP_SCATTER_RADIUS);
-    const ref = this._dropSideRef ? this._dropSideRef(x, y, flying) : null;
-    const pos = this._reachableDropPos ? this._reachableDropPos(scattered.x, scattered.y, ref) : scattered;
+    const pos = this._reachableDropPos ? this._reachableDropPos(scattered.x, scattered.y) : scattered;
     const view = this._makeSalvageView(pos.x, pos.y);
     this.salvage.push({ x: pos.x, y: pos.y, amount, age: 0, view });
   },
@@ -90,11 +89,11 @@ export const SalvageMixin = {
       // #347/#378: SCRAP drifts toward — and is collected by — the NEAREST LIVE player. In co-op
       // that is a live per-drop choice: each drop magnetises to whichever player is closer right
       // now, and either can pick it up (the collector search below iterates every live player).
-      // #378: gated on walls. #336 put drops on the correct side of a base wall in the first
-      // place; an ungated pull would drag them straight back through, so a drop with a wall
-      // between it and the nearest player simply doesn't drift.
+      // #378: the pull goes straight THROUGH walls, deliberately (see data/magnet.js) — Jackson:
+      // "magnet should pull through walls". Scrap's magnet always behaved this way; that is now
+      // the confirmed intent rather than an accident of it predating #336.
       const near = targetPlayerFor(this, s);
-      const moved = magnetPull(s, near, delta, SCRAP_MAGNET, { canReach: dropCanReach(this) });
+      const moved = magnetPull(s, near, delta, SCRAP_MAGNET);
       if (moved) { s.x = moved.x; s.y = moved.y; }
 
       const t = s.age / BOB_PERIOD;

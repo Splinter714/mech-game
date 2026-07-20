@@ -28,23 +28,25 @@ export const POWERUP_MAGNET = {
 };
 
 // Where a drop should be after `delta` ms of magnetic pull toward `target`, or null for
-// "don't move it this frame" (out of range, already on top of the target, or walled off).
+// "don't move it this frame" (out of range, or already on top of the target).
 //
-// #378 / #336: the pull MUST respect walls. #336 exists specifically because the drop-placement
-// search was hopping drops across base walls; a magnet that ignored geometry would drag them
-// straight back through and undo it. `canReach(drop, x, y)` is the caller's swept collision test
-// (the scene passes `_blockedAlongSegment`, the same one locomotion, the #348 leash clamp and
-// #361's ground separation use). It is tested against the PLAYER's position, not against the
-// one-frame step: if the drop cannot reach the player without crossing a wall it simply does not
-// drift at all, rather than creeping up to the wall and pooling against it. (A blocked full
-// segment implies a blocked step along it, so the single test covers both.)
-export function magnetPull(drop, target, delta, tuning, opts = {}) {
+// THE PULL DELIBERATELY IGNORES GEOMETRY — it drags a drop straight THROUGH walls. Jackson
+// (#378): "magnet should pull through walls". That's an explicit game-feel call, not an
+// oversight, and it's worth stating plainly because it otherwise reads as a bug: magnetic pickup
+// is already unphysical, and the alternative — gating the pull on the swept `_blockedAlongSegment`
+// test locomotion uses — leaves drops the player can SEE inside a compound but can never reach.
+//
+// This does NOT undo #336, which puts a drop on the correct SIDE of a base wall when it spawns:
+// placement stays picky, only the pull is permissive. And because the drift is pure position
+// assignment along the straight line to the player, with no collision test anywhere on the path,
+// a drop can never lodge against the inside face of a wall and stick there just out of reach — it
+// converges on the player's OWN position, which is by definition somewhere the player is, so it
+// always closes all the way into pickup range.
+export function magnetPull(drop, target, delta, tuning) {
   if (!drop || !target || !tuning || !(delta > 0)) return null;
-  const { canReach = null } = opts;
   const dx = target.x - drop.x, dy = target.y - drop.y;
   const dist = Math.hypot(dx, dy);
   if (!(dist > 0) || dist > tuning.radius) return null;
-  if (canReach && !canReach(drop, target.x, target.y)) return null;
   const closeness = 1 - dist / tuning.radius;   // 0 at the outer edge, →1 near the player
   const speed = tuning.minSpeed + (tuning.maxSpeed - tuning.minSpeed) * closeness;
   const step = Math.min(dist, speed * delta);
