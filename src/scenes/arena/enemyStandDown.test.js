@@ -188,3 +188,91 @@ describe('#304 a redeploy resets the stand-down clock', () => {
     expect(create[0]).toMatch(/this\._standDownAt = null;/);
   });
 });
+
+// ── #360 co-op: the predicate is ALL players dead, not "player 1 is dead" ──────────────
+// Jackson, two-player playtest: "enemies are falsely disengaging/freezing when player 1 dies
+// and player 2 is still alive." `_playerDead` is phase 1's delegating accessor onto
+// `players[0]`, so #304's stand-down stood the WHOLE squad down the instant player 1 exploded.
+// The correct seam (`allPlayersDeadIn`, players.js) already existed — #348 phase 2 built it for
+// exactly this distinction, and run.js ends the run on it.
+function coopScene({ now = 0, dead = [false, false], enemyFire = true } = {}) {
+  const scene = {
+    time: { now }, enemyFire, bases: [], _standDownAt: null,
+    players: dead.map((d, id) => ({ id, dead: d, x: 0, y: 0, mech: { isDestroyed: () => d } })),
+  };
+  Object.assign(scene, EnemiesMixin);
+  return scene;
+}
+
+describe('#360 stand-down in co-op', () => {
+  it('does NOT stand down with one player dead and one still alive — the fight is still on', () => {
+    const scene = coopScene({ now: 1000, dead: [true, false] });
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._enemyFireAllowed()).toBe(true);
+    // and no clock was even started, so nothing can elapse into a stand-down later
+    expect(scene._standDownAt).toBe(null);
+    scene.time.now = 1000 + 60_000;
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._enemyFireAllowed()).toBe(true);
+  });
+
+  it('it is player TWO dying that used to be ignored and player ONE dying that used to trigger — neither does alone', () => {
+    for (const dead of [[true, false], [false, true]]) {
+      const scene = coopScene({ now: 1000, dead });
+      scene.time.now = 1000 + 60_000;
+      expect(scene._standDownActive()).toBe(false);
+    }
+  });
+
+  it('DOES stand down once every player is down (after the same #304 beat)', () => {
+    const scene = coopScene({ now: 1000, dead: [true, true] });
+    expect(scene._standDownActive()).toBe(false);   // still the trailing-volley beat
+    expect(scene._standDownAt).toBeGreaterThan(1000);
+    scene.time.now = 1000 + 5000;
+    expect(scene._standDownActive()).toBe(true);
+    expect(scene._enemyFireAllowed()).toBe(false);
+  });
+
+  it('is unchanged at N=1: a solo player dying still stands the squad down after the beat', () => {
+    const scene = coopScene({ now: 1000, dead: [true] });
+    expect(scene._standDownActive()).toBe(false);
+    scene.time.now = 1000 + 5000;
+    expect(scene._standDownActive()).toBe(true);
+    expect(scene._enemyFireAllowed()).toBe(false);
+    const alive = coopScene({ now: 1000, dead: [false] });
+    alive.time.now = 1000 + 60_000;
+    expect(alive._standDownActive()).toBe(false);
+  });
+
+  // #348 respawn: a downed player returns ~20s later gated on the survivor being out of combat,
+  // so "all players dead" can flip back to false mid-sortie. The clock must not latch.
+  it('re-engages on respawn and can stand down again cleanly on the NEXT team wipe', () => {
+    const scene = coopScene({ now: 1000, dead: [true, true] });
+    scene._standDownActive();
+    scene.time.now = 1000 + 5000;
+    expect(scene._standDownActive()).toBe(true);          // engaged: everyone down
+
+    // Player 2 respawns. Enemies must resume fighting immediately, and the elapsed deadline
+    // must be cleared rather than left sitting on the scene.
+    scene.players[1].dead = false;
+    scene.players[1].mech.isDestroyed = () => false;
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._standDownAt).toBe(null);
+    expect(scene._enemyFireAllowed()).toBe(true);
+
+    // Now the survivor dies too. The beat has to run again from scratch — a stale elapsed
+    // deadline would have stood everyone down on the very death frame.
+    scene.players[1].dead = true;
+    scene.players[1].mech.isDestroyed = () => true;
+    scene.time.now = 1000 + 20_000;
+    expect(scene._standDownActive()).toBe(false);
+    expect(scene._standDownAt).toBe(1000 + 20_000 + 600);
+    scene.time.now = 1000 + 20_000 + 601;
+    expect(scene._standDownActive()).toBe(true);
+  });
+
+  it('the #28 debug fire toggle still wins while both players are alive', () => {
+    const scene = coopScene({ dead: [false, false], enemyFire: false });
+    expect(scene._enemyFireAllowed()).toBe(false);
+  });
+});
