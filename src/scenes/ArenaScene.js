@@ -4,6 +4,7 @@ import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { range } from '../data/hexgrid.js';
 import { Controls, PadEdges, PAD } from '../input/Controls.js';
+import { TouchStickHud } from '../input/TouchStickHud.js';
 import { initialSprintState } from '../data/sprint.js';
 import { initialDashState } from '../data/dash.js';
 import { Audio } from '../audio/index.js';
@@ -196,6 +197,9 @@ export default class ArenaScene extends Phaser.Scene {
     }
 
     this.controls = new Controls(this);
+    // #346: screen-space overlay for the on-screen sticks. Only created on a touch-capable
+    // device, and it draws nothing until a finger actually lands — desktop sees no change.
+    this.touchStickHud = this.controls.touch ? new TouchStickHud(this) : null;
     this.padEdges = new PadEdges(this);   // rising-edge pad buttons for one-shot actions
     this.fireCooldowns = {};   // `${loc}:${index}` → ms until this weapon can fire again
     this.sprint = initialSprintState();   // #188: Overclock-only now (#261), see data/sprint.js
@@ -275,6 +279,7 @@ export default class ArenaScene extends Phaser.Scene {
   update(_time, delta) {
     const dt = Math.min(0.05, delta / 1000);
     const intent = this.controls.read();
+    this.touchStickHud?.draw(this.controls.touch);   // #346, presentation only
 
     // #80: the camera's world-space view rect, republished each frame so HudScene's edge-
     // direction arrow can tell whether the objective is on-screen and, if not, where to point.

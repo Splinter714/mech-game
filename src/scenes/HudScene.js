@@ -286,6 +286,13 @@ export default class HudScene extends Phaser.Scene {
     this._miniSpineRef = null; // identity of the spine snapshot the static layer was drawn from
   }
 
+  // Dev overlay label for the active input scheme. #346 added a third one, 'touch';
+  // anything else still reads as mouse+keyboard.
+  _inputModeLabel() {
+    const m = this.registry.get('inputMode');
+    return m === 'pad' ? 'CONTROLLER' : m === 'touch' ? 'TOUCH' : 'MOUSE + KB';
+  }
+
   update() {
     const mech = this.registry.get('playerMech');
     if (!mech) return;
@@ -293,7 +300,7 @@ export default class HudScene extends Phaser.Scene {
     // #296: dev-only overlays — the objects only exist under DEV (see create()), so their
     // per-frame updates are gated behind the same flag (stripped from the production build).
     if (import.meta.env.DEV) {
-      this.modeText.setText(this.registry.get('inputMode') === 'pad' ? 'CONTROLLER' : 'MOUSE + KB');
+      this.modeText.setText(this._inputModeLabel());
       const aiMove = this.registry.get('aiMove') !== false;
       const aiFire = this.registry.get('aiFire') !== false;
       this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);

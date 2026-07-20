@@ -73,7 +73,11 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   of the four slots is bound to a fixed button (`SKILL_BINDS`): RA→RT/RMB, LA→LT/LMB,
   RT→RB/E, LT→LB/Q. L3/Space is the always-available Dash (#261, `DASH_BIND` — separate from
   `SKILL_BINDS`, it isn't a mountable location); R3/F is unbound since #322. Left stick/WASD
-  drives, right stick/mouse aims.
+  drives, right stick/mouse aims. **#346 added touch as a THIRD source into that same intent**:
+  floating on-screen sticks (left half drives, right half aims with the pad's hold-last-angle
+  semantics). The stick math is pure and unit-tested in `touchSticks.js` (tuning dials live in
+  its `TOUCH_STICK` object, including a `floating` flag); `TouchStickHud.js` only draws them.
+  Touch reports no fire and no dash — weapon triggers are deliberately out of #346's scope.
 - **`src/scenes/`** — `GarageScene` (mech lab: a four-slot paper-doll; click a catalog
   item then a body section to mount it, each slot shows its fire bind, live mech preview,
   deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia; turret slews
