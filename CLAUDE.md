@@ -57,6 +57,15 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     abilities, every mountable item is a weapon, so this is a thin wrapper over `WEAPONS`),
     `loadout.js` (the build model: **four skill slots, one item per location**,
     melee only in arms; no tonnage, no multi-slot capacity).
+  - `players.js` — the PLAYERS COLLECTION (#347, phase 1 of local co-op). The arena holds
+    `scene.players` — currently exactly ONE entry — instead of a player singleton. Pure
+    queries here (`nearestPlayer`, `allPlayersDead`, `playersCentroid`); the scene-side
+    seams live in `scenes/arena/players.js` as standalone `fn(scene, …)` helpers (not mixin
+    methods, so the arena's hand-built test doubles work unchanged). Arena code asks a
+    QUESTION — `targetPlayerFor` (which player is this enemy fighting? NEAREST),
+    `listenerOf`, `fogOriginOf`, `cameraFocusOf`, `livePlayersOf` — rather than reading a
+    global. `scene.px`/`py`/`mech`/`playerView`/`_playerDead` still work: they're delegating
+    accessors onto `players[0]` (bottom of `ArenaScene.js`), aliasing the same storage.
   - `hexgrid.js` — the shared hex primitives every hex-aware module builds on (others
     that reason about hexes: `hexRoute.js`, `hexEdges.js`, `hexLabels.js`, `wallEdges.js`,
     `worldgen.js`, `arena/world.js`). Axial coords; pure

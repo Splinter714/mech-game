@@ -23,6 +23,7 @@ import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
+import { enemyTargetOf, listenerOf, targetPlayerFor } from './players.js';
 // #305: the multi-weapon seam. A kind may declare several weapon SLOTS; the behaviour names the
 // live one via `e.weaponSlot` and this file resolves it — no weapon-id literal (#243) and no
 // slot-key literal ever appears here. See data/kindWeapons.js's header for the whole model.
@@ -957,8 +958,13 @@ export const EnemiesMixin = {
   // Its own router token: a mech in COVER/FLANK routes toward a cover spot, not the player, so
   // sharing one cached route between the two goals would invalidate it on alternate frames and
   // burn a search every tick. Two tokens, two independent cached routes, each on its own cadence.
+  // #347: routes to THIS enemy's target player (`targetPlayerFor` — nearest), not to a global
+  // "the player". With one player that is the same unit and the same route; with two, each
+  // enemy routes to its own nearest, and the per-enemy cached route token already scopes
+  // correctly because it lives on `e`.
   _playerTravel(e) {
-    return this._routedIntent(e, this.px, this.py, (e._playerRouteToken ??= {}));
+    const tp = targetPlayerFor(this, e);
+    return this._routedIntent(e, tp.x, tp.y, (e._playerRouteToken ??= {}));
   },
 
   _updateEnemy(e, dt, delta) {
@@ -978,9 +984,14 @@ export const EnemiesMixin = {
     // #68: non-mech kinds run their own simple per-kind brain + integrate/render path.
     if (e.kind !== 'mech') { this._updateVehicle(e, dt, delta); return; }
     const mv = e.mech.movement;
-    const dxp = this.px - e.x, dyp = this.py - e.y;
+    // #347: this unit's target player — nearest (`targetPlayerFor`). Resolved ONCE here and
+    // threaded through the whole tick (bearing, LOS, state decision, lock, fire angle) so a
+    // single enemy can never reason about two different players within one frame.
+    const tp = targetPlayerFor(this, e);
+    e.targetPlayer = tp;
+    const dxp = tp.x - e.x, dyp = tp.y - e.y;
     const dist = Math.hypot(dxp, dyp) || 1;
-    const bearing = Math.atan2(dyp, dxp);           // from enemy → player
+    const bearing = Math.atan2(dyp, dxp);           // from enemy → its target player
     const ux = dxp / dist, uy = dyp / dist;
 
     // Line-of-sight to the player (needed both for awareness detection below and the firing gate
@@ -989,7 +1000,7 @@ export const EnemiesMixin = {
     // was the top game-logic CPU cost run raw per mech per frame — now a STAGGERED CACHE
     // (`_cachedLosToPlayer`, ~120ms per-enemy refresh) so the expensive raycast runs ~8x less
     // often; the value is exact at each refresh and feeds awareness, the lock, and firing alike.
-    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, this.px, this.py, isSmallUnit(e));
+    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, tp.x, tp.y, isSmallUnit(e));
 
     // #103 awareness: an UNAWARE enemy hasn't noticed the player yet — it idles near its spawn
     // point rather than engaging. It flips to AWARE (permanently, for the rest of the encounter)
@@ -1198,7 +1209,7 @@ export const EnemiesMixin = {
           // #264: real positional audio — the firer's actual muzzle position vs. the
           // player's (the listener) drives distance falloff + stereo pan, replacing the old
           // flat ENEMY_FIRE_GAIN_SCALE approximation (see fireCues.js's header comment).
-          scheduleFireCues(this, w.weapon, plan, true, 1, { x: mx2, y: my2, listenerX: this.px, listenerY: this.py });
+          scheduleFireCues(this, w.weapon, plan, true, 1, { x: mx2, y: my2, ...listenerOf(this) });
         }
         // #269 playtest follow-up (helicopter Repeater streams bug): dispatch EVERY emission in
         // `plan.shots`, not just one — see `_fireEnemyShots`'s header comment for the root cause
@@ -1253,7 +1264,11 @@ export const EnemiesMixin = {
       const p = nearestValidPixel(this.terrain, this.worldRadius, e.x, e.y);
       e.x = p.x; e.y = p.y; e.vx = 0; e.vy = 0;
     }
-    const dxp = this.px - e.x, dyp = this.py - e.y;
+    // #347: same per-tick target resolution as the mech path (`_updateEnemy`) — nearest player,
+    // stamped on `e` so this vehicle's aim, routing and firing all agree within the frame.
+    const tp = targetPlayerFor(this, e);
+    e.targetPlayer = tp;
+    const dxp = tp.x - e.x, dyp = tp.y - e.y;
     const dist = Math.hypot(dxp, dyp) || 1;
     const bearing = Math.atan2(dyp, dxp);
     const ux = dxp / dist, uy = dyp / dist;
@@ -1539,7 +1554,7 @@ export const EnemiesMixin = {
     // never stacks overlapping fire-cue trails.
     if (this._allowEnemyFireCue(weapon.id, plan)) {
       // #264: same real positional audio as the mech enemy loop above.
-      scheduleFireCues(this, weapon, plan, true, 1, { x: mx, y: my, listenerX: this.px, listenerY: this.py });
+      scheduleFireCues(this, weapon, plan, true, 1, { x: mx, y: my, ...listenerOf(this) });
     }
     // #269 playtest follow-up (helicopter Repeater streams bug): dispatch EVERY emission in
     // `plan.shots`, not just one — see `_fireEnemyShots`'s header comment for the root cause
@@ -1584,22 +1599,26 @@ export const EnemiesMixin = {
   // straight line — line of sight, the bearing, "is the player's turret tracking me" — keeps using
   // `dist`.
   _decideEnemyState(e, travelDist, dist, bearing, hp) {
+    // #347: the player this unit is fighting (stamped by `_updateEnemy` this tick). Every
+    // "player-reaction signal" below — is he fleeing ME, is he hurt, is he aiming at ME — is
+    // now explicitly about THAT player rather than about a global singleton.
+    const tp = enemyTargetOf(this, e);
     const tooClose = travelDist < e.standoff * TOO_CLOSE_FRAC;
     const tooFar = travelDist > e.standoff * TOO_FAR_FRAC;
     // #167: fresh (not cached) — state decisions run on the slow DECIDE_MIN/MAX cadence, not per
     // frame, so this wants a current read; still routed through the allocation-free raycast.
-    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, this.px, this.py, isSmallUnit(e)) === Infinity;
+    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, tp.x, tp.y, isSmallUnit(e)) === Infinity;
     const hurt = hp < COVER_HEALTH_TRIGGER || this.time.now < e.hurtUntil;
     const now = this.time.now;
 
     // Player-reaction signals.
-    const pspeed = Math.hypot(this.vx || 0, this.vy || 0);
-    const fleeDot = pspeed > 8 ? (-(this.vx * Math.cos(bearing) + this.vy * Math.sin(bearing)) / pspeed) : 0;
+    const pspeed = Math.hypot(tp.vx || 0, tp.vy || 0);
+    const fleeDot = pspeed > 8 ? (-(tp.vx * Math.cos(bearing) + tp.vy * Math.sin(bearing)) / pspeed) : 0;
     const playerFleeing = fleeDot > PLAYER_FLEE_DOT;         // moving away from this enemy
-    const playerVulnerable = lethalHealth(this.mech) < PLAYER_VULN_HEALTH;
-    // "Is the player aiming at me?" — player turret facing vs bearing from player to enemy.
-    const toEnemy = Math.atan2(e.y - this.py, e.x - this.px);
-    const trackDot = Math.cos(this.turretAngle - toEnemy);
+    const playerVulnerable = lethalHealth(tp.mech) < PLAYER_VULN_HEALTH;
+    // "Is the player aiming at me?" — that player's turret facing vs bearing from him to me.
+    const toEnemy = Math.atan2(e.y - tp.y, e.x - tp.x);
+    const trackDot = Math.cos(tp.turretAngle - toEnemy);
     const beingTracked = trackDot > TRACKED_DOT && dist < e.standoff * 1.3;
 
     // 0) ARTILLERY posture (#44 follow-up): a mech whose whole loadout is indirect-fire never
@@ -1677,14 +1696,15 @@ export const EnemiesMixin = {
   // player by a flank angle on the enemy's handedness. This makes enemies travel to distinct
   // off-axis spots (varying approach vectors) instead of holding a constant-radius orbit.
   _flankGoal(e, bearing) {
+    const tp = enemyTargetOf(this, e);   // #347: flank the player THIS unit is fighting
     const ang = rand(FLANK_ANGLE_MIN, FLANK_ANGLE_MAX) * e.handed;
     // Angle from the PLAYER out to the desired spot = (player→enemy bearing) rotated by `ang`.
     const outAng = bearing + Math.PI + ang;
-    let gx = this.px + Math.cos(outAng) * e.standoff;
-    let gy = this.py + Math.sin(outAng) * e.standoff;
+    let gx = tp.x + Math.cos(outAng) * e.standoff;
+    let gy = tp.y + Math.sin(outAng) * e.standoff;
     // Nudge the goal off blocked terrain by pulling it back toward the player until clear.
     for (let t = 0; t < 5 && this._blocked(gx, gy); t++) {
-      gx = (gx + this.px) / 2; gy = (gy + this.py) / 2;
+      gx = (gx + tp.x) / 2; gy = (gy + tp.y) / 2;
     }
     return { x: gx, y: gy };
   },
@@ -1696,6 +1716,11 @@ export const EnemiesMixin = {
   // probe uses own-hex transparency, so standing INSIDE a soft-cover hex no longer counts as
   // cover (the hex wouldn't protect its occupant) — the spot must be BEHIND a blocking hex.
   _findCoverSpot(e, bearing, exclude = null) {
+    // #347: cover means "out of sight of the player I'm fighting". With more than one player
+    // that is a genuine simplification — hiding from your nearest attacker can leave you exposed
+    // to the other — but it is the correct phase-1 reading of the existing rule, and the choice
+    // now lives in one named place rather than being implicit in a global read.
+    const tp = enemyTargetOf(this, e);
     const here = { q: 0, r: 0 };
     // Candidate hex centres within a few rings of the enemy.
     const cand = range(here, COVER_SEARCH_RING)
@@ -1707,11 +1732,11 @@ export const EnemiesMixin = {
     let best = null, bestScore = Infinity;
     for (const p of cand) {
       if (exclude && Math.hypot(p.x - exclude.x, p.y - exclude.y) <= COVER_SPOT_RADIUS) continue;
-      const d = Math.hypot(p.x - this.px, p.y - this.py);
-      const ang = Math.atan2(p.y - this.py, p.x - this.px);
+      const d = Math.hypot(p.x - tp.x, p.y - tp.y);
+      const ang = Math.atan2(p.y - tp.y, p.x - tp.x);
       // A spot is cover if the player's line of sight to it is broken by a wall before it
       // (own-hex transparency applied: neither endpoint's soft-cover hex counts, #72).
-      const losBlocked = this._wallDistanceLos(this.px, this.py, ang, d, p.x, p.y, isSmallUnit(e)) < d - COVER_SEARCH_STEP;
+      const losBlocked = this._wallDistanceLos(tp.x, tp.y, ang, d, p.x, p.y, isSmallUnit(e)) < d - COVER_SEARCH_STEP;
       if (!losBlocked) continue;
       // Prefer near cover that keeps us in the fight (not driven to the map edge).
       const travel = Math.hypot(p.x - e.x, p.y - e.y);
@@ -1811,9 +1836,13 @@ export const EnemiesMixin = {
     // each frame) — this is the LIVE handle a homing round stashes and re-reads every frame, so it
     // must never be replaced by an {x, y} snapshot. Carries `.mech` (destroyed check) + live
     // position/velocity.
-    const player = e.playerTarget ??= { mech: this.mech, x: 0, y: 0, vx: 0, vy: 0 };
-    player.mech = this.mech; player.x = this.px; player.y = this.py;
-    player.vx = this.vx || 0; player.vy = this.vy || 0;
+    // #347: mirrors whichever player this unit is fighting. The handle stays per-enemy and
+    // mutated in place (a homing round stashed it and re-reads it every frame), so retargeting
+    // in phase 2 will correctly redirect that enemy's in-flight rounds along with its aim.
+    const tp = enemyTargetOf(this, e);
+    const player = e.playerTarget ??= { mech: tp.mech, x: 0, y: 0, vx: 0, vy: 0 };
+    player.mech = tp.mech; player.x = tp.x; player.y = tp.y;
+    player.vx = tp.vx || 0; player.vy = tp.vy || 0;
     e.lockTarget = dist <= LOCK_RANGE ? player : null;
   },
 
@@ -1825,7 +1854,8 @@ export const EnemiesMixin = {
     const vel = (d.hit === 'hitscan' || d.hit === 'contact') ? 0 : (d.velocity || 0);
     if (vel <= 0) return Math.atan2(dyp, dxp);
     const t = dist / vel;
-    const lx = this.px + (this.vx || 0) * t, ly = this.py + (this.vy || 0) * t;
+    const tp = enemyTargetOf(this, e);   // #347: lead the player THIS unit is shooting at
+    const lx = tp.x + (tp.vx || 0) * t, ly = tp.y + (tp.vy || 0) * t;
     return Math.atan2(ly - e.y, lx - e.x);
   },
 };

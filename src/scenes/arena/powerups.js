@@ -32,6 +32,7 @@ import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
 } from './shieldOutline.js';
+import { livePlayersOf, primaryPlayerOf } from './players.js';
 
 const PICKUP_RADIUS = 26;        // px — how close the player must get to grab a collectible
 const BOB_PERIOD = 1400;         // ms — collectible hover-bob cycle
@@ -66,7 +67,8 @@ export const PowerupsMixin = {
   // the mech's own shield tick). The show/hide edge, the fraction-driven fade, and the #237
   // early-exit-when-empty guarantee all live in `updateShieldOutline`.
   _updateShieldVisual(delta) {
-    updateShieldOutline(this._shieldVisual, this.playerView, this.mech?.shield, delta);
+    const p = primaryPlayerOf(this);
+    updateShieldOutline(this._shieldVisual, p?.view ?? this.playerView, p?.mech?.shield, delta);
   },
 
   // #205: a brief outward pulse on the outline glow the instant it actually absorbs a hit —
@@ -125,7 +127,10 @@ export const PowerupsMixin = {
   // The side-anchor for a kill's drops (see `_reachableDropPos`). Shared by the powerup and
   // salvage drop paths so both rewards from one kill land on the same side.
   _dropSideRef(x, y, flying = false) {
-    if (flying) return { x: this.px, y: this.py };
+    // #347: a flyer's drop follows the primary player's side of the wall (#336). With two
+    // players "which side" becomes ambiguous and is phase-2 work; the primary keeps today's
+    // behaviour exactly.
+    if (flying) { const p = primaryPlayerOf(this); return { x: p.x, y: p.y }; }
     return { x, y };
   },
 
@@ -195,9 +200,15 @@ export const PowerupsMixin = {
       // Ground glow stays on the floor (counter the bob) and shimmers with the pulse.
       for (const g of v._glow) { g.y = 6 - bob; g.setScale(0.9 + 0.2 * pulse); }
 
-      // Pickup: player within grab radius.
-      if (Math.hypot(this.px - pk.x, this.py - pk.y) <= PICKUP_RADIUS) {
-        this._activatePowerup(pk.type);
+      // Pickup: a player within grab radius. #347: this is the phase-2 answer to #335's open
+      // question 6 ("do powerups become contested pickups, or apply to whoever grabs them?")
+      // already wired — the COLLECTOR is found here and handed to `_activatePowerup`, so the
+      // buff lands on that player rather than on a global "the player". With one player this
+      // is the same single distance test and the same recipient it always was.
+      const collector = livePlayersOf(this).find(
+        (p) => Math.hypot(p.x - pk.x, p.y - pk.y) <= PICKUP_RADIUS);
+      if (collector) {
+        this._activatePowerup(pk.type, collector);
         pk.view.destroy();
         this.powerups.splice(i, 1);
         continue;
@@ -225,36 +236,41 @@ export const PowerupsMixin = {
   //    mech's own shield layer; the boost's remaining time is what stacks, at the same unchanged
   //    `boostMult`, so a second Shield means a longer big-shield window, not a bigger one.
   //  - Everything else is a plain timed buff whose per-type countdown accumulates.
-  _activatePowerup(typeId) {
+  // `player` is WHO collected it (powerups.js `_updatePowerups`). Defaults to the primary
+  // player so the existing tests/call sites that activate a buff with no collector still work.
+  // Note the timed-buff overlay (`this.activePowerups`) is still SCENE-level, i.e. shared: that
+  // is deliberate for phase 1 (it is exactly today's behaviour) and is the next thing phase 2
+  // must split, per-player, when a second player can pick one up.
+  _activatePowerup(typeId, player = primaryPlayerOf(this)) {
     const p = POWERUPS[typeId];
     if (!p) return;
     // #196: each powerup type now has its OWN independently-tunable pickup cue (was one
     // shared 'powerupPickup' cue for all five) — dispatch keyed off the actual type picked up.
     Audio.ui('powerupPickup' + typeId[0].toUpperCase() + typeId.slice(1));
     if (isInstant(typeId)) {
-      this._applyInstantPowerup(typeId);
+      this._applyInstantPowerup(typeId, player);
     } else if (p.effect === 'shield') {
       // Same `boostMult` as ever (magnitude does NOT compound), for a stacked span of time.
-      this.mech.boostShield(
+      player.mech.boostShield(
         p.boostMult ?? 1,
-        stackedRemainingMs(typeId, this.mech.shieldBoostRemainingMs),
+        stackedRemainingMs(typeId, player.mech.shieldBoostRemainingMs),
       );
     } else {
       this.activePowerups[typeId] = stackedRemainingMs(typeId, this.activePowerups[typeId]);
     }
     const col = '#' + p.color.toString(16).padStart(6, '0');
-    this._floatText(this.px, this.py - 34, p.label, col);
+    this._floatText(player.x, player.y - 34, p.label, col);
   },
 
   // Instant powerup effects (no timer). Currently just Armor Patch: whole-mech proportional
   // repair of missing armor (delegates the per-location math to the model / pure calc).
-  _applyInstantPowerup(typeId) {
+  _applyInstantPowerup(typeId, player = primaryPlayerOf(this)) {
     if (typeId === 'armorPatch') {
-      const restored = this.mech.repairArmor(POWERUPS.armorPatch.repairFrac);
+      const restored = player.mech.repairArmor(POWERUPS.armorPatch.repairFrac);
       // #315: derived from the entry's own colour, not a second hardcoded copy of it — the old
       // literal '#8ad0ff' silently kept the retired light blue when the palette moved to silver.
       const col = '#' + POWERUPS.armorPatch.color.toString(16).padStart(6, '0');
-      if (restored > 0) this._floatText(this.px, this.py - 20, `+${Math.round(restored)} armor`, col);
+      if (restored > 0) this._floatText(player.x, player.y - 20, `+${Math.round(restored)} armor`, col);
     }
   },
 

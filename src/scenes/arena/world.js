@@ -23,6 +23,7 @@ import {
   DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
   isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH,
 } from './shared.js';
+import { listenerOf, livePlayersOf } from './players.js';
 
 // #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). Sized
 // against ordinary walk-through cover (forest/wreck 40, scrub/drift/fumarole 30, all unchanged by
@@ -617,7 +618,10 @@ export const WorldMixin = {
   // this stays unconditional (not tier-gated) since the player is always effectively "large."
   // `self` is excluded from the enemy scan so a unit never blocks against its own circle.
   _blockedByOtherGroundUnit(self, x, y) {
-    if (circleContains(x, y, this.px, this.py, ENEMY_COLLIDE_RADIUS_MECH)) return true;
+    // #347: EVERY player is a solid obstacle to a ground unit, not just "the" player.
+    for (const pl of livePlayersOf(this)) {
+      if (circleContains(x, y, pl.x, pl.y, ENEMY_COLLIDE_RADIUS_MECH)) return true;
+    }
     const selfSmall = isSmallUnit(self);
     for (const o of this.enemies) {
       if (o === self) continue;
@@ -898,7 +902,7 @@ export const WorldMixin = {
   // (a forest hex burning/chewed down) plays a lighter version — quieter cue, smaller flash/ring.
   _outpostCollapseFx(x, y, soft = false) {
     // #264: real positional audio — the collapsing outpost's position vs. the player (listener).
-    Audio.explosion(soft ? 0.45 : 1.0, { x, y, listenerX: this.px, listenerY: this.py });
+    Audio.explosion(soft ? 0.45 : 1.0, { x, y, ...listenerOf(this) });
     // #99: explicit DEPTH.IMPACT_FX — same tier as combat.js's impact/death bursts, which this
     // is (a collapse explosion); previously unset, only reading "on top" by add-order accident.
     const flash = this.add.circle(x, y, 6, 0xffe6a0, soft ? 0.6 : 0.9).setDepth(DEPTH.IMPACT_FX);

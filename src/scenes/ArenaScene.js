@@ -22,6 +22,8 @@ import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { TerrainLabelsMixin } from './arena/terrainLabels.js';
 import { VisibilityMixin } from './arena/visibility.js';
+import { makePlayer } from '../data/players.js';
+import { cameraFocusOf, primaryPlayerOf } from './arena/players.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -85,6 +87,12 @@ export default class ArenaScene extends Phaser.Scene {
     // create()" pattern as `_initRun`/`_initMission` above. Without this, the first death of a
     // session permanently disabled movement/firing (update()'s `!this._playerDead` gate) on
     // every subsequent deploy, with no way to recover short of reloading the page.
+    // #347: the PLAYERS COLLECTION is built first, because `this.mech`/`this.px`/`this._playerDead`
+    // and friends are now delegating accessors onto `this.players[0]` (see the bottom of this
+    // file) — assigning any of them before the collection exists would have nowhere to write.
+    // Exactly one entry today; the pose fields are set to their real deploy values just below,
+    // through those same accessors, so the assignments read unchanged.
+    this.players = [makePlayer({ id: 0, textureKey: 'playerMech' })];
     this._playerDead = false;
     // Refs #304: same reason, for the enemy-side stand-down clock stamped off that flag
     // (enemies.js `_standDownActive`). Without this reset a redeploy after a death would find
@@ -164,7 +172,12 @@ export default class ArenaScene extends Phaser.Scene {
     // below it (DEPTH.GROUND_UNITS) so it's never visually obscured.
     this.playerView = this._makeMechView('playerMech', this.px, this.py, this.angle, true);
 
-    this.cameras.main.startFollow(this.playerView, true, 0.12, 0.12);
+    // #347: the camera follows whatever `cameraFocusOf` nominates — today the primary player's
+    // own view, i.e. exactly the previous `startFollow(this.playerView, …)`. Phase 2 replaces
+    // this with a shared leashed camera framing every player (`playersCentroidOf`), and this is
+    // the single line that changes. Deliberately NOT entrenching the single-follow assumption
+    // further: nothing else in the scene reads the camera target.
+    this.cameras.main.startFollow(cameraFocusOf(this).view, true, 0.12, 0.12);
 
     // #269: the old off-screen opening squad (#44) is retired — every base's docked units are
     // placed HERE, at deploy time, dormant, at their fixed dock positions (no camera/player-
@@ -294,7 +307,12 @@ export default class ArenaScene extends Phaser.Scene {
     // for weapon convergence/firing), not the hull's movement heading (Refs #116 playtest feedback:
     // the arrow should point where you're aiming, not where you're driving), objective (from
     // objectiveWorld), and enemy dots on the map.
-    this.registry.set('playerWorld', { x: this.px, y: this.py, angle: this.turretAngle });
+    // #347: the HUD is still single-player shaped and is deliberately left that way this phase
+    // (a second HUD row/health bar is visible change, i.e. phase 2). It is fed from the PRIMARY
+    // player — the local one whose HUD this is — rather than from a scene singleton, so phase 2
+    // adds a `players` channel alongside this one instead of rerouting it.
+    const hudPlayer = primaryPlayerOf(this);
+    this.registry.set('playerWorld', { x: hudPlayer.x, y: hudPlayer.y, angle: hudPlayer.turretAngle });
     const enemyPos = [];
     for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyPos.push({ x: e.x, y: e.y });
     this.registry.set('enemyPositions', enemyPos);
@@ -321,12 +339,18 @@ export default class ArenaScene extends Phaser.Scene {
     // rather than each mixin re-checking the flag itself. `_updateRun` (run.js, still called
     // unconditionally below) is what owns the delayed return-to-garage transition; this only
     // freezes the player's own agency, not the run's bookkeeping.
-    if (!this._playerDead) {
+    // #347: gated PER PLAYER, not on a scene flag — a dead player stops steering while the
+    // others keep playing. With one player this is the same single gate on the same single
+    // latch (`player.dead` IS what `this._playerDead` now reads). `intent` is still ONE input
+    // source: a second controller producing a second intent is explicitly phase 2, so every
+    // player is driven from the same intent here — which, with one player, is what it always was.
+    for (const player of this.players) {
+      if (player.dead) continue;
       // #188/#261: resolve Sprint (Overclock-only now) and Dash's burst/cooldown BEFORE _drive
       // so a same-frame press is reflected in this frame's speed multiplier, not delayed a frame.
       this._handleSprint(intent, delta);
       this._handleDash(intent, delta);
-      this._drive(intent, dt);
+      this._drive(intent, dt, player);
     }
 
     // ── One-shot pad buttons (#28 AI toggles, #29 return to garage). #252: the manual R3/T
@@ -349,8 +373,10 @@ export default class ArenaScene extends Phaser.Scene {
     // targeted (hides itself the instant the target dies or there's no target, same as that query).
     const lockPt = this._lockAimPoint();
     this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
-    this._stepGait(dt);
-    if (!this._playerDead) this._handleFiring(intent, delta);
+    for (const player of this.players) this._stepGait(dt, player);
+    for (const player of this.players) {
+      if (!player.dead) this._handleFiring(intent, delta, player);
+    }
     this._updateEnemies(dt, delta);
     // #269 §5: tick every standing alert tower's wake-countdown sensor.
     this._updateAlertTowers(dt);
@@ -396,10 +422,14 @@ export default class ArenaScene extends Phaser.Scene {
 
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
     // Surge, which used to multiply this rate, was removed as redundant with Overcharge.)
-    this.mech.regenAmmo(dt);
+    // #347: per player — each mech regenerates its own magazines and ticks its own shield.
+    // One player today, so this is the same two calls it always was.
+    for (const p of this.players) {
+      p.mech.regenAmmo(dt);
     // #246: passive shield regen (with its brief post-hit pause) + counting down any active
     // Shield-powerup boost — see Mech.tickShield/boostShield (data/Mech.js).
-    this.mech.tickShield(dt);
+      p.mech.tickShield(dt);
+    }
   }
 
   // #216: the sound cue lives HERE, not in any of the call sites, because this is the one
@@ -446,3 +476,40 @@ Object.assign(
   ArenaScene.prototype,
   WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin,
 );
+
+// #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.
+//
+// This is deliberately a compatibility layer, not the destination. The de-singletoning that
+// matters happened in the seams (arena/players.js) and in the call sites that now ask a
+// QUESTION — "which player is this enemy fighting?", "who collected this?" — instead of
+// reading a global. What these accessors buy is that the remaining ~40 references which are
+// genuinely about THE LOCAL PLAYER (its own gait, its own turret, its own HUD row) did not
+// have to be churned in the same commit, and that the arena's ~25 hand-built test doubles —
+// which set `px`/`py`/`mech` as plain properties — keep working untouched.
+//
+// The storage is real: writing `this.px` writes `players[0].x`. There is no second copy that
+// can drift, which is the failure mode a "keep both" shim would have had.
+const PLAYER_FIELD_ALIASES = {
+  mech: 'mech',
+  px: 'x', py: 'y',
+  angle: 'angle', turretAngle: 'turretAngle',
+  aimX: 'aimX', aimY: 'aimY',
+  vx: 'vx', vy: 'vy', speed: 'speed',
+  stepMs: 'stepMs', hullFrame: 'hullFrame',
+  playerView: 'view',
+  _playerDead: 'dead',
+};
+for (const [sceneField, playerField] of Object.entries(PLAYER_FIELD_ALIASES)) {
+  Object.defineProperty(ArenaScene.prototype, sceneField, {
+    get() { return this.players?.[0]?.[playerField]; },
+    set(v) {
+      // Before create() has built the collection there is nothing to write to. That only
+      // happens if something assigns player state outside the deploy path, which nothing does
+      // — but silently dropping the write would be a nasty bug to find, so it throws.
+      const p = this.players?.[0];
+      if (!p) throw new Error(`ArenaScene.${sceneField} set before this.players existed (#347)`);
+      p[playerField] = v;
+    },
+    configurable: true,
+  });
+}

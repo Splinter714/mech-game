@@ -3,6 +3,7 @@
 // the per-shot helpers (cadence, range falloff, ability activation). Methods use `this`
 // (the ArenaScene); composed onto the prototype via Object.assign.
 import { CATEGORIES } from '../../data/categories.js';
+import { livePlayersOf, primaryPlayerOf } from './players.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
@@ -33,12 +34,22 @@ export const FiringMixin = {
 
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
   // auto-fires that location's weapon at its own cadence, gated by ammo. ──
-  _handleFiring(intent, delta) {
+  // #347: fires ONE player's slots. `player` defaults to the primary, so every existing caller
+  // and test double is unchanged; ArenaScene.update() passes each player explicitly.
+  //
+  // SCOPE NOTE — deliberately partial, and this is the honest boundary of phase 1. The weapon
+  // SOURCE is now per-player (`player.mech.weapons()`), but the rest of the firing chain is
+  // still primary-scoped: `this.fireCooldowns` is one shared map, `this.convergeTarget` is one
+  // shared aim pick, and `fireWeapon`/`_muzzle` default to the primary player. All three are
+  // driven by INPUT and AIM, which means splitting them is inseparable from adding a second
+  // controller and a second reticle — explicitly phase 2. Leaving them shared is exactly
+  // today's behaviour for one player rather than a half-migration that could drift.
+  _handleFiring(intent, delta, player = primaryPlayerOf(this)) {
     this._heldAudio ??= {};
     // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
     // can measure our code-path cost from here to the audio node's start().
     Audio.markTrigger();
-    for (const w of this.mech.weapons()) {
+    for (const w of player.mech.weapons()) {
       let cd = (this.fireCooldowns[w.location] ?? 0) - delta;
       if (intent.fire[w.location] && cd <= 0 && w.ready) {
         this.fireWeapon(w);
@@ -187,8 +198,11 @@ export const FiringMixin = {
     // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
     // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.
     this._lastFireAt = this.time.now;
-    this._lastFireX = this.px;
-    this._lastFireY = this.py;
+    // #347: the NOISE source that wakes enemies — whoever fired. Primary-scoped for now, in
+    // step with the rest of the firing chain above; one player makes it identical.
+    const shooter = primaryPlayerOf(this);
+    this._lastFireX = shooter.x;
+    this._lastFireY = shooter.y;
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
@@ -268,10 +282,12 @@ export const FiringMixin = {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     let target = null, t = 0;
     if (owner === 'enemy') {
-      if (!this.mech.isDestroyed()) {
-        const ex = this.px - mx, ey = this.py - my;
+      // #347: sweep against every live player and take the nearest one in the arc, mirroring
+      // the player-side sweep just below. One player today = the same single test as before.
+      for (const p of livePlayersOf(this)) {
+        const ex = p.x - mx, ey = p.y - my;
         const tt = ex * dirX + ey * dirY, perp = Math.abs(ex * dirY - ey * dirX);
-        if (tt > 0 && tt < reach && perp < 44) { target = 'player'; t = tt; }
+        if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = p; t = tt; }
       }
     } else {
       for (const e of this.enemies) {
@@ -283,7 +299,7 @@ export const FiringMixin = {
     const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
     if (target) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      if (owner === 'enemy') this._damagePlayerAt(dmg);
+      if (owner === 'enemy') this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
     }
     // Animate the crescent across a few frames, then clear.
@@ -328,7 +344,10 @@ export const FiringMixin = {
   // know who's shooting at whom.
   _liveTargetsForTrace(owner) {
     if (owner === 'enemy') {
-      return this.mech.isDestroyed() ? [] : [{ x: this.px, y: this.py, destroyed: false, ref: 'player' }];
+      // #347: every LIVE player is a candidate, each carrying itself as `ref` so the hit
+      // resolution downstream knows WHICH player the ray struck. One player today, so this is
+      // the same one-item list `traceHitscan` has always been handed.
+      return livePlayersOf(this).map((p) => ({ x: p.x, y: p.y, destroyed: false, ref: p }));
     }
     return this._liveEnemiesForTrace();
   },
@@ -480,7 +499,7 @@ export const FiringMixin = {
     }
     if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      if (owner === 'enemy') this._damagePlayerAt(dmg);
+      if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target));
       else this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
@@ -530,7 +549,8 @@ export const FiringMixin = {
     // rounds just run out at max range. This travel budget is what the kinematic round flies.
     let maxDist = maxRange;
     if (d.path === 'arcing') {
-      const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : (seekTarget ?? { x: this.px, y: this.py });
+      const primary = primaryPlayerOf(this);
+      const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : (seekTarget ?? { x: primary.x, y: primary.y });
       // arcMaxDist (data/delivery.js, #77 follow-up) takes `aimAngle` — the weapon's un-offset
       // CENTRE bearing — not `angle` (this shot's own possibly fan-offset launch heading). See
       // that function's comment for why using the shot's own angle here regressed both missile
@@ -603,3 +623,11 @@ export const FiringMixin = {
     return pushed;
   },
 };
+
+// #347: the player a hitscan trace actually struck. `traceHitscan` hands back the candidate it
+// hit, whose `ref` is the player object itself (see `_liveTargetsForTrace`). Falls back to the
+// primary player for the arena test doubles that stub `traceHitscan` and return a bare target.
+function playerRefOf(scene, target) {
+  const ref = target?.ref ?? target;
+  return (ref && ref.mech && ref.x != null) ? ref : primaryPlayerOf(scene);
+}

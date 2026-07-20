@@ -41,6 +41,7 @@
 // threats. And the softness — 0.62 ceiling, a 3-ring gradient ramp — is the one part of the v1 look
 // he did not object to.
 import { DEPTH } from './shared.js';
+import { fogOriginOf } from './players.js';
 import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { blocksSpan } from '../../data/wallEdges.js';
 import {
@@ -98,7 +99,12 @@ export const VisibilityMixin = {
 
   _updateVisibility(view) {
     if (!this._visibilityReady) return;
-    const h = pixelToHex(this.px, this.py);
+    // #347: the fog is swept from ONE origin — the local player. Phase 2 makes the lit set the
+    // UNION of every live player's sweep (a compound entered by either counts as entered, and
+    // both peeks light), which is a real design change; phase 1 deliberately keeps the single
+    // origin so the fog renders pixel-identically. Named seam so that change is one edit here.
+    const o = fogOriginOf(this);
+    const h = pixelToHex(o.x, o.y);
     // ── THE ONE STATE TRANSITION ── standing anywhere in a compound's footprint counts as having
     // entered it, and it stays lit for the rest of the run. Note this fires on the OUTLINE ring too,
     // which is right: the only way onto an outline hex is through the wall line itself.
@@ -110,10 +116,10 @@ export const VisibilityMixin = {
       this._fogDrawX = null;
     }
     if (this._fogDrawX !== null
-      && Math.abs(this.px - this._fogDrawX) < REDRAW_MOVE_PX
-      && Math.abs(this.py - this._fogDrawY) < REDRAW_MOVE_PX) return;
-    this._fogDrawX = this.px;
-    this._fogDrawY = this.py;
+      && Math.abs(o.x - this._fogDrawX) < REDRAW_MOVE_PX
+      && Math.abs(o.y - this._fogDrawY) < REDRAW_MOVE_PX) return;
+    this._fogDrawX = o.x;
+    this._fogDrawY = o.y;
     this._updatePeek(here);
     this._drawFog(view);
   },
@@ -133,10 +139,11 @@ export const VisibilityMixin = {
       this.fogFx.clearMask();
       return;
     }
-    const segs = collectShadowSegments(this.px, this.py, PEEK_RADIUS_PX,
+    const o = fogOriginOf(this);   // #347: same single origin as `_updateVisibility`
+    const segs = collectShadowSegments(o.x, o.y, PEEK_RADIUS_PX,
       (q, r) => this.terrain.get(axialKey(q, r)),
       { wallEdges: [...set.edges.values()] });
-    const poly = segs.length ? computeVisibilityPolygon(this.px, this.py, segs, PEEK_RADIUS_PX) : [];
+    const poly = segs.length ? computeVisibilityPolygon(o.x, o.y, segs, PEEK_RADIUS_PX) : [];
     if (poly.length < 3) {
       this._peekSegments = null;
       this.fogFx.clearMask();
@@ -160,7 +167,8 @@ export const VisibilityMixin = {
     if (!g) return;
     g.clear();
     if (!this.foggedHexes?.size) return;
-    const center = pixelToHex(this.px, this.py);
+    const o = fogOriginOf(this);
+    const center = pixelToHex(o.x, o.y);
     const drawn = [];
     for (const h of range(center, this._drawRadius(view))) {
       const k = axialKey(h.q, h.r);
@@ -188,7 +196,8 @@ export const VisibilityMixin = {
   // Does the player's peek reach this world point? The SAME blocker segments the drawn polygon was
   // swept from, so what he can see and what he can shoot cannot disagree.
   _peekVisible(x, y) {
-    return !!this._peekSegments && pointVisibleFrom(this.px, this.py, x, y, this._peekSegments);
+    const o = fogOriginOf(this);
+    return !!this._peekSegments && pointVisibleFrom(o.x, o.y, x, y, this._peekSegments);
   },
 
   // Is this world point visible? The player's targeting gate for non-enemy things (hexes, wall

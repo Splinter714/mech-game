@@ -2,6 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
+import { livePlayersOf, targetPlayerFor } from './players.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
@@ -27,7 +28,11 @@ export const ProjectilesMixin = {
     // of that owner's rounds — instead of allocating a fresh Set (seeded with every enemy hex)
     // per non-arcing round per frame. `_isWallForRound` unions the shared set with each round's
     // own tiny originHexes without any per-round allocation. Same outcome, far less work/GC.
-    const playerTransparent = new Set([this._hexKeyAt(this.px, this.py)]);
+    // #347: every player's own hex is transparent to player-owned rounds (a round leaving a
+    // mech standing in forest must not self-detonate at its own muzzle) — one Set covering all
+    // of them, which for one player is the same single entry as before.
+    const playerTransparent = new Set(
+      livePlayersOf(this).map((pl) => this._hexKeyAt(pl.x, pl.y)));
     const enemyTransparent = new Set();
     for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyTransparent.add(this._hexKeyAt(e.x, e.y));
     // #168: a coarse spatial index over the living enemies, rebuilt once per frame, so a
@@ -53,9 +58,15 @@ export const ProjectilesMixin = {
         : lockedLive
           ? (lockedLive.mech.isDestroyed() ? null : lockedLive)
           : enemyIndex.nearest(p.x, p.y);
-      const targetGone = enemyShot ? this.mech.isDestroyed() : !hitEnemy;
-      const tx = enemyShot ? this.px : (hitEnemy ? hitEnemy.x : p.x);
-      const ty = enemyShot ? this.py : (hitEnemy ? hitEnemy.y : p.y);
+      // #347: an enemy round chases the player NEAREST TO THE ROUND. A round fired at a
+      // specific player already carries that player as its live `seekTarget` handle (set in
+      // enemies.js `_updateEnemyLock`, mutated in place so it keeps tracking); this nearest
+      // fallback is for the dumb-fire rounds that have none. With one player both resolve to
+      // the same target, so the hit test is unchanged.
+      const hitPlayer = enemyShot ? targetPlayerFor(this, p) : null;
+      const targetGone = enemyShot ? !hitPlayer || hitPlayer.mech.isDestroyed() : !hitEnemy;
+      const tx = enemyShot ? hitPlayer?.x : (hitEnemy ? hitEnemy.x : p.x);
+      const ty = enemyShot ? hitPlayer?.y : (hitEnemy ? hitEnemy.y : p.y);
 
       // Homing steers toward the round's seek target (the lock's aim point, stashed once at fire —
       // firing.js). The target handle itself is either a LIVE enemy record (re-read fresh every
@@ -203,7 +214,7 @@ export const ProjectilesMixin = {
         p.stopTrajectorySfx?.();   // #56: ditto — impact/landing is the other death site
         if (toTarget < HIT_RADIUS + p.splash) {
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          if (enemyShot) this._damagePlayerAt(dmg);
+          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
           else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
@@ -349,8 +360,10 @@ export const ProjectilesMixin = {
         // call is that fire is a ground hazard: your own napalm hurts you too, and an
         // artillery mech that lobs it into its own crowd cooks that crowd. So there is
         // deliberately no owner on a patch — this is the whole fix.
-        if (!this.mech.isDestroyed() && Math.hypot(this.px - fp.x, this.py - fp.y) < fp.r) {
-          this._damagePlayerAt(tick);
+        // #347: burning ground burns EVERY player standing in it, each taking its own tick —
+        // the indiscriminate-hazard rule above applied per player rather than to "the" player.
+        for (const pl of livePlayersOf(this)) {
+          if (Math.hypot(pl.x - fp.x, pl.y - fp.y) < fp.r) this._damagePlayerAt(tick, pl);
         }
         // #87: iterate a SNAPSHOT — a killing tick tears the enemy down and splices it out
         // of `this.enemies` synchronously, which would otherwise skip whichever enemy

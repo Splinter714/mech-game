@@ -11,6 +11,7 @@ import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, backward
 import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
+import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
 import { DASH_SPEED_MULT } from '../../data/dash.js';
 
@@ -136,14 +137,16 @@ export const LocomotionMixin = {
   // weapon: how far that weapon's fire angle deviates from the turret facing. Direct-fire
   // weapons converge inward (a small tilt — smaller for side torsos, whose muzzles are less
   // off-centre); indirect/melee/empty parts return 0 (straight). Mirrors firing's _fireAngle.
-  _partTilt(loc) {
-    if (this.mech.isPartDestroyed(loc)) return 0;
-    const ids = this.mech.mounts[loc].filter(isWeapon);
+  // #347: `player` is whose limb this is. Defaults to the primary player, so every existing
+  // caller and arena test double is unaffected.
+  _partTilt(loc, player = primaryPlayerOf(this)) {
+    if (player.mech.isPartDestroyed(loc)) return 0;
+    const ids = player.mech.mounts[loc].filter(isWeapon);
     if (!ids.length) return 0;
     const w = { weapon: getWeapon(ids[0]), location: loc };
-    const m = this._muzzle(loc);
+    const m = this._muzzle(loc, player);
     const fireAngle = this._fireAngle(w, m);
-    return Phaser.Math.Angle.Wrap(fireAngle - this.turretAngle);
+    return Phaser.Math.Angle.Wrap(fireAngle - player.turretAngle);
   },
 
   // World position of a weapon's muzzle: its body-location offset (the mounted weapon's
@@ -159,27 +162,37 @@ export const LocomotionMixin = {
   // still square with the turret — otherwise the computed muzzle drifts from the real rendered
   // barrel tip any time convergence has the part tilted. centerTorso/head never pivot, so their
   // tilt/pivot stay at the defaults (0), same math as before.
-  _muzzle(loc) {
+  _muzzle(loc, player = primaryPlayerOf(this)) {
     const disp = ARENA_MECH_SCALE * ART_SCALE;
-    const part = mechLayout(this.mech)[loc];
-    const tipOffset = mechMuzzleTipOffset(this.mech, loc, part);
-    const tilt = this.playerView?._tilt?.[loc] || 0;
+    const part = mechLayout(player.mech)[loc];
+    const tipOffset = mechMuzzleTipOffset(player.mech, loc, part);
+    const tilt = player.view?._tilt?.[loc] || 0;
     const pivotFrac = PART_PIVOT[loc] ?? 0;
-    return partMuzzle(part, this.px, this.py, this.turretAngle, disp, tipOffset, tilt, pivotFrac);
+    return partMuzzle(part, player.x, player.y, player.turretAngle, disp, tipOffset, tilt, pivotFrac);
   },
 
   // Twin-stick locomotion + turret aim. The left stick / WASD is a world-space move vector;
   // the mech accelerates toward it (weight inertia), strafes freely, and slides along blocked
   // axes; the legs turn to face travel and the turret slews toward the aim (full 360°).
-  _drive(intent, dt) {
-    const mv = this.mech.movement;
-    const legF = this.mech.legFactor();
+  // #347: drives ONE player. `player` defaults to the primary so every existing caller and the
+  // arena's locomotion test doubles are unchanged; ArenaScene.update() now passes each player
+  // explicitly. The body below reads `p.*` in place of the former `this.px`/`this.vx`/… — the
+  // scene accessors alias exactly that same storage for players[0], so for one player this is a
+  // literally equivalent substitution, not a behavioural rewrite.
+  //
+  // NOTE for phase 2: `this.sprint`/`this.dash`/`this.fireCooldowns` are still SCENE-level and
+  // must move onto the player alongside a second `intent` source — they are input-shaped state,
+  // so they belong with the second controller (explicitly phase 2), not here.
+  _drive(intent, dt, player = primaryPlayerOf(this)) {
+    const p = player;
+    const mv = p.mech.movement;
+    const legF = p.mech.legFactor();
 
     // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
-    const backScale = backwardSpeedScale(intent.move.x, intent.move.y, this.turretAngle);
+    const backScale = backwardSpeedScale(intent.move.x, intent.move.y, p.turretAngle);
     // #41: the terrain UNDER the mech scales its top speed — a shallow river or forest bogs it
     // down (rubble mildly), open grass is normal.
-    const terrainScale = this._speedFactorAt(this.px, this.py);
+    const terrainScale = this._speedFactorAt(p.x, p.y);
     // #188/#189: Sprint (SPRINT_SPEED_MULT) is no longer player-triggered (#261) — it's now
     // Overclock-only, force-activated fuel-free for the powerup's duration (see arena/firing.js
     // `_handleSprint`). #261: Dash (DASH_SPEED_MULT) is the new player-facing L3/Space ability —
@@ -196,10 +209,10 @@ export const LocomotionMixin = {
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that
     // axis is winding up (target farther from 0 than current, same sign) or slowing/reversing.
     const tx = intent.move.x * maxSp, ty = intent.move.y * maxSp;
-    const rampX = (tx !== 0 && Math.sign(tx) === Math.sign(this.vx) && Math.abs(tx) > Math.abs(this.vx));
-    const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(this.vy) && Math.abs(ty) > Math.abs(this.vy));
-    this.vx = INSTANT_VELOCITY ? tx : approach(this.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
-    this.vy = INSTANT_VELOCITY ? ty : approach(this.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
+    const rampX = (tx !== 0 && Math.sign(tx) === Math.sign(p.vx) && Math.abs(tx) > Math.abs(p.vx));
+    const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(p.vy) && Math.abs(ty) > Math.abs(p.vy));
+    p.vx = INSTANT_VELOCITY ? tx : approach(p.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
+    p.vy = INSTANT_VELOCITY ? ty : approach(p.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
     // Move with wall/boundary collision, sliding along blocked axes. #92: a living GROUND enemy
     // (mech/tank/turret — flyers narratively fly over ground obstacles, see
     // `_blockedByGroundEnemy`) blocks the player the same way impassable terrain does.
@@ -211,18 +224,18 @@ export const LocomotionMixin = {
     // isn't: a fast mech grazing a hex at a shallow angle can clip a cross-section narrower than
     // any fixed substep length. At normal speeds/dt this loop is a single iteration, identical
     // to the old code — `steps` only exceeds 1 once a frame's total movement exceeds one substep.
-    const totalDist = Math.hypot(this.vx * dt, this.vy * dt);
+    const totalDist = Math.hypot(p.vx * dt, p.vy * dt);
     const steps = Math.max(1, Math.ceil(totalDist / COLLISION_SUBSTEP_PX));
     const stepDt = dt / steps;
     for (let s = 0; s < steps; s++) {
-      const ox = this.px, oy = this.py;
+      const ox = p.x, oy = p.y;
       // #320: the player's chassis collides with a wall at its BODY radius, not as a point.
       // `PLAYER_WALL_COLLIDE_RADIUS` (shared.js) rather than the full `ENEMY_COLLIDE_RADIUS_MECH`
       // — see that constant for the measured reason a wall gets a slightly smaller body than
       // another unit does, and for the table of what each value costs at a breach. Terrain and
       // enemy-circle blocking are untouched; only the wall half of the sweep inflates.
       const groundBlocked = (x, y) => this._blockedAlongSegment(ox, oy, x, y, PLAYER_WALL_COLLIDE_RADIUS) || !!this._blockedByGroundEnemy(x, y);
-      let nx = this.px + this.vx * stepDt, ny = this.py + this.vy * stepDt;
+      let nx = p.x + p.vx * stepDt, ny = p.y + p.vy * stepDt;
       // #92 (corrected 2026-07-10): walking INTO a TANK is an INSTANT kill, not a gradual crush —
       // `_crushGroundEnemyAt` destroys it in this one call (normal death path: explosion FX, corpse
       // teardown, powerup/salvage drop — `_removeEnemy` runs synchronously the same tick). #104
@@ -256,13 +269,13 @@ export const LocomotionMixin = {
         // frame `dt`) since this can now run once per substep — a mech pressed against a building
         // for the whole frame still accumulates ~`dt` worth of stomp damage total across substeps.
         this._stompBuildingAt(nx, ny, stepDt);
-        if (!groundBlocked(ox, ny)) { nx = ox; this.vx = 0; }
-        else if (!groundBlocked(nx, oy)) { ny = oy; this.vy = 0; }
-        else { nx = ox; ny = oy; this.vx = 0; this.vy = 0; }
+        if (!groundBlocked(ox, ny)) { nx = ox; p.vx = 0; }
+        else if (!groundBlocked(nx, oy)) { ny = oy; p.vy = 0; }
+        else { nx = ox; ny = oy; p.vx = 0; p.vy = 0; }
       }
-      this.px = nx; this.py = ny;
+      p.x = nx; p.y = ny;
     }
-    this.speed = Math.hypot(this.vx, this.vy);
+    p.speed = Math.hypot(p.vx, p.vy);
 
     // Legs turn to face the direction of travel (so the walk reads), at the chassis turn
     // rate — heavier mechs pivot their stance more slowly.
@@ -276,46 +289,47 @@ export const LocomotionMixin = {
     if (INSTANT_TURNING) {
       const inputMag = Math.hypot(intent.move.x, intent.move.y);
       if (inputMag > STICK_DEADZONE) {
-        this.angle = Math.atan2(intent.move.y, intent.move.x);
+        p.angle = Math.atan2(intent.move.y, intent.move.x);
       }
-    } else if (this.speed > 5) {
-      const moveAng = Math.atan2(this.vy, this.vx);
-      this.angle = Phaser.Math.Angle.RotateTo(this.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
+    } else if (p.speed > 5) {
+      const moveAng = Math.atan2(p.vy, p.vx);
+      p.angle = Phaser.Math.Angle.RotateTo(p.angle, moveAng, mv.turnRate * dt * (0.4 + 0.6 * legF));
     }
 
     // ── Turret: aim freely, full 360° (no torso-twist arc), slewing toward the aim. ──
     if (intent.aim.mode === 'pointer') {
-      this.aimX = intent.aim.x; this.aimY = intent.aim.y;
+      p.aimX = intent.aim.x; p.aimY = intent.aim.y;
     } else {
-      this.aimX = this.px + Math.cos(intent.aim.angle) * 800;
-      this.aimY = this.py + Math.sin(intent.aim.angle) * 800;
+      p.aimX = p.x + Math.cos(intent.aim.angle) * 800;
+      p.aimY = p.y + Math.sin(intent.aim.angle) * 800;
     }
-    const aim = Math.atan2(this.aimY - this.py, this.aimX - this.px);
+    const aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
     // #189: turret slew no longer has a buff multiplier — Overclock's old slewMult was
     // removed along with moveMult when it was redesigned to force-activate Sprint instead.
-    this.turretAngle = INSTANT_TURNING
+    p.turretAngle = INSTANT_TURNING
       ? aim
-      : rotateToward(this.turretAngle, aim, mv.turretSlew, dt);
+      : rotateToward(p.turretAngle, aim, mv.turretSlew, dt);
     this.registry.set('inputMode', intent.mode);
   },
 
   // Stompy stepped gait: advance the walk frames with speed, kick a footfall FX (+ sound)
   // on each plant, and apply the per-step body bob. Then pin the view to the mech.
-  _stepGait(dt) {
-    const mv = this.mech.movement;
-    const legF = this.mech.legFactor();
+  _stepGait(dt, player = primaryPlayerOf(this)) {
+    const p = player;
+    const mv = p.mech.movement;
+    const legF = p.mech.legFactor();
     let bob = 0;
-    if (Math.abs(this.speed) > 5 && legF > 0) {
-      this.stepMs += dt * 1000 * (Math.abs(this.speed) / mv.maxSpeed);
-      if (this.stepMs >= mv.stepInterval) {
-        this.stepMs -= mv.stepInterval;
-        this.hullFrame = (this.hullFrame + 1) % 4;
+    if (Math.abs(p.speed) > 5 && legF > 0) {
+      p.stepMs += dt * 1000 * (Math.abs(p.speed) / mv.maxSpeed);
+      if (p.stepMs >= mv.stepInterval) {
+        p.stepMs -= mv.stepInterval;
+        p.hullFrame = (p.hullFrame + 1) % 4;
         // A footfall lands only on the two planted frames (0 and 2); frames 1/3 are the
         // mid-stride swing. Kick the local impact FX + weight-scaled camera shake + sound.
-        if (this.hullFrame % 2 === 0) {
-          const foot = this.hullFrame === 0 ? 0 : 1;
-          this._footImpactFx(foot, mv.stepBob);
-          this._footShake(mv.footShake);
+        if (p.hullFrame % 2 === 0) {
+          const foot = p.hullFrame === 0 ? 0 : 1;
+          this._footImpactFx(foot, mv.stepBob, p);
+          this._footShake(mv.footShake, p);
           Audio.footstep(foot);
         }
       }
@@ -323,29 +337,29 @@ export const LocomotionMixin = {
       // sine toward the front of the stride (the ^1.4 easing) makes the drop feel like the
       // mech's mass settling onto the foot rather than a smooth float. Scales with speed so a
       // crawl barely bobs and a full-tilt march heaves. `stepBob` is the per-chassis amplitude.
-      const phase = this.stepMs / mv.stepInterval;                 // 0→1 across one step
-      const speedScale = Phaser.Math.Clamp(Math.abs(this.speed) / mv.maxSpeed, 0, 1);
+      const phase = p.stepMs / mv.stepInterval;                 // 0→1 across one step
+      const speedScale = Phaser.Math.Clamp(Math.abs(p.speed) / mv.maxSpeed, 0, 1);
       bob = Math.pow(Math.abs(Math.sin(phase * Math.PI)), 1.4) * mv.stepBob * speedScale;
     }
-    this.playerView.hull.setTexture(`playerMech_hull_${this.hullFrame}`);
-    this.playerView.hull.rotation = this.angle + Math.PI / 2;
-    this.playerView.turret.rotation = this.turretAngle + Math.PI / 2;
+    p.view.hull.setTexture(`${p.textureKey ?? 'playerMech'}_hull_${p.hullFrame}`);
+    p.view.hull.rotation = p.angle + Math.PI / 2;
+    p.view.turret.rotation = p.turretAngle + Math.PI / 2;
     // Ease each pivoting part toward its convergence tilt (smoothing kills the lock-engage snap).
-    this._syncTilts(this.playerView, this.mech, this.turretAngle, ARENA_MECH_SCALE, 0, 0, {
-      leftTorso: this._partTilt('leftTorso'), rightTorso: this._partTilt('rightTorso'),
-      leftArm: this._partTilt('leftArm'), rightArm: this._partTilt('rightArm'),
+    this._syncTilts(p.view, p.mech, p.turretAngle, ARENA_MECH_SCALE, 0, 0, {
+      leftTorso: this._partTilt('leftTorso', p), rightTorso: this._partTilt('rightTorso', p),
+      leftArm: this._partTilt('leftArm', p), rightArm: this._partTilt('rightArm', p),
     }, dt);
-    this.playerView.setPosition(this.px, this.py - bob);
+    p.view.setPosition(p.x, p.y - bob);
   },
 
   // Footfall impact (#37): convey weight with a LOCAL effect at the planted foot instead
   // of a full-screen camera shake — an expanding ground shock ring, a few dust puffs
   // kicking outward, and a quick squash-and-recover of the mech body. `power` (the
   // chassis stepBob) scales it, so a heavy lands harder than a light.
-  _footImpactFx(foot, power) {
+  _footImpactFx(foot, power, player = primaryPlayerOf(this)) {
     const p = Math.max(2, power);
-    const x = this.px + (foot ? 11 : -11);
-    const y = this.py + 16;                       // roughly at the feet, below the torso
+    const x = player.x + (foot ? 11 : -11);
+    const y = player.y + 16;                       // roughly at the feet, below the torso
 
     // #99: DEPTH.GROUND_FX — a footfall ring/dust puff is ground decal at the mech's own feet,
     // same tier as the fire-patch decal; it should never render OVER the mech casting it.
@@ -365,7 +379,7 @@ export const LocomotionMixin = {
     // Squash the body briefly (heavier stomp = deeper). Guard against stacking tweens so a
     // fast gait doesn't leave the container mis-scaled.
     // (Camera shake is kicked separately by _footShake, synced to the same footfall.)
-    const v = this.playerView;
+    const v = player.view;
     if (!v._stomping) {
       v._stomping = true;
       const sq = Math.min(0.12, 0.04 + p * 0.012);
@@ -388,13 +402,13 @@ export const LocomotionMixin = {
   // here — a lower px→offset cap (SHAKE_MAX_PX), a smaller share of the kick coming from the
   // per-chassis magnitude (SHAKE_GAIN), and a shorter duration (SHAKE_MS). A heavy still
   // "thumps" but no longer heaves the frame. All three are named knobs, easy to re-tune.
-  _footShake(powerPx) {
+  _footShake(powerPx, player = primaryPlayerOf(this)) {
     if (!powerPx) return;
     const SHAKE_GAIN = 0.45;  // fraction of the chassis footShake px that reaches the camera
     const SHAKE_MAX_PX = 4;   // hard cap on camera offset (was 9) — kills the nausea ceiling
     const SHAKE_MS = 60;      // duration of the jolt (was 90) — a shorter, softer tick
     const cam = this.cameras.main;
-    const speedScale = Phaser.Math.Clamp(Math.abs(this.speed) / this.mech.movement.maxSpeed, 0, 1);
+    const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / player.mech.movement.maxSpeed, 0, 1);
     const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);
     const intensity = px / Math.max(1, cam.height);
     cam.shake(SHAKE_MS, intensity, true);   // force=true so a new step overrides the tail of the last

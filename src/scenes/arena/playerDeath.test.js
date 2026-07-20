@@ -112,15 +112,19 @@ describe('_damagePlayerAt — player death explosion + freeze (#225)', () => {
 const DIR = dirname(fileURLToPath(import.meta.url));
 const arenaScene = readFileSync(join(DIR, '..', 'ArenaScene.js'), 'utf8');
 
+// #347: the gate moved from ONE scene flag (`this._playerDead`) to a PER-PLAYER latch
+// (`player.dead`) inside the per-player loop. Same guarantee — a destroyed mech stops steering
+// and stops firing — expressed once per player, so a co-op death freezes only that player.
 describe('#225 player-input gating in ArenaScene#update', () => {
-  it('gates _handleSprint and _drive behind !this._playerDead', () => {
-    const block = arenaScene.match(/if \(!this\._playerDead\) \{[\s\S]*?_drive\(intent, dt\);[\s\S]*?\n {4}\}/);
+  it('gates _handleSprint and _drive behind the per-player dead latch', () => {
+    const block = arenaScene.match(/for \(const player of this\.players\) \{[\s\S]*?_drive\(intent, dt, player\);[\s\S]*?\n {4}\}/);
     expect(block).toBeTruthy();
+    expect(block[0]).toMatch(/if \(player\.dead\) continue;/);
     expect(block[0]).toMatch(/this\._handleSprint\(intent, delta\);/);
   });
 
-  it('gates _handleFiring behind !this._playerDead', () => {
-    expect(arenaScene).toMatch(/if \(!this\._playerDead\) this\._handleFiring\(intent, delta\);/);
+  it('gates _handleFiring behind the per-player dead latch', () => {
+    expect(arenaScene).toMatch(/if \(!player\.dead\) this\._handleFiring\(intent, delta, player\);/);
   });
 });
 
