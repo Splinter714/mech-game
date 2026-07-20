@@ -56,7 +56,11 @@ export function attachPadTabCycle(scene, active) {
 
 // Draw the bar across the top of `scene`. `active` is the current scene key. `onDeploy` is
 // called when Deploy is clicked; `canDeploy` greys it out + makes it inert when false.
-export function buildTabBar(scene, { active, onDeploy, canDeploy = true } = {}) {
+// `deployLabel` (#349) lets the caller relabel the pinned action without adding a second
+// button: in co-op the Garage's Deploy becomes "▶ P1 READY" while player 1 is building, which
+// IS the handoff step. Keeping it on the existing button is deliberate — the garage is already
+// tight at narrow widths (#330/#342) and a new primary control would make that worse.
+export function buildTabBar(scene, { active, onDeploy, canDeploy = true, deployLabel = '▶ DEPLOY' } = {}) {
   const dpr = scene.registry.get('dpr') || 1;
   const W = Math.round(scene.scale.width / dpr);
   const layer = scene.add.container(0, 0).setDepth(50);
@@ -89,7 +93,7 @@ export function buildTabBar(scene, { active, onDeploy, canDeploy = true } = {}) 
   const enabled = canDeploy && !!onDeploy;
   const dr = scene.add.rectangle(dx, y, depW, tabH, TAB_UI.tab).setOrigin(0, 0)
     .setStrokeStyle(1, enabled ? TAB_UI.sel : TAB_UI.barEdge);
-  const dt = scene.add.text(dx + depW / 2, y + tabH / 2, '▶ DEPLOY', {
+  const dt = scene.add.text(dx + depW / 2, y + tabH / 2, deployLabel, {
     fontFamily: 'monospace', fontSize: '14px', color: enabled ? TAB_UI.sel : TAB_UI.off,
   }).setOrigin(0.5);
   layer.add([dr, dt]);

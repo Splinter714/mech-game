@@ -110,7 +110,7 @@ export default class ArenaScene extends Phaser.Scene {
     // lingering powerup boost from a prior run).
     activeMech.configureShield(PLAYER_SHIELD);
     // #348: remembered so a JOINING player's mech gets the identical native shield baseline —
-    // co-op must not hand player 2 a differently-durable machine (coop.js `_cloneActiveMech`).
+    // co-op must not hand player 2 a differently-durable machine (coop.js `_mechForPlayer`).
     this._playerShieldConfig = PLAYER_SHIELD;
     this.registry.set('playerMech', activeMech);
 

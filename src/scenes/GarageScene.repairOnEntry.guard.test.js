@@ -31,14 +31,24 @@ function bodyOf(methodPattern) {
 }
 
 describe('#249 Garage repairs the mech on every scene entry, not just on next deploy', () => {
-  it('create() repairs the active mech unconditionally', () => {
+  // #349: the repair now covers EVERY player build slot, not just the one on screen. Player 2's
+  // mech comes back from a co-op run damaged too and must be healthy the instant the handoff
+  // swaps it in — there is no second create() to heal it at that point.
+  const REPAIR_ALL_SLOTS = 'for (const key of PLAYER_MECH_KEYS) this.allMechs[key]?.repairAll();';
+
+  it('create() repairs the mech being edited unconditionally', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
-    expect(create).toMatch(/this\.mech = this\.allMechs\[ACTIVE_MECH_KEY\];[\s\S]*?this\.mech\.repairAll\(\);/);
+    expect(create).toMatch(/this\.mech = this\.allMechs\[this\.mechKey\];[\s\S]*?PLAYER_MECH_KEYS\) this\.allMechs\[key\]\?\.repairAll\(\);/);
+  });
+
+  it('create() repairs EVERY player slot, so the handed-off player 2 mech is healthy too (#349)', () => {
+    const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
+    expect(create).toContain(REPAIR_ALL_SLOTS);
   });
 
   it('create() repairs BEFORE building the preview/paper-doll textures from this.mech', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
-    const repairIdx = create.indexOf('this.mech.repairAll();');
+    const repairIdx = create.indexOf(REPAIR_ALL_SLOTS);
     const textureIdx = create.indexOf("buildMechTextures(this, 'garageMech', this.mech);");
     expect(repairIdx).toBeGreaterThan(-1);
     expect(textureIdx).toBeGreaterThan(-1);
@@ -47,7 +57,18 @@ describe('#249 Garage repairs the mech on every scene entry, not just on next de
 
   it('create() persists the repair so localStorage does not disagree with the on-screen mech', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
-    expect(create).toMatch(/this\.mech\.repairAll\(\);\s*\n\s*saveAllMechs\(this\.allMechs\);/);
+    expect(create).toMatch(/repairAll\(\);\s*\n\s*saveAllMechs\(this\.allMechs\);/);
+  });
+
+  // #349: the handoff swaps `this.mech` to the other player's slot mid-scene, so that path needs
+  // the same repair guarantee the entry path has.
+  it('_setSession() repairs the incoming player mech before reskinning the preview from it', () => {
+    const body = bodyOf(/_setSession\(next\)\s*\{[\s\S]*?\n {2}\}/);
+    const repairIdx = body.indexOf('this.mech.repairAll();');
+    const reskinIdx = body.indexOf("reskinMech(this, 'garageMech', this.mech);");
+    expect(repairIdx).toBeGreaterThan(-1);
+    expect(reskinIdx).toBeGreaterThan(-1);
+    expect(repairIdx).toBeLessThan(reskinIdx);
   });
 
   it('deploy() still repairs too (belt-and-braces; harmless no-op once create() already healed it)', () => {

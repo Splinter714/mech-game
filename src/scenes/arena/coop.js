@@ -14,6 +14,7 @@ import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
 import { initialDashState } from '../../data/dash.js';
 import { MAX_PLAYERS, makePlayer, playerAccent } from '../../data/players.js';
+import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
   makeRespawnState, pickRespawnPoint, startRespawn, tickRespawn,
@@ -63,14 +64,26 @@ export const CoopMixin = {
     // Pad-1 START is the join button. A separate PadEdges bound to pad index 1 — the scene's
     // existing `padEdges` watches pad 0 (player 1's debug/exit buttons) and must stay that way.
     this._joinEdges = new PadEdges(this, 1);
+    // #349: players who joined from the GARAGE are already decided before the arena loads —
+    // put them on the field immediately rather than making them press START again.
+    this._spawnGarageCoopPlayers();
+  },
+
+  // #349: the garage publishes `coopMechKeys` — one key in solo, both in co-op. Every key past
+  // the first is a player who built their own mech and is deploying with player 1. Absent (an
+  // old session, or the smoke test driving the arena directly) reads as solo, so this is inert
+  // on every pre-#349 path.
+  _spawnGarageCoopPlayers() {
+    const keys = this.registry.get('coopMechKeys') ?? [];
+    for (let i = 1; i < keys.length && playersOf(this).length < MAX_PLAYERS; i++) this._addPlayer();
   },
 
   // Per-frame: has a second controller asked to join? Press START on gamepad 2.
   //
-  // Joining mid-sortie rather than from the garage is deliberate for this phase: the garage flow
-  // is explicitly phase 3 (#349), and gating co-op behind a garage screen that does not exist
-  // yet would mean shipping a co-op phase nobody can actually start. The joiner deploys the same
-  // mech build as player 1 (there is only one saved build until phase 3 says otherwise).
+  // #349 keeps this path alive alongside the garage flow (Jackson: "keep both") — the garage is
+  // the normal way in, this is late drop-in for someone who wanders over mid-run. What changed
+  // is WHICH mech they get: their own saved 'mech2' build if it is usable, falling back to
+  // phase 2's copy-of-player-1 only if it is not (see `_mechForPlayer`).
   _updateCoopJoin() {
     if (!this._joinEdges) return;
     if (playersOf(this).length >= MAX_PLAYERS) return;
@@ -84,7 +97,7 @@ export const CoopMixin = {
     // A fresh, fully-repaired copy of the active build — `makeMech`-equivalent via the roster the
     // garage already published. Cloning through the registry's allMechs keeps this data-driven:
     // phase 3 replaces the SOURCE of this mech, not the wiring.
-    const mech = this._cloneActiveMech();
+    const mech = this._mechForPlayer(index);
     // Drop in alongside player 1, just far enough not to overlap, and well inside the leash.
     const player = this._makePlayerAt(index, host.x + 70, host.y + 70, mech);
     player.angle = host.angle;
@@ -94,15 +107,19 @@ export const CoopMixin = {
     Audio.ui('deploy');
   },
 
-  // A second mech for the joining player: a FRESH Mech built from the same chassis + mounts
-  // player 1 deployed with, through the model's own constructor. Emphatically not a reference to
-  // player 1's Mech — the two must take damage completely independently — and not a hand-rolled
-  // deep copy either, since `new Mech(...)` is the one place that knows how to derive a full-
-  // health mech from a build. Phase 3 (#349) replaces the SOURCE of this build (a second garage
-  // slot), not this wiring.
-  _cloneActiveMech() {
-    const src = primaryPlayerOf(this).mech;
-    const mech = new Mech({ chassisId: src.chassisId, mounts: src.mounts, name: src.name });
+  // A second mech for player `index`: a FRESH Mech through the model's own constructor.
+  // Emphatically not a reference to player 1's Mech — the two must take damage completely
+  // independently — and not a hand-rolled deep copy either, since `new Mech(...)` is the one
+  // place that knows how to derive a full-health mech from a build.
+  //
+  // #349 replaced the SOURCE, exactly as phase 2 predicted it would, without touching the
+  // wiring: the build now comes from that player's own persistent garage slot, with phase 2's
+  // copy-of-player-1 kept as the fallback for a slot that was never finished. `joinerBuild`
+  // (data/coopGarage.js) is the pure decision; this is just the Mech construction around it.
+  _mechForPlayer(index) {
+    const host = primaryPlayerOf(this).mech;
+    const saved = this.allMechs?.[mechKeyForPlayer(index)];
+    const mech = new Mech(joinerBuild(saved, host));
     mech.configureShield(this._playerShieldConfig ?? {});
     return mech;
   },

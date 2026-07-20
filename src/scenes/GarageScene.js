@@ -3,6 +3,10 @@ import { buildMechTextures, reskinMech, partSpriteTransform } from '../art/index
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
+import {
+  PLAYER_MECH_KEYS, makeGarageSession, sessionMechKey, sessionMechKeys, garageAction,
+  garageActionLabel, coopToggleLabel, garageStatusText, handOff, toggleCoop,
+} from '../data/coopGarage.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -94,7 +98,13 @@ export default class GarageScene extends Phaser.Scene {
     Slider.attachDrag(this);
 
     this.allMechs = this.registry.get('allMechs');
-    this.mech = this.allMechs[ACTIVE_MECH_KEY];
+    // #349: the co-op session. `coop` survives a return from the arena (so a co-op pair coming
+    // back from a run finds co-op still armed) but `editing` always resets to player 1 — the
+    // sequential flow is re-walked from the top every visit, which is also what makes the
+    // handoff an explicit act each time rather than sticky state nobody remembers setting.
+    this.session = makeGarageSession({ coop: !!this.registry.get('coopGarage') });
+    this.mechKey = sessionMechKey(this.session);
+    this.mech = this.allMechs[this.mechKey];
     // #249: every entry into the Garage (fresh boot, ESC from the Music tab, or — the bug —
     // returning from Arena after a run ends in a win OR a loss) must show a healthy mech. Damage
     // used to only get healed at the START of the NEXT deploy (see deploy() below), so the
@@ -102,7 +112,10 @@ export default class GarageScene extends Phaser.Scene {
     // was back in the Garage after a loss. repairAll() is idempotent (a no-op on an already-healthy
     // mech), so doing it unconditionally here — before textures are built below — is safe on every
     // path, not just the post-run one; deploy()'s own repairAll() stays as a harmless belt-and-braces.
-    this.mech.repairAll();
+    // #349: repair EVERY player slot, not just the one on screen — player 2's mech comes back
+    // from a co-op run damaged too, and it must be healthy the moment the handoff swaps it in
+    // (there is no second create() to heal it). Still idempotent, still safe on every path.
+    for (const key of PLAYER_MECH_KEYS) this.allMechs[key]?.repairAll();
     saveAllMechs(this.allMechs);
     this.selected = null;   // the slot currently being edited (filters the catalog)
     this.catalogIds = [...WEAPON_IDS];
@@ -184,6 +197,7 @@ export default class GarageScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '12px', color: '#7c8794',
     }).setOrigin(1, 0);
     this._refreshCurrency();
+    this._buildCoopBar();
 
     // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
     // catalog from the first pad press — the whole unfiltered weapon set, never a per-slot
@@ -237,6 +251,55 @@ export default class GarageScene extends Phaser.Scene {
     } else {
       this.lastRunText.setText('');
     }
+  }
+
+  // #349: the co-op strip — one toggle button plus a status line, tucked into the band between
+  // the tab bar and the catalog (the same 54px gap the SCRAP/last-run readout uses). That band
+  // is otherwise empty on the LEFT and the readout is right-anchored, so this adds nothing to
+  // the horizontal crowding the garage already has at narrow widths (#330/#342): no new row,
+  // no new panel, and the handoff itself rides the existing Deploy button.
+  _buildCoopBar() {
+    const y = TAB_BAR_H + 8;
+    const w = 150, h = 24;
+    this.coopBtn = this.button(20, y, w, h, coopToggleLabel(this.session), () => this._toggleCoop(), UI.accent);
+    this.coopStatus = this.add.text(20 + w + 12, y + h / 2, garageStatusText(this.session), {
+      fontFamily: 'monospace', fontSize: '12px', color: '#efc14a',
+    }).setOrigin(0, 0.5);
+  }
+
+  _refreshCoopBar() {
+    this.coopBtn?.t.setText(coopToggleLabel(this.session));
+    this.coopStatus?.setText(garageStatusText(this.session));
+  }
+
+  // Opt in to co-op, back out of it, or step back from player 2 to player 1 — whichever the
+  // button currently means (data/coopGarage.js `toggleCoop`).
+  _toggleCoop() {
+    Audio.ui('menuNav');
+    this._setSession(toggleCoop(this.session));
+  }
+
+  // Bind the single editing surface to whichever player's mech the session now says. This IS
+  // the whole "two players share one garage" mechanism: nothing is duplicated, the same tiles,
+  // catalog and preview are simply pointed at the other saved build.
+  _setSession(next) {
+    const prevKey = this.mechKey;
+    this.session = next;
+    this.registry.set('coopGarage', this.session.coop);
+    this.mechKey = sessionMechKey(this.session);
+    if (this.mechKey !== prevKey) {
+      this.allMechs[prevKey] = this.mech;      // commit the outgoing player's work
+      this.mech = this.allMechs[this.mechKey];
+      this.mech.repairAll();
+      reskinMech(this, 'garageMech', this.mech);
+      this._positionPreviewParts();
+      this.selected = null;
+      this.list.setIds(this._eligibleIds(null));
+      this.list.setSelected(null);
+    }
+    saveAllMechs(this.allMechs);
+    this._refreshCoopBar();
+    this.refresh();
   }
 
   // Switch the displayed control scheme (and focus-cursor/legend visibility), redrawing once.
@@ -355,6 +418,9 @@ export default class GarageScene extends Phaser.Scene {
       active: 'GarageScene',
       canDeploy: this.mech.isComplete(),
       onDeploy: () => this.deploy(),
+      // #349: in co-op, while player 1 is the one building, the pinned action is the HANDOFF —
+      // same button, different label, so no new control was added to the bar.
+      deployLabel: garageActionLabel(this.session),
     });
   }
 
@@ -371,7 +437,7 @@ export default class GarageScene extends Phaser.Scene {
     const data = this.mech.toJSON();
     data.chassisId = next;
     this.mech = new Mech(data);
-    this.allMechs[ACTIVE_MECH_KEY] = this.mech;
+    this.allMechs[this.mechKey] = this.mech;   // #349: whichever player is currently editing
     buildMechTextures(this, 'garageMech', this.mech);
     this._positionPreviewParts();  // layout (side-torso/arm placement) changes with the chassis
     saveAllMechs(this.allMechs);
@@ -754,6 +820,15 @@ export default class GarageScene extends Phaser.Scene {
       }
       return;
     }
+    // #349: in co-op, player 1 pressing this button means "I'm done, your turn" — the same
+    // completeness check above already gates it, so a player cannot hand off a half-built mech
+    // and then be unable to get back to it. Player 2's press is the one that actually deploys.
+    if (garageAction(this.session) === 'handoff') {
+      Audio.ui('equip');
+      this._setSession(handOff(this.session));
+      this.toast('PLAYER 1 READY — PLAYER 2, BUILD YOUR MECH', UI.accent);
+      return;
+    }
     Audio.ui('deploy');   // #178: weightier rising anticipation whoosh — committing to the run
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
@@ -781,6 +856,10 @@ export default class GarageScene extends Phaser.Scene {
     // (a prior run's `run` registry value would otherwise look "in progress" to
     // ArenaScene._initRun, which continues an existing run rather than starting fresh).
     this.registry.set('run', null);
+    // #349: which builds are taking the field. One key in solo (unchanged), both in co-op —
+    // this is the ONLY thing the arena needs in order to put a second, garage-built player on
+    // the field (scenes/arena/coop.js `_spawnGarageCoopPlayers`).
+    this.registry.set('coopMechKeys', sessionMechKeys(this.session));
     this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
     this.scene.start('ArenaScene');
   }

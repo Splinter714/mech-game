@@ -5,8 +5,17 @@
 
 import { Mech } from './Mech.js';
 
-// The single editable build slot for now.
+// Player 1's build slot. Still THE slot as far as every single-player path is concerned —
+// #349 added exactly one more ('mech2', player 2's persistent build in local co-op), it did not
+// introduce a general roster picker. The two keys, indexed by player, live in
+// data/coopGarage.js (PLAYER_MECH_KEYS); this constant stays the name single-player code uses.
 export const ACTIVE_MECH_KEY = 'mech1';
+
+// #349: player 2's build slot. Persists between sessions exactly like player 1's, so a regular
+// co-op partner keeps their mech. It ships with its OWN complete default loadout rather than a
+// copy of player 1's, so a first-ever co-op deploy puts two visibly different machines on the
+// field and player 2 is never stuck behind an incomplete build.
+export const PLAYER2_MECH_KEY = 'mech2';
 
 export const ROSTERS = {
   mech: {
@@ -31,6 +40,18 @@ export const ROSTERS = {
           leftTorso: ['clusterRocket'],
           rightTorso: ['machineGun'],   // #188: centerTorso is no longer mountable — Sprint
                                          // (L3/Space) is a hardcoded built-in now, not an item.
+        },
+      },
+      // #349: player 2's slot. Same chassis (every mech is locked to 'mediumPlayer' by the
+      // migrate hook above anyway), a different but equally complete opening kit.
+      [PLAYER2_MECH_KEY]: {
+        chassisId: 'mediumPlayer',
+        name: 'Trooper-02',
+        mounts: {
+          rightArm: ['pulseLaser'],
+          leftArm: ['autocannon'],
+          leftTorso: ['machineGun'],
+          rightTorso: ['clusterRocket'],
         },
       },
     }),
