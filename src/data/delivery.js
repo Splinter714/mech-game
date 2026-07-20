@@ -199,31 +199,32 @@ export function arcHomingBlend(t, ascentEnd = ASCENT_END) {
 //   * 'lob' (the default, and what every arcing weapon used before #377) — a symmetric
 //     parabola, 4t(1-t). Rises and falls at the same lazy rate: a thrown ball. Napalm,
 //     Plasma Cannon and Streak Pod keep exactly this, unchanged.
-//   * 'mortar' (#377, Swarm Rack only) — Jackson: "rise quickly, then travel, then come
-//     falling down on the enemy abruptly towards the end." Three phases: a hard ramp to full
-//     height over the first `MORTAR_RISE_END` of flight, a near-flat cruise (drifting down
-//     only slightly, so the round doesn't read as frozen), then a steep cosine drop to zero
-//     over the last stretch after `MORTAR_FALL_START`.
+//   * 'steepDrop' (#377, Swarm Rack only) — Jackson's words for the shape he wanted: "rise
+//     quickly, then travel, then come falling down on the enemy abruptly towards the end."
+//     Three phases, named after what the curve does rather than after any weapon type: a hard
+//     ramp to full height over the first `STEEP_DROP_RISE_END` of flight, a near-flat cruise
+//     (drifting down only slightly, so the round doesn't read as frozen), then a steep cosine
+//     drop to zero over the last stretch after `STEEP_DROP_FALL_START`.
 //
 // Both are continuous at the phase joins and both return 0 at t=0 and t=1 (launch and impact
 // are on the deck). Returns a 0..1 height fraction; the caller scales it into sprite gain.
-export const MORTAR_RISE_END = 0.15;    // fraction of flight spent climbing to apex
-export const MORTAR_FALL_START = 0.80;  // fraction of flight where the terminal dive begins
-const MORTAR_CRUISE_SAG = 0.08;         // how much height bleeds off across the flat cruise
+export const STEEP_DROP_RISE_END = 0.15;    // fraction of flight spent climbing to apex
+export const STEEP_DROP_FALL_START = 0.80;  // fraction of flight where the terminal dive begins
+const STEEP_DROP_CRUISE_SAG = 0.08;         // how much height bleeds off across the flat cruise
 
 export function arcLoft(t, profile = 'lob') {
   const u = Math.min(1, Math.max(0, t));
-  if (profile !== 'mortar') return 4 * u * (1 - u);
-  if (u <= MORTAR_RISE_END) {
+  if (profile !== 'steepDrop') return 4 * u * (1 - u);
+  if (u <= STEEP_DROP_RISE_END) {
     // Quarter-sine: fastest at the muzzle, easing to a flat top at apex — it pops.
-    return Math.sin((u / MORTAR_RISE_END) * (Math.PI / 2));
+    return Math.sin((u / STEEP_DROP_RISE_END) * (Math.PI / 2));
   }
-  const cruiseEnd = 1 - MORTAR_CRUISE_SAG;
-  if (u < MORTAR_FALL_START) {
-    const k = (u - MORTAR_RISE_END) / (MORTAR_FALL_START - MORTAR_RISE_END);
-    return 1 - MORTAR_CRUISE_SAG * k;                       // near-flat travel
+  const cruiseEnd = 1 - STEEP_DROP_CRUISE_SAG;
+  if (u < STEEP_DROP_FALL_START) {
+    const k = (u - STEEP_DROP_RISE_END) / (STEEP_DROP_FALL_START - STEEP_DROP_RISE_END);
+    return 1 - STEEP_DROP_CRUISE_SAG * k;                       // near-flat travel
   }
-  const k = (u - MORTAR_FALL_START) / (1 - MORTAR_FALL_START);
+  const k = (u - STEEP_DROP_FALL_START) / (1 - STEEP_DROP_FALL_START);
   return cruiseEnd * (0.5 + 0.5 * Math.cos(Math.PI * k));   // abrupt terminal plunge
 }
 
