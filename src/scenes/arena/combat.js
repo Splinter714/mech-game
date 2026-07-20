@@ -29,30 +29,49 @@ const IMPACT_CIRCLE_CAP = 48;
 const DEBRIS_CAP = 60;
 
 export const CombatMixin = {
-  // ── #374: soft cover eats some shots ────────────────────────────────────────────────────
-  // The one place the foliage roll is made. Every shot that has RESOLVED onto a unit asks this
-  // before damage is applied; a `true` answer means the round hit the trees instead, so it
-  // splashes cosmetically at the impact point and deals nothing.
+  // ── #374 REWORK: soft cover eats some shots, PER CROSSED HEX ────────────────────────────
+  // The one place the foliage roll is made. Every PROJECTILE (and every beam tick) that has
+  // RESOLVED onto a unit asks this before damage is applied; a `true` answer means the shot hit
+  // the trees instead, so it splashes cosmetically at the impact point and deals nothing.
+  //
+  // PER PROJECTILE, NOT PER TRIGGER PULL — that falls straight out of the call site: every round
+  // in a Swarm Rack salvo is its own `p` and asks independently, so a 6-missile volley across
+  // three forest hexes loses ~1.6 missiles and the rest land. Nothing here is memoised per shot.
+  //
+  // `origin` is WHERE THE SHOT CAME FROM ({x, y} — a round's spawn point, a beam's muzzle). It is
+  // what makes the lane walkable: `_softCoverLane` (world.js) turns muzzle→target into the list of
+  // soft-cover hexes crossed. Without it (a bare test stub, or a caller with no origin handy) the
+  // lane degrades to the target's own hex alone — the pre-rework behaviour, never an exception.
+  // `originHexes` is the round's stamped muzzle/body hex list, feeding the #72/#279 own-hex
+  // exemption by being EXCLUDED from the lane: a shooter in the target's own thicket yields an
+  // empty lane and no roll.
   //
   // `target` is the thing being shot (a player ref or an enemy) — the tier is read off IT, never
-  // off the shooter (`softCoverUnitTier`, shared.js). `originHexes` is the shot's own muzzle-hex
-  // list, used only for the #72/#279 own-hex exemption: a shooter standing in the same cover hex
-  // as its target has no foliage in between, so no roll is made. It's the same array an in-flight
-  // round already carries (`p.originHexes`); the hitscan path passes its muzzle hex the same way.
-  // Omit it and the exemption simply doesn't apply.
+  // off the shooter (`softCoverUnitTier`, shared.js), which is what makes the rule SYMMETRIC:
+  // enemy fire runs this identical path (projectiles.js's `enemyShot` branch, firing.js's
+  // `owner === 'enemy'` beams), so foliage protects whoever stands in it regardless of who fired.
   //
   // The RNG is seeded off the run (`runSeed`) rather than `Math.random`, matching how the arena
   // seeds its other per-run rolls (bases.js `_dockRng`), so a seeded run stays reproducible. It's
-  // built lazily on first use and stepped once per roll; tests inject `_coverRng` directly.
-  _softCoverStopsShot(target, originHexes = null) {
+  // built lazily on first use and now steps ONCE PER SOFT-COVER HEX crossed rather than once per
+  // shot — more draws, same discipline. Tests inject `_coverRng` directly.
+  _softCoverStopsShot(target, originHexes = null, origin = null) {
     const tx = target?.x, ty = target?.y;
     if (typeof tx !== 'number' || typeof ty !== 'number') return false;
-    const key = this._hexKeyAt(tx, ty);
-    const shooterInSameHex = !!(originHexes && originHexes.includes(key));
+    const tier = softCoverUnitTier(target);
+    if (tier === 'air') return false;   // air ignores the whole lane — skip the walk entirely
+    let lane;
+    if (typeof origin?.x === 'number' && typeof origin?.y === 'number' && this._softCoverLane) {
+      lane = this._softCoverLane(origin.x, origin.y, tx, ty, originHexes);
+    } else {
+      const key = this._hexKeyAt(tx, ty);
+      lane = (originHexes && originHexes.includes(key))
+        ? []                                            // own-hex exemption, no origin needed
+        : [{ id: this.terrain.get(key), ownHex: true }];
+    }
+    if (lane.length === 0) return false;                // nothing crossed ⇒ no draws taken
     if (!this._coverRng) this._coverRng = mulberry32(((this.runSeed ?? 1) ^ 0x5f37c0de) >>> 0);
-    return softCoverStopsShot(
-      this.terrain.get(key), softCoverUnitTier(target), shooterInSameHex, this._coverRng,
-    );
+    return softCoverStopsShot(lane, tier, this._coverRng);
   },
 
   // Incoming damage to the player (used once enemies fire). #246: the shield is now a real
