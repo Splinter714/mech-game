@@ -19,7 +19,7 @@ import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
 import { kindWeaponSlot } from '../../data/kindWeapons.js';
 import {
   APPROACH, STRAFE, FACE_PLAYER, FACE_BROADSIDE,
-  initGunshipCycle, stepGunshipCycle, phasePlan,
+  initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial,
 } from '../../data/gunshipCycle.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -351,15 +351,14 @@ function helicopterBehavior(scene, e, ctx) {
     // Straight in at the player. ctx.ux/uy already point enemy → player.
     desiredX = ctx.ux; desiredY = ctx.uy;
   } else if (st.phase === STRAFE) {
-    // Slide laterally across the player's front while HOLDING the standoff radius. The radial
-    // component uses the same hysteresis bands as `tankMoveIntent` above (advance / hold /
-    // back off) — deliberately reused rather than reinvented, because that's what stops the
-    // unit oscillating between closing and retreating and reads as a steady pass instead of a
-    // wobble. The lateral component is what makes it a strafe.
+    // Slide laterally across the player's front, roughly at the standoff radius. #362: the
+    // radial component NO LONGER reuses `tankMoveIntent`'s tight per-frame band — on an
+    // aircraft that read as an invisible tether, cancelling out any range the player opened.
+    // `strafeRadial` is a wide latched dead band instead: normally zero, so the range drifts
+    // with the player's movement, and it only eases back once the drift is large. The lateral
+    // component (#305's strafe) is untouched.
     const side = e.handed || 1;
-    let radial = 0;
-    if (ctx.dist > st.standoff * 1.15) radial = 1;
-    else if (ctx.dist < st.standoff * 0.75) radial = -0.9;
+    const radial = strafeRadial(st, ctx.dist);
     desiredX = ctx.ux * radial + (-ctx.uy * side);
     desiredY = ctx.uy * radial + (ctx.ux * side);
   } else {

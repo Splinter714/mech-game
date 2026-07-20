@@ -11,7 +11,8 @@ import {
   SLOT_NOSE, SLOT_FLANK,
   STANDOFF_MIN, STANDOFF_MAX, APPROACH_TIMEOUT_MS, STRAFE_MAX_MS, REPOSITION_TIMEOUT_MS,
   REPOSITION_ARRIVE_PX, REPOSITION_OUT_FRAC,
-  initGunshipCycle, stepGunshipCycle, phasePlan,
+  initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial,
+  DRIFT_FAR_FRAC, DRIFT_NEAR_FRAC, RECAPTURE_HI_FRAC, RECAPTURE_LO_FRAC,
 } from './gunshipCycle.js';
 
 // A deterministic rng that always returns the midpoint, so rolled durations/standoffs are exact.
@@ -155,5 +156,85 @@ describe('stepGunshipCycle — transitions', () => {
     }
     expect(cold).toBeGreaterThan(0);       // it really does break off and stop shooting
     expect(firing).toBeGreaterThan(cold);  // but the cycle is mostly an attack, not mostly a retreat
+  });
+
+  // ── #362: the strafe-phase range rule ────────────────────────────────────────────────────
+  // "The player moving should CHANGE the range, not be instantly cancelled out." The gunship
+  // still keeps station, but it must not correct range every frame the way ground units do.
+  describe('strafeRadial (#362) — station-keeping without compensating for the player', () => {
+    const stAt = (standoff = 300, closing = 0) => ({ standoff, closing });
+
+    it('does nothing at all across a WIDE band around the standoff — range is free to drift', () => {
+      const st = stAt(300);
+      for (const f of [DRIFT_NEAR_FRAC + 0.01, 0.7, 0.9, 1, 1.2, 1.4, DRIFT_FAR_FRAC - 0.01]) {
+        expect(strafeRadial(st, 300 * f)).toBe(0);
+      }
+    });
+
+    it('the drift band is far wider than the old ground-vehicle band it replaced', () => {
+      // The old rule corrected outside 0.75–1.15. The new one must tolerate range changes that
+      // the old one would have cancelled — that IS the bug being fixed.
+      const st = stAt(300);
+      expect(strafeRadial(st, 300 * 0.8)).toBe(0);   // old rule: still holding, fine
+      expect(strafeRadial(st, 300 * 1.3)).toBe(0);   // old rule: would have advanced
+      expect(strafeRadial(st, 300 * 0.6)).toBe(0);   // old rule: would have reversed
+      expect(DRIFT_FAR_FRAC).toBeGreaterThan(1.15);
+      expect(DRIFT_NEAR_FRAC).toBeLessThan(0.75);
+    });
+
+    it('eases back IN only once the player has opened the range past the far threshold', () => {
+      const st = stAt(300);
+      expect(strafeRadial(st, 300 * DRIFT_FAR_FRAC)).toBe(0);       // exactly at it: still not yet
+      const r = strafeRadial(st, 300 * DRIFT_FAR_FRAC + 1);
+      expect(r).toBeGreaterThan(0);
+      expect(r).toBeLessThan(1);                                     // and gently, not full throttle
+    });
+
+    it('eases back OUT only once the player has closed inside the near threshold', () => {
+      const st = stAt(300);
+      expect(strafeRadial(st, 300 * DRIFT_NEAR_FRAC)).toBe(0);
+      const r = strafeRadial(st, 300 * DRIFT_NEAR_FRAC - 1);
+      expect(r).toBeLessThan(0);
+      expect(Math.abs(r)).toBeLessThan(1);
+    });
+
+    it('LATCHES: once correcting it keeps correcting back to the standoff, not just to the edge', () => {
+      const st = stAt(300);
+      strafeRadial(st, 300 * DRIFT_FAR_FRAC + 1);            // engage
+      // Back inside the drift band, but not yet recaptured — must still be closing, otherwise
+      // it would chatter on and off at the threshold.
+      expect(strafeRadial(st, 300 * 1.4)).toBeGreaterThan(0);
+      expect(strafeRadial(st, 300 * (RECAPTURE_HI_FRAC + 0.01))).toBeGreaterThan(0);
+      // Recaptured — releases, and drift resumes.
+      expect(strafeRadial(st, 300 * RECAPTURE_HI_FRAC)).toBe(0);
+      expect(strafeRadial(st, 300 * 1.4)).toBe(0);
+    });
+
+    it('latches the same way on the inward side', () => {
+      const st = stAt(300);
+      strafeRadial(st, 300 * DRIFT_NEAR_FRAC - 1);
+      expect(strafeRadial(st, 300 * 0.7)).toBeLessThan(0);
+      expect(strafeRadial(st, 300 * (RECAPTURE_LO_FRAC - 0.01))).toBeLessThan(0);
+      expect(strafeRadial(st, 300 * RECAPTURE_LO_FRAC)).toBe(0);
+    });
+
+    it('a player driving away and back is never chased — the range simply changes', () => {
+      const st = stAt(300);
+      // Range walks out from 300 to 450 and back: entirely within the dead band, zero reaction.
+      const seen = new Set();
+      for (let d = 300; d <= 450; d += 10) seen.add(strafeRadial(st, d));
+      for (let d = 450; d >= 200; d -= 10) seen.add(strafeRadial(st, d));
+      expect([...seen]).toEqual([0]);
+    });
+
+    it('every gunship starts a strafe pass drifting, and each new pass resets the latch', () => {
+      const st = initGunshipCycle(mid);
+      expect(st.closing).toBe(0);
+      st.closing = 1;
+      // Drive APPROACH -> STRAFE; entering the pass clears the latch.
+      stepGunshipCycle(st, 16, 0, ctx(), mid);
+      expect(st.phase).toBe(STRAFE);
+      expect(st.closing).toBe(0);
+    });
   });
 });

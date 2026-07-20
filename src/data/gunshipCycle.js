@@ -82,6 +82,58 @@ export const REPOSITION_OUT_FRAC = 1.9;
 export const REPOSITION_ARC_MIN = 1.1;
 export const REPOSITION_ARC_MAX = 2.3;
 
+// #362: the STRAFE-phase RANGE RULE. Playtest (Jackson, 2026-07-19): "there's a phase of
+// helicopters' flight where it feels like it keeps a semi-fixed distance from me while it flies,
+// so if I move, it moves to compensate, and that makes it feel less like a real flying thing."
+//
+// The strafe phase used to reuse the shared ground-vehicle standoff band (advance beyond
+// standoff*1.15, reverse below *0.75) every frame. On a ground unit that reads as holding
+// position; on an aircraft it reads as an invisible tether, because any range the player opens
+// or closes is cancelled out on the very next frame.
+//
+// Confirmed ask: KEEP STATION, but STOP COMPENSATING. The gunship still sits at roughly its
+// standoff, but the player moving should CHANGE the range, not be instantly undone. So the
+// correction is LATCHED and the dead band is wide:
+//
+//   - Default state is NOT correcting: radial 0, pure lateral slide. Range drifts freely.
+//   - Correction only ENGAGES once range has drifted past a much wider band — beyond
+//     DRIFT_FAR_FRAC or inside DRIFT_NEAR_FRAC of the standoff. At the 240–400px standoff band
+//     that's roughly 130–640px of range the player can open or close with no reaction at all.
+//   - Once engaged it stays engaged (a latch, so it doesn't chatter) until the range is back
+//     inside the much narrower RECAPTURE band, then it releases and drift resumes.
+//   - The correction itself is GENTLE (a fraction of full throttle), so even the re-approach is
+//     a lazy easing back rather than a snap.
+//
+// Only the helicopter uses this. Drones and ground units keep the shared band deliberately
+// (Jackson excluded them by name).
+export const DRIFT_FAR_FRAC = 1.6;    // drifted out this far → start easing back in
+export const DRIFT_NEAR_FRAC = 0.55;  // drifted in this close → start easing back out
+export const RECAPTURE_HI_FRAC = 1.2; // correcting inward stops here
+export const RECAPTURE_LO_FRAC = 0.85; // correcting outward stops here
+export const DRIFT_CLOSE_RATE = 0.55;  // gentle, not the ground units' full-throttle 1
+export const DRIFT_BACKOFF_RATE = -0.5;
+
+// Pure: given cycle state and the current distance, return the radial throttle for the STRAFE
+// phase (+ toward the player, − away, 0 = let it drift). Mutates only `st.closing` — the latch.
+export function strafeRadial(st, dist) {
+  const far = st.standoff * DRIFT_FAR_FRAC;
+  const near = st.standoff * DRIFT_NEAR_FRAC;
+  if (st.closing === 1) {
+    // Easing back in; release once we're comfortably inside again.
+    if (dist <= st.standoff * RECAPTURE_HI_FRAC) st.closing = 0;
+  } else if (st.closing === -1) {
+    if (dist >= st.standoff * RECAPTURE_LO_FRAC) st.closing = 0;
+  }
+  if (st.closing === 0 || st.closing == null) {
+    if (dist > far) st.closing = 1;
+    else if (dist < near) st.closing = -1;
+    else st.closing = 0;
+  }
+  if (st.closing === 1) return DRIFT_CLOSE_RATE;
+  if (st.closing === -1) return DRIFT_BACKOFF_RATE;
+  return 0;
+}
+
 // What each phase wants, as data. `slot: null` = hold fire.
 export const PHASE_PLAN = {
   [APPROACH]: { facing: FACE_PLAYER, slot: SLOT_NOSE },
@@ -101,6 +153,9 @@ export function initGunshipCycle(rng = Math.random) {
     standoff: roll(STANDOFF_MIN, STANDOFF_MAX, rng),
     // The point the unit is repositioning toward; null outside REPOSITION.
     repoX: null, repoY: null,
+    // #362 strafe-range latch: 0 = drifting (no range correction), 1 = easing back in,
+    // -1 = easing back out. See strafeRadial.
+    closing: 0,
   };
 }
 
@@ -121,6 +176,9 @@ export function stepGunshipCycle(st, delta, dist, ctx, rng = Math.random) {
     if (dist <= st.standoff * APPROACH_ARRIVE_FRAC || st.timer <= 0) {
       st.phase = STRAFE;
       st.timer = roll(STRAFE_MIN_MS, STRAFE_MAX_MS, rng);
+      // #362: each pass starts from a clean slate — it just arrived at its standoff, so there
+      // is nothing to correct and the range is free to drift from here.
+      st.closing = 0;
     }
   } else if (st.phase === STRAFE) {
     if (st.timer <= 0) {
