@@ -31,6 +31,17 @@
 
 // Exported so other modules (e.g. arena/locomotion.js's instant-turning facing-angle gate,
 // #156) can reuse the same "is this raw input meaningful" threshold instead of inventing one.
+// #346: touch is a THIRD source feeding this same intent — an on-screen movement stick on the
+// left half of the screen and an aim stick on the right, both floating (they appear where the
+// thumb lands). The stick MATH is pure and lives in `touchSticks.js`; this file only routes
+// Phaser pointer events into it and folds the result into `read()`'s intent, exactly like the
+// pad path. Weapon triggers and dash are deliberately OUT of scope (#346) — on touch the
+// player drives and aims but does not fire; `fire` reads all-false and `dashPressed` false.
+// Desktop is untouched: touch mode only latches once a genuine TOUCH pointer is seen
+// (`pointer.wasTouch`), and the mouse-activity checks below now ignore touch-driven pointers
+// so a touch drag can never be mistaken for mouse movement.
+import { TouchSticks } from './touchSticks.js';
+
 export const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
 
@@ -119,7 +130,50 @@ export class Controls {
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
     this._padDashDown = false;     // previous frame's raw L3 state, for edge-detecting the dash trigger
     this._kbDashDown = false;      // previous frame's raw Space state, for edge-detecting the dash trigger
+
+    // #346: on-screen sticks. Only wired up when the device can actually produce touches;
+    // even then, `mode` doesn't become 'touch' until a real touch pointer arrives, so a
+    // touchscreen laptop driven by mouse+keyboard behaves exactly as it always has.
+    this.touch = null;
+    if (Controls.touchCapable()) this._initTouch();
   }
+
+  // Capability probe only — NOT "is the player using touch". Guarded so the module still
+  // imports cleanly under Node/vitest, where there is no window.
+  static touchCapable() {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+    return 'ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0;
+  }
+
+  _initTouch() {
+    const scene = this.scene;
+    const cam = scene.cameras?.main;
+    const w = cam?.width ?? scene.scale?.width ?? 0;
+    const h = cam?.height ?? scene.scale?.height ?? 0;
+    this.touch = new TouchSticks({ width: w, height: h, aimAngle: this.aimAngle });
+
+    // Phaser tracks one pointer by default; two thumbs need two more slots.
+    scene.input.addPointer?.(2);
+
+    const isTouch = (p) => !!p && p.wasTouch === true;
+    scene.input.on('pointerdown', (p) => {
+      if (!isTouch(p)) return;
+      this.touch.setViewport(this._viewW(), this._viewH());
+      if (this.touch.pointerDown(p.id, p.x, p.y)) this.mode = 'touch';
+    });
+    scene.input.on('pointermove', (p) => {
+      if (!isTouch(p)) return;
+      this.touch.pointerMove(p.id, p.x, p.y);
+    });
+    const up = (p) => { if (isTouch(p)) this.touch.pointerUp(p.id); };
+    scene.input.on('pointerup', up);
+    scene.input.on('pointerupoutside', up);
+    // A scene shutdown / lost focus must not leave a stick latched down.
+    scene.events?.once?.('shutdown', () => this.touch.releaseAll());
+  }
+
+  _viewW() { return this.scene.cameras?.main?.width ?? this.scene.scale?.width ?? 0; }
+  _viewH() { return this.scene.cameras?.main?.height ?? this.scene.scale?.height ?? 0; }
 
   pad() {
     const gp = this.scene.input.gamepad;
@@ -141,15 +195,37 @@ export class Controls {
     const padBtn = !!(pad && pad.buttons.some((b) => b && b.pressed));
     const padActive = padMove || padAim || padBtn;
 
-    const mouseMoved = p.x !== this._px || p.y !== this._py;
+    // #346: a touch drag moves `activePointer` too, so mouse activity must exclude
+    // touch-driven pointers or every touch would immediately yank the mode back to 'kbm'.
+    // `wasTouch` is false for a real mouse, so this is a no-op on desktop.
+    const pointerIsTouch = p.wasTouch === true;
+    const mouseMoved = (p.x !== this._px || p.y !== this._py) && !pointerIsTouch;
     this._px = p.x; this._py = p.y;
     const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'SPACE']
       .some((key) => k[key].isDown);
-    const kbmActive = mouseMoved || p.leftButtonDown() || p.rightButtonDown() || kbDown;
+    const mouseBtn = !pointerIsTouch && (p.leftButtonDown() || p.rightButtonDown());
+    const kbmActive = mouseMoved || mouseBtn || kbDown;
 
     if (padActive) this.mode = 'pad';
     else if (kbmActive) this.mode = 'kbm';
     // else: no input this frame — stay in the current mode (don't fall back to mouse).
+    // (Touch latches `mode = 'touch'` in the pointerdown handler, and nothing above can
+    // clear it except genuine pad/mouse/keyboard activity — which is what we want.)
+
+    // ── Touch (#346) ── movement + aim only; no fire, no dash. Handled before the
+    // pad/kbm split below so those paths stay byte-for-byte the behaviour they had.
+    if (this.mode === 'touch' && this.touch) {
+      this.touch.setViewport(this._viewW(), this._viewH());
+      const t = this.touch.read();
+      this.aimAngle = t.aimAngle;   // keep the shared aim memory in sync across schemes
+      return {
+        move: t.move,
+        aim: { mode: 'angle', angle: t.aimAngle },
+        fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
+        mode: 'touch',
+        dashPressed: false,
+      };
+    }
 
     // Effective scheme: only use the pad path if a pad is actually present (a disconnect
     // while latched in pad mode falls back to mouse/keyboard).
