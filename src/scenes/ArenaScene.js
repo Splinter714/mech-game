@@ -342,6 +342,10 @@ export default class ArenaScene extends Phaser.Scene {
       this._handleDash(pi, delta, player);
       this._drive(pi, dt, player);
     }
+    // #348: players are solid to each other. Between the drive loop and the leash on purpose —
+    // it resolves overlaps created by this frame's movement, and the leash clamp after it keeps
+    // the final say on position so a shove can never push a teammate past the limit.
+    this._separatePlayers();
     // #348: the hard-stop leash + the shared camera anchor, applied AFTER everyone has moved.
     this._updateCoopCamera();
 

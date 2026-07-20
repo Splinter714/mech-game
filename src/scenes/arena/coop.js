@@ -4,6 +4,7 @@
 //
 // Everything here is scene WIRING. The rules themselves are pure and unit-tested elsewhere:
 //   data/leash.js    — the hard-stop leash (Jackson rejected zoom-out and rubber-band by name)
+//   data/playerCollision.js — players are solid to each other (soft push, never a deadlock)
 //   data/respawn.js  — the 20s clock, the out-of-combat gate, and the far-edge placement
 //   data/players.js  — the collection, nearest-player targeting, the identifying colours
 //
@@ -19,8 +20,9 @@ import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
   makeRespawnState, pickRespawnPoint, startRespawn, tickRespawn,
 } from '../../data/respawn.js';
+import { separatePlayers } from '../../data/playerCollision.js';
 import { livePlayersOf, playersOf, primaryPlayerOf } from './players.js';
-import { DEPTH } from './shared.js';
+import { DEPTH, PLAYER_WALL_COLLIDE_RADIUS } from './shared.js';
 import { Audio } from '../../audio/index.js';
 
 // The identifying ring drawn on the ground under each mech. Sized to sit just outside the
@@ -122,6 +124,24 @@ export const CoopMixin = {
     const mech = new Mech(joinerBuild(saved, host));
     mech.configureShield(this._playerShieldConfig ?? {});
     return mech;
+  },
+
+  // ── Player-vs-player collision (#348 playtest answer: "Add player collision") ──
+  // Runs after every player has been driven and BEFORE `_updateCoopCamera`'s leash clamp, so the
+  // leash keeps the final word on position — see data/playerCollision.js for why this is a soft
+  // symmetric push rather than the hard movement block every other solid pair in the game uses,
+  // and for why a shove and a leash pin cannot deadlock a player.
+  //
+  // The push is clipped against the same wall/terrain sweep the player's own locomotion uses, at
+  // the same `PLAYER_WALL_COLLIDE_RADIUS` (#320), so being shoved by a teammate can never put a
+  // mech somewhere it could not have walked — which is the gate-mouth/breach case specifically:
+  // in a breach the pair separate along the gap, and a player already against the wall simply
+  // does not take their half of the push.
+  _separatePlayers() {
+    const live = livePlayersOf(this);
+    if (live.length < 2) return 0;
+    const canMove = (p, x, y) => !this._blockedAlongSegment(p.x, p.y, x, y, PLAYER_WALL_COLLIDE_RADIUS);
+    return separatePlayers(live, { canMove });
   },
 
   // ── The shared leashed camera ──

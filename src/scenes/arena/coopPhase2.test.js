@@ -6,6 +6,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { FiringMixin } from './firing.js';
 import { cameraFocusOf, isPlayerRef, otherLivePlayers, targetPlayerFor } from './players.js';
 import { makePlayer, playerAccent, playerColor } from '../../data/players.js';
+import { CoopMixin } from './coop.js';
+import { readFileSync } from 'node:fs';
 
 const P = (id, x, y) => ({ ...makePlayer({ id, x, y }), mech: { isDestroyed: () => false } });
 
@@ -147,5 +149,49 @@ describe('per-player firing state (what phase 1 deliberately left shared)', () =
     scene.b.convergeTarget = null;
     expect(scene._shotIgnoresCover('player', scene.b)).toBe(false);
     expect(scene.a.convergeTarget).not.toBe(scene.b.convergeTarget);
+  });
+});
+
+// #348 playtest answer: players collide with each other. The push rule itself is pure and tested
+// in data/playerCollision.test.js (including the leash interaction); what is covered here is the
+// scene wiring — that the mixin method runs at all, only for live players, and that it clips a
+// shove against the world instead of stuffing a mech into a wall.
+describe('_separatePlayers — the scene seam for player-vs-player collision', () => {
+  const collideScene = (players, blocked = () => false) => Object.assign(
+    { players, _blockedAlongSegment: (x0, y0, x1, y1) => blocked(x1, y1) },
+    CoopMixin,
+  );
+
+  it('is wired into the arena update, between driving and the leash clamp', () => {
+    const src = readFileSync(new URL('../ArenaScene.js', import.meta.url), 'utf8');
+    const sep = src.indexOf('this._separatePlayers()');
+    const leash = src.indexOf('this._updateCoopCamera()');
+    expect(sep).toBeGreaterThan(-1);
+    expect(sep).toBeLessThan(leash);
+  });
+
+  it('pushes two overlapping players apart', () => {
+    const scene = collideScene([P(0, 0, 0), P(1, 10, 0)]);
+    expect(scene._separatePlayers()).toBe(1);
+    expect(Math.hypot(scene.players[0].x - scene.players[1].x, 0)).toBeCloseTo(56, 6);
+  });
+
+  it('does nothing in single player', () => {
+    expect(collideScene([P(0, 0, 0)])._separatePlayers()).toBe(0);
+  });
+
+  it('ignores a downed player — a corpse is not a body to shove', () => {
+    const scene = collideScene([P(0, 0, 0), P(1, 10, 0)]);
+    scene.players[1].dead = true;
+    expect(scene._separatePlayers()).toBe(0);
+    expect(scene.players[0].x).toBe(0);
+  });
+
+  it('clips the shove against walls, so nobody is pushed into geometry', () => {
+    // A wall on the left: any destination with x < -5 is blocked.
+    const scene = collideScene([P(0, 0, 0), P(1, 10, 0)], (x) => x < -5);
+    scene._separatePlayers();
+    expect(scene.players[0].x).toBeGreaterThanOrEqual(-5);
+    expect(scene.players[1].x).toBeGreaterThan(10);   // the partner still separates
   });
 });
