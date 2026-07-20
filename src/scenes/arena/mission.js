@@ -13,7 +13,7 @@
 // #64), so this mission can only ever go active → complete, never → failed, for now.
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
-import { isBaseCleared, baseClearState, CLEAR_DONE } from '../../data/bases.js';
+import { isBaseCleared, baseClearState, baseMarkTargets, CLEAR_DONE } from '../../data/bases.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR, strokeHexRing } from './shared.js';
 
 // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"): the
@@ -67,6 +67,14 @@ export function isBaseFullyCleared(base, buildingHp, enemies) {
   return baseClearStateOf(base, buildingHp, enemies).step === CLEAR_DONE;
 }
 
+// #371 marker sizes. The dock marker matches the primary objective marker's 30px hex — a dock IS a
+// building-sized target, and Jackson asked for "building-sized ones on the docks". The enemy hex is
+// deliberately tiny ("a little objective hex on all remaining enemies") and lifted clear of the
+// sprite so it doesn't collide with the #370 shield outline on a drone.
+const DOCK_MARK_RADIUS = 30;
+const ENEMY_MARK_RADIUS = 6;
+const ENEMY_MARK_LIFT = 26;
+
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated `this.bases`.
   // Targets base 0 (the lowest-index/earliest base — see file header) as the very first
@@ -99,6 +107,7 @@ export const MissionMixin = {
     // keep showing the last base's requirement after the run has run off the end.
     if (!base) this.registry.set('baseClear', null);
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
+    this._clearSpreadMarkers();   // #371: last base's remaining-requirement markers don't carry over
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
     this.registry.set('mission', this.mission);
     this._publishObjectiveWorld();
@@ -172,6 +181,8 @@ export const MissionMixin = {
     // Publish the live step so HudScene can show the player exactly ONE requirement at a time —
     // crucially, no enemy count until the last dock is down (see data/bases.js for why).
     this.registry.set('baseClear', clear);
+    // #371: the indicator spreads to whatever is still required, derived from that SAME `clear`.
+    this._syncClearMarkers(clear);
     const wasActive = this.mission.status === 'active';
     // #66: fail path deferred to #64 (the run loop) — no real playerDead signal yet, so this
     // always passes false and the mission can only ever go active → complete for now.
@@ -181,6 +192,89 @@ export const MissionMixin = {
     if (wasActive && this.mission.status === 'complete') this._onMissionComplete();
   },
 
+  // ── #371: the spreading objective indicator ────────────────────────────────────────────────
+  // Once the objective hex falls, "the objective" is no longer one place — it is the list of
+  // things still required. `baseMarkTargets` (data/bases.js) decides that list as a projection of
+  // the SAME `clear` state the HUD line is rendered from, so the markers can never disagree with
+  // the text (and in particular never mark an enemy while a dock stands). This method is purely a
+  // renderer for that list: it pools one marker per target, re-derived every frame, which is also
+  // what makes late spawns — a dock's last wave, a carrier's endless drones (#328) — pick up
+  // markers automatically as they appear, with no cap.
+  //
+  // Fog (#337): markers do NOT show through an unentered compound. `WORLD_UI` is deliberately
+  // above the fog layer, so a marker inside a black interior would draw the garrison's exact
+  // positions on the fog the interior exists to hide. Docks gate on `_pointVisible`, enemies on
+  // `_enemyVisible` — the same two predicates that already decide whether the dock hex and the
+  // enemy sprite itself are visible, so a marker is shown exactly when its subject is.
+  _syncClearMarkers(clear) {
+    const base = this._objectiveBase;
+    const hp = this.buildingHp ?? new Map();
+    const marks = baseMarkTargets(clear, base, {
+      isDockStanding: (d) => hp.has(axialKey(d.q, d.r)),
+      enemies: this.enemies ?? [],
+    });
+    // The original single marker steps aside while the spread markers are up, and comes back for
+    // the CLEARED treatment (`_onMissionComplete`) once the base is done.
+    this._objectiveMarker?.setVisible(marks.showObjective);
+
+    this._dockMarkers ??= new Map();
+    const liveDocks = new Set();
+    for (const d of marks.docks) {
+      const key = axialKey(d.q, d.r);
+      liveDocks.add(key);
+      const { x, y } = hexToPixel(d.q, d.r);
+      let m = this._dockMarkers.get(key);
+      if (!m) { m = this._makeMarkHex(x, y, DOCK_MARK_RADIUS, 3, 'DOCK'); this._dockMarkers.set(key, m); }
+      m.setVisible(this._pointVisible ? this._pointVisible(x, y) : true);
+    }
+    for (const [key, m] of this._dockMarkers) {
+      if (!liveDocks.has(key)) { m.destroy(); this._dockMarkers.delete(key); }
+    }
+
+    this._enemyMarkers ??= new Map();
+    const liveEnemies = new Set(marks.enemies);
+    for (const e of marks.enemies) {
+      let m = this._enemyMarkers.get(e);
+      if (!m) { m = this._makeMarkHex(e.x, e.y, ENEMY_MARK_RADIUS, 1.5, null); this._enemyMarkers.set(e, m); }
+      // Floated above the unit rather than ringing it: at drone scale a ring would sit right on
+      // top of the #370 shield outline. A small amber hex hovering overhead also stays distinct
+      // from the off-screen lock chevron (#368) and the on-ground player colour discs (#348).
+      m.setPosition(e.x, e.y - ENEMY_MARK_LIFT);
+      m.setVisible(this._enemyVisible ? this._enemyVisible(e) : true);
+    }
+    for (const [e, m] of this._enemyMarkers) {
+      if (!liveEnemies.has(e)) { m.destroy(); this._enemyMarkers.delete(e); }
+    }
+  },
+
+  // One marker: the same amber pointy-top hex + dark/light double outline the objective marker
+  // uses (#129/#280 legibility against every biome), just at the requested size. Static — with a
+  // dock cluster or a drone swarm on screen at once, a pulse per marker would be noise, and the
+  // one pulsing marker stays reserved for the single primary objective.
+  _makeMarkHex(x, y, radius, width, labelText) {
+    const parts = [
+      strokeHexRing(this.add.graphics(), radius * 1.1, width, 0xfbfdff, 0.85),
+      strokeHexRing(this.add.graphics(), radius * 1.05, width * 0.7, 0x0b0e14, 0.85),
+      strokeHexRing(this.add.graphics(), radius, width, UI_HIGHLIGHT_COLOR, 0.9),
+    ];
+    if (labelText) {
+      parts.push(this.add.text(0, -radius - 16, labelText, {
+        fontFamily: 'monospace', fontSize: '11px',
+        color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
+      }).setOrigin(0.5));
+    }
+    return this.add.container(x, y, parts).setDepth(DEPTH.WORLD_UI);
+  },
+
+  // Advancing to the next base (or off the end of the list) drops every spread marker — they
+  // describe ONE base's remaining requirements and must not leak into the next objective.
+  _clearSpreadMarkers() {
+    for (const m of this._dockMarkers?.values() ?? []) m.destroy();
+    for (const m of this._enemyMarkers?.values() ?? []) m.destroy();
+    this._dockMarkers = new Map();
+    this._enemyMarkers = new Map();
+  },
+
   // Win reaction. Kept deliberately simple (owner's call, #66): no forced return to the
   // garage (that's a #64 run-loop concern) and enemies are left running — the arena just
   // keeps playing as a sandbox after the win, with the marker swapped to a "cleared" look
@@ -188,6 +282,10 @@ export const MissionMixin = {
   // any surprising freeze/stop behaviour before the run loop exists to make that call well.
   _onMissionComplete() {
     if (this._objectiveMarker) {
+      // #371: the base is clear, so nothing is required any more — the spread markers go away and
+      // the original marker comes back to carry the CLEARED banner.
+      this._clearSpreadMarkers();
+      this._objectiveMarker.setVisible(true);
       // #129: index 2 — the amber ring is now the third child (after the halo + outline
       // legibility rings added around it; see `_makeObjectiveMarker`).
       const ring = this._objectiveMarker.list[2];

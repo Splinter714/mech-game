@@ -98,3 +98,54 @@ export function baseClearLabel(state) {
     default: return 'BASE CLEAR';
   }
 }
+
+// ── #371: WHAT THE OBJECTIVE INDICATOR POINTS AT RIGHT NOW ────────────────────────────────────
+// Jackson, playtest 2026-07-20: "the actual objective indicator should spread to all items that
+// need to be destroyed after the standard 'objective' is destroyed; a little objective hex on all
+// remaining enemies, and building-sized ones on the docks".
+//
+// The whole point is that this must never disagree with the HUD line. So it is not a parallel
+// rule: it is a projection of the SAME `baseClearState` result that `baseClearLabel` renders.
+// One step is surfaced at a time, in #356's order, and the enemy set is deliberately empty while
+// any dock stands — the same discipline that keeps a kill count off the HUD until the last dock
+// is down (a base with 7 live enemies and a standing dock marks the DOCKS, never the 7).
+//
+// Late spawns are marked, by construction: the sets are derived fresh from the live `enemies`
+// array every call rather than snapshotted when marking begins, so a dock's last wave or a
+// carrier's (#328) endless drones all pick up markers as they appear. The enemy set can GROW
+// during the `enemies` step and that is intended — an unmarked straggler is the failure mode this
+// whole issue exists to prevent, so there is no cap.
+//
+// `size` names the visual weight the scene should draw, keeping that decision out of the renderer:
+//   'objective' — the single hex marker, unchanged (step 1)
+//   'building'  — dock-sized markers (step 2)
+//   'small'     — a little hex per enemy (step 3)
+export const MARK_OBJECTIVE = 'objective';
+export const MARK_BUILDING = 'building';
+export const MARK_SMALL = 'small';
+
+export function baseMarkTargets(state, base, { isDockStanding = () => false, enemies = [] } = {}) {
+  switch (state?.step) {
+    case CLEAR_OBJECTIVE:
+      // The objective hex itself is still the one and only marker; the scene already owns it.
+      return { size: MARK_OBJECTIVE, showObjective: true, docks: [], enemies: [] };
+    case CLEAR_DOCKS:
+      return {
+        size: MARK_BUILDING,
+        showObjective: false,
+        docks: (base?.docks ?? []).filter((d) => isDockStanding(d)),
+        enemies: [],
+      };
+    case CLEAR_ENEMIES:
+      return {
+        size: MARK_SMALL,
+        showObjective: false,
+        docks: [],
+        enemies: (enemies ?? []).filter((e) => e.baseId === base?.id),
+      };
+    default:
+      // Cleared (or no base): nothing is required, so nothing is marked. The scene keeps its own
+      // "CLEARED" treatment of the original marker — that is a win banner, not a requirement.
+      return { size: null, showObjective: true, docks: [], enemies: [] };
+  }
+}

@@ -33,8 +33,8 @@ function fakeScene(overrides = {}) {
       polygon: () => fakeGraphic(),
       graphics: () => fakeGraphic(),
       text: () => fakeGraphic(),
-      container: (x, y, list) => Object.assign({ x, y, list }, {
-        setDepth() { return this; }, destroy() {},
+      container: (x, y, list) => Object.assign({ x, y, list, visible: true }, {
+        setDepth() { return this; }, destroy() {}, setVisible(v) { this.visible = v; return this; }, setPosition(x, y) { this.x = x; this.y = y; return this; },
       }),
     },
     tweens: { add: () => {}, killTweensOf: () => {} },
@@ -223,5 +223,113 @@ describe('mission completion is driven by the objective hex\'s destroyed state, 
     scene.enemies = [];
     scene._updateMission();
     expect(scene.mission.status).toBe('complete');
+  });
+});
+
+// ── #371: the objective indicator spreads to everything still required ─────────────────────────
+// The pure rule (which targets, at which step) is pinned in data/baseMarkTargets.test.js. These
+// pin the SCENE wiring on top of it: one marker per live target, pooled and re-derived each tick
+// (so late spawns get marked and dead targets lose theirs), and fog suppression.
+describe('#371 spreading objective markers', () => {
+  const dockBase = (id, docks) => ({
+    id, center: { q: 0, r: 0 }, docks, turrets: [], objectiveHex: { q: 0, r: 0 },
+  });
+  const hpFor = (hexes) => new Map(hexes.map((h) => [axialKey(h.q, h.r), 10]));
+  const dockCount = (s) => s._dockMarkers?.size ?? 0;
+  const enemyCount = (s) => s._enemyMarkers?.size ?? 0;
+
+  function sceneAt({ objectiveUp = false, docksUp = [], enemies = [], ...rest } = {}) {
+    const docks = [{ q: 1, r: 0 }, { q: 2, r: 0 }];
+    const standing = [...docksUp, ...(objectiveUp ? [{ q: 0, r: 0 }] : [])];
+    const scene = fakeScene({
+      bases: [dockBase('base0', docks)],
+      enemies,
+      buildingHp: hpFor(standing),
+      run: makeRun(),
+      ...rest,
+    });
+    scene._initMission();
+    scene._updateMission();
+    return scene;
+  }
+
+  it('step 1 — objective alive: only the single marker, no spread markers', () => {
+    const s = sceneAt({
+      objectiveUp: true,
+      docksUp: [{ q: 1, r: 0 }, { q: 2, r: 0 }],
+      enemies: [{ baseId: 'base0', x: 0, y: 0 }],
+    });
+    expect(dockCount(s)).toBe(0);
+    expect(enemyCount(s)).toBe(0);
+  });
+
+  it('step 2 — objective down: one marker per STANDING dock, and none on enemies', () => {
+    const s = sceneAt({
+      docksUp: [{ q: 1, r: 0 }, { q: 2, r: 0 }],
+      enemies: Array.from({ length: 7 }, () => ({ baseId: 'base0', x: 0, y: 0 })),
+    });
+    expect(dockCount(s)).toBe(2);
+    expect(enemyCount(s)).toBe(0);
+
+    // Blow up one dock: its marker is pruned, the other stays.
+    s.buildingHp.delete(axialKey(1, 0));
+    s._updateMission();
+    expect(dockCount(s)).toBe(1);
+    expect(enemyCount(s)).toBe(0);
+  });
+
+  it('step 3 — docks cleared: a little marker per remaining enemy, pinned above it', () => {
+    const enemies = [{ baseId: 'base0', x: 100, y: 200 }, { baseId: 'other', x: 0, y: 0 }];
+    const s = sceneAt({ enemies });
+    expect(dockCount(s)).toBe(0);
+    expect(enemyCount(s)).toBe(1);
+    const m = s._enemyMarkers.get(enemies[0]);
+    expect(m.x).toBe(100);
+    expect(m.y).toBeLessThan(200);   // lifted clear of the sprite/shield bubble
+
+    // It tracks the enemy as it moves.
+    enemies[0].x = 140;
+    s._updateMission();
+    expect(s._enemyMarkers.get(enemies[0]).x).toBe(140);
+  });
+
+  it('LATE SPAWNS get marked — a carrier drone born mid-step grows the marker set, uncapped', () => {
+    const enemies = [{ baseId: 'base0', x: 0, y: 0 }];
+    const s = sceneAt({ enemies });
+    expect(enemyCount(s)).toBe(1);
+    for (let i = 0; i < 12; i++) s.enemies.push({ baseId: 'base0', x: i, y: 0 });
+    s._updateMission();
+    expect(enemyCount(s)).toBe(13);
+    // Dead enemies (pruned from `enemies`) drop their markers.
+    s.enemies = s.enemies.slice(0, 3);
+    s._updateMission();
+    expect(enemyCount(s)).toBe(3);
+  });
+
+  it('markers do NOT show through an unentered compound (fog #337)', () => {
+    const enemies = [{ baseId: 'base0', x: 0, y: 0 }];
+    const s = sceneAt({
+      enemies,
+      _enemyVisible: () => false,
+      _pointVisible: () => false,
+    });
+    expect(s._enemyMarkers.get(enemies[0]).visible).toBe(false);
+
+    // Same gate for docks.
+    const d = sceneAt({ docksUp: [{ q: 1, r: 0 }], _pointVisible: () => false });
+    expect([...d._dockMarkers.values()][0].visible).toBe(false);
+  });
+
+  it('base clear drops every spread marker, and advancing bases does not leak them', () => {
+    const enemies = [{ baseId: 'base0', x: 0, y: 0 }];
+    const s = sceneAt({ enemies });
+    expect(enemyCount(s)).toBe(1);
+    s.enemies = [];
+    s._updateMission();
+    expect(s.mission.status).toBe('complete');
+    expect(enemyCount(s)).toBe(0);
+    s._advanceObjective();
+    expect(enemyCount(s)).toBe(0);
+    expect(dockCount(s)).toBe(0);
   });
 });

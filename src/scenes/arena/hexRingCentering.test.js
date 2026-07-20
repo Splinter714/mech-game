@@ -72,7 +72,7 @@ describe('#280: the static objective-marker hexagon rings are centered on the ob
       add: {
         graphics: () => { const g = fakeGraphics(); graphicsMocks.push(g); return g; },
         text: () => { const t = { setOrigin: () => t, setColor: () => t, setText: () => t }; return t; },
-        container: (x, y, list) => Object.assign({ x, y, list }, { setDepth() { return this; }, destroy() {} }),
+        container: (x, y, list) => Object.assign({ x, y, list }, { setDepth() { return this; }, destroy() {}, setVisible() { return this; } }),
       },
       tweens: { add: () => {}, killTweensOf: () => {} },
       registry: { get: (k) => registryStore.get(k), set: (k, v) => registryStore.set(k, v) },

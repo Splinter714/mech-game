@@ -24,7 +24,7 @@ function fakeScene(overrides = {}) {
   return Object.assign({
     add: {
       graphics: () => fakeGraphic(), text: () => fakeGraphic(),
-      container: (x, y, list) => Object.assign({ x, y, list }, { setDepth() { return this; }, destroy() {} }),
+      container: (x, y, list) => Object.assign({ x, y, list }, { setDepth() { return this; }, destroy() {}, setVisible() { return this; }, setPosition(x, y) { this.x = x; this.y = y; return this; } }),
     },
     tweens: { add: () => {}, killTweensOf: () => {} },
     time: { delayedCall: () => ({}) },
