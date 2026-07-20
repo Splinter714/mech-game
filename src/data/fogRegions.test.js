@@ -4,9 +4,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, peekHexes, enemyVisibleInFog,
-  FOG_ALPHA, FOG_FEATHER_PX, PEEK_RANGE_PX,
+  FOG_ALPHA, FOG_FEATHER_PX, PEEK_RANGE_PX, PEEK_MAX_DEPTH, peekDepthFor,
 } from './fogRegions.js';
-import { axialKey, hexToPixel, range } from './hexgrid.js';
+import { axialKey, hexToPixel, range, distance } from './hexgrid.js';
 
 // A compound centred on `c` with radius `rad` rings — the same shape worldgen hands over.
 function base(id, c, rad) {
@@ -159,7 +159,7 @@ describe('enemyVisibleInFog', () => {
 // auto-reveal on breach/gate is a bit too generous; maybe we just reveal the one hex inside the
 // breach or opening or something small like that". It must read as a peek through a hole, and it is
 // still position-dependent — walking away from a hole closes it again.
-describe('peekHexes — the one-hex breach/gate reveal', () => {
+describe('peekHexes — the breach/gate reveal', () => {
   const world = buildFogWorld([base('alpha', { q: 0, r: 0 }, 3)]);
   const fogged = fogHexes(world, new Set());
   // An opening on the compound's east flank: outline hex (3,0) ←→ open ground (4,0).
@@ -168,8 +168,14 @@ describe('peekHexes — the one-hex breach/gate reveal', () => {
   const far = { a: { q: 0, r: 3 }, b: { q: 0, r: 4 } };
   const outside = (q, r) => hexToPixel(q, r);
 
-  it('reveals exactly the ONE hex behind the opening you are standing at', () => {
-    const seen = peekHexes(fogged, [opening], outside(4, 0));
+  // At the far edge of PEEK_RANGE_PX the #352 ramp is still at depth 1, so this is the v3 behaviour.
+  const farEdge = () => {
+    const p = hexToPixel(4, 0);
+    return { x: p.x + PEEK_RANGE_PX * 0.9, y: p.y };
+  };
+
+  it('reveals exactly the ONE hex behind the opening from the far edge of range', () => {
+    const seen = peekHexes(fogged, [opening], farEdge());
     expect([...seen]).toEqual([K(3, 0)]);           // one hex, not a slice of yard
   });
 
@@ -182,11 +188,13 @@ describe('peekHexes — the one-hex breach/gate reveal', () => {
     const seen = peekHexes(fogged, [opening, far], outside(4, 0));
     expect(seen.has(K(3, 0))).toBe(true);
     expect(seen.has(K(0, 3))).toBe(false);
+    expect(seen.has(K(0, 2))).toBe(false);
   });
 
   it('works from either orientation of the span — the caller never picks a side', () => {
     const flipped = { a: opening.b, b: opening.a };
-    expect([...peekHexes(fogged, [flipped], outside(4, 0))]).toEqual([K(3, 0)]);
+    expect(peekHexes(fogged, [flipped], farEdge())).toEqual(peekHexes(fogged, [opening], farEdge()));
+    expect(peekHexes(fogged, [flipped], outside(4, 0))).toEqual(peekHexes(fogged, [opening], outside(4, 0)));
   });
 
   it('gives up nothing when the span has fog on neither side, or none at all', () => {
@@ -204,5 +212,55 @@ describe('peekHexes — the one-hex breach/gate reveal', () => {
     const p = hexToPixel(4, 0);
     expect(peekHexes(fogged, [opening], { x: p.x + PEEK_RANGE_PX - 1, y: p.y }).size).toBe(1);
     expect(peekHexes(fogged, [opening], { x: p.x + PEEK_RANGE_PX + 1, y: p.y }).size).toBe(0);
+  });
+
+  // ── #352: the peek deepens as he closes on the hole ───────────────────────────────
+  // "when the player gets close, I want to expose slightly more base interior hexes through a
+  // breach or open gate". The cone deepens; it never becomes a disc or a view of the yard.
+  const at = (frac) => {
+    const p = hexToPixel(4, 0);
+    return { x: p.x + PEEK_RANGE_PX * frac, y: p.y };
+  };
+
+  it('deepens the cone as the player closes: 1 hex far, more up close', () => {
+    const far = peekHexes(fogged, [opening], at(0.9));
+    const mid = peekHexes(fogged, [opening], at(0.5));
+    const near = peekHexes(fogged, [opening], at(0.05));
+    expect(far.size).toBe(1);
+    expect(mid.size).toBe(4);
+    expect(near.size).toBe(9);
+    // Monotone: closing in only ever ADDS hexes, so the reveal never flickers off as he walks in.
+    for (const k of far) expect(mid.has(k)).toBe(true);
+    for (const k of mid) expect(near.has(k)).toBe(true);
+  });
+
+  it('ramps depth in thirds of PEEK_RANGE_PX, and gives up nothing out of range', () => {
+    expect(PEEK_MAX_DEPTH).toBe(3);
+    expect(peekDepthFor(0)).toBe(3);
+    expect(peekDepthFor(PEEK_RANGE_PX * 0.32)).toBe(3);
+    expect(peekDepthFor(PEEK_RANGE_PX * 0.5)).toBe(2);
+    expect(peekDepthFor(PEEK_RANGE_PX * 0.9)).toBe(1);
+    expect(peekDepthFor(PEEK_RANGE_PX)).toBe(1);
+    expect(peekDepthFor(PEEK_RANGE_PX + 1)).toBe(0);
+  });
+
+  it('stays a cone THROUGH the hole — every revealed hex is deeper in than the last', () => {
+    const seen = peekHexes(fogged, [opening], at(0));
+    for (const k of seen) {
+      const [q, r] = k.split(',').map(Number);
+      // Strictly farther from the opening's outer hex than from the hex just inside it.
+      expect(distance({ q, r }, { q: 4, r: 0 })).toBe(distance({ q, r }, { q: 3, r: 0 }) + 1);
+      // …and never so deep that it is a view of the yard: at most PEEK_MAX_DEPTH in.
+      expect(distance({ q, r }, { q: 4, r: 0 })).toBeLessThanOrEqual(PEEK_MAX_DEPTH);
+    }
+    // The compound's far side and its centre stay dark even standing in the gate.
+    expect(seen.has(K(0, 0))).toBe(false);
+    expect(seen.has(K(-3, 0))).toBe(false);
+    expect(seen.size).toBeLessThan(fogged.size / 3);
+  });
+
+  it('never reveals a hex outside the fogged compound, however close he stands', () => {
+    const seen = peekHexes(fogged, [opening], at(0));
+    for (const k of seen) expect(fogged.has(k)).toBe(true);
   });
 });

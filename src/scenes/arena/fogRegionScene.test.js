@@ -136,7 +136,7 @@ const onSpan = (a, b, apply) => (e) => {
   if (e.a.q === a.q && e.a.r === a.r && e.b.q === b.q && e.b.r === b.r) apply(e);
 };
 
-describe('breach peek: the one hex behind a nearby opening', () => {
+describe('breach peek: the cone behind a nearby opening', () => {
   const bases = [compound('a', { q: 0, r: 0 }, 3)];
   const INNER = { q: 3, r: 0 }, OUTER = { q: 4, r: 0 };   // the span facing +x
   const breached = () => ringEdges({ q: 0, r: 0 }, 3, onSpan(INNER, OUTER, (e) => { e.destroyed = true; }));
@@ -149,9 +149,13 @@ describe('breach peek: the one hex behind a nearby opening', () => {
     expect(s._peeked.size).toBe(0);
   });
 
-  it('reveals exactly ONE hex through a breach he is standing at', () => {
+  // #352: standing back at the edge of PEEK_RANGE_PX is still the flat one-hex v3 peek; walking up
+  // to the hole deepens the cone. `at(5, 0)` is one hex out from the opening — the middle tier.
+  const farOff = () => { const p = hexToPixel(4, 0); return { px: p.x + 200, py: p.y }; };
+
+  it('reveals exactly ONE hex through a breach seen from the edge of peek range', () => {
     const s = makeScene({ bases, wallEdges: breached() });
-    Object.assign(s, at(5, 0));
+    Object.assign(s, farOff());
     s._updateVisibility(view);
     expect([...s._peeked]).toEqual([K(3, 0)]);
     const p = hexToPixel(3, 0);
@@ -159,22 +163,39 @@ describe('breach peek: the one hex behind a nearby opening', () => {
     expect(s._pointVisible(p.x, p.y)).toBe(true);          // …and it is targetable
   });
 
+  it('widens the cone as he closes on the breach — and what he sees, he can shoot', () => {
+    const s = makeScene({ bases, wallEdges: breached() });
+    Object.assign(s, at(5, 0));                            // one hex out from the opening
+    s._updateVisibility(view);
+    expect(s._peeked.size).toBe(4);
+    expect(s._peeked.has(K(3, 0))).toBe(true);
+    // The coupling is the point: every newly revealed hex is also newly targetable.
+    for (const k of s._peeked) {
+      const [q, r] = k.split(',').map(Number);
+      const p = hexToPixel(q, r);
+      expect(s._peekVisible(p.x, p.y)).toBe(true);
+      expect(s._pointVisible(p.x, p.y)).toBe(true);
+    }
+  });
+
   it('leaves the rest of the yard dark — it is a peek through a hole, not a view of it', () => {
     const s = makeScene({ bases, wallEdges: breached() });
     Object.assign(s, at(5, 0));
     s._updateVisibility(view);
-    const yard = range({ q: 0, r: 0 }, 3).filter((h) => !(h.q === 3 && h.r === 0));
+    const yard = range({ q: 0, r: 0 }, 3).filter((h) => !s._peeked.has(K(h.q, h.r)));
+    expect(yard.length).toBe(33);                          // the great majority of the compound
     for (const h of yard) {
       const p = hexToPixel(h.q, h.r);
       expect(s._pointVisible(p.x, p.y)).toBe(false);
     }
   });
 
-  it('cuts the peeked hex out of the drawn fill — one fewer than the full footprint', () => {
+  it('cuts the peeked hexes out of the drawn fill — the fill and the gate agree', () => {
     const s = makeScene({ bases, wallEdges: breached() });
     Object.assign(s, at(5, 0));
     s._updateVisibility(view);
-    expect(s.counts.fills).toBe(36);
+    expect(s.counts.fills).toBe(37 - s._peeked.size);       // 37-hex footprint, 4 peeked
+    expect(s.counts.fills).toBe(33);
   });
 
   it('treats an OPEN GATE identically to a breach — one code path, no branch', () => {
@@ -183,12 +204,15 @@ describe('breach peek: the one hex behind a nearby opening', () => {
     const s = makeScene({ bases, wallEdges: gated });
     Object.assign(s, at(5, 0));
     s._updateVisibility(view);
-    expect([...s._peeked]).toEqual([K(3, 0)]);
+    const b = makeScene({ bases, wallEdges: breached() });
+    Object.assign(b, at(5, 0));
+    b._updateVisibility(view);
+    expect(s._peeked).toEqual(b._peeked);
   });
 
   // Still position-dependent, which is what v1 got wrong (it unioned over every exterior angle and
-  // lit nearly the whole yard from one hole). At one hex of depth the reveal simply closes as he
-  // walks away from the hole.
+  // lit nearly the whole yard from one hole). The cone narrows to one hex and then closes entirely
+  // as he walks away from the hole.
   it('closes again once he moves off the opening', () => {
     const s = makeScene({ bases, wallEdges: breached() });
     Object.assign(s, at(9, 0));                            // too far out

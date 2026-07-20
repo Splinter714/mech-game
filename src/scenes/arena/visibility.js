@@ -25,9 +25,10 @@
 // rather than retuned — see `peekHexes` in data/fogRegions.js.
 //
 // His earlier "it shouldn't be hex by hex, it should be by raycast" was about v1's coarse
-// 5-hex-block reveal disc popping as he drove; at one hex of depth there is no wedge geometry left
-// for a raycast to express, and the reveal is still directional (only openings you are standing
-// near light up). His own follow-up says as much: "at this scale the distinction barely matters".
+// 5-hex-block reveal disc popping as he drove; at one to three hexes of depth (#352 deepened the
+// cone with proximity) there is no wedge geometry left for a raycast to express, and the reveal is
+// still directional (only openings you are standing near light up). His own follow-up says as much:
+// "at this scale the distinction barely matters".
 //
 // ── What v1 got right and is kept verbatim ──
 // One dark translucent layer at DEPTH.LOS_DIM (2.9), so terrain, ground FX, small units, the cover

@@ -30,7 +30,7 @@
 //
 // The only hex-granular thing left is the fogged interior's own footprint and its soft edge ramp,
 // which is fine: that boundary IS the wall ring, a hex-aligned structure to begin with.
-import { axialKey, neighbors, hexToPixel } from './hexgrid.js';
+import { axialKey, neighbors, hexToPixel, distance, range } from './hexgrid.js';
 import { targetCoverExempt } from './visibility.js';
 
 // Fog darkness and softness. Jackson, after playtesting the 0.62 + 3-ring version: the interior
@@ -56,8 +56,25 @@ export const FOG_FEATHER_PX = 3;    // width of the anti-aliased edge, in world 
 // Jackson: "the auto-reveal on breach/gate is a bit too generous; maybe we just reveal the one hex
 // inside the breach or opening or something small like that". A 900px raycast sweep whose intended
 // output is a single hex is doing pointless work, so the geometry is gone rather than shrunk — see
-// `peekHexes`. It reads as a peek through a hole because it is literally one hex deep.
+// `peekHexes`. It reads as a peek through a hole because it is a shallow cone, not a radius (#352
+// deepened that cone from a flat one hex to 1-3 hexes by proximity; see PEEK_MAX_DEPTH below).
 export const PEEK_RANGE_PX = 220;
+
+// ── #352: the peek DEEPENS as you close on the opening ───────────────────────────────
+// Jackson, having played the flat one-hex version: "when the player gets close, I want to expose
+// slightly more base interior hexes through a breach or open gate - e.g. 3 hex ring around the
+// player instead of just the base 1".
+//
+// So depth is a step function of how close he is to the opening's outer hex: the far third of
+// PEEK_RANGE_PX still gives the v3 single hex, the middle third two, and pressed right up against
+// the hole three. Nothing about the shape changes — see `peekHexes`, it is still a cone drilled
+// straight through the opening, never a disc around the player and never a view of the yard.
+export const PEEK_MAX_DEPTH = 3;
+export function peekDepthFor(distPx) {
+  if (!(distPx <= PEEK_RANGE_PX)) return 0;
+  const t = Math.max(0, distPx) / PEEK_RANGE_PX;   // 0 at the opening, 1 at the edge of range
+  return Math.max(1, PEEK_MAX_DEPTH - Math.floor(t * PEEK_MAX_DEPTH));
+}
 
 // ── World precompute ─────────────────────────────────────────────────────────────────
 // Built once per run from the base descriptors. `footprint` (worldgen.js) is the compound's hex set.
@@ -124,8 +141,11 @@ export function fogHexes(world, entered = new Set()) {
 // (breached or open gate) on a fogged compound, the single fogged hex immediately behind it, and
 // only while he is within PEEK_RANGE_PX of that span's outer hex.
 //
-// One hex deep, by construction — there is no radius that can grow it into a view of the yard, which
-// is the whole point. It is still directional: only the openings you are actually standing near
+// #352: "the single fogged hex" is now "the cone of up to `peekDepthFor(dist)` hexes behind it".
+// The shape is still bounded by construction rather than by a radius — every revealed hex must be
+// strictly farther from the opening than the last, so the set can only ever be a wedge drilled
+// through the hole (1, 4 or 9 hexes), never a disc around the player and never a view of the yard.
+// It is still directional: only the openings you are actually standing near
 // give anything up, so walking along a breached wall swings which sliver is lit, the property the
 // v2 polygon was there to buy. `openEdges` is the caller's already-filtered list of non-blocking
 // spans (`blocksSpan`, data/wallEdges.js), so a blown span and an open gate take the same path.
@@ -143,7 +163,18 @@ export function peekHexes(fogged, openEdges = [], origin = null) {
       const ik = axialKey(inner.q, inner.r);
       if (!fogged.has(ik) || fogged.has(axialKey(outer.q, outer.r))) continue;
       const p = hexToPixel(outer.q, outer.r);
-      if (Math.hypot(origin.x - p.x, origin.y - p.y) <= PEEK_RANGE_PX) out.add(ik);
+      const dist = Math.hypot(origin.x - p.x, origin.y - p.y);
+      const depth = peekDepthFor(dist);
+      if (!depth) continue;
+      // The cone: every fogged hex within `depth - 1` steps of the inner hex that is also
+      // strictly FARTHER from the opening than that step count — i.e. lies away from the
+      // player, through the hole. The ranks are 1, 3 and 5 wide, so 1 / 4 / 9 hexes by depth.
+      for (const h of range(inner, depth - 1)) {
+        const k = axialKey(h.q, h.r);
+        if (!fogged.has(k)) continue;
+        if (distance(h, outer) !== distance(h, inner) + 1) continue;
+        out.add(k);
+      }
     }
   }
   return out;
