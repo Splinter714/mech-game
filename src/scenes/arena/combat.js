@@ -5,8 +5,10 @@ import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import {
   ARENA_MECH_SCALE, DAMAGEABLE, DEATH_SCALE_MAX, DEPTH, deathScaleFor, explosionCategoryFor,
-  resolveHitLocation, pickLiveWeighted,
+  resolveHitLocation, pickLiveWeighted, softCoverUnitTier,
 } from './shared.js';
+import { softCoverStopsShot } from '../../data/terrain.js';
+import { mulberry32 } from '../../data/worldgen.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 import { DORMANT } from '../../data/awareness.js';
 // #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
@@ -27,6 +29,32 @@ const IMPACT_CIRCLE_CAP = 48;
 const DEBRIS_CAP = 60;
 
 export const CombatMixin = {
+  // ── #374: soft cover eats some shots ────────────────────────────────────────────────────
+  // The one place the foliage roll is made. Every shot that has RESOLVED onto a unit asks this
+  // before damage is applied; a `true` answer means the round hit the trees instead, so it
+  // splashes cosmetically at the impact point and deals nothing.
+  //
+  // `target` is the thing being shot (a player ref or an enemy) — the tier is read off IT, never
+  // off the shooter (`softCoverUnitTier`, shared.js). `originHexes` is the shot's own muzzle-hex
+  // list, used only for the #72/#279 own-hex exemption: a shooter standing in the same cover hex
+  // as its target has no foliage in between, so no roll is made. It's the same array an in-flight
+  // round already carries (`p.originHexes`); the hitscan path passes its muzzle hex the same way.
+  // Omit it and the exemption simply doesn't apply.
+  //
+  // The RNG is seeded off the run (`runSeed`) rather than `Math.random`, matching how the arena
+  // seeds its other per-run rolls (bases.js `_dockRng`), so a seeded run stays reproducible. It's
+  // built lazily on first use and stepped once per roll; tests inject `_coverRng` directly.
+  _softCoverStopsShot(target, originHexes = null) {
+    const tx = target?.x, ty = target?.y;
+    if (typeof tx !== 'number' || typeof ty !== 'number') return false;
+    const key = this._hexKeyAt(tx, ty);
+    const shooterInSameHex = !!(originHexes && originHexes.includes(key));
+    if (!this._coverRng) this._coverRng = mulberry32(((this.runSeed ?? 1) ^ 0x5f37c0de) >>> 0);
+    return softCoverStopsShot(
+      this.terrain.get(key), softCoverUnitTier(target), shooterInSameHex, this._coverRng,
+    );
+  },
+
   // Incoming damage to the player (used once enemies fire). #246: the shield is now a real
   // layer living ON the Mech itself (this.mech.shield — a native trait, not just a powerup
   // bolt-on) — Mech.applyDamage already runs the full shield -> armor -> hp pipeline

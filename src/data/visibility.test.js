@@ -8,8 +8,8 @@ import { axialKey, distance, hexToPixel, range } from './hexgrid.js';
 const world = (obj) => (q, r) => obj[axialKey(q, r)] ?? 'grass';
 
 // `alertTower` is HARD cover (terrain.js `coverTier`), so it blocks a mech's sight line
-// unconditionally. `forest` is SOFT cover, which a large unit (the player is always a mech)
-// sees clean over — see `softCoverBlocksLOS`. Both facts are load-bearing below.
+// unconditionally. `forest` is SOFT cover, which everyone sees clean over — #374 removed the last
+// case where it blocked a sightline (see `coverBlocksForRay`). Both facts are load-bearing below.
 // (#288 turned base walls into hex-EDGE geometry rather than a `wallSegment` terrain, so the
 // hard-cover TILES are now the structures; walls are covered by the `segmentBlocked` tests below.)
 const HARD = 'alertTower';

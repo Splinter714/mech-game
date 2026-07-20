@@ -1,9 +1,10 @@
 // #317 + #318 — what the convergence/lock system can target, and what a shot aimed at it actually
 // hits.
 //
-// #317: soft cover was a legitimate lock target that could never be hit. `softCoverBlocksLOS`
-// correctly returns false for a LARGE unit (a mech shoots clean over foliage — the whole point of
-// the soft tier, #279), so the in-flight cover test never stopped a round in a forest hex, and the
+// #317: soft cover was a legitimate lock target that could never be hit. The cover rule correctly
+// returned false for a LARGE unit (a mech shoots clean over foliage — the whole point of the soft
+// tier, #279; #374 has since made that true for every unit), so the in-flight cover test never
+// stopped a round in a forest hex, and the
 // own-hex `transparent` exemption couldn't help: it only ever makes a hex MORE see-through. The fix
 // asks "is this my target" as a SEPARATE question from "does this terrain block", so it can stop a
 // shot the terrain rule would let sail past — but only for the one hex actually aimed at.
@@ -82,7 +83,7 @@ function fireAt(scene, to, targetHexKey = null, extra = {}) {
   const round = makeProjectile(WEAPONS.autocannon, 0, 0, angle, { maxDist: 4000 });
   Object.assign(round, {
     owner: 'player', trail: [], seekTarget: null,
-    originHexes: [scene._hexKeyAt(0, 0)], targetHexKey, smallUnitInvolved: false,
+    originHexes: [scene._hexKeyAt(0, 0)], targetHexKey,
     ...extra,
   });
   scene.projectiles = [round];
@@ -155,8 +156,8 @@ describe('#317 a TARGETED soft-cover hex is finally hittable', () => {
     // This is the mechanism, pinned so the fix can never be mistaken for a transparency tweak:
     // for a LARGE unit the cover rule itself says "does not stop the ray", exemption or not.
     expect(isSoftCover(SOFT)).toBe(true);
-    expect(coverBlocksForRay(SOFT, false, false)).toBe(false);
-    expect(coverBlocksForRay(SOFT, true, false)).toBe(false);
+    expect(coverBlocksForRay(SOFT, false)).toBe(false);
+    expect(coverBlocksForRay(SOFT, true)).toBe(false);
   });
 
   it('a shot aimed AT a forest hex impacts it and drops its HP', () => {
@@ -195,12 +196,16 @@ describe('#317 a TARGETED soft-cover hex is finally hittable', () => {
 });
 
 describe('#317 the tiers and units the fix must not disturb', () => {
-  it('a SMALL unit is still blocked by soft cover', () => {
-    expect(coverBlocksForRay(SOFT, false, true)).toBe(true);
+  // #374 UPDATED. This used to read "a SMALL unit is still blocked by soft cover" — the #269 size
+  // tier #317 had to avoid disturbing. That tier is gone: soft cover blocks no one's ray now, so
+  // what #317's rule must not disturb is narrower, and this pins the narrower thing.
+  it('#374: soft cover blocks NO unit geometrically — #317 targeting is the only way to stop in it', () => {
+    expect(coverBlocksForRay(SOFT, false)).toBe(false);
+    expect(coverBlocksForRay(SOFT, true)).toBe(false);
   });
 
   it('HARD cover still blocks unconditionally between two other points, and is still hittable', () => {
-    expect(coverBlocksForRay(HARD, false, false)).toBe(true);
+    expect(coverBlocksForRay(HARD, false)).toBe(true);
     expect(TERRAIN[HARD].destructible).toBe(true);
     const h = { q: 4, r: 0 };
     const s = makeScene({ hexes: [{ h, id: HARD }] });
@@ -362,11 +367,12 @@ describe('#351 natural terrain is permanent scenery — untargetable and undamag
     expect(s._damageBuildingAt(p.x, p.y, 100000)).toBe(true);
   });
 
-  it('COVER behaviour is untouched — a mech still shoots clean over foliage, a small unit does not', () => {
-    // The whole point of the experiment's scope: destructibility/targetability only.
+  // #374 UPDATED: #351's scope claim was "destructibility/targetability only, cover untouched",
+  // pinned via the size tier. #374 has since changed cover deliberately, so this now pins the
+  // claim that still holds — the two axes are independent, and #351 did not itself move cover.
+  it('cover and destructibility stay independent axes (#351 scope), with #374 cover behaviour', () => {
     expect(isSoftCover(SOFT)).toBe(true);
-    expect(coverBlocksForRay(SOFT, false, false)).toBe(false);  // mech / large unit sees over
-    expect(coverBlocksForRay(SOFT, false, true)).toBe(true);    // small unit still concealed
+    expect(coverBlocksForRay(SOFT, false)).toBe(false);   // #374 — nobody is blocked geometrically
     // And a round travelling past intact foliage is unaffected in either direction.
     const s = realScene([{ h: { q: 2, r: 0 }, id: SOFT }]);
     expect(fireAt(s, centre({ q: 6, r: 0 })).dead).toBeFalsy();

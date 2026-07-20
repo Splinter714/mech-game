@@ -626,6 +626,33 @@ export function isSmallUnit(e) {
   return unitSize(e) === 'small';
 }
 
+// #374 (owner, playtest 2026-07-20): which SOFT-COVER BLOCK tier a unit belongs to — the key into
+// terrain.js's `SOFT_COVER_BLOCK_CHANCE` ('vehicle' 75% / 'mech' 25% / 'air' 0%). Jackson: "let's
+// give non-mech ground units a 75% block chance and mech ground units 25% block chance and air
+// units NO block chance."
+//
+// Deliberately derived from the classifications that ALREADY exist rather than a new hand-kept
+// list of kinds — a new enemy kind gets its tier for free:
+//   • AIR is `targetCoverExempt`'s exact airborne test (`flying && airborne !== false`, visibility.js).
+//     A flying kind that is currently GROUNDED (landed/downed) is NOT air — it's sitting in the
+//     foliage like anything else, so it takes the ground treatment. Same reading #338 already
+//     applies to the cover exemption, so the two can't drift apart.
+//   • MECH is `unitSize`'s own mech test: `kind === 'mech'` or no kind at all. The PLAYER falls
+//     here for free — a player ref carries no `kind`, and the player is always a mech.
+//   • everything else is a non-mech ground vehicle: tank, infantry, carrier, turret.
+// Note there is no wall-turret special case and none is needed: an emplaced gun sits on a wall
+// span, never in a soft-cover hex, so `softCoverStopsShot` bails on the terrain test long before
+// this tier matters.
+//
+// This is a property of the TARGET being shot at ("how well does this thing hide in trees"), never
+// of the shooter — see `softCoverStopsShot`'s own comment.
+export function softCoverUnitTier(target) {
+  if (!target) return 'mech';
+  if (target.flying && target.airborne !== false) return 'air';
+  if (target.kind === 'mech' || target.kind === undefined) return 'mech';
+  return 'vehicle';
+}
+
 // #92/#104: which ground units get the instant-crush-on-contact treatment (world.js
 // `_crushGroundEnemyAt`, called from locomotion.js `_drive`) instead of just blocking the player
 // like a normal ground enemy. Originally tank-only (#92 correction); #104 extends it to infantry

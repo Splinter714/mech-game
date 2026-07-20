@@ -27,8 +27,9 @@
 // enemy's own fire respects cover is therefore still live and still correct.
 //
 // The rule flyers now follow is exactly a ground mech's: HARD cover (walls, structures) blocks
-// them; SOFT cover (forest/scrub) does not — because both flyer kinds are `size: 'large'`, so
-// they get the same size-tier soft-cover exemption a mech does (terrain.js `softCoverBlocksLOS`).
+// them; SOFT cover (forest/scrub) does not — originally because both flyer kinds are
+// `size: 'large'` and so shared a mech's size-tier exemption, and since #374 simply because soft
+// cover blocks no one's ray at all (terrain.js `coverBlocksForRay`).
 // That third case is the one most likely to regress silently, so it's asserted explicitly below.
 //
 // enemies.js has a vestigial `import Phaser from 'phaser'` whose top-level device detection
@@ -191,8 +192,8 @@ describe('#316 hitscan: EVERY beam consults the wall trace (reverses #245)', () 
 // ── _fireVehicleWeapon no longer threads any flying-cover flag ─────────────────────────────
 // Same harness shape as vehicleFire.test.js: the REAL _fireVehicleWeapon dispatch runs with the
 // two fire helpers spied, so we can read the exact arguments each path received. Post-#316 the
-// only per-shot flag left is #269's `smallUnitInvolved` (soft-cover size tier) — `flying` is not
-// consulted at all.
+// only per-shot flag left was #269's `smallUnitInvolved` (soft-cover size tier); #374 removed that
+// too, so there is now NO per-shot cover flag at all — `flying` is not consulted either.
 function makeVehicleScene() {
   const calls = { hitscan: [], projectile: [] };
   const scene = { time: { now: 0, delayedCall: () => {} } };
@@ -225,11 +226,11 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
     it(`a ${label} kind's _fireHitscan args carry no cover-exemption flag`, () => {
       const { scene, calls } = makeVehicleScene();
       scene._fireVehicleWeapon(makeKindEnemy(HITSCAN_WEAPON.id, flying), {}, 0);
-      // owner, shooterKey, then #269's smallUnitInvolved (false — the test kind isn't small)
-      // and #307's lane descriptor. Nothing between them; `flying` is not consulted. #310 added
+      // owner, shooterKey, then #307's lane descriptor — #374 removed the `smallUnitInvolved`
+      // flag that used to sit between them. Nothing else; `flying` is not consulted. #310 added
       // `ignoreSpanKey` to that descriptor — null for anything that isn't a wall turret, which is
       // every shooter here.
-      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', false, { lane: 0, lateral: 0, ignoreSpanKey: null }]);
+      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null }]);
     });
 
     // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
@@ -241,8 +242,9 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
       for (const args of calls.projectile) {
         expect(args[4]).toBe('enemy');
         expect(args[6]).toBe(null);        // seekOverride
-        expect(args[8]).toBe(false);       // #269 smallUnitInvolved, now the last arg
-        expect(args).toHaveLength(9);      // ...and nothing beyond it
+        // #374 dropped #269's `smallUnitInvolved` (formerly arg 8), so `aimAngle` is now last on
+        // an enemy's call — there is no cover flag on a shot any more.
+        expect(args).toHaveLength(8);
       }
     });
   }
@@ -280,13 +282,16 @@ describe('#316 _spawnProjectile stamps no cover-exemption flag on the round', ()
     expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0).ignoresCover).toBe(false);
   });
 
-  // Guards the positional-arg shift: dropping `ignoreCover` moved #269's `smallUnitInvolved`
-  // from arg 9 to arg 8. If that shift were ever half-applied, a "small unit" flag would land
-  // in the wrong slot and silently break soft-cover behaviour rather than failing loudly.
-  it('#269 smallUnitInvolved is still threaded, at its post-#316 position', () => {
+  // #374 UPDATED. This used to guard #269's `smallUnitInvolved` sitting at arg 8 (it had shifted
+  // from 9 when #316 dropped `ignoreCover`). #374 removed the flag from the signature AND from the
+  // round's stamp — soft cover is rolled at impact now, not carried by the round — so the guard
+  // inverts: no such property may reappear on a spawned round, and arg 8 is the `shooter` handle.
+  it('#374: a spawned round carries no soft-cover flag at all', () => {
     const scene = makeSpawnScene();
-    expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0, true).smallUnitInvolved).toBe(true);
-    expect(scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0, false).smallUnitInvolved).toBe(false);
+    const round = scene._spawnProjectile(w, 0, 0, 0, 'enemy', 0, null, 0);
+    expect(round).not.toHaveProperty('smallUnitInvolved');
+    const player = { id: 'p1' };
+    expect(scene._spawnProjectile(w, 0, 0, 0, 'player', 0, null, 0, player).shooter).toBe(player);
   });
 });
 
@@ -316,9 +321,9 @@ const PLAYER_HITSCAN_W = { weapon: HITSCAN_WEAPON, location: 'rightArm', index: 
 const PLAYER_PROJECTILE_W = { weapon: STRAIGHT_PROJECTILE, location: 'leftArm', index: 0 };
 
 describe('#316 fireWeapon: the player\'s shot respects cover whatever it is aimed at', () => {
-  // Post-#316 `_fireHitscan`'s 7th arg is #269's smallUnitInvolved, not a cover flag — and the
-  // player is always a large unit, so it is always false. The whole point of these cases is that
-  // the convergence target's `flying` no longer changes ANY argument.
+  // Post-#374 `_fireHitscan` has no per-shot cover flag at all — its 7th arg is #307's lane
+  // descriptor. The whole point of these cases is that the convergence target's `flying` no longer
+  // changes ANY argument.
   const CASES = [
     ['no convergence target', null],
     ['a GROUND enemy', { x: 10, y: 0, flying: false, mech: {} }],
@@ -330,8 +335,8 @@ describe('#316 fireWeapon: the player\'s shot respects cover whatever it is aime
     it(`converged on ${label} ⇒ the hitscan beam gets no cover exemption`, () => {
       const scene = makeFireWeaponScene({ convergeTarget });
       scene.fireWeapon(PLAYER_HITSCAN_W);
-      expect(scene._fireHitscan.mock.calls[0].slice(0, 7))
-        .toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player', false]);
+      expect(scene._fireHitscan.mock.calls[0].slice(0, 6))
+        .toEqual([PLAYER_HITSCAN_W, 0, 0, 0, 'player', 'player']);
     });
   }
 
@@ -346,24 +351,26 @@ describe('#316 fireWeapon: the player\'s shot respects cover whatever it is aime
     // own `convergeTarget`, which is the very thing being varied — so the comparison is over the
     // SHOT arguments, which are what #316 is about. Anything the flying-ness of the target could
     // leak into a shot still lands inside this slice.
-    const shotArgs = (calls) => calls.map((c) => c.slice(0, 9));
+    const shotArgs = (calls) => calls.map((c) => c.slice(0, 8));
     expect(shotArgs(flyer._spawnProjectile.mock.calls))
       .toEqual(shotArgs(ground._spawnProjectile.mock.calls));
     // ...and no trailing cover-exemption arg survives on either.
     for (const call of flyer._spawnProjectile.mock.calls) {
       expect(call[4]).toBe('player');
-      expect(call.length).toBeLessThanOrEqual(10);
+      expect(call.length).toBeLessThanOrEqual(9);
     }
   });
 });
 
 // ── SOFT cover still does NOT block flyers (#316 point 4) ──────────────────────────────────
 // The case most likely to regress silently. #316 does NOT invent a flyer-specific cover rule —
-// it removes the exemptions so flyers fall through to the SHARED logic, which already exempts
-// LARGE units from soft cover (terrain.js `softCoverBlocksLOS`, #269). Both flyer kinds are
-// `size: 'large'`, so a helicopter over woodland still sees and shoots normally; only hard cover
-// stops it. If someone ever re-tagged a flyer as `size: 'small'`, forest would start blocking it
-// — hence the size assertion, which is the actual load-bearing fact.
+// it removes the exemptions so flyers fall through to the SHARED logic. #374 UPDATED what that
+// shared logic is: soft cover used to exempt LARGE units by size tier (`softCoverBlocksLOS`, #269)
+// and flyers rode on being `size: 'large'`; now soft cover blocks NOBODY geometrically, so the
+// conclusion ("a helicopter over woodland sees and shoots normally; only hard cover stops it")
+// holds for a strictly simpler reason and no longer depends on the flyers' size tag. The size
+// assertion is kept because #374's own shot-block roll puts air units at 0% via `flying`, and the
+// kinds' size/flying data staying coherent is still worth pinning.
 describe('#316 point 4: soft cover (forest/scrub) does not block flyers, hard cover does', () => {
   const FLYER_KINDS = Object.values(ENEMY_KINDS).filter((k) => k.flying);
 
@@ -379,13 +386,12 @@ describe('#316 point 4: soft cover (forest/scrub) does not block flyers, hard co
   it('forest and scrub are SOFT cover and do not block a large unit\'s ray (flyer or mech)', () => {
     for (const id of [TERRAIN.forest.id, TERRAIN.scrub.id]) {
       expect(isSoftCover(id)).toBe(true);
-      // smallUnitInvolved=false is what a flyer (and the player mech) passes.
-      expect(coverBlocksForRay(id, false, false)).toBe(false);
+      expect(coverBlocksForRay(id, false)).toBe(false);   // #374 — true for every unit now
     }
   });
 
   it('hard cover (the objective structure) blocks a large unit\'s ray — flyers included', () => {
     expect(isSoftCover(TERRAIN.objective.id)).toBe(false);
-    expect(coverBlocksForRay(TERRAIN.objective.id, false, false)).toBe(true);
+    expect(coverBlocksForRay(TERRAIN.objective.id, false)).toBe(true);
   });
 });

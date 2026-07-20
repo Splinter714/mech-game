@@ -496,16 +496,17 @@ export const WorldMixin = {
   // #72: `transparent` (optional Set of hex keys) lists hexes that are see-through for THIS
   // ray — the shooter's muzzle hex and the target's own hex — so soft cover never protects its
   // own occupant. Solid cover blocks regardless (the pure rule lives in terrain.js). #269:
-  // `smallUnitInvolved` (optional) threads to the soft-cover size-tier exemption — see
-  // `coverBlocksForRay` in terrain.js for why it's currently a no-op regardless of the value.
+  // #374 removed the `smallUnitInvolved` size-tier parameter this used to thread: soft cover no
+  // longer blocks any ray geometrically (see terrain.js `coverBlocksForRay`), so what remains here
+  // is the hard-cover/wall test.
   // #288: a standing wall span is solid to sight and fire exactly like a solid terrain hex is —
   // checked in ADDITION to the terrain rule, never instead of it, and never exempted by the own-hex
   // soft-cover transparency (`transparent`), which only ever applied to walk-through cover.
   // #310 `ignoreSpanKey`: one span this ray does not see — the parapet under a wall turret that is
   // either the shooter or the thing being shot at. See wallEdges.js `wallEdgeAt`.
-  _isWall(x, y, transparent = null, smallUnitInvolved = false, ignoreSpanKey = null) {
+  _isWall(x, y, transparent = null, ignoreSpanKey = null) {
     const k = this._hexKeyAt(x, y);
-    if (shotBlockedAt(this.terrain.get(k), k, transparent, smallUnitInvolved)) return true;
+    if (shotBlockedAt(this.terrain.get(k), k, transparent)) return true;
     return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #309: see through an open gate
   },
 
@@ -516,14 +517,14 @@ export const WorldMixin = {
   // frame. Behaviourally identical to `_isWall(x, y, new Set([...originHexes, ...shared]))`;
   // only the allocation is removed. Defers to `coverBlocksForRay` (terrain.js) — the same shared
   // decision `shotBlockedAt`/`_wallDistanceLos` use — so the cover rule can't drift between the
-  // three call sites. #269: `smallUnitInvolved` — see `_isWall` above.
-  _isWallForRound(x, y, sharedTransparent, originHexes, smallUnitInvolved = false, ignoreSpanKey = null) {
+  // three call sites. #374: the size-tier parameter is gone — see `_isWall` above.
+  _isWallForRound(x, y, sharedTransparent, originHexes, ignoreSpanKey = null) {
     const k = this._hexKeyAt(x, y);
     const id = this.terrain.get(k);
     const ownHexExempt =
       (sharedTransparent != null && sharedTransparent.has(k)) ||
       (originHexes != null && originHexes.includes(k));
-    if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return true;
+    if (coverBlocksForRay(id, ownHexExempt)) return true;
     return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #288/#309 — see `_isWall`
   },
 
@@ -947,7 +948,7 @@ export const WorldMixin = {
   // `maxT`. Used so beams/shots are blocked by cover. #72: pass a `transparent` hex-key Set
   // (usually `_losTransparency(shooter, target)`) so each endpoint's own soft-cover hex
   // doesn't block the ray.
-  _wallDistance(x0, y0, angle, maxT, transparent = null, smallUnitInvolved = false, ignoreSpanKey = null) {
+  _wallDistance(x0, y0, angle, maxT, transparent = null, ignoreSpanKey = null) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     // #288: the nearest standing wall span this ray crosses, resolved up front so the sampled
     // terrain scan below can stop the moment it passes that point — whichever blocker is CLOSER
@@ -955,7 +956,7 @@ export const WorldMixin = {
     const tw = this._wallEdgeDistance(x0, y0, x0 + cx * maxT, y0 + cy * maxT, ignoreSpanKey);
     for (let t = 8; t < maxT; t += 8) {
       if (t >= tw) break;
-      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent, smallUnitInvolved, ignoreSpanKey)) return t;
+      if (this._isWall(x0 + cx * t, y0 + cy * t, transparent, ignoreSpanKey)) return t;
     }
     return tw;
   },
@@ -994,10 +995,10 @@ export const WorldMixin = {
   // transparency hex is bit-identical to the old `_losTransparency(x0,y0,x1,y1)` endpoint, and
   // `cx`/`cy` reuse the same `Math.cos/sin(angle)` the old loop used — the sampled points are
   // therefore the same to the bit. Defers to `coverBlocksForRay` (terrain.js) — the same shared
-  // decision `shotBlockedAt`/`_isWallForRound` use. #269: `smallUnitInvolved` (optional) — see
+  // decision `shotBlockedAt`/`_isWallForRound` use. #374: the size-tier parameter is gone — see
   // `_isWall` above; propagated through `_cachedLosToPlayer` so a caller with a live enemy handle
   // can pass `isSmallUnit(e)`.
-  _wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved = false, ignoreSpanKey = null) {
+  _wallDistanceLos(x0, y0, angle, maxT, x1, y1, ignoreSpanKey = null) {
     const cx = Math.cos(angle), cy = Math.sin(angle);
     const oh = pixelToHex(x0, y0);          // shooter/muzzle endpoint hex (soft-cover-transparent)
     const eh = pixelToHex(x1, y1);          // target endpoint hex (soft-cover-transparent)
@@ -1015,7 +1016,7 @@ export const WorldMixin = {
       // #72: soft cover on either endpoint's OWN hex is see-through for this ray; solid cover and
       // any non-endpoint soft cover between the two blocks (exactly shotBlockedAt's rule).
       const ownHexExempt = (h.q === oh.q && h.r === oh.r) || (h.q === eh.q && h.r === eh.r);
-      if (coverBlocksForRay(id, ownHexExempt, smallUnitInvolved)) return t;
+      if (coverBlocksForRay(id, ownHexExempt)) return t;
     }
     return tw;
   },
@@ -1035,10 +1036,9 @@ export const WorldMixin = {
   // directly), and (b) trivially staggered: the countdown is seeded to a RANDOM point in the
   // window on first use, so a batch spawned on one frame refreshes on spread-out frames rather
   // than all at once, and the offset persists across refreshes.
-  // #269: `smallUnitInvolved` (optional) — see `_isWall` above; a caller with a live enemy handle
-  // should pass `isSmallUnit(e)` (terrain.js) so the eventual size-tier wiring covers this cached
-  // path too, not just the uncached one.
-  _cachedLosToPlayer(e, delta, x0, y0, angle, maxT, x1, y1, smallUnitInvolved = false) {
+  // #374: the `smallUnitInvolved` size-tier parameter this used to take is gone — soft cover no
+  // longer blocks any sightline, so what this caches is a hard-cover/wall answer. See `_isWall`.
+  _cachedLosToPlayer(e, delta, x0, y0, angle, maxT, x1, y1) {
     if (e._losCd === undefined) {
       // Seed the countdown at a random point in the window (stagger) and assume NO clear lane
       // until the first refresh fires — an enemy holds fire / stays unaware rather than acting on
@@ -1052,7 +1052,7 @@ export const WorldMixin = {
       if (e._losCd <= 0) e._losCd = LOS_REFRESH_MS;   // guard: a huge delta spike still recomputes once
       // #310: a wall turret ignores the span it is bolted to (and only that one), so a gun seated
       // on the wall's centreline can see out across the approach AND back into the compound.
-      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1, smallUnitInvolved, e.spanKey ?? null) === Infinity;
+      e._losClear = this._wallDistanceLos(x0, y0, angle, maxT, x1, y1, e.spanKey ?? null) === Infinity;
     }
     return e._losClear;
   },

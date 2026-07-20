@@ -174,7 +174,8 @@ export const ProjectilesMixin = {
         // #317 THE TARGETED-HEX RULE: a round whose TARGET is a destructible hex impacts that hex
         // the moment it enters it, regardless of whether that terrain would normally stop a ray.
         // This is checked BEFORE the cover test and is deliberately independent of it — soft cover
-        // correctly does NOT block a mech's ray (`softCoverBlocksLOS`), so `_isWallForRound` below
+        // correctly does NOT block a mech's ray (and since #374 blocks nobody's), so
+        // `_isWallForRound` below
         // returns false for a forest hex and the round used to sail straight over the very tile the
         // reticle was locked on. The own-hex `transparent` exemption could never rescue this: it
         // makes a hex MORE see-through, which for soft cover was already a no-op.
@@ -196,7 +197,7 @@ export const ProjectilesMixin = {
         // #310: the point-sampled form of the same narrow exemption, gated on the same condition
         // — the sampled band test would otherwise stop the round a few px short of the gun even
         // once the swept test above has let it through.
-        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes, p.smallUnitInvolved,
+        if (this._isWallForRound(p.x, p.y, sharedTransparent, p.originHexes,
           hittingItsGun ? hitEnemy.spanKey : null)) {
           p.dead = true;
           p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
@@ -219,8 +220,12 @@ export const ProjectilesMixin = {
         if (ally) {
           p.dead = true;
           p.stopTrajectorySfx?.();
-          const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          this._damagePlayerAt(dmg, ally);
+          // #374: the foliage roll — a teammate standing in soft cover may have this round eaten
+          // by the trees. Same rule as any other target; the round still dies and still splashes.
+          if (!this._softCoverStopsShot?.(ally, p.originHexes)) {
+            const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
+            this._damagePlayerAt(dmg, ally);
+          }
           this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }
@@ -233,9 +238,16 @@ export const ProjectilesMixin = {
         p.dead = true;
         p.stopTrajectorySfx?.();   // #56: ditto — impact/landing is the other death site
         if (toTarget < HIT_RADIUS + p.splash) {
-          const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
-          else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
+          // #374: the foliage roll, per resolved target. Soft cover stops nothing geometrically
+          // any more, so this is where a round aimed at something standing in the trees can be
+          // eaten instead — tier-graded off the TARGET (vehicle 75% / mech 25% / air 0%), exempt
+          // when the shooter fired from inside that same cover hex (`p.originHexes`).
+          const victim = enemyShot ? hitPlayer : hitEnemy;
+          if (!this._softCoverStopsShot?.(victim, p.originHexes)) {
+            const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
+            if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
+            else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
+          }
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
         // design — it never runs the in-flight wall test at all — so it used to land on a targeted

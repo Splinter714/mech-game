@@ -15,7 +15,7 @@
 
 import Phaser from 'phaser';
 import { enemyTargetOf } from './players.js';
-import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
+import { rotateToward, hullTravelAngle } from './shared.js';
 import { kindWeaponSlot } from '../../data/kindWeapons.js';
 import {
   APPROACH, STRAFE, FACE_PLAYER, FACE_BROADSIDE,
@@ -52,16 +52,16 @@ function aimAndFire(scene, e, ctx, { slot = undefined, fire = true } = {}) {
   // EVERY unit needs a clear firing lane before it opens fire. #316 removed the last `needLos:
   // false` opt-out (flyers, #245/#94) — flyers now run this exact same gate, so the parameter is
   // gone entirely rather than left as an unused door. #72 own-hex transparency: the player's own
-  // soft-cover hex (and this unit's) doesn't block the lane; and since `isSmallUnit` is false for
-  // both flyer kinds (drone/helicopter are size 'large'), soft cover — forest/scrub — doesn't
-  // block a flyer's lane either, exactly as it doesn't block a mech's. Hard cover blocks everyone.
+  // soft-cover hex (and this unit's) doesn't block the lane. #374: soft cover — forest/scrub — no
+  // longer blocks ANY unit's lane, of any size tier (it protects whoever stands in it via a
+  // per-shot roll instead), so this gate is purely about hard cover, which blocks everyone.
   // #167: ground vehicles (tanks/infantry/carriers, often 40+ at once) ran this raycast per
   // unit per frame — now a STAGGERED CACHE (~120ms per-enemy refresh), exact at each refresh.
   // #347: the firing lane is checked to THIS unit's target player (nearest), not to a global
   // singleton — `enemyTargetOf` reads back the pick `_updateEnemy`/`_updateVehicle` stamped on
   // `e` this tick, so the lane, the aim and the round all agree on who is being shot at.
   const tgt = enemyTargetOf(scene, e);
-  const los = scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, tgt.x, tgt.y, isSmallUnit(e));
+  const los = scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, tgt.x, tgt.y);
   // Only fire once the gun is roughly on target, so shots read as aimed.
   //
   // #305: a slot may be a FIXED FORWARD mount (`fixedForward` in the kind's data) — a gun bolted

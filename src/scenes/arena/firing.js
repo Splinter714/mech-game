@@ -263,12 +263,12 @@ export const FiringMixin = {
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
         // (two shots fired, one line drawn).
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), false, { lane, lateral: s.lateral, shooter: player });
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, false, player);
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player);
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -385,19 +385,20 @@ export const FiringMixin = {
   // #72 own-hex transparency: the muzzle's own hex (firing OUT of forest) and any living
   // enemy's hex (a target standing IN forest) don't block the beam — only deeper soft cover
   // and solid walls do.
-  // #269: `smallUnitInvolved` (optional) — see world.js `_isWall`; a caller shooting FOR a live
-  // enemy should pass `isSmallUnit(e)` so this hot path is ready once the size tier lands.
+  // #374: soft cover no longer stops a beam geometrically at all (the `smallUnitInvolved`
+  // size-tier parameter is gone) — a target standing in foliage is protected by the per-shot
+  // `_softCoverStopsShot` roll instead, applied after this trace resolves. See world.js `_isWall`.
   // #310 `ignoreSpanKey`: the shooter's own wall span, for a wall turret firing off the centreline
   // it is mounted on — see wallEdges.js `wallEdgeCrossing`'s `ignoreKey`. Null for every other
   // shooter, so no one else's beam gains a way through a wall.
-  _hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved = false, ignoreSpanKey = null) {
+  _hitscanReach(muzzleX, muzzleY, angle, endDist, ignoreSpanKey = null) {
     // #348: every LIVE player's own hex, not just the local one — with friendly fire on, a
     // teammate standing in forest is a legitimate target and their hex must be see-through for
     // the same reason an enemy's is.
     const transparent = new Set([this._hexKeyAt(muzzleX, muzzleY)]);
     for (const p of livePlayersOf(this)) transparent.add(this._hexKeyAt(p.x, p.y));
     for (const e of this.enemies) if (!e.mech.isDestroyed()) transparent.add(this._hexKeyAt(e.x, e.y));
-    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent, smallUnitInvolved, ignoreSpanKey);
+    return this._wallDistance(muzzleX, muzzleY, angle, endDist, transparent, ignoreSpanKey);
   },
 
   // Re-aim a held continuous beam's existing line at the current muzzle/angle, every render
@@ -460,8 +461,8 @@ export const FiringMixin = {
   // body location don't stomp each other's beam object.
   // (#245's `ignoreCover` param — a flying shooter's beam skipping the wall trace — was removed
   // by #316: cover blocks every shooter, so the wall trace below is unconditional.)
-  // `smallUnitInvolved` (#269, optional): threads to the soft-cover size-tier exemption — see
-  // world.js `_isWall`. Enemy callers pass `isSmallUnit(e)`; the player never does (always large).
+  // (#269's `smallUnitInvolved` param — the soft-cover size-tier exemption — was removed by #374
+  // along with the geometric soft-cover block it fed; see `_softCoverStopsShot`, rolled below.)
   // `lane`/`lateral` (#307, optional): which PARALLEL LANE of the emission plan this shot is.
   // A continuously-held beam keeps one persistent beam object per lane — keyed by
   // shooter+location+lane — so Barrage's two lanes each own (and re-pin) their own line
@@ -471,7 +472,7 @@ export const FiringMixin = {
   // tracking object, preserving #86.
   // `shooter` (#348, optional): the PLAYER firing, for the per-player converge pick and for
   // friendly fire (they are excluded from their own candidate list).
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', smallUnitInvolved = false, { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null } = {}) {
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -502,7 +503,7 @@ export const FiringMixin = {
     // wall (which targeting permits by rule) and watches every beam splash on the stone.
     const targetSpanKey = (target && typeof target === 'object' && target.spanKey) || null;
     const wallT = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this)) ? Infinity
-      : this._hitscanReach(muzzleX, muzzleY, angle, endDist, smallUnitInvolved, ignoreSpanKey ?? targetSpanKey);
+      : this._hitscanReach(muzzleX, muzzleY, angle, endDist, ignoreSpanKey ?? targetSpanKey);
     let blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     // #317, hitscan half of the targeted-hex rule: a beam has no per-step position to test, so its
@@ -532,7 +533,12 @@ export const FiringMixin = {
     } else {
       this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral });
     }
-    if (hit) {
+    // #374: the foliage roll. A target standing in soft cover has a tier-graded chance of this
+    // shot being eaten by the trees — checked here, AFTER the beam has geometrically resolved onto
+    // a unit, because soft cover no longer blocks anything geometrically. The beam still draws to
+    // the target and still sparks (it hit the branches in front of them); it just deals nothing.
+    const eaten = hit && this._softCoverStopsShot?.(target, [this._hexKeyAt(muzzleX, muzzleY)]);
+    if (hit && !eaten) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
       // player damage sink, not the enemy one.
@@ -540,6 +546,8 @@ export const FiringMixin = {
       else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
+    } else if (eaten) {
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);   // #374 — splash in the foliage
     } else if (blocked) {
       // #317: a stopped beam now CHIPS what stopped it, exactly as a round that detonates on cover
       // has always done (projectiles.js). Before this, hitscan weapons could not damage destructible
@@ -570,13 +578,13 @@ export const FiringMixin = {
   // was removed by #316 and stays removed. #338 re-derives that stamp below from the shared
   // predicate instead: it is the player's LOCKED TARGET being airborne that opens the lane, never
   // the shooter flying, so there is no parameter for a caller to pass.)
-  // `smallUnitInvolved` (#269, optional): stamped onto the round so projectiles.js's in-flight
-  // cover check can pass it to `_isWallForRound` — see world.js `_isWall`. Enemy callers pass
-  // `isSmallUnit(e)`; the player never does (always large).
+  // (#269's `smallUnitInvolved` param, stamped onto the round for projectiles.js's in-flight cover
+  // check, was removed by #374 with the rest of the geometric soft-cover block — an in-flight round
+  // now takes its chances with `_softCoverStopsShot` at the moment it resolves onto a target.)
   // `shooter` (#348, optional): the PLAYER who fired, stamped onto the round so its own rounds
   // can never friendly-fire back onto it, and so the round's seek/target-hex come from THAT
   // player's aim rather than a scene singleton.
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, smallUnitInvolved = false, shooter = null) {
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, shooter = null) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -661,7 +669,6 @@ export const FiringMixin = {
     const ignoresCover = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this));
     const pushed = {
       ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover,
-      smallUnitInvolved: !!smallUnitInvolved,
       // #348: who fired it, so friendly fire (projectiles.js) can skip the shooter themselves.
       shooter: owner === 'player' ? (shooter ?? primaryPlayerOf(this)) : null,
     };

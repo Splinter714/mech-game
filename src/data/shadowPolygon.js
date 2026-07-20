@@ -73,10 +73,11 @@ const WEDGE_OVERSHOOT = 1.6;
 // blocks (only about sub-hex precision):
 //
 //   1. Terrain hexes whose cover blocks a ray (`coverBlocksForRay(id, false)` — the same shared
-//      decision `shotBlockedAt` / `_wallDistanceLos` use). SOFT cover contributes NOTHING: for a
-//      mech-sized viewer `softCoverBlocksLOS(false)` is false, so forest and scrub cast no shadow.
-//      That is deliberate and unchanged from the hex version — dimming concentrates around
-//      structures and walls, not woodland.
+//      decision `shotBlockedAt` / `_wallDistanceLos` use). SOFT cover contributes NOTHING —
+//      `coverBlocksForRay` is false for it (#374 made that true for every unit, not just a
+//      mech-sized viewer). That is deliberate and unchanged from the hex version — dimming
+//      concentrates around structures and walls, not woodland. #374's foliage shot-block is a
+//      per-shot roll at the target and has no sight/shadow component at all.
 //   2. Standing base-wall spans (#288), which are edge geometry with real pixel endpoints and are
 //      not terrain hexes at all. A terrain-only pass would see straight through a base wall.
 //

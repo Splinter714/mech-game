@@ -1037,7 +1037,7 @@ export const EnemiesMixin = {
     // was the top game-logic CPU cost run raw per mech per frame — now a STAGGERED CACHE
     // (`_cachedLosToPlayer`, ~120ms per-enemy refresh) so the expensive raycast runs ~8x less
     // often; the value is exact at each refresh and feeds awareness, the lock, and firing alike.
-    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, tp.x, tp.y, isSmallUnit(e));
+    const los = this._cachedLosToPlayer(e, delta, e.x, e.y, bearing, dist, tp.x, tp.y);
 
     // #103 awareness: an UNAWARE enemy hasn't noticed the player yet — it idles near its spawn
     // point rather than engaging. It flips to AWARE (permanently, for the rest of the encounter)
@@ -1521,7 +1521,7 @@ export const EnemiesMixin = {
           // #310: `ignoreSpanKey` — a wall turret's beam is not stopped by the span it is bolted
           // to (`e.spanKey`; undefined for every other shooter, so nothing else changes). Without
           // it a centred gun would detonate its own lance on its own parapet every shot.
-          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, isSmallUnit(e), { lane, lateral: s.lateral, ignoreSpanKey: e.spanKey ?? null });
+          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, { lane, lateral: s.lateral, ignoreSpanKey: e.spanKey ?? null });
         } else {
           // No explicit seek target needed here (playtest follow-up #252 dropped the old
           // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
@@ -1533,7 +1533,7 @@ export const EnemiesMixin = {
           // `aimAngle` param) stays `fireAngle` for every sub-shot so a fanned/streamed weapon's
           // arcing maxDist test (see `_spawnProjectile`) reads the same centre line the player
           // path uses.
-          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, isSmallUnit(e));
+          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle);
         }
       };
       if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
@@ -1644,7 +1644,7 @@ export const EnemiesMixin = {
     const tooFar = travelDist > e.standoff * TOO_FAR_FRAC;
     // #167: fresh (not cached) — state decisions run on the slow DECIDE_MIN/MAX cadence, not per
     // frame, so this wants a current read; still routed through the allocation-free raycast.
-    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, tp.x, tp.y, isSmallUnit(e)) === Infinity;
+    const hasLos = this._wallDistanceLos(e.x, e.y, bearing, dist, tp.x, tp.y) === Infinity;
     const hurt = hp < COVER_HEALTH_TRIGGER || this.time.now < e.hurtUntil;
     const now = this.time.now;
 
@@ -1773,7 +1773,7 @@ export const EnemiesMixin = {
       const ang = Math.atan2(p.y - tp.y, p.x - tp.x);
       // A spot is cover if the player's line of sight to it is broken by a wall before it
       // (own-hex transparency applied: neither endpoint's soft-cover hex counts, #72).
-      const losBlocked = this._wallDistanceLos(tp.x, tp.y, ang, d, p.x, p.y, isSmallUnit(e)) < d - COVER_SEARCH_STEP;
+      const losBlocked = this._wallDistanceLos(tp.x, tp.y, ang, d, p.x, p.y) < d - COVER_SEARCH_STEP;
       if (!losBlocked) continue;
       // Prefer near cover that keeps us in the fight (not driven to the map edge).
       const travel = Math.hypot(p.x - e.x, p.y - e.y);

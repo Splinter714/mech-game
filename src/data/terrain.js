@@ -24,6 +24,8 @@
 //      generalized across BOTH cover tiers — it's applied once, up front, regardless of
 //      soft/hard — see the `cover` field note below and `coverBlocksForRay`'s own comment
 //      for why the generalization is kept even though terrain cover reverted to `soft`.)
+//      #374 carries the same exemption into the new probabilistic rule: `softCoverStopsShot`
+//      does not roll when the shooter stands in the target's own cover hex.
 //   2. Destructible + burnable: this cover has HP (less than an outpost's 60) so gunfire chews
 //      firing lanes through it, and FLAME damage (flamethrower gouts, napalm ground fire) is
 //      multiplied by FLAME_COVER_MULT so incendiaries are the premier forest-clearing tool.
@@ -49,13 +51,14 @@
 //              `passable`): 'open' when `blocksLOS` is false; `hard` for the impassable
 //              base-infra structures (alertTower/dockClosed/objective) — those always block
 //              EVERY ground unit's LOS unconditionally. The walk-through terrain cover
-//              (forest/scrub/drift/wreck/fumarole) is `soft`: passable+slow, and only a SMALL
-//              ground unit's LOS is blocked (per issue #269 §1's size tier — a mech/large unit
-//              sees clean over it). (#279 briefly flipped these five to `hard`; a playtest
-//              reversed that back to `soft` — cover should only affect small units.) See
-//              `coverBlocksForRay`/`softCoverBlocksLOS`/`isSoftCover` below for how the tiers
-//              are wired, and that function's own comment for the (tier-independent) own-hex
-//              exemption.
+//              (forest/scrub/drift/wreck/fumarole) is `soft`: passable+slow, and (since #374)
+//              blocks NO ONE's LOS geometrically — instead a shot at a target standing in it has
+//              a chance of being eaten by the foliage, graded by the TARGET's unit tier
+//              (`SOFT_COVER_BLOCK_CHANCE`: vehicle 75%, mech 25%, air 0%). (History: #279 briefly flipped these five
+//              to `hard`; a playtest reverted them to `soft`, which then blocked only SMALL units'
+//              rays per #269 §1's size tier; #374 removed that size-tiered blocking entirely.) See
+//              `coverBlocksForRay`/`softCoverStopsShot`/`isSoftCover` below for how the tiers
+//              are wired, and those functions' own comments for the own-hex exemption.
 // The raw fields remain the source of truth callers read via `isPassable`/`blocksLOS`/etc.
 // below; category/movement/cover are DERIVED from them per-entry (not the other way around) so
 // adding a new terrain type is still "one entry, all fields together" — no separate derivation
@@ -412,8 +415,8 @@ export function isWaterTerrain(id) {
 
 // Does this terrain break line-of-sight (cover / projectile blocker)? Unknown ⇒ false. #269:
 // derived from the `cover` tier ('open' ⇒ no block; 'soft'/'hard' ⇒ blocks, subject to the
-// size-tier/own-hex exemptions in `shotBlockedAt`/`coverBlocksForRay` below) rather than the raw
-// `blocksLOS` flag.
+// own-hex exemption in `shotBlockedAt`/`coverBlocksForRay` below — and note #374 makes the `soft`
+// tier's block always fall away there) rather than the raw `blocksLOS` flag.
 export function blocksLOS(id) {
   const tier = coverTier(id);
   return tier === 'soft' || tier === 'hard';
@@ -427,8 +430,9 @@ export function blocksLOS(id) {
 //
 // This is DESTRUCTIBILITY + TARGETABILITY ONLY. Cover is untouched: `cover`/`blocksLOS`/
 // `isSoftCover`/`coverBlocksForRay` all read the `cover` tier, never `destructible`, so forest/
-// scrub/drift/wreck/fumarole remain exactly the soft cover they are today (#279 — a mech shoots
-// clean over them, a small ground unit is concealed by them).
+// scrub/drift/wreck/fumarole remain exactly the soft cover they are today. (#374 later DID change
+// what that soft tier does — no geometric blocking, a 25% shot-block roll instead — but still
+// independently of destructibility; the two axes stay separate.)
 //
 // TO REVERSE: flip this one constant back to `true`. Nothing else was removed — every natural
 // destructible keeps its `destructible: true` / `hp` / `rubbleId` fields (#313's retuned HP values:
@@ -492,43 +496,89 @@ export function isMissionObjective(id) {
   return destructibleNow(t) && !t.setDressing;
 }
 
-// #72: soft cover — walk-through concealment that only blocks a SMALL ground unit's LOS (a
-// mech/large unit sees clean over it). The walk-through terrain cover set (forest/scrub/drift/
-// wreck/fumarole) uses this tier (#279 briefly made them `hard`; a playtest reverted them back to
-// `soft`). #269: derived from the `cover` tier directly. Unknown ⇒ false.
+// #72: soft cover — walk-through concealment (forest/scrub/drift/wreck/fumarole). #374: it no
+// longer blocks any unit's LOS geometrically; it gives whoever STANDS in it a flat per-shot chance
+// of the foliage eating an incoming shot (`softCoverStopsShot`). #269: derived from the `cover`
+// tier directly. Unknown ⇒ false.
 export function isSoftCover(id) {
   return coverTier(id) === 'soft';
 }
 
-// #269 §1/§2: does SOFT cover block LOS, given whether a small ground unit is party to this
-// particular ray? Final design: only a small unit's sightline is blocked by soft cover — a
-// mech/large unit sees clean over it. `smallUnitInvolved` is computed by callers via
-// `isSmallUnit(theLiveEnemy)` (`scenes/arena/shared.js`, the real per-entity size-tier query —
-// small = tank/infantry, large = mech/carrier, per the design doc's confirmed mapping; the
-// player is always a mech, implicitly large, so a caller never needs this for the player side
-// of a ray) and threaded down through `coverBlocksForRay` below.
-export function softCoverBlocksLOS(smallUnitInvolved) {
-  return smallUnitInvolved;
+// ── #374 (owner, playtest 2026-07-20) — soft cover is a PROBABILISTIC SHOT BLOCK, not a
+// geometric one ────────────────────────────────────────────────────────────────────────────
+// What changed, and why the old rule is gone:
+//   • REMOVED: #269 §1's size-tiered geometric blocking. Soft cover used to stop a ray outright
+//     whenever a SMALL ground unit (tank/infantry) was party to it, while a mech shot clean over
+//     it — the old `softCoverBlocksLOS(smallUnitInvolved)`. Jackson: "that shot blocking
+//     shouldn't happen anymore." Soft cover now blocks NOTHING geometrically, for any size tier,
+//     and `smallUnitInvolved` no longer exists anywhere in the cover path.
+//   • ADDED: `softCoverStopsShot` below — a per-shot chance that a shot AT a target standing in
+//     soft cover is stopped by the foliage. Deliberately framed as a BLOCK rather than a damage
+//     reduction (Jackson reframed it mid-conversation): same expected damage, but an occasional
+//     shot visibly splashing into the trees reads better than every shot uniformly softened.
+// Hard cover is untouched: it still blocks everything between two other points, unconditionally.
+// (#351's natural-terrain indestructibility is orthogonal — that is destructibility/targetability;
+// this is cover behaviour.)
+//
+// The chance is GRADED BY THE TARGET'S TYPE (Jackson, same conversation: "let's give non-mech
+// ground units a 75% block chance and mech ground units 25% block chance and air units NO block
+// chance"). That restores the SHAPE of #269's size tiering — small things hide in foliage better
+// than big ones — as a probability rather than the old near-immunity, and "aircraft are above the
+// treeline" falls out of the table as a plain 0 instead of needing its own branch anywhere.
+//   vehicle — non-mech GROUND units: infantry, tank, carrier, turret, and a grounded flyer.
+//   mech    — the player's mech and every mech-kind enemy (scout/brawler/sniper/artillery).
+//   air     — anything currently airborne. 0 ⇒ `softCoverStopsShot` never even rolls.
+// Owner: tunable — these three numbers are the whole dial.
+export const SOFT_COVER_BLOCK_CHANCE = { vehicle: 0.75, mech: 0.25, air: 0 };
+
+// #374: the block chance for one unit tier. Unknown/missing tier ⇒ 0 (never block) rather than a
+// guessed default — a caller that can't classify its target should not silently eat shots.
+export function softCoverBlockChance(tier) {
+  return SOFT_COVER_BLOCK_CHANCE[tier] ?? 0;
+}
+
+// #374: does the foliage eat THIS shot?
+//   `id`    — terrain of the hex the shot is RESOLVING in, i.e. the TARGET's hex. Cover protects
+//             whoever STANDS in it, never whoever is merely shot at through it; that reversal is
+//             the whole point of dropping the geometric rule.
+//   `tier`  — the TARGET's tier (see the table above). Deliberately a property of the thing being
+//             shot at, not of the shooter: it answers "how well does this unit hide in these
+//             trees", which has nothing to do with who pulled the trigger.
+//   `shooterInSameHex` — the #72/#279 own-hex exemption, carried forward deliberately: cover does
+//             not protect its own occupant from a shot ORIGINATING in the same cover. Two units
+//             brawling inside one thicket have no foliage between them, so there is nothing to
+//             stop the shot — the same reasoning that lets a unit standing in cover see and shoot
+//             out of it. Anywhere else the roll applies.
+//   `rng`   — INJECTED (defaults to `Math.random`) so a seeded run is reproducible and the rule is
+//             deterministically testable; the same convention `pickPowerupType`/
+//             `makeDockResupplyState` use. Pure: no module-level RNG state.
+// Note a wall turret needs no special case: it is emplaced on a wall span, never standing in
+// foliage, so `isSoftCover` is false for its hex and the rule simply never reaches the roll.
+export function softCoverStopsShot(id, tier, shooterInSameHex = false, rng = Math.random) {
+  if (!isSoftCover(id)) return false;
+  if (shooterInSameHex) return false;
+  const chance = softCoverBlockChance(tier);
+  if (chance <= 0) return false;
+  return rng() < chance;
 }
 
 // #269: the single shared "does this terrain block THIS ray" decision — `shotBlockedAt`,
 // world.js's `_isWallForRound`, and `_wallDistanceLos` all defer to this so the cover rule can't
 // drift across its three call sites. `ownHexExempt` is #72's own-hex transparency (true when the
 // point being tested sits in a hex the caller has marked see-through for this particular shot —
-// the shooter's muzzle hex, or a living target's own hex); `smallUnitInvolved` is #269 §1's
-// size-tier soft-cover exemption (see `softCoverBlocksLOS` above).
+// the shooter's muzzle hex, or a living target's own hex).
 // #279: the own-hex exemption applies to BOTH cover tiers — originally it only existed under the
 // `soft` branch because every `hard`-cover hex was impassable (alertTower/dockClosed/objective),
 // so nobody could ever stand inside one and the exemption was moot there. Generalizing it to run
 // once, up front, regardless of tier is harmless for both tiers (a unit standing in cover still
 // sees/shoots out) and keeps the rule robust if a passable `hard`-cover terrain is ever added.
-// Only after that up-front exemption does the soft-vs-hard distinction matter: soft cover between
-// two other points is gated by the size-tier exemption (a mech sees over it, a small unit
-// doesn't); hard cover between two other points always blocks unconditionally.
-export function coverBlocksForRay(id, ownHexExempt, smallUnitInvolved = false) {
+// #374: after that exemption, soft cover NEVER blocks a ray — its shot-stopping is now the
+// probabilistic `softCoverStopsShot` roll above, applied at the target, not a geometric block.
+// Hard cover between two other points always blocks unconditionally.
+export function coverBlocksForRay(id, ownHexExempt) {
   if (!blocksLOS(id)) return false;
   if (ownHexExempt) return false;
-  if (isSoftCover(id)) return softCoverBlocksLOS(smallUnitInvolved);
+  if (isSoftCover(id)) return false;   // #374 — see above; foliage stops shots by roll, not geometry
   return true; // hard cover between two other points — always blocks a ground unit; flying-unit
                // ignoresCover is the caller's concern (firing.js/projectiles.js), orthogonal to
                // this cover-tier rule.
@@ -543,13 +593,12 @@ export function coverBlocksForRay(id, ownHexExempt, smallUnitInvolved = false) {
 // still block ("deep woods"/hard cover in the way). The boundary-only impassable terrains
 // (mesa/collapsed/deepWater/ice/lava) never block LOS at all (#221 — they're stamped only at the
 // world's outer edge, never used as an in-map obstacle).
-// #269: `smallUnitInvolved` (optional, default false) threads through to the soft-cover size-tier
-// exemption via `coverBlocksForRay` — see that function + `softCoverBlocksLOS`. It's live for the
-// walk-through terrain cover (forest/scrub/drift/wreck/fumarole), which is `soft`: those hexes
-// block a small unit's ray but not a mech's.
-export function shotBlockedAt(id, key, transparent = null, smallUnitInvolved = false) {
+// #374: soft-cover hexes no longer block ANY ray here (the size-tier `smallUnitInvolved`
+// parameter is gone) — foliage stops shots via `softCoverStopsShot`'s roll at the target instead.
+// So in practice this now answers "is there hard cover in the way."
+export function shotBlockedAt(id, key, transparent = null) {
   const ownHexExempt = !!(transparent && transparent.has(key));
-  return coverBlocksForRay(id, ownHexExempt, smallUnitInvolved);
+  return coverBlocksForRay(id, ownHexExempt);
 }
 
 // #72 burnable cover: flame damage (flamethrower gouts, napalm rounds + ground fire) is
