@@ -13,7 +13,8 @@ import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WIND
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS } from '../../data/alertTower.js';
 import { isFastWakeKind } from '../../data/bases.js';
 import { isEnemyKind } from '../../data/enemyKinds.js';
-import { DEPTH, strokeHexRing } from './shared.js';
+import { DEPTH, strokeHexRing, wallCollideRadius, PLAYER_WALL_COLLIDE_RADIUS } from './shared.js';
+import { nudgeFromGateMouth, gateMouthOccupied } from '../../data/gateClearance.js';
 import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
@@ -25,7 +26,7 @@ import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../d
 import { gateEdges, setGateOpen, turretEdges, spanTurretMount, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
 import {
   makeGateState, tickGate, gatePassable, GATE_STAGGER_MAX_MS,
-  GATE_OPENING, GATE_OPENING_MS, GATE_CLOSING, GATE_CLOSING_MS,
+  GATE_OPEN, GATE_OPENING, GATE_OPENING_MS, GATE_CLOSED, GATE_CLOSING, GATE_CLOSING_MS,
 } from '../../data/gateCycle.js';
 import {
   makeGateDemand, gateRequestOnRoute, remainingToGate, requestsGate, trackApproach,
@@ -1210,6 +1211,13 @@ export const BasesMixin = {
         awake: this._wokenBases.has(edge.baseId),
         demand: !!this._gateDemand?.wanted(edge.key, nowMs),
         failOpen: failedOpen.has(edge.baseId),
+        // #369 ELEVATOR DOORS: is anything standing in the mouth? Only asked in the two phases
+        // where the answer can change anything — the open gate deciding whether to shut, and the
+        // closing gate deciding whether to relent. A shut, opening, or locked-open gate skips the
+        // geometry entirely, which matters with #354's 2-5 gates per ring: the common case (every
+        // gate on every dormant or shut ring, every frame) stays free.
+        occupied: (state.phase === GATE_OPEN || state.phase === GATE_CLOSING) && !state.lockedOpen
+          && this._gateMouthOccupied(edge),
         dt,
       });
       if (next === state) continue;
@@ -1225,6 +1233,12 @@ export const BasesMixin = {
       redraw = true;
       if (next.startedOpening) this._gateOpenFx(edge);
       if (next.justClosed) this._gateCloseFx(edge);
+      // #369 fallback sweep. The doors are now fully shut, and with elevator doors in place nothing
+      // that was in the mouth should have let them get here — so this normally finds nothing and
+      // costs one distance test per body. It exists for the one path occupancy cannot see: a body
+      // PLACED inside a shut span by a system that never asks the gate (a respawn or carrier drop,
+      // a shove from #361's separation) between the last occupancy check and the leaves meeting.
+      if (state.phase === GATE_CLOSING && next.phase === GATE_CLOSED) this._nudgeFromClosingGate(edge);
       // A gate opening or shutting changes what can be seen through it, so the cached field of
       // view is stale — same invalidation a breached span triggers (world.js `_damageWallEdge`).
       // #312: and what can be WALKED through it — a gate opening is a route appearing, a gate
@@ -1237,6 +1251,54 @@ export const BasesMixin = {
     // actual transition. (A fully-open gate is now static — no pulsing field left to animate — but
     // it is cheap to keep redrawing it and it keeps the leaves' rest position honest.)
     if (redraw || [...this._gateStates.values()].some(gatePassable)) this._redrawWallEdges();
+  },
+
+  // #369 — the live bodies a gate can be blocked by or can trap: every LIVE, non-flying player and
+  // ground unit. The three exclusions are each load-bearing:
+  //   • flyers pass over walls and were never in a mouth;
+  //   • WRECKS, because an occupant that can never walk away would hold its gate open for the rest
+  //     of the sortie — the one failure mode the elevator-door rule could actually produce, and the
+  //     only place it needs closing off (see gateCycle.js `occupied`);
+  //   • nothing else. Enemies count exactly as much as players do: a tank standing in the door
+  //     holds it open, which is what Jackson's "applies to enemies as well" asks for.
+  //
+  // Returned as two GROUPS rather than one merged list, because the two body types answer "how big
+  // am I to a wall" (#320) from different places — `wallCollideRadius(e)` per enemy kind, the flat
+  // `PLAYER_WALL_COLLIDE_RADIUS` per player — and sniffing which is which from a merged array would
+  // be a guess. Both consumers below iterate the groups the same way, so occupancy and the nudge
+  // can never disagree about whether a given body fits through a given door.
+  _gateBodyGroups() {
+    return [
+      { bodies: (this.enemies ?? []).filter((e) => !e.flying && !e.mech?.isDestroyed?.()), radiusOf: (e) => wallCollideRadius(e) },
+      { bodies: livePlayersOf(this), radiusOf: () => PLAYER_WALL_COLLIDE_RADIUS },
+    ];
+  },
+
+  // #369 ELEVATOR DOORS — is anything standing in this gate's mouth? The pure geometry is
+  // data/gateClearance.js; this is only the "which bodies, at what radius" half. Called from
+  // `_updateGates` for gates in the open/closing phases and fed to `tickGate` as `occupied`.
+  _gateMouthOccupied(edge) {
+    return this._gateBodyGroups().some((g) => gateMouthOccupied(g.bodies, edge, g.radiusOf));
+  },
+
+  // #369 — the FALLBACK sweep (see the header of data/gateClearance.js). Runs on the tick a gate
+  // finishes shutting, for a body that was placed inside the span by a system that never asked the
+  // gate. Pushes through the SAME swept wall test the bodies' own locomotion uses, at the body's
+  // own radius, so a nudge can never end inside geometry.
+  //
+  // `edge.key` is handed to that test as the one span to ignore: the gate that just shut must not
+  // veto the escape it caused (it now reads as solid across the very mouth the body is standing
+  // in), while every other wall and all impassable terrain still block the push normally.
+  _nudgeFromClosingGate(edge) {
+    if (!this._blockedAlongSegment) return 0;
+    let moved = 0;
+    for (const { bodies, radiusOf } of this._gateBodyGroups()) {
+      moved += nudgeFromGateMouth(bodies, edge, {
+        radiusOf,
+        canMove: (b, x, y) => !this._blockedAlongSegment(b.x, b.y, x, y, radiusOf(b), edge.key),
+      });
+    }
+    return moved;
   },
 
   // A bright amber flare and ring across the gate's mouth as the leaves start to part — the

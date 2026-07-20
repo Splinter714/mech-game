@@ -253,3 +253,106 @@ describe('#355 gate cycle — fail open once the objective is destroyed', () => 
     expect(s).toEqual(before);
   });
 });
+
+// ── #369 ELEVATOR DOORS ────────────────────────────────────────────────────────────────
+// Jackson, playtest 2026-07-20: "I just got stuck in a gate when it closed while I was in the
+// middle", then, choosing between a shove and a door that gives way: "ooo, yeah let's do 'not
+// closing while occupied', I actually like that a lot." So: the doors will not close on a body,
+// and a gate already closing reverses when one steps in. `occupied` is computed by the scene from
+// the real collision geometry (gateClearance.js); here it is just an input to drive.
+function runOcc(state, ms, { occupied = false, demand = false, awake = true, failOpen = false } = {}) {
+  const seen = [state];
+  for (let t = 0; t < ms; t += 16) {
+    const o = typeof occupied === 'function' ? occupied(t) : occupied;
+    state = tickGate(state, { awake, demand, occupied: o, failOpen, dt: 0.016 });
+    seen.push(state);
+  }
+  return { state, seen };
+}
+
+// An open gate that has already outlasted its minimum-open floor and has no demand — i.e. one that
+// would shut on the very next tick if nothing were standing in it.
+function openAndDue() {
+  const { state } = run(makeGateState(), TO_OPEN_MS);
+  expect(state.phase).toBe(GATE_OPEN);
+  return runOcc(state, GATE_MIN_OPEN_MS + 32, { occupied: true }).state;
+}
+
+describe('#369 — a gate does not close while its mouth is occupied', () => {
+  it('holds open indefinitely while a body stands in the mouth', () => {
+    const held = runOcc(openAndDue(), 20000, { occupied: true }).state;
+    expect(held.phase).toBe(GATE_OPEN);
+    expect(gatePassable(held)).toBe(true);
+  });
+
+  it('closes as soon as the mouth is clear — the hold only defers, it never cancels', () => {
+    const { state } = runOcc(openAndDue(), 32, { occupied: false });
+    expect(state.phase).toBe(GATE_CLOSING);   // it had been due to shut for 20s; it shuts at once
+  });
+
+  it('still needs the minimum-open floor: occupancy adds a reason to stay, not a reason to leave', () => {
+    // Fresh open gate, empty mouth, well under the floor: it stays open on the floor alone.
+    const { state } = run(makeGateState(), TO_OPEN_MS);
+    const early = runOcc(state, 1000, { occupied: false }).state;
+    expect(early.phase).toBe(GATE_OPEN);
+  });
+
+  it('a body in the mouth of a SHUT gate does not make it open', () => {
+    const shut = runOcc(makeGateState(), 10000, { occupied: true, demand: false }).state;
+    expect(shut.phase).toBe(GATE_CLOSED);
+    expect(gatePassable(shut)).toBe(false);
+  });
+
+  it('reverses a gate that is already closing when something steps into the mouth', () => {
+    const closing = runOcc(openAndDue(), 32, { occupied: false }).state;
+    expect(closing.phase).toBe(GATE_CLOSING);
+    const relented = tickGate(closing, { awake: true, occupied: true, dt: 0.016 });
+    expect(relented.phase).toBe(GATE_OPENING);
+    expect(relented.startedOpening).toBe(true);
+  });
+
+  it('the reversal preserves the leaves- position — the doors give way, they never blink', () => {
+    // Halfway shut: openFrac ~0.5, so the reversal must start ~halfway through OPENING, not at 0.
+    const { state: closing } = runOcc(openAndDue(), 32, { occupied: false });
+    const half = runOcc(closing, GATE_CLOSING_MS / 2, { occupied: false }).state;
+    expect(half.phase).toBe(GATE_CLOSING);
+    const openFrac = 1 - half.phaseMs / GATE_CLOSING_MS;
+    const relented = tickGate(half, { awake: true, occupied: true, dt: 0 });
+    expect(relented.phaseMs / GATE_OPENING_MS).toBeCloseTo(openFrac, 6);
+  });
+
+  it('a reversed gate finishes opening and is passable again', () => {
+    const closing = runOcc(openAndDue(), 32, { occupied: false }).state;
+    const reopened = runOcc(closing, GATE_OPENING_MS + 64, { occupied: true }).state;
+    expect(reopened.phase).toBe(GATE_OPEN);
+    expect(gatePassable(reopened)).toBe(true);
+  });
+
+  it('a gate that finished closing before anyone arrived stays closed', () => {
+    const shut = runOcc(openAndDue(), GATE_CLOSING_MS + 64, { occupied: false }).state;
+    expect(shut.phase).toBe(GATE_CLOSED);
+    // Occupancy of a shut mouth is the fallback nudge's job, not the state machine's.
+    expect(runOcc(shut, 2000, { occupied: true }).state.phase).toBe(GATE_CLOSED);
+  });
+
+  it('composes with #355: a LOCKED-OPEN gate ignores occupancy entirely and stays open', () => {
+    const locked = runOcc(makeGateState(), TO_OPEN_MS + 2000, { failOpen: true }).state;
+    expect(locked.lockedOpen).toBe(true);
+    expect(locked.phase).toBe(GATE_OPEN);
+    // Both values of `occupied` are inert once the latch is set — it was never going to close, so
+    // the two "will not close" rules never meet.
+    for (const occupied of [true, false]) {
+      const later = runOcc(locked, 30000, { occupied, failOpen: true }).state;
+      expect(later.phase).toBe(GATE_OPEN);
+      expect(gatePassable(later)).toBe(true);
+    }
+  });
+
+  it('defaults to unoccupied, so every existing caller is unchanged', () => {
+    const { state: a } = run(makeGateState(), TO_OPEN_MS + GATE_MIN_OPEN_MS + 64);
+    expect(a.phase).toBe(GATE_OPEN);   // demand true throughout: held by demand, not occupancy
+    const { state } = run(makeGateState(), TO_OPEN_MS);
+    const shutting = runOcc(state, GATE_MIN_OPEN_MS + 64, {}).state;
+    expect(shutting.phase).toBe(GATE_CLOSING);
+  });
+});

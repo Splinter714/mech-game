@@ -543,3 +543,131 @@ describe('#355 gates lock open once the objective is destroyed', () => {
     for (const g of allGates(s)) expect(g.open).toBe(true);
   });
 });
+
+// ── #369 ELEVATOR DOORS: the scene half ─────────────────────────────────────────────────
+// Playtest 2026-07-20, Jackson: "I just got stuck in a gate when it closed while I was in the
+// middle", and, choosing between shoving him clear and a door that will not close: "ooo, yeah let's
+// do 'not closing while occupied', I actually like that a lot."
+//
+// The rule itself is pure and proved in data/gateCycle.test.js (`occupied`) and the geometry in
+// data/gateClearance.test.js. What is pinned HERE is the wiring: that the scene computes occupancy
+// from the real span geometry at the real body radii, and that it counts players and enemies alike
+// but never a wreck or a flyer.
+const gateMid = (s) => { const g = theGate(s); return { x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 }; };
+
+// A player-shaped body, standing wherever you put it.
+function standing(at) {
+  return { x: at.x, y: at.y, dead: false, mech: { isDestroyed: () => false } };
+}
+
+// Get a scene to a fully OPEN gate with its garrison's demand satisfied, then stop wanting the
+// door — i.e. a gate whose only remaining question is "is anything standing in me".
+function openThenIdle(s) {
+  s._wokenBases.add('base0');
+  run(s, SURELY_OPEN_MS);
+  expect(theGate(s).open).toBe(true);
+  s.enemies = [];                       // garrison gone: no demand left, only the min-open floor
+  return s;
+}
+
+describe('#369 — the gate will not close on a body in its mouth', () => {
+  // #354: a ring typically carries several gates; the #355 latch tests use this same set.
+  const FOUR_GATES = [0, 2, 3, 5];
+  const allGates = (s) => gateEdges(s.wallEdges);
+
+  it('holds open while the PLAYER stands in the mouth, and shuts once he drives clear', () => {
+    const s = makeScene();
+    const player = standing(gateMid(openThenIdle(s)));
+    s.players = [player];
+    run(s, GATE_MIN_OPEN_MS + 4000);
+    expect(theGate(s).open).toBe(true);          // parked in the door, it stays open
+
+    player.y += 200;                             // he drives away
+    run(s, GATE_CLOSING_MS + 200);
+    expect(theGate(s).open).toBe(false);
+  });
+
+  it('holds open for an ENEMY in the mouth too — a trapped tank is the same bug', () => {
+    const s = makeScene();
+    openThenIdle(s);
+    s.enemies = [garrison(A, gateMid(s))];
+    run(s, GATE_MIN_OPEN_MS + 4000);
+    expect(theGate(s).open).toBe(true);
+  });
+
+  it('a body merely NEAR the gate does not hold it open', () => {
+    const s = makeScene();
+    const mid = gateMid(openThenIdle(s));
+    s.players = [standing({ x: mid.x, y: mid.y + 120 })];
+    run(s, GATE_MIN_OPEN_MS + 2000);
+    expect(theGate(s).open).toBe(false);
+  });
+
+  it('a WRECK in the mouth never holds a gate open — the one way this could jam forever', () => {
+    const s = makeScene();
+    const mid = gateMid(openThenIdle(s));
+    s.enemies = [garrison(A, { ...mid, mech: { isDestroyed: () => true } })];
+    s.players = [{ ...standing(mid), dead: true }];
+    run(s, GATE_MIN_OPEN_MS + 2000);
+    expect(theGate(s).open).toBe(false);
+  });
+
+  it('a FLYER over the mouth does not hold it open — it was never in the door', () => {
+    const s = makeScene();
+    const mid = gateMid(openThenIdle(s));
+    s.enemies = [garrison(A, { ...mid, flying: true })];
+    run(s, GATE_MIN_OPEN_MS + 2000);
+    expect(theGate(s).open).toBe(false);
+  });
+
+  it('a gate mid-close reverses and re-opens when someone steps into it', () => {
+    const s = makeScene();
+    const mid = gateMid(openThenIdle(s));
+    // Step until the leaves actually start moving. The exact moment varies with the per-gate
+    // stagger (`GATE_STAGGER_MAX_MS`), so this waits for the phase rather than guessing at a time.
+    const phase = () => s._gateStates.get(theGate(s).key).phase;
+    for (let t = 0; t < GATE_MIN_OPEN_MS + 4000 && phase() !== 'closing'; t += 16) run(s, 16);
+    expect(phase()).toBe('closing');
+    expect(theGate(s).open).toBe(false);                       // committed, span already solid
+
+    s.players = [standing(mid)];                               // he dives in
+    // It reverses at the leaf position it had reached — barely shut, so it is back open almost at
+    // once rather than replaying a full 800ms swing. That continuity is the point (gateCycle.js).
+    run(s, GATE_OPENING_MS + 200);
+    expect(phase()).toBe('open');
+    expect(theGate(s).open).toBe(true);                        // the doors gave way
+  });
+
+  it('composes with #355: a locked-open gate is unaffected by occupancy, empty or not', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: false, enemies: [] });
+    run(s, GATE_OPENING_MS + 200);
+    for (const g of allGates(s)) expect(g.open).toBe(true);
+    s.players = [standing(gateMid(s))];
+    run(s, 60000);
+    for (const g of allGates(s)) expect(g.open).toBe(true);    // still open, latch untouched
+    s.players = [];
+    run(s, 60000);
+    for (const g of allGates(s)) expect(g.open).toBe(true);    // and it never closes either way
+  });
+});
+
+describe('#369 — the fallback nudge, for a body placed inside a shut span', () => {
+  it('pushes a body out of the plate when a gate finishes closing on it', () => {
+    // Reachable only by a system that writes position without asking the gate (a respawn or
+    // carrier drop landing in the mouth). Called directly, since the elevator-door rule is
+    // designed to make it unreachable through the doors themselves.
+    const s = makeScene();
+    const mid = gateMid(s);
+    const player = standing(mid);
+    s.players = [player];
+    expect(s._nudgeFromClosingGate(theGate(s))).toBe(1);
+    expect(Math.hypot(player.x - mid.x, player.y - mid.y)).toBeGreaterThan(0);
+    expect(s._gateMouthOccupied(theGate(s))).toBe(false);      // genuinely out of the plate
+  });
+
+  it('leaves everything alone when nothing is in the mouth', () => {
+    const s = makeScene();
+    s.players = [standing({ x: 999, y: 999 })];
+    expect(s._nudgeFromClosingGate(theGate(s))).toBe(0);
+  });
+});

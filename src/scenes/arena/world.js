@@ -571,11 +571,17 @@ export const WorldMixin = {
   // lookup, because a tile obstacle is a whole hex and the mech has always been allowed to stand
   // with its shoulders over a neighbouring tile's border. Walls are the thing that reads wrong
   // when a body overlaps them, because a wall IS the border.
-  _blockedAlongSegment(x0, y0, x1, y1, radius = 0) {
+  // #369: `ignoreKey` is one span, by canonical key, this query pretends is not there — the same
+  // escape hatch `wallEdgeCrossing`/`wallEdgeAt` already carry for #310's wall turrets, surfaced on
+  // the swept scene query because the gate nudge needs it. Its one caller is a body being pushed
+  // out of the mouth of the very gate that just closed on it: that span must not veto the escape it
+  // caused, while every OTHER wall and all terrain still must. Defaults to null, so every existing
+  // caller (locomotion, separation, the leash clamp) is bit-for-bit unchanged.
+  _blockedAlongSegment(x0, y0, x1, y1, radius = 0, ignoreKey = null) {
     for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
       if (!isPassable(this.terrain.get(axialKey(h.q, h.r)))) return true;
     }
-    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, null, radius);
+    return !!wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, ignoreKey, radius);
   },
 
   // #92: does a living GROUND enemy unit's collision circle cover world point (x, y)? Flying

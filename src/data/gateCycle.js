@@ -189,7 +189,38 @@ function tickFailOpen(state, ms) {
   }
 }
 
-export function tickGate(state, { awake, demand = false, dt = 0, failOpen = false }) {
+// #369 — ELEVATOR DOORS. Playtest 2026-07-20, Jackson: "I just got stuck in a gate when it closed
+// while I was in the middle", and, offered the choice between shoving him clear and a door that
+// will not close on him, "ooo, yeah let's do 'not closing while occupied', I actually like that a
+// lot."
+//
+// `occupied` is computed by the scene from the SAME collision geometry everything else uses
+// (data/gateClearance.js `gateMouthOccupied`: the body's own wall radius against the span's
+// collision capsule), and it is true for ENEMIES as much as for players — a tank standing in the
+// door holds it open too, which is both natural and consistent with #361 having just fixed the
+// adjacent jam at these same mouths.
+//
+// It does exactly two things, and deliberately nothing else:
+//   • GATE_OPEN will not transition to GATE_CLOSING while it is true. The minimum-open floor and
+//     the demand rule are untouched; this is one more reason to stay open, not a new reason to
+//     open. Nothing occupancy does can OPEN a gate — a body in a SHUT mouth (only reachable by
+//     being placed there, see gateClearance.js) is swept out by the fallback nudge instead, so
+//     "stand in a closed door to make it open" is not a thing.
+//   • GATE_CLOSING reverses into GATE_OPENING at the leaf position it had already reached, exactly
+//     as #355's fail-open does and for the same reason: a door that freezes half-shut reads as
+//     broken, a door that gives way reads as a door.
+//
+// THE ACCEPTED COST: a player can park in a mouth and hold a gate open indefinitely, cutting
+// against #309's just-in-time design. Jackson chose this behaviour knowing that, so there is NO
+// anti-exploit timer and no force-close here — adding one would be re-litigating his call. The one
+// case that would be genuinely broken, a gate held open forever by something that cannot leave, is
+// closed off at the source rather than here: the scene counts only LIVE, non-flying bodies, so a
+// wreck in the mouth is not an occupant.
+//
+// HOW IT COMPOSES WITH #355's LATCH: it does not have to. `lockedOpen` is checked first and returns
+// before any of this runs, so a locked-open gate never consults occupancy at all — it was never
+// going to close, so it can never trap anything, and the two "will not close" rules never meet.
+export function tickGate(state, { awake, demand = false, dt = 0, failOpen = false, occupied = false }) {
   const ms = Math.max(0, dt) * 1000;
 
   // #355: once the base's objective is down this is the only branch that runs, forever.
@@ -233,13 +264,21 @@ export function tickGate(state, { awake, demand = false, dt = 0, failOpen = fals
       // The only conditional transition in the machine: shut once nothing wants the door AND the
       // minimum-open floor has elapsed. Demand carries its own grace window, so `demand` being
       // false here already means "nobody has asked for roughly a second and a half".
-      if (!demand && phaseMs >= GATE_MIN_OPEN_MS) {
+      // #369: `occupied` is the third condition, alongside "nobody wants it" and the floor.
+      if (!demand && !occupied && phaseMs >= GATE_MIN_OPEN_MS) {
         return { ...carry(state), phase: GATE_CLOSING, phaseMs: 0, justClosed: true };
       }
       return { ...carry(state), phaseMs };
 
     case GATE_CLOSING:
     default:
+      // #369: something stepped into the mouth mid-swing. Give way — reverse into OPENING at the
+      // leaf position already reached, so `openFrac` is continuous and the doors are seen to
+      // relent rather than to blink. Identical treatment to `tickFailOpen`'s CLOSING branch.
+      if (occupied) {
+        const openFrac = Math.max(0, 1 - state.phaseMs / GATE_CLOSING_MS);
+        return { ...carry(state), phase: GATE_OPENING, phaseMs: openFrac * GATE_OPENING_MS, armedMs: 0, lockoutMs: 0, startedOpening: true };
+      }
       if (phaseMs >= GATE_CLOSING_MS) {
         return { ...carry(state), phase: GATE_CLOSED, phaseMs: 0, armedMs: 0, lockoutMs: GATE_RECLOSE_LOCKOUT_MS };
       }
