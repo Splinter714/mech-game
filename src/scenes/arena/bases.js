@@ -31,6 +31,7 @@ import {
 } from '../../data/gateDemand.js';
 import { findHexPath } from '../../data/hexRoute.js';
 import { pixelToHex } from '../../data/hexgrid.js';
+import { listenerOf, livePlayersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
 // #309 playtest — how often the DEMAND scan runs, and how many garrison units it may ask per scan.
 // The scan is the expensive half of demand-driven gates: each unit it asks costs one A* search
@@ -531,7 +532,11 @@ export const BasesMixin = {
       //   (b) a recent player gunshot within NOISE_AGGRO_RANGE of the tower (heard it), or
       //   (c) the tower took damage this frame (flagged by `_onAlertTowerDamaged`).
       // Because the countdown is sticky (data/alertTower.js), any single true frame commits it.
-      const inRange = Math.hypot(this.px - x, this.py - y) <= ALERT_DETECT_RADIUS;
+      // #347: ANY player inside the radius trips the tower — a detector is not "watching for the
+      // player", it is watching its own patch of ground. `_livePlayers()` is a one-element array
+      // today, so this is the same single `Math.hypot` it always was.
+      const inRange = livePlayersOf(this).some(
+        (p) => Math.hypot(p.x - x, p.y - y) <= ALERT_DETECT_RADIUS);
       const heardShot = noiseLive && Math.hypot(this._lastFireX - x, this._lastFireY - y) <= NOISE_AGGRO_RANGE;
       const wasDamaged = this._alertTowerDamaged?.has(key) ?? false;
       if (wasDamaged) this._alertTowerDamaged.delete(key);   // one-frame signal — consume it now
@@ -602,7 +607,7 @@ export const BasesMixin = {
     // fired the frame it reaches zero and reset to the (now-shorter) interval for `f`.
     fx.pulseTimerMs -= Math.max(0, dt) * 1000;
     if (fx.pulseTimerMs <= 0) {
-      Audio.alertPulse(f, { x, y, listenerX: this.px, listenerY: this.py });
+      Audio.alertPulse(f, { x, y, ...listenerOf(this) });
       fx.pulseTimerMs = ALERT_PULSE_INTERVAL_MAX_MS - (ALERT_PULSE_INTERVAL_MAX_MS - ALERT_PULSE_INTERVAL_MIN_MS) * f;
     }
   },
@@ -647,7 +652,9 @@ export const BasesMixin = {
   // inside `_wakeBase`), so this stays a cheap `Math.hypot` for every already-irrelevant tick.
   _maybeProximityWake(e) {
     if (e.baseId == null) return;
-    const dist = Math.hypot(this.px - e.x, this.py - e.y);
+    // #347: distance to the NEAREST player — whoever walked up is who wakes it.
+    const tp = targetPlayerFor(this, e);
+    const dist = Math.hypot(tp.x - e.x, tp.y - e.y);
     // #269: also wake on nearby gunfire noise, not just physical proximity — a player shooting
     // up a base's front units should stir the rest, even before walking into them. Same
     // `noiseDist` computation the UNAWARE path uses (enemies.js `_updateVehicle`): distance from
@@ -831,7 +838,7 @@ export const BasesMixin = {
     // A small, quiet mechanical thud (not a full destruction boom) reusing the existing
     // explosion cue at a low scale — same precedent as `_outpostCollapseFx`'s softer soft-cover
     // variant, just even quieter since nothing is actually being destroyed here.
-    Audio.explosion(0.25, { x, y, listenerX: this.px, listenerY: this.py });
+    Audio.explosion(0.25, { x, y, ...listenerOf(this) });
     const plate = this.add.circle(x, y, 15, 0x1c1f24, 0.94).setScale(0.05).setDepth(DEPTH.DOCK_FX);
     const rim = this.add.circle(x, y).setStrokeStyle(2.5, 0x9098a3, 0).setRadius(15).setScale(1.4).setDepth(DEPTH.DOCK_FX + 0.1);
     this.tweens.add({ targets: plate, scale: 1, duration: 380, ease: 'Quad.easeOut' });
@@ -1033,7 +1040,13 @@ export const BasesMixin = {
     );
     if (units.length === 0) return;
 
-    const goal = pixelToHex(this.px, this.py);
+    // #347: the sortie goal is the primary player's hex. This is a coarse, whole-garrison
+    // "which way is out" scan shared by every unit in the base (not a per-unit route), so it
+    // deliberately takes ONE goal rather than resolving nearest per unit — phase 2 should
+    // revisit whether a base splits its sortie between two players, which is a design
+    // question (#335), not a mechanical one.
+    const focus = primaryPlayerOf(this);
+    const goal = pixelToHex(focus.x, focus.y);
     const canStep = (a, b, k) => this._canEnemyStepGatesOpen(a, b, k);
     // Round-robin from wherever the last scan stopped, so a garrison larger than the per-scan cap
     // is covered evenly instead of the same first four units being asked forever.
@@ -1187,7 +1200,7 @@ export const BasesMixin = {
   // `_closeDockFx`, which is the machinery #309 asked this to reuse.
   _gateOpenFx(edge) {
     const x = (edge.x0 + edge.x1) / 2, y = (edge.y0 + edge.y1) / 2;
-    Audio.explosion(0.3, { x, y, listenerX: this.px, listenerY: this.py });
+    Audio.explosion(0.3, { x, y, ...listenerOf(this) });
     const flare = this.add.circle(x, y, 10, 0xffc65a, 0.75).setDepth(DEPTH.IMPACT_FX);
     const ring = this.add.circle(x, y).setStrokeStyle(3, 0xffc65a, 0.9).setRadius(12).setDepth(DEPTH.IMPACT_FX + 0.1);
     this.tweens.add({ targets: flare, scale: 2.4, alpha: 0, duration: 620, ease: 'Quad.easeOut', onComplete: () => flare.destroy() });
@@ -1198,7 +1211,7 @@ export const BasesMixin = {
   // `_closeDockFx`'s "nothing was destroyed, something just sealed" register.
   _gateCloseFx(edge) {
     const x = (edge.x0 + edge.x1) / 2, y = (edge.y0 + edge.y1) / 2;
-    Audio.explosion(0.2, { x, y, listenerX: this.px, listenerY: this.py });
+    Audio.explosion(0.2, { x, y, ...listenerOf(this) });
     const ring = this.add.circle(x, y).setStrokeStyle(2.5, 0x8a7645, 0.85).setRadius(26).setDepth(DEPTH.IMPACT_FX);
     this.tweens.add({ targets: ring, scale: 0.2, alpha: 0, duration: 420, ease: 'Quad.easeIn', onComplete: () => ring.destroy() });
   },

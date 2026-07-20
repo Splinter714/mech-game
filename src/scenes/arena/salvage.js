@@ -5,6 +5,7 @@
 // arena/run.js banks on stage-clear / loses on death), so it shows in the HUD SCRAP readout
 // immediately and follows #64's existing banked-vs-lost rules with no extra plumbing.
 import { SALVAGE_DROP_CHANCE, salvageAmount } from '../../data/shop.js';
+import { livePlayersOf, targetPlayerFor } from './players.js';
 import { scatterOffset } from '../../data/hexgrid.js';
 import { DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
 import { Audio } from '../../audio/index.js';
@@ -81,7 +82,10 @@ export const SalvageMixin = {
       // world position (s.x/s.y) creeps toward the player each frame, accelerating as it closes
       // in. This only moves the underlying position; the bob/spin below is layered on top of it
       // each frame, so the two never fight — the drop bobs while it drifts, same as while still.
-      const dx = this.px - s.x, dy = this.py - s.y;
+      // #347: SCRAP drifts toward — and is collected by — the nearest player, not "the player".
+      // One player today, so the same single magnet and the same collector as before.
+      const near = targetPlayerFor(this, s);
+      const dx = near.x - s.x, dy = near.y - s.y;
       const dist = Math.hypot(dx, dy);
       if (dist > 0 && dist <= MAGNET_RADIUS) {
         const closeness = 1 - dist / MAGNET_RADIUS;   // 0 at the outer edge, →1 near the player
@@ -98,8 +102,10 @@ export const SalvageMixin = {
       v._gem.rotation += delta * 0.0014;
       v._ring.rotation -= delta * 0.001;
 
-      if (Math.hypot(this.px - s.x, this.py - s.y) <= PICKUP_RADIUS) {
-        this._collectSalvage(s);
+      const collector = livePlayersOf(this).find(
+        (p) => Math.hypot(p.x - s.x, p.y - s.y) <= PICKUP_RADIUS);
+      if (collector) {
+        this._collectSalvage(s, collector);
         v.destroy();
         this.salvage.splice(i, 1);
         continue;
@@ -109,7 +115,10 @@ export const SalvageMixin = {
 
   // Feed a pickup straight into the live run's currency total — the same field _advanceRun
   // banks from and _endRun persists, so this needs no separate bookkeeping.
-  _collectSalvage(s) {
+  // `player` is who picked it up. SCRAP banks into the RUN's shared currency, which is a
+  // deliberate phase-1 reading — a co-op run is one run with one purse — so the collector is
+  // currently only carried for the pickup cue/feedback. Phase 2 can split it here if wanted.
+  _collectSalvage(s, player = null) {
     if (this.run) {
       this.run.currency += s.amount;
       this.registry.set('run', this.run);

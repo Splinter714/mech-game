@@ -19,6 +19,7 @@ import {
 } from '../../data/run.js';
 import { RUN_CURRENCY_KEY } from '../../data/events.js';
 import { saveRunCurrency } from '../../data/save.js';
+import { allPlayersDeadIn } from './players.js';
 
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
 
@@ -41,7 +42,11 @@ export const RunMixin = {
   _updateRun() {
     if (!this.run || this._runAdvancing) return;
 
-    if (this.mech.isDestroyed()) {
+    // #347: the run ends on death only when EVERY player is down. With one player that is
+    // exactly the old `this.mech.isDestroyed()` check; with two it is where phase 2's
+    // spectate-vs-respawn decision (#335 open question 5) plugs in, rather than in the mission
+    // bookkeeping below.
+    if (allPlayersDeadIn(this)) {
       if (this.mission && this.mission.status === 'active') {
         // Re-evaluate the mission with the real death signal so it flips to 'failed' too (the
         // pure model already supports this — see data/mission.js evaluateMission).

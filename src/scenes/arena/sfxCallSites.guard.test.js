@@ -24,9 +24,11 @@ describe('#201 SFX call-site wiring', () => {
 
   it('combat.js fires mechDestroyed on the player MECH DOWN moment', () => {
     // #236: the floating "MECH DOWN" text was removed (Jackson: drop almost all
-    // player-anchored float text), so this now anchors on the `_playerDead` flag flip
-    // that marks the same moment instead of the text that used to sit next to it.
-    expect(combat).toMatch(/_playerDead = true;[\s\S]*?Audio\.ui\('mechDestroyed'\)/);
+    // player-anchored float text), so this now anchors on the death-latch flip that marks the
+    // same moment instead of the text that used to sit next to it.
+    // #347: that latch moved from the scene singleton (`this._playerDead`) onto the player being
+    // hit (`player.dead`) — same moment, same one flip, now per player.
+    expect(combat).toMatch(/player\.dead = true;[\s\S]*?Audio\.ui\('mechDestroyed'\)/);
   });
 
   it('combat.js no longer uses the generic explosion cue for part-loss/mech-destroyed', () => {

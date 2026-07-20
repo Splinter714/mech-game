@@ -12,6 +12,7 @@ import { DORMANT } from '../../data/awareness.js';
 // #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
+import { listenerOf, primaryPlayerOf } from './players.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -30,8 +31,10 @@ export const CombatMixin = {
   // bolt-on) — Mech.applyDamage already runs the full shield -> armor -> hp pipeline
   // internally, so this is just a thin pass-through (kept as its own method for the arena's
   // other call sites / tests that hang off `damagePlayer`).
-  damagePlayer(locationId, amount) {
-    return this.mech.applyDamage(locationId, amount);
+  // #347: `player` is WHO is being hit. Defaults to the primary player, which is both today's
+  // only player and what every existing caller/test means by "the player".
+  damagePlayer(locationId, amount, player = primaryPlayerOf(this)) {
+    return player.mech.applyDamage(locationId, amount);
   },
 
   // Enemy round hits the player: damage a (torso-weighted) random part through the shield.
@@ -45,7 +48,11 @@ export const CombatMixin = {
   // cascade, see DESTROY_CASCADE) took it anyway. Eased to 1.5:1 here, paired with a bump to
   // FACTORS.leftTorso/rightTorso, so the two changes together land torsos and arms within
   // ~6% of each other's effective destruction rate instead of 60%.
-  _damagePlayerAt(dmg) {
+  // #347: takes the player being hit. Enemy fire resolves WHICH player it struck upstream
+  // (firing.js `_liveTargetsForTrace`, projectiles.js) and passes it here, so the hit-location
+  // roll, the reskin, the death FX and the death latch all act on that player's own mech and
+  // view — none of it reads a global any more.
+  _damagePlayerAt(dmg, player = primaryPlayerOf(this)) {
     const parts = [
       'leftTorso', 'leftTorso', 'leftTorso',
       'rightTorso', 'rightTorso', 'rightTorso',
@@ -55,19 +62,19 @@ export const CombatMixin = {
     // #231: a weighted-random pick can land on a location already destroyed (e.g. an arm that
     // cascaded from its torso), which would otherwise waste the whole hit into nothing.
     // `pickLiveWeighted` rerolls among the still-live entries of the same pool instead.
-    const loc = pickLiveWeighted(parts, (p) => this.mech.isPartDestroyed(p));
-    const res = this.damagePlayer(loc, dmg);
+    const loc = pickLiveWeighted(parts, (part) => player.mech.isPartDestroyed(part));
+    const res = this.damagePlayer(loc, dmg, player);
     // #205: pulse the on-mech shield bubble any time the shield actually absorbed part of this
     // hit — covers both a fully-absorbed hit (shielded, below) and a hit that partially absorbed
     // then broke through (shieldAbsorbed > 0 but not `shielded`, see damagePlayer above).
-    if (res.shieldAbsorbed) this._shieldHitFlash();
+    if (res.shieldAbsorbed) this._shieldHitFlash(player);
     if (res.shielded) return;
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
     // weapons) or which segments have lost their ARMOR plating (#246's armor-shell overlay —
     // see mechArt.js), not on continuous health — so only pay the 9-texture procedural rebuild
     // when this hit actually changed one of those two discrete visual states. Reskinning on
     // every hit was the main combat lag source.
-    if (res.destroyed || res.armorBrokeNow) reskinMech(this, 'playerMech', this.mech);
+    if (res.destroyed || res.armorBrokeNow) reskinMech(this, player.textureKey ?? 'playerMech', player.mech);
     // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
     // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
     // #201: a part breaking off now has its own SFX domain trigger (shared for player+enemy
@@ -76,15 +83,15 @@ export const CombatMixin = {
     // #64: death feedback only — the run mixin (_updateRun, polled every frame) is what
     // actually ends the run and drives the delayed return to the garage, so there's exactly
     // one place owning that transition (and the run-over banner/currency banking with it).
-    if (this.mech.isDestroyed() && !this._playerDead) {
-      this._playerDead = true;
+    if (player.mech.isDestroyed() && !player.dead) {
+      player.dead = true;
       // #225 (playtest: "it needs to really be destroyed in a big explosion, not just have
       // parts missing and still be able to walk around as a husk"): freeze velocity/speed so
       // the stepped-gait animation (_stepGait, locomotion.js) stops dead on this frame's pose
       // instead of continuing to "walk" on stale speed while input is gated off below (see
       // ArenaScene.update()'s `!this._playerDead` guards around _handleSprint/_drive/
       // _handleFiring — the actual input choke point).
-      this.vx = 0; this.vy = 0; this.speed = 0;
+      player.vx = 0; player.vy = 0; player.speed = 0;
       // The player's own kill gets the same catastrophic-kill treatment as an enemy death
       // (_deathFx — burst flash, irregular fireball blobs, shock ring, smoke, flung debris —
       // see the big comment above _deathFx) rather than nothing. Always the biggest scale/
@@ -93,7 +100,7 @@ export const CombatMixin = {
       // 'massive' kill, which is itself the ceiling `explosionCategoryFor`/`deathScaleFor`
       // ever produce for an enemy — ties into the dedicated `deathExplosionMassive` bake
       // (#180) as the biggest explosion SOUND category that already exists.
-      this._deathFx(this.px, this.py, DEATH_SCALE_MAX, 'massive');
+      this._deathFx(player.x, player.y, DEATH_SCALE_MAX, 'massive');
       // Mirrors the enemy-death lesson from #87 (corrected 2026-07-10: "a lingering, frozen
       // corpse before cleanup read as horrible and looks dumb — the explosion IS the death
       // feedback, not a delayed afterthought"): hide the player's own mech view the instant it
@@ -102,7 +109,7 @@ export const CombatMixin = {
       // transition. Unlike `_removeEnemy`, this only HIDES (not destroys) the container — the
       // camera's `startFollow(this.playerView, …)` (ArenaScene.create()) still needs a live
       // object to anchor on while the run-over sequence plays out.
-      this.playerView.setVisible(false);
+      player.view?.setVisible(false);
       // #236: no floating "MECH DOWN" text — the explosion + hidden mech IS the feedback.
       // #201: the player's own mech going down gets its own dedicated, most-severe cue —
       // distinct from an enemy's death (deathExplosionByCategory, #180/#184).
@@ -124,7 +131,7 @@ export const CombatMixin = {
     // #264: real positional audio — the impact's own world position vs. the player (listener)
     // drives distance falloff + stereo pan, so a hit landing far from the player reads quieter.
     if (WEAPON_IMPACT_SOUNDS_ENABLED && allowByKey((this._impactSoundAt ??= {}), weaponId ?? '_', now, SOUND_THROTTLE_MS)) {
-      Audio.impact(weaponId, { x, y, listenerX: this.px, listenerY: this.py });
+      Audio.impact(weaponId, { x, y, ...listenerOf(this) });
     }
     // #76: collapse near-simultaneous bursts at the same point — concentrated fire lands many
     // hits/frame at one spot, and the overlapping identical rings are indistinguishable, so keep
@@ -255,7 +262,7 @@ export const CombatMixin = {
     // #264: real positional audio — the kill site vs. the player (listener). The player's own
     // MECH DOWN case (this._deathFx(this.px, this.py, ...) above) naturally resolves to
     // distance 0 / centered pan, i.e. unaffected full volume, exactly as before.
-    Audio.deathExplosion(category, { x, y, listenerX: this.px, listenerY: this.py });
+    Audio.deathExplosion(category, { x, y, ...listenerOf(this) });
   },
 
   // Lingering smoke puff (#100): a soft grey blob that drifts a little and fades out much

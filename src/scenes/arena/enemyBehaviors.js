@@ -14,6 +14,7 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
+import { enemyTargetOf } from './players.js';
 import { rotateToward, hullTravelAngle, isSmallUnit } from './shared.js';
 import { kindWeaponSlot } from '../../data/kindWeapons.js';
 import {
@@ -56,7 +57,11 @@ function aimAndFire(scene, e, ctx, { slot = undefined, fire = true } = {}) {
   // block a flyer's lane either, exactly as it doesn't block a mech's. Hard cover blocks everyone.
   // #167: ground vehicles (tanks/infantry/carriers, often 40+ at once) ran this raycast per
   // unit per frame — now a STAGGERED CACHE (~120ms per-enemy refresh), exact at each refresh.
-  const los = scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, scene.px, scene.py, isSmallUnit(e));
+  // #347: the firing lane is checked to THIS unit's target player (nearest), not to a global
+  // singleton — `enemyTargetOf` reads back the pick `_updateEnemy`/`_updateVehicle` stamped on
+  // `e` this tick, so the lane, the aim and the round all agree on who is being shot at.
+  const tgt = enemyTargetOf(scene, e);
+  const los = scene._cachedLosToPlayer(e, ctx.delta, e.x, e.y, ctx.bearing, ctx.dist, tgt.x, tgt.y, isSmallUnit(e));
   // Only fire once the gun is roughly on target, so shots read as aimed.
   //
   // #305: a slot may be a FIXED FORWARD mount (`fixedForward` in the kind's data) — a gun bolted
@@ -285,8 +290,9 @@ function droneBehavior(scene, e, ctx) {
     e._orbitR = orbit * rand(0.75, 1.25);
   }
   // Target point: on a ring around the player at the drone's jittered angle.
-  const tx = scene.px + Math.cos(e._orbitAng) * (e._orbitR ?? orbit);
-  const ty = scene.py + Math.sin(e._orbitAng) * (e._orbitR ?? orbit);
+  const tgt = enemyTargetOf(scene, e);   // #347: orbit the player this drone is swarming
+  const tx = tgt.x + Math.cos(e._orbitAng) * (e._orbitR ?? orbit);
+  const ty = tgt.y + Math.sin(e._orbitAng) * (e._orbitR ?? orbit);
   let dx = tx - e.x, dy = ty - e.y;
   const dm = Math.hypot(dx, dy) || 1;
   // Add a tangential swirl so the swarm churns around the player.
@@ -332,9 +338,10 @@ function helicopterBehavior(scene, e, ctx) {
   e.gunship ??= initGunshipCycle();
   const st = e.gunship;
 
+  const tgt = enemyTargetOf(scene, e);   // #347: the player this gunship is running passes on
   const repoDist = st.repoX == null ? Infinity : Math.hypot(st.repoX - e.x, st.repoY - e.y);
   stepGunshipCycle(st, ctx.delta, ctx.dist, {
-    px: scene.px, py: scene.py, ex: e.x, ey: e.y, handed: e.handed || 1, repoDist,
+    px: tgt.x, py: tgt.y, ex: e.x, ey: e.y, handed: e.handed || 1, repoDist,
   });
   const plan = phasePlan(st.phase);
 
@@ -357,7 +364,7 @@ function helicopterBehavior(scene, e, ctx) {
     desiredY = ctx.uy * radial + (ctx.ux * side);
   } else {
     // REPOSITION — cruise out to the fresh attack point the machine picked on entry.
-    const dx = (st.repoX ?? scene.px) - e.x, dy = (st.repoY ?? scene.py) - e.y;
+    const dx = (st.repoX ?? tgt.x) - e.x, dy = (st.repoY ?? tgt.y) - e.y;
     const dm = Math.hypot(dx, dy) || 1;
     desiredX = dx / dm; desiredY = dy / dm;
   }
