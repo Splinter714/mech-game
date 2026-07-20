@@ -1,22 +1,29 @@
-// #336: a kill's pickup must never end up on the far side of a base wall from the thing that
-// dropped it. Two nudges used to let that happen — an oversized #88 scatter and #73's
-// side-agnostic ring search — so these cover the tamed radius and the side rule together.
+// Where a kill's pickup lands.
+//
+// HISTORY, because most of this file used to assert the opposite of what it now asserts: #336
+// made a drop stay on the same SIDE of a base wall as the thing that dropped it, since a drop
+// across a wall was one the player couldn't collect. Jackson reversed that on 2026-07-20 ("drop
+// the same-side rule entirely") once #378's magnet started pulling drops THROUGH walls — which
+// side a drop landed on stopped meaning anything. The side rule, the flyer-uses-the-player's-side
+// reference and the wedged-against-the-correct-side fallback are all gone; the tests that
+// asserted them are rewritten below to assert the replacement behaviour rather than deleted, so
+// the reversal is visible.
+//
+// What survives from those issues, deliberately: #336's tamed scatter radius (a real fix, nothing
+// to do with walls) and #345's bounded search (guards the bug CLASS — a budget scaled off world
+// size — not just the wall-test instance that made it catastrophic).
 import { describe, it, expect } from 'vitest';
 import { resolveDropPos, DROP_SCATTER_RADIUS, DROP_SEARCH_RINGS } from './dropPlacement.js';
-import { hexToPixel, pixelToHex, axialKey, HEX_SIZE, scatterOffset } from './hexgrid.js';
-import { makeWallEdgeSet, wallEdgeSeparating } from './wallEdges.js';
+import { hexToPixel, HEX_SIZE, scatterOffset } from './hexgrid.js';
 
-// A synthetic wall along the y axis: two points are separated iff their x's straddle zero.
-const yAxisWall = (ax, ay, bx, by) => (ax < 0) !== (bx < 0);
-
-describe('DROP_SCATTER_RADIUS (#88 scatter, tamed by #336)', () => {
-  it('cannot throw a drop across a wall band on its own (well under half a hex)', () => {
+describe('DROP_SCATTER_RADIUS (#88 scatter, tamed by #336 — KEPT through the reversal)', () => {
+  it('stays well under half a hex, so a drop lands near the kill that earned it', () => {
+    // The original 30px was most of a 48px hex, which could fling a drop most of a hex away from
+    // the kill. That was the problem worth fixing regardless of walls.
     expect(DROP_SCATTER_RADIUS).toBeLessThan(HEX_SIZE / 2);
-    // The concrete guarantee: a kill standing clear of a wall by more than the radius can never
-    // be scattered through it.
     for (let i = 0; i < 500; i++) {
-      const p = scatterOffset(-(DROP_SCATTER_RADIUS + 1), 0, DROP_SCATTER_RADIUS);
-      expect(p.x).toBeLessThan(0);
+      const p = scatterOffset(0, 0, DROP_SCATTER_RADIUS);
+      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(DROP_SCATTER_RADIUS);
     }
   });
 
@@ -31,96 +38,78 @@ describe('DROP_SCATTER_RADIUS (#88 scatter, tamed by #336)', () => {
   });
 });
 
-describe('resolveDropPos — the side rule (#336)', () => {
-  it('leaves a walkable, same-side drop exactly where it landed', () => {
-    const pos = resolveDropPos(-100, 20, {
-      ref: { x: -110, y: 20 }, blocked: () => false, separated: yAxisWall,
-    });
+describe('resolveDropPos — drops land where the enemy died (the 2026-07-20 reversal)', () => {
+  it('leaves a walkable drop exactly where it landed', () => {
+    const pos = resolveDropPos(-100, 20, { blocked: () => false });
     expect(pos).toEqual({ x: -100, y: 20, fallback: false });
   });
 
-  it('relocates a drop that the scatter pushed THROUGH the wall back to the kill\'s side', () => {
-    // Drop point is at +x (through the wall); the kill happened at -x. Everything is walkable,
-    // so the only thing that can move it is the side rule.
-    const pos = resolveDropPos(10, 0, {
-      ref: { x: -30, y: 0 }, blocked: () => true, passable: () => true, separated: yAxisWall,
-    });
-    expect(pos.x).toBeLessThan(0);
-    expect(pos.fallback).toBe(false);
-  });
-
-  it('keeps expanding past a NEARER far-side tile to find a same-side one (the #73 bug)', () => {
-    // The old search was purely geometric, so the hex just over the wall won because it was
-    // closest. Make only the far side passable nearby and confirm we do NOT take it.
-    const passable = (q, r) => {
-      const p = hexToPixel(q, r);
-      return p.x > 0 || p.x < -3 * HEX_SIZE;      // a gap of impassable ground on our own side
-    };
-    const pos = resolveDropPos(-10, 0, {
-      ref: { x: -20, y: 0 }, blocked: () => true, passable, separated: yAxisWall,
-    });
-    expect(pos.x).toBeLessThan(0);
-    expect(pos.fallback).toBe(false);
-  });
-
-  it('with no ref, behaves exactly as before — nearest passable tile, side ignored', () => {
+  it('takes the NEAREST passable tile, with no notion of sides — was the #336 side rule', () => {
+    // Under #336 this drop (at -10, with only the +x side passable nearby) was dragged back to a
+    // far tile on its own side of the wall. Now it simply takes the closest walkable ground.
     const passable = (q, r) => hexToPixel(q, r).x > 0;
-    const pos = resolveDropPos(-10, 0, { ref: null, blocked: () => true, passable });
+    const pos = resolveDropPos(-10, 0, { blocked: () => true, passable });
     expect(pos.x).toBeGreaterThan(0);
+    expect(pos.fallback).toBe(false);
   });
 
-  it('a FLYER downed over a wall drops on the side its ref (the player) is on', () => {
-    // Same death point, two different refs — the drop follows the ref, which is exactly how the
-    // scene distinguishes a flyer (player position) from a ground kill (death position).
-    const opts = { blocked: () => true, passable: () => true, separated: yAxisWall };
+  it('does not relocate a drop merely for being across a wall from the kill', () => {
+    // The exact case #336 existed to move. Nothing about walls is consulted anymore, so a
+    // walkable spot is accepted as-is and the magnet (#378) is what gets it to the player.
+    const pos = resolveDropPos(10, 0, { blocked: () => false });
+    expect(pos).toEqual({ x: 10, y: 0, fallback: false });
+  });
+
+  it('relocates ONLY for genuinely unreachable ground — #73\'s original job, which stands', () => {
+    // Deep water / impassable terrain / off-map: the one reason left to move a drop at all.
+    const passable = (q, r) => Math.abs(hexToPixel(q, r).x) > HEX_SIZE;
+    const pos = resolveDropPos(0, 0, { blocked: () => true, passable });
+    expect(Math.abs(pos.x)).toBeGreaterThan(HEX_SIZE);
+    expect(pos.fallback).toBe(false);
+  });
+
+  it('a FLYER\'s drop no longer follows the player — the ref rule is gone', () => {
+    // #336 placed a flyer's drop on the PLAYER's side of a wall, because a flyer downed over a
+    // wall had no side of its own. With no side rule the death point is simply where it lands,
+    // and `resolveDropPos` has no ref parameter to pass a player through at all.
     const overWall = { x: 4, y: 0 };
-    const playerLeft = resolveDropPos(overWall.x, overWall.y, { ...opts, ref: { x: -200, y: 0 } });
-    const playerRight = resolveDropPos(overWall.x, overWall.y, { ...opts, ref: { x: 200, y: 0 } });
-    expect(yAxisWall(-200, 0, playerLeft.x, playerLeft.y)).toBe(false);
-    expect(yAxisWall(200, 0, playerRight.x, playerRight.y)).toBe(false);
-    expect(playerLeft.x).toBeLessThan(0);
-    expect(playerRight.x).toBeGreaterThanOrEqual(0);
+    const pos = resolveDropPos(overWall.x, overWall.y, { blocked: () => false });
+    expect(pos).toEqual({ ...overWall, fallback: false });
   });
 });
 
-describe('resolveDropPos — the wedged-in-a-corner fallback (#336)', () => {
-  it('places against the wall on the correct side rather than losing the drop', () => {
-    // Nothing walkable exists on our side at all: the reward must still appear, on our side.
-    const passable = (q, r) => hexToPixel(q, r).x > 0;
-    const pos = resolveDropPos(-10, 0, {
-      ref: { x: -20, y: 0 }, blocked: () => true, passable, separated: yAxisWall, maxSteps: 6,
-    });
-    expect(pos.fallback).toBe(true);
-    expect(pos.x).toBeLessThan(0);
+describe('resolveDropPos — a drop is never silently lost', () => {
+  it('leaves a wedged drop where it landed rather than losing it', () => {
+    // Nothing walkable anywhere in the search (died in a sealed pocket). #336 placed it against
+    // the wall on the correct side; now it just stays put, and the magnet can pull it out.
+    const pos = resolveDropPos(-10, 3, { blocked: () => true, passable: () => false, maxSteps: 6 });
+    expect(pos).toEqual({ x: -10, y: 3, fallback: true });
   });
 
-  it('never returns nothing — a drop is never silently dropped on the floor', () => {
-    const pos = resolveDropPos(0, 0, {
-      ref: { x: 5, y: 7 }, blocked: () => true, passable: () => false,
-      separated: () => true, maxSteps: 3,
-    });
+  it('always returns finite coordinates', () => {
+    const pos = resolveDropPos(0, 0, { blocked: () => true, passable: () => false, maxSteps: 3 });
     expect(Number.isFinite(pos.x) && Number.isFinite(pos.y)).toBe(true);
     expect(pos.fallback).toBe(true);
   });
 });
 
-// #345 — the freeze. A kill landing ON a wall span leaves the reference point inside the wall, so
-// nearly nothing reads as same-side and the ring search runs to exhaustion — twice (the search,
-// then the wedged pass). That is fine as long as "exhaustion" is a small fixed neighbourhood; it
-// was catastrophic when the budget was `worldRadius * 2 + …`, which #340's longer corridor pushed
-// to 752 rings (~1.7M candidates, each running a wall-separation segment test). Measured at 549
-// SECONDS for a single drop against a real generated base. These lock the bound in place.
+// #345 — the freeze, and the reason the bound must OUTLIVE the rule that made it urgent. A kill
+// landing ON a wall span left the reference point inside the wall, so nearly nothing read as
+// same-side and the ring search ran to exhaustion running a wall-separation segment test per
+// candidate. That was fine as a small fixed neighbourhood and catastrophic when the budget was
+// `worldRadius * 2 + …`, which #340's longer corridor pushed to 752 rings (~1.7M candidates) —
+// measured at 549 SECONDS for one drop. Removing the side rule removed that expensive predicate,
+// but these still hold the budget down: the class of bug is the world-scaled budget itself.
 describe('resolveDropPos — the search is bounded to a local neighbourhood (#345)', () => {
-  it('does bounded work when NOTHING is ever on the right side', () => {
+  it('does bounded work when NOTHING is ever passable', () => {
     let calls = 0;
     const pos = resolveDropPos(0, 0, {
-      ref: { x: 0, y: 0 }, blocked: () => true, passable: () => true,
-      separated: () => { calls++; return true; },
+      blocked: () => true,
+      passable: () => { calls++; return false; },
     });
     expect(pos.fallback).toBe(true);
-    // Both passes together walk at most two full DROP_SEARCH_RINGS discs. The point of the
-    // assertion is the ORDER OF MAGNITUDE: hundreds, never the ~1.7M the world-sized budget
-    // allowed. 3n(n+1)+1 hexes per disc, doubled, with room to spare.
+    // The point of the assertion is the ORDER OF MAGNITUDE: hundreds, never the ~1.7M the
+    // world-sized budget allowed. 3n(n+1)+1 hexes in a DROP_SEARCH_RINGS disc, with room to spare.
     const perDisc = 3 * DROP_SEARCH_RINGS * (DROP_SEARCH_RINGS + 1) + 1;
     expect(calls).toBeLessThanOrEqual(perDisc * 2 + 2);
     expect(calls).toBeLessThan(1000);
@@ -130,48 +119,5 @@ describe('resolveDropPos — the search is bounded to a local neighbourhood (#34
     // The regression itself: the callers used to derive maxSteps from MAX_WORLD_RADIUS (351),
     // giving 752. If someone reintroduces a world-derived default, this fails.
     expect(DROP_SEARCH_RINGS).toBeLessThanOrEqual(12);
-  });
-});
-
-describe('resolveDropPos against REAL wall geometry', () => {
-  // One standing span between two adjacent hexes, driven by the same wallEdgeSeparating the
-  // scene passes in — #320's true opposite-sides test, not wallEdgeCrossing.
-  const a = { q: 0, r: 0 };
-  const b = { q: 1, r: 0 };
-  const set = makeWallEdgeSet([{ a, b }]);
-  const separated = (ax, ay, bx, by) => !!wallEdgeSeparating(set, ax, ay, bx, by);
-
-  it('a drop pushed into the neighbouring hex comes back across the span', () => {
-    const home = hexToPixel(a.q, a.r);
-    const over = hexToPixel(b.q, b.r);
-    expect(separated(home.x, home.y, over.x, over.y)).toBe(true);
-    const pos = resolveDropPos(over.x, over.y, {
-      ref: home, blocked: () => true, passable: () => true, separated,
-    });
-    expect(separated(home.x, home.y, pos.x, pos.y)).toBe(false);
-  });
-
-  it('a drop resting AGAINST the plate on its own side is left alone (not over-rejected)', () => {
-    // The distinction #320 drew: a point inside the wall's thickness but on the shooter's own
-    // side is not "separated". If this used wallEdgeCrossing it would reject and move the drop.
-    const home = hexToPixel(a.q, a.r);
-    const over = hexToPixel(b.q, b.r);
-    const nearPlate = { x: (home.x + over.x) / 2 - 2, y: (home.y + over.y) / 2 };
-    expect(separated(home.x, home.y, nearPlate.x, nearPlate.y)).toBe(false);
-    const pos = resolveDropPos(nearPlate.x, nearPlate.y, {
-      ref: home, blocked: () => false, passable: () => true, separated,
-    });
-    expect(pos).toEqual({ ...nearPlate, fallback: false });
-  });
-
-  it('an open world with no walls places drops identically to the old behaviour', () => {
-    const empty = makeWallEdgeSet([]);
-    const sep = (ax, ay, bx, by) => !!wallEdgeSeparating(empty, ax, ay, bx, by);
-    const passable = (q, r) => axialKey(q, r) !== axialKey(...Object.values(pixelToHex(0, 0)));
-    const pos = resolveDropPos(0, 0, {
-      ref: { x: 0, y: 0 }, blocked: () => true, passable, separated: sep,
-    });
-    expect(pos.fallback).toBe(false);
-    expect(Math.hypot(pos.x, pos.y)).toBeLessThanOrEqual(HEX_SIZE * 2);
   });
 });

@@ -20,12 +20,11 @@ import {
 // `buffModifiers`/`activePowerups` since its state lives on the mech, not a scene-level timer.
 import { axialKey, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
-// #336: the drop's placement geometry (scatter radius + the side-aware reachability search)
-// is pure and lives in data/dropPlacement.js; this file only supplies the scene's predicates.
+// The drop's placement geometry (scatter radius + the reachability search) is pure and lives in
+// data/dropPlacement.js; this file only supplies the scene's terrain predicates.
 import { resolveDropPos, DROP_SCATTER_RADIUS } from '../../data/dropPlacement.js';
-import { wallEdgeSeparating } from '../../data/wallEdges.js';
 import { Audio } from '../../audio/index.js';
-import { DEPTH, ARENA_MECH_SCALE, dropCanReach } from './shared.js';
+import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
 // #378: the magnetic pickup pull, shared with scrap (salvage.js) — same rule, gentler table.
 import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // #302: the shield-outline technique itself now lives in ONE shared place, driven by the player
@@ -117,8 +116,11 @@ export const PowerupsMixin = {
     // world edge, where the player can never walk to the drop (and the scatter above could
     // itself wander into one of those). Relocate to the nearest REACHABLE ground so it's
     // always collectible; the drop stays as close to the (scattered) kill point as possible.
-    // #336: that relocation is now anchored to the kill's own side of any wall.
-    const pos = this._reachableDropPos(scattered.x, scattered.y, this._dropSideRef(x, y, flying));
+    // (#336's same-side-of-the-wall anchoring was REMOVED 2026-07-20 — see dropPlacement.js. The
+    // magnet pulls through walls now, so a drop's side of a wall no longer decides anything. The
+    // `flying` argument is kept on the signature because callers pass it and a future placement
+    // rule may want it again, but nothing reads it today.)
+    const pos = this._reachableDropPos(scattered.x, scattered.y);
     const view = this._makePowerupView(pos.x, pos.y, p);
     const pk = { x: pos.x, y: pos.y, type: typeId, age: 0, view };
     this.powerups.push(pk);
@@ -131,33 +133,16 @@ export const PowerupsMixin = {
   // ring-by-ring from the death hex for the closest passable tile and use its centre. If (very
   // unlikely) nothing passable is found nearby, fall back to the always-open world centre so a
   // drop is NEVER stranded.
-  // #336: `ref` is the point whose side of a standing wall the drop must stay on — the death
-  // position for a ground kill, the PLAYER's position for a flyer (a flyer downed over a wall
-  // has no side of its own, so its drop lands where the player can reach it). Omitting it keeps
-  // the old side-agnostic behaviour, which is right for a drop with no meaningful side.
-  _reachableDropPos(x, y, ref = null) {
-    // #345: the search budget is NOT derived from the world size anymore. It used to be
-    // `worldRadius * 2 + BOUNDARY_RING_WIDTH + 15` — copied from `nearestValidHex`, whose
-    // per-candidate test is a cheap map lookup; here every candidate also runs a wall-separation
-    // test, and #340's longer corridor turned that into a multi-minute freeze on a kill against a
-    // base wall. `resolveDropPos` now defaults to its own fixed local `DROP_SEARCH_RINGS`.
+  _reachableDropPos(x, y) {
+    // #345: the search budget is NOT derived from the world size — `resolveDropPos` defaults to
+    // its own fixed local `DROP_SEARCH_RINGS`. That bound stays even though the per-candidate
+    // wall-separation test that made an unbounded walk catastrophic is gone: it guards the bug
+    // class (a budget scaled off world size), not just the one instance.
     const pos = resolveDropPos(x, y, {
-      ref,
       blocked: this.terrain && this._blocked ? (px, py) => this._blocked(px, py) : null,
       passable: (q, r) => isPassable(this.terrain?.get(axialKey(q, r))),
-      separated: (ax, ay, bx, by) => !!wallEdgeSeparating(this.wallEdges, ax, ay, bx, by),
     });
     return { x: pos.x, y: pos.y };
-  },
-
-  // The side-anchor for a kill's drops (see `_reachableDropPos`). Shared by the powerup and
-  // salvage drop paths so both rewards from one kill land on the same side.
-  _dropSideRef(x, y, flying = false) {
-    // #347: a flyer's drop follows the primary player's side of the wall (#336). With two
-    // players "which side" becomes ambiguous and is phase-2 work; the primary keeps today's
-    // behaviour exactly.
-    if (flying) { const p = primaryPlayerOf(this); return { x: p.x, y: p.y }; }
-    return { x, y };
   },
 
   // Roll the drop chance and, on success, drop a powerup at an enemy's death position. Called
@@ -213,10 +198,9 @@ export const PowerupsMixin = {
       // gentler table — Jackson asked for "slightly lower" radius AND pull for powerups. Only the
       // underlying world position moves; the bob/pulse below is layered on top each frame, so the
       // beacon keeps breathing while it drifts. Toward the NEAREST LIVE player (co-op: whichever
-      // is closer right now), and gated on walls so #336's correct-side-of-the-wall placement
-      // can't be undone by dragging the drop back through.
+      // is closer right now), and straight THROUGH walls, deliberately — see data/magnet.js.
       const near = targetPlayerFor(this, pk);
-      const moved = magnetPull(pk, near, delta, POWERUP_MAGNET, { canReach: dropCanReach(this) });
+      const moved = magnetPull(pk, near, delta, POWERUP_MAGNET);
       if (moved) { pk.x = moved.x; pk.y = moved.y; }
 
       // Bob + pulse + spin. The container bobs; the ground glow is counter-offset so it stays
