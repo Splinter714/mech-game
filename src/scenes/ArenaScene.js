@@ -17,7 +17,6 @@ import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
 import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
-import { TerrainLabelsMixin } from './arena/terrainLabels.js';
 import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
 import { primaryPlayerOf } from './arena/players.js';
@@ -182,23 +181,6 @@ export default class ArenaScene extends Phaser.Scene {
     // freshly-built `this.terrain`/`this.bases`/`this.alertTowerHexes`.
     this._spawnTowerPatrols();
     this._initAlertTowers();
-    // #269/#270 playtest follow-up (hex legibility), dev-only: both hex-labelling systems —
-    // bases.js's persistent red text tags over every dock/alertTower/objective hex, and
-    // terrainLabels.js's camera-culled/pooled labels for every OTHER hex's real terrain id — were
-    // always meant as a playtest legibility aid, never a shipped HUD feature, so they're gated to
-    // `npm run dev` and never run in a production build. `import.meta.env.DEV` is Vite's
-    // build-time flag (stripped to `false`/dead-code-eliminated in `npm run build`; see
-    // GarageScene.js's own `import.meta.env.DEV` use for the same pattern). The underlying
-    // methods (`_spawnHexLabels`, `_initTerrainLabels`, `_updateTerrainLabels` below) stay
-    // directly callable/testable — only this ArenaScene auto-invocation is gated.
-    // #270 playtest follow-up: also a live L keybind (dev-only, see below) to hide/show both
-    // systems at once without restarting — on by default (matches the old always-on-in-dev
-    // behavior), `_hexLabelsVisible` is the single source of truth both systems read.
-    this._hexLabelsVisible = true;
-    if (import.meta.env.DEV) {
-      this._spawnHexLabels();
-      this._initTerrainLabels();
-    }
 
     // #346: screen-space overlay for the on-screen sticks. Only created on a touch-capable
     // device, and it draws nothing until a finger actually lands — desktop sees no change.
@@ -230,11 +212,6 @@ export default class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
     this.input.keyboard.on('keydown-R', () => this._resetEnemies());   // #39
     this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
-    // #270 playtest follow-up: L toggles both hex-label systems on/off live — dev-only, same as
-    // the systems themselves (see `_hexLabelsVisible` init above and `_toggleHexLabels` below).
-    if (import.meta.env.DEV) {
-      this.input.keyboard.on('keydown-L', () => this._toggleHexLabels());
-    }
     // #99: explicit depths (DEPTH.* — shared.js) instead of relying on scene add-order, which
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
@@ -316,11 +293,6 @@ export default class ArenaScene extends Phaser.Scene {
     // field-of-view pass and overlay redraw only happen when the player crosses a hex boundary or
     // terrain collapses — see arena/visibility.js for the cost reasoning.
     this._updateVisibility(view);
-    // #270: general terrain-id hex labels — same view rect, own coarse recompute cadence (see
-    // terrainLabels.js for the interval/margin reasoning). Dev-only, see the `_initTerrainLabels`
-    // gate in create() above — `this._terrainLabelPool` only exists when that ran.
-    if (import.meta.env.DEV) this._updateTerrainLabels(view, dt);
-
     // #60: recompute the active-buff overlay once per frame; firing/movement/turret read it.
     this._refreshBuffMods();
 
@@ -466,19 +438,6 @@ export default class ArenaScene extends Phaser.Scene {
     this.scene.start('GarageScene');
   }
 
-  // #270 playtest follow-up: live on/off toggle for both hex-label systems (bases.js's
-  // dock/alertTower/objective tags + terrainLabels.js's per-terrain pool), bound to L
-  // (dev-only, see create()). `_hexLabelsVisible` is the single flag both systems read: bases.js
-  // stamps it onto every label as it's created (`_addHexLabel`) and terrainLabels.js does the
-  // same for every newly pooled label (`_updateTerrainLabels`) — so a hex that enters view AFTER
-  // a toggle still comes in hidden/shown correctly. This method just flips the flag and re-applies
-  // it to whatever's alive right now.
-  _toggleHexLabels() {
-    this._hexLabelsVisible = !this._hexLabelsVisible;
-    for (const label of this._hexLabels ?? []) label.setVisible(this._hexLabelsVisible);
-    for (const label of this._terrainLabelPool?.values() ?? []) label.setVisible(this._hexLabelsVisible);
-    this._floatText(this.px, this.py - 30, this._hexLabelsVisible ? 'HEX LABELS: ON' : 'HEX LABELS: OFF', '#7c8794');
-  }
 }
 
 // The scene's behaviour is split into per-concern mixins under ./arena/; each is a plain
@@ -486,7 +445,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, TerrainLabelsMixin, CoopMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

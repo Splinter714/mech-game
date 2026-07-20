@@ -18,7 +18,6 @@ import { Audio } from '../../audio/index.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { makeDockResupplyState, tickDockResupply, spendDockResupply, DOCK_RESUPPLY_COOLDOWN_MS } from '../../data/dockResupply.js';
 import { mulberry32, drawDockKind, dockCountFor, baseLateFraction } from '../../data/worldgen.js';
-import { HEX_LABEL_COLOR, HEX_LABEL_FONT_SIZE, HEX_LABEL_FONT_STYLE } from './hexLabelStyle.js';
 import { isBaseObjectiveDestroyed } from './mission.js';
 import { getTerrain, buildingHp as terrainBuildingHp, isPassable } from '../../data/terrain.js';
 import { gateEdges, setGateOpen, turretEdges, spanTurretMount, WALL_THICKNESS_PX } from '../../data/wallEdges.js';
@@ -169,18 +168,6 @@ export const TOWER_PATROL_COUNT = 5;
 // (scale-wise the lightest kind in the roster), so it reuses the same 16px huddle radius rather
 // than needing the wider berth tank/helicopter docks get.
 const TOWER_PATROL_HUDDLE_OFFSET = 16;
-
-// #269 playtest follow-up (hex legibility): a base/tower hex's dormant unit or small art icon
-// alone doesn't read clearly as "this is a dock/alert tower/turret emplacement" during playtest
-// — a persistent red text tag above the hex makes it unambiguous at a glance. Deliberately
-// plain/loud (bright red, monospace) rather than styled like the amber objective marker
-// (mission.js `_makeObjectiveMarker`) — these are a debug-readable tag, not a wayfinding beacon,
-// so they shouldn't compete visually with the real objective marker. #270 playtest follow-up:
-// dev-only (see ArenaScene.js's `import.meta.env.DEV` gate around `_spawnHexLabels()`) — this
-// was always a playtest legibility aid, never meant to ship in production. Color/size/weight
-// come from hexLabelStyle.js, shared with terrainLabels.js so the two label systems can't
-// drift into two different looks again.
-const HEX_LABEL_TEXT = { dock: 'DOCK', alertTower: 'ALERT TOWER', objective: 'OBJECTIVE' };
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
@@ -438,36 +425,6 @@ export const BasesMixin = {
         this._spawnKind(px, py, TOWER_PATROL_KIND_ID);
       }
     }
-  },
-
-  // #269 playtest follow-up (hex legibility): one persistent red text tag per dock/alertTower/
-  // objective hex, positioned via `hexToPixel` — a STATIC world-space label (unlike
-  // combat.js's `_floatText`, which fades/floats for hit numbers; this stays up the whole run,
-  // same "persistent world-space thing pinned over a fixed hex" shape as mission.js's
-  // `_makeObjectiveMarker`, just far simpler — no ring/tween, just the text). Called once from
-  // ArenaScene.create(), alongside `_spawnDormantUnits`/`_initAlertTowers` above — all three run
-  // right after `_buildWorld()` has populated `this.bases`/`this.alertTowerHexes`.
-  _spawnHexLabels() {
-    this._hexLabels = [];
-    for (const base of this.bases ?? []) {
-      for (const dock of base.docks) this._addHexLabel(dock.q, dock.r, 'dock');
-      // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"):
-      // tag the base's dedicated objective hex too, same red-text legibility treatment as the
-      // other base-population hex types.
-      if (base.objectiveHex) this._addHexLabel(base.objectiveHex.q, base.objectiveHex.r, 'objective');
-    }
-    for (const t of this.alertTowerHexes ?? []) this._addHexLabel(t.q, t.r, 'alertTower');
-  },
-
-  _addHexLabel(q, r, kindId) {
-    const { x, y } = hexToPixel(q, r);
-    const label = this.add.text(x, y - 34, HEX_LABEL_TEXT[kindId], {
-      fontFamily: 'monospace', fontSize: HEX_LABEL_FONT_SIZE, color: HEX_LABEL_COLOR, fontStyle: HEX_LABEL_FONT_STYLE,
-    }).setOrigin(0.5).setDepth(DEPTH.WORLD_UI);
-    // #270 playtest follow-up: honour the live L-key toggle (ArenaScene `_hexLabelsVisible`,
-    // default true) — `?? true` so this stays correct in a test harness that never set the flag.
-    label.setVisible(this._hexLabelsVisible ?? true);
-    this._hexLabels.push(label);
   },
 
   // §5: one alert-tower countdown state per standing `alertTower` hex, keyed by hex key.

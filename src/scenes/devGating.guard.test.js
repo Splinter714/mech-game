@@ -2,7 +2,7 @@
 // and the whole SFX-authoring surface — sound-tuning panel + sound-trigger rows) is gated behind
 // `import.meta.env.DEV` (Vite's build-time flag, stripped/dead-code-eliminated in `npm run build`)
 // so none of it ships in a production bundle. HudScene/GarageScene extend Phaser.Scene and are
-// Phaser-API-heavy, so — same technique as hexLabelDevGate.guard.test.js / sfxCallSites.guard.test.js
+// Phaser-API-heavy, so — same technique as sfxCallSites.guard.test.js
 // — these are source-text guards over the real files, not constructed instances. They lock in that
 // each gated surface is wrapped in a DEV guard (and, for the SFX call sites, that the guard covers
 // the dangling references — panel/rows — so a production build with no panel can't throw).
