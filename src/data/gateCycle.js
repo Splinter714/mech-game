@@ -111,6 +111,9 @@ export function makeGateState(jitterMs = 0) {
     lockoutMs: 0,
     reactionMs: GATE_REACTION_MS + Math.max(0, jitterMs),
     sorties: 0,
+    // #355: the terminal fail-open latch. One-way — set when the base's objective dies, never
+    // cleared.
+    lockedOpen: false,
   };
 }
 
@@ -139,11 +142,58 @@ function carry(state) {
     lockoutMs: state.lockoutMs,
     reactionMs: state.reactionMs,
     sorties: state.sorties,
+    lockedOpen: !!state.lockedOpen,
   };
 }
 
-export function tickGate(state, { awake, demand = false, dt = 0 }) {
+// #355 — FAIL OPEN: the machine's one TERMINAL state. Owner: "gates should lock open after the
+// objective is destroyed", and (confirmed) the trigger is the objective hex ALONE — docks and
+// garrison may still be alive and fighting. The base is beaten, its systems fail open.
+//
+// It sits ahead of everything else in `tickGate` because it overrides every other rule at once:
+// wake (a base whose objective was sniped while still dormant fails open too — nothing left to
+// keep shut), demand (no garrison unit has to want the door), the reaction delay, and the re-open
+// lockout. Once `lockedOpen` is set nothing ever clears it — the scene derives `failOpen` from the
+// objective hex being gone from `buildingHp`, which is itself permanent, so the latch and its
+// source are both one-way and can never disagree.
+//
+// The one thing it does NOT do is teleport the doors. A gate mid-travel keeps travelling: OPENING
+// finishes on its normal timer, and CLOSING REVERSES into OPENING at the leaf position it had
+// already reached (`phaseMs` is converted so `openFrac` is continuous across the flip) rather than
+// snapping wide. The player sees the doors give way, not blink.
+function tickFailOpen(state, ms) {
+  const phaseMs = state.phaseMs + ms;
+  switch (state.phase) {
+    case GATE_OPEN:
+      // Terminal, and genuinely STATIC: nothing downstream reads `phaseMs` once a gate can never
+      // close again, so returning `state` itself parks the gate at zero per-frame cost (the scene
+      // skips on `next === state`) instead of allocating a fresh object every tick forever.
+      // The one tick this cannot do is the first one after a transition, which still carries the
+      // transient FX flags — those have to be dropped through `carry` exactly once (see its
+      // comment) before the gate can start returning itself.
+      if (state.lockedOpen && !state.justOpened && !state.startedOpening) return state;
+      return { ...carry(state), phaseMs, lockedOpen: true };
+    case GATE_OPENING:
+      if (phaseMs >= GATE_OPENING_MS) {
+        return { ...carry(state), phase: GATE_OPEN, phaseMs: 0, sorties: state.sorties + 1, lockedOpen: true, justOpened: true };
+      }
+      return { ...carry(state), phaseMs, lockedOpen: true };
+    case GATE_CLOSING: {
+      // Reverse mid-swing, preserving how far open the leaves currently stand.
+      const openFrac = Math.max(0, 1 - state.phaseMs / GATE_CLOSING_MS);
+      return { ...carry(state), phase: GATE_OPENING, phaseMs: openFrac * GATE_OPENING_MS, armedMs: 0, lockoutMs: 0, lockedOpen: true, startedOpening: true };
+    }
+    case GATE_CLOSED:
+    default:
+      return { ...carry(state), phase: GATE_OPENING, phaseMs: 0, armedMs: 0, lockoutMs: 0, lockedOpen: true, startedOpening: true };
+  }
+}
+
+export function tickGate(state, { awake, demand = false, dt = 0, failOpen = false }) {
   const ms = Math.max(0, dt) * 1000;
+
+  // #355: once the base's objective is down this is the only branch that runs, forever.
+  if (failOpen || state.lockedOpen) return tickFailOpen(state, ms);
 
   // A dormant base is fully inert — but a gate that is already MOVING is allowed to finish, so a
   // base going quiet mid-cycle can never strand its doors half-open. In practice bases do not
