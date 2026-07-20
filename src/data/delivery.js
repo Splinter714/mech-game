@@ -189,6 +189,44 @@ export function arcHomingBlend(t, ascentEnd = ASCENT_END) {
   return Math.min(1, (t - ascentEnd) / HOMING_BLEND_SPAN);
 }
 
+// ── Arc loft profiles (#377) ──────────────────────────────────────────────────────────────
+// An arcing round has NO vertical axis: its "height" is faked entirely by a sprite-scale
+// pulse in the arena's `_drawProjectile`, keyed to the flight FRACTION (dist / maxDist). So
+// the SHAPE of the arc is nothing but an easing curve on that fraction, and this is it —
+// pure, testable, and per-weapon selectable via `delivery.arcProfile` (stamped onto the round
+// as `arcProfile` by makeProjectile).
+//
+//   * 'lob' (the default, and what every arcing weapon used before #377) — a symmetric
+//     parabola, 4t(1-t). Rises and falls at the same lazy rate: a thrown ball. Napalm,
+//     Plasma Cannon and Streak Pod keep exactly this, unchanged.
+//   * 'mortar' (#377, Swarm Rack only) — Jackson: "rise quickly, then travel, then come
+//     falling down on the enemy abruptly towards the end." Three phases: a hard ramp to full
+//     height over the first `MORTAR_RISE_END` of flight, a near-flat cruise (drifting down
+//     only slightly, so the round doesn't read as frozen), then a steep cosine drop to zero
+//     over the last stretch after `MORTAR_FALL_START`.
+//
+// Both are continuous at the phase joins and both return 0 at t=0 and t=1 (launch and impact
+// are on the deck). Returns a 0..1 height fraction; the caller scales it into sprite gain.
+export const MORTAR_RISE_END = 0.15;    // fraction of flight spent climbing to apex
+export const MORTAR_FALL_START = 0.80;  // fraction of flight where the terminal dive begins
+const MORTAR_CRUISE_SAG = 0.08;         // how much height bleeds off across the flat cruise
+
+export function arcLoft(t, profile = 'lob') {
+  const u = Math.min(1, Math.max(0, t));
+  if (profile !== 'mortar') return 4 * u * (1 - u);
+  if (u <= MORTAR_RISE_END) {
+    // Quarter-sine: fastest at the muzzle, easing to a flat top at apex — it pops.
+    return Math.sin((u / MORTAR_RISE_END) * (Math.PI / 2));
+  }
+  const cruiseEnd = 1 - MORTAR_CRUISE_SAG;
+  if (u < MORTAR_FALL_START) {
+    const k = (u - MORTAR_RISE_END) / (MORTAR_FALL_START - MORTAR_RISE_END);
+    return 1 - MORTAR_CRUISE_SAG * k;                       // near-flat travel
+  }
+  const k = (u - MORTAR_FALL_START) / (1 - MORTAR_FALL_START);
+  return cruiseEnd * (0.5 + 0.5 * Math.cos(Math.PI * k));   // abrupt terminal plunge
+}
+
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
 
 // Swarm Rack (#49): all 6 missiles launch at once from the same point but fan out at
@@ -389,6 +427,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist }) {
     weaponId: weapon.id,
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,
+    // #377: which loft easing the fake "height" follows (see arcLoft above). Defaults to the
+    // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
+    // via `delivery.arcProfile` changes shape.
+    arcProfile: d.arcProfile || 'lob',
     // Turn rate is derived from speed (#77) so the round can always corner within a fixed radius
     // instead of orbiting a target it's too fast to turn onto. Arcing lobs override `speed` after
     // this (firing.js) and re-derive `turn` from the new speed (passing the same per-weapon

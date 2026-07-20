@@ -194,8 +194,15 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
   // the pull count (a pure downgrade — same burst, slower recovery). We took the extra shot.
   // clusterRocket's faster 1.1s cycle DID let its extra pull land inside the original window
   // (6.6s), so it is not listed here. #372's rule and its intent stand for everything else.
+  //
+  // #377 — swarmRack ALONE goes much further, on a direct and explicit ask ("increase reload
+  // speed and magazine size", on top of a faster 1.1s cycle). ammoMax 4 -> 8 and ammoRegen
+  // 0.20 -> 0.45 together put it at ~15.4s of continuous fire. This is NOT a quiet widening
+  // to make a red test green: it is a deliberate, weapon-specific carve-out from #372's rule,
+  // Jackson tuning one weapon by feel with full knowledge that it breaks the general economy.
+  // Everything else, including the other three missiles, still sits inside its #376 bound.
   const BURST_MAX_SECONDS = {
-    swarmRack: 8.0, streakPod: 7.2, napalm: 7.5, plasmaCannon: 8.0,
+    swarmRack: 15.5, streakPod: 7.2, napalm: 7.5, plasmaCannon: 8.0,
   };
 
   it.each(limited)('%s holds fire for ~6s before running dry', (id, w) => {
@@ -241,5 +248,36 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
     expect(WEAPONS.swarmRack.delivery.count).toBe(6);
     expect(WEAPONS.autocannon.delivery.count).toBe(1);
     expect(WEAPONS.shotgun.ammoMax).toBe(WEAPONS.autocannon.ammoMax);
+  });
+});
+
+// ── #377: Swarm Rack feel pass, in isolation ─────────────────────────────────────────────
+// Jackson tuned this ONE weapon by feel after #376: half the flight speed, a faster cycle, a
+// mortar-shaped arc, and a bigger/faster-refilling magazine. The point of this block is the
+// word "isolation" — the other missiles must be exactly where #376 left them.
+describe('#377 Swarm Rack feel pass', () => {
+  it('halves flight speed and fires noticeably more often', () => {
+    expect(WEAPONS.swarmRack.delivery.velocity).toBe(500);
+    expect(WEAPONS.swarmRack.cycleTime).toBe(1100);
+  });
+
+  it('opts into the mortar arc profile', () => {
+    expect(WEAPONS.swarmRack.delivery.arcProfile).toBe('mortar');
+  });
+
+  it('carries a bigger magazine that also refills faster (both raised, on the direct ask)', () => {
+    expect(WEAPONS.swarmRack.ammoMax).toBe(8);
+    expect(WEAPONS.swarmRack.ammoRegen).toBe(0.45);
+    // The ask was "reload speed" — what that means in play is how long a single trigger pull
+    // costs you: ~2.2s to earn one back, down from ~5.0s at #376's 0.20 regen.
+    expect(1 / WEAPONS.swarmRack.ammoRegen).toBeLessThan(1 / 0.20);
+  });
+
+  it('leaves every OTHER missile exactly where #376 put it — speed, cycle and arc shape', () => {
+    for (const id of ['clusterRocket', 'streakPod', 'napalm', 'plasmaCannon']) {
+      expect(WEAPONS[id].delivery.arcProfile).toBeUndefined();   // still the default lob
+    }
+    expect(WEAPONS.clusterRocket.delivery.velocity).toBe(1140);
+    expect(WEAPONS.streakPod.delivery.velocity).toBeGreaterThan(500);
   });
 });

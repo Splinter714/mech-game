@@ -368,7 +368,17 @@ export const WEAPONS = {
     // #376: ammoMax 3 -> 4 with regen 0.27 -> 0.20, buying one extra trigger pull per held
     // burst (4 -> 5 pulls, 6.4s -> 8.0s) — see weapons.test.js's #376 note on why the slow
     // cycled missiles can't gain a shot inside #372's 5-7s window.
-    ammoMax: 4, ammoRegen: 0.20, slots: 2, cycleTime: 1600,   // #376: ~8.0s hold
+    // #377 feel pass (Swarm Rack ONLY — no other missile touched):
+    //   * cycleTime 1600 -> 1100. "I want to be able to fire them more often." ~45% more
+    //     trigger pulls per second; while-firing DPS rides up with it (6 x 6.933 / 1.1 =
+    //     ~37.8 vs ~26.0). That is a real buff, deliberately accepted — Jackson is tuning
+    //     this weapon by feel, and every number here is a playtest dial.
+    //   * ammoMax 4 -> 8 and ammoRegen 0.20 -> 0.45 ("increase reload speed and magazine
+    //     size"). Both up, so this now BOTH holds fire far longer AND recovers much faster:
+    //     ~15.4s of continuous fire (14 pulls) from full, and ~2.2s to earn back a single
+    //     pull instead of ~5.0s. That blows through #372's ~6s rule and past #376's 8.0s;
+    //     the per-weapon exception in weapons.test.js is widened for swarmRack alone.
+    ammoMax: 8, ammoRegen: 0.45, slots: 2, cycleTime: 1100,   // #377: ~15.4s hold
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
     // salvo can clear cover.
@@ -381,6 +391,9 @@ export const WEAPONS = {
     //     Cluster Salvo's 1140 and sits deliberately just below it, as asked. The old 1050
     //     was NOT a real speed: #77 picked it by scaling velocity 3.5x alongside range purely
     //     to hold the (now-removed) constant flight time, so it has been re-derived, not nudged.
+    //     SUPERSEDED BY #377 (velocity is now 500): that "just below Cluster Salvo" alignment
+    //     no longer holds for Swarm Rack and is not meant to — see the #377 note below. It
+    //     still holds for the other missiles, which #377 did not touch.
     //   * homingBlendStart 0 — the seeker is live from the muzzle instead of waking up at the
     //     shared 0.4 (past apex) default. That engagement point, NOT the turn rate, is what
     //     made tracking feel weak: at 1000 px/s the round's steering rate already pins to the
@@ -388,7 +401,22 @@ export const WEAPONS = {
     //     tightening homingTurnRadius here would be a literal no-op and is deliberately not
     //     done. The 0.35 blend span is untouched, so authority still ramps in smoothly over
     //     the first third of flight rather than snapping on at the muzzle.
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 1000, wobble: 'jostle', path: 'arcing', homingBlendStart: 0 },
+    // #377, two more changes in the delivery block:
+    //   * velocity 1000 -> 500. "The flight speed feels waaaay too fast, maybe 2x what it
+    //     should be." This DELIBERATELY breaks #376's "all missiles sit just under Cluster
+    //     Salvo's 1140" alignment for this one weapon — he is tuning by feel now, and that
+    //     comment has been annotated rather than left asserting an alignment that is gone.
+    //     Steering is unaffected in character: at 500 px/s the derived turn rate (speed /
+    //     64px radius = 7.8 rad/s) is just under the engine's 9.0 rad/s ceiling instead of
+    //     pinned to it, so the round still corners inside the same 64px radius.
+    //   * arcProfile: 'mortar' — the loft easing (data/delivery.js arcLoft; fake height, a
+    //     sprite-scale pulse only). "Less parabolic, more like they rise quickly, then
+    //     travel, then come falling down on the enemy abruptly towards the end." The default
+    //     'lob' parabola is untouched for napalm/plasmaCannon/streakPod.
+    //     The seeker ramp is unaffected and does not desync: homingBlendStart 0 + the 0.35
+    //     span means steering is fully live by t=0.35 — inside the flat cruise, well before
+    //     the terminal dive at t=0.80 — so the round is done correcting when it drops.
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 500, wobble: 'jostle', path: 'arcing', homingBlendStart: 0, arcProfile: 'mortar' },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',

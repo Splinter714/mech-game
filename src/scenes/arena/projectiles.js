@@ -3,7 +3,7 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
@@ -340,7 +340,11 @@ export const ProjectilesMixin = {
     let scale = 1;
     if (p.arc) {
       const t = p.dist / p.maxDist;
-      const h = 4 * t * (1 - t);                              // 0..1 parabolic height fraction
+      // #377: the loft EASING is now per-weapon (delivery.arcProfile -> p.arcProfile, curve in
+      // data/delivery.js arcLoft). 'lob' is the original symmetric parabola and stays the
+      // default for every arcing weapon; Swarm Rack alone opts into 'mortar' — pop up fast,
+      // cruise flat, then plunge in the last fifth of flight.
+      const h = arcLoft(t, p.arcProfile);                      // 0..1 height fraction
       // Constant apex: every lob peaks at the same height regardless of range, so a near
       // toss looks like a steep mortar pop and a far shot looks flat and skimming.
       const bump = 0.6;                                       // peak size gain at apex — subtle grow-then-shrink

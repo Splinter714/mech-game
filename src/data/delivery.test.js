@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, MORTAR_RISE_END, MORTAR_FALL_START } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -853,5 +853,95 @@ describe('per-weapon delivery tunables default to the shared constants (#243)', 
     const bare = { x: 0, y: 0 };
     expect(withinWeakSeekRadius(bare, WEAK_SEEK_RADIUS - 1, 0)).toBe(true);
     expect(withinWeakSeekRadius(bare, WEAK_SEEK_RADIUS + 1, 0)).toBe(false);
+  });
+});
+
+// ── #377: the arc's SHAPE is a per-weapon easing curve, not physics ───────────────────────
+// An arcing round has no vertical axis — its "height" is a sprite-scale pulse keyed to the
+// flight fraction. Jackson wanted Swarm Rack to "rise quickly, then travel, then come falling
+// down on the enemy abruptly towards the end": a mortar, not a lobbed ball. That is entirely
+// `arcLoft`. The other arcing weapons must keep the old symmetric parabola untouched.
+describe('#377 arc loft profiles', () => {
+  it("'lob' (the default) is the original symmetric 4t(1-t) parabola", () => {
+    for (const t of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+      expect(arcLoft(t)).toBeCloseTo(4 * t * (1 - t), 10);
+      expect(arcLoft(t, 'lob')).toBeCloseTo(4 * t * (1 - t), 10);
+    }
+    expect(arcLoft(0.5)).toBeCloseTo(1, 10);   // apex dead centre — a thrown ball
+  });
+
+  it("'mortar' launches and lands on the deck, like every arc", () => {
+    expect(arcLoft(0, 'mortar')).toBeCloseTo(0, 10);
+    expect(arcLoft(1, 'mortar')).toBeCloseTo(0, 10);
+  });
+
+  it("'mortar' rises hard: at full height by MORTAR_RISE_END, and already past half height " +
+     'in the first few percent of flight (the lob is nowhere near either)', () => {
+    expect(arcLoft(MORTAR_RISE_END, 'mortar')).toBeCloseTo(1, 10);
+    expect(arcLoft(0.05, 'mortar')).toBeGreaterThanOrEqual(0.5);
+    expect(arcLoft(0.05, 'lob')).toBeLessThan(0.25);
+  });
+
+  it("'mortar' cruises near-flat through the middle — never below 0.9, and the whole span " +
+     'from apex to the dive drifts less than the sag budget', () => {
+    for (let t = MORTAR_RISE_END; t <= MORTAR_FALL_START; t += 0.01) {
+      expect(arcLoft(t, 'mortar')).toBeGreaterThan(0.9);
+    }
+    const drift = arcLoft(MORTAR_RISE_END, 'mortar') - arcLoft(MORTAR_FALL_START, 'mortar');
+    expect(drift).toBeLessThan(0.1);
+    expect(drift).toBeGreaterThan(0);        // not frozen — it does bleed height
+  });
+
+  it('drops abruptly at the end: still high at 85% of flight, and its steepest descent is ' +
+     'markedly steeper than anything the lob parabola ever reaches', () => {
+    expect(arcLoft(0.85, 'mortar')).toBeGreaterThan(0.7);
+    const steepestFall = (profile) => {
+      let worst = 0;
+      for (let t = 0; t < 1; t += 0.001) {
+        worst = Math.max(worst, (arcLoft(t, profile) - arcLoft(t + 0.001, profile)) / 0.001);
+      }
+      return worst;
+    };
+    expect(steepestFall('mortar')).toBeGreaterThan(steepestFall('lob') * 1.5);
+    // ...and all of that steepness is spent in the terminal dive, not spread over the flight.
+    const dropInFinalStretch = arcLoft(MORTAR_FALL_START, 'mortar') - arcLoft(1, 'mortar');
+    expect(dropInFinalStretch).toBeGreaterThan(0.9);
+  });
+
+  it('is monotonic — rises to apex, then only ever falls (no bounce or second hump)', () => {
+    let prev = -1;
+    for (let t = 0; t <= MORTAR_RISE_END; t += 0.005) {
+      const h = arcLoft(t, 'mortar');
+      expect(h).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = h;
+    }
+    prev = Infinity;
+    for (let t = MORTAR_RISE_END; t <= 1; t += 0.005) {
+      const h = arcLoft(t, 'mortar');
+      expect(h).toBeLessThanOrEqual(prev + 1e-9);
+      prev = h;
+    }
+  });
+
+  it('clamps out-of-range fractions instead of going negative (a round can overshoot maxDist ' +
+     'by a frame before it retires)', () => {
+    expect(arcLoft(1.2, 'mortar')).toBeCloseTo(0, 10);
+    expect(arcLoft(1.2, 'lob')).toBeCloseTo(0, 10);
+    expect(arcLoft(-0.2, 'mortar')).toBeCloseTo(0, 10);
+  });
+
+  it('makeProjectile stamps the profile per round, defaulting to lob', () => {
+    expect(makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900 }).arcProfile).toBe('mortar');
+    for (const id of ['napalm', 'plasmaCannon', 'streakPod']) {
+      expect(makeProjectile(WEAPONS[id], 0, 0, 0, { maxDist: 900 }).arcProfile).toBe('lob');
+    }
+  });
+
+  it('the mortar reshape does NOT desync from the seeker ramp: swarmRack steering is fully ' +
+     'live during the flat cruise, well before the terminal dive begins', () => {
+     const start = WEAPONS.swarmRack.delivery.homingBlendStart;
+     expect(arcHomingBlend(MORTAR_FALL_START, start)).toBe(1);
+     expect(arcHomingBlend(start + HOMING_BLEND_SPAN, start)).toBe(1);
+     expect(start + HOMING_BLEND_SPAN).toBeLessThan(MORTAR_FALL_START);
   });
 });
