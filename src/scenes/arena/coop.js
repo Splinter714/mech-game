@@ -96,9 +96,9 @@ export const CoopMixin = {
   _addPlayer() {
     const index = playersOf(this).length;
     const host = primaryPlayerOf(this);
-    // A fresh, fully-repaired copy of the active build — `makeMech`-equivalent via the roster the
-    // garage already published. Cloning through the registry's allMechs keeps this data-driven:
-    // phase 3 replaces the SOURCE of this mech, not the wiring.
+    // A fresh, fully-healthy mech for this player, built from whichever saved garage slot is
+    // theirs. Going through the registry's allMechs keeps it data-driven — #349 changed only
+    // the SOURCE of the build, not this wiring.
     const mech = this._mechForPlayer(index);
     // Drop in alongside player 1, just far enough not to overlap, and well inside the leash.
     const player = this._makePlayerAt(index, host.x + 70, host.y + 70, mech);

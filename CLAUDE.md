@@ -74,6 +74,12 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     The camera frames the live players' centroid and `data/leash.js` HARD-STOPS anyone leaving
     that frame (no zoom-out, no rubber-band — owner's explicit choice). `data/respawn.js` is
     the 20s respawn clock gated on the survivors being out of combat ~1.5s.
+    **#349 (phase 3) added the Garage flow**: `data/coopGarage.js` is the pure sequential
+    build state machine — P1 builds, presses the (relabelled) Deploy button as "P1 READY",
+    the garage rebinds its one editing surface to player 2's slot, P2 builds, deploy. There
+    are exactly TWO persistent build slots (`PLAYER_MECH_KEYS` = `mech1`/`mech2`, both with
+    complete defaults in `rosters.js`) and deliberately no roster/slot-picker UI. The
+    mid-sortie START join stays as late drop-in and now drives its own `mech2` build.
   - `hexgrid.js` — the shared hex primitives every hex-aware module builds on (others
     that reason about hexes: `hexRoute.js`, `hexEdges.js`, `hexLabels.js`, `wallEdges.js`,
     `worldgen.js`, `arena/world.js`). Axial coords; pure
