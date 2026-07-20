@@ -592,6 +592,20 @@ export const WorldMixin = {
     return null;
   },
 
+  // #361: THE ENEMY-vs-ENEMY HALF OF THIS RULE IS GONE. What remains is "a ground unit may not
+  // step into a PLAYER's body," which is the same shape as `_blockedByGroundEnemy` above (the
+  // player's half of the same pair) and is safe as a hard block because a human can always steer
+  // out of the contact. Unit-vs-unit is now SOFT SEPARATION (`data/groundSeparation.js`, applied
+  // once per tick in enemies.js `_updateEnemies`), because the hard block below deadlocked a
+  // garrison in a gate mouth exactly as #282's `_blockedByOtherFlyer` deadlocked drone piles —
+  // playtest 2026-07-19: "a bunch of tanks got piled up at a base gate and couldn't get out."
+  // Two movers each rejecting every candidate move because the other is standing in it is not a
+  // collision rule, it is a livelock. The size-tier rule the old comment describes below survives
+  // in spirit as the separation module's MASS tiers: a tank absorbs nearly all of a tank-vs-mech
+  // push, a turret (immobile, infinite mass) absorbs none and stays the wall it always was.
+  //
+  // HISTORICAL (the deleted enemy-vs-enemy behaviour, kept because the tier reasoning still
+  // informs the mass tiers):
   // #282: mutual ground-unit collision — the counterpart to `_blockedByGroundEnemy` above, but
   // called from an ENEMY's own movement integration (enemies.js `_updateEnemy`/`_updateVehicle`)
   // instead of only the player's. (Formerly `_blockedByOtherLargeUnit`, which only ever handled
@@ -624,14 +638,9 @@ export const WorldMixin = {
     for (const pl of livePlayersOf(this)) {
       if (circleContains(x, y, pl.x, pl.y, ENEMY_COLLIDE_RADIUS_MECH)) return true;
     }
-    const selfSmall = isSmallUnit(self);
-    for (const o of this.enemies) {
-      if (o === self) continue;
-      if (o.flying) continue;
-      if (o.mech.isDestroyed()) continue;
-      if (isSmallUnit(o) && !selfSmall) continue;   // a small obstacle only blocks other SMALL units
-      if (circleContains(x, y, o.x, o.y, groundEnemyRadius(o))) return true;
-    }
+    // #361: no enemy scan here any more — see the note above. `self` is accepted and ignored so
+    // every call site keeps its signature.
+    void self;
     return false;
   },
 
