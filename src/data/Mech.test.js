@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Mech, AMMO_EMPTY_COOLDOWN } from './Mech.js';
 import { LOCATIONS } from './anatomy.js';
+import { WEAPONS } from './weapons.js';
+
+// #372 retuned every weapon's magazine (ammoMax/ammoRegen) so a held trigger runs dry in
+// ~6s. These ammo tests are about the generic Mech MECHANICS (spend, regen, cap, per-slot
+// empty-cooldown), not about any particular weapon's balance, so they read the catalog's
+// live numbers instead of hard-coding them — a future retune can't silently break them.
+// PC = the slow cycled weapon under test, AC = a second, independent weapon in another slot.
+const PC = WEAPONS.plasmaCannon;      // ammoMax/ammoRegen read live
+const AC = WEAPONS.autocannon;
 
 // Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
 // melee category, which has no live entry in the registry anymore. Inject a test-only
@@ -150,15 +159,15 @@ describe('Mech weapons go offline with their part', () => {
 describe('Mech weapon ammo (self-regenerating magazines)', () => {
   it('starts a mounted weapon with a full magazine', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('rightArm', 'autocannon'); // ammoMax 12
-    expect(m.weapons()[0].ammo).toBe(12);
+    m.mount('rightArm', 'autocannon');
+    expect(m.weapons()[0].ammo).toBe(AC.ammoMax);
     expect(m.weapons()[0].ready).toBe(true);
   });
 
   it('firing spends ammo and an empty weapon is not ready', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
-    for (let i = 0; i < 4; i++) m.consumeAmmo('leftArm', 0, 1);
+    m.mount('leftArm', 'plasmaCannon');
+    for (let i = 0; i < PC.ammoMax; i++) m.consumeAmmo('leftArm', 0, 1);
     expect(m.weapons()[0].ammo).toBe(0);
     expect(m.weapons()[0].ready).toBe(false);
     expect(m.readyWeapons()).toHaveLength(0);
@@ -166,13 +175,13 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
 
   it('regenAmmo refills over time but never past the magazine size (partial drain, no cooldown)', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4, regen 0.5/s
-    m.consumeAmmo('leftArm', 0, 3); // down to 1 — a partial drain, not a full empty, so
-    // #238's empty-cooldown never engages here; regen should proceed immediately.
-    m.regenAmmo(2); // +1.0
-    expect(m.weapons()[0].ammo).toBeCloseTo(2, 5);
-    m.regenAmmo(100); // would overshoot
-    expect(m.weapons()[0].ammo).toBe(4);
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, PC.ammoMax - 1); // leaves exactly 1 — a PARTIAL drain, not a
+    // full empty, so #238's empty-cooldown never engages here; regen proceeds immediately.
+    m.regenAmmo(2);
+    expect(m.weapons()[0].ammo).toBeCloseTo(1 + PC.ammoRegen * 2, 5);
+    m.regenAmmo(1000); // would overshoot the magazine many times over
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax);
   });
 
   // #235: Overdrive halves the fire cycle (cycleMult 0.5 -> shots go out ~2x as often).
@@ -184,23 +193,33 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
   // confirming it accepts a fractional `n` cleanly with no rounding/truncation.
   it('consumeAmmo spends a flat 1 ammo/shot at normal (non-Overdrive) fire rate, unchanged', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
+    m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, 1); // cycleMult defaults to 1 outside Overdrive
-    expect(m.weapons()[0].ammo).toBe(3);
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax - 1);
   });
 
   it('consumeAmmo spends only 0.5 ammo/shot when passed Overdrive\'s cycleMult (0.5)', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
+    m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, 0.5); // as fireWeapon would call it during Overdrive
-    expect(m.weapons()[0].ammo).toBe(3.5);
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax - 0.5);
     m.consumeAmmo('leftArm', 0, 0.5);
-    expect(m.weapons()[0].ammo).toBe(3); // fractional consumption accumulates cleanly
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax - 1); // fractional consumption accumulates cleanly
   });
 
   it('Overdrive is net-neutral: N shots at 2x fire rate / 0.5 cost each drain the same total '
     + 'ammo as N shots at normal rate / 1 cost each', () => {
-    const shots = 10;
+    // "Net-neutral" is a claim about a WINDOW OF TIME, not about a shot count: in the same
+    // real seconds, Overdrive gets TWICE the shots out (cycleMult 0.5 halves the fire
+    // interval) at half the cost each. So the fair comparison is N shots at 1.0 vs 2N shots
+    // at 0.5 — not N vs N, which would trivially drain half as much.
+    //
+    // (The pre-#372 version of this test compared N vs N with N=10 against a 4-round
+    // magazine: BOTH mechs bottomed out at consumeAmmo's 0 floor and the assertion passed on
+    // the clamp rather than on the economy. #372's smaller magazines exposed that, hence the
+    // rewrite. `shots` is now sized to stay strictly inside the magazine so neither mech
+    // touches the floor and the arithmetic is actually being measured.)
+    const shots = Math.max(1, Math.floor(PC.ammoMax / 2));
 
     const normal = new Mech({ chassisId: 'medium' });
     normal.mount('leftArm', 'plasmaCannon');
@@ -208,13 +227,17 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
 
     const overdrive = new Mech({ chassisId: 'medium' });
     overdrive.mount('leftArm', 'plasmaCannon');
-    for (let i = 0; i < shots; i++) overdrive.consumeAmmo('leftArm', 0, 0.5);
+    for (let i = 0; i < shots * 2; i++) overdrive.consumeAmmo('leftArm', 0, 0.5);
 
-    const normalDrained = 4 - normal.weapons()[0].ammo;   // plasmaCannon ammoMax 4
-    const overdriveDrained = 4 - overdrive.weapons()[0].ammo;
+    // Neither mech may have hit the 0 floor, or the comparison below is meaningless.
+    expect(normal.weapons()[0].ammo).toBeGreaterThan(0);
+    expect(overdrive.weapons()[0].ammo).toBeGreaterThan(0);
+
+    const normalDrained = PC.ammoMax - normal.weapons()[0].ammo;
+    const overdriveDrained = PC.ammoMax - overdrive.weapons()[0].ammo;
     // Same total ammo drained per shot fired, regardless of how fast those shots came out —
-    // Overdrive fires twice as often in real time but costs half as much per shot, so the
-    // economy nets out identical shot-for-shot instead of draining faster.
+    // Overdrive fires twice as often in real time but costs half as much per shot, so over
+    // the same span of seconds the economy nets out identical instead of draining faster.
     expect(overdriveDrained).toBeCloseTo(normalDrained, 5);
   });
 
@@ -229,10 +252,10 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
   it('repairAll tops every magazine back up', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('rightArm', 'autocannon');
-    m.consumeAmmo('rightArm', 0, 12);
+    m.consumeAmmo('rightArm', 0, AC.ammoMax);
     expect(m.weapons()[0].ammo).toBe(0);
     m.repairAll();
-    expect(m.weapons()[0].ammo).toBe(12);
+    expect(m.weapons()[0].ammo).toBe(AC.ammoMax);
   });
 });
 
@@ -242,8 +265,8 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
 describe('Mech per-slot ammo-empty cooldown (#238)', () => {
   it('draining a magazine to exactly 0 starts that slot\'s cooldown', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4
-    m.consumeAmmo('leftArm', 0, 4);
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, PC.ammoMax);
     expect(m.weapons()[0].ammo).toBe(0);
     expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN, 5);
     expect(m.weapons()[0].ready).toBe(false);
@@ -252,7 +275,7 @@ describe('Mech per-slot ammo-empty cooldown (#238)', () => {
   it('firing is blocked while a slot is on cooldown (ready stays false even if ammo were topped up)', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
-    m.consumeAmmo('leftArm', 0, 4);
+    m.consumeAmmo('leftArm', 0, PC.ammoMax);
     // Still well inside the cooldown window.
     m.regenAmmo(AMMO_EMPTY_COOLDOWN / 2);
     expect(m.weapons()[0].ready).toBe(false);
@@ -261,17 +284,17 @@ describe('Mech per-slot ammo-empty cooldown (#238)', () => {
 
   it('regenAmmo does not tick ammo up during the cooldown window — it only counts the timer down', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // regen 0.5/s
-    m.consumeAmmo('leftArm', 0, 4);
-    m.regenAmmo(2); // would be +1.0 ammo if regen applied, but cooldown blocks it
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, PC.ammoMax);
+    m.regenAmmo(2); // would tick ammo up if regen applied, but the cooldown blocks it
     expect(m.weapons()[0].ammo).toBe(0);
     expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN - 2, 5);
   });
 
   it('once the cooldown expires, normal regen resumes exactly as before', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon'); // ammoMax 4, regen 0.5/s
-    m.consumeAmmo('leftArm', 0, 4);
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, PC.ammoMax);
     // Tick past the cooldown window in one call (dt exceeds AMMO_EMPTY_COOLDOWN): the
     // remaining time after the timer hits 0 should NOT also count toward regen in the same
     // tick (each regenAmmo call spends its dt on cooldown OR regen, never splits mid-call) —
@@ -280,24 +303,26 @@ describe('Mech per-slot ammo-empty cooldown (#238)', () => {
     expect(m.weapons()[0].cooldown).toBe(0);
     expect(m.weapons()[0].ammo).toBe(0); // cooldown just expired, no regen yet this tick
     expect(m.weapons()[0].ready).toBe(false); // still empty, but no longer on cooldown
-    m.regenAmmo(2); // +1.0, normal regen now applies
+    // Regen for however long it takes this weapon to earn back one full round — #372 made
+    // the cycled weapons' regen much slower, so a fixed 2s no longer reaches `ready`.
+    m.regenAmmo(1 / PC.ammoRegen);
     expect(m.weapons()[0].ammo).toBeCloseTo(1, 5);
     expect(m.weapons()[0].ready).toBe(true);
   });
 
   it('cooldown is scoped to only the affected slot — other mounted weapons keep firing/regenerating normally', () => {
     const m = new Mech({ chassisId: 'medium' });
-    m.mount('leftArm', 'plasmaCannon');  // ammoMax 4, regen 0.5/s
-    m.mount('rightArm', 'autocannon');   // ammoMax 12, unaffected
-    m.consumeAmmo('leftArm', 0, 4); // drains leftArm to 0, starts ITS cooldown only
-    m.consumeAmmo('rightArm', 0, 3); // rightArm just fires normally, no cooldown
+    m.mount('leftArm', 'plasmaCannon');
+    m.mount('rightArm', 'autocannon');   // unaffected by the other slot's lockout
+    m.consumeAmmo('leftArm', 0, PC.ammoMax); // drains leftArm to 0, starts ITS cooldown only
+    m.consumeAmmo('rightArm', 0, 1); // rightArm just fires normally, no cooldown
     m.regenAmmo(2);
 
     const left = m.weapons().find((w) => w.location === 'leftArm');
     const right = m.weapons().find((w) => w.location === 'rightArm');
     expect(left.ammo).toBe(0); // still locked out, regen suppressed
     expect(left.ready).toBe(false);
-    expect(right.ammo).toBeCloseTo(11, 5); // 12 - 3 spent + 2s * 1.0/s regen ticking normally
+    expect(right.ammo).toBeCloseTo(Math.min(AC.ammoMax, AC.ammoMax - 1 + AC.ammoRegen * 2), 5);
     expect(right.ready).toBe(true);
   });
 
