@@ -51,57 +51,28 @@ function makeUnit(x, y, { flying = false, size = 'large', scale = 1, dead = fals
   };
 }
 
-describe('_blockedByOtherGroundUnit (#282) — mutual ground-unit + player collision geometry', () => {
-  it('self LARGE: blocks against another LARGE ground unit\'s collision circle', () => {
-    const self = makeUnit(-9999, -9999, { size: 'large' });
-    const other = makeUnit(10, 0, { size: 'large' });
-    const scene = makeWorldScene({ enemies: [self, other], px: 9999, py: 9999 });
-    const r = groundEnemyRadius(other);
-    expect(scene._blockedByOtherGroundUnit(self, 10 + r - 1, 0)).toBe(true);
-    expect(scene._blockedByOtherGroundUnit(self, 10 + r + 5, 0)).toBe(false);
+describe('_blockedByOtherGroundUnit (#282, gutted by #361) — what still hard-blocks a ground unit', () => {
+  // #361: the ENEMY-vs-ENEMY half of this rule is GONE. It was a hard positional block, and a
+  // hard block between two things that are both trying to move is a livelock, not a collision
+  // rule — a garrison sortieing through a gate piled up in the mouth and could not get out
+  // (playtest 2026-07-19), exactly as #282's own `_blockedByOtherFlyer` gridlocked drone piles.
+  // Unit-vs-unit solidity now lives in `data/groundSeparation.js` as a soft push, applied once
+  // per tick — see groundSeparation.test.js and gateJam.test.js. The #282 tier intent survives
+  // there as MASS: a tank absorbs nearly all of a tank-vs-mech push, a turret absorbs none.
+  // What remains here is the PLAYER, which is safe as a hard block because a human can always
+  // steer out of the contact.
+  it('no other ground enemy blocks a unit any more, at either size tier (#361)', () => {
+    for (const selfSize of ['large', 'small']) {
+      for (const otherSize of ['large', 'small']) {
+        const self = makeUnit(-9999, -9999, { size: selfSize });
+        const other = makeUnit(10, 0, { size: otherSize });
+        const scene = makeWorldScene({ enemies: [self, other], px: 9999, py: 9999 });
+        expect(scene._blockedByOtherGroundUnit(self, 10, 0)).toBe(false);   // dead centre of it
+      }
+    }
   });
 
-  it('self LARGE: never blocks against a SMALL ground unit — a small obstacle isn\'t an obstacle to large units', () => {
-    const self = makeUnit(-9999, -9999, { size: 'large' });
-    const small = makeUnit(10, 0, { size: 'small' });
-    const scene = makeWorldScene({ enemies: [self, small], px: 9999, py: 9999 });
-    expect(scene._blockedByOtherGroundUnit(self, 10, 0)).toBe(false); // dead centre of it
-  });
-
-  it('self SMALL: blocks against another SMALL ground unit (#282 fix)', () => {
-    const self = makeUnit(-9999, -9999, { size: 'small' });
-    const other = makeUnit(10, 0, { size: 'small' });
-    const scene = makeWorldScene({ enemies: [self, other], px: 9999, py: 9999 });
-    const r = groundEnemyRadius(other);
-    expect(scene._blockedByOtherGroundUnit(self, 10 + r - 1, 0)).toBe(true);
-    expect(scene._blockedByOtherGroundUnit(self, 10 + r + 5, 0)).toBe(false);
-  });
-
-  it('self SMALL: also blocks against a LARGE ground unit (#282 fix — small units used to skip this check entirely)', () => {
-    const self = makeUnit(-9999, -9999, { size: 'small' });
-    const large = makeUnit(10, 0, { size: 'large' });
-    const scene = makeWorldScene({ enemies: [self, large], px: 9999, py: 9999 });
-    const r = groundEnemyRadius(large);
-    expect(scene._blockedByOtherGroundUnit(self, 10 + r - 1, 0)).toBe(true);
-    expect(scene._blockedByOtherGroundUnit(self, 10 + r + 5, 0)).toBe(false);
-  });
-
-  it('excludes `self` from the scan — a unit never blocks against its own circle', () => {
-    const self = makeUnit(0, 0, { size: 'large' });
-    const scene = makeWorldScene({ enemies: [self], px: 9999, py: 9999 });
-    expect(scene._blockedByOtherGroundUnit(self, 0, 0)).toBe(false);
-  });
-
-  it('ignores a flying unit and an already-destroyed unit, regardless of self tier', () => {
-    const self = makeUnit(-9999, -9999, { size: 'small' });
-    const flyer = makeUnit(10, 0, { size: 'large', flying: true });
-    const dead = makeUnit(-10, 0, { size: 'large', dead: true });
-    const scene = makeWorldScene({ enemies: [self, flyer, dead], px: 9999, py: 9999 });
-    expect(scene._blockedByOtherGroundUnit(self, 10, 0)).toBe(false);
-    expect(scene._blockedByOtherGroundUnit(self, -10, 0)).toBe(false);
-  });
-
-  it('also blocks against the PLAYER\'s own collision circle, for either self tier', () => {
+  it('still blocks against the PLAYER\'s own collision circle, for either self tier', () => {
     const large = makeUnit(-9999, -9999, { size: 'large' });
     const small = makeUnit(-9999, -9999, { size: 'small' });
     const scene = makeWorldScene({ enemies: [large, small], px: 0, py: 0 });
@@ -144,87 +115,62 @@ function makeVehicleUnit(x, y, { flying = false, size = 'large', scale = 1, vx =
   };
 }
 
-describe('_updateVehicle movement resolution (#282) — LARGE ground units', () => {
-  it('two large ground units cannot end up overlapping after movement resolution', () => {
+// #361: the assertions below moved from "the move was REJECTED" to "the overlap was RESOLVED".
+// A unit drives into another unit freely now; the per-tick separation step pushes the pair apart
+// afterwards, which is what makes them solid without being able to jam. `_separateGroundUnits`
+// is called here directly because these tests drive `_updateVehicle` per unit rather than the
+// whole `_updateEnemies` tick (which calls it for real — see gateJam.test.js).
+describe('_updateVehicle movement resolution (#282, reshaped by #361) — ground units end up separated', () => {
+  const settle = (scene) => { for (let i = 0; i < 30; i++) scene._separateGroundUnits(); };
+
+  const driveInto = ({ selfSize, otherSize, otherScale = 1, selfScale = 1 }) => {
     const scene = makeVehicleScene();
-    const target = makeVehicleUnit(200, 0, { size: 'large' });
-    const mover = makeVehicleUnit(0, 0, { size: 'large', vx: 5000 }); // would tunnel through in one tick
+    const target = makeVehicleUnit(200, 0, { size: otherSize, scale: otherScale });
+    const mover = makeVehicleUnit(0, 0, { size: selfSize, scale: selfScale, vx: 200 });
     scene.enemies.push(target, mover);
+    scene._updateVehicle(mover, 1, 1000);   // lands exactly on top of `target`
+    settle(scene);
+    return { scene, target, mover };
+  };
 
-    scene._updateVehicle(mover, 1, 1000); // big dt: unblocked, this would land well past `target`
-
-    const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
-    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(target) - 0.001);
+  it('two large ground units do not come to rest overlapping', () => {
+    const { target, mover } = driveInto({ selfSize: 'large', otherSize: 'large' });
+    const d = Math.hypot(mover.x - target.x, mover.y - target.y);
+    expect(d).toBeGreaterThanOrEqual(groundEnemyRadius(target) + groundEnemyRadius(mover) - 0.001);
   });
 
-  it('a large ground unit cannot walk through the player', () => {
+  it('two SMALL ground units (two tanks) do not come to rest overlapping', () => {
+    const { target, mover } = driveInto({ selfSize: 'small', otherSize: 'small' });
+    const d = Math.hypot(mover.x - target.x, mover.y - target.y);
+    expect(d).toBeGreaterThanOrEqual(groundEnemyRadius(target) + groundEnemyRadius(mover) - 0.001);
+  });
+
+  it('a tank and infantry (both SMALL, different kinds) also push apart', () => {
+    const { target, mover } = driveInto({ selfSize: 'small', selfScale: 0.48, otherSize: 'small', otherScale: 0.38 });
+    const d = Math.hypot(mover.x - target.x, mover.y - target.y);
+    expect(d).toBeGreaterThanOrEqual(groundEnemyRadius(target) + groundEnemyRadius(mover) - 0.001);
+  });
+
+  it('a small unit shoved against a large one takes most of the displacement (mass tiers)', () => {
+    const { target, mover } = driveInto({ selfSize: 'small', otherSize: 'large' });
+    // The large unit barely moves off its post; the small one is the one that gives way.
+    expect(Math.abs(target.x - 200)).toBeLessThan(Math.abs(mover.x - 200));
+  });
+
+  it('a large ground unit still cannot walk through the player (unchanged by #361)', () => {
     const scene = makeVehicleScene({ px: 200, py: 0 });
     const mover = makeVehicleUnit(0, 0, { size: 'large', vx: 5000 });
     scene.enemies.push(mover);
-
     scene._updateVehicle(mover, 1, 1000);
-
     const dist = Math.hypot(mover.x - scene.px, mover.y - scene.py);
     expect(dist).toBeGreaterThanOrEqual(ENEMY_COLLIDE_RADIUS_MECH - 0.001);
   });
 
-  it('a SMALL ground unit does NOT block a LARGE unit\'s movement — large units still walk through small ones', () => {
-    const scene = makeVehicleScene();
-    const small = makeVehicleUnit(200, 0, { size: 'small' });
-    const mover = makeVehicleUnit(0, 0, { size: 'large', vx: 5000 });
-    scene.enemies.push(small, mover);
-
-    scene._updateVehicle(mover, 1, 1000);
-
-    // Unblocked: the mover sailed straight through/past the small unit's position.
-    expect(mover.x).toBeGreaterThan(200);
-  });
-});
-
-describe('_updateVehicle movement resolution (#282 follow-up) — SMALL ground units', () => {
-  it('two SMALL ground units (e.g. two tanks) cannot end up overlapping after movement resolution', () => {
-    const scene = makeVehicleScene();
-    const target = makeVehicleUnit(200, 0, { size: 'small' });
-    const mover = makeVehicleUnit(0, 0, { size: 'small', vx: 5000 }); // would tunnel through in one tick
-    scene.enemies.push(target, mover);
-
-    scene._updateVehicle(mover, 1, 1000); // big dt: unblocked, this would land well past `target`
-
-    const dist = Math.hypot(mover.x - target.x, mover.y - target.y);
-    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(target) - 0.001);
-  });
-
-  it('a tank and infantry (both SMALL, different kinds) also push apart from each other', () => {
-    const scene = makeVehicleScene();
-    const infantry = makeVehicleUnit(200, 0, { size: 'small', scale: 0.38 });
-    const tank = makeVehicleUnit(0, 0, { size: 'small', scale: 0.48, vx: 5000 });
-    scene.enemies.push(infantry, tank);
-
-    scene._updateVehicle(tank, 1, 1000);
-
-    const dist = Math.hypot(tank.x - infantry.x, tank.y - infantry.y);
-    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(infantry) - 0.001);
-  });
-
-  it('a SMALL unit\'s own movement IS now blocked by a LARGE unit in its way (#282 fix)', () => {
-    const scene = makeVehicleScene();
-    const large = makeVehicleUnit(200, 0, { size: 'large' });
-    const mover = makeVehicleUnit(0, 0, { size: 'small', vx: 5000 });
-    scene.enemies.push(large, mover);
-
-    scene._updateVehicle(mover, 1, 1000);
-
-    const dist = Math.hypot(mover.x - large.x, mover.y - large.y);
-    expect(dist).toBeGreaterThanOrEqual(groundEnemyRadius(large) - 0.001);
-  });
-
-  it('a SMALL unit\'s own movement is also blocked by the player', () => {
+  it('a SMALL unit\'s own movement is also still blocked by the player', () => {
     const scene = makeVehicleScene({ px: 200, py: 0 });
     const mover = makeVehicleUnit(0, 0, { size: 'small', vx: 5000 });
     scene.enemies.push(mover);
-
     scene._updateVehicle(mover, 1, 1000);
-
     const dist = Math.hypot(mover.x - scene.px, mover.y - scene.py);
     expect(dist).toBeGreaterThanOrEqual(ENEMY_COLLIDE_RADIUS_MECH - 0.001);
   });

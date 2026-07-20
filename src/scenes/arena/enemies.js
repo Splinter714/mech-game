@@ -38,7 +38,9 @@ import { isWaterTerrain, isPassable } from '../../data/terrain.js';
 import { makeRouter, routeDistancePx } from '../../data/hexRoute.js';
 import { blocksSpan, wallEdgeCrossing, WALL_THICKNESS_PX, SPAN_ROLE_GATE } from '../../data/wallEdges.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
-import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, wallCollideRadius } from './shared.js';
+import { approach, backwardSpeedScale, ARENA_MECH_SCALE, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth, isSmallUnit, wallCollideRadius, groundEnemyRadius } from './shared.js';
+// #361: soft ground-unit separation, replacing the hard mutual block that deadlocked gate mouths.
+import { separateGroundUnits, MASS_SMALL, MASS_LARGE, MASS_IMMOBILE } from '../../data/groundSeparation.js';
 import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data/coverLeash.js';
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, DORMANT, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
@@ -739,6 +741,11 @@ export const EnemiesMixin = {
     // garrison awake) is spread over several frames instead of spiking one.
     this._enemyRouter?.beginTick();
     for (const e of this.enemies) this._updateEnemy(e, dt, delta);
+    // #361: resolve ground-unit overlap AFTER everyone has moved. Ground units used to hard-block
+    // each other during their own integration, which deadlocked a garrison sortieing through a
+    // gate (see world.js `_blockedByOtherGroundUnit`). Soft separation instead — same fix shape as
+    // #282's flyers, same module shape as #348's players.
+    this._separateGroundUnits();
     // #337: hide anything the region fog conceals. Runs AFTER the per-enemy update so `_losClear`
     // (the symmetric-visibility half of the rule) is this tick's answer, not last tick's. Terrain
     // persists for the run but enemies never do — Jackson: "Yes, but enemies still hide" — so this
@@ -751,6 +758,33 @@ export const EnemiesMixin = {
     // run.js _startNextStage) and fall back to the array length if it's somehow unset.
     this.registry.set('enemyCount', this._enemiesSpawnedThisStage ?? this.enemies.length);
     this.registry.set('enemiesAlive', alive);
+  },
+
+  // #361: the scene seam for soft ground-unit separation. Everything decision-shaped lives in the
+  // pure module (`data/groundSeparation.js`); this only supplies the world's answers to "how big",
+  // "how heavy", and "could this unit have walked there".
+  //
+  //  • scope — LIVE, NON-FLYING enemies. Flyers have their own separation (`flyerSeparation` in
+  //    the behaviours); corpses are not bodies. The PLAYERS are deliberately NOT in this list:
+  //    a unit is still hard-blocked against a player (`_blockedByOtherGroundUnit`), which is safe
+  //    because a human can always steer out of a contact, and folding the players in would let an
+  //    enemy shove a player around, which nobody asked for.
+  //  • mass — an emplaced/turret unit is IMMOBILE and takes no push at all (it is a wall with a
+  //    gun); otherwise the #269 size tier picks small vs large.
+  //  • canMove — the unit's OWN wall radius through the same `_blocked` the unit's locomotion uses
+  //    (#320), so a shove can never place a body inside a gate's wall plates. Exactly the
+  //    guarantee #348's `_separatePlayers` makes with `PLAYER_WALL_COLLIDE_RADIUS`.
+  //
+  // Returns the pair count so tests (and only tests) can see that it did something.
+  _separateGroundUnits() {
+    const live = (this.enemies ?? []).filter((e) => !e.flying && !e.mech?.isDestroyed?.());
+    if (live.length < 2) return 0;
+    return separateGroundUnits(live, {
+      radiusOf: (e) => groundEnemyRadius(e),
+      massOf: (e) => (e.emplaced || e.kind === 'turret' ? MASS_IMMOBILE
+        : isSmallUnit(e) ? MASS_SMALL : MASS_LARGE),
+      canMove: (e, x, y) => !blockedForEnemy(this, x, y, wallCollideRadius(e)),
+    });
   },
 
   // ── Fire-cue throttle (#200, extended by its reopen follow-up) ────────────────────────
