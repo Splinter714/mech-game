@@ -25,7 +25,7 @@ import { Mech } from '../../data/Mech.js';
 import { makePlayer } from '../../data/players.js';
 import { SHIELD_MECH_PART_KEYS } from './shieldOutline.js';
 
-const PLAYER_SHIELD = { max: 100, regenPerSec: 2, pauseMs: 1200 };
+const PLAYER_SHIELD = { max: 100, regenPerSec: 25, pauseMs: 3000 };  // #380
 
 // ── (b) every player's mech gets the deploy-time shield config ──────────────────────────────
 

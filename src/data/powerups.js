@@ -85,6 +85,13 @@ export const POWERUPS = {
   //    more gradually than an instant fill alone. `boostMult` 2.5x is a big, clearly-felt spike
   //    (a 50-cap/2-per-sec baseline becomes 125-cap/5-per-sec for the duration) without being
   //    effectively invincible. Tune via playtest like the rest.
+  //    #380 re-check (base regen 2 -> 25/sec, pause 1200 -> 3000ms): the interaction still holds
+  //    and needs no change. `boostMult` scales max and regen TOGETHER, so the ratio — and thus
+  //    the refill TIME — is invariant: 100/25 refills in 4s, boosted 250/62.5 also refills in 4s.
+  //    The powerup therefore still reads as "a much bigger pool, filled instantly", which is what
+  //    it was always mainly selling. `pauseMs` is deliberately NOT boosted, so the powerup never
+  //    lets you regen through sustained fire — that's now the whole point of the shield layer,
+  //    and the powerup respecting it keeps "break contact to recharge" true even while buffed.
   shield: {
     id: 'shield', label: 'SHIELD', color: 0x5ec8e0, weight: 1,
     duration: 12, effect: 'shield', boostMult: 2.5,
