@@ -3,6 +3,7 @@ import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 import { POWERUPS, durationMs } from '../data/powerups.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
+import { miniProjector, clampToBox } from '../data/minimap.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { DASH_BIND } from '../input/Controls.js';
@@ -227,23 +228,33 @@ export default class HudScene extends Phaser.Scene {
       bottom: this.wayMargins.bottom + 16, left: this.wayMargins.left + 16,
     };
 
-    // #116: corner minimap — the deferred half of #80 (the edge-direction arrow was the other
+    // #116/#383: corner minimap — the deferred half of #80 (the edge-direction arrow was the other
     // half). A compact box in the RIGHT margin, sitting just ABOVE the skill-tile toolbar (so it
     // clears both the toolbar and the bottom-right mode/AI text) and below the top-right enemy-
-    // count/buff stack. It renders the WHOLE snaking corridor's silhouette (from `spineWorld`)
-    // with live player/objective/enemy markers moving within it.
+    // count/buff stack. #383 turned it from a WHOLE-corridor letterbox into a WINDOW that FOLLOWS
+    // the player — it shows 4× the area the camera frames, centred on the camera focus, scrolling
+    // as the player moves (see `_updateMinimap` + data/minimap.js).
     const mmW = 152, mmH = 128;
     this._miniSize = { w: mmW, h: mmH };
     this.miniBox = { x: this.W - 14 - mmW, y: tileTop - 12 - mmH, w: mmW, h: mmH };
-    // Static layer: panel + corridor silhouette, drawn once the spine is known (it never changes
-    // mid-run). Dynamic layer: the live markers, cleared/redrawn each frame. Both on the same
-    // depth tier as the wayfinding arrow so they sit above the skill toolbar.
+    // Panel layer: the dark backing + border, repainted only when the box moves (a panel rebuild).
+    // Dynamic layer: the corridor silhouette AND the live markers, cleared/redrawn each frame — a
+    // scrolling window means the corridor can no longer be a one-time static paint. Both on the
+    // same depth tier as the wayfinding arrow so they sit above the skill toolbar. #383 chose the
+    // per-frame redraw over a world-space translate/clip layer: the corridor is subsampled to only
+    // ~two-dozen filled circles, so repainting them is as cheap as the enemy/player dots already
+    // redrawn here every frame, and it avoids maintaining a separately-scaled offscreen layer.
     this.miniStaticGfx = this.add.graphics().setDepth(19);
     this.miniGfx = this.add.graphics().setDepth(21);
     this.miniLabel = this.add.text(this.miniBox.x + 6, this.miniBox.y + 4, 'MAP',
       { fontFamily: 'monospace', fontSize: '10px', color: C.dim }).setDepth(21);
-    this._miniFit = null;      // {toMini, scale} once computed
-    this._miniSpineRef = null; // identity of the spine snapshot the static layer was drawn from
+    // Geometry mask so the scrolling corridor/markers are clipped to the panel interior instead of
+    // spilling past its border (the old whole-world fit never reached the edges, but a follow-
+    // window routinely runs content off the box). Painted in logical coords — the HUD camera's
+    // zoom=dpr scales it to physical, same pattern as ui/weaponCardList.js's scroll clip.
+    this.miniMaskG = this.make.graphics();
+    this.miniGfx.setMask(this.miniMaskG.createGeometryMask());
+    this._miniBoxRef = null;   // identity of the box the panel + mask were last painted for
   }
 
   // ── #366: per-player panels ──────────────────────────────────────────────────────────────
@@ -321,8 +332,7 @@ export default class HudScene extends Phaser.Scene {
         w: this._miniSize.w, h: this._miniSize.h,
       };
       this.miniLabel?.setPosition(this.miniBox.x + 6, this.miniBox.y + 4);
-      this._miniFit = null;          // force a re-fit against the moved box
-      this._miniSpineRef = null;
+      this._miniBoxRef = null;       // force the panel + mask to repaint against the moved box
     }
   }
 
@@ -549,7 +559,13 @@ export default class HudScene extends Phaser.Scene {
     }
 
     this._updateBuffHud();
-    this._updateWayArrow();
+    // #383: the main-game-window objective edge arrow (#80) is now REDUNDANT — the follow-window
+    // minimap carries its own on-map objective edge marker (see `_updateMinimap`), so the
+    // navigational cue lives there instead of overlaying the play area. Jackson's call: "maybe
+    // remove the objective edge marker on the main game window?" The code stays retrievable —
+    // `_updateWayArrow`/`_drawEdgeIndicator` and `this.wayGfx` are untouched; we simply stop
+    // calling it, so `wayGfx` never paints. The off-screen LOCK-target chevron (#260,
+    // `_updateLockArrow`) is a DIFFERENT indicator and stays.
     this._updateLockArrow(snapshots);
     this._updateMinimap();
 
@@ -629,66 +645,57 @@ export default class HudScene extends Phaser.Scene {
     drawChevron(g, x, y, angle, size, color, 0.92 * (0.7 + 0.3 * pulse));
   }
 
-  // #116: build the world→minimap fit and paint the static layer (panel + corridor silhouette).
-  // Run once per run — the corridor is built once (#111), so `spineWorld` is a stable snapshot; we
-  // re-run only if its identity changes (a fresh deploy/run swaps in a new array). The fit letter-
-  // boxes the corridor's padded bounding box into the box preserving aspect, so any random
-  // per-deploy orientation of the snake fits cleanly whether it runs wide or tall.
-  _buildMinimap(spine) {
+  // #116/#383: paint the panel backing + border, and (re)cut the clip mask, for the current box.
+  // The panel no longer carries the corridor silhouette (that scrolls now, so it's redrawn per
+  // frame in `_updateMinimap`); this is just the static chrome, repainted only when the box moves
+  // (a co-op panel rebuild shifts it — see `_applyChromeLayout`), keyed off `_miniBoxRef`.
+  _paintMiniPanel() {
     const box = this.miniBox;
-    const inset = 10;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of spine) {
-      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-    }
-    // Pad the bounds by the corridor half-width so the drawn floor (and any marker out at the
-    // corridor's edge) stays inside the box, not clipped at the centreline's own extent.
-    const pad = CORRIDOR_HALF_WIDTH_PX;
-    minX -= pad; maxX += pad; minY -= pad; maxY += pad;
-    const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
-    const availW = box.w - 2 * inset, availH = box.h - 2 * inset;
-    const scale = Math.min(availW / spanX, availH / spanY);
-    const offX = box.x + inset + (availW - spanX * scale) / 2;
-    const offY = box.y + inset + (availH - spanY * scale) / 2;
-    const toMini = (wx, wy) => ({ x: offX + (wx - minX) * scale, y: offY + (wy - minY) * scale });
-    this._miniFit = { toMini, scale };
-
     const g = this.miniStaticGfx;
     g.clear();
-    // Panel: dark rounded backing + subtle border.
     g.fillStyle(MM.panelFill, 0.72);
     g.fillRoundedRect(box.x, box.y, box.w, box.h, 6);
     g.lineStyle(1, MM.panelStroke, 0.9);
     g.strokeRoundedRect(box.x, box.y, box.w, box.h, 6);
+    // The mask clips the scrolling content to the panel interior. Painted in logical coords — the
+    // HUD camera's zoom=dpr scales it to physical (same pattern as ui/weaponCardList.js).
+    this.miniMaskG.clear().fillStyle(0xffffff).fillRoundedRect(box.x, box.y, box.w, box.h, 6);
+    this._miniBoxRef = box;
+  }
+
+  // #116/#383: the follow-window minimap, redrawn each frame. It's a WINDOW that tracks the camera
+  // focus and shows 4× the area the camera frames (data/minimap.js `miniProjector`), not the old
+  // whole-corridor letterbox. Everything — the corridor silhouette, enemies, objective, player
+  // chevron(s) — is projected through the same per-frame window and clipped to the box by the
+  // geometry mask. Reads the SAME `objectiveWorld`/`cameraView` channels the rest of the HUD uses.
+  _updateMinimap() {
+    const spine = this.registry.get('spineWorld');
+    const view = this.registry.get('cameraView');
+    const g = this.miniGfx;
+    g.clear();
+    if (!spine || !spine.length || !view) { this.miniStaticGfx.clear(); this._miniBoxRef = null; return; }
+
+    const box = this.miniBox;
+    if (this._miniBoxRef !== box) this._paintMiniPanel();
+    const { toMini, inBox, scale } = miniProjector(view, box);
+
     // Corridor silhouette: the union of discs along the spine — exactly how the playable set is
     // defined (worldgen.js `corridorHexSet`), so the sketch is faithful and gap-free. Subsample the
-    // dense spine (samples are 24px apart; discs are `CORRIDOR_HALF_WIDTH_PX` wide) so ~2 dozen
-    // solid circles cover it with heavy overlap instead of drawing all ~150 every rebuild.
+    // dense spine (samples ~24px apart; discs are `CORRIDOR_HALF_WIDTH_PX` wide) so a handful of
+    // heavily-overlapping circles cover it, and skip any whose disc can't touch the box — with a
+    // follow-window most of the 24,000px corridor is off-screen, so the visible slice is only a
+    // few circles even before the mask clips them.
     const r = CORRIDOR_HALF_WIDTH_PX * scale;
     const step = 6;
     g.fillStyle(MM.corridor, 0.95);
-    for (let i = 0; i < spine.length; i += step) {
-      const m = toMini(spine[i].x, spine[i].y);
-      g.fillCircle(m.x, m.y, r);
-    }
-    // Always include the last sample so the far end isn't dropped by the stride.
-    const last = toMini(spine[spine.length - 1].x, spine[spine.length - 1].y);
-    g.fillCircle(last.x, last.y, r);
-    this._miniSpineRef = spine;
-  }
-
-  // #116: draw the live markers (player facing, objective, enemies) into the dynamic layer each
-  // frame. Reads the SAME `objectiveWorld` the edge arrow uses, so the two can never disagree.
-  _updateMinimap() {
-    const spine = this.registry.get('spineWorld');
-    const g = this.miniGfx;
-    g.clear();
-    if (!spine || !spine.length) { this.miniStaticGfx.clear(); return; }
-    if (this._miniSpineRef !== spine || !this._miniFit) this._buildMinimap(spine);
-    const { toMini } = this._miniFit;
-    const box = this.miniBox;
-    const inBox = (m) => m.x >= box.x && m.x <= box.x + box.w && m.y >= box.y && m.y <= box.y + box.h;
+    const drawDisc = (wx, wy) => {
+      const m = toMini(wx, wy);
+      if (m.x + r >= box.x && m.x - r <= box.x + box.w && m.y + r >= box.y && m.y - r <= box.y + box.h) {
+        g.fillCircle(m.x, m.y, r);
+      }
+    };
+    for (let i = 0; i < spine.length; i += step) drawDisc(spine[i].x, spine[i].y);
+    drawDisc(spine[spine.length - 1].x, spine[spine.length - 1].y);   // never drop the far end
 
     // Enemies: small danger dots. Cap to the nearest N to the player so a swarm stays readable.
     const player = this.registry.get('playerWorld');
@@ -706,7 +713,9 @@ export default class HudScene extends Phaser.Scene {
       if (inBox(m)) g.fillCircle(m.x, m.y, 2.2);
     }
 
-    // Objective: amber diamond + ring (shared wayfinding highlight colour).
+    // Objective: amber diamond + ring when it's inside the window; otherwise an amber edge marker
+    // pinned to the map border pointing toward it (#383 — this replaces the old main-game-window
+    // objective arrow, keeping the navigational cue the whole-world view used to give).
     const obj = this.registry.get('objectiveWorld');
     if (obj) {
       const m = toMini(obj.x, obj.y);
@@ -718,6 +727,13 @@ export default class HudScene extends Phaser.Scene {
         g.closePath(); g.fillPath();
         g.lineStyle(1.2, UI_HIGHLIGHT_COLOR, 0.8);
         g.strokeCircle(m.x, m.y, 7);
+      } else {
+        // Off-window: a chevron riding the inset box edge, pulsing with the shared wayfinding
+        // counter so it reads as the same "objective this way" language as the world-space marker.
+        const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+        const { x, y, angle } = clampToBox(box, cx, cy, m, 7);
+        const pulse = this.wayPulse.t;
+        drawChevron(g, x, y, angle, 6.5 * (1 + 0.25 * pulse), UI_HIGHLIGHT_COLOR, 0.75 + 0.25 * pulse);
       }
     }
 
@@ -725,8 +741,10 @@ export default class HudScene extends Phaser.Scene {
     // feedback was that it should point where the mech is aiming, not where it's driving —
     // `angle` is ArenaScene's `turretAngle`, not the hull heading).
     // #366: one marker PER player, in that player's identifying colour once there are two of
-    // them — the map was previously drawing only the primary, so a co-op partner was invisible
-    // on it. Solo keeps the single chevron in the shared accent exactly as before.
+    // them. In co-op the window is centred on the camera focus (the centroid the camera frames),
+    // and the leash keeps both players within it, so both chevrons stay on the map. Solo keeps the
+    // single chevron in the shared accent, now sitting near the map centre since the window
+    // follows the player.
     const worlds = this.registry.get('playerWorlds') ?? (player ? [player] : []);
     const identify = showsPlayerColor(worlds.length);
     for (const w of worlds) {
