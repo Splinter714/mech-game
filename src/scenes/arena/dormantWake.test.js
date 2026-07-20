@@ -1214,3 +1214,95 @@ describe('#269 playtest follow-up: _allObjectivesDestroyed — objective-hex-bas
     expect(scene._allObjectivesDestroyed()).toBe(true);
   });
 });
+
+// #350 — CO-OP ENEMY-COUNT SCALING, at the wiring level. The scaling RULE itself is unit-tested
+// in data/playerScaling.test.js; what's checked here is that the two spawn paths actually consult
+// the live player roster, and — the part that matters most — that solo is bit-identical to what
+// every suite above already asserts. A two-player scene is just `scene.players` with two entries
+// (`playersOf` synthesizes a one-player view for a scene double that has no collection, which is
+// exactly why every other test in this file keeps passing untouched).
+describe('#350: enemy counts scale with player count', () => {
+  function makeDockScene(playerCount) {
+    const scene = makeScene();
+    if (playerCount != null) scene.players = Array.from({ length: playerCount }, (_, id) => ({ id }));
+    scene._spawnKind = (x, y, kindId) => {
+      const def = ENEMY_KINDS[kindId];
+      const e = {
+        key: `${kindId}Test`, mech: new HpBody(def), kind: def.kind, kindDef: def,
+        x, y, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, typeId: kindId,
+      };
+      scene.enemies.push(e);
+      return e;
+    };
+    scene.bases = [{
+      id: 'base0', center: { q: 0, r: 0 },
+      docks: [{ q: 0, r: 0, kindId: 'tank', count: dockCountFor('tank', Math.random) }], turrets: [],
+    }];
+    return scene;
+  }
+
+  function makePatrolScene(playerCount, towers) {
+    const scene = makeScene();
+    if (playerCount != null) scene.players = Array.from({ length: playerCount }, (_, id) => ({ id }));
+    scene.alertTowerHexes = towers;
+    scene._spawnKind = (x, y, kindId) => {
+      const e = { key: `${kindId}Test`, x, y, typeId: kindId, awareness: UNAWARE };
+      scene.enemies.push(e);
+      return e;
+    };
+    scene._spawnEnemy = (x, y, typeId) => {
+      if (ENEMY_KINDS[typeId]) return scene._spawnKind(x, y, typeId);
+      const e = { key: `${typeId}Test`, kind: 'mech', x, y, typeId, awareness: UNAWARE };
+      scene.enemies.push(e);
+      return e;
+    };
+    return scene;
+  }
+
+  const towers = [{ q: 0, r: 0 }, { q: 4, r: -2 }, { q: -5, r: 3 }];
+  const soloPatrolTotal = towers.reduce((n, _t, i) => n + towerPatrolComposition(i, towers.length).length, 0);
+
+  it('a GARRISON dock is unchanged solo', () => {
+    const scene = makeDockScene(1);
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(dockCountFor('tank', Math.random));
+  });
+
+  it('a GARRISON dock doubles at two players', () => {
+    const scene = makeDockScene(2);
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(dockCountFor('tank', Math.random) * 2);
+    expect(scene.enemies.every((e) => e.awareness === DORMANT)).toBe(true);
+  });
+
+  it('a SWARM dock doubles at two players and is untouched solo', () => {
+    for (const [players, expected] of [[1, DOCK_SWARM_COUNT], [2, DOCK_SWARM_COUNT * 2]]) {
+      const scene = makeDockScene(players);
+      scene.bases[0].docks = [{ q: 0, r: 0, kindId: 'drone', count: DOCK_SWARM_COUNT }];
+      scene._spawnDormantUnits();
+      expect(scene.enemies.length).toBe(expected);
+    }
+  });
+
+  it('PATROLS are unchanged solo and doubled at two players', () => {
+    const solo = makePatrolScene(1, towers);
+    solo._spawnTowerPatrols();
+    expect(solo.enemies.length).toBe(soloPatrolTotal);
+
+    const coop = makePatrolScene(2, towers);
+    coop._spawnTowerPatrols();
+    expect(coop.enemies.length).toBe(soloPatrolTotal * 2);
+  });
+
+  it('a scene with no players collection at all behaves as one player', () => {
+    const scene = makeDockScene(null);
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(dockCountFor('tank', Math.random));
+  });
+
+  it('scales per player rather than flipping a two-player switch', () => {
+    const scene = makeDockScene(3);
+    scene._spawnDormantUnits();
+    expect(scene.enemies.length).toBe(dockCountFor('tank', Math.random) * 3);
+  });
+});

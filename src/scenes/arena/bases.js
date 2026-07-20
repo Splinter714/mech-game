@@ -32,7 +32,8 @@ import {
 } from '../../data/gateDemand.js';
 import { findHexPath } from '../../data/hexRoute.js';
 import { pixelToHex } from '../../data/hexgrid.js';
-import { listenerOf, livePlayersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
+import { listenerOf, livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
+import { scaleEnemyCount, scaleComposition } from '../../data/playerScaling.js';
 
 // #309 playtest — how often the DEMAND scan runs, and how many garrison units it may ask per scan.
 // The scan is the expensive half of demand-driven gates: each unit it asks costs one A* search
@@ -327,8 +328,16 @@ export const BasesMixin = {
         this._dockResupplyStates.set(dockKey, makeDockResupplyState(DOCK_RESUPPLY_COOLDOWN_MS, dockRng));
         // #323: the whole cluster now goes through the ONE shared placement seam, the same one
         // `_resupplyDock` calls — see `spawnDockCluster` above for why.
+        // #350: the base GARRISON scales with player count. `dock.count` is world-gen's
+        // per-kind body count (worldgen.js `dockCountFor`, which is also where swarm docks get
+        // their `DOCK_SWARM_COUNT` burst), so scaling it here scales both ordinary garrison
+        // bodies and swarm sizes through the one seam — no second rule for swarms. Scaled at
+        // SPAWN time rather than baked into `dock.count` at world-gen time so the number is read
+        // from the live roster; `_initCoop` has already added any garage-joined player (#349) by
+        // the time this runs.
         spawnDockCluster(this, {
-          x, y, kindId: dock.kindId, count: dock.count ?? 1,
+          x, y, kindId: dock.kindId,
+          count: scaleEnemyCount(dock.count ?? 1, playersOf(this).length),
           baseId: base.id, dockKey, awareness: DORMANT,
         });
       }
@@ -439,7 +448,13 @@ export const BasesMixin = {
     towers.forEach((t, towerIndex) => {
       const { x: tx, y: ty } = hexToPixel(t.q, t.r);
       const { x, y } = nearestValidPixel(this.terrain, this.worldRadius, tx, ty);
-      const composition = towerPatrolComposition(towerIndex, towers.length);
+      // #350: PATROLS scale with player count too — #357's tier list repeated once per player, so
+      // the tier's MIX is preserved and co-op meets a bigger version of the same patrol rather
+      // than a differently-shaped one. The huddle ring below already distributes an arbitrary `n`
+      // evenly, so a doubled patrol needs no placement change.
+      const composition = scaleComposition(
+        towerPatrolComposition(towerIndex, towers.length), playersOf(this).length,
+      );
       const n = composition.length;
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2 + Math.PI / 4;
@@ -874,7 +889,13 @@ export const BasesMixin = {
     // dock trickled back one body at a time instead of the burst it opened with. The count comes
     // from the same `dockCountFor` the initial spawn uses, so a resupplied swarm arrives at full
     // strength. (#326: nothing is billed for it any more — there is no budget to bill against.)
-    const count = dockCountFor(kindId, rng);
+    // #350: a resupply WAVE is the same population as the opening garrison, so it takes the same
+    // player-count scaling — otherwise co-op would face a doubled base that reinforces at solo
+    // strength and thins out over the fight. Note this scales wave SIZE only; the resupply
+    // CADENCE (`DOCK_RESUPPLY_COOLDOWN_MS`) is untouched, because "faster dock reinforcement" is
+    // the lever Jackson explicitly rejected. Read live, so a mid-sortie START join is picked up
+    // by every wave from that moment on.
+    const count = scaleEnemyCount(dockCountFor(kindId, rng), playersOf(this).length);
     // #269 Part 2 ("dock open/closed states"): a dock that's currently CLOSED (the normal case —
     // its original unit(s) walked off/died and `_updateDockOpenClose` already sealed it, see
     // above) reopens right here, at the same moment this elevator sequence kicks off — the
