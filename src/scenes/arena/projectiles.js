@@ -2,7 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
-import { livePlayersOf, targetPlayerFor } from './players.js';
+import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 
@@ -201,6 +201,26 @@ export const ProjectilesMixin = {
           p.dead = true;
           p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
+          this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+          continue;
+        }
+      }
+      // #348 FRIENDLY FIRE (Jackson: ON): a PLAYER-fired round can hit another player. Checked
+      // here, on the same swept segment the enemy hit test uses, and checked BEFORE that test so
+      // a teammate standing between the shooter and an enemy actually eats the round rather than
+      // it passing through them. The shooter is never a candidate for their own shot
+      // (`p.shooter`, stamped at spawn) — walking into your own muzzle is not the mechanic.
+      if (!enemyShot && !p.dead) {
+        let ally = null, allyD = Infinity;
+        for (const other of otherLivePlayers(this, p.shooter)) {
+          const d = segmentPointDistance(prevX, prevY, p.x, p.y, other.x, other.y);
+          if (d < HIT_RADIUS && d < allyD) { ally = other; allyD = d; }
+        }
+        if (ally) {
+          p.dead = true;
+          p.stopTrajectorySfx?.();
+          const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
+          this._damagePlayerAt(dmg, ally);
           this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }

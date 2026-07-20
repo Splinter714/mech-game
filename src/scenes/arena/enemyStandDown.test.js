@@ -181,7 +181,10 @@ describe('#304 a redeploy resets the stand-down clock', () => {
   it('ArenaScene.create() clears _standDownAt alongside _playerDead', () => {
     const arena = src('..', 'ArenaScene.js');
     const create = arena.match(/create\(\)[\s\S]*?\n {2}\}/);
-    expect(create[0]).toMatch(/this\._playerDead = false;/);
+    // #348: the `_playerDead = false` line this used to pair against is gone — create() now
+    // rebuilds the players collection wholesale, so the dead latch starts clean by construction
+    // rather than by assignment (see playerDeath.test.js for that guard).
+    expect(create[0]).toMatch(/this\.players = \[\];/);
     expect(create[0]).toMatch(/this\._standDownAt = null;/);
   });
 });

@@ -13,6 +13,7 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf } from './players.js';
+import { playerAccent } from '../../data/players.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -64,6 +65,11 @@ export const CombatMixin = {
     // `pickLiveWeighted` rerolls among the still-live entries of the same pool instead.
     const loc = pickLiveWeighted(parts, (part) => player.mech.isPartDestroyed(part));
     const res = this.damagePlayer(loc, dmg, player);
+    // #348: stamp WHEN this player was last hit. This is the signal the co-op respawn's
+    // out-of-combat gate reads (coop.js `_updateRespawns`) — the surviving player must have gone
+    // 1-2s without taking fire before a downed teammate is allowed back in. Stamped for every hit
+    // including a fully-shielded one: being shot at is being in combat, whether or not it hurt.
+    player.lastHitAt = this.time?.now ?? 0;
     // #205: pulse the on-mech shield bubble any time the shield actually absorbed part of this
     // hit — covers both a fully-absorbed hit (shielded, below) and a hit that partially absorbed
     // then broke through (shieldAbsorbed > 0 but not `shielded`, see damagePlayer above).
@@ -74,7 +80,12 @@ export const CombatMixin = {
     // see mechArt.js), not on continuous health — so only pay the 9-texture procedural rebuild
     // when this hit actually changed one of those two discrete visual states. Reskinning on
     // every hit was the main combat lag source.
-    if (res.destroyed || res.armorBrokeNow) reskinMech(this, player.textureKey ?? 'playerMech', player.mech);
+    // #348: preserve this player's identifying accent across the damage re-raster — without the
+    // opts a re-skinned player 2 would silently revert to player 1's colours.
+    if (res.destroyed || res.armorBrokeNow) {
+      reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
+        { theme: 'player', accent: playerAccent(player.id ?? 0) });
+    }
     // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
     // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
     // #201: a part breaking off now has its own SFX domain trigger (shared for player+enemy

@@ -115,16 +115,18 @@ const arenaScene = readFileSync(join(DIR, '..', 'ArenaScene.js'), 'utf8');
 // #347: the gate moved from ONE scene flag (`this._playerDead`) to a PER-PLAYER latch
 // (`player.dead`) inside the per-player loop. Same guarantee — a destroyed mech stops steering
 // and stops firing — expressed once per player, so a co-op death freezes only that player.
+// #348: and each player is now driven by ITS OWN intent (`pi`), read from its own controller,
+// rather than every player sharing the single local one.
 describe('#225 player-input gating in ArenaScene#update', () => {
   it('gates _handleSprint and _drive behind the per-player dead latch', () => {
-    const block = arenaScene.match(/for \(const player of this\.players\) \{[\s\S]*?_drive\(intent, dt, player\);[\s\S]*?\n {4}\}/);
+    const block = arenaScene.match(/for \(const player of this\.players\) \{[\s\S]*?_drive\(pi, dt, player\);[\s\S]*?\n {4}\}/);
     expect(block).toBeTruthy();
     expect(block[0]).toMatch(/if \(player\.dead\) continue;/);
-    expect(block[0]).toMatch(/this\._handleSprint\(intent, delta\);/);
+    expect(block[0]).toMatch(/this\._handleSprint\(pi, delta, player\);/);
   });
 
   it('gates _handleFiring behind the per-player dead latch', () => {
-    expect(arenaScene).toMatch(/if \(!player\.dead\) this\._handleFiring\(intent, delta, player\);/);
+    expect(arenaScene).toMatch(/if \(!player\.dead && pi\) this\._handleFiring\(pi, delta, player\);/);
   });
 });
 
@@ -135,19 +137,31 @@ describe('#225 player-input gating in ArenaScene#update', () => {
 // into every sortie after it. Fix: explicitly reset it in create(), same "reset per-deploy scene
 // state" pattern `_initRun`/`_initMission` already use. Source-text guard, same technique as the
 // gating tests above — create() is Phaser-API-heavy so a live instance isn't practical here.
-describe('#281 ArenaScene#create resets _playerDead every deploy', () => {
-  it('create() explicitly resets this._playerDead to false', () => {
+// #348 supersedes the explicit `this._playerDead = false` line this used to guard, WITHOUT
+// weakening the guarantee. `_playerDead` is an alias onto `players[0].dead`, and create() now
+// rebuilds the collection from scratch every deploy (`this.players = []`, then a freshly
+// constructed player pushed into it) — so the dead latch is not reset, it is a brand-new object
+// that never carried one. That is strictly stronger than the old assignment: EVERY per-player
+// field starts clean, not just this one. The guard therefore checks the rebuild instead.
+describe('#281 ArenaScene#create starts every deploy with a fresh, un-dead player', () => {
+  it('create() rebuilds the players collection rather than reusing the last deploy\'s', () => {
     const create = arenaScene.match(/create\(\)\s*\{[\s\S]*?\n  \}/);
     expect(create).toBeTruthy();
-    expect(create[0]).toMatch(/this\._playerDead = false;/);
+    expect(create[0]).toMatch(/this\.players = \[\];/);
+    expect(create[0]).toMatch(/this\.players\.push\(this\._makePlayerAt\(0,/);
   });
 
-  it('resets it after _initRun(), following the existing per-deploy-reset ordering', () => {
+  it('builds that player after _initRun(), following the existing per-deploy-reset ordering', () => {
     const create = arenaScene.match(/create\(\)\s*\{[\s\S]*?\n  \}/)[0];
     const initRunIdx = create.indexOf('this._initRun();');
-    const resetIdx = create.indexOf('this._playerDead = false;');
+    const buildIdx = create.indexOf('this.players.push(this._makePlayerAt(0,');
     expect(initRunIdx).toBeGreaterThan(-1);
-    expect(resetIdx).toBeGreaterThan(-1);
-    expect(resetIdx).toBeGreaterThan(initRunIdx);
+    expect(buildIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeGreaterThan(initRunIdx);
+  });
+
+  it('a freshly made player is not dead — the latch cannot survive a redeploy', async () => {
+    const { makePlayer } = await import('../../data/players.js');
+    expect(makePlayer({ id: 0 }).dead).toBe(false);
   });
 });

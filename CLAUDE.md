@@ -66,6 +66,14 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     `listenerOf`, `fogOriginOf`, `cameraFocusOf`, `livePlayersOf` — rather than reading a
     global. `scene.px`/`py`/`mech`/`playerView`/`_playerDead` still work: they're delegating
     accessors onto `players[0]` (bottom of `ArenaScene.js`), aliasing the same storage.
+    **#348 (phase 2) made it real co-op**: up to `MAX_PLAYERS` (2), a second player joins
+    mid-sortie with START on gamepad 2 (`scenes/arena/coop.js`), each player owns its own
+    `Controls`/fire cooldowns/sprint/dash/converge pick/reticle, enemies target the nearest
+    player, friendly fire is ON, and each player has an identifying colour (`PLAYER_COLORS` —
+    a ground ring, plus a rim-accent on the procedural mech theme for players after the first).
+    The camera frames the live players' centroid and `data/leash.js` HARD-STOPS anyone leaving
+    that frame (no zoom-out, no rubber-band — owner's explicit choice). `data/respawn.js` is
+    the 20s respawn clock gated on the survivors being out of combat ~1.5s.
   - `hexgrid.js` — the shared hex primitives every hex-aware module builds on (others
     that reason about hexes: `hexRoute.js`, `hexEdges.js`, `hexLabels.js`, `wallEdges.js`,
     `worldgen.js`, `arena/world.js`). Axial coords; pure
@@ -82,7 +90,9 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   of the four slots is bound to a fixed button (`SKILL_BINDS`): RA→RT/RMB, LA→LT/LMB,
   RT→RB/E, LT→LB/Q. L3/Space is the always-available Dash (#261, `DASH_BIND` — separate from
   `SKILL_BINDS`, it isn't a mountable location); R3/F is unbound since #322. Left stick/WASD
-  drives, right stick/mouse aims. **#346 added touch as a THIRD source into that same intent**:
+  drives, right stick/mouse aims. **#348: one `Controls` per PLAYER** — `padIndex` picks the
+  physical pad and `keyboard` says whether that player also owns the keyboard+mouse (player 1
+  only; every later player is gamepad-only). **#346 added touch as a THIRD source into that same intent**:
   floating on-screen sticks (left half drives, right half aims with the pad's hold-last-angle
   semantics). The stick math is pure and unit-tested in `touchSticks.js` (tuning dials live in
   its `TOUCH_STICK` object, including a `floating` flag); `TouchStickHud.js` only draws them.

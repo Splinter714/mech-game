@@ -341,11 +341,18 @@ describe('#316 fireWeapon: the player\'s shot respects cover whatever it is aime
     const ground = makeFireWeaponScene({ convergeTarget: { x: 10, y: 0, flying: false, mech: {} } });
     ground.fireWeapon(PLAYER_PROJECTILE_W);
     expect(flyer._spawnProjectile.mock.calls.length).toBeGreaterThan(0);
-    expect(flyer._spawnProjectile.mock.calls).toEqual(ground._spawnProjectile.mock.calls);
+    // #348 added a trailing `shooter` arg (the PLAYER firing, for per-player aim + friendly
+    // fire). That handle necessarily differs between these two scenes — it carries each one's
+    // own `convergeTarget`, which is the very thing being varied — so the comparison is over the
+    // SHOT arguments, which are what #316 is about. Anything the flying-ness of the target could
+    // leak into a shot still lands inside this slice.
+    const shotArgs = (calls) => calls.map((c) => c.slice(0, 9));
+    expect(shotArgs(flyer._spawnProjectile.mock.calls))
+      .toEqual(shotArgs(ground._spawnProjectile.mock.calls));
     // ...and no trailing cover-exemption arg survives on either.
     for (const call of flyer._spawnProjectile.mock.calls) {
       expect(call[4]).toBe('player');
-      expect(call.length).toBeLessThanOrEqual(8);
+      expect(call.length).toBeLessThanOrEqual(10);
     }
   });
 });

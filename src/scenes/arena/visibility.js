@@ -41,7 +41,7 @@
 // threats. And the softness — 0.62 ceiling, a 3-ring gradient ramp — is the one part of the v1 look
 // he did not object to.
 import { DEPTH } from './shared.js';
-import { fogOriginOf } from './players.js';
+import { fogOriginOf, fogOriginsOf } from './players.js';
 import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { blocksSpan } from '../../data/wallEdges.js';
 import {
@@ -104,17 +104,33 @@ export const VisibilityMixin = {
     // both peeks light), which is a real design change; phase 1 deliberately keeps the single
     // origin so the fog renders pixel-identically. Named seam so that change is one edit here.
     const o = fogOriginOf(this);
-    const h = pixelToHex(o.x, o.y);
     // ── THE ONE STATE TRANSITION ── standing anywhere in a compound's footprint counts as having
     // entered it, and it stays lit for the rest of the run. Note this fires on the OUTLINE ring too,
     // which is right: the only way onto an outline hex is through the wall line itself.
-    const here = compoundAt(h.q, h.r, this.fogWorld);
-    if (here != null && !this.enteredCompounds.has(here)) {
-      this.enteredCompounds.add(here);
+    //
+    // #348: this half is a UNION over every live player — either player walking into a compound
+    // reveals it for the team. Entry is a persistent world-state change (it stays lit for the
+    // whole run), so it must not depend on which player happens to be player 1. The SWEEP below
+    // is deliberately still single-origin: the peek raycast and the redraw gate are per-frame
+    // rendering, and the shared leashed camera keeps both players inside the same frame anyway.
+    let entered = false;
+    for (const origin of fogOriginsOf(this)) {
+      const h = pixelToHex(origin.x, origin.y);
+      const here = compoundAt(h.q, h.r, this.fogWorld);
+      if (here != null && !this.enteredCompounds.has(here)) {
+        this.enteredCompounds.add(here);
+        entered = true;
+      }
+    }
+    if (entered) {
       this.foggedHexes = fogHexes(this.fogWorld, this.enteredCompounds);
       this._fogFrontier = fogFrontier(this.foggedHexes);
       this._fogDrawX = null;
     }
+    // Which compound the SWEEP origin is standing in — the peek only exists relative to the one
+    // vantage point it is cast from, so this stays single-origin (see the note above).
+    const oh = pixelToHex(o.x, o.y);
+    const here = compoundAt(oh.q, oh.r, this.fogWorld);
     if (this._fogDrawX !== null
       && Math.abs(o.x - this._fogDrawX) < REDRAW_MOVE_PX
       && Math.abs(o.y - this._fogDrawY) < REDRAW_MOVE_PX) return;

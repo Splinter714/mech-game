@@ -74,8 +74,11 @@ export const DASH_BIND = { key: 'Space', pad: 'L3' };
 // transitions) where the held-flag fire intent isn't appropriate. One instance per scene
 // that needs button edges; each button index should be polled at most once per frame.
 export class PadEdges {
-  constructor(scene) {
+  // #348: `padIndex` selects which physical pad's edges these are — the arena watches pad 1's
+  // START button to know when a second player wants in.
+  constructor(scene, padIndex = 0) {
     this.scene = scene;
+    this.padIndex = padIndex;
     this.prev = {};
     // #122: same fresh-scene Gamepad-wrapper quirk as Controls (see its constructor comment) —
     // force an immediate resync so a pad already connected/held when this scene starts isn't
@@ -84,7 +87,7 @@ export class PadEdges {
   }
   pad() {
     const gp = this.scene.input.gamepad;
-    const p = gp && gp.total ? gp.getPad(0) : null;
+    const p = gp && gp.total > this.padIndex ? gp.getPad(this.padIndex) : null;
     return p && p.connected ? p : null;
   }
   pressed(i) {
@@ -102,8 +105,25 @@ export class PadEdges {
 }
 
 export class Controls {
-  constructor(scene) {
+  // #348 (local co-op): one Controls per PLAYER, not one per scene.
+  //   `padIndex`  — which physical gamepad this player reads. Player 1 is pad 0, player 2 pad 1.
+  //   `keyboard`  — whether this player also owns the keyboard + mouse.
+  //
+  // How the mixed case resolves, which is the part that was NOT obvious (and which Jackson has
+  // not been asked about — see the report): only ONE player can own the keyboard+mouse, and it
+  // is always player 1. So the arrangements are: one pad + kbm (P1 latches between its pad and
+  // kbm exactly as it always has, P2 is pad-only), or two pads (same thing, P1 simply never
+  // touches the keyboard). Player 2 is deliberately never keyboard-capable — sharing one
+  // keyboard between two drivers needs a whole second bind table, and picking one unasked
+  // would be a real design decision rather than a conservative default. Gamepad-only for the
+  // joiner is the reversible choice: adding a keyboard scheme later is additive.
+  //
+  // Defaults reproduce the single-player instance exactly (pad 0 + keyboard), so every existing
+  // caller and test is unchanged.
+  constructor(scene, { padIndex = 0, keyboard = true } = {}) {
     this.scene = scene;
+    this.padIndex = padIndex;
+    this.hasKeyboard = keyboard;
     this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,SPACE');
     scene.input.mouse?.disableContextMenu(); // so right-click fires instead of opening a menu
 
@@ -125,7 +145,9 @@ export class Controls {
     // Active input scheme. We latch onto whichever device was used last: once a pad is
     // touched we stay in 'pad' mode (ignoring the mouse, holding the last aim when the
     // right stick is centred) until the mouse/keyboard is used again, and vice-versa.
-    this.mode = 'kbm';
+    // #348: a pad-only player (player 2) starts and stays in 'pad' — there is no kbm to fall
+    // back to, and latching it to 'kbm' would aim its turret at player 1's mouse.
+    this.mode = keyboard ? 'kbm' : 'pad';
     this.aimAngle = -Math.PI / 2;  // remembered turret aim, so a centred stick holds it
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
     this._padDashDown = false;     // previous frame's raw L3 state, for edge-detecting the dash trigger
@@ -134,8 +156,11 @@ export class Controls {
     // #346: on-screen sticks. Only wired up when the device can actually produce touches;
     // even then, `mode` doesn't become 'touch' until a real touch pointer arrives, so a
     // touchscreen laptop driven by mouse+keyboard behaves exactly as it always has.
+    // #348: on-screen sticks are a SINGLE-touchscreen affordance — there is one screen, so only
+    // the keyboard-owning player (player 1) can have them. A second pad-only player never gets
+    // touch sticks, which would otherwise both grab the same thumbs.
     this.touch = null;
-    if (Controls.touchCapable()) this._initTouch();
+    if (keyboard && Controls.touchCapable()) this._initTouch();
   }
 
   // Capability probe only — NOT "is the player using touch". Guarded so the module still
@@ -175,9 +200,10 @@ export class Controls {
   _viewW() { return this.scene.cameras?.main?.width ?? this.scene.scale?.width ?? 0; }
   _viewH() { return this.scene.cameras?.main?.height ?? this.scene.scale?.height ?? 0; }
 
+  // #348: THIS player's pad, by index — player 1 reads pad 0, player 2 pad 1.
   pad() {
     const gp = this.scene.input.gamepad;
-    const p = gp && gp.total ? gp.getPad(0) : null;
+    const p = gp && gp.total > this.padIndex ? gp.getPad(this.padIndex) : null;
     return p && p.connected ? p : null;
   }
 
@@ -204,7 +230,8 @@ export class Controls {
     const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'SPACE']
       .some((key) => k[key].isDown);
     const mouseBtn = !pointerIsTouch && (p.leftButtonDown() || p.rightButtonDown());
-    const kbmActive = mouseMoved || mouseBtn || kbDown;
+    // #348: a pad-only player ignores the keyboard/mouse entirely — those belong to player 1.
+    const kbmActive = this.hasKeyboard && (mouseMoved || mouseBtn || kbDown);
 
     if (padActive) this.mode = 'pad';
     else if (kbmActive) this.mode = 'kbm';
@@ -223,6 +250,20 @@ export class Controls {
         aim: { mode: 'angle', angle: t.aimAngle },
         fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
         mode: 'touch',
+        dashPressed: false,
+      };
+    }
+
+    // #348: a pad-only player (player 2) whose pad has gone away has no fallback device — the
+    // keyboard belongs to player 1, so falling through to the kbm path below would have BOTH
+    // mechs driven by the same WASD/mouse. Report a neutral intent instead: the mech just
+    // stands still until the pad comes back, holding its last aim.
+    if (!this.hasKeyboard && !pad) {
+      return {
+        move: { x: 0, y: 0 },
+        aim: { mode: 'angle', angle: this.aimAngle },
+        fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
+        mode: 'pad',
         dashPressed: false,
       };
     }
