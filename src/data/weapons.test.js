@@ -253,7 +253,7 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
 
 // ── #377: Swarm Rack feel pass, in isolation ─────────────────────────────────────────────
 // Jackson tuned this ONE weapon by feel after #376: half the flight speed, a faster cycle, a
-// mortar-shaped arc, and a bigger/faster-refilling magazine. The point of this block is the
+// a steep-dropping arc, and a bigger/faster-refilling magazine. The point of this block is the
 // word "isolation" — the other missiles must be exactly where #376 left them.
 describe('#377 Swarm Rack feel pass', () => {
   it('flies far slower than it did (cut twice, 1000 -> 500 -> 320) and fires noticeably more ' +
@@ -272,8 +272,8 @@ describe('#377 Swarm Rack feel pass', () => {
     expect(WEAPONS.swarmRack.delivery.wobbleAmplitude).toBeUndefined();    // width unchanged
   });
 
-  it('opts into the mortar arc profile', () => {
-    expect(WEAPONS.swarmRack.delivery.arcProfile).toBe('mortar');
+  it('opts into the steepDrop arc profile', () => {
+    expect(WEAPONS.swarmRack.delivery.arcProfile).toBe('steepDrop');
   });
 
   it('carries a bigger magazine that also refills faster (both raised, on the direct ask)', () => {

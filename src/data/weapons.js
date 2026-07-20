@@ -409,10 +409,11 @@ export const WEAPONS = {
     //     Steering is unaffected in character: at 500 px/s the derived turn rate (speed /
     //     64px radius = 7.8 rad/s) is just under the engine's 9.0 rad/s ceiling instead of
     //     pinned to it, so the round still corners inside the same 64px radius.
-    //   * arcProfile: 'mortar' — the loft easing (data/delivery.js arcLoft; fake height, a
-    //     sprite-scale pulse only). "Less parabolic, more like they rise quickly, then
-    //     travel, then come falling down on the enemy abruptly towards the end." The default
-    //     'lob' parabola is untouched for napalm/plasmaCannon/streakPod.
+    //   * arcProfile: 'steepDrop' — the loft easing (data/delivery.js arcLoft; fake height, a
+    //     sprite-scale pulse only). Jackson: "less parabolic, more like they rise quickly,
+    //     then travel, then come falling down on the enemy abruptly towards the end." The
+    //     profile name describes that shape; it is deliberately not named after a weapon
+    //     type. The default 'lob' parabola is untouched for napalm/plasmaCannon/streakPod.
     //     The seeker ramp is unaffected and does not desync: homingBlendStart 0 + the 0.35
     //     span means steering is fully live by t=0.35 — inside the flat cruise, well before
     //     the terminal dive at t=0.80 — so the round is done correcting when it drops.
@@ -423,12 +424,12 @@ export const WEAPONS = {
     // the seeker, not by anything wrong with the fan. Each round now steers at a point up to
     // 48px to the side of the true target (which side, and how far, follows its own position
     // in the launch fan, so the salvo holds its shape), and that offset decays to zero across
-    // t=0.80 -> 0.93 — the same beat as the mortar dive, with flight left over to settle so
+    // t=0.80 -> 0.93 — the same beat as the steep terminal drop, with flight left to settle so
     // all six still connect. Tracking authority itself is UNTOUCHED: he said tracking feels
     // good, so the rounds steer just as hard as before, only at slightly different points.
     // #377 follow-up 2, three deltas — "make the projectiles slower, make the wobble slower,
     // and the in-flight spread slightly less". Everything else in this weapon is confirmed
-    // good and untouched (mortar arc, cycle, magazine, regen, tracking, converge window).
+    // good and untouched (the steepDrop arc, cycle, magazine, regen, tracking, converge).
     //   * velocity 500 -> 320. The SECOND cut this issue (it was 1000). Swarm Rack is now a
     //     deliberate crawl next to Streak Pod (1000) and Cluster Salvo (1140) — that
     //     divergence is the point, not an oversight: this weapon is being made its own thing.
@@ -453,7 +454,7 @@ export const WEAPONS = {
     // See SALVO_CONVERGE_START_PX in delivery.js — a fraction made the salvo start tightening
     // further out on a long lob than a short one, so the same weapon read differently
     // depending on range.
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 320, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'mortar', salvoSpread: 40 },
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 320, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'steepDrop', salvoSpread: 40 },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',

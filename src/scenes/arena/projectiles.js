@@ -363,11 +363,11 @@ export const ProjectilesMixin = {
       const t = p.dist / p.maxDist;
       // #377: the loft EASING is now per-weapon (delivery.arcProfile -> p.arcProfile, curve in
       // data/delivery.js arcLoft). 'lob' is the original symmetric parabola and stays the
-      // default for every arcing weapon; Swarm Rack alone opts into 'mortar' — pop up fast,
+      // default for every arcing weapon; Swarm Rack alone opts into 'steepDrop' — pop up fast,
       // cruise flat, then plunge in the last fifth of flight.
       const h = arcLoft(t, p.arcProfile);                      // 0..1 height fraction
       // Constant apex: every lob peaks at the same height regardless of range, so a near
-      // toss looks like a steep mortar pop and a far shot looks flat and skimming.
+      // toss looks like a steep high pop and a far shot looks flat and skimming.
       const bump = 0.6;                                       // peak size gain at apex — subtle grow-then-shrink
       scale = 1 + h * bump;
       const sw = 8 - h * 4;                                   // shadow tightens with height

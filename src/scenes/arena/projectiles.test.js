@@ -249,7 +249,15 @@ describe('#377 follow-up: a Swarm Rack salvo separates in flight and converges l
     // outward drift — i.e. the onset. Keyed to remaining distance that onset sits at the same
     // px-from-target at any range. Keyed to flight fraction it would scale with range: t=0.72
     // is ~196px out on a 700px lob but ~448px out on a 1600px one.
+    // Each round rolls a random wobble phase, which jitters exactly where the measured peak
+    // falls. Seed it so both ranges fly identical wobble, leaving RANGE as the only variable —
+    // otherwise this measures noise as much as it measures the converge onset.
     const onsetDistance = (range) => {
+      let seed = 12345;
+      const rnd = vi.spyOn(Math, 'random').mockImplementation(() => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      });
       const target = makeEnemy('t', range, 0);
       const { shots } = planEmissions(WEAPONS.swarmRack);
       const rounds = shots.map((sh) => {
@@ -267,6 +275,7 @@ describe('#377 follow-up: a Swarm Rack salvo separates in flight and converges l
         if (width > widest) { widest = width; atDist = rem; }
         scene._updateProjectiles(0.016);
       }
+      rnd.mockRestore();
       return atDist;
     };
     const shortLob = onsetDistance(700);
