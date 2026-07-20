@@ -28,6 +28,7 @@ import { allPlayersDeadIn, enemyTargetOf, listenerOf, targetPlayerFor } from './
 // live one via `e.weaponSlot` and this file resolves it — no weapon-id literal (#243) and no
 // slot-key literal ever appears here. See data/kindWeapons.js's header for the whole model.
 import { kindWeaponSlot, kindMaxFireRange } from '../../data/kindWeapons.js';
+import { initKindAmmo, slotHasAmmo, consumeSlotAmmo, regenKindAmmo } from '../../data/kindAmmo.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, vehicleTextureSet, mechLayout, ART_SCALE } from '../../art/index.js';
@@ -293,6 +294,11 @@ export const EnemiesMixin = {
       // #305: per-weapon-SLOT cooldown + burst counters (data/kindWeapons.js). A single-weapon
       // kind just ends up with one entry; a multi-weapon kind's guns cycle independently.
       slotCd: {}, slotBurst: {}, weaponSlot: null,
+      // #375: per-slot MAGAZINE for the emplaced kinds that opt in (`ammoLimited` — turret and
+      // wallTurret). Starts full; drains one round per trigger pull and trickles back via
+      // `ammoRegen`, so sustained fire tapers and breaking contact lets the gun recover. Every
+      // other kind gets `{}` here, which reads as unlimited everywhere downstream.
+      slotAmmo: initKindAmmo(def),
       spawnX: x, spawnY: y, typeId, kind: def.kind, kindDef: def, flying: !!def.flying,
       behavior: def.behavior, handed: Math.random() < 0.5 ? 1 : -1,
       rotorSpin: 0,           // flyers spin their rotor overlay
@@ -574,6 +580,7 @@ export const EnemiesMixin = {
         // so every gun comes back off repair ready to fire with a fresh burst window (#243).
         e.slotCd = {};
         e.slotBurst = {};
+        e.slotAmmo = initKindAmmo(e.kindDef);   // #375: a repaired emplacement comes back with a full magazine
         this._reskinVehicle(e);  // #300: repairAll restored its armor — put the plating back on
       }
     }
@@ -1448,6 +1455,10 @@ export const EnemiesMixin = {
     if (e.slotCd) {
       for (const k in e.slotCd) if (e.slotCd[k] > 0) e.slotCd[k] = Math.max(0, e.slotCd[k] - delta);
     }
+    // #375: and trickle the magazines back up (dt in SECONDS, the same convention as
+    // Mech.regenAmmo on the mech-enemy path). Only the ammo-limited emplaced kinds carry any
+    // entries here, so this is a no-op loop over an empty map for every mobile kind.
+    if (e.slotAmmo) regenKindAmmo(e.kindDef, e.slotAmmo, dt);
 
     // #152: legged walk-cycle for a kind whose art builds multiple hull frames (def.legFrames —
     // no kind uses it since #328 retired the legged Broodhauler) — mirrors the player mech's stompy stepGait
@@ -1566,6 +1577,19 @@ export const EnemiesMixin = {
     // carries, and #241's `_fireInterval` cadence.
     const weapon = resolveWeapon(mount.weaponId, mount.weaponOverride);
     if (!weapon) return;
+    // #375: AMMO — the second limiter, and the one that lets a player SUPPRESS an emplacement by
+    // drawing its fire. Checked here, after the cooldown but before anything with a side effect,
+    // and it returns WITHOUT touching the cooldown or the burst counter. That is what makes it
+    // compose with #243's trigger discipline instead of fighting it:
+    //   * a dry slot simply doesn't fire this frame — it doesn't consume a cadence cooldown it
+    //     hasn't earned, and it doesn't bank a phantom shot toward the burst count, so the gun
+    //     resumes the instant a whole round has regenerated;
+    //   * a burst that runs dry mid-window PAUSES rather than cancelling — its counter survives,
+    //     and the burst's own `burstRestMs` still lands when the burst finally completes. The two
+    //     limiters are strictly ANDed: a shot needs cadence AND burst window AND a round.
+    // Only kinds with `ammoLimited` (enemyKinds.js: turret, wallTurret) have any entry in
+    // `slotAmmo`; for everyone else `slotHasAmmo` is unconditionally true.
+    if (!slotHasAmmo(e.slotAmmo, mount.slot)) return;
     const w = { weapon, location: e.kind, index: 0 };
     const aimErr = (Math.random() - 0.5) * 0.1;
     // #109: spawn from the kind's actual gun/barrel part (enemyKinds.js `muzzlePart`), not a
@@ -1606,6 +1630,9 @@ export const EnemiesMixin = {
     // delivery.fireRate for streams — see enemyKinds.js's field docs), so one cadence concept
     // serves every fire path.
     cds[mount.slot] = this._fireInterval(weapon, {});
+    // #375: one round per TRIGGER PULL, not one per emission — a salvo/stream weapon's shots all
+    // come from a single squeeze, matching `consumeAmmo(…, 1)` on the mech-enemy path above.
+    consumeSlotAmmo(e.slotAmmo, mount.slot, 1);
     // #243 trigger discipline: a slot with `burstShots` fires N shots at the cadence above,
     // then RESTS — the shot that completes the burst swaps its cooldown for the (longer)
     // `burstRestMs` instead of the per-shot cadence, and the counter re-arms for the next

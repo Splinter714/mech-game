@@ -149,7 +149,16 @@ export const ENEMY_KINDS = {
       // trivial tickle or a one-shot — no change needed here.
       damage: 10,                                     // vs napalm's base 27 (was 6 pre-#259)
       range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
-      ammoMax: 20, ammoRegen: 0.6,                    // deep artillery magazine (base 6 / 0.7)
+      // #375: RETUNED, and now actually live (see `ammoLimited` below). The old 20 / 0.6 was
+      // written for a mechanic that never ran and was never calibrated: at this kind's 2.6s
+      // cadence the gun burns 0.385 rounds/s while regenerating 0.6/s, so it could NEVER have
+      // run dry — the magazine was decorative even if it had been wired up.
+      // 10 / 0.06 gives a real taper: 11 shells over ~26s of continuous bombardment, then dry
+      // for ~7s, after which it is limited by regen to roughly one shell per 17s — a ~6x drop
+      // in volume that a player earns by drawing and surviving the barrage. Still never silent
+      // (so a nest stays a threat and #356's clear-the-base objective stays achievable), and a
+      // full magazine takes ~167s of no contact to rebuild.
+      ammoMax: 10, ammoRegen: 0.06,
       cycleTime: 2600,                                // #94's deliberate slow bombardment cadence (base 1500)
       delivery: {
         velocity: 550,                                // faster, flatter-feeling heavy shell (base 300)
@@ -164,6 +173,11 @@ export const ENEMY_KINDS = {
     // #243: no separate fire timer — cadence always derives from the resolved weapon, i.e. the
     // override's cycleTime 2600 above. The nest-of-4 pacing (#145) is unchanged.
     flying: false,
+    // #375: this kind's guns run on a real MAGAZINE (data/kindAmmo.js) — the opt-in flag for
+    // ammo on the vehicle fire path. Deliberately scoped to the two EMPLACED kinds: a rooted gun
+    // going quiet reads as suppression, whereas a tank or drone pausing mid-chase would read as a
+    // bug. Tanks/drones/helicopters/carriers/infantry stay pure cadence + trigger discipline.
+    ammoLimited: true,
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
     art: 'turret',
     behavior: 'turret',
@@ -246,11 +260,20 @@ export const ENEMY_KINDS = {
     weaponId: 'railLance',
     weaponOverride: {
       range: { min: 0, opt: 520, max: 900 },
-      ammoMax: 8, ammoRegen: 0.25,
+      // #375: RETUNED, and now actually live (see `ammoLimited` below). The old 8 / 0.25 was
+      // uncalibrated fiction: at the 5.2s cadence below the gun spends 0.192 rounds/s against a
+      // 0.25/s trickle, so it out-regenerated its own fire rate and could never taper — the very
+      // thing the comment above claims it does.
+      // 6 / 0.045 makes the claim true: 7 shots over ~31s of sustained engagement, then ~13s
+      // fully dry, then a suppressed ~1 shot per 22s (vs 5.2s free) until contact is broken long
+      // enough to rebuild. That IS the tactical lever — bait the wall into shooting, break
+      // contact, come back to a quieter approach lane — while never silencing it outright.
+      ammoMax: 6, ammoRegen: 0.045,
       cycleTime: 5200,
     },
     fireRange: 900,        // matches the override's range.max above
     flying: false,
+    ammoLimited: true,     // #375: emplaced ⇒ real magazine; see the sentry turret's note above
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 1.5 },   // slow, heavy traverse: part of the telegraph
     art: 'wallTurret',
     behavior: 'turret',
