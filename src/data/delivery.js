@@ -245,20 +245,34 @@ export function arcLoft(t, profile = 'lob') {
 //     `delivery.salvoSpread`. Deterministic per round, NOT re-rolled per frame — a re-roll
 //     would read as jitter, and warble is the 'jostle' wobble's job. The outermost missile in
 //     the fan aims furthest off, so the salvo holds the shape it launched in.
-//   * `salvoConvergeFalloff` — how much of that offset still applies at flight fraction `t`:
-//     full through the cruise, then a cosine decay to exactly zero over the converge window.
-//     It finishes at `SALVO_CONVERGE_END`, deliberately short of impact, so every round has
-//     real flight left to settle onto the true target and all six still HIT.
+//   * `salvoConvergeFalloff` — how much of that offset still applies, keyed to the round's
+//     REMAINING DISTANCE to its target: full while further out than `SALVO_CONVERGE_START_PX`,
+//     then a cosine decay to exactly zero by `SALVO_CONVERGE_DONE_PX`. That last gap is
+//     deliberate slack — every round still has real flight left to settle onto the true
+//     target, so all six HIT.
 //
-// The window opens with the mortar arc's terminal dive (MORTAR_FALL_START), so the salvo
-// tightening and the rounds falling out of the sky are the same beat.
-export const SALVO_CONVERGE_START = MORTAR_FALL_START;   // 0.80 — offsets hold full until here
-export const SALVO_CONVERGE_END = 0.93;                  // fully converged, with flight left to settle
+// DISTANCE, NOT FLIGHT FRACTION. The first cut of this keyed the window to `dist / maxDist`
+// (0.80 -> 0.93). Jackson: "ohhhhhh, it should not be a fraction, it should be a fixed
+// distance from the target I'm thinking" — and he is right. It is the same bug #376 fixed on
+// velocity: anything keyed to a fraction of flight VARIES WITH RANGE. At t=0.80 of a long lob
+// the salvo starts tightening hundreds of px further out than on a short one, so the identical
+// weapon reads differently depending how far away you are standing. Keyed to remaining
+// distance it looks the same at every range.
+//
+// The numbers are picked to land close to what the fraction window produced at a typical
+// engagement (Swarm Rack's `range.opt` of 1050: 0.72 -> 0.88 of flight was ~294px -> ~126px
+// remaining), biased slightly early because the ask that prompted this was "convergence
+// before hitting should happen a tad sooner". Both are playtest dials.
+export const SALVO_CONVERGE_START_PX = 320;   // px to target: offsets hold full further out than this
+export const SALVO_CONVERGE_DONE_PX = 130;    // px to target: fully converged by here, with room to settle
 
-export function salvoConvergeFalloff(t) {
-  if (t <= SALVO_CONVERGE_START) return 1;
-  if (t >= SALVO_CONVERGE_END) return 0;
-  const k = (t - SALVO_CONVERGE_START) / (SALVO_CONVERGE_END - SALVO_CONVERGE_START);
+export function salvoConvergeFalloff(remainingDist) {
+  if (remainingDist >= SALVO_CONVERGE_START_PX) return 1;
+  if (remainingDist <= SALVO_CONVERGE_DONE_PX) return 0;
+  // A point-blank shot that launches already inside the window simply starts part-converged
+  // and finishes converging over what flight it has — no snap, and no divide-by-zero, since
+  // the two constants are fixed and distinct.
+  const k = (SALVO_CONVERGE_START_PX - remainingDist) / (SALVO_CONVERGE_START_PX - SALVO_CONVERGE_DONE_PX);
   return 0.5 + 0.5 * Math.cos(Math.PI * k);
 }
 

@@ -426,7 +426,34 @@ export const WEAPONS = {
     // t=0.80 -> 0.93 — the same beat as the mortar dive, with flight left over to settle so
     // all six still connect. Tracking authority itself is UNTOUCHED: he said tracking feels
     // good, so the rounds steer just as hard as before, only at slightly different points.
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 500, wobble: 'jostle', path: 'arcing', homingBlendStart: 0, arcProfile: 'mortar', salvoSpread: 48 },
+    // #377 follow-up 2, three deltas — "make the projectiles slower, make the wobble slower,
+    // and the in-flight spread slightly less". Everything else in this weapon is confirmed
+    // good and untouched (mortar arc, cycle, magazine, regen, tracking, converge window).
+    //   * velocity 500 -> 320. The SECOND cut this issue (it was 1000). Swarm Rack is now a
+    //     deliberate crawl next to Streak Pod (1000) and Cluster Salvo (1140) — that
+    //     divergence is the point, not an oversight: this weapon is being made its own thing.
+    //   * wobbleFrequency 6.5, overriding the shared JOSTLE_FREQUENCY of 11 (~40% lazier
+    //     side-to-side). Set as a per-weapon override rather than by editing the shared
+    //     constant, so 'jostle' stays available unchanged to anything that adopts it later.
+    //     Rate only — amplitude is untouched at the shared 5px, and the two are genuinely
+    //     independent in stepProjectile (offset = sin(t * frequency) * amplitude), so this
+    //     changes how FAST it warbles, not how wide.
+    //     Note the wobble clock is REAL TIME, not distance — so slowing the round does not
+    //     slow the warble on its own; it just packs more wiggles into the same path. Halving
+    //     speed alone would have made the flight look MORE shimmery, not less. Together, the
+    //     two changes land at ~309px of travel per wobble cycle (was ~285px), so the wiggle
+    //     stays about the same shape along the flight path while the real-time rate drops
+    //     ~41% — lazier to watch, not stretched into a slack noodle.
+    //   * salvoSpread 48 -> 40. "Slightly less" — the outermost pair now sit ~80px apart
+    //     rather than ~96px. Still clearly separated; every other part of the offset
+    //     behaviour is deliberately unchanged.
+    // Plus a fourth, asked for right after: convergence now triggers on REMAINING DISTANCE
+    // to the target (320px -> fully converged by 130px) instead of on a fraction of flight.
+    // Jackson: "it should not be a fraction, it should be a fixed distance from the target."
+    // See SALVO_CONVERGE_START_PX in delivery.js — a fraction made the salvo start tightening
+    // further out on a long lob than a short one, so the same weapon read differently
+    // depending on range.
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 320, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'mortar', salvoSpread: 40 },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',

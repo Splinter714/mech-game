@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ProjectilesMixin } from './projectiles.js';
 import { WEAPONS } from '../../data/weapons.js';
-import { makeProjectile, planEmissions } from '../../data/delivery.js';
+import { makeProjectile, planEmissions, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX } from '../../data/delivery.js';
 
 function makeEnemy(id, x, y, destroyed = false) {
   return { id, x, y, vx: 0, vy: 0, mech: { isDestroyed: () => destroyed } };
@@ -241,6 +241,43 @@ describe('#377 follow-up: a Swarm Rack salvo separates in flight and converges l
   it('still converges reliably at short range, where there is far less flight to settle in', () => {
     const { damaged } = flySalvo(makeEnemy('t', 320, 0), 320);
     expect(damaged.filter((d) => d.target === 't').length).toBe(6);
+  });
+
+  it('BEGINS converging at the same distance from the target regardless of range — the whole ' +
+     'point of keying it to distance instead of flight fraction', () => {
+    // Where the salvo is at its WIDEST is where convergence takes over from the natural
+    // outward drift — i.e. the onset. Keyed to remaining distance that onset sits at the same
+    // px-from-target at any range. Keyed to flight fraction it would scale with range: t=0.72
+    // is ~196px out on a 700px lob but ~448px out on a 1600px one.
+    const onsetDistance = (range) => {
+      const target = makeEnemy('t', range, 0);
+      const { shots } = planEmissions(WEAPONS.swarmRack);
+      const rounds = shots.map((sh) => {
+        const r = makeProjectile(WEAPONS.swarmRack, 0, 0, sh.angleOffset, { maxDist: range, angleOffset: sh.angleOffset });
+        r.owner = 'player'; r.seekTarget = target; r.trail = [];
+        return r;
+      });
+      const { scene } = makeScene({ enemies: [target], projectiles: [...rounds] });
+      let widest = -1, atDist = 0;
+      for (let i = 0; i < 3000 && scene.projectiles.length; i++) {
+        const live = scene.projectiles;
+        const xs = live.map((p) => p.x), ys = live.map((p) => p.y);
+        const width = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+        const rem = Math.min(...live.map((p) => Math.hypot(target.x - p.x, target.y - p.y)));
+        if (width > widest) { widest = width; atDist = rem; }
+        scene._updateProjectiles(0.016);
+      }
+      return atDist;
+    };
+    const shortLob = onsetDistance(700);
+    const longLob = onsetDistance(1600);
+    // Same distance from the target, within a frame or two of travel.
+    expect(Math.abs(shortLob - longLob)).toBeLessThan(60);
+    // ...and that distance is the tuned trigger, not some accident of the flight.
+    for (const d of [shortLob, longLob]) {
+      expect(d).toBeGreaterThan(SALVO_CONVERGE_DONE_PX);
+      expect(d).toBeLessThan(SALVO_CONVERGE_START_PX + 60);
+    }
   });
 
   it('leaves a weapon that never opted in flying exactly as it did — a Streak Pod volley is ' +

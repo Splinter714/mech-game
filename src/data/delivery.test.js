@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, MORTAR_RISE_END, MORTAR_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START, SALVO_CONVERGE_END } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, MORTAR_RISE_END, MORTAR_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -974,31 +974,42 @@ describe('#377 follow-up — salvo separation with a late converge', () => {
   it('the whole salvo spans a SLIGHT separation — real, but nowhere near the 44° fan #376 ' +
      'removed', () => {
     const extremes = salvoAimOffset(swarm, halfCone) - salvoAimOffset(swarm, -halfCone);
+    expect(extremes).toBeCloseTo(80, 6);     // ~80px across the salvo
     expect(extremes).toBeGreaterThan(40);    // visible
     expect(extremes).toBeLessThan(120);      // still one clump, not a wall
   });
 
-  it('holds full separation through the whole cruise, and starts converging exactly when the ' +
-     'mortar arc starts its dive', () => {
-    for (const t of [0, 0.2, 0.5, 0.7, SALVO_CONVERGE_START]) {
-      expect(salvoConvergeFalloff(t)).toBe(1);
+  it('holds full separation while the round is still well out from the target, and only ' +
+     'starts tightening inside the trigger distance', () => {
+    for (const d of [5000, 1200, 600, SALVO_CONVERGE_START_PX]) {
+      expect(salvoConvergeFalloff(d)).toBe(1);
     }
-    expect(SALVO_CONVERGE_START).toBe(MORTAR_FALL_START);
-    expect(salvoConvergeFalloff(SALVO_CONVERGE_START + 0.01)).toBeLessThan(1);
+    expect(salvoConvergeFalloff(SALVO_CONVERGE_START_PX - 1)).toBeLessThan(1);
   });
 
-  it('converges to EXACTLY zero, and does so before impact so the rounds still connect', () => {
-    expect(salvoConvergeFalloff(SALVO_CONVERGE_END)).toBe(0);
-    expect(salvoConvergeFalloff(0.99)).toBe(0);
-    expect(salvoConvergeFalloff(1)).toBe(0);
-    expect(SALVO_CONVERGE_END).toBeLessThan(1);   // settle time left over — reliability
+  it('converges to EXACTLY zero with distance still left to run, so the rounds settle onto ' +
+     'the true target and connect', () => {
+    expect(salvoConvergeFalloff(SALVO_CONVERGE_DONE_PX)).toBe(0);
+    expect(salvoConvergeFalloff(40)).toBe(0);
+    expect(salvoConvergeFalloff(0)).toBe(0);
+    expect(SALVO_CONVERGE_DONE_PX).toBeGreaterThan(0);   // settle room — reliability
   });
 
-  it('decays monotonically once it starts (tightening in, never re-spreading)', () => {
-    let prev = Infinity;
-    for (let t = SALVO_CONVERGE_START; t <= 1; t += 0.005) {
-      const f = salvoConvergeFalloff(t);
-      expect(f).toBeLessThanOrEqual(prev + 1e-9);
+  it('a point-blank shot that launches ALREADY inside the window starts part-converged and ' +
+     'finishes over what flight it has — no snap, no divide-by-zero', () => {
+    const midWindow = (SALVO_CONVERGE_START_PX + SALVO_CONVERGE_DONE_PX) / 2;
+    const f = salvoConvergeFalloff(midWindow);
+    expect(f).toBeGreaterThan(0);
+    expect(f).toBeLessThan(1);
+    expect(Number.isFinite(salvoConvergeFalloff(SALVO_CONVERGE_DONE_PX + 1e-9))).toBe(true);
+    expect(Number.isFinite(salvoConvergeFalloff(1e-9))).toBe(true);
+  });
+
+  it('tightens monotonically as the round closes in (never re-spreading)', () => {
+    let prev = -Infinity;
+    for (let d = 0; d <= SALVO_CONVERGE_START_PX + 50; d += 2) {
+      const f = salvoConvergeFalloff(d);   // walking AWAY from the target: falloff only rises
+      expect(f).toBeGreaterThanOrEqual(prev - 1e-9);
       prev = f;
     }
   });
@@ -1007,8 +1018,8 @@ describe('#377 follow-up — salvo separation with a late converge', () => {
      '0 for a caller that passes none', () => {
     const outer = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900, angleOffset: halfCone });
     const inner = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900, angleOffset: -halfCone });
-    expect(outer.aimOffset).toBeCloseTo(48, 6);
-    expect(inner.aimOffset).toBeCloseTo(-48, 6);
+    expect(outer.aimOffset).toBeCloseTo(40, 6);
+    expect(inner.aimOffset).toBeCloseTo(-40, 6);
     expect(makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900 }).aimOffset).toBe(0);
     // A weapon that never opted in gets 0 even when it IS fanned.
     expect(makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 900, angleOffset: 0.2 }).aimOffset).toBe(0);
@@ -1030,5 +1041,50 @@ describe('#377 follow-up — salvo separation with a late converge', () => {
      'left it, since Jackson said tracking already feels good', () => {
     expect(WEAPONS.swarmRack.delivery.homingBlendStart).toBe(0);
     expect(arcHomingBlend(0.5, 0)).toBe(1);
+  });
+});
+
+// #377 follow-up 2: "make the wobble slower". The subtlety worth locking down is that the
+// wobble clock is REAL TIME, not distance travelled — so slowing the round does NOT slow its
+// warble by itself, it just packs more wiggles into the same stretch of path. The frequency
+// cut is what actually makes it lazier, and the two changes together happen to leave the
+// wiggle about the same shape along the flight path.
+describe('#377 follow-up — Swarm Rack warbles lazier, without getting wider', () => {
+  const swarm = WEAPONS.swarmRack.delivery;
+
+  it('cuts the RATE only — width is left at the shared jostle amplitude', () => {
+    const p = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 900 });
+    expect(p.wobbleFrequency).toBe(6.5);
+    expect(p.wobbleFrequency).toBeLessThan(11);          // was the shared JOSTLE_FREQUENCY
+    expect(p.wobbleAmplitude).toBe(5);                   // unchanged
+  });
+
+  it('amplitude and frequency are genuinely independent — a frequency change moves the ' +
+     'zero-crossings, never the peak excursion', () => {
+    const peak = (freq) => {
+      const p = { ...makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 9e9 }), wobblePhase: 0 };
+      p.wobbleFrequency = freq;
+      p.homing = false;
+      let worst = 0;
+      for (let i = 0; i < 400; i++) { stepProjectile(p, 0.016, null); worst = Math.max(worst, Math.abs(p.wobbleOffset)); }
+      return worst;
+    };
+    expect(peak(6.5)).toBeCloseTo(peak(11), 3);
+  });
+
+  it('slowing the round does NOT slow the warble on its own (the clock is time, not ' +
+     'distance) — which is exactly why the frequency cut was needed', () => {
+    const cyclesPerSecond = (v) => swarm.wobbleFrequency / (2 * Math.PI);   // independent of v
+    expect(cyclesPerSecond(320)).toBeCloseTo(cyclesPerSecond(1000), 10);
+  });
+
+  it('velocity + frequency together: the real-time warble is much lazier, while the wiggle ' +
+     'stays about the same shape ALONG THE PATH (it does not become a slack noodle)', () => {
+    const pxPerCycle = (v, f) => (v * 2 * Math.PI) / f;
+    const now = pxPerCycle(swarm.velocity, swarm.wobbleFrequency);          // 320px/s @ 6.5
+    const before = pxPerCycle(500, 11);                                     // the previous pair
+    expect(swarm.wobbleFrequency / 11).toBeLessThan(0.65);                  // >35% lazier in real time
+    expect(now).toBeGreaterThan(before * 0.85);                             // path shape preserved
+    expect(now).toBeLessThan(before * 1.25);
   });
 });

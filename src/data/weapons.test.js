@@ -256,9 +256,20 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
 // mortar-shaped arc, and a bigger/faster-refilling magazine. The point of this block is the
 // word "isolation" — the other missiles must be exactly where #376 left them.
 describe('#377 Swarm Rack feel pass', () => {
-  it('halves flight speed and fires noticeably more often', () => {
-    expect(WEAPONS.swarmRack.delivery.velocity).toBe(500);
+  it('flies far slower than it did (cut twice, 1000 -> 500 -> 320) and fires noticeably more ' +
+     'often — a deliberate crawl next to the other missiles, not an oversight', () => {
+    expect(WEAPONS.swarmRack.delivery.velocity).toBe(320);
     expect(WEAPONS.swarmRack.cycleTime).toBe(1100);
+    expect(WEAPONS.swarmRack.delivery.velocity).toBeLessThan(WEAPONS.streakPod.delivery.velocity);
+    expect(WEAPONS.swarmRack.delivery.velocity).toBeLessThan(WEAPONS.clusterRocket.delivery.velocity);
+  });
+
+  it('warbles lazier — a per-weapon wobble RATE override, with the width left alone and the ' +
+     'shared jostle default untouched for anything that adopts it later', () => {
+    expect(WEAPONS.swarmRack.delivery.wobble).toBe('jostle');
+    expect(WEAPONS.swarmRack.delivery.wobbleFrequency).toBe(6.5);
+    expect(WEAPONS.swarmRack.delivery.wobbleFrequency).toBeLessThan(11);   // the shared default
+    expect(WEAPONS.swarmRack.delivery.wobbleAmplitude).toBeUndefined();    // width unchanged
   });
 
   it('opts into the mortar arc profile', () => {
@@ -273,9 +284,15 @@ describe('#377 Swarm Rack feel pass', () => {
     expect(1 / WEAPONS.swarmRack.ammoRegen).toBeLessThan(1 / 0.20);
   });
 
+  it('keeps a slightly narrower in-flight salvo spread', () => {
+    expect(WEAPONS.swarmRack.delivery.salvoSpread).toBe(40);
+  });
+
   it('leaves every OTHER missile exactly where #376 put it — speed, cycle and arc shape', () => {
     for (const id of ['clusterRocket', 'streakPod', 'napalm', 'plasmaCannon']) {
       expect(WEAPONS[id].delivery.arcProfile).toBeUndefined();   // still the default lob
+      expect(WEAPONS[id].delivery.salvoSpread).toBeUndefined();  // no late-converge offset
+      expect(WEAPONS[id].delivery.wobbleFrequency).toBeUndefined();
     }
     expect(WEAPONS.clusterRocket.delivery.velocity).toBe(1140);
     expect(WEAPONS.streakPod.delivery.velocity).toBeGreaterThan(500);

@@ -110,15 +110,16 @@ export const ProjectilesMixin = {
       // still connect. Applied BEFORE leadAngle so the intercept solution is computed against
       // the offset point, and left out of `tx/ty` entirely so hit detection is untouched.
       if (p.aimOffset && homingActive) {
-        const f = salvoConvergeFalloff(p.dist / p.maxDist);
+        const dx = hx - p.x, dy = hy - p.y;
+        const len = Math.hypot(dx, dy);
+        // Keyed to REMAINING DISTANCE, never to flight fraction — see salvoConvergeFalloff.
+        // A fraction would make the tightening start further out on a long shot than a short
+        // one; this way it looks identical at every range.
+        const f = len > 1e-6 ? salvoConvergeFalloff(len) : 0;
         if (f > 0) {
-          const dx = hx - p.x, dy = hy - p.y;
-          const len = Math.hypot(dx, dy);
-          if (len > 1e-6) {
-            const off = p.aimOffset * f;
-            hx += (-dy / len) * off;
-            hy += (dx / len) * off;
-          }
+          const off = p.aimOffset * f;
+          hx += (-dy / len) * off;
+          hy += (dx / len) * off;
         }
       }
       // Steer toward an INTERCEPT point (#77): lead a live moving enemy so the round commits to a
