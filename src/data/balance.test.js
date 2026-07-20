@@ -25,7 +25,9 @@ const PLAYER_SHIELD_MAX = 100;
 // structure / armor / shield, exactly as the owner gave them.
 const TABLE = {
   infantry:    { structure: 3,   armor: 0,   shield: 0,   total: 3 },
-  drone:       { structure: 3,   armor: 0,   shield: 0,   total: 3 },
+  // #370 (owner-set): drone went 3 -> 5 structure + 5 shield = 10 total ("10 total, 5 of each",
+  // having just picked shields over armor).
+  drone:       { structure: 5,   armor: 0,   shield: 5,   total: 10 },
   turret:      { structure: 35,  armor: 15,  shield: 0,   total: 50 },
   helicopter:  { structure: 35,  armor: 0,   shield: 15,  total: 50 },
   tank:        { structure: 50,  armor: 30,  shield: 0,   total: 80 },
@@ -116,6 +118,37 @@ describe('#299: enemy mechs now carry a regenerating shield', () => {
     const refill = (id) => { const s = new Mech(ENEMIES[id]).shield; return s.max / s.regenPerSec; };
     expect(refill('raider')).toBeLessThan(refill('sniper'));
     expect(refill('sniper')).toBeLessThan(refill('artillery'));
+  });
+});
+
+describe('#370: the drone is HP+SHIELD, reusing the helicopter\'s regen tuning', () => {
+  it('carries a 5-point shield in front of 5 structure, no armor', () => {
+    const d = new HpBody(ENEMY_KINDS.drone);
+    expect(d.maxHp).toBe(5);
+    expect(d.maxArmor).toBe(0);
+    expect(d.hasShield()).toBe(true);
+    expect(d.shield.max).toBe(5);
+    expect(d.toughness).toBe(10);
+  });
+
+  it('uses the same regenPerSec/pauseMs as the helicopter rather than new numbers', () => {
+    const d = new HpBody(ENEMY_KINDS.drone).shield;
+    const h = new HpBody(ENEMY_KINDS.helicopter).shield;
+    expect(d.regenPerSec).toBe(h.regenPerSec);
+    expect(d.pauseMs).toBe(h.pauseMs);
+  });
+
+  it('absorbs on the shield first, then refills after the hit-pause clears', () => {
+    const d = new HpBody(ENEMY_KINDS.drone);
+    const res = d.applyDamage('body', 4);
+    expect(res.shieldAbsorbed).toBe(4);
+    expect(d.hp).toBe(5);                  // structure untouched
+    expect(d.shield.hp).toBe(1);
+    d.tickShield(0.5);                     // still inside the 900ms pause
+    expect(d.shield.hp).toBe(1);
+    d.tickShield(0.5);                     // pause clears
+    d.tickShield(2);                       // 3/s over 2s caps out at 5
+    expect(d.shield.hp).toBe(5);
   });
 });
 

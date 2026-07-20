@@ -317,7 +317,17 @@ export const ENEMY_KINDS = {
   drone: {
     name: 'Recon Drone',
     kind: 'drone',
-    hp: 3,                  // #299 balance pass (owner-set): 3, down from 14 — chaff, dies instantly.
+    // #370 (owner-set, playtest 2026-07-20: "increase drone ability to withstand hits" — asked
+    // armor vs shields he picked SHIELDS, and gave "10 total, 5 of each"). So: 5 structure +
+    // 5 shield = 10 total, up from the #299 pass's flat 3 ("chaff, dies instantly").
+    hp: 5,
+    // #246 layer model: HP+SHIELD, no armor — same combo as the helicopter, and reusing the
+    // helicopter's exact regen tuning (regenPerSec 3, pauseMs 900) rather than inventing new
+    // numbers: a thin-skinned flyer with a small fast-recharging deflector. At 5 max that's a
+    // ~1.7s refill once the 0.9s hit-pause clears, so a drone that breaks off and survives comes
+    // back shelled — a deliberate, accepted attritional change given carriers deploy forever
+    // (#328). Any continuing fire keeps the pause reset, so it never regens mid-engagement.
+    shield: { max: 5, regenPerSec: 3, pauseMs: 900 },
     parts: {
       body: { x: 0, y: 0, w: 12, h: 12 },
     },
