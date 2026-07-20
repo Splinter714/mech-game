@@ -45,6 +45,14 @@ import { TouchSticks } from './touchSticks.js';
 export const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
 
+// #386: master switch for the on-screen touch sticks. OFF — on an iPad they activated even
+// with a Bluetooth controller attached (touchCapable() is true on any touch device) and
+// hijacked input, breaking the gamepad; the owner also concluded touch controls aren't viable
+// for this game. With this false, touchCapable() returns false, so _initTouch() never runs and
+// no TouchStickHud is built — touch devices now behave exactly like desktop. The whole touch
+// implementation is intact; flip this back to true to restore it.
+export const TOUCH_STICKS_ENABLED = false;
+
 // Standard-gamepad button indices Phaser doesn't name (sticks, d-pad, menu buttons).
 export const PAD = {
   A: 0, B: 1, X: 2, Y: 3,
@@ -165,7 +173,12 @@ export class Controls {
 
   // Capability probe only — NOT "is the player using touch". Guarded so the module still
   // imports cleanly under Node/vitest, where there is no window.
+  // #386: touch sticks are DISABLED behind this one flag. They hijacked input on iPad even
+  // with a Bluetooth controller attached, and the owner concluded touch controls aren't
+  // viable for this game. Flip TOUCH_STICKS_ENABLED back to true to restore them — the whole
+  // implementation (touchSticks.js, TouchStickHud.js, the wiring below) is intact.
   static touchCapable() {
+    if (!TOUCH_STICKS_ENABLED) return false;
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
     return 'ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0;
   }

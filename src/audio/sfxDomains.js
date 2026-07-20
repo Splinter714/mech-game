@@ -45,7 +45,6 @@ export const SFX_DOMAINS = {
     { id: 'returnToGarage', label: 'Return To Garage', stages: [['play', 'PLAY']] },
     { id: 'menuNav', label: 'Menu Navigation', stages: [['play', 'PLAY']] },
     { id: 'scrapPickup', label: 'Scrap Pickup', stages: [['play', 'PLAY']] },
-    { id: 'powerupPickupOvercharge', label: 'Pickup: Overcharge', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupOverdrive', label: 'Pickup: Overdrive', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupOverclock', label: 'Pickup: Overclock', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupArmorPatch', label: 'Pickup: Armor Patch', stages: [['play', 'PLAY']] },
@@ -75,7 +74,7 @@ export function findSfxDomainEntry(id) {
 // added to this list without its SFX_DOMAINS.ui entry, and the garage crashed on `.label`).
 export const SFX_UI_GROUPS = [
   { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
-  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOvercharge', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage'] },
+  { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage'] },
   { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
   { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
 ];

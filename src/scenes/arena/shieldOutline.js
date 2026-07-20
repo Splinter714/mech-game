@@ -61,13 +61,29 @@ export function shieldPartKeys(def) {
 export const SHIELD_OUTLINE_SCALE_MULT = 1.14;
 export const SHIELD_HIT_FLASH_MULT = 1.15;
 
+// #381: how much the glow SWELLS per unit of temp-pool-to-base-capacity ratio. A full 150-temp
+// pool on the player's 100 base (ratio 1.5) grows the shell by 1 + 0.5*1.5 = 1.75x on top of the
+// normal 1.14x rim — a clearly larger protective bubble that shrinks back as the pool is spent.
+// Enemies never carry a temp pool, so their outline is byte-for-byte unchanged (growth ≡ 1).
+export const SHIELD_TEMP_GROW_K = 0.5;
+
 // ── Pure state/appearance logic (no Phaser — unit-tested in shieldOutline.test.js) ───────────
 
-// Is the outline supposed to be showing right now? The ONLY rule: a live pool. Regen brings it
-// straight back, which is the whole point of #302 (a shielded enemy the player chipped but didn't
-// burst down visibly re-shells itself).
+// Is the outline supposed to be showing right now? The ONLY rule: a live pool — base hp OR the
+// #381 temporary pool. Regen brings it straight back, which is the whole point of #302 (a shielded
+// enemy the player chipped but didn't burst down visibly re-shells itself).
 export function shieldOutlineActive(shield) {
-  return (shield?.hp || 0) > 0;
+  return (shield?.hp || 0) + (shield?.temp || 0) > 0;
+}
+
+// #381: the outline's scale multiplier for a live temporary pool — 1 (no growth) whenever there is
+// no temp, so every enemy and an un-buffed player stay exactly as before. Pure so the growth curve
+// is unit-tested without any sprites.
+export function shieldOutlineGrowth(shield) {
+  const max = shield?.max || 0;
+  const temp = shield?.temp || 0;
+  if (max <= 0 || temp <= 0) return 1;
+  return 1 + SHIELD_TEMP_GROW_K * (temp / max);
 }
 
 // Opacity for this frame: fades with the remaining FRACTION of the pool rather than a flat on/off,
@@ -85,7 +101,7 @@ export function shieldOutlineAlpha(pool, cap, t) {
 // Build the outline duplicates for one unit's view and return its visual state. `scale` is the
 // display scale of the real sprites (the outline is drawn slightly larger). Callers decide
 // whether a unit gets one at all: the PLAYER always does (its shield capacity can appear later,
-// when the Shield powerup boosts a zero-capacity chassis — Mech.boostShield), while an ENEMY only
+// when the Shield powerup grants a temporary pool to a zero-capacity chassis — Mech.grantTempShield), while an ENEMY only
 // gets one if its kind data configures a shield (`shieldPresent`), so the great majority of
 // enemies hold no outline sprites and make no per-frame call whatsoever.
 export function makeShieldOutline(scene, view, { keys, scale, color = SHIELD_COLOR }) {
@@ -105,7 +121,7 @@ export function makeShieldOutline(scene, view, { keys, scale, color = SHIELD_COL
     // themselves doesn't matter since they're additive-blended and fully hidden by the real art.
     view.addAt(o, 0);
   }
-  return { outlines, active: false, t: 0, baseScale };
+  return { outlines, active: false, t: 0, baseScale, grow: 1 };
 }
 
 // Per-frame upkeep for ONE unit's outline. Shows/hides on the 0↔>0 edge (pickup / regen-back-up /
@@ -116,7 +132,9 @@ export function makeShieldOutline(scene, view, { keys, scale, color = SHIELD_COL
 // driving.
 export function updateShieldOutline(sv, view, shield, delta) {
   if (!sv) return;
-  const pool = shield?.hp || 0;
+  // #381: the pool and cap include the temporary shield, so the alpha ("how much is left") reads
+  // the full total. Temp is 0 for every enemy, so this is identical to the base pool for them.
+  const pool = (shield?.hp || 0) + (shield?.temp || 0);
   const active = shieldOutlineActive(shield);
   const keys = Object.keys(sv.outlines);
   if (active !== sv.active) {
@@ -126,7 +144,14 @@ export function updateShieldOutline(sv, view, shield, delta) {
   }
   if (!active) return;
   sv.t += delta;
-  const alpha = shieldOutlineAlpha(pool, shield.max, sv.t);
+  const alpha = shieldOutlineAlpha(pool, (shield.max || 0) + (shield.temp || 0), sv.t);
+  // #381: swell the shell with a live temp pool. Only re-scale when the growth factor CHANGES
+  // (pickup / spend / expiry) so we don't fight the hit-flash tween every frame — and never for a
+  // plain (temp-less) shield, where growth stays 1 and no setScale call is made at all.
+  const grow = shieldOutlineGrowth(shield);
+  if (sv.grow === undefined) sv.grow = 1;
+  const growChanged = Math.abs(grow - sv.grow) > 1e-3;
+  if (growChanged) sv.grow = grow;
   for (const key of keys) {
     const real = view[key];
     const o = sv.outlines[key];
@@ -135,6 +160,7 @@ export function updateShieldOutline(sv, view, shield, delta) {
     o.setOrigin(real.originX, real.originY);
     o.rotation = real.rotation;
     o.setAlpha(alpha);
+    if (growChanged && o.setScale) o.setScale(sv.baseScale * grow);
   }
 }
 
@@ -143,9 +169,11 @@ export function updateShieldOutline(sv, view, shield, delta) {
 // `_burst` primitive, but reusing the outline sprites' own persistent shapes.
 export function flashShieldOutline(scene, sv) {
   if (!sv || !sv.active) return;
+  // #381: flash relative to the current (possibly temp-swollen) shell size, settling back to it.
+  const rest = sv.baseScale * (sv.grow ?? 1);
   const targets = Object.values(sv.outlines);
-  for (const o of targets) o.setScale(sv.baseScale * SHIELD_HIT_FLASH_MULT);
+  for (const o of targets) o.setScale(rest * SHIELD_HIT_FLASH_MULT);
   scene.tweens.add({
-    targets, scaleX: sv.baseScale, scaleY: sv.baseScale, duration: 220, ease: 'Quad.out',
+    targets, scaleX: rest, scaleY: rest, duration: 220, ease: 'Quad.out',
   });
 }

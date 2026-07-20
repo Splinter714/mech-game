@@ -38,7 +38,7 @@ export function isBaseCleared(baseId, enemies) {
   return !enemies.some((e) => e.baseId === baseId);
 }
 
-// ── #356: WHAT IT TAKES TO CLEAR A BASE ──────────────────────────────────────────────────────
+// ── #356/#384: WHAT IT TAKES TO CLEAR A BASE ─────────────────────────────────────────────────
 // Jackson, 2026-07-19: "the mission shouldn't be fully complete until all enemies are dead at the
 // last objective; this might need more interim objectives of destroying all enemies and docks at
 // each base before moving to the next base maybe?" — answered as BOTH: the run does not complete
@@ -48,28 +48,32 @@ export function isBaseCleared(baseId, enemies) {
 // The whole design problem here is #326: it removed every dock reinforcement cap, so a standing
 // dock produces enemies FOREVER. "Kill every enemy at this base" is therefore not a requirement
 // that can settle while a single dock still stands — a player handed a live kill count would watch
-// it tick back up. So the requirement is ORDERED, and the order is the point: the player is only
-// ever shown ONE step at a time, and the enemy count is not shown — does not exist as a goal —
-// until the last dock is down. Killing docks is what MAKES clearing possible, and the UI says so
-// in that order rather than presenting an unachievable tally up front.
+// it tick back up. So the enemy count is not shown — does not exist as a goal — until the last
+// dock is down. Killing docks is what MAKES clearing possible, and the UI reflects that.
 //
-// The three steps, in the order they're surfaced:
-//   1. `objective` — the base's objective hex still stands. Unchanged from the old rule; this is
-//      still what the marker points at and what latches the base's gates open (#355).
-//   2. `docks`     — the objective is down but N docks still stand. Kill the docks. Reinforcement
-//      is still flowing; that's fine, because the player isn't being asked to out-kill it yet.
-//   3. `enemies`   — every dock is down, so the base's population is now FINITE and strictly
+// #384 (Jackson, playtest 2026-07-20: "I want the first phase of marked objectives at each base to
+// be the docks and the objective, not just the objective; mark all of those at once", and on kill
+// order: "objective + docks any order, but gates still need objective") collapsed #356's first two
+// ORDERED steps (objective, then docks) into ONE any-order phase. Two phases now:
+//   1. `structures` — the objective hex AND every dock, destroyable in ANY order, all marked at
+//      once from the start. Phase 1 is done only when the objective is down AND no dock stands.
+//   2. `enemies`    — every structure is down, so the base's population is now FINITE and strictly
 //      decreasing. Only now is a kill count shown, and only now can it reach zero.
 // Then `clear`, which is the ONLY state that lets the objective advance to the next base (and,
 // for every base at once, ends the run as a win).
+//
+// THE SPLIT THAT MUST NOT BE MERGED (#384): #355's gates-lock-open still latches on the OBJECTIVE
+// hex dying ALONE, NOT on all of phase 1 — that latch is `isBaseObjectiveDestroyed`
+// (scenes/arena/mission.js), a DIFFERENT predicate from "phase 1 complete" (which also needs the
+// docks). Killing the objective while docks stand opens the gates but does not finish phase 1;
+// killing a dock while the objective stands does neither. Do NOT repoint the gate latch here.
 //
 // Pure: the caller supplies `objectiveDestroyed` (scenes/arena/mission.js `isBaseObjectiveDestroyed`)
 // and an `isDockStanding` predicate, because "is this hex still standing" is a `buildingHp`
 // question the scene owns. A dock hex collapses out of `buildingHp` the instant it dies, exactly
 // like the objective hex — so both halves read from the same one-way world fact and no new
 // bookkeeping is introduced.
-export const CLEAR_OBJECTIVE = 'objective';
-export const CLEAR_DOCKS = 'docks';
+export const CLEAR_STRUCTURES = 'structures';
 export const CLEAR_ENEMIES = 'enemies';
 export const CLEAR_DONE = 'clear';
 
@@ -77,38 +81,56 @@ export function baseClearState(base, { objectiveDestroyed = false, isDockStandin
   // No base at all reads as cleared — nothing left to wait on, same convention as
   // `isBaseCleared`/`isBaseObjectiveDestroyed` (guards the run's "index ran past the last base"
   // and pre-`_buildWorld` cases).
-  if (!base) return { step: CLEAR_DONE, docksLeft: 0, enemiesLeft: 0, cleared: true };
+  if (!base) return { step: CLEAR_DONE, objectiveStanding: false, docksLeft: 0, structuresLeft: 0, enemiesLeft: 0, cleared: true };
+  const objectiveStanding = !objectiveDestroyed;
   const docksLeft = (base.docks ?? []).filter((d) => isDockStanding(d)).length;
   const enemiesLeft = (enemies ?? []).filter((e) => e.baseId === base.id).length;
-  const step = !objectiveDestroyed ? CLEAR_OBJECTIVE
-    : docksLeft > 0 ? CLEAR_DOCKS
-      : enemiesLeft > 0 ? CLEAR_ENEMIES
-        : CLEAR_DONE;
-  return { step, docksLeft, enemiesLeft, cleared: step === CLEAR_DONE };
+  // Phase 1's remaining tally: the objective (0 or 1) plus every standing dock, in ANY order.
+  const structuresLeft = (objectiveStanding ? 1 : 0) + docksLeft;
+  const step = structuresLeft > 0 ? CLEAR_STRUCTURES
+    : enemiesLeft > 0 ? CLEAR_ENEMIES
+      : CLEAR_DONE;
+  return { step, objectiveStanding, docksLeft, structuresLeft, enemiesLeft, cleared: step === CLEAR_DONE };
 }
 
 // The player-facing line for a clear state. Lives here, next to the rule it describes, so the HUD
-// stays a renderer and the "never show a kill count while docks stand" guarantee is enforced by
-// the same code that decides the step rather than by a second, drift-prone copy in the HUD.
+// stays a renderer and the "never show a kill count while a structure stands" guarantee is enforced
+// by the same code that decides the step rather than by a second, drift-prone copy in the HUD.
+//
+// Phase 1 names exactly what is still standing (objective and/or N docks) so an any-order sweep
+// reads right whichever piece the player takes first — and, per #356's discipline, never shows a
+// garrison count while any structure remains.
 export function baseClearLabel(state) {
   switch (state?.step) {
-    case CLEAR_OBJECTIVE: return 'DESTROY THE OBJECTIVE';
-    case CLEAR_DOCKS: return `DESTROY THE DOCKS  (${state.docksLeft} LEFT)`;
+    case CLEAR_STRUCTURES: {
+      const parts = [];
+      if (state.objectiveStanding) parts.push('OBJECTIVE');
+      if (state.docksLeft > 0) parts.push(`${state.docksLeft} DOCK${state.docksLeft === 1 ? '' : 'S'}`);
+      return `DESTROY THE BASE  (${parts.join(' + ')})`;
+    }
     case CLEAR_ENEMIES: return `ELIMINATE THE GARRISON  (${state.enemiesLeft} LEFT)`;
     default: return 'BASE CLEAR';
   }
 }
 
-// ── #371: WHAT THE OBJECTIVE INDICATOR POINTS AT RIGHT NOW ────────────────────────────────────
+// ── #371/#384: WHAT THE OBJECTIVE INDICATOR POINTS AT RIGHT NOW ───────────────────────────────
 // Jackson, playtest 2026-07-20: "the actual objective indicator should spread to all items that
 // need to be destroyed after the standard 'objective' is destroyed; a little objective hex on all
-// remaining enemies, and building-sized ones on the docks".
+// remaining enemies, and building-sized ones on the docks" — then, same day (#384): "mark all of
+// those at once", the objective and the docks together from the start, destroyable in any order.
 //
 // The whole point is that this must never disagree with the HUD line. So it is not a parallel
 // rule: it is a projection of the SAME `baseClearState` result that `baseClearLabel` renders.
-// One step is surfaced at a time, in #356's order, and the enemy set is deliberately empty while
-// any dock stands — the same discipline that keeps a kill count off the HUD until the last dock
-// is down (a base with 7 live enemies and a standing dock marks the DOCKS, never the 7).
+// One PHASE is surfaced at a time, and the enemy set is deliberately empty while any structure
+// (objective or dock) stands — the same discipline that keeps a kill count off the HUD until the
+// last structure is down (a base with 7 live enemies and a standing dock marks the DOCK, never
+// the 7).
+//
+// Phase 1 marks the objective AND every standing dock at once. `showObjective` follows the
+// objective's OWN state (`objectiveStanding`), not the whole phase — so once the objective hex
+// falls its big beacon drops even while docks are still being marked, and the docks keep their
+// building markers until the last one is gone. This is the same any-order composition as the HUD
+// label: whichever piece the player takes first, the markers track exactly what still stands.
 //
 // Late spawns are marked, by construction: the sets are derived fresh from the live `enemies`
 // array every call rather than snapshotted when marking begins, so a dock's last wave or a
@@ -116,23 +138,21 @@ export function baseClearLabel(state) {
 // during the `enemies` step and that is intended — an unmarked straggler is the failure mode this
 // whole issue exists to prevent, so there is no cap.
 //
-// `size` names the visual weight the scene should draw, keeping that decision out of the renderer:
-//   'objective' — the single hex marker, unchanged (step 1)
-//   'building'  — dock-sized markers (step 2)
-//   'small'     — a little hex per enemy (step 3)
-export const MARK_OBJECTIVE = 'objective';
-export const MARK_BUILDING = 'building';
+// `size` names the coarse visual weight for the phase (the scene draws the objective beacon and
+// the building/small markers itself; this is descriptive, kept out of the renderer's decisions):
+//   'structures' — objective beacon + dock-sized markers (phase 1)
+//   'small'       — a little hex per enemy (phase 2)
+export const MARK_STRUCTURES = 'structures';
 export const MARK_SMALL = 'small';
 
 export function baseMarkTargets(state, base, { isDockStanding = () => false, enemies = [] } = {}) {
   switch (state?.step) {
-    case CLEAR_OBJECTIVE:
-      // The objective hex itself is still the one and only marker; the scene already owns it.
-      return { size: MARK_OBJECTIVE, showObjective: true, docks: [], enemies: [] };
-    case CLEAR_DOCKS:
+    case CLEAR_STRUCTURES:
+      // Objective beacon shown iff the objective itself still stands; building markers on every
+      // standing dock. Both at once — any order.
       return {
-        size: MARK_BUILDING,
-        showObjective: false,
+        size: MARK_STRUCTURES,
+        showObjective: state.objectiveStanding !== false,
         docks: (base?.docks ?? []).filter((d) => isDockStanding(d)),
         enemies: [],
       };

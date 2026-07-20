@@ -487,114 +487,111 @@ describe('Mech full-mech shield (#246)', () => {
     expect(m.shield.hp).toBeCloseTo(50, 5);
   });
 
-  it('boostShield is a no-op on a mech with no native shield at all', () => {
-    const m = new Mech({ chassisId: 'medium' });
-    m.boostShield(2, 5000);
+  // ── #381: TEMPORARY shield pool (D&D temp HP) — replaces #246/#271's capacity+regen multiplier.
+  // The Shield powerup now grants an expendable pool ON TOP of base max: spent first, never
+  // regenerating, never lifting the regen ceiling, and expiring with its window if unspent.
+  it('#381: grantTempShield adds an expendable pool ON TOP of base max — base max/regen/hp untouched, total grows', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.grantTempShield(150, 10000);
+    expect(m.shield.max).toBe(40);            // base capacity is NEVER raised
+    expect(m.shield.regenPerSec).toBe(2);     // …nor the regen rate
+    expect(m.shield.hp).toBe(40);             // base filled to full
+    expect(m.shield.temp).toBe(150);          // the expendable pool sits alongside
+    expect(m.shieldTotalHp()).toBe(190);      // what the HUD/glow read: base + temp
+    expect(m.shieldTotalMax()).toBe(190);
+  });
+
+  it('#381: damage spends the temporary pool FIRST, then base hp, then overflows to armor', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 0, pauseMs: 500 } });
+    m.grantTempShield(50, 10000);             // temp 50 on top of base 40 (total 90)
+    const arm = m.parts.leftArm;
+    const armorBefore = arm.armor;
+
+    let res = m.applyDamage('leftArm', 30);   // eats temp only: 50 -> 20
+    expect(res.shielded).toBe(true);
+    expect(m.shield.temp).toBe(20);
+    expect(m.shield.hp).toBe(40);             // base untouched while temp remains
+    expect(arm.armor).toBe(armorBefore);
+
+    res = m.applyDamage('leftArm', 30);       // eats the last 20 temp, then 10 of base
+    expect(m.shield.temp).toBe(0);
+    expect(m.shield.hp).toBe(30);             // base now dipped into
+    expect(arm.armor).toBe(armorBefore);
+
+    res = m.applyDamage('leftArm', 40);       // 30 base left, 10 overflows to armor
+    expect(m.shield.temp).toBe(0);
+    expect(m.shield.hp).toBe(0);
+    expect(res.applied).toBe(10);
+    expect(arm.armor).toBe(armorBefore - 10);
+  });
+
+  it('#381: the temporary pool NEVER regenerates — regen only refills base hp up to base max', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 10, pauseMs: 0 } });
+    m.grantTempShield(60, 10000);             // total 100
+    m.applyDamage('leftArm', 80);             // temp 60 -> 0, base 40 -> 20
+    expect(m.shield.temp).toBe(0);
+    expect(m.shield.hp).toBe(20);
+
+    m.tickShield(10);                         // plenty of regen time
+    expect(m.shield.temp).toBe(0);            // spent temp does NOT come back
+    expect(m.shield.hp).toBe(40);             // base refilled ONLY to base max, no higher
+    expect(m.shieldTotalMax()).toBe(40);      // ceiling is back to base once temp is gone
+  });
+
+  it('#381: regen never lifts the ceiling — with temp still present, base hp caps at base max', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 10, pauseMs: 0 } });
+    m.grantTempShield(60, 10000);
+    m.applyDamage('leftArm', 20);             // eats temp only: 60 -> 40; base stays 40 (full)
+    expect(m.shield.hp).toBe(40);
+    m.tickShield(5);                          // base is already at max; regen can't push past it
+    expect(m.shield.hp).toBe(40);
+    expect(m.shield.temp).toBe(40);           // temp is untouched by regen
+  });
+
+  it('#381: an unspent temporary pool EXPIRES with its window (the chosen consistent reading)', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.grantTempShield(60, 8000);
+    m.tickShield(7.999);                      // just under the window
+    expect(m.shield.temp).toBe(60);           // still there
+    expect(m.tempShieldRemainingMs).toBeCloseTo(1, 0);
+
+    m.tickShield(0.002);                      // window elapses
+    expect(m.shield.temp).toBe(0);            // unspent pool gone
+    expect(m.tempShieldRemainingMs).toBe(0);
+    expect(m.shield.hp).toBe(40);             // base is unaffected by temp expiry
+  });
+
+  it('#381: a duplicate grant refreshes the pool to the same size (magnitude never compounds) and extends the window', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.grantTempShield(60, 5000);
+    m.applyDamage('leftArm', 30);             // temp 60 -> 30
+    expect(m.shield.temp).toBe(30);
+
+    m.grantTempShield(60, 8000);              // duplicate — refills the pool to 60, NOT 90
+    expect(m.shield.temp).toBe(60);
+    expect(m.tempShieldRemainingMs).toBe(8000);
+    expect(m.shield.max).toBe(40);            // base still never touched
+  });
+
+  it('#381: grantTempShield can shield a chassis with no native shield, and it still drains first', () => {
+    const m = new Mech({ chassisId: 'medium' });   // no shield config: max 0
     expect(m.hasShield()).toBe(false);
+    m.grantTempShield(50, 10000);
+    expect(m.shield.temp).toBe(50);
+    const res = m.applyDamage('leftArm', 20);      // temp absorbs even without a base pool
+    expect(res.shielded).toBe(true);
+    expect(m.shield.temp).toBe(30);
   });
 
-  it('boostShield (#246 Shield powerup): instantly fills AND multiplies max/regen for the duration', () => {
+  it('repairAll refills the shield and clears any lingering temporary pool from a prior sortie', () => {
     const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.applyDamage('leftArm', 30);   // shield -> 10
-    m.boostShield(2.5, 8000);
-    expect(m.shield.max).toBe(100);          // 40 * 2.5
-    expect(m.shield.regenPerSec).toBe(5);    // 2 * 2.5
-    expect(m.shield.hp).toBe(100);           // instantly filled to the BOOSTED max
-
-    m.tickShield(7.999);            // just under the boost duration — still boosted
-    expect(m.shield.max).toBe(100);
-  });
-
-  // #271: the timer expiring should NOT instantly snap the extra capacity away — it should
-  // persist as a depleting-only buffer until damage brings hp down to (or below) base max.
-  it('#271: boost expiry does NOT snap max/hp back to base while hp is still elevated — it decays only through damage', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 8000);
-    expect(m.shield.hp).toBe(100);
-
-    m.tickShield(8.002);            // past the 8s boost duration — timer expires
-    // max/hp must NOT have snapped back down: the extra 60 is still there, decaying only.
-    expect(m.shield.max).toBe(100);
-    expect(m.shield.hp).toBe(100);
-
-    m.tickShield(1);                // more time passing post-expiry, no damage taken
-    expect(m.shield.hp).toBe(100);  // still no decay from time alone
-    expect(m.shield.max).toBe(100);
-  });
-
-  it('#271: once expired, damage drains the buffer, and hp reaching base max finalizes the clamp to base max/regen', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 8000);       // max/hp -> 100
-    m.tickShield(8.002);            // boost timer expires; buffer still 100
-
-    m.applyDamage('leftArm', 50);   // shield hp: 100 -> 50, still above base max (40)
-    expect(m.shield.hp).toBe(50);
-    expect(m.shield.max).toBe(100); // not clamped yet — still above base
-
-    m.applyDamage('leftArm', 15);   // shield hp: 50 -> 35, now AT/BELOW base max (40)
-    expect(m.shield.hp).toBe(35);
-    expect(m.shield.max).toBe(40);       // now finalized: clamped back to base max
-    expect(m.shield.regenPerSec).toBe(2); // and base regen rate
-    expect(m.hasShield()).toBe(true);
-  });
-
-  it('#271: no regen past base max once expired but not yet decayed back to base', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 8000);       // max/hp -> 100
-    m.tickShield(8.002);            // expires; buffer 100
-    m.applyDamage('leftArm', 50);   // hp -> 50 (still above base max 40, pause active too)
-
-    m.tickShield(0.5);              // burn the hit-pause
-    m.tickShield(10);               // plenty of time for regen if it were allowed
-    expect(m.shield.hp).toBe(50);   // must NOT have regenerated — depleting-only above base
-    expect(m.shield.max).toBe(100); // still not finalized since hp never reached base max
-  });
-
-  it('#271: once decayed to base max, regen resumes normally up to base max', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 8000);       // max/hp -> 100
-    m.tickShield(8.002);            // expires; buffer 100
-    m.applyDamage('leftArm', 65);   // hp -> 35, at/below base max -> finalized to base
-    expect(m.shield.max).toBe(40);
-
-    m.tickShield(0.5);              // burn the hit-pause
-    m.tickShield(1);                // 1s of regen at base rate (2/s)
-    expect(m.shield.hp).toBeCloseTo(37, 5);
-  });
-
-  it('a duplicate boostShield pickup mid-boost refreshes the timer against the SAME pre-boost base (no compounding)', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 5000);
-    expect(m.shield.max).toBe(100);
-    m.boostShield(2.5, 5000);       // duplicate pickup — must NOT compound to 40*2.5*2.5
-    expect(m.shield.max).toBe(100);
-  });
-
-  // #271: a duplicate pickup mid-decay (timer already expired, hp still elevated above base)
-  // should un-expire and refresh the boost idempotently from the ORIGINAL base — not re-base
-  // off the currently-decaying hp/max.
-  it('#271: a duplicate boostShield pickup mid-decay refreshes/extends idempotently from the original base', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 8000);       // max/hp -> 100, base captured as 40/2
-    m.tickShield(8.002);            // expires; still decaying, buffer 100
-    m.applyDamage('leftArm', 30);   // hp -> 70, still above base max, not yet finalized
-
-    m.boostShield(2.5, 8000);       // duplicate pickup mid-decay
-    expect(m.shield.max).toBe(100); // re-derived from the ORIGINAL base (40 * 2.5), not re-based off 70
-    expect(m.shield.regenPerSec).toBe(5);
-    expect(m.shield.hp).toBe(100);  // refreshed pickup instantly re-fills, same as a fresh pickup
-
-    m.tickShield(7.999);            // still within the new boost window
-    expect(m.shield.max).toBe(100);
-  });
-
-  it('repairAll refills the shield to full and clears any lingering boost/pause from a prior sortie', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
-    m.boostShield(2.5, 5000);
+    m.grantTempShield(150, 5000);
     m.applyDamage('leftArm', 10);
     m.repairAll();
-    expect(m.shield.max).toBe(40);    // boost cleared, back to base config
-    expect(m.shield.hp).toBe(40);     // full
+    expect(m.shield.max).toBe(40);            // base config intact
+    expect(m.shield.hp).toBe(40);             // full
+    expect(m.shield.temp).toBe(0);            // temp pool wiped
+    expect(m.tempShieldRemainingMs).toBe(0);
     expect(m.shield.pauseRemaining).toBe(0);
   });
 });

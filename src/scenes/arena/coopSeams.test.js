@@ -25,8 +25,8 @@ const mech = (over = {}) => ({
   isDestroyed: () => false,
   isPartDestroyed: () => false,
   repairArmor: vi.fn(() => 10),
-  boostShield: vi.fn(),
-  shieldBoostRemainingMs: 0,
+  grantTempShield: vi.fn(),
+  tempShieldRemainingMs: 0,
   applyDamage: vi.fn(() => ({})),
   ...over,
 });
@@ -114,14 +114,14 @@ describe('powerups apply to the COLLECTOR, not to "the player" (#347)', () => {
     expect(scene.powerups).toHaveLength(1);
   });
 
-  it('the shield powerup boosts the collector\'s own mech', () => {
+  it('the shield powerup grants the temp pool to the collector\'s own mech', () => {
     const a = player(0, 0, 0);
     const b = player(1, 800, 0);
     const scene = powerupScene([a, b]);
     dropAt(scene, 800, 0, 'shield');
     scene._updatePowerups(16);
-    expect(b.mech.boostShield).toHaveBeenCalled();
-    expect(a.mech.boostShield).not.toHaveBeenCalled();
+    expect(b.mech.grantTempShield).toHaveBeenCalled();
+    expect(a.mech.grantTempShield).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   createShield, shieldPresent, damageShield, tickShield, fillShield, shieldFraction,
+  grantTempShield, shieldTotalHp, shieldTotalMax,
   layerMultiplier, LAYER_MULTIPLIERS,
 } from './shield.js';
 
@@ -125,6 +126,79 @@ describe('fillShield / shieldFraction', () => {
     const s = createShield({ max: 40 });
     s.hp = 10;
     expect(shieldFraction(s)).toBe(0.25);
+  });
+});
+
+// #381: the expendable TEMPORARY pool (D&D temp HP) — outermost layer, spent first, never
+// regenerates, never lifts the regen ceiling, expires with its window if unspent.
+describe('temporary shield pool (#381)', () => {
+  it('createShield starts with no temp pool', () => {
+    const s = createShield({ max: 50 });
+    expect(s.temp).toBe(0);
+    expect(s.tempExpiryMs).toBe(0);
+  });
+
+  it('grantTempShield adds a pool on top of base and tops base to full, leaving base max/regen alone', () => {
+    const s = createShield({ max: 40, regenPerSec: 2 });
+    s.hp = 10;
+    grantTempShield(s, 150, 10000);
+    expect(s.temp).toBe(150);
+    expect(s.tempExpiryMs).toBe(10000);
+    expect(s.max).toBe(40);          // base capacity untouched
+    expect(s.regenPerSec).toBe(2);   // base regen untouched
+    expect(s.hp).toBe(40);           // base filled
+    expect(shieldTotalHp(s)).toBe(190);
+    expect(shieldTotalMax(s)).toBe(190);
+  });
+
+  it('damage spends the temp pool FIRST, then base hp, then overflows', () => {
+    const s = createShield({ max: 40, regenPerSec: 0 });
+    grantTempShield(s, 50, 10000);   // total 90
+    expect(damageShield(s, 30)).toEqual({ absorbed: 30, overflow: 0 });
+    expect(s.temp).toBe(20);
+    expect(s.hp).toBe(40);           // base untouched while temp remains
+    expect(damageShield(s, 30)).toEqual({ absorbed: 30, overflow: 0 });
+    expect(s.temp).toBe(0);
+    expect(s.hp).toBe(30);           // dipped into base once temp was gone
+    expect(damageShield(s, 40)).toEqual({ absorbed: 30, overflow: 10 });
+    expect(s.hp).toBe(0);
+  });
+
+  it('the temp pool never regenerates; base hp still regens only up to base max', () => {
+    const s = createShield({ max: 40, regenPerSec: 10, pauseMs: 0 });
+    grantTempShield(s, 60, 10000);
+    damageShield(s, 80);             // temp 60->0, base 40->20
+    tickShield(s, 10);
+    expect(s.temp).toBe(0);          // spent temp stays gone
+    expect(s.hp).toBe(40);           // base refills to base max, no further
+  });
+
+  it('an unspent temp pool expires with its window', () => {
+    const s = createShield({ max: 40, regenPerSec: 0 });
+    grantTempShield(s, 60, 2000);
+    tickShield(s, 1.999);
+    expect(s.temp).toBe(60);
+    tickShield(s, 0.002);            // window elapses
+    expect(s.temp).toBe(0);
+    expect(s.tempExpiryMs).toBe(0);
+  });
+
+  it('a temp pool works even on a shieldless (max 0) body and still absorbs first', () => {
+    const s = createShield();        // max 0
+    expect(shieldPresent(s)).toBe(false);
+    grantTempShield(s, 40, 10000);
+    expect(s.temp).toBe(40);
+    expect(damageShield(s, 25)).toEqual({ absorbed: 25, overflow: 0 });
+    expect(s.temp).toBe(15);
+  });
+
+  it('grantTempShield does not compound the pool size on a duplicate (takes the max, not the sum)', () => {
+    const s = createShield({ max: 40 });
+    grantTempShield(s, 60, 5000);
+    damageShield(s, 30);             // temp 60 -> 30
+    grantTempShield(s, 60, 8000);    // duplicate refreshes to 60, not 90
+    expect(s.temp).toBe(60);
+    expect(s.tempExpiryMs).toBe(8000);
   });
 });
 
