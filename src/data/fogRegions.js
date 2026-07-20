@@ -32,10 +32,14 @@
 // which is fine: that boundary IS the wall ring, a hex-aligned structure to begin with.
 import { axialKey, neighbors } from './hexgrid.js';
 
-// Fog darkness and softness — the one part of v1 Jackson did not object to, kept verbatim.
-// "I would like to soften the edges of the shadow itself. So it's not quite so stark."
-export const FOG_ALPHA = 0.62;     // ceiling: a fogged interior hex well away from any frontier
-export const FOG_SOFT_STEPS = 3;   // rings over which the fog ramps up from the lit boundary
+// Fog darkness and softness. Jackson, after playtesting the 0.62 + 3-ring version: the interior
+// must "be more plainly blacked out, not just light greying still showing base hex details", and
+// "by softer edges, I just meant like a 2-3px feathering". A ring is a whole hex (48px), so the
+// old ramp was ~144px of grey cloud — the opposite of what he asked for. So: ONE near-black fill
+// alpha everywhere inside, and the softness lives entirely in a 2-3px feather stroked at the
+// boundary by the renderer (scenes/arena/visibility.js). No depth tiering left.
+export const FOG_ALPHA = 0.92;      // the single interior fill alpha — near-black
+export const FOG_FEATHER_PX = 3;    // width of the anti-aliased edge, in world px
 
 // How far the player can peek through an opening, in world px. Bounds the raycast so the sweep only
 // ever considers one compound's worth of geometry — which is exactly why the cost objection that
@@ -87,42 +91,24 @@ export function fogHexes(world, entered = new Set()) {
   return out;
 }
 
-// ── Softened edges ───────────────────────────────────────────────────────────────────
-// Depth of each fogged hex measured INWARD from the lit boundary: a BFS seeded on the fogged hexes
-// that touch something un-fogged. Alpha then climbs with depth, so the wall-ring edge is a two- or
-// three-hex gradient instead of a stencil cut. Fogged hexes deeper than FOG_SOFT_STEPS are simply
-// absent from the map and take the full ceiling.
-export function fogEdgeDepths(fogged, steps = FOG_SOFT_STEPS) {
-  const depth = new Map();
-  let frontier = [];
-  for (const k of fogged) {
+// ── The feathered edge ───────────────────────────────────────────────────────────────
+// The fogged hexes that touch something un-fogged — i.e. the outline of the fogged shape, one hex
+// thick. These are the only hexes the renderer needs to stroke, and stroking them is the entire
+// edge treatment: a few px of half-alpha fog straddling the boundary so the silhouette reads as
+// anti-aliased rather than stencil-cut. Their FILL is the same full FOG_ALPHA as everywhere else.
+export function fogFrontier(fogged) {
+  const out = new Set();
+  for (const k of fogged ?? []) {
     const [q, r] = k.split(',').map(Number);
-    if (neighbors(q, r).some((n) => !fogged.has(axialKey(n.q, n.r)))) {
-      depth.set(k, 1);
-      frontier.push({ q, r });
-    }
+    if (neighbors(q, r).some((n) => !fogged.has(axialKey(n.q, n.r)))) out.add(k);
   }
-  for (let d = 2; d <= steps; d++) {
-    const next = [];
-    for (const h of frontier) {
-      for (const n of neighbors(h.q, h.r)) {
-        const nk = axialKey(n.q, n.r);
-        if (!fogged.has(nk) || depth.has(nk)) continue;
-        depth.set(nk, d);
-        next.push(n);
-      }
-    }
-    frontier = next;
-  }
-  return depth;
+  return out;
 }
 
-// The alpha for one hex. Un-fogged is 0 (the open world, an entered compound, any wall ring); a
-// fogged hex ramps FOG_ALPHA * depth/steps up to the ceiling.
-export function fogAlphaFor(key, { fogged, depths, steps = FOG_SOFT_STEPS } = {}) {
-  if (!fogged?.has(key)) return 0;
-  const d = depths?.get(key);
-  return d == null ? FOG_ALPHA : FOG_ALPHA * (d / steps);
+// The alpha for one hex: flat. Un-fogged is 0 (the open world, an entered compound, any wall ring);
+// anything fogged is the single near-black ceiling.
+export function fogAlphaFor(key, { fogged } = {}) {
+  return fogged?.has(key) ? FOG_ALPHA : 0;
 }
 
 // ── Entity visibility ────────────────────────────────────────────────────────────────

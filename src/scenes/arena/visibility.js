@@ -44,8 +44,8 @@ import { DEPTH } from './shared.js';
 import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { blocksSpan } from '../../data/wallEdges.js';
 import {
-  buildFogWorld, compoundAt, fogHexes, fogEdgeDepths, fogAlphaFor, enemyVisibleInFog,
-  PEEK_RADIUS_PX,
+  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, enemyVisibleInFog,
+  PEEK_RADIUS_PX, FOG_ALPHA, FOG_FEATHER_PX,
 } from '../../data/fogRegions.js';
 import { collectShadowSegments, computeVisibilityPolygon, pointVisibleFrom } from '../../data/shadowPolygon.js';
 import { DORMANT } from '../../data/awareness.js';
@@ -82,7 +82,7 @@ export const VisibilityMixin = {
     this.fogWorld = buildFogWorld(this.bases ?? []);
     this.enteredCompounds = new Set();
     this.foggedHexes = fogHexes(this.fogWorld, this.enteredCompounds);
-    this._fogDepths = fogEdgeDepths(this.foggedHexes);
+    this._fogFrontier = fogFrontier(this.foggedHexes);
     this._peekSegments = null;   // the blocker set the current polygon was swept from
     this._fogDrawX = null;       // last position the overlay was drawn / the peek was swept from
     this._fogDrawY = null;
@@ -106,7 +106,7 @@ export const VisibilityMixin = {
     if (here != null && !this.enteredCompounds.has(here)) {
       this.enteredCompounds.add(here);
       this.foggedHexes = fogHexes(this.fogWorld, this.enteredCompounds);
-      this._fogDepths = fogEdgeDepths(this.foggedHexes);
+      this._fogFrontier = fogFrontier(this.foggedHexes);
       this._fogDrawX = null;
     }
     if (this._fogDrawX !== null
@@ -151,21 +151,31 @@ export const VisibilityMixin = {
   },
 
   // ── Drawing ──────────────────────────────────────────────────────────────────────────
-  // Pure fill: the fogged set and its depth ramp are already computed, and both are static between
-  // compound entries.
+  // One flat near-black fill over every fogged hex, then a 2-3px feather stroked around the
+  // frontier hexes only. The stroke straddles the boundary, so it adds ~1.5px of half-alpha fog
+  // outside the silhouette and lands on already-black fog inside it (invisible there) — a
+  // crisp-but-anti-aliased outline rather than the ~144px grey ramp the ring tiering produced.
   _drawFog(view) {
     const g = this.fogFx;
     if (!g) return;
     g.clear();
     if (!this.foggedHexes?.size) return;
     const center = pixelToHex(this.px, this.py);
+    const drawn = [];
     for (const h of range(center, this._drawRadius(view))) {
       const k = axialKey(h.q, h.r);
-      const a = fogAlphaFor(k, { fogged: this.foggedHexes, depths: this._fogDepths });
+      const a = fogAlphaFor(k, { fogged: this.foggedHexes });
       if (a <= 0) continue;
       const p = hexToPixel(h.q, h.r);
       g.fillStyle(FOG_COLOR, a);
       g.fillPoints(hexPoints(p.x, p.y), true, true);
+      if (this._fogFrontier?.has(k)) drawn.push(p);
+    }
+    // Two thin passes: the wider one at low alpha, a narrower one nearer full — a short ramp
+    // measured in pixels, not hexes.
+    for (const [w, mul] of [[FOG_FEATHER_PX, 0.4], [FOG_FEATHER_PX * 0.5, 0.75]]) {
+      g.lineStyle(w, FOG_COLOR, FOG_ALPHA * mul);
+      for (const p of drawn) g.strokePoints(hexPoints(p.x, p.y), true, true);
     }
   },
 

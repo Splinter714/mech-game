@@ -15,9 +15,10 @@ const view = { width: 1280, height: 800 };
 // NOTE: the counters live on a mutable object rather than behind a getter — `Object.assign` COPIES a
 // getter's current value rather than the getter itself, so a getter here would freeze at 0.
 function makeScene({ bases = [], wallEdges = null, terrain = new Map(), enemies = [] } = {}) {
-  const counts = { fills: 0, setMask: 0, clearMask: 0 };
+  const counts = { fills: 0, strokes: 0, setMask: 0, clearMask: 0 };
   const graphics = () => ({
     setDepth() { return this; }, clear() {}, fillStyle() {}, fillPoints() { counts.fills++; },
+    lineStyle() {}, strokePoints() { counts.strokes++; },
     createGeometryMask() { return { setInvertAlpha() { return this; } }; },
     setMask() { counts.setMask++; }, clearMask() { counts.clearMask++; },
   });

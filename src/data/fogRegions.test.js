@@ -3,8 +3,8 @@
 // were deleted with it; nothing in the redesign has an open-world concept to test.
 import { describe, it, expect } from 'vitest';
 import {
-  buildFogWorld, compoundAt, fogHexes, fogEdgeDepths, fogAlphaFor, enemyVisibleInFog,
-  FOG_ALPHA, FOG_SOFT_STEPS,
+  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, enemyVisibleInFog,
+  FOG_ALPHA, FOG_FEATHER_PX,
 } from './fogRegions.js';
 import { axialKey, range } from './hexgrid.js';
 import { pointVisibleFrom } from './shadowPolygon.js';
@@ -69,37 +69,35 @@ describe('fogHexes', () => {
   });
 });
 
-describe('fogEdgeDepths / fogAlphaFor — the softened edge', () => {
+describe('fogFrontier / fogAlphaFor — flat fill, feathered edge', () => {
   const world = buildFogWorld([base('alpha', { q: 0, r: 0 }, 6)]);
   const fogged = fogHexes(world, new Set());
-  const depths = fogEdgeDepths(fogged);
+  const frontier = fogFrontier(fogged);
 
-  it('ramps depth inward from the lit boundary', () => {
-    expect(depths.get(K(5, 0))).toBe(1);            // touches the outline ring
-    expect(depths.get(K(4, 0))).toBe(2);
-    expect(depths.get(K(3, 0))).toBe(3);
-    expect(depths.has(K(0, 0))).toBe(false);        // deeper than FOG_SOFT_STEPS: full ceiling
+  it('marks exactly the fogged hexes touching something un-fogged', () => {
+    expect(frontier.has(K(5, 0))).toBe(true);       // touches the outline ring
+    expect(frontier.has(K(4, 0))).toBe(false);      // one deeper: interior
+    expect(frontier.has(K(0, 0))).toBe(false);
+    expect(frontier.has(K(6, 0))).toBe(false);      // outline itself is not fogged
+    for (const k of frontier) expect(fogged.has(k)).toBe(true);
   });
 
-  it('turns that ramp into a gradient instead of a stencil cut', () => {
-    const a = (q, r) => fogAlphaFor(K(q, r), { fogged, depths });
+  it('fills every fogged hex at the same near-black alpha — no ring tiering', () => {
+    const a = (q, r) => fogAlphaFor(K(q, r), { fogged });
     expect(a(6, 0)).toBe(0);                        // outline — not fogged at all
-    expect(a(5, 0)).toBeCloseTo(FOG_ALPHA / 3);
-    expect(a(4, 0)).toBeCloseTo(FOG_ALPHA * 2 / 3);
-    expect(a(3, 0)).toBeCloseTo(FOG_ALPHA);
+    expect(a(5, 0)).toBe(FOG_ALPHA);                // the frontier is fully dark too
+    expect(a(4, 0)).toBe(FOG_ALPHA);
     expect(a(0, 0)).toBe(FOG_ALPHA);
-    expect(a(5, 0)).toBeLessThan(a(4, 0));
-    expect(a(4, 0)).toBeLessThan(a(3, 0));
+    for (const k of fogged) expect(fogAlphaFor(k, { fogged })).toBe(FOG_ALPHA);
   });
 
-  it('never exceeds the 0.62 ceiling anywhere', () => {
-    for (const k of fogged) expect(fogAlphaFor(k, { fogged, depths })).toBeLessThanOrEqual(FOG_ALPHA);
-    expect(FOG_ALPHA).toBe(0.62);
-    expect(FOG_SOFT_STEPS).toBe(3);
+  it('is near-black, with softness measured in pixels not rings', () => {
+    expect(FOG_ALPHA).toBe(0.92);
+    expect(FOG_FEATHER_PX).toBe(3);
   });
 
   it('gives open ground alpha 0 — there is no open-world fog', () => {
-    expect(fogAlphaFor(K(99, 99), { fogged, depths })).toBe(0);
+    expect(fogAlphaFor(K(99, 99), { fogged })).toBe(0);
   });
 });
 
