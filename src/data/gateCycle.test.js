@@ -175,3 +175,81 @@ describe('#309 gate cycle — demand-driven', () => {
     expect(s).toEqual(before);
   });
 });
+
+// ── #355: the terminal fail-open state ─────────────────────────────────────────────────
+// Owner: "gates should lock open after the objective is destroyed." The trigger is the objective
+// hex ALONE (confirmed) — the garrison may still be alive. The base is beaten, its systems fail
+// open, and nothing after that can shut the door again.
+function runFail(state, ms, { failOpen = true, demand = false, awake = true } = {}) {
+  const seen = [state];
+  for (let t = 0; t < ms; t += 16) {
+    const f = typeof failOpen === 'function' ? failOpen(t) : failOpen;
+    state = tickGate(state, { awake, demand, failOpen: f, dt: 0.016 });
+    seen.push(state);
+  }
+  return { state, seen };
+}
+
+describe('#355 gate cycle — fail open once the objective is destroyed', () => {
+  it('cranks a shut gate open with no demand, no reaction delay and no garrison', () => {
+    const { state } = runFail(makeGateState(500), GATE_OPENING_MS + 64);
+    expect(state.phase).toBe(GATE_OPEN);
+    expect(gatePassable(state)).toBe(true);
+    expect(state.lockedOpen).toBe(true);
+  });
+
+  it('never closes again, however long the run goes and however dead the garrison', () => {
+    const { state, seen } = runFail(makeGateState(), 300000);
+    expect(state.phase).toBe(GATE_OPEN);
+    expect(seen.every((s) => s.phase !== GATE_CLOSING)).toBe(true);
+    expect(seen.filter((s) => s.justClosed).length).toBe(0);
+  });
+
+  it('latches: the gate stays open even if `failOpen` stops being passed', () => {
+    // The scene derives `failOpen` from a permanent world fact, so this can't happen in practice —
+    // but the latch is what makes the state TERMINAL rather than merely sticky, so pin it.
+    const { state } = runFail(makeGateState(), GATE_OPENING_MS + 64);
+    let s = state;
+    for (let t = 0; t < 120000; t += 16) s = tickGate(s, { awake: true, demand: false, dt: 0.016 });
+    expect(s.phase).toBe(GATE_OPEN);
+    expect(gatePassable(s)).toBe(true);
+  });
+
+  it('opens a DORMANT base\'s gate too — an objective sniped before the base ever woke', () => {
+    const { state } = runFail(makeGateState(), GATE_OPENING_MS + 64, { awake: false });
+    expect(state.phase).toBe(GATE_OPEN);
+  });
+
+  it('reverses a gate that is mid-close, without the leaves jumping', () => {
+    // Get it fully open on ordinary demand, drop demand, let it start closing, then kill the
+    // objective partway through the swing.
+    let { state } = run(makeGateState(), TO_OPEN_MS);
+    ({ state } = run(state, GATE_MIN_OPEN_MS + GATE_CLOSING_MS / 2, false));
+    expect(state.phase).toBe(GATE_CLOSING);
+    const fracBefore = 1 - state.phaseMs / GATE_CLOSING_MS;
+    const flipped = tickGate(state, { awake: true, demand: false, failOpen: true, dt: 0 });
+    expect(flipped.phase).toBe(GATE_OPENING);
+    // Continuous: the leaves resume from where they stood, not from shut and not from wide.
+    expect(flipped.phaseMs / GATE_OPENING_MS).toBeCloseTo(fracBefore, 5);
+    const { state: after } = runFail(flipped, GATE_OPENING_MS + 64);
+    expect(after.phase).toBe(GATE_OPEN);
+  });
+
+  it('fires exactly one open transition, and lets an in-flight opening finish normally', () => {
+    const { seen } = runFail(makeGateState(), 60000);
+    expect(seen.filter((s) => s.startedOpening).length).toBe(1);
+    expect(seen.filter((s) => s.justOpened).length).toBe(1);
+  });
+
+  it('parks with zero churn once open — the same object is returned every tick', () => {
+    const { state } = runFail(makeGateState(), GATE_OPENING_MS + 64);
+    expect(tickGate(state, { awake: true, demand: false, failOpen: true, dt: 0.016 })).toBe(state);
+  });
+
+  it('never mutates the state passed in', () => {
+    const s = makeGateState();
+    const before = { ...s };
+    tickGate(s, { awake: true, failOpen: true, dt: 0.016 });
+    expect(s).toEqual(before);
+  });
+});

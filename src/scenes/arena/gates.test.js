@@ -54,23 +54,40 @@ function garrison(hex = A, over = {}) {
   };
 }
 
-// A ring of six spans fully enclosing the origin hex, with `NB[3]`'s span as the gate. The unit
-// inside has exactly one possible way out, which is what makes the demand query's answer
+// #355: the base's objective hex. It is "alive" while it has an entry in `buildingHp`; deleting
+// that entry is exactly what destroying it does in the real game.
+const OBJECTIVE_HEX = { q: 0, r: -2 };
+
+// A ring of six spans fully enclosing the origin hex, with `NB[3]`'s span as the gate by default.
+// The unit inside has exactly one possible way out, which is what makes the demand query's answer
 // unambiguous.
-function makeScene({ enemies = [garrison()], impassableRing = false } = {}) {
+
+function makeScene({
+  enemies = [garrison()], impassableRing = false,
+  // #355/#354: which of the six ring spans are gates. Defaults to the single original gate;
+  // the fail-open tests pass several, since a ring now carries 2-5.
+  gateAt = [3], objectiveAlive = null,
+} = {}) {
   const terrain = new Map();
   for (let q = -6; q <= 6; q++) for (let r = -6; r <= 6; r++) terrain.set(axialKey(q, r), 'grass');
   // The "genuinely sealed in" variant: ring the origin with impassable terrain so that even with
   // every gate hypothetically open there is no route out at all.
   if (impassableRing) for (const n of NB) terrain.set(axialKey(n.q, n.r), 'lava');
 
+  // Only the fail-open tests declare a base at all; every other test leaves `bases` empty, which
+  // makes `_failedOpenBases()` empty and the gate logic identical to before #355.
+  const buildingHp = new Map();
+  const bases = objectiveAlive == null ? []
+    : [{ id: 'base0', objectiveHex: OBJECTIVE_HEX, center: A }];
+  if (objectiveAlive) buildingHp.set(axialKey(OBJECTIVE_HEX.q, OBJECTIVE_HEX.r), 200);
+
   const scene = Object.assign({}, WorldMixin, BasesMixin, {
     terrain,
     wallEdges: makeWallEdgeSet(NB.map((n, i) => ({
-      a: A, b: n, baseId: 'base0', ...(i === 3 ? { role: 'gate' } : {}),
+      a: A, b: n, baseId: 'base0', ...(gateAt.includes(i) ? { role: 'gate' } : {}),
     }))),
-    buildingHp: new Map(), coverHp: new Map(),
-    enemies, bases: [],
+    buildingHp, coverHp: new Map(),
+    enemies, bases,
     // The player, outside the ring and reachable on open ground — so a unit inside has a real
     // route to him the moment a door is (hypothetically) open.
     px: hexToPixel(0, 3).x, py: hexToPixel(0, 3).y,
@@ -457,5 +474,72 @@ describe('#309 gate wiring', () => {
     s.px = (gate.x0 + gate.x1) / 2; s.py = (gate.y0 + gate.y1) / 2;
     run(s, 60000);
     expect(gate.open).toBe(false);
+  });
+});
+
+// ── #355: the whole ring fails open when the objective dies ────────────────────────────
+// Scene-level half of the terminal state proved pure in data/gateCycle.test.js. The point of
+// testing it here is MULTIPLICITY: #354 made a ring carry 2-5 gates, so "the base is beaten" has to
+// reach every one of them, not just the one a garrison unit happened to be routing through.
+describe('#355 gates lock open once the objective is destroyed', () => {
+  const FOUR_GATES = [0, 2, 3, 5];
+  const allGates = (s) => gateEdges(s.wallEdges);
+
+  it('opens EVERY gate on the ring, with no garrison and nobody asking', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: false, enemies: [] });
+    expect(allGates(s).length).toBe(4);
+    run(s, GATE_OPENING_MS + 200);
+    for (const g of allGates(s)) {
+      expect(g.open).toBe(true);
+      expect(g.openFrac).toBe(1);
+    }
+  });
+
+  it('keeps them shut while the objective still stands, garrison or not', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: true, enemies: [] });
+    s._wokenBases.add('base0');
+    run(s, 60000);
+    for (const g of allGates(s)) expect(g.open).toBe(false);
+  });
+
+  it('opens mid-run the moment the objective hex dies, and never shuts again', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: true, enemies: [] });
+    s._wokenBases.add('base0');
+    run(s, 5000);
+    for (const g of allGates(s)) expect(g.open).toBe(false);
+    s.buildingHp.delete(axialKey(OBJECTIVE_HEX.q, OBJECTIVE_HEX.r));   // the player blows it up
+    run(s, GATE_OPENING_MS + 200);
+    for (const g of allGates(s)) expect(g.open).toBe(true);
+    run(s, 180000);
+    for (const g of allGates(s)) expect(g.open).toBe(true);
+  });
+
+  // The trigger is the objective ALONE — docks and garrison still alive and shooting is exactly
+  // the case the owner described.
+  it('fails open with the garrison still alive and fighting', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: false });
+    s._wokenBases.add('base0');
+    run(s, GATE_OPENING_MS + 200);
+    expect(s.enemies.length).toBe(1);
+    for (const g of allGates(s)) expect(g.open).toBe(true);
+  });
+
+  // A gate the player SHOT OUT before beating the base stays a permanent breach; fail-open must
+  // not resurrect a cycle for it.
+  it('leaves an already-destroyed gate span alone', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: false, enemies: [] });
+    const dead = allGates(s)[1];
+    dead.destroyed = true;
+    run(s, GATE_OPENING_MS + 200);
+    expect(s._gateStates.has(dead.key)).toBe(false);
+    expect(s._gateStates.size).toBe(3);
+  });
+
+  // A dormant base whose objective got sniped from outside still fails open — there is nothing
+  // left inside to keep the doors shut for.
+  it('fails open even if the base was never woken', () => {
+    const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: false, enemies: [] });
+    run(s, GATE_OPENING_MS + 200);
+    for (const g of allGates(s)) expect(g.open).toBe(true);
   });
 });
