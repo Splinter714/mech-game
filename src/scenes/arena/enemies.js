@@ -23,7 +23,7 @@ import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES, ENEMY_ROTATION, DEFAULT_SQUAD } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
-import { enemyTargetOf, listenerOf, targetPlayerFor } from './players.js';
+import { allPlayersDeadIn, enemyTargetOf, listenerOf, targetPlayerFor } from './players.js';
 // #305: the multi-weapon seam. A kind may declare several weapon SLOTS; the behaviour names the
 // live one via `e.weaponSlot` and this file resolves it — no weapon-id literal (#243) and no
 // slot-key literal ever appears here. See data/kindWeapons.js's header for the whole model.
@@ -647,11 +647,24 @@ export const EnemiesMixin = {
   //
   // The deadline is stamped LAZILY on first ask rather than in combat.js, so there's exactly one
   // place that owns this clock. `_standDownAt` is reset per-deploy in ArenaScene.create()
-  // alongside `_playerDead` itself — see #281's comment there for why that reset is mandatory
-  // (Phaser reuses the same scene instance, and a stale deadline would leave a fresh sortie's
-  // enemies permanently stood down).
+  // — see #281's comment there for why that reset is mandatory (Phaser reuses the same scene
+  // instance, and a stale deadline would leave a fresh sortie's enemies permanently stood down).
+  //
+  // #360 (co-op playtest: "enemies are falsely disengaging/freezing when player 1 dies and
+  // player 2 is still alive"): the predicate is ALL PLAYERS DEAD, not "player 1 is dead".
+  // `_playerDead` is phase 1's delegating accessor onto `players[0]`, so reading it here stood
+  // the entire squad down the instant player 1 exploded while player 2 was still fighting.
+  // `allPlayersDeadIn` (players.js) is the seam #348 phase 2 built for exactly this distinction
+  // — and at N=1 it IS "the player died" (it's what run.js already ends the run on), so #304's
+  // playtested solo behaviour is bit-for-bit unchanged.
+  //
+  // And the clock does NOT latch: with #348 respawn a downed player can come back while the
+  // survivor keeps fighting, so "all dead" can flip back to false mid-sortie. Clearing the
+  // deadline on every not-all-dead tick means a re-engage restarts the beat from scratch on the
+  // NEXT team wipe, rather than an old elapsed deadline standing the squad down instantly (the
+  // in-sortie twin of the stale-instance bug #281's reset guards against).
   _standDownActive() {
-    if (!this._playerDead) return false;
+    if (!allPlayersDeadIn(this)) { this._standDownAt = null; return false; }
     if (this._standDownAt == null) { this._standDownAt = this.time.now + STAND_DOWN_DELAY_MS; return false; }
     return this.time.now >= this._standDownAt;
   },

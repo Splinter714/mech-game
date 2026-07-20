@@ -106,9 +106,12 @@ export const MAX_PLAYERS = 2;
 
 // A player is out of the fight when its mech is destroyed. `dead` is the scene's own latch
 // (set once, in combat.js, so the death FX/input-gate fire exactly once) — a player with no
-// mech at all is treated as live so a half-built test double doesn't read as a corpse.
+// mech at all is treated as live so a half-built test double doesn't read as a corpse. #360:
+// and neither does a PARTIAL mech stub — several arena doubles carry a `mech` that only
+// implements the one method their subject needs (`{ partHealthFraction }`), so the destroyed
+// check is optional-called rather than assumed present. Missing = not destroyed = alive.
 export function playerAlive(p) {
-  return !!p && !p.dead && !(p.mech && p.mech.isDestroyed());
+  return !!p && !p.dead && !p.mech?.isDestroyed?.();
 }
 
 export function livePlayers(players) {
