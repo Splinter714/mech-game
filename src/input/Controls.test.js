@@ -233,6 +233,26 @@ describe('Controls — touch sticks feed the same intent (#346)', () => {
     expect(Controls.touchCapable()).toBe(false);
   });
 
+  // #386: the TOUCH_STICKS_ENABLED gate is OFF, so even on a genuine touch device the
+  // capability probe reports false and no touch is wired — the sticks no longer hijack
+  // input away from a Bluetooth controller on iPad. (Emulate a touch device by stubbing
+  // the globals touchCapable() reads.)
+  it('the #386 gate suppresses touch even on a touch-capable device', () => {
+    const savedWindow = globalThis.window;
+    const savedNav = globalThis.navigator;
+    try {
+      globalThis.window = { ontouchstart: null };
+      globalThis.navigator = { maxTouchPoints: 5 };
+      // Without the gate this would be true; with TOUCH_STICKS_ENABLED = false it stays false.
+      expect(Controls.touchCapable()).toBe(false);
+      const controls = new Controls(fakeControlsScene());
+      expect(controls.touch).toBeNull();   // no TouchSticks, so ArenaScene builds no TouchStickHud
+    } finally {
+      if (savedWindow === undefined) delete globalThis.window; else globalThis.window = savedWindow;
+      if (savedNav === undefined) delete globalThis.navigator; else globalThis.navigator = savedNav;
+    }
+  });
+
   it('stays in kbm mode until a genuine touch pointer arrives', () => {
     const { scene, controls } = touchControls();
     expect(controls.read().mode).toBe('kbm');
