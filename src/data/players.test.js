@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makePlayer, playerAlive, livePlayers, anyPlayerAlive, allPlayersDead,
-  nearestPlayer, primaryPlayer, playersCentroid,
+  nearestPlayer, primaryPlayer, playersCentroid, showsPlayerColor,
 } from './players.js';
 
 const liveMech = () => ({ isDestroyed: () => false });
@@ -133,5 +133,26 @@ describe('primaryPlayer / playersCentroid', () => {
     expect(playersCentroid([a, b])).toEqual({ x: 50, y: 20 });
     const dead = makePlayer({ id: 2, mech: deadMech(), x: 1000, y: 1000 });
     expect(playersCentroid([a, b, dead])).toEqual({ x: 50, y: 20 });
+  });
+});
+
+// #348 playtest follow-up: "we don't need the color ring around player 1 when there isn't any
+// second player". The identifying colour only means something once there is somebody to be told
+// apart from — this one rule now backs BOTH the ground ring and the reticle tint.
+describe('showsPlayerColor', () => {
+  it('is off for a solo player and on once a second joins', () => {
+    expect(showsPlayerColor(0)).toBe(false);
+    expect(showsPlayerColor(1)).toBe(false);
+    expect(showsPlayerColor(2)).toBe(true);
+    expect(showsPlayerColor(3)).toBe(true);
+  });
+
+  it('is a function of the CURRENT count, so a mid-sortie join flips it both ways', () => {
+    const players = [makePlayer({ id: 0, mech: liveMech() })];
+    expect(showsPlayerColor(players.length)).toBe(false);
+    players.push(makePlayer({ id: 1, mech: liveMech() }));   // START on gamepad 2
+    expect(showsPlayerColor(players.length)).toBe(true);
+    players.pop();
+    expect(showsPlayerColor(players.length)).toBe(false);
   });
 });

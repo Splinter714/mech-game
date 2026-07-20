@@ -14,7 +14,7 @@ import { Mech } from '../../data/Mech.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
 import { initialDashState } from '../../data/dash.js';
-import { MAX_PLAYERS, makePlayer, playerAccent } from '../../data/players.js';
+import { MAX_PLAYERS, makePlayer, playerAccent, showsPlayerColor } from '../../data/players.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
@@ -40,9 +40,12 @@ export const CoopMixin = {
     // #348: player 1's accent is null, so its textures are byte-identical to single-player.
     buildMechTextures(this, textureKey, mech, { theme: 'player', accent: playerAccent(index) });
     player.view = this._makeMechView(textureKey, x, y, player.angle, true);
+    // Created hidden: `_updatePlayerMarkers` owns visibility every frame, and starting hidden
+    // means a solo player never sees a one-frame flash of a ring before that rule first runs.
     player.marker = this.add.circle(x, y, MARKER_RADIUS)
       .setStrokeStyle(2, player.color, 0.55)
-      .setDepth(DEPTH.GROUND_FX);
+      .setDepth(DEPTH.GROUND_FX)
+      .setVisible(false);
     // Player 1 owns the keyboard + mouse and pad 0; every later player is pad-only. See the
     // Controls constructor comment for why the joiner is deliberately never keyboard-capable.
     player.controls = new Controls(this, { padIndex: index, keyboard: index === 0 });
@@ -162,11 +165,18 @@ export const CoopMixin = {
   },
 
   // Keep each player's ground marker pinned under its mech, and hide it with the mech on death.
+  //
+  // A SOLO player gets no ring at all (#348 playtest) — a colour that identifies you from nobody
+  // is just clutter. `showsPlayerColor` is the same rule the reticle tint already used. Deciding
+  // it here, per frame, rather than at construction time is what makes a mid-sortie START join
+  // work in both directions: the rings switch on for both players the moment player 2 exists.
   _updatePlayerMarkers() {
-    for (const p of playersOf(this)) {
+    const players = playersOf(this);
+    const colored = showsPlayerColor(players.length);
+    for (const p of players) {
       if (!p.marker) continue;
       p.marker.setPosition(p.x, p.y);
-      p.marker.setVisible(!p.dead);
+      p.marker.setVisible(colored && !p.dead);
     }
   },
 

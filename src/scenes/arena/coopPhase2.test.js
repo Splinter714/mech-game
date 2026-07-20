@@ -114,6 +114,34 @@ describe('player identification', () => {
   it('carries the colour on the player itself, so every draw site reads one source', () => {
     expect(makePlayer({ id: 1 }).color).toBe(playerColor(1));
   });
+
+  // #348 playtest follow-up — no ring when there is nobody to be told apart from. The rule is
+  // pure (data/players.js `showsPlayerColor`); what matters HERE is that the marker update
+  // re-asks it every frame, so a mid-sortie START join turns the rings on without a redeploy.
+  describe('the ground ring only exists once there are two players', () => {
+    const marked = (p) => ({ ...p, marker: { visible: true, x: 0, y: 0,
+      setPosition(x, y) { this.x = x; this.y = y; return this; },
+      setVisible(v) { this.visible = v; return this; } } });
+
+    it('is hidden for a solo player and shown for both after a join', () => {
+      const solo = { players: [marked(P(0, 5, 6))], ...CoopMixin };
+      solo._updatePlayerMarkers();
+      expect(solo.players[0].marker.visible).toBe(false);
+      // Still pinned under the mech while hidden, so it is correct the moment it appears.
+      expect(solo.players[0].marker).toMatchObject({ x: 5, y: 6 });
+
+      solo.players.push(marked(P(1, 70, 70)));   // START on gamepad 2, mid-sortie
+      solo._updatePlayerMarkers();
+      expect(solo.players.map((p) => p.marker.visible)).toEqual([true, true]);
+    });
+
+    it('still hides a downed player’s ring in co-op', () => {
+      const scene = { players: [marked(P(0, 0, 0)), marked(P(1, 200, 0))], ...CoopMixin };
+      scene.players[1].dead = true;
+      scene._updatePlayerMarkers();
+      expect(scene.players.map((p) => p.marker.visible)).toEqual([true, false]);
+    });
+  });
 });
 
 describe('per-player firing state (what phase 1 deliberately left shared)', () => {

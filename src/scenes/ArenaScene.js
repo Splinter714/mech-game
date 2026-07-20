@@ -21,6 +21,7 @@ import { TerrainLabelsMixin } from './arena/terrainLabels.js';
 import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
 import { primaryPlayerOf } from './arena/players.js';
+import { showsPlayerColor } from '../data/players.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -427,7 +428,7 @@ export default class ArenaScene extends Phaser.Scene {
       if (player.dead || !player.reticlePos) continue;
       // Solo play keeps the familiar locked-red reticle exactly as it was — the colour only
       // means something once there is a second one on screen to tell it apart from.
-      const tint = this.players.length > 1 ? player.color : null;
+      const tint = showsPlayerColor(this.players.length) ? player.color : null;
       this._drawLockReticle(player.reticlePos.x, player.reticlePos.y, tint);
     }
 

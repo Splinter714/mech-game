@@ -90,6 +90,13 @@ export const PLAYER_COLORS = [0x4fc3f7, 0xffb24a, 0x6dff9e, 0xff4fa3];
 // `player` theme exactly as it is.
 export const PLAYER_ACCENTS = [null, 0xffb24a, 0x6dff9e, 0xff4fa3];
 
+// Should the identifying COLOUR be shown at all? Only once there is somebody to be told apart
+// from (#348 playtest: "we don't need the color ring around player 1 when there isn't any second
+// player"). This is the same rule the reticle tint already used, pulled out so the ground ring
+// and the reticle share one definition instead of two copies of `players.length > 1`. It is
+// asked every frame, so a mid-sortie START join turns the rings ON and nobody has to re-deploy.
+export function showsPlayerColor(playerCount) { return playerCount > 1; }
+
 export function playerColor(id) { return PLAYER_COLORS[id % PLAYER_COLORS.length]; }
 export function playerAccent(id) { return PLAYER_ACCENTS[id % PLAYER_ACCENTS.length]; }
 
