@@ -255,23 +255,26 @@ describe('#371 spreading objective markers', () => {
     return scene;
   }
 
-  it('step 1 — objective alive: only the single marker, no spread markers', () => {
+  it('phase 1 — objective alive: the objective beacon AND a marker per dock, together (#384)', () => {
     const s = sceneAt({
       objectiveUp: true,
       docksUp: [{ q: 1, r: 0 }, { q: 2, r: 0 }],
       enemies: [{ baseId: 'base0', x: 0, y: 0 }],
     });
-    expect(dockCount(s)).toBe(0);
+    // #384 marks all the structures at once: docks are marked from the start, objective beacon shown.
+    expect(dockCount(s)).toBe(2);
     expect(enemyCount(s)).toBe(0);
+    expect(s._objectiveMarker.visible).toBe(true);
   });
 
-  it('step 2 — objective down: one marker per STANDING dock, and none on enemies', () => {
+  it('phase 1 — objective down, docks remain: beacon drops, dock markers stay, no enemies (#384)', () => {
     const s = sceneAt({
       docksUp: [{ q: 1, r: 0 }, { q: 2, r: 0 }],
       enemies: Array.from({ length: 7 }, () => ({ baseId: 'base0', x: 0, y: 0 })),
     });
     expect(dockCount(s)).toBe(2);
     expect(enemyCount(s)).toBe(0);
+    expect(s._objectiveMarker.visible).toBe(false);
 
     // Blow up one dock: its marker is pruned, the other stays.
     s.buildingHp.delete(axialKey(1, 0));
@@ -280,7 +283,7 @@ describe('#371 spreading objective markers', () => {
     expect(enemyCount(s)).toBe(0);
   });
 
-  it('step 3 — docks cleared: a little marker per remaining enemy, pinned above it', () => {
+  it('phase 2 — structures cleared: a little marker per remaining enemy, pinned above it', () => {
     const enemies = [{ baseId: 'base0', x: 100, y: 200 }, { baseId: 'other', x: 0, y: 0 }];
     const s = sceneAt({ enemies });
     expect(dockCount(s)).toBe(0);

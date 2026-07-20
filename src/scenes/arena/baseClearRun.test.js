@@ -8,7 +8,7 @@ import { MissionMixin, isBaseFullyCleared } from './mission.js';
 import { RunMixin } from './run.js';
 import { BasesMixin } from './bases.js';
 import { axialKey } from '../../data/hexgrid.js';
-import { CLEAR_DOCKS, CLEAR_ENEMIES, CLEAR_DONE } from '../../data/bases.js';
+import { CLEAR_STRUCTURES, CLEAR_ENEMIES, CLEAR_DONE } from '../../data/bases.js';
 
 function fakeGraphic() {
   const obj = {
@@ -58,8 +58,8 @@ function twoBaseWorld() {
 
 const raze = (scene, hex) => scene.buildingHp.delete(axialKey(hex.q, hex.r));
 
-describe('#356 a base must be cleared of docks AND enemies before the objective advances', () => {
-  it('holds the objective on base 0 until its docks and garrison are both gone', () => {
+describe('#384 a base must be cleared of ALL structures AND enemies before the objective advances', () => {
+  it('holds the objective on base 0 until its structures and garrison are both gone', () => {
     const { bases, buildingHp } = twoBaseWorld();
     const scene = fakeScene({ bases, buildingHp, enemies: [{ baseId: 'base0' }, { baseId: 'base1' }] });
     scene._initMission();
@@ -69,19 +69,22 @@ describe('#356 a base must be cleared of docks AND enemies before the objective 
     step();
     expect(scene._objectiveBaseIndex).toBe(0);
 
-    // Objective hex down — under the OLD rule this alone advanced the run.
+    // Objective hex down — under the OLD (#356) rule this advanced to the docks step; under #384
+    // it is still the ONE structures phase, because docks remain.
     raze(scene, bases[0].objectiveHex);
     step();
-    expect(scene.registry.get('baseClear').step).toBe(CLEAR_DOCKS);
+    expect(scene.registry.get('baseClear').step).toBe(CLEAR_STRUCTURES);
+    expect(scene.registry.get('baseClear').objectiveStanding).toBe(false);
     expect(scene._objectiveBaseIndex).toBe(0);
 
-    // One of two docks down: still docks.
+    // One of two docks down: still structures.
     raze(scene, bases[0].docks[0]);
     step();
+    expect(scene.registry.get('baseClear').step).toBe(CLEAR_STRUCTURES);
     expect(scene.registry.get('baseClear').docksLeft).toBe(1);
     expect(scene._objectiveBaseIndex).toBe(0);
 
-    // Last dock down — only NOW does the garrison become the ask.
+    // Last dock down — every structure is gone, so ONLY NOW does the garrison become the ask.
     raze(scene, bases[0].docks[1]);
     step();
     expect(scene.registry.get('baseClear').step).toBe(CLEAR_ENEMIES);
@@ -93,6 +96,28 @@ describe('#356 a base must be cleared of docks AND enemies before the objective 
     expect(scene._objectiveBaseIndex).toBe(1);
     expect(scene._objectiveBase.id).toBe('base1');
     expect(scene.run.status).toBe('active');
+  });
+
+  it('accepts the structures in ANY order — docks first, objective last, still one phase', () => {
+    const { bases, buildingHp } = twoBaseWorld();
+    const scene = fakeScene({ bases, buildingHp, enemies: [{ baseId: 'base0' }, { baseId: 'base1' }] });
+    scene._initMission();
+    scene._initRun();
+    const step = () => { scene._updateMission(); scene._updateRun(); };
+
+    // Both docks razed BEFORE the objective — the old ordered rule never allowed this.
+    raze(scene, bases[0].docks[0]);
+    raze(scene, bases[0].docks[1]);
+    step();
+    expect(scene.registry.get('baseClear').step).toBe(CLEAR_STRUCTURES);   // objective still up
+    expect(scene.registry.get('baseClear').docksLeft).toBe(0);
+    expect(scene.registry.get('baseClear').objectiveStanding).toBe(true);
+    expect(scene._objectiveBaseIndex).toBe(0);
+
+    // Objective last — structures done, garrison now.
+    raze(scene, bases[0].objectiveHex);
+    step();
+    expect(scene.registry.get('baseClear').step).toBe(CLEAR_ENEMIES);
   });
 });
 
@@ -127,16 +152,31 @@ describe('#356 the run does not complete while enemies live at the final objecti
   });
 });
 
-describe('#356 composes with #355 (gates latch open on the objective alone)', () => {
-  it('an objective-dead, docks-alive base is open but not cleared', () => {
+describe('#384 keeps the #355 gate latch keyed on the OBJECTIVE alone — the split must not merge', () => {
+  // The gate latch (`_failedOpenBases` -> `isBaseObjectiveDestroyed`) and the phase-1-complete
+  // predicate (`isBaseFullyCleared` -> also needs the docks) are DIFFERENT predicates. #384's whole
+  // subtlety: killing the objective opens the gates even mid-phase-1; killing a dock does not.
+  it('objective dead, docks ALIVE -> gates open, base NOT yet cleared', () => {
     const { bases, buildingHp } = twoBaseWorld();
     const scene = fakeScene({ bases, buildingHp, enemies: [] });
-    raze(scene, bases[0].objectiveHex);
+    raze(scene, bases[0].objectiveHex);   // docks[0] and docks[1] still standing
     // #355's gate rule sees the base as beaten (gates fail open) …
     const failedOpen = BasesMixin._failedOpenBases.call(scene);
     expect(failedOpen.has('base0')).toBe(true);
-    // … while #356's progression rule still has work left, which is the intended composition:
-    // the player can drive in and out freely while sweeping the docks.
+    // … while #384's progression rule still has work left (the docks), which is the intended
+    // composition: the player can drive in and out freely while sweeping them.
+    expect(isBaseFullyCleared(bases[0], scene.buildingHp, scene.enemies)).toBe(false);
+  });
+
+  it('dock dead, objective ALIVE -> gates do NOT open (killing a dock does not latch them)', () => {
+    const { bases, buildingHp } = twoBaseWorld();
+    const scene = fakeScene({ bases, buildingHp, enemies: [] });
+    raze(scene, bases[0].docks[0]);       // objective still standing
+    raze(scene, bases[0].docks[1]);       // both docks gone, objective alive
+    // The gate latch keys on the objective ALONE, so razing every dock leaves the gates shut …
+    const failedOpen = BasesMixin._failedOpenBases.call(scene);
+    expect(failedOpen.has('base0')).toBe(false);
+    // … and the base is of course not cleared either (objective still up).
     expect(isBaseFullyCleared(bases[0], scene.buildingHp, scene.enemies)).toBe(false);
   });
 
