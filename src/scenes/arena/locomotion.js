@@ -267,7 +267,7 @@ export const LocomotionMixin = {
         // rubble the hex becomes passable and the mech rolls over it. Uses `stepDt` (not the full
         // frame `dt`) since this can now run once per substep — a mech pressed against a building
         // for the whole frame still accumulates ~`dt` worth of stomp damage total across substeps.
-        this._stompBuildingAt(nx, ny, stepDt);
+        this._stompBuildingAt(nx, ny, stepDt, p);
         if (!groundBlocked(ox, ny)) { nx = ox; p.vx = 0; }
         else if (!groundBlocked(nx, oy)) { ny = oy; p.vy = 0; }
         else { nx = ox; ny = oy; p.vx = 0; p.vy = 0; }

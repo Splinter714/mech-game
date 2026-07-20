@@ -899,8 +899,13 @@ export const WorldMixin = {
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush
   // damage (a fixed per-second rate scaled by how fast the mech is driving into it) so leaning
   // on an outpost flattens it in a beat or two rather than instantly. No-op off buildings.
-  _stompBuildingAt(x, y, dt) {
-    const speedFrac = Math.min(1, this.speed / Math.max(1, this.mech.movement.maxSpeed));
+  // #365: the STOMPING player is passed in — `this.speed`/`this.mech` are co-op phase-1 (#347)
+  // accessors onto players[0], so reading them here scaled every player's crush by player 1's
+  // speed and chassis (P2 stomping while P1 stood still did nothing). Defaults to players[0]
+  // for the single-player/no-arg case.
+  _stompBuildingAt(x, y, dt, stomper = null) {
+    const p = stomper || (this.players && this.players[0]) || this;
+    const speedFrac = Math.min(1, p.speed / Math.max(1, p.mech.movement.maxSpeed));
     const dmg = crushDamage(STOMP_DPS, dt, speedFrac);
     // #288: `stomp` marks this as the mech LEANING on the structure rather than shooting it, so a
     // wall span can scale it down (see WALL_STOMP_FACTOR) without changing how anything else

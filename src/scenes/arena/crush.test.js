@@ -207,6 +207,54 @@ describe('_stompBuildingAt — outpost stomp keeps its ORIGINAL gradual behavior
   });
 });
 
+// #365: the bite is scaled by the STOMPING player's speed/chassis, not players[0]'s. Before the
+// fix `_stompBuildingAt` read `this.speed`/`this.mech` — co-op phase-1 (#347) accessors onto
+// players[0] — so player 2 crushing while player 1 stood still did zero damage.
+describe('_stompBuildingAt — scales off the stomping player (#365)', () => {
+  function makeCoopScene() {
+    const { scene } = makeScene();
+    // players[0] is stationary; the accessors on the scene delegate to it, as in the real game.
+    scene.players = [
+      { speed: 0, mech: { movement: { maxSpeed: 100 } } },
+      { speed: 999, mech: { movement: { maxSpeed: 100 } } },
+    ];
+    scene.speed = scene.players[0].speed;
+    scene.mech = scene.players[0].mech;
+    return scene;
+  }
+
+  it('player 2 stomping at speed damages the building even though player 1 is stationary', () => {
+    const scene = makeCoopScene();
+    scene._stompBuildingAt(0, 0, 1 / 60, scene.players[1]);
+    expect(scene.buildingHp.get('0,0')).toBeLessThan(60);
+  });
+
+  it('a stationary stomper bites at the minimum rate even while the OTHER player sprints', () => {
+    // Flip it: players[0] is the fast one, the stomper (players[1]) is stopped. crushDamage has
+    // a 0.35 floor at speedFrac 0, so the assertion is that the stopped stomper does strictly
+    // LESS than a sprinting one — not that it does literally nothing.
+    const fast = makeCoopScene();
+    fast._stompBuildingAt(0, 0, 1 / 60, fast.players[1]);
+    const fastDmg = 60 - fast.buildingHp.get('0,0');
+
+    const scene = makeCoopScene();
+    scene.players[0].speed = 999;
+    scene.speed = 999;
+    scene.players[1].speed = 0;
+    scene._stompBuildingAt(0, 0, 1 / 60, scene.players[1]);
+    const slowDmg = 60 - scene.buildingHp.get('0,0');
+
+    expect(slowDmg).toBeLessThan(fastDmg);
+  });
+
+  it('defaults to players[0] when no stomper is passed', () => {
+    const scene = makeCoopScene();
+    scene.players[0].speed = 999;
+    scene._stompBuildingAt(0, 0, 1 / 60);
+    expect(scene.buildingHp.get('0,0')).toBeLessThan(60);
+  });
+});
+
 // How many times _damageBuildingAt was actually invoked (sanity: gradual means "more than once").
 function i0Calls(scene) {
   return scene._damageBuildingAt.mock.calls.length;
