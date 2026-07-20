@@ -627,9 +627,11 @@ export function isSmallUnit(e) {
 }
 
 // #374 (owner, playtest 2026-07-20): which SOFT-COVER BLOCK tier a unit belongs to — the key into
-// terrain.js's `SOFT_COVER_BLOCK_CHANCE` ('vehicle' 75% / 'mech' 25% / 'air' 0%). Jackson: "let's
-// give non-mech ground units a 75% block chance and mech ground units 25% block chance and air
-// units NO block chance."
+// terrain.js's soft-cover rule. Since the #374 REWORK the tier no longer sets a single per-shot
+// chance: every soft-cover hex a shot crosses rolls a flat 10%, and the tier only grades the
+// TARGET'S OWN hex ('vehicle' 25% / 'mech' 10%, i.e. no bonus) — except 'air', which exempts the
+// WHOLE lane. Jackson: "have non-mech own hex bump to 25%, and don't give mech own-hex additional
+// bonus."
 //
 // Deliberately derived from the classifications that ALREADY exist rather than a new hand-kept
 // list of kinds — a new enemy kind gets its tier for free:
@@ -641,8 +643,8 @@ export function isSmallUnit(e) {
 //     here for free — a player ref carries no `kind`, and the player is always a mech.
 //   • everything else is a non-mech ground vehicle: tank, infantry, carrier, turret.
 // Note there is no wall-turret special case and none is needed: an emplaced gun sits on a wall
-// span, never in a soft-cover hex, so `softCoverStopsShot` bails on the terrain test long before
-// this tier matters.
+// span, never in a soft-cover hex, so its OWN hex never contributes a roll; only genuine
+// intervening woods can eat a shot at it, which is the lane rule doing its job.
 //
 // This is a property of the TARGET being shot at ("how well does this thing hide in trees"), never
 // of the shooter — see `softCoverStopsShot`'s own comment.

@@ -5,7 +5,7 @@ import { ART_SCALE } from '../../art/index.js';
 import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSegment, neighbors, hexCorners, HEX_SIZE } from '../../data/hexgrid.js';
 import {
   getTerrain, terrainSpeedFactor, isPassable, damageBuilding, rubbleFor,
-  shotBlockedAt, flameCoverDamage, coverBlocksForRay,
+  shotBlockedAt, flameCoverDamage, coverBlocksForRay, isSoftCover,
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
@@ -526,6 +526,54 @@ export const WorldMixin = {
       (originHexes != null && originHexes.includes(k));
     if (coverBlocksForRay(id, ownHexExempt)) return true;
     return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #288/#309 — see `_isWall`
+  },
+
+  // #374 REWORK: the SOFT-COVER LANE for one shot — every soft-cover hex between the muzzle and
+  // the point the shot resolved at, as `[{ id, ownHex }, …]` for terrain.js `softCoverStopsShot`.
+  //
+  // WHY THIS SHAPE, and what it costs. Soft cover is now a per-hex 10% roll along the whole lane
+  // rather than one lookup on the target's hex, so the lane must be walked. It reuses the
+  // traversal the codebase already owns — `hexesAlongSegment` (hexgrid.js), the same interpolated
+  // cube-rounded walk `_damageHexesAlongSegment`/wayfinding use — rather than adding a second,
+  // differently-shaped walk or a fresh 8px pixel march. That makes the cost proportional to the
+  // number of HEXES crossed, not pixels: a 400px lane is ~5 hexes ⇒ ~5 `cubeRound`s, ~5 key
+  // strings and ~5 terrain lookups, versus `_wallDistanceLos`'s ~50 pixel samples. It is
+  // deliberately NOT folded into the LOS raycast: that runs per enemy per frame (staggered/cached,
+  // `_cachedLosToPlayer`) and answers a DISTANCE question, while this runs ONCE per shot that has
+  // already resolved onto a unit. Net cost is therefore well under one cached-LOS raycast per hit
+  // — cheaper than the geometry it sits beside — plus one rng draw per soft hex actually crossed
+  // (at most ~5, usually 0–1, and the loop short-circuits on the first hex that blocks).
+  //
+  // THE OWN-HEX EXEMPTION (#72/#279) IS THE OMISSION OF THE MUZZLE HEX: `originHexes` (the
+  // shooter's muzzle + body hex, stamped at spawn) and the muzzle point's own hex are skipped, so
+  // a shooter standing in the target's own thicket produces an EMPTY lane and no roll at all —
+  // exactly the old behaviour, now falling out of the traversal instead of needing its own flag.
+  // The target's own hex is marked `ownHex`, which is what earns it the vehicle 25% / mech 10%
+  // destination chance instead of the standard 10% (a bump that REPLACES the base chance — one
+  // roll per hex, never two).
+  //
+  // Hard cover is not this function's business: a lane that crosses a wall never reaches here,
+  // because the shot detonated on it (`_isWallForRound` / `_hitscanReach`).
+  _softCoverLane(x0, y0, x1, y1, originHexes = null) {
+    const lane = [];
+    const seen = new Set(originHexes || []);
+    seen.add(this._hexKeyAt(x0, y0));
+    const targetKey = this._hexKeyAt(x1, y1);
+    for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
+      const k = axialKey(h.q, h.r);
+      if (k === targetKey || seen.has(k)) continue;
+      seen.add(k);                                    // never roll one hex twice for one shot
+      const id = this.terrain.get(k);
+      if (isSoftCover(id)) lane.push({ id, ownHex: false });
+    }
+    // The destination hex, always last and always the `ownHex` one — appended explicitly rather
+    // than taken from the walk so it can't be missed when the muzzle and target share a hex
+    // (in which case `seen` already holds it and the lane stays empty — the brawling exemption).
+    if (!seen.has(targetKey)) {
+      const id = this.terrain.get(targetKey);
+      if (isSoftCover(id)) lane.push({ id, ownHex: true });
+    }
+    return lane;
   },
 
   // The own-hex transparency Set for a shot/LOS ray between two points (#72): each endpoint's

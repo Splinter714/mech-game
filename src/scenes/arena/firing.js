@@ -533,11 +533,17 @@ export const FiringMixin = {
     } else {
       this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral });
     }
-    // #374: the foliage roll. A target standing in soft cover has a tier-graded chance of this
-    // shot being eaten by the trees — checked here, AFTER the beam has geometrically resolved onto
-    // a unit, because soft cover no longer blocks anything geometrically. The beam still draws to
-    // the target and still sparks (it hit the branches in front of them); it just deals nothing.
-    const eaten = hit && this._softCoverStopsShot?.(target, [this._hexKeyAt(muzzleX, muzzleY)]);
+    // #374 REWORK: the foliage roll, per soft-cover hex the beam CROSSES (10% each; the target's
+    // own hex 25% for a non-mech ground unit, 10% for a mech, 0 for air — which exempts the whole
+    // lane). Checked here, AFTER the beam has geometrically resolved onto a unit, because soft
+    // cover no longer blocks anything geometrically. The muzzle point is passed as the lane's
+    // origin; the muzzle's own hex is also the #72 own-hex exemption. The beam still draws to the
+    // target and still sparks (it hit the branches in front of them); it just deals nothing.
+    // A held stream asks once per TICK, so it loses ~10% of its DPS per crossed hex rather than
+    // being gated all-or-nothing.
+    const eaten = hit && this._softCoverStopsShot?.(
+      target, [this._hexKeyAt(muzzleX, muzzleY)], { x: muzzleX, y: muzzleY },
+    );
     if (hit && !eaten) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
@@ -681,6 +687,11 @@ export const FiringMixin = {
     const ignoresCover = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this));
     const pushed = {
       ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover,
+      // #374 REWORK: where this round was BORN, so the soft-cover lane (world.js
+      // `_softCoverLane`) can be walked muzzle→impact when the round resolves onto a unit.
+      // Stamped at spawn rather than back-derived from flight, so an arcing/homing round is
+      // judged on the lane it was actually fired down.
+      originX: x, originY: y,
       // #348: who fired it, so friendly fire (projectiles.js) can skip the shooter themselves.
       shooter: owner === 'player' ? (shooter ?? primaryPlayerOf(this)) : null,
     };

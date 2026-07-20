@@ -241,9 +241,10 @@ export const ProjectilesMixin = {
         if (ally) {
           p.dead = true;
           p.stopTrajectorySfx?.();
-          // #374: the foliage roll — a teammate standing in soft cover may have this round eaten
-          // by the trees. Same rule as any other target; the round still dies and still splashes.
-          if (!this._softCoverStopsShot?.(ally, p.originHexes)) {
+          // #374 REWORK: the foliage roll — a teammate standing in soft cover may have this
+          // round eaten by the trees, per soft-cover hex the round's lane crossed. Same rule as
+          // any other target; the round still dies and still splashes.
+          if (!this._softCoverStopsShot?.(ally, p.originHexes, { x: p.originX, y: p.originY })) {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
             this._damagePlayerAt(dmg, ally);
           }
@@ -259,12 +260,17 @@ export const ProjectilesMixin = {
         p.dead = true;
         p.stopTrajectorySfx?.();   // #56: ditto — impact/landing is the other death site
         if (toTarget < HIT_RADIUS + p.splash) {
-          // #374: the foliage roll, per resolved target. Soft cover stops nothing geometrically
-          // any more, so this is where a round aimed at something standing in the trees can be
-          // eaten instead — tier-graded off the TARGET (vehicle 75% / mech 25% / air 0%), exempt
-          // when the shooter fired from inside that same cover hex (`p.originHexes`).
+          // #374 REWORK: the foliage roll, PER PROJECTILE and per soft-cover hex its lane
+          // crossed (10% each; the target's own hex 25% for a non-mech ground unit, 10% for a
+          // mech, and an AIR target is exempt for the entire lane). Soft cover stops nothing
+          // geometrically any more, so this is where a round flying through or into the trees is
+          // eaten instead. `p.originX/originY` is the spawn point the lane is walked from; the
+          // shooter's own muzzle hexes (`p.originHexes`) drop out of that lane, which is the
+          // #72/#279 brawling-in-one-thicket exemption. Every round of a salvo asks
+          // independently, so a volley loses SOME of its missiles rather than all or none.
+          // Identical for `enemyShot` — the rule reads the target, never the shooter.
           const victim = enemyShot ? hitPlayer : hitEnemy;
-          if (!this._softCoverStopsShot?.(victim, p.originHexes)) {
+          if (!this._softCoverStopsShot?.(victim, p.originHexes, { x: p.originX, y: p.originY })) {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
             if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
             else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);

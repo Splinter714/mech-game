@@ -52,9 +52,12 @@
 //              base-infra structures (alertTower/dockClosed/objective) — those always block
 //              EVERY ground unit's LOS unconditionally. The walk-through terrain cover
 //              (forest/scrub/drift/wreck/fumarole) is `soft`: passable+slow, and (since #374)
-//              blocks NO ONE's LOS geometrically — instead a shot at a target standing in it has
-//              a chance of being eaten by the foliage, graded by the TARGET's unit tier
-//              (`SOFT_COVER_BLOCK_CHANCE`: vehicle 75%, mech 25%, air 0%). (History: #279 briefly flipped these five
+//              blocks NO ONE's LOS geometrically — instead EVERY soft-cover hex a shot crosses
+//              has its own independent 10% chance of eating that projectile, with the target's
+//              own hex worth 25% for a non-mech ground unit and air targets exempt from the whole
+//              lane (`SOFT_COVER_HEX_BLOCK_CHANCE`/`SOFT_COVER_OWN_HEX_BLOCK_CHANCE`; the #374
+//              rework replaced that issue's first landing, a single target-tier roll of
+//              75/25/0). (History: #279 briefly flipped these five
 //              to `hard`; a playtest reverted them to `soft`, which then blocked only SMALL units'
 //              rays per #269 §1's size tier; #374 removed that size-tiered blocking entirely.) See
 //              `coverBlocksForRay`/`softCoverStopsShot`/`isSoftCover` below for how the tiers
@@ -520,46 +523,81 @@ export function isSoftCover(id) {
 // (#351's natural-terrain indestructibility is orthogonal — that is destructibility/targetability;
 // this is cover behaviour.)
 //
-// The chance is GRADED BY THE TARGET'S TYPE (Jackson, same conversation: "let's give non-mech
-// ground units a 75% block chance and mech ground units 25% block chance and air units NO block
-// chance"). That restores the SHAPE of #269's size tiering — small things hide in foliage better
-// than big ones — as a probability rather than the old near-immunity, and "aircraft are above the
-// treeline" falls out of the table as a plain 0 instead of needing its own branch anywhere.
-//   vehicle — non-mech GROUND units: infantry, tank, carrier, turret, and a grounded flyer.
-//   mech    — the player's mech and every mech-kind enemy (scout/brawler/sniper/artillery).
-//   air     — anything currently airborne. 0 ⇒ `softCoverStopsShot` never even rolls.
-// Owner: tunable — these three numbers are the whole dial.
-export const SOFT_COVER_BLOCK_CHANCE = { vehicle: 0.75, mech: 0.25, air: 0 };
+// ── #374 REWORK (owner, 2026-07-20) — soft cover is a PER-HEX LANE rule ────────────────────
+// This SUPERSEDES the first #374 landing's target-only tiered lookup
+// (`SOFT_COVER_BLOCK_CHANCE = { vehicle: 0.75, mech: 0.25, air: 0 }`, a single roll against the
+// TARGET's own hex). Jackson, after working the mechanics through: "what if we made it actually
+// have a 10% chance of blocking shots that pass over it, unless those shots are at air enemies?
+// … have non-mech own hex bump to 25%, and don't give mech own-hex additional bonus; this all
+// will apply to enemy shots as well, right?"
+//
+// The model:
+//   • EVERY soft-cover hex the shot's lane crosses gets its OWN independent 10% roll. Three
+//     forest hexes between shooter and target ⇒ three rolls ⇒ 1 − 0.9³ ≈ 27.1% blocked. Depth of
+//     woods is what protects you, not a flat per-target lookup.
+//   • The roll is PER PROJECTILE, never per trigger pull (confirmed with Jackson). A 6-missile
+//     salvo across three hexes loses ~1.6 missiles and the rest get through — foliage eating SOME
+//     of a volley, which is the read we want; all-or-nothing per-pull would feel arbitrary. The
+//     scene calls this once per resolved round / per beam tick, so that falls out for free, and a
+//     20/sec stream just loses ~10% of its DPS through one hex.
+//   • The TARGET'S OWN HEX is the one special case, and the bump REPLACES the standard 10% for
+//     that hex (the interpretation the issue asked to be flagged rather than guessed — a single
+//     roll per hex, so 25% INSTEAD OF 10%, never 25% on top):
+//        vehicle (non-mech ground: infantry, tank, carrier, turret) — 25%
+//        mech    (player + mech-kind enemies)                       — 10%, no bonus at all
+//        air                                                        — 0%
+//   • AIR TARGETS IGNORE COVER COMPLETELY — the WHOLE lane, not just their own hex. A shot at
+//     anything airborne is never blocked no matter how much foliage it crosses. Jackson chose
+//     this explicitly over the physically-consistent alternative (rolling the intervening hexes
+//     and exempting only the destination).
+//   • SYMMETRIC: nothing here reads the shooter's identity, so an enemy's shots obey it exactly
+//     as the player's do. Foliage blocks whatever crosses it.
+// Hard cover is untouched: it still blocks everything between two other points, unconditionally,
+// via `coverBlocksForRay` below. (#351's natural-terrain indestructibility is orthogonal.)
+//
+// Owner: tunable — these two entries are the whole dial.
+export const SOFT_COVER_HEX_BLOCK_CHANCE = 0.10;
+export const SOFT_COVER_OWN_HEX_BLOCK_CHANCE = { vehicle: 0.25, mech: 0.10, air: 0 };
 
-// #374: the block chance for one unit tier. Unknown/missing tier ⇒ 0 (never block) rather than a
-// guessed default — a caller that can't classify its target should not silently eat shots.
-export function softCoverBlockChance(tier) {
-  return SOFT_COVER_BLOCK_CHANCE[tier] ?? 0;
+// #374: the block chance for ONE crossed soft-cover hex. `ownHex` is true only for the hex the
+// target is actually standing in. An unknown tier falls back to the standard per-hex chance on an
+// own hex (never a guessed bonus) — a caller that can't classify its target still gets the plain
+// lane rule rather than silently eating extra shots.
+export function softCoverHexBlockChance(tier, ownHex = false) {
+  if (tier === 'air') return 0;
+  if (!ownHex) return SOFT_COVER_HEX_BLOCK_CHANCE;
+  return SOFT_COVER_OWN_HEX_BLOCK_CHANCE[tier] ?? SOFT_COVER_HEX_BLOCK_CHANCE;
 }
 
-// #374: does the foliage eat THIS shot?
-//   `id`    — terrain of the hex the shot is RESOLVING in, i.e. the TARGET's hex. Cover protects
-//             whoever STANDS in it, never whoever is merely shot at through it; that reversal is
-//             the whole point of dropping the geometric rule.
-//   `tier`  — the TARGET's tier (see the table above). Deliberately a property of the thing being
-//             shot at, not of the shooter: it answers "how well does this unit hide in these
-//             trees", which has nothing to do with who pulled the trigger.
-//   `shooterInSameHex` — the #72/#279 own-hex exemption, carried forward deliberately: cover does
-//             not protect its own occupant from a shot ORIGINATING in the same cover. Two units
-//             brawling inside one thicket have no foliage between them, so there is nothing to
-//             stop the shot — the same reasoning that lets a unit standing in cover see and shoot
-//             out of it. Anywhere else the roll applies.
+// #374: does the foliage eat THIS projectile?
+//   `lane`  — the soft-cover hexes the shot CROSSES, muzzle → target, as
+//             `[{ id, ownHex }, …]`: `id` is the terrain id of that hex, `ownHex` marks the
+//             target's own hex. Built by the scene from the geometry it already walks for LOS
+//             (arena/world.js `_softCoverLane`); non-soft ids are ignored here so a caller may
+//             hand over a whole traversal without pre-filtering it.
+//             THE OWN-HEX EXEMPTION (#72/#279) IS EXPRESSED AS AN OMISSION: the shooter's own
+//             muzzle hex is simply never put in the lane, so two units brawling inside one
+//             thicket produce an EMPTY lane (the target's hex IS the muzzle hex) and no roll is
+//             made at all — the same reasoning that lets a unit in cover see and shoot out of it,
+//             now falling out of the traversal instead of needing its own flag.
+//   `tier`  — the TARGET's tier (`softCoverUnitTier`, arena/shared.js). A property of the thing
+//             being shot at, never of the shooter. `air` short-circuits the entire lane.
 //   `rng`   — INJECTED (defaults to `Math.random`) so a seeded run is reproducible and the rule is
 //             deterministically testable; the same convention `pickPowerupType`/
-//             `makeDockResupplyState` use. Pure: no module-level RNG state.
+//             `makeDockResupplyState` use. Pure: no module-level RNG state. Stepped ONCE PER
+//             soft-cover hex now, not once per shot — more draws per shot, same discipline.
 // Note a wall turret needs no special case: it is emplaced on a wall span, never standing in
-// foliage, so `isSoftCover` is false for its hex and the rule simply never reaches the roll.
-export function softCoverStopsShot(id, tier, shooterInSameHex = false, rng = Math.random) {
-  if (!isSoftCover(id)) return false;
-  if (shooterInSameHex) return false;
-  const chance = softCoverBlockChance(tier);
-  if (chance <= 0) return false;
-  return rng() < chance;
+// foliage, so its own hex is never soft and only genuine intervening woods can eat a shot at it.
+export function softCoverStopsShot(lane, tier, rng = Math.random) {
+  if (tier === 'air') return false;          // air ignores the WHOLE lane, not just its own hex
+  if (!lane || lane.length === 0) return false;
+  for (const hex of lane) {
+    if (!hex || !isSoftCover(hex.id)) continue;
+    const chance = softCoverHexBlockChance(tier, !!hex.ownHex);
+    if (chance <= 0) continue;
+    if (rng() < chance) return true;         // this hex's foliage ate it; no need to roll deeper
+  }
+  return false;
 }
 
 // #269: the single shared "does this terrain block THIS ray" decision — `shotBlockedAt`,
