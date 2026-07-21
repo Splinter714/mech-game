@@ -25,7 +25,7 @@ import { Mech } from '../../data/Mech.js';
 import { makePlayer } from '../../data/players.js';
 import { SHIELD_MECH_PART_KEYS } from './shieldOutline.js';
 
-const PLAYER_SHIELD = { max: 100, regenPerSec: 25, pauseMs: 3000 };  // #380
+const PLAYER_SHIELD = { max: 100 };  // #382: just a pool size — pause/regen are shared constants
 
 // ── (b) every player's mech gets the deploy-time shield config ──────────────────────────────
 
@@ -49,8 +49,6 @@ describe('#364(b): player 2 is not deployed with a weaker machine than player 1'
     expect(mech).not.toBe(host);                       // an independent damage sink
     expect(mech.shield.max).toBe(host.shield.max);
     expect(mech.shield.max).toBe(PLAYER_SHIELD.max);
-    expect(mech.shield.regenPerSec).toBe(PLAYER_SHIELD.regenPerSec);
-    expect(mech.shield.pauseMs).toBe(PLAYER_SHIELD.pauseMs);
   });
 
   it('starts that shield FULL, so player 2 does not walk on with an empty pool', () => {

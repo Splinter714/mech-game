@@ -29,19 +29,14 @@ import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
 // every sortie, not something that only exists once a Shield powerup is picked up (most enemy
 // mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy kinds opt in).
-// `pauseMs` is the regen interrupt on any hit that reaches the shield, per the #246 decision.
 // #299: `max` raised 50 -> 100 as part of the owner-set balance table. (#324: the armor/structure
 // half of that table was being multiplied by 7 at deploy and now reads honestly as 2100/1400 in
 // chassis/mediumPlayer.js — the shield is separate, unaffected, and stays 100.)
-// #380 (playtest 2026-07-20, Jackson: "make shield recharge delay longer, but rate much higher"):
-// the shield stops being a passive trickle that quietly refills mid-fight and becomes a REWARD
-// FOR BREAKING CONTACT. Pause 1200 -> 3000ms (any hit restarts it, so under sustained fire the
-// pool never ticks at all); regen 2 -> 25/sec, i.e. the full 100 pool refills in 4s once regen
-// actually starts. Disengage for ~7s and you are whole again; stay in the beam and the shield is
-// a strict one-time buffer. Both numbers are BUILDER-PICKED playtest dials, not owner-set.
-// The same SHAPE (longer pause, refill measured in a few seconds rather than tens of seconds) is
-// applied proportionally to every shielded enemy kind — see data/enemies.js + data/enemyKinds.js.
-const PLAYER_SHIELD = { max: 100, regenPerSec: 25, pauseMs: 3000 };
+// #380 made the shield a REWARD FOR BREAKING CONTACT (long pause, fast refill). #382 then unified
+// pause+regen across EVERY shield: the 3000ms pause and the 25%-of-max/sec regen live as shared
+// constants in shield.js (the player 100 pool refills in the same 4s as a 5-point drone), so the
+// only per-owner shield dial that remains here is the pool SIZE.
+const PLAYER_SHIELD = { max: 100 };
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim

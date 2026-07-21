@@ -70,7 +70,8 @@ export class Mech {
 
     // #246: full-MECH shield — one pool for the whole mech (not per location), sitting in
     // front of the per-location armor+hp stack above. `data.shield` is the chassis-baseline
-    // (or per-enemy) config: { max, regenPerSec, pauseMs }; absent/zero `max` means this mech
+    // (or per-enemy) config: { max } (pause+regen are shared constants in shield.js since #382);
+    // absent/zero `max` means this mech
     // has no native shield at all (most enemy mechs — see data/enemies.js). The arena gives
     // the PLAYER a real baseline (see ArenaScene's deploy path) and the Shield powerup
     // (data/powerups.js) instantly fills + temporarily boosts whatever's configured here.
@@ -256,8 +257,8 @@ export class Mech {
   // Shield powerup pickup (#381, reworked from #246/#271's capacity/regen multiplier): grant an
   // expendable TEMPORARY shield pool of `amount` ON TOP of the base max, and top the base shield
   // to full. The pool PERSISTS UNTIL SPENT by incoming damage — the shield powerup passes no
-  // `durationMs`, so it never time-expires; only damage drains it. The base `max`/`regenPerSec`
-  // are never touched, so the regen ceiling stays put and the temp pool sits outside the regen
+  // `durationMs`, so it never time-expires; only damage drains it. The base `max` (and the shared
+  // regen rate) is never touched, so the regen ceiling stays put and the temp pool sits outside the regen
   // path entirely. Magnitude does not compound across duplicate pickups (grantTempShield takes the
   // max, not the sum). Works even on a mech with no native shield config.
   grantTempShield(amount, durationMs) {

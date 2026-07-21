@@ -4,22 +4,32 @@
 // regen/hit-pause state machine lives in exactly ONE place instead of being duplicated per body
 // type. Pure — no Phaser, no live Mech reference — so it's fully unit-tested in isolation.
 //
-// Config shape (chassis/kind data, or a constructor override): { max, regenPerSec, pauseMs }.
-// `max <= 0` (or no config at all) means "no shield at all" — some enemy kinds opt out entirely
-// (see data/enemyKinds.js), which is exactly the point of formalizing this as configurable data
-// instead of a powerup-only bolt-on.
+// Config shape (chassis/kind data, or a constructor override): { max }. `max <= 0` (or no config
+// at all) means "no shield at all" — some enemy kinds opt out entirely (see data/enemyKinds.js),
+// which is exactly the point of formalizing this as configurable data instead of a powerup-only
+// bolt-on. Per-kind `max` is the ONLY per-kind shield dial; the pause and the regen rate are
+// shared across every shield (player and every enemy) — see the two constants below.
 //
-// Regen model (#246 decision): passive + slow, continuous — but any hit that reaches the shield
-// causes a BRIEF pause before regen resumes (not a long multi-second shooter-style lockout).
-// `pauseMs` is that brief window; `tickShield` counts it down before any regen accrues.
+// #382: ONE shared pause and ONE shared regen rule for ALL shields (Jackson: "that should all be
+// the same for all enemies and player, for now"). Replaces #380's per-kind `pauseMs`/`regenPerSec`
+// table.
+//
+// Regen model (#246 decision, unified by #382): passive, continuous — but any hit that reaches the
+// shield causes a BRIEF pause before regen resumes (not a long multi-second shooter-style lockout).
+//   * SHIELD_PAUSE_MS — that brief window; `tickShield` counts it down before any regen accrues.
+//   * SHIELD_REGEN_FRACTION — regen is a FRACTION OF MAX per second (not an absolute number and not
+//     a fraction of *current*). 0.25/s ⇒ every shield refills in exactly 1/0.25 = 4s regardless of
+//     pool size: a 5-pt drone regens 1.25/s, a 100-pt player 25/s, both full 4s after the pause.
+//     Fraction-of-MAX is LINEAR and fully refills; fraction-of-current would be exponential and
+//     asymptote (never fill) — a bug, not the intent.
+export const SHIELD_PAUSE_MS = 3000;
+export const SHIELD_REGEN_FRACTION = 0.25;
 
 export function createShield(config) {
   const max = Math.max(0, config?.max ?? 0);
   return {
     max,
     hp: max,
-    regenPerSec: Math.max(0, config?.regenPerSec ?? 0),
-    pauseMs: Math.max(0, config?.pauseMs ?? 0),
     pauseRemaining: 0,
     // #381: TEMPORARY shield pool (D&D temp-HP). An expendable buffer sitting ON TOP of `max`,
     // granted by the Shield powerup (`grantTempShield`). Damage eats this FIRST (damageShield),
@@ -66,13 +76,13 @@ export function damageShield(shield, amount) {
     remaining -= fromBase;
     absorbed += fromBase;
   }
-  if (absorbed > 0) shield.pauseRemaining = shield.pauseMs;
+  if (absorbed > 0) shield.pauseRemaining = SHIELD_PAUSE_MS;
   return { absorbed, overflow: raw - absorbed };
 }
 
 // Passive regen tick, `dt` in seconds (matches Mech.regenAmmo's convention). The hit-pause
 // counts down first; only once it reaches zero does the shield actually recharge, at
-// `regenPerSec` per second, capped at `max`.
+// SHIELD_REGEN_FRACTION * max per second (percent-of-MAX, so linear and 4s to full), capped at max.
 //
 // #381: the temporary pool PERSISTS UNTIL SPENT — the shield powerup grants it with no finite
 // expiry (`tempExpiryMs = Infinity`), so this tick leaves it completely alone: it is NEVER
@@ -91,7 +101,7 @@ export function tickShield(shield, dt) {
     shield.pauseRemaining = Math.max(0, shield.pauseRemaining - dt * 1000);
     return;
   }
-  shield.hp = Math.min(shield.max, shield.hp + shield.regenPerSec * dt);
+  shield.hp = Math.min(shield.max, shield.hp + SHIELD_REGEN_FRACTION * shield.max * dt);
 }
 
 // Instant fill (Shield powerup pickup, #246): top the shield to full immediately. No-op on a

@@ -127,7 +127,7 @@ describe('HpBody layered defense (#246: HP-only / HP+armor / HP+shield / all thr
   });
 
   it('HP+shield: the shield absorbs first, in front of hp (no armor at all)', () => {
-    const b = new HpBody({ hp: 50, shield: { max: 30, regenPerSec: 0, pauseMs: 500 }, parts: layout });
+    const b = new HpBody({ hp: 50, shield: { max: 30 }, parts: layout });
     expect(b.hasShield()).toBe(true);
     const r1 = b.applyDamage('core', 20);
     expect(r1.shielded).toBe(true);
@@ -142,7 +142,7 @@ describe('HpBody layered defense (#246: HP-only / HP+armor / HP+shield / all thr
 
   it('all three layers: shield -> armor -> hp, in that order, on a single big hit', () => {
     const b = new HpBody({
-      hp: 50, armor: 20, shield: { max: 30, regenPerSec: 0, pauseMs: 500 }, parts: layout,
+      hp: 50, armor: 20, shield: { max: 30 }, parts: layout,
     });
     const res = b.applyDamage('core', 70);   // 30 shield + 20 armor + 20 hp
     expect(res.shieldAbsorbed).toBe(30);
@@ -152,16 +152,16 @@ describe('HpBody layered defense (#246: HP-only / HP+armor / HP+shield / all thr
   });
 
   it('tickShield regens the unit-wide shield passively, same brief-pause behavior as Mech', () => {
-    const b = new HpBody({ hp: 50, shield: { max: 30, regenPerSec: 5, pauseMs: 400 }, parts: layout });
-    b.applyDamage('core', 10);       // shield -> 20, pause starts
-    b.tickShield(0.4);               // pause clears exactly here, no regen yet
+    const b = new HpBody({ hp: 50, shield: { max: 30 }, parts: layout });   // #382: shared 3000ms pause, 7.5/s regen (25% of 30)
+    b.applyDamage('core', 10);       // shield -> 20, pause starts at the shared 3000ms
+    b.tickShield(3);                 // pause clears exactly here, no regen yet
     expect(b.shield.hp).toBe(20);
-    b.tickShield(1);                 // +5
-    expect(b.shield.hp).toBe(25);
+    b.tickShield(1);                 // +7.5
+    expect(b.shield.hp).toBe(27.5);
   });
 
   it('repairAll restores hp, armor, and shield all together', () => {
-    const b = new HpBody({ hp: 50, armor: 20, shield: { max: 30, regenPerSec: 1, pauseMs: 400 }, parts: layout });
+    const b = new HpBody({ hp: 50, armor: 20, shield: { max: 30 }, parts: layout });
     b.applyDamage('core', 90);
     b.repairAll();
     expect(b.hp).toBe(50);

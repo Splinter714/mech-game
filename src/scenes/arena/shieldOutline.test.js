@@ -51,17 +51,17 @@ describe('shieldOutlineActive', () => {
   });
 
   it('tracks a real shield through break and regen (data/shield.js), which is the whole point of #302', () => {
-    const shield = createShield({ max: 30, regenPerSec: 3, pauseMs: 900 });
+    const shield = createShield({ max: 30 });                // #382: shared 3000ms pause, 7.5/s regen
     expect(shieldOutlineActive(shield)).toBe(true);           // gunship spawns shelled
 
     damageShield(shield, 30);                                 // burst it down
     expect(shieldOutlineActive(shield)).toBe(false);          // shell gone
 
-    tickShield(shield, 0.5);                                  // still inside the hit-pause
+    tickShield(shield, 1);                                    // still inside the hit-pause
     expect(shieldOutlineActive(shield)).toBe(false);
 
-    tickShield(shield, 0.5);                                  // pause expires, regen accrues
-    tickShield(shield, 0.5);
+    tickShield(shield, 2);                                    // pause expires exactly here
+    tickShield(shield, 0.5);                                  // regen accrues
     expect(shield.hp).toBeGreaterThan(0);
     expect(shieldOutlineActive(shield)).toBe(true);           // shell comes back
   });
@@ -87,7 +87,7 @@ describe('shieldOutlineGrowth (#381)', () => {
 
   it('re-scales the outline sprites only when a temp pool changes the growth (via updateShieldOutline)', () => {
     const { sv, view } = makeVehicleOutline();
-    const shield = createShield({ max: 100, regenPerSec: 0, pauseMs: 0 });
+    const shield = createShield({ max: 100 });
     // No temp: active but growth stays 1, so setScale is never called.
     updateShieldOutline(sv, view, shield, 16.67);
     for (const key of SHIELD_VEHICLE_PART_KEYS) expect(sv.outlines[key].setScale).not.toHaveBeenCalled();
@@ -150,7 +150,7 @@ describe('updateShieldOutline (shared driver, driven here on a vehicle-shaped 2-
 
   it('shows on the 0→>0 edge, hides on the >0→0 edge, and shows again on regen — once each', () => {
     const { sv, view } = makeVehicleOutline();
-    const shield = createShield({ max: 30, regenPerSec: 3, pauseMs: 0 });
+    const shield = createShield({ max: 30 });   // #382: shared pause/regen
 
     updateShieldOutline(sv, view, shield, 16.67);
     for (const key of SHIELD_VEHICLE_PART_KEYS) {
@@ -168,6 +168,7 @@ describe('updateShieldOutline (shared driver, driven here on a vehicle-shaped 2-
       sv.outlines[key].setVisible.mockClear();
     }
 
+    tickShield(shield, 3);                          // clear the shared 3s pause first
     tickShield(shield, 1);                          // regen brings the pool back
     updateShieldOutline(sv, view, shield, 16.67);
     for (const key of SHIELD_VEHICLE_PART_KEYS) expect(sv.outlines[key].setVisible).toHaveBeenCalledWith(true);

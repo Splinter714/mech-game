@@ -3,6 +3,7 @@ import {
   createShield, shieldPresent, damageShield, tickShield, fillShield, shieldFraction,
   grantTempShield, shieldTotalHp, shieldTotalMax,
   layerMultiplier, LAYER_MULTIPLIERS,
+  SHIELD_PAUSE_MS, SHIELD_REGEN_FRACTION,
 } from './shield.js';
 
 describe('createShield / shieldPresent — config-driven, absent by default', () => {
@@ -12,19 +13,70 @@ describe('createShield / shieldPresent — config-driven, absent by default', ()
     expect(shieldPresent(createShield({ max: 0 }))).toBe(false);
   });
 
-  it('a positive max config starts full and present', () => {
-    const s = createShield({ max: 50, regenPerSec: 2, pauseMs: 900 });
+  it('a positive max config starts full and present — pool SIZE is the only per-kind dial (#382)', () => {
+    const s = createShield({ max: 50 });
     expect(shieldPresent(s)).toBe(true);
     expect(s.hp).toBe(50);
     expect(s.max).toBe(50);
     expect(s.pauseRemaining).toBe(0);
+    // #382: pause/regen are no longer per-config — they're shared constants, not fields on the shield.
+    expect(s.regenPerSec).toBeUndefined();
+    expect(s.pauseMs).toBeUndefined();
   });
 
-  it('clamps negative config fields to zero rather than going negative', () => {
-    const s = createShield({ max: -10, regenPerSec: -5, pauseMs: -1 });
+  it('clamps a negative max to zero rather than going negative', () => {
+    const s = createShield({ max: -10 });
     expect(s.max).toBe(0);
-    expect(s.regenPerSec).toBe(0);
-    expect(s.pauseMs).toBe(0);
+  });
+});
+
+// #382: ONE shared pause and ONE shared regen rule for ALL shields — player and every enemy kind.
+// No per-kind pauseMs/regenPerSec table (that was #380, now removed). Pause = 3000ms for
+// everything; regen = 25% of MAX per second, so every pool refills in exactly 4s regardless of
+// size. These tests pin the shared model at several pool sizes to prove the invariant.
+describe('unified shield pause + regen (#382)', () => {
+  it('exposes the shared constants: 3000ms pause, 25%/s regen fraction', () => {
+    expect(SHIELD_PAUSE_MS).toBe(3000);
+    expect(SHIELD_REGEN_FRACTION).toBe(0.25);
+  });
+
+  it('any absorbing hit starts the SAME 3000ms pause regardless of pool size', () => {
+    for (const max of [5, 15, 50, 100]) {
+      const s = createShield({ max });
+      damageShield(s, 1);
+      expect(s.pauseRemaining).toBe(3000);
+    }
+  });
+
+  it('regen is 25% of MAX per second at every pool size (5-pt drone 1.25/s, 100-pt player 25/s)', () => {
+    const cases = [[5, 1.25], [15, 3.75], [50, 12.5], [100, 25]];
+    for (const [max, perSec] of cases) {
+      const s = createShield({ max });
+      s.hp = 0;
+      tickShield(s, 1);            // one second of regen, no pause active
+      expect(s.hp).toBeCloseTo(perSec, 5);
+    }
+  });
+
+  it('every pool refills fully in ~4s regardless of size (linear percent-of-MAX)', () => {
+    for (const max of [5, 15, 50, 100]) {
+      const s = createShield({ max });
+      s.hp = 0;
+      // integrate in small steps up to 4s — should reach exactly max, and not before.
+      for (let t = 0; t < 4; t += 0.1) tickShield(s, 0.1);
+      expect(s.hp).toBeCloseTo(max, 4);
+    }
+  });
+
+  it('regen is percent-of-MAX (linear, fully fills) NOT percent-of-current (would asymptote — a bug)', () => {
+    const s = createShield({ max: 100 });
+    s.hp = 0;
+    // percent-of-current from 0 could never leave 0; percent-of-max adds a flat 25/s from empty.
+    tickShield(s, 1);
+    expect(s.hp).toBeCloseTo(25, 5);   // moved off zero — proves it's not fraction-of-current
+    // and it actually reaches full, which an exponential percent-of-current never would.
+    for (let t = 0; t < 3; t += 0.1) tickShield(s, 0.1);
+    expect(s.hp).toBeCloseTo(100, 4);
   });
 });
 
@@ -51,9 +103,9 @@ describe('damageShield — absorb-then-overflow, mirrors the old absorbShieldDam
   });
 
   it('a hit reaching the shield (absorbed > 0) starts the post-hit pause, even on the breaking hit', () => {
-    const s = createShield({ max: 20, pauseMs: 900 });
+    const s = createShield({ max: 20 });
     damageShield(s, 34);   // breaks it, absorbed 20 > 0
-    expect(s.pauseRemaining).toBe(900);
+    expect(s.pauseRemaining).toBe(SHIELD_PAUSE_MS);
   });
 
   it('treats non-positive damage as a no-op', () => {
@@ -71,39 +123,39 @@ describe('tickShield — passive regen with a brief post-hit pause (#246)', () =
     expect(s.hp).toBe(0);
   });
 
-  it('regenerates at regenPerSec once there is no pause', () => {
-    const s = createShield({ max: 50, regenPerSec: 2 });
+  it('regenerates at 25% of max per second once there is no pause', () => {
+    const s = createShield({ max: 50 });   // 25% of 50 = 12.5/s
     s.hp = 10;
-    tickShield(s, 3);   // +6
-    expect(s.hp).toBeCloseTo(16, 5);
+    tickShield(s, 3);   // +37.5
+    expect(s.hp).toBeCloseTo(47.5, 5);
   });
 
   it('never regenerates past max', () => {
-    const s = createShield({ max: 50, regenPerSec: 100 });
+    const s = createShield({ max: 50 });
     s.hp = 40;
     tickShield(s, 10);
     expect(s.hp).toBe(50);
   });
 
   it('counts the pause down first — no regen accrues while paused', () => {
-    const s = createShield({ max: 50, regenPerSec: 10, pauseMs: 1000 });
+    const s = createShield({ max: 50 });
     s.hp = 10;
-    damageShield(s, 5);           // absorbed, starts the 1000ms pause
-    expect(s.pauseRemaining).toBe(1000);
-    tickShield(s, 0.5);           // 500ms of pause consumed, no regen yet
-    expect(s.pauseRemaining).toBe(500);
-    expect(s.hp).toBe(5);         // still just what damageShield left it at
+    damageShield(s, 5);                     // absorbed, starts the shared 3000ms pause
+    expect(s.pauseRemaining).toBe(SHIELD_PAUSE_MS);
+    tickShield(s, 0.5);                     // 500ms of pause consumed, no regen yet
+    expect(s.pauseRemaining).toBe(SHIELD_PAUSE_MS - 500);
+    expect(s.hp).toBe(5);                   // still just what damageShield left it at
   });
 
   it('regen resumes exactly once the pause clears — brief interrupt, not a long lockout', () => {
-    const s = createShield({ max: 50, regenPerSec: 10, pauseMs: 300 });
+    const s = createShield({ max: 50 });    // 12.5/s regen
     s.hp = 20;
-    damageShield(s, 5);           // hp -> 15, pause starts at 300ms
-    tickShield(s, 0.3);           // pause clears exactly this tick — no regen split within it
+    damageShield(s, 5);                     // hp -> 15, pause starts at 3000ms
+    tickShield(s, SHIELD_PAUSE_MS / 1000);  // pause clears exactly this tick — no regen split within it
     expect(s.pauseRemaining).toBe(0);
     expect(s.hp).toBe(15);
-    tickShield(s, 1);             // +10 now that the pause is clear
-    expect(s.hp).toBeCloseTo(25, 5);
+    tickShield(s, 1);                       // +12.5 now that the pause is clear
+    expect(s.hp).toBeCloseTo(27.5, 5);
   });
 });
 
@@ -140,21 +192,20 @@ describe('temporary shield pool (#381)', () => {
     expect(s.tempExpiryMs).toBe(0);
   });
 
-  it('grantTempShield adds a pool on top of base and tops base to full, leaving base max/regen alone', () => {
-    const s = createShield({ max: 40, regenPerSec: 2 });
+  it('grantTempShield adds a pool on top of base and tops base to full, leaving base max alone', () => {
+    const s = createShield({ max: 40 });
     s.hp = 10;
     grantTempShield(s, 150, 10000);
     expect(s.temp).toBe(150);
     expect(s.tempExpiryMs).toBe(10000);
     expect(s.max).toBe(40);          // base capacity untouched
-    expect(s.regenPerSec).toBe(2);   // base regen untouched
     expect(s.hp).toBe(40);           // base filled
     expect(shieldTotalHp(s)).toBe(190);
     expect(shieldTotalMax(s)).toBe(190);
   });
 
   it('damage spends the temp pool FIRST, then base hp, then overflows', () => {
-    const s = createShield({ max: 40, regenPerSec: 0 });
+    const s = createShield({ max: 40 });
     grantTempShield(s, 50, 10000);   // total 90
     expect(damageShield(s, 30)).toEqual({ absorbed: 30, overflow: 0 });
     expect(s.temp).toBe(20);
@@ -167,16 +218,17 @@ describe('temporary shield pool (#381)', () => {
   });
 
   it('the temp pool never regenerates; base hp still regens only up to base max', () => {
-    const s = createShield({ max: 40, regenPerSec: 10, pauseMs: 0 });
+    const s = createShield({ max: 40 });   // base regen 25%/s = 10/s
     grantTempShield(s, 60, 10000);
-    damageShield(s, 80);             // temp 60->0, base 40->20
-    tickShield(s, 10);
+    damageShield(s, 80);             // temp 60->0, base 40->20, starts the 3000ms pause
+    tickShield(s, 4);                // one long tick clears the 3s pause (no regen within it)
+    tickShield(s, 10);               // now regen runs — 10/s well past the 20 remaining, capped at max
     expect(s.temp).toBe(0);          // spent temp stays gone
     expect(s.hp).toBe(40);           // base refills to base max, no further
   });
 
   it('the shield-powerup grant (no durationMs) PERSISTS UNTIL SPENT — never time-expires', () => {
-    const s = createShield({ max: 40, regenPerSec: 0 });
+    const s = createShield({ max: 40 });
     grantTempShield(s, 150);         // powerup path: no expiry
     expect(s.tempExpiryMs).toBe(Infinity);
     tickShield(s, 60);               // tick well past any 10s window, no damage
@@ -191,7 +243,7 @@ describe('temporary shield pool (#381)', () => {
   });
 
   it('an unspent temp pool with a FINITE opted-in window still expires (retained optional path)', () => {
-    const s = createShield({ max: 40, regenPerSec: 0 });
+    const s = createShield({ max: 40 });
     grantTempShield(s, 60, 2000);
     expect(s.tempExpiryMs).toBe(2000);
     tickShield(s, 1.999);

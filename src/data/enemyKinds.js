@@ -346,13 +346,11 @@ export const ENEMY_KINDS = {
     hp: 5,
     // #246 layer model: HP+SHIELD, no armor — same combo (and same regen shape) as the
     // helicopter: a thin-skinned flyer with a small fast-recharging deflector.
-    // #380: the shared "longer pause, much faster refill" shape, scaled to a 5-point pool — pause
-    // 900 -> 2200ms, regen 3 -> 5/sec (~1s refill, down from ~1.7s). The pool is so small that
-    // the RATE was already effectively fast here, so for the drone this change is mostly the
-    // longer pause. Deliberately the shortest pause of any shielded kind (it is the flightiest
-    // unit and genuinely does break contact), but note swarms are 10+ since #370, so the faster
-    // refill compounds across a swarm — a prime playtest dial if drones feel spongy.
-    shield: { max: 5, regenPerSec: 5, pauseMs: 2200 },
+    // #382: shared pause/regen for ALL shields (3000ms, 25%-of-max/sec — see shield.js). The
+    // 5-point pool now regens 1.25/sec and refills in the same 4s as everything else; per-kind
+    // tuning (the old 2200ms/5-per-sec) is gone. Note swarms are 10+ since #370, so the refill
+    // still compounds across a swarm — a prime playtest dial if drones feel spongy.
+    shield: { max: 5 },
     parts: {
       body: { x: 0, y: 0, w: 12, h: 12 },
     },
@@ -419,14 +417,13 @@ export const ENEMY_KINDS = {
     // #246: HP+SHIELD (no armor) — a thin-skinned aerial unit with a small deflector rather
     // than plating; regens fast (it's evasive and often out of the fight between passes) but
     // the pool itself is modest, so a sustained pass still breaks through it quickly. Exercises
-    // the HpBody shield layer (data/shield.js) with a DIFFERENT tuning than the player/
-    // Broodhauler below, showing the config is genuinely per-kind.
+    // the HpBody shield layer (data/shield.js). Only the pool SIZE is per-kind now.
     // #299: pool 30 -> 15 (owner-set).
-    // #380: shared shape, scaled to the 15-point pool — pause 900 -> 2400ms, regen 3 -> 7.5/sec
-    // (~2s refill, down from 5s). #362 has helicopters HOLD range rather than closing, so this
-    // is the enemy kind most likely to actually cash in the faster refill by drifting out of
-    // contact between passes.
-    shield: { max: 15, regenPerSec: 7.5, pauseMs: 2400 },
+    // #382: shared pause/regen for ALL shields (3000ms, 25%-of-max/sec — see shield.js); the
+    // 15-point pool regens 3.75/sec and refills in 4s. #362 has helicopters HOLD range rather than
+    // closing, so this is the enemy kind most likely to actually cash in the recharge by drifting
+    // out of contact between passes.
+    shield: { max: 15 },
     parts: {
       fuselage: { x: 0, y: 2, w: 14, h: 30 },
       cockpit: { x: 0, y: -12, w: 12, h: 12 },
@@ -522,10 +519,10 @@ export const ENEMY_KINDS = {
     // stack, a deliberately different combination from tank's (armor-only) and helicopter's
     // (shield-only) so the roster exercises every layer-combo the design calls for.
     armor: 50,
-    // #380: shared shape, scaled to the 50-point pool — pause 1500 -> 3500ms, regen 1.5 -> 16/sec
-    // (~3.1s refill, down from ~33s). Longest pause of any kind: the heaviest, least evasive unit
-    // should be the slowest to start recovering, matching the heavy Mortarhead in enemies.js.
-    shield: { max: 50, regenPerSec: 16, pauseMs: 3500 },
+    // #382: shared pause/regen for ALL shields (3000ms, 25%-of-max/sec — see shield.js); the
+    // 50-point pool regens 12.5/sec and refills in the same 4s as every other shield. The old
+    // per-kind 3500ms/16-per-sec tuning is gone.
+    shield: { max: 50 },
     // #328: the hitboxes follow the new art. `hull` is byte-identical to the TANK's, because it
     // is now literally the same drawing (see art/vehicles/carrier.js); the tank's `turret` and
     // `barrel` parts are replaced by the single `bay` — the launch door on the deck. Both parts

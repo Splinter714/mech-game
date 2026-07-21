@@ -274,7 +274,7 @@ describe('#106: toughness = structure + armor + shield, uniformly across body ty
   });
 
   it('a live Shield powerup does not inflate a mech\'s rated toughness', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     const before = m.toughness;
     expect(before).toBe(m.maxHp + 40);
     m.grantTempShield(150, 5000);        // #381: a big temporary pool on top
@@ -518,7 +518,7 @@ describe('#339: Armor Patch (instant) simply applies again', () => {
 });
 
 describe('#381: Mech.tempShieldRemainingMs exposes the temp-pool clock for stacking', () => {
-  const shieldMech = () => new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 2 } });
+  const shieldMech = () => new Mech({ chassisId: 'medium', shield: { max: 50 } });
   const pool = POWERUPS.shield.tempPool;
 
   it('is 0 with no pool, and reports the live window once one is granted', () => {

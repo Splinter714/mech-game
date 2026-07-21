@@ -531,7 +531,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('a configured shield absorbs an entire hit before armor/hp are touched at all', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 0, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 50 } });
     const arm = m.parts.leftArm;
     const armorBefore = arm.armor, hpBefore = arm.hp;
     const res = m.applyDamage('leftArm', 20);
@@ -544,7 +544,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('a hit exceeding the shield breaks it and the OVERFLOW lands on armor/hp normally', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 20, regenPerSec: 0, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 20 } });
     const arm = m.parts.leftArm;
     const armorBefore = arm.armor;
     const res = m.applyDamage('leftArm', 34);
@@ -556,13 +556,13 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('tickShield regenerates passively but pauses briefly right after a hit', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 50, regenPerSec: 10, pauseMs: 1000 } });
-    m.applyDamage('leftArm', 10);        // shield -> 40, pause starts at 1000ms
-    m.tickShield(0.5);                   // 500ms of pause burned, no regen yet
+    const m = new Mech({ chassisId: 'medium', shield: { max: 50 } });   // #382: shared 3000ms pause, 12.5/s regen (25% of 50)
+    m.applyDamage('leftArm', 10);        // shield -> 40, pause starts at the shared 3000ms
+    m.tickShield(1);                     // inside the pause, no regen yet
     expect(m.shield.hp).toBe(40);
-    m.tickShield(0.5);                   // pause clears exactly here
+    m.tickShield(2);                     // pause clears exactly here (3s total)
     expect(m.shield.hp).toBe(40);
-    m.tickShield(1);                     // regen now applies: +10
+    m.tickShield(1);                     // regen now applies: +12.5
     expect(m.shield.hp).toBeCloseTo(50, 5);
   });
 
@@ -571,10 +571,9 @@ describe('Mech full-mech shield (#246)', () => {
   // regenerating, never lifting the regen ceiling, and PERSISTING UNTIL SPENT by damage (no
   // time-expiry). Callers may still opt into a finite `durationMs` (the retained optional path).
   it('#381: grantTempShield adds an expendable pool ON TOP of base max — base max/regen/hp untouched, total grows', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(150, 10000);
-    expect(m.shield.max).toBe(40);            // base capacity is NEVER raised
-    expect(m.shield.regenPerSec).toBe(2);     // …nor the regen rate
+    expect(m.shield.max).toBe(40);            // base capacity is NEVER raised (regen is a shared %-of-max, so it scales with this alone)
     expect(m.shield.hp).toBe(40);             // base filled to full
     expect(m.shield.temp).toBe(150);          // the expendable pool sits alongside
     expect(m.shieldTotalHp()).toBe(190);      // what the HUD/glow read: base + temp
@@ -582,7 +581,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('#381: damage spends the temporary pool FIRST, then base hp, then overflows to armor', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 0, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(50, 10000);             // temp 50 on top of base 40 (total 90)
     const arm = m.parts.leftArm;
     const armorBefore = arm.armor;
@@ -606,20 +605,21 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('#381: the temporary pool NEVER regenerates — regen only refills base hp up to base max', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 10, pauseMs: 0 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });   // #382: 10/s regen (25% of 40)
     m.grantTempShield(60, 10000);             // total 100
-    m.applyDamage('leftArm', 80);             // temp 60 -> 0, base 40 -> 20
+    m.applyDamage('leftArm', 80);             // temp 60 -> 0, base 40 -> 20, starts the shared 3000ms pause
     expect(m.shield.temp).toBe(0);
     expect(m.shield.hp).toBe(20);
 
-    m.tickShield(10);                         // plenty of regen time
+    m.tickShield(4);                          // clears the 3s pause first (no regen within the tick)
+    m.tickShield(10);                         // plenty of regen time now
     expect(m.shield.temp).toBe(0);            // spent temp does NOT come back
     expect(m.shield.hp).toBe(40);             // base refilled ONLY to base max, no higher
     expect(m.shieldTotalMax()).toBe(40);      // ceiling is back to base once temp is gone
   });
 
   it('#381: regen never lifts the ceiling — with temp still present, base hp caps at base max', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 10, pauseMs: 0 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(60, 10000);
     m.applyDamage('leftArm', 20);             // eats temp only: 60 -> 40; base stays 40 (full)
     expect(m.shield.hp).toBe(40);
@@ -629,7 +629,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('#381: the powerup grant (no durationMs) PERSISTS UNTIL SPENT — ticking past any window leaves it intact', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(60);                     // powerup path: no expiry
     expect(m.shield.tempExpiryMs).toBe(Infinity);
     m.tickShield(60);                          // tick well past any 10s window, no damage
@@ -642,7 +642,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('#381: a caller may still opt into a FINITE window, and an unspent pool expires with it', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(60, 8000);
     m.tickShield(7.999);                      // just under the window
     expect(m.shield.temp).toBe(60);           // still there
@@ -655,7 +655,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('#381: a duplicate grant refreshes the pool to the same size (magnitude never compounds) and extends the window', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(60, 5000);
     m.applyDamage('leftArm', 30);             // temp 60 -> 30
     expect(m.shield.temp).toBe(30);
@@ -677,7 +677,7 @@ describe('Mech full-mech shield (#246)', () => {
   });
 
   it('repairAll refills the shield and clears any lingering temporary pool from a prior sortie', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(150, 5000);
     m.applyDamage('leftArm', 10);
     m.repairAll();

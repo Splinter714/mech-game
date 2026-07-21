@@ -7,29 +7,18 @@
 // giving enemies distinct loadouts makes them read as behaving differently — not one orbit.
 export const ENEMIES = {
 // #299: enemy mechs get a full-body SHIELD for the first time (they had none before this pass).
-// The pool sizes are the owner's (light 25 / medium 50 / heavy 75); the REGEN tuning below is
-// the builder's, chosen so the shield actually enforces "burst it down" rather than being a flat
-// extra health bar:
+// The pool sizes are the owner's (light 25 / medium 50 / heavy 75) and are the ONLY per-kind
+// shield dial that survives.
 //
-//   * `pauseMs` is the real lever. Any hit that touches the shield restarts the pause, so under
-//     ANY sustained fire the shield never ticks at all — it only comes back if you break off or
-//     lose the target. That's what makes bursting correct and chipping wrong.
-//   * `regenPerSec` then decides how punishing a disengage is. What scales with weight class is
-//     the REFILL TIME, not the per-point rate: each archetype's shield reinforces how it already
-//     fights. The light raider/stalker refill in ~2s: they flank and break contact constantly, so
-//     letting one slip away really does cost you the progress. The medium Warden (~2.5s) kites,
-//     so its shield is a partial reset on a long backpedal. The heavy Mortarhead (~3s) camps
-//     behind cover and is the slowest to recover — its 75 pool is still effectively a one-time
-//     buffer per engagement, which is the right read for a siege unit you grind down.
-//
-// #380 (playtest 2026-07-20, Jackson: "make shield recharge delay longer, but rate much higher",
-// scope confirmed as ALL shields, players and enemies alike): the pauses roughly 2.5x and the
-// refills go from tens of seconds to a few seconds. Same SHAPE as PLAYER_SHIELD (ArenaScene.js),
-// applied PROPORTIONALLY — an enemy's pool is smaller, so it gets a smaller absolute rate that
-// buys it a comparable few-second refill, not the player's absolute numbers. Builder-picked
-// playtest dials. NOTE the asymmetry: enemy mechs rarely choose to break contact, so in practice
-// this mostly costs them the mid-fight trickle they used to get, making shielded enemies slightly
-// EASIER, while the player (who can disengage on purpose) gains a real tool.
+// #382 (playtest 2026-07-20, Jackson: "why do we have different shield pauses for different types
+// of things? that should all be the same for all enemies and player, for now" + "rate should maybe
+// be a percentage instead of a number?"): the per-kind `pauseMs`/`regenPerSec` table that #380/#299
+// introduced is GONE. Pause and regen are now ONE shared rule for every shield — a 3000ms pause and
+// a 25%-of-max-per-second regen (both in shield.js). Because regen is a fraction of MAX, each pool
+// still refills in exactly 4s regardless of size, so weight class no longer changes refill time.
+// NOTE the asymmetry that remains: enemy mechs rarely choose to break contact, so the long pause
+// mostly costs them the mid-fight trickle they used to get, while the player (who can disengage on
+// purpose) gets the real recharge tool.
 
   // Mid-range flanker: an autocannon (opt 347, was 220 before #135's range-floor pass) +
   // cluster salvo (opt 660). The original Raider — a skirmisher that fights at a middling
@@ -37,7 +26,7 @@ export const ENEMIES = {
   raider: {
     chassisId: 'light',
     name: 'Raider',
-    shield: { max: 25, regenPerSec: 12.5, pauseMs: 2500 }, // #380: full refill ~2s
+    shield: { max: 25 }, // #382: shared pause/regen (see shield.js)
     mounts: { rightArm: ['autocannon'], leftTorso: ['clusterRocket'] },
   },
 
@@ -53,7 +42,7 @@ export const ENEMIES = {
   skirmisher: {
     chassisId: 'light',
     name: 'Stalker',
-    shield: { max: 25, regenPerSec: 12.5, pauseMs: 2500 }, // #380: full refill ~2s
+    shield: { max: 25 }, // #382: shared pause/regen (see shield.js)
     mounts: { rightArm: ['shotgun'], leftArm: ['machineGun'] },
   },
 
@@ -83,7 +72,7 @@ export const ENEMIES = {
   sniper: {
     chassisId: 'medium',
     name: 'Warden',
-    shield: { max: 50, regenPerSec: 20, pauseMs: 3000 },   // #380: full refill ~2.5s
+    shield: { max: 50 }, // #382: shared pause/regen (see shield.js)
     mounts: { rightArm: ['plasmaLance'], leftTorso: ['clusterRocket'] },
   },
 
@@ -105,7 +94,7 @@ export const ENEMIES = {
   artillery: {
     chassisId: 'heavy',
     name: 'Mortarhead',
-    shield: { max: 75, regenPerSec: 25, pauseMs: 3500 },   // #380: full refill ~3s
+    shield: { max: 75 }, // #382: shared pause/regen (see shield.js)
     mounts: { rightTorso: ['plasmaCannon'], leftTorso: ['napalm'] },
   },
 };

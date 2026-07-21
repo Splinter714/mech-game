@@ -39,7 +39,8 @@ export class HpBody {
   //   coords). `armor` (#246, optional, default 0) is a flat pool that absorbs damage before
   //   hp — the non-mech analogue of a Mech's per-location armor, but a single unit-wide pool
   //   since HpBody has no separate per-location tracking. `shield` (optional) is
-  //   { max, regenPerSec, pauseMs } — absent/zero `max` means this kind has no shield at all.
+  //   { max } (pause+regen are shared constants in shield.js since #382) — absent/zero `max`
+  //   means this kind has no shield at all.
   constructor(def = {}) {
     this.kind = 'body';
     this.name = def.name ?? 'Contact';
