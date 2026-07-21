@@ -22,7 +22,7 @@ import {
 import { Audio } from '../../audio/index.js';
 import {
   DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
-  isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH,
+  isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH, GATE_PIP_HIT_RADIUS,
 } from './shared.js';
 import { listenerOf, livePlayersOf } from './players.js';
 
@@ -1020,6 +1020,23 @@ export const WorldMixin = {
       if (this._hexKeyAt(x0 + cx * t, y0 + cy * t) === key) return t;
     }
     return Infinity;
+  },
+
+  // #412, hitscan half of the targeted-open-gate rule: distance from (x0,y0) along `angle` to the
+  // point where the ray comes within `GATE_PIP_HIT_RADIUS` of an open gate's PIP (its span
+  // midpoint), or Infinity if the ray never grazes it within `maxT`. The beam counterpart of the
+  // projectile's per-step proximity test — a beam does not travel in steps, so its stopping point
+  // is solved up front, exactly as `_targetHexDistance` solves the targeted-hex one. Only ever
+  // asked about the ONE open gate the player has locked, so it can never manufacture solidity in a
+  // mouth the player is merely firing past.
+  _targetGateDistance(x0, y0, angle, maxT, edge) {
+    if (!edge) return Infinity;
+    const mx = (edge.x0 + edge.x1) / 2, my = (edge.y0 + edge.y1) / 2;
+    const cx = Math.cos(angle), cy = Math.sin(angle);
+    // Nearest point on the ray to the pip centre, clamped to the beam's own [0, maxT] span.
+    const t = Math.max(0, Math.min(maxT, (mx - x0) * cx + (my - y0) * cy));
+    const px = x0 + cx * t, py = y0 + cy * t;
+    return Math.hypot(px - mx, py - my) <= GATE_PIP_HIT_RADIUS ? t : Infinity;
   },
 
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush

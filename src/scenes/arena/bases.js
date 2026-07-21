@@ -36,6 +36,7 @@ import {
 import { findHexPath } from '../../data/hexRoute.js';
 import { pixelToHex } from '../../data/hexgrid.js';
 import { listenerOf, livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
+import { MAX_AUDIBLE_DISTANCE } from '../../data/positionalAudio.js';
 import { scaleComposition, scaleDockWave } from '../../data/playerScaling.js';
 
 // #309 playtest — how often the DEMAND scan runs, and how many garrison units it may ask per scan.
@@ -725,8 +726,19 @@ export const BasesMixin = {
     // listener — `listenerOf`, still the co-op audio seam post-#364). None left -> stop it.
     const { listenerX, listenerY } = listenerOf(this);
     const src = pickSirenSource(alive, listenerX, listenerY);
-    if (src) Audio.updateSiren({ x: src.x, y: src.y, listenerX, listenerY });
-    else Audio.stopSiren(1.1);   // #385: the last signaled tower fell — trail the wail off, don't snap it silent
+    // #385 (real abrupt-cut fix): only SUSTAIN the single siren voice for a source that's actually
+    // AUDIBLE — within MAX_AUDIBLE_DISTANCE of the listener. The prior fixes only lengthened the
+    // last-tower fade at `stopSiren` below, but that path almost never runs: destroying the near,
+    // blaring tower leaves OTHER signaled towers alive (its own base's, or a far already-alerted
+    // base's), so `pickSirenSource` returns one and the voice REASSIGNS with no fade. When the new
+    // nearest is far, `setSirenPos` snaps the positional gain down to its ~floor value over ~0.15s —
+    // an abrupt CUT, never reaching the fade. So: if the nearest signaled-alive tower is out of
+    // audible range, treat the siren the player was fighting as ENDED and wail the voice down over
+    // ~1.1s (walking back into range restarts it). Reassignment still glides smoothly between towers
+    // that are BOTH in range (clearing a base tower-by-tower keeps the siren going, as intended).
+    const audible = src && Math.hypot(src.x - listenerX, src.y - listenerY) <= MAX_AUDIBLE_DISTANCE;
+    if (audible) Audio.updateSiren({ x: src.x, y: src.y, listenerX, listenerY });
+    else Audio.stopSiren(1.1);   // #385: the audible siren ended (last/only in-range tower fell) — trail the wail off, don't snap it silent
     // (~1.1s: the fade is an EXPONENTIAL ramp to near-silence, which front-loads its attenuation —
     //  0.6s of scheduled ramp was only ~0.2-0.3s of AUDIBLE fade and still read as a click-off.)
   },

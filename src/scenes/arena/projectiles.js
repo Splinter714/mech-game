@@ -3,9 +3,10 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, homingShouldGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
+import { GATE_PIP_HIT_RADIUS } from './shared.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
@@ -92,11 +93,13 @@ export const ProjectilesMixin = {
       // hard-gating the desired angle, so the turn-in reads as a smooth curve, not a snap.
       const homingActive = p.homing && !targetGone;
       let restoreTurn = null;
+      let seekerLive = homingActive;   // #418: an arcing lob's seeker isn't engaged during ballistic ascent
       if (homingActive && p.arc) {
         const blend = arcHomingBlend(p.dist / p.maxDist, p.blendStart);
         if (blend <= 0) {
           restoreTurn = p.turn;
           p.turn = 0;
+          seekerLive = false;
         } else if (blend < 1) {
           restoreTurn = p.turn;
           p.turn = p.turn * blend;
@@ -146,6 +149,15 @@ export const ProjectilesMixin = {
       const prevX = p.x, prevY = p.y;   // #77: for swept hit detection (fast rounds can tunnel)
       stepProjectile(p, dt, desiredAngle);
       if (restoreTurn != null) p.turn = restoreTurn;
+      // #418 FAILED-PASS GIVE-UP: a guided round that has overshot its target — begun receding
+      // from its closest approach past the give-up margin — stops homing here and flies straight
+      // on its current heading from now on, so it carries to ground/terrain or max range and
+      // detonates instead of orbiting the target forever hunting another pass. Only guided rounds
+      // whose seeker is actually live (an arcing lob mid-ascent is approaching, not orbiting, and
+      // always lands at maxDist regardless); dumbfire rounds never reach here.
+      if (seekerLive && !targetGone && homingShouldGiveUp(p, Math.hypot(tx - p.x, ty - p.y))) {
+        p.homing = false;
+      }
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if
       // that wall is a destructible outpost — or #72 a soft-cover hex — the round chips its HP
       // (and may flatten it to rubble; flame rounds chew soft cover extra fast). #72 own-hex
@@ -192,6 +204,24 @@ export const ProjectilesMixin = {
           this._damageWallEdge(wallHit.edge, p.damage);
           this._impactFx(wallHit.x, wallHit.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
+        }
+        // #412 THE TARGETED-OPEN-GATE RULE. An open gate is a doorway a round passes straight
+        // through — `wallEdgeCrossing` treats it as non-solid, so `_wallEdgeHit` above never fires
+        // on one and the span, though perfectly lockable, is almost impossible to actually hit. A
+        // round whose TARGET is that open gate impacts its PIP: a small targetable point at the
+        // mouth's midpoint. On contact the damage routes straight to the span's HP
+        // (`_damageWallEdge`), not through the terrain/nearest-wall path (which excludes open gates
+        // by design). Mirrors the targeted-hex rule just below — scoped to the ONE gate the player
+        // aimed at (`targetGate`, stamped at spawn from the live lock), and only while it stands.
+        if (p.targetGate && !p.targetGate.destroyed) {
+          const mx = (p.targetGate.x0 + p.targetGate.x1) / 2, my = (p.targetGate.y0 + p.targetGate.y1) / 2;
+          if (segmentPointDistance(prevX, prevY, p.x, p.y, mx, my) < GATE_PIP_HIT_RADIUS) {
+            p.dead = true;
+            p.stopTrajectorySfx?.();
+            this._damageWallEdge(p.targetGate, p.damage);
+            this._impactFx(mx, my, p.color, p.kind, p.splash, p.weaponId);
+            continue;
+          }
         }
         // #317 THE TARGETED-HEX RULE: a round whose TARGET is a destructible hex impacts that hex
         // the moment it enters it, regardless of whether that terrain would normally stop a ray.

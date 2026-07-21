@@ -654,16 +654,19 @@ describe('Mech full-mech shield (#246)', () => {
     expect(m.shield.hp).toBe(40);             // base is unaffected by temp expiry
   });
 
-  it('#381: a duplicate grant refreshes the pool to the same size (magnitude never compounds) and extends the window', () => {
+  it('#417: a duplicate grant ADDS its full pool ON TOP, UNCAPPED (sums, not max)', () => {
     const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
     m.grantTempShield(60, 5000);
     m.applyDamage('leftArm', 30);             // temp 60 -> 30
     expect(m.shield.temp).toBe(30);
 
-    m.grantTempShield(60, 8000);              // duplicate — refills the pool to 60, NOT 90
-    expect(m.shield.temp).toBe(60);
+    m.grantTempShield(60, 8000);              // #417: ADDS 60 on top → 90 (was max-of, i.e. 60)
+    expect(m.shield.temp).toBe(90);
     expect(m.tempShieldRemainingMs).toBe(8000);
     expect(m.shield.max).toBe(40);            // base still never touched
+
+    m.grantTempShield(60, 8000);              // …and again → 150, no ceiling
+    expect(m.shield.temp).toBe(150);
   });
 
   it('#381: grantTempShield can shield a chassis with no native shield, and it still drains first', () => {

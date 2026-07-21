@@ -6,6 +6,10 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   // Hot wake streaming back from the glob.
   g.fillStyle(color, 0.18 * f); g.fillCircle(x - ca * 3.5 * s, y - sa * 3.5 * s, 3.8 * s);
   g.fillStyle(color, 0.30 * f); g.fillCircle(x, y, 5 * s);
+  // #421 legibility: a thin dark rim UNDER the teardrop body so a pale/bright energy glob
+  // (cyan/green/white cores) still reads on light ground (snow, sand) instead of washing out.
+  // Drawn between the soft corona and the solid body so it darkens only the hard edge.
+  g.fillStyle(0x14161a, 0.55); g.fillCircle(x, y, 3.2 * s);
   // Teardrop: round front, tapered tail (drawn as two overlapping circles).
   g.fillStyle(color, 0.92); g.fillCircle(x, y, 2.4 * s);
   g.fillStyle(color, 0.7); g.fillCircle(x - ca * 2 * s, y - sa * 2 * s, 1.5 * s);

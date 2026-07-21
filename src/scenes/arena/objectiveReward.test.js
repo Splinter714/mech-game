@@ -91,8 +91,8 @@ describe('#315: destroying a base objective drops exactly one Armor Patch', () =
     expect(() => s._onTerrainCollapsed('0,0')).not.toThrow();
   });
 
-  it('the awarded powerup applies its repair INSTANTLY on pickup, on top of #381\'s free-ammo window', () => {
+  it('the awarded powerup applies its repair INSTANTLY on pickup, with no timed window (#409)', () => {
     expect(POWERUPS.armorPatch.instant).toBe(true);
-    expect(POWERUPS.armorPatch.duration).toBe(10);   // #381: the free-ammo window (repair stays instant)
+    expect(POWERUPS.armorPatch.duration).toBeUndefined();   // #409: purely instant, no free-ammo window
   });
 });

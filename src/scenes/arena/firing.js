@@ -17,7 +17,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel } from '../../data/sprint.js';
 import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
-import { targetHexKeyOf } from './shared.js';
+import { targetHexKeyOf, openGateOf } from './shared.js';
 import { targetCoverExempt } from '../../data/visibility.js';
 
 export const FiringMixin = {
@@ -51,9 +51,13 @@ export const FiringMixin = {
     // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
     // can measure our code-path cost from here to the audio node's start().
     Audio.markTrigger();
+    // #409: INFINITE FIRE suppresses the reload gate — an online weapon is treated as ready even
+    // mid-reload / dry (its ammo cost is skipped too, in fireWeapon). Otherwise `w.ready` stands.
+    const noReload = !!this._buffMods?.().noReload;
     for (const w of player.mech.weapons()) {
+      const fireReady = w.ready || (noReload && w.online);
       let cd = (player.fireCooldowns[w.location] ?? 0) - delta;
-      if (intent.fire[w.location] && cd <= 0 && w.ready) {
+      if (intent.fire[w.location] && cd <= 0 && fireReady) {
         this.fireWeapon(w, player);
         cd = this._fireInterval(w.weapon);
       }
@@ -65,13 +69,13 @@ export const FiringMixin = {
       // between angles as the turret swept instead of following it smoothly. This runs every
       // render frame regardless of cadence and re-aims the beam's existing line at the current
       // muzzle/angle; it's purely visual — damage still only applies on the cadence above.
-      if (intent.fire[w.location] && w.ready && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w, player);
+      if (intent.fire[w.location] && fireReady && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w, player);
 
       // Held/looping fire sound (#53): a genuinely continuous weapon (flamethrower/beam
       // laser, hasHeldSfx) starts its loop on the rising edge (button just pressed) and
       // stops it on the falling edge — button released, OR the weapon ran dry / went
       // offline while held (ammo depleted, part destroyed).
-      const held = intent.fire[w.location] && w.ready && hasHeldSfx(w.weapon.id);
+      const held = intent.fire[w.location] && fireReady && hasHeldSfx(w.weapon.id);
       // #348: the held-loop key is per player — two players holding the same weapon in the
       // same slot each own their own loop instead of stopping each other's.
       const audioKey = `${player.id}:${w.location}`;
@@ -218,8 +222,9 @@ export const FiringMixin = {
     // or not, and a flyer's rounds do the same. There is no per-shot cover-exemption flag left in
     // this file — the wall trace / in-flight wall check below run unconditionally.
     const mods = this._buffMods?.() ?? {};
-    // #381 free ammo: while ANY powerup is active, weapons don't spend ammo (freeAmmo — granted
-    // by every powerup now, not the old dedicated Overcharge). Otherwise spend a shot's worth,
+    // #409 free ammo: only INFINITE FIRE grants it (reverting #381's universal window). While it's
+    // active weapons don't spend ammo AND ignore the reload gate (see _handleFiring). Otherwise
+    // spend a shot's worth,
     // scaled by cycleMult (#235): Overdrive's cycleMult 0.5 halves the fire interval (shots go out
     // ~2x as often), so scaling consumption by the same factor spends 0.5 ammo/shot — exactly
     // offsetting the faster rate for a net-neutral ammo economy, distinct from free ammo's true
@@ -528,6 +533,18 @@ export const FiringMixin = {
       const tt = this._targetHexDistance(muzzleX, muzzleY, angle, endDist, tHexKey);
       if (tt < endDist) { endDist = tt; hit = false; blocked = true; }
     }
+    // #412, hitscan half of the targeted-open-gate rule. A beam sails through an open gate's mouth
+    // (the span is non-solid, so the wall trace above never clamps on it), so a laser aimed at the
+    // gate lances straight past it. If the player's lock is that open gate and the ray grazes its
+    // pip shorter than the beam would otherwise end, terminate the beam there and route the chip
+    // straight to the span (`gateBlock` below) — `_damageBuildingAt`/`nearestWallEdge` would miss
+    // it, since those exclude open gates by design. Same shape as the targeted-hex clamp above.
+    const tGate = owner === 'player' ? openGateOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
+    let gateBlock = null;
+    if (tGate) {
+      const tt = this._targetGateDistance?.(muzzleX, muzzleY, angle, endDist, tGate) ?? Infinity;
+      if (tt < endDist) { endDist = tt; hit = false; blocked = true; gateBlock = tGate; }
+    }
     let endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
     // #374 REWORK: soft cover eats a beam along its TRACE. A beam resolves instantly, so it can't
@@ -583,6 +600,12 @@ export const FiringMixin = {
       if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target));
       else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, endX, endY, dmg, color);
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
+    } else if (gateBlock) {
+      // #412: the beam terminated on the open gate's pip — route the chip straight to that span's
+      // HP. `_damageBuildingAt` (the generic blocked path below) would miss it: `nearestWallEdge`
+      // excludes open gates, so the hit has to name the gate edge directly.
+      this._damageWallEdge?.(gateBlock, Math.max(1, Math.round(w.weapon.damage)));
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
       // #317: a stopped beam now CHIPS what stopped it, exactly as a round that detonates on cover
@@ -709,6 +732,11 @@ export const FiringMixin = {
     // targetable and literally unhittable. Player-only: an enemy has no convergence pick, and the
     // stamp is null for every other target kind, so nothing else changes behaviour.
     const targetHexKey = owner === 'player' ? targetHexKeyOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
+    // #412: stamp the OPEN GATE the player is aimed at (when the converge/lock pick is one). An open
+    // gate is a doorway a round would otherwise pass clean through, so projectiles.js impacts the
+    // round on that gate's pip and routes the damage to its span HP. Player-only and null for every
+    // other target kind (a shut gate, a plain span, a hex, an enemy), so nothing else changes.
+    const targetGate = owner === 'player' ? openGateOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
     // #338: the shot half of the shared predicate, resolved ONCE at spawn and carried by the round
     // (projectiles.js reads it in the in-flight cover check). Spawn-time, not per-frame, on purpose
     // — a shot commits to the geometry it was fired under, which is exactly the rule that keeps
@@ -716,7 +744,7 @@ export const FiringMixin = {
     // on the wall that target ducks behind, rather than homing through terrain after it.
     const ignoresCover = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this));
     const pushed = {
-      ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover,
+      ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, targetGate, ignoresCover,
       // #374 REWORK: where this round was BORN (kept for reference / the friendly-fire origin) and
       // the last hex it was seen in, seeded to the muzzle hex so the muzzle's own hex is never
       // in-flight-rolled. projectiles.js rolls the flat per-hex 10% on each NEW soft-cover hex the

@@ -8,6 +8,7 @@ import { CENTER } from '../../art/mechPrims.js';
 import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
 import { hexCorners } from '../../data/hexgrid.js';
 import { liveToughnessBounds } from '../../data/rosterBounds.js';
+import { SPAN_ROLE_GATE } from '../../data/wallEdges.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
 // and combat (mapping a hit point back to the nearest body part).
@@ -531,6 +532,28 @@ export function targetHexKeyOf(target) {
 // (projectiles.js `_wallEdgeHit`) and every beam already stops on one (world.js `_wallDistance`).
 // #318 was therefore purely a POOL gap: spans were hittable all along, just never offered as a
 // convergence/lock target because the pool only scanned the hex-keyed HP maps.
+
+// #412: …with ONE exception #318's blanket claim above missed — an OPEN gate. A gate that has
+// swung open is a genuine doorway (world.js `wallEdgeCrossing`/`_wallEdgeHit` treat it as
+// non-solid so anyone can shoot and drive through the mouth), so unlike every other span a round
+// aimed at it sails straight through and never detonates. It stays perfectly LOCKABLE — the span
+// is a standing candidate whether open or shut — which leaves it in the maddening state the owner
+// hit: the reticle grabs it but no shot ever lands. The fix is a small TARGETABLE PIP at the open
+// mouth's midpoint (drawn in wallArt.js): a shot that reaches the pip routes its damage straight
+// to the span's HP (`_damageWallEdge`), so the gate can actually be brought down. This is the gate
+// analogue of #317's targeted-hex rule — "is this my target" answered separately from "does this
+// block", able to STOP a shot that the solidity rule would let pass.
+//
+// `openGateOf` returns the live gate edge when the converge/lock pick is a wall span that is a
+// fully-OPEN, standing gate — the only state where the pip is needed. A CLOSED gate is a solid
+// door every round already detonates on, so it returns null for one, exactly as it does for a
+// plain span or an enemy.
+export const GATE_PIP_HIT_RADIUS = 16;   // px — the aim tolerance of the open-gate pip. Owner-tunable.
+export function openGateOf(target) {
+  if (!target || target.mech) return null;
+  const e = target.edge;
+  return e && e.role === SPAN_ROLE_GATE && e.open && !e.destroyed ? e : null;
+}
 
 // #92: the tank's HULL turns to face its direction of TRAVEL (like a real tank driving),
 // completely independent of its turret (which separately tracks the player — see aimAndFire

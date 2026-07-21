@@ -148,6 +148,15 @@ export const TargetingMixin = {
   _drawLockReticle(x, y, color = null) {
     const col = color ?? 0xe2533a;   // locked = red
     const r = 20, len = 8;
+    // #421 legibility: a dark backing pass under the brackets + ring, drawn slightly wider,
+    // so the thin reticle lines hold contrast on light ground (snow/sand) as well as dark.
+    const back = this.projFx.lineStyle(4, 0x14161a, 0.5);
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const cx = x + sx * r, cy = y + sy * r;
+      back.lineBetween(cx, cy, cx - sx * len, cy);
+      back.lineBetween(cx, cy, cx, cy - sy * len);
+    }
+    this.projFx.lineStyle(3.5, 0x14161a, 0.45).strokeCircle(x, y, r + 4);
     const g = this.projFx.lineStyle(2, col, 1);
     for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const cx = x + sx * r, cy = y + sy * r;

@@ -110,12 +110,13 @@ export function fillShield(shield) {
   if (shieldPresent(shield)) shield.hp = shield.max;
 }
 
-// #381: grant a TEMPORARY shield pool of `amount`. The pool PERSISTS UNTIL SPENT by incoming
-// damage — it does NOT time-expire; only `damageShield` shrinks it. The magnitude does NOT
-// compound (a duplicate refreshes the pool to the same granted size, never a bigger one — mirrors
-// #339's duration-stacks-not-magnitude rule). The base shield is topped to full at the same time
-// (the powerup's instant-fill half). Works even on a zero-`max` body so a shieldless chassis can
-// still wear a temp pool.
+// #381/#417: grant a TEMPORARY shield pool of `amount`. The pool PERSISTS UNTIL SPENT by incoming
+// damage — it does NOT time-expire; only `damageShield` shrinks it. #417: the grant is ADDITIVE and
+// UNCAPPED — each pickup ADDS its full `amount` ON TOP of whatever temp shield is already live, so
+// sequential Shield powerups compound the shell without limit (it used to `Math.max`, taking the
+// larger of the two, which meant a second pickup while one was live did nothing). The base shield is
+// topped to full at the same time (the powerup's instant-fill half). Works even on a zero-`max` body
+// so a shieldless chassis can still wear a temp pool.
 //
 // A caller MAY pass a finite positive `durationMs` to give the pool a wall-clock expiry (the old
 // behaviour), but null/undefined/0/Infinity — the shield powerup's actual call — means PERMANENT
@@ -123,7 +124,7 @@ export function fillShield(shield) {
 export function grantTempShield(shield, amount, durationMs) {
   if (!shield) return;
   const grant = Math.max(0, amount || 0);
-  shield.temp = Math.max(shield.temp || 0, grant);
+  shield.temp = (shield.temp || 0) + grant;
   shield.tempExpiryMs =
     durationMs == null || !Number.isFinite(durationMs) || durationMs <= 0
       ? Infinity
