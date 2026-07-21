@@ -30,7 +30,7 @@ import {
 // DELIBERATELY a FLAT duration, not tied to magazine size: a big magazine already costs more UPTIME
 // to burn through, so also making its reload longer would double-penalise it. One flat, fast beat
 // (1s) reads as a snappy magazine swap. One dial: raise it to make reloading a heavier commitment.
-export const RELOAD_SECONDS = 1;
+export const RELOAD_SECONDS = 2;
 
 export class Mech {
   constructor(data = {}) {
