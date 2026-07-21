@@ -17,7 +17,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel } from '../../data/sprint.js';
 import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
-import { targetHexKeyOf } from './shared.js';
+import { targetHexKeyOf, openGateOf } from './shared.js';
 import { targetCoverExempt } from '../../data/visibility.js';
 
 export const FiringMixin = {
@@ -528,6 +528,18 @@ export const FiringMixin = {
       const tt = this._targetHexDistance(muzzleX, muzzleY, angle, endDist, tHexKey);
       if (tt < endDist) { endDist = tt; hit = false; blocked = true; }
     }
+    // #412, hitscan half of the targeted-open-gate rule. A beam sails through an open gate's mouth
+    // (the span is non-solid, so the wall trace above never clamps on it), so a laser aimed at the
+    // gate lances straight past it. If the player's lock is that open gate and the ray grazes its
+    // pip shorter than the beam would otherwise end, terminate the beam there and route the chip
+    // straight to the span (`gateBlock` below) — `_damageBuildingAt`/`nearestWallEdge` would miss
+    // it, since those exclude open gates by design. Same shape as the targeted-hex clamp above.
+    const tGate = owner === 'player' ? openGateOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
+    let gateBlock = null;
+    if (tGate) {
+      const tt = this._targetGateDistance?.(muzzleX, muzzleY, angle, endDist, tGate) ?? Infinity;
+      if (tt < endDist) { endDist = tt; hit = false; blocked = true; gateBlock = tGate; }
+    }
     let endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
 
     // #374 REWORK: soft cover eats a beam along its TRACE. A beam resolves instantly, so it can't
@@ -583,6 +595,12 @@ export const FiringMixin = {
       if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target));
       else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, endX, endY, dmg, color);
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
+    } else if (gateBlock) {
+      // #412: the beam terminated on the open gate's pip — route the chip straight to that span's
+      // HP. `_damageBuildingAt` (the generic blocked path below) would miss it: `nearestWallEdge`
+      // excludes open gates, so the hit has to name the gate edge directly.
+      this._damageWallEdge?.(gateBlock, Math.max(1, Math.round(w.weapon.damage)));
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (blocked) {
       // #317: a stopped beam now CHIPS what stopped it, exactly as a round that detonates on cover
@@ -709,6 +727,11 @@ export const FiringMixin = {
     // targetable and literally unhittable. Player-only: an enemy has no convergence pick, and the
     // stamp is null for every other target kind, so nothing else changes behaviour.
     const targetHexKey = owner === 'player' ? targetHexKeyOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
+    // #412: stamp the OPEN GATE the player is aimed at (when the converge/lock pick is one). An open
+    // gate is a doorway a round would otherwise pass clean through, so projectiles.js impacts the
+    // round on that gate's pip and routes the damage to its span HP. Player-only and null for every
+    // other target kind (a shut gate, a plain span, a hex, an enemy), so nothing else changes.
+    const targetGate = owner === 'player' ? openGateOf((shooter ?? primaryPlayerOf(this)).convergeTarget) : null;
     // #338: the shot half of the shared predicate, resolved ONCE at spawn and carried by the round
     // (projectiles.js reads it in the in-flight cover check). Spawn-time, not per-frame, on purpose
     // — a shot commits to the geometry it was fired under, which is exactly the rule that keeps
@@ -716,7 +739,7 @@ export const FiringMixin = {
     // on the wall that target ducks behind, rather than homing through terrain after it.
     const ignoresCover = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this));
     const pushed = {
-      ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover,
+      ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, targetGate, ignoresCover,
       // #374 REWORK: where this round was BORN (kept for reference / the friendly-fire origin) and
       // the last hex it was seen in, seeded to the muzzle hex so the muzzle's own hex is never
       // in-flight-rolled. projectiles.js rolls the flat per-hex 10% on each NEW soft-cover hex the

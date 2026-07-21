@@ -43,6 +43,10 @@ const GATE_LEAF = 0x4b4030;     // brass-toned door leaf: warm, machined, obviou
 const GATE_LEAF_LIT = 0x8a7645;
 const GATE_GLOW = 0xffc65a;     // warm threshold light spilling from an OPEN gate's mouth
 const GATE_FRAME = 0x6a5a3a;    // the heavy jamb posts a gate hangs from
+// #412: the open-gate TARGET PIP — a cold, deliberate "aim here" dot at the mouth's centre. Cool
+// tones so it never reads as the warm threshold glow ("walk here") spilling around it.
+const GATE_PIP_CORE = 0xd85a3a;    // warm-red core, the reticle-coloured "shoot this" tell
+const GATE_PIP_HILITE = 0xffe0c0;  // bright centre so the pip catches the eye against the mouth
 
 // #309: the interpolated position of a gate's leaves, 0 = fully shut, 1 = fully open. The scene
 // passes the gate's own live `openFrac` on the record; a gate with no such field is treated as
@@ -120,6 +124,22 @@ function drawGate(g, e, hw, timeMs) {
   // swallow) — the paired lamps are the "this is a door" tell while it is shut.
   g.fillStyle(HAZARD, 0.45 + 0.45 * frac);
   for (const [ax, ay, bx, by] of leaves) g.fillCircle((ax + bx) / 2, (ay + by) / 2, hw * 0.3);
+  // #412 THE TARGETABLE PIP. An OPEN gate's mouth is a doorway shots pass straight through, so it
+  // presents almost nothing to aim at even though it is perfectly lockable — the owner's complaint.
+  // Drawn only while the gate is fully open (`e.open`, exactly the state where the firing rule is
+  // live — a shut gate is a solid door you already hit anywhere), this is the small mark the player
+  // locks and fires on to bring the gate down: a shot reaching it routes straight to the span HP
+  // (firing.js / projectiles.js). A cold, deliberate "shoot here" dot at the mouth's centre,
+  // distinct from the warm threshold glow around it (which reads "walk here").
+  if (e.open) {
+    const mx = (e.x0 + e.x1) / 2, my = (e.y0 + e.y1) / 2;
+    g.fillStyle(0x000000, 0.4);
+    g.fillCircle(mx, my + 1, hw * 0.62);
+    g.fillStyle(GATE_PIP_CORE, 0.95);
+    g.fillCircle(mx, my, hw * 0.5);
+    g.fillStyle(GATE_PIP_HILITE, 0.95);
+    g.fillCircle(mx, my, hw * 0.22);
+  }
 }
 
 // #310 TURRET-SPAN MARK. The owner (playtest 2026-07-19): wall turrets "don't need a whole
