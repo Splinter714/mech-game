@@ -35,7 +35,13 @@ describe('CHASSIS — weight-class movement stats', () => {
 
   it('#299: mediumPlayer is a stat variant of medium, not a new weight class', () => {
     expect(CHASSIS.mediumPlayer.weightClass).toBe('medium');
-    expect(CHASSIS.mediumPlayer.movement).toEqual(CHASSIS.medium.movement);
+    // #403: the player's step cadence is quicker than the shared medium (its stepInterval was
+    // tuned before #159 doubled maxSpeed) — the ONLY movement field allowed to diverge.
+    const { stepInterval: pStep, ...pRest } = CHASSIS.mediumPlayer.movement;
+    const { stepInterval: mStep, ...mRest } = CHASSIS.medium.movement;
+    expect(pRest).toEqual(mRest);
+    expect(pStep).toBe(250);
+    expect(pStep).toBeLessThan(mStep);
   });
 
   it('#159: heavy maxSpeed now matches light\'s OLD (pre-#159) maxSpeed of 135', () => {
