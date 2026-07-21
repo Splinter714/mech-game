@@ -100,9 +100,12 @@ export function showsPlayerColor(playerCount) { return playerCount > 1; }
 export function playerColor(id) { return PLAYER_COLORS[id % PLAYER_COLORS.length]; }
 export function playerAccent(id) { return PLAYER_ACCENTS[id % PLAYER_ACCENTS.length]; }
 
-// How many players the arena will accept. Two for now (Jackson: "2 for now, design for more") —
-// nothing below or in the scene wiring is written to two, this is the only cap.
-export const MAX_PLAYERS = 2;
+// How many players the arena will accept. Raised to FOUR (#387) — the arena machinery was
+// written to generalise over this cap from phase 1, so nothing below or in the scene wiring is
+// hardcoded to a count; this is the only dial. Players 3 & 4 currently arrive only as mid-sortie
+// drop-ins (press START on their pad); the garage build flow stays 2-player until #388.
+// PLAYER_COLORS / PLAYER_ACCENTS above already carry four entries to match.
+export const MAX_PLAYERS = 4;
 
 // A player is out of the fight when its mech is destroyed. `dead` is the scene's own latch
 // (set once, in combat.js, so the death FX/input-gate fire exactly once) — a player with no

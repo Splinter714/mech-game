@@ -10,9 +10,9 @@ import {
 import { ROSTERS, ACTIVE_MECH_KEY, PLAYER2_MECH_KEY } from './rosters.js';
 import { Mech } from './Mech.js';
 
-describe('the two persistent build slots', () => {
-  it('is exactly two — phase 3 added one slot, not a roster picker', () => {
-    expect(PLAYER_MECH_KEYS).toEqual(['mech1', 'mech2']);
+describe('the four persistent build slots', () => {
+  it('is exactly four — #387 raised the cap; slots 3 & 4 back the drop-ins', () => {
+    expect(PLAYER_MECH_KEYS).toEqual(['mech1', 'mech2', 'mech3', 'mech4']);
   });
 
   it('keeps player 1 on the key single-player has always used', () => {
@@ -20,8 +20,13 @@ describe('the two persistent build slots', () => {
     expect(mechKeyForPlayer(1)).toBe(PLAYER2_MECH_KEY);
   });
 
+  it('maps players 3 & 4 to their own slots (#387)', () => {
+    expect(mechKeyForPlayer(2)).toBe('mech3');
+    expect(mechKeyForPlayer(3)).toBe('mech4');
+  });
+
   it('clamps a stray extra player onto the last real slot rather than returning undefined', () => {
-    expect(mechKeyForPlayer(2)).toBe('mech2');
+    expect(mechKeyForPlayer(4)).toBe('mech4');
     expect(mechKeyForPlayer(-1)).toBe('mech1');
     expect(mechKeyForPlayer(undefined)).toBe('mech1');
   });
@@ -86,11 +91,20 @@ describe('the sequential handoff', () => {
     expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
   });
 
-  it('never runs past player 2 no matter how many times ready is pressed', () => {
-    let s = beginCoop(makeGarageSession());
-    s = handOff(handOff(handOff(s)));
+  it('the garage flow never advances past the DEPLOY step, so it stays two-player (#387)', () => {
+    // After one handoff the button is DEPLOY, not another handoff — the garage UI can never step
+    // to player 3 even though four slots now exist. 3 & 4 arrive only as mid-sortie drop-ins;
+    // #388 is what makes them pre-buildable in the garage.
+    const s = handOff(beginCoop(makeGarageSession()));
     expect(s.editing).toBe(1);
-    expect(sessionMechKey(s)).toBe('mech2');
+    expect(garageAction(s)).toBe('deploy');
+    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
+  });
+
+  it('handOff still clamps to the last real slot rather than indexing off the end', () => {
+    // Pure safety: even if called past the flow, editing can never index a nonexistent slot.
+    const s = handOff(handOff(handOff(handOff(beginCoop(makeGarageSession())))));
+    expect(sessionMechKey(s)).toBe('mech4');
   });
 
   it('is a no-op in solo — one player can never be handed off to nobody', () => {
@@ -106,6 +120,19 @@ describe('the sequential handoff', () => {
     handOff(s);
     toggleCoop(s);
     expect(s).toEqual(snapshot);
+  });
+});
+
+// #387 raised PLAYER_MECH_KEYS to four for the mid-sortie drop-ins, but the garage build flow is
+// still sequential two-player — a garage co-op deploy must put exactly the slots it built on the
+// field, never all four, or four mechs would spawn from a two-player garage session.
+describe('a garage co-op deploy stays two-player even with four slots (#387)', () => {
+  it('deploys only the slots the sequential flow reached, not the whole array', () => {
+    // Player 2 at the Deploy button (editing = 1) — the only state a co-op deploy happens in.
+    const s = handOff(beginCoop(makeGarageSession()));
+    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
+    // Solo is one key, unchanged.
+    expect(sessionMechKeys(makeGarageSession())).toEqual(['mech1']);
   });
 });
 

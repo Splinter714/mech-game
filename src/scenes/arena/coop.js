@@ -96,9 +96,11 @@ export const CoopMixin = {
     const first = primaryPlayerOf(this);
     this._camAnchor = this.add.container(first.x, first.y);
     this.cameras.main.startFollow(this._camAnchor, true, 0.12, 0.12);
-    // Pad-1 START is the join button. A separate PadEdges bound to pad index 1 — the scene's
-    // existing `padEdges` watches pad 0 (player 1's debug/exit buttons) and must stay that way.
-    this._joinEdges = new PadEdges(this, 1);
+    // START on any UNCLAIMED pad is the join button (#387: up to four players). One PadEdges per
+    // joiner pad — indices 1..MAX_PLAYERS-1 — keyed by pad index. The scene's existing `padEdges`
+    // watches pad 0 (player 1's debug/exit buttons) and must stay that way, so pad 0 is not here.
+    this._joinEdges = {};
+    for (let pad = 1; pad < MAX_PLAYERS; pad++) this._joinEdges[pad] = new PadEdges(this, pad);
     // #349: players who joined from the GARAGE are already decided before the arena loads —
     // put them on the field immediately rather than making them press START again.
     this._spawnGarageCoopPlayers();
@@ -113,17 +115,23 @@ export const CoopMixin = {
     for (let i = 1; i < keys.length && playersOf(this).length < MAX_PLAYERS; i++) this._addPlayer();
   },
 
-  // Per-frame: has a second controller asked to join? Press START on gamepad 2.
+  // Per-frame: has another controller asked to join? Press START on an unclaimed gamepad.
   //
   // #349 keeps this path alive alongside the garage flow (Jackson: "keep both") — the garage is
   // the normal way in, this is late drop-in for someone who wanders over mid-run. What changed
-  // is WHICH mech they get: their own saved 'mech2' build if it is usable, falling back to
-  // phase 2's copy-of-player-1 only if it is not (see `_mechForPlayer`).
+  // is WHICH mech they get: their own saved build if it is usable, falling back to phase 2's
+  // copy-of-player-1 only if it is not (see `_mechForPlayer`).
+  //
+  // #387: watch EVERY not-yet-claimed pad, not just pad 1. Players claim pads 0..count-1, so the
+  // unclaimed pads are indices count..MAX_PLAYERS-1. `_addPlayer` assigns the joiner index =
+  // current count and binds it to pad = that index, so drop-ins line up pad-for-slot as they join
+  // in order (pad 2 → player 3 → mech3, pad 3 → player 4 → mech4).
   _updateCoopJoin() {
     if (!this._joinEdges) return;
     if (playersOf(this).length >= MAX_PLAYERS) return;
-    if (!this._joinEdges.pressed(PAD.START)) return;
-    this._addPlayer();
+    for (let pad = playersOf(this).length; pad < MAX_PLAYERS; pad++) {
+      if (this._joinEdges[pad]?.pressed(PAD.START)) { this._addPlayer(); return; }
+    }
   },
 
   _addPlayer() {

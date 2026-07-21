@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FiringMixin } from './firing.js';
 import { cameraFocusOf, isPlayerRef, otherLivePlayers, targetPlayerFor } from './players.js';
-import { makePlayer, playerAccent, playerColor } from '../../data/players.js';
+import { MAX_PLAYERS, makePlayer, playerAccent, playerColor } from '../../data/players.js';
 import { CoopMixin } from './coop.js';
 import { axialKey, hexToPixel, pixelToHex } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
@@ -326,6 +326,67 @@ describe('co-op placement always lands on passable ground (#348)', () => {
     const scene = arenaScene(null);
     expect(scene._validPlayerPos({ x: 12345, y: -999 })).toEqual({ x: 12345, y: -999 });
     expect(scene._isPassablePos(12345, -999)).toBe(true);
+  });
+});
+
+// #387: the cap rose to four, and players 3 & 4 arrive as mid-sortie drop-ins. The join watcher
+// must now watch EVERY unclaimed pad (index >= current player count), not just pad 1, and must
+// stop at MAX_PLAYERS. `_addPlayer` is stubbed to just grow the collection — its real placement/
+// mech wiring is covered by the "co-op placement" suite above; what's under test here is the scan.
+describe('mid-sortie drop-in join watches every unclaimed pad up to the cap (#387)', () => {
+  const joinScene = (playerCount, pressedPads) => {
+    const set = new Set(pressedPads);
+    const players = [];
+    for (let i = 0; i < playerCount; i++) players.push(P(i, i * 50, 0));
+    const joinEdges = {};
+    for (let pad = 1; pad < MAX_PLAYERS; pad++) joinEdges[pad] = { pressed: () => set.has(pad) };
+    return Object.assign({}, CoopMixin, {
+      players,
+      _joinEdges: joinEdges,
+      _addPlayer() { this.players.push(P(this.players.length, 0, 0)); },
+    });
+  };
+
+  it('the cap is four', () => {
+    expect(MAX_PLAYERS).toBe(4);
+  });
+
+  it('adds a player when START is pressed on pad 2 (the third player)', () => {
+    const scene = joinScene(2, [2]);
+    scene._updateCoopJoin();
+    expect(scene.players.length).toBe(3);
+  });
+
+  it('adds a player when START is pressed on pad 3 (the fourth player)', () => {
+    const scene = joinScene(3, [3]);
+    scene._updateCoopJoin();
+    expect(scene.players.length).toBe(4);
+  });
+
+  it('ignores START on an already-claimed pad', () => {
+    // Two players (pads 0 & 1 claimed); pressing pad 1 again must not add anyone.
+    const scene = joinScene(2, [1]);
+    scene._updateCoopJoin();
+    expect(scene.players.length).toBe(2);
+  });
+
+  it('adds at most one player per frame even when several pads are pressed', () => {
+    const scene = joinScene(1, [1, 2, 3]);
+    scene._updateCoopJoin();
+    expect(scene.players.length).toBe(2);
+  });
+
+  it('stops at MAX_PLAYERS — a fourth join is the last, a fifth never happens', () => {
+    const scene = joinScene(1, [1, 2, 3]);
+    // One frame each fills the roster to four, then further frames are inert.
+    for (let i = 0; i < 6; i++) scene._updateCoopJoin();
+    expect(scene.players.length).toBe(MAX_PLAYERS);
+  });
+
+  it('is a no-op with no join watcher (pre-init / non-coop scenes)', () => {
+    const scene = Object.assign({ players: [P(0, 0, 0)], _joinEdges: null }, CoopMixin);
+    expect(() => scene._updateCoopJoin()).not.toThrow();
+    expect(scene.players.length).toBe(1);
   });
 });
 

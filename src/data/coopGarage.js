@@ -31,9 +31,10 @@
 // #deploy and scenes/arena/coop.js.
 
 // The fixed persistent build slots, indexed by player. Deliberately a short literal list and
-// not a generated range: these are the two slots that exist, and adding a third player later
-// means adding a third entry here plus a matching `defaultRoster` build in rosters.js.
-export const PLAYER_MECH_KEYS = ['mech1', 'mech2'];
+// not a generated range: these are the four slots that exist, each with a matching `defaultRoster`
+// build in rosters.js. #387 raised the cap to four players; slots 3 & 4 back the mid-sortie
+// drop-ins (the garage still only pre-builds mech1/mech2 — #388 makes 3/4 pre-buildable).
+export const PLAYER_MECH_KEYS = ['mech1', 'mech2', 'mech3', 'mech4'];
 
 // The storage key holding player `index`'s persistent build. Out-of-range indices clamp to the
 // last real slot rather than returning undefined, so a stray extra player can never index a
@@ -57,10 +58,16 @@ export function sessionMechKey(session) {
   return session?.coop ? mechKeyForPlayer(session.editing) : PLAYER_MECH_KEYS[0];
 }
 
-// Which builds are deploying. One key in solo, both in co-op — this is what the arena reads to
-// decide how many players to put on the field.
+// Which builds are deploying. One key in solo, and in co-op exactly the slots the sequential
+// garage flow has actually reached — `editing` is the furthest player built, so `editing + 1`
+// keys deploy (two, when player 2 is the one at the Deploy button). #387 raised PLAYER_MECH_KEYS
+// to four for the mid-sortie drop-ins, so this must NOT return the whole array or a two-player
+// garage deploy would suddenly put four players on the field; deriving from `editing` keeps the
+// garage flow bit-identical at two (and is what #388 extends when 3/4 become pre-buildable).
 export function sessionMechKeys(session) {
-  return session?.coop ? [...PLAYER_MECH_KEYS] : [PLAYER_MECH_KEYS[0]];
+  if (!session?.coop) return [PLAYER_MECH_KEYS[0]];
+  const reached = Math.min(Math.max(0, session.editing | 0) + 1, PLAYER_MECH_KEYS.length);
+  return PLAYER_MECH_KEYS.slice(0, reached);
 }
 
 // What the Deploy button DOES when pressed. The handoff step lives here rather than as a

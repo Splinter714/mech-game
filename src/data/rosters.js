@@ -17,6 +17,14 @@ export const ACTIVE_MECH_KEY = 'mech1';
 // field and player 2 is never stuck behind an incomplete build.
 export const PLAYER2_MECH_KEY = 'mech2';
 
+// #387: players 3 & 4. The cap rose to four; these two slots back the mid-sortie drop-ins so a
+// player pressing START on pad 3 or 4 gets a real, complete mech rather than a copy of player 1.
+// Same chassis (every mech is forced to 'mediumPlayer' by the migrate hook anyway), each a
+// complete opening kit. The garage still only pre-builds mech1/mech2; these come from drop-in
+// until #388 makes 3/4 pre-buildable.
+export const PLAYER3_MECH_KEY = 'mech3';
+export const PLAYER4_MECH_KEY = 'mech4';
+
 export const ROSTERS = {
   mech: {
     storageKey: 'mech-game-mechs-v1',
@@ -52,6 +60,29 @@ export const ROSTERS = {
           leftArm: ['autocannon'],
           leftTorso: ['machineGun'],
           rightTorso: ['clusterRocket'],
+        },
+      },
+      // #387: players 3 & 4. Each a complete, deployable default so a drop-in with an untouched
+      // slot gets a real mech. Loadouts vary the opening kit so four machines read as distinct on
+      // the field; every slot is 'mediumPlayer' like the others.
+      [PLAYER3_MECH_KEY]: {
+        chassisId: 'mediumPlayer',
+        name: 'Trooper-03',
+        mounts: {
+          rightArm: ['machineGun'],
+          leftArm: ['clusterRocket'],
+          leftTorso: ['autocannon'],
+          rightTorso: ['pulseLaser'],
+        },
+      },
+      [PLAYER4_MECH_KEY]: {
+        chassisId: 'mediumPlayer',
+        name: 'Trooper-04',
+        mounts: {
+          rightArm: ['clusterRocket'],
+          leftArm: ['machineGun'],
+          leftTorso: ['pulseLaser'],
+          rightTorso: ['autocannon'],
         },
       },
     }),
