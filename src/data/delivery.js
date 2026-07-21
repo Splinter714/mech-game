@@ -603,6 +603,35 @@ export function stepProjectile(p, dt, desiredAngle = null) {
   }
 }
 
+// ── Failed-pass give-up (#418) ─────────────────────────────────────────────────────────────
+// A guided round that overshoots — gets close but can't line up the hit — used to keep homing
+// forever, banking around the target trying for another pass (it only ever stopped when it ran
+// out of range). Owner's call: after a FAILED PASS, STOP homing, fly STRAIGHT on the current
+// heading, and continue until it hits the ground/terrain or its max range and detonates there.
+//
+// "Failed pass" is detected purely from the round's own distance to its target: track the
+// CLOSEST APPROACH seen so far (`homingMinDist`), and once the round has begun RECEDING from
+// that closest point by more than `HOMING_GIVEUP_RECEDE_PX`, it has passed the target and is
+// pulling away — give up. The margin sits comfortably above the arena's 32px hit radius, so a
+// round that actually got within striking range detonates before this ever trips; only a
+// genuine miss (closest approach outside the kill radius, now moving away) gives up. Pure and
+// stateful on the round, so it's shared by every guided round and unit-testable Phaser-free.
+// A tunable dial. Dumbfire rounds never call this, so they're unaffected.
+const HOMING_GIVEUP_RECEDE_PX = 48;   // px of recession past closest approach before a guided round quits homing
+
+// Update the round's closest-approach tracker with its current `dist` to the target and report
+// whether it has now overshot (receded past the give-up margin). The caller disables `p.homing`
+// on a true result, after which the round flies ballistically to ground/range.
+export function homingShouldGiveUp(p, dist, recede = HOMING_GIVEUP_RECEDE_PX) {
+  if (p.homingMinDist == null || dist < p.homingMinDist) {
+    p.homingMinDist = dist;
+    return false;
+  }
+  return dist > p.homingMinDist + recede;
+}
+
+export { HOMING_GIVEUP_RECEDE_PX };
+
 // Rotate angle `a` toward `target` by at most `maxStep`, taking the shortest way around.
 export function rotateToward(a, target, maxStep) {
   const diff = wrapAngle(target - a);
