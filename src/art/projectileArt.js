@@ -40,6 +40,11 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const SEGS = heavy ? 48 : 64;
 
   if (sparkAlpha >= 1) {
+  // #421 legibility: a thin dark under-line the length of the beam, drawn BEFORE the glow/core,
+  // so a pale energy/support beam (cyan/green) holds an edge against light ground (snow, sand)
+  // instead of the low-alpha glow washing into it. Slightly narrower than the core so it reads
+  // as a dark seam under the bright beam, never a visible dark outline on dark terrain.
+  g.lineStyle(coreW * 0.7, 0x14161a, 0.35).lineBetween(x0, y0, x1, y1);
   // Outer glow: tapered warbling segments matching the core wobble.
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;

@@ -904,7 +904,8 @@ export default class HudScene extends Phaser.Scene {
   // timer, tinted the buff colour, whose arc empties clockwise from full to zero over the buff's
   // duration — a cooldown-pie. The label + remaining seconds sit to the left so several buffs
   // stack readably down the top-right. Text objects are pooled; the Graphics layer is redrawn
-  // each frame. Instant buffs (Armor Patch) never enter `activePowerups`, so they never show.
+  // each frame. #409: instant buffs (Armor Patch AND Shield) never enter `activePowerups`, so they
+  // never show a ring — only the timed buffs (Overdrive/Overclock/Barrage/Infinite Fire) do.
   _updateBuffHud() {
     const active = this.registry.get('activePowerups') || {};
     const ids = Object.keys(active).filter((id) => active[id] > 0);

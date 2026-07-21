@@ -16,9 +16,9 @@ import {
 } from '../../data/powerups.js';
 // #246/#381: the shield is a real layer living ON the Mech itself (this.mech.shield —
 // data/shield.js), not a scene-tracked pool — the Shield powerup's job is to tell the mech to
-// grant a temporary pool for a while (Mech.grantTempShield). That temp pool state lives on the
-// mech; the powerup's free-ammo window (like every powerup's, #381) is the only part in the
-// scene-level `activePowerups`/`buffModifiers`.
+// grant a temporary pool (Mech.grantTempShield). #409: Shield is now purely INSTANT (no `duration`),
+// so it never enters the scene-level `activePowerups`/`buffModifiers` at all — the temp pool on the
+// mech is its entire effect. #417: sequential Shield pickups ADD to that pool uncapped.
 import { axialKey, scatterOffset } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
 // The drop's placement geometry (scatter radius + the reachability search) is pure and lives in
@@ -33,7 +33,7 @@ import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
-  SHIELD_PLAYER_SCALE_MULT, SHIELD_PLAYER_BLEND,
+  SHIELD_PLAYER_SCALE_MULT, SHIELD_PLAYER_BLEND, SHIELD_PLAYER_OFFSET_PX,
 } from './shieldOutline.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
@@ -83,7 +83,13 @@ export const PowerupsMixin = {
       color: POWERUPS.shield.color,
       // #397: the player shell hugs tighter and blends NORMAL, so the muzzle glow can't balloon it
       // and it reads even all around (see makeShieldOutline's `blend` note). Enemies keep ADD.
+      // #422: the shell sits a CONSISTENT display-px distance outside the silhouette on every side
+      // (uniform margin) rather than a width/depth-proportional scale — pass the offset + the live
+      // mech so makeShieldOutline can size each axis off the real body half-extents. scaleMult stays
+      // as the fallback if either is ever missing.
       scaleMult: SHIELD_PLAYER_SCALE_MULT,
+      offsetPx: SHIELD_PLAYER_OFFSET_PX,
+      mech: player.mech,
       blend: SHIELD_PLAYER_BLEND,
       // #397 follow-up: hug the BODY armor only — draw from the body-only `_shield` textures so the
       // guns and their muzzle glow poke out unshielded (see makeShieldOutline's `bodyOnly` note).
@@ -259,15 +265,16 @@ export const PowerupsMixin = {
     this._updateShieldVisual(delta);
   },
 
-  // Apply a picked-up powerup. #381: EVERY powerup opens a 10s FREE-AMMO window in the scene
-  // overlay (`activePowerups`, what `buffModifiers` reads), stacked per the ONE shared rule
-  // (#339 — duration stacks, magnitude never does; data/powerups.js `stackedRemainingMs`). On top
-  // of that shared window each type layers its own effect:
-  //  - Armor Patch: an INSTANT proportional repair on pickup, plus the free-ammo window.
+  // Apply a picked-up powerup. #409: only TIMED types open a window in the scene overlay
+  // (`activePowerups`, what `buffModifiers` reads), stacked per the ONE shared rule (#339 — duration
+  // stacks, magnitude never does; data/powerups.js `stackedRemainingMs`). Instant types (Shield,
+  // Armor Patch) have no `duration`, so `stackedRemainingMs` returns 0 and they never enter the
+  // overlay. Each type's effect:
+  //  - Armor Patch: an INSTANT proportional repair on pickup (no window).
   //  - Shield: an expendable TEMPORARY pool on the mech's own shield layer (Mech.grantTempShield),
-  //    for the SAME stacked span — magnitude (pool size) never compounds, only the window extends.
-  //  - Overdrive / Overclock / Barrage: their fire-rate / sprint / shot-count overlay, read back
-  //    out of the same overlay by `buffModifiers`.
+  //    granted INSTANTLY (no window). #417: sequential pickups ADD their full pool uncapped.
+  //  - Overdrive / Overclock / Barrage / Infinite Fire: their timed overlay effect, read back out
+  //    of the overlay by `buffModifiers` (Infinite Fire = free ammo + no reload, #409).
   // `player` is WHO collected it (powerups.js `_updatePowerups`). Defaults to the primary
   // player so the existing tests/call sites that activate a buff with no collector still work.
   // Note the timed-buff overlay (`this.activePowerups`) is still SCENE-level, i.e. shared: that
@@ -280,15 +287,15 @@ export const PowerupsMixin = {
     // #196: each powerup type has its OWN independently-tunable pickup cue — dispatch keyed off
     // the actual type picked up.
     Audio.ui('powerupPickup' + typeId[0].toUpperCase() + typeId.slice(1));
-    // #381: the universal, stacked free-ammo window — opened for every type, instant ones included.
+    // #409: only TIMED types open a stacked overlay window; instant ones (Shield/Armor Patch) have
+    // no `duration`, so `stackedRemainingMs` is 0 and they never enter `activePowerups`.
     const windowMs = stackedRemainingMs(typeId, this.activePowerups[typeId]);
     if (windowMs > 0) this.activePowerups[typeId] = windowMs;
-    // Each type's own effect on top of that window.
+    // Each type's own effect.
     if (isInstant(typeId)) this._applyInstantPowerup(typeId, player);
     if (p.effect === 'shield') {
-      // #381: magnitude (pool size) does NOT compound, and the temp pool PERSISTS UNTIL SPENT —
-      // no finite expiry passed, so it never time-decays. The 10s `windowMs` above governs ONLY
-      // the free-ammo window (activePowerups['shield']), not the shield pool.
+      // #417: the temp pool ADDS uncapped (grantTempShield sums), and PERSISTS UNTIL SPENT — no
+      // finite expiry passed, so it never time-decays. Shield has no overlay window (#409).
       // #390: one pickup shields the WHOLE team — every live player gets its OWN full temp pool
       // (co-op), not just the collector. Each mech's shield stays its own independent pool. With
       // one player, `livePlayersOf` is exactly the collector, so solo is bit-identical.

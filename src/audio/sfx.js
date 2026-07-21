@@ -477,6 +477,7 @@ function powerupPickupOverclockCue(e) { powerupPickupBaseCue(e, -2); }    // sli
 function powerupPickupArmorPatchCue(e) { powerupPickupBaseCue(e, -6); }   // lower/warmer (repair, defensive)
 function powerupPickupShieldCue(e) { powerupPickupBaseCue(e, -4); }       // lower (protective, defensive)
 function powerupPickupBarrageCue(e) { powerupPickupBaseCue(e, 9); }       // highest (#137: more shots at once)
+function powerupPickupInfiniteFireCue(e) { powerupPickupBaseCue(e, 3); }  // #409: bright, mid-high (free ammo + no reload)
 // #188: Sprint engage/disengage — reuses the old jump-jet dash's "thruster burst" character
 // for engaging (a rising filtered-noise whoosh + pitch lift reads as "powering up"), with a
 // quick falling-pitch version for disengaging (mirrors equip's confident-vs-lighter
@@ -531,6 +532,7 @@ export const UI_CUES = {
   powerupPickupArmorPatch: powerupPickupArmorPatchCue,
   powerupPickupShield: powerupPickupShieldCue,
   powerupPickupBarrage: powerupPickupBarrageCue,
+  powerupPickupInfiniteFire: powerupPickupInfiniteFireCue,
   sprintOn: sprintOnCue,
   sprintOff: sprintOffCue,
   partDestroyed: partDestroyedCue,

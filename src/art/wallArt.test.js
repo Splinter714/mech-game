@@ -78,10 +78,11 @@ describe('#288 drawWallEdges', () => {
     const gap = edgeMidpoint(spans[2].a, spans[2].b);
     const nearestToGap = Math.min(...allPoints(after).map((p) => Math.hypot(p.x - gap.x, p.y - gap.y)));
     expect(nearestToGap).toBeGreaterThan(WALL_THICKNESS_PX);
-    // The five standing spans still draw around it.
+    // The five standing spans still draw around it — each contributes band geometry hugging its own
+    // boundary line (checked via distance to the span segment, since #413 removed the midpoint pip
+    // that used to sit exactly on each span's centre).
     for (const s of spans.filter((s2) => !s2.destroyed)) {
-      const m = edgeMidpoint(s.a, s.b);
-      expect(Math.min(...allPoints(after).map((p) => Math.hypot(p.x - m.x, p.y - m.y)))).toBeLessThan(WALL_THICKNESS_PX);
+      expect(Math.min(...allPoints(after).map((p) => pointSegmentDistance(s.x0, s.y0, s.x1, s.y1, p.x, p.y)))).toBeLessThan(WALL_THICKNESS_PX);
     }
   });
 

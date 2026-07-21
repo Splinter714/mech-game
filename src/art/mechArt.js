@@ -7,7 +7,7 @@
 // Both are drawn pointing "up" (north / -y) and centred. Because the turret is stacked
 // ON TOP of the hull, the torso naturally occludes the leg tops — that overhead
 // occlusion is what sells the top-down read. Parts are drawn from the live Mech: a
-// destroyed location becomes a charred stump and its weapons vanish.
+// destroyed location draws nothing (#419 — no leftover stump) and its weapons vanish.
 //
 // Two visual THEMES distinguish the factions:
 //   player — "gritty cyberpunk": dark weathered ANGULAR gunmetal plates (hard chamfers).
@@ -22,7 +22,7 @@ import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
-  DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
+  DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar,
   exposedInternals, statusSpotBar, READOUT, readoutMount,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
@@ -155,17 +155,20 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s) {
 // muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
 // a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
 // stump either way.
-function drawArm(sg, mech, loc, T, noWeapons = false) {
+function drawArm(sg, mech, loc, T, noWeapons = false, showReadout = true) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
-  if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
+  // #419: a fully-destroyed location draws NOTHING — no charred stump, no leftover piece. The
+  // hull/attachment logic is unaffected (this part texture is simply blank when the location is gone).
+  if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   // The persistent readout socket rides the rear of the part, drawn regardless of armor state so
   // the live ammo tag (arena/ammoIndicators.js) always has a physical mount. Skipped on the
-  // body-only shield raster (`noWeapons`) — the shield shell hugs plating only.
-  if (!noWeapons) drawReadoutMount(sg, mech, lay, loc, T);
+  // body-only shield raster (`noWeapons`) — the shield shell hugs plating only. #420: PLAYER-only —
+  // the reload light overlay only draws for players, so enemy mechs bake no readout socket either.
+  if (!noWeapons && showReadout) drawReadoutMount(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
@@ -179,16 +182,17 @@ function drawArm(sg, mech, loc, T, noWeapons = false) {
 // via `exposedInternals`, instead of the old brackets-on-top overlay.
 // `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
 // body-only raster for the player's shield shell (see drawArm's note).
-function drawSideTorso(sg, mech, loc, T, noWeapons = false) {
+function drawSideTorso(sg, mech, loc, T, noWeapons = false, showReadout = true) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
-  if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
+  // #419: a fully-destroyed location draws NOTHING — no charred stump, no leftover piece.
+  if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
   if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
-  if (!noWeapons) drawReadoutMount(sg, mech, lay, loc, T);   // persistent ammo-readout socket (see drawArm)
+  if (!noWeapons && showReadout) drawReadoutMount(sg, mech, lay, loc, T);   // persistent ammo-readout socket (player-only, #420)
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
@@ -327,6 +331,8 @@ function drawHull(sg, mech, frame, T) {
 // ('player' | 'enemy') picks the faction palette/shape.
 export function buildMechTextures(scene, key, mech, opts) {
   const T = themeFor(opts);
+  // #420: the on-mech reload light is PLAYER-only, so only player textures bake its readout socket.
+  const showReadout = (opts?.theme ?? 'player') === 'player';
   for (let f = 0; f < 4; f++) {
     gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
       (g) => drawHull(scaledGraphics(g), mech, f, T));
@@ -337,11 +343,11 @@ export function buildMechTextures(scene, key, mech, opts) {
   // point (side torsos subtly, arms more; see partSpriteTransform).
   for (const loc of SIDE_TORSO_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T));
+      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, false, showReadout));
   }
   for (const loc of ARM_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawArm(scaledGraphics(g), mech, loc, T));
+      (g) => drawArm(scaledGraphics(g), mech, loc, T, false, showReadout));
   }
   // #397 follow-up: the PLAYER's shield shell must hug the BODY ARMOR only — not the mounted guns
   // and not their baked-in muzzle glow. Weapons live INSIDE each part texture (drawWeaponsAt), so
