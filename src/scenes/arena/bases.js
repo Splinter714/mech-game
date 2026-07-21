@@ -716,7 +716,7 @@ export const BasesMixin = {
     const { listenerX, listenerY } = listenerOf(this);
     const src = pickSirenSource(alive, listenerX, listenerY);
     if (src) Audio.updateSiren({ x: src.x, y: src.y, listenerX, listenerY });
-    else Audio.stopSiren();
+    else Audio.stopSiren(0.6);   // #385: the last signaled tower fell — trail the wail off, don't snap it silent
   },
 
   // #385: the continuous red pulse for ONE signaled-alive tower — a steady hexring that beats on a
