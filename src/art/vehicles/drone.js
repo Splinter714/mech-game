@@ -27,20 +27,22 @@ function drawFrame(sg, accent) {
     ellipseC(sg, x, y, 3, 3, V.tread);
     ellipseC(sg, x, y, 1.6, 1.6, A.core, 0.8);
   }
-  // Central pod. #379 follow-up (playtest: drone BODY too big relative to its rotors) — the
-  // central pod is shrunk ~30% while the rotor booms (ARMS, ±8) and their rotor discs are left
-  // exactly where they were, so the airframe reads as the same size but the body it carries is
-  // noticeably smaller/leaner. The shield-glow rim traces this same hull silhouette, so it hugs
-  // the leaner body automatically (shieldOutlineParts: ['hull'] in enemyKinds.js).
-  poly(sg, [[-4.5, -3.8], [4.5, -3.8], [5.2, 3.8], [-5.2, 3.8]], V.halo);   // #129
-  poly(sg, [[-3.5, -2.8], [3.5, -2.8], [4.2, 2.8], [-4.2, 2.8]], V.outline);
-  poly(sg, [[-2.8, -2.1], [2.8, -2.1], [3.5, 2.1], [-3.5, 2.1]], V.bodyHi);
+  // Central pod. #379 follow-up (2nd pass — the playtest read the BODY as still full-size after
+  // the first ~30% trim, because only the rotors looked smaller). The core X-body the booms
+  // attach to is now cut ~40% MORE from that first pass (roughly half the original footprint),
+  // so the drone reads as a genuinely small-bodied unit hanging under a same-size rotor span.
+  // The rotor booms (ARMS, ±8) and their rotor discs are untouched. The shield-glow rim traces
+  // this same hull silhouette, so it hugs the leaner body automatically
+  // (shieldOutlineParts: ['hull'] in enemyKinds.js).
+  poly(sg, [[-2.7, -2.3], [2.7, -2.3], [3.1, 2.3], [-3.1, 2.3]], V.halo);   // #129
+  poly(sg, [[-2.0, -1.7], [2.0, -1.7], [2.4, 1.7], [-2.4, 1.7]], V.outline);
+  poly(sg, [[-1.5, -1.2], [1.5, -1.2], [1.9, 1.2], [-1.9, 1.2]], V.bodyHi);
   // Forward sensor eye (accent glow), pointing −y — pulled in to sit on the smaller pod's nose.
-  ellipseC(sg, 0, -2.2, 2, 1.9, V.outline);
-  ellipseC(sg, 0, -2.2, 1.2, 1.1, A.core, 0.95);
-  ellipseC(sg, 0, -2.2, 2.8, 2.5, A.halo, 0.25);
+  ellipseC(sg, 0, -1.6, 1.5, 1.4, V.outline);
+  ellipseC(sg, 0, -1.6, 0.9, 0.85, A.core, 0.95);
+  ellipseC(sg, 0, -1.6, 2.1, 1.9, A.halo, 0.25);
   // A tiny under-slung gun barrel.
-  rectC(sg, 0, -6, 1.4, 4, V.tread);
+  rectC(sg, 0, -5, 1.2, 3.4, V.tread);
 }
 
 // Spinning rotor disc overlay: faint translucent blur rings at each tip. As the scene rotates
