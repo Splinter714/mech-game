@@ -81,11 +81,13 @@ export const POWERUPS = {
   //    shield are granted ON TOP of the base max — the bar and the in-world glow visibly GROW to
   //    show the larger total (base 100 + 150 temp = a 250 total). That temporary portion is spent
   //    FIRST by incoming damage and NEVER regenerates: once it is gone it is gone, and normal regen
-  //    still only refills the base pool up to base max. Any unspent temp expires with the powerup's
-  //    `duration` (the consistent reading, since every other powerup is timed). This deliberately
-  //    sits OUTSIDE #380's regen path (25/sec, 3000ms pause) — the pool never recharges and never
-  //    lifts the regen ceiling. `tempPool` 150 is a big, clearly-felt shell (2.5x the 100 base
-  //    total, echoing the old boostMult's headline size) without being invincible; tune by play.
+  //    still only refills the base pool up to base max. The temp pool PERSISTS UNTIL SPENT by
+  //    damage — it does NOT ride the powerup's `duration` timer. ONLY the free-ammo window (which
+  //    every powerup grants) is timed at `duration` 10s; the shell itself just sits there until
+  //    something chews through it. This deliberately sits OUTSIDE #380's regen path (25/sec, 3000ms
+  //    pause) — the pool never recharges and never lifts the regen ceiling. `tempPool` 150 is a big,
+  //    clearly-felt shell (2.5x the 100 base total, echoing the old boostMult's headline size)
+  //    without being invincible; tune by play.
   shield: {
     id: 'shield', label: 'SHIELD', color: 0x5ec8e0, weight: 1,
     duration: 10, effect: 'shield', tempPool: 150,

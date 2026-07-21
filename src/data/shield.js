@@ -24,8 +24,9 @@ export function createShield(config) {
     // #381: TEMPORARY shield pool (D&D temp-HP). An expendable buffer sitting ON TOP of `max`,
     // granted by the Shield powerup (`grantTempShield`). Damage eats this FIRST (damageShield),
     // it NEVER regenerates (tickShield leaves it alone — regen only refills base `hp` to `max`),
-    // and any unspent remainder expires after `tempExpiryMs` runs out. Zero on every enemy and on
-    // a fresh player, so all the temp-aware branches below are no-ops unless a powerup is live.
+    // and it PERSISTS UNTIL SPENT — the powerup grants it with `tempExpiryMs = Infinity`, so it
+    // does NOT time-expire; only incoming damage drains it. Zero on every enemy and on a fresh
+    // player, so all the temp-aware branches below are no-ops unless a powerup is live.
     temp: 0,
     tempExpiryMs: 0,
   };
@@ -73,14 +74,15 @@ export function damageShield(shield, amount) {
 // counts down first; only once it reaches zero does the shield actually recharge, at
 // `regenPerSec` per second, capped at `max`.
 //
-// #381: the temporary pool is handled here ONLY as an expiry countdown — an unspent `temp`
-// remainder decays to nothing after `tempExpiryMs`. It is deliberately NEVER regenerated and
-// NEVER lifts the regen ceiling: base `hp` still only ever refills up to base `max`. The expiry
-// ticks independently of the hit-pause (it is a wall-clock powerup duration, not a combat state),
-// so it runs BEFORE the pause's early return.
+// #381: the temporary pool PERSISTS UNTIL SPENT — the shield powerup grants it with no finite
+// expiry (`tempExpiryMs = Infinity`), so this tick leaves it completely alone: it is NEVER
+// regenerated, NEVER lifts the regen ceiling (base `hp` still only ever refills up to base `max`),
+// and NEVER time-decays. Only `damageShield` drains it. The optional-expiry branch below only
+// fires when a caller passed a positive FINITE `tempExpiryMs`; it runs BEFORE the pause's early
+// return so an expiry would tick independently of the hit-pause combat state.
 export function tickShield(shield, dt) {
   if (!shield) return;
-  if (shield.temp > 0 && shield.tempExpiryMs > 0) {
+  if (shield.temp > 0 && Number.isFinite(shield.tempExpiryMs) && shield.tempExpiryMs > 0) {
     shield.tempExpiryMs = Math.max(0, shield.tempExpiryMs - dt * 1000);
     if (shield.tempExpiryMs <= 0) shield.temp = 0;
   }
@@ -98,17 +100,24 @@ export function fillShield(shield) {
   if (shieldPresent(shield)) shield.hp = shield.max;
 }
 
-// #381: grant a TEMPORARY shield pool of `amount`, expiring after `durationMs` if unspent. The
-// magnitude does NOT compound (a duplicate refreshes the pool to the same granted size, never a
-// bigger one — mirrors #339's duration-stacks-not-magnitude rule), while the duration is whatever
-// the caller passes (the stacking policy lives in data/powerups.js `stackedRemainingMs`). The
-// base shield is topped to full at the same time (the powerup's instant-fill half). Works even on
-// a zero-`max` body so a shieldless chassis can still wear a temp pool.
+// #381: grant a TEMPORARY shield pool of `amount`. The pool PERSISTS UNTIL SPENT by incoming
+// damage — it does NOT time-expire; only `damageShield` shrinks it. The magnitude does NOT
+// compound (a duplicate refreshes the pool to the same granted size, never a bigger one — mirrors
+// #339's duration-stacks-not-magnitude rule). The base shield is topped to full at the same time
+// (the powerup's instant-fill half). Works even on a zero-`max` body so a shieldless chassis can
+// still wear a temp pool.
+//
+// A caller MAY pass a finite positive `durationMs` to give the pool a wall-clock expiry (the old
+// behaviour), but null/undefined/0/Infinity — the shield powerup's actual call — means PERMANENT
+// (`tempExpiryMs = Infinity`), so `tickShield` never counts it down.
 export function grantTempShield(shield, amount, durationMs) {
   if (!shield) return;
   const grant = Math.max(0, amount || 0);
   shield.temp = Math.max(shield.temp || 0, grant);
-  shield.tempExpiryMs = Math.max(0, durationMs || 0);
+  shield.tempExpiryMs =
+    durationMs == null || !Number.isFinite(durationMs) || durationMs <= 0
+      ? Infinity
+      : durationMs;
   fillShield(shield);
 }
 

@@ -489,7 +489,8 @@ describe('Mech full-mech shield (#246)', () => {
 
   // ── #381: TEMPORARY shield pool (D&D temp HP) — replaces #246/#271's capacity+regen multiplier.
   // The Shield powerup now grants an expendable pool ON TOP of base max: spent first, never
-  // regenerating, never lifting the regen ceiling, and expiring with its window if unspent.
+  // regenerating, never lifting the regen ceiling, and PERSISTING UNTIL SPENT by damage (no
+  // time-expiry). Callers may still opt into a finite `durationMs` (the retained optional path).
   it('#381: grantTempShield adds an expendable pool ON TOP of base max — base max/regen/hp untouched, total grows', () => {
     const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
     m.grantTempShield(150, 10000);
@@ -548,7 +549,20 @@ describe('Mech full-mech shield (#246)', () => {
     expect(m.shield.temp).toBe(40);           // temp is untouched by regen
   });
 
-  it('#381: an unspent temporary pool EXPIRES with its window (the chosen consistent reading)', () => {
+  it('#381: the powerup grant (no durationMs) PERSISTS UNTIL SPENT — ticking past any window leaves it intact', () => {
+    const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
+    m.grantTempShield(60);                     // powerup path: no expiry
+    expect(m.shield.tempExpiryMs).toBe(Infinity);
+    m.tickShield(60);                          // tick well past any 10s window, no damage
+    m.tickShield(60);
+    expect(m.shield.temp).toBe(60);            // pool is fully intact — it never time-decays
+    m.applyDamage('leftArm', 60);              // …and it is still spent by damage
+    expect(m.shield.temp).toBe(0);
+    m.tickShield(10);
+    expect(m.shield.temp).toBe(0);             // once depleted it stays gone
+  });
+
+  it('#381: a caller may still opt into a FINITE window, and an unspent pool expires with it', () => {
     const m = new Mech({ chassisId: 'medium', shield: { max: 40, regenPerSec: 2, pauseMs: 500 } });
     m.grantTempShield(60, 8000);
     m.tickShield(7.999);                      // just under the window

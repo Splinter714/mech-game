@@ -152,7 +152,7 @@ function fakeArena() {
       _remaining: 0,
       _repairs: 0,
       get tempShieldRemainingMs() { return this._remaining; },
-      grantTempShield(pool, ms) { this._pool = pool; this._remaining = ms; },
+      grantTempShield(pool, ms) { this._pool = pool; this._remaining = ms; this._grantCalls = (this._grantCalls || 0) + 1; },
       repairArmor() { this._repairs++; return 10; },
     },
     _activatePowerup: PowerupsMixin._activatePowerup,
@@ -198,16 +198,16 @@ describe('#339: _activatePowerup stacks duration on duplicate pickups', () => {
     expect(buffModifiers(s.activePowerups)).toEqual(once);
   });
 
-  it('#381: Shield grants the temp pool at the same size and extends its window; it ALSO enters the active set for free ammo', () => {
+  it('#381: Shield grants the temp pool at the same size with NO finite expiry (persists until spent); the free-ammo window is the only timed half', () => {
     const s = fakeArena();
     s._activatePowerup('shield');
     expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);
-    expect(s.mech._remaining).toBe(durationMs('shield'));
-    expect(s.activePowerups.shield).toBe(durationMs('shield'));   // #381: free-ammo window
+    expect(s.mech._remaining).toBeUndefined();                   // #381: no durationMs passed — pool never time-expires
+    expect(s.activePowerups.shield).toBe(durationMs('shield'));   // #381: free-ammo window is 10s
     s._activatePowerup('shield');
-    expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);          // same pool size…
-    expect(s.mech._remaining).toBe(durationMs('shield') * 2);     // …longer window
-    expect(s.activePowerups.shield).toBe(durationMs('shield') * 2);
+    expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);          // same pool size, does not compound
+    expect(s.mech._remaining).toBeUndefined();                   // still no expiry on the pool
+    expect(s.activePowerups.shield).toBe(durationMs('shield') * 2); // …only the free-ammo window stacks
   });
 
   it('#381: Armor Patch repairs again on each pickup AND opens a free-ammo window (so it now enters the active set)', () => {

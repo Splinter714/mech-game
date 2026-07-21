@@ -223,21 +223,21 @@ export class Mech {
     tickShieldState(this.shield, dt);
   }
 
-  // #381: how much of the temporary-pool window is still on the clock, in ms — 0 when no pool is
-  // live. The scene reads this to compute the STACKED duration (data/powerups.js
-  // `stackedRemainingMs`) it passes back into `grantTempShield`, so all timed buffs share one
-  // stacking rule and the model keeps its "set exactly what you're told" contract.
+  // #381: the temp pool's remaining wall-clock expiry, in ms — 0 when no pool is live. Since the
+  // shield powerup now grants the pool with NO finite expiry (it persists until spent), this reads
+  // Infinity while a pool is live. Retained for symmetry/HUD readouts; the free-ammo window is
+  // tracked separately in the scene's `activePowerups`.
   get tempShieldRemainingMs() {
     return (this.shield?.temp || 0) > 0 ? Math.max(0, this.shield.tempExpiryMs || 0) : 0;
   }
 
   // Shield powerup pickup (#381, reworked from #246/#271's capacity/regen multiplier): grant an
-  // expendable TEMPORARY shield pool of `amount` ON TOP of the base max, expiring after
-  // `durationMs` if unspent, and top the base shield to full. The base `max`/`regenPerSec` are
-  // never touched, so the regen ceiling stays put and the temp pool sits outside the regen path
-  // entirely (it only ever drains — via damage, first, or the expiry timer). Magnitude does not
-  // compound across duplicate pickups (grantTempShield takes the max, not the sum); duration
-  // stacking is the caller's `durationMs`. Works even on a mech with no native shield config.
+  // expendable TEMPORARY shield pool of `amount` ON TOP of the base max, and top the base shield
+  // to full. The pool PERSISTS UNTIL SPENT by incoming damage — the shield powerup passes no
+  // `durationMs`, so it never time-expires; only damage drains it. The base `max`/`regenPerSec`
+  // are never touched, so the regen ceiling stays put and the temp pool sits outside the regen
+  // path entirely. Magnitude does not compound across duplicate pickups (grantTempShield takes the
+  // max, not the sum). Works even on a mech with no native shield config.
   grantTempShield(amount, durationMs) {
     grantTempShield(this.shield, amount, durationMs);
   }

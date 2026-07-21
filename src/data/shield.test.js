@@ -130,7 +130,9 @@ describe('fillShield / shieldFraction', () => {
 });
 
 // #381: the expendable TEMPORARY pool (D&D temp HP) — outermost layer, spent first, never
-// regenerates, never lifts the regen ceiling, expires with its window if unspent.
+// regenerates, never lifts the regen ceiling. As the shield POWERUP grants it (no durationMs) it
+// PERSISTS UNTIL SPENT by damage — no time-expiry. A caller may still pass a finite positive
+// durationMs to opt into a wall-clock expiry (the retained optional path, exercised below).
 describe('temporary shield pool (#381)', () => {
   it('createShield starts with no temp pool', () => {
     const s = createShield({ max: 50 });
@@ -173,9 +175,25 @@ describe('temporary shield pool (#381)', () => {
     expect(s.hp).toBe(40);           // base refills to base max, no further
   });
 
-  it('an unspent temp pool expires with its window', () => {
+  it('the shield-powerup grant (no durationMs) PERSISTS UNTIL SPENT — never time-expires', () => {
+    const s = createShield({ max: 40, regenPerSec: 0 });
+    grantTempShield(s, 150);         // powerup path: no expiry
+    expect(s.tempExpiryMs).toBe(Infinity);
+    tickShield(s, 60);               // tick well past any 10s window, no damage
+    tickShield(s, 60);
+    expect(s.temp).toBe(150);        // pool is fully intact
+    // ...and it is still spent by damage FIRST, and once depleted it is gone.
+    expect(damageShield(s, 150)).toEqual({ absorbed: 150, overflow: 0 });
+    expect(s.temp).toBe(0);
+    tickShield(s, 10);
+    expect(s.temp).toBe(0);          // spent temp stays gone (never regens back)
+    expect(s.hp).toBe(40);           // base was never touched
+  });
+
+  it('an unspent temp pool with a FINITE opted-in window still expires (retained optional path)', () => {
     const s = createShield({ max: 40, regenPerSec: 0 });
     grantTempShield(s, 60, 2000);
+    expect(s.tempExpiryMs).toBe(2000);
     tickShield(s, 1.999);
     expect(s.temp).toBe(60);
     tickShield(s, 0.002);            // window elapses

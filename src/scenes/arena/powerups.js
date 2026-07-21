@@ -278,8 +278,10 @@ export const PowerupsMixin = {
     // Each type's own effect on top of that window.
     if (isInstant(typeId)) this._applyInstantPowerup(typeId, player);
     if (p.effect === 'shield') {
-      // Magnitude (pool size) does NOT compound; the window is the stacked span computed above.
-      player.mech.grantTempShield(p.tempPool ?? 0, windowMs);
+      // #381: magnitude (pool size) does NOT compound, and the temp pool PERSISTS UNTIL SPENT —
+      // no finite expiry passed, so it never time-decays. The 10s `windowMs` above governs ONLY
+      // the free-ammo window (activePowerups['shield']), not the shield pool.
+      player.mech.grantTempShield(p.tempPool ?? 0);
     }
     const col = '#' + p.color.toString(16).padStart(6, '0');
     this._floatText(player.x, player.y - 34, p.label, col);
