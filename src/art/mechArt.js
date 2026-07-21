@@ -23,7 +23,7 @@ import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
-  exposedInternals, statusSpotBar, READOUT, readoutMount,
+  exposedInternals, statusSpotBar, statusSpotGlow, READOUT, readoutMount,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -231,8 +231,13 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // and keep the original reactor purple.
   if (statusSpot) statusSpotBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, statusSpot);
   else glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                      // reactor spine
-  glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
-  glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
+  // The two vents flanking the spine complete the reactor cluster. For player mechs they follow the
+  // spine's STATUS colour (its primary/first colour, black when no powerup); enemies & garage preview
+  // keep the fixed reactor purple. statusSpotGlow shapes the primary status colour into glowBar's
+  // {halo,core,hot} descriptor (black when no powerup).
+  const ventCol = statusSpot ? statusSpotGlow(statusSpot) : REACTOR;
+  glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
+  glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
 
   // Head + cockpit optic + antenna. #128: neither is damage-tracked any more — always
   // draws intact, never a stump/charred cockpit.

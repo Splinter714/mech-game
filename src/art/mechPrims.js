@@ -150,7 +150,7 @@ export function glowBar(sg, cx, cy, w, h, n) {
 // A vertical bar of (cx,cy,w,h). Mirrors glowBar's glow language so it still reads as "core".
 export function statusSpotBar(sg, cx, cy, w, h, colors) {
   if (!colors || colors.length === 0) {
-    rectC(sg, cx, cy, w, h, 0x0a0b0d);                 // dark core = no active powerup
+    rectC(sg, cx, cy, w, h, STATUS_SPOT_DARK);         // dark core = no active powerup
     rectC(sg, cx, cy, w * 0.5, h * 0.86, 0x16181c);    // faint inner so it reads as a housing, not a hole
     return;
   }
@@ -162,6 +162,18 @@ export function statusSpotBar(sg, cx, cy, w, h, colors) {
     rectC(sg, cx, sy, w, seg, colors[i], 1);                          // the section's own colour
     rectC(sg, cx, sy, w * 0.4, seg * 0.66, mixToWhite(colors[i], 0.5), 1); // hot center streak
   }
+}
+
+// #400 follow-up: a glowBar GLOW DESCRIPTOR ({halo,core,hot}) for the small center-torso vents that
+// flank the spine, derived from the same status-spot colour list the spine consumes. The vents are
+// too small to section, so they take the PRIMARY (first) colour of the list — black (matching
+// statusSpotBar's dark core) when the list is empty (no powerup). Shaped like REACTOR so glowBar
+// renders it, so the whole reactor cluster reads as one indicator: black when no powerup, the
+// powerup colour when one is.
+export const STATUS_SPOT_DARK = 0x0a0b0d;
+export function statusSpotGlow(colors) {
+  const core = colors && colors.length ? colors[0] : STATUS_SPOT_DARK;
+  return { halo: mixToWhite(core, 0.12), core, hot: mixToWhite(core, 0.5) };
 }
 
 // Mix a 0xRRGGBB colour `t` of the way toward white (0 = colour, 1 = white). Local to the
