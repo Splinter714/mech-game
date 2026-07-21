@@ -8,8 +8,62 @@
 // — previously each had its own inline copy of the same expression. These tests prove it's
 // properly dt-scaled (frame-rate independent) at both a low dt (a fast 144fps-ish frame) and a
 // high dt (a slow/hitchy frame), and that it never overshoots past the target.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { rotateToward } from './shared.js';
+// enemies.js has a vestigial top-level `import Phaser` whose device-detection touches `navigator`
+// and throws under the node test env — stub it out (same as enemyFireAngle.test.js) so the
+// exported #398 tuning constant can be imported.
+vi.mock('phaser', () => ({ default: {} }));
+import { ENEMY_MECH_TURRET_SLEW } from './enemies.js';
+
+// #398 — enemy mechs felt "floaty" because their turret snapped to the player's bearing every
+// frame at the chassis's own fast turretSlew (1.9–4.2 rad/s). The fix caps enemy-mech aim
+// tracking to ENEMY_MECH_TURRET_SLEW so the gun LAGS and swings toward the player like a heavy
+// machine. These prove the cap is a genuine slow-down (below every chassis slew) and that the
+// capped step is a proper rad/s tracking step — advances toward the target at the capped rate,
+// never overshoots, and lags a laterally-moving target instead of snapping onto it. The enemy
+// mech's turret update is literally `rotateToward(e.turret, bearing, ENEMY_MECH_TURRET_SLEW, dt)`
+// (enemies.js), so exercising rotateToward with the exported constant tests the real aim step.
+describe('enemy-mech capped turret slew (#398)', () => {
+  const CHASSIS_SLEWS = [1.9, 2.9, 4.2]; // heavy / medium / light turretSlew
+
+  it('is slower than every chassis turretSlew (so it always bites)', () => {
+    for (const s of CHASSIS_SLEWS) expect(ENEMY_MECH_TURRET_SLEW).toBeLessThan(s);
+    expect(ENEMY_MECH_TURRET_SLEW).toBeGreaterThan(0);
+  });
+
+  it('advances the aim toward the target at exactly the capped rad/s (no snapping)', () => {
+    const dt = 1 / 60;
+    // Player far off to one side: a full frame moves the turret by exactly slew*dt, not onto it.
+    const got = rotateToward(0, Math.PI, ENEMY_MECH_TURRET_SLEW, dt);
+    expect(got).toBeCloseTo(ENEMY_MECH_TURRET_SLEW * dt, 10);
+    expect(got).toBeLessThan(Math.PI); // did NOT snap to the target
+  });
+
+  it('never overshoots the aim once the step would pass it', () => {
+    const target = 0.01; // tiny remaining gap
+    const got = rotateToward(0, target, ENEMY_MECH_TURRET_SLEW, 1); // slew*dt ≫ gap
+    expect(got).toBeCloseTo(target, 10);
+  });
+
+  it('lags a laterally strafing player rather than tracking perfectly', () => {
+    // Turret starts on target; the player then jumps 0.6 rad to the side each frame (fast lateral
+    // strafe). With the cap, the turret can only claw back a slice per frame, so a steady gap
+    // persists — that gap IS the aim lag the fix is for. At the old chassis slew it would close.
+    const dt = 1 / 60;
+    let turret = 0;
+    let bearing = 0;
+    let maxGap = 0;
+    for (let i = 0; i < 20; i++) {
+      bearing += 0.6; // player keeps moving sideways
+      turret = rotateToward(turret, bearing, ENEMY_MECH_TURRET_SLEW, dt);
+      maxGap = Math.max(maxGap, Math.abs(bearing - turret));
+    }
+    // A perfect tracker would have gap ~0.6 (one frame behind) or less; the capped turret falls
+    // much further behind because slew*dt (≈0.023 rad) ≪ the 0.6 rad/frame the player moves.
+    expect(maxGap).toBeGreaterThan(1.0);
+  });
+});
 
 describe('rotateToward — dt-scaled turret/heading rotation (#86)', () => {
   it('advances by exactly radPerSec * dt at a small dt (no snapping/quantization)', () => {
