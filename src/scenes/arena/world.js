@@ -6,6 +6,7 @@ import { hexToPixel, pixelToHex, axialKey, hexesWithinPixelRadius, hexesAlongSeg
 import {
   getTerrain, terrainSpeedFactor, isPassable, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage, coverBlocksForRay, isSoftCover,
+  clearedSoftCoverFor, SOFT_COVER_CLEAR_HP, SOFT_COVER_CATCH_DAMAGE,
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
@@ -202,6 +203,12 @@ export const WorldMixin = {
     // mission/run objective logic — which reads `buildingHp` as "the standing outposts" — never
     // designates a tree as an assault target. `_damageBuildingAt` chips/flattens both alike.
     this.coverHp = coverHp;      // hexKey → remaining HP for destructible soft-cover hexes
+    // #405: soft cover is destructible again, but ONLY by the shots the foliage CATCHES — so its
+    // clear-HP lives in its OWN map, entirely separate from `buildingHp`/`coverHp`. Those two feed
+    // the targeting/lock/convergence pool (`_destructibleTargetsNear`/`_destructibleStandingAt`);
+    // `softCoverHp` deliberately does NOT, which is what keeps clearing woods incidental — never a
+    // thing the reticle or an enemy targets. Seeded below from every standing soft-cover hex.
+    this.softCoverHp = new Map();  // hexKey → remaining clear-HP for a standing soft-cover hex (#405)
     this.tileImages = new Map();   // hexKey → the tile Image, so a hex can be re-textured in place
     // #222 (4th playtest pass): three rounds of per-tile treatment (dropping the inset border,
     // overdrawing/bleeding the fill, scoping the #211 sunken-shadow ring to true coastline-only
@@ -234,6 +241,8 @@ export const WorldMixin = {
       const tex = getTerrain(id).tex;
       const img = this.add.image(x, y, tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
+      // #405: every standing soft-cover hex gets clear-HP so caught shots can wear it down.
+      if (isSoftCover(id)) this.softCoverHp.set(k, SOFT_COVER_CLEAR_HP);
       if (isCoverCanopyId(tex)) {
         const canopy = this.add.image(x, y, canopyTexKey(tex)).setScale(1 / ART_SCALE).setDepth(DEPTH.COVER_CANOPY);
         this.canopyImages.set(k, canopy);
@@ -829,6 +838,45 @@ export const WorldMixin = {
     // #312: the hex's movement cost just changed too (an impassable building collapsed into
     // walkable rubble), so every cached enemy route is stale — a unit that was routing the long
     // way around this structure can now go straight through where it stood.
+    this._invalidateRoutes?.();
+    return true;
+  },
+
+  // #405: chip a soft-cover hex's clear-HP because a shot's #374 block roll CAUGHT a round in it.
+  // This is the ONLY thing that damages soft cover, and it is deliberately its OWN path — separate
+  // from `_damageBuildingAt`/`buildingHp`/`coverHp` — because soft cover is never a targeting/lock/
+  // convergence candidate (it's not in those maps). Clearing woods therefore can never compete with
+  // shooting enemies; it only happens incidentally, as a side effect of fire the foliage ate.
+  // Symmetric by construction: the caught-shot sites (projectiles.js / firing.js) never read who
+  // fired, so an enemy round chips a hex exactly as a player round does.
+  // At 0 HP the hex CLEARS to open ground (`clearedSoftCoverFor` — the biome's plain floor, a subtle
+  // look, not a distinct rubble tile) and stops being cover: it no longer eats shots, slows, or
+  // conceals. `key` is the hex the shot was caught in. No-op if that hex isn't standing soft cover.
+  // Returns true iff this hit cleared the hex. Guards every scene-object touch with optional chaining
+  // so the headless world-test doubles (no tileImages/canopy/FX) exercise the HP+clear logic cleanly.
+  _damageSoftCoverHex(key, amount = SOFT_COVER_CATCH_DAMAGE) {
+    if (!this.softCoverHp || !this.softCoverHp.has(key)) return false;
+    const { hp, destroyed } = damageBuilding(this.softCoverHp.get(key), amount);
+    if (!destroyed) { this.softCoverHp.set(key, hp); return false; }
+    this.softCoverHp.delete(key);
+    const cleared = clearedSoftCoverFor(this.terrain.get(key));
+    if (cleared) {
+      this.terrain.set(key, cleared);
+      const img = this.tileImages?.get(key);
+      if (img) img.setTexture(getTerrain(cleared).tex);
+    }
+    // The foliage canopy overlay goes with it — a cleared hex shows open ground, no floating trees.
+    const canopy = this.canopyImages?.get(key);
+    if (canopy) { canopy.destroy(); this.canopyImages.delete(key); }
+    // A light debris puff (soft=true), same feedback a burning forest hex played before #351.
+    // Gated on a real scene (`this.add`) — same stub-tolerance the rest of this mixin shows toward
+    // the headless test doubles, which mix in the method but have no Phaser display list.
+    const [q, r] = key.split(',').map(Number);
+    const { x, y } = hexToPixel(q, r);
+    if (this.add) this._outpostCollapseFx?.(x, y, true);
+    // Cover just fell: vision opens up and a unit's terrain speed cost here just changed, so the
+    // cached FOV and routes are stale — same invalidation `_damageBuildingAt`'s collapse runs.
+    this._invalidateVisibility?.();
     this._invalidateRoutes?.();
     return true;
   },

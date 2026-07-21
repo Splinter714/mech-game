@@ -571,8 +571,11 @@ export const FiringMixin = {
     if (eatenAt) {
       // #374 — the beam was eaten mid-trace: play its OWN normal beam impact FX at the clamp point
       // where it enters the blocking hex (endX/endY, already clamped above), NOT a puff at the hex
-      // centre. No damage, no terrain chip — the trees simply stopped it right there.
+      // centre. No unit damage — the trees simply stopped it right there.
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
+      // #405: the caught beam chips the soft-cover hex that ate it (the hex `eatenAt` marks), so
+      // energy loadouts clear woods too. Keyed off the eating hex's own centre, not the clamp point.
+      this._damageSoftCoverHex?.(this._hexKeyAt(eatenAt.x, eatenAt.y));
     } else if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
