@@ -280,6 +280,18 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
 // Owner: tunable via playtest.
 const DOCK_VACATE_RADIUS_PX = 60;
 
+// #395 part B (owner: "docks need a stronger dark border, drawn high so it clearly frames the dock
+// hex on top of the tile and the door leaves"): a strong, near-black hex outline stroked around
+// every DOCK hex at DEPTH.DOCK_BORDER (above the tile, its doors, the ground-decal band and the
+// unit tiers) so a dock reads as a distinct, clearly-bounded structure regardless of open/closed
+// state. Biome-neutral by construction — a fixed dark tone and fixed radius, drawn the same on
+// every biome. Radius sits just inside the hex's HEX_SIZE (48) corner so the stroke lands on the
+// hex edge and frames it rather than overhanging into neighbours.
+const DOCK_BORDER_COLOR = 0x090c11;
+const DOCK_BORDER_ALPHA = 0.95;
+const DOCK_BORDER_WIDTH = 5;
+const DOCK_BORDER_RADIUS = 46;
+
 export const BasesMixin = {
   // §4: spawn every base's docked units NOW, at deploy time, dormant — not lazily, not via the
   // old off-camera `_offscreenSpawnPoint`/squad system. Called once from ArenaScene.create(),
@@ -361,6 +373,22 @@ export const BasesMixin = {
       }
     }
     this._spawnWallTurrets();
+    this._drawDockBorders();
+  },
+
+  // #395 part B: stroke the strong dark border ring around every dock hex. Driven off
+  // `_dockResupplyMeta` (populated just above), which already holds the pixel centre of every dock
+  // — so this frames exactly the dock hexes, both open and closed, biome-agnostically. One static
+  // `Graphics` per dock, positioned at the dock centre and stroked as a hex outline via the shared
+  // `strokeHexRing` helper (the same `hexCorners`-based path terrain hexes and the alert/objective
+  // rings use), at DEPTH.DOCK_BORDER so it sits ON TOP of the tile and the sliding door leaves.
+  // No per-tick redraw needed — the frame never moves or resizes; it's drawn once at spawn.
+  _drawDockBorders() {
+    if (!this.add?.graphics || !this._dockResupplyMeta) return;
+    for (const meta of this._dockResupplyMeta.values()) {
+      const g = this.add.graphics().setPosition(meta.x, meta.y).setDepth(DEPTH.DOCK_BORDER);
+      strokeHexRing(g, DOCK_BORDER_RADIUS, DOCK_BORDER_WIDTH, DOCK_BORDER_COLOR, DOCK_BORDER_ALPHA);
+    }
   },
 
   // #310: seat one Wall Lance on every span flagged `role: 'turret'` (worldgen.js
