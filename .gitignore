@@ -5,3 +5,6 @@ dist/
 /tmp/
 .claude/worktrees/
 test-results/
+
+# Source audio files — only the converted .m4a bakes in src/assets/sfx/ are committed
+raw audio/
