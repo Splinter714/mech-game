@@ -1,14 +1,16 @@
-// #375 — turret ammo made REAL. Two things under test here:
-//   1. the pure magazine model (scope gate, init/consume/regen semantics), and
-//   2. the TAPER these values actually produce, simulated against each kind's own cadence.
-// (2) is the point of the issue: the pre-#375 numbers were written for a mechanic that never
-// ran, and both of them regenerated FASTER than their gun could spend — so even once wired up
-// they could never have tapered at all. These tests pin the corrected shape.
+// #375 (redefined) — emplaced-turret ammo now uses the PLAYER reload model (#402): a MAGAZINE that
+// drains a round per pull, and once EMPTY locks out for RELOAD_SECONDS then snaps back to FULL —
+// no `ammoRegen` trickle. So an emplaced turret suppresses exactly like the player's own gun: dump
+// the mag, wait the reload. These tests pin (1) the scope gate (emplaced kinds only), (2) the
+// magazine mechanics, and (3) the reload behaviour itself.
 import { describe, it, expect } from 'vitest';
 import { ENEMY_KINDS } from './enemyKinds.js';
 import { kindWeaponSlot, DEFAULT_SLOT } from './kindWeapons.js';
 import { resolveWeapon } from './weapons.js';
-import { slotAmmoSpec, initKindAmmo, slotHasAmmo, consumeSlotAmmo, regenKindAmmo } from './kindAmmo.js';
+import { RELOAD_SECONDS } from './Mech.js';
+import {
+  slotAmmoSpec, initKindAmmo, initKindReload, slotHasAmmo, consumeSlotAmmo, tickKindReload,
+} from './kindAmmo.js';
 
 // The kinds that ride the vehicle fire path. Only the two EMPLACED ones are ammo-limited (the
 // scope decision recorded in kindAmmo.js's header).
@@ -16,35 +18,31 @@ const EMPLACED = ['turret', 'wallTurret'];
 const MOBILE = ['tank', 'drone', 'helicopter', 'carrier', 'infantry'];
 
 // Mirrors the production loop for ONE slot: `_updateVehicle` ticks the cooldown and calls
-// regenKindAmmo every frame; `_fireVehicleWeapon` fires when the cooldown has expired AND a
-// whole round is available, then spends one round and re-arms the cadence. Returns the shot
-// TIMES so a test can ask both "how many shots before it runs dry" and "how long was it quiet".
+// tickKindReload every frame; `_fireVehicleWeapon` fires when the cooldown has expired AND a whole
+// round is available, then spends one round (arming its reload if that emptied the mag) and
+// re-arms the cadence. Returns the shot TIMES plus the min ammo seen, so a test can ask "how many
+// shots in the opening mag" and "did it actually reach empty".
 function simulate(kindId, seconds, stepMs = 20) {
   const def = ENEMY_KINDS[kindId];
   const mount = kindWeaponSlot(def);
   const weapon = resolveWeapon(mount.weaponId, mount.weaponOverride);
   const interval = weapon.cycleTime;       // every emplaced kind is a single-shot cycleTime weapon
   const ammo = initKindAmmo(def);
+  const reload = initKindReload(def);
   const shots = [];
   let cd = 0;
+  let minAmmo = Infinity;
   for (let t = 0; t <= seconds * 1000; t += stepMs) {
     if (cd <= 0 && slotHasAmmo(ammo, DEFAULT_SLOT)) {
       shots.push(t / 1000);
-      consumeSlotAmmo(ammo, DEFAULT_SLOT, 1);
+      consumeSlotAmmo(ammo, DEFAULT_SLOT, 1, reload);
       cd = interval;
     }
     cd = Math.max(0, cd - stepMs);
-    regenKindAmmo(def, ammo, stepMs / 1000);
+    tickKindReload(def, ammo, reload, stepMs / 1000);
+    minAmmo = Math.min(minAmmo, ammo[DEFAULT_SLOT]);
   }
-  return { shots, ammo, interval };
-}
-
-// The OPENING BURST: the run of shots fired back-to-back at the free cadence, before the
-// magazine gives out. Everything after the first oversized gap is post-taper trickle.
-function openingBurst({ shots, interval }) {
-  let n = 1;
-  while (n < shots.length && shots[n] - shots[n - 1] <= interval / 1000 + 0.1) n++;
-  return { count: n, endsAt: shots[n - 1], gapAfter: shots[n] - shots[n - 1] };
+  return { shots, ammo, reload, interval, minAmmo };
 }
 
 describe('#375 scope: ammo limits the EMPLACED kinds only', () => {
@@ -53,11 +51,20 @@ describe('#375 scope: ammo limits the EMPLACED kinds only', () => {
     const ammo = initKindAmmo(ENEMY_KINDS[id]);
     expect(Object.keys(ammo)).toEqual([DEFAULT_SLOT]);
     expect(ammo[DEFAULT_SLOT]).toBeGreaterThan(0);
+    // Its magazine size IS the resolved weapon's own ammoMax — same number the player's gun uses.
+    const mount = kindWeaponSlot(ENEMY_KINDS[id]);
+    const weapon = resolveWeapon(mount.weaponId, mount.weaponOverride);
+    expect(ammo[DEFAULT_SLOT]).toBe(weapon.ammoMax);
+  });
+
+  it.each(EMPLACED)('%s starts with no pending reload', (id) => {
+    expect(initKindReload(ENEMY_KINDS[id])).toEqual({ [DEFAULT_SLOT]: 0 });
   });
 
   it.each(MOBILE)('%s is NOT ammo-limited — a mobile enemy pausing mid-fight is out of scope', (id) => {
     expect(ENEMY_KINDS[id].ammoLimited).toBeFalsy();
     expect(initKindAmmo(ENEMY_KINDS[id])).toEqual({});
+    expect(initKindReload(ENEMY_KINDS[id])).toEqual({});
   });
 
   it('a kind with no magazine reads as unlimited everywhere (no behaviour change off the opt-in)', () => {
@@ -88,73 +95,10 @@ describe('#375 magazine mechanics', () => {
     expect(ammo.main).toBe(0);
   });
 
-  it('needs a WHOLE round to fire — a fractional magazine is dry', () => {
+  it('needs a WHOLE round to fire — an empty magazine is dry', () => {
+    expect(slotHasAmmo({ main: 0 }, 'main')).toBe(false);
     expect(slotHasAmmo({ main: 0.9 }, 'main')).toBe(false);
     expect(slotHasAmmo({ main: 1 }, 'main')).toBe(true);
-  });
-
-  it('regen is continuous and CLAMPS at ammoMax (a long lull cannot bank extra rounds)', () => {
-    const def = ENEMY_KINDS.wallTurret;
-    const max = initKindAmmo(def)[DEFAULT_SLOT];
-    const ammo = { [DEFAULT_SLOT]: 0 };
-    regenKindAmmo(def, ammo, 10);
-    expect(ammo[DEFAULT_SLOT]).toBeCloseTo(0.45, 5);      // 0.045/s * 10s
-    regenKindAmmo(def, ammo, 10_000);
-    expect(ammo[DEFAULT_SLOT]).toBe(max);
-  });
-});
-
-describe('#375 the taper these values actually produce', () => {
-  it('every ammo-limited kind SPENDS faster than it regenerates — otherwise it could never run dry', () => {
-    // This is exactly what was broken before #375: wallTurret spent 1/5.2s = 0.192 rounds/s
-    // against a 0.25/s trickle, and turret spent 0.385/s against 0.6/s. Both out-regenerated
-    // their own guns, so the "taper" the comments described was arithmetically impossible.
-    for (const id of EMPLACED) {
-      const def = ENEMY_KINDS[id];
-      const mount = kindWeaponSlot(def);
-      const weapon = resolveWeapon(mount.weaponId, mount.weaponOverride);
-      const spend = 1000 / weapon.cycleTime;
-      expect(spend, id).toBeGreaterThan(weapon.ammoRegen);
-    }
-  });
-
-  it('wallTurret: ~7 shots over ~31s of sustained contact, then a real quiet window', () => {
-    const sim = simulate('wallTurret', 90);
-    const burst = openingBurst(sim);
-    expect(burst.count).toBe(7);                     // 7 shots at the free 5.2s cadence…
-    expect(burst.endsAt).toBeCloseTo(31.2, 1);
-    // …and then it is DRY: no 8th shot for over ten seconds. That silence is the suppression
-    // window the issue is buying — bait the wall, break contact, approach quieter.
-    expect(burst.gapAfter).toBeGreaterThan(10);
-    expect(burst.gapAfter).toBeCloseTo(13.3, 0);
-  });
-
-  it('turret: ~11 shells over ~26s of bombardment, then dry', () => {
-    const burst = openingBurst(simulate('turret', 90));
-    expect(burst.count).toBe(11);
-    expect(burst.endsAt).toBeCloseTo(26, 1);
-    expect(burst.gapAfter).toBeGreaterThan(5);
-    expect(burst.gapAfter).toBeCloseTo(7.3, 0);
-  });
-
-  it.each(EMPLACED)('%s is SUPPRESSED, never silenced — sustained volume drops several-fold but stays nonzero', (id) => {
-    // #356 (clear every enemy and dock per base) must stay achievable, and a base still needs
-    // fixed guns that matter (#287 made wall turrets the only ones). So the steady state after
-    // the magazine is spent is a slow trickle of fire, not a dead emplacement.
-    const { shots, interval } = simulate(id, 240);
-    const free = 240_000 / interval;                       // shots an unlimited gun would land
-    expect(shots.length).toBeLessThan(free * 0.5);         // meaningfully quieter…
-    const late = shots.filter((t) => t > 60);
-    expect(late.length).toBeGreaterThan(3);                // …but still shooting, long after dry
-  });
-
-  it('a suppressed emplacement RECOVERS once contact is broken — the lever is reversible', () => {
-    const def = ENEMY_KINDS.wallTurret;
-    const max = initKindAmmo(def)[DEFAULT_SLOT];
-    const ammo = { [DEFAULT_SLOT]: 0 };                    // just ran dry
-    regenKindAmmo(def, ammo, 60);                          // a minute out of its arc
-    expect(ammo[DEFAULT_SLOT]).toBeGreaterThan(1);         // shooting again
-    expect(ammo[DEFAULT_SLOT]).toBeLessThan(max);          // but not yet a full magazine
   });
 
   it('per-unit magazines, so co-op\'s doubled enemy COUNT (#350) scales volume linearly with no shared pool', () => {
@@ -164,5 +108,88 @@ describe('#375 the taper these values actually produce', () => {
     consumeSlotAmmo(a, DEFAULT_SLOT, 3);
     expect(b[DEFAULT_SLOT]).toBe(initKindAmmo(def)[DEFAULT_SLOT]);   // b untouched by a's fire
     expect(a[DEFAULT_SLOT]).not.toBe(b[DEFAULT_SLOT]);
+  });
+});
+
+describe('#375 the RELOAD model — same as the player version of the gun', () => {
+  it('draining a mag to empty AUTO-starts the slot reload for RELOAD_SECONDS', () => {
+    const ammo = { main: 1 };
+    const reload = { main: 0 };
+    consumeSlotAmmo(ammo, 'main', 1, reload);
+    expect(ammo.main).toBe(0);
+    expect(reload.main).toBe(RELOAD_SECONDS);
+  });
+
+  it('a pull that does NOT empty the mag arms no reload', () => {
+    const ammo = { main: 3 };
+    const reload = { main: 0 };
+    consumeSlotAmmo(ammo, 'main', 1, reload);
+    expect(ammo.main).toBe(2);
+    expect(reload.main).toBe(0);
+  });
+
+  it('NO trickle: a slot that is not reloading holds its ammo exactly where firing left it', () => {
+    const def = ENEMY_KINDS.turret;
+    const ammo = { [DEFAULT_SLOT]: 4 };
+    const reload = { [DEFAULT_SLOT]: 0 };
+    tickKindReload(def, ammo, reload, 30);                 // half a minute idle mid-magazine
+    expect(ammo[DEFAULT_SLOT]).toBe(4);                    // unchanged — no between-shots regen
+  });
+
+  it('a slot mid-reload stays DRY until the timer elapses, then snaps to a FULL magazine', () => {
+    const def = ENEMY_KINDS.wallTurret;
+    const max = initKindAmmo(def)[DEFAULT_SLOT];
+    const ammo = { [DEFAULT_SLOT]: 0 };
+    const reload = { [DEFAULT_SLOT]: RELOAD_SECONDS };
+    tickKindReload(def, ammo, reload, RELOAD_SECONDS - 0.5);
+    expect(ammo[DEFAULT_SLOT]).toBe(0);                    // still reloading, still dry
+    expect(slotHasAmmo(ammo, DEFAULT_SLOT)).toBe(false);
+    tickKindReload(def, ammo, reload, 0.5);               // reload completes this frame
+    expect(reload[DEFAULT_SLOT]).toBe(0);
+    expect(ammo[DEFAULT_SLOT]).toBe(max);                 // FULL magazine, not a partial trickle
+  });
+
+  it('reload does not over-refill — once full and not reloading, ticking is a no-op', () => {
+    const def = ENEMY_KINDS.wallTurret;
+    const max = initKindAmmo(def)[DEFAULT_SLOT];
+    const ammo = { [DEFAULT_SLOT]: max };
+    const reload = { [DEFAULT_SLOT]: 0 };
+    tickKindReload(def, ammo, reload, 10_000);
+    expect(ammo[DEFAULT_SLOT]).toBe(max);
+  });
+
+  it('fire a whole mag, then a real reload cycle refills it to full', () => {
+    const def = ENEMY_KINDS.turret;
+    const max = initKindAmmo(def)[DEFAULT_SLOT];
+    const ammo = initKindAmmo(def);
+    const reload = initKindReload(def);
+    for (let i = 0; i < max; i++) consumeSlotAmmo(ammo, DEFAULT_SLOT, 1, reload);
+    expect(ammo[DEFAULT_SLOT]).toBe(0);                    // magazine spent
+    expect(reload[DEFAULT_SLOT]).toBe(RELOAD_SECONDS);     // reload armed by the emptying shot
+    // Reload gate held the whole time, then delivered the ENTIRE magazine at once.
+    tickKindReload(def, ammo, reload, RELOAD_SECONDS);
+    expect(ammo[DEFAULT_SLOT]).toBe(max);
+  });
+});
+
+describe('#375 emergent behaviour under sustained contact', () => {
+  it.each(EMPLACED)('%s empties its opening magazine, reaching zero before it reloads', (id) => {
+    const def = ENEMY_KINDS[id];
+    const max = initKindAmmo(def)[DEFAULT_SLOT];
+    const sim = simulate(id, 120);
+    // It really runs the magazine dry (min ammo hits 0) rather than out-regenerating its own gun.
+    expect(sim.minAmmo).toBe(0);
+    // First `max` shots are the opening magazine, back-to-back at the free cadence.
+    expect(sim.shots.length).toBeGreaterThanOrEqual(max);
+    const opening = sim.shots.slice(0, max);
+    for (let i = 1; i < opening.length; i++) {
+      expect(opening[i] - opening[i - 1]).toBeCloseTo(sim.interval / 1000, 1);
+    }
+  });
+
+  it.each(EMPLACED)('%s keeps firing after the reload — a magazine swap, not a dead gun', (id) => {
+    const { shots } = simulate(id, 120);
+    const late = shots.filter((t) => t > 60);
+    expect(late.length).toBeGreaterThan(0);               // still shooting a full minute in
   });
 });

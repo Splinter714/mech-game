@@ -50,9 +50,10 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     flank: {...} }`, `kindWeapons.js`) — each slot carrying its own weapon/override/range/
     trigger discipline, with cadence and burst counters tracked per slot; the behaviour names
     the live slot and scene code stays free of weapon-id literals. An EMPLACED kind can also
-    opt into a real magazine with `ammoLimited: true` (`kindAmmo.js`) — per-slot ammo that
-    drains one round per trigger pull and trickles back via `ammoRegen`, so sustained fire
-    tapers and a player can SUPPRESS a wall turret by drawing its fire and breaking contact.
+    opt into a real magazine with `ammoLimited: true` (`kindAmmo.js`) — per-slot ammo on the
+    same MAGAZINE + RELOAD model as the player's gun (#402): drains one round per trigger pull,
+    and once EMPTY locks out for `RELOAD_SECONDS` then snaps back to FULL (no `ammoRegen` trickle),
+    so a player can SUPPRESS a wall turret by baiting it into emptying its magazine.
     Deliberately scoped to `turret`/`wallTurret`; mobile kinds stay pure cadence. Fine-grained
     delivery feel (spread stagger, speed-jitter band, homing turn radius, weak-seek
     strength/radius, burst stagger) is per-weapon tunable via optional `delivery` fields

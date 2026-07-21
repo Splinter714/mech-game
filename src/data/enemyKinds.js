@@ -149,16 +149,12 @@ export const ENEMY_KINDS = {
       // trivial tickle or a one-shot — no change needed here.
       damage: 10,                                     // vs napalm's base 27 (was 6 pre-#259)
       range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
-      // #375: RETUNED, and now actually live (see `ammoLimited` below). The old 20 / 0.6 was
-      // written for a mechanic that never ran and was never calibrated: at this kind's 2.6s
-      // cadence the gun burns 0.385 rounds/s while regenerating 0.6/s, so it could NEVER have
-      // run dry — the magazine was decorative even if it had been wired up.
-      // 10 / 0.06 gives a real taper: 11 shells over ~26s of continuous bombardment, then dry
-      // for ~7s, after which it is limited by regen to roughly one shell per 17s — a ~6x drop
-      // in volume that a player earns by drawing and surviving the barrage. Still never silent
-      // (so a nest stays a threat and #356's clear-the-base objective stays achievable), and a
-      // full magazine takes ~167s of no contact to rebuild.
-      ammoMax: 10, ammoRegen: 0.06,
+      // #375: a real magazine, now on the PLAYER RELOAD model (`ammoLimited` below + kindAmmo.js).
+      // Fires 10 shells at the 2.6s cadence (~26s of continuous bombardment), then the emptied
+      // magazine locks the gun out for RELOAD_SECONDS and comes back FULL — no `ammoRegen` trickle,
+      // exactly like the player's own gun. A nest stays a threat (#356's clear-the-base objective
+      // stays achievable) and the reload is the beat a player reads to time an approach.
+      ammoMax: 10,
       cycleTime: 2600,                                // #94's deliberate slow bombardment cadence (base 1500)
       delivery: {
         velocity: 550,                                // faster, flatter-feeling heavy shell (base 300)
@@ -260,15 +256,12 @@ export const ENEMY_KINDS = {
     weaponId: 'railLance',
     weaponOverride: {
       range: { min: 0, opt: 520, max: 900 },
-      // #375: RETUNED, and now actually live (see `ammoLimited` below). The old 8 / 0.25 was
-      // uncalibrated fiction: at the 5.2s cadence below the gun spends 0.192 rounds/s against a
-      // 0.25/s trickle, so it out-regenerated its own fire rate and could never taper — the very
-      // thing the comment above claims it does.
-      // 6 / 0.045 makes the claim true: 7 shots over ~31s of sustained engagement, then ~13s
-      // fully dry, then a suppressed ~1 shot per 22s (vs 5.2s free) until contact is broken long
-      // enough to rebuild. That IS the tactical lever — bait the wall into shooting, break
-      // contact, come back to a quieter approach lane — while never silencing it outright.
-      ammoMax: 6, ammoRegen: 0.045,
+      // #375: a real magazine on the PLAYER RELOAD model (`ammoLimited` below + kindAmmo.js).
+      // Fires 6 shots at the 5.2s cadence (~31s of sustained engagement), then the emptied magazine
+      // locks the gun out for RELOAD_SECONDS and returns FULL — no `ammoRegen` trickle, exactly like
+      // the player's own gun. That reload beat is the tactical lever: bait the wall into emptying
+      // its magazine, then move on it while it swaps — while never silencing it outright.
+      ammoMax: 6,
       cycleTime: 5200,
     },
     fireRange: 900,        // matches the override's range.max above

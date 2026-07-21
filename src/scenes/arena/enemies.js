@@ -28,7 +28,7 @@ import { allPlayersDeadIn, enemyTargetOf, listenerOf, targetPlayerFor } from './
 // live one via `e.weaponSlot` and this file resolves it — no weapon-id literal (#243) and no
 // slot-key literal ever appears here. See data/kindWeapons.js's header for the whole model.
 import { kindWeaponSlot, kindMaxFireRange } from '../../data/kindWeapons.js';
-import { initKindAmmo, slotHasAmmo, consumeSlotAmmo, regenKindAmmo } from '../../data/kindAmmo.js';
+import { initKindAmmo, initKindReload, slotHasAmmo, consumeSlotAmmo, tickKindReload } from '../../data/kindAmmo.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, vehicleTextureSet, mechLayout, ART_SCALE } from '../../art/index.js';
@@ -301,11 +301,13 @@ export const EnemiesMixin = {
       // #305: per-weapon-SLOT cooldown + burst counters (data/kindWeapons.js). A single-weapon
       // kind just ends up with one entry; a multi-weapon kind's guns cycle independently.
       slotCd: {}, slotBurst: {}, weaponSlot: null,
-      // #375: per-slot MAGAZINE for the emplaced kinds that opt in (`ammoLimited` — turret and
-      // wallTurret). Starts full; drains one round per trigger pull and trickles back via
-      // `ammoRegen`, so sustained fire tapers and breaking contact lets the gun recover. Every
-      // other kind gets `{}` here, which reads as unlimited everywhere downstream.
-      slotAmmo: initKindAmmo(def),
+      // #375: per-slot MAGAZINE + RELOAD for the emplaced kinds that opt in (`ammoLimited` —
+      // turret and wallTurret), mirroring the PLAYER model (#402): starts full, drains one round
+      // per trigger pull, and once EMPTY locks out for `RELOAD_SECONDS` then snaps back to full —
+      // no trickle. So a turret suppresses exactly like the player's gun: dump the mag, wait the
+      // reload. `slotReload` is the parallel per-slot reload-timer map. Every other kind gets `{}`
+      // for both, which reads as unlimited everywhere downstream.
+      slotAmmo: initKindAmmo(def), slotReload: initKindReload(def),
       spawnX: x, spawnY: y, typeId, kind: def.kind, kindDef: def, flying: !!def.flying,
       behavior: def.behavior, handed: Math.random() < 0.5 ? 1 : -1,
       rotorSpin: 0,           // flyers spin their rotor overlay
@@ -591,7 +593,9 @@ export const EnemiesMixin = {
         // so every gun comes back off repair ready to fire with a fresh burst window (#243).
         e.slotCd = {};
         e.slotBurst = {};
-        e.slotAmmo = initKindAmmo(e.kindDef);   // #375: a repaired emplacement comes back with a full magazine
+        // #375: a repaired emplacement comes back with a full magazine and no pending reload.
+        e.slotAmmo = initKindAmmo(e.kindDef);
+        e.slotReload = initKindReload(e.kindDef);
         this._reskinVehicle(e);  // #300: repairAll restored its armor — put the plating back on
       }
     }
@@ -1466,10 +1470,11 @@ export const EnemiesMixin = {
     if (e.slotCd) {
       for (const k in e.slotCd) if (e.slotCd[k] > 0) e.slotCd[k] = Math.max(0, e.slotCd[k] - delta);
     }
-    // #375: and trickle the magazines back up (dt in SECONDS, the same convention as
-    // Mech.regenAmmo on the mech-enemy path). Only the ammo-limited emplaced kinds carry any
+    // #375: tick any pending RELOAD (dt in SECONDS, the same convention as Mech.regenAmmo on the
+    // mech-enemy path). A slot mid-reload counts down and snaps its magazine back to FULL when the
+    // timer hits 0 — no between-shots trickle. Only the ammo-limited emplaced kinds carry any
     // entries here, so this is a no-op loop over an empty map for every mobile kind.
-    if (e.slotAmmo) regenKindAmmo(e.kindDef, e.slotAmmo, dt);
+    if (e.slotAmmo) tickKindReload(e.kindDef, e.slotAmmo, e.slotReload, dt);
 
     // #152: legged walk-cycle for a kind whose art builds multiple hull frames (def.legFrames —
     // no kind uses it since #328 retired the legged Broodhauler) — mirrors the player mech's stompy stepGait
@@ -1643,7 +1648,9 @@ export const EnemiesMixin = {
     cds[mount.slot] = this._fireInterval(weapon, {});
     // #375: one round per TRIGGER PULL, not one per emission — a salvo/stream weapon's shots all
     // come from a single squeeze, matching `consumeAmmo(…, 1)` on the mech-enemy path above.
-    consumeSlotAmmo(e.slotAmmo, mount.slot, 1);
+    // Draining the mag to empty auto-starts the slot's RELOAD (passing `e.slotReload`), mirroring
+    // the player model — the gun then goes quiet for RELOAD_SECONDS and refills to full.
+    consumeSlotAmmo(e.slotAmmo, mount.slot, 1, e.slotReload);
     // #243 trigger discipline: a slot with `burstShots` fires N shots at the cadence above,
     // then RESTS — the shot that completes the burst swaps its cooldown for the (longer)
     // `burstRestMs` instead of the per-shot cadence, and the counter re-arms for the next
