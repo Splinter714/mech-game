@@ -134,13 +134,16 @@ describe('#310 §1b: the gun the wall mounts', () => {
     expect(resolved.delivery.kind).toBe('rail');
   });
 
-  it('fires at the player\'s own per-round damage — difficulty comes from CADENCE', () => {
-    // #243's playtest rule: no kind retunes damage. The knob that makes a fortification gun a
-    // fortification gun is its slow charge, which is also the "it telegraphs" the owner asked for.
+  it('fires the PLAYER version of the weapon — matching damage AND cadence (#375 redefined)', () => {
+    // #243's playtest rule: no kind retunes damage. #375 (owner: "use the player version of the
+    // weapon") extends that to CADENCE — the wall lance fires at the base rail lance's own rate, no
+    // slowdown. Difficulty now comes from range, gun count, and the magazine/reload beat, not a
+    // bespoke slow charge.
     expect(def.weaponOverride?.damage).toBeUndefined();
+    expect(def.weaponOverride?.cycleTime).toBeUndefined();
     const resolved = resolveWeapon(def.weaponId, def.weaponOverride);
     expect(resolved.damage).toBe(WEAPONS.railLance.damage);
-    expect(resolved.cycleTime).toBeGreaterThan(WEAPONS.railLance.cycleTime);
+    expect(resolved.cycleTime).toBe(WEAPONS.railLance.cycleTime);
   });
 
   it('out-ranges the player\'s version, so it matters during the APPROACH', () => {

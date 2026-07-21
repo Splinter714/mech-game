@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { ENEMY_KINDS } from './enemyKinds.js';
 import { kindWeaponSlot, DEFAULT_SLOT } from './kindWeapons.js';
-import { resolveWeapon } from './weapons.js';
+import { resolveWeapon, WEAPONS } from './weapons.js';
 import { RELOAD_SECONDS } from './Mech.js';
 import {
   slotAmmoSpec, initKindAmmo, initKindReload, slotHasAmmo, consumeSlotAmmo, tickKindReload,
@@ -169,6 +169,39 @@ describe('#375 the RELOAD model — same as the player version of the gun', () =
     // Reload gate held the whole time, then delivered the ENTIRE magazine at once.
     tickKindReload(def, ammo, reload, RELOAD_SECONDS);
     expect(ammo[DEFAULT_SLOT]).toBe(max);
+  });
+});
+
+// #375 (redefined): an emplaced turret fires the PLAYER's version of its weapon — its effective
+// fire interval AND its magazine size are the BASE weapon's, with no cadence/mag override slowing
+// them. This is the core of the issue: pin cadence + mag to the base entry, not to a bespoke value.
+describe('#375 emplaced turrets fire the PLAYER version (base cadence + mag, not slowed)', () => {
+  const BASE = { turret: 'napalm', wallTurret: 'railLance' };
+  it.each(EMPLACED)('%s effective fire interval equals the base (player) weapon cadence', (id) => {
+    const def = ENEMY_KINDS[id];
+    const mount = kindWeaponSlot(def);
+    const resolved = resolveWeapon(mount.weaponId, mount.weaponOverride);
+    expect(resolved.cycleTime).toBe(WEAPONS[BASE[id]].cycleTime);
+    // And the override no longer carries a cadence field at all.
+    expect(def.weaponOverride.cycleTime).toBeUndefined();
+  });
+
+  it.each(EMPLACED)('%s magazine equals the base (player) weapon ammoMax, and reloads on empty', (id) => {
+    const def = ENEMY_KINDS[id];
+    const mount = kindWeaponSlot(def);
+    const resolved = resolveWeapon(mount.weaponId, mount.weaponOverride);
+    expect(resolved.ammoMax).toBe(WEAPONS[BASE[id]].ammoMax);
+    // The override no longer carries an enlarged ammoMax.
+    expect(def.weaponOverride.ammoMax).toBeUndefined();
+    // Spawned full at the base mag, drains to empty, arms the reload, then refills to that same base mag.
+    const ammo = initKindAmmo(def);
+    const reload = initKindReload(def);
+    expect(ammo[DEFAULT_SLOT]).toBe(WEAPONS[BASE[id]].ammoMax);
+    for (let i = 0; i < resolved.ammoMax; i++) consumeSlotAmmo(ammo, DEFAULT_SLOT, 1, reload);
+    expect(ammo[DEFAULT_SLOT]).toBe(0);
+    expect(reload[DEFAULT_SLOT]).toBe(RELOAD_SECONDS);
+    tickKindReload(def, ammo, reload, RELOAD_SECONDS);
+    expect(ammo[DEFAULT_SLOT]).toBe(WEAPONS[BASE[id]].ammoMax);
   });
 });
 

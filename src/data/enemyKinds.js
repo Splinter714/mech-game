@@ -149,13 +149,14 @@ export const ENEMY_KINDS = {
       // trivial tickle or a one-shot — no change needed here.
       damage: 10,                                     // vs napalm's base 27 (was 6 pre-#259)
       range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
-      // #375: a real magazine, now on the PLAYER RELOAD model (`ammoLimited` below + kindAmmo.js).
-      // Fires 10 shells at the 2.6s cadence (~26s of continuous bombardment), then the emptied
-      // magazine locks the gun out for RELOAD_SECONDS and comes back FULL — no `ammoRegen` trickle,
-      // exactly like the player's own gun. A nest stays a threat (#356's clear-the-base objective
-      // stays achievable) and the reload is the beat a player reads to time an approach.
-      ammoMax: 10,
-      cycleTime: 2600,                                // #94's deliberate slow bombardment cadence (base 1500)
+      // #375 (redefined): the turret fires the PLAYER's version of napalm. The cadence-slowing
+      // `cycleTime: 2600` and the enlarged `ammoMax: 10` are BOTH gone — cadence and magazine now
+      // inherit the base napalm entry (cycleTime 1500, ammoMax 5). So the turret dumps its 5-shell
+      // mag at the player's own bombardment rate, then the emptied magazine locks the gun out for
+      // RELOAD_SECONDS and comes back FULL (PLAYER RELOAD model — `ammoLimited` below + kindAmmo.js;
+      // no `ammoRegen` trickle), exactly like the player's own gun. The reload is the beat a player
+      // reads to time an approach. Only the non-speed siege identity survives the override: the
+      // absolute damage (#259/#244), the INSANE range envelope (#94), and the heavy-shell delivery.
       delivery: {
         velocity: 550,                                // faster, flatter-feeling heavy shell (base 300)
         splash: 55,                                   // bigger burst (base 30)
@@ -166,8 +167,8 @@ export const ENEMY_KINDS = {
                            // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
                            // threatens from far outside normal combat distance. Matches the
                            // override's range.max above.
-    // #243: no separate fire timer — cadence always derives from the resolved weapon, i.e. the
-    // override's cycleTime 2600 above. The nest-of-4 pacing (#145) is unchanged.
+    // #243: no separate fire timer — cadence always derives from the resolved weapon. With the
+    // #375 override no longer touching cadence, that is the base napalm's own 1500ms cycleTime.
     flying: false,
     // #375: this kind's guns run on a real MAGAZINE (data/kindAmmo.js) — the opt-in flag for
     // ammo on the vehicle fire path. Deliberately scoped to the two EMPLACED kinds: a rooted gun
@@ -233,36 +234,35 @@ export const ENEMY_KINDS = {
     //     the right call on the merits: a half-weight lance would undercut the whole brief. The
     //     owner picked this weapon because "it telegraphs, it hits hard"; a 52.8 hit is ~9% of the
     //     player's health in one crack, which is the "hits hard" doing its job.
-    //   - cycleTime 5200 vs the player's 2200. THE balance lever, and the one the #243 rule leaves
-    //     open — difficulty here is carried by cadence and gun count, never by per-round damage.
-    //     Better than 2.4x slower: the whole brief is that it telegraphs, so a long silent charge
-    //     and then one heavy lance is the shape. A fast rail lance is just a laser, which is the
-    //     exact thing the owner chose railLance OVER. At 5.2s a player can watch a gun wind up,
-    //     break its lane, and have it miss — the gauntlet is readable and beatable rather than a
-    //     raw DPS check. Per gun that is ~10 dps; with only two or three able to bear at once (every
-    //     span of the ring except its own still blocks a gun — see TURRET_MOUNT_OFFSET_PX) a ring
-    //     brings ~20-30 dps against
-    //     a 600-toughness mech, i.e. a real cost to a slow approach and survivable to a brisk one.
+    //   - NO cadence override (#375 redefined). The wall gun now fires at the base rail lance's own
+    //     rate (cycleTime 1650), exactly the player's — the owner's call: "use the player version of
+    //     the weapon." The old deliberate 5.2s slow-charge telegraph is gone; difficulty is carried
+    //     by gun count, the magazine/reload beat, and the guns' longer reach, never by a bespoke
+    //     cadence. With only two or three guns able to bear at once (every span of the ring except its
+    //     own still blocks a gun — see TURRET_MOUNT_OFFSET_PX), a ring is a real cost to a slow
+    //     approach and survivable to a brisk one, now with a reload lull to exploit.
     //   - range opt 520 / max 900, LONGER than the player's 400/640. A fixed emplacement on a
     //     parapet with a prepared field of fire should out-range a walking mech; it is what
     //     makes the guns matter during the APPROACH (the point of the issue) rather than only once
     //     the player is already at the wall. Still far short of the sentry's 2400 artillery
     //     envelope, so the two never occupy the same tactical niche.
-    //   - A deep, slowly-refilling magazine (8 / 0.25): a fortification does not run dry in a
-    //     fight, but a player who survives a long engagement does see the volume taper.
+    //   - The base rail lance's own magazine (4 rounds) on the player RELOAD model: dump the mag,
+    //     then a full lockout-and-reload beat before it fires again, exactly like the player's gun.
     // Per #243 the resolved weapon keeps the BASE id ('railLance'), so its fire/impact cues
     // resolve as the rail lance's own tuned sound — deliberate: the player already knows that
     // charge-and-crack, and hearing it from the wall is the telegraph doing its job.
     weaponId: 'railLance',
     weaponOverride: {
       range: { min: 0, opt: 520, max: 900 },
-      // #375: a real magazine on the PLAYER RELOAD model (`ammoLimited` below + kindAmmo.js).
-      // Fires 6 shots at the 5.2s cadence (~31s of sustained engagement), then the emptied magazine
-      // locks the gun out for RELOAD_SECONDS and returns FULL — no `ammoRegen` trickle, exactly like
-      // the player's own gun. That reload beat is the tactical lever: bait the wall into emptying
-      // its magazine, then move on it while it swaps — while never silencing it outright.
-      ammoMax: 6,
-      cycleTime: 5200,
+      // #375 (redefined): the wall lance fires the PLAYER's version of the rail lance. The
+      // cadence-slowing `cycleTime: 5200` and the enlarged `ammoMax: 6` are BOTH gone — cadence and
+      // magazine now inherit the base railLance entry (cycleTime 1650, ammoMax 4). So the wall gun
+      // fires at the player's own rate, dumps its 4-shot mag, then the emptied magazine locks out for
+      // RELOAD_SECONDS and returns FULL (PLAYER RELOAD model — `ammoLimited` below + kindAmmo.js; no
+      // `ammoRegen` trickle), exactly like the player's own gun. That reload beat is the tactical
+      // lever: bait the wall into emptying its magazine, then move on it while it swaps. Only the
+      // non-speed range override survives — a parapet gun out-ranges a walking mech (matters on the
+      // APPROACH, the point of #310); damage already matched the player's, so nothing to change there.
     },
     fireRange: 900,        // matches the override's range.max above
     flying: false,
