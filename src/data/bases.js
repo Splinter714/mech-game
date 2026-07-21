@@ -24,6 +24,20 @@ export function isFastWakeKind(kindDef, threshold = FAST_WAKE_SPEED_THRESHOLD) {
   return (kindDef?.move?.maxSpeed ?? 0) >= threshold;
 }
 
+// #391 (Jackson, 2026-07-20: "base-clear should exempt anything that can't chase you"): an enemy
+// that cannot leave its spot is NOT a required kill for clearing a base — only things that can
+// actually pursue count toward the objective. Mobility is the SAME `move.maxSpeed` signal
+// `isFastWakeKind` reads: a maxSpeed of 0 (turret, wallTurret — and any future emplaced/stationary
+// kind) means it can't chase, so it's exempt with no hardcoded id list. Anything that can move at
+// all still counts. Reads the live enemy record's `kindDef` (seated on every spawn by
+// scenes/arena/enemies.js `_spawnKind`); a record with no kindDef (a bare test double) is treated
+// as mobile so existing "an enemy at this base" doubles still count — only a kind that positively
+// declares maxSpeed 0 is exempted.
+export function isMobileEnemy(e) {
+  const maxSpeed = e?.kindDef?.move?.maxSpeed;
+  return maxSpeed == null || maxSpeed > 0;
+}
+
 // #269 playtest follow-up (objective sequencing): a base is "cleared" once every enemy tagged
 // with its `baseId` (dormant or awakened, doesn't matter — same rule `_allBasesCleared` uses run-
 // wide) is dead. Dead enemies are pruned out of the live `enemies` array the same tick they die
@@ -77,14 +91,16 @@ export const CLEAR_STRUCTURES = 'structures';
 export const CLEAR_ENEMIES = 'enemies';
 export const CLEAR_DONE = 'clear';
 
-export function baseClearState(base, { objectiveDestroyed = false, isDockStanding = () => false, enemies = [] } = {}) {
+export function baseClearState(base, { objectiveDestroyed = false, isDockStanding = () => false, enemies = [], isMobile = isMobileEnemy } = {}) {
   // No base at all reads as cleared — nothing left to wait on, same convention as
   // `isBaseCleared`/`isBaseObjectiveDestroyed` (guards the run's "index ran past the last base"
   // and pre-`_buildWorld` cases).
   if (!base) return { step: CLEAR_DONE, objectiveStanding: false, docksLeft: 0, structuresLeft: 0, enemiesLeft: 0, cleared: true };
   const objectiveStanding = !objectiveDestroyed;
   const docksLeft = (base.docks ?? []).filter((d) => isDockStanding(d)).length;
-  const enemiesLeft = (enemies ?? []).filter((e) => e.baseId === base.id).length;
+  // #391: only MOBILE defenders are a required kill. A rooted turret left standing after the
+  // objective and docks are down can't chase the player, so it doesn't hold the base open.
+  const enemiesLeft = (enemies ?? []).filter((e) => e.baseId === base.id && isMobile(e)).length;
   // Phase 1's remaining tally: the objective (0 or 1) plus every standing dock, in ANY order.
   const structuresLeft = (objectiveStanding ? 1 : 0) + docksLeft;
   const step = structuresLeft > 0 ? CLEAR_STRUCTURES
@@ -145,7 +161,7 @@ export function baseClearLabel(state) {
 export const MARK_STRUCTURES = 'structures';
 export const MARK_SMALL = 'small';
 
-export function baseMarkTargets(state, base, { isDockStanding = () => false, enemies = [] } = {}) {
+export function baseMarkTargets(state, base, { isDockStanding = () => false, enemies = [], isMobile = isMobileEnemy } = {}) {
   switch (state?.step) {
     case CLEAR_STRUCTURES:
       // Objective beacon shown iff the objective itself still stands; building markers on every
@@ -161,7 +177,9 @@ export function baseMarkTargets(state, base, { isDockStanding = () => false, ene
         size: MARK_SMALL,
         showObjective: false,
         docks: [],
-        enemies: (enemies ?? []).filter((e) => e.baseId === base?.id),
+        // #391: mark only the MOBILE stragglers — a rooted turret isn't a required kill, so it
+        // gets no clear marker (matching `baseClearState`'s enemy count above).
+        enemies: (enemies ?? []).filter((e) => e.baseId === base?.id && isMobile(e)),
       };
     default:
       // Cleared (or no base): nothing is required, so nothing is marked. The scene keeps its own

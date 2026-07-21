@@ -12,7 +12,11 @@ const SQRT3 = Math.sqrt(3);
 // #251 (playtest follow-up): the ONE fixed fill/edge every base-infrastructure hex type uses,
 // regardless of biome — see the PAL.dock comment below for why. Exported so future base-infra
 // terrain entries can reuse it instead of re-deriving a color.
-export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x40444a };
+// #393: `edge` toned UP from 0x40444a toward the fill so base-infra hexes no longer render a
+// heavy dark boundary band — a base tile should read as flat built ground, NOT as a wall. Walls
+// carry the dark/raised structural look now (see PAL.wall), so a wall vs. a base edge vs. an
+// opening is legible at a glance.
+export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x4e5258 };
 
 // The ashen debris tone the generic `rubble` tile uses. (#287 introduced it as a shared value for
 // `rubble` + the dedicated `turretRubble` wreck; #287's 2026-07-19 follow-up removed the turret
@@ -54,7 +58,11 @@ const PAL = {
   // Abstract arena (kept).
   ground:  { fill: 0x1b2129, edge: 0x2a333f },
   groundB: { fill: 0x1f2630, edge: 0x2a333f },
-  wall:    { fill: 0x3a4250, edge: 0x4a5564 },
+  // #393: walls must read as a SOLID RAISED STRUCTURE, clearly distinct from a base-infra hex's
+  // (now toned-down) boundary band — so that when a wall span is destroyed the gap is obviously an
+  // opening. Darker, cooler body than before (0x3a4250 → 0x2d343f) with a bright top-lit rim; the
+  // raised top-plate layering happens in buildHexTextures below.
+  wall:    { fill: 0x2d343f, edge: 0x545f6e },
   // Natural battlefield (#41).
   grass:    { fill: 0x2f5230, edge: 0x24401f },
   grassB:   { fill: 0x35592f, edge: 0x284a22 },
@@ -94,7 +102,9 @@ const PAL = {
   // to read as the same fabricated concrete family (so the compound looks like one continuous
   // built surface, and the wall ring visibly encloses "the base" rather than a patch of grass)
   // while still letting a dock/objective pop out of it rather than blending in.
-  baseYard:   { fill: 0x494d53, edge: 0x3a3e44 },
+  // #393: border band toned up (0x3a3e44 → 0x44484e) so the paved apron reads as flat ground, not
+  // a bordered tile.
+  baseYard:   { fill: 0x494d53, edge: 0x44484e },
   // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): the
   // dedicated destructible `objective` base hex (data/terrain.js) each base's mission marker now
   // points at. Same shared base-infra fill as its siblings — the DETAIL painter below (a squared
@@ -103,11 +113,10 @@ const PAL = {
   objective: BASE_INFRA_COLOR,
   // #269 playtest follow-up (dock open/closed states): the CLOSED state of a dock hex (terrain.js
   // `dockClosed`) — a genuine sealed structure (destructible, LOS-blocking; #286: passable-but-
-  // slow, not a blockade), so it gets its own
-  // darker/heavier base-infra tone rather than the open `dock`'s neutral BASE_INFRA_COLOR, so a
-  // player can tell open vs. closed apart at a glance even before the DETAIL painter's dome icon
-  // registers.
-  dockClosed: { fill: 0x33383e, edge: 0x22262c },
+  // slow, not a blockade). #395 redraws it as a full-hex METAL ROLLING SHUTTER (see DETAIL below):
+  // a steel-grey fill (the shutter skin covering the whole hex) inside a dark frame edge (the door
+  // frame recess), so the closed dock reads unmistakably as two shutter doors slid together.
+  dockClosed: { fill: 0x484d55, edge: 0x22262c },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -558,30 +567,44 @@ const DETAIL = {
     sg.fillStyle(0xd8462a, 0.35); sg.fillCircle(C.cx, C.cy - 17.5, 4.2);         // beacon glow halo
     sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
   },
-  // #269 playtest follow-up (dock open/closed states): `dockClosed` — a sealed steel dome over
-  // the same rectangular bay footprint as `hex_dock` above, so the pad's outline still reads as
-  // the same hex, just shut. A domed cap (concentric arcs, like a hatch seen edge-on) replaces
-  // the open pad's chevron lane marking, with riveted seam lines and a small red "sealed"
-  // warning light where the dock's amber bollards were — deliberately alarming (red, not amber)
-  // so it reads as "closed/dangerous," distinct from the open dock's welcoming amber palette.
+  // #395: `dockClosed` — a full-hex METAL ROLLING SHUTTER, like the back of a truck's roll-up door
+  // laid over the whole bay. Two doors meet at a vertical seam down the middle (they slide apart
+  // from the centre to open, black beneath); the whole face is corrugated with horizontal shutter
+  // slats (lit metal ridge + dark groove per slat). Biome-neutral — the same steel on every biome.
+  // A small red "sealed" light keeps the closed/dangerous read from the old dome version.
   hex_dockClosed: (sg) => {
-    const hw = 14, hh = 10;
-    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, hw * 2.1, hh * 1.7);   // ground shadow
-    sg.fillStyle(0x1c1f24, 0.9); sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, hh * 2);            // deck base plate
-    sg.fillStyle(0x676d76, 0.5);                                                                // painted border frame (dimmer than open)
-    sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, 1.6);
-    sg.fillRect(C.cx - hw, C.cy + hh - 1.6, hw * 2, 1.6);
-    sg.fillRect(C.cx - hw, C.cy - hh, 1.6, hh * 2);
-    sg.fillRect(C.cx + hw - 1.6, C.cy - hh, 1.6, hh * 2);
-    sg.fillStyle(0x2c2f34, 1); sg.fillEllipse(C.cx, C.cy, hw * 1.7, hh * 1.5);                 // domed hatch cap
-    sg.fillStyle(0x40444a, 0.9); sg.fillEllipse(C.cx, C.cy, hw * 1.2, hh * 1.0);                // concentric seam ring
-    sg.fillStyle(0x565b63, 0.7); sg.fillEllipse(C.cx, C.cy - 1, hw * 0.7, hh * 0.55);           // top-lit dome highlight
-    sg.fillStyle(0x676d76, 0.6);                                                                 // riveted seam dots
-    for (const [dx, dy] of [[-6, -3], [6, -3], [-6, 4], [6, 4], [0, -6], [0, 6]]) {
-      sg.fillCircle(C.cx + dx, C.cy + dy, 0.8);
+    const S = HEX_SIZE;
+    const HALF_W = SQRT3 / 2 * S;            // hex half-width along the straight vertical edges
+    // Half-width of the (pointy-top) hex at vertical offset y from centre — constant across the
+    // middle band, tapering to the top/bottom points. Used to keep every slat inside the hex.
+    const halfAt = (y) => {
+      const ay = Math.abs(y);
+      if (ay <= S * 0.5) return HALF_W;
+      return Math.max(0, HALF_W * (S - ay) / (S * 0.5));
+    };
+    const top = -S + 3, bot = S - 3, slatH = 6.4;
+    // Horizontal shutter slats across the whole face: a top-lit metal ridge + a dark groove below.
+    for (let y = top; y < bot; y += slatH) {
+      const outerAy = Math.max(Math.abs(y), Math.abs(y + slatH));   // narrower end → stays inside hex
+      const hw = halfAt(outerAy);
+      if (hw < 2) continue;
+      sg.fillStyle(0x555b65, 1);   sg.fillRect(C.cx - hw, C.cy + y, hw * 2, slatH - 1.5);        // slat face
+      sg.fillStyle(0x6c7480, 0.9); sg.fillRect(C.cx - hw, C.cy + y, hw * 2, 1.1);                // top-lit ridge
+      sg.fillStyle(0x22252b, 0.95); sg.fillRect(C.cx - hw, C.cy + y + slatH - 1.5, hw * 2, 1.5); // groove between slats
     }
-    sg.fillStyle(0xb3392a, 0.35); sg.fillCircle(C.cx, C.cy + hh - 2, 2.2);                       // sealed-warning glow halo
-    sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx, C.cy + hh - 2, 1.1);                       // sealed-warning light
+    // Side guide rails the doors ride in — a darker vertical channel just inside each flat edge.
+    sg.fillStyle(0x2c3037, 0.85);
+    sg.fillRect(C.cx - HALF_W + 1, C.cy - S * 0.5, 2.2, S);
+    sg.fillRect(C.cx + HALF_W - 3.2, C.cy - S * 0.5, 2.2, S);
+    // The two doors meet at a central seam: a thin black gap (where they'll part) flanked by the
+    // shadowed lip of each door.
+    const seamTop = C.cy - (S - 6), seamH = (S - 6) * 2;
+    sg.fillStyle(0x2b2f36, 0.9); sg.fillRect(C.cx - 2.6, seamTop, 1.5, seamH);                    // left door lip
+    sg.fillStyle(0x2b2f36, 0.9); sg.fillRect(C.cx + 1.1, seamTop, 1.5, seamH);                    // right door lip
+    sg.fillStyle(0x0b0c0f, 1);   sg.fillRect(C.cx - 1.1, seamTop, 2.2, seamH);                    // black centre gap
+    // Small red sealed-warning light near the bottom (kept from the old closed-dock read).
+    sg.fillStyle(0xb3392a, 0.32); sg.fillCircle(C.cx, C.cy + S * 0.5, 2.4);
+    sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx, C.cy + S * 0.5, 1.2);
   },
   // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette topped with a
   // bold red target-ring beacon, so it reads unmistakably as "the real objective," distinct from
@@ -870,11 +893,16 @@ export function buildHexTextures(scene) {
       });
     }
   }
-  // The wall tile gets a raised top plate so cover reads as solid.
+  // #393: the wall reads as a SOLID, RAISED block so it's unmistakable against a (now flat-looking)
+  // base-infra hex — and so a destroyed span reads as a real OPENING. Three stacked layers: a dark
+  // drop-shadow footprint hugging the tile edge (the block sits "above" the ground and casts down),
+  // a darker wall body, then a bright top-lit plate stepped in from the body — a visible ledge, not
+  // a flat tile with a thin grid line.
   gen(scene, 'hex_wall', HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
     const sg = scaledGraphics(g);
-    drawHex(sg, PAL.wall.fill, PAL.wall.edge, 0.92);
-    drawHex(sg, 0x4a5564, 0x39414d, 0.6);
+    drawHex(sg, 0x1a1e25, 0x12151b, 0.98);          // drop-shadow footprint (the block's cast shadow)
+    drawHex(sg, PAL.wall.fill, PAL.wall.edge, 0.86); // wall body, dark cool metal with a lit rim
+    drawHex(sg, 0x4b5666, 0x363e49, 0.6);            // raised top plate, stepped in — the ledge
   });
 
   // #289: a SECOND, separate texture-build pass for each cover terrain's canopy overlay — a

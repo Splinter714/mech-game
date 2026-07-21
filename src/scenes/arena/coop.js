@@ -18,7 +18,7 @@ import { MAX_PLAYERS, makePlayer, playerAccent, showsPlayerColor } from '../../d
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
-  makeRespawnState, pickRespawnPoint, startRespawn, tickRespawn,
+  makeRespawnState, pickRespawnPoint, respawnReadout, startRespawn, tickRespawn,
 } from '../../data/respawn.js';
 import { separatePlayers } from '../../data/playerCollision.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
@@ -32,6 +32,12 @@ import { Audio } from '../../audio/index.js';
 // chassis silhouette so it reads as a marking on the ground rather than part of the machine,
 // and drawn at DEPTH.GROUND_FX (the footfall-decal tier) so it can never render over a unit.
 const MARKER_RADIUS = 30;
+
+// #394: the in-world respawn countdown drawn at a downed player's wreck — a draining ring in the
+// spirit of the HUD powerup cooldown-pies (HudScene `_updateBuffHud`), tinted the downed player's
+// own identifying colour so both players can read WHOSE clock it is and how long is left. Sized a
+// touch larger than the ground marker so it reads as a beacon over the wreck, not a floor decal.
+const RESPAWN_RING_RADIUS = 34;
 
 export const CoopMixin = {
   // #348: the two shared "can a player be HERE?" primitives behind both co-op placements
@@ -101,6 +107,12 @@ export const CoopMixin = {
     // watches pad 0 (player 1's debug/exit buttons) and must stay that way, so pad 0 is not here.
     this._joinEdges = {};
     for (let pad = 1; pad < MAX_PLAYERS; pad++) this._joinEdges[pad] = new PadEdges(this, pad);
+    // #394: one shared world-space layer for every downed player's respawn countdown ring, redrawn
+    // each frame by `_updateRespawnMarkers`. WORLD_UI (6) so the beacon sits legibly over the death
+    // FX at the wreck, the same tier the objective/powerup beacons use. The per-player seconds
+    // readouts are pooled text objects created lazily as slots are needed.
+    this._respawnGfx = this.add.graphics().setDepth(DEPTH.WORLD_UI);
+    this._respawnTexts = [];
     // #349: players who joined from the GARAGE are already decided before the arena loads —
     // put them on the field immediately rather than making them press START again.
     this._spawnGarageCoopPlayers();
@@ -252,6 +264,66 @@ export const CoopMixin = {
       p.respawn = state;
       if (ready) this._respawnPlayer(p);
     }
+  },
+
+  // #394: draw each downed player's respawn countdown at their wreck, so both players can see how
+  // long until that teammate is back. A draining ring (12 o'clock, clockwise) in the powerup
+  // cooldown-pie idiom, tinted the downed player's own colour, with the remaining seconds inside.
+  //
+  // When the clock has run out but the out-of-combat gate is HOLDING placement (the survivor is
+  // still under fire), the readout says HOLD over a full, gently pulsing ring rather than showing a
+  // stuck "0s" — the pause is the design, so it should read as "waiting on the fight", not a bug.
+  //
+  // Shares the arena update loop's early-out contract with `_updateRespawns`: outside co-op no
+  // player is ever `dead` with a live respawn clock, so the loop simply draws nothing.
+  _updateRespawnMarkers() {
+    const g = this._respawnGfx;
+    if (!g) return;
+    g.clear();
+    const texts = this._respawnTexts;
+    const R = RESPAWN_RING_RADIUS;
+    const start = -Math.PI / 2;   // 12 o'clock, matching the HUD buff pies
+    let slot = 0;
+    for (const p of playersOf(this)) {
+      if (!p.dead) continue;
+      const readout = respawnReadout(p.respawn);
+      if (!readout) continue;
+      const color = p.color ?? 0xffffff;
+      const cx = p.x, cy = p.y;
+      // Dim full track behind the drain, so the empty portion still reads as a ring.
+      g.lineStyle(4, color, 0.22);
+      g.strokeCircle(cx, cy, R);
+      if (readout.holding) {
+        // Held on the combat gate: a full ring that breathes, so it reads as "waiting", not frozen.
+        const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 220);
+        g.lineStyle(4, color, 0.5 + 0.4 * pulse);
+        g.strokeCircle(cx, cy, R);
+        g.fillStyle(color, 0.10 + 0.12 * pulse);
+        g.fillCircle(cx, cy, R - 3);
+      } else {
+        // Draining remainder: an arc from 12 o'clock going clockwise, shrinking as time runs out.
+        const end = start + readout.fraction * Math.PI * 2;
+        g.lineStyle(4, color, 1);
+        g.beginPath();
+        g.arc(cx, cy, R, start, end, false);
+        g.strokePath();
+        g.fillStyle(color, 0.10 + 0.14 * readout.fraction);
+        g.fillCircle(cx, cy, R - 3);
+      }
+      // The readout inside the ring: whole seconds while counting, HOLD while gated.
+      let t = texts[slot];
+      if (!t) {
+        t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold' })
+          .setOrigin(0.5, 0.5).setDepth(DEPTH.WORLD_UI);
+        texts[slot] = t;
+      }
+      t.setText(readout.holding ? 'HOLD' : `${Math.ceil(readout.seconds)}`)
+        .setColor('#' + color.toString(16).padStart(6, '0'))
+        .setPosition(cx, cy)
+        .setVisible(true);
+      slot++;
+    }
+    for (let i = slot; i < texts.length; i++) texts[i].setVisible(false);
   },
 
   _respawnPlayer(player) {

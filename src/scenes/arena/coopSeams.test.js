@@ -73,8 +73,12 @@ function dropAt(scene, x, y, type = 'armorPatch') {
   scene.powerups.push({ x, y, type, age: 0, view });
 }
 
-describe('powerups apply to the COLLECTOR, not to "the player" (#347)', () => {
-  it('two players: the one standing on it repairs, the far one does not', () => {
+describe('powerups apply to the COLLECTOR, not to "the player" (#347; team-wide for shield/armor #390)', () => {
+  // #390: Armor Patch (and Shield) now grant their FULL effect to EVERY live player from one
+  // pickup — the collector is still the one who TRIGGERS it (proximity), but the repair is
+  // team-wide. What #347 still guarantees is that a global "the player" singleton is not used:
+  // the pickup is detected on whoever stands on it, and it is consumed exactly once.
+  it('two players: standing on it triggers a team-wide repair (BOTH mechs, #390)', () => {
     const a = player(0, 0, 0);
     const b = player(1, 800, 0);
     const scene = powerupScene([a, b]);
@@ -83,7 +87,7 @@ describe('powerups apply to the COLLECTOR, not to "the player" (#347)', () => {
     scene._updatePowerups(16);
 
     expect(b.mech.repairArmor).toHaveBeenCalled();
-    expect(a.mech.repairArmor).not.toHaveBeenCalled();
+    expect(a.mech.repairArmor).toHaveBeenCalled();   // #390: the far player is repaired too
     expect(scene.powerups).toHaveLength(0);
   });
 
@@ -114,14 +118,14 @@ describe('powerups apply to the COLLECTOR, not to "the player" (#347)', () => {
     expect(scene.powerups).toHaveLength(1);
   });
 
-  it('the shield powerup grants the temp pool to the collector\'s own mech', () => {
+  it('the shield powerup grants EVERY live player their own full temp pool (#390)', () => {
     const a = player(0, 0, 0);
     const b = player(1, 800, 0);
     const scene = powerupScene([a, b]);
     dropAt(scene, 800, 0, 'shield');
     scene._updatePowerups(16);
     expect(b.mech.grantTempShield).toHaveBeenCalled();
-    expect(a.mech.grantTempShield).not.toHaveBeenCalled();
+    expect(a.mech.grantTempShield).toHaveBeenCalled();   // #390: the far player is shielded too
   });
 });
 

@@ -1,138 +1,164 @@
-// The SEQUENTIAL two-player Garage flow (#349, phase 3 of local co-op — parent #335).
+// The SEQUENTIAL multi-player Garage flow (#349 → #388, phase 3/4b of local co-op — parent #335).
 //
 // Phase 2 (#348) could only start co-op mid-sortie: press START on gamepad 2 and the joiner
-// deployed a COPY of player 1's build, because there was exactly one saved build. This module
-// is the "player 2 brings their own mech" half.
+// deployed a COPY of player 1's build, because there was exactly one saved build. Phase 3 (#349)
+// added the "player 2 brings their own mech" garage half as a BINARY solo/2-player flow. Phase
+// 4b (#388) generalises that to 1–4 players: any number of controllers can join in the garage,
+// each builds its own persistent mech, control is handed player-to-player, and the last one
+// deploys the whole squad.
 //
-// ## The one correction worth writing down
+// ## The state: a COUNT, not a bool
 //
-// The issue body assumed multi-slot saving was already player-facing. It is not.
-// `ACTIVE_MECH_KEY` in rosters.js is the hardcoded string 'mech1' — there is ONE persistent
-// mech, and the roster machinery that could hold more has never had a second entry. So there
-// is no roster picker to extend and none is being built here (Jackson, explicitly: a general
-// slot-picker UI "is a different feature and is not being asked for"). What phase 3 adds is
-// exactly ONE more fixed slot, 'mech2', which persists between sessions so a regular co-op
-// partner keeps their machine.
+// The garage session is `{ count, editing }`:
+//   - `count`   — how many players have JOINED (1..MAX). Solo is `count === 1`.
+//   - `editing` — which joined player is building RIGHT NOW (0..count-1).
+// #388 replaced phase 3's `coop` bool with `count`: "is a second player here" could not express
+// "three players are here, player 2 is building." Solo is exactly `count === 1`, and every
+// function below returns what single-player did before when that holds.
 //
 // ## The flow
 //
-// Sequential, chosen by Jackson over a tab-switch or a split view "because it is the least new
-// UI and the Garage already works that way for one person":
+// A player joins by pressing START on an UNCLAIMED pad (mirrors the mid-sortie drop-in, but in
+// the garage) — `joinPlayer` grows the count; `editing` does not move, so joining while player 1
+// is mid-build just reveals player 2's tab. The player currently building presses START on their
+// OWN pad to hand control to the next joined player (`advanceEditing`); the LAST joined player's
+// START deploys (`garageAction` reads 'deploy' once `editing` has reached `count - 1`). One
+// player present = nobody ever joins, `editing` stays 0, and the sole START deploys.
 //
-//   solo ──[+ ADD PLAYER 2]──▸ coop/editing P1 ──[P1 READY]──▸ coop/editing P2 ──[DEPLOY]──▸ arena
-//          ◂──[CANCEL CO-OP]──                  ◂──[BACK TO P1]──
+//   solo ──[P2 START joins]──▸ count 2, P1 building ──[P1 START]──▸ P2 building ──[P2 START]──▸ deploy
+//                                                                  (…and so on up to 4 players)
 //
-// The garage's single editing surface is simply rebound from one mech key to the other; the
-// handoff step Jackson asked for IS the Deploy button relabelling itself to "P1 READY" while
-// player 1 is the one editing. One player present = the co-op toggle never gets pressed and
-// every function below returns exactly what single-player did before.
-//
-// Pure: no Phaser, no scene, no localStorage. The scene wiring is GarageScene#_setEditing /
-// #deploy and scenes/arena/coop.js.
+// The garage's single editing surface is rebound from one mech key to the next as `editing`
+// advances; the handoff step IS the Deploy button relabelling itself to "▶ P1 READY" while a
+// non-last player is editing. Pure: no Phaser, no scene, no localStorage. The scene wiring is
+// GarageScene (the tab row, the per-builder pad, `deploy`/`_joinPlayer`) and scenes/arena/coop.js.
 
-// The fixed persistent build slots, indexed by player. Deliberately a short literal list and
-// not a generated range: these are the four slots that exist, each with a matching `defaultRoster`
-// build in rosters.js. #387 raised the cap to four players; slots 3 & 4 back the mid-sortie
-// drop-ins (the garage still only pre-builds mech1/mech2 — #388 makes 3/4 pre-buildable).
+// The fixed persistent build slots, indexed by player. Deliberately a short literal list and not
+// a generated range: these are the four slots that exist, each with a matching `defaultRoster`
+// build in rosters.js. #387 raised the cap to four players for mid-sortie drop-ins; #388 makes
+// all four pre-buildable in the garage.
 export const PLAYER_MECH_KEYS = ['mech1', 'mech2', 'mech3', 'mech4'];
+
+// The most players the garage flow will seat — one per persistent slot. The arena's own
+// MAX_PLAYERS (data/players.js) is the same number; kept as a local so this module stays pure
+// data with no players.js dependency, and so the two can never disagree without this line
+// changing too.
+export const MAX_GARAGE_PLAYERS = PLAYER_MECH_KEYS.length;
+
+function clampInt(v, lo, hi) {
+  const n = Number.isFinite(v) ? Math.trunc(v) : lo;
+  return Math.min(Math.max(n, lo), hi);
+}
 
 // The storage key holding player `index`'s persistent build. Out-of-range indices clamp to the
 // last real slot rather than returning undefined, so a stray extra player can never index a
 // nonexistent roster entry and crash the deploy path.
 export function mechKeyForPlayer(index) {
-  const i = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
-  return PLAYER_MECH_KEYS[Math.min(i, PLAYER_MECH_KEYS.length - 1)];
+  return PLAYER_MECH_KEYS[clampInt(index, 0, PLAYER_MECH_KEYS.length - 1)];
 }
 
-// The garage's co-op session state. `coop` is whether a second player is joining from the
-// garage at all; `editing` is which player's mech the single editing surface is currently bound
-// to. That is the whole state — there is no per-player "ready" flag, because with a sequential
-// flow "player 1 is ready" is just "we have moved on to player 2".
-export function makeGarageSession({ coop = false, editing = 0 } = {}) {
-  return { coop: !!coop, editing: coop ? Math.min(Math.max(0, editing | 0), PLAYER_MECH_KEYS.length - 1) : 0 };
+// The garage's co-op session state. `count` is how many players have joined (>=1); `editing` is
+// which of them the single editing surface is currently bound to. Both are clamped to legal
+// ranges here so no other function has to defend against a bad session.
+export function makeGarageSession(session) {
+  const { count = 1, editing = 0 } = session ?? {};
+  const c = clampInt(count, 1, MAX_GARAGE_PLAYERS);
+  return { count: c, editing: clampInt(editing, 0, c - 1) };
 }
 
-// Which build the garage is editing right now. In solo this is unconditionally 'mech1', so
-// every single-player path is byte-identical to what it was before phase 3.
-export function sessionMechKey(session) {
-  return session?.coop ? mechKeyForPlayer(session.editing) : PLAYER_MECH_KEYS[0];
+// How many players have joined (>=1). Reads a raw/garbage session as solo.
+export function playerCount(session) {
+  return clampInt(session?.count ?? 1, 1, MAX_GARAGE_PLAYERS);
 }
 
-// Which builds are deploying. One key in solo, and in co-op exactly the slots the sequential
-// garage flow has actually reached — `editing` is the furthest player built, so `editing + 1`
-// keys deploy (two, when player 2 is the one at the Deploy button). #387 raised PLAYER_MECH_KEYS
-// to four for the mid-sortie drop-ins, so this must NOT return the whole array or a two-player
-// garage deploy would suddenly put four players on the field; deriving from `editing` keeps the
-// garage flow bit-identical at two (and is what #388 extends when 3/4 become pre-buildable).
+// Solo is exactly one joined player — the single-player garage, byte-identical to before #388.
+export function isSoloSession(session) {
+  return playerCount(session) === 1;
+}
+
+// Is there room for another player to join? False once every slot is seated.
+export function canJoin(session) {
+  return playerCount(session) < MAX_GARAGE_PLAYERS;
+}
+
+// Which build the garage is editing right now — the current builder's own slot. In solo this is
+// unconditionally 'mech1', so every single-player path is byte-identical to before.
+export function sessionEditingKey(session) {
+  return mechKeyForPlayer(session?.editing ?? 0);
+}
+
+// Which builds are deploying: exactly the joined players' slots, in order. One key in solo,
+// `['mech1','mech2']` for two players, up to `['mech1'..'mech4']` for four. This is the ONE thing
+// the arena needs to put the built squad on the field (scenes/arena/coop.js).
 export function sessionMechKeys(session) {
-  if (!session?.coop) return [PLAYER_MECH_KEYS[0]];
-  const reached = Math.min(Math.max(0, session.editing | 0) + 1, PLAYER_MECH_KEYS.length);
-  return PLAYER_MECH_KEYS.slice(0, reached);
+  return PLAYER_MECH_KEYS.slice(0, playerCount(session));
 }
 
-// What the Deploy button DOES when pressed. The handoff step lives here rather than as a
-// separate button: while player 1 is editing in co-op, the same button hands off instead of
-// deploying, so co-op adds no new primary control to a garage that is already tight at narrow
-// widths (#330/#342).
+// A new controller joins: grow the count by one (capped), leaving `editing` where it is so a
+// join mid-build just reveals the newcomer's tab rather than yanking control away.
+export function joinPlayer(session) {
+  const s = makeGarageSession(session);
+  return makeGarageSession({ count: s.count + 1, editing: s.editing });
+}
+
+// The current builder hands control to the next joined player. A no-op once `editing` is already
+// the last player, so a stray press can never run past the end of the flow (the last player's
+// press is a DEPLOY, not a handoff — see garageAction).
+export function advanceEditing(session) {
+  const s = makeGarageSession(session);
+  return makeGarageSession({ count: s.count, editing: s.editing + 1 });
+}
+
+// What the Deploy button DOES when pressed. The handoff step lives here rather than as a separate
+// button: while a non-last player is editing, the same button hands off instead of deploying, so
+// co-op adds no new primary control to a garage that is already tight at narrow widths (#330/#342).
 export function garageAction(session) {
-  return session?.coop && session.editing === 0 ? 'handoff' : 'deploy';
+  const s = makeGarageSession(session);
+  return s.editing >= s.count - 1 ? 'deploy' : 'handoff';
 }
 
 export function garageActionLabel(session) {
-  return garageAction(session) === 'handoff' ? '▶ P1 READY' : '▶ DEPLOY';
+  if (garageAction(session) === 'deploy') return '▶ DEPLOY';
+  const p = clampInt(session?.editing ?? 0, 0, MAX_GARAGE_PLAYERS - 1) + 1;
+  return `▶ P${p} READY`;
 }
 
-// The co-op toggle: one button whose meaning depends on where in the flow we are. Solo → opt
-// in; player 1 editing → back out entirely; player 2 editing → step back to player 1 (so a
-// premature handoff is recoverable without cancelling the whole session).
-export function coopToggleLabel(session) {
-  if (!session?.coop) return '+ ADD PLAYER 2';
-  return session.editing === 0 ? '✕ CANCEL CO-OP' : '◀ BACK TO P1';
-}
-
-// The status line beside the toggle. Empty in solo: a one-player garage shows no co-op chrome
-// at all beyond the opt-in button itself.
+// The status line: empty in solo (a one-player garage shows no co-op chrome), else whose turn it
+// is. The tab row is the primary "whose turn" indicator; this is the words beside it.
 export function garageStatusText(session) {
-  if (!session?.coop) return '';
-  return session.editing === 0 ? 'PLAYER 1 BUILDING' : 'PLAYER 2 BUILDING';
+  const s = makeGarageSession(session);
+  if (s.count === 1) return '';
+  return `PLAYER ${s.editing + 1} BUILDING`;
 }
 
-export function beginCoop(session) {
-  return makeGarageSession({ coop: true, editing: 0 });
-}
-
-export function endCoop(session) {
-  return makeGarageSession({ coop: false });
-}
-
-// Player 1 declares ready → the editing surface rebinds to player 2's slot. A no-op in solo and
-// a no-op if player 2 is already the one editing, so a double press can never run past the end
-// of the flow.
-export function handOff(session) {
-  if (!session?.coop) return makeGarageSession(session);
-  return makeGarageSession({ coop: true, editing: Math.min(session.editing + 1, PLAYER_MECH_KEYS.length - 1) });
-}
-
-// The co-op toggle's effect, as one function so the button has no branching of its own.
-export function toggleCoop(session) {
-  if (!session?.coop) return beginCoop(session);
-  if (session.editing > 0) return makeGarageSession({ coop: true, editing: session.editing - 1 });
-  return endCoop(session);
+// The player-tab row model the garage draws: one OCCUPIED tab per joined player (the active one
+// flagged), plus — while there's still room — a single trailing ADD tab (the "press START to
+// join" affordance). Pure so the scene stays a thin renderer over it.
+export function playerTabs(session) {
+  const s = makeGarageSession(session);
+  const tabs = [];
+  for (let i = 0; i < s.count; i++) {
+    tabs.push({ index: i, occupied: true, active: i === s.editing });
+  }
+  if (s.count < MAX_GARAGE_PLAYERS) {
+    tabs.push({ index: s.count, occupied: false, active: false });
+  }
+  return tabs;
 }
 
 // ── The mid-sortie joiner ──
 //
-// Jackson kept BOTH join paths: the garage flow is the normal one, and phase 2's "press START
-// on gamepad 2" stays for someone dropping in late. That leaves the question of which mech a
-// late joiner drives, and this is the answer: their OWN saved build if there is a usable one,
-// otherwise phase 2's original behaviour (a copy of player 1's build) unchanged as the
-// fallback. Since 'mech2' now ships with a complete default build, in practice a joiner gets
-// their own mech from the first time anyone ever presses START — but the fallback still matters
-// for a save whose player-2 slot was left half-built via the garage flow, where deploying an
-// incomplete mech would put an unarmed machine on the field.
+// Jackson kept BOTH join paths: the garage flow is the normal one, and phase 2's "press START on
+// a gamepad" stays for someone dropping in late. That leaves the question of which mech a late
+// joiner drives, and this is the answer: their OWN saved build if there is a usable one, otherwise
+// phase 2's original behaviour (a copy of player 1's build) unchanged as the fallback. Since every
+// slot now ships with a complete default build, in practice a joiner gets their own mech from the
+// first time anyone ever presses START — but the fallback still matters for a save whose slot was
+// left half-built via the garage flow, where deploying an incomplete mech would put an unarmed
+// machine on the field.
 //
-// Duck-typed on purpose: `saved` is a Mech (or a plain build object in tests) and only its
-// build fields are read, so this stays a pure function with no Mech import.
+// Duck-typed on purpose: `saved` is a Mech (or a plain build object in tests) and only its build
+// fields are read, so this stays a pure function with no Mech import.
 export function joinerBuild(saved, hostBuild) {
   if (isUsableBuild(saved)) {
     return { chassisId: saved.chassisId, mounts: saved.mounts, name: saved.name };
@@ -141,8 +167,8 @@ export function joinerBuild(saved, hostBuild) {
 }
 
 // A build is usable if it exists and, where it can tell us, says it is complete. A plain object
-// with no `isComplete` (a test double, or a raw save) is taken at face value as long as it has
-// a chassis — the Mech constructor is what actually validates it.
+// with no `isComplete` (a test double, or a raw save) is taken at face value as long as it has a
+// chassis — the Mech constructor is what actually validates it.
 export function isUsableBuild(build) {
   if (!build || !build.chassisId) return false;
   if (typeof build.isComplete === 'function') return build.isComplete();

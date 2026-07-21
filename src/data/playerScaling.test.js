@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { enemyCountFactor, scaleEnemyCount, scaleComposition } from './playerScaling.js';
+import { enemyCountFactor, scaleEnemyCount, scaleComposition, scaleDockWave } from './playerScaling.js';
 import { TOWER_PATROL_TIERS, DOCK_SWARM_COUNT, dockCountFor } from './worldgen.js';
+import { ENEMIES } from './enemies.js';
 
 // #350 — the merge gate for co-op difficulty: solo must be EXACTLY unchanged, and two players
 // must get exactly 2x the enemy COUNT.
@@ -88,6 +89,42 @@ describe('playerScaling (#350)', () => {
       const tank = dockCountFor('tank', Math.random);
       expect(scaleEnemyCount(tank, 1)).toBe(1);
       expect(scaleEnemyCount(tank, 2)).toBe(2);
+    });
+  });
+
+  // #389 (owner: "not two mechs at a time from one dock resupply"): a large/heavy MECH dock is a
+  // single-body dock, and `scaleDockWave` pins its wave to ONE mech at any player count — co-op
+  // difficulty for a mech dock is cadence (resupply more often), never two-at-once. Swarm and
+  // vehicle docks are untouched, and solo stays bit-identical.
+  describe('scaleDockWave (#389)', () => {
+    it('emits exactly ONE mech per wave at one AND two players (every mech loadout)', () => {
+      for (const mechId of Object.keys(ENEMIES)) {
+        const base = dockCountFor(mechId, Math.random);   // a mech dock is a single body
+        expect(base).toBe(1);
+        expect(scaleDockWave(mechId, base, 1)).toBe(1);   // solo — one mech
+        expect(scaleDockWave(mechId, base, 2)).toBe(1);   // co-op — still ONE mech, not two
+        expect(scaleDockWave(mechId, base, 3)).toBe(1);   // and still one beyond two players
+      }
+    });
+
+    it('still doubles a swarm dock at two players', () => {
+      const swarm = dockCountFor('drone', Math.random);
+      expect(swarm).toBe(DOCK_SWARM_COUNT);
+      expect(scaleDockWave('drone', swarm, 1)).toBe(DOCK_SWARM_COUNT);
+      expect(scaleDockWave('drone', swarm, 2)).toBe(DOCK_SWARM_COUNT * 2);
+      expect(scaleDockWave('infantry', dockCountFor('infantry', Math.random), 2)).toBe(DOCK_SWARM_COUNT * 2);
+    });
+
+    it('still scales a single-body VEHICLE dock — the rule is mechs-only', () => {
+      const tank = dockCountFor('tank', Math.random);
+      expect(scaleDockWave('tank', tank, 1)).toBe(1);
+      expect(scaleDockWave('tank', tank, 2)).toBe(2);
+      expect(scaleDockWave('helicopter', dockCountFor('helicopter', Math.random), 2)).toBe(2);
+    });
+
+    it('never erases a population (a zero-count wave stays zero)', () => {
+      expect(scaleDockWave('raider', 0, 2)).toBe(0);
+      expect(scaleDockWave('drone', 0, 2)).toBe(0);
     });
   });
 });

@@ -6,7 +6,7 @@
 // the player is told at each step.
 import { describe, it, expect } from 'vitest';
 import {
-  baseClearState, baseClearLabel,
+  baseClearState, baseClearLabel, isMobileEnemy,
   CLEAR_STRUCTURES, CLEAR_ENEMIES, CLEAR_DONE,
 } from './bases.js';
 
@@ -86,6 +86,50 @@ describe('#384 base clear state — objective + docks are ONE any-order phase', 
 
   it('reads a missing base as cleared (index ran past the last base)', () => {
     expect(baseClearState(null).cleared).toBe(true);
+  });
+});
+
+// #391 (Jackson, 2026-07-20: "base-clear should exempt anything that can't chase you"): only
+// MOBILE defenders are a required kill. A rooted turret (move.maxSpeed 0) can't pursue, so leftover
+// turrets don't hold a base open. Mobility is read off the live kindDef, so any future stationary
+// kind is exempt automatically with no id list.
+describe('#391 base clear exempts immobile defenders', () => {
+  const mobile = (baseId = 'base0') => ({ baseId, kindDef: { move: { maxSpeed: 150 } } });
+  const turret = (baseId = 'base0') => ({ baseId, kindDef: { move: { maxSpeed: 0 } } });
+
+  it('isMobileEnemy reads move.maxSpeed: >0 mobile, 0 emplaced', () => {
+    expect(isMobileEnemy(mobile())).toBe(true);
+    expect(isMobileEnemy(turret())).toBe(false);
+    // A bare record with no kindDef (an old test double / unclassified enemy) counts as mobile.
+    expect(isMobileEnemy({ baseId: 'base0' })).toBe(true);
+    expect(isMobileEnemy(null)).toBe(true);
+  });
+
+  it('a base with only living turrets left (structures down) is CLEARED', () => {
+    const s = state({ objectiveDestroyed: true, isDockStanding: noneUp, enemies: [turret(), turret()] });
+    expect(s.step).toBe(CLEAR_DONE);
+    expect(s.enemiesLeft).toBe(0);
+    expect(s.cleared).toBe(true);
+  });
+
+  it('a base with a living MOBILE enemy left (structures down) is NOT cleared', () => {
+    const s = state({ objectiveDestroyed: true, isDockStanding: noneUp, enemies: [mobile()] });
+    expect(s.step).toBe(CLEAR_ENEMIES);
+    expect(s.enemiesLeft).toBe(1);
+    expect(s.cleared).toBe(false);
+  });
+
+  it('counts only the mobile enemies when both are present', () => {
+    const enemies = [mobile(), turret(), mobile(), turret()];
+    const s = state({ objectiveDestroyed: true, isDockStanding: noneUp, enemies });
+    expect(s.step).toBe(CLEAR_ENEMIES);
+    expect(s.enemiesLeft).toBe(2);
+  });
+
+  it('the garrison count the player is told excludes turrets', () => {
+    const enemies = [mobile(), turret(), turret()];
+    const s = state({ objectiveDestroyed: true, isDockStanding: noneUp, enemies });
+    expect(baseClearLabel(s)).toMatch(/GARRISON.*1 LEFT/);
   });
 });
 

@@ -34,7 +34,7 @@ import {
 import { findHexPath } from '../../data/hexRoute.js';
 import { pixelToHex } from '../../data/hexgrid.js';
 import { listenerOf, livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
-import { scaleEnemyCount, scaleComposition } from '../../data/playerScaling.js';
+import { scaleComposition, scaleDockWave } from '../../data/playerScaling.js';
 
 // #309 playtest — how often the DEMAND scan runs, and how many garrison units it may ask per scan.
 // The scan is the expensive half of demand-driven gates: each unit it asks costs one A* search
@@ -348,9 +348,12 @@ export const BasesMixin = {
         // SPAWN time rather than baked into `dock.count` at world-gen time so the number is read
         // from the live roster; `_initCoop` has already added any garage-joined player (#349) by
         // the time this runs.
+        // #389: `scaleDockWave` (not the bare `scaleEnemyCount`) so a single-body MECH dock stays
+        // ONE mech at any player count — a mech dock's co-op difficulty comes from resupply
+        // cadence, never two heavy mechs from one hex at once. Swarm/vehicle docks scale as before.
         spawnDockCluster(this, {
           x, y, kindId: dock.kindId,
-          count: scaleEnemyCount(dock.count ?? 1, playersOf(this).length),
+          count: scaleDockWave(dock.kindId, dock.count ?? 1, playersOf(this).length),
           baseId: base.id, dockKey, awareness: DORMANT,
         });
       }
@@ -988,7 +991,10 @@ export const BasesMixin = {
     // CADENCE (`DOCK_RESUPPLY_COOLDOWN_MS`) is untouched, because "faster dock reinforcement" is
     // the lever Jackson explicitly rejected. Read live, so a mid-sortie START join is picked up
     // by every wave from that moment on.
-    const count = scaleEnemyCount(dockCountFor(kindId, rng), playersOf(this).length);
+    // #389: a MECH resupply wave is pinned to ONE mech regardless of player count — see
+    // `scaleDockWave`. The rejected two-mechs-at-once spawn the owner saw was this call doubling a
+    // lone mech at two players; the resupply CADENCE stays the co-op lever, not wave size.
+    const count = scaleDockWave(kindId, dockCountFor(kindId, rng), playersOf(this).length);
     // #269 Part 2 ("dock open/closed states"): a dock that's currently CLOSED (the normal case —
     // its original unit(s) walked off/died and `_updateDockOpenClose` already sealed it, see
     // above) reopens right here, at the same moment this elevator sequence kicks off — the

@@ -401,6 +401,7 @@ export default class ArenaScene extends Phaser.Scene {
     // is down — otherwise a respawn landing on the same frame as the last death would still end
     // the run. Only does anything with two or more players; a solo death is unchanged.
     this._updateRespawns(delta);
+    this._updateRespawnMarkers();   // #394: draw each downed player's respawn countdown at its wreck
     // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
     // the run on mission-complete, or end it on player destruction.
     this._updateRun();

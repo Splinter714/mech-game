@@ -281,7 +281,10 @@ export const PowerupsMixin = {
       // #381: magnitude (pool size) does NOT compound, and the temp pool PERSISTS UNTIL SPENT —
       // no finite expiry passed, so it never time-decays. The 10s `windowMs` above governs ONLY
       // the free-ammo window (activePowerups['shield']), not the shield pool.
-      player.mech.grantTempShield(p.tempPool ?? 0);
+      // #390: one pickup shields the WHOLE team — every live player gets its OWN full temp pool
+      // (co-op), not just the collector. Each mech's shield stays its own independent pool. With
+      // one player, `livePlayersOf` is exactly the collector, so solo is bit-identical.
+      for (const q of livePlayersOf(this)) q.mech.grantTempShield(p.tempPool ?? 0);
     }
     const col = '#' + p.color.toString(16).padStart(6, '0');
     this._floatText(player.x, player.y - 34, p.label, col);
@@ -291,11 +294,21 @@ export const PowerupsMixin = {
   // repair of missing armor (delegates the per-location math to the model / pure calc).
   _applyInstantPowerup(typeId, player = primaryPlayerOf(this)) {
     if (typeId === 'armorPatch') {
-      const restored = player.mech.repairArmor(POWERUPS.armorPatch.repairFrac);
+      // #390: one Armor Patch repairs the WHOLE team — every live player gets the full
+      // proportional repair, not just the collector. Each mech's repair is its own. The float-text
+      // cue stays on the COLLECTOR (its own restored amount). With one player, `livePlayersOf` is
+      // exactly the collector, so solo is bit-identical.
+      let collectorRestored = 0;
+      for (const q of livePlayersOf(this)) {
+        const restored = q.mech.repairArmor(POWERUPS.armorPatch.repairFrac);
+        if (q === player) collectorRestored = restored;
+      }
       // #315: derived from the entry's own colour, not a second hardcoded copy of it — the old
       // literal '#8ad0ff' silently kept the retired light blue when the palette moved to silver.
       const col = '#' + POWERUPS.armorPatch.color.toString(16).padStart(6, '0');
-      if (restored > 0) this._floatText(player.x, player.y - 20, `+${Math.round(restored)} armor`, col);
+      if (collectorRestored > 0) {
+        this._floatText(player.x, player.y - 20, `+${Math.round(collectorRestored)} armor`, col);
+      }
     }
   },
 

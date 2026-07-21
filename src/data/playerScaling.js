@@ -1,3 +1,5 @@
+import { isEnemyKind } from './enemyKinds.js';
+
 // #350 — CO-OP DIFFICULTY: how much MORE the world fields per additional player.
 //
 // Jackson (2026-07-19) chose the lever: co-op should be HARDER than solo, and the lever is enemy
@@ -69,6 +71,31 @@ export function scaleEnemyCount(count, playerCount) {
   const c = Math.max(0, Math.floor(count) || 0);
   if (c === 0) return 0;
   return Math.max(1, Math.round(c * enemyCountFactor(playerCount)));
+}
+
+// Scale ONE DOCK'S wave size — the garrison or resupply burst a single dock emits in one event.
+//
+// #389 (owner: "They can resupply whenever, but not two mechs at a time from one dock resupply"):
+// a large/heavy MECH dock is a SINGLE-body dock (`dockCountFor` returns 1 for every mech loadout),
+// so the straight `scaleEnemyCount` above would field TWO mechs at once at two players — which is
+// exactly the doubled-up spawn the owner saw and rejected. Co-op difficulty for a mech dock is
+// meant to come from resupplying MORE OFTEN over the fight (its wave CADENCE is already the shared
+// lever, and #326 removed every dock cap), never from two heavy mechs erupting from one hex in a
+// single event. So a mech dock's wave is PINNED to one body regardless of player count.
+//
+// SWARM docks (drone / infantry — `isEnemyKind` is true for both) are deliberately untouched: a
+// `DOCK_SWARM_COUNT` burst of 3-HP bodies IS the intended set-piece and doubling it to a bigger
+// cloud is the whole point of the count lever. Non-mech single-body vehicle docks (tank, helicopter,
+// carrier) also keep the ordinary scaling — the owner's decision is specifically about MECHS.
+//
+// A dock's kind is a MECH loadout exactly when it is NOT a non-mech `ENEMY_KINDS` id — the same
+// `isEnemyKind` split `spawnDockCluster` uses to route between `_spawnMech` and `_spawnKind`.
+//
+// At playerCount 1 this is `scaleEnemyCount`'s identity for every kind, so solo stays bit-identical.
+export function scaleDockWave(kindId, count, playerCount) {
+  const scaled = scaleEnemyCount(count, playerCount);
+  if (!isEnemyKind(kindId)) return Math.min(1, scaled);   // #389: a mech dock never emits two at once
+  return scaled;
 }
 
 // Scale a COMPOSITION — a flat list of type ids, like #357's `towerPatrolComposition`.

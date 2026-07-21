@@ -4,9 +4,11 @@ import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import {
-  PLAYER_MECH_KEYS, makeGarageSession, sessionMechKey, sessionMechKeys, garageAction,
-  garageActionLabel, coopToggleLabel, garageStatusText, handOff, toggleCoop,
+  PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, makeGarageSession, sessionEditingKey, sessionMechKeys,
+  garageAction, garageActionLabel, garageStatusText, advanceEditing, joinPlayer, canJoin,
+  playerTabs,
 } from '../data/coopGarage.js';
+import { playerColor } from '../data/players.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -98,12 +100,13 @@ export default class GarageScene extends Phaser.Scene {
     Slider.attachDrag(this);
 
     this.allMechs = this.registry.get('allMechs');
-    // #349: the co-op session. `coop` survives a return from the arena (so a co-op pair coming
-    // back from a run finds co-op still armed) but `editing` always resets to player 1 — the
-    // sequential flow is re-walked from the top every visit, which is also what makes the
-    // handoff an explicit act each time rather than sticky state nobody remembers setting.
-    this.session = makeGarageSession({ coop: !!this.registry.get('coopGarage') });
-    this.mechKey = sessionMechKey(this.session);
+    // #349/#388: the co-op session `{ count, editing }`. The joined COUNT survives a return from
+    // the arena (so a co-op squad coming back from a run finds all its tabs still there) but
+    // `editing` always resets to player 1 — the sequential flow is re-walked from the top every
+    // visit, which is also what makes each handoff an explicit act rather than sticky state
+    // nobody remembers setting.
+    this.session = makeGarageSession({ count: this.registry.get('coopPlayerCount') || 1 });
+    this.mechKey = sessionEditingKey(this.session);
     this.mech = this.allMechs[this.mechKey];
     // #249: every entry into the Garage (fresh boot, ESC from the Music tab, or — the bug —
     // returning from Arena after a run ends in a win OR a loss) must show a healthy mech. Damage

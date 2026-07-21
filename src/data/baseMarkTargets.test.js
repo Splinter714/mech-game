@@ -123,6 +123,18 @@ describe('#384 objective marker targets — objective + docks marked at once', (
     const state = baseClearState(null);
     expect(baseMarkTargets(state, null).docks).toEqual([]);
   });
+
+  // #391: leftover turrets aren't required kills, so they get no clear marker either — the marker
+  // set stays a projection of the (now mobility-aware) `baseClearState` count.
+  it('marks only MOBILE stragglers in phase 2 — a rooted turret gets no marker', () => {
+    const mobile = { baseId: 'base0', kindDef: { move: { maxSpeed: 150 } } };
+    const turret = { baseId: 'base0', kindDef: { move: { maxSpeed: 0 } } };
+    const enemies = [mobile, turret, turret];
+    const m = marks({ objectiveDestroyed: true, enemies });
+    expect(m.size).toBe(MARK_SMALL);
+    expect(m.enemies).toEqual([mobile]);
+    expect(m.enemies).toHaveLength(m.state.enemiesLeft);
+  });
 });
 
 // ── #371 playtest follow-up: where a marker sits on its unit ───────────────────────────────────

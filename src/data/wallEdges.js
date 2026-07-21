@@ -438,15 +438,50 @@ export function nearestWallEdge(set, x, y, maxDist = HEX_SIZE) {
 }
 
 // ── Destruction ─────────────────────────────────────────────────────────────────────────
-// Chip a span's HP. Each edge has its own independent pool — damaging one never affects its
-// neighbours — so the player breaches by grinding down a span until it collapses, opening a gap in
-// the line while the rest of the wall stands. Returns `{ hp, destroyed }`; a destroyed span is
-// marked (not deleted, so it keeps its identity/geometry for the renderer's collapse) and stops
-// blocking movement, sight, and fire immediately. Damaging an already-destroyed span is a no-op.
+// The base-side hex a span belongs to — the WALL HEX it forms one face of. `a` is always the
+// footprint side (worldgen.js `placeBaseWalls`), so a footprint hex only ever appears here as an
+// edge's `a`, never its `b`; that is what makes "every span of this wall hex" a clean lookup.
+function wallHexKey(edge) {
+  return edge?.a ? axialKey(edge.a.q, edge.a.r) : null;
+}
+
+// #392 (owner decision): every STANDING sibling span that shares a span's base-side wall hex — the
+// other faces of the same hex. Kept simple deliberately: same-hex membership is a match on the
+// base-side coord `a`, not a shared HP pool. A span indexed under this hex only as its OUTER side
+// (`b`) belongs to a DIFFERENT wall hex and is NOT a sibling, so the match is on `a` explicitly.
+function wallHexSiblings(set, edge) {
+  const key = wallHexKey(edge);
+  if (!set || key == null) return [];
+  const list = set.byHex.get(key);
+  if (!list) return [];
+  return list.filter(
+    (e) => e !== edge && !e.destroyed && e.a && e.a.q === edge.a.q && e.a.r === edge.a.r,
+  );
+}
+
+// Chip a span's HP. Each span keeps its OWN HP pool and takes its own hits — damaging one never
+// chips its neighbours (no shared pool, no damage bleed). What DID change with #392: a span's
+// DEATH now opens the whole wall hex at once. The player still grinds a single span down, but the
+// instant it collapses, the remaining live spans of the SAME wall hex (its base-side hex `a`) fall
+// free with it — so a breach is a real gap you drive through, not one narrow slot flanked by
+// standing wall. Owner: "destroying ONE wall span should open the WHOLE wall hex."
+//
+// Returns `{ hp, destroyed, felled }`: `hp`/`destroyed` describe the span actually hit; `felled` is
+// every span this call brought down (the hit span first, then any cascaded siblings), so the scene
+// can play collapse FX / drop wall turrets / invalidate sight+routes once per fallen span. `felled`
+// is empty when the hit only chipped HP (or was a no-op). A destroyed span is marked (not deleted,
+// so it keeps its identity/geometry for the renderer's collapse) and stops blocking movement,
+// sight, and fire immediately. Damaging an already-destroyed span is a no-op.
 export function damageWallEdge(set, edge, amount) {
-  if (!edge || edge.destroyed) return { hp: 0, destroyed: false };
+  if (!edge || edge.destroyed) return { hp: 0, destroyed: false, felled: [] };
   edge.hp = Math.max(0, edge.hp - Math.max(0, amount));
-  if (edge.hp > 0) return { hp: edge.hp, destroyed: false };
+  if (edge.hp > 0) return { hp: edge.hp, destroyed: false, felled: [] };
   edge.destroyed = true;
-  return { hp: 0, destroyed: true };
+  const felled = [edge];
+  for (const sib of wallHexSiblings(set, edge)) {
+    sib.hp = 0;
+    sib.destroyed = true;
+    felled.push(sib);
+  }
+  return { hp: 0, destroyed: true, felled };
 }

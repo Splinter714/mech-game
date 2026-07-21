@@ -39,14 +39,14 @@ function drawBay(sg, accent, open, armored = false) {
   roundC(sg, 0, 1, 15.6, 21.6, V.halo, 4.4);      // #129 legibility halo
   roundC(sg, 0, 1, 14, 20, V.outline, 4);
   roundC(sg, 0, 1, 12, 18, V.bodyDk, 3.4);
-  // The bay THROAT — a dark recess, revealed as the leaves retract. Always drawn; when the door
-  // is shut the leaves below cover it completely.
-  roundC(sg, 0, 1, 9.6, 15, V.deep, 2.6);
+  // The bay THROAT — a BLACK recess (Jackson #396: "shouldn't be purple inside, it should be
+  // black"). Always drawn; when the door is shut the leaves below cover it completely.
+  roundC(sg, 0, 1, 9.6, 15, 0x000000, 2.6);
   if (open) {
-    // Interior glow + a hint of the rack the drones sit on, so an open bay reads as "something
-    // is in there" rather than a black hole.
-    roundC(sg, 0, 1, 8.4, 13.6, A.halo, 0.26);
-    for (const y of [-3.4, 1, 5.4]) rectC(sg, 0, y, 7.4, 1.1, A.core, 0.5);
+    // Interior stays black; only a faint grey hint of the rack the drones sit on so an open bay
+    // still reads as "something is in there" — NO accent/purple glow.
+    roundC(sg, 0, 1, 8.4, 13.6, 0x000000, 1);
+    for (const y of [-3.4, 1, 5.4]) rectC(sg, 0, y, 7.4, 1.1, V.tread, 0.5);
   }
   // Two sliding leaves. Shut: they meet at the centreline. Open: each has slid outboard, leaving
   // the throat exposed between them. Same shapes either way — only the x offset moves — so the

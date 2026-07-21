@@ -1,18 +1,21 @@
-// #349 — the pure sequential two-player Garage flow. This is the merge gate for phase 3: the
-// slot/handoff logic is entirely here, so the scene wiring on top of it is thin enough to
-// verify by playing.
+// #388 — the pure sequential 1–4 player Garage flow. This is the merge gate for phase 4b: the
+// join/handoff/deploy-set logic is entirely here, so the tab-row + per-builder-pad wiring on top
+// of it in GarageScene is thin enough to verify by playing.
 import { describe, it, expect } from 'vitest';
 import {
-  PLAYER_MECH_KEYS, mechKeyForPlayer, makeGarageSession, sessionMechKey, sessionMechKeys,
-  garageAction, garageActionLabel, coopToggleLabel, garageStatusText, beginCoop, endCoop,
-  handOff, toggleCoop, joinerBuild, isUsableBuild,
+  PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, mechKeyForPlayer, makeGarageSession, playerCount,
+  isSoloSession, canJoin, sessionEditingKey, sessionMechKeys, joinPlayer, advanceEditing,
+  garageAction, garageActionLabel, garageStatusText, playerTabs, joinerBuild, isUsableBuild,
 } from './coopGarage.js';
 import { ROSTERS, ACTIVE_MECH_KEY, PLAYER2_MECH_KEY } from './rosters.js';
+import { MAX_PLAYERS } from './players.js';
 import { Mech } from './Mech.js';
 
 describe('the four persistent build slots', () => {
-  it('is exactly four — #387 raised the cap; slots 3 & 4 back the drop-ins', () => {
+  it('is exactly four, and the garage cap matches the arena cap', () => {
     expect(PLAYER_MECH_KEYS).toEqual(['mech1', 'mech2', 'mech3', 'mech4']);
+    expect(MAX_GARAGE_PLAYERS).toBe(4);
+    expect(MAX_GARAGE_PLAYERS).toBe(MAX_PLAYERS);
   });
 
   it('keeps player 1 on the key single-player has always used', () => {
@@ -20,7 +23,7 @@ describe('the four persistent build slots', () => {
     expect(mechKeyForPlayer(1)).toBe(PLAYER2_MECH_KEY);
   });
 
-  it('maps players 3 & 4 to their own slots (#387)', () => {
+  it('maps players 3 & 4 to their own slots', () => {
     expect(mechKeyForPlayer(2)).toBe('mech3');
     expect(mechKeyForPlayer(3)).toBe('mech4');
   });
@@ -31,7 +34,7 @@ describe('the four persistent build slots', () => {
     expect(mechKeyForPlayer(undefined)).toBe('mech1');
   });
 
-  it('both slots exist in the roster defaults, and both are COMPLETE builds', () => {
+  it('every slot exists in the roster defaults and is a COMPLETE build', () => {
     const defaults = ROSTERS.mech.defaultRoster();
     for (const key of PLAYER_MECH_KEYS) {
       expect(defaults[key], `missing default build for ${key}`).toBeTruthy();
@@ -46,11 +49,16 @@ describe('the four persistent build slots', () => {
   });
 });
 
-describe('solo is untouched', () => {
+describe('solo (one joined player) is untouched', () => {
   const solo = makeGarageSession();
 
+  it('starts at a count of one', () => {
+    expect(playerCount(solo)).toBe(1);
+    expect(isSoloSession(solo)).toBe(true);
+  });
+
   it('edits mech1 and deploys mech1 alone', () => {
-    expect(sessionMechKey(solo)).toBe('mech1');
+    expect(sessionEditingKey(solo)).toBe('mech1');
     expect(sessionMechKeys(solo)).toEqual(['mech1']);
   });
 
@@ -59,116 +67,145 @@ describe('solo is untouched', () => {
     expect(garageActionLabel(solo)).toBe('▶ DEPLOY');
   });
 
-  it('shows no co-op status chrome, only the opt-in button', () => {
+  it('shows no co-op status chrome', () => {
     expect(garageStatusText(solo)).toBe('');
-    expect(coopToggleLabel(solo)).toBe('+ ADD PLAYER 2');
   });
 
   it('treats a missing/garbage session as solo rather than throwing', () => {
-    expect(sessionMechKey(null)).toBe('mech1');
+    expect(playerCount(null)).toBe(1);
+    expect(isSoloSession(undefined)).toBe(true);
+    expect(sessionEditingKey(null)).toBe('mech1');
     expect(sessionMechKeys(undefined)).toEqual(['mech1']);
     expect(garageAction(null)).toBe('deploy');
     expect(garageStatusText(null)).toBe('');
   });
 });
 
-describe('the sequential handoff', () => {
-  it('walks solo -> P1 building -> P2 building -> deploy', () => {
+describe('joining grows the count 1→2→3→4 and no further', () => {
+  it('adds one player per join up to the cap', () => {
     let s = makeGarageSession();
-    expect(garageAction(s)).toBe('deploy');
+    expect(playerCount(s)).toBe(1);
+    s = joinPlayer(s); expect(playerCount(s)).toBe(2);
+    s = joinPlayer(s); expect(playerCount(s)).toBe(3);
+    s = joinPlayer(s); expect(playerCount(s)).toBe(4);
+    // A fifth join is refused — the count is pinned at the cap.
+    expect(canJoin(s)).toBe(false);
+    s = joinPlayer(s); expect(playerCount(s)).toBe(4);
+  });
 
-    s = beginCoop(s);
-    expect(sessionMechKey(s)).toBe('mech1');
+  it('canJoin flips off exactly at the cap', () => {
+    expect(canJoin(makeGarageSession({ count: 1 }))).toBe(true);
+    expect(canJoin(makeGarageSession({ count: 3 }))).toBe(true);
+    expect(canJoin(makeGarageSession({ count: 4 }))).toBe(false);
+  });
+
+  it('leaves editing where it was — joining mid-build does not steal control', () => {
+    // Player 1 is building (editing 0); player 2 joins → still player 1's turn.
+    const s = joinPlayer(makeGarageSession({ count: 1, editing: 0 }));
+    expect(s.editing).toBe(0);
+    expect(sessionEditingKey(s)).toBe('mech1');
+    expect(garageStatusText(s)).toBe('PLAYER 1 BUILDING');
+  });
+
+  it('grows the deploy set with the count', () => {
+    expect(sessionMechKeys(makeGarageSession({ count: 1 }))).toEqual(['mech1']);
+    expect(sessionMechKeys(makeGarageSession({ count: 2 }))).toEqual(['mech1', 'mech2']);
+    expect(sessionMechKeys(makeGarageSession({ count: 3 }))).toEqual(['mech1', 'mech2', 'mech3']);
+    expect(sessionMechKeys(makeGarageSession({ count: 4 }))).toEqual(['mech1', 'mech2', 'mech3', 'mech4']);
+  });
+});
+
+describe('control advances P1→…→last, and the last START deploys', () => {
+  it('walks a two-player session: P1 building → P2 building → deploy', () => {
+    let s = joinPlayer(makeGarageSession());   // count 2, editing 0
+    expect(sessionEditingKey(s)).toBe('mech1');
     expect(garageStatusText(s)).toBe('PLAYER 1 BUILDING');
     expect(garageAction(s)).toBe('handoff');
     expect(garageActionLabel(s)).toBe('▶ P1 READY');
 
-    s = handOff(s);
-    expect(sessionMechKey(s)).toBe('mech2');
+    s = advanceEditing(s);                     // editing 1 — the last player
+    expect(sessionEditingKey(s)).toBe('mech2');
     expect(garageStatusText(s)).toBe('PLAYER 2 BUILDING');
     expect(garageAction(s)).toBe('deploy');
     expect(garageActionLabel(s)).toBe('▶ DEPLOY');
     expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
   });
 
-  it('the garage flow never advances past the DEPLOY step, so it stays two-player (#387)', () => {
-    // After one handoff the button is DEPLOY, not another handoff — the garage UI can never step
-    // to player 3 even though four slots now exist. 3 & 4 arrive only as mid-sortie drop-ins;
-    // #388 is what makes them pre-buildable in the garage.
-    const s = handOff(beginCoop(makeGarageSession()));
-    expect(s.editing).toBe(1);
+  it('walks a full four-player session end to end', () => {
+    let s = makeGarageSession();
+    for (let i = 0; i < 3; i++) s = joinPlayer(s);   // four players joined
+    expect(playerCount(s)).toBe(4);
+    // P1, P2, P3 each hand off (not last); P4 deploys.
+    for (let p = 0; p < 3; p++) {
+      expect(s.editing).toBe(p);
+      expect(garageAction(s)).toBe('handoff');
+      expect(garageActionLabel(s)).toBe(`▶ P${p + 1} READY`);
+      s = advanceEditing(s);
+    }
+    expect(s.editing).toBe(3);
     expect(garageAction(s)).toBe('deploy');
-    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
+    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2', 'mech3', 'mech4']);
   });
 
-  it('handOff still clamps to the last real slot rather than indexing off the end', () => {
-    // Pure safety: even if called past the flow, editing can never index a nonexistent slot.
-    const s = handOff(handOff(handOff(handOff(beginCoop(makeGarageSession())))));
-    expect(sessionMechKey(s)).toBe('mech4');
+  it('a mid-build join extends the flow — a would-be last player hands off to the newcomer', () => {
+    // Two players; player 1 hands off, so player 2 is now the last → their button is DEPLOY.
+    let s = advanceEditing(joinPlayer(makeGarageSession()));
+    expect(garageAction(s)).toBe('deploy');
+    // A third player joins while player 2 is building: player 2 is no longer last.
+    s = joinPlayer(s);
+    expect(playerCount(s)).toBe(3);
+    expect(s.editing).toBe(1);
+    expect(garageAction(s)).toBe('handoff');
+    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2', 'mech3']);
+  });
+
+  it('advanceEditing clamps at the last player rather than indexing off the end', () => {
+    let s = joinPlayer(makeGarageSession());   // count 2
+    s = advanceEditing(advanceEditing(advanceEditing(s)));
+    expect(s.editing).toBe(1);
+    expect(sessionEditingKey(s)).toBe('mech2');
+    expect(garageAction(s)).toBe('deploy');
   });
 
   it('is a no-op in solo — one player can never be handed off to nobody', () => {
-    const s = handOff(makeGarageSession());
-    expect(s.coop).toBe(false);
-    expect(sessionMechKey(s)).toBe('mech1');
+    const s = advanceEditing(makeGarageSession());
+    expect(playerCount(s)).toBe(1);
+    expect(s.editing).toBe(0);
     expect(garageAction(s)).toBe('deploy');
   });
 
   it('leaves the session object it was given untouched (pure)', () => {
-    const s = beginCoop(makeGarageSession());
+    const s = joinPlayer(makeGarageSession());
     const snapshot = { ...s };
-    handOff(s);
-    toggleCoop(s);
+    advanceEditing(s);
+    joinPlayer(s);
     expect(s).toEqual(snapshot);
   });
 });
 
-// #387 raised PLAYER_MECH_KEYS to four for the mid-sortie drop-ins, but the garage build flow is
-// still sequential two-player — a garage co-op deploy must put exactly the slots it built on the
-// field, never all four, or four mechs would spawn from a two-player garage session.
-describe('a garage co-op deploy stays two-player even with four slots (#387)', () => {
-  it('deploys only the slots the sequential flow reached, not the whole array', () => {
-    // Player 2 at the Deploy button (editing = 1) — the only state a co-op deploy happens in.
-    const s = handOff(beginCoop(makeGarageSession()));
-    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
-    // Solo is one key, unchanged.
-    expect(sessionMechKeys(makeGarageSession())).toEqual(['mech1']);
-  });
-});
-
-describe('the one co-op toggle button', () => {
-  it('opts in from solo', () => {
-    const s = toggleCoop(makeGarageSession());
-    expect(s.coop).toBe(true);
-    expect(s.editing).toBe(0);
+describe('the player-tab row model', () => {
+  it('solo shows P1 occupied+active plus one trailing ADD tab', () => {
+    expect(playerTabs(makeGarageSession())).toEqual([
+      { index: 0, occupied: true, active: true },
+      { index: 1, occupied: false, active: false },
+    ]);
   });
 
-  it('backs all the way out while player 1 is still building', () => {
-    const s = toggleCoop(beginCoop(makeGarageSession()));
-    expect(s.coop).toBe(false);
-    expect(sessionMechKeys(s)).toEqual(['mech1']);
-    expect(coopToggleLabel(s)).toBe('+ ADD PLAYER 2');
+  it('grows an occupied tab per join and moves the active flag with editing', () => {
+    const s = advanceEditing(joinPlayer(joinPlayer(makeGarageSession())));  // 3 players, editing 1
+    expect(playerTabs(s)).toEqual([
+      { index: 0, occupied: true, active: false },
+      { index: 1, occupied: true, active: true },
+      { index: 2, occupied: true, active: false },
+      { index: 3, occupied: false, active: false },  // still room for a 4th
+    ]);
   });
 
-  it('steps BACK to player 1 while player 2 is building — a premature handoff is recoverable', () => {
-    const p2 = handOff(beginCoop(makeGarageSession()));
-    expect(coopToggleLabel(p2)).toBe('◀ BACK TO P1');
-    const back = toggleCoop(p2);
-    expect(back.coop).toBe(true);
-    expect(sessionMechKey(back)).toBe('mech1');
-    expect(garageAction(back)).toBe('handoff');
-  });
-
-  it('round-trips: opt in, hand off, step back, hand off again', () => {
-    let s = makeGarageSession();
-    s = toggleCoop(s); s = handOff(s); s = toggleCoop(s); s = handOff(s);
-    expect(sessionMechKey(s)).toBe('mech2');
-    expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
-  });
-
-  it('endCoop always lands back on player 1', () => {
-    const s = endCoop(handOff(beginCoop(makeGarageSession())));
-    expect(s).toEqual({ coop: false, editing: 0 });
+  it('drops the ADD tab once every slot is seated', () => {
+    const full = makeGarageSession({ count: 4, editing: 0 });
+    const tabs = playerTabs(full);
+    expect(tabs).toHaveLength(4);
+    expect(tabs.every((t) => t.occupied)).toBe(true);
   });
 });
 

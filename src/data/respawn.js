@@ -53,6 +53,25 @@ export function tickRespawn(state, dtMs, msSinceAnyPlayerHit = Infinity) {
   };
 }
 
+// #394: the pure display state behind the IN-WORLD respawn countdown drawn at a downed player's
+// wreck (coop.js `_updateRespawnMarkers`). Returns null when there is nothing to show (the player
+// is not waiting to respawn), otherwise:
+//   fraction — how full the draining ring is, 1 at the moment of death → 0 at zero (like the
+//              powerup cooldown-pies), so the same 12-o'clock-clockwise arc reads as time left;
+//   seconds  — the remaining wait, for the readout in the ring;
+//   holding  — the out-of-combat gate is holding the placement (the clock hit zero but the
+//              survivor is still under fire). The renderer shows this as a HELD/pulsing ring
+//              rather than a frozen "0s", so a paused clock never reads as a bug.
+export function respawnReadout(state) {
+  if (!state || state.remainingMs == null) return null;
+  const remainingMs = Math.max(0, state.remainingMs);
+  return {
+    fraction: Math.max(0, Math.min(1, remainingMs / RESPAWN_DELAY_MS)),
+    seconds: remainingMs / 1000,
+    holding: !!state.waitingOnCombat,
+  };
+}
+
 // WHERE the respawn lands: "the far edge of the current view". `view` is the camera's world-space
 // rect ({x, y, width, height}); the candidates are its four edge midpoints, pulled in by `margin`
 // so the mech materialises just inside the frame rather than half off it — the player has to be

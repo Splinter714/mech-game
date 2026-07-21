@@ -839,15 +839,20 @@ export const WorldMixin = {
   // the same debris/fireball the other destructible structures use, centred on the span itself.
   // Returns true iff this hit destroyed the span, matching `_damageBuildingAt`'s contract.
   _damageWallEdge(edge, amount) {
-    const { destroyed } = damageWallEdge(this.wallEdges, edge, amount);
+    const { destroyed, felled } = damageWallEdge(this.wallEdges, edge, amount);
     this._redrawWallEdges();
     if (destroyed) {
-      this._outpostCollapseFx((edge.x0 + edge.x1) / 2, (edge.y0 + edge.y1) / 2);
-      // #310: a span that carried a wall turret takes the gun down with it — the direct analogue
-      // of `_onTerrainCollapsed` -> `_killEmplacedAt` for a collapsing turret emplacement (#287),
-      // and the same reasoning: a breached span must not leave its gun hovering intact over the
-      // hole. Optional chaining because plenty of tests build a bare world with no bases mixin.
-      this._killWallTurretsOn?.(edge.key);
+      // #392: destroying one span opens the WHOLE wall hex — `felled` is the hit span PLUS the
+      // sibling spans of the same hex that fell with it, so the collapse FX and turret-drop below
+      // run once per fallen span, not just the one the shot/stomp landed on.
+      for (const span of felled) {
+        this._outpostCollapseFx((span.x0 + span.x1) / 2, (span.y0 + span.y1) / 2);
+        // #310: a span that carried a wall turret takes the gun down with it — the direct analogue
+        // of `_onTerrainCollapsed` -> `_killEmplacedAt` for a collapsing turret emplacement (#287),
+        // and the same reasoning: a breached span must not leave its gun hovering intact over the
+        // hole. Optional chaining because plenty of tests build a bare world with no bases mixin.
+        this._killWallTurretsOn?.(span.key);
+      }
       // #306: the span just stopped blocking sight, so the cached field-of-view set is stale —
       // breaching a base wall has to visibly reveal what was behind it, same as collapsing a tile.
       this._invalidateVisibility?.();

@@ -3,7 +3,8 @@
 // enough" half of the rule.
 import { describe, it, expect } from 'vitest';
 import {
-  OUT_OF_COMBAT_MS, RESPAWN_DELAY_MS, makeRespawnState, pickRespawnPoint, startRespawn, tickRespawn,
+  OUT_OF_COMBAT_MS, RESPAWN_DELAY_MS, makeRespawnState, pickRespawnPoint, respawnReadout,
+  startRespawn, tickRespawn,
 } from './respawn.js';
 
 const QUIET = OUT_OF_COMBAT_MS + 1;
@@ -71,6 +72,45 @@ describe('the out-of-combat gate — THE point of the design', () => {
 
   it('a run where nobody has ever been hit counts as out of combat', () => {
     expect(tickRespawn(startRespawn(makeRespawnState()), RESPAWN_DELAY_MS, Infinity).ready).toBe(true);
+  });
+});
+
+// #394: the in-world countdown drawn at the downed player's wreck reads its display state from
+// here, so the arc/seconds/held-hold decision is pure and locked down (the drawing itself is not).
+describe('respawnReadout — the in-world countdown display state', () => {
+  it('is null when the player is not waiting to respawn', () => {
+    expect(respawnReadout(makeRespawnState())).toBeNull();
+    expect(respawnReadout(null)).toBeNull();
+  });
+
+  it('reports a full ring the frame the clock starts', () => {
+    const r = respawnReadout(startRespawn(makeRespawnState()));
+    expect(r.fraction).toBe(1);
+    expect(r.seconds).toBe(RESPAWN_DELAY_MS / 1000);
+    expect(r.holding).toBe(false);
+  });
+
+  it('drains the fraction and counts the seconds down as the clock ticks', () => {
+    const s = tickRespawn(startRespawn(makeRespawnState()), RESPAWN_DELAY_MS / 2, QUIET).state;
+    const r = respawnReadout(s);
+    expect(r.fraction).toBeCloseTo(0.5, 6);
+    expect(r.seconds).toBeCloseTo(RESPAWN_DELAY_MS / 2000, 6);
+    expect(r.holding).toBe(false);
+  });
+
+  it('reports HOLDING (not a frozen zero) while the out-of-combat gate is paused', () => {
+    // Clock run all the way out, but the survivor took fire this frame — placement is held.
+    const s = tickRespawn(startRespawn(makeRespawnState()), RESPAWN_DELAY_MS, 0).state;
+    const r = respawnReadout(s);
+    expect(r.holding).toBe(true);
+    expect(r.fraction).toBe(0);
+    expect(r.seconds).toBe(0);
+  });
+
+  it('clamps a negative overshoot rather than reporting past zero', () => {
+    const r = respawnReadout({ remainingMs: -500, waitingOnCombat: false });
+    expect(r.fraction).toBe(0);
+    expect(r.seconds).toBe(0);
   });
 });
 

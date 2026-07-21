@@ -228,3 +228,78 @@ describe('#339: _activatePowerup stacks duration on duplicate pickups', () => {
     expect(s.activePowerups.barrage).toBe(durationMs('barrage'));
   });
 });
+
+// ── #390: Shield & Armor Patch apply to the WHOLE TEAM, not just the collector ──────────────
+// Owner decision: a single Shield or Armor-Patch pickup grants its FULL effect to EVERY live
+// player (each gets its own full temp pool / full repair), while the pickup cue stays on the
+// collector. Other types (overdrive/overclock/barrage) keep the shared scene-level overlay.
+function fakeMech() {
+  return {
+    _pool: undefined, _grantCalls: 0, _repairs: 0,
+    grantTempShield(pool, ms) { this._pool = pool; this._remaining = ms; this._grantCalls++; },
+    repairArmor() { this._repairs++; return 10; },
+  };
+}
+
+// A co-op scene with a REAL `players` collection (not the legacy single-player adapter), so
+// `livePlayersOf` genuinely iterates two independent players each with their own mech.
+function fakeCoopArena() {
+  const players = [
+    { id: 0, x: 0, y: 0, dead: false, mech: fakeMech() },
+    { id: 1, x: 100, y: 50, dead: false, mech: fakeMech() },
+  ];
+  return Object.assign(
+    {
+      players,
+      activePowerups: {},
+      _floatText: vi.fn(),
+    },
+    PowerupsMixin,
+  );
+}
+
+describe('#390: Shield / Armor Patch apply to every live player', () => {
+  it('Shield grants BOTH players their own full temp pool from one pickup', () => {
+    const s = fakeCoopArena();
+    const collector = s.players[1];
+    s._activatePowerup('shield', collector);
+    for (const p of s.players) {
+      expect(p.mech._grantCalls).toBe(1);
+      expect(p.mech._pool).toBe(POWERUPS.shield.tempPool);
+      expect(p.mech._remaining).toBeUndefined();   // no finite expiry — pool persists until spent
+    }
+    // The pickup cue lands on the collector's position, once.
+    expect(s._floatText).toHaveBeenCalledTimes(1);
+    expect(s._floatText.mock.calls[0][0]).toBe(collector.x);
+  });
+
+  it('Armor Patch repairs BOTH players from one pickup; cue only on the collector', () => {
+    const s = fakeCoopArena();
+    const collector = s.players[0];
+    s._activatePowerup('armorPatch', collector);
+    for (const p of s.players) expect(p.mech._repairs).toBe(1);
+    // Two float texts: the "+N armor" for the collector only, plus the shared pickup label.
+    const armorCalls = s._floatText.mock.calls.filter((c) => String(c[2]).includes('armor'));
+    expect(armorCalls).toHaveLength(1);
+    expect(armorCalls[0][0]).toBe(collector.x);
+  });
+
+  it('a DEAD player receives neither shield nor repair (only live players)', () => {
+    const s = fakeCoopArena();
+    s.players[1].dead = true;
+    s._activatePowerup('shield', s.players[0]);
+    s._activatePowerup('armorPatch', s.players[0]);
+    expect(s.players[0].mech._grantCalls).toBe(1);
+    expect(s.players[0].mech._repairs).toBe(1);
+    expect(s.players[1].mech._grantCalls).toBe(0);
+    expect(s.players[1].mech._repairs).toBe(0);
+  });
+
+  it('each player\'s shield pool is independent — one spending its pool does not touch the other', () => {
+    const s = fakeCoopArena();
+    s._activatePowerup('shield', s.players[0]);
+    // Simulate player 0 spending its pool; player 1 keeps its own full pool.
+    s.players[0].mech._pool = 0;
+    expect(s.players[1].mech._pool).toBe(POWERUPS.shield.tempPool);
+  });
+});
