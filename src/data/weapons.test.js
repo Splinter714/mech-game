@@ -229,9 +229,9 @@ describe('#402 ammo economy — magazine size sets each weapon\'s ~6s burst (no 
 // other missiles must be exactly where they were left. (#402 dropped the old fast-regen half of the
 // #377 buff along with every weapon's trickle; the big magazine that keeps its long burst stays.)
 describe('#377/#402 Swarm Rack feel pass', () => {
-  it('flies far slower than it did (cut twice, 1000 -> 500 -> 320) and fires noticeably more ' +
-     'often — a deliberate crawl next to the other missiles, not an oversight', () => {
-    expect(WEAPONS.swarmRack.delivery.velocity).toBe(320);
+  it('flies far slower than it did (cut twice, 1000 -> 500 -> 320, then nudged 320 -> 400) and ' +
+     'fires noticeably more often — a deliberate crawl next to the other missiles, not an oversight', () => {
+    expect(WEAPONS.swarmRack.delivery.velocity).toBe(400);
     expect(WEAPONS.swarmRack.cycleTime).toBe(1100);
     expect(WEAPONS.swarmRack.delivery.velocity).toBeLessThan(WEAPONS.streakPod.delivery.velocity);
     expect(WEAPONS.swarmRack.delivery.velocity).toBeLessThan(WEAPONS.clusterRocket.delivery.velocity);
