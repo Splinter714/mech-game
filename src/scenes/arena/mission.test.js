@@ -411,12 +411,11 @@ describe('#371 follow-up — wall-turret marker anchor and the pulse on every ma
     expect(s._tweenCalls.length).toBe(after);
   });
 
-  it('the pulse targets the RINGS, so a dock label stays put while the hex breathes', () => {
+  it('a dock marker is just the three pip layers — no text label (#410)', () => {
     const s = sceneAt({ docksUp: [{ q: 1, r: 0 }] });
     const marker = [...s._dockMarkers.values()][0];
     const dockTween = s._tweenCalls[s._tweenCalls.length - 1];
     expect(dockTween.targets.length).toBe(3);        // three rings
-    expect(marker.list.length).toBe(4);              // ...plus the DOCK label, untweened
-    expect(dockTween.targets).not.toContain(marker.list[3]);
+    expect(marker.list.length).toBe(3);              // pip only, no label
   });
 });

@@ -158,10 +158,7 @@ export const MissionMixin = {
     // marker `container` below (positioned at the real world (x,y)) supplies the placement, so the
     // diamond always lands dead-centre on the hex (see `drawPip` / the #280 centring note).
     const [haloRing, outlineRing, ring] = drawPipLayers(this, OBJECTIVE_PIP_RADIUS);
-    const label = this.add.text(0, -22, 'OBJECTIVE', {
-      fontFamily: 'monospace', fontSize: '12px', color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
-    }).setOrigin(0.5);
-    const marker = this.add.container(x, y, [haloRing, outlineRing, ring, label]);
+    const marker = this.add.container(x, y, [haloRing, outlineRing, ring]);
     // #99: bumped from a bare 5 to the shared DEPTH.WORLD_UI tier — established alongside the
     // rest of the arena's depth scheme (shared.js), one step above impact/death FX (5) so the
     // objective stays legible even through an explosion happening on top of it.
@@ -232,7 +229,7 @@ export const MissionMixin = {
       liveDocks.add(key);
       const { x, y } = hexToPixel(d.q, d.r);
       let m = this._dockMarkers.get(key);
-      if (!m) { m = this._makeMarkHex(x, y, DOCK_MARK_RADIUS, 3, 'DOCK'); this._dockMarkers.set(key, m); }
+      if (!m) { m = this._makeMarkHex(x, y, DOCK_MARK_RADIUS, 3); this._dockMarkers.set(key, m); }
       m.setVisible(this._pointVisible ? this._pointVisible(x, y) : true);
     }
     for (const [key, m] of this._dockMarkers) {
@@ -243,7 +240,7 @@ export const MissionMixin = {
     const liveEnemies = new Set(marks.enemies);
     for (const e of marks.enemies) {
       let m = this._enemyMarkers.get(e);
-      if (!m) { m = this._makeMarkHex(e.x, e.y, ENEMY_MARK_RADIUS, 1.5, null); this._enemyMarkers.set(e, m); }
+      if (!m) { m = this._makeMarkHex(e.x, e.y, ENEMY_MARK_RADIUS, 1.5); this._enemyMarkers.set(e, m); }
       // Floated above the unit rather than ringing it: at drone scale a ring would sit right on
       // top of the #370 shield outline. A small amber hex hovering overhead also stays distinct
       // from the off-screen lock chevron (#368) and the on-ground player colour discs (#348).
@@ -270,15 +267,9 @@ export const MissionMixin = {
   // an OBJECTIVE label, and it is alone on screen at its step (`showObjective` is false for every
   // step that draws these), so a shared pulse cannot confuse the two — they never coexist.
   // The RINGS pulse, not the container, so a dock's label stays put and legible while it breathes.
-  _makeMarkHex(x, y, radius, width, labelText) {
+  _makeMarkHex(x, y, radius, width) {
     const parts = drawPipLayers(this, radius);
     this.tweens.add({ targets: [...parts], ...MARK_PULSE });
-    if (labelText) {
-      parts.push(this.add.text(0, -radius - 12, labelText, {
-        fontFamily: 'monospace', fontSize: '11px',
-        color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
-      }).setOrigin(0.5));
-    }
     return this.add.container(x, y, parts).setDepth(DEPTH.WORLD_UI);
   },
 
@@ -307,8 +298,6 @@ export const MissionMixin = {
       const ring = this._objectiveMarker.list[2];
       this.tweens.killTweensOf(ring);
       drawPip(ring, OBJECTIVE_PIP_RADIUS, { fill: 0x7bd17b, fillAlpha: 0.95, stroke: 0x0b0e14, strokeWidth: 1, strokeAlpha: 0.9 });
-      const label = this._objectiveMarker.list[3];
-      label.setText('CLEARED').setColor('#7bd17b');
     }
   },
 };
