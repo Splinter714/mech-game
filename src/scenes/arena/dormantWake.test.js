@@ -2,7 +2,9 @@
 // the alert-tower wake routing/response split. enemies.js has a vestigial `import Phaser from
 // 'phaser'` whose top-level device detection throws under vitest's node env, so it's stubbed
 // out (same convention as enemyFireAngle.test.js/vehicleFire.test.js).
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { Audio } from '../../audio/index.js';
+import { MAX_AUDIBLE_DISTANCE } from '../../data/positionalAudio.js';
 vi.mock('phaser', () => ({
   default: {
     Math: { Angle: { Wrap: (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; } } },
@@ -844,6 +846,84 @@ describe('#269 overhaul: alert-tower activation triggers + sticky countdown (_up
     scene.terrain.set(KEY, 'rubble');                    // tower destroyed
     scene._updateAlertTowers(0.1);
     expect(scene._signaledTowers.has(KEY)).toBe(false);   // gone — silent + unlit
+  });
+
+  // #385 (real abrupt-cut fix): the two prior fixes only lengthened the fade at the LAST-tower
+  // `stopSiren` call — but that path almost never runs. Destroying the near, blaring tower usually
+  // leaves ANOTHER signaled tower alive (this base's, or a far already-alerted base's), so the voice
+  // REASSIGNS with no fade. When the survivor is far, that reads as an abrupt cut. These pin the fix:
+  // the siren wails DOWN whenever the nearest signaled-alive tower is out of audible range, and only
+  // GLIDES (no cut) when a survivor is still close enough to hear.
+  describe('#385 siren wails down when the audible tower dies (single-voice reassignment)', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    // A far signaled tower well past MAX_AUDIBLE_DISTANCE, standing in for a cross-map alerted base.
+    const FAR = { q: 50, r: 0 };
+    const FAR_KEY = axialKey(FAR.q, FAR.r);
+
+    function signalOriginTower() {
+      const { scene } = makeTowerScene();
+      const { x, y } = hexToPixel(TOWER.q, TOWER.r);
+      scene.px = x; scene.py = y;          // player hugging the origin tower — it's the audible one
+      scene._updateAlertTowers(30);        // signal it
+      expect(scene._signaledTowers.has(KEY)).toBe(true);
+      return { scene, x, y };
+    }
+
+    it('destroying the audible tower with only a FAR survivor left FADES the siren (not an instant cut)', () => {
+      const { scene } = signalOriginTower();
+      // A second, far-off signaled tower survives (out of audible range).
+      const far = hexToPixel(FAR.q, FAR.r);
+      expect(Math.hypot(far.x - scene.px, far.y - scene.py)).toBeGreaterThan(MAX_AUDIBLE_DISTANCE);
+      scene.terrain.set(FAR_KEY, 'alertTower');
+      scene._signaledTowers.set(FAR_KEY, { x: far.x, y: far.y });
+
+      const stopSiren = vi.spyOn(Audio, 'stopSiren').mockImplementation(() => {});
+      const updateSiren = vi.spyOn(Audio, 'updateSiren').mockImplementation(() => {});
+
+      scene.terrain.set(KEY, 'rubble');    // player destroys the near, blaring tower
+      scene._updateAlertTowers(0.1);
+
+      // The voice must WAIL DOWN — stopSiren called WITH a real fade (~1s), not reassigned onto the
+      // far survivor at its near-silent distance gain (the abrupt cut), and never a bare/instant stop.
+      expect(stopSiren).toHaveBeenCalledTimes(1);
+      const fade = stopSiren.mock.calls[0][0];
+      expect(fade).toBeGreaterThanOrEqual(1);
+      expect(updateSiren).not.toHaveBeenCalled();   // did NOT snap the voice onto the far tower
+    });
+
+    it('destroying the audible tower while a NEAR survivor remains GLIDES the voice (no fade/cut)', () => {
+      const { scene } = signalOriginTower();
+      // A survivor close enough to still be heard — reassignment should keep the siren going.
+      const near = hexToPixel(2, 0);
+      expect(Math.hypot(near.x - scene.px, near.y - scene.py)).toBeLessThan(MAX_AUDIBLE_DISTANCE);
+      const NEAR_KEY = axialKey(2, 0);
+      scene.terrain.set(NEAR_KEY, 'alertTower');
+      scene._signaledTowers.set(NEAR_KEY, { x: near.x, y: near.y });
+
+      const stopSiren = vi.spyOn(Audio, 'stopSiren').mockImplementation(() => {});
+      const updateSiren = vi.spyOn(Audio, 'updateSiren').mockImplementation(() => {});
+
+      scene.terrain.set(KEY, 'rubble');    // destroy the origin tower
+      scene._updateAlertTowers(0.1);
+
+      expect(updateSiren).toHaveBeenCalledTimes(1);   // reassigned to the near survivor, no cut
+      expect(updateSiren.mock.calls[0][0]).toMatchObject({ x: near.x, y: near.y });
+      expect(stopSiren).not.toHaveBeenCalled();
+    });
+
+    it('destroying the ONLY/last audible tower FADES the siren over ~1s', () => {
+      const { scene } = signalOriginTower();
+      const stopSiren = vi.spyOn(Audio, 'stopSiren').mockImplementation(() => {});
+      const updateSiren = vi.spyOn(Audio, 'updateSiren').mockImplementation(() => {});
+
+      scene.terrain.set(KEY, 'rubble');
+      scene._updateAlertTowers(0.1);
+
+      expect(stopSiren).toHaveBeenCalledTimes(1);
+      expect(stopSiren.mock.calls[0][0]).toBeGreaterThanOrEqual(1);
+      expect(updateSiren).not.toHaveBeenCalled();
+    });
   });
 });
 
