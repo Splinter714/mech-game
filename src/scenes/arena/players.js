@@ -26,8 +26,9 @@
 // (which carries `px`/`py`/`mech` instead of a collection) present as a one-player array.
 import {
   allPlayersDead, anyPlayerAlive, livePlayers, nearestPlayer, playersCentroid, primaryPlayer,
-  playerColor,
+  playerColor, showsPlayerColor,
 } from '../../data/players.js';
+import { powerupSpotColors } from '../../data/powerups.js';
 
 // THE collection. A real ArenaScene sets `scene.players` in create(). A legacy scene double
 // gets a synthesized one-player adapter, cached on the double, whose fields are live getters
@@ -105,6 +106,17 @@ export function cameraFocusOf(scene) {
   const p = primaryPlayerOf(scene);
   if (!c) return p ? { x: p.x, y: p.y, view: p.view } : null;
   return { x: c.x, y: c.y, view: p?.view ?? null };
+}
+
+// (4a) #400/#404: the center-torso STATUS-SPOT colour list for `player` RIGHT NOW. The one
+// place both the per-frame sync (coop.js `_updatePlayerMarkers`) and the damage re-raster
+// (combat.js `_damagePlayerAt`) resolve it from, so a damage rebuild can never disagree with the
+// live indicator. CO-OP (2+ players) → the player's own identifying colour, so mechs are told
+// apart; SINGLE-PLAYER → the active-powerup colours (sectioned when several; empty = the "no
+// powerup" black). `scene.activePowerups` is the shared timed-buff overlay (powerups.js).
+export function statusSpotColorsFor(scene, player) {
+  if (showsPlayerColor(playersOf(scene).length)) return [playerColor(player.id ?? 0)];
+  return powerupSpotColors(Object.keys(scene.activePowerups || {}));
 }
 
 // (4b) #348 FRIENDLY FIRE: is this hit-trace candidate one of the players? Friendly fire is ON

@@ -127,7 +127,14 @@ const SPAWN_WORLD_INSET = 1.5;      // hexes of inset from the world edge kept c
 const TURRET_HUDDLE_OFFSET = 10;
 
 // Movement feel.
-const MOVE_SPEED_FRAC = 0.85;       // fraction of chassis maxSpeed the AI drives at
+// #398 (owner-set): enemy MECHS drive NOTICEABLY SLOWER / more lumbering across the board —
+// 0.85 -> 0.6, a ~29% cut to the fraction of chassis maxSpeed the AI drives at, applied to ALL
+// enemy mechs at once (every archetype/chassis reads heavier). This is the mech-only lever: it
+// gates the `_updateEnemy` mech movement path only — non-mech vehicle kinds (tank/drone/etc.)
+// move via enemyBehaviors.js and never touch it, and the player has its own locomotion. Cut, not
+// zeroed, so mechs still close distance eventually — just as a heavy, deliberate advance. Owner
+// verifies the lumbering feel in play; this is the dial to nudge.
+const MOVE_SPEED_FRAC = 0.6;        // fraction of chassis maxSpeed the AI drives at
 const ARRIVE_SLOW = 70;             // px from a destination where the enemy eases to a stop
 const REPICK_ON_ARRIVE = true;      // arriving at a FLANK/COVER goal forces an early re-decide
 

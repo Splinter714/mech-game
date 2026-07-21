@@ -142,6 +142,36 @@ export function glowBar(sg, cx, cy, w, h, n) {
   rectC(sg, cx, cy, w * 0.36, h * 0.7, n.hot, 1);
 }
 
+// #400/#404: the center-torso STATUS SPOT — replaces the reactor spine's fixed purple with a
+// data-driven indicator. This primitive is MEANING-AGNOSTIC: it renders whatever colour list
+// the caller resolves (single-player → active-powerup colours; co-op → the player's identifying
+// colour). The list decides the look: 0 colours → a dark "no powerup" core; 1 → a solid glowing
+// bar; N → N sections stacked along the bar's length (a vertical spine reads top-to-bottom).
+// A vertical bar of (cx,cy,w,h). Mirrors glowBar's glow language so it still reads as "core".
+export function statusSpotBar(sg, cx, cy, w, h, colors) {
+  if (!colors || colors.length === 0) {
+    rectC(sg, cx, cy, w, h, 0x0a0b0d);                 // dark core = no active powerup
+    rectC(sg, cx, cy, w * 0.5, h * 0.86, 0x16181c);    // faint inner so it reads as a housing, not a hole
+    return;
+  }
+  const n = colors.length;
+  const top = cy - h / 2, seg = h / n;
+  rectC(sg, cx, cy, w * 1.9 + 1.4, h * 1.5 + 1.4, colors[0], 0.32);   // soft glow halo behind the whole bar
+  for (let i = 0; i < n; i++) {
+    const sy = top + seg * (i + 0.5);
+    rectC(sg, cx, sy, w, seg, colors[i], 1);                          // the section's own colour
+    rectC(sg, cx, sy, w * 0.4, seg * 0.66, mixToWhite(colors[i], 0.5), 1); // hot center streak
+  }
+}
+
+// Mix a 0xRRGGBB colour `t` of the way toward white (0 = colour, 1 = white). Local to the
+// status-spot glow; kept tiny and dependency-free.
+function mixToWhite(c, t) {
+  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+  const m = (v) => Math.round(v + (255 - v) * t);
+  return (m(r) << 16) | (m(g) << 8) | m(b);
+}
+
 // A weapon barrel: a glossy ellipse (bubbly), a rounded bar (rounded), or a plain dark
 // bar (angular). Shared by the ballistic/support/energy mounts.
 export function barrel(sg, T, cx, cy, w, h) {
@@ -175,6 +205,55 @@ export function armorShell(sg, cx, cy, w, h) {
     rectC(sg, sx + (dx * len) / 2, sy, len, bw, ARMOR_SHELL, 0.8);
     rectC(sg, sx, sy + (dy * len) / 2, bw, len, ARMOR_SHELL, 0.8);
   }
+}
+
+// A thick line segment (a rotated quad) between two design-coord points — used to draw the
+// frayed cabling / struts inside a torn-open panel.
+function thickLine(sg, x0, y0, x1, y1, t, fill, alpha = 1) {
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * (t / 2), ny = (dx / len) * (t / 2);
+  poly(sg, [[x0 + nx, y0 + ny], [x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x0 - nx, y0 - ny]], fill, alpha);
+}
+
+// #401 — the ARMOR-STRIPPED state, replacing the #246 "brackets bolted on top of an armored
+// plate" read. The new direction (owner's): the clean base plate IS the fully-armored look, so
+// full armor draws NOTHING extra. When a location's ARMOR is gone but its STRUCTURE still lives
+// (distinct from `stump`, which is full destruction), a jagged panel is TORN OFF this part to
+// bare the internals underneath — a dark cavity, a lit powered core, strut/actuator hardware,
+// frayed multicoloured cabling and a couple of spark glints. Baked into the part texture (rebuilt
+// only when armor breaks/returns, per the existing `armorBrokeNow` reskin gate), so the "spark"
+// is a fixed hot glint, not a per-frame animation. Deterministic jag offsets keep it stable.
+const INTERNAL_DARK = 0x0a0d13;   // the shadowed void behind the peeled shell
+const INTERNAL_STRUT = 0x363d47;  // actuators / structural ribs inside
+const SPARK = { halo: 0xffb04a, core: 0xffd98a, hot: 0xffffff, edge: 0xffcf85 };
+const WIRES = [0xd23b3b, 0xe0b23a, 0x3ba0e0, 0x46c07a];  // frayed cabling (R/Y/B/G)
+export function exposedInternals(sg, T, cx, cy, w, h) {
+  const m = Math.min(w, h);
+  // Jagged torn cavity: an 8-point ring with alternating in/out radii so the rim reads as
+  // bent-back, ripped plating rather than a clean-cut hole. Fixed jag => stable across rebuilds.
+  const rw = w * 0.36, rh = h * 0.36;
+  const jag = [1.0, 0.62, 0.94, 0.68, 1.04, 0.6, 0.9, 0.7];
+  const cav = jag.map((k, i) => {
+    const a = (i / jag.length) * Math.PI * 2 - Math.PI / 2;
+    return [cx + Math.cos(a) * rw * k, cy + Math.sin(a) * rh * k];
+  });
+  // Peeled-back metal lip (a larger, lighter torn edge) then the dark interior void.
+  poly(sg, cav.map(([x, y]) => [(x - cx) * 1.18 + cx, (y - cy) * 1.18 + cy]), T.faceDk);
+  poly(sg, cav.map(([x, y]) => [(x - cx) * 1.08 + cx, (y - cy) * 1.08 + cy]), T.outline);
+  poly(sg, cav, INTERNAL_DARK);
+  // A faint powered glow deep in the cavity — reads as "live machine still running inside."
+  ellipseC(sg, cx, cy + h * 0.04, rw * 1.1, rh * 0.9, REACTOR.halo, 0.28);
+  // Structural struts / actuator ribs behind the wiring.
+  thickLine(sg, cx - rw * 0.55, cy - rh * 0.7, cx - rw * 0.35, cy + rh * 0.75, m * 0.1, INTERNAL_STRUT);
+  thickLine(sg, cx + rw * 0.5, cy - rh * 0.75, cx + rw * 0.4, cy + rh * 0.7, m * 0.1, INTERNAL_STRUT);
+  // Frayed cabling: a few thin coloured runs across the cavity at varied angles.
+  thickLine(sg, cx - rw * 0.7, cy - rh * 0.3, cx + rw * 0.6, cy + rh * 0.2, Math.max(0.7, m * 0.05), WIRES[0]);
+  thickLine(sg, cx - rw * 0.4, cy + rh * 0.6, cx + rw * 0.55, cy - rh * 0.55, Math.max(0.7, m * 0.05), WIRES[1]);
+  thickLine(sg, cx - rw * 0.15, cy - rh * 0.75, cx + rw * 0.1, cy + rh * 0.7, Math.max(0.6, m * 0.045), WIRES[2]);
+  thickLine(sg, cx + rw * 0.1, cy + rh * 0.5, cx - rw * 0.6, cy + rh * 0.1, Math.max(0.6, m * 0.045), WIRES[3]);
+  // A couple of hot spark glints where the shell tore free.
+  glowDot(sg, cx + rw * 0.45, cy - rh * 0.4, Math.max(0.9, m * 0.07), SPARK);
+  glowDot(sg, cx - rw * 0.5, cy + rh * 0.45, Math.max(0.7, m * 0.05), SPARK);
 }
 
 // A destroyed location: a charred lump with faint embers.

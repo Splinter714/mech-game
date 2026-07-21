@@ -208,6 +208,17 @@ export function dropChanceForKill(toughness, isCrush = false) {
 // Ordered id list (stable) — used by the weighted pick and by any UI that wants a fixed order.
 export const POWERUP_IDS = Object.keys(POWERUPS);
 
+// #400: the ordered list of COLOURS for the center-torso status spot, given the set of
+// currently-active powerup ids (the keys of the arena's `activePowerups` overlay). Ordered by
+// the POWERUPS declaration order — NOT pickup order — so the sectioning is stable frame to
+// frame (a spot that reshuffles its sections every time a buff expires would read as noise).
+// Unknown ids are skipped. Empty in → empty out (the arena renders that as the "no powerup"
+// black). Pure so it can be unit-tested and reused by the mech-art status-spot renderer.
+export function powerupSpotColors(activeIds) {
+  const set = new Set(activeIds || []);
+  return POWERUP_IDS.filter((id) => set.has(id)).map((id) => POWERUPS[id].color);
+}
+
 // #315: the subset of ids that can come out of a RANDOM drop — everything with a positive
 // weight. An entry with `weight: 0` (today only `armorPatch`, which is awarded exclusively for
 // destroying a base objective) is excluded from the pool outright rather than merely being
