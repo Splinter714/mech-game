@@ -254,6 +254,9 @@ export const ProjectilesMixin = {
             // #374: the round dies where it was actually caught — its own normal impact FX at the
             // exact in-flight stop position (p.x, p.y), NOT a puff at the hex centre — just no damage.
             this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+            // #405: the shot the foliage CAUGHT chips this hex's clear-HP (may flatten it to open
+            // ground). This is the headline "blast a firing lane through the woods" case.
+            this._damageSoftCoverHex?.(curKey);
             continue;
           }
         }
@@ -280,6 +283,8 @@ export const ProjectilesMixin = {
           const block = this._softCoverStopsShot?.(ally, p.originHexes);
           if (block) {
             this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+            // #405: caught on the teammate's own foliage hex — chip it.
+            this._damageSoftCoverHex?.(this._hexKeyAt(ally.x, ally.y));
           } else {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
             this._damagePlayerAt(dmg, ally);
@@ -309,6 +314,9 @@ export const ProjectilesMixin = {
           const block = this._softCoverStopsShot?.(victim, p.originHexes);
           if (block) {
             this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
+            // #405: caught on the target's own foliage hex — chip it (wears cover down around a
+            // unit you're shooting at while it's standing in the trees).
+            if (victim) this._damageSoftCoverHex?.(this._hexKeyAt(victim.x, victim.y));
             continue;
           }
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
