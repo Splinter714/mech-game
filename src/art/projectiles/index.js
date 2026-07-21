@@ -16,7 +16,24 @@ export const PROJECTILE_ART = { plasma, missile, flame, fire, bullet, slug };
 // A travelling round's body, drawn at (x, y) heading along `angle`. `phase` drives the
 // flame flicker (the arena passes the round's distance; icons pass 0). Computes the heading
 // vector once and dispatches to the registered kind (default `slug`).
-export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0) {
+//
+// `foreshorten` (#377) compresses the sprite ALONG its travel axis only (perpendicular width
+// unchanged) to fake pitch on an arcing round — 1 = full side-on length, <1 = seen more end-on
+// as it climbs/dives. It's applied via a canvas transform (translate→rotate→scaleX) so no
+// per-kind art has to know about it: the kind draws itself at the origin heading +x as usual,
+// and the scaleX squashes only the length. The fast common path (foreshorten === 1) keeps the
+// original direct-coordinate draw untouched.
+export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0, foreshorten = 1) {
+  const drawKind = PROJECTILE_ART[kind] ?? PROJECTILE_ART.slug;
+  if (foreshorten !== 1) {
+    g.save();
+    g.translateCanvas(x, y);
+    g.rotateCanvas(angle);
+    g.scaleCanvas(foreshorten, 1);     // squash length along the travel axis, keep width
+    drawKind(g, 0, 0, 1, 0, color, s, phase);
+    g.restore();
+    return;
+  }
   const ca = Math.cos(angle), sa = Math.sin(angle);
-  (PROJECTILE_ART[kind] ?? PROJECTILE_ART.slug)(g, x, y, ca, sa, color, s, phase);
+  drawKind(g, x, y, ca, sa, color, s, phase);
 }

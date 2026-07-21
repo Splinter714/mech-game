@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -929,6 +929,38 @@ describe('#377 arc loft profiles', () => {
     expect(arcLoft(1.2, 'steepDrop')).toBeCloseTo(0, 10);
     expect(arcLoft(1.2, 'lob')).toBeCloseTo(0, 10);
     expect(arcLoft(-0.2, 'steepDrop')).toBeCloseTo(0, 10);
+  });
+});
+
+// #377: the sprite-pitch foreshorten — full side-on at the flat apex, compressed end-on while
+// climbing off the muzzle and while diving onto the target (large |dh/dt| of the loft curve).
+describe('arcForeshorten (fake sprite pitch from arc vertical velocity)', () => {
+  it('is (near) full length at the flat apex/cruise and compressed at the steep ends', () => {
+    // lob: apex is dead-centre where dh/dt = 0 → full side-on length.
+    expect(arcForeshorten(0.5, 'lob')).toBeCloseTo(1, 6);
+    // Steep climb off the muzzle and steep plunge at the end are both foreshortened below full.
+    expect(arcForeshorten(0.02, 'lob')).toBeLessThan(0.9);
+    expect(arcForeshorten(0.98, 'lob')).toBeLessThan(0.9);
+  });
+
+  it('treats climb and dive symmetrically for a symmetric lob (same |vertical velocity|)', () => {
+    expect(arcForeshorten(0.15, 'lob')).toBeCloseTo(arcForeshorten(0.85, 'lob'), 6);
+  });
+
+  it('never collapses past the minScale floor and never exceeds full length', () => {
+    for (let t = 0; t <= 1; t += 0.02) {
+      for (const profile of ['lob', 'steepDrop']) {
+        const f = arcForeshorten(t, profile);
+        expect(f).toBeGreaterThanOrEqual(ARC_PITCH_MIN_SCALE - 1e-9);
+        expect(f).toBeLessThanOrEqual(1 + 1e-9);
+      }
+    }
+  });
+
+  it('steepDrop: cruise reads near full side-on, while the pop and the terminal dive squash', () => {
+    expect(arcForeshorten(0.45, 'steepDrop')).toBeGreaterThan(0.9);   // near-flat cruise
+    expect(arcForeshorten(STEEP_DROP_RISE_END / 2, 'steepDrop')).toBeLessThan(0.75);  // pop
+    expect(arcForeshorten(0.95, 'steepDrop')).toBeLessThan(0.75);     // plunge
   });
 
   it('makeProjectile stamps the profile per round, defaulting to lob', () => {

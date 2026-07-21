@@ -716,7 +716,9 @@ export const BasesMixin = {
     const { listenerX, listenerY } = listenerOf(this);
     const src = pickSirenSource(alive, listenerX, listenerY);
     if (src) Audio.updateSiren({ x: src.x, y: src.y, listenerX, listenerY });
-    else Audio.stopSiren(0.6);   // #385: the last signaled tower fell — trail the wail off, don't snap it silent
+    else Audio.stopSiren(1.1);   // #385: the last signaled tower fell — trail the wail off, don't snap it silent
+    // (~1.1s: the fade is an EXPONENTIAL ramp to near-silence, which front-loads its attenuation —
+    //  0.6s of scheduled ramp was only ~0.2-0.3s of AUDIBLE fade and still read as a click-off.)
   },
 
   // #385: the continuous red pulse for ONE signaled-alive tower — a steady hexring that beats on a
