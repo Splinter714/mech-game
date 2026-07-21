@@ -61,11 +61,18 @@ export function shieldPartKeys(def) {
 export const SHIELD_OUTLINE_SCALE_MULT = 1.14;
 export const SHIELD_HIT_FLASH_MULT = 1.15;
 
-// #381: how much the glow SWELLS per unit of temp-pool-to-base-capacity ratio. A full 150-temp
-// pool on the player's 100 base (ratio 1.5) grows the shell by 1 + 0.5*1.5 = 1.75x on top of the
-// normal 1.14x rim — a clearly larger protective bubble that shrinks back as the pool is spent.
-// Enemies never carry a temp pool, so their outline is byte-for-byte unchanged (growth ≡ 1).
-export const SHIELD_TEMP_GROW_K = 0.5;
+// #397: the PLAYER shell is drawn tighter and with NORMAL (not ADD) blend — see the long note on
+// `makeShieldOutline`'s `blend` param. A tighter hug ("hugs the mech more tightly") plus a crisp
+// solid rim that the muzzle glow can no longer balloon. Enemies keep the default rim + ADD glow.
+export const SHIELD_PLAYER_SCALE_MULT = 1.08;
+export const SHIELD_PLAYER_BLEND = Phaser.BlendModes.NORMAL;
+
+// #381: how much the glow SWELLS per unit of temp-pool-to-base-capacity ratio. #397 dialled this
+// WAY down (was 0.5): a full 150-temp pool on the player's 100 base (ratio 1.5) now grows the
+// shell by only 1 + 0.2*1.5 = 1.3x on top of the tight 1.08x rim (was 1.75x on a loose 1.14x —
+// "a bit too large after the shield powerup"). The powerup now reads as a tighter, punchier shell
+// rather than a huge bubble. Enemies never carry a temp pool, so their outline is unchanged (growth ≡ 1).
+export const SHIELD_TEMP_GROW_K = 0.2;
 
 // ── Pure state/appearance logic (no Phaser — unit-tested in shieldOutline.test.js) ───────────
 
