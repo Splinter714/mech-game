@@ -77,6 +77,13 @@ export const SKILL_BINDS = {
 // it isn't keyed by a body location like SKILL_BINDS. Exported for the HUD's cooldown label.
 export const DASH_BIND = { key: 'Space', pad: 'L3' };
 
+// #402: manual-RELOAD bind — R3 / F, which have been UNBOUND since #322 (see the header note
+// above). Press to reload all of this player's weapons at once (Mech.reloadAllWeapons). Like
+// Dash, it isn't a mountable location, so it lives here rather than in SKILL_BINDS. Exported for
+// any HUD hint that wants to name it.
+export const RELOAD_BIND = { key: 'F', pad: 'R3' };
+const PAD_R3 = PAD.R3;
+
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
 // transitions) where the held-flag fire intent isn't appropriate. One instance per scene
@@ -160,6 +167,8 @@ export class Controls {
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
     this._padDashDown = false;     // previous frame's raw L3 state, for edge-detecting the dash trigger
     this._kbDashDown = false;      // previous frame's raw Space state, for edge-detecting the dash trigger
+    this._padReloadDown = false;   // #402: previous frame's raw R3 state, for edge-detecting reload
+    this._kbReloadDown = false;    // #402: previous frame's raw F state, for edge-detecting reload
 
     // #346: on-screen sticks. Only wired up when the device can actually produce touches;
     // even then, `mode` doesn't become 'touch' until a real touch pointer arrives, so a
@@ -264,6 +273,7 @@ export class Controls {
         fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
         mode: 'touch',
         dashPressed: false,
+        reloadPressed: false,   // #402: touch reports no reload, same as no fire/dash
       };
     }
 
@@ -278,6 +288,7 @@ export class Controls {
         fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
         mode: 'pad',
         dashPressed: false,
+        reloadPressed: false,   // #402: no pad, no reload edge to report
       };
     }
 
@@ -337,6 +348,17 @@ export class Controls {
     this._kbDashDown = kbDashDown;
     const dashPressed = padMode ? padDashPressed : kbDashPressed;
 
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', dashPressed };
+    // #402: manual reload (R3 / F) — edge-detected exactly like the dash above, each device
+    // tracked independently every frame so a mid-press mode switch can't leave a stale edge,
+    // then only the currently-active scheme's edge is reported.
+    const padReloadDown = !!(pad && pad.buttons[PAD_R3] && pad.buttons[PAD_R3].pressed);
+    const padReloadPressed = padReloadDown && !this._padReloadDown;
+    this._padReloadDown = padReloadDown;
+    const kbReloadDown = k.F.isDown;
+    const kbReloadPressed = kbReloadDown && !this._kbReloadDown;
+    this._kbReloadDown = kbReloadDown;
+    const reloadPressed = padMode ? padReloadPressed : kbReloadPressed;
+
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', dashPressed, reloadPressed };
   }
 }
