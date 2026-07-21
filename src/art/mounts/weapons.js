@@ -84,12 +84,12 @@ function autocannon(sg, T, bx, frontY, s, n, cap) {
   glowDot(sg, bx, frontY - L, 1.7 * s, n);
 }
 
-// Repeater — a MULTI-barrel gatling: three thin barrels in a row over a wide housing, each
-// with its own small muzzle glow. Reads as a rapid tracer stream.
+// Repeater — a MULTI-barrel gatling: two thin barrels in a row over a wide housing, each
+// with its own small muzzle glow (matches its two stream lanes). Reads as a rapid tracer stream.
 function machineGun(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('machineGun', s, cap), w = 1.2 * s, off = 1.7 * s;
   rectC(sg, bx, frontY - L * 0.4, (off * 2 + w) * 1.5, L * 0.8, T.deep);  // gatling housing
-  for (const dx of [-1, 0, 1]) {
+  for (const dx of [-0.5, 0.5]) {
     barrel(sg, T, bx + dx * off, frontY - L / 2, w, L);
     glowDot(sg, bx + dx * off, frontY - L + 0.4, 1.0 * s, n);
   }
