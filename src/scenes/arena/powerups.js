@@ -33,7 +33,7 @@ import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
-  SHIELD_PLAYER_SCALE_MULT, SHIELD_PLAYER_BLEND,
+  SHIELD_PLAYER_SCALE_MULT, SHIELD_PLAYER_BLEND, SHIELD_PLAYER_OFFSET_PX,
 } from './shieldOutline.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
@@ -83,7 +83,13 @@ export const PowerupsMixin = {
       color: POWERUPS.shield.color,
       // #397: the player shell hugs tighter and blends NORMAL, so the muzzle glow can't balloon it
       // and it reads even all around (see makeShieldOutline's `blend` note). Enemies keep ADD.
+      // #422: the shell sits a CONSISTENT display-px distance outside the silhouette on every side
+      // (uniform margin) rather than a width/depth-proportional scale — pass the offset + the live
+      // mech so makeShieldOutline can size each axis off the real body half-extents. scaleMult stays
+      // as the fallback if either is ever missing.
       scaleMult: SHIELD_PLAYER_SCALE_MULT,
+      offsetPx: SHIELD_PLAYER_OFFSET_PX,
+      mech: player.mech,
       blend: SHIELD_PLAYER_BLEND,
       // #397 follow-up: hug the BODY armor only — draw from the body-only `_shield` textures so the
       // guns and their muzzle glow poke out unshielded (see makeShieldOutline's `bodyOnly` note).

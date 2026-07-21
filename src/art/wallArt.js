@@ -122,20 +122,11 @@ function drawGate(g, e, hw, timeMs) {
   for (const [ax, ay, bx, by] of leaves) g.fillCircle((ax + bx) / 2, (ay + by) / 2, hw * 0.3);
 }
 
-// #310 TURRET-SPAN MARK. The owner (playtest 2026-07-19): wall turrets "don't need a whole
-// separate wall-type-piece visually, they can just be popped on the main wall section." So the
-// PLINTH this file used to draw — a widened armoured block at the span's midpoint, ~2.2x the wall's
-// thickness, with its own palette and corner posts — is gone. A turret span is now geometrically
-// identical to every other span: the gun is simply popped on top of the ordinary wall.
-//
-// What the plinth was for, and what replaces it: a turret span had to stay readable after its gun
-// died, since the gun is a separate unit on the units layer and a plain span would erase any
-// evidence an emplacement was ever there. That is kept, but as a PALETTE/DETAIL touch instead of
-// geometry — the span's normal amber hazard pip is swapped for a cold cyan emplacement mark (the
-// Wall Lance's own themeColor), same size and same position as the pip it replaces. Armed spans
-// are still pickable out of the line from across the field, and a span whose gun is dead still
-// carries the mark, with no bespoke shape anywhere.
-const TURRET_MARK = 0x5ac8e0;        // cold cyan, matching the Wall Lance's own themeColor
+// #310/#413 TURRET-SPAN MARK. A turret span used to draw a widened armoured PLINTH; #310 dropped
+// that so a turret span is geometrically identical to every other span (the gun is simply popped on
+// top of the ordinary wall), and marked the difference only with a cold-cyan midpoint pip. #413
+// removed the midpoint pips entirely, so an armed span now carries no wall-level mark at all — it is
+// identified purely by the gun unit sitting on top of it.
 
 export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 0) {
   g.clear();
@@ -172,16 +163,8 @@ export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 
     g.fillCircle(e.x0, e.y0, hw * 0.92);
     g.fillCircle(e.x1, e.y1, hw * 0.92);
   }
-  // Pass 5: a pip at each standing span's midpoint — small, but it's what makes the line read from
-  // a distance as a defended perimeter rather than a rock formation. #310: a TURRET span's pip is
-  // cold cyan instead of amber (and marginally larger), which is the entire visual difference
-  // between an armed span and a plain one — no separate geometry, per the owner's 2026-07-19 call.
-  for (const e of live) {
-    const frac = e.maxHp ? Math.max(0, Math.min(1, e.hp / e.maxHp)) : 1;
-    const armed = e.role === 'turret';
-    g.fillStyle(armed ? TURRET_MARK : HAZARD, armed ? 0.5 + 0.45 * frac : 0.35 + 0.5 * frac);
-    g.fillCircle((e.x0 + e.x1) / 2, (e.y0 + e.y1) / 2, hw * (armed ? 0.38 : 0.3));
-  }
+  // #413: the per-span midpoint pip is gone — the owner wanted the small dot marks off the tops of
+  // the wall segments. The wall now reads from its body/plate/shadow and junction pillars alone.
   // Pass 6 (#309): the gates, last, so an open mouth's threshold glow reads over the wall line
   // beside it rather than being painted under the neighbouring spans.
   for (const e of gates) drawGate(g, e, hw, timeMs);

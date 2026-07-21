@@ -240,14 +240,24 @@ export function arcLoft(t, profile = 'lob') {
 // vertical velocity: dh/dt of arcLoft. |dh/dt| is large during the climb and the dive (compress)
 // and ~0 across the apex/cruise (full length). This is exactly cos(pitch) rendered as an
 // along-axis scale — pure and testable here; the renderer just multiplies it onto the sprite.
-export const ARC_PITCH_MIN_SCALE = 0.5;   // steepest climb/dive: along-axis length collapses to this
-export const ARC_PITCH_SLOPE_GAIN = 0.28; // maps |dh/dt| (height-fraction per unit t) into 0..1 compression
+export const ARC_PITCH_MIN_SCALE = 0.62;  // steepest climb/dive: along-axis length collapses to this
+export const ARC_PITCH_SLOPE_GAIN = 0.5;  // maps |dh/dt| (height-fraction per unit t) into 0..1 compression
+export const ARC_PITCH_SLOPE_WINDOW = 0.09; // half-width of the finite-difference window used to read dh/dt
 
-export function arcForeshorten(t, profile = 'lob', minScale = ARC_PITCH_MIN_SCALE, gain = ARC_PITCH_SLOPE_GAIN) {
-  const e = 0.01;
-  const t0 = Math.max(0, t - e), t1 = Math.min(1, t + e);
+// #377 follow-up: Jackson found the pitch change ABRUPT — the factor snapped, worst at the
+// steepDrop arc's PHASE BOUNDARIES (its loft is piecewise, so raw dh/dt jumps there) and again
+// wherever the old `min(1, …)` clamp hit its ceiling and pinned flat at the floor. Three pure
+// changes make the pitch ease smooth and continuous, all while staying a pure fn of t:
+//   * a SMOOTH saturation (`tanh`) instead of the hard `min(1, …)` clamp — no corner, so the
+//     factor eases toward full compression asymptotically rather than snapping into a plateau;
+//   * a RAISED floor (`minScale` 0.5 → 0.62) so the steepest ends never hard-squash;
+//   * a WIDER slope window (0.01 → 0.09) that averages dh/dt across a neighbourhood — a spatial
+//     low-pass that softens the steepDrop boundary jumps (measured ~3× smaller max step) without
+//     needing per-frame history.
+export function arcForeshorten(t, profile = 'lob', minScale = ARC_PITCH_MIN_SCALE, gain = ARC_PITCH_SLOPE_GAIN, window = ARC_PITCH_SLOPE_WINDOW) {
+  const t0 = Math.max(0, t - window), t1 = Math.min(1, t + window);
   const slope = (arcLoft(t1, profile) - arcLoft(t0, profile)) / (t1 - t0);   // dh/dt: + climbing, − diving
-  const amt = Math.min(1, Math.abs(slope) * gain);                           // 0 flat … 1 steepest
+  const amt = Math.tanh(Math.abs(slope) * gain);                             // 0 flat … →1 steepest, smooth
   return 1 - amt * (1 - minScale);                                           // 1 side-on … minScale end-on
 }
 
@@ -602,6 +612,35 @@ export function stepProjectile(p, dt, desiredAngle = null) {
     p.wobbleOffset = offset;
   }
 }
+
+// ── Failed-pass give-up (#418) ─────────────────────────────────────────────────────────────
+// A guided round that overshoots — gets close but can't line up the hit — used to keep homing
+// forever, banking around the target trying for another pass (it only ever stopped when it ran
+// out of range). Owner's call: after a FAILED PASS, STOP homing, fly STRAIGHT on the current
+// heading, and continue until it hits the ground/terrain or its max range and detonates there.
+//
+// "Failed pass" is detected purely from the round's own distance to its target: track the
+// CLOSEST APPROACH seen so far (`homingMinDist`), and once the round has begun RECEDING from
+// that closest point by more than `HOMING_GIVEUP_RECEDE_PX`, it has passed the target and is
+// pulling away — give up. The margin sits comfortably above the arena's 32px hit radius, so a
+// round that actually got within striking range detonates before this ever trips; only a
+// genuine miss (closest approach outside the kill radius, now moving away) gives up. Pure and
+// stateful on the round, so it's shared by every guided round and unit-testable Phaser-free.
+// A tunable dial. Dumbfire rounds never call this, so they're unaffected.
+const HOMING_GIVEUP_RECEDE_PX = 48;   // px of recession past closest approach before a guided round quits homing
+
+// Update the round's closest-approach tracker with its current `dist` to the target and report
+// whether it has now overshot (receded past the give-up margin). The caller disables `p.homing`
+// on a true result, after which the round flies ballistically to ground/range.
+export function homingShouldGiveUp(p, dist, recede = HOMING_GIVEUP_RECEDE_PX) {
+  if (p.homingMinDist == null || dist < p.homingMinDist) {
+    p.homingMinDist = dist;
+    return false;
+  }
+  return dist > p.homingMinDist + recede;
+}
+
+export { HOMING_GIVEUP_RECEDE_PX };
 
 // Rotate angle `a` toward `target` by at most `maxStep`, taking the shortest way around.
 export function rotateToward(a, target, maxStep) {
