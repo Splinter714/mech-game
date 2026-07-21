@@ -13,7 +13,7 @@ vi.mock('phaser', () => ({ default: {} }));
 
 import {
   shieldOutlineActive, shieldOutlineAlpha, shieldOutlineGrowth, updateShieldOutline,
-  SHIELD_VEHICLE_PART_KEYS, shieldPartKeys,
+  makeShieldOutline, SHIELD_VEHICLE_PART_KEYS, shieldPartKeys,
 } from './shieldOutline.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { createShield, damageShield, tickShield, grantTempShield } from '../../data/shield.js';
@@ -192,6 +192,65 @@ describe('updateShieldOutline (shared driver, driven here on a vehicle-shaped 2-
     expect(sv.t).toBeGreaterThan(0);
     updateShieldOutline(sv, view, { hp: 0, max: 30 }, 16.67);
     expect(sv.t).toBe(0);
+  });
+});
+
+// #397 follow-up: the PLAYER shell is drawn from BODY-ONLY `_shield` textures so the guns + their
+// muzzle glow poke out unshielded. `bodyOnly` maps each weapon-carrying part's real texture to its
+// `_shield` variant (where one exists) and the driver keeps using that variant per frame.
+describe('makeShieldOutline bodyOnly (#397)', () => {
+  const fakeSceneSprite = () => {
+    const s = {
+      texture: { key: 'unset' },
+      setOrigin: () => s, setScale: () => s, setTintFill: () => s, setBlendMode: () => s,
+      setVisible: () => s, setTexture: vi.fn(function (k) { this.texture = { key: k }; return this; }),
+      setPosition: vi.fn(function () { return this; }), setAlpha: vi.fn(function () { return this; }),
+    };
+    return s;
+  };
+  // A scene whose texture manager only knows about the parts we say have a `_shield` variant.
+  const sceneWith = (shieldTextures) => ({
+    add: { sprite: vi.fn((x, y, key) => { const s = fakeSceneSprite(); s.texture = { key }; return s; }) },
+    textures: { exists: (k) => shieldTextures.has(k) },
+  });
+  const playerView = () => {
+    const view = { addAt: vi.fn() };
+    // turret has a body-only variant, hull (walk-cycle) does not — the real mech shape.
+    view.turret = { x: 0, y: 0, originX: 0.5, originY: 0.5, rotation: 0, texture: { key: 'playerMech_turret' } };
+    view.hull = { x: 0, y: 0, originX: 0.5, originY: 0.5, rotation: 0, texture: { key: 'playerMech_hull_0' } };
+    return view;
+  };
+
+  it('draws a part from its `_shield` variant when one exists, and records the mapping', () => {
+    const scene = sceneWith(new Set(['playerMech_turret_shield']));
+    const view = playerView();
+    const sv = makeShieldOutline(scene, view, { keys: ['turret', 'hull'], scale: 1, blend: 0, bodyOnly: true });
+
+    expect(sv.outlines.turret.texture.key).toBe('playerMech_turret_shield');   // guns/muzzle omitted
+    expect(sv.outlines.hull.texture.key).toBe('playerMech_hull_0');            // no variant → real frame
+    expect(sv.texMap).toEqual({ playerMech_turret: 'playerMech_turret_shield' });
+  });
+
+  it('keeps the body-only texture across per-frame upkeep instead of reverting to the gun texture', () => {
+    const scene = sceneWith(new Set(['playerMech_turret_shield']));
+    const view = playerView();
+    const sv = makeShieldOutline(scene, view, { keys: ['turret', 'hull'], scale: 1, blend: 0, bodyOnly: true });
+    sv.outlines.turret.setTexture.mockClear();
+
+    updateShieldOutline(sv, view, { hp: 30, max: 30 }, 16.67);
+
+    // The driver must NOT setTexture the turret back to the weapon-carrying 'playerMech_turret'.
+    expect(sv.outlines.turret.setTexture).not.toHaveBeenCalledWith('playerMech_turret');
+    expect(sv.outlines.turret.texture.key).toBe('playerMech_turret_shield');
+  });
+
+  it('without bodyOnly, uses the real (weapon-carrying) textures unchanged — the enemy path', () => {
+    const scene = sceneWith(new Set(['playerMech_turret_shield']));
+    const view = playerView();
+    const sv = makeShieldOutline(scene, view, { keys: ['turret', 'hull'], scale: 1, blend: 0 });
+
+    expect(sv.outlines.turret.texture.key).toBe('playerMech_turret');
+    expect(sv.texMap).toEqual({});
   });
 });
 
