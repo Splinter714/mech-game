@@ -306,19 +306,41 @@ describe('#392 a breach fells the hit span + its two contiguous neighbours (fixe
     expect(liveWallEdges(set)).toHaveLength(3);
   });
 
-  it('when one side of the run is a dead end, takes the extra neighbour from the other side', () => {
-    // An OPEN 4-span run: faces 0,1,2,3 of hex A (a partial arc — contiguous but not closed).
-    // Breaching an END span (face 0) has a dead end on one side, so the breach reaches two spans
-    // down the live side to still total three.
+  it('an END-of-run hit fells only itself + its single neighbour — NO backfill from the live side', () => {
+    // #392 STRICT retune (owner 2026-07-21): a breach fells the hit span plus its ONE immediate
+    // collinear neighbour on EACH side — never more. An OPEN 4-span run (faces 0,1,2,3 of hex A, a
+    // partial arc). Breaching an END span (face 0) has a dead end on one side, so it fells exactly
+    // TWO (face 0 + face 1) and does NOT reach a second span down the live side to backfill to three.
     const ns = neighbors(A.q, A.r);
     const set = makeWallEdgeSet([0, 1, 2, 3].map((i) => ({ a: A, b: ns[i], baseId: 'b' })));
     const spans = [...set.edges.values()];
     expect(spans).toHaveLength(4);
     const { felled } = damageWallEdge(set, spans[0], WALL_EDGE_HP);   // end span: one side dead
+    expect(felled).toHaveLength(2);
+    expect(new Set(felled)).toEqual(new Set([spans[0], spans[1]]));   // hit + its lone neighbour
+    expect(spans[2].destroyed).toBe(false);   // NOT backfilled — face 2 still stands
+    expect(spans[3].destroyed).toBe(false);
+  });
+
+  it('a corner/junction hit takes the collinear continuation, never a perpendicular spur', () => {
+    // A closed ring around A, plus a SPUR: the edge between two adjacent ring neighbours (ns[0] and
+    // ns[1]), which meets the ring at their shared corner — a T-junction. Breaching ring face 0
+    // (A–ns[0]) must fell its two collinear ring neighbours and leave the spur standing, even though
+    // the spur shares the exact same vertex: a breach follows the SAME wall line, not "nearest span".
+    const ns = neighbors(A.q, A.r);
+    const set = makeWallEdgeSet([
+      ...ns.map((n) => ({ a: A, b: n, baseId: 'b' })),
+      { a: ns[0], b: ns[1], baseId: 'b' },   // spur off the ring at the ns[0]/ns[1] corner
+    ]);
+    const all = [...set.edges.values()];
+    const spur = all[6];
+    const { felled } = damageWallEdge(set, all[0], WALL_EDGE_HP);
     expect(felled).toHaveLength(3);
-    // Face 0's only neighbour is face 1 (face 5 is absent), so the run walks on to face 2.
-    expect(new Set(felled)).toEqual(new Set([spans[0], spans[1], spans[2]]));
-    expect(spans[3].destroyed).toBe(false);   // the far end still stands
+    // The two ring neighbours of face 0 (faces 5 and 1), never the spur.
+    expect(new Set(felled)).toEqual(new Set([all[0], all[5], all[1]]));
+    expect(felled).not.toContain(spur);
+    expect(spur.destroyed).toBe(false);
+    expect(spur.hp).toBe(WALL_EDGE_HP);
   });
 });
 

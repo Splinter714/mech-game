@@ -438,22 +438,29 @@ export function nearestWallEdge(set, x, y, maxDist = HEX_SIZE) {
 }
 
 // ── Destruction ─────────────────────────────────────────────────────────────────────────
-// #392 (owner retune 2026-07-20, SUPERSEDES the first landing's "open the whole wall hex" rule):
-// destroying a span opens a FIXED-WIDTH breach of exactly three spans — the hit span plus its two
-// nearest contiguous neighbours ALONG THE WALL RUN — so a breach reads the same width everywhere
-// instead of swallowing an entire hex ring (which felt wrong on concave stretches). The whole-hex
-// cascade (`wallHexSiblings`, keyed on the base-side coord `a`) is gone; contiguity is now GEOMETRIC.
+// #392 (owner retune 2026-07-20, SUPERSEDES the first landing's "open the whole wall hex" rule;
+// tightened 2026-07-21 to be STRICT): destroying a span opens a breach of the hit span plus the ONE
+// span immediately adjacent on EACH side along the SAME wall run (its collinear left/right
+// neighbour). A breach reads the same width everywhere instead of swallowing an entire hex ring
+// (which felt wrong on concave stretches). The whole-hex cascade (`wallHexSiblings`, keyed on the
+// base-side coord `a`) is gone; contiguity is GEOMETRIC.
+//
+// STRICT (owner 2026-07-21): NO BACKFILL. If a side has no collinear neighbour (the hit span is at
+// the end of a run, a lone span, or the only spans at that corner turn away) that side contributes
+// nothing and the other side does NOT reach further to compensate. So a mid-run hit fells 3, an
+// end-of-run hit fells 2, and a lone span fells 1 — never a backfilled 3.
 
-// How many spans a single breach takes down: the hit span + up to one neighbour on each side of it
-// along the run. Owner: tunable.
+// The MOST spans a single breach takes down: the hit span + up to one collinear neighbour on each
+// side of it along the run. Fewer at ends/corners. Owner: tunable.
 export const BREACH_SPAN_COUNT = 3;
 
-// Two spans are neighbours along the wall run iff they meet at a shared VERTEX — a hex corner. Each
-// span carries its two pixel corners as (x0,y0)/(x1,y1); a rounded key collapses the float noise
-// between the SAME corner computed from either span's own hex (corners sit ~24–48px apart, so
-// rounding to 0.01px can never conflate two distinct ones). This is what makes a "run" a run:
-// consecutive faces of a wall share an endpoint, so following shared vertices walks the wall line —
-// around convex or concave corners alike — rather than reasoning about which hex owns which face.
+// Two spans meet along the wall run iff they share a VERTEX — a hex corner. Each span carries its
+// two pixel corners as (x0,y0)/(x1,y1); a rounded key collapses the float noise between the SAME
+// corner computed from either span's own hex (corners sit ~24–48px apart, so rounding to 0.01px can
+// never conflate two distinct ones). Sharing a vertex makes two spans CANDIDATE neighbours; which
+// one actually continues the run is then a collinearity test (`collinearNeighbor`), so a breach
+// follows the wall line around convex or concave corners without grabbing a perpendicular spur that
+// merely touches the same corner.
 function vertexKey(x, y) {
   return `${Math.round(x * 100)},${Math.round(y * 100)}`;
 }
@@ -472,70 +479,69 @@ function spansAtVertex(set, edge, vx, vy, visited) {
   return out;
 }
 
-// From `span`, step to its nearest un-felled neighbour across the vertex (vx,vy), as
-// `{ span, vx, vy }` where the returned (vx,vy) is that neighbour's OTHER endpoint — the vertex the
-// next step advances from, so a side walks steadily outward along the run. When more than one span
-// meets the vertex (a T-junction where an inner wall abuts the run), the nearest is the one whose
-// midpoint is closest, with the canonical edge key as a deterministic tie-break so the choice never
-// depends on Map iteration order.
-function stepAlongRun(set, span, vx, vy, visited) {
-  const cands = spansAtVertex(set, span, vx, vy, visited);
-  if (!cands.length) return null;
-  const mx = (span.x0 + span.x1) / 2, my = (span.y0 + span.y1) / 2;
-  let best = null, bestD = Infinity;
-  for (const e of cands) {
-    const em = { x: (e.x0 + e.x1) / 2, y: (e.y0 + e.y1) / 2 };
-    const d = Math.hypot(em.x - mx, em.y - my);
-    if (d < bestD - 1e-6 || (Math.abs(d - bestD) <= 1e-6 && (!best || e.key < best.key))) {
-      best = e; bestD = d;
+// The ONE span that COLLINEARLY continues the hit span past the shared vertex (vx,vy), or null.
+// `(farX,farY)` is the hit span's OTHER corner, so `d_in` is the run's travel direction ARRIVING at
+// the vertex; a candidate's `d_out` is its own direction LEAVING the vertex toward its far corner.
+//
+// Adjacent hex spans are NEVER parallel — two edges of the same orientation don't share a corner —
+// so a genuine run continuation always makes a 60° turn (dot(d_in, d_out) = +0.5), while a fold-back
+// or a perpendicular spur meeting the vertex at a T-junction turns 120°/180° (dot <= -0.5). Every
+// possible turn is a multiple of 60°, so requiring `dot > 0` cleanly admits ONLY the collinear
+// continuation and rejects any cross-junction branch — no "nearest by distance" pick. When two
+// candidates tie on straightness (a symmetric junction), the canonical edge key breaks it so the
+// choice never depends on Map iteration order.
+function collinearNeighbor(set, hit, vx, vy, farX, farY) {
+  const inx = vx - farX, iny = vy - farY;
+  const inLen = Math.hypot(inx, iny) || 1;
+  const dix = inx / inLen, diy = iny / inLen;
+  const vk = vertexKey(vx, vy);
+  let best = null, bestDot = 0;
+  for (const e of spansAtVertex(set, hit, vx, vy, EMPTY_VISITED)) {
+    // The neighbour's far endpoint — whichever of its two corners is NOT the shared vertex.
+    const atX0 = vertexKey(e.x0, e.y0) === vk;
+    const nfx = atX0 ? e.x1 : e.x0, nfy = atX0 ? e.y1 : e.y0;
+    const ox = nfx - vx, oy = nfy - vy, oLen = Math.hypot(ox, oy) || 1;
+    const dot = dix * (ox / oLen) + diy * (oy / oLen);
+    if (dot <= 1e-6) continue;                 // fold-back / perpendicular spur — not a continuation
+    if (!best || dot > bestDot + 1e-6 ||
+        (Math.abs(dot - bestDot) <= 1e-6 && e.key < best.key)) {
+      best = e; bestDot = dot;
     }
   }
-  const vk = vertexKey(vx, vy);
-  // The neighbour's far endpoint — whichever of its two corners is NOT the shared vertex.
-  const far = vertexKey(best.x0, best.y0) === vk
-    ? { x: best.x1, y: best.y1 } : { x: best.x0, y: best.y0 };
-  return { span: best, vx: far.x, vy: far.y };
+  return best;
 }
+const EMPTY_VISITED = new Set();
 
-// The run breached when `hit` falls: `hit` first, then up to `count - 1` neighbours, taken one at a
-// time alternating between the run's two directions (out from each of `hit`'s endpoints), so a
-// breach is centred — one span on each side where the run has one. When a side runs out (the hit
-// span was at or near the end of a short run), the other side keeps going to still total `count`, so
-// a lone or stub run fells only what it actually has. Marks nothing itself; the caller collapses the
-// returned spans.
+// The run breached when `hit` falls (#392, owner retune 2026-07-21 — STRICT: hit + immediate
+// neighbour each side, NO backfill): `hit` first, then the ONE span that collinearly continues the
+// run past each of `hit`'s two corners. No backfill — if a side has no collinear continuation (the
+// hit span is at the end of a run, a lone span, or the only candidates turn away at a corner) that
+// side contributes nothing; the other side does NOT reach further to compensate. So a mid-run hit
+// fells 3, an end-of-run hit fells 2, and a lone span fells 1. `count` caps the total (3). Marks
+// nothing itself; the caller collapses the returned spans.
 function breachRun(set, hit, count) {
   const felled = [hit];
-  const visited = new Set([hit]);
-  if (!set) return felled;
-  // One walking cursor per direction, seeded at each of the hit span's two corners.
+  if (!set || count <= 1) return felled;
+  // One immediate neighbour per direction, seeded at each of the hit span's two corners.
   const sides = [
-    { span: hit, vx: hit.x0, vy: hit.y0, alive: true },
-    { span: hit, vx: hit.x1, vy: hit.y1, alive: true },
+    { vx: hit.x0, vy: hit.y0, fx: hit.x1, fy: hit.y1 },
+    { vx: hit.x1, vy: hit.y1, fx: hit.x0, fy: hit.y0 },
   ];
-  while (felled.length < count && sides.some((s) => s.alive)) {
-    let progressed = false;
-    for (const side of sides) {
-      if (felled.length >= count) break;
-      if (!side.alive) continue;
-      const next = stepAlongRun(set, side.span, side.vx, side.vy, visited);
-      if (!next) { side.alive = false; continue; }
-      visited.add(next.span);
-      felled.push(next.span);
-      side.span = next.span; side.vx = next.vx; side.vy = next.vy;
-      progressed = true;
-    }
-    if (!progressed) break;
+  for (const s of sides) {
+    if (felled.length >= count) break;
+    const n = collinearNeighbor(set, hit, s.vx, s.vy, s.fx, s.fy);
+    if (n && !felled.includes(n)) felled.push(n);
   }
   return felled;
 }
 
 // Chip a span's HP. Each span keeps its OWN HP pool and takes its own hits — damaging one never
 // chips its neighbours (no shared pool, no damage bleed). What happens on DEATH (#392): the span's
-// collapse opens a fixed three-span breach — the hit span plus its two nearest contiguous neighbours
-// along the wall run — so the player grinds a single span down and the instant it falls a
-// consistent-width gap opens, one span either side of the hole where the run has them. Owner
-// (2026-07-20): "destroying a wall span should take out exactly THREE wall segments — the hit span
-// plus its two nearest contiguous neighbours — consistent breach width everywhere."
+// collapse opens a breach of the hit span plus the ONE collinear neighbour on each side along the
+// wall run — so the player grinds a single span down and the instant it falls a consistent-width gap
+// opens, one span either side of the hole where the run has them. STRICT (owner 2026-07-21): no
+// backfill — an end-of-run hit fells 2, a lone span 1, only a mid-run hit 3; a corner/junction never
+// grabs a perpendicular span, only the collinear continuation of the same wall line.
 //
 // Returns `{ hp, destroyed, felled }`: `hp`/`destroyed` describe the span actually hit; `felled` is
 // every span this call brought down (the hit span first, then its cascaded neighbours), so the scene
