@@ -148,8 +148,15 @@ export function makeShieldOutline(scene, view, {
     const shieldKey = bodyOnly && scene.textures?.exists?.(`${realKey}_shield`)
       ? `${realKey}_shield` : realKey;
     if (shieldKey !== realKey) texMap[realKey] = shieldKey;
+    // #397 follow-up: the outline scales about its TEXTURE CENTRE (origin 0.5,0.5), never the
+    // real part's origin. A side-torso/arm real origin is the convergence PIVOT — a joint set
+    // toward the part's REAR (PART_PIVOT, mechArt.js). Growing a duplicate about that rear anchor
+    // balloons it FORWARD (the front edge is far from the pivot, the back edge is right on it), so
+    // the shell stuck out ahead of the mech. Anchored at the texture centre instead, every part
+    // grows symmetrically front-to-back and the shell sits centred on the body. The per-frame
+    // driver positions this at the real part's texture-centre so the two stay registered.
     const o = scene.add.sprite(real.x, real.y, shieldKey)
-      .setOrigin(real.originX, real.originY)
+      .setOrigin(0.5, 0.5)
       .setScale(baseScale)
       .setTintFill(color)
       .setBlendMode(blend)
@@ -198,8 +205,17 @@ export function updateShieldOutline(sv, view, shield, delta) {
     // enemy) resolve straight back to the real key, so this is a no-op for them.
     const desired = sv.texMap?.[real.texture.key] ?? real.texture.key;
     if (o.texture.key !== desired) o.setTexture(desired);
-    o.setPosition(real.x, real.y);
-    o.setOrigin(real.originX, real.originY);
+    // Register the (centre-anchored) outline onto the real part's TEXTURE CENTRE, wherever the
+    // real part's own origin sits. The real side-torso/arm origin is its rear convergence joint,
+    // so its position is that joint, not the part centre — walk the origin→centre offset out
+    // through the part's display size and rotation so the two silhouettes stay perfectly aligned
+    // while the shell still grows symmetrically about the centre (see makeShieldOutline). Hull and
+    // turret keep origin 0.5,0.5, so their offset is zero and this reduces to the real position.
+    const ex = (0.5 - (real.originX ?? 0.5)) * (real.displayWidth || 0);
+    const ey = (0.5 - (real.originY ?? 0.5)) * (real.displayHeight || 0);
+    const rot = real.rotation || 0;
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    o.setPosition(real.x + cos * ex - sin * ey, real.y + sin * ex + cos * ey);
     o.rotation = real.rotation;
     o.setAlpha(alpha);
     if (growChanged && o.setScale) o.setScale(sv.baseScale * grow);
