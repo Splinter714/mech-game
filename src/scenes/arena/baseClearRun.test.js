@@ -15,6 +15,7 @@ function fakeGraphic() {
     setStrokeStyle: () => obj, setOrigin: () => obj, setDepth: () => obj,
     setColor: () => obj, setText: () => obj, destroy: () => {},
     clear: () => obj, lineStyle: () => obj, strokePoints: () => obj,
+    fillStyle: () => obj, fillPoints: () => obj,
   };
   return obj;
 }
