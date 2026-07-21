@@ -290,9 +290,10 @@ describe('#310 §3: destroying the span destroys its turret (#287\'s precedent)'
     expect(scene._damageEnemyAt).not.toHaveBeenCalled();
   });
 
-  it('#392: breaching a SAME-hex span opens the whole hex and takes the gun down with its span', () => {
-    // ARMED (turret) and PLAIN share base-side hex {0,0}, so breaching PLAIN fells the armed span
-    // too — the opened hex must not leave a gun hovering over the hole.
+  it('#392: breaching a contiguous span fells the armed span too and takes the gun down with it', () => {
+    // GATE, PLAIN and ARMED are three consecutive faces of hex {0,0} — one contiguous 3-span run —
+    // so breaching PLAIN (the middle) fells its two neighbours GATE and ARMED. The armed span must
+    // not leave a gun hovering over the hole.
     const scene = makeScene();   // default defs: ARMED + PLAIN + GATE, all on hex {0,0}
     scene._spawnDormantUnits();
     const gun = wallGuns(scene)[0];

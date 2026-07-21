@@ -184,24 +184,26 @@ describe('#312 _routedIntent — the steering the movement code consumes', () =>
     expect(s._enemyRouter.routeFor(e).complete).toBe(false);
     const epochBefore = s._enemyRouter.epoch;
 
-    // The player shoots a span down — the scene's own damage path must bump the epoch. #392: this
-    // ring is a SINGLE wall hex (every span shares base-side CENTRE), so breaching the BACK span
-    // opens the WHOLE hex at once, not just that one face.
+    // The player shoots the BACK span down — the scene's own damage path must bump the epoch. #392
+    // retune: the breach is a fixed three spans, so it opens BACK plus its two contiguous
+    // neighbours (a three-wide hole on the far side), leaving the three spans toward the target
+    // still standing.
     const span = s.wallEdges.edges.get(edgeKey(defs[BACK].a, defs[BACK].b));
     s._damageWallEdge(span, 99999);
     expect(span.destroyed).toBe(true);
-    expect(s._liveWallEdges()).toHaveLength(0);   // #392: the off-line breach opened the whole ring
+    expect(s._liveWallEdges()).toHaveLength(3);   // #392: three fell, three still stand
     expect(s._enemyRouter.epoch).toBeGreaterThan(epochBefore);
 
-    // The route cache is now stale (epoch bumped) AND the way out is wide open. On recompute the
-    // unit has a clear line to the target and heads straight for it rather than routing around a
-    // remnant — there is no remnant left to route around.
+    // The route cache is now stale (epoch bumped) AND a real way out has opened on the back side.
+    // On recompute the unit finds a complete route and takes it OUT through the breach — the target
+    // side is still walled, so it does not just drive straight at it.
+    const breachExits = new Set([BACK, (BACK + 5) % 6, (BACK + 1) % 6].map((i) => `${defs[i].b.q},${defs[i].b.r}`));
     s.time.now = 10;   // deep inside the failure backoff — the epoch bump is what overrides it
     s._enemyRouter.beginTick();
-    const got = s._routedIntent(e, target.x, target.y);
-    const dx = target.x - e.x, dy = target.y - e.y, m = Math.hypot(dx, dy);
-    expect(got.mx).toBeCloseTo(dx / m, 6);
-    expect(got.my).toBeCloseTo(dy / m, 6);
+    s._routedIntent(e, target.x, target.y);
+    const route = s._enemyRouter.routeFor(e);
+    expect(route.complete).toBe(true);
+    expect(breachExits.has(`${route.path[0].q},${route.path[0].r}`)).toBe(true);
   });
 
   it('breaching the span directly on the line stops routing entirely — the unit just drives at it', () => {
