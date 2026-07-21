@@ -184,16 +184,24 @@ describe('#312 _routedIntent — the steering the movement code consumes', () =>
     expect(s._enemyRouter.routeFor(e).complete).toBe(false);
     const epochBefore = s._enemyRouter.epoch;
 
-    // The player shoots a span down — the scene's own damage path must bump the epoch.
+    // The player shoots a span down — the scene's own damage path must bump the epoch. #392: this
+    // ring is a SINGLE wall hex (every span shares base-side CENTRE), so breaching the BACK span
+    // opens the WHOLE hex at once, not just that one face.
     const span = s.wallEdges.edges.get(edgeKey(defs[BACK].a, defs[BACK].b));
     s._damageWallEdge(span, 99999);
     expect(span.destroyed).toBe(true);
+    expect(s._liveWallEdges()).toHaveLength(0);   // #392: the off-line breach opened the whole ring
     expect(s._enemyRouter.epoch).toBeGreaterThan(epochBefore);
 
+    // The route cache is now stale (epoch bumped) AND the way out is wide open. On recompute the
+    // unit has a clear line to the target and heads straight for it rather than routing around a
+    // remnant — there is no remnant left to route around.
     s.time.now = 10;   // deep inside the failure backoff — the epoch bump is what overrides it
     s._enemyRouter.beginTick();
-    s._routedIntent(e, target.x, target.y);
-    expect(s._enemyRouter.routeFor(e).complete).toBe(true);
+    const got = s._routedIntent(e, target.x, target.y);
+    const dx = target.x - e.x, dy = target.y - e.y, m = Math.hypot(dx, dy);
+    expect(got.mx).toBeCloseTo(dx / m, 6);
+    expect(got.my).toBeCloseTo(dy / m, 6);
   });
 
   it('breaching the span directly on the line stops routing entirely — the unit just drives at it', () => {

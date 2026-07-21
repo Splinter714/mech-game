@@ -200,7 +200,7 @@ export default class GarageScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '12px', color: '#7c8794',
     }).setOrigin(1, 0);
     this._refreshCurrency();
-    this._buildCoopBar();
+    this._buildPlayerTabs();
 
     // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
     // catalog from the first pad press — the whole unfiltered weapon set, never a per-slot
@@ -209,7 +209,13 @@ export default class GarageScene extends Phaser.Scene {
     // already holds exactly that item. There is no tile-first gate: the tile row still renders
     // (mounts + binds) but is not a pad focus zone. Focus visuals + the button legend only
     // appear once a pad button is used (`padActive`), so mouse/keyboard users see no cursor.
-    this.padEdges = new PadEdges(this);
+    // #388: `padEdges` reads the CURRENT builder's pad (== that player's index), not always pad 0.
+    this._bindBuilderPad();
+    // START on any UNCLAIMED pad (indices count..MAX-1) is the JOIN button — one PadEdges per
+    // watchable pad, mirroring the arena's mid-sortie join (scenes/arena/coop.js). Pads below the
+    // current count are already claimed builders; `_updateGarageJoin` only polls the unclaimed ones.
+    this._joinEdges = {};
+    for (let pad = 1; pad < MAX_GARAGE_PLAYERS; pad++) this._joinEdges[pad] = new PadEdges(this, pad);
     this.inputMode = 'kbm';       // which scheme the tile bind labels reflect (#26)
     this.padActive = false;       // pad in use → show the catalog cursor + legend
     this.dirRepeat = new DirRepeater();   // shared d-pad/stick step auto-repeat
@@ -256,40 +262,84 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  // #349: the co-op strip — one toggle button plus a status line, tucked into the band between
-  // the tab bar and the catalog (the same 54px gap the SCRAP/last-run readout uses). That band
-  // is otherwise empty on the LEFT and the readout is right-anchored, so this adds nothing to
-  // the horizontal crowding the garage already has at narrow widths (#330/#342): no new row,
-  // no new panel, and the handoff itself rides the existing Deploy button.
-  _buildCoopBar() {
-    const y = TAB_BAR_H + 8;
-    const w = 150, h = 24;
-    this.coopBtn = this.button(20, y, w, h, coopToggleLabel(this.session), () => this._toggleCoop(), UI.accent);
-    this.coopStatus = this.add.text(20 + w + 12, y + h / 2, garageStatusText(this.session), {
-      fontFamily: 'monospace', fontSize: '12px', color: '#efc14a',
+  // #388: the co-op player-tab row — a strip of small tabs tucked into the band between the tab
+  // bar and the catalog (the same 54px gap the SCRAP/last-run readout uses). That band is empty
+  // on the LEFT and the readout is right-anchored, so this adds nothing to the horizontal
+  // crowding the garage already has at narrow widths (#330/#342). One OCCUPIED tab per joined
+  // player (the active one highlighted) plus a trailing dotted ADD tab inviting the next START,
+  // with a status/hint line beside it. Rebuilt wholesale on every session change via a container.
+  _buildPlayerTabs() {
+    this.tabsY = TAB_BAR_H + 8;
+    this.tabsLayer = this.add.container(0, 0);
+    this.coopHint = this.add.text(0, this.tabsY + 12, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: '#efc14a',
     }).setOrigin(0, 0.5);
+    this._refreshPlayerTabs();
   }
 
-  _refreshCoopBar() {
-    this.coopBtn?.t.setText(coopToggleLabel(this.session));
-    this.coopStatus?.setText(garageStatusText(this.session));
+  _refreshPlayerTabs() {
+    this.tabsLayer?.removeAll(true);
+    const tabW = 34, tabH = 24, gap = 6, x0 = 20, y = this.tabsY;
+    const tabs = playerTabs(this.session);
+    for (const tab of tabs) {
+      const x = x0 + tab.index * (tabW + gap);
+      if (tab.occupied) {
+        const col = playerColor(tab.index);
+        const rect = this.add.rectangle(x, y, tabW, tabH, col, tab.active ? 0.32 : 0.14)
+          .setOrigin(0, 0).setStrokeStyle(tab.active ? 2 : 1, col, tab.active ? 1 : 0.6);
+        const t = this.add.text(x + tabW / 2, y + tabH / 2, `P${tab.index + 1}`, {
+          fontFamily: 'monospace', fontSize: '12px', color: '#e8eef4',
+        }).setOrigin(0.5);
+        this.tabsLayer.add([rect, t]);
+      } else {
+        // The ADD affordance: a dotted-border ghost tab with a plus, meaning "press START to
+        // join". Drawn as a dashed rectangle so it reads as an empty slot, not a real player.
+        const g = this._dashedRect(x, y, tabW, tabH, 0x7c8794);
+        const t = this.add.text(x + tabW / 2, y + tabH / 2, '+', {
+          fontFamily: 'monospace', fontSize: '15px', color: '#7c8794',
+        }).setOrigin(0.5);
+        this.tabsLayer.add([g, t]);
+      }
+    }
+    // The hint sits just right of the last tab. It names whose turn it is once there is more than
+    // one player, and always reminds that START adds another player while slots remain.
+    const endX = x0 + tabs.length * (tabW + gap) + 6;
+    const status = garageStatusText(this.session);
+    const addable = canJoin(this.session) ? 'START JOINS' : '';
+    const hint = [status, addable].filter(Boolean).join('   ');
+    this.coopHint.setPosition(endX, y + tabH / 2).setText(hint);
   }
 
-  // Opt in to co-op, back out of it, or step back from player 2 to player 1 — whichever the
-  // button currently means (data/coopGarage.js `toggleCoop`).
-  _toggleCoop() {
-    Audio.ui('menuNav');
-    this._setSession(toggleCoop(this.session));
+  // A dashed-border rectangle (Phaser has no dotted stroke), used for the empty "add player" tab.
+  _dashedRect(x, y, w, h, color) {
+    const g = this.add.graphics().lineStyle(1, color, 0.8);
+    const dash = 4, gapLen = 3;
+    const line = (x1, y1, x2, y2) => {
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
+      for (let d = 0; d < len; d += dash + gapLen) {
+        const e = Math.min(d + dash, len);
+        g.beginPath();
+        g.moveTo(x1 + ux * d, y1 + uy * d);
+        g.lineTo(x1 + ux * e, y1 + uy * e);
+        g.strokePath();
+      }
+    };
+    line(x, y, x + w, y); line(x + w, y, x + w, y + h);
+    line(x + w, y + h, x, y + h); line(x, y + h, x, y);
+    return g;
   }
 
-  // Bind the single editing surface to whichever player's mech the session now says. This IS
-  // the whole "two players share one garage" mechanism: nothing is duplicated, the same tiles,
-  // catalog and preview are simply pointed at the other saved build.
+  // Bind the single editing surface to whichever player's mech the session now says. This IS the
+  // whole "the whole squad shares one garage" mechanism: nothing is duplicated, the same tiles,
+  // catalog and preview are simply pointed at the other saved build. Also rebinds the active
+  // build controller to the current builder's OWN pad (#388: the build surface is driven by whose
+  // turn it is, not always pad 0) and repaints the tab row.
   _setSession(next) {
     const prevKey = this.mechKey;
     this.session = next;
-    this.registry.set('coopGarage', this.session.coop);
-    this.mechKey = sessionMechKey(this.session);
+    this.registry.set('coopPlayerCount', this.session.count);
+    this.mechKey = sessionEditingKey(this.session);
     if (this.mechKey !== prevKey) {
       this.allMechs[prevKey] = this.mech;      // commit the outgoing player's work
       this.mech = this.allMechs[this.mechKey];
@@ -301,8 +351,33 @@ export default class GarageScene extends Phaser.Scene {
       this.list.setSelected(null);
     }
     saveAllMechs(this.allMechs);
-    this._refreshCoopBar();
+    this._bindBuilderPad();
+    this._refreshPlayerTabs();
     this.refresh();
+  }
+
+  // Point the catalog-navigation PadEdges at the CURRENT builder's physical pad (player index ==
+  // pad index). Solo = pad 0, unchanged. This is what makes player 2's controller — not player
+  // 1's — drive the paper-doll/catalog during player 2's turn (#388).
+  _bindBuilderPad() {
+    this.padEdges = new PadEdges(this, this.session.editing);
+  }
+
+  // Per-frame: has an unclaimed controller pressed START to JOIN? Players claim pads 0..count-1,
+  // so the unclaimed pads are count..MAX-1. Mirrors the arena's `_updateCoopJoin` pad model
+  // (scenes/arena/coop.js) so the two ways in behave identically. Inert in solo only until
+  // someone presses a second pad — a single-player garage with no second controller never joins.
+  _updateGarageJoin() {
+    if (!this._joinEdges || !canJoin(this.session)) return;
+    for (let pad = this.session.count; pad < MAX_GARAGE_PLAYERS; pad++) {
+      if (this._joinEdges[pad]?.pressed(PAD.START)) { this._joinPlayer(); return; }
+    }
+  }
+
+  _joinPlayer() {
+    Audio.ui('deploy');
+    this._setSession(joinPlayer(this.session));   // count++, editing unchanged (join never steals control)
+    this.toast(`PLAYER ${this.session.count} JOINED — PRESS START TO HAND OFF`, UI.accent);
   }
 
   // Switch the displayed control scheme (and focus-cursor/legend visibility), redrawing once.
@@ -345,10 +420,16 @@ export default class GarageScene extends Phaser.Scene {
   update(time, delta) {
     this.list.update(time, delta);
 
+    // #388: a new controller joining via START on an unclaimed pad, checked before the builder's
+    // own input so a join is never mistaken for a build action.
+    this._updateGarageJoin();
+
     const e = this.padEdges;
     const pad = e.pad();
     if (!pad) return;
 
+    // The current builder's START: hand off to the next joined player, or (if they are the last)
+    // deploy. deploy() itself branches on garageAction, so this is the same call for both.
     if (e.pressed(PAD.START)) { this.deploy(); return; }
     // #248: X/Y chassis-cycle pad shortcut disabled along with the rest of the switcher.
 
@@ -823,13 +904,15 @@ export default class GarageScene extends Phaser.Scene {
       }
       return;
     }
-    // #349: in co-op, player 1 pressing this button means "I'm done, your turn" — the same
-    // completeness check above already gates it, so a player cannot hand off a half-built mech
-    // and then be unable to get back to it. Player 2's press is the one that actually deploys.
+    // #349/#388: in co-op, a non-last player pressing this button means "I'm done, next player's
+    // turn" — the completeness check above already gates it, so a player cannot hand off a
+    // half-built mech and then be unable to get back to it. Only the LAST joined player's press
+    // (garageAction === 'deploy') actually launches the run.
     if (garageAction(this.session) === 'handoff') {
       Audio.ui('equip');
-      this._setSession(handOff(this.session));
-      this.toast('PLAYER 1 READY — PLAYER 2, BUILD YOUR MECH', UI.accent);
+      const next = this.session.editing + 2;   // 1-based number of the player taking over
+      this._setSession(advanceEditing(this.session));
+      this.toast(`PLAYER ${next - 1} READY — PLAYER ${next}, BUILD YOUR MECH`, UI.accent);
       return;
     }
     Audio.ui('deploy');   // #178: weightier rising anticipation whoosh — committing to the run

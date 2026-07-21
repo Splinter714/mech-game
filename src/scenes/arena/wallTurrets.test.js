@@ -276,8 +276,11 @@ describe('#310 §3: destroying the span destroys its turret (#287\'s precedent)'
     expect(dmg).toBeGreaterThan(gun.mech.maxHp + def.armor);
   });
 
-  it('breaching a DIFFERENT span leaves the gun untouched', () => {
-    const scene = makeScene();
+  it('breaching a span on a DIFFERENT wall hex leaves the gun untouched', () => {
+    // A plain span on its OWN hex, well away from the turret's hex — the turret's span does not
+    // fall with it, so the gun survives. (Contrast the same-hex cascade below.)
+    const farPlain = { a: { q: 5, r: 0 }, b: { q: 6, r: 0 }, baseId: 'base0', role: SPAN_ROLE_WALL };
+    const scene = makeScene([ARMED, farPlain]);
     scene._spawnDormantUnits();
     const gun = wallGuns(scene)[0];
     const plain = [...scene.wallEdges.edges.values()].find((e) => e.role === SPAN_ROLE_WALL);
@@ -285,6 +288,20 @@ describe('#310 §3: destroying the span destroys its turret (#287\'s precedent)'
     expect(plain.destroyed).toBe(true);
     expect(gun.mech.isDestroyed()).toBe(false);
     expect(scene._damageEnemyAt).not.toHaveBeenCalled();
+  });
+
+  it('#392: breaching a SAME-hex span opens the whole hex and takes the gun down with its span', () => {
+    // ARMED (turret) and PLAIN share base-side hex {0,0}, so breaching PLAIN fells the armed span
+    // too — the opened hex must not leave a gun hovering over the hole.
+    const scene = makeScene();   // default defs: ARMED + PLAIN + GATE, all on hex {0,0}
+    scene._spawnDormantUnits();
+    const gun = wallGuns(scene)[0];
+    const armed = [...scene.wallEdges.edges.values()].find((e) => e.role === SPAN_ROLE_TURRET);
+    const plain = [...scene.wallEdges.edges.values()].find((e) => e.role === SPAN_ROLE_WALL);
+    scene._damageWallEdge(plain, plain.maxHp);
+    expect(plain.destroyed).toBe(true);
+    expect(armed.destroyed).toBe(true);            // the sibling turret span fell in the cascade
+    expect(gun.mech.isDestroyed()).toBe(true);     // and its gun went down with it
   });
 
   it('merely damaging an armed span does not hurt the gun', () => {
