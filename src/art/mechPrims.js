@@ -270,6 +270,10 @@ export const READOUT = {
   lightR: 1.1,   // status-light radius (design units) — the whole readout now
   pad: 0.7,      // bezel margin around the light
 };
+// Inner light-slot radius (design units): the recessed socket the baked housing carves out and the
+// exact radius the LIVE reload dot fills flush to. SINGLE SOURCE OF TRUTH for the dot size — the
+// arena overlay multiplies this by the display scale rather than hand-tuning its own radius (#402).
+export const READOUT_SLOT_R = READOUT.lightR + 0.5;
 const READOUT_SLOT = 0x0b0f13;   // dark instrument recess (light socket), both themes
 
 // The static readout socket at (cx, cy) — a small round bezelled module carrying a recessed light
@@ -280,7 +284,7 @@ export function readoutMount(sg, T, cx, cy) {
   roundC(sg, cx, cy, (R + 0.6) * 2, (R + 0.6) * 2, T.outline, R + 0.6);   // bezel edge
   roundC(sg, cx, cy, R * 2, R * 2, T.housing, R);                        // housing face
   sg.fillStyle(READOUT_SLOT, 1);
-  sg.fillCircle(CENTER + cx, CENTER + cy, lightR + 0.5);                 // recessed light socket
+  sg.fillCircle(CENTER + cx, CENTER + cy, READOUT_SLOT_R);               // recessed light socket
 }
 
 // A destroyed location: a charred lump with faint embers.

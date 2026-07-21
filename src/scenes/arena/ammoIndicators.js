@@ -21,13 +21,16 @@
 // Purely visual — the state it reads is all from the pure model (Mech.weapons()), so there is
 // nothing to unit-test here (reload/ammo transitions are covered in Mech.test.js).
 import { partSpriteTransform } from '../../art/index.js';
+import { READOUT_SLOT_R } from '../../art/mechPrims.js';
 import { ARENA_MECH_SCALE, DEPTH } from './shared.js';
 import { livePlayersOf } from './players.js';
 
 // The only colour the light ever shows: an urgent red "reloading" pulse.
 const RELOAD_COL = 0xe2533a;
-// Status-light radius in world px — sized to read clearly on the (smaller) baked socket.
-const LIGHT_R = 2.6 * ARENA_MECH_SCALE;
+// Status-light radius in world px, DERIVED from the baked housing's inner light-slot radius
+// (mechPrims READOUT_SLOT_R, in design units) × the arena display scale — ONE source of truth so the
+// lit dot fills the socket flush to the bezel instead of being an independently hand-tuned size (#402).
+const LIGHT_R = READOUT_SLOT_R * ARENA_MECH_SCALE;
 
 export const AmmoIndicatorsMixin = {
   // #402: one shared Graphics layer for every player's reload lights, cleared and redrawn each
