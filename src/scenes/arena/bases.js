@@ -281,12 +281,12 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
 const DOCK_VACATE_RADIUS_PX = 60;
 
 // #395 part B (owner): a hex outline stroked around every DOCK hex at DEPTH.DOCK_BORDER (above the
-// tile, its doors, the ground-decal band and the unit tiers) so a dock reads as a distinct,
-// clearly-bounded structure regardless of open/closed state. The high z-order is what fixed the
-// dock's read; the colour/weight now MATCHES the other base-hex borders (`BASE_INFRA_COLOR.edge`)
-// so it's a subtle frame like the rest of the base, not a heavy black box. Biome-neutral by
-// construction. Radius sits just inside the hex's HEX_SIZE (48) corner so the stroke lands on the
-// hex edge and frames it rather than overhanging into neighbours.
+// tile, its doors and the DOCK_FX band, but BELOW the units) so a dock reads as a distinct,
+// clearly-bounded structure regardless of open/closed state — while a unit standing on the dock
+// still renders OVER the ground-level frame. The colour/weight MATCHES the other base-hex borders
+// (`BASE_INFRA_COLOR.edge`) so it's a subtle frame like the rest of the base, not a heavy black
+// box. Biome-neutral by construction. Radius sits just inside the hex's HEX_SIZE (48) corner so the
+// stroke lands on the hex edge and frames it rather than overhanging into neighbours.
 const DOCK_BORDER_COLOR = BASE_INFRA_COLOR.edge;
 const DOCK_BORDER_ALPHA = 0.65;
 const DOCK_BORDER_WIDTH = 2.5;
@@ -381,7 +381,7 @@ export const BasesMixin = {
   // — so this frames exactly the dock hexes, both open and closed, biome-agnostically. One static
   // `Graphics` per dock, positioned at the dock centre and stroked as a hex outline via the shared
   // `strokeHexRing` helper (the same `hexCorners`-based path terrain hexes and the alert/objective
-  // rings use), at DEPTH.DOCK_BORDER so it sits ON TOP of the tile and the sliding door leaves.
+  // rings use), at DEPTH.DOCK_BORDER so it sits above the tile and door leaves but below the units.
   // No per-tick redraw needed — the frame never moves or resizes; it's drawn once at spawn.
   _drawDockBorders() {
     if (!this.add?.graphics || !this._dockResupplyMeta) return;

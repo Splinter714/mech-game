@@ -161,13 +161,13 @@ export const DEPTH = {
   FLYING_UNITS: 3.5,
   // #395 part B: the strong dark outline stroked around every DOCK hex (bases.js
   // `_drawDockBorders`). A static, biome-neutral ring that FRAMES the dock hex as a distinct,
-  // clearly-bounded structure — sits high, above the terrain tile (0), its sliding door leaves
-  // (DOCK_DOORS 0.5), the ground-decal band (DOCK_FX 1.5 / GROUND_UNITS 2) and even the unit
-  // tiers, so the frame reads unmistakably ON TOP of the dock rather than being buried under the
-  // tile. It's a thin outline stroke, so drawing it over a unit standing in the bay doesn't
-  // meaningfully occlude the body. Below PROJECTILES (4) so rounds/impact FX/world UI still draw
-  // over it. Another fractional slot, for the same "no renumbering" reason 2.5/2.75/2.9 use.
-  DOCK_BORDER: 3.6,
+  // clearly-bounded structure — sits above the terrain tile (0), its sliding door leaves
+  // (DOCK_DOORS 0.5) and the DOCK_FX band (1.5), so the frame reads clearly ON TOP of the dock
+  // rather than being buried under the tile. But BELOW GROUND_UNITS (2): a unit standing on/near
+  // the dock renders OVER the ground-level frame (it was rendering on top of enemy units at its
+  // old 3.6 tier, which read wrong — #395 follow-up). Another fractional slot, for the same
+  // "no renumbering" reason 2.5/2.75/2.9 use.
+  DOCK_BORDER: 1.8,
   PROJECTILES: 4,     // in-flight rounds, persistent beams, muzzle flash / melee slash — flying
                       // over the units they're headed toward or past.
   IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text
