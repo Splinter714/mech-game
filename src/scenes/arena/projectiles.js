@@ -5,6 +5,7 @@ import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
+import { isSoftCover } from '../../data/terrain.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
@@ -227,6 +228,35 @@ export const ProjectilesMixin = {
           continue;
         }
       }
+      // #374 REWORK — IN-FLIGHT soft-cover pass-through. Every soft-cover hex a round ENTERS has
+      // its own flat 10% chance of the foliage eating it, rolled ONCE on entry (never re-rolled
+      // while the round sits in the hex across frames). This is what makes a shot fired into empty
+      // woods, with no target at all, visibly puff and die in the trees. Exemptions:
+      //   • the muzzle's own hexes (`p.originHexes`) — the #72/#279 brawling rule (a shooter in
+      //     forest firing OUT is not eaten at its own muzzle);
+      //   • the CURRENT target's own hex — left to the tier-bumped resolution roll below so it is
+      //     never rolled twice;
+      //   • an AIR-aimed shot (`p.airTarget`) — the flyer exemption, whole lane;
+      //   • an ARCING lob — it flies over the canopy, exactly as it lobs over walls (`!p.arc`), and
+      //     still takes its resolution own-hex roll where it comes down.
+      // The puff detonates at the crossed hex's CENTRE (mid-lane), reading as the trees stopping
+      // the round rather than a weapon impact. Symmetric — enemy rounds obey it identically.
+      if (!p.arc && !p.airTarget && !p.dead) {
+        const curKey = this._hexKeyAt(p.x, p.y);
+        if (curKey !== p._lastHexKey) {
+          p._lastHexKey = curKey;
+          const victim = enemyShot ? hitPlayer : hitEnemy;
+          const isOwn = !!victim && this._hexKeyAt(victim.x, victim.y) === curKey;
+          const isMuzzle = !!p.originHexes && p.originHexes.includes(curKey);
+          if (!isOwn && !isMuzzle && isSoftCover(this.terrain.get(curKey)) && this._softCoverHexEats?.()) {
+            p.dead = true;
+            p.stopTrajectorySfx?.();
+            const c = this._hexCenterAt(p.x, p.y);
+            this._foliageBlockFx(c.x, c.y);
+            continue;
+          }
+        }
+      }
       // #348 FRIENDLY FIRE (Jackson: ON): a PLAYER-fired round can hit another player. Checked
       // here, on the same swept segment the enemy hit test uses, and checked BEFORE that test so
       // a teammate standing between the shooter and an enemy actually eats the round rather than
@@ -241,12 +271,12 @@ export const ProjectilesMixin = {
         if (ally) {
           p.dead = true;
           p.stopTrajectorySfx?.();
-          // #374 REWORK: the foliage roll — a teammate standing in soft cover may have this
-          // round eaten by the trees, per soft-cover hex the round's lane crossed. Same rule as
-          // any other target. #374 block-visual: a blocked round detonates AT the blocking hex's
-          // centre (mid-lane) with a distinct leaf puff and deals nothing; an unblocked round is
-          // unchanged — damage + the normal impact splash at the teammate.
-          const block = this._softCoverStopsShot?.(ally, p.originHexes, { x: p.originX, y: p.originY });
+          // #374 REWORK: the resolution roll — a teammate standing in soft cover may have this
+          // round eaten by the trees on their OWN hex (the tier bump). The intervening lane hexes
+          // were already rolled in flight above, so this is the own-hex roll only. A blocked round
+          // detonates AT that hex's centre with a distinct leaf puff and deals nothing; an
+          // unblocked round is unchanged — damage + the normal impact splash at the teammate.
+          const block = this._softCoverStopsShot?.(ally, p.originHexes);
           if (block) {
             this._foliageBlockFx(block.x, block.y);
           } else {
@@ -265,21 +295,17 @@ export const ProjectilesMixin = {
         p.dead = true;
         p.stopTrajectorySfx?.();   // #56: ditto — impact/landing is the other death site
         if (toTarget < HIT_RADIUS + p.splash) {
-          // #374 REWORK: the foliage roll, PER PROJECTILE and per soft-cover hex its lane
-          // crossed (10% each; the target's own hex 25% for a non-mech ground unit, 10% for a
-          // mech, and an AIR target is exempt for the entire lane). Soft cover stops nothing
-          // geometrically any more, so this is where a round flying through or into the trees is
-          // eaten instead. `p.originX/originY` is the spawn point the lane is walked from; the
-          // shooter's own muzzle hexes (`p.originHexes`) drop out of that lane, which is the
-          // #72/#279 brawling-in-one-thicket exemption. Every round of a salvo asks
-          // independently, so a volley loses SOME of its missiles rather than all or none.
-          // Identical for `enemyShot` — the rule reads the target, never the shooter.
+          // #374 REWORK: the RESOLUTION roll — the TARGET's OWN hex only (the tier bump: 25% for a
+          // non-mech ground unit, 10% for a mech, air exempt). The intervening lane hexes the round
+          // crossed were already rolled IN FLIGHT above (per step, as it entered each), so this
+          // rolls just the one hex the target stands in — no hex is rolled twice. Every round of a
+          // salvo asks independently, so a volley loses SOME of its missiles rather than all or
+          // none. Identical for `enemyShot` — the rule reads the target, never the shooter.
           const victim = enemyShot ? hitPlayer : hitEnemy;
-          // #374 block-visual: a `{x, y}` (the blocking hex's centre) means the foliage ate this
-          // round — it detonates a leaf puff THERE (mid-lane) and deals nothing. Skip the rest of
-          // the impact resolution (destructible-hex damage, the normal splash, any fire patch): the
-          // trees stopped the round before it ever reached the target.
-          const block = this._softCoverStopsShot?.(victim, p.originHexes, { x: p.originX, y: p.originY });
+          // #374 block-visual: a `{x, y}` (the own hex's centre) means the foliage ate this round —
+          // it detonates a leaf puff THERE and deals nothing. Skip the rest of the impact
+          // resolution (destructible-hex damage, the normal splash, any fire patch).
+          const block = this._softCoverStopsShot?.(victim, p.originHexes);
           if (block) {
             this._foliageBlockFx(block.x, block.y);
             continue;

@@ -516,7 +516,29 @@ export const FiringMixin = {
       const tt = this._targetHexDistance(muzzleX, muzzleY, angle, endDist, tHexKey);
       if (tt < endDist) { endDist = tt; hit = false; blocked = true; }
     }
-    const endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
+    let endX = muzzleX + dirX * endDist, endY = muzzleY + dirY * endDist;
+
+    // #374 REWORK: soft cover eats a beam along its TRACE. A beam resolves instantly, so it can't
+    // roll per-step like a travelling round — its whole trace muzzle→endpoint is walked in one pass
+    // (`_softCoverBeamBlock`) and the FIRST soft-cover hex that rolls a block stops it THERE, before
+    // it reaches whatever it was aimed at. This runs even when the beam hit no unit (`hit` false) —
+    // a beam lanced into open woods still puffs and dies in the trees, which is the headline case.
+    // A ground target's own hex takes the tier bump (vehicle 25% / mech 10%); intervening hexes are
+    // the flat 10%; an air-aimed beam is exempt from the whole lane. Symmetric — an enemy beam obeys
+    // it identically (`_shotIgnoresCover` is false for enemies, so `airAimed` is player-only, which
+    // is correct: enemies only ever shoot at ground mechs). A held stream asks once per TICK, so it
+    // loses ~10% of its DPS per crossed hex rather than being gated all-or-nothing.
+    const airAimed = this._shotIgnoresCover?.(owner, shooter ?? primaryPlayerOf(this));
+    const eatenAt = this._softCoverBeamBlock?.(muzzleX, muzzleY, endX, endY, hit ? target : null, airAimed);
+    if (eatenAt) {
+      // Stop the beam at the eating hex — its centre projected onto the ray — so it visibly
+      // terminates in the foliage rather than drawing through to the target/wall. The trees stopped
+      // it, so it is neither a unit hit nor a wall block: no damage, no terrain chip, a leaf puff.
+      const along = Math.max(0, (eatenAt.x - muzzleX) * dirX + (eatenAt.y - muzzleY) * dirY);
+      endDist = Math.min(endDist, along);
+      endX = muzzleX + dirX * endDist; endY = muzzleY + dirY * endDist;
+      hit = false; blocked = false;
+    }
 
     // Persistent beam so sparks can linger after it fades. A continuously-held beam
     // (sustained/stream) keeps ONE beam object that re-pins to the muzzle each shot, so it
@@ -533,18 +555,9 @@ export const FiringMixin = {
     } else {
       this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral });
     }
-    // #374 REWORK: the foliage roll, per soft-cover hex the beam CROSSES (10% each; the target's
-    // own hex 25% for a non-mech ground unit, 10% for a mech, 0 for air — which exempts the whole
-    // lane). Checked here, AFTER the beam has geometrically resolved onto a unit, because soft
-    // cover no longer blocks anything geometrically. The muzzle point is passed as the lane's
-    // origin; the muzzle's own hex is also the #72 own-hex exemption. The beam still draws to the
-    // target and still sparks (it hit the branches in front of them); it just deals nothing.
-    // A held stream asks once per TICK, so it loses ~10% of its DPS per crossed hex rather than
-    // being gated all-or-nothing.
-    const eaten = hit && this._softCoverStopsShot?.(
-      target, [this._hexKeyAt(muzzleX, muzzleY)], { x: muzzleX, y: muzzleY },
-    );
-    if (hit && !eaten) {
+    if (eatenAt) {
+      this._foliageBlockFx?.(eatenAt.x, eatenAt.y);   // #374 — the distinct foliage puff, no damage
+    } else if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
       // player damage sink, not the enemy one.
@@ -552,8 +565,6 @@ export const FiringMixin = {
       else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
       else this._damageEnemyAt(target, endX, endY, dmg, color);
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
-    } else if (eaten) {
-      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);   // #374 — splash in the foliage
     } else if (blocked) {
       // #317: a stopped beam now CHIPS what stopped it, exactly as a round that detonates on cover
       // has always done (projectiles.js). Before this, hitscan weapons could not damage destructible
@@ -687,11 +698,17 @@ export const FiringMixin = {
     const ignoresCover = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this));
     const pushed = {
       ...round, owner, trail: [], seekTarget, originHexes, targetHexKey, ignoresCover,
-      // #374 REWORK: where this round was BORN, so the soft-cover lane (world.js
-      // `_softCoverLane`) can be walked muzzle→impact when the round resolves onto a unit.
-      // Stamped at spawn rather than back-derived from flight, so an arcing/homing round is
-      // judged on the lane it was actually fired down.
-      originX: x, originY: y,
+      // #374 REWORK: where this round was BORN (kept for reference / the friendly-fire origin) and
+      // the last hex it was seen in, seeded to the muzzle hex so the muzzle's own hex is never
+      // in-flight-rolled. projectiles.js rolls the flat per-hex 10% on each NEW soft-cover hex the
+      // round enters (`_lastHexKey` is how "new" is detected).
+      originX: x, originY: y, _lastHexKey: this._hexKeyAt(x, y),
+      // #374 REWORK: is this shot aimed at an AIRBORNE target? Air targets are exempt from soft
+      // cover eating entirely — in flight and at resolution. Derived from the SAME
+      // locked-target-airborne predicate as #338's `ignoresCover` (a shot aimed at something in the
+      // air is no more eaten by trees than it is stopped by walls), so it is player-only and reads
+      // the intended/locked target, never a caller param — the prior art the issue points at.
+      airTarget: ignoresCover,
       // #348: who fired it, so friendly fire (projectiles.js) can skip the shooter themselves.
       shooter: owner === 'player' ? (shooter ?? primaryPlayerOf(this)) : null,
     };

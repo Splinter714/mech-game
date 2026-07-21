@@ -107,103 +107,62 @@ function makeScene({ roll = 0, rolls = null, extraForest = false } = {}) {
   return scene;
 }
 
-describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll', () => {
+describe('#374 REWORK (in-flight): _softCoverStopsShot — the RESOLUTION roll, TARGET OWN HEX only', () => {
+  // Since the rework the intervening lane hexes are rolled IN FLIGHT (a projectile per step, a
+  // hitscan trace along its whole path — see the wiring blocks below), so this resolution roll is
+  // scoped down to just the TARGET'S OWN hex, with the tier bump (vehicle 25% / mech 10% / air 0).
+  // It never re-walks the lane, so a hex is never rolled twice.
   const at = (h, extra = {}) => ({ ...centre(h), mech: {}, ...extra });
-  // Every scene-level call now names WHERE the shot came from — the shooter at pixel (0,0).
-  const MUZZLE = { x: 0, y: 0 };
-  const roll = (s, target, originHexes = null, origin = MUZZLE) =>
-    s._softCoverStopsShot(target, originHexes, origin);
-
-  // #374 block-visual: `_softCoverStopsShot` now returns the CENTRE `{x, y}` of the blocking hex
-  // (where the leaf puff detonates) when eaten, or `null` when the shot gets through. `blockAt`
-  // pins that the returned point is a specific hex's centre.
+  const roll = (s, target, originHexes = null) => s._softCoverStopsShot(target, originHexes);
+  // Returns the CENTRE `{x, y}` of the target's own hex (where the leaf puff detonates) when eaten.
   const blockAt = (h) => ({ x: centre(h).x, y: centre(h).y });
 
-  it('a target with a lane crossing NO soft cover is never blocked, however the dice fall', () => {
-    const s = makeScene({ roll: 0 });
-    expect(roll(s, at(CLEAR_HEX))).toBeNull();
+  it('a target whose OWN hex is not soft cover is never blocked, however the dice fall', () => {
+    expect(roll(makeScene({ roll: 0 }), at(CLEAR_HEX))).toBeNull();
+    // even standing BEHIND woods: the intervening forest is the in-flight roll's job, not this one.
+    expect(roll(makeScene({ roll: 0 }), at(OPEN_HEX))).toBeNull();
   });
 
   // The own-hex chances: this is the "no mech bonus" half of Jackson's instruction.
   it('a MECH target in forest gets NO own-hex bonus — its own hex is a plain 10%', () => {
-    // ...and when eaten, the puff detonates at that own (forest) hex's centre.
     expect(roll(makeScene({ roll: 0.09 }), at(FOREST_HEX))).toEqual(blockAt(FOREST_HEX));
     expect(roll(makeScene({ roll: 0.10 }), at(FOREST_HEX))).toBeNull();
     expect(roll(makeScene({ roll: 0.2 }), at(FOREST_HEX))).toBeNull();
   });
 
-  it('a non-mech GROUND target bumps its OWN hex to 25% — and only its own hex', () => {
+  it('a non-mech GROUND target bumps its OWN hex to 25%', () => {
     const tank = { kind: 'tank' };
     expect(roll(makeScene({ roll: 0.24 }), at(FOREST_HEX, tank))).toEqual(blockAt(FOREST_HEX));
     expect(roll(makeScene({ roll: 0.25 }), at(FOREST_HEX, tank))).toBeNull();
-    // an INTERVENING forest hex is still only 10% for that same tank: standing at OPEN_HEX
-    // (behind the woods) its lane crosses the forest as a plain hex — and the puff detonates
-    // mid-lane AT that crossed forest hex, not at the tank.
-    expect(roll(makeScene({ roll: 0.15 }), at(OPEN_HEX, tank))).toBeNull();
-    expect(roll(makeScene({ roll: 0.05 }), at(OPEN_HEX, tank))).toEqual(blockAt(FOREST_HEX));
   });
 
-  // THE HEADLINE BEHAVIOUR: foliage between you and the target now matters at all.
-  it('a shot at a target in the CLEAR is blocked by woods it merely CROSSES', () => {
-    const s = makeScene({ roll: 0.05 });          // 0.05 < 0.10
-    // ...and the block reports the crossed forest hex's centre, not the clear target's.
-    expect(roll(s, at(OPEN_HEX))).toEqual(blockAt(FOREST_HEX));
-    expect(roll(makeScene({ roll: 0.5 }), at(OPEN_HEX))).toBeNull();
-  });
-
-  it('two soft hexes in one lane are rolled INDEPENDENTLY — either can eat the shot', () => {
-    // rolls: [first hex, second hex]. Only the SECOND (FOREST_HEX) is under 10%, and it blocks there.
-    expect(roll(makeScene({ rolls: [0.5, 0.05], extraForest: true }), at(OPEN_HEX))).toEqual(blockAt(FOREST_HEX));
-    // only the first (FOREST_MID) under 10% ⇒ the puff detonates at that nearer hex
-    expect(roll(makeScene({ rolls: [0.05, 0.5], extraForest: true }), at(OPEN_HEX))).toEqual(blockAt(FOREST_MID));
-    // neither ⇒ through, where a single-hex lane on the same dice also gets through
-    expect(roll(makeScene({ rolls: [0.5, 0.5], extraForest: true }), at(OPEN_HEX))).toBeNull();
-  });
-
-  it('the lane really is walked: an intervening forest takes its own draw', () => {
+  it('rolls the target OWN hex ONCE — a single draw, never the whole lane', () => {
+    // FOREST_MID is also planted, so the OLD lane-walk would have taken two draws; the reworked
+    // resolution roll takes exactly one — the own hex — leaving the intervening woods to in-flight.
     const rng = vi.fn(() => 0.5);
     const s = makeScene({ extraForest: true });
     s._coverRng = rng;
-    // FOREST_MID + FOREST_HEX crossed, then OPEN_HEX (grass) as the own hex ⇒ two draws.
-    roll(s, at(OPEN_HEX));
-    expect(rng).toHaveBeenCalledTimes(2);
+    roll(s, at(FOREST_HEX));
+    expect(rng).toHaveBeenCalledTimes(1);
   });
 
-  // Air's exemption is now LANE-WIDE, which is the part Jackson chose over physical consistency.
-  it('an AIRBORNE target ignores the ENTIRE lane, not just its own hex', () => {
+  it('an AIRBORNE target is exempt from its own-hex roll too', () => {
     const heli = { kind: 'helicopter', flying: true };
     const rng = vi.fn(() => 0);
-    const s = makeScene({ extraForest: true });
+    const s = makeScene({});
     s._coverRng = rng;
-    // in the trees itself...
     expect(roll(s, at(FOREST_HEX, heli))).toBeNull();
-    // ...and behind two forest hexes, where a ground target would almost certainly be stopped
-    expect(roll(s, at(OPEN_HEX, heli))).toBeNull();
     expect(rng).not.toHaveBeenCalled();
-    expect(roll(makeScene({ roll: 0, extraForest: true }), at(OPEN_HEX))).toEqual(blockAt(FOREST_MID));
   });
 
-  // #72/#279's own-hex exemption, carried into the lane rule: it survives, expressed as the
-  // shooter's muzzle hex being OMITTED from the lane.
-  it('the own-hex exemption holds — a shooter in the SAME forest hex is never blocked', () => {
+  // #72/#279's own-hex exemption: the shooter standing in the target's own thicket never rolls.
+  it('the brawling exemption holds — muzzle hex IS the target hex ⇒ no roll', () => {
     const s = makeScene({ roll: 0 });
     const forestPt = centre(FOREST_HEX);
     const sameHex = [s._hexKeyAt(forestPt.x, forestPt.y)];
-    // shooter standing in the target's own thicket: empty lane, no roll
-    expect(s._softCoverStopsShot(at(FOREST_HEX), sameHex, forestPt)).toBeNull();
-    // ...but a shooter standing anywhere else rolls normally.
-    expect(roll(s, at(FOREST_HEX), sameHex.slice(0, 0))).toEqual(blockAt(FOREST_HEX));
+    expect(s._softCoverStopsShot(at(FOREST_HEX), sameHex)).toBeNull();
+    // ...but a shooter standing anywhere else rolls the own hex normally.
     expect(roll(s, at(FOREST_HEX), null)).toEqual(blockAt(FOREST_HEX));
-  });
-
-  it('with no origin the rule degrades to the target own-hex lane — never to an exception', () => {
-    const s = makeScene({ roll: 0 });
-    // the fallback still reports a real block point — the target's own hex centre.
-    expect(s._softCoverStopsShot(at(FOREST_HEX))).toEqual(blockAt(FOREST_HEX));
-    expect(s._softCoverStopsShot(at(CLEAR_HEX))).toBeNull();
-    // the own-hex exemption still applies without an origin
-    const forestPt = centre(FOREST_HEX);
-    expect(s._softCoverStopsShot(at(FOREST_HEX), [s._hexKeyAt(forestPt.x, forestPt.y)])).toBeNull();
   });
 
   it('a target with no position cannot be rolled for, and is never blocked', () => {
@@ -212,24 +171,21 @@ describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll
     expect(s._softCoverStopsShot({ mech: {} })).toBeNull();
   });
 
-  // The seeding requirement, stated as a test: no bare Math.random, and the same run seed must
-  // reproduce the same sequence of blocks — now with MORE draws per shot than before.
+  // The seeding requirement: no bare Math.random, and the same run seed reproduces the outcomes.
   it('rolls on a SEEDED rng derived from runSeed — not Math.random — and repeats for a seed', () => {
     const spy = vi.spyOn(Math, 'random');
     const run = (runSeed) => {
-      const s = makeScene({ extraForest: true });
+      const s = makeScene({});
       delete s._coverRng;                      // force the lazy production construction
       s.runSeed = runSeed;
-      const tank = at(OPEN_HEX, { kind: 'tank' });
-      // map the point-or-null return to a plain blocked? boolean for the sequence comparison
-      return Array.from({ length: 40 }, () => !!roll(s, tank));
+      const tank = at(FOREST_HEX, { kind: 'tank' });
+      return Array.from({ length: 60 }, () => !!roll(s, tank));
     };
     const a = run(1234), b = run(1234), c = run(9999);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
     expect(a).toEqual(b);                      // same seed ⇒ same outcomes
     expect(a).not.toEqual(c);                  // a different seed genuinely differs
-    // ...and it is a real roll, not a stuck constant.
     expect(a).toContain(true);
     expect(a).toContain(false);
   });
@@ -272,12 +228,12 @@ describe('#374 REWORK: _softCoverLane — the soft-cover hexes a shot crosses', 
   });
 });
 
-// ── the two real damage-resolution sites ──────────────────────────────────────────────────
-describe('#374 a blocked shot deals no damage but still splashes', () => {
-  function makeFiringScene({ roll, target }) {
-    const s = makeScene({ roll });
+// ── the real damage-resolution sites, plus the NEW in-flight pass-through ──────────────────
+describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, a foliage puff', () => {
+  function makeFiringScene({ roll, rolls, target, extraForest = false }) {
+    const s = makeScene({ roll, rolls, extraForest });
     Object.assign(s, FiringMixin, ProjectilesMixin, {
-      beams: [], enemies: [target],
+      beams: [], enemies: target ? [target] : [],
       players: [{ id: 'p1', x: 0, y: 0, convergeTarget: null, mech: { isDestroyed: () => false } }],
       time: { now: 0, delayedCall: () => {} },
       projFx: { clear: vi.fn() },
@@ -288,74 +244,83 @@ describe('#374 a blocked shot deals no damage but still splashes', () => {
       _damagePlayerAt: vi.fn(),
       _damageBuildingAt: vi.fn(),
       _rangeFactor: () => 1,
-      _liveTargetsForTrace: () => [{ ref: target, x: target.x, y: target.y }],
+      _liveTargetsForTrace: () => (target ? [{ ref: target, x: target.x, y: target.y }] : []),
       _shotIgnoresCover: () => false,
       _isHeldBeam: () => false,
-      _buildEnemyIndex: () => ({ nearest: () => target }),
+      _buildEnemyIndex: () => ({ nearest: () => target ?? null }),
     });
     return s;
   }
 
   const tankIn = (h) => ({ ...centre(h), kind: 'tank', mech: { isDestroyed: () => false } });
+  const W = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
+  const lastBeam = (s) => s.beams[s.beams.length - 1];
 
-  it('HITSCAN: a beam eaten by the foliage damages nothing, but still draws its impact', () => {
+  // fire a projectile from (0,0) toward `to`, stepping until it resolves. `airTarget` stamps the
+  // flyer-exempt flag firing.js derives from a locked airborne target.
+  function fireRound(s, to, { airTarget = false, maxDist = 4000 } = {}) {
+    const round = makeProjectile(WEAPONS.autocannon, 0, 0, Math.atan2(to.y, to.x), { maxDist });
+    Object.assign(round, {
+      owner: 'player', trail: [], seekTarget: null,
+      originHexes: [s._hexKeyAt(0, 0)], targetHexKey: null,
+      originX: 0, originY: 0, _lastHexKey: s._hexKeyAt(0, 0), airTarget,
+    });
+    s.projectiles = [round];
+    for (let i = 0; i < 400 && !round.dead; i++) s._updateProjectiles(0.016);
+    return round;
+  }
+
+  // ── HITSCAN (whole-trace walk) ──
+  it('HITSCAN: a beam eaten by the foliage deals nothing and puffs — no weapon splash', () => {
     const target = tankIn(FOREST_HEX);
     const s = makeFiringScene({ roll: 0, target });   // 0 < 0.25 ⇒ the trees eat it
-    const w = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
-    s._fireHitscan(w, 0, 0, 0, 'player', 'player');
+    s._fireHitscan(W, 0, 0, 0, 'player', 'player');
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._impactFx).toHaveBeenCalled();           // it visibly hit the branches
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(s._impactFx).not.toHaveBeenCalled();
   });
 
   it('HITSCAN: the same beam on a roll the target survives deals its damage normally', () => {
     const target = tankIn(FOREST_HEX);
     const s = makeFiringScene({ roll: 0.9, target });  // 0.9 >= 0.25 ⇒ through the gap
-    const w = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
-    s._fireHitscan(w, 0, 0, 0, 'player', 'player');
+    s._fireHitscan(W, 0, 0, 0, 'player', 'player');
     expect(s._damageEnemyAt).toHaveBeenCalled();
   });
 
-  it('HITSCAN: a target whose lane crosses no soft cover is never affected by the rule', () => {
+  it('HITSCAN: a target whose trace crosses no soft cover is never affected by the rule', () => {
     const target = tankIn(CLEAR_HEX);
     const s = makeFiringScene({ roll: 0, target });
-    const w = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
-    s._fireHitscan(w, 0, 0, Math.atan2(target.y, target.x), 'player', 'player');
+    s._fireHitscan(W, 0, 0, Math.atan2(target.y, target.x), 'player', 'player');
     expect(s._damageEnemyAt).toHaveBeenCalled();
   });
 
-  // The rework's other headline at the wiring level: a beam at a target in the CLEAR can now be
-  // eaten by woods it merely passes over.
-  it('HITSCAN: woods CROSSED on the way to a clear target can eat the beam', () => {
+  // The rework's headline: a beam at a target in the CLEAR is eaten by woods it merely crosses,
+  // and visibly STOPS at that hex rather than drawing through to the target.
+  it('HITSCAN: woods CROSSED on the way to a clear target eat the beam, which stops there', () => {
     const target = tankIn(OPEN_HEX);                  // sits behind FOREST_HEX
     const s = makeFiringScene({ roll: 0.05, target }); // 0.05 < 0.10, the crossed-hex chance
-    const w = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
-    s._fireHitscan(w, 0, 0, 0, 'player', 'player');
+    s._fireHitscan(W, 0, 0, 0, 'player', 'player');
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._impactFx).toHaveBeenCalled();
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(lastBeam(s).x1).toBeCloseTo(centre(FOREST_HEX).x, 3);   // stopped mid-trace, not drawn through
   });
 
-  function fireRound(s, target) {
-    const to = { x: target.x, y: target.y };
-    const round = makeProjectile(WEAPONS.autocannon, 0, 0, Math.atan2(to.y, to.x), { maxDist: 4000 });
-    Object.assign(round, {
-      owner: 'player', trail: [], seekTarget: null,
-      originHexes: [s._hexKeyAt(0, 0)], targetHexKey: null,
-      // #374 REWORK: the spawn point the soft-cover lane is walked from (firing.js stamps this).
-      originX: 0, originY: 0,
-    });
-    s.projectiles = [round];
-    for (let i = 0; i < 200 && !round.dead; i++) s._updateProjectiles(0.016);
-    return round;
-  }
+  it('HITSCAN (no target): a beam lanced into EMPTY woods still rolls, puffs, and stops there', () => {
+    const s = makeFiringScene({ roll: 0.05, extraForest: true });   // no target at all
+    s._fireHitscan(W, 0, 0, 0, 'player', 'player');
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_MID).x, centre(FOREST_MID).y);
+    expect(s._damageEnemyAt).not.toHaveBeenCalled();
+    expect(lastBeam(s).x1).toBeCloseTo(centre(FOREST_MID).x, 3);
+  });
 
-  it('PROJECTILE: a round eaten by the foliage dies and puffs in the trees, but deals no damage', () => {
+  // ── PROJECTILE (per-step in flight + own-hex at resolution) ──
+  it('PROJECTILE: a round eaten resolving on a target in forest puffs, no damage', () => {
     const target = tankIn(FOREST_HEX);
-    const s = makeFiringScene({ roll: 0, target });
+    const s = makeFiringScene({ roll: 0, target });   // own-hex 25%, 0 < 0.25
     const round = fireRound(s, target);
     expect(round.dead).toBe(true);
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    // #374 block-visual: a blocked PROJECTILE plays the distinct foliage puff, NOT a weapon splash.
-    expect(s._foliageBlockFx).toHaveBeenCalled();
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
     expect(s._impactFx).not.toHaveBeenCalled();
   });
 
@@ -366,14 +331,75 @@ describe('#374 a blocked shot deals no damage but still splashes', () => {
     expect(s._damageEnemyAt).toHaveBeenCalled();
   });
 
-  // The consequence Jackson accepted, pinned as a fact rather than left implicit: an AIRBORNE
-  // unit gets nothing from foliage at all, where the old size-tier rule (drones are `size:
-  // 'large'`) also gave them nothing — but a grounded one now takes the vehicle treatment.
-  it('PROJECTILE: an airborne drone in forest is hit regardless of the roll', () => {
-    const target = { ...centre(FOREST_HEX), kind: 'drone', flying: true, mech: { isDestroyed: () => false } };
-    const s = makeFiringScene({ roll: 0, target });
+  it('PROJECTILE (no target): a round fired into EMPTY woods puffs and dies in the trees', () => {
+    const s = makeFiringScene({ roll: 0.05, extraForest: true });   // 0.05 < 0.10
+    const round = fireRound(s, centre(OPEN_HEX), { maxDist: 900 });
+    expect(round.dead).toBe(true);
+    // eaten at the FIRST forest hex it enters (FOREST_MID), which is where the puff detonates.
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_MID).x, centre(FOREST_MID).y);
+    expect(s._damageEnemyAt).not.toHaveBeenCalled();
+    expect(s._impactFx).not.toHaveBeenCalled();
+  });
+
+  it('PROJECTILE (no target): survives the open dice and lands normally — no foliage puff', () => {
+    const s = makeFiringScene({ roll: 0.5, extraForest: true });
+    const round = fireRound(s, centre(OPEN_HEX), { maxDist: 900 });
+    expect(round.dead).toBe(true);
+    expect(s._foliageBlockFx).not.toHaveBeenCalled();
+  });
+
+  it('PROJECTILE: each crossed forest hex rolls INDEPENDENTLY — the puff is at the FIRST that eats it', () => {
+    // FOREST_MID is entered before FOREST_HEX, so rolls[0] is MID's draw, rolls[1] is HEX's.
+    const midEats = makeFiringScene({ rolls: [0.05, 0.5], extraForest: true });
+    fireRound(midEats, centre(OPEN_HEX), { maxDist: 900 });
+    expect(midEats._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_MID).x, centre(FOREST_MID).y);
+
+    const hexEats = makeFiringScene({ rolls: [0.5, 0.05], extraForest: true });
+    fireRound(hexEats, centre(OPEN_HEX), { maxDist: 900 });
+    expect(hexEats._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+  });
+
+  it('PROJECTILE: an intervening forest is NOT double-rolled with the target own hex', () => {
+    // A tank sits in FOREST_HEX behind FOREST_MID (extraForest). rolls: MID (in flight) then the
+    // own hex (resolution). MID survives (0.5), own-hex vehicle 25% eats it (0.2) — exactly TWO
+    // draws total, one per hex, never MID twice.
+    const rng = vi.fn(() => 0.5);
+    let seq = [0.5, 0.2], i = 0;
+    rng.mockImplementation(() => seq[i++] ?? 0.5);
+    const target = tankIn(FOREST_HEX);
+    const s = makeFiringScene({ target, extraForest: true });
+    s._coverRng = rng;
     fireRound(s, target);
+    expect(rng).toHaveBeenCalledTimes(2);
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(s._damageEnemyAt).not.toHaveBeenCalled();
+  });
+
+  // The flyer exemption, the part Jackson chose over physical consistency: an AIRBORNE target is
+  // exempt from the WHOLE lane, in flight and at resolution — the `airTarget` flag firing.js stamps.
+  it('PROJECTILE: an air-aimed round crossing forest is NEVER eaten, even on a guaranteed roll', () => {
+    const target = { ...centre(OPEN_HEX), kind: 'drone', flying: true, mech: { isDestroyed: () => false } };
+    const s = makeFiringScene({ roll: 0, target, extraForest: true });   // would eat everything...
+    fireRound(s, target, { airTarget: true });                            // ...but it's air-aimed
+    expect(s._foliageBlockFx).not.toHaveBeenCalled();
     expect(s._damageEnemyAt).toHaveBeenCalled();
+  });
+
+  // The statistical shape Jackson asked for: crossing k=2 forest hexes with no target is eaten at
+  // ~1 − 0.9² ≈ 0.19 over many SEEDED rolls (the real mulberry32, not the scripted stub).
+  it('PROJECTILE (no target): ~1 − 0.9^k eaten crossing k=2 forest hexes over many rolls', () => {
+    const s = makeFiringScene({ extraForest: true });
+    delete s._coverRng;                       // force the lazy production mulberry32
+    s.runSeed = 20260720;
+    const N = 2000; let eaten = 0;
+    for (let n = 0; n < N; n++) {
+      s._foliageBlockFx.mockClear();
+      fireRound(s, centre(OPEN_HEX), { maxDist: 900 });
+      if (s._foliageBlockFx.mock.calls.length > 0) eaten++;
+    }
+    const rate = eaten / N;
+    expect(rate).toBeGreaterThan(0.15);
+    expect(rate).toBeLessThan(0.24);          // centred on ≈ 0.19
   });
 });
 
@@ -415,9 +441,10 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
     Object.assign(round, {
       owner: 'enemy', trail: [], seekTarget: null,
       originHexes: [s._hexKeyAt(0, 0)], targetHexKey: null, originX: 0, originY: 0,
+      _lastHexKey: s._hexKeyAt(0, 0), airTarget: false,
     });
     s.projectiles = [round];
-    for (let i = 0; i < 200 && !round.dead; i++) s._updateProjectiles(0.016);
+    for (let i = 0; i < 300 && !round.dead; i++) s._updateProjectiles(0.016);
     return round;
   }
 
@@ -453,10 +480,11 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
 
   it('an enemy BEAM obeys it as well — the hitscan path is shared', () => {
     const { s, player } = makeEnemyFiringScene({ roll: 0.05, playerHex: FOREST_HEX });
+    void player;
     const w = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
     s._fireHitscan(w, 0, 0, 0, 'enemy', 'e1');
     expect(s._damagePlayerAt).not.toHaveBeenCalled();
-    expect(s._impactFx).toHaveBeenCalled();
+    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
     // ...and lands when the dice allow
     const clear = makeEnemyFiringScene({ roll: 0.9, playerHex: FOREST_HEX });
     clear.s._fireHitscan(w, 0, 0, 0, 'enemy', 'e1');

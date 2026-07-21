@@ -7,7 +7,7 @@ import {
   ARENA_MECH_SCALE, DAMAGEABLE, DEATH_SCALE_MAX, DEPTH, deathScaleFor, explosionCategoryFor,
   resolveHitLocation, pickLiveWeighted, softCoverUnitTier,
 } from './shared.js';
-import { softCoverStopsShot } from '../../data/terrain.js';
+import { isSoftCover, softCoverHexBlockChance, softCoverStopsShot, SOFT_COVER_HEX_BLOCK_CHANCE } from '../../data/terrain.js';
 import { mulberry32 } from '../../data/worldgen.js';
 import { SOUND_THROTTLE_MS, allowByKey, skipImpactBurst } from '../../data/hitFx.js';
 import { DORMANT } from '../../data/awareness.js';
@@ -29,58 +29,83 @@ const IMPACT_CIRCLE_CAP = 48;
 const DEBRIS_CAP = 60;
 
 export const CombatMixin = {
-  // ── #374 REWORK: soft cover eats some shots, PER CROSSED HEX ────────────────────────────
-  // The one place the foliage roll is made. Every PROJECTILE (and every beam tick) that has
-  // RESOLVED onto a unit asks this before damage is applied; a `true` answer means the shot hit
-  // the trees instead, so it splashes cosmetically at the impact point and deals nothing.
-  //
-  // PER PROJECTILE, NOT PER TRIGGER PULL — that falls straight out of the call site: every round
-  // in a Swarm Rack salvo is its own `p` and asks independently, so a 6-missile volley across
-  // three forest hexes loses ~1.6 missiles and the rest land. Nothing here is memoised per shot.
-  //
-  // `origin` is WHERE THE SHOT CAME FROM ({x, y} — a round's spawn point, a beam's muzzle). It is
-  // what makes the lane walkable: `_softCoverLane` (world.js) turns muzzle→target into the list of
-  // soft-cover hexes crossed. Without it (a bare test stub, or a caller with no origin handy) the
-  // lane degrades to the target's own hex alone — the pre-rework behaviour, never an exception.
-  // `originHexes` is the round's stamped muzzle/body hex list, feeding the #72/#279 own-hex
-  // exemption by being EXCLUDED from the lane: a shooter in the target's own thicket yields an
-  // empty lane and no roll.
-  //
-  // `target` is the thing being shot (a player ref or an enemy) — the tier is read off IT, never
-  // off the shooter (`softCoverUnitTier`, shared.js), which is what makes the rule SYMMETRIC:
-  // enemy fire runs this identical path (projectiles.js's `enemyShot` branch, firing.js's
-  // `owner === 'enemy'` beams), so foliage protects whoever stands in it regardless of who fired.
+  // ── #374 REWORK (in-flight): soft cover eats shots as they PHYSICALLY CROSS it ────────────
+  // The forest now eats a shot whether or not it has a target — a round fired into empty woods
+  // puffs and dies in the trees. The roll is made IN FLIGHT, per soft-cover hex the shot ENTERS,
+  // split across three places that share one seeded rng (`_coverRng`, below):
+  //   • `_softCoverHexEats()` — the flat per-hex 10% draw, made by the projectile update loop
+  //     (projectiles.js) once for each NEW soft-cover hex a travelling round enters, and by
+  //     `_softCoverBeamBlock` for each hex a hitscan trace crosses.
+  //   • `_softCoverStopsShot` — the RESOLUTION roll on the TARGET's OWN hex only (the tier bump:
+  //     vehicle 25% / mech 10% / air 0). The intervening lane hexes were already rolled in flight,
+  //     so this rolls exactly ONE hex and never re-walks the lane — no hex is rolled twice.
+  //   • `_softCoverBeamBlock` — a beam resolves instantly, so it can't roll per-step over time;
+  //     its whole trace is walked here in one pass instead (muzzle→endpoint), flat 10% per crossed
+  //     hex plus the tier bump on a ground target's own hex.
+  // All three are SYMMETRIC (they read the shot/target, never "is this the player") and skip
+  // AIR-aimed shots entirely (`airTarget`/`airAimed`), which is the flyer exemption.
   //
   // The RNG is seeded off the run (`runSeed`) rather than `Math.random`, matching how the arena
-  // seeds its other per-run rolls (bases.js `_dockRng`), so a seeded run stays reproducible. It's
-  // built lazily on first use and now steps ONCE PER SOFT-COVER HEX crossed rather than once per
-  // shot — more draws, same discipline. Tests inject `_coverRng` directly.
-  // Returns WHERE the foliage ate the shot — the CENTRE `{x, y}` of the soft-cover hex that rolled
-  // the block — or `null` when the shot gets through. A truthy return means "blocked", so callers
-  // that only care whether it was eaten (firing.js's beam `eaten` check) read exactly as before,
-  // while the projectile code detonates its leaf puff at the returned point (mid-lane) instead of
-  // splashing at the target. The point is the blocking hex's centre, stamped onto the lane by
-  // `_softCoverLane` (or `_hexCenterAt` in the origin-less fallback).
-  _softCoverStopsShot(target, originHexes = null, origin = null) {
+  // seeds its other per-run rolls (bases.js `_dockRng`), so a seeded run stays reproducible. Built
+  // lazily on first use; tests inject `_coverRng` directly.
+  _coverRoll() {
+    if (!this._coverRng) this._coverRng = mulberry32(((this.runSeed ?? 1) ^ 0x5f37c0de) >>> 0);
+    return this._coverRng();
+  },
+
+  // #374 REWORK: the flat per-hex IN-FLIGHT draw — does ONE soft-cover hex a shot is passing
+  // THROUGH eat it? A plain 10% (`SOFT_COVER_HEX_BLOCK_CHANCE`), no tier bump (that's the target's
+  // OWN hex only, `_softCoverStopsShot`). Called by the projectile loop once per newly-entered
+  // soft hex; the caller has already checked the hex is soft cover and not the muzzle/target own
+  // hex, and that the shot is not air-aimed, so this is purely the dice.
+  _softCoverHexEats() {
+    return this._coverRoll() < SOFT_COVER_HEX_BLOCK_CHANCE;
+  },
+
+  // #374 REWORK: the RESOLUTION roll — when a shot resolves onto a target standing in soft cover,
+  // its OWN hex gets ONE tier-bumped roll (vehicle 25% / mech 10%, i.e. no mech bonus / air 0).
+  // Scoped to the target's own hex ALONE: the intervening lane hexes were already rolled in flight
+  // (projectiles.js per step) so re-walking the lane here would roll them a second time. Returns
+  // the own hex's centre `{x, y}` when the foliage eats the shot (the leaf puff detonates there),
+  // else null. `originHexes` carries the #72/#279 brawling exemption — a shooter standing in the
+  // target's own thicket (its muzzle hex IS the target's hex) never rolls.
+  // `target` is the thing being shot (a player ref or an enemy); the tier is read off IT, never
+  // off the shooter (`softCoverUnitTier`, shared.js), which is what keeps the rule symmetric.
+  _softCoverStopsShot(target, originHexes = null) {
     const tx = target?.x, ty = target?.y;
     if (typeof tx !== 'number' || typeof ty !== 'number') return null;
     const tier = softCoverUnitTier(target);
-    if (tier === 'air') return null;    // air ignores the whole lane — skip the walk entirely
-    let lane;
-    if (typeof origin?.x === 'number' && typeof origin?.y === 'number' && this._softCoverLane) {
-      lane = this._softCoverLane(origin.x, origin.y, tx, ty, originHexes);
-    } else {
-      const key = this._hexKeyAt(tx, ty);
-      if (originHexes && originHexes.includes(key)) {
-        lane = [];                                      // own-hex exemption, no origin needed
-      } else {
-        const c = this._hexCenterAt(tx, ty);
-        lane = [{ id: this.terrain.get(key), ownHex: true, x: c.x, y: c.y }];
-      }
+    if (tier === 'air') return null;                    // air is exempt from the whole rule
+    const key = this._hexKeyAt(tx, ty);
+    if (originHexes && originHexes.includes(key)) return null;   // brawling: muzzle hex IS target hex
+    if (!isSoftCover(this.terrain.get(key))) return null;
+    const chance = softCoverHexBlockChance(tier, true);
+    if (chance <= 0) return null;
+    if (this._coverRoll() < chance) {
+      const c = this._hexCenterAt(tx, ty);
+      return { x: c.x, y: c.y };
     }
-    if (lane.length === 0) return null;                 // nothing crossed ⇒ no draws taken
-    if (!this._coverRng) this._coverRng = mulberry32(((this.runSeed ?? 1) ^ 0x5f37c0de) >>> 0);
-    const hex = softCoverStopsShot(lane, tier, this._coverRng);
+    return null;
+  },
+
+  // #374 REWORK: the HITSCAN whole-trace walk. A beam resolves in a single frame, so unlike a
+  // travelling round it can't roll per-step over time; its trace muzzle→endpoint is walked here in
+  // order (`_softCoverLane`, world.js) and the FIRST soft-cover hex that rolls a block stops the
+  // beam at that hex (returned centre) — no damage, a foliage puff there. Intervening hexes are the
+  // flat 10%; the target's OWN hex earns the tier bump, but ONLY when the beam actually reached a
+  // ground target (`target` set) — an endpoint hex with no unit in it (wall/miss/max range) is a
+  // plain crossed hex. The muzzle's own hex is omitted from the lane (brawling exemption); an
+  // air-aimed beam, or one resolving onto an airborne unit, is exempt from the whole lane.
+  _softCoverBeamBlock(muzzleX, muzzleY, endX, endY, target, airAimed = false) {
+    // With no ground target (the beam hit a wall / nothing / max range) the tier defaults to 'mech',
+    // whose own-hex chance IS the flat 10% — so the endpoint hex the lane marks `ownHex` gets no
+    // bump, exactly right for a hex with no unit in it. A real ground target passes its own tier, so
+    // its own hex earns the vehicle 25% / mech 10%. Air is exempt from the whole lane.
+    const tier = target ? softCoverUnitTier(target) : 'mech';
+    if (airAimed || tier === 'air') return null;
+    if (!this._softCoverLane) return null;
+    const lane = this._softCoverLane(muzzleX, muzzleY, endX, endY, [this._hexKeyAt(muzzleX, muzzleY)]);
+    const hex = softCoverStopsShot(lane, tier, () => this._coverRoll());
     return hex ? { x: hex.x, y: hex.y } : null;
   },
 

@@ -17,6 +17,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WorldMixin } from './world.js';
 import { ProjectilesMixin } from './projectiles.js';
+import { CombatMixin } from './combat.js';
 import { TargetingMixin } from './targeting.js';
 import { FiringMixin } from './firing.js';
 import { targetHexKeyOf } from './shared.js';
@@ -372,9 +373,14 @@ describe('#351 natural terrain is permanent scenery — untargetable and undamag
   // claim that still holds — the two axes are independent, and #351 did not itself move cover.
   it('cover and destructibility stay independent axes (#351 scope), with #374 cover behaviour', () => {
     expect(isSoftCover(SOFT)).toBe(true);
-    expect(coverBlocksForRay(SOFT, false)).toBe(false);   // #374 — nobody is blocked geometrically
-    // And a round travelling past intact foliage is unaffected in either direction.
-    const s = realScene([{ h: { q: 2, r: 0 }, id: SOFT }]);
+    expect(coverBlocksForRay(SOFT, false)).toBe(false);   // #374 — nobody is blocked GEOMETRICALLY
+    // #374 REWORK: foliage now eats a passing round PROBABILISTICALLY, in flight, not geometrically.
+    // With the real roll wired but the dice tuned to always SPARE the round (`_coverRng` at the
+    // ceiling), a shot travelling past intact foliage sails through — proving the stop is a roll,
+    // not the terrain geometry. The probabilistic eating itself is pinned in softCoverBlock.test.js.
+    const s = Object.assign(realScene([{ h: { q: 2, r: 0 }, id: SOFT }]), CombatMixin,
+      { _coverRng: () => 1, _foliageBlockFx: vi.fn() });
     expect(fireAt(s, centre({ q: 6, r: 0 })).dead).toBeFalsy();
+    expect(s._foliageBlockFx).not.toHaveBeenCalled();
   });
 });
