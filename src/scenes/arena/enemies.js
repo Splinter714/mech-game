@@ -144,7 +144,7 @@ const MOVE_SPEED_FRAC = 0.6;        // fraction of chassis maxSpeed the AI drive
 // MECHS only (the floaty ones); turrets/tanks/other kinds keep their own per-kind slew. The
 // PLAYER is untouched — it still tracks at its chassis turretSlew within its turretArc. Owner:
 // tunable — raise toward the chassis values for snappier enemy aim, lower for heavier lag.
-export const ENEMY_MECH_TURRET_SLEW = 1.4;  // rad/s — capped aim-tracking rate for enemy mechs (#398)
+export const ENEMY_MECH_TURRET_SLEW = 0.9;  // rad/s — capped aim-tracking rate for enemy mechs (#398)
 const ARRIVE_SLOW = 70;             // px from a destination where the enemy eases to a stop
 const REPICK_ON_ARRIVE = true;      // arriving at a FLANK/COVER goal forces an early re-decide
 

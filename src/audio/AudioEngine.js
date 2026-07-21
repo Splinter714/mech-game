@@ -475,8 +475,9 @@ export class AudioEngine {
   // last signaled-alive tower dies/none remain, and on scene shutdown so it never bleeds into the
   // Garage or the next run.
   // `fadeSec` (optional) lengthens the ramp to silence. Shutdown / return-to-garage call it bare for
-  // a near-instant cut; the tower-DESTRUCTION path (#385) passes ~0.6s so the last siren voice trails
-  // off as the tower falls rather than snapping silent.
+  // a near-instant cut; the tower-DESTRUCTION path (#385) passes ~1.1s so the last siren voice trails
+  // off as the tower falls rather than snapping silent (the ramp is exponential + front-loaded, so the
+  // duration is generous to keep the audible tail from reading as a click).
   stopSiren(fadeSec) {
     if (!this._siren) return;
     this._siren.stop(fadeSec);
