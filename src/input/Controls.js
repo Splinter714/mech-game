@@ -75,14 +75,20 @@ export const SKILL_BINDS = {
 
 // Dash's fixed bind (#261, was Sprint's bind under #188) — always available, never mounted, so
 // it isn't keyed by a body location like SKILL_BINDS. Exported for the HUD's cooldown label.
-export const DASH_BIND = { key: 'Space', pad: 'L3' };
+// #407 adds a SECOND pad button, B, as an additional dash trigger alongside L3 (pad2); the
+// primary `pad` label stays L3 for the HUD.
+export const DASH_BIND = { key: 'Space', pad: 'L3', pad2: 'B' };
+const PAD_B = PAD.B;
 
 // #402: manual-RELOAD bind — R3 / F, which have been UNBOUND since #322 (see the header note
 // above). Press to reload all of this player's weapons at once (Mech.reloadAllWeapons). Like
 // Dash, it isn't a mountable location, so it lives here rather than in SKILL_BINDS. Exported for
 // any HUD hint that wants to name it.
-export const RELOAD_BIND = { key: 'F', pad: 'R3' };
+// #407 adds a SECOND pad button, X, as an additional reload trigger alongside R3 (pad2); the
+// primary `pad` label stays R3.
+export const RELOAD_BIND = { key: 'F', pad: 'R3', pad2: 'X' };
 const PAD_R3 = PAD.R3;
+const PAD_X = PAD.X;
 
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
@@ -340,7 +346,9 @@ export class Controls {
     // of which scheme is currently active, so a mode switch mid-press can't leave a stale edge
     // from the previously-active device), then report just the ONE edge that matches the
     // currently-active scheme as `dashPressed`.
-    const padDashDown = !!(pad && pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed);
+    // #407: B (PAD_B) is an additional dash trigger alongside L3 — either raw button down counts.
+    const padDashDown = !!(pad && ((pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed)
+                                || (pad.buttons[PAD_B] && pad.buttons[PAD_B].pressed)));
     const padDashPressed = padDashDown && !this._padDashDown;
     this._padDashDown = padDashDown;
     const kbDashDown = k.SPACE.isDown;
@@ -351,7 +359,9 @@ export class Controls {
     // #402: manual reload (R3 / F) — edge-detected exactly like the dash above, each device
     // tracked independently every frame so a mid-press mode switch can't leave a stale edge,
     // then only the currently-active scheme's edge is reported.
-    const padReloadDown = !!(pad && pad.buttons[PAD_R3] && pad.buttons[PAD_R3].pressed);
+    // #407: X (PAD_X) is an additional reload trigger alongside R3 — either raw button down counts.
+    const padReloadDown = !!(pad && ((pad.buttons[PAD_R3] && pad.buttons[PAD_R3].pressed)
+                                  || (pad.buttons[PAD_X] && pad.buttons[PAD_X].pressed)));
     const padReloadPressed = padReloadDown && !this._padReloadDown;
     this._padReloadDown = padReloadDown;
     const kbReloadDown = k.F.isDown;

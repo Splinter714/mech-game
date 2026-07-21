@@ -179,6 +179,21 @@ describe('Controls.read — dash intent, press-to-trigger on both devices (#261)
     expect(controls.read().dashPressed).toBe(true);    // press again
   });
 
+  // #407: B is an additional dash trigger alongside L3.
+  it('dashPressed is a rising-edge one-shot on gamepad B (#407)', () => {
+    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
+    const scene = fakeControlsScene({ pads: [pad] });
+    const controls = new Controls(scene);
+
+    pad.buttons[PAD.B] = { pressed: true };
+    expect(controls.read().dashPressed).toBe(true);    // fresh press (also switches mode to pad)
+    expect(controls.read().dashPressed).toBe(false);   // still held, no repeat
+    pad.buttons[PAD.B] = { pressed: false };
+    expect(controls.read().dashPressed).toBe(false);   // released
+    pad.buttons[PAD.B] = { pressed: true };
+    expect(controls.read().dashPressed).toBe(true);    // press again
+  });
+
   it('only reports the edge from the currently-active device, even if the other device also has a fresh press the same frame', () => {
     const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
     const scene = fakeControlsScene({ pads: [pad] });
@@ -238,6 +253,21 @@ describe('Controls.read — reload intent, press-to-trigger on both devices (#40
     pad.buttons[PAD.R3] = { pressed: false };
     expect(controls.read().reloadPressed).toBe(false);   // released
     pad.buttons[PAD.R3] = { pressed: true };
+    expect(controls.read().reloadPressed).toBe(true);    // press again
+  });
+
+  // #407: X is an additional reload trigger alongside R3.
+  it('reloadPressed is a rising-edge one-shot on gamepad X (#407)', () => {
+    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
+    const scene = fakeControlsScene({ pads: [pad] });
+    const controls = new Controls(scene);
+
+    pad.buttons[PAD.X] = { pressed: true };
+    expect(controls.read().reloadPressed).toBe(true);    // fresh press (also switches mode to pad)
+    expect(controls.read().reloadPressed).toBe(false);   // still held, no repeat
+    pad.buttons[PAD.X] = { pressed: false };
+    expect(controls.read().reloadPressed).toBe(false);   // released
+    pad.buttons[PAD.X] = { pressed: true };
     expect(controls.read().reloadPressed).toBe(true);    // press again
   });
 });

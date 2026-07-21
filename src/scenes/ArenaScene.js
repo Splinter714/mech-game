@@ -337,7 +337,9 @@ export default class ArenaScene extends Phaser.Scene {
     // ── One-shot pad buttons (#28 AI toggles, #29 return to garage). #252: the manual R3/T
     // drop-lock action is retired — the lock has no maintained state to escape any more, it
     // simply follows convergence's live pick every frame, so there's nothing left to "drop." ──
-    if (this.padEdges.pressed(PAD.SELECT) || this.padEdges.pressed(PAD.B)) this.toGarage();
+    // #407: B no longer returns to garage (it's now an additional dash trigger, see Controls.js);
+    // SELECT is the sole pad return-to-garage button (the G key path is unchanged).
+    if (this.padEdges.pressed(PAD.SELECT)) this.toGarage();
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
