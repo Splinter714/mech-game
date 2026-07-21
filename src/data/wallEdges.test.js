@@ -13,13 +13,13 @@ const A = { q: 0, r: 0 };
 const B = neighbors(A.q, A.r)[0];          // A's east neighbour — one shared edge
 const oneWall = () => makeWallEdgeSet([{ a: A, b: B, baseId: 'base-1' }]);
 
-// A full ring of spans around ONE wall hex (base-side hex A, one span per outward face). Since
-// #392 these all share a wall hex, so breaching any one opens the whole hex — the fixture for
-// "one span falls, they ALL fall."
+// A full ring of spans around hex A — a closed 6-span RUN (consecutive outward faces share a
+// corner). Since #392's retune a breach fells the hit span + its two nearest contiguous neighbours
+// along that run, so breaching one drops exactly THREE of the six, not the whole ring.
 const rowWall = () => makeWallEdgeSet(neighbors(A.q, A.r).map((n) => ({ a: A, b: n, baseId: 'b' })));
 
-// Two SEPARATE wall hexes, each with its own outward span — the fixture for "one hex opens, the
-// OTHER hex is untouched." `a` is the base-side hex, so these are two distinct hexes' walls.
+// Two ISOLATED spans that share no vertex (far-apart hexes) — the fixture for "a lone span has no
+// contiguous neighbour, so its breach fells only itself and leaves the other untouched."
 const C = { q: 3, r: 0 };
 const twoHexes = () => makeWallEdgeSet([
   { a: A, b: neighbors(A.q, A.r)[0], baseId: 'b' },
@@ -191,15 +191,15 @@ describe('#288 per-span destruction', () => {
     expect(damageWallEdge(set, null, 50)).toEqual({ hp: 0, destroyed: false, felled: [] });
   });
 
-  // #392: the breach mechanic — grinding ONE span down opens the whole wall hex, but leaves every
-  // OTHER wall hex completely untouched (independent pools, no shared HP, no damage bleed BETWEEN
-  // hexes). Cross-hex independence: the hit hex's span falls, the neighbouring hex's span does not.
-  it('breaching a span opens its wall hex but leaves OTHER wall hexes at full HP and standing', () => {
+  // #392: the breach mechanic — grinding ONE span down opens a fixed three-span gap, but a span
+  // with NO contiguous neighbour (an isolated wall) fells only itself and leaves every other span
+  // untouched (independent pools, no shared HP, no bleed).
+  it('breaching an isolated span fells only itself and leaves others at full HP and standing', () => {
     const set = twoHexes();
     const [hitSpan, otherSpan] = [...set.edges.values()];
     damageWallEdge(set, hitSpan, WALL_EDGE_HP);
     expect(hitSpan.destroyed).toBe(true);
-    // The other HEX's span is untouched — full HP, still standing, still solid.
+    // The other span shares no vertex with the hit one — untouched, full HP, still solid.
     expect(otherSpan.destroyed).toBe(false);
     expect(otherSpan.hp).toBe(WALL_EDGE_HP);
     const om = edgeMidpoint(otherSpan.a, otherSpan.b);
@@ -220,75 +220,105 @@ describe('#288 per-span destruction', () => {
   });
 
   it('liveWallEdges is exactly the standing spans', () => {
-    // #392: rowWall is one wall hex, so breaching any span fells the whole hex — from 6 to 0.
+    // #392 retune: rowWall is a 6-span RUN, so breaching one span fells 3 (the hit span + a
+    // neighbour on each side) — from 6 down to 3, not to 0.
     const set = rowWall();
     expect(liveWallEdges(set)).toHaveLength(6);
     damageWallEdge(set, [...set.edges.values()][0], 999);
-    expect(liveWallEdges(set)).toHaveLength(0);
+    expect(liveWallEdges(set)).toHaveLength(3);
     expect(liveWallEdges(null)).toEqual([]);
   });
 });
 
-describe('#392 destroying one span opens the WHOLE wall hex', () => {
-  it('fells every live span of the hit span\'s wall hex, in one step', () => {
-    const set = rowWall();               // 6 spans, all sharing base-side hex A = one wall hex
+// The ring is a 6-cycle by insertion order: span i shares a corner with spans (i+5)%6 and (i+1)%6.
+// So a breach at i fells exactly {(i+5)%6, i, (i+1)%6}.
+const ringNeighbours = (i) => [(i + 5) % 6, (i + 1) % 6];
+
+describe('#392 a breach fells the hit span + its two contiguous neighbours (fixed 3-span width)', () => {
+  it('fells exactly the hit span and one neighbour on each side of the run', () => {
+    const set = rowWall();               // 6-span closed run around hex A
     const all = [...set.edges.values()];
     expect(all).toHaveLength(6);
-    const { destroyed, felled } = damageWallEdge(set, all[2], WALL_EDGE_HP);
+    const hitIdx = 2;
+    const { destroyed, felled } = damageWallEdge(set, all[hitIdx], WALL_EDGE_HP);
     expect(destroyed).toBe(true);
-    // Every span of the hex is down — none left standing.
-    expect(liveWallEdges(set)).toHaveLength(0);
-    for (const e of all) expect(e.destroyed).toBe(true);
-    // `felled` is the hit span first, then its siblings — one entry per fallen span, no dupes.
-    expect(felled[0]).toBe(all[2]);
-    expect(new Set(felled)).toEqual(new Set(all));
-    expect(felled).toHaveLength(6);
-    // The whole hex is now passable / shoot-through — no span solid at any of its faces.
-    for (const e of all) {
-      const m = edgeMidpoint(e.a, e.b);
-      expect(wallEdgeAt(set, m.x, m.y)).toBeNull();
+    // Exactly three spans down: the hit one + its two run-neighbours; the far three still stand.
+    expect(felled).toHaveLength(3);
+    expect(liveWallEdges(set)).toHaveLength(3);
+    const expected = new Set([hitIdx, ...ringNeighbours(hitIdx)].map((i) => all[i]));
+    expect(new Set(felled)).toEqual(expected);
+    for (let i = 0; i < 6; i++) expect(all[i].destroyed).toBe(expected.has(all[i]));
+    // `felled` leads with the hit span, then its neighbours — one entry per fallen span, no dupes.
+    expect(felled[0]).toBe(all[hitIdx]);
+    expect(new Set(felled).size).toBe(3);
+    // The three fallen faces are now passable / shoot-through; the three standing ones are not.
+    for (let i = 0; i < 6; i++) {
+      const m = edgeMidpoint(all[i].a, all[i].b);
+      if (expected.has(all[i])) expect(wallEdgeAt(set, m.x, m.y)).toBeNull();
+      else expect(wallEdgeAt(set, m.x, m.y)).toBeTruthy();
     }
   });
 
-  it('leaves spans of OTHER wall hexes completely untouched', () => {
+  it('a lone span with no contiguous neighbour fells only itself', () => {
     const set = twoHexes();
     const [hitSpan, otherSpan] = [...set.edges.values()];
     const { felled } = damageWallEdge(set, hitSpan, WALL_EDGE_HP);
-    expect(felled).toEqual([hitSpan]);          // only its own hex fell
+    expect(felled).toEqual([hitSpan]);          // nothing shares a vertex with it
     expect(otherSpan.destroyed).toBe(false);
     expect(otherSpan.hp).toBe(WALL_EDGE_HP);
   });
 
-  it('takes down a PARTIALLY-damaged sibling too — death cascades, but HP pools stay independent', () => {
-    const set = rowWall();
-    const all = [...set.edges.values()];
-    // Wound one sibling (its own pool only), then breach a different span of the same hex.
-    damageWallEdge(set, all[0], 30);
-    expect(all[0].hp).toBe(WALL_EDGE_HP - 30);   // the chip stayed on that span alone — no bleed
-    expect(all[0].destroyed).toBe(false);
-    expect(all[1].hp).toBe(WALL_EDGE_HP);        // its neighbour was not chipped
-    const { felled } = damageWallEdge(set, all[3], WALL_EDGE_HP);
-    // The wounded sibling falls with the rest — its remaining HP does not spare it.
-    expect(all[0].destroyed).toBe(true);
-    expect(all[0].hp).toBe(0);
-    expect(felled).toContain(all[0]);
-    expect(liveWallEdges(set)).toHaveLength(0);
+  it('a stub run shorter than three fells only what it has, and only its own run', () => {
+    // Two contiguous faces of hex A (a corner: consecutive ring faces share a vertex) sitting apart
+    // from a third lone span. Breaching one of the pair fells BOTH of the pair (the whole 2-span
+    // run) and nothing of the lone span — a short run gives a shorter breach; it does not reach
+    // across a gap.
+    const ns = neighbors(A.q, A.r);
+    const lone = { q: 6, r: -3 };
+    const set = makeWallEdgeSet([
+      { a: A, b: ns[0], baseId: 'b' },   // run span 1 — shares a corner with the next
+      { a: A, b: ns[1], baseId: 'b' },   // run span 2
+      { a: lone, b: neighbors(lone.q, lone.r)[0], baseId: 'b' },   // isolated span, far away
+    ]);
+    const [run1, run2, loneSpan] = [...set.edges.values()];
+    const { felled } = damageWallEdge(set, run1, WALL_EDGE_HP);
+    expect(new Set(felled)).toEqual(new Set([run1, run2]));   // the whole 2-span run, no more
+    expect(run2.destroyed).toBe(true);
+    expect(loneSpan.destroyed).toBe(false);
+    expect(loneSpan.hp).toBe(WALL_EDGE_HP);
   });
 
-  it('groups siblings by the BASE-side hex, not the outer hex a span merely borders', () => {
-    // Hex X is the OUTER side of edge1 but the BASE side of edge2, so both are indexed under X.
-    // Only edge2 belongs to wall hex X; breaching it must not fell edge1 (whose wall hex is A).
-    const X = neighbors(A.q, A.r)[0];
-    const Y = neighbors(X.q, X.r).find((n) => !(n.q === A.q && n.r === A.r));
-    const set = makeWallEdgeSet([
-      { a: A, b: X, baseId: 'b' },     // edge1: wall hex A, borders X on its outer side
-      { a: X, b: Y, baseId: 'b' },     // edge2: wall hex X
-    ]);
-    const [edge1, edge2] = [...set.edges.values()];
-    const { felled } = damageWallEdge(set, edge2, WALL_EDGE_HP);
-    expect(felled).toEqual([edge2]);   // edge1 is a different wall hex — untouched
-    expect(edge1.destroyed).toBe(false);
-    expect(edge1.hp).toBe(WALL_EDGE_HP);
+  it('takes down a PARTIALLY-damaged neighbour too — the breach cascade ignores its remaining HP', () => {
+    const set = rowWall();
+    const all = [...set.edges.values()];
+    const hitIdx = 3;
+    const [nA, nB] = ringNeighbours(hitIdx);
+    // Wound one neighbour (its own pool only), then breach the span between it and its partner.
+    damageWallEdge(set, all[nA], 30);
+    expect(all[nA].hp).toBe(WALL_EDGE_HP - 30);   // the chip stayed on that span alone — no bleed
+    expect(all[nA].destroyed).toBe(false);
+    const { felled } = damageWallEdge(set, all[hitIdx], WALL_EDGE_HP);
+    // The wounded neighbour falls with the breach — its remaining HP does not spare it.
+    expect(all[nA].destroyed).toBe(true);
+    expect(all[nA].hp).toBe(0);
+    expect(felled).toContain(all[nA]);
+    expect(new Set(felled)).toEqual(new Set([all[hitIdx], all[nA], all[nB]]));
+    expect(liveWallEdges(set)).toHaveLength(3);
+  });
+
+  it('when one side of the run is a dead end, takes the extra neighbour from the other side', () => {
+    // An OPEN 4-span run: faces 0,1,2,3 of hex A (a partial arc — contiguous but not closed).
+    // Breaching an END span (face 0) has a dead end on one side, so the breach reaches two spans
+    // down the live side to still total three.
+    const ns = neighbors(A.q, A.r);
+    const set = makeWallEdgeSet([0, 1, 2, 3].map((i) => ({ a: A, b: ns[i], baseId: 'b' })));
+    const spans = [...set.edges.values()];
+    expect(spans).toHaveLength(4);
+    const { felled } = damageWallEdge(set, spans[0], WALL_EDGE_HP);   // end span: one side dead
+    expect(felled).toHaveLength(3);
+    // Face 0's only neighbour is face 1 (face 5 is absent), so the run walks on to face 2.
+    expect(new Set(felled)).toEqual(new Set([spans[0], spans[1], spans[2]]));
+    expect(spans[3].destroyed).toBe(false);   // the far end still stands
   });
 });
 

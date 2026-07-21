@@ -438,36 +438,107 @@ export function nearestWallEdge(set, x, y, maxDist = HEX_SIZE) {
 }
 
 // ── Destruction ─────────────────────────────────────────────────────────────────────────
-// The base-side hex a span belongs to — the WALL HEX it forms one face of. `a` is always the
-// footprint side (worldgen.js `placeBaseWalls`), so a footprint hex only ever appears here as an
-// edge's `a`, never its `b`; that is what makes "every span of this wall hex" a clean lookup.
-function wallHexKey(edge) {
-  return edge?.a ? axialKey(edge.a.q, edge.a.r) : null;
+// #392 (owner retune 2026-07-20, SUPERSEDES the first landing's "open the whole wall hex" rule):
+// destroying a span opens a FIXED-WIDTH breach of exactly three spans — the hit span plus its two
+// nearest contiguous neighbours ALONG THE WALL RUN — so a breach reads the same width everywhere
+// instead of swallowing an entire hex ring (which felt wrong on concave stretches). The whole-hex
+// cascade (`wallHexSiblings`, keyed on the base-side coord `a`) is gone; contiguity is now GEOMETRIC.
+
+// How many spans a single breach takes down: the hit span + up to one neighbour on each side of it
+// along the run. Owner: tunable.
+export const BREACH_SPAN_COUNT = 3;
+
+// Two spans are neighbours along the wall run iff they meet at a shared VERTEX — a hex corner. Each
+// span carries its two pixel corners as (x0,y0)/(x1,y1); a rounded key collapses the float noise
+// between the SAME corner computed from either span's own hex (corners sit ~24–48px apart, so
+// rounding to 0.01px can never conflate two distinct ones). This is what makes a "run" a run:
+// consecutive faces of a wall share an endpoint, so following shared vertices walks the wall line —
+// around convex or concave corners alike — rather than reasoning about which hex owns which face.
+function vertexKey(x, y) {
+  return `${Math.round(x * 100)},${Math.round(y * 100)}`;
 }
 
-// #392 (owner decision): every STANDING sibling span that shares a span's base-side wall hex — the
-// other faces of the same hex. Kept simple deliberately: same-hex membership is a match on the
-// base-side coord `a`, not a shared HP pool. A span indexed under this hex only as its OUTER side
-// (`b`) belongs to a DIFFERENT wall hex and is NOT a sibling, so the match is on `a` explicitly.
-function wallHexSiblings(set, edge) {
-  const key = wallHexKey(edge);
-  if (!set || key == null) return [];
-  const list = set.byHex.get(key);
-  if (!list) return [];
-  return list.filter(
-    (e) => e !== edge && !e.destroyed && e.a && e.a.q === edge.a.q && e.a.r === edge.a.r,
-  );
+// Every STANDING span (other than `edge` and anything already felled this breach) that touches the
+// vertex (vx,vy). A pre-existing breach (`destroyed`) is skipped so a run walk stops at an existing
+// gap instead of hopping across it. Scans the set's edges directly — destruction is rare and a wall
+// set is small, so the O(n) walk costs nothing and needs no corner index.
+function spansAtVertex(set, edge, vx, vy, visited) {
+  const vk = vertexKey(vx, vy);
+  const out = [];
+  for (const e of set.edges.values()) {
+    if (e === edge || e.destroyed || visited.has(e)) continue;
+    if (vertexKey(e.x0, e.y0) === vk || vertexKey(e.x1, e.y1) === vk) out.push(e);
+  }
+  return out;
+}
+
+// From `span`, step to its nearest un-felled neighbour across the vertex (vx,vy), as
+// `{ span, vx, vy }` where the returned (vx,vy) is that neighbour's OTHER endpoint — the vertex the
+// next step advances from, so a side walks steadily outward along the run. When more than one span
+// meets the vertex (a T-junction where an inner wall abuts the run), the nearest is the one whose
+// midpoint is closest, with the canonical edge key as a deterministic tie-break so the choice never
+// depends on Map iteration order.
+function stepAlongRun(set, span, vx, vy, visited) {
+  const cands = spansAtVertex(set, span, vx, vy, visited);
+  if (!cands.length) return null;
+  const mx = (span.x0 + span.x1) / 2, my = (span.y0 + span.y1) / 2;
+  let best = null, bestD = Infinity;
+  for (const e of cands) {
+    const em = { x: (e.x0 + e.x1) / 2, y: (e.y0 + e.y1) / 2 };
+    const d = Math.hypot(em.x - mx, em.y - my);
+    if (d < bestD - 1e-6 || (Math.abs(d - bestD) <= 1e-6 && (!best || e.key < best.key))) {
+      best = e; bestD = d;
+    }
+  }
+  const vk = vertexKey(vx, vy);
+  // The neighbour's far endpoint — whichever of its two corners is NOT the shared vertex.
+  const far = vertexKey(best.x0, best.y0) === vk
+    ? { x: best.x1, y: best.y1 } : { x: best.x0, y: best.y0 };
+  return { span: best, vx: far.x, vy: far.y };
+}
+
+// The run breached when `hit` falls: `hit` first, then up to `count - 1` neighbours, taken one at a
+// time alternating between the run's two directions (out from each of `hit`'s endpoints), so a
+// breach is centred — one span on each side where the run has one. When a side runs out (the hit
+// span was at or near the end of a short run), the other side keeps going to still total `count`, so
+// a lone or stub run fells only what it actually has. Marks nothing itself; the caller collapses the
+// returned spans.
+function breachRun(set, hit, count) {
+  const felled = [hit];
+  const visited = new Set([hit]);
+  if (!set) return felled;
+  // One walking cursor per direction, seeded at each of the hit span's two corners.
+  const sides = [
+    { span: hit, vx: hit.x0, vy: hit.y0, alive: true },
+    { span: hit, vx: hit.x1, vy: hit.y1, alive: true },
+  ];
+  while (felled.length < count && sides.some((s) => s.alive)) {
+    let progressed = false;
+    for (const side of sides) {
+      if (felled.length >= count) break;
+      if (!side.alive) continue;
+      const next = stepAlongRun(set, side.span, side.vx, side.vy, visited);
+      if (!next) { side.alive = false; continue; }
+      visited.add(next.span);
+      felled.push(next.span);
+      side.span = next.span; side.vx = next.vx; side.vy = next.vy;
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  return felled;
 }
 
 // Chip a span's HP. Each span keeps its OWN HP pool and takes its own hits — damaging one never
-// chips its neighbours (no shared pool, no damage bleed). What DID change with #392: a span's
-// DEATH now opens the whole wall hex at once. The player still grinds a single span down, but the
-// instant it collapses, the remaining live spans of the SAME wall hex (its base-side hex `a`) fall
-// free with it — so a breach is a real gap you drive through, not one narrow slot flanked by
-// standing wall. Owner: "destroying ONE wall span should open the WHOLE wall hex."
+// chips its neighbours (no shared pool, no damage bleed). What happens on DEATH (#392): the span's
+// collapse opens a fixed three-span breach — the hit span plus its two nearest contiguous neighbours
+// along the wall run — so the player grinds a single span down and the instant it falls a
+// consistent-width gap opens, one span either side of the hole where the run has them. Owner
+// (2026-07-20): "destroying a wall span should take out exactly THREE wall segments — the hit span
+// plus its two nearest contiguous neighbours — consistent breach width everywhere."
 //
 // Returns `{ hp, destroyed, felled }`: `hp`/`destroyed` describe the span actually hit; `felled` is
-// every span this call brought down (the hit span first, then any cascaded siblings), so the scene
+// every span this call brought down (the hit span first, then its cascaded neighbours), so the scene
 // can play collapse FX / drop wall turrets / invalidate sight+routes once per fallen span. `felled`
 // is empty when the hit only chipped HP (or was a no-op). A destroyed span is marked (not deleted,
 // so it keeps its identity/geometry for the renderer's collapse) and stops blocking movement,
@@ -477,11 +548,11 @@ export function damageWallEdge(set, edge, amount) {
   edge.hp = Math.max(0, edge.hp - Math.max(0, amount));
   if (edge.hp > 0) return { hp: edge.hp, destroyed: false, felled: [] };
   edge.destroyed = true;
-  const felled = [edge];
-  for (const sib of wallHexSiblings(set, edge)) {
-    sib.hp = 0;
-    sib.destroyed = true;
-    felled.push(sib);
+  const felled = breachRun(set, edge, BREACH_SPAN_COUNT);
+  for (const span of felled) {
+    if (span === edge) continue;
+    span.hp = 0;
+    span.destroyed = true;
   }
   return { hp: 0, destroyed: true, felled };
 }
