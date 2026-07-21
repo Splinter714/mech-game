@@ -19,6 +19,7 @@ import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
+import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { primaryPlayerOf } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot } from '../data/hudLayout.js';
@@ -229,6 +230,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
     this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);    // travelling projectiles (redrawn each frame)
+    this._initAmmoIndicators();          // #402: per-weapon on-mech ammo/reload lights + bars
     this.projectiles = [];
     this.beams = [];
     this.dyingBeams = [];
@@ -369,7 +371,9 @@ export default class ArenaScene extends Phaser.Scene {
     this._updatePlayerMarkers();   // #348: keep each identifying ring under its own mech
     for (const player of this.players) {
       const pi = intents.get(player);
-      if (!player.dead && pi) this._handleFiring(pi, delta, player);
+      if (player.dead || !pi) continue;
+      this._handleReload(pi, player);   // #402: manual reload (R3/F) before firing reads `ready`
+      this._handleFiring(pi, delta, player);
     }
     this._updateEnemies(dt, delta);
     // #269 §5: tick every standing alert tower's wake-countdown sensor.
@@ -440,6 +444,9 @@ export default class ArenaScene extends Phaser.Scene {
     // temporary-shield pool's expiry — see Mech.tickShield/grantTempShield (data/Mech.js).
       p.mech.tickShield(dt);
     }
+    // #402: on-mech per-weapon ammo/reload lights + bars, redrawn after this frame's ammo state
+    // and part poses are settled.
+    this._drawAmmoIndicators();
   }
 
   // #216: the sound cue lives HERE, not in any of the call sites, because this is the one
@@ -471,7 +478,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

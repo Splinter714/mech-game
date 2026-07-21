@@ -125,8 +125,13 @@ describe('#225 player-input gating in ArenaScene#update', () => {
     expect(block[0]).toMatch(/this\._handleSprint\(pi, delta, player\);/);
   });
 
-  it('gates _handleFiring behind the per-player dead latch', () => {
-    expect(arenaScene).toMatch(/if \(!player\.dead && pi\) this\._handleFiring\(pi, delta, player\);/);
+  it('gates _handleReload and _handleFiring behind the per-player dead latch', () => {
+    // #402 folded the reload + firing calls into a shared per-player loop that `continue`s on a
+    // dead player (or a missing intent), so both are gated by the same guard.
+    const block = arenaScene.match(/for \(const player of this\.players\) \{[\s\S]*?_handleFiring\(pi, delta, player\);[\s\S]*?\n {4}\}/);
+    expect(block).toBeTruthy();
+    expect(block[0]).toMatch(/if \(player\.dead \|\| !pi\) continue;/);
+    expect(block[0]).toMatch(/this\._handleReload\(pi, player\);/);
   });
 });
 
