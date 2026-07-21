@@ -957,6 +957,19 @@ describe('arcForeshorten (fake sprite pitch from arc vertical velocity)', () => 
     }
   });
 
+  it('#377: the pitch factor eases smoothly with no abrupt snap, even across steepDrop phase boundaries', () => {
+    // The old min()-clamp + narrow slope window snapped hard at the piecewise arc's boundaries.
+    // The smooth (tanh) map + wider window keep every step between adjacent samples small.
+    for (const profile of ['lob', 'steepDrop']) {
+      let prev = arcForeshorten(0, profile);
+      for (let t = 0.005; t <= 1; t += 0.005) {
+        const f = arcForeshorten(t, profile);
+        expect(Math.abs(f - prev)).toBeLessThan(0.035);
+        prev = f;
+      }
+    }
+  });
+
   it('steepDrop: cruise reads near full side-on, while the pop and the terminal dive squash', () => {
     expect(arcForeshorten(0.45, 'steepDrop')).toBeGreaterThan(0.9);   // near-flat cruise
     expect(arcForeshorten(STEEP_DROP_RISE_END / 2, 'steepDrop')).toBeLessThan(0.75);  // pop
