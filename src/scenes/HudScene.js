@@ -7,7 +7,6 @@ import { miniProjector, clampToBox } from '../data/minimap.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { DASH_BIND } from '../input/Controls.js';
-import { AMMO_EMPTY_COOLDOWN } from '../data/Mech.js';
 import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
@@ -453,15 +452,16 @@ export default class HudScene extends Phaser.Scene {
         opts.iconAlpha = w.online ? 1 : 0.3;
         if (!w.online) { opts.subtitle = 'OFFLINE'; opts.subtitleColor = C.bad; }
         else if (w.ammo == null) { opts.subtitle = '∞'; opts.subtitleColor = C.dim; }
-        // #238: an empty slot on its post-drain cooldown gets its own readout (distinct from
-        // a plain "0/max" empty magazine that's actively regenerating) so the player isn't
-        // left wondering why nothing's ticking back up. Countdown shown to the nearest tenth
-        // of a second since AMMO_EMPTY_COOLDOWN is only a few seconds long.
-        else if (w.cooldown > 0) {
-          opts.subtitle = `COOLDOWN ${w.cooldown.toFixed(1)}s`;
+        // #402: a slot mid-RELOAD gets its own readout (distinct from a plain "0/max" magazine
+        // that's simply low) so the player can see the weapon is locked out and topping back up
+        // to FULL. Countdown to the nearest tenth of a second; the tile's cooldown tint reuses
+        // the same "locked out, recharging" visual language it did for #238. `w.reloadMax` is the
+        // full reload period, so the fill fraction reads as reload progress.
+        else if (w.reloading) {
+          opts.subtitle = `RELOAD ${w.reload.toFixed(1)}s`;
           opts.subtitleColor = C.cooldown;
           opts.onCooldown = true;
-          opts.cooldownFrac = w.cooldown / AMMO_EMPTY_COOLDOWN;
+          opts.cooldownFrac = w.reload / w.reloadMax;
         } else {
           opts.subtitle = `${Math.floor(w.ammo)}/${w.weapon.ammoMax}`;
           opts.subtitleColor = w.ready ? C.good : C.warn;

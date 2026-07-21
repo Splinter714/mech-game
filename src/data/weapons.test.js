@@ -158,8 +158,9 @@ describe('lobbed-weapon live tracking (#252 follow-up)', () => {
 //     at ammoMax (Mech.regenAmmo). The >= 1 gate is why this is simulated per shot rather
 //     than solved as `ammoMax / (rate - regen)`: for a slow cycled weapon the last fraction
 //     of a round is not spendable, and the continuous approximation is off by a whole cycle.
-// AMMO_EMPTY_COOLDOWN (#238) is deliberately NOT modelled here — it starts once the magazine
-// is already dry, so it governs recovery, not the burst window being measured.
+// The #402 RELOAD is deliberately NOT modelled here — it starts once the magazine is already dry,
+// so it governs recovery, not the burst window being measured. The trickle economy #372 tuned is
+// unchanged by #402 (see the ammo note in weapons.js), so these bounds still stand.
 describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire', () => {
   // ms between trigger pulls — mirrors firing.js `_fireInterval` with identity (no-buff) mods.
   const fireIntervalMs = (w) => (w.delivery.pattern === 'stream' && w.delivery.fireRate > 0

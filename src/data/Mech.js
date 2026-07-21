@@ -14,11 +14,24 @@ import {
   grantTempShield, shieldTotalHp, shieldTotalMax,
 } from './shield.js';
 
-// #238: how long (seconds) a weapon slot is locked out after its magazine is fully
-// drained — a per-slot "empty click" penalty distinct from the old always-on trickle
-// regen. Tunable in one place; 3s sits in the middle of the 2-4s range the design asked
-// for (long enough to read as a real cost, short enough not to feel like a full stall).
-export const AMMO_EMPTY_COOLDOWN = 3;
+// #402: the RELOAD period (seconds) — how long a weapon slot is locked out while it reloads,
+// after which its magazine comes back FULL (not a slow trickle-from-0). Two things start it:
+//   * AUTO — a magazine drained to exactly 0 reloads itself (consumeAmmo below);
+//   * MANUAL — the player triggers it early on R3/F to top a mag off before it runs dry
+//     (reloadAllWeapons below, driven from arena/firing.js).
+// This SUPERSEDES #238's flat empty-lockout: that also locked a dry slot out for 3s, but then
+// resumed the slow trickle from 0; now the same lockout ends with a full magazine, which reads
+// as a real reload beat rather than an invisible recharge.
+//
+// DELIBERATELY a FLAT duration, not `ammoMax / ammoRegen` (the trickle's own time-to-full):
+// tying it to magazine size would give big-magazine weapons (beamLaser's 60, swarmRack's 8)
+// punishing multi-second lockouts and would fight the per-weapon recovery pacing #372/#376/#377
+// tuned into `ammoRegen`. Instead the CONTINUOUS TRICKLE (regenAmmo) is left exactly as tuned —
+// it stays the everyday economy (ease off the trigger, rounds trickle back at `ammoRegen`) — and
+// the reload sits ON TOP as the running-dry beat plus an optional manual top-off. 3s matches the
+// old #238 lockout's magnitude, so running a mag dry costs about the same time as before but now
+// hands back a full magazine. One dial: raise it to make reloading a heavier commitment.
+export const RELOAD_SECONDS = 3;
 
 export class Mech {
   constructor(data = {}) {
@@ -71,15 +84,15 @@ export class Mech {
     return w && w.ammoMax != null ? w.ammoMax : null;
   }
 
-  // (Re)build the ammo arrays so each weapon starts with a full magazine. `cooldown` is a
-  // parallel array (same shape/indexing as `ammo[loc]`) holding remaining lockout seconds
-  // per slot — 0 means "not on cooldown, regen proceeds normally." Runtime-only, like ammo.
+  // (Re)build the ammo arrays so each weapon starts with a full magazine. `reload` is a
+  // parallel array (same shape/indexing as `ammo[loc]`) holding remaining RELOAD seconds
+  // per slot — 0 means "not reloading, trickle regen proceeds normally." Runtime-only, like ammo.
   _initAmmo() {
     this.ammo = {};
-    this.cooldown = {};
+    this.reload = {};
     for (const loc of MOUNT_LOCATIONS) {
       this.ammo[loc] = this.mounts[loc].map((id) => this._ammoCap(id));
-      this.cooldown[loc] = this.mounts[loc].map(() => 0);
+      this.reload[loc] = this.mounts[loc].map(() => 0);
     }
   }
 
@@ -269,14 +282,14 @@ export class Mech {
       if (prevLoc && prevLoc !== loc) this.unmount(prevLoc, this.mounts[prevLoc].indexOf(itemId));
       this.mounts[loc].push(itemId);
       this.ammo[loc].push(this._ammoCap(itemId));
-      this.cooldown[loc].push(0);
+      this.reload[loc].push(0);
     }
     return res;
   }
 
   unmount(loc, index) {
     this.ammo[loc].splice(index, 1);
-    this.cooldown[loc].splice(index, 1);
+    this.reload[loc].splice(index, 1);
     return this.mounts[loc].splice(index, 1)[0];
   }
 
@@ -298,13 +311,14 @@ export class Mech {
         if (isWeapon(id)) {
           const online = !this.isPartDestroyed(loc);
           const ammo = this.ammo[loc][index];
-          // #238: a slot on cooldown can't fire even if ammo somehow reads >0 (it won't,
-          // since cooldown only starts on a drain-to-0), so this is really "cooldown
-          // supersedes the ammo check" — kept explicit for clarity.
-          const cooldown = this.cooldown[loc][index] ?? 0;
+          // #402: a slot mid-RELOAD can't fire even if ammo somehow reads >0 — the reload gate
+          // supersedes the ammo check. `reload` is the remaining lockout seconds; `reloadMax` is
+          // the full period, so a HUD/indicator can draw the reload's progress fraction.
+          const reload = this.reload[loc][index] ?? 0;
           out.push({
-            location: loc, index, id, weapon: getWeapon(id), online, ammo, cooldown,
-            ready: online && cooldown <= 0 && (ammo == null || ammo >= 1),
+            location: loc, index, id, weapon: getWeapon(id), online, ammo,
+            reload, reloadMax: RELOAD_SECONDS, reloading: reload > 0,
+            ready: online && reload <= 0 && (ammo == null || ammo >= 1),
           });
         }
       });
@@ -324,22 +338,51 @@ export class Mech {
       const before = this.ammo[loc][index];
       const after = Math.max(0, before - n);
       this.ammo[loc][index] = after;
-      // #238: draining a slot to exactly empty starts its cooldown lockout. Guarded by
-      // `before > 0` so repeatedly firing an already-dry weapon (e.g. a trigger held past
-      // empty) doesn't keep resetting the timer back to full each frame.
-      if (after === 0 && before > 0) this.cooldown[loc][index] = AMMO_EMPTY_COOLDOWN;
+      // #402: draining a slot to exactly empty AUTO-triggers its reload. Guarded by `before > 0`
+      // so repeatedly firing an already-dry weapon (a trigger held past empty) doesn't keep
+      // resetting the reload timer back to full each frame.
+      if (after === 0 && before > 0) this.reload[loc][index] = RELOAD_SECONDS;
     }
   }
 
-  // Top every magazine back up over time at the weapon's regen rate — UNLESS that slot is
-  // on cooldown (#238), in which case this just counts the cooldown timer down instead;
-  // ammo stays pinned at 0 until the timer expires, then normal regen resumes next tick.
+  // #402: begin a MANUAL reload of ONE weapon slot — the player topping a magazine off before it
+  // runs dry (arena/firing.js, R3/F). Locks the slot out for RELOAD_SECONDS, then regenAmmo below
+  // refills it to full. No-op — returning false — for an unlimited weapon, a slot already
+  // reloading, or one already full (nothing to gain by paying the lockout). Returns true when a
+  // reload actually started, so the caller can gate feedback on "something happened."
+  reloadWeapon(loc, index) {
+    const cap = this._ammoCap(this.mounts[loc]?.[index]);
+    if (cap == null) return false;                          // unlimited / non-weapon: never reloads
+    if ((this.reload[loc]?.[index] ?? 0) > 0) return false; // already reloading
+    if (this.ammo[loc][index] >= cap) return false;         // already full
+    this.reload[loc][index] = RELOAD_SECONDS;
+    return true;
+  }
+
+  // #402: the manual-reload BUTTON — reload every eligible weapon on this mech at once (see
+  // reloadWeapon for eligibility). Returns how many slots actually began reloading. Per-mech, so
+  // in co-op each player reloads only their OWN weapons (firing.js reads that player's controls).
+  reloadAllWeapons() {
+    let started = 0;
+    for (const loc of MOUNT_LOCATIONS) {
+      this.mounts[loc].forEach((_id, i) => { if (this.reloadWeapon(loc, i)) started += 1; });
+    }
+    return started;
+  }
+
+  // Per-frame ammo upkeep: a slot mid-RELOAD counts its timer down and snaps to a FULL magazine
+  // the moment it expires (#402); every other slot tops back up over time at the weapon's own
+  // trickle rate (`ammoRegen`), capped at the magazine size. The trickle is the everyday economy
+  // (unchanged by #402 — see the weapon-balance comments in weapons.js); the reload is the beat
+  // on running dry. Name kept as `regenAmmo` since the arena/enemy update paths call it.
   regenAmmo(dt) {
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, i) => {
-        if (this.ammo[loc][i] == null) return;
-        if (this.cooldown[loc][i] > 0) {
-          this.cooldown[loc][i] = Math.max(0, this.cooldown[loc][i] - dt);
+        if (this.ammo[loc][i] == null) return;   // unlimited: never reloads or trickles
+        if (this.reload[loc][i] > 0) {
+          const r = Math.max(0, this.reload[loc][i] - dt);
+          this.reload[loc][i] = r;
+          if (r === 0) this.ammo[loc][i] = getWeapon(id).ammoMax;   // reload complete → full mag
           return;
         }
         const w = getWeapon(id);
