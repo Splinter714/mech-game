@@ -80,14 +80,18 @@ export const UI_HIGHLIGHT_COLOR = 0xffb84a;
 // units keep DEPTH.UNITS.
 export const DEPTH = {
   TERRAIN: 0,         // terrain tiles (world.js) — the floor, always lowest, explicit every time.
+  // #395: the two sliding dock-door leaves (bases.js `_animateDock`) — sit just above the terrain
+  // tile (the black bay they cover) but below every unit and FX, so a mech driving onto a dock hex
+  // renders over its doors, exactly like it renders over the floor. A hatch is part of the ground.
+  DOCK_DOORS: 0.5,
   GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
   // #326 playtest bug (Jackson: "z-ordering on docks reinforcing animation is bad... it's too high
-  // compared to the units that are coming out"). The dock hatch FX — the shaft, the sliding door
-  // leaves, the rising platform and its glow (`_resupplyDock`), plus the dome plate/rim that seals
-  // a vacated dock (`_closeDockFx`), all in bases.js — used to be built on IMPACT_FX (5), far
-  // above every unit tier, so a tank driving out of its own bay rendered UNDERNEATH its own hatch
-  // doors. Exactly backwards: a hatch is a HOLE IN THE GROUND, and the things standing on the
-  // ground belong on top of it.
+  // compared to the units that are coming out"). The dock resupply FX — the rising platform and its
+  // glow (`_resupplyDock`, bases.js) — used to be built on IMPACT_FX (5), far above every unit
+  // tier, so a tank driving out of its own bay rendered UNDERNEATH the hatch FX. Exactly backwards:
+  // a hatch is a HOLE IN THE GROUND, and the things standing on the ground belong on top of it.
+  // (#395: the sliding doors themselves moved to their own DOCK_DOORS tier below; the old dome
+  // plate/rim seal FX was replaced by the doors sliding shut.)
   //
   // Slotted between GROUND_FX (1) and GROUND_UNITS (2) — the ground-decal band, alongside napalm's
   // burning patch — using the same fractional-tier pattern (#289) that COVER_CANOPY/

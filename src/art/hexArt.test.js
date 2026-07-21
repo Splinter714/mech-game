@@ -65,9 +65,17 @@ describe('dock/alertTower distinct textures (#269 playtest follow-up)', () => {
     expect(TERRAIN.dock.tex).not.toBe(TERRAIN.alertTower.tex);
   });
 
-  it('both stay on the shared base-infrastructure fill colour', () => {
-    expect(terrainFillColor('dock')).toBe(BASE_INFRA_COLOR.fill);
+  it('alertTower stays on the shared base-infrastructure fill colour', () => {
     expect(terrainFillColor('alertTower')).toBe(BASE_INFRA_COLOR.fill);
+  });
+
+  // #395: a `dock` hex is now a recessed BLACK BAY (the doors are separate sliding sprites), so it
+  // no longer shares the base-infra concrete fill — it's a distinctly darker shaft.
+  it('dock is now a dark bay fill, distinct from the base-infra concrete', () => {
+    const bay = terrainFillColor('dock');
+    expect(bay).not.toBe(BASE_INFRA_COLOR.fill);
+    expect(terrainFillColor('dockClosed')).toBe(bay);   // both dock states share the same black bay
+    expect(bay).toBeLessThan(0x222222);                 // unambiguously dark
   });
 });
 
