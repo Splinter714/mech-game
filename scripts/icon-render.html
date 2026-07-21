@@ -85,7 +85,7 @@
         // in the square (leaves the downward muzzles room without floating in the middle).
         // Maskable is centred (a round crop reads best with the mech dead-centre); the
         // full-bleed square keeps the slight upward nudge so the muzzles have room below.
-        const cx = size / 2, cy = size / 2 - size * (maskable ? 0.04 : 0.12);
+        const cx = size / 2, cy = size / 2 - size * (maskable ? 0.10 : 0.22);
         const angle = Math.PI / 2;                 // aim straight down (south)
 
         const blit = (img, dx, dy, rot, ox, oy) => {

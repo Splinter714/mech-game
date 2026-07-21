@@ -42,7 +42,7 @@ export default defineConfig(({ command }) => {
         // Match the game's dark UI (index.html body bg + Phaser backgroundColor).
         manifest: {
           name: 'Mech Game',
-          short_name: 'Mech',
+          short_name: 'Mech Game',
           description: 'A top-down real-time mech action game with deep customization.',
           display: 'standalone',
           orientation: 'landscape',
