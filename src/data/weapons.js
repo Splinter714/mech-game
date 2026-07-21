@@ -113,10 +113,12 @@ export const WEAPONS = {
   pulseLaser: w({   // every trigger pull = a rapid burst of light beam pulses
     id: 'pulseLaser', name: 'Pulse Laser', category: 'energy',
     // #259 DPS-squish: totalDamage 16 -> 66 to bring raw DPS up from ~5.33 to the ~22 band.
-    // DPS = damage(totalDamage/count) x count / cycleTime(s): pre-retune
-    // (16/5)*5/3 = 5.33 dps -> (66/5)*5/3 = 22.0 dps.
-    totalDamage: 66, range: { min: 0, opt: 340, max: 600 },
-    ammoMax: 2, slots: 1, cycleTime: 3000,   // #402: ~6.0s burst (2 pulls × 3.0s), then 1s reload
+    // #408: cycleTime 3000 -> 1800 (under the 2s reload so the mag empties and reload creates real
+    // downtime), holding DPS by scaling totalDamage 66 -> 39.6 (= 66 × 1800/3000). Still a slow,
+    // punchy pulse burst — not a machine gun. DPS = totalDamage / cycleTime(s): 66/3 = 22.0 dps ->
+    // 39.6/1.8 = 22.0 dps (unchanged).
+    totalDamage: 39.6, range: { min: 0, opt: 340, max: 600 },
+    ammoMax: 3, slots: 1, cycleTime: 1800,   // #408: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'single', count: 5, burst: { wubOn: 25, wubOff: 50 } },
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
@@ -184,9 +186,12 @@ export const WEAPONS = {
   railLance: w({    // railgun sniper: slow charge, one heavy long-range lance
     id: 'railLance', name: 'Rail Lance', category: 'energy',
     // #259 DPS-squish: damage 34 -> 52.8 to bring raw DPS up from ~15.45 to the ~24 band.
-    // DPS = damage / cycleTime(s): 34/2.2 = 15.45 dps -> 52.8/2.2 = 24.0 dps.
-    damage: 52.8, range: { min: 120, opt: 400, max: 640 },
-    ammoMax: 3, slots: 2, cycleTime: 2200,   // #402: ~6.6s burst (3 pulls × 2.2s), then 1s reload
+    // #408: cycleTime 2200 -> 1650 (under the 2s reload so the mag empties and reload creates real
+    // downtime), holding DPS by scaling damage 52.8 -> 39.6 (= 52.8 × 1650/2200). Still a slow,
+    // heavy sniper lance — not a machine gun. DPS = damage / cycleTime(s): 52.8/2.2 = 24.0 dps ->
+    // 39.6/1.65 = 24.0 dps (unchanged).
+    damage: 39.6, range: { min: 120, opt: 400, max: 640 },
+    ammoMax: 4, slots: 2, cycleTime: 1650,   // #408: ~6.6s burst (4 pulls × 1.65s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover

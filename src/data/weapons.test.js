@@ -268,3 +268,31 @@ describe('#377/#402 Swarm Rack feel pass', () => {
     expect(WEAPONS.streakPod.delivery.velocity).toBeGreaterThan(500);
   });
 });
+
+// ── #408: pulseLaser & railLance cadence brought under the 2s reload, HOLDING DPS ─────────
+// Both weapons cycled SLOWER than the fixed 2s reload (pulseLaser 3000ms, railLance 2200ms), so
+// their magazine never emptied mid-fight and the reload mechanic did nothing. #408 dropped both
+// cycleTimes clearly under 2000ms (so the mag empties and the 2s reload creates real downtime) and
+// scaled per-pull damage DOWN in exact proportion, so raw DPS is unchanged. These assertions ARE
+// the balance gate: cadence moved, DPS did not.
+describe('#408 pulseLaser/railLance under the 2s reload, DPS unchanged', () => {
+  it('pulseLaser cycles under the 2s reload while holding its 22.0 dps', () => {
+    const w = WEAPONS.pulseLaser;
+    expect(w.cycleTime).toBe(1800);
+    expect(w.cycleTime).toBeLessThan(2000);            // the reload now actually gates it
+    expect(w.totalDamage).toBeCloseTo(39.6, 6);
+    expect(w.ammoMax).toBe(3);
+    // DPS = totalDamage / cycleTime(s)
+    expect((w.totalDamage / (w.cycleTime / 1000))).toBeCloseTo(22.0, 6);
+  });
+
+  it('railLance cycles under the 2s reload while holding its 24.0 dps', () => {
+    const w = WEAPONS.railLance;
+    expect(w.cycleTime).toBe(1650);
+    expect(w.cycleTime).toBeLessThan(2000);            // the reload now actually gates it
+    expect(w.damage).toBeCloseTo(39.6, 6);
+    expect(w.ammoMax).toBe(4);
+    // DPS = damage / cycleTime(s)
+    expect((w.damage / (w.cycleTime / 1000))).toBeCloseTo(24.0, 6);
+  });
+});
