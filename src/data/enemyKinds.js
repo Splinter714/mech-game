@@ -631,7 +631,15 @@ export const ENEMY_KINDS = {
     // unit in the game (scale 0.38, the lowest of any kind).
     size: 'small',
     themeColor: 0x8fae4a,
-    scale: 0.38,            // noticeably smaller than drone's 0.52 (#97 ask: "smaller than drones")
+    scale: 0.19,           // #411 (playtest: "shrink infantry to about half size"): halved from
+                           // 0.38. `scale` is the single size source of truth — it drives BOTH the
+                           // rendered art footprint and the collision radius (groundEnemyRadius =
+                           // 24 * scale in shared.js), so one edit halves both. The art itself is
+                           // left as #104's deliberately-chunky single-blob silhouette (thin shapes
+                           // vanish at small scale) rather than shrunk further, which would
+                           // over-shrink and desync from the `parts` hitbox above. Still comfortably
+                           // below the drone's 0.44 (#97 wanted troopers the smallest unit). PLAYTEST
+                           // DIAL — if it aliases too hard at this size, nudge back up.
   },
 };
 

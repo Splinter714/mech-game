@@ -474,9 +474,12 @@ export class AudioEngine {
   // Stop the siren voice if one is playing (safe to call when none is — a no-op). Called when the
   // last signaled-alive tower dies/none remain, and on scene shutdown so it never bleeds into the
   // Garage or the next run.
-  stopSiren() {
+  // `fadeSec` (optional) lengthens the ramp to silence. Shutdown / return-to-garage call it bare for
+  // a near-instant cut; the tower-DESTRUCTION path (#385) passes ~0.6s so the last siren voice trails
+  // off as the tower falls rather than snapping silent.
+  stopSiren(fadeSec) {
     if (!this._siren) return;
-    this._siren.stop();
+    this._siren.stop(fadeSec);
     this._siren = null;
   }
 
