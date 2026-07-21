@@ -379,8 +379,8 @@ describe('#351 natural terrain is permanent scenery — untargetable and undamag
     // ceiling), a shot travelling past intact foliage sails through — proving the stop is a roll,
     // not the terrain geometry. The probabilistic eating itself is pinned in softCoverBlock.test.js.
     const s = Object.assign(realScene([{ h: { q: 2, r: 0 }, id: SOFT }]), CombatMixin,
-      { _coverRng: () => 1, _foliageBlockFx: vi.fn() });
+      { _coverRng: () => 1, _impactFx: vi.fn() });
     expect(fireAt(s, centre({ q: 6, r: 0 })).dead).toBeFalsy();
-    expect(s._foliageBlockFx).not.toHaveBeenCalled();
+    expect(s._impactFx).not.toHaveBeenCalled();   // #374 — not eaten, so no in-flight block impact
   });
 });

@@ -533,7 +533,8 @@ export const FiringMixin = {
     if (eatenAt) {
       // Stop the beam at the eating hex — its centre projected onto the ray — so it visibly
       // terminates in the foliage rather than drawing through to the target/wall. The trees stopped
-      // it, so it is neither a unit hit nor a wall block: no damage, no terrain chip, a leaf puff.
+      // it, so it is neither a unit hit nor a wall block: no damage, no terrain chip, just its
+      // normal beam impact FX at that clamp point (below).
       const along = Math.max(0, (eatenAt.x - muzzleX) * dirX + (eatenAt.y - muzzleY) * dirY);
       endDist = Math.min(endDist, along);
       endX = muzzleX + dirX * endDist; endY = muzzleY + dirY * endDist;
@@ -556,7 +557,10 @@ export const FiringMixin = {
       this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral });
     }
     if (eatenAt) {
-      this._foliageBlockFx?.(eatenAt.x, eatenAt.y);   // #374 — the distinct foliage puff, no damage
+      // #374 — the beam was eaten mid-trace: play its OWN normal beam impact FX at the clamp point
+      // where it enters the blocking hex (endX/endY, already clamped above), NOT a puff at the hex
+      // centre. No damage, no terrain chip — the trees simply stopped it right there.
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
