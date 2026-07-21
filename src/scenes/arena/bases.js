@@ -10,7 +10,7 @@
 // "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { ART_SCALE } from '../../art/index.js';
-import { DOCK_DOOR_TEX, DOCK_DOOR_SLIDE } from '../../art/hexArt.js';
+import { DOCK_DOOR_TEX, DOCK_DOOR_SLIDE, BASE_INFRA_COLOR } from '../../art/hexArt.js';
 import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WINDOW_MS, NOISE_AGGRO_RANGE } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS, pickSirenSource } from '../../data/alertTower.js';
 import { isFastWakeKind } from '../../data/bases.js';
@@ -280,16 +280,16 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
 // Owner: tunable via playtest.
 const DOCK_VACATE_RADIUS_PX = 60;
 
-// #395 part B (owner: "docks need a stronger dark border, drawn high so it clearly frames the dock
-// hex on top of the tile and the door leaves"): a strong, near-black hex outline stroked around
-// every DOCK hex at DEPTH.DOCK_BORDER (above the tile, its doors, the ground-decal band and the
-// unit tiers) so a dock reads as a distinct, clearly-bounded structure regardless of open/closed
-// state. Biome-neutral by construction — a fixed dark tone and fixed radius, drawn the same on
-// every biome. Radius sits just inside the hex's HEX_SIZE (48) corner so the stroke lands on the
+// #395 part B (owner): a hex outline stroked around every DOCK hex at DEPTH.DOCK_BORDER (above the
+// tile, its doors, the ground-decal band and the unit tiers) so a dock reads as a distinct,
+// clearly-bounded structure regardless of open/closed state. The high z-order is what fixed the
+// dock's read; the colour/weight now MATCHES the other base-hex borders (`BASE_INFRA_COLOR.edge`)
+// so it's a subtle frame like the rest of the base, not a heavy black box. Biome-neutral by
+// construction. Radius sits just inside the hex's HEX_SIZE (48) corner so the stroke lands on the
 // hex edge and frames it rather than overhanging into neighbours.
-const DOCK_BORDER_COLOR = 0x090c11;
-const DOCK_BORDER_ALPHA = 0.95;
-const DOCK_BORDER_WIDTH = 5;
+const DOCK_BORDER_COLOR = BASE_INFRA_COLOR.edge;
+const DOCK_BORDER_ALPHA = 0.65;
+const DOCK_BORDER_WIDTH = 2.5;
 const DOCK_BORDER_RADIUS = 46;
 
 export const BasesMixin = {
@@ -967,7 +967,9 @@ export const BasesMixin = {
     pair.tweenR?.stop?.();
     pair.l.setVisible(true);
     pair.r.setVisible(true);
-    const dur = 750, ease = 'Sine.easeInOut';
+    // #395: a heavier, slower part so the two leaves visibly slide apart to reveal the black bay
+    // (owner wasn't reading the motion at 750ms) — long enough to see clear travel, still snappy.
+    const dur = 950, ease = 'Sine.easeInOut';
     pair.tweenL = this.tweens.add({ targets: pair.l, x: opening ? x - DOCK_DOOR_SLIDE : x, duration: dur, ease });
     pair.tweenR = this.tweens.add({
       targets: pair.r, x: opening ? x + DOCK_DOOR_SLIDE : x, duration: dur, ease,
@@ -1093,11 +1095,12 @@ export const BasesMixin = {
     const glow = this.add.circle(x, y + riseFrom, 4, 0xd8cba0, 0.9).setDepth(DEPTH.DOCK_FX + 0.3);
     const destroyFx = () => { platform.destroy(); glow.destroy(); };
 
-    // Let the doors part first, then rise the platform through the open bay.
-    this.time.delayedCall(360, () => {
+    // Let the doors part first (now ~950ms, #395), THEN rise the platform through the open bay, so
+    // nothing occludes the leaves sliding apart — the parting reads clean before anything emerges.
+    this.time.delayedCall(600, () => {
       this.tweens.add({ targets: [platform, glow], y: `-=${riseFrom}`, duration: 450, ease: 'Sine.easeOut' });
     });
-    this.time.delayedCall(700, () => {
+    this.time.delayedCall(960, () => {
       // #323: the SAME shared placement seam the initial dormant spawn uses — cluster rings,
       // terrain snapping and mech/kind dispatch all come from there, so a swarm resupply arrives
       // as a properly-seated burst. AWARE, not DORMANT: the base is already fighting.
@@ -1105,7 +1108,7 @@ export const BasesMixin = {
     });
     // Once surfaced, fade the platform FX out. The bay stays OPEN (doors parted) while the unit(s)
     // occupy the hex; `_updateDockOpenClose` slides the doors shut once they vacate.
-    this.time.delayedCall(1000, () => {
+    this.time.delayedCall(1260, () => {
       this.tweens.add({ targets: [platform, glow], alpha: 0, duration: 220, onComplete: destroyFx });
     });
   },

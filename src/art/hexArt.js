@@ -416,21 +416,43 @@ function dockDoor(sg, side) {
     const vh = dockVHalfAt(outerAx);
     if (vh < 2) continue;
     const sx = C.cx + x, top = C.cy - vh, h = vh * 2;
-    sg.fillStyle(0x555b65, 1);    sg.fillRect(sx, top, w - 0.8, h);            // slat face
-    sg.fillStyle(0x6c7480, 0.9);  sg.fillRect(sx, top, 1.0, h);               // left-lit ridge
-    sg.fillStyle(0x22252b, 0.95); sg.fillRect(sx + w - 1.4, top, 1.4, h);     // shadow groove (right)
+    // #395: brighter, higher-contrast slat metal so a closed leaf reads as a bold solid panel
+    // against the black bay it slides off of (the parting has to be obvious in motion).
+    sg.fillStyle(0x6a7280, 1);    sg.fillRect(sx, top, w - 0.8, h);            // slat face
+    sg.fillStyle(0x8b93a2, 0.95); sg.fillRect(sx, top, 1.2, h);               // left-lit ridge
+    sg.fillStyle(0x191c22, 1);    sg.fillRect(sx + w - 1.6, top, 1.6, h);     // shadow groove (right)
   }
-  // The seam lip where the two leaves meet, and a top/bottom edge cap so the leaf reads as a solid
-  // panel rather than a stack of loose bars.
-  const seamVh = dockVHalfAt(1.5);
-  sg.fillStyle(0x2b2f36, 0.95);
-  if (side < 0) sg.fillRect(C.cx - 2.4, C.cy - seamVh, 2.4, seamVh * 2);      // left leaf's inner lip
-  else          sg.fillRect(C.cx,       C.cy - seamVh, 2.4, seamVh * 2);      // right leaf's inner lip
+  // #395: outer vertical edge of each leaf — a bright rim where the metal meets the black bay, so
+  // the door's leading/trailing edge stays crisp as it slides across the shaft.
+  const outVh = dockVHalfAt(DOCK_HALF_W - 2.2);
+  sg.fillStyle(0x9aa3b2, 0.9);
+  if (side < 0) sg.fillRect(C.cx - DOCK_HALF_W + 0.6, C.cy - outVh, 1.6, outVh * 2);
+  else          sg.fillRect(C.cx + DOCK_HALF_W - 2.2, C.cy - outVh, 1.6, outVh * 2);
+  // #395: top/bottom edge caps — a dark lip framing the panel top and bottom so each leaf reads as
+  // one solid door, not a stack of loose bars.
+  const capVh = dockVHalfAt(Math.abs(side < 0 ? -DOCK_HALF_W / 2 : DOCK_HALF_W / 2));
+  const capX = side < 0 ? C.cx - DOCK_HALF_W : C.cx;
+  sg.fillStyle(0x14171c, 0.85);
+  sg.fillRect(capX, C.cy - capVh, DOCK_HALF_W, 2.2);
+  sg.fillRect(capX, C.cy + capVh - 2.2, DOCK_HALF_W, 2.2);
+  // #395: the CENTRAL SEAM where the two leaves meet — the single most important read of a closed
+  // dock. Each leaf paints its own half of a bold, chamfered hatch seam: a bright bevel lip catching
+  // the light, then a deep near-black channel at dead centre. Together the two halves form a crisp,
+  // high-contrast vertical line straight down the middle, so a sealed dock unmistakably reads as two
+  // doors meeting — and the moment it parts, that line splits and black bay yawns open between them.
+  const seamVh = dockVHalfAt(2.0);
+  if (side < 0) {
+    sg.fillStyle(0x9aa3b2, 0.95); sg.fillRect(C.cx - 4.0, C.cy - seamVh, 1.6, seamVh * 2);  // bevel lip
+    sg.fillStyle(0x05070a, 1);    sg.fillRect(C.cx - 2.4, C.cy - seamVh, 2.4, seamVh * 2);  // dark channel (left half)
+  } else {
+    sg.fillStyle(0x05070a, 1);    sg.fillRect(C.cx,       C.cy - seamVh, 2.4, seamVh * 2);  // dark channel (right half)
+    sg.fillStyle(0x9aa3b2, 0.95); sg.fillRect(C.cx + 2.4, C.cy - seamVh, 1.6, seamVh * 2);  // bevel lip
+  }
   // Small red "sealed" light on the right leaf near the seam, so a closed dock still reads as
   // shut/dangerous (kept from the old dome/shutter version). It slides away as the door opens.
   if (side > 0) {
-    sg.fillStyle(0xb3392a, 0.32); sg.fillCircle(C.cx + 4, C.cy + S * 0.42, 2.4);
-    sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx + 4, C.cy + S * 0.42, 1.2);
+    sg.fillStyle(0xb3392a, 0.32); sg.fillCircle(C.cx + 5, C.cy + S * 0.42, 2.6);
+    sg.fillStyle(0xff3a2a, 1);    sg.fillCircle(C.cx + 5, C.cy + S * 0.42, 1.3);
   }
 }
 // The door-leaf texture keys, and the on-screen distance each leaf slides to fully clear the bay.
