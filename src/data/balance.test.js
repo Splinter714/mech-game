@@ -97,7 +97,13 @@ describe('#299: the player and the enemy medium chassis are genuinely separable'
   });
 
   it('but they still share medium\'s movement feel verbatim (only the stats forked)', () => {
-    expect(CHASSIS.mediumPlayer.movement).toEqual(CHASSIS.medium.movement);
+    // #403: the player's step cadence is quicker than the shared medium (its stepInterval was
+    // tuned before #159 doubled maxSpeed) — the ONLY movement field allowed to diverge.
+    const { stepInterval: pStep, ...pRest } = CHASSIS.mediumPlayer.movement;
+    const { stepInterval: mStep, ...mRest } = CHASSIS.medium.movement;
+    expect(pRest).toEqual(mRest);
+    expect(pStep).toBe(250);
+    expect(pStep).toBeLessThan(mStep);
     expect(CHASSIS.mediumPlayer.weightClass).toBe('medium');
   });
 });
