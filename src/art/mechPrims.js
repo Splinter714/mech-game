@@ -256,6 +256,42 @@ export function exposedInternals(sg, T, cx, cy, w, h) {
   glowDot(sg, cx - rw * 0.5, cy + rh * 0.45, Math.max(0.7, m * 0.05), SPARK);
 }
 
+// #402 follow-up: geometry of the persistent per-mount READOUT housing, in mech-local DESIGN
+// units. The housing is the small "back plate" bolted to the rear of a weapon-carrying mount
+// (arm / side torso). `readoutMount` (below) bakes the STATIC socket into the part texture so it
+// ALWAYS draws — armored or stripped — while arena/ammoIndicators.js paints the LIVE bar + status
+// light on top in world space at the SAME anchor (the part's joint), oriented with the part. That
+// keeps the readout physically part of the segment: it rides the arm/torso as it slews and never
+// floats free or vanishes when the segment's armor is torn off. Sizes are shared by both call
+// sites (mechArt bakes at design scale; the overlay multiplies by the arena display scale) so the
+// live bar sits exactly in the baked slot. `barSpan`/`barMin` size the bar to the part's own width.
+export const READOUT = {
+  barSpan: 1.0,   // bar length as a fraction of the part's width...
+  barMin: 6,      // ...with a design-unit floor so even a spindly light-chassis arm still reads
+  barThick: 2.4,
+  lightR: 1.5,
+  lightGap: 2.4,  // gap (design) between the bar's forward edge and the status light
+  pad: 1.3,       // bezel margin around the bar + light cluster
+};
+const READOUT_SLOT = 0x0b0f13;   // dark instrument recess (bar slot + light socket), both themes
+
+// The static readout socket at (cx, cy) — a bezelled module carrying a recessed bar slot with a
+// light socket just forward of it (−y = toward the barrel). No live state here; the overlay
+// renders the coloured fill + lit dot into these recesses.
+export function readoutMount(sg, T, cx, cy, barLen) {
+  const { barThick, lightR, lightGap, pad } = READOUT;
+  const lightCy = cy - barThick / 2 - lightGap - lightR;
+  const top = lightCy - lightR - pad, bottom = cy + barThick / 2 + pad;
+  const H = bottom - top, cyH = (top + bottom) / 2, W = barLen + pad * 2;
+  const r = Math.min(W, H) * 0.28;
+  roundC(sg, cx, cyH, W + 1.2, H + 1.2, T.outline, r + 0.4);                        // bezel edge
+  roundC(sg, cx, cyH, W, H, T.housing, r);                                          // housing face
+  rectC(sg, cx, top + Math.max(0.7, H * 0.07), W - 1.8, Math.max(0.6, H * 0.09), T.rim, 0.7); // top light-catch
+  rectC(sg, cx, cy, barLen, barThick, READOUT_SLOT);                               // recessed bar slot
+  sg.fillStyle(READOUT_SLOT, 1);
+  sg.fillCircle(CENTER + cx, CENTER + lightCy, lightR + 0.5);                       // light socket
+}
+
 // A destroyed location: a charred lump with faint embers.
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);

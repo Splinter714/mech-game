@@ -23,7 +23,7 @@ import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
-  exposedInternals, statusSpotBar,
+  exposedInternals, statusSpotBar, READOUT, readoutMount,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -31,7 +31,7 @@ import { drawDecor, DECOR_ART } from './decor/index.js';
 // The low-level primitives + palettes live in ./mechPrims.js; the per-category weapon-mount
 // art in ./mounts/ and the per-kind chassis decor in ./decor/ (registries). This file keeps
 // the layout + orchestration: mechLayout, drawTurret/drawHull, and the texture builders.
-export { ART_SCALE, DESIGN };
+export { ART_SCALE, DESIGN, READOUT };
 
 // Per-chassis SHAPE — proportion/stance multipliers on the baseline layout so each weight
 // class reads as a structurally different build (not one shape scaled), #24. All default
@@ -87,6 +87,29 @@ export function partSpriteTransform(mech, loc, angle, scale) {
 
 // Back-compat alias — the arm-only name that existing call sites import.
 export const armSpriteTransform = partSpriteTransform;
+
+// #402 follow-up: does this mount carry a LIMITED-ammo weapon (i.e. one that gets a live ammo
+// readout)? Unlimited/melee (`ammoMax: null`) mounts and empty mounts show nothing, so they get
+// no readout housing either. Shared by the art (whether to bake the socket) and — via the same
+// per-weapon check — the arena overlay (whether to paint on it).
+export function mountHasReadout(mech, loc) {
+  return mech.mounts[loc].filter(isWeapon).some((id) => getWeapon(id)?.ammoMax != null);
+}
+
+// The readout housing's bar length (design units) for a mount, sized to the part's own width.
+function readoutBarLen(part) {
+  return Math.max(READOUT.barMin, part.w * READOUT.barSpan);
+}
+
+// Bake the persistent readout socket onto `loc`'s texture at the part's joint (the same anchor the
+// overlay draws to). Only for mounts that actually carry a limited-ammo readout, and never over a
+// destroyed part. Always drawn otherwise — armored or stripped — so the live readout stays put.
+function drawReadoutMount(sg, mech, lay, loc, T) {
+  if (!mountHasReadout(mech, loc)) return;
+  const p = lay[loc];
+  const jointY = p.y + p.h * (PART_PIVOT[loc] ?? 0.42);
+  readoutMount(sg, T, p.x, jointY, readoutBarLen(p));
+}
 
 // Per-location anchors + box sizes in mech-local design coords (origin = centre, -y =
 // forward). Scenes also read this to place per-part hit-areas + damage labels, so the
@@ -144,6 +167,10 @@ function drawArm(sg, mech, loc, T, noWeapons = false) {
   if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
+  // The persistent readout socket rides the rear of the part, drawn regardless of armor state so
+  // the live ammo tag (arena/ammoIndicators.js) always has a physical mount. Skipped on the
+  // body-only shield raster (`noWeapons`) — the shield shell hugs plating only.
+  if (!noWeapons) drawReadoutMount(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
@@ -166,6 +193,7 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false) {
   if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
+  if (!noWeapons) drawReadoutMount(sg, mech, lay, loc, T);   // persistent ammo-readout socket (see drawArm)
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
