@@ -154,6 +154,7 @@ function fakeArena() {
       get tempShieldRemainingMs() { return this._remaining; },
       grantTempShield(pool, ms) { this._pool = pool; this._remaining = ms; this._grantCalls = (this._grantCalls || 0) + 1; },
       repairArmor() { this._repairs++; return 10; },
+      exposedArmorLocations() { return []; },
     },
     _activatePowerup: PowerupsMixin._activatePowerup,
     _applyInstantPowerup: PowerupsMixin._applyInstantPowerup,
@@ -238,6 +239,7 @@ function fakeMech() {
     _pool: undefined, _grantCalls: 0, _repairs: 0,
     grantTempShield(pool, ms) { this._pool = pool; this._remaining = ms; this._grantCalls++; },
     repairArmor() { this._repairs++; return 10; },
+    exposedArmorLocations() { return []; },
   };
 }
 

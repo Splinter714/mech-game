@@ -82,6 +82,18 @@ export const FiringMixin = {
     }
   },
 
+  // ── Manual reload (#402) ── R3/F tops off ALL of this player's weapons at once (the auto-
+  // reload on empty is handled in the pure model, Mech.consumeAmmo). `intent.reloadPressed` is
+  // already rising-edge-detected in Controls.js (one edge per physical press, on whichever device
+  // is active), so this fires once per press. Per player: it reads THIS player's controls and
+  // reloads THIS player's mech, so in co-op each driver reloads only their own guns. A no-op when
+  // nothing is eligible (every mag already full/reloading, or only unlimited weapons mounted).
+  _handleReload(intent, player = primaryPlayerOf(this)) {
+    if (!intent?.reloadPressed) return;
+    const started = player.mech.reloadAllWeapons();
+    if (started > 0) Audio.ui('sprintOn');   // reuse the movement-ability "engaged" cue as a reload chirp
+  },
+
   // ── Sprint (#188, player-trigger removed by #261) ── the Sprint state machine
   // (data/sprint.js) itself is UNCHANGED — it's still a depleting/regenerating fuel bar that
   // drains while active and refills while inactive, hitting empty forces it off. What's gone is

@@ -36,4 +36,15 @@ export const MEDIUM_PLAYER_CONFIG = {
   // Plus the 100-point shield configured at deploy (PLAYER_SHIELD in scenes/ArenaScene.js).
   totalArmor: 2100,
   totalHp: 1400,
+  // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties
+  // cadence to speed already — it advances the walk frames by `speed / maxSpeed` and plants a
+  // foot every `stepInterval` ms at full throttle. But the shared MEDIUM stepInterval (340) was
+  // tuned before #159 nearly DOUBLED maxSpeed (98 → 195), so at the mech's current top speed the
+  // footfalls now land too far apart and the walk reads as a glide. #399 (full speed in every
+  // direction) widens that gap further. Pulling the interval down to 250 puts a footfall roughly
+  // every half-second at top speed — noticeably quicker, still tied to speed so a crawl still
+  // steps slowly. Weight is carried by stepBob/footShake/footstep audio (all inherited,
+  // untouched), so the step is faster without going floaty. Player-only: overriding here (not in
+  // medium.js) leaves the enemy Warden's medium chassis alone.
+  movement: { ...MEDIUM_CONFIG.movement, stepInterval: 250 },
 };

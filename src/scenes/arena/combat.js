@@ -175,12 +175,7 @@ export const CombatMixin = {
     // #400/#404: also carry the current center-torso status spot through the rebuild (else a hit
     // would flip it back to the default reactor purple). Cache the key the per-frame sync
     // (coop.js) compares against, so the two paths never fight over the texture.
-    if (res.destroyed || res.armorBrokeNow) {
-      const statusSpot = statusSpotColorsFor(this, player);
-      player._statusSpotKey = statusSpot.join(',');
-      reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
-        { theme: 'player', accent: playerAccent(player.id ?? 0), statusSpot });
-    }
+    if (res.destroyed || res.armorBrokeNow) this._reskinPlayerMech(player);
     // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
     // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
     // #201: a part breaking off now has its own SFX domain trigger (shared for player+enemy
@@ -221,6 +216,19 @@ export const CombatMixin = {
       // distinct from an enemy's death (deathExplosionByCategory, #180/#184).
       Audio.ui('mechDestroyed');
     }
+  },
+
+  // Rebuild a player's 9-texture mech set from its live Mech, preserving the player's identifying
+  // accent (#348) and current center-torso status spot (#400/#404) across the re-raster. The
+  // single place that re-skins a PLAYER mech — shared by the damage path (a part broke or lost its
+  // armor plating) and the Armor Patch repair path (#401 follow-up: armor RESTORED, so the clean
+  // plating must come back and the bared internals hide). Both need the same accent/status-spot
+  // carry-through, so neither can just call `reskinMech` directly.
+  _reskinPlayerMech(player) {
+    const statusSpot = statusSpotColorsFor(this, player);
+    player._statusSpotKey = statusSpot.join(',');
+    reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
+      { theme: 'player', accent: playerAccent(player.id ?? 0), statusSpot });
   },
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
