@@ -65,7 +65,9 @@ export const SHIELD_HIT_FLASH_MULT = 1.15;
 // `makeShieldOutline`'s `blend` param. A tighter hug ("hugs the mech more tightly") plus a crisp
 // solid rim that the muzzle glow can no longer balloon. Enemies keep the default rim + ADD glow.
 export const SHIELD_PLAYER_SCALE_MULT = 1.08;
-export const SHIELD_PLAYER_BLEND = Phaser.BlendModes.NORMAL;
+// Optional-chained so the unit tests (which mock Phaser as `{}`) can import this module; the real
+// Phaser build always has BlendModes.NORMAL (=== 0). Only read at real sprite construction time.
+export const SHIELD_PLAYER_BLEND = Phaser.BlendModes?.NORMAL ?? 0;
 
 // #381: how much the glow SWELLS per unit of temp-pool-to-base-capacity ratio. #397 dialled this
 // WAY down (was 0.5): a full 150-temp pool on the player's 100 base (ratio 1.5) now grows the
@@ -100,7 +102,9 @@ export function shieldOutlineGrowth(shield) {
 export function shieldOutlineAlpha(pool, cap, t) {
   const frac = Math.max(0.15, Math.min(1, pool / (cap || pool || 1)));
   const pulse = 0.5 + 0.5 * Math.sin(t * 0.0025);
-  return (0.35 + 0.45 * frac) * (0.85 + 0.3 * pulse);
+  // #397: higher, tighter-swinging opacity so the shell reads MORE intensely ("more intense
+  // without being so huge") — brighter floor, gentler ambient hum. Still clamped ≤ 1.
+  return (0.5 + 0.4 * frac) * (0.9 + 0.2 * pulse);
 }
 
 // ── Phaser-side construction / per-frame upkeep ──────────────────────────────────────────────
@@ -111,8 +115,22 @@ export function shieldOutlineAlpha(pool, cap, t) {
 // when the Shield powerup grants a temporary pool to a zero-capacity chassis — Mech.grantTempShield), while an ENEMY only
 // gets one if its kind data configures a shield (`shieldPresent`), so the great majority of
 // enemies hold no outline sprites and make no per-frame call whatsoever.
-export function makeShieldOutline(scene, view, { keys, scale, color = SHIELD_COLOR }) {
-  const baseScale = scale * SHIELD_OUTLINE_SCALE_MULT;
+// `scaleMult` (#397): how much bigger than the real part the rim is drawn — defaults to the shared
+// enemy rim; the player passes SHIELD_PLAYER_SCALE_MULT for a tighter hug.
+// `blend` (#397): the outline's blend mode. Enemies default to ADD — a soft additive glow rim.
+// The PLAYER passes NORMAL, and this is the muzzle-glow FIX: an energy weapon bakes a big soft
+// `glowDot` halo at the muzzle tip into its part texture, and `setTintFill` floods that faint halo
+// to solid shield-blue. Under ADD blend that flooded halo accumulates into a big round bubble that
+// balloons FORWARD off the gun (Jackson #397: "further expands the visual size of the shield
+// overlay, which looks ridiculous"). Under NORMAL blend the soft halo copy sits harmlessly behind
+// the real (also soft) glow and contributes almost nothing, while the SOLID body plating still
+// throws a crisp blue rim over the ground — so the shell sizes off the MECH, never the muzzle FX,
+// and reads even all around instead of stretched forward.
+export function makeShieldOutline(scene, view, {
+  keys, scale, color = SHIELD_COLOR,
+  scaleMult = SHIELD_OUTLINE_SCALE_MULT, blend = Phaser.BlendModes.ADD,
+}) {
+  const baseScale = scale * scaleMult;
   const outlines = {};
   for (const key of keys) {
     const real = view[key];
@@ -121,7 +139,7 @@ export function makeShieldOutline(scene, view, { keys, scale, color = SHIELD_COL
       .setOrigin(real.originX, real.originY)
       .setScale(baseScale)
       .setTintFill(color)
-      .setBlendMode(Phaser.BlendModes.ADD)
+      .setBlendMode(blend)
       .setVisible(false);
     outlines[key] = o;
     // Behind everything already in the container (the real parts) — order among the outlines

@@ -33,6 +33,7 @@ import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
+  SHIELD_PLAYER_SCALE_MULT, SHIELD_PLAYER_BLEND,
 } from './shieldOutline.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
@@ -80,6 +81,10 @@ export const PowerupsMixin = {
       keys: SHIELD_MECH_PART_KEYS,
       scale: ARENA_MECH_SCALE,
       color: POWERUPS.shield.color,
+      // #397: the player shell hugs tighter and blends NORMAL, so the muzzle glow can't balloon it
+      // and it reads even all around (see makeShieldOutline's `blend` note). Enemies keep ADD.
+      scaleMult: SHIELD_PLAYER_SCALE_MULT,
+      blend: SHIELD_PLAYER_BLEND,
     });
     return player.shieldVisual;
   },
