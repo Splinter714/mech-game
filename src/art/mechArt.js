@@ -23,7 +23,7 @@ import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
-  armorShell,
+  armorShell, statusSpotBar,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -175,7 +175,7 @@ function drawPauldronFor(sg, mech, lay, loc, T) {
 // torsos — those are separate pivoting textures (drawArm / drawSideTorso), drawn under this
 // body sprite so it occludes their inner edges (the top-down read). Drawn facing up; weapons
 // point forward (-y).
-function drawTurret(sg, mech, T) {
+function drawTurret(sg, mech, T, statusSpot) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
 
@@ -190,7 +190,13 @@ function drawTurret(sg, mech, T) {
   else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
   if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.4, ct.h * 0.7, T.housing);            // reactor housing
   else rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);
-  glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                           // reactor spine
+  // #400/#404: the reactor spine doubles as the STATUS SPOT for player mechs. When the caller
+  // hands in a `statusSpot` colour list (arena players only) it renders that instead of the
+  // fixed purple: single-player → active-powerup colours (sectioned when several, black when
+  // none); co-op → the player's identifying colour. Enemies & the garage preview pass nothing
+  // and keep the original reactor purple.
+  if (statusSpot) statusSpotBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, statusSpot);
+  else glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                      // reactor spine
   glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
   glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, REACTOR);             // vent
 
@@ -272,7 +278,7 @@ export function buildMechTextures(scene, key, mech, opts) {
       (g) => drawHull(scaledGraphics(g), mech, f, T));
   }
   gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-    (g) => drawTurret(scaledGraphics(g), mech, T));
+    (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot));
   // One texture per side torso + arm — the scene pivots each toward the weapon-convergence
   // point (side torsos subtly, arms more; see partSpriteTransform).
   for (const loc of SIDE_TORSO_LOCATIONS) {

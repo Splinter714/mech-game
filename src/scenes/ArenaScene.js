@@ -391,6 +391,10 @@ export default class ArenaScene extends Phaser.Scene {
 
     // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
     this._updatePowerups(delta);
+    // #400/#404: sync the center-torso status spot AFTER the buff set is updated this frame, so a
+    // powerup that just expired/landed is reflected immediately (single-player = powerup colours,
+    // co-op = player colour). Only rebuilds a mech texture when its resolved colours change.
+    this._updateStatusSpots();
     // #65: bob/expire dropped SCRAP pickups, grab any the player touches.
     this._updateSalvage(delta);
 

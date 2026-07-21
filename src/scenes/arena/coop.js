@@ -24,7 +24,7 @@ import { separatePlayers } from '../../data/playerCollision.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
 import { axialKey, pixelToHex } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
-import { livePlayersOf, playersOf, primaryPlayerOf } from './players.js';
+import { livePlayersOf, playersOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
 import { DEPTH, PLAYER_WALL_COLLIDE_RADIUS } from './shared.js';
 import { Audio } from '../../audio/index.js';
 
@@ -238,6 +238,18 @@ export const CoopMixin = {
     }
   },
 
+  // #400/#404: keep every player's center-torso STATUS SPOT current. Single-player shows the
+  // active-powerup colours (sectioned when several, black when none); co-op shows each player's
+  // identifying colour. The turret raster is the same 9-texture cost as a damage reskin, so only
+  // rebuild (through `_reskinPlayer`) when the resolved colour list actually changes — a cached
+  // key, exactly like combat.js gates its own reskin. Separate from `_updatePlayerMarkers` so the
+  // cheap per-frame ring update never drags in a texture rebuild.
+  _updateStatusSpots() {
+    for (const p of playersOf(this)) {
+      if (p._statusSpotKey !== statusSpotColorsFor(this, p).join(',')) this._reskinPlayer(p);
+    }
+  },
+
   // ── Respawn ──
   // A downed player waits 20s AND for the team to be out of combat for ~1.5s, then walks back on
   // at the far edge of the current view. The out-of-combat gate is the design (Jackson): it stops
@@ -360,12 +372,16 @@ export const CoopMixin = {
     Audio.ui('deploy');
   },
 
-  // Re-raster one player's mech textures, preserving its identifying accent. Every call site
-  // that reskins a player must go through here or a respawned/repaired player 2 would silently
-  // revert to player 1's colours.
+  // Re-raster one player's mech textures, preserving its identifying accent AND its current
+  // center-torso status spot (#400/#404). Every call site that reskins a player must go through
+  // here or a respawned/repaired player 2 would silently revert to player 1's colours (or drop
+  // its status spot back to the default reactor purple). Caches the key `_updatePlayerMarkers`
+  // compares against so the per-frame sync doesn't redundantly rebuild right after.
   _reskinPlayer(player) {
+    const statusSpot = statusSpotColorsFor(this, player);
+    player._statusSpotKey = statusSpot.join(',');
     buildMechTextures(this, player.textureKey ?? 'playerMech', player.mech,
-      { theme: 'player', accent: playerAccent(player.id) });
+      { theme: 'player', accent: playerAccent(player.id), statusSpot });
   },
 
   // The world-space distance from the camera focus at which a player is hard-stopped, published

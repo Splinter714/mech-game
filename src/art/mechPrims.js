@@ -142,6 +142,36 @@ export function glowBar(sg, cx, cy, w, h, n) {
   rectC(sg, cx, cy, w * 0.36, h * 0.7, n.hot, 1);
 }
 
+// #400/#404: the center-torso STATUS SPOT — replaces the reactor spine's fixed purple with a
+// data-driven indicator. This primitive is MEANING-AGNOSTIC: it renders whatever colour list
+// the caller resolves (single-player → active-powerup colours; co-op → the player's identifying
+// colour). The list decides the look: 0 colours → a dark "no powerup" core; 1 → a solid glowing
+// bar; N → N sections stacked along the bar's length (a vertical spine reads top-to-bottom).
+// A vertical bar of (cx,cy,w,h). Mirrors glowBar's glow language so it still reads as "core".
+export function statusSpotBar(sg, cx, cy, w, h, colors) {
+  if (!colors || colors.length === 0) {
+    rectC(sg, cx, cy, w, h, 0x0a0b0d);                 // dark core = no active powerup
+    rectC(sg, cx, cy, w * 0.5, h * 0.86, 0x16181c);    // faint inner so it reads as a housing, not a hole
+    return;
+  }
+  const n = colors.length;
+  const top = cy - h / 2, seg = h / n;
+  rectC(sg, cx, cy, w * 1.9 + 1.4, h * 1.5 + 1.4, colors[0], 0.32);   // soft glow halo behind the whole bar
+  for (let i = 0; i < n; i++) {
+    const sy = top + seg * (i + 0.5);
+    rectC(sg, cx, sy, w, seg, colors[i], 1);                          // the section's own colour
+    rectC(sg, cx, sy, w * 0.4, seg * 0.66, mixToWhite(colors[i], 0.5), 1); // hot center streak
+  }
+}
+
+// Mix a 0xRRGGBB colour `t` of the way toward white (0 = colour, 1 = white). Local to the
+// status-spot glow; kept tiny and dependency-free.
+function mixToWhite(c, t) {
+  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+  const m = (v) => Math.round(v + (255 - v) * t);
+  return (m(r) << 16) | (m(g) << 8) | m(b);
+}
+
 // A weapon barrel: a glossy ellipse (bubbly), a rounded bar (rounded), or a plain dark
 // bar (angular). Shared by the ballistic/support/energy mounts.
 export function barrel(sg, T, cx, cy, w, h) {

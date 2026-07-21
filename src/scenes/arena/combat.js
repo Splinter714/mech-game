@@ -14,7 +14,7 @@ import { DORMANT } from '../../data/awareness.js';
 // #224 (temporary): WEAPON_IMPACT_SOUNDS_ENABLED lives in sfxParams.js — see the comment
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
-import { listenerOf, primaryPlayerOf } from './players.js';
+import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
 import { playerAccent } from '../../data/players.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
@@ -176,9 +176,14 @@ export const CombatMixin = {
     // every hit was the main combat lag source.
     // #348: preserve this player's identifying accent across the damage re-raster — without the
     // opts a re-skinned player 2 would silently revert to player 1's colours.
+    // #400/#404: also carry the current center-torso status spot through the rebuild (else a hit
+    // would flip it back to the default reactor purple). Cache the key the per-frame sync
+    // (coop.js) compares against, so the two paths never fight over the texture.
     if (res.destroyed || res.armorBrokeNow) {
+      const statusSpot = statusSpotColorsFor(this, player);
+      player._statusSpotKey = statusSpot.join(',');
       reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
-        { theme: 'player', accent: playerAccent(player.id ?? 0) });
+        { theme: 'player', accent: playerAccent(player.id ?? 0), statusSpot });
     }
     // #83: floating damage NUMBERS are off entirely — narrative feedback (shielded/MECH DOWN/
     // DESTROYED/etc. above and below) still floats as before, just not the raw hit amount.
