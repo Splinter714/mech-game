@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -269,6 +269,64 @@ describe('homing steering (#77)', () => {
     }
     expect(minDist).toBeLessThan(32);                // reaches hit radius — converges, doesn't orbit
     void speed;
+  });
+
+  it('a homing round that OVERSHOOTS an uncatchable target gives up and flies straight (#418)', () => {
+    // A slow-turning missile fired at a target moving FASTER than it can corner: it closes to
+    // its nearest approach, misses, and would classically bank around forever hunting another
+    // pass. With the give-up rule it disables homing after the failed pass and flies straight —
+    // so it keeps travelling in one fixed direction to ground/range instead of orbiting.
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 99999 });
+    p.arc = false;
+    p.homing = true;
+    p.turn = 2.0;                                    // deliberately sluggish so it can't re-acquire
+    // A target streaking across, faster than the round — it can never be run down.
+    const tgt = { x: 400, y: 40, vx: 700, vy: 0 };
+    let gaveUp = false, gaveUpAt = -1;
+    for (let i = 0; i < 400; i++) {
+      tgt.x += tgt.vx * 0.016; tgt.y += tgt.vy * 0.016;
+      const dist = Math.hypot(tgt.x - p.x, tgt.y - p.y);
+      if (p.homing) {
+        const desired = leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, tgt.vx, tgt.vy);
+        stepProjectile(p, 0.016, desired);
+        if (homingShouldGiveUp(p, Math.hypot(tgt.x - p.x, tgt.y - p.y))) {
+          p.homing = false; gaveUp = true; gaveUpAt = i;
+        }
+      } else {
+        stepProjectile(p, 0.016, null);              // flies straight — no steering
+      }
+      void dist;
+    }
+    expect(gaveUp).toBe(true);                        // the failed pass was detected
+    // After giving up it flew perfectly straight: heading is frozen from the give-up moment on.
+    const frozenAngle = p.angle;
+    stepProjectile(p, 0.1, 999);                      // even handed a steering target, it ignores it
+    expect(p.angle).toBe(frozenAngle);                // heading frozen — no more steering
+    // Velocity stays locked to that frozen heading (cosmetic wobble aside, the true flight is straight).
+    expect(Math.atan2(p.vy, p.vx)).toBeCloseTo(frozenAngle, 6);
+    void gaveUpAt;
+  });
+
+  it('homingShouldGiveUp tracks closest approach and trips only once the round recedes past the margin', () => {
+    const p = {};
+    expect(homingShouldGiveUp(p, 200)).toBe(false);   // first sample seeds the min
+    expect(homingShouldGiveUp(p, 120)).toBe(false);   // still approaching
+    expect(homingShouldGiveUp(p, 40)).toBe(false);    // closest approach so far
+    expect(homingShouldGiveUp(p, 40 + HOMING_GIVEUP_RECEDE_PX - 1)).toBe(false); // receding, within margin
+    expect(homingShouldGiveUp(p, 40 + HOMING_GIVEUP_RECEDE_PX + 1)).toBe(true);  // overshot — give up
+  });
+
+  it('homingShouldGiveUp does NOT trip while a round is still closing (monotonic approach)', () => {
+    const p = {};
+    let gaveUp = false;
+    for (let d = 500; d >= 0; d -= 10) gaveUp = gaveUp || homingShouldGiveUp(p, d);
+    expect(gaveUp).toBe(false);                        // never recedes → never gives up
+  });
+
+  it('a round that gets within kill radius never gives up first (margin exceeds the 32px hit radius)', () => {
+    // The recession margin sits above the arena hit radius, so a round that actually reaches
+    // striking distance detonates before it could ever be judged a failed pass.
+    expect(HOMING_GIVEUP_RECEDE_PX).toBeGreaterThan(32);
   });
 
   it('segmentPointDistance catches a fast round that tunnels past the target in one step', () => {
