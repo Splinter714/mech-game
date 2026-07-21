@@ -447,7 +447,17 @@ export const WEAPONS = {
     // See SALVO_CONVERGE_START_PX in delivery.js — a fraction made the salvo start tightening
     // further out on a long lob than a short one, so the same weapon read differently
     // depending on range.
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 320, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'steepDrop', salvoSpread: 40 },
+    // #377 feel follow-up 3 — "overall better, but still needs some fine tuning: slightly
+    // faster, and a more obvious arc." Two dials nudged, nothing else touched:
+    //   * velocity 320 -> 400. A gentle +25% — still a deliberate crawl next to Streak Pod
+    //     (1000) and Cluster Salvo (1140), just no longer quite so sluggish. (It was 500, then
+    //     320, earlier this issue; this is a small nudge back up, not a return toward those.)
+    //   * arcBump 1.05 (overriding the shared ARC_LOFT_BUMP of 0.6 — see delivery.js). The
+    //     steepDrop loft already popped to full height; this makes that pop READ, growing the
+    //     apex sprite ~1.75x baseline instead of ~1.6x, so the up-then-drop lob is clearly
+    //     visible. Rise/cruise/fall SHAPE (arcProfile 'steepDrop') is unchanged — only how tall
+    //     the fake height renders. Other arcing weapons keep the subtle 0.6 default.
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 400, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'steepDrop', arcBump: 1.05, salvoSpread: 40 },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',

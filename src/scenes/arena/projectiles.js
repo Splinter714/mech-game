@@ -421,7 +421,7 @@ export const ProjectilesMixin = {
       const h = arcLoft(t, p.arcProfile);                      // 0..1 height fraction
       // Constant apex: every lob peaks at the same height regardless of range, so a near
       // toss looks like a steep high pop and a far shot looks flat and skimming.
-      const bump = 0.6;                                       // peak size gain at apex — subtle grow-then-shrink
+      const bump = p.arcBump ?? 0.6;                         // peak size gain at apex — per-weapon (delivery.arcBump), subtle grow-then-shrink
       scale = 1 + h * bump;
       const sw = 8 - h * 4;                                   // shadow tightens with height
       g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);

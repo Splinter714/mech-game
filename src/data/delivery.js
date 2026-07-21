@@ -210,6 +210,11 @@ export function arcHomingBlend(t, ascentEnd = ASCENT_END) {
 // are on the deck). Returns a 0..1 height fraction; the caller scales it into sprite gain.
 export const STEEP_DROP_RISE_END = 0.15;    // fraction of flight spent climbing to apex
 export const STEEP_DROP_FALL_START = 0.80;  // fraction of flight where the terminal dive begins
+// #377 feel follow-up: how much the sprite grows at apex to fake "up over cover" — the peak
+// size gain the renderer multiplies onto the 0..1 arcLoft height. The shared default (every
+// arcing lob) is a subtle 0.6; a weapon can crank its own arc taller via `delivery.arcBump`
+// without touching the others. Swarm Rack opts into a bigger rise so its lob reads clearly.
+export const ARC_LOFT_BUMP = 0.6;
 const STEEP_DROP_CRUISE_SAG = 0.08;         // how much height bleeds off across the flat cruise
 
 export function arcLoft(t, profile = 'lob') {
@@ -494,6 +499,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.
     arcProfile: d.arcProfile || 'lob',
+    // #377 feel follow-up: peak sprite-scale gain at apex (how obvious the loft looks). Defaults
+    // to the shared ARC_LOFT_BUMP; a weapon opts into a taller, more visible arc via
+    // `delivery.arcBump` without affecting other arcing weapons.
+    arcBump: d.arcBump ?? ARC_LOFT_BUMP,
     // #377 follow-up: this round's own lateral aim offset (px), fixed for its whole flight and
     // faded out late by salvoConvergeFalloff — see salvoAimOffset above. 0 for every weapon
     // that doesn't opt in via `delivery.salvoSpread`.
