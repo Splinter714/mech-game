@@ -9,6 +9,8 @@
 // between successive bases along the corridor's progression, not anchored to any base or
 // "outpost" concept).
 import { hexToPixel, axialKey } from '../../data/hexgrid.js';
+import { ART_SCALE } from '../../art/index.js';
+import { DOCK_DOOR_TEX, DOCK_DOOR_SLIDE } from '../../art/hexArt.js';
 import { DORMANT, AWARE, shouldBecomeAware, PROXIMITY_WAKE_RANGE_CAP, NOISE_WINDOW_MS, NOISE_AGGRO_RANGE } from '../../data/awareness.js';
 import { makeAlertState, tickAlertTower, ALERT_DETECT_RADIUS, pickSirenSource } from '../../data/alertTower.js';
 import { isFastWakeKind } from '../../data/bases.js';
@@ -875,9 +877,14 @@ export const BasesMixin = {
   _closeDock(dockKey, meta) {
     this.terrain.set(dockKey, 'dockClosed');
     const img = this.tileImages.get(dockKey);
+    // #395: both dock states share the same black-bay tile — the swap keeps the terrain system's
+    // texture bookkeeping honest, but the visible change is the doors sliding shut below.
     if (img) img.setTexture(getTerrain('dockClosed').tex);
     this.buildingHp.set(dockKey, terrainBuildingHp('dockClosed'));
-    this._closeDockFx(meta.x, meta.y);
+    // #395: a quiet mechanical thud (the same soft cue the old dome-seal used) as the two door
+    // leaves slide SHUT over the black bay — heavy, slow, driven by `_animateDock` below.
+    Audio.explosion(0.25, { x: meta.x, y: meta.y, ...listenerOf(this) });
+    this._animateDock(dockKey, meta.x, meta.y, false);
   },
 
   // The inverse of `_closeDock` — swap a still-intact closed dock back to the open `dock`
@@ -888,8 +895,72 @@ export const BasesMixin = {
   _openDock(dockKey) {
     this.terrain.set(dockKey, 'dock');
     const img = this.tileImages.get(dockKey);
-    if (img) img.setTexture(getTerrain('dock').tex);
+    if (img) img.setTexture(getTerrain('dock').tex);   // both dock states share the black-bay tile (#395)
     this.buildingHp.delete(dockKey);
+    // #395: slide the two door leaves APART to reveal the black bay. Position comes from the dock's
+    // resupply meta (its sole caller, `_resupplyDock`, already keys off it). A dock that never
+    // actually closed has no door sprites, so `_animateDock` is a harmless no-op.
+    const meta = this._dockResupplyMeta?.get(dockKey);
+    if (meta) this._animateDock(dockKey, meta.x, meta.y, true);
+  },
+
+  // #395: a dock hex owns a pair of sliding door-leaf sprites (`hex_dockDoorL`/`hex_dockDoorR`)
+  // over its black bay. Created LAZILY on the first close — docks start OPEN (doors would be hidden)
+  // so most docks never build a pair until they're first vacated — and reused thereafter, kept in
+  // `this._dockDoors` keyed by dockKey. Placed at DEPTH.DOCK_DOORS (just above the terrain tile,
+  // below every unit) at the same 1/ART_SCALE scale the tile images use, so they register exactly
+  // over the bay.
+  _dockDoorPair(dockKey, x, y) {
+    if (!this._dockDoors) this._dockDoors = new Map();
+    let pair = this._dockDoors.get(dockKey);
+    if (!pair) {
+      // Start the leaves in the fully-PARTED position, hidden — a dock is OPEN before it first
+      // closes, so this is the correct resting state, and it means the first close is a real
+      // slide-shut (parted → meeting) rather than a snap into place.
+      const mk = (tex, px) => this.add.image(px, y, tex).setOrigin(0.5).setScale(1 / ART_SCALE)
+        .setDepth(DEPTH.DOCK_DOORS).setVisible(false);
+      pair = {
+        l: mk(DOCK_DOOR_TEX.L, x - DOCK_DOOR_SLIDE), r: mk(DOCK_DOOR_TEX.R, x + DOCK_DOOR_SLIDE),
+        tweenL: null, tweenR: null,
+      };
+      this._dockDoors.set(dockKey, pair);
+    }
+    return pair;
+  },
+
+  // #395: drive the two door leaves. `opening` slides them APART (revealing the bay, then hides
+  // them at rest); `!opening` slides them back TOGETHER over the bay. Slow, heavy easing so it
+  // reads as a mechanical bulkhead parting rather than a texture snap. `x` is the hex centre; each
+  // leaf's texture already paints only its own half, so a leaf at the hex centre covers its half
+  // and slides out by DOCK_DOOR_SLIDE to fully clear it.
+  _animateDock(dockKey, x, y, opening) {
+    const pair = this._dockDoorPair(dockKey, x, y);
+    pair.tweenL?.stop?.();
+    pair.tweenR?.stop?.();
+    pair.l.setVisible(true);
+    pair.r.setVisible(true);
+    const dur = 750, ease = 'Sine.easeInOut';
+    pair.tweenL = this.tweens.add({ targets: pair.l, x: opening ? x - DOCK_DOOR_SLIDE : x, duration: dur, ease });
+    pair.tweenR = this.tweens.add({
+      targets: pair.r, x: opening ? x + DOCK_DOOR_SLIDE : x, duration: dur, ease,
+      onComplete: () => {
+        // Fully-open at rest is just the black bay: hide the parted leaves so they never linger
+        // spilled onto neighbouring hexes while the dock stays open.
+        if (opening) { pair.l.setVisible(false); pair.r.setVisible(false); }
+      },
+    });
+  },
+
+  // #395: destroy a dock's door sprites — called when its bay collapses to rubble
+  // (`_onTerrainCollapsed`), so a blown-open dock doesn't keep phantom doors floating over the wreck.
+  _destroyDockDoors(dockKey) {
+    const pair = this._dockDoors?.get(dockKey);
+    if (!pair) return;
+    pair.tweenL?.stop?.();
+    pair.tweenR?.stop?.();
+    pair.l.destroy();
+    pair.r.destroy();
+    this._dockDoors.delete(dockKey);
   },
 
   // #269 Part 2: hooked from world.js `_damageBuildingAt` (`_onTerrainCollapsed`) — fires for
@@ -901,6 +972,9 @@ export const BasesMixin = {
   _onTerrainCollapsed(hexKey) {
     const state = this._dockResupplyStates?.get(hexKey);
     if (state) this._dockResupplyStates.set(hexKey, spendDockResupply(state));
+    // #395: a dock blown open collapses to rubble — drop its door sprites so they don't float over
+    // the wreck.
+    this._destroyDockDoors(hexKey);
     this._maybeDropObjectiveReward(hexKey);
   },
 
@@ -923,29 +997,6 @@ export const BasesMixin = {
     // REACHABLE ground, which matters here: the objective hex has just become rubble but a
     // sealed base ring can leave its immediate surroundings walled.
     return this.spawnPowerup?.(x, y, 'armorPatch') ?? null;
-  },
-
-  // A steel dome sealing shut over a vacated dock hex: a dark plate scales in from nothing to
-  // cover the pad, with a bright metallic rim ring flashing as it seals, then both fade — same
-  // throwaway-display-object/tween style as `_outpostCollapseFx`/`_resupplyDock`'s door FX
-  // (nothing here is baked into the static hex art, which `_closeDock` already swapped above).
-  _closeDockFx(x, y) {
-    // A small, quiet mechanical thud (not a full destruction boom) reusing the existing
-    // explosion cue at a low scale — same precedent as `_outpostCollapseFx`'s softer soft-cover
-    // variant, just even quieter since nothing is actually being destroyed here.
-    Audio.explosion(0.25, { x, y, ...listenerOf(this) });
-    const plate = this.add.circle(x, y, 15, 0x1c1f24, 0.94).setScale(0.05).setDepth(DEPTH.DOCK_FX);
-    const rim = this.add.circle(x, y).setStrokeStyle(2.5, 0x9098a3, 0).setRadius(15).setScale(1.4).setDepth(DEPTH.DOCK_FX + 0.1);
-    this.tweens.add({ targets: plate, scale: 1, duration: 380, ease: 'Quad.easeOut' });
-    this.tweens.add({
-      targets: rim, scale: 1, alpha: 0.9, duration: 380, ease: 'Quad.easeOut',
-      onComplete: () => {
-        this.tweens.add({
-          targets: [plate, rim], alpha: 0, duration: 260, delay: 140,
-          onComplete: () => { plate.destroy(); rim.destroy(); },
-        });
-      },
-    });
   },
 
   // Plays the doors-open → platform-rise → doors-close FX at a cleared dock's position, and
@@ -1002,49 +1053,32 @@ export const BasesMixin = {
     // so no separate reopen animation is needed. If the dock never actually closed (e.g. its
     // original unit died right on the pad before ever moving — see `_updateDockOpenClose`'s own
     // comment), this is a harmless no-op: the hex is already the open `dock` terrain.
+    // #395: the doors are the real sliding sprites now — `_openDock` parts them (heavy, ~750ms)
+    // to reveal the black bay. No throwaway door leaves or shaft are drawn here any more; the bay
+    // tile IS the dark gap. A dock that never actually closed has no doors, and this is a no-op.
     if (this.terrain.get(dockKey) === 'dockClosed') this._openDock(dockKey);
-    const doorHalfW = 15, doorH = 4, shaftHalfW = 15, riseFrom = 22;
+    const riseFrom = 22;
 
-    // The dark shaft the platform rises through — stays visible for the whole sequence, so the
-    // doors read as sliding open OVER a real gap rather than just two bars moving apart.
-    const shaft = this.add.rectangle(x, y, shaftHalfW * 2, doorH * 2.4, 0x0a0b0d, 0.85).setDepth(DEPTH.DOCK_FX);
-    // Two door leaves, starting CLOSED (meeting at centre, fully covering the shaft).
-    const doorL = this.add.rectangle(x - doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.DOCK_FX + 0.1);
-    const doorR = this.add.rectangle(x + doorHalfW / 2, y, doorHalfW, doorH * 3, 0x2c3038, 1).setDepth(DEPTH.DOCK_FX + 0.1);
-    // The rising platform itself — starts below the deck (hidden), rises to deck level.
-    const platform = this.add.rectangle(x, y + riseFrom, doorHalfW * 1.6, doorH * 1.6, 0x565d66, 1).setDepth(DEPTH.DOCK_FX + 0.2);
+    // The unit rises out of the now-open bay: a lit platform surfaces from below the deck, and the
+    // unit is spawned as it crests — directly ACTIVE (no dormant/wake step, the base is fighting).
+    const platform = this.add.rectangle(x, y + riseFrom, 24, 6, 0x565d66, 1).setDepth(DEPTH.DOCK_FX + 0.2);
     const glow = this.add.circle(x, y + riseFrom, 4, 0xd8cba0, 0.9).setDepth(DEPTH.DOCK_FX + 0.3);
-    const fx = [shaft, doorL, doorR, platform, glow];
-    const destroyFx = () => { for (const obj of fx) obj.destroy(); };
+    const destroyFx = () => { platform.destroy(); glow.destroy(); };
 
-    // Stage 1: doors open (slide apart to reveal the shaft).
-    this.tweens.add({
-      targets: doorL, x: x - doorHalfW * 1.6, duration: 500, ease: 'Quad.easeOut',
+    // Let the doors part first, then rise the platform through the open bay.
+    this.time.delayedCall(360, () => {
+      this.tweens.add({ targets: [platform, glow], y: `-=${riseFrom}`, duration: 450, ease: 'Sine.easeOut' });
     });
-    this.tweens.add({
-      targets: doorR, x: x + doorHalfW * 1.6, duration: 500, ease: 'Quad.easeOut',
-      onComplete: () => {
-        // Stage 2: the platform rises out of the shaft. The unit itself is spawned partway
-        // through the rise (roughly when the platform would first crest the deck), directly
-        // ACTIVE — no dormant/wake step, matching "the base is already fighting."
-        this.tweens.add({ targets: [platform, glow], y: `-=${riseFrom}`, duration: 450, ease: 'Sine.easeOut' });
-        this.time.delayedCall(220, () => {
-          // #323: the SAME shared placement seam the initial dormant spawn uses — cluster rings,
-          // terrain snapping and mech/kind dispatch all come from there, so a swarm resupply
-          // arrives as a properly-seated burst. AWARE, not DORMANT: the base is already fighting.
-          spawnDockCluster(this, { x, y, kindId, count, baseId: meta.baseId, dockKey, awareness: AWARE });
-        });
-        // Stage 3: once the platform has surfaced, doors close back over the (now empty) shaft.
-        this.time.delayedCall(500, () => {
-          this.tweens.add({ targets: doorL, x: x - doorHalfW / 2, duration: 500, ease: 'Quad.easeIn' });
-          this.tweens.add({
-            targets: doorR, x: x + doorHalfW / 2, duration: 500, ease: 'Quad.easeIn',
-            onComplete: () => {
-              this.tweens.add({ targets: fx, alpha: 0, duration: 200, onComplete: destroyFx });
-            },
-          });
-        });
-      },
+    this.time.delayedCall(700, () => {
+      // #323: the SAME shared placement seam the initial dormant spawn uses — cluster rings,
+      // terrain snapping and mech/kind dispatch all come from there, so a swarm resupply arrives
+      // as a properly-seated burst. AWARE, not DORMANT: the base is already fighting.
+      spawnDockCluster(this, { x, y, kindId, count, baseId: meta.baseId, dockKey, awareness: AWARE });
+    });
+    // Once surfaced, fade the platform FX out. The bay stays OPEN (doors parted) while the unit(s)
+    // occupy the hex; `_updateDockOpenClose` slides the doors shut once they vacate.
+    this.time.delayedCall(1000, () => {
+      this.tweens.add({ targets: [platform, glow], alpha: 0, duration: 220, onComplete: destroyFx });
     });
   },
 
@@ -1401,8 +1435,8 @@ export const BasesMixin = {
 
   // A bright amber flare and ring across the gate's mouth as the leaves start to part — the
   // "something is coming out of there" cue, deliberately loud enough to pull the eye across the
-  // field. Same throwaway-display-object/tween style as `_resupplyDock`'s door sequence and
-  // `_closeDockFx`, which is the machinery #309 asked this to reuse.
+  // field. Same throwaway-display-object/tween style as `_resupplyDock`'s platform-rise sequence,
+  // which is the machinery #309 asked this to reuse.
   _gateOpenFx(edge) {
     const x = (edge.x0 + edge.x1) / 2, y = (edge.y0 + edge.y1) / 2;
     Audio.explosion(0.3, { x, y, ...listenerOf(this) });
@@ -1412,8 +1446,8 @@ export const BasesMixin = {
     this.tweens.add({ targets: ring, scale: 3.4, alpha: 0, duration: 760, ease: 'Quad.easeOut', onComplete: () => ring.destroy() });
   },
 
-  // The gate slamming shut: a quiet mechanical thud and a quick inward flash, mirroring
-  // `_closeDockFx`'s "nothing was destroyed, something just sealed" register.
+  // The gate slamming shut: a quiet mechanical thud and a quick inward flash, mirroring the dock
+  // door-close cue's "nothing was destroyed, something just sealed" register (`_closeDock`, #395).
   _gateCloseFx(edge) {
     const x = (edge.x0 + edge.x1) / 2, y = (edge.y0 + edge.y1) / 2;
     Audio.explosion(0.2, { x, y, ...listenerOf(this) });

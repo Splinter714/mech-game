@@ -239,8 +239,8 @@ export const ProjectilesMixin = {
       //   • an AIR-aimed shot (`p.airTarget`) — the flyer exemption, whole lane;
       //   • an ARCING lob — it flies over the canopy, exactly as it lobs over walls (`!p.arc`), and
       //     still takes its resolution own-hex roll where it comes down.
-      // The puff detonates at the crossed hex's CENTRE (mid-lane), reading as the trees stopping
-      // the round rather than a weapon impact. Symmetric — enemy rounds obey it identically.
+      // The round plays its OWN normal impact FX at the exact point it was caught (p.x, p.y),
+      // reading as the shot being stopped right there. Symmetric — enemy rounds obey it identically.
       if (!p.arc && !p.airTarget && !p.dead) {
         const curKey = this._hexKeyAt(p.x, p.y);
         if (curKey !== p._lastHexKey) {
@@ -251,8 +251,9 @@ export const ProjectilesMixin = {
           if (!isOwn && !isMuzzle && isSoftCover(this.terrain.get(curKey)) && this._softCoverHexEats?.()) {
             p.dead = true;
             p.stopTrajectorySfx?.();
-            const c = this._hexCenterAt(p.x, p.y);
-            this._foliageBlockFx(c.x, c.y);
+            // #374: the round dies where it was actually caught — its own normal impact FX at the
+            // exact in-flight stop position (p.x, p.y), NOT a puff at the hex centre — just no damage.
+            this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
             continue;
           }
         }
@@ -274,11 +275,11 @@ export const ProjectilesMixin = {
           // #374 REWORK: the resolution roll — a teammate standing in soft cover may have this
           // round eaten by the trees on their OWN hex (the tier bump). The intervening lane hexes
           // were already rolled in flight above, so this is the own-hex roll only. A blocked round
-          // detonates AT that hex's centre with a distinct leaf puff and deals nothing; an
+          // plays its OWN normal impact FX at the stop point (p.x, p.y) and deals nothing; an
           // unblocked round is unchanged — damage + the normal impact splash at the teammate.
           const block = this._softCoverStopsShot?.(ally, p.originHexes);
           if (block) {
-            this._foliageBlockFx(block.x, block.y);
+            this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           } else {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
             this._damagePlayerAt(dmg, ally);
@@ -302,12 +303,12 @@ export const ProjectilesMixin = {
           // salvo asks independently, so a volley loses SOME of its missiles rather than all or
           // none. Identical for `enemyShot` — the rule reads the target, never the shooter.
           const victim = enemyShot ? hitPlayer : hitEnemy;
-          // #374 block-visual: a `{x, y}` (the own hex's centre) means the foliage ate this round —
-          // it detonates a leaf puff THERE and deals nothing. Skip the rest of the impact
-          // resolution (destructible-hex damage, the normal splash, any fire patch).
+          // #374 block-visual: a truthy result means the foliage ate this round — it plays its OWN
+          // normal impact FX at the stop point (p.x, p.y) and deals nothing. Skip the rest of the
+          // impact resolution (destructible-hex damage, the normal splash, any fire patch).
           const block = this._softCoverStopsShot?.(victim, p.originHexes);
           if (block) {
-            this._foliageBlockFx(block.x, block.y);
+            this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
             continue;
           }
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));

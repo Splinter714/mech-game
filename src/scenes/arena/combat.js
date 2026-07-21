@@ -65,9 +65,10 @@ export const CombatMixin = {
   // #374 REWORK: the RESOLUTION roll — when a shot resolves onto a target standing in soft cover,
   // its OWN hex gets ONE tier-bumped roll (vehicle 25% / mech 10%, i.e. no mech bonus / air 0).
   // Scoped to the target's own hex ALONE: the intervening lane hexes were already rolled in flight
-  // (projectiles.js per step) so re-walking the lane here would roll them a second time. Returns
-  // the own hex's centre `{x, y}` when the foliage eats the shot (the leaf puff detonates there),
-  // else null. `originHexes` carries the #72/#279 brawling exemption — a shooter standing in the
+  // (projectiles.js per step) so re-walking the lane here would roll them a second time. Returns a
+  // truthy `{x, y}` (the own hex's centre) when the foliage eats the shot — the caller now plays the
+  // round's own impact FX at the actual stop point, so only the truthiness is used — else null.
+  // `originHexes` carries the #72/#279 brawling exemption — a shooter standing in the
   // target's own thicket (its muzzle hex IS the target's hex) never rolls.
   // `target` is the thing being shot (a player ref or an enemy); the tier is read off IT, never
   // off the shooter (`softCoverUnitTier`, shared.js), which is what keeps the rule symmetric.
@@ -91,7 +92,8 @@ export const CombatMixin = {
   // #374 REWORK: the HITSCAN whole-trace walk. A beam resolves in a single frame, so unlike a
   // travelling round it can't roll per-step over time; its trace muzzle→endpoint is walked here in
   // order (`_softCoverLane`, world.js) and the FIRST soft-cover hex that rolls a block stops the
-  // beam at that hex (returned centre) — no damage, a foliage puff there. Intervening hexes are the
+  // beam at that hex (returned centre) — no damage; the caller clamps the beam to that hex and plays
+  // the normal beam impact FX at the clamp point. Intervening hexes are the
   // flat 10%; the target's OWN hex earns the tier bump, but ONLY when the beam actually reached a
   // ground target (`target` set) — an endpoint hex with no unit in it (wall/miss/max range) is a
   // plain crossed hex. The muzzle's own hex is omitted from the lane (brawling exemption); an
@@ -109,17 +111,11 @@ export const CombatMixin = {
     return hex ? { x: hex.x, y: hex.y } : null;
   },
 
-  // #374 block visual: a shot swallowed by soft cover — a small green LEAFY PUFF at the blocking
-  // hex's centre, deliberately unlike `_impactFx`'s per-weapon burst (no white core flash, no
-  // `p.color` tint, no impact sound): it must read as the trees stopping the round, not a weapon
-  // hit. Three cheap pooled bursts (arena runs many projectiles at once — same `_burst` primitive
-  // and circle pool as every other effect, no per-round allocation): a soft mid-green puff, a
-  // darker inner rustle, and a light lime rustle ring flicking outward like disturbed foliage.
-  _foliageBlockFx(x, y) {
-    this._burst(x, y, 3, 13, 0x6b9e4a, 0.5, 240, false);   // leafy puff
-    this._burst(x, y, 2, 9, 0x3f6b2e, 0.6, 200, false);    // darker inner rustle
-    this._burst(x, y, 4, 16, 0x9ecf6b, 0.35, 260, true);   // light rustle ring
-  },
+  // #374: a shot swallowed by soft cover now plays the round's OWN normal impact FX at the exact
+  // point it was caught (see projectiles.js / firing.js) rather than a distinct foliage puff at the
+  // hex centre — so the retired `_foliageBlockFx` helper is gone. The block ROLL logic is unchanged
+  // (`_softCoverHexEats` / `_softCoverStopsShot` / `_softCoverBeamBlock` above); only the VISUAL and
+  // its POSITION moved to the stop point, still with no damage dealt.
 
   // Incoming damage to the player (used once enemies fire). #246: the shield is now a real
   // layer living ON the Mech itself (this.mech.shield — a native trait, not just a powerup

@@ -24,6 +24,11 @@ export const BASE_INFRA_COLOR = { fill: 0x565a5f, edge: 0x4e5258 };
 // than inlined so a future debris tile has one tone to reuse.)
 const RUBBLE_COLOR = { fill: 0x2f3138, edge: 0x212329 };
 
+// #395: the base tile shared by both dock states — a near-black recessed bay (the shaft the two
+// sliding doors cover / reveal). A very dark interior with a slightly-lit metal frame rim so it
+// reads as a fabricated opening in the ground rather than a flat black tile.
+const DOCK_BAY = { fill: 0x0d0f13, edge: 0x2b2f36 };
+
 // #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
 // (hexgrid.hexToPixel, e.g. HEX_SIZE*SQRT3 for same-row neighbours) — but that spacing is
 // IRRATIONAL, so on-screen it never lands on a whole device pixel. Phaser's `pixelArt: true`
@@ -94,7 +99,12 @@ const PAL = {
   // concrete/tarmac tone) so they still read as "part of the base-infrastructure family"
   // regardless of biome — the distinction between them comes entirely from each one's own DETAIL
   // painter shape.
-  dock:       BASE_INFRA_COLOR,
+  // #395: a dock hex is now a recessed BLACK BAY — a dark shaft framed by a metal rim — whether it
+  // reads as open or closed. The open/closed state is carried by two separate sliding DOOR sprites
+  // (see `hex_dockDoorL`/`hex_dockDoorR` below + bases.js `_animateDock`), NOT by the base tile: when
+  // the doors part they reveal this black bay, so `dock` (open) and `dockClosed` (sealed) share the
+  // same dark base texture and differ only in whether their doors are slid shut over it.
+  dock:       DOCK_BAY,
   alertTower: BASE_INFRA_COLOR,
   // #288 (ring placement): `baseYard` — the base compound's paved floor, filling out its whole
   // hex footprint inside the wall ring. Deliberately a SHADE DARKER/flatter than the shared
@@ -113,10 +123,10 @@ const PAL = {
   objective: BASE_INFRA_COLOR,
   // #269 playtest follow-up (dock open/closed states): the CLOSED state of a dock hex (terrain.js
   // `dockClosed`) — a genuine sealed structure (destructible, LOS-blocking; #286: passable-but-
-  // slow, not a blockade). #395 redraws it as a full-hex METAL ROLLING SHUTTER (see DETAIL below):
-  // a steel-grey fill (the shutter skin covering the whole hex) inside a dark frame edge (the door
-  // frame recess), so the closed dock reads unmistakably as two shutter doors slid together.
-  dockClosed: { fill: 0x484d55, edge: 0x22262c },
+  // slow, not a blockade). #395: the base tile is now the SAME black bay as the open `dock` (the
+  // sealed look comes from the two door sprites slid shut over it, not the tile), so both share
+  // `DOCK_BAY` — a dark shaft framed by a metal rim.
+  dockClosed: DOCK_BAY,
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -343,6 +353,67 @@ function coverFloor(sg, color, alpha = 0.7) {
   sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
 }
 
+// ── #395: dock bay + sliding doors ─────────────────────────────────────────────────────────
+// A dock hex's base tile: a recessed BLACK shaft framed by a metal rim, plus the two vertical
+// guide rails the doors ride in. Shared by the open (`hex_dock`) and sealed (`hex_dockClosed`)
+// states — the state is expressed by the separate door sprites slid over it, so both reveal this
+// same black bay when open.
+const DOCK_HALF_W = SQRT3 / 2 * HEX_SIZE;   // hex half-width along the straight vertical edges
+function dockBay(sg) {
+  const S = HEX_SIZE;
+  // A deep black interior shaft, inset from the frame rim (drawn from the tile's DOCK_BAY edge/fill).
+  sg.fillStyle(0x050608, 1);
+  sg.fillPoints(hexCorners(S * 0.74).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
+  // The two vertical guide rails the door leaves ride in, just inside each straight (vertical) edge.
+  sg.fillStyle(0x2c3037, 0.9);
+  sg.fillRect(C.cx - DOCK_HALF_W + 1, C.cy - S * 0.5, 2.4, S);
+  sg.fillRect(C.cx + DOCK_HALF_W - 3.4, C.cy - S * 0.5, 2.4, S);
+}
+
+// Vertical half-height of a pointy-top hex at horizontal offset x from centre (0 outside the hex).
+// The inverse of the closed-shutter `halfAt`: used to keep each vertical door slat inside the hex.
+function dockVHalfAt(x) {
+  const ax = Math.abs(x);
+  if (ax >= DOCK_HALF_W) return 0;
+  return HEX_SIZE - (ax / DOCK_HALF_W) * (HEX_SIZE / 2);
+}
+
+// One door leaf covering HALF the hex, corrugated with VERTICAL metal slats (a lit ridge on the
+// left of each slat, a shadow groove on the right — light from upper-left). `side` = -1 draws the
+// LEFT leaf (spanning [-HALF_W, 0]), +1 the RIGHT leaf ([0, +HALF_W]); the two meet at a central
+// vertical seam. Drawn on a transparent background (like the canopy overlays) so the leaf can be
+// placed as its own sprite over the black bay and slid apart horizontally to open (bases.js).
+function dockDoor(sg, side) {
+  const S = HEX_SIZE, slatW = 5.4;
+  const x0 = side < 0 ? -DOCK_HALF_W : 0;
+  const x1 = side < 0 ? 0 : DOCK_HALF_W;
+  for (let x = x0; x < x1; x += slatW) {
+    const w = Math.min(slatW, x1 - x);
+    const outerAx = Math.max(Math.abs(x), Math.abs(x + w));   // wider end → stays inside the hex
+    const vh = dockVHalfAt(outerAx);
+    if (vh < 2) continue;
+    const sx = C.cx + x, top = C.cy - vh, h = vh * 2;
+    sg.fillStyle(0x555b65, 1);    sg.fillRect(sx, top, w - 0.8, h);            // slat face
+    sg.fillStyle(0x6c7480, 0.9);  sg.fillRect(sx, top, 1.0, h);               // left-lit ridge
+    sg.fillStyle(0x22252b, 0.95); sg.fillRect(sx + w - 1.4, top, 1.4, h);     // shadow groove (right)
+  }
+  // The seam lip where the two leaves meet, and a top/bottom edge cap so the leaf reads as a solid
+  // panel rather than a stack of loose bars.
+  const seamVh = dockVHalfAt(1.5);
+  sg.fillStyle(0x2b2f36, 0.95);
+  if (side < 0) sg.fillRect(C.cx - 2.4, C.cy - seamVh, 2.4, seamVh * 2);      // left leaf's inner lip
+  else          sg.fillRect(C.cx,       C.cy - seamVh, 2.4, seamVh * 2);      // right leaf's inner lip
+  // Small red "sealed" light on the right leaf near the seam, so a closed dock still reads as
+  // shut/dangerous (kept from the old dome/shutter version). It slides away as the door opens.
+  if (side > 0) {
+    sg.fillStyle(0xb3392a, 0.32); sg.fillCircle(C.cx + 4, C.cy + S * 0.42, 2.4);
+    sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx + 4, C.cy + S * 0.42, 1.2);
+  }
+}
+// The door-leaf texture keys, and the on-screen distance each leaf slides to fully clear the bay.
+export const DOCK_DOOR_TEX = { L: 'hex_dockDoorL', R: 'hex_dockDoorR' };
+export const DOCK_DOOR_SLIDE = DOCK_HALF_W + 3;
+
 // A thin "crack"/seam line between successive points, drawn as a chain of thin oriented quads
 // (the scaledGraphics wrapper has no stroke-path API, so we approximate with fillTriangle pairs).
 function crackLine(sg, pts, color, alpha, width = 1) {
@@ -534,23 +605,9 @@ const DETAIL = {
   // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad. Reads as a loading bay: a
   // squared-off deck with a painted border frame, two corner bollard studs, and a chevron "lane"
   // marking down the middle pointing toward the bay's mouth — a docked unit backs/parks into this.
-  hex_dock: (sg) => {
-    const hw = 14, hh = 10;
-    sg.fillStyle(0x000000, 0.22); sg.fillEllipse(C.cx + 1, C.cy + 1.5, hw * 2.1, hh * 1.7);   // ground shadow
-    sg.fillStyle(0x22262c, 0.85); sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, hh * 2);           // deck base plate
-    sg.fillStyle(0xcfa93a, 0.7);                                                                // painted border frame
-    sg.fillRect(C.cx - hw, C.cy - hh, hw * 2, 1.6);
-    sg.fillRect(C.cx - hw, C.cy + hh - 1.6, hw * 2, 1.6);
-    sg.fillRect(C.cx - hw, C.cy - hh, 1.6, hh * 2);
-    sg.fillRect(C.cx + hw - 1.6, C.cy - hh, 1.6, hh * 2);
-    sg.fillStyle(0x22262c, 0.9); sg.fillRect(C.cx - hw + 2, C.cy - hh + 2, hw * 2 - 4, hh * 2 - 4); // inner deck
-    sg.fillStyle(0xd8cba0, 0.85);                                                               // corner mooring bollards
-    sg.fillCircle(C.cx - hw + 3, C.cy - hh + 3, 1.6);
-    sg.fillCircle(C.cx + hw - 3, C.cy - hh + 3, 1.6);
-    sg.fillStyle(0xcfa93a, 0.8);                                                                // chevron lane marking
-    sg.fillTriangle(C.cx, C.cy - 5, C.cx - 4.5, C.cy + 2, C.cx + 4.5, C.cy + 2);
-    sg.fillTriangle(C.cx, C.cy + 0.5, C.cx - 4.5, C.cy + 7.5, C.cx + 4.5, C.cy + 7.5);
-  },
+  // #395: a dock hex's base tile is a recessed BLACK BAY (shared by open `dock` and sealed
+  // `dockClosed` — see `dockBay`). What the doors slide apart to reveal is exactly this shaft.
+  hex_dock: (sg) => dockBay(sg),
   // #269 playtest follow-up: `alertTower` — a slim sensor/beacon mast, distinct from the regular
   // `tower` outpost's blocky building roof so it reads as a DETECTOR to avoid/snipe, not another
   // structure. A short plinth base, a thin mast rising well above a normal roofline, an angled
@@ -567,45 +624,10 @@ const DETAIL = {
     sg.fillStyle(0xd8462a, 0.35); sg.fillCircle(C.cx, C.cy - 17.5, 4.2);         // beacon glow halo
     sg.fillStyle(0xff6a3a, 0.95); sg.fillCircle(C.cx, C.cy - 17.5, 2);           // beacon light
   },
-  // #395: `dockClosed` — a full-hex METAL ROLLING SHUTTER, like the back of a truck's roll-up door
-  // laid over the whole bay. Two doors meet at a vertical seam down the middle (they slide apart
-  // from the centre to open, black beneath); the whole face is corrugated with horizontal shutter
-  // slats (lit metal ridge + dark groove per slat). Biome-neutral — the same steel on every biome.
-  // A small red "sealed" light keeps the closed/dangerous read from the old dome version.
-  hex_dockClosed: (sg) => {
-    const S = HEX_SIZE;
-    const HALF_W = SQRT3 / 2 * S;            // hex half-width along the straight vertical edges
-    // Half-width of the (pointy-top) hex at vertical offset y from centre — constant across the
-    // middle band, tapering to the top/bottom points. Used to keep every slat inside the hex.
-    const halfAt = (y) => {
-      const ay = Math.abs(y);
-      if (ay <= S * 0.5) return HALF_W;
-      return Math.max(0, HALF_W * (S - ay) / (S * 0.5));
-    };
-    const top = -S + 3, bot = S - 3, slatH = 6.4;
-    // Horizontal shutter slats across the whole face: a top-lit metal ridge + a dark groove below.
-    for (let y = top; y < bot; y += slatH) {
-      const outerAy = Math.max(Math.abs(y), Math.abs(y + slatH));   // narrower end → stays inside hex
-      const hw = halfAt(outerAy);
-      if (hw < 2) continue;
-      sg.fillStyle(0x555b65, 1);   sg.fillRect(C.cx - hw, C.cy + y, hw * 2, slatH - 1.5);        // slat face
-      sg.fillStyle(0x6c7480, 0.9); sg.fillRect(C.cx - hw, C.cy + y, hw * 2, 1.1);                // top-lit ridge
-      sg.fillStyle(0x22252b, 0.95); sg.fillRect(C.cx - hw, C.cy + y + slatH - 1.5, hw * 2, 1.5); // groove between slats
-    }
-    // Side guide rails the doors ride in — a darker vertical channel just inside each flat edge.
-    sg.fillStyle(0x2c3037, 0.85);
-    sg.fillRect(C.cx - HALF_W + 1, C.cy - S * 0.5, 2.2, S);
-    sg.fillRect(C.cx + HALF_W - 3.2, C.cy - S * 0.5, 2.2, S);
-    // The two doors meet at a central seam: a thin black gap (where they'll part) flanked by the
-    // shadowed lip of each door.
-    const seamTop = C.cy - (S - 6), seamH = (S - 6) * 2;
-    sg.fillStyle(0x2b2f36, 0.9); sg.fillRect(C.cx - 2.6, seamTop, 1.5, seamH);                    // left door lip
-    sg.fillStyle(0x2b2f36, 0.9); sg.fillRect(C.cx + 1.1, seamTop, 1.5, seamH);                    // right door lip
-    sg.fillStyle(0x0b0c0f, 1);   sg.fillRect(C.cx - 1.1, seamTop, 2.2, seamH);                    // black centre gap
-    // Small red sealed-warning light near the bottom (kept from the old closed-dock read).
-    sg.fillStyle(0xb3392a, 0.32); sg.fillCircle(C.cx, C.cy + S * 0.5, 2.4);
-    sg.fillStyle(0xff3a2a, 0.95); sg.fillCircle(C.cx, C.cy + S * 0.5, 1.2);
-  },
+  // #395: a sealed dock's base tile is the SAME black bay as an open one — the "sealed" read comes
+  // from the two door sprites (`hex_dockDoorL`/`hex_dockDoorR`) slid shut over this shaft, not from
+  // the tile art. See `dockBay` for the shaft, and the door build pass in `buildHexTextures`.
+  hex_dockClosed: (sg) => dockBay(sg),
   // #269 playtest follow-up: `objective` — a squat, reinforced bunker silhouette topped with a
   // bold red target-ring beacon, so it reads unmistakably as "the real objective," distinct from
   // the alertTower's slim sensor mast.
@@ -916,4 +938,10 @@ export function buildHexTextures(scene) {
       CANOPY_DETAIL[id](sg);
     });
   }
+
+  // #395: the two dock DOOR leaves — each a transparent-background half-hex panel of vertical metal
+  // slats (like the canopy pass, only its own shapes are opaque). world.js/bases.js place a pair of
+  // these over a dock hex's black bay and tween them apart to open / together to close.
+  gen(scene, DOCK_DOOR_TEX.L, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => dockDoor(scaledGraphics(g), -1));
+  gen(scene, DOCK_DOOR_TEX.R, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => dockDoor(scaledGraphics(g), +1));
 }

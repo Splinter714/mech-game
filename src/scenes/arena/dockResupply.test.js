@@ -47,6 +47,10 @@ function fakeGameObject() {
   obj.setScale = () => obj;
   obj.setStrokeStyle = () => obj;
   obj.setRadius = () => obj;
+  // #395: `_dockDoorPair` (bases.js) builds door-leaf `add.image(...)` sprites and chains
+  // setOrigin/setVisible on them — same chainable no-op fake as the rest.
+  obj.setOrigin = () => obj;
+  obj.setVisible = () => obj;
   obj.destroy = () => { obj.destroyed = true; };
   return obj;
 }
@@ -59,6 +63,7 @@ function makeScene() {
     add: {
       rectangle: () => fakeGameObject(),
       circle: () => fakeGameObject(),
+      image: () => fakeGameObject(),
     },
     enemies: [], px: 0, py: 0, bases: [], alertTowerHexes: [],
     // #311: docks now roll a jittered cooldown + starting phase off the run's world seed
