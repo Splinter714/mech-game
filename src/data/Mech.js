@@ -201,6 +201,16 @@ export class Mech {
     return !!p && p.armor > 0;
   }
 
+  // #401 follow-up: the locations currently showing bare internals — alive (not a stump) but
+  // stripped of armor plating. These are EXACTLY the segments mechArt draws with
+  // `exposedInternals`. Snapshot this BEFORE an armor repair (Armor Patch powerup); if any of
+  // them regains armor afterward, `hasArmor(loc)` flips back true and the mech must re-raster so
+  // the clean plating returns (the damage reskin gate only fires when armor BREAKS, not when it's
+  // restored). Pure, so the "should we re-raster after repair?" decision is unit-testable.
+  exposedArmorLocations() {
+    return LOCATIONS.filter((loc) => !this.isPartDestroyed(loc) && !this.hasArmor(loc));
+  }
+
   // ── Full-mech shield (#246) ────────────────────────────────────────────────
   // Apply damage straight to the shield only (used by callers that already resolved which
   // layer a hit should hit — kept for symmetry/tests; normal combat goes through applyDamage,

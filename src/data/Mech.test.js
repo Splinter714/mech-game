@@ -369,6 +369,43 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
   });
 });
 
+// #401 follow-up: the reskin-after-repair predicate. Restoring armor must bring the clean plating
+// back (hide the torn-panel `exposedInternals`), but the damage reskin gate only fires when armor
+// BREAKS. `exposedArmorLocations()` is the pure snapshot the repair path diffs against to decide
+// whether a re-raster is needed.
+describe('Mech.exposedArmorLocations (#401 restore-reskin predicate)', () => {
+  it('is empty on a pristine mech', () => {
+    expect(new Mech({ chassisId: 'medium' }).exposedArmorLocations()).toEqual([]);
+  });
+
+  it('lists a location whose armor is fully stripped but is still alive', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.applyDamage('leftTorso', m.parts.leftTorso.maxArmor);   // strip armor exactly to 0, hp intact
+    expect(m.hasArmor('leftTorso')).toBe(false);
+    expect(m.exposedArmorLocations()).toContain('leftTorso');
+  });
+
+  it('drops a location once repair restores its armor — the flip that triggers the reskin', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.applyDamage('leftTorso', m.parts.leftTorso.maxArmor);
+    const wasExposed = m.exposedArmorLocations();
+    expect(wasExposed).toContain('leftTorso');
+    m.repairArmor(0.5);
+    // The location that WAS exposed now has armor again — this is the true `some(...hasArmor)`
+    // condition the powerup path uses to fire `_reskinPlayerMech`.
+    expect(wasExposed.some((loc) => m.hasArmor(loc))).toBe(true);
+    expect(m.exposedArmorLocations()).not.toContain('leftTorso');
+  });
+
+  it('excludes a destroyed location (it draws a stump, not bared internals)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const p = m.parts.leftArm;
+    m.applyDamage('leftArm', p.maxArmor + p.maxHp);   // fully destroy the arm
+    expect(m.isPartDestroyed('leftArm')).toBe(true);
+    expect(m.exposedArmorLocations()).not.toContain('leftArm');
+  });
+});
+
 // #324: `Mech.boostHealth` (and the per-part baseMaxArmor/baseMaxHp capture it needed) was
 // deleted along with its only call site. The player-only 7x deploy buffer it existed to apply is
 // now plain chassis data (data/chassis/mediumPlayer.js: 2100 armor + 1400 hp = the same 3500),
