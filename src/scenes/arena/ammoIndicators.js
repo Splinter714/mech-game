@@ -20,7 +20,7 @@
 // sits ON the joint (the pivot), the dot needs no rotation and never swings as the limb cants.
 // Purely visual — the state it reads is all from the pure model (Mech.weapons()), so there is
 // nothing to unit-test here (reload/ammo transitions are covered in Mech.test.js).
-import { partSpriteTransform } from '../../art/index.js';
+import { partSpriteTransform, ART_SCALE } from '../../art/index.js';
 import { READOUT_SLOT_R } from '../../art/mechPrims.js';
 import { ARENA_MECH_SCALE, DEPTH } from './shared.js';
 import { livePlayersOf } from './players.js';
@@ -28,9 +28,13 @@ import { livePlayersOf } from './players.js';
 // The only colour the light ever shows: an urgent red "reloading" pulse.
 const RELOAD_COL = 0xe2533a;
 // Status-light radius in world px, DERIVED from the baked housing's inner light-slot radius
-// (mechPrims READOUT_SLOT_R, in design units) × the arena display scale — ONE source of truth so the
-// lit dot fills the socket flush to the bezel instead of being an independently hand-tuned size (#402).
-const LIGHT_R = READOUT_SLOT_R * ARENA_MECH_SCALE;
+// (mechPrims READOUT_SLOT_R, in design units) × the TRUE design-unit→screen factor — ONE source of
+// truth so the lit dot fills the socket flush to the bezel instead of being an independently
+// hand-tuned size (#402). The socket is baked into the part texture at ART_SCALE super-sampling and
+// displayed at ARENA_MECH_SCALE, so its rendered radius is READOUT_SLOT_R × ARENA_MECH_SCALE ×
+// ART_SCALE — the ART_SCALE factor is exactly what partSpriteTransform folds in internally, and
+// omitting it here (the original bug) made the dot 4× too small for its housing.
+const LIGHT_R = READOUT_SLOT_R * ARENA_MECH_SCALE * ART_SCALE;
 
 export const AmmoIndicatorsMixin = {
   // #402: one shared Graphics layer for every player's reload lights, cleared and redrawn each
