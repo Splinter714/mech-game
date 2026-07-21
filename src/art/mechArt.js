@@ -261,13 +261,22 @@ function drawHull(sg, mech, frame, T) {
       ellipseC(sg, sx - a.bodyWid * 0.05, a.bodyLen * 0.08, a.bodyWid * 0.12, a.bodyLen * 0.04, T.rim, 0.9);
       continue;
     }
-    if (T.legibilityHalo) poly(sg, [[sx - a.bodyWid * 0.17, a.bodyLen * 0.05], [sx + a.bodyWid * 0.17, a.bodyLen * 0.05],
-              [sx + a.bodyWid * 0.14, a.bodyLen * 0.18], [sx - a.bodyWid * 0.2, a.bodyLen * 0.18]], HALO);
-    poly(sg, [[sx - a.bodyWid * 0.16, a.bodyLen * 0.06], [sx + a.bodyWid * 0.16, a.bodyLen * 0.06],
-              [sx + a.bodyWid * 0.13, a.bodyLen * 0.17], [sx - a.bodyWid * 0.19, a.bodyLen * 0.17]], T.outline);
-    poly(sg, [[sx - a.bodyWid * 0.15, a.bodyLen * 0.06], [sx + a.bodyWid * 0.15, a.bodyLen * 0.06],
-              [sx + a.bodyWid * 0.12, a.bodyLen * 0.16], [sx - a.bodyWid * 0.18, a.bodyLen * 0.16]], T.faceMid);
-    rectC(sg, sx - a.bodyWid * 0.015, a.bodyLen * 0.08, a.bodyWid * 0.26, Math.max(0.8, 0.6 * s), T.rim);
+    // A tucked hip plate that sits OVER the top of the leg — mirrored per side and kept
+    // inside the leg's own outer edge, so it reads as "leg tucks under the body" rather than
+    // a slab winging out past the leg. Local x-magnitudes ×dx so left/right are true mirrors
+    // (the old poly reused one un-mirrored point set, which flared asymmetrically). Only the
+    // OUTER-bottom corner draws in (the tuck), giving the slope without the sideways jut.
+    // W = a.bodyWid, L = a.bodyLen. `g` insets/expands the outer edge for each shade layer.
+    const skirt = (g) => [
+      [dx * a.bodyWid * (0.02 - g),  a.bodyLen * (0.055 - g)],   // inner-top (over pelvis)
+      [dx * a.bodyWid * (0.27 + g),  a.bodyLen * (0.055 - g)],   // outer-top (≈ leg outer edge)
+      [dx * a.bodyWid * (0.215 + g), a.bodyLen * (0.17 + g)],    // outer-bottom (tucked in)
+      [dx * a.bodyWid * (0.02 - g),  a.bodyLen * (0.17 + g)],    // inner-bottom
+    ];
+    if (T.legibilityHalo) poly(sg, skirt(0.02), HALO);
+    poly(sg, skirt(0.01), T.outline);
+    poly(sg, skirt(0), T.faceMid);
+    rectC(sg, dx * a.bodyWid * 0.145, a.bodyLen * 0.08, a.bodyWid * 0.22, Math.max(0.8, 0.6 * s), T.rim);
   }
 }
 

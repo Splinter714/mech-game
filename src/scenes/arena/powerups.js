@@ -305,7 +305,14 @@ export const PowerupsMixin = {
       // exactly the collector, so solo is bit-identical.
       let collectorRestored = 0;
       for (const q of livePlayersOf(this)) {
+        // #401 follow-up: snapshot which segments are currently showing bare internals BEFORE the
+        // repair. If the repair puts armor back on any of them, `hasArmor(loc)` flips true and the
+        // mech must re-raster so the clean plating returns — the damage reskin gate only fires when
+        // armor BREAKS, so a restore would otherwise leave the torn-panel look stuck on. Symmetric
+        // with the break path; done per player since #390 repairs the whole team.
+        const wasExposed = q.mech.exposedArmorLocations();
         const restored = q.mech.repairArmor(POWERUPS.armorPatch.repairFrac);
+        if (wasExposed.some((loc) => q.mech.hasArmor(loc))) this._reskinPlayerMech?.(q);
         if (q === player) collectorRestored = restored;
       }
       // #315: derived from the entry's own colour, not a second hardcoded copy of it — the old
