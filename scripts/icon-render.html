@@ -73,7 +73,7 @@
         // The mech textures are drawn on a DESIGN*ART_SCALE grid, centred, pointing up.
         // We composite them at a display scale that fits DESIGN into the icon, minus a
         // margin (bigger for maskable so it survives the safe-zone circle crop).
-        const margin = maskable ? 0.30 : 0.14;    // fraction of the icon on each side
+        const margin = maskable ? 0.16 : 0.14;    // fraction of the icon on each side
         const fit = size * (1 - 2 * margin);       // px the mech may fill
         // Match the arena's sprite convention exactly: a texture (DESIGN*ART_SCALE px)
         // shown at Phaser display scale S occupies DESIGN*ART_SCALE*S px, and
@@ -83,7 +83,9 @@
         const disp = DESIGN * ART_SCALE * S;       // displayed sprite size in icon px
         // Centre horizontally; nudge the mech UP from vertical centre so it sits higher
         // in the square (leaves the downward muzzles room without floating in the middle).
-        const cx = size / 2, cy = size / 2 - size * 0.12;
+        // Maskable is centred (a round crop reads best with the mech dead-centre); the
+        // full-bleed square keeps the slight upward nudge so the muzzles have room below.
+        const cx = size / 2, cy = size / 2 - size * (maskable ? 0.04 : 0.12);
         const angle = Math.PI / 2;                 // aim straight down (south)
 
         const blit = (img, dx, dy, rot, ox, oy) => {
