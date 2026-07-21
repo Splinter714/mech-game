@@ -1,9 +1,7 @@
 // On-mech per-weapon RELOAD LIGHT (#402). Each mounted, online, LIMITED-ammo weapon wears a tiny
-// status light drawn ON THE MECH — bolted to its own mount segment — so the player can read every
-// gun's state without looking away to the HUD:
-//   * GREEN  = ready (has ammo, can fire);
-//   * RED    = empty/dead (dry — only briefly, since empty auto-starts a reload);
-//   * BLUE   = reloading, BLINKING (bright/dim so the dot never fully vanishes).
+// status light drawn ON THE MECH — bolted to its own mount segment. The light has exactly ONE
+// state: a RED dot that FAST-BLINKS while the weapon is RELOADING, and is OFF (not drawn) at all
+// other times. It's a pure "reloading now" pulse — no ready/empty/steady states, no other colours.
 // Unlimited-ammo weapons (melee, `ammoMax: null`) show nothing — they can never run dry or reload.
 //
 // #402 follow-up: the horizontal ammo/reload BAR was dropped entirely (owner: "just a reload light
@@ -26,14 +24,10 @@ import { partSpriteTransform } from '../../art/index.js';
 import { ARENA_MECH_SCALE, DEPTH } from './shared.js';
 import { livePlayersOf } from './players.js';
 
-const COL = {
-  ready: 0x7bd17b,     // green — has ammo, can fire
-  empty: 0xe2533a,     // red — dry (only briefly; empty auto-starts a reload)
-  reload: 0x5e7ce0,    // blue-violet — reloading (matches the HUD tile's reload tint)
-};
-// Status-light radius in world px. The baked socket's radius is READOUT.lightR * display scale;
-// this draws the lit dot a hair smaller so it sits inside the socket's dark rim.
-const LIGHT_R = 1.7 * ARENA_MECH_SCALE;
+// The only colour the light ever shows: an urgent red "reloading" pulse.
+const RELOAD_COL = 0xe2533a;
+// Status-light radius in world px — sized to read clearly on the (smaller) baked socket.
+const LIGHT_R = 2.6 * ARENA_MECH_SCALE;
 
 export const AmmoIndicatorsMixin = {
   // #402: one shared Graphics layer for every player's reload lights, cleared and redrawn each
@@ -50,9 +44,8 @@ export const AmmoIndicatorsMixin = {
     if (!g) return;
     g.clear();
     const now = this.time?.now ?? 0;
-    // A ~5Hz blink for reloading lights — bright/dim rather than fully off, so the dot never
-    // vanishes (which would read as "gone", not "busy").
-    const blink = 0.45 + 0.55 * (Math.sin(now * 0.012) > 0 ? 1 : 0);
+    // A fast (~5Hz) hard on/off blink — an urgent "reloading" pulse. `now * 0.03` ≈ 4.8Hz.
+    const blinkOn = Math.sin(now * 0.03) > 0;
     for (const player of livePlayersOf(this)) {
       const mech = player?.mech;
       if (!mech) continue;
@@ -64,21 +57,19 @@ export const AmmoIndicatorsMixin = {
         // Anchor = the part's joint (dx/dy from partSpriteTransform) — the same point the baked
         // socket sits on and the sprite pivots around. On the pivot, so no orientation needed.
         const t = partSpriteTransform(mech, w.location, player.turretAngle, ARENA_MECH_SCALE);
-        this._drawWeaponLight(g, baseX + t.dx, baseY + t.dy, w, blink);
+        this._drawWeaponLight(g, baseX + t.dx, baseY + t.dy, w, blinkOn);
       }
     }
   },
 
-  // One weapon's status light at its socket (cx, cy): green ready / red empty / blinking reload.
-  _drawWeaponLight(g, cx, cy, w, blink) {
-    const reloading = w.reloading;
-    const empty = !reloading && w.ammo < 1;
-    const col = reloading ? COL.reload : empty ? COL.empty : COL.ready;
-    const alpha = reloading ? blink : 1;
-    g.fillStyle(col, alpha);
+  // One weapon's status light at its socket (cx, cy). ONLY state: a red dot that fast-blinks
+  // while reloading; nothing is drawn otherwise.
+  _drawWeaponLight(g, cx, cy, w, blinkOn) {
+    if (!w.reloading || !blinkOn) return;
+    g.fillStyle(RELOAD_COL, 1);
     g.fillCircle(cx, cy, LIGHT_R);
     // A faint dark ring so the light stays legible over bright terrain.
-    g.lineStyle(1, 0x000000, 0.4 * alpha);
+    g.lineStyle(1, 0x000000, 0.4);
     g.strokeCircle(cx, cy, LIGHT_R);
   },
 };

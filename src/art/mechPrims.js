@@ -267,8 +267,8 @@ export function exposedInternals(sg, T, cx, cy, w, h) {
 // and no bar" — so this is now a light only. Sizes are shared by both call sites (mechArt bakes at
 // design scale; the overlay multiplies by the arena display scale) so the dot sits in the socket.
 export const READOUT = {
-  lightR: 2,     // status-light radius (design units) — the whole readout now
-  pad: 1.4,      // bezel margin around the light
+  lightR: 1.1,   // status-light radius (design units) — the whole readout now
+  pad: 0.7,      // bezel margin around the light
 };
 const READOUT_SLOT = 0x0b0f13;   // dark instrument recess (light socket), both themes
 
