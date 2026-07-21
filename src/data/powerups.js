@@ -19,16 +19,20 @@
 //    there are far more farmable kills than when these were tuned. Magnitude stacking could
 //    trivialise fights (a x4 Barrage, a x0.125 Overdrive cycle); duration stacking cannot —
 //    the ceiling on how strong you get is unchanged, only how long you stay there moves.
-//  - #381: EVERY powerup grants FREE AMMO for its 10s window, so all of them (Armor Patch and
-//    Shield included) DO enter the scene's `active` set — that is the single source `buffModifiers`
-//    reads to decide free ammo. A type's own `effect` adds whatever extra it carries on top.
-//  - Armor Patch's repair is INSTANT (applied on pickup, `instant: true`) but it still opens the
-//    same 10s free-ammo window as the rest (#381), so it now carries a real `duration` too.
+//  - #409: FREE AMMO is NO LONGER a universal rule. #381 gave every active powerup free ammo for a
+//    10s window; now that reload is a real mechanic (#402: a drained mag locks out then snaps full),
+//    that blanket window was removed. Free ammo (and no-reload) is granted by ONE dedicated pickup —
+//    INFINITE FIRE (`effect: 'infiniteFire'`) — and nothing else. `buffModifiers` sets both flags
+//    only for that type.
+//  - #409 consequence: Shield and Armor Patch lose their timed window entirely — they carry NO
+//    `duration`, so `durationMs` is 0, they never enter the scene's `active` set, and they show no
+//    HUD-buff countdown. Both are now purely INSTANT.
+//  - Armor Patch's repair is INSTANT (applied on pickup, `instant: true`).
 //  - Shield (#381, reworked from #246/#271) grants an expendable TEMPORARY pool on the mech's own
 //    NATIVE shield layer (Mech.shield / HpBody.shield — data/shield.js) via Mech.grantTempShield:
-//    damage spends it first, it never regenerates, and it expires with the 10s window. Its free
-//    ammo comes from the same universal rule; the temp pool itself lives on the mech, not the
-//    scene overlay.
+//    damage spends it first and it never regenerates. #417: sequential Shield pickups now ADD their
+//    full pool ON TOP of the current temp shield, UNCAPPED (grantTempShield sums instead of maxing).
+//    The temp pool lives on the mech, not the scene overlay, and persists until spent by damage.
 
 // #106: the drop-chance bounds are derived from the LIVE enemy roster (see `dropBounds` below).
 // #301: that derivation now lives in data/rosterBounds.js, shared with the death-explosion tiers.
@@ -68,13 +72,12 @@ export const POWERUPS = {
   //    for any coloured pickup. Deliberately NOT pure white — arctic snow ground is 0xd9e6ef
   //    and a white beacon washes out on it; this keeps enough grey to stay legible on snow and
   //    pale desert sand while still reading bright against every dark biome.
-  //    #381: on top of the instant repair it now ALSO opens a 10s FREE-AMMO window like every
-  //    other powerup — so `instant: true` (the repair applies on pickup) coexists with a real
-  //    `duration` (the free-ammo timer). `isInstant` still routes the repair; `durationMs` now
-  //    reports the free-ammo window rather than 0.
+  //    #409: PURELY INSTANT again — the #381 free-ammo window was removed, so this carries no
+  //    `duration` and never enters the scene's active-buff set. `isInstant` routes the repair;
+  //    `durationMs` is 0.
   armorPatch: {
     id: 'armorPatch', label: 'ARMOR PATCH', color: 0x9fa8b2, weight: 0,
-    objectiveOnly: true, instant: true, duration: 10, effect: 'armorPatch', repairFrac: 0.5,
+    objectiveOnly: true, instant: true, effect: 'armorPatch', repairFrac: 0.5,
   },
   // 4) #381 (reworked from #246/#271's capacity+regen multiplier): a TEMPORARY shield pool, the
   //    D&D temp-HP concept. On pickup the base shield is filled AND `tempPool` points of expendable
@@ -82,15 +85,26 @@ export const POWERUPS = {
   //    show the larger total (base 100 + 150 temp = a 250 total). That temporary portion is spent
   //    FIRST by incoming damage and NEVER regenerates: once it is gone it is gone, and normal regen
   //    still only refills the base pool up to base max. The temp pool PERSISTS UNTIL SPENT by
-  //    damage — it does NOT ride the powerup's `duration` timer. ONLY the free-ammo window (which
-  //    every powerup grants) is timed at `duration` 10s; the shell itself just sits there until
-  //    something chews through it. This deliberately sits OUTSIDE #380's regen path (25/sec, 3000ms
-  //    pause) — the pool never recharges and never lifts the regen ceiling. `tempPool` 150 is a big,
-  //    clearly-felt shell (2.5x the 100 base total, echoing the old boostMult's headline size)
-  //    without being invincible; tune by play.
+  //    damage. #409: this is PURELY INSTANT now — the #381 free-ammo window was removed, so the
+  //    entry carries NO `duration` and never enters the scene's active-buff set (no HUD timer). The
+  //    shell just sits there until something chews through it. This deliberately sits OUTSIDE #380's
+  //    regen path (25/sec, 3000ms pause) — the pool never recharges and never lifts the regen
+  //    ceiling. #417: sequential pickups ADD `tempPool` ON TOP, UNCAPPED (grantTempShield sums), so
+  //    stacking Shields grows the shell without limit. `tempPool` 150 is a big, clearly-felt shell
+  //    (2.5x the 100 base total) without a single pickup being invincible; tune by play.
   shield: {
     id: 'shield', label: 'SHIELD', color: 0x5ec8e0, weight: 1,
-    duration: 10, effect: 'shield', tempPool: 150,
+    instant: true, effect: 'shield', tempPool: 150,
+  },
+  // 6) #409: INFINITE FIRE — the sole free-ammo pickup (replacing #381's universal window). For its
+  //    duration, weapons cost NO ammo AND never reload: `buffModifiers` sets both `freeAmmo` (firing
+  //    skips consumeAmmo) and `noReload` (the firing code ignores the reload gate), so a held trigger
+  //    just dumps. CYAN/TEAL 0x28e0d8 — the only non-gold, clearly-cyan entry, distinct from Shield's
+  //    lighter 0x5ec8e0 and the silver Armor Patch. Timed + stackable like the other buffs (weight 1,
+  //    10s). No magnitude fields — the effect is purely the two flags.
+  infiniteFire: {
+    id: 'infiniteFire', label: 'INFINITE FIRE', color: 0x28e0d8, weight: 1,
+    duration: 10, effect: 'infiniteFire',
   },
   // 5) #137: doubles how many things every weapon fires PER TRIGGER PULL — deliberately the
   //    complement to Overdrive, which multiplies how OFTEN it fires. Because #137 unified the
@@ -108,11 +122,11 @@ export const POWERUPS = {
   },
 };
 
-// #381: every powerup now runs for a UNIFORM 10-second window and grants FREE AMMO (no per-shot
-// ammo cost) for that window ON TOP of its own effect — Overcharge, which used to be the sole
-// free-ammo pickup, was folded into all of them and removed. `buffModifiers` therefore turns
-// free ammo on whenever ANY powerup is active, and the per-type `effect` only adds that type's
-// extra (faster fire, more shots, force-sprint, temp shield, or the instant armor repair).
+// #409: FREE AMMO is a dedicated pickup again. #381 made every active powerup grant free ammo for a
+// uniform 10s window; that blanket rule was removed once reload became a real mechanic (#402). Now
+// INFINITE FIRE is the ONE type whose effect turns on free ammo — and, on top of that, no-reload —
+// via `buffModifiers`. Every other type contributes only its own effect (faster fire, more shots,
+// force-sprint) or is purely instant (temp shield, armor repair) with no scene-overlay entry.
 
 // ── Drop tuning (#90 → #106) ─────────────────────────────────────────────────────────────
 // A kill's powerup odds SCALE with how tough the thing you killed was. Two knobs decide the
@@ -288,12 +302,14 @@ export function stackedRemainingMs(id, remainingMs = 0) {
 // ── Buff overlay math ────────────────────────────────────────────────────────────────────
 // Collapse the ACTIVE set of timed buffs into the plain multiplier/flag object the arena's
 // firing/movement/turret code reads each frame. `active` is a map: type id → remaining ms
-// (only positive-remaining entries should be present; the arena prunes expired ones). Shield's
-// temp POOL lives on the mech, not here (Mech.grantTempShield/data/shield.js), but Shield — like
-// every other powerup — still puts an entry in `active` for its #381 free-ammo window, which is
-// what makes it appear here. The returned shape is the single contract with the scene:
-//   freeAmmo        — true ⇒ don't spend ammo. #381: granted by ANY live powerup, not one
-//                     dedicated pickup — Overcharge was folded into all of them and removed.
+// (only positive-remaining entries should be present; the arena prunes expired ones). #409: only
+// TIMED types appear here — Shield and Armor Patch are instant now (no `duration`) and never enter
+// `active`, so they don't show up. The returned shape is the single contract with the scene:
+//   freeAmmo        — true ⇒ don't spend ammo. #409: granted ONLY by INFINITE FIRE (not every
+//                     powerup as in #381).
+//   noReload        — true ⇒ ignore the reload gate (INFINITE FIRE): a slot fires even mid-reload
+//                     or dry, so a held trigger dumps. Firing (firing.js) treats an online weapon
+//                     as ready while this is set.
 //   cycleMult       — multiplier on weapon cycle time / fire interval (Overdrive; <1 = faster)
 //   countMult       — multiplier on delivery.count, i.e. how many things one trigger pull
 //                     emits (Barrage, #137; >1 = more at once). Consumed in firing.js, which
@@ -306,6 +322,7 @@ export function stackedRemainingMs(id, remainingMs = 0) {
 export function buffModifiers(active) {
   const mods = {
     freeAmmo: false,
+    noReload: false,
     cycleMult: 1,
     countMult: 1,
     overclockActive: false,
@@ -314,13 +331,13 @@ export function buffModifiers(active) {
     if (!(active[id] > 0)) continue;
     const p = POWERUPS[id];
     if (!p) continue;
-    // #381: any live powerup grants free ammo, on top of whatever its own effect adds.
-    mods.freeAmmo = true;
     switch (p.effect) {
       case 'fireRate': mods.cycleMult *= p.cycleMult ?? 1; break;
       case 'shotCount': mods.countMult *= p.countMult ?? 1; break;
       case 'overclock': mods.overclockActive = true; break;
-      default: break;   // shield / armorPatch: free ammo only, no firing/movement overlay
+      // #409: the ONLY free-ammo source — and it also suppresses the reload gate.
+      case 'infiniteFire': mods.freeAmmo = true; mods.noReload = true; break;
+      default: break;
     }
   }
   return mods;

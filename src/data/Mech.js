@@ -259,8 +259,9 @@ export class Mech {
   // to full. The pool PERSISTS UNTIL SPENT by incoming damage — the shield powerup passes no
   // `durationMs`, so it never time-expires; only damage drains it. The base `max` (and the shared
   // regen rate) is never touched, so the regen ceiling stays put and the temp pool sits outside the regen
-  // path entirely. Magnitude does not compound across duplicate pickups (grantTempShield takes the
-  // max, not the sum). Works even on a mech with no native shield config.
+  // path entirely. #417: sequential pickups ADD their full pool ON TOP, UNCAPPED (grantTempShield
+  // sums, not maxes) — stacking Shields grows the shell without limit. Works even on a mech with no
+  // native shield config.
   grantTempShield(amount, durationMs) {
     grantTempShield(this.shield, amount, durationMs);
   }

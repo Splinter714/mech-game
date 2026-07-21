@@ -199,25 +199,36 @@ describe('#339: _activatePowerup stacks duration on duplicate pickups', () => {
     expect(buffModifiers(s.activePowerups)).toEqual(once);
   });
 
-  it('#381: Shield grants the temp pool at the same size with NO finite expiry (persists until spent); the free-ammo window is the only timed half', () => {
+  it('#409: Shield is INSTANT — grants the temp pool with NO finite expiry and opens NO overlay window; each pickup grants again (#417 stacks on the mech)', () => {
     const s = fakeArena();
     s._activatePowerup('shield');
     expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);
-    expect(s.mech._remaining).toBeUndefined();                   // #381: no durationMs passed — pool never time-expires
-    expect(s.activePowerups.shield).toBe(durationMs('shield'));   // #381: free-ammo window is 10s
+    expect(s.mech._remaining).toBeUndefined();          // no durationMs passed — pool never time-expires
+    expect(s.activePowerups.shield).toBeUndefined();    // #409: no free-ammo/overlay window
+    expect(s.mech._grantCalls).toBe(1);
     s._activatePowerup('shield');
-    expect(s.mech._pool).toBe(POWERUPS.shield.tempPool);          // same pool size, does not compound
-    expect(s.mech._remaining).toBeUndefined();                   // still no expiry on the pool
-    expect(s.activePowerups.shield).toBe(durationMs('shield') * 2); // …only the free-ammo window stacks
+    expect(s.mech._grantCalls).toBe(2);                 // grants again (the mech sums the pool, #417)
+    expect(s.activePowerups.shield).toBeUndefined();    // still no overlay entry
   });
 
-  it('#381: Armor Patch repairs again on each pickup AND opens a free-ammo window (so it now enters the active set)', () => {
+  it('#409: Armor Patch is INSTANT — repairs again on each pickup, opens NO overlay window', () => {
     const s = fakeArena();
     s._activatePowerup('armorPatch');
-    expect(s.activePowerups.armorPatch).toBe(durationMs('armorPatch'));  // #381: free-ammo window
+    expect(s.activePowerups.armorPatch).toBeUndefined();  // #409: no window
     s._activatePowerup('armorPatch');
-    expect(s.mech._repairs).toBe(2);                                     // repair still applies each time
-    expect(s.activePowerups.armorPatch).toBe(durationMs('armorPatch') * 2);
+    expect(s.mech._repairs).toBe(2);                      // repair still applies each time
+    expect(s.activePowerups.armorPatch).toBeUndefined();
+  });
+
+  it('#409: Infinite Fire opens a stacking overlay window granting free ammo + no reload', () => {
+    const s = fakeArena();
+    s._activatePowerup('infiniteFire');
+    expect(s.activePowerups.infiniteFire).toBe(durationMs('infiniteFire'));
+    const mods = buffModifiers(s.activePowerups);
+    expect(mods.freeAmmo).toBe(true);
+    expect(mods.noReload).toBe(true);
+    s._activatePowerup('infiniteFire');
+    expect(s.activePowerups.infiniteFire).toBe(durationMs('infiniteFire') * 2);
   });
 
   it('different types keep their own independent clocks', () => {

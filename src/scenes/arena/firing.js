@@ -51,9 +51,13 @@ export const FiringMixin = {
     // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
     // can measure our code-path cost from here to the audio node's start().
     Audio.markTrigger();
+    // #409: INFINITE FIRE suppresses the reload gate — an online weapon is treated as ready even
+    // mid-reload / dry (its ammo cost is skipped too, in fireWeapon). Otherwise `w.ready` stands.
+    const noReload = !!this._buffMods?.().noReload;
     for (const w of player.mech.weapons()) {
+      const fireReady = w.ready || (noReload && w.online);
       let cd = (player.fireCooldowns[w.location] ?? 0) - delta;
-      if (intent.fire[w.location] && cd <= 0 && w.ready) {
+      if (intent.fire[w.location] && cd <= 0 && fireReady) {
         this.fireWeapon(w, player);
         cd = this._fireInterval(w.weapon);
       }
@@ -65,13 +69,13 @@ export const FiringMixin = {
       // between angles as the turret swept instead of following it smoothly. This runs every
       // render frame regardless of cadence and re-aims the beam's existing line at the current
       // muzzle/angle; it's purely visual — damage still only applies on the cadence above.
-      if (intent.fire[w.location] && w.ready && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w, player);
+      if (intent.fire[w.location] && fireReady && this._isHeldBeam(w.weapon)) this._trackHeldBeam(w, player);
 
       // Held/looping fire sound (#53): a genuinely continuous weapon (flamethrower/beam
       // laser, hasHeldSfx) starts its loop on the rising edge (button just pressed) and
       // stops it on the falling edge — button released, OR the weapon ran dry / went
       // offline while held (ammo depleted, part destroyed).
-      const held = intent.fire[w.location] && w.ready && hasHeldSfx(w.weapon.id);
+      const held = intent.fire[w.location] && fireReady && hasHeldSfx(w.weapon.id);
       // #348: the held-loop key is per player — two players holding the same weapon in the
       // same slot each own their own loop instead of stopping each other's.
       const audioKey = `${player.id}:${w.location}`;
@@ -218,8 +222,9 @@ export const FiringMixin = {
     // or not, and a flyer's rounds do the same. There is no per-shot cover-exemption flag left in
     // this file — the wall trace / in-flight wall check below run unconditionally.
     const mods = this._buffMods?.() ?? {};
-    // #381 free ammo: while ANY powerup is active, weapons don't spend ammo (freeAmmo — granted
-    // by every powerup now, not the old dedicated Overcharge). Otherwise spend a shot's worth,
+    // #409 free ammo: only INFINITE FIRE grants it (reverting #381's universal window). While it's
+    // active weapons don't spend ammo AND ignore the reload gate (see _handleFiring). Otherwise
+    // spend a shot's worth,
     // scaled by cycleMult (#235): Overdrive's cycleMult 0.5 halves the fire interval (shots go out
     // ~2x as often), so scaling consumption by the same factor spends 0.5 ammo/shot — exactly
     // offsetting the faster rate for a net-neutral ammo economy, distinct from free ammo's true

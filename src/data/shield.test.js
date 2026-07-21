@@ -262,13 +262,22 @@ describe('temporary shield pool (#381)', () => {
     expect(s.temp).toBe(15);
   });
 
-  it('grantTempShield does not compound the pool size on a duplicate (takes the max, not the sum)', () => {
+  it('#417: grantTempShield ADDS on top of the live temp pool, UNCAPPED (sums, not max)', () => {
     const s = createShield({ max: 40 });
     grantTempShield(s, 60, 5000);
     damageShield(s, 30);             // temp 60 -> 30
-    grantTempShield(s, 60, 8000);    // duplicate refreshes to 60, not 90
-    expect(s.temp).toBe(60);
+    grantTempShield(s, 60, 8000);    // #417: ADDS its full 60 on top → 90 (was max-of, i.e. 60)
+    expect(s.temp).toBe(90);
     expect(s.tempExpiryMs).toBe(8000);
+  });
+
+  it('#417: sequential Shield-powerup grants keep stacking the pool with no ceiling', () => {
+    const s = createShield({ max: 40 });
+    grantTempShield(s, 150);         // powerup path (no expiry)
+    grantTempShield(s, 150);
+    grantTempShield(s, 150);
+    expect(s.temp).toBe(450);        // 3 pickups → 450, uncapped
+    expect(s.tempExpiryMs).toBe(Infinity);
   });
 });
 
