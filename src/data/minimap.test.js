@@ -84,18 +84,18 @@ describe('clampToBox — the off-window objective edge marker (#383)', () => {
     expect(m.angle).toBeCloseTo(0);
   });
 
-  it('honours the inset so the marker sits just inside the border', () => {
+  it('honours the inset so the marker sits just inside the rim', () => {
     const m = clampToBox(box, 20, 20, { x: 100, y: 20 }, 4);
-    expect(m.x).toBeCloseTo(36);   // 40 - inset
+    expect(m.x).toBeCloseTo(36);   // radius 20 - inset 4 = 16 → 20 + 16
   });
 
-  it('clamps a diagonal target to the nearer border and keeps the true heading', () => {
-    // Up-and-to-the-right: dy has the larger magnitude relative to the box half, so the TOP border
-    // (y = 0) is the nearer crossing.
+  it('lands a diagonal target on the circular rim and keeps the true heading', () => {
+    // Up-and-to-the-right: the marker rides the DISC rim (radius 20), not a rectangle border, so it
+    // sits exactly 20 from centre on the ray toward the target — biased right and up.
     const m = clampToBox(box, 20, 20, { x: 20 + 30, y: 20 - 90 });
-    expect(m.y).toBeCloseTo(0);                 // clamped to the top border
-    expect(m.x).toBeGreaterThan(20);            // still biased right of centre
-    expect(m.x).toBeLessThan(40);
+    expect(Math.hypot(m.x - 20, m.y - 20)).toBeCloseTo(20);   // on the rim
+    expect(m.x).toBeGreaterThan(20);            // biased right of centre
+    expect(m.y).toBeLessThan(20);               // biased above centre
     expect(m.angle).toBeCloseTo(Math.atan2(-90, 30));
   });
 });

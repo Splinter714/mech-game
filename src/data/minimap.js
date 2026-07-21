@@ -31,23 +31,26 @@ export function miniProjector(view, box) {
   const cx = box.x + box.w / 2;
   const cy = box.y + box.h / 2;
   const toMini = (wx, wy) => ({ x: cx + (wx - focusX) * scale, y: cy + (wy - focusY) * scale });
-  const inBox = (m) => m.x >= box.x && m.x <= box.x + box.w && m.y >= box.y && m.y <= box.y + box.h;
-  return { scale, focusX, focusY, halfX, halfY, cx, cy, toMini, inBox };
+  // The map is a DISC (circular follow-up to #383), so "in the window" is a radius test, not a
+  // rectangle. The disc is the box's inscribed circle: radius = min(w, h) / 2 (w === h for the real
+  // top-right map, so this is just w/2). A point exactly on the rim counts as inside.
+  const radius = Math.min(box.w, box.h) / 2;
+  const inBox = (m) => (m.x - cx) ** 2 + (m.y - cy) ** 2 <= radius * radius;
+  return { scale, focusX, focusY, halfX, halfY, cx, cy, radius, toMini, inBox };
 }
 
-// Pin a marker to the minimap's edge, pointing toward a target that sits OUTSIDE the window.
+// Pin a marker to the minimap's RIM, pointing toward a target that sits OUTSIDE the window.
 // `target` is a point already in mini-space (the projector's `toMini` output, which may land
-// beyond the box). Casts a ray from the box centre (cx, cy) toward it and clamps to the inset
-// box border, returning {x, y, angle} — the border landing point plus the heading toward the
-// target (atan2 convention). Used for the objective's on-map edge marker (#383): when the
-// objective is off-window it rides the map edge instead of vanishing, preserving the navigational
-// value the old whole-world view used to give.
+// beyond the disc). Casts a ray from the disc centre (cx, cy) toward it and lands it on the
+// (inset) circular rim, returning {x, y, angle} — the rim landing point plus the heading toward
+// the target (atan2 convention). Used for the objective's on-map edge marker (#383): when the
+// objective is off-window it rides the map rim instead of vanishing, preserving the navigational
+// value the old whole-world view used to give. The map is a DISC (circular follow-up), so the
+// marker rides a circle now, not a rectangle border.
 export function clampToBox(box, cx, cy, target, inset = 0) {
   let dx = target.x - cx, dy = target.y - cy;
   if (dx === 0 && dy === 0) dx = 1;   // degenerate (target exactly at centre) — arbitrary direction
-  const halfW = box.w / 2 - inset, halfH = box.h / 2 - inset;
-  const tx = dx !== 0 ? halfW / Math.abs(dx) : Infinity;
-  const ty = dy !== 0 ? halfH / Math.abs(dy) : Infinity;
-  const t = Math.min(tx, ty);
-  return { x: cx + dx * t, y: cy + dy * t, angle: Math.atan2(dy, dx) };
+  const radius = Math.min(box.w, box.h) / 2 - inset;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: cx + (dx / len) * radius, y: cy + (dy / len) * radius, angle: Math.atan2(dy, dx) };
 }

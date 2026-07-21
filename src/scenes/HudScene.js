@@ -231,33 +231,49 @@ export default class HudScene extends Phaser.Scene {
     };
 
     // #116/#383: corner minimap — the deferred half of #80 (the edge-direction arrow was the other
-    // half). A compact box in the RIGHT margin, sitting just ABOVE the skill-tile toolbar (so it
-    // clears both the toolbar and the bottom-right mode/AI text) and below the top-right enemy-
-    // count/buff stack. #383 turned it from a WHOLE-corridor letterbox into a WINDOW that FOLLOWS
-    // the player — it shows 4× the area the camera frames, centred on the camera focus, scrolling
-    // as the player moves (see `_updateMinimap` + data/minimap.js).
-    const mmW = 152, mmH = 128;
-    this._miniSize = { w: mmW, h: mmH };
-    this.miniBox = { x: this.W - 14 - mmW, y: tileTop - 12 - mmH, w: mmW, h: mmH };
-    // Panel layer: the dark backing + border, repainted only when the box moves (a panel rebuild).
-    // Dynamic layer: the corridor silhouette AND the live markers, cleared/redrawn each frame — a
-    // scrolling window means the corridor can no longer be a one-time static paint. Both on the
-    // same depth tier as the wayfinding arrow so they sit above the skill toolbar. #383 chose the
-    // per-frame redraw over a world-space translate/clip layer: the corridor is subsampled to only
-    // ~two-dozen filled circles, so repainting them is as cheap as the enemy/player dots already
+    // half). A CIRCULAR follow-window map pinned to the TOP-RIGHT corner: a round dark backing +
+    // frame with a circular clip mask. #383 turned it from a WHOLE-corridor letterbox into a WINDOW
+    // that FOLLOWS the player — it shows 4× the area the camera frames, centred on the camera focus,
+    // scrolling as the player moves (see `_updateMinimap` + data/minimap.js). The circular shape
+    // (this follow-up) means the corridor and the marks are clipped to — and tested against — the
+    // disc, not a rectangle. `miniBox` stays a square {x,y,w,h} (w === h): it's the bounding box of
+    // the disc, whose centre is (x+w/2, y+h/2) and radius w/2. The HiDPI anchor is the top-right
+    // corner (W is the logical width; the HUD camera's zoom=dpr scales the whole thing to physical),
+    // so the disc stays glued to the corner at any resolution.
+    const mmD = 132;                       // diameter (also the square bounding box's side)
+    this._miniSize = { w: mmD, h: mmD };
+    this.miniBox = { x: this.W - 14 - mmD, y: 14, w: mmD, h: mmD };
+    // The top-right corner otherwise hosts the enemy count + buff rings; push those down to sit
+    // just below the map so they clear it (solo only — co-op moves both to top-centre, untouched).
+    this._mapReserveBottom = this.miniBox.y + this.miniBox.h + 8;
+    // Panel layer: the dark disc backing + frame, repainted only when the box moves (a panel
+    // rebuild). Dynamic layer: the corridor silhouette AND the live markers, cleared/redrawn each
+    // frame — a scrolling window means the corridor can no longer be a one-time static paint. Both
+    // on the same depth tier as the wayfinding arrow so they sit above the skill toolbar. #383 chose
+    // the per-frame redraw over a world-space translate/clip layer: the corridor is subsampled to
+    // only ~two-dozen segments, so repainting them is as cheap as the enemy/player dots already
     // redrawn here every frame, and it avoids maintaining a separately-scaled offscreen layer.
     this.miniStaticGfx = this.add.graphics().setDepth(19);
     this.miniGfx = this.add.graphics().setDepth(21);
-    this.miniLabel = this.add.text(this.miniBox.x + 6, this.miniBox.y + 4, 'MAP',
-      { fontFamily: 'monospace', fontSize: '10px', color: C.dim }).setDepth(21);
-    // Geometry mask so the scrolling corridor/markers are clipped to the panel interior instead of
-    // spilling past its border (the old whole-world fit never reached the edges, but a follow-
-    // window routinely runs content off the box). Painted in logical coords — the HUD camera's
+    // Geometry mask (a filled CIRCLE) so the scrolling corridor/markers are clipped to the disc
+    // interior instead of spilling past its frame. Painted in logical coords — the HUD camera's
     // zoom=dpr scales it to physical, same pattern as ui/weaponCardList.js's scroll clip.
     this.miniMaskG = this.make.graphics();
     this.miniGfx.setMask(this.miniMaskG.createGeometryMask());
     this._miniBoxRef = null;   // identity of the box the panel + mask were last painted for
+
+    // The map now occupies the top-right corner, so shift the enemy count clear of it (down to just
+    // below the disc in solo; co-op's centred origin leaves it at the top).
+    this.dummyText?.setPosition(this._layout.shared.enemyX, this._enemyTextY())
+      .setOrigin(this._layout.shared.enemyOriginX, 0);
   }
+
+  // Is the top-right shared chrome (enemy count + buff rings) right-aligned? True in solo, false in
+  // co-op (where the layout moves both to top-centre). When right-aligned they share the corner with
+  // the map, so they drop below it; centred, they keep their original top positions.
+  _rightStack() { return this._layout?.shared?.enemyOriginX === 1; }
+  _enemyTextY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom : 16; }
+  _buffStartY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom + 24 : 44; }
 
   // ── #366: per-player panels ──────────────────────────────────────────────────────────────
   //
@@ -319,7 +335,8 @@ export default class HudScene extends Phaser.Scene {
   // object existing because the first build runs mid-create(), before the minimap exists.
   _applyChromeLayout() {
     const { shared, margins } = this._layout;
-    this.dummyText?.setPosition(shared.enemyX, 16).setOrigin(shared.enemyOriginX, 0);
+    // Enemy count rides below the map in solo (right-aligned corner), back at the top in co-op.
+    this.dummyText?.setPosition(shared.enemyX, this._enemyTextY()).setOrigin(shared.enemyOriginX, 0);
     if (!this.wayMargins) return;   // first build: create() sets these itself, just below
     this.wayMargins = {
       top: 116, right: margins.right, bottom: this.H - this._tileTop + 12, left: margins.left,
@@ -328,14 +345,8 @@ export default class HudScene extends Phaser.Scene {
       top: this.wayMargins.top + 16, right: this.wayMargins.right + 16,
       bottom: this.wayMargins.bottom + 16, left: this.wayMargins.left + 16,
     };
-    if (this.miniBox && this._miniSize) {
-      this.miniBox = {
-        x: this.W - 14 - this._miniSize.w, y: this._tileTop - 12 - this._miniSize.h,
-        w: this._miniSize.w, h: this._miniSize.h,
-      };
-      this.miniLabel?.setPosition(this.miniBox.x + 6, this.miniBox.y + 4);
-      this._miniBoxRef = null;       // force the panel + mask to repaint against the moved box
-    }
+    // The circular map is pinned to the top-right corner (a function of W alone, which is constant),
+    // so a co-op panel rebuild no longer moves it — nothing to recompute here.
   }
 
   // Build one player's set of objects at the layout's coordinates. Creation ORDER mirrors the
@@ -655,20 +666,21 @@ export default class HudScene extends Phaser.Scene {
   _paintMiniPanel() {
     const box = this.miniBox;
     const g = this.miniStaticGfx;
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2, r = box.w / 2;
     g.clear();
-    // Near-solid dark backing so the map holds its own contrast over a BRIGHT biome (snow) instead
-    // of letting the terrain bleed through and wash the corridor/marks out. A faint inner hairline
-    // just inside the bright frame separates the fill from the frame so the box reads as a device.
+    // Near-solid dark DISC backing so the map holds its own contrast over a BRIGHT biome (snow)
+    // instead of letting the terrain bleed through and wash the corridor/marks out. A faint inner
+    // hairline just inside the bright frame separates the fill from the frame so it reads as a device.
     g.fillStyle(MM.panelFill, 0.92);
-    g.fillRoundedRect(box.x, box.y, box.w, box.h, 6);
+    g.fillCircle(cx, cy, r);
     g.lineStyle(1, MM.panelInner, 0.8);
-    g.strokeRoundedRect(box.x + 1.5, box.y + 1.5, box.w - 3, box.h - 3, 5);
-    // Bright outer frame — the high-contrast edge that keeps the box legible on light AND dark ground.
+    g.strokeCircle(cx, cy, r - 1.5);
+    // Bright outer frame — the high-contrast ring that keeps the map legible on light AND dark ground.
     g.lineStyle(2, MM.panelStroke, 0.95);
-    g.strokeRoundedRect(box.x, box.y, box.w, box.h, 6);
-    // The mask clips the scrolling content to the panel interior. Painted in logical coords — the
-    // HUD camera's zoom=dpr scales it to physical (same pattern as ui/weaponCardList.js).
-    this.miniMaskG.clear().fillStyle(0xffffff).fillRoundedRect(box.x, box.y, box.w, box.h, 6);
+    g.strokeCircle(cx, cy, r);
+    // The mask (a filled circle) clips the scrolling content to the disc interior. Painted in logical
+    // coords — the HUD camera's zoom=dpr scales it to physical (same pattern as ui/weaponCardList.js).
+    this.miniMaskG.clear().fillStyle(0xffffff).fillCircle(cx, cy, r);
     this._miniBoxRef = box;
   }
 
@@ -913,7 +925,9 @@ export default class HudScene extends Phaser.Scene {
     // to top-centre in co-op, where the right edge belongs to player 2's integrity column.
     const cx = this._layout.shared.buffCx;
     const rowH = 2 * R + 10;
-    let y = 44;
+    // In solo the rings share the top-right corner with the map, so they start below it; co-op
+    // moves them to top-centre and keeps the original top start.
+    let y = this._buffStartY();
 
     ids.forEach((id, i) => {
       const p = POWERUPS[id];
