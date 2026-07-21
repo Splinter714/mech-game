@@ -25,6 +25,7 @@ const mech = (over = {}) => ({
   isDestroyed: () => false,
   isPartDestroyed: () => false,
   repairArmor: vi.fn(() => 10),
+  exposedArmorLocations: () => [],
   grantTempShield: vi.fn(),
   tempShieldRemainingMs: 0,
   applyDamage: vi.fn(() => ({})),

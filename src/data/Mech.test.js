@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Mech, AMMO_EMPTY_COOLDOWN } from './Mech.js';
+import { Mech, RELOAD_SECONDS } from './Mech.js';
 import { LOCATIONS } from './anatomy.js';
 import { WEAPONS } from './weapons.js';
 
 // #372 retuned every weapon's magazine (ammoMax/ammoRegen) so a held trigger runs dry in
-// ~6s. These ammo tests are about the generic Mech MECHANICS (spend, regen, cap, per-slot
-// empty-cooldown), not about any particular weapon's balance, so they read the catalog's
+// ~6s. These ammo tests are about the generic Mech MECHANICS (spend, trickle regen, cap, and
+// the #402 reload), not about any particular weapon's balance, so they read the catalog's
 // live numbers instead of hard-coding them — a future retune can't silently break them.
 // PC = the slow cycled weapon under test, AC = a second, independent weapon in another slot.
 const PC = WEAPONS.plasmaCannon;      // ammoMax/ammoRegen read live
@@ -173,11 +173,11 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
     expect(m.readyWeapons()).toHaveLength(0);
   });
 
-  it('regenAmmo refills over time but never past the magazine size (partial drain, no cooldown)', () => {
+  it('regenAmmo refills over time but never past the magazine size (partial drain, no reload)', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, PC.ammoMax - 1); // leaves exactly 1 — a PARTIAL drain, not a
-    // full empty, so #238's empty-cooldown never engages here; regen proceeds immediately.
+    // full empty, so #402's auto-reload never engages here; the trickle proceeds immediately.
     m.regenAmmo(2);
     expect(m.weapons()[0].ammo).toBeCloseTo(1 + PC.ammoRegen * 2, 5);
     m.regenAmmo(1000); // would overshoot the magazine many times over
@@ -259,90 +259,130 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
   });
 });
 
-// #238: a fully-drained weapon slot enters a cooldown lockout (AMMO_EMPTY_COOLDOWN
-// seconds) — it can't fire and doesn't regen until the timer expires, scoped to only
-// that one slot.
-describe('Mech per-slot ammo-empty cooldown (#238)', () => {
-  it('draining a magazine to exactly 0 starts that slot\'s cooldown', () => {
+// #402: a fully-drained weapon slot enters a RELOAD period (RELOAD_SECONDS) — it can't fire and
+// doesn't trickle while reloading, and when the timer expires its magazine comes back FULL (not a
+// trickle-from-0, which is how #238's flat empty-lockout behaved). Scoped to only that slot.
+describe('Mech per-weapon reload (#402) — auto on empty', () => {
+  it('draining a magazine to exactly 0 starts that slot\'s reload', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, PC.ammoMax);
     expect(m.weapons()[0].ammo).toBe(0);
-    expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN, 5);
+    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS, 5);
+    expect(m.weapons()[0].reloading).toBe(true);
     expect(m.weapons()[0].ready).toBe(false);
   });
 
-  it('firing is blocked while a slot is on cooldown (ready stays false even if ammo were topped up)', () => {
+  it('firing is blocked while a slot is reloading', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, PC.ammoMax);
-    // Still well inside the cooldown window.
-    m.regenAmmo(AMMO_EMPTY_COOLDOWN / 2);
+    m.regenAmmo(RELOAD_SECONDS / 2); // still well inside the reload window
     expect(m.weapons()[0].ready).toBe(false);
     expect(m.readyWeapons()).toHaveLength(0);
   });
 
-  it('regenAmmo does not tick ammo up during the cooldown window — it only counts the timer down', () => {
+  it('regenAmmo does not tick ammo up mid-reload — it only counts the reload timer down', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, PC.ammoMax);
-    m.regenAmmo(2); // would tick ammo up if regen applied, but the cooldown blocks it
+    m.regenAmmo(2); // ammo would trickle if regen applied, but the reload blocks it
     expect(m.weapons()[0].ammo).toBe(0);
-    expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN - 2, 5);
+    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS - 2, 5);
   });
 
-  it('once the cooldown expires, normal regen resumes exactly as before', () => {
+  it('when the reload completes, the magazine comes back FULL and ready (not a trickle-from-0)', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, PC.ammoMax);
-    // Tick past the cooldown window in one call (dt exceeds AMMO_EMPTY_COOLDOWN): the
-    // remaining time after the timer hits 0 should NOT also count toward regen in the same
-    // tick (each regenAmmo call spends its dt on cooldown OR regen, never splits mid-call) —
-    // so drain it in two ticks: first clears the cooldown, second regenerates.
-    m.regenAmmo(AMMO_EMPTY_COOLDOWN);
-    expect(m.weapons()[0].cooldown).toBe(0);
-    expect(m.weapons()[0].ammo).toBe(0); // cooldown just expired, no regen yet this tick
-    expect(m.weapons()[0].ready).toBe(false); // still empty, but no longer on cooldown
-    // Regen for however long it takes this weapon to earn back one full round — #372 made
-    // the cycled weapons' regen much slower, so a fixed 2s no longer reaches `ready`.
-    m.regenAmmo(1 / PC.ammoRegen);
-    expect(m.weapons()[0].ammo).toBeCloseTo(1, 5);
+    m.regenAmmo(RELOAD_SECONDS); // exactly clears the reload
+    expect(m.weapons()[0].reload).toBe(0);
+    expect(m.weapons()[0].reloading).toBe(false);
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax); // FULL magazine, the #402 change vs #238
     expect(m.weapons()[0].ready).toBe(true);
   });
 
-  it('cooldown is scoped to only the affected slot — other mounted weapons keep firing/regenerating normally', () => {
+  it('reload is scoped to only the affected slot — other weapons keep firing/trickling normally', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
-    m.mount('rightArm', 'autocannon');   // unaffected by the other slot's lockout
-    m.consumeAmmo('leftArm', 0, PC.ammoMax); // drains leftArm to 0, starts ITS cooldown only
-    m.consumeAmmo('rightArm', 0, 1); // rightArm just fires normally, no cooldown
+    m.mount('rightArm', 'autocannon');   // unaffected by the other slot's reload
+    m.consumeAmmo('leftArm', 0, PC.ammoMax); // drains leftArm to 0, starts ITS reload only
+    m.consumeAmmo('rightArm', 0, 1); // rightArm just fires normally, no reload
     m.regenAmmo(2);
 
     const left = m.weapons().find((w) => w.location === 'leftArm');
     const right = m.weapons().find((w) => w.location === 'rightArm');
-    expect(left.ammo).toBe(0); // still locked out, regen suppressed
-    expect(left.ready).toBe(false);
+    expect(left.ammo).toBe(0); // still reloading, trickle suppressed
+    expect(left.reloading).toBe(true);
+    expect(right.reloading).toBe(false);
     expect(right.ammo).toBeCloseTo(Math.min(AC.ammoMax, AC.ammoMax - 1 + AC.ammoRegen * 2), 5);
     expect(right.ready).toBe(true);
   });
 
-  it('repeatedly firing an already-dry weapon does not keep resetting the cooldown timer', () => {
+  it('repeatedly firing an already-dry weapon does not keep resetting the reload timer', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
-    m.consumeAmmo('leftArm', 0, 4); // drains to 0, cooldown starts at full
-    m.regenAmmo(1); // cooldown ticks down
+    m.consumeAmmo('leftArm', 0, 4); // drains to 0, reload starts at full
+    m.regenAmmo(1); // reload ticks down
     m.consumeAmmo('leftArm', 0, 1); // still 0 ammo, a no-op drain — must not reset the timer
-    expect(m.weapons()[0].cooldown).toBeCloseTo(AMMO_EMPTY_COOLDOWN - 1, 5);
+    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS - 1, 5);
   });
 
-  it('repairAll clears an active cooldown along with topping ammo back up', () => {
+  it('repairAll clears an active reload along with topping ammo back up', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, 4);
-    expect(m.weapons()[0].cooldown).toBeGreaterThan(0);
+    expect(m.weapons()[0].reloading).toBe(true);
     m.repairAll();
-    expect(m.weapons()[0].cooldown).toBe(0);
+    expect(m.weapons()[0].reload).toBe(0);
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax);
     expect(m.weapons()[0].ready).toBe(true);
+  });
+});
+
+// #402: MANUAL reload — the player tops a magazine off before it runs dry (R3/F in the arena).
+describe('Mech manual reload (#402)', () => {
+  it('reloadWeapon starts a reload on a partially-drained magazine and refills it to full', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    m.consumeAmmo('leftArm', 0, 1); // one round gone — nowhere near empty
+    expect(m.reloadWeapon('leftArm', 0)).toBe(true);
+    expect(m.weapons()[0].reloading).toBe(true);
+    expect(m.weapons()[0].ready).toBe(false); // locked out while reloading, even with rounds left
+    m.regenAmmo(RELOAD_SECONDS);
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax);
+    expect(m.weapons()[0].ready).toBe(true);
+  });
+
+  it('reloadWeapon is a no-op on a full magazine, an already-reloading slot, and an unlimited weapon', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    expect(m.reloadWeapon('leftArm', 0)).toBe(false); // already full
+    m.consumeAmmo('leftArm', 0, 1);
+    expect(m.reloadWeapon('leftArm', 0)).toBe(true);  // now started
+    expect(m.reloadWeapon('leftArm', 0)).toBe(false); // already reloading
+
+    const um = new Mech({ chassisId: 'medium' });
+    um.mount('rightArm', 'testMelee'); // ammoMax null
+    expect(um.reloadWeapon('rightArm', 0)).toBe(false); // unlimited never reloads
+    expect(um.weapons()[0].reloading).toBe(false);
+  });
+
+  it('reloadAllWeapons reloads every eligible slot and returns how many started', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    m.mount('rightArm', 'autocannon');
+    m.mount('leftTorso', 'shotgun');
+    // leftArm + rightArm are drained a little; leftTorso stays full (so it's not eligible).
+    m.consumeAmmo('leftArm', 0, 1);
+    m.consumeAmmo('rightArm', 0, 1);
+    expect(m.reloadAllWeapons()).toBe(2);
+    const byLoc = Object.fromEntries(m.weapons().map((w) => [w.location, w]));
+    expect(byLoc.leftArm.reloading).toBe(true);
+    expect(byLoc.rightArm.reloading).toBe(true);
+    expect(byLoc.leftTorso.reloading).toBe(false); // was full → nothing to reload
+    // A second press with everything now reloading/full starts nothing.
+    expect(m.reloadAllWeapons()).toBe(0);
   });
 });
 
@@ -366,6 +406,43 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
     for (const loc of Object.keys(m.parts)) {
       expect(m.parts[loc].armor).toBeLessThanOrEqual(m.parts[loc].maxArmor);
     }
+  });
+});
+
+// #401 follow-up: the reskin-after-repair predicate. Restoring armor must bring the clean plating
+// back (hide the torn-panel `exposedInternals`), but the damage reskin gate only fires when armor
+// BREAKS. `exposedArmorLocations()` is the pure snapshot the repair path diffs against to decide
+// whether a re-raster is needed.
+describe('Mech.exposedArmorLocations (#401 restore-reskin predicate)', () => {
+  it('is empty on a pristine mech', () => {
+    expect(new Mech({ chassisId: 'medium' }).exposedArmorLocations()).toEqual([]);
+  });
+
+  it('lists a location whose armor is fully stripped but is still alive', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.applyDamage('leftTorso', m.parts.leftTorso.maxArmor);   // strip armor exactly to 0, hp intact
+    expect(m.hasArmor('leftTorso')).toBe(false);
+    expect(m.exposedArmorLocations()).toContain('leftTorso');
+  });
+
+  it('drops a location once repair restores its armor — the flip that triggers the reskin', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.applyDamage('leftTorso', m.parts.leftTorso.maxArmor);
+    const wasExposed = m.exposedArmorLocations();
+    expect(wasExposed).toContain('leftTorso');
+    m.repairArmor(0.5);
+    // The location that WAS exposed now has armor again — this is the true `some(...hasArmor)`
+    // condition the powerup path uses to fire `_reskinPlayerMech`.
+    expect(wasExposed.some((loc) => m.hasArmor(loc))).toBe(true);
+    expect(m.exposedArmorLocations()).not.toContain('leftTorso');
+  });
+
+  it('excludes a destroyed location (it draws a stump, not bared internals)', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const p = m.parts.leftArm;
+    m.applyDamage('leftArm', p.maxArmor + p.maxHp);   // fully destroy the arm
+    expect(m.isPartDestroyed('leftArm')).toBe(true);
+    expect(m.exposedArmorLocations()).not.toContain('leftArm');
   });
 });
 

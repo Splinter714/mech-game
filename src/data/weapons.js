@@ -59,6 +59,15 @@
 // means unlimited (melee — the `melee` category is `usesAmmo: false`; no melee weapon is
 // currently in the table, but the null path is live and must stay unlimited).
 //
+// #402 — RELOAD sits ON TOP of this trickle, it does NOT replace it. The continuous `ammoRegen`
+// trickle below stays exactly as tuned (all of #372/#376/#377), and remains the everyday
+// economy: ease off the trigger and rounds come back at `ammoRegen`/s. What #402 adds is a real
+// RELOAD BEAT — a fixed lockout (Mech.RELOAD_SECONDS, magazine-size-independent) that ends with a
+// FULL magazine. It starts two ways: AUTOMATICALLY when a mag is drained to 0, or MANUALLY when
+// the player hits reload (R3/F) to top a mag off early. So none of the per-weapon `ammoMax`/
+// `ammoRegen` numbers below moved for #402 — the reload is a flat time layered over them, not a
+// re-derivation of them. `ammoMax: null` weapons are exempt (they never run dry or reload).
+//
 // #372 — THE ~6-SECOND RULE (uniform across every weapon). Jackson: "it's time we implement
 // actual limits to the reload rate that is lower than the fire rate for all weapons."
 // Before #372 exactly ONE weapon (plasmaLance) actually obeyed this; the rest were

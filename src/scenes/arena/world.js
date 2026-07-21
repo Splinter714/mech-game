@@ -842,9 +842,9 @@ export const WorldMixin = {
     const { destroyed, felled } = damageWallEdge(this.wallEdges, edge, amount);
     this._redrawWallEdges();
     if (destroyed) {
-      // #392: destroying one span opens the WHOLE wall hex — `felled` is the hit span PLUS the
-      // sibling spans of the same hex that fell with it, so the collapse FX and turret-drop below
-      // run once per fallen span, not just the one the shot/stomp landed on.
+      // #392: destroying one span opens a fixed three-span breach — `felled` is the hit span PLUS
+      // its two nearest contiguous neighbours along the wall run that fell with it, so the collapse
+      // FX and turret-drop below run once per fallen span, not just the one the shot/stomp landed on.
       for (const span of felled) {
         this._outpostCollapseFx((span.x0 + span.x1) / 2, (span.y0 + span.y1) / 2);
         // #310: a span that carried a wall turret takes the gun down with it — the direct analogue

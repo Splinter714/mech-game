@@ -229,7 +229,7 @@ describe('#374 REWORK: _softCoverLane — the soft-cover hexes a shot crosses', 
 });
 
 // ── the real damage-resolution sites, plus the NEW in-flight pass-through ──────────────────
-describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, a foliage puff', () => {
+describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, normal impact FX at the stop point', () => {
   function makeFiringScene({ roll, rolls, target, extraForest = false }) {
     const s = makeScene({ roll, rolls, extraForest });
     Object.assign(s, FiringMixin, ProjectilesMixin, {
@@ -239,7 +239,6 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
       projFx: { clear: vi.fn() },
       _drawProjectile: vi.fn(),
       _impactFx: vi.fn(),
-      _foliageBlockFx: vi.fn(),
       _damageEnemyAt: vi.fn(),
       _damagePlayerAt: vi.fn(),
       _damageBuildingAt: vi.fn(),
@@ -271,13 +270,17 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
   }
 
   // ── HITSCAN (whole-trace walk) ──
-  it('HITSCAN: a beam eaten by the foliage deals nothing and puffs — no weapon splash', () => {
+  it('HITSCAN: a beam eaten by the foliage deals nothing but plays its normal beam impact at the stop point', () => {
     const target = tankIn(FOREST_HEX);
     const s = makeFiringScene({ roll: 0, target });   // 0 < 0.25 ⇒ the trees eat it
     s._fireHitscan(W, 0, 0, 0, 'player', 'player');
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
-    expect(s._impactFx).not.toHaveBeenCalled();
+    // #374: the block now plays the round's OWN normal beam impact FX at the clamp point (the beam's
+    // stopped endpoint, projected into the blocking hex), not a distinct puff at the hex centre.
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
+    const [ix, , , kind] = s._impactFx.mock.calls[0];
+    expect(kind).toBe('beam');
+    expect(ix).toBeCloseTo(centre(FOREST_HEX).x, 3);
   });
 
   it('HITSCAN: the same beam on a roll the target survives deals its damage normally', () => {
@@ -301,27 +304,30 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
     const s = makeFiringScene({ roll: 0.05, target }); // 0.05 < 0.10, the crossed-hex chance
     s._fireHitscan(W, 0, 0, 0, 'player', 'player');
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
+    expect(s._impactFx.mock.calls[0][0]).toBeCloseTo(centre(FOREST_HEX).x, 3);   // impact at the stop point
     expect(lastBeam(s).x1).toBeCloseTo(centre(FOREST_HEX).x, 3);   // stopped mid-trace, not drawn through
   });
 
-  it('HITSCAN (no target): a beam lanced into EMPTY woods still rolls, puffs, and stops there', () => {
+  it('HITSCAN (no target): a beam lanced into EMPTY woods still rolls, impacts, and stops there', () => {
     const s = makeFiringScene({ roll: 0.05, extraForest: true });   // no target at all
     s._fireHitscan(W, 0, 0, 0, 'player', 'player');
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_MID).x, centre(FOREST_MID).y);
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
+    expect(s._impactFx.mock.calls[0][0]).toBeCloseTo(centre(FOREST_MID).x, 3);
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
     expect(lastBeam(s).x1).toBeCloseTo(centre(FOREST_MID).x, 3);
   });
 
   // ── PROJECTILE (per-step in flight + own-hex at resolution) ──
-  it('PROJECTILE: a round eaten resolving on a target in forest puffs, no damage', () => {
+  it('PROJECTILE: a round eaten resolving on a target in forest impacts at the stop point, no damage', () => {
     const target = tankIn(FOREST_HEX);
     const s = makeFiringScene({ roll: 0, target });   // own-hex 25%, 0 < 0.25
     const round = fireRound(s, target);
     expect(round.dead).toBe(true);
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
-    expect(s._impactFx).not.toHaveBeenCalled();
+    // #374: the eaten round plays its OWN normal impact FX where it was caught (near the target),
+    // not a puff at the hex centre — but deals nothing.
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
   });
 
   it('PROJECTILE: the same round on a surviving roll deals its damage', () => {
@@ -331,32 +337,38 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
     expect(s._damageEnemyAt).toHaveBeenCalled();
   });
 
-  it('PROJECTILE (no target): a round fired into EMPTY woods puffs and dies in the trees', () => {
+  it('PROJECTILE (no target): a round fired into EMPTY woods impacts and dies in the trees', () => {
     const s = makeFiringScene({ roll: 0.05, extraForest: true });   // 0.05 < 0.10
     const round = fireRound(s, centre(OPEN_HEX), { maxDist: 900 });
     expect(round.dead).toBe(true);
-    // eaten at the FIRST forest hex it enters (FOREST_MID), which is where the puff detonates.
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_MID).x, centre(FOREST_MID).y);
+    // eaten at the FIRST forest hex it enters (FOREST_MID) — its normal impact FX plays where it
+    // was caught, so the impact x lands inside that hex (a hex spans ±HEX_SIZE of its centre).
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
+    expect(s._impactFx.mock.calls[0][0]).toBeCloseTo(centre(FOREST_MID).x, -2);
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._impactFx).not.toHaveBeenCalled();
   });
 
-  it('PROJECTILE (no target): survives the open dice and lands normally — no foliage puff', () => {
+  it('PROJECTILE (no target): survives the open dice and lands normally — no early block', () => {
     const s = makeFiringScene({ roll: 0.5, extraForest: true });
     const round = fireRound(s, centre(OPEN_HEX), { maxDist: 900 });
     expect(round.dead).toBe(true);
-    expect(s._foliageBlockFx).not.toHaveBeenCalled();
+    // it flew clean through the woods and ran out its range: the ONLY impact is the normal landing
+    // one out at max range (x well past the two forest hexes), never an in-flight block inside them.
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
+    expect(s._impactFx.mock.calls[0][0]).toBeGreaterThan(centre(FOREST_HEX).x + 100);
   });
 
-  it('PROJECTILE: each crossed forest hex rolls INDEPENDENTLY — the puff is at the FIRST that eats it', () => {
+  it('PROJECTILE: each crossed forest hex rolls INDEPENDENTLY — the impact is at the FIRST that eats it', () => {
     // FOREST_MID is entered before FOREST_HEX, so rolls[0] is MID's draw, rolls[1] is HEX's.
     const midEats = makeFiringScene({ rolls: [0.05, 0.5], extraForest: true });
     fireRound(midEats, centre(OPEN_HEX), { maxDist: 900 });
-    expect(midEats._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_MID).x, centre(FOREST_MID).y);
+    expect(midEats._impactFx).toHaveBeenCalledTimes(1);
+    expect(midEats._impactFx.mock.calls[0][0]).toBeCloseTo(centre(FOREST_MID).x, -2);
 
     const hexEats = makeFiringScene({ rolls: [0.5, 0.05], extraForest: true });
     fireRound(hexEats, centre(OPEN_HEX), { maxDist: 900 });
-    expect(hexEats._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(hexEats._impactFx).toHaveBeenCalledTimes(1);
+    expect(hexEats._impactFx.mock.calls[0][0]).toBeCloseTo(centre(FOREST_HEX).x, -2);
   });
 
   it('PROJECTILE: an intervening forest is NOT double-rolled with the target own hex', () => {
@@ -371,7 +383,7 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
     s._coverRng = rng;
     fireRound(s, target);
     expect(rng).toHaveBeenCalledTimes(2);
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(s._impactFx).toHaveBeenCalledTimes(1);   // eaten on the own-hex roll → impact at the stop point
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
   });
 
@@ -381,8 +393,7 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
     const target = { ...centre(OPEN_HEX), kind: 'drone', flying: true, mech: { isDestroyed: () => false } };
     const s = makeFiringScene({ roll: 0, target, extraForest: true });   // would eat everything...
     fireRound(s, target, { airTarget: true });                            // ...but it's air-aimed
-    expect(s._foliageBlockFx).not.toHaveBeenCalled();
-    expect(s._damageEnemyAt).toHaveBeenCalled();
+    expect(s._damageEnemyAt).toHaveBeenCalled();                          // never eaten → damages normally
   });
 
   // The statistical shape Jackson asked for: crossing k=2 forest hexes with no target is eaten at
@@ -392,10 +403,13 @@ describe('#374 REWORK: a shot is eaten IN FLIGHT / at resolution — no damage, 
     delete s._coverRng;                       // force the lazy production mulberry32
     s.runSeed = 20260720;
     const N = 2000; let eaten = 0;
+    const woodsEdge = centre(FOREST_HEX).x + 100;   // past both forest hexes but short of max range
     for (let n = 0; n < N; n++) {
-      s._foliageBlockFx.mockClear();
+      s._impactFx.mockClear();
+      // no target/wall: an un-eaten round still impacts once when it LANDS out at max range, so
+      // "eaten" is an impact that fired INSIDE the woods (before the landing point), not any impact.
       fireRound(s, centre(OPEN_HEX), { maxDist: 900 });
-      if (s._foliageBlockFx.mock.calls.length > 0) eaten++;
+      if (s._impactFx.mock.calls.some((c) => c[0] < woodsEdge)) eaten++;
     }
     const rate = eaten / N;
     expect(rate).toBeGreaterThan(0.15);
@@ -422,7 +436,6 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
       projFx: { clear: vi.fn() },
       _drawProjectile: vi.fn(),
       _impactFx: vi.fn(),
-      _foliageBlockFx: vi.fn(),
       _damageEnemyAt: vi.fn(),
       _damagePlayerAt: vi.fn(),
       _damageBuildingAt: vi.fn(),
@@ -453,9 +466,8 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
     const round = fireEnemyRound(s, player);
     expect(round.dead).toBe(true);
     expect(s._damagePlayerAt).not.toHaveBeenCalled();
-    // #374 block-visual: symmetric — an eaten ENEMY round puffs in the foliage too.
-    expect(s._foliageBlockFx).toHaveBeenCalled();
-    expect(s._impactFx).not.toHaveBeenCalled();
+    // #374 block-visual: symmetric — an eaten ENEMY round plays its normal impact at the stop point too.
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
   });
 
   it('the same enemy round on a surviving roll damages the player normally', () => {
@@ -484,7 +496,8 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
     const w = { weapon: WEAPONS.beamLaser, location: 'rightArm', index: 0 };
     s._fireHitscan(w, 0, 0, 0, 'enemy', 'e1');
     expect(s._damagePlayerAt).not.toHaveBeenCalled();
-    expect(s._foliageBlockFx).toHaveBeenCalledWith(centre(FOREST_HEX).x, centre(FOREST_HEX).y);
+    expect(s._impactFx).toHaveBeenCalledTimes(1);
+    expect(s._impactFx.mock.calls[0][0]).toBeCloseTo(centre(FOREST_HEX).x, 3);
     // ...and lands when the dice allow
     const clear = makeEnemyFiringScene({ roll: 0.9, playerHex: FOREST_HEX });
     clear.s._fireHitscan(w, 0, 0, 0, 'enemy', 'e1');

@@ -211,6 +211,37 @@ describe('Controls.read — dash intent, press-to-trigger on both devices (#261)
   });
 });
 
+// #402: manual reload — the same rising-edge one-shot as the dash above, on R3 / F.
+describe('Controls.read — reload intent, press-to-trigger on both devices (#402)', () => {
+  it('reloadPressed is a rising-edge one-shot on keyboard F (kbm mode)', () => {
+    const scene = fakeControlsScene();
+    const controls = new Controls(scene);
+
+    expect(controls.read().reloadPressed).toBe(false);
+    setKey(scene, 'F', true);
+    expect(controls.read().reloadPressed).toBe(true);    // fresh press
+    expect(controls.read().reloadPressed).toBe(false);   // still held, no repeat
+    setKey(scene, 'F', false);
+    expect(controls.read().reloadPressed).toBe(false);   // released
+    setKey(scene, 'F', true);
+    expect(controls.read().reloadPressed).toBe(true);    // press again
+  });
+
+  it('reloadPressed is a rising-edge one-shot on gamepad R3 (pad mode)', () => {
+    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
+    const scene = fakeControlsScene({ pads: [pad] });
+    const controls = new Controls(scene);
+
+    pad.buttons[PAD.R3] = { pressed: true };
+    expect(controls.read().reloadPressed).toBe(true);    // fresh press (also switches mode to pad)
+    expect(controls.read().reloadPressed).toBe(false);   // still held, no repeat
+    pad.buttons[PAD.R3] = { pressed: false };
+    expect(controls.read().reloadPressed).toBe(false);   // released
+    pad.buttons[PAD.R3] = { pressed: true };
+    expect(controls.read().reloadPressed).toBe(true);    // press again
+  });
+});
+
 // #346: touch is a third source feeding the same intent. These tests drive Controls'
 // pointer handlers directly (the capability probe is stubbed, since vitest runs in Node
 // where there is no window) and — just as importantly — pin down that the desktop paths
