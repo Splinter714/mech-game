@@ -76,6 +76,10 @@ const PAL = {
   // Deep water: darker, colder navy.
   deepWater:{ fill: 0x163a58, edge: 0x0f2c45 },
   forest:   { fill: 0x223f20, edge: 0x18311a },
+  // #405: a CLEARED forest hex — the same base fill as `forest` (the ground the trees stood on),
+  // so its under-lump floor shows through; the canopy-removed floor + faint stubble is painted by
+  // the `hex_forestCleared` DETAIL painter below.
+  forestCleared: { fill: 0x223f20, edge: 0x18311a },
   // Rubble: the ashen debris a flattened destructible hex leaves behind.
   rubble:   RUBBLE_COLOR,
   // #227: a destroyed forest hex — charred plant debris, distinct from the generic rubble.
@@ -134,6 +138,8 @@ const PAL = {
   dryRiver:  { fill: 0x9c7f4a, edge: 0x836838 },
   mesa:      { fill: 0x8a5a3a, edge: 0x633c26 },
   scrub:     { fill: 0xb1904f, edge: 0x8f7440 },
+  // #405: cleared scrub — same base fill as `scrub`; floor painted by `hex_scrubCleared` below.
+  scrubCleared: { fill: 0xb1904f, edge: 0x8f7440 },
   // #227: a destroyed scrub hex — scattered dead brush, distinct from the generic rubble.
   scrubRubble:{ fill: 0x6b5738, edge: 0x513f28 },
   // #110: quicksand — a lesser desert hazard (mesa is now boundary-only).
@@ -145,6 +151,8 @@ const PAL = {
   slush:     { fill: 0x9db6c6, edge: 0x84a0b3 },
   ice:       { fill: 0x9fc4dd, edge: 0x76a3c4 },
   drift:     { fill: 0xe4eef5, edge: 0xc3d3e0 },
+  // #405: cleared snowdrift — same base fill as `drift`; floor painted by `hex_driftCleared` below.
+  driftCleared: { fill: 0xe4eef5, edge: 0xc3d3e0 },
   // #227: a destroyed snowdrift hex — shattered ice/snow chunks, distinct from the generic rubble.
   driftRubble:{ fill: 0x7f93a3, edge: 0x647a8c },
   // #110: broken ice — a lesser arctic hazard (solid ice is now boundary-only).
@@ -155,6 +163,8 @@ const PAL = {
   pavementB: { fill: 0x53575e, edge: 0x40444a },
   collapsed: { fill: 0x44484f, edge: 0x2f3238 },
   wreck:     { fill: 0x4a4640, edge: 0x35322d },
+  // #405: cleared wreckage — same base fill as `wreck`; floor painted by `hex_wreckCleared` below.
+  wreckCleared: { fill: 0x4a4640, edge: 0x35322d },
   // #227: a destroyed wreck hex — burnt debris scraps, distinct from the generic rubble.
   wreckRubble:{ fill: 0x2c2924, edge: 0x201d19 },
   // #110: debris field — a lesser urban hazard (the collapsed heap is now boundary-only).
@@ -170,6 +180,8 @@ const PAL = {
   crust:     { fill: 0x3a2620, edge: 0x281713 },
   lava:      { fill: 0x7a2410, edge: 0x4a1608 },
   fumarole:  { fill: 0x35302b, edge: 0x211d19 },
+  // #405: cleared fumarole — same base fill as `fumarole`; floor painted by `hex_fumaroleCleared` below.
+  fumaroleCleared: { fill: 0x35302b, edge: 0x211d19 },
   // #227: a destroyed fumarole hex — loose ash/cinder scatter, distinct from the generic rubble.
   fumaroleRubble:{ fill: 0x2a2117, edge: 0x1c160f },
   // #110: cinder field — a lesser volcanic hazard, distinct from boundary-only 'lava'.
@@ -351,6 +363,17 @@ const CLUMP_SPOTS = buildClumpLattice(4242);
 function coverFloor(sg, color, alpha = 0.7) {
   sg.fillStyle(color, alpha);
   sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
+}
+
+// #405: a CLEARED soft-cover hex — the SAME under-lump ground floor its standing cover drew
+// (`coverFloor`, so forest shows the shadowy tree floor, scrub the brush floor, etc.), now with the
+// canopy/lumps GONE and only a faint scatter of stubble/remnants left. This reads as "the cover
+// was blasted flat and you can see the ground it grew on", NOT a swap to a different biome tile.
+// `stubble` is a low-alpha darker speck of what the lumps left behind; `seed` keeps each biome's
+// scatter stable per tile.
+function clearedCoverFloor(sg, floor, floorAlpha, stubble, seed) {
+  coverFloor(sg, floor, floorAlpha);
+  speckle(sg, seed, stubble, 0.22, 7, 1, 2.4, 15);
 }
 
 // ── #395: dock bay + sliding doors ─────────────────────────────────────────────────────────
@@ -602,6 +625,9 @@ const DETAIL = {
     sg.fillStyle(0x14290f, 0.7);
     sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
   },
+  // #405: cleared forest — the forest FLOOR (same 0x14290f as hex_forest) with the trees gone,
+  // plus a faint stubble of cut stumps.
+  hex_forestCleared: (sg) => clearedCoverFloor(sg, 0x14290f, 0.7, 0x0c1c08, 0xc1),
   // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad. Reads as a loading bay: a
   // squared-off deck with a painted border frame, two corner bollard studs, and a chevron "lane"
   // marking down the middle pointing toward the bay's mouth — a docked unit backs/parks into this.
@@ -675,6 +701,8 @@ const DETAIL = {
   hex_scrub: (sg) => {   // sparse desert brush cover
     coverFloor(sg, 0x8f7440, 0.55);
   },
+  // #405: cleared scrub — the brush FLOOR with the bushes gone + a faint stubble of cut stems.
+  hex_scrubCleared: (sg) => clearedCoverFloor(sg, 0x8f7440, 0.55, 0x6b5730, 0xc2),
   // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT the generic
   // rubble's masonry look.
   hex_scrubRubble: (sg) => organicDebrisScatter(sg, 0x513f28, 0x8f7548, 0xb2955e, 0x59),
@@ -721,6 +749,8 @@ const DETAIL = {
   hex_drift: (sg) => {   // snowdrifts / frosted pines cover
     coverFloor(sg, 0xb2c3d3, 0.6);
   },
+  // #405: cleared snowdrift — the packed-snow FLOOR with the drifts gone + faint churned-snow flecks.
+  hex_driftCleared: (sg) => clearedCoverFloor(sg, 0xb2c3d3, 0.6, 0x93a6b6, 0xc3),
   // #227: destroyed snowdrift — jagged broken ice/snow shards, NOT the generic rubble's
   // masonry-slab look.
   hex_driftRubble: (sg) => iceShardScatter(sg, 0x647a8c, 0xaebfcc, 0xe4eef5, 0x6b),
@@ -758,6 +788,8 @@ const DETAIL = {
     coverFloor(sg, 0x35322d, 0.6);
     sg.fillStyle(0xd8632a, 0.35); sg.fillCircle(C.cx + 3, C.cy - 2, 5);   // a faint smoulder glow
   },
+  // #405: cleared wreckage — the scorched FLOOR with the wreck piles gone + faint scattered scraps.
+  hex_wreckCleared: (sg) => clearedCoverFloor(sg, 0x35322d, 0.6, 0x201d19, 0xc4),
   // #227: destroyed wreck — burnt debris scraps + a faint ember fleck, NOT the generic
   // rubble's masonry-slab look.
   hex_wreckRubble: (sg) => organicDebrisScatter(sg, 0x201d19, 0x4a423a, 0xd8632a, 0x84),
@@ -803,6 +835,12 @@ const DETAIL = {
   hex_fumarole: (sg) => {   // ash mounds / smoke plumes cover
     coverFloor(sg, 0x211d19, 0.6);
     sg.fillStyle(0xff6a1e, 0.3); sg.fillCircle(C.cx, C.cy, 6);   // ember glow at the vent
+  },
+  // #405: cleared fumarole — the ashen FLOOR (keeping a fainter vent ember) with the mounds gone
+  // + faint cinder flecks.
+  hex_fumaroleCleared: (sg) => {
+    clearedCoverFloor(sg, 0x211d19, 0.6, 0x140f0c, 0xc5);
+    sg.fillStyle(0xff6a1e, 0.15); sg.fillCircle(C.cx, C.cy, 5);
   },
   // #227: destroyed fumarole — loose ash/cinder scatter with glowing embers, NOT the generic
   // rubble's masonry-slab look.

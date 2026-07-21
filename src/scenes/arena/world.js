@@ -849,7 +849,7 @@ export const WorldMixin = {
   // shooting enemies; it only happens incidentally, as a side effect of fire the foliage ate.
   // Symmetric by construction: the caught-shot sites (projectiles.js / firing.js) never read who
   // fired, so an enemy round chips a hex exactly as a player round does.
-  // At 0 HP the hex CLEARS to open ground (`clearedSoftCoverFor` — the biome's plain floor, a subtle
+  // At 0 HP the hex CLEARS to its OWN under-lump ground (`clearedSoftCoverFor` — the same hex's base
   // look, not a distinct rubble tile) and stops being cover: it no longer eats shots, slows, or
   // conceals. `key` is the hex the shot was caught in. No-op if that hex isn't standing soft cover.
   // Returns true iff this hit cleared the hex. Guards every scene-object touch with optional chaining

@@ -89,8 +89,13 @@ export const TERRAIN = {
                category: 'terrain', movement: 'none', cover: 'open' },
   // Forest: walk-through cover — passable but slowing, and it hides you (blocks LOS).
   // #227: its OWN rubble (charred plant debris) distinct from a destroyed building's masonry.
-  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 40, rubbleId: 'forestRubble', clearedId: 'grass',
+  forest:    { id: 'forest',    tex: 'hex_forest',    passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 40, rubbleId: 'forestRubble', clearedId: 'forestCleared',
                category: 'terrain', movement: 'slow', cover: 'soft' },
+  // #405 (owner, playtest 2026-07-20): a cleared soft-cover hex shows its OWN under-lump ground
+  // (the forest FLOOR that was beneath the trees), lumps removed + a faint stubble of remnants —
+  // NOT a swap to the generic biome tile (this used to remap to `grass`). Open, walkable, no cover.
+  forestCleared: { id: 'forestCleared', tex: 'hex_forestCleared', passable: true, blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // #227: what a destroyed forest hex leaves behind — charred plant debris, visually distinct
   // from the generic rubble's broken-masonry look even though both are passable/no-cover.
   forestRubble: { id: 'forestRubble', tex: 'hex_forestRubble', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
@@ -258,8 +263,11 @@ export const TERRAIN = {
                category: 'terrain', movement: 'none', cover: 'open' },
   // Scrub: sparse desert brush — walk-through cover (passable + slowing + blocks LOS), like forest.
   // #227: its own rubble (scattered dead scrub) distinct from the generic rubble's masonry look.
-  scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'scrubRubble', clearedId: 'sand',
+  scrub:     { id: 'scrub',     tex: 'hex_scrub',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'scrubRubble', clearedId: 'scrubCleared',
                category: 'terrain', movement: 'slow', cover: 'soft' },
+  // #405: cleared scrub — its own brush FLOOR with the bushes gone (was: remap to `sand`).
+  scrubCleared: { id: 'scrubCleared', tex: 'hex_scrubCleared', passable: true, blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // #227: what a destroyed scrub hex leaves behind — scattered dead brush, distinct from the
   // generic rubble's masonry look (#275: was originally distinguished from the desert's own
   // `adobe` outpost rubble; that outpost/rubble pair has since been removed).
@@ -285,8 +293,11 @@ export const TERRAIN = {
   // Snowdrift / frozen pines: walk-through cover (passable + slowing + LOS block).
   // #227: its own rubble (broken ice/snow drift chunks) distinct from the generic rubble's
   // masonry look.
-  drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'driftRubble', clearedId: 'snow',
+  drift:     { id: 'drift',     tex: 'hex_drift',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR,  destructible: true, hp: 30, rubbleId: 'driftRubble', clearedId: 'driftCleared',
                category: 'terrain', movement: 'slow', cover: 'soft' },
+  // #405: cleared snowdrift — its own packed-snow FLOOR with the drifts gone (was: remap to `snow`).
+  driftCleared: { id: 'driftCleared', tex: 'hex_driftCleared', passable: true, blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // #227: what a destroyed snowdrift hex leaves behind — shattered ice/snow chunks, distinct
   // from the generic rubble's masonry look (#275: was originally distinguished from the arctic's
   // own `iceRuin` outpost rubble; that outpost/rubble pair has since been removed).
@@ -309,8 +320,11 @@ export const TERRAIN = {
                category: 'terrain', movement: 'none', cover: 'open' },
   // Wreckage: burned-out vehicles / low wall — walk-through cover (passable + slow + LOS).
   // #227: its own rubble (burnt debris scraps) distinct from the generic rubble's masonry look.
-  wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 40, rubbleId: 'wreckRubble', clearedId: 'pavement',
+  wreck:     { id: 'wreck',     tex: 'hex_wreck',     passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 40, rubbleId: 'wreckRubble', clearedId: 'wreckCleared',
                category: 'terrain', movement: 'slow', cover: 'soft' },
+  // #405: cleared wreckage — its own scorched FLOOR with the wreck piles gone (was: remap to `pavement`).
+  wreckCleared: { id: 'wreckCleared', tex: 'hex_wreckCleared', passable: true, blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // #227: what a destroyed wreck hex leaves behind — burnt debris scraps, distinct from the
   // generic rubble's masonry look (#275: was originally distinguished from urban's own `tower`
   // outpost rubble; that outpost/rubble pair has since been removed).
@@ -346,8 +360,12 @@ export const TERRAIN = {
                category: 'terrain', movement: 'none', cover: 'open' },
   // Ash dunes / smoke plumes: walk-through cover (passable + slow + LOS block).
   // #227: its own rubble (loose ash/cinder scatter) distinct from the generic rubble's masonry look.
-  fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 30, rubbleId: 'fumaroleRubble', clearedId: 'ash',
+  fumarole:  { id: 'fumarole',  tex: 'hex_fumarole',  passable: true,  blocksLOS: true,  speedFactor: SLOW_MOVEMENT_FACTOR, destructible: true, hp: 30, rubbleId: 'fumaroleRubble', clearedId: 'fumaroleCleared',
                category: 'terrain', movement: 'slow', cover: 'soft' },
+  // #405: cleared fumarole — its own ashen FLOOR (with the vent's faint ember) and the mounds gone
+  // (was: remap to `ash`).
+  fumaroleCleared: { id: 'fumaroleCleared', tex: 'hex_fumaroleCleared', passable: true, blocksLOS: false, speedFactor: 1,
+               category: 'terrain', movement: 'full', cover: 'open' },
   // #227: what a destroyed fumarole hex leaves behind — loose ash/cinder scatter, distinct
   // from the generic rubble's masonry look (#275: was originally distinguished from volcanic's
   // own `obsidian` outpost rubble; that outpost/rubble pair has since been removed).
@@ -523,24 +541,25 @@ export function isSoftCover(id) {
 //     damage (`_damageSoftCoverHex`). No stomp, no lock, no flame-multiplier path touches it.
 //   • Symmetric: a caught ENEMY round chips a hex exactly as a player round does — the caught-shot
 //     sites never read who fired.
-// When a hex reaches 0 it CLEARS to open ground (`clearedSoftCoverFor` — the biome's plain floor,
-// a subtle "the trees are gone" look, NOT a distinct rubble tile) and stops being cover: no more
-// eating shots, no slow, no conceal.
+// When a hex reaches 0 it CLEARS to its OWN under-lump ground (`clearedSoftCoverFor` — the same
+// hex's base floor with the lumps/canopy removed, a subtle "the trees are gone" look, NOT a swap
+// to a different biome tile) and stops being cover: no more eating shots, no slow, no conceal.
 //
-// Owner: these two numbers are the whole dial — tune in play, and the owner's call (2026-07-20) is
-// to keep the HP LOW so a thicket blasts down FAST and satisfyingly, not on a grind. Because only
-// ~10% of shots passing through are actually CAUGHT, a low hex HP still costs many rounds FIRED to
-// clear — so a small number of *caught* shots is intentional. HP 30 / 20 per catch ⇒ just TWO caught
-// shots flatten a hex.
-export const SOFT_COVER_CLEAR_HP = 30;
+// Owner (2026-07-20 playtest follow-up): the original HP 30 / 20-per-catch (⇒ just TWO caught
+// shots) read as TOO SQUISHY. Raised so it takes ~5-6 caught shots to flatten a hex — a thicket
+// still comes down satisfyingly, but not from a couple of stray rounds. These two numbers are the
+// whole dial; only ~10% of shots passing through are actually CAUGHT, so this still costs many
+// rounds FIRED. HP 110 / 20 per catch ⇒ ~6 caught shots.
+export const SOFT_COVER_CLEAR_HP = 110;
 export const SOFT_COVER_CATCH_DAMAGE = 20;
 
-// #405: what a cleared soft-cover hex becomes — its biome's plain open ground (declared per soft
-// entry as `clearedId`: forest→grass, scrub→sand, drift→snow, wreck→pavement, fumarole→ash). This
-// is DELIBERATELY the regular ground tile, not one of the distinct `*Rubble` debris tiles
-// (`rubbleId`, which stays wired for the outpost/stomp collapse path and a future
-// NATURAL_TERRAIN_DESTRUCTIBLE flip) — the owner wants a cleared thicket to read as subtle open
-// ground, not an obvious rubble pile. Returns null for anything that isn't soft cover.
+// #405: what a cleared soft-cover hex becomes — its OWN under-lump ground (declared per soft entry
+// as `clearedId`: forest→forestCleared, scrub→scrubCleared, drift→driftCleared, wreck→wreckCleared,
+// fumarole→fumaroleCleared). Each cleared tile draws the SAME base floor that was beneath its lumps
+// (trees for forest, brush for scrub, etc.) with the canopy/lumps removed and a faint stubble of
+// remnants — NOT a remap to the generic biome ground (it used to become grass/sand/snow/pavement/
+// ash) and NOT one of the distinct `*Rubble` debris tiles (`rubbleId`, still wired for the outpost/
+// stomp collapse path). Returns null for anything that isn't soft cover.
 export function clearedSoftCoverFor(id) {
   const t = id && TERRAIN[id];
   return (t && t.cover === 'soft' && t.clearedId) || null;

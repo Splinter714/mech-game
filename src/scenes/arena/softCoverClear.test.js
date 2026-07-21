@@ -4,9 +4,9 @@
 // transition, and the caught-shot sites in projectiles.js/firing.js — lives here.
 //
 // Four things have to hold, and this file pins each:
-//   1. a cleared thicket becomes plain OPEN GROUND, not a distinct rubble tile, and stops being
-//      cover (`clearedSoftCoverFor` + `isSoftCover`);
-//   2. the clear-HP is LOW so a couple of caught shots flatten a hex (the owner's tuning call);
+//   1. a cleared thicket becomes its OWN under-lump ground (forest→forestCleared, etc.) — walkable,
+//      no longer cover, and NOT a remap to a different biome tile (`clearedSoftCoverFor` + `isSoftCover`);
+//   2. the clear-HP is tuned so it takes ~5-6 caught shots to flatten a hex (the owner's tuning call);
 //   3. `_damageSoftCoverHex` chips a hex's clear-HP and, at 0, clears it — and is a no-op on any
 //      hex that isn't standing soft cover (so it can never touch a targetable outpost);
 //   4. it fires at the real caught-shot sites, for ENEMY fire exactly as for the player's, and
@@ -28,8 +28,11 @@ const KEY = axialKey(FOREST.q, FOREST.r);
 const FCENTRE = hexToPixel(FOREST.q, FOREST.r);
 
 // ── 1. the cleared-ground mapping ──────────────────────────────────────────────────────────
-describe('#405 clearedSoftCoverFor — a cleared thicket becomes plain open ground', () => {
-  const cases = { forest: 'grass', scrub: 'sand', drift: 'snow', wreck: 'pavement', fumarole: 'ash' };
+describe('#405 clearedSoftCoverFor — a cleared thicket shows its OWN under-lump ground', () => {
+  const cases = {
+    forest: 'forestCleared', scrub: 'scrubCleared', drift: 'driftCleared',
+    wreck: 'wreckCleared', fumarole: 'fumaroleCleared',
+  };
   for (const [soft, ground] of Object.entries(cases)) {
     it(`${soft} clears to ${ground}, which is no longer soft cover`, () => {
       expect(clearedSoftCoverFor(soft)).toBe(ground);
@@ -44,11 +47,11 @@ describe('#405 clearedSoftCoverFor — a cleared thicket becomes plain open grou
 });
 
 // ── 2. the tuning ──────────────────────────────────────────────────────────────────────────
-describe('#405 clear-HP constants — low, so a couple of caught shots flatten a hex', () => {
-  it('clears in a small number of caught shots (owner: keep it fast to blast down)', () => {
+describe('#405 clear-HP constants — tuned so ~5-6 caught shots flatten a hex (not too squishy)', () => {
+  it('clears in a handful of caught shots (owner: was too squishy at 2, raised)', () => {
     const catches = Math.ceil(SOFT_COVER_CLEAR_HP / SOFT_COVER_CATCH_DAMAGE);
-    expect(catches).toBeGreaterThanOrEqual(1);
-    expect(catches).toBeLessThanOrEqual(3);
+    expect(catches).toBeGreaterThanOrEqual(4);
+    expect(catches).toBeLessThanOrEqual(8);
   });
 });
 
@@ -71,15 +74,15 @@ describe('#405 _damageSoftCoverHex — caught shots wear a hex down, then clear 
     expect(isSoftCover(s.terrain.get(KEY))).toBe(true);
   });
 
-  it('enough damage clears it to open ground and it stops being cover', () => {
+  it('enough damage clears it to its own under-lump ground and it stops being cover', () => {
     const s = makeWorld();
     expect(s._damageSoftCoverHex(KEY, SOFT_COVER_CLEAR_HP)).toBe(true);
-    expect(s.terrain.get(KEY)).toBe('grass');
+    expect(s.terrain.get(KEY)).toBe('forestCleared');
     expect(isSoftCover(s.terrain.get(KEY))).toBe(false);
     expect(s.softCoverHp.has(KEY)).toBe(false);     // no longer a standing soft-cover hex
   });
 
-  it('two caught shots at the tuned per-catch damage flatten a hex', () => {
+  it('enough caught shots at the tuned per-catch damage flatten a hex', () => {
     const s = makeWorld();
     const catches = Math.ceil(SOFT_COVER_CLEAR_HP / SOFT_COVER_CATCH_DAMAGE);
     let cleared = false;
@@ -154,7 +157,7 @@ describe('#405 wiring: a caught round chips the hex it was caught in', () => {
     const s = makeArena({ roll: 0.05 });
     const catches = Math.ceil(SOFT_COVER_CLEAR_HP / SOFT_COVER_CATCH_DAMAGE);
     for (let i = 0; i < catches; i++) fireRound(s, FCENTRE);
-    expect(s.terrain.get(KEY)).toBe('grass');
+    expect(s.terrain.get(KEY)).toBe('forestCleared');
     expect(isSoftCover(s.terrain.get(KEY))).toBe(false);
     expect(s.softCoverHp.has(KEY)).toBe(false);
   });
