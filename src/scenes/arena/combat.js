@@ -55,23 +55,45 @@ export const CombatMixin = {
   // seeds its other per-run rolls (bases.js `_dockRng`), so a seeded run stays reproducible. It's
   // built lazily on first use and now steps ONCE PER SOFT-COVER HEX crossed rather than once per
   // shot — more draws, same discipline. Tests inject `_coverRng` directly.
+  // Returns WHERE the foliage ate the shot — the CENTRE `{x, y}` of the soft-cover hex that rolled
+  // the block — or `null` when the shot gets through. A truthy return means "blocked", so callers
+  // that only care whether it was eaten (firing.js's beam `eaten` check) read exactly as before,
+  // while the projectile code detonates its leaf puff at the returned point (mid-lane) instead of
+  // splashing at the target. The point is the blocking hex's centre, stamped onto the lane by
+  // `_softCoverLane` (or `_hexCenterAt` in the origin-less fallback).
   _softCoverStopsShot(target, originHexes = null, origin = null) {
     const tx = target?.x, ty = target?.y;
-    if (typeof tx !== 'number' || typeof ty !== 'number') return false;
+    if (typeof tx !== 'number' || typeof ty !== 'number') return null;
     const tier = softCoverUnitTier(target);
-    if (tier === 'air') return false;   // air ignores the whole lane — skip the walk entirely
+    if (tier === 'air') return null;    // air ignores the whole lane — skip the walk entirely
     let lane;
     if (typeof origin?.x === 'number' && typeof origin?.y === 'number' && this._softCoverLane) {
       lane = this._softCoverLane(origin.x, origin.y, tx, ty, originHexes);
     } else {
       const key = this._hexKeyAt(tx, ty);
-      lane = (originHexes && originHexes.includes(key))
-        ? []                                            // own-hex exemption, no origin needed
-        : [{ id: this.terrain.get(key), ownHex: true }];
+      if (originHexes && originHexes.includes(key)) {
+        lane = [];                                      // own-hex exemption, no origin needed
+      } else {
+        const c = this._hexCenterAt(tx, ty);
+        lane = [{ id: this.terrain.get(key), ownHex: true, x: c.x, y: c.y }];
+      }
     }
-    if (lane.length === 0) return false;                // nothing crossed ⇒ no draws taken
+    if (lane.length === 0) return null;                 // nothing crossed ⇒ no draws taken
     if (!this._coverRng) this._coverRng = mulberry32(((this.runSeed ?? 1) ^ 0x5f37c0de) >>> 0);
-    return softCoverStopsShot(lane, tier, this._coverRng);
+    const hex = softCoverStopsShot(lane, tier, this._coverRng);
+    return hex ? { x: hex.x, y: hex.y } : null;
+  },
+
+  // #374 block visual: a shot swallowed by soft cover — a small green LEAFY PUFF at the blocking
+  // hex's centre, deliberately unlike `_impactFx`'s per-weapon burst (no white core flash, no
+  // `p.color` tint, no impact sound): it must read as the trees stopping the round, not a weapon
+  // hit. Three cheap pooled bursts (arena runs many projectiles at once — same `_burst` primitive
+  // and circle pool as every other effect, no per-round allocation): a soft mid-green puff, a
+  // darker inner rustle, and a light lime rustle ring flicking outward like disturbed foliage.
+  _foliageBlockFx(x, y) {
+    this._burst(x, y, 3, 13, 0x6b9e4a, 0.5, 240, false);   // leafy puff
+    this._burst(x, y, 2, 9, 0x3f6b2e, 0.6, 200, false);    // darker inner rustle
+    this._burst(x, y, 4, 16, 0x9ecf6b, 0.35, 260, true);   // light rustle ring
   },
 
   // Incoming damage to the player (used once enemies fire). #246: the shield is now a real

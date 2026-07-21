@@ -243,12 +243,17 @@ export const ProjectilesMixin = {
           p.stopTrajectorySfx?.();
           // #374 REWORK: the foliage roll — a teammate standing in soft cover may have this
           // round eaten by the trees, per soft-cover hex the round's lane crossed. Same rule as
-          // any other target; the round still dies and still splashes.
-          if (!this._softCoverStopsShot?.(ally, p.originHexes, { x: p.originX, y: p.originY })) {
+          // any other target. #374 block-visual: a blocked round detonates AT the blocking hex's
+          // centre (mid-lane) with a distinct leaf puff and deals nothing; an unblocked round is
+          // unchanged — damage + the normal impact splash at the teammate.
+          const block = this._softCoverStopsShot?.(ally, p.originHexes, { x: p.originX, y: p.originY });
+          if (block) {
+            this._foliageBlockFx(block.x, block.y);
+          } else {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
             this._damagePlayerAt(dmg, ally);
+            this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           }
-          this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }
       }
@@ -270,11 +275,18 @@ export const ProjectilesMixin = {
           // independently, so a volley loses SOME of its missiles rather than all or none.
           // Identical for `enemyShot` — the rule reads the target, never the shooter.
           const victim = enemyShot ? hitPlayer : hitEnemy;
-          if (!this._softCoverStopsShot?.(victim, p.originHexes, { x: p.originX, y: p.originY })) {
-            const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-            if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
-            else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
+          // #374 block-visual: a `{x, y}` (the blocking hex's centre) means the foliage ate this
+          // round — it detonates a leaf puff THERE (mid-lane) and deals nothing. Skip the rest of
+          // the impact resolution (destructible-hex damage, the normal splash, any fire patch): the
+          // trees stopped the round before it ever reached the target.
+          const block = this._softCoverStopsShot?.(victim, p.originHexes, { x: p.originX, y: p.originY });
+          if (block) {
+            this._foliageBlockFx(block.x, block.y);
+            continue;
           }
+          const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
+          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
+          else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
         // design — it never runs the in-flight wall test at all — so it used to land on a targeted

@@ -491,6 +491,13 @@ export const WorldMixin = {
     return axialKey(h.q, h.r);
   },
 
+  // The CENTRE pixel of the hex under a world point (#374 block-visual): used by the origin-less
+  // fallback of `_softCoverStopsShot` to detonate a foliage puff at the target's own hex centre.
+  _hexCenterAt(x, y) {
+    const h = pixelToHex(x, y);
+    return hexToPixel(h.q, h.r);
+  },
+
   // Does a world point block line-of-sight (cover / projectile blocker)? Forest + buildings do;
   // open grass, river, and deep water do not (you can shoot over water and rubble).
   // #72: `transparent` (optional Set of hex keys) lists hexes that are see-through for THIS
@@ -554,24 +561,35 @@ export const WorldMixin = {
   //
   // Hard cover is not this function's business: a lane that crosses a wall never reaches here,
   // because the shot detonated on it (`_isWallForRound` / `_hitscanReach`).
+  // Each lane entry carries the hex's CENTRE pixel (`hexToPixel`) alongside its `id`/`ownHex`, so
+  // that when `softCoverStopsShot` names the blocking hex the projectile code can detonate the
+  // foliage puff at that hex's middle (mid-lane), reading as the trees eating the round rather than
+  // a weapon impact at the target. Pure geometry — the same `hexToPixel` this file already uses.
   _softCoverLane(x0, y0, x1, y1, originHexes = null) {
     const lane = [];
     const seen = new Set(originHexes || []);
     seen.add(this._hexKeyAt(x0, y0));
-    const targetKey = this._hexKeyAt(x1, y1);
+    const targetHex = pixelToHex(x1, y1);
+    const targetKey = axialKey(targetHex.q, targetHex.r);
     for (const h of hexesAlongSegment(x0, y0, x1, y1)) {
       const k = axialKey(h.q, h.r);
       if (k === targetKey || seen.has(k)) continue;
       seen.add(k);                                    // never roll one hex twice for one shot
       const id = this.terrain.get(k);
-      if (isSoftCover(id)) lane.push({ id, ownHex: false });
+      if (isSoftCover(id)) {
+        const c = hexToPixel(h.q, h.r);
+        lane.push({ id, ownHex: false, x: c.x, y: c.y });
+      }
     }
     // The destination hex, always last and always the `ownHex` one — appended explicitly rather
     // than taken from the walk so it can't be missed when the muzzle and target share a hex
     // (in which case `seen` already holds it and the lane stays empty — the brawling exemption).
     if (!seen.has(targetKey)) {
       const id = this.terrain.get(targetKey);
-      if (isSoftCover(id)) lane.push({ id, ownHex: true });
+      if (isSoftCover(id)) {
+        const c = hexToPixel(targetHex.q, targetHex.r);
+        lane.push({ id, ownHex: true, x: c.x, y: c.y });
+      }
     }
     return lane;
   },

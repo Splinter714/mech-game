@@ -569,10 +569,18 @@ export function softCoverHexBlockChance(tier, ownHex = false) {
   return SOFT_COVER_OWN_HEX_BLOCK_CHANCE[tier] ?? SOFT_COVER_HEX_BLOCK_CHANCE;
 }
 
-// #374: does the foliage eat THIS projectile?
+// #374: does the foliage eat THIS projectile? Returns the BLOCKING lane hex (the element that
+// rolled a block) so the caller can detonate AT that hex — or `null` when nothing in the lane
+// blocks. (Originally a bare boolean; #374's block-visual follow-up made it report WHICH hex ate
+// the round, because a blocked shot now puffs in the trees at that hex's centre rather than
+// splashing at the target. The returned object is the very element handed in via `lane`, so any
+// coordinates the scene stamped on it — see `_softCoverLane` — ride along for free. It stays
+// truthy-when-blocked / null-when-not, so every truthy/falsy caller, e.g. firing.js's beam
+// `eaten` check, is unchanged.)
 //   `lane`  — the soft-cover hexes the shot CROSSES, muzzle → target, as
-//             `[{ id, ownHex }, …]`: `id` is the terrain id of that hex, `ownHex` marks the
-//             target's own hex. Built by the scene from the geometry it already walks for LOS
+//             `[{ id, ownHex, … }, …]`: `id` is the terrain id of that hex, `ownHex` marks the
+//             target's own hex (the scene also stamps a centre `{x, y}` on each entry — carried
+//             through untouched). Built by the scene from the geometry it already walks for LOS
 //             (arena/world.js `_softCoverLane`); non-soft ids are ignored here so a caller may
 //             hand over a whole traversal without pre-filtering it.
 //             THE OWN-HEX EXEMPTION (#72/#279) IS EXPRESSED AS AN OMISSION: the shooter's own
@@ -589,15 +597,15 @@ export function softCoverHexBlockChance(tier, ownHex = false) {
 // Note a wall turret needs no special case: it is emplaced on a wall span, never standing in
 // foliage, so its own hex is never soft and only genuine intervening woods can eat a shot at it.
 export function softCoverStopsShot(lane, tier, rng = Math.random) {
-  if (tier === 'air') return false;          // air ignores the WHOLE lane, not just its own hex
-  if (!lane || lane.length === 0) return false;
+  if (tier === 'air') return null;           // air ignores the WHOLE lane, not just its own hex
+  if (!lane || lane.length === 0) return null;
   for (const hex of lane) {
     if (!hex || !isSoftCover(hex.id)) continue;
     const chance = softCoverHexBlockChance(tier, !!hex.ownHex);
     if (chance <= 0) continue;
-    if (rng() < chance) return true;         // this hex's foliage ate it; no need to roll deeper
+    if (rng() < chance) return hex;          // this hex's foliage ate it; no need to roll deeper
   }
-  return false;
+  return null;
 }
 
 // #269: the single shared "does this terrain block THIS ray" decision — `shotBlockedAt`,

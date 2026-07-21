@@ -114,42 +114,50 @@ describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll
   const roll = (s, target, originHexes = null, origin = MUZZLE) =>
     s._softCoverStopsShot(target, originHexes, origin);
 
+  // #374 block-visual: `_softCoverStopsShot` now returns the CENTRE `{x, y}` of the blocking hex
+  // (where the leaf puff detonates) when eaten, or `null` when the shot gets through. `blockAt`
+  // pins that the returned point is a specific hex's centre.
+  const blockAt = (h) => ({ x: centre(h).x, y: centre(h).y });
+
   it('a target with a lane crossing NO soft cover is never blocked, however the dice fall', () => {
     const s = makeScene({ roll: 0 });
-    expect(roll(s, at(CLEAR_HEX))).toBe(false);
+    expect(roll(s, at(CLEAR_HEX))).toBeNull();
   });
 
   // The own-hex chances: this is the "no mech bonus" half of Jackson's instruction.
   it('a MECH target in forest gets NO own-hex bonus — its own hex is a plain 10%', () => {
-    expect(roll(makeScene({ roll: 0.09 }), at(FOREST_HEX))).toBe(true);
-    expect(roll(makeScene({ roll: 0.10 }), at(FOREST_HEX))).toBe(false);
-    expect(roll(makeScene({ roll: 0.2 }), at(FOREST_HEX))).toBe(false);
+    // ...and when eaten, the puff detonates at that own (forest) hex's centre.
+    expect(roll(makeScene({ roll: 0.09 }), at(FOREST_HEX))).toEqual(blockAt(FOREST_HEX));
+    expect(roll(makeScene({ roll: 0.10 }), at(FOREST_HEX))).toBeNull();
+    expect(roll(makeScene({ roll: 0.2 }), at(FOREST_HEX))).toBeNull();
   });
 
   it('a non-mech GROUND target bumps its OWN hex to 25% — and only its own hex', () => {
     const tank = { kind: 'tank' };
-    expect(roll(makeScene({ roll: 0.24 }), at(FOREST_HEX, tank))).toBe(true);
-    expect(roll(makeScene({ roll: 0.25 }), at(FOREST_HEX, tank))).toBe(false);
+    expect(roll(makeScene({ roll: 0.24 }), at(FOREST_HEX, tank))).toEqual(blockAt(FOREST_HEX));
+    expect(roll(makeScene({ roll: 0.25 }), at(FOREST_HEX, tank))).toBeNull();
     // an INTERVENING forest hex is still only 10% for that same tank: standing at OPEN_HEX
-    // (behind the woods) its lane crosses the forest as a plain hex.
-    expect(roll(makeScene({ roll: 0.15 }), at(OPEN_HEX, tank))).toBe(false);
-    expect(roll(makeScene({ roll: 0.05 }), at(OPEN_HEX, tank))).toBe(true);
+    // (behind the woods) its lane crosses the forest as a plain hex — and the puff detonates
+    // mid-lane AT that crossed forest hex, not at the tank.
+    expect(roll(makeScene({ roll: 0.15 }), at(OPEN_HEX, tank))).toBeNull();
+    expect(roll(makeScene({ roll: 0.05 }), at(OPEN_HEX, tank))).toEqual(blockAt(FOREST_HEX));
   });
 
   // THE HEADLINE BEHAVIOUR: foliage between you and the target now matters at all.
   it('a shot at a target in the CLEAR is blocked by woods it merely CROSSES', () => {
     const s = makeScene({ roll: 0.05 });          // 0.05 < 0.10
-    expect(roll(s, at(OPEN_HEX))).toBe(true);
-    expect(roll(makeScene({ roll: 0.5 }), at(OPEN_HEX))).toBe(false);
+    // ...and the block reports the crossed forest hex's centre, not the clear target's.
+    expect(roll(s, at(OPEN_HEX))).toEqual(blockAt(FOREST_HEX));
+    expect(roll(makeScene({ roll: 0.5 }), at(OPEN_HEX))).toBeNull();
   });
 
   it('two soft hexes in one lane are rolled INDEPENDENTLY — either can eat the shot', () => {
-    // rolls: [first hex, second hex]. Only the SECOND is under 10%, and it still blocks.
-    expect(roll(makeScene({ rolls: [0.5, 0.05], extraForest: true }), at(OPEN_HEX))).toBe(true);
-    // only the first under 10%
-    expect(roll(makeScene({ rolls: [0.05, 0.5], extraForest: true }), at(OPEN_HEX))).toBe(true);
+    // rolls: [first hex, second hex]. Only the SECOND (FOREST_HEX) is under 10%, and it blocks there.
+    expect(roll(makeScene({ rolls: [0.5, 0.05], extraForest: true }), at(OPEN_HEX))).toEqual(blockAt(FOREST_HEX));
+    // only the first (FOREST_MID) under 10% ⇒ the puff detonates at that nearer hex
+    expect(roll(makeScene({ rolls: [0.05, 0.5], extraForest: true }), at(OPEN_HEX))).toEqual(blockAt(FOREST_MID));
     // neither ⇒ through, where a single-hex lane on the same dice also gets through
-    expect(roll(makeScene({ rolls: [0.5, 0.5], extraForest: true }), at(OPEN_HEX))).toBe(false);
+    expect(roll(makeScene({ rolls: [0.5, 0.5], extraForest: true }), at(OPEN_HEX))).toBeNull();
   });
 
   it('the lane really is walked: an intervening forest takes its own draw', () => {
@@ -168,11 +176,11 @@ describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll
     const s = makeScene({ extraForest: true });
     s._coverRng = rng;
     // in the trees itself...
-    expect(roll(s, at(FOREST_HEX, heli))).toBe(false);
+    expect(roll(s, at(FOREST_HEX, heli))).toBeNull();
     // ...and behind two forest hexes, where a ground target would almost certainly be stopped
-    expect(roll(s, at(OPEN_HEX, heli))).toBe(false);
+    expect(roll(s, at(OPEN_HEX, heli))).toBeNull();
     expect(rng).not.toHaveBeenCalled();
-    expect(roll(makeScene({ roll: 0, extraForest: true }), at(OPEN_HEX))).toBe(true);
+    expect(roll(makeScene({ roll: 0, extraForest: true }), at(OPEN_HEX))).toEqual(blockAt(FOREST_MID));
   });
 
   // #72/#279's own-hex exemption, carried into the lane rule: it survives, expressed as the
@@ -182,25 +190,26 @@ describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll
     const forestPt = centre(FOREST_HEX);
     const sameHex = [s._hexKeyAt(forestPt.x, forestPt.y)];
     // shooter standing in the target's own thicket: empty lane, no roll
-    expect(s._softCoverStopsShot(at(FOREST_HEX), sameHex, forestPt)).toBe(false);
+    expect(s._softCoverStopsShot(at(FOREST_HEX), sameHex, forestPt)).toBeNull();
     // ...but a shooter standing anywhere else rolls normally.
-    expect(roll(s, at(FOREST_HEX), sameHex.slice(0, 0))).toBe(true);
-    expect(roll(s, at(FOREST_HEX), null)).toBe(true);
+    expect(roll(s, at(FOREST_HEX), sameHex.slice(0, 0))).toEqual(blockAt(FOREST_HEX));
+    expect(roll(s, at(FOREST_HEX), null)).toEqual(blockAt(FOREST_HEX));
   });
 
   it('with no origin the rule degrades to the target own-hex lane — never to an exception', () => {
     const s = makeScene({ roll: 0 });
-    expect(s._softCoverStopsShot(at(FOREST_HEX))).toBe(true);
-    expect(s._softCoverStopsShot(at(CLEAR_HEX))).toBe(false);
+    // the fallback still reports a real block point — the target's own hex centre.
+    expect(s._softCoverStopsShot(at(FOREST_HEX))).toEqual(blockAt(FOREST_HEX));
+    expect(s._softCoverStopsShot(at(CLEAR_HEX))).toBeNull();
     // the own-hex exemption still applies without an origin
     const forestPt = centre(FOREST_HEX);
-    expect(s._softCoverStopsShot(at(FOREST_HEX), [s._hexKeyAt(forestPt.x, forestPt.y)])).toBe(false);
+    expect(s._softCoverStopsShot(at(FOREST_HEX), [s._hexKeyAt(forestPt.x, forestPt.y)])).toBeNull();
   });
 
   it('a target with no position cannot be rolled for, and is never blocked', () => {
     const s = makeScene({ roll: 0 });
-    expect(s._softCoverStopsShot(null)).toBe(false);
-    expect(s._softCoverStopsShot({ mech: {} })).toBe(false);
+    expect(s._softCoverStopsShot(null)).toBeNull();
+    expect(s._softCoverStopsShot({ mech: {} })).toBeNull();
   });
 
   // The seeding requirement, stated as a test: no bare Math.random, and the same run seed must
@@ -212,7 +221,8 @@ describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll
       delete s._coverRng;                      // force the lazy production construction
       s.runSeed = runSeed;
       const tank = at(OPEN_HEX, { kind: 'tank' });
-      return Array.from({ length: 40 }, () => roll(s, tank));
+      // map the point-or-null return to a plain blocked? boolean for the sequence comparison
+      return Array.from({ length: 40 }, () => !!roll(s, tank));
     };
     const a = run(1234), b = run(1234), c = run(9999);
     expect(spy).not.toHaveBeenCalled();
@@ -227,13 +237,14 @@ describe('#374 REWORK: _softCoverStopsShot — the scene-level per-hex lane roll
 
 // ── _softCoverLane — the traversal itself ─────────────────────────────────────────────────
 describe('#374 REWORK: _softCoverLane — the soft-cover hexes a shot crosses', () => {
-  it('lists the crossed soft hexes, with the target hex last and marked ownHex', () => {
+  it('lists the crossed soft hexes, with the target hex last and marked ownHex — each stamped with its centre', () => {
     const s = makeScene({ extraForest: true });
     const to = centre(FOREST_HEX);
     const lane = s._softCoverLane(0, 0, to.x, to.y);
+    // #374 block-visual: every lane entry carries its hex CENTRE, so a block can detonate there.
     expect(lane).toEqual([
-      { id: 'forest', ownHex: false },   // FOREST_MID, crossed
-      { id: 'forest', ownHex: true },    // FOREST_HEX, the destination
+      { id: 'forest', ownHex: false, x: centre(FOREST_MID).x, y: centre(FOREST_MID).y },   // FOREST_MID, crossed
+      { id: 'forest', ownHex: true, x: centre(FOREST_HEX).x, y: centre(FOREST_HEX).y },     // FOREST_HEX, the destination
     ]);
   });
 
@@ -272,6 +283,7 @@ describe('#374 a blocked shot deals no damage but still splashes', () => {
       projFx: { clear: vi.fn() },
       _drawProjectile: vi.fn(),
       _impactFx: vi.fn(),
+      _foliageBlockFx: vi.fn(),
       _damageEnemyAt: vi.fn(),
       _damagePlayerAt: vi.fn(),
       _damageBuildingAt: vi.fn(),
@@ -336,13 +348,15 @@ describe('#374 a blocked shot deals no damage but still splashes', () => {
     return round;
   }
 
-  it('PROJECTILE: a round eaten by the foliage dies and splashes, but deals no damage', () => {
+  it('PROJECTILE: a round eaten by the foliage dies and puffs in the trees, but deals no damage', () => {
     const target = tankIn(FOREST_HEX);
     const s = makeFiringScene({ roll: 0, target });
     const round = fireRound(s, target);
     expect(round.dead).toBe(true);
     expect(s._damageEnemyAt).not.toHaveBeenCalled();
-    expect(s._impactFx).toHaveBeenCalled();
+    // #374 block-visual: a blocked PROJECTILE plays the distinct foliage puff, NOT a weapon splash.
+    expect(s._foliageBlockFx).toHaveBeenCalled();
+    expect(s._impactFx).not.toHaveBeenCalled();
   });
 
   it('PROJECTILE: the same round on a surviving roll deals its damage', () => {
@@ -382,6 +396,7 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
       projFx: { clear: vi.fn() },
       _drawProjectile: vi.fn(),
       _impactFx: vi.fn(),
+      _foliageBlockFx: vi.fn(),
       _damageEnemyAt: vi.fn(),
       _damagePlayerAt: vi.fn(),
       _damageBuildingAt: vi.fn(),
@@ -411,7 +426,9 @@ describe('#374 REWORK: ENEMY shots obey the same lane rule', () => {
     const round = fireEnemyRound(s, player);
     expect(round.dead).toBe(true);
     expect(s._damagePlayerAt).not.toHaveBeenCalled();
-    expect(s._impactFx).toHaveBeenCalled();
+    // #374 block-visual: symmetric — an eaten ENEMY round puffs in the foliage too.
+    expect(s._foliageBlockFx).toHaveBeenCalled();
+    expect(s._impactFx).not.toHaveBeenCalled();
   });
 
   it('the same enemy round on a surviving roll damages the player normally', () => {

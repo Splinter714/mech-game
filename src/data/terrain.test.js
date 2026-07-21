@@ -626,25 +626,30 @@ describe('#374 REWORK — soft cover is a PER-HEX LANE roll', () => {
     expect(softCoverHexBlockChance('nope', true)).toBe(0.10);
   });
 
+  // #374 block-visual: `softCoverStopsShot` now returns the BLOCKING lane hex (so the caller can
+  // detonate a leaf puff at it) when eaten, or `null` when the shot gets through. A blocked roll
+  // returns the very entry that rolled the block.
   it('rolls strictly BELOW the chance — the boundary lands on "not blocked"', () => {
     for (const id of SOFT) {
-      expect(softCoverStopsShot([{ id, ownHex: false }], 'mech', () => 0.09)).toBe(true);
-      expect(softCoverStopsShot([{ id, ownHex: false }], 'mech', () => 0.10)).toBe(false);
-      expect(softCoverStopsShot([{ id, ownHex: true }], 'vehicle', () => 0.24)).toBe(true);
-      expect(softCoverStopsShot([{ id, ownHex: true }], 'vehicle', () => 0.25)).toBe(false);
+      const crossed = { id, ownHex: false };
+      const own = { id, ownHex: true };
+      expect(softCoverStopsShot([crossed], 'mech', () => 0.09)).toBe(crossed);
+      expect(softCoverStopsShot([crossed], 'mech', () => 0.10)).toBeNull();
+      expect(softCoverStopsShot([own], 'vehicle', () => 0.24)).toBe(own);
+      expect(softCoverStopsShot([own], 'vehicle', () => 0.25)).toBeNull();
       // a MECH gets no own-hex bonus: a roll a vehicle would be saved by passes straight through
-      expect(softCoverStopsShot([{ id, ownHex: true }], 'mech', () => 0.20)).toBe(false);
-      expect(softCoverStopsShot([{ id, ownHex: true }], 'vehicle', () => 0.20)).toBe(true);
+      expect(softCoverStopsShot([own], 'mech', () => 0.20)).toBeNull();
+      expect(softCoverStopsShot([own], 'vehicle', () => 0.20)).toBe(own);
     }
   });
 
   // THE HEADLINE: independent per-hex rolls, so depth of woods compounds.
   it('rolls INDEPENDENTLY PER HEX — three forest hexes compound to ~27%, not 10%', () => {
     // 0.05 < 0.10 blocks on the FIRST hex; three hexes all rolling 0.5 get through.
-    expect(softCoverStopsShot(lane(3), 'mech', () => 0.5)).toBe(false);
-    expect(softCoverStopsShot(lane(3), 'mech', () => 0.05)).toBe(true);
+    expect(softCoverStopsShot(lane(3), 'mech', () => 0.5)).toBeNull();
+    expect(softCoverStopsShot(lane(3), 'mech', () => 0.05)).toBeTruthy();
     // only the THIRD hex rolls under: still blocked — a later hex can save nothing.
-    expect(softCoverStopsShot(lane(3), 'mech', rngOf(0.5, 0.5, 0.05))).toBe(true);
+    expect(softCoverStopsShot(lane(3), 'mech', rngOf(0.5, 0.5, 0.05))).toBeTruthy();
     // one draw is taken per crossed hex until one blocks
     const rng = vi.fn(() => 0.5);
     softCoverStopsShot(lane(3), 'mech', rng);
@@ -685,22 +690,22 @@ describe('#374 REWORK — soft cover is a PER-HEX LANE roll', () => {
       0.5, 0.01,       // round 5 — eaten on its second hex
       0.5, 0.5, 0.5,   // round 6 — through
     );
-    const salvo = Array.from({ length: 6 }, () => softCoverStopsShot(lane(3), 'mech', rng));
+    const salvo = Array.from({ length: 6 }, () => !!softCoverStopsShot(lane(3), 'mech', rng));
     expect(salvo).toEqual([false, true, false, false, true, false]);
     expect(salvo.filter(Boolean)).toHaveLength(2);   // partial attrition, not all-or-nothing
   });
 
   it('an AIR target ignores the WHOLE lane, not just its own hex — the rng is never consulted', () => {
     const rng = vi.fn(() => 0);
-    expect(softCoverStopsShot(lane(5, true), 'air', rng)).toBe(false);
+    expect(softCoverStopsShot(lane(5, true), 'air', rng)).toBeNull();
     expect(rng).not.toHaveBeenCalled();
     // ...and the same lane absolutely does block a ground target
-    expect(softCoverStopsShot(lane(5, true), 'mech', () => 0)).toBe(true);
+    expect(softCoverStopsShot(lane(5, true), 'mech', () => 0)).toBeTruthy();
   });
 
   it('only SOFT cover in the lane rolls — open ground and hard cover contribute nothing', () => {
     for (const id of ['grass', 'river', 'deepWater', 'rubble', 'alertTower', 'objective', 'dockClosed', undefined, 'nope']) {
-      expect(softCoverStopsShot([{ id, ownHex: false }, { id, ownHex: true }], 'vehicle', () => 0)).toBe(false);
+      expect(softCoverStopsShot([{ id, ownHex: false }, { id, ownHex: true }], 'vehicle', () => 0)).toBeNull();
     }
     // a mixed lane rolls only its soft hexes
     const rng = vi.fn(() => 0.5);
@@ -713,23 +718,23 @@ describe('#374 REWORK — soft cover is a PER-HEX LANE roll', () => {
   // EMPTY lane. (The scene-side half of this is pinned in scenes/arena/softCoverBlock.test.js.)
   it('an empty lane never rolls — the brawling-in-one-thicket exemption', () => {
     const rng = vi.fn(() => 0);
-    expect(softCoverStopsShot([], 'vehicle', rng)).toBe(false);
-    expect(softCoverStopsShot(null, 'vehicle', rng)).toBe(false);
+    expect(softCoverStopsShot([], 'vehicle', rng)).toBeNull();
+    expect(softCoverStopsShot(null, 'vehicle', rng)).toBeNull();
     expect(rng).not.toHaveBeenCalled();
   });
 
   it('is deterministic given a seeded rng — the same sequence yields the same outcomes', () => {
     const seq = [0.05, 0.9, 0.2, 0.99, 0.5];
-    const run = () => seq.map((_, i) => softCoverStopsShot(lane(2), 'mech', rngOf(...seq.slice(i))));
+    const run = () => seq.map((_, i) => !!softCoverStopsShot(lane(2), 'mech', rngOf(...seq.slice(i))));
     expect(run()).toEqual(run());
     // one plain hex @ 10%: below ⇒ eaten, above ⇒ through.
-    expect(seq.map((v) => softCoverStopsShot(lane(1), 'mech', () => v)))
+    expect(seq.map((v) => !!softCoverStopsShot(lane(1), 'mech', () => v)))
       .toEqual([true, false, false, false, false]);
   });
 
   it('defaults to Math.random when no rng is injected (production callers may omit it)', () => {
     const spy = vi.spyOn(Math, 'random').mockReturnValue(0);
-    expect(softCoverStopsShot(lane(1), 'mech')).toBe(true);
+    expect(softCoverStopsShot(lane(1), 'mech')).toBeTruthy();
     spy.mockRestore();
   });
 
