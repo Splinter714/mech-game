@@ -23,7 +23,7 @@ import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
-  exposedInternals, statusSpotBar, statusSpotGlow, READOUT, readoutMount,
+  exposedInternals, statusSpotBar, READOUT, readoutMount,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -231,11 +231,12 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // and keep the original reactor purple.
   if (statusSpot) statusSpotBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, statusSpot);
   else glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                      // reactor spine
-  // The two vents flanking the spine complete the reactor cluster. For player mechs they follow the
-  // spine's STATUS colour (its primary/first colour, black when no powerup); enemies & garage preview
-  // keep the fixed reactor purple. statusSpotGlow shapes the primary status colour into glowBar's
-  // {halo,core,hot} descriptor (black when no powerup).
-  const ventCol = statusSpot ? statusSpotGlow(statusSpot) : REACTOR;
+  // The two vents flanking the spine complete the reactor cluster. #400 follow-up: for player mechs
+  // (statusSpot supplied) they no longer follow the status colour — as small horizontal glowBars they
+  // read as a stray horizontal line of colour. Instead they draw a NEUTRAL DARK tone so ONLY the
+  // reactor spine carries the powerup/player status colour. Enemies & garage preview keep the fixed
+  // reactor purple.
+  const ventCol = statusSpot ? { halo: T.housing, core: T.housing, hot: T.housing } : REACTOR;
   glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
   glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
 
@@ -244,8 +245,11 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   const hd = lay.head;
   plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
   rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, T.rimHi); // antenna
+  // #400 follow-up: the head cockpit optic no longer glows purple on PLAYER mechs — Jackson wanted
+  // no purple head light. Players (statusSpot supplied) get no optic glow; enemies & garage preview
+  // keep the fixed reactor-purple optic.
   const cp = lay.cockpit;
-  glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
+  if (!statusSpot) glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
 
   // Structural decor (mast / vane / exhaust stacks) under the weapons. The shoulder PAULDRONS
   // are drawn on the side-torso textures instead (so they cant with the side torso), so skip
