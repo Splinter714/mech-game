@@ -264,6 +264,16 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
     // wildly larger combat-range-derived values are the ones it bites on. Only meaningful for a
     // dormant unit — an AWARE resupply unit is already engaged and never consults its wake radius.
     if (awareness === DORMANT) e.detectRange = Math.min(e.detectRange, PROXIMITY_WAKE_RANGE_CAP);
+    // #415: a flying dock unit (helicopter/drone) is HIDDEN while it sits in the dock — a docked
+    // flyer shouldn't be visible parked on the pad. It stays invisible (alpha 0) until it LAUNCHES:
+    // `dockedTakeoff` marks it for the takeoff beat (data/takeoff.js), which _updateVehicle runs the
+    // first frames after the unit wakes (a DORMANT unit never ticks its brain, so the fade genuinely
+    // begins at the moment of wake, over the dock). A DORMANT flyer waits inert+invisible; an AWARE
+    // resupply flyer materialises the same way the instant it spawns into an already-fighting base.
+    if (e.flying) {
+      e.dockedTakeoff = true;
+      e.view?.setAlpha?.(0);
+    }
     spawned.push(e);
   }
   return spawned;
@@ -844,6 +854,14 @@ export const BasesMixin = {
       if (e.baseId !== baseId || e.awareness !== DORMANT) continue;
       e.awareness = AWARE;
       if (e.kind === 'mech' || (e.kindDef && !isFastWakeKind(e.kindDef))) e.holdGround = true;
+      // #416: a woken Broodhauler ADVANCES on the player instead of camping the base. Its whole
+      // threat is the drone nest it carries, so leaving it parked at its dock lets a stack of drones
+      // pile up and reach the player long before the carrier does. Flagging it here (base alerted =
+      // "activation", exactly the issue's trigger — reached by both the alert-tower wake and the
+      // walk-up proximity wake) makes carrierMoveIntent (enemyBehaviors.js) close to a much tighter
+      // standoff, driving the drone production INTO the fight rather than holding back at its normal
+      // 320px camp. Scoped to the carrier kind; every other kind's wake response is unchanged.
+      if (e.behavior === 'carrier') e.advanceOnAlert = true;
       e.reactDelayMs = WAKE_REACT_STAGGER_MIN_MS
         + Math.random() * (WAKE_REACT_STAGGER_MAX_MS - WAKE_REACT_STAGGER_MIN_MS);
     }

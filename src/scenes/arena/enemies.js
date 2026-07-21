@@ -46,6 +46,7 @@ import { trackCoverSpot, coverLeashExpired, COVER_SPOT_RADIUS } from '../../data
 import { biasedSpawnAngle } from '../../data/spawnBias.js';
 import { UNAWARE, AWARE, DORMANT, detectionRangeFor, shouldBecomeAware, NOISE_WINDOW_MS } from '../../data/awareness.js';
 import { ENEMY_BEHAVIORS, carrierDeployTick, CARRIER_DEPLOY_GRACE_MS } from './enemyBehaviors.js';
+import { makeTakeoff, stepTakeoff } from '../../data/takeoff.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
@@ -1400,6 +1401,21 @@ export const EnemiesMixin = {
     // additionally waits out the unit's short post-wake "still noticing" delay, if any.
     const reacting = this._isReacting(e, delta);
 
+    // #415: a flyer launched from a dock MATERIALISES over the pad — alpha fades 0→1 — and hovers a
+    // beat before releasing to its normal flight AI. Only DOCK-spawned flyers carry `dockedTakeoff`
+    // (bases.js `spawnDockCluster`); it's cleared the frame the beat completes. While DORMANT the
+    // unit never reached here (it early-returns in `_updateEnemy`) and stayed invisible, so the fade
+    // genuinely begins at the moment of wake, right over the dock. `hovering` gates the tactical
+    // brain + deploy off below, so during the beat the flyer holds position and fires nothing.
+    let hovering = false;
+    if (e.dockedTakeoff) {
+      e.takeoff ??= makeTakeoff();
+      const { alpha, done } = stepTakeoff(e.takeoff, delta);
+      e.view?.setAlpha?.(alpha);
+      if (done) { e.dockedTakeoff = false; e.takeoff = null; }
+      else hovering = true;
+    }
+
     const behavior = ENEMY_BEHAVIORS[e.behavior];
     // #304: player dead + the beat elapsed — disengage instead of running the kind's tactical
     // brain. Placed FIRST so it also pre-empts the `e.behavior === 'turret'` special case below
@@ -1408,6 +1424,12 @@ export const EnemiesMixin = {
     // `aimAndFire`'s own `_enemyFireAllowed()` check as the belt-and-braces second gate.
     if (this._standDownActive()) {
       this._standDownVehicleMove(e, dt);
+    } else if (hovering) {
+      // #415: spinning up over the dock — bleed velocity to a hover and hold. No tactical brain,
+      // no fire (both live below/inside the behaviour fns); the fade above is the whole show.
+      const mv = e.kindDef.move;
+      e.vx = approach(e.vx, 0, (mv.accel || 200) * dt);
+      e.vy = approach(e.vy, 0, (mv.accel || 200) * dt);
     } else if (!reacting) {
       // Idle (also covers the brief post-wake stagger window, #285): loiter near spawn rather
       // than running the kind's tactical brain (which also gates firing, since aimAndFire lives
@@ -1435,7 +1457,7 @@ export const EnemiesMixin = {
     // dead) still stops it — a disengaging force shouldn't keep birthing drones — as does death,
     // since a dead unit never reaches this loop. There is no lifetime cap: killing it is the
     // only lever.
-    if (e.kindDef.deployEveryMs && !this._standDownActive()) {
+    if (e.kindDef.deployEveryMs && !this._standDownActive() && !hovering) {
       if (reacting) { e.deployArmed = true; e.deployGraceMs = CARRIER_DEPLOY_GRACE_MS; }
       else if (e.deployGraceMs > 0) e.deployGraceMs -= delta;
       if (e.deployArmed && (reacting || e.deployGraceMs > 0)) {

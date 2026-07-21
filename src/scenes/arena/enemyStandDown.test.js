@@ -165,7 +165,11 @@ describe('#304 the stand-down gate is actually wired into both enemy loops', () 
   });
 
   it('a stood-down vehicle skips its tactical behavior entirely (which is where its firing lives)', () => {
-    expect(src('enemies.js')).toMatch(/if \(this\._standDownActive\(\)\) \{\s*\n\s*this\._standDownVehicleMove\(e, dt\);\s*\n\s*\} else if \(!reacting\)/);
+    // Stand-down is the FIRST branch of the vehicle dispatch, so it pre-empts the tactical
+    // behaviour (and thus firing) regardless of what other branches follow. #415 inserted a
+    // `hovering` (dock-takeoff) branch between this and `!reacting`; the guarantee under test is
+    // only that stand-down comes first, so this no longer pins the immediately-following branch.
+    expect(src('enemies.js')).toMatch(/if \(this\._standDownActive\(\)\) \{\s*\n\s*this\._standDownVehicleMove\(e, dt\);\s*\n\s*\} else if \(/);
   });
 
   it('a stood-down mech stops tracking the player with its turret and drops its lock', () => {

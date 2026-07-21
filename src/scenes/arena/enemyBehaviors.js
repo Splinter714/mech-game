@@ -449,8 +449,15 @@ function deployNearby(scene, e, kindId) {
 // Same grind-to-standoff-and-hold shape as tankMoveIntent above, just its own standoff default
 // and a slightly lighter strafe — extracted so the normal and #269 Part 1 hold-ground-leashed
 // paths below both run the literal same formula.
+// #416: how close an ALERTED Broodhauler presses in (`e.advanceOnAlert`, set in bases.js
+// `_wakeBase`), well inside its normal 320px camp standoff — close enough that its drones deploy in
+// the player's face rather than piling up back at the base. Still a standoff, not a ram: the unit is
+// unarmed and its job is to bring the nest forward, not to body the player, so it holds a short
+// distance and keeps churning out drones there. Owner: tunable.
+const CARRIER_ALERT_STANDOFF = 160;
 function carrierMoveIntent(e, ctx, def) {
-  const standoff = def.standoff ?? 320;
+  // #416: an alerted carrier abandons its camp standoff and advances to a much tighter one.
+  const standoff = e.advanceOnAlert ? CARRIER_ALERT_STANDOFF : (def.standoff ?? 320);
   let radial = 0;
   const travel = ctx.travelDist ?? ctx.dist;   // #332: route distance — see tankMoveIntent.
   if (ctx.noFiringLane || travel > standoff * 1.15) radial = 1;
