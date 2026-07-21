@@ -107,6 +107,12 @@ import mechDestroyed2 from '../assets/sfx/mechDestroyed-play-mechaDamaged2.m4a';
 import mechDestroyed12 from '../assets/sfx/mechDestroyed-play-mechaDamaged12.m4a';
 import mechDestroyed15 from '../assets/sfx/mechDestroyed-play-mechaDamaged15.m4a';
 import mechDestroyed17 from '../assets/sfx/mechDestroyed-play-mechaDamaged17.m4a';
+// The UI domain's `returnToGarage` cue (Arena → Garage) — "DSGNMisc_MOVEMENT-Phase Swish_HY_
+// PC-006.wav" from Helton Yan's Pixel Combat pack. Converted with macOS `afconvert` to 44.1kHz
+// STEREO AAC/.m4a (~192kbps, ~37KB) — kept stereo like the other UI-domain stereo bakes. Played
+// back as the FULL untrimmed file (startMs 0, trimMs null — the whole 2555ms length). No fade,
+// no pitch/filter/reverb/volume processing, per Jackson's Weapon Lab copy-recipe.
+import returnToGaragePhaseSwish from '../assets/sfx/returnToGarage-play-phaseSwish.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -303,6 +309,16 @@ export const BAKED_SFX = {
     startMs: 0,
     trimMs: 790,
     fadeOutMs: 1030,
+    processing: null,
+  },
+  // Helton Yan's Pixel Combat pack — "DSGNMisc_MOVEMENT-Phase Swish_HY_PC-006.wav" (stereo). The
+  // FULL untrimmed file (startMs 0, trimMs null — the whole 2555ms length) as the UI domain's
+  // returnToGarage cue (Arena → Garage). No fade, no pitch/filter/reverb/volume processing, per
+  // Jackson's Weapon Lab copy-recipe.
+  'returnToGarage::play': {
+    asset: returnToGaragePhaseSwish,
+    startMs: 0,
+    trimMs: null,
     processing: null,
   },
 };
