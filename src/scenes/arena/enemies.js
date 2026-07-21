@@ -135,6 +135,16 @@ const TURRET_HUDDLE_OFFSET = 10;
 // zeroed, so mechs still close distance eventually — just as a heavy, deliberate advance. Owner
 // verifies the lumbering feel in play; this is the dial to nudge.
 const MOVE_SPEED_FRAC = 0.6;        // fraction of chassis maxSpeed the AI drives at
+// #398: enemy mechs felt "floaty" — the movement slowdown above wasn't the whole story. The tell
+// Jackson named was the TURRET: it "constantly aims directly at me", snapping to the player's
+// bearing every frame with the chassis's own (fast) turretSlew. A heavy machine's gun should LAG
+// and swing toward its target, so lateral player movement briefly opens the aim. This caps the
+// enemy mech's turret tracking to a slow fixed rad/s — well below every chassis turretSlew
+// (heavy 1.9 → light 4.2) so it always bites — producing that visible aim lag. Scoped to enemy
+// MECHS only (the floaty ones); turrets/tanks/other kinds keep their own per-kind slew. The
+// PLAYER is untouched — it still tracks at its chassis turretSlew within its turretArc. Owner:
+// tunable — raise toward the chassis values for snappier enemy aim, lower for heavier lag.
+export const ENEMY_MECH_TURRET_SLEW = 1.4;  // rad/s — capped aim-tracking rate for enemy mechs (#398)
 const ARRIVE_SLOW = 70;             // px from a destination where the enemy eases to a stop
 const REPICK_ON_ARRIVE = true;      // arriving at a FLANK/COVER goal forces an early re-decide
 
@@ -1187,7 +1197,11 @@ export const EnemiesMixin = {
     // #304: a stood-down mech stops tracking the player too — its gun swings back over its line
     // of travel (the same rule an unaware/patrolling unit already follows), so the disengage
     // reads visually and not just as "it walked away still aiming at me."
-    if (reacting && !stood) e.turret = rotateToward(e.turret, bearing, mv.turretSlew, dt);
+    // #398: track the player at the capped ENEMY_MECH_TURRET_SLEW, not the chassis's fast
+    // turretSlew — this is the aim LAG that makes an enemy mech read as a heavy machine swinging
+    // its gun toward me rather than a turret welded to my position. The idle/travel-follow branch
+    // below keeps the chassis slew (it's cosmetic, not aiming at the player).
+    if (reacting && !stood) e.turret = rotateToward(e.turret, bearing, ENEMY_MECH_TURRET_SLEW, dt);
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     // #269 Part 1: a held-ground mech runs the same movement brain as a normal one so it's
     // usually in motion and the ordinary "turn to face travel direction" rule below already

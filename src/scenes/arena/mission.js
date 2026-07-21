@@ -14,7 +14,7 @@
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
 import { isBaseCleared, baseClearState, baseMarkTargets, enemyMarkLift, CLEAR_DONE } from '../../data/bases.js';
-import { DEPTH, UI_HIGHLIGHT_COLOR, strokeHexRing } from './shared.js';
+import { DEPTH, UI_HIGHLIGHT_COLOR, drawPip } from './shared.js';
 
 // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"): the
 // previous round added a real, destructible `objective` hex per base and pointed the marker at
@@ -67,18 +67,34 @@ export function isBaseFullyCleared(base, buildingHp, enemies) {
   return baseClearStateOf(base, buildingHp, enemies).step === CLEAR_DONE;
 }
 
-// #371 marker sizes. The dock marker matches the primary objective marker's 30px hex — a dock IS a
-// building-sized target, and Jackson asked for "building-sized ones on the docks". The enemy hex is
-// deliberately tiny ("a little objective hex on all remaining enemies") and lifted clear of the
-// sprite so it doesn't collide with the #370 shield outline on a drone.
-const DOCK_MARK_RADIUS = 30;
-const ENEMY_MARK_RADIUS = 6;
+// #410 pip sizes. The old markers were full hex-sized RINGS (30px dock, 6px enemy) drawn around
+// the target; Jackson found them obtrusive/huge and asked for a small central FLOATING PIP instead
+// — a tiny diamond dot at the centre of the target, gently bobbing/pulsing. The dock/objective pip
+// is a touch larger than the enemy pip so a building still reads as the bigger target, but both are
+// a fraction of the old rings' footprint.
+const OBJECTIVE_PIP_RADIUS = 7;
+const DOCK_MARK_RADIUS = 7;
+const ENEMY_MARK_RADIUS = 4;
 // The per-unit lift is a pure rule in data/bases.js (`enemyMarkLift`) — wall guns are anchored
 // differently from hex-sitting units, see that function's note.
 
-// #371 playtest follow-up ("all of the secondary objective markers should pulse"): the same
-// breathing tween the primary objective beacon uses (`_makeObjectiveMarker`), now on every marker.
-const MARK_PULSE = { scale: 1.35, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' };
+// #371 playtest follow-up ("all of the secondary objective markers should pulse") + #410: the pip's
+// motion. A gentle vertical bob (`y`) makes it read as a small FLOATING dot, combined with the
+// original breathing scale/alpha pulse. Applied to every marker's pip layers (not the label, so
+// labels stay put and legible). The bob is a LOCAL offset on the pip graphics, independent of the
+// container's world position, so enemy markers that are repositioned every frame still bob.
+const MARK_PULSE = { y: -4, scale: 1.3, alpha: 0.5, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' };
+
+// The three pip layers, smallest first (indices matter: the amber core is child 2, the CLEARED
+// recolour target in `_onMissionComplete`). A light halo + dark outline carry the pip's edge
+// against every biome (same legibility reasoning the old rings used), around an amber filled core.
+function drawPipLayers(scene, radius) {
+  return [
+    drawPip(scene.add.graphics(), radius + 3, { stroke: 0xfbfdff, strokeWidth: 2, strokeAlpha: 0.85 }),
+    drawPip(scene.add.graphics(), radius + 1.5, { stroke: 0x0b0e14, strokeWidth: 2, strokeAlpha: 0.85 }),
+    drawPip(scene.add.graphics(), radius, { fill: UI_HIGHLIGHT_COLOR, fillAlpha: 0.95, stroke: 0x0b0e14, strokeWidth: 1, strokeAlpha: 0.9 }),
+  ];
+}
 
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated `this.bases`.
@@ -131,31 +147,18 @@ export const MissionMixin = {
     this.registry.set('objectiveWorld', hexToPixel(q, r));
   },
 
-  // A simple, readable beacon over the objective hex: a pulsing amber ring + a small
-  // floating label, in the style of the powerup beacons (world-space container, tweened).
-  // Kept far simpler than the powerup beacon since this only needs to be findable, not flashy.
+  // #410: a small, readable pip at the centre of the objective hex — a tiny floating amber diamond
+  // (with a light/dark legibility outline, same biome-legibility reasoning the old ring used) and a
+  // small floating label, in the style of the powerup beacons (world-space container, tweened). Far
+  // less obtrusive than the old hex-sized ring: it marks the SPOT, it doesn't fence off the hex.
   _makeObjectiveMarker(hexKey) {
     const [q, r] = hexKey.split(',').map(Number);
     const { x, y } = hexToPixel(q, r);
-    // #129: the amber ring alone can blend into some biome palettes (e.g. desert sand, or
-    // volcanic embers, are close to amber in hue). Add a fixed dark + light double outline
-    // OUTSIDE the amber ring — same reasoning as the enemy legibility halo (mechPrims.js's
-    // `HALO`): the dark ring reads against light terrain, the light ring reads against dark
-    // terrain, so together they carry the marker's edge against every biome without touching
-    // the amber "this is the objective" colour itself.
-    // #280: hexagon outlines (matching the real hex grid's pointy-top orientation, via the
-    // same `hexCorners` helper hexArt.js uses to draw actual terrain hexes) instead of circles
-    // — same three radii/stroke widths/colors/alpha as before. #280 playtest follow-up: drawn
-    // with `Graphics` + `strokeHexRing` (shared.js), not a `Polygon` shape — `Polygon`'s
-    // display-origin math renders an already-centered point set (what `hexCorners` returns)
-    // offset up-left by its own radius (see `strokeHexRing`'s comment for the full mechanism).
-    // Each ring is a plain `Graphics` object left at its local (0,0) — the marker `container`
-    // below (positioned at the real world (x,y)) supplies the actual placement, exactly like the
-    // `Polygon` shapes did before.
-    const haloRing = strokeHexRing(this.add.graphics(), 33, 3, 0xfbfdff, 0.9);
-    const outlineRing = strokeHexRing(this.add.graphics(), 31.5, 2, 0x0b0e14, 0.9);
-    const ring = strokeHexRing(this.add.graphics(), 30, 3, UI_HIGHLIGHT_COLOR, 0.9);
-    const label = this.add.text(0, -46, 'OBJECTIVE', {
+    // Three plain `Graphics` pip layers (halo/outline/amber core) left at their local (0,0) — the
+    // marker `container` below (positioned at the real world (x,y)) supplies the placement, so the
+    // diamond always lands dead-centre on the hex (see `drawPip` / the #280 centring note).
+    const [haloRing, outlineRing, ring] = drawPipLayers(this, OBJECTIVE_PIP_RADIUS);
+    const label = this.add.text(0, -22, 'OBJECTIVE', {
       fontFamily: 'monospace', fontSize: '12px', color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
     }).setOrigin(0.5);
     const marker = this.add.container(x, y, [haloRing, outlineRing, ring, label]);
@@ -163,7 +166,7 @@ export const MissionMixin = {
     // rest of the arena's depth scheme (shared.js), one step above impact/death FX (5) so the
     // objective stays legible even through an explosion happening on top of it.
     marker.setDepth(DEPTH.WORLD_UI);
-    this.tweens.add({ targets: [ring, outlineRing, haloRing], scale: 1.35, alpha: 0.35, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: [ring, outlineRing, haloRing], ...MARK_PULSE });
     this._objectiveMarker = marker;
   },
 
@@ -268,14 +271,10 @@ export const MissionMixin = {
   // step that draws these), so a shared pulse cannot confuse the two — they never coexist.
   // The RINGS pulse, not the container, so a dock's label stays put and legible while it breathes.
   _makeMarkHex(x, y, radius, width, labelText) {
-    const parts = [
-      strokeHexRing(this.add.graphics(), radius * 1.1, width, 0xfbfdff, 0.85),
-      strokeHexRing(this.add.graphics(), radius * 1.05, width * 0.7, 0x0b0e14, 0.85),
-      strokeHexRing(this.add.graphics(), radius, width, UI_HIGHLIGHT_COLOR, 0.9),
-    ];
+    const parts = drawPipLayers(this, radius);
     this.tweens.add({ targets: [...parts], ...MARK_PULSE });
     if (labelText) {
-      parts.push(this.add.text(0, -radius - 16, labelText, {
+      parts.push(this.add.text(0, -radius - 12, labelText, {
         fontFamily: 'monospace', fontSize: '11px',
         color: `#${UI_HIGHLIGHT_COLOR.toString(16).padStart(6, '0')}`,
       }).setOrigin(0.5));
@@ -307,7 +306,7 @@ export const MissionMixin = {
       // legibility rings added around it; see `_makeObjectiveMarker`).
       const ring = this._objectiveMarker.list[2];
       this.tweens.killTweensOf(ring);
-      strokeHexRing(ring, 30, 3, 0x7bd17b, 0.9);
+      drawPip(ring, OBJECTIVE_PIP_RADIUS, { fill: 0x7bd17b, fillAlpha: 0.95, stroke: 0x0b0e14, strokeWidth: 1, strokeAlpha: 0.9 });
       const label = this._objectiveMarker.list[3];
       label.setText('CLEARED').setColor('#7bd17b');
     }

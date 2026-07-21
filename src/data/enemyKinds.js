@@ -537,7 +537,14 @@ export const ENEMY_KINDS = {
     // lumbering-LEGS tune (#152) that no longer describes anything now the legs are gone.
     // No `turretSlew` — there is no turret to slew; the bay door is pinned to the hull.
     // Owner: tunable, these are playtest dials.
-    move: { maxSpeed: 40, accel: 95, turnRate: 1.0 },
+    // #361 (playtest 2026-07-21, "WAAAAAY too slow or getting stuck at gates"): diagnosed as
+    // pure speed, not a gate deadlock — soft ground separation (data/groundSeparation.js) already
+    // clears the carrier through a gate crowd (gateJam.test.js's heterogeneous case), but the old
+    // 40/95/1.0 was slower than the tank on EVERY axis (52/120/1.4), so it lumbered and could
+    // wallow in a gate mouth strafing in place. Bumped to "a touch slower than the tank" on all
+    // three axes, matching the #328 design intent ("match the tank, maybe slower") instead of
+    // being dramatically under it. Still the slowest mobile ground kind.
+    move: { maxSpeed: 48, accel: 110, turnRate: 1.3 },
     // #328: how many BAY-DOOR frames this kind's art builds (art/vehicles/carrier.js
     // CARRIER_DOOR_FRAMES — [0] shut, [1] open). Presence of this field is what tells the arena
     // (enemies.js _makeVehicleView/_updateVehicle/_reskinVehicle) to render
@@ -624,7 +631,15 @@ export const ENEMY_KINDS = {
     // unit in the game (scale 0.38, the lowest of any kind).
     size: 'small',
     themeColor: 0x8fae4a,
-    scale: 0.38,            // noticeably smaller than drone's 0.52 (#97 ask: "smaller than drones")
+    scale: 0.19,           // #411 (playtest: "shrink infantry to about half size"): halved from
+                           // 0.38. `scale` is the single size source of truth — it drives BOTH the
+                           // rendered art footprint and the collision radius (groundEnemyRadius =
+                           // 24 * scale in shared.js), so one edit halves both. The art itself is
+                           // left as #104's deliberately-chunky single-blob silhouette (thin shapes
+                           // vanish at small scale) rather than shrunk further, which would
+                           // over-shrink and desync from the `parts` hitbox above. Still comfortably
+                           // below the drone's 0.44 (#97 wanted troopers the smallest unit). PLAYTEST
+                           // DIAL — if it aliases too hard at this size, nudge back up.
   },
 };
 

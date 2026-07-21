@@ -22,7 +22,7 @@ import { HpBody } from '../../data/HpBody.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { AWARE, detectionRangeFor } from '../../data/awareness.js';
 import { groundEnemyRadius, wallCollideRadius } from './shared.js';
-import { separateGroundUnits, MASS_SMALL } from '../../data/groundSeparation.js';
+import { separateGroundUnits, MASS_SMALL, MASS_LARGE } from '../../data/groundSeparation.js';
 
 // ── 1. The gate ─────────────────────────────────────────────────────────────────────────
 // A solid vertical wall at x = WALL_X with a single opening at y = 0, standing between the
@@ -92,6 +92,42 @@ describe('#361 — a garrison sortieing through one gate', () => {
   it('and separation never leaves a unit inside a wall plate', () => {
     const { units } = sortie({ hardBlock: false });
     for (const u of units) expect(wallBlocks(u.x, u.y)).toBe(false);
+  });
+
+  // #361 follow-up (playtest 2026-07-21): the BROODHAULER (carrier) reported as "stuck at gates".
+  // The carrier is the odd unit out in a crowd — a large-MASS body (MASS_LARGE) with a bigger
+  // radius and the slowest move speed of any mobile kind, wedged among small fast tanks. This
+  // pins down that it still CLEARS: soft separation only ever adds an outward push and strips the
+  // closing velocity, so no arrangement plugs a slow heavy unit in the mouth. If this regresses,
+  // the carrier really is deadlocking and the report is a genuine collision bug, not just feel.
+  it('a slow heavy carrier wedged in a tank pile still clears the gate', () => {
+    const CAR_R = groundEnemyRadius({ kind: 'carrier', kindDef: ENEMY_KINDS.carrier });
+    const units = [];
+    // The carrier dead-centre in the pile, tanks strung out around it, everyone at the same y-band.
+    units.push({ x: WALL_X - 70, y: 0, vx: 0, vy: 0, r: CAR_R, m: MASS_LARGE, speed: ENEMY_KINDS.carrier.move.maxSpeed });
+    for (let i = 0; i < 10; i++) units.push({ x: WALL_X - 70 - (i % 2) * TANK_R * 2.2, y: (i - 5) * 26, vx: 0, vy: 0, r: TANK_R, m: MASS_SMALL, speed: 60 });
+    const dt = 1 / 60;
+    for (let t = 0; t < 60; t += dt) {
+      for (const u of units) {
+        const dx = 1200 - u.x, dy = -u.y, d = Math.hypot(dx, dy) || 1;
+        u.vx = (dx / d) * u.speed; u.vy = (dy / d) * u.speed;
+        let nx = u.x + u.vx * dt, ny = u.y + u.vy * dt;
+        const bl = (x, y) => wallBlocks(x, y, u.r);
+        if (bl(nx, ny)) {
+          if (!bl(u.x + u.vx * dt, u.y)) ny = u.y;
+          else if (!bl(u.x, u.y + u.vy * dt)) nx = u.x;
+          else { nx = u.x; ny = u.y; }
+        }
+        u.x = nx; u.y = ny;
+      }
+      separateGroundUnits(units, {
+        radiusOf: (u) => u.r, massOf: (u) => u.m,
+        canMove: (u, x, y) => !wallBlocks(x, y, u.r),
+      });
+    }
+    const car = units[0];
+    expect(car.x).toBeGreaterThan(WALL_X + WALL_HALF_THICK);   // the carrier itself got out
+    expect(units.every((u) => !wallBlocks(u.x, u.y, u.r))).toBe(true);
   });
 });
 
