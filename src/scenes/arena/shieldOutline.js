@@ -126,16 +126,29 @@ export function shieldOutlineAlpha(pool, cap, t) {
 // the real (also soft) glow and contributes almost nothing, while the SOLID body plating still
 // throws a crisp blue rim over the ground — so the shell sizes off the MECH, never the muzzle FX,
 // and reads even all around instead of stretched forward.
+// `bodyOnly` (#397 follow-up): draw the shell from the BODY-ONLY `_shield` textures where they
+// exist (mechArt.buildMechTextures bakes them for the player), so the shell hugs the mech's armor
+// plating and leaves the mounted guns + their muzzle glow poking out UNshielded. Weapons are baked
+// into each part texture, so this is the only clean cut — a filter on sprite keys would drop the
+// whole arm/torso body, not just the gun. A part with no `_shield` variant (the hull, every enemy)
+// falls back to its real texture, so nothing else changes. The real→shield key mapping is stored on
+// the returned state so the per-frame driver keeps using the body-only texture (it never fights the
+// walk-cycle frame-follow, since the hull — the only part that swaps frames — has no variant).
 export function makeShieldOutline(scene, view, {
   keys, scale, color = SHIELD_COLOR,
-  scaleMult = SHIELD_OUTLINE_SCALE_MULT, blend = Phaser.BlendModes.ADD,
+  scaleMult = SHIELD_OUTLINE_SCALE_MULT, blend = Phaser.BlendModes.ADD, bodyOnly = false,
 }) {
   const baseScale = scale * scaleMult;
   const outlines = {};
+  const texMap = {};
   for (const key of keys) {
     const real = view[key];
     if (!real) continue;
-    const o = scene.add.sprite(real.x, real.y, real.texture.key)
+    const realKey = real.texture.key;
+    const shieldKey = bodyOnly && scene.textures?.exists?.(`${realKey}_shield`)
+      ? `${realKey}_shield` : realKey;
+    if (shieldKey !== realKey) texMap[realKey] = shieldKey;
+    const o = scene.add.sprite(real.x, real.y, shieldKey)
       .setOrigin(real.originX, real.originY)
       .setScale(baseScale)
       .setTintFill(color)
@@ -146,7 +159,7 @@ export function makeShieldOutline(scene, view, {
     // themselves doesn't matter since they're additive-blended and fully hidden by the real art.
     view.addAt(o, 0);
   }
-  return { outlines, active: false, t: 0, baseScale, grow: 1 };
+  return { outlines, active: false, t: 0, baseScale, grow: 1, texMap };
 }
 
 // Per-frame upkeep for ONE unit's outline. Shows/hides on the 0↔>0 edge (pickup / regen-back-up /
@@ -180,7 +193,11 @@ export function updateShieldOutline(sv, view, shield, delta) {
   for (const key of keys) {
     const real = view[key];
     const o = sv.outlines[key];
-    if (o.texture.key !== real.texture.key) o.setTexture(real.texture.key);
+    // #397: follow the real part's texture, but keep the body-only `_shield` variant for any part
+    // that has one (the player's weapon-carrying parts). Parts with no mapping (hull frames, every
+    // enemy) resolve straight back to the real key, so this is a no-op for them.
+    const desired = sv.texMap?.[real.texture.key] ?? real.texture.key;
+    if (o.texture.key !== desired) o.setTexture(desired);
     o.setPosition(real.x, real.y);
     o.setOrigin(real.originX, real.originY);
     o.rotation = real.rotation;

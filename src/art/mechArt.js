@@ -133,14 +133,18 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s) {
 // is TORN OFF to bare the internals (`exposedInternals`, mechPrims.js): wires/struts/sparks in
 // a dark cavity, so armor loss reads as the shell being ripped open rather than plating
 // vanishing. Full destruction still falls through to `stump`.
-function drawArm(sg, mech, loc, T) {
+// `noWeapons` (#397 follow-up): draw the arm's PLATING only, skipping its mounted guns +
+// muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
+// a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
+// stump either way.
+function drawArm(sg, mech, loc, T, noWeapons = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
   if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
-  drawWeaponsAt(sg, mech, lay, loc, T, s);
+  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
 // One side torso (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
@@ -151,7 +155,9 @@ function drawArm(sg, mech, loc, T) {
 // #401: same treatment as drawArm above — clean plate = armored, and once this torso's armor
 // is stripped (even though it's still alive) a jagged panel tears off to bare its internals
 // via `exposedInternals`, instead of the old brackets-on-top overlay.
-function drawSideTorso(sg, mech, loc, T) {
+// `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
+// body-only raster for the player's shield shell (see drawArm's note).
+function drawSideTorso(sg, mech, loc, T, noWeapons = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
@@ -160,7 +166,7 @@ function drawSideTorso(sg, mech, loc, T) {
   if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
-  drawWeaponsAt(sg, mech, lay, loc, T, s);
+  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
 // Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftTorso, > 0 → rightTorso),
@@ -177,7 +183,10 @@ function drawPauldronFor(sg, mech, lay, loc, T) {
 // torsos — those are separate pivoting textures (drawArm / drawSideTorso), drawn under this
 // body sprite so it occludes their inner edges (the top-down read). Drawn facing up; weapons
 // point forward (-y).
-function drawTurret(sg, mech, T, statusSpot) {
+// `noWeapons` (#397 follow-up): the body — centre torso, head, spine decor, reactor glow — WITHOUT
+// the centre/head weapon hardware or its muzzle glow. The body-only raster the player's shield
+// shell hugs (see drawArm's note).
+function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
 
@@ -217,9 +226,11 @@ function drawTurret(sg, mech, T, statusSpot) {
 
   // Weapon hardware for the centre/head mounts only — the ARM and SIDE-TORSO mounts are drawn
   // in their own pivoting textures (drawArm / drawSideTorso), so skip them here.
-  for (const loc of MOUNT_LOCATIONS) {
-    if (PIVOT_LOCATIONS.includes(loc)) continue;
-    drawWeaponsAt(sg, mech, lay, loc, T, s);
+  if (!noWeapons) {
+    for (const loc of MOUNT_LOCATIONS) {
+      if (PIVOT_LOCATIONS.includes(loc)) continue;
+      drawWeaponsAt(sg, mech, lay, loc, T, s);
+    }
   }
 }
 
@@ -299,6 +310,24 @@ export function buildMechTextures(scene, key, mech, opts) {
   for (const loc of ARM_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
       (g) => drawArm(scaledGraphics(g), mech, loc, T));
+  }
+  // #397 follow-up: the PLAYER's shield shell must hug the BODY ARMOR only — not the mounted guns
+  // and not their baked-in muzzle glow. Weapons live INSIDE each part texture (drawWeaponsAt), so
+  // the only clean way to keep the shell off them is a parallel BODY-ONLY raster of every
+  // weapon-carrying part. The hull carries no weapons, so it needs no variant — the shield outline
+  // just reuses the live hull frame. Only the player theme builds these (arena/shieldOutline.js
+  // `bodyOnly` points the player's outline duplicates at them); enemies keep their full-part shell.
+  if ((opts?.theme ?? 'player') === 'player') {
+    gen(scene, `${key}_turret_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+      (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot, true));
+    for (const loc of SIDE_TORSO_LOCATIONS) {
+      gen(scene, `${key}_${loc}_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, true));
+    }
+    for (const loc of ARM_LOCATIONS) {
+      gen(scene, `${key}_${loc}_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawArm(scaledGraphics(g), mech, loc, T, true));
+    }
   }
 }
 

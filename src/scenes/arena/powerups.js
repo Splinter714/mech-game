@@ -85,6 +85,9 @@ export const PowerupsMixin = {
       // and it reads even all around (see makeShieldOutline's `blend` note). Enemies keep ADD.
       scaleMult: SHIELD_PLAYER_SCALE_MULT,
       blend: SHIELD_PLAYER_BLEND,
+      // #397 follow-up: hug the BODY armor only — draw from the body-only `_shield` textures so the
+      // guns and their muzzle glow poke out unshielded (see makeShieldOutline's `bodyOnly` note).
+      bodyOnly: true,
     });
     return player.shieldVisual;
   },
