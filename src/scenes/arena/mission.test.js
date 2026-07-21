@@ -21,6 +21,8 @@ function fakeGraphic() {
     // shared.js), not `Polygon` — chain the calls it makes (`clear`/`lineStyle`/`strokePoints`)
     // the same no-op way as the rest of this fake.
     clear: () => obj, lineStyle: () => obj, strokePoints: () => obj,
+    // #410: the pip markers also fill a diamond (`drawPip`, shared.js) — chain these no-ops too.
+    fillStyle: () => obj, fillPoints: () => obj,
   };
   return obj;
 }

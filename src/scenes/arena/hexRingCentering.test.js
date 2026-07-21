@@ -43,6 +43,10 @@ function fakeGraphics() {
     clear: () => g,
     lineStyle: () => g,
     strokePoints(points) { g.lastPoints = points; return g; },
+    // #410: the objective marker is now a filled diamond pip (`drawPip`, shared.js). Record its
+    // filled point set too so the centring assertions can read whichever the layer used.
+    fillStyle: () => g,
+    fillPoints(points) { g.lastPoints = points; return g; },
     destroy: () => {},
   };
   return g;

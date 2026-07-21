@@ -744,3 +744,23 @@ export function strokeHexRing(graphics, radius, lineWidth, color, alpha) {
   graphics.strokePoints(hexCorners(radius), true);
   return graphics;
 }
+
+// #410: a small central "pip" — a filled diamond (a rotated square, centred on 0,0) with an
+// optional outline stroke. Replaces the big hex-ring objective/clear markers with something far
+// less obtrusive: a tiny floating dot at the centre of the target rather than a full hex-sized
+// ring around it. Same `Graphics` + local-point approach as `strokeHexRing` (so it lands exactly
+// on the container's world position with no origin-guessing), just diamond points instead of hex
+// corners. `stroke`-only layers (halo/outline for biome legibility) pass `fill: null`; the core
+// pip fills AND strokes so it stays readable against any terrain. The stroke is always drawn when
+// a colour is given, so every layer records a centred point set (keeps the #280 centring tests
+// meaningful).
+export function drawPip(graphics, radius, opts = {}) {
+  const { fill = null, fillAlpha = 1, stroke = null, strokeWidth = 0, strokeAlpha = 1 } = opts;
+  const pts = [
+    { x: 0, y: -radius }, { x: radius, y: 0 }, { x: 0, y: radius }, { x: -radius, y: 0 },
+  ];
+  graphics.clear();
+  if (fill != null) { graphics.fillStyle(fill, fillAlpha); graphics.fillPoints(pts, true); }
+  if (stroke != null) { graphics.lineStyle(strokeWidth, stroke, strokeAlpha); graphics.strokePoints(pts, true); }
+  return graphics;
+}
