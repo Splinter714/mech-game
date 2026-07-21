@@ -29,6 +29,8 @@
 // currently down pays only the same early-exit as the player's.
 import Phaser from 'phaser';
 import { POWERUPS } from '../../data/powerups.js';
+import { mechLayout } from '../../art/mechArt.js';
+import { ART_SCALE } from '../../art/_frames.js';
 
 // One shield-blue for every unit in the game — the Shield powerup's own colour, so the player's
 // glow and an enemy gunship's glow are self-evidently the same mechanic.
@@ -64,7 +66,20 @@ export const SHIELD_HIT_FLASH_MULT = 1.15;
 // #397: the PLAYER shell is drawn tighter and with NORMAL (not ADD) blend — see the long note on
 // `makeShieldOutline`'s `blend` param. A tighter hug ("hugs the mech more tightly") plus a crisp
 // solid rim that the muzzle glow can no longer balloon. Enemies keep the default rim + ADD glow.
+// #422 SUPERSEDES this scale multiplier for the player: a single % scale about the mech centre made
+// the rim grow proportional to the distance-from-centre, so the wide axis (arm-to-arm) got a fatter
+// rim than the shallow axis (front-to-back) and the shell looked stretched sideways. The player now
+// passes SHIELD_PLAYER_OFFSET_PX instead (see `makeShieldOutline`'s `offsetPx`), so this constant is
+// only a fallback for any player caller that hasn't supplied the offset+mech.
 export const SHIELD_PLAYER_SCALE_MULT = 1.08;
+
+// #422: the PLAYER shell's UNIFORM outward margin, in DISPLAY pixels — the same gap on every side of
+// the mech silhouette (arm edges, nose, tail) rather than a width/depth-proportional multiplier. The
+// shell duplicates all share one texture footprint centred on the mech, so a uniform margin is a
+// non-uniform per-axis scale: each axis is scaled so its own half-extent grows by exactly this many
+// display px (see `makeShieldOutline`). Landed between the old ~1.45px (front/back) and ~2.7px (sides)
+// margins so the even shell reads close to the old shell's overall thickness. Tunable.
+export const SHIELD_PLAYER_OFFSET_PX = 2.4;
 // Optional-chained so the unit tests (which mock Phaser as `{}`) can import this module; the real
 // Phaser build always has BlendModes.NORMAL (=== 0). Only read at real sprite construction time.
 export const SHIELD_PLAYER_BLEND = Phaser.BlendModes?.NORMAL ?? 0;
@@ -93,6 +108,39 @@ export function shieldOutlineGrowth(shield) {
   const temp = shield?.temp || 0;
   if (max <= 0 || temp <= 0) return 1;
   return 1 + SHIELD_TEMP_GROW_K * (temp / max);
+}
+
+// #422: the mech silhouette's half-extents in TEXTURE pixels (half-width across, half-depth
+// front-to-back), read from the same `mechLayout` boxes the art and hit-areas use. Every part
+// duplicate is a full-canvas raster centred on the mech, so growing each duplicate's scale by
+// `d` beyond the real scale pushes the widest silhouette point out by `halfW * d` display px and
+// the deepest by `halfD * d`. To turn a desired UNIFORM outward margin (`offsetPx`, display px)
+// into per-axis scales we need these half-extents; the max over all body boxes is the silhouette
+// edge on each axis. Pure (no Phaser) so it's unit-testable.
+export function mechHalfExtentPx(mech) {
+  const lay = mechLayout(mech);
+  let w = 0, d = 0;
+  for (const box of Object.values(lay)) {
+    if (!box) continue;
+    w = Math.max(w, Math.abs(box.x || 0) + (box.w || 0) / 2);
+    d = Math.max(d, Math.abs(box.y || 0) + (box.h || 0) / 2);
+  }
+  return { w: w * ART_SCALE, d: d * ART_SCALE };
+}
+
+// #422: the outline's per-axis base scales for a UNIFORM `offsetPx` display-px margin. Real parts
+// draw at `scale`; scaling an axis to `scale + offsetPx / halfExtentPx` pushes that axis's silhouette
+// edge out by exactly `offsetPx` display px (edge display distance = halfExtentPx × scale, so the
+// added distance = halfExtentPx × (newScale − scale) = offsetPx). The shallower axis therefore gets
+// the LARGER scale, which is the whole point: equal px on every side instead of equal percentage.
+// Falls back to the uniform `scale × scaleMult` shell when no offset/extent is available (enemies,
+// or a player caller that passed neither) so nothing else changes.
+export function outlineBaseScales({ scale, scaleMult, offsetPx = 0, halfExtentPx = null }) {
+  if (offsetPx > 0 && halfExtentPx && halfExtentPx.w > 0 && halfExtentPx.d > 0) {
+    return { sx: scale + offsetPx / halfExtentPx.w, sy: scale + offsetPx / halfExtentPx.d };
+  }
+  const uniform = scale * scaleMult;
+  return { sx: uniform, sy: uniform };
 }
 
 // Opacity for this frame: fades with the remaining FRACTION of the pool rather than a flat on/off,
@@ -134,11 +182,19 @@ export function shieldOutlineAlpha(pool, cap, t) {
 // falls back to its real texture, so nothing else changes. The real→shield key mapping is stored on
 // the returned state so the per-frame driver keeps using the body-only texture (it never fights the
 // walk-cycle frame-follow, since the hull — the only part that swaps frames — has no variant).
+// `offsetPx` + `mech` (#422): the PLAYER passes these to get a UNIFORM outward margin (same display
+// px on every side) instead of the width/depth-proportional `scaleMult`. With them the shell scales
+// each axis independently (per `outlineBaseScales`), so the wide arm-to-arm axis and the shallow
+// nose-to-tail axis grow by the SAME number of pixels rather than the same percentage. Omitting them
+// (every enemy, or a player fallback) keeps the classic uniform `scale × scaleMult` shell.
 export function makeShieldOutline(scene, view, {
   keys, scale, color = SHIELD_COLOR,
   scaleMult = SHIELD_OUTLINE_SCALE_MULT, blend = Phaser.BlendModes.ADD, bodyOnly = false,
+  offsetPx = 0, mech = null,
 }) {
-  const baseScale = scale * scaleMult;
+  const halfExtentPx = offsetPx > 0 && mech ? mechHalfExtentPx(mech) : null;
+  const { sx: baseSx, sy: baseSy } = outlineBaseScales({ scale, scaleMult, offsetPx, halfExtentPx });
+  const baseScale = scale * scaleMult;   // retained for the flash/grow fallback + existing callers
   const outlines = {};
   const texMap = {};
   for (const key of keys) {
@@ -157,7 +213,7 @@ export function makeShieldOutline(scene, view, {
     // driver positions this at the real part's texture-centre so the two stay registered.
     const o = scene.add.sprite(real.x, real.y, shieldKey)
       .setOrigin(0.5, 0.5)
-      .setScale(baseScale)
+      .setScale(baseSx, baseSy)
       .setTintFill(color)
       .setBlendMode(blend)
       .setVisible(false);
@@ -166,7 +222,7 @@ export function makeShieldOutline(scene, view, {
     // themselves doesn't matter since they're additive-blended and fully hidden by the real art.
     view.addAt(o, 0);
   }
-  return { outlines, active: false, t: 0, baseScale, grow: 1, texMap };
+  return { outlines, active: false, t: 0, baseScale, baseSx, baseSy, grow: 1, texMap };
 }
 
 // Per-frame upkeep for ONE unit's outline. Shows/hides on the 0↔>0 edge (pickup / regen-back-up /
@@ -218,7 +274,15 @@ export function updateShieldOutline(sv, view, shield, delta) {
     o.setPosition(real.x + cos * ex - sin * ey, real.y + sin * ex + cos * ey);
     o.rotation = real.rotation;
     o.setAlpha(alpha);
-    if (growChanged && o.setScale) o.setScale(sv.baseScale * grow);
+    // #422: re-scale off the per-axis base (uniform-margin player shell) or the single uniform
+    // baseScale (enemies / any state built before #422). When the two axes match this is the same
+    // single-arg call as before.
+    if (growChanged && o.setScale) {
+      const sx = sv.baseSx ?? sv.baseScale;
+      const sy = sv.baseSy ?? sv.baseScale;
+      if (sx === sy) o.setScale(sx * grow);
+      else o.setScale(sx * grow, sy * grow);
+    }
   }
 }
 
@@ -227,11 +291,14 @@ export function updateShieldOutline(sv, view, shield, delta) {
 // `_burst` primitive, but reusing the outline sprites' own persistent shapes.
 export function flashShieldOutline(scene, sv) {
   if (!sv || !sv.active) return;
-  // #381: flash relative to the current (possibly temp-swollen) shell size, settling back to it.
-  const rest = sv.baseScale * (sv.grow ?? 1);
+  // #381/#422: flash relative to the current (possibly temp-swollen) shell size, settling back to
+  // it. Per-axis so the uniform-margin player shell flashes evenly instead of snapping to a square.
+  const g = sv.grow ?? 1;
+  const restX = (sv.baseSx ?? sv.baseScale) * g;
+  const restY = (sv.baseSy ?? sv.baseScale) * g;
   const targets = Object.values(sv.outlines);
-  for (const o of targets) o.setScale(rest * SHIELD_HIT_FLASH_MULT);
+  for (const o of targets) o.setScale(restX * SHIELD_HIT_FLASH_MULT, restY * SHIELD_HIT_FLASH_MULT);
   scene.tweens.add({
-    targets, scaleX: rest, scaleY: rest, duration: 220, ease: 'Quad.out',
+    targets, scaleX: restX, scaleY: restY, duration: 220, ease: 'Quad.out',
   });
 }
