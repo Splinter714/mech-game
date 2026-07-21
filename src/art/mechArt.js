@@ -23,7 +23,7 @@ import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar, stump,
-  armorShell, statusSpotBar,
+  exposedInternals, statusSpotBar,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -128,17 +128,18 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s) {
 // One arm (the weapon mount) — chunky plate + its weapons — in its OWN texture so the scene
 // can pivot it toward convergence. Drawn at the same design coords as when it lived in the
 // turret, so a straight (tilt-0) arm renders identically. `stump` if the arm is destroyed.
-// #246: an intact arm with armor remaining also gets the armor-shell overlay (mechPrims.js) —
-// drawn OVER the base plate, present while `mech.hasArmor(loc)`, simply skipped once the
-// location's armor pool hits 0 (bare plate underneath = "armor stripped," distinct from the
-// `stump` treatment for full destruction).
+// #401: the clean base plate IS the fully-armored look — full armor draws NOTHING extra.
+// Once the location's armor pool hits 0 (but the arm still has structure/hp), a jagged panel
+// is TORN OFF to bare the internals (`exposedInternals`, mechPrims.js): wires/struts/sparks in
+// a dark cavity, so armor loss reads as the shell being ripped open rather than plating
+// vanishing. Full destruction still falls through to `stump`.
 function drawArm(sg, mech, loc, T) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
   if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
-  if (mech.hasArmor(loc)) armorShell(sg, p.x, p.y, p.w, p.h);
+  if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
 
@@ -147,8 +148,9 @@ function drawArm(sg, mech, loc, T) {
 // when it lived in the turret, so a straight (tilt-0) side torso renders identically. The
 // shoulder PAULDRON (heavy chassis) is drawn HERE too, so it stays glued to the side torso as
 // it cants; other decor (mast/vane/stack/spine) stays on the body. `stump` if destroyed.
-// #246: same armor-shell overlay as drawArm above — present while `mech.hasArmor(loc)`, gone
-// once that location's armor is stripped (even though the torso itself is still alive).
+// #401: same treatment as drawArm above — clean plate = armored, and once this torso's armor
+// is stripped (even though it's still alive) a jagged panel tears off to bare its internals
+// via `exposedInternals`, instead of the old brackets-on-top overlay.
 function drawSideTorso(sg, mech, loc, T) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
@@ -156,7 +158,7 @@ function drawSideTorso(sg, mech, loc, T) {
   if (mech.isPartDestroyed(loc)) { stump(sg, T, p.x, p.y, p.w, p.h); return; }
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
   if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
-  if (mech.hasArmor(loc)) armorShell(sg, p.x, p.y, p.w, p.h);
+  if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
   drawWeaponsAt(sg, mech, lay, loc, T, s);
 }
