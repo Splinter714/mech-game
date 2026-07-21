@@ -233,6 +233,24 @@ export function arcLoft(t, profile = 'lob') {
   return cruiseEnd * (0.5 + 0.5 * Math.cos(Math.PI * k));   // abrupt terminal plunge
 }
 
+// #377 sprite-pitch: a top-down round can't rotate to point up/down, so instead we FORESHORTEN
+// it along its travel axis to fake pitch. When the arc is CLIMBING or DIVING steeply, you'd be
+// seeing the rocket end-on (from behind as it points up, or nose-away as it points down), so its
+// visible LENGTH collapses; at the flat apex you see it full side-on. The cue is the arc's
+// vertical velocity: dh/dt of arcLoft. |dh/dt| is large during the climb and the dive (compress)
+// and ~0 across the apex/cruise (full length). This is exactly cos(pitch) rendered as an
+// along-axis scale — pure and testable here; the renderer just multiplies it onto the sprite.
+export const ARC_PITCH_MIN_SCALE = 0.5;   // steepest climb/dive: along-axis length collapses to this
+export const ARC_PITCH_SLOPE_GAIN = 0.28; // maps |dh/dt| (height-fraction per unit t) into 0..1 compression
+
+export function arcForeshorten(t, profile = 'lob', minScale = ARC_PITCH_MIN_SCALE, gain = ARC_PITCH_SLOPE_GAIN) {
+  const e = 0.01;
+  const t0 = Math.max(0, t - e), t1 = Math.min(1, t + e);
+  const slope = (arcLoft(t1, profile) - arcLoft(t0, profile)) / (t1 - t0);   // dh/dt: + climbing, − diving
+  const amt = Math.min(1, Math.abs(slope) * gain);                           // 0 flat … 1 steepest
+  return 1 - amt * (1 - minScale);                                           // 1 side-on … minScale end-on
+}
+
 // ── Salvo separation: converge at the last moment (#377 follow-up) ───────────────────────
 // Jackson, after the speed/arc pass landed: "can we keep slight separation of the individual
 // missiles warbling until last minute they converge on the target?"

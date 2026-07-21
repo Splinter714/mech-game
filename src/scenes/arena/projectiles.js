@@ -3,7 +3,7 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
 
@@ -412,6 +412,7 @@ export const ProjectilesMixin = {
     // while staying planted on its true ground position and flat to its heading. The lateral
     // undulation (jostle/weave, applied in stepProjectile) supplies the "arcing" wiggle.
     let scale = 1;
+    let foreshorten = 1;
     if (p.arc) {
       const t = p.dist / p.maxDist;
       // #377: the loft EASING is now per-weapon (delivery.arcProfile -> p.arcProfile, curve in
@@ -425,10 +426,17 @@ export const ProjectilesMixin = {
       scale = 1 + h * bump;
       const sw = 8 - h * 4;                                   // shadow tightens with height
       g.fillStyle(0x000000, 0.28 - h * 0.16).fillEllipse(p.x, p.y, sw, sw * 0.42);
+      // #377: derive a sprite PITCH from where we are in the arc. arcForeshorten reads the arc's
+      // vertical velocity (dh/dt of the same loft curve) — steep while climbing off the muzzle
+      // and while plunging onto the target, ~flat across the apex — and returns an along-axis
+      // length scale. So the top-down sprite squashes end-on as it points up, stretches full
+      // side-on at the flat cruise, then squashes again as it noses down onto the enemy.
+      foreshorten = arcForeshorten(t, p.arcProfile);
     }
     // The round body itself is shared art (so the garage icon matches); it's drawn flat to
-    // its true heading (p.angle) — never pitched — and `p.dist` drives the flame flicker.
-    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale * (p.scale || 1), p.dist);
+    // its true heading (p.angle) — `foreshorten` compresses only its length to fake pitch —
+    // and `p.dist` drives the flame flicker.
+    drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, scale * (p.scale || 1), p.dist, foreshorten);
   },
 
   // Persistent hitscan beams: age them, retire expired ones into a brief spark-fade, and
