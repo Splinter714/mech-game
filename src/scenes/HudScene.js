@@ -82,13 +82,16 @@ const PART_ROW_H = 20;
 const ARMOR_BAR_COLOR = 0x9fe0ff;
 const SHIELD_BAR_COLOR = 0x5ec8e0;
 
-// #116: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is a
-// muted steel; the player rides the shared accent, the objective the shared amber wayfinding
-// highlight (so it matches the edge arrow / world marker), and enemies the danger red.
+// #116/#383: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is
+// a light steel that stands off the near-opaque dark backing; the player rides a brightened accent,
+// the objective the shared amber wayfinding highlight (so it matches the edge arrow / world marker),
+// and enemies a hot danger red. #383 raised the whole palette's contrast + the backing's opacity so
+// the map still READS on a light biome (snow) instead of washing out — the backing is dark and near-
+// solid, and it carries a bright outer frame so the box edge is crisp on light AND dark terrain.
 const MM = {
-  panelFill: 0x0c1116, panelStroke: 0x2b3742,
-  corridor: 0x39434d, corridorEdge: 0x515e6b,
-  player: 0x5ec8e0, enemy: 0xe2533a,
+  panelFill: 0x080b0f, panelStroke: 0x8fb4c8, panelInner: 0x1b242d,
+  corridor: 0x5b6b79, corridorEdge: 0x515e6b,
+  player: 0x8fe6f7, enemy: 0xff5a3c,
 };
 
 // #260: the lock-target off-screen arrow's color — matches targeting.js's `_drawLockReticle`
@@ -653,9 +656,15 @@ export default class HudScene extends Phaser.Scene {
     const box = this.miniBox;
     const g = this.miniStaticGfx;
     g.clear();
-    g.fillStyle(MM.panelFill, 0.72);
+    // Near-solid dark backing so the map holds its own contrast over a BRIGHT biome (snow) instead
+    // of letting the terrain bleed through and wash the corridor/marks out. A faint inner hairline
+    // just inside the bright frame separates the fill from the frame so the box reads as a device.
+    g.fillStyle(MM.panelFill, 0.92);
     g.fillRoundedRect(box.x, box.y, box.w, box.h, 6);
-    g.lineStyle(1, MM.panelStroke, 0.9);
+    g.lineStyle(1, MM.panelInner, 0.8);
+    g.strokeRoundedRect(box.x + 1.5, box.y + 1.5, box.w - 3, box.h - 3, 5);
+    // Bright outer frame — the high-contrast edge that keeps the box legible on light AND dark ground.
+    g.lineStyle(2, MM.panelStroke, 0.95);
     g.strokeRoundedRect(box.x, box.y, box.w, box.h, 6);
     // The mask clips the scrolling content to the panel interior. Painted in logical coords — the
     // HUD camera's zoom=dpr scales it to physical (same pattern as ui/weaponCardList.js).
@@ -680,22 +689,44 @@ export default class HudScene extends Phaser.Scene {
     const { toMini, inBox, scale } = miniProjector(view, box);
 
     // Corridor silhouette: the union of discs along the spine — exactly how the playable set is
-    // defined (worldgen.js `corridorHexSet`), so the sketch is faithful and gap-free. Subsample the
-    // dense spine (samples ~24px apart; discs are `CORRIDOR_HALF_WIDTH_PX` wide) so a handful of
-    // heavily-overlapping circles cover it, and skip any whose disc can't touch the box — with a
-    // follow-window most of the 24,000px corridor is off-screen, so the visible slice is only a
-    // few circles even before the mask clips them.
+    // defined (worldgen.js `corridorHexSet`), so the sketch is faithful and gap-free. #383 draws it
+    // as a single CONTINUOUS thick stroke down the spine (a round-jointed polyline = the Minkowski
+    // sum of the path with a disc, i.e. the same union of discs) instead of a STRING of separate
+    // filled circles. The old per-disc fill left a scalloped edge whose bumps crawled and aliased as
+    // the follow-window scrolled ("mushy/warbly"); one stroke gives a clean, constant-width corridor
+    // with no crawling scallops. A disc at each vertex rounds the joints so bends stay smooth, and a
+    // finer subsample keeps the centreline curve crisp. Off-box spans are culled (with the entry/exit
+    // point kept so the corridor still reaches the box edge under the mask) — with a follow-window
+    // most of the 24,000px corridor is off-screen, so only a short visible run is ever stroked.
     const r = CORRIDOR_HALF_WIDTH_PX * scale;
-    const step = 6;
-    g.fillStyle(MM.corridor, 0.95);
-    const drawDisc = (wx, wy) => {
-      const m = toMini(wx, wy);
-      if (m.x + r >= box.x && m.x - r <= box.x + box.w && m.y + r >= box.y && m.y - r <= box.y + box.h) {
-        g.fillCircle(m.x, m.y, r);
+    const step = 4;
+    g.fillStyle(MM.corridor, 1);
+    g.lineStyle(2 * r, MM.corridor, 1);
+    const near = (m) => m.x + r >= box.x && m.x - r <= box.x + box.w && m.y + r >= box.y && m.y - r <= box.y + box.h;
+    let run = [], prev = null;
+    const flush = () => {
+      if (run.length >= 2) {
+        g.beginPath();
+        g.moveTo(run[0].x, run[0].y);
+        for (let k = 1; k < run.length; k++) g.lineTo(run[k].x, run[k].y);
+        g.strokePath();
       }
+      for (const p of run) g.fillCircle(p.x, p.y, r);   // round the joints (and cover a lone point)
+      run = [];
     };
-    for (let i = 0; i < spine.length; i += step) drawDisc(spine[i].x, spine[i].y);
-    drawDisc(spine[spine.length - 1].x, spine[spine.length - 1].y);   // never drop the far end
+    const consider = (wx, wy) => {
+      const m = toMini(wx, wy);
+      if (near(m)) {
+        if (run.length === 0 && prev) run.push(prev);   // seed with the just-outside entry point
+        run.push(m);
+      } else if (run.length) {
+        run.push(m); flush();                            // keep the exit point, then break the run
+      }
+      prev = m;
+    };
+    for (let i = 0; i < spine.length; i += step) consider(spine[i].x, spine[i].y);
+    consider(spine[spine.length - 1].x, spine[spine.length - 1].y);   // never drop the far end
+    flush();
 
     // Enemies: small danger dots. Cap to the nearest N to the player so a swarm stays readable.
     const player = this.registry.get('playerWorld');
@@ -707,10 +738,10 @@ export default class HudScene extends Phaser.Scene {
         .sort((a, b) => ((a.x - player.x) ** 2 + (a.y - player.y) ** 2) - ((b.x - player.x) ** 2 + (b.y - player.y) ** 2))
         .slice(0, CAP);
     }
-    g.fillStyle(MM.enemy, 0.95);
+    g.fillStyle(MM.enemy, 1);
     for (const e of shown) {
       const m = toMini(e.x, e.y);
-      if (inBox(m)) g.fillCircle(m.x, m.y, 2.2);
+      if (inBox(m)) g.fillCircle(m.x, m.y, 2.7);
     }
 
     // Objective: amber diamond + ring when it's inside the window; otherwise an amber edge marker
@@ -750,7 +781,7 @@ export default class HudScene extends Phaser.Scene {
     for (const w of worlds) {
       if (w.dead) continue;
       const m = toMini(w.x, w.y);
-      if (inBox(m)) drawChevron(g, m.x, m.y, w.angle, 6.5, identify ? w.color : MM.player, 1);
+      if (inBox(m)) drawChevron(g, m.x, m.y, w.angle, 7.5, identify ? w.color : MM.player, 1);
     }
   }
 

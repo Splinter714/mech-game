@@ -635,22 +635,28 @@ export function startSiren(e) {
   }
   lfo.start(t);
   let stopped = false;
-  function stop() {
+  // fadeSec: how long the master gain ramps to silence. The default (0.1s) is a click-safe near-
+  // instant cut for shutdown / return-to-garage; the tower-DESTRUCTION path (#385) passes a longer
+  // value so the wail trails off instead of snapping silent. Oscillators are held a touch past the
+  // ramp end, and the node teardown waits until after that, so a long fade is never cut short.
+  function stop(fadeSec = 0.1) {
     if (stopped) return;
     stopped = true;
     const now = e.ctx ? e._now() : t;
+    const fade = Math.max(0.02, fadeSec);
     master.gain.cancelScheduledValues(now);
     master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), now);
-    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-    for (const osc of oscs) { try { osc.stop(now + 0.14); } catch { /* already stopped */ } }
-    try { lfo.stop(now + 0.14); } catch { /* already stopped */ }
+    master.gain.exponentialRampToValueAtTime(0.0001, now + fade);
+    const stopAt = now + fade + 0.04;
+    for (const osc of oscs) { try { osc.stop(stopAt); } catch { /* already stopped */ } }
+    try { lfo.stop(stopAt); } catch { /* already stopped */ }
     setTimeout(() => {
       try {
         for (const osc of oscs) osc.disconnect();
         lfoDepth.disconnect(); lfo.disconnect(); master.disconnect();
         pan?.disconnect(); posGain.disconnect();
       } catch { /* already gone */ }
-    }, 200);
+    }, (fade + 0.1) * 1000);
   }
   return { stop, posGain, pan };
 }
