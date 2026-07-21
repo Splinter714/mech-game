@@ -3,12 +3,13 @@ import { Mech, RELOAD_SECONDS } from './Mech.js';
 import { LOCATIONS } from './anatomy.js';
 import { WEAPONS } from './weapons.js';
 
-// #372 retuned every weapon's magazine (ammoMax/ammoRegen) so a held trigger runs dry in
-// ~6s. These ammo tests are about the generic Mech MECHANICS (spend, trickle regen, cap, and
-// the #402 reload), not about any particular weapon's balance, so they read the catalog's
-// live numbers instead of hard-coding them — a future retune can't silently break them.
+// #402 removed the passive between-shots trickle: a weapon only refills by RELOADING (a fixed
+// RELOAD_SECONDS lockout that ends with a full magazine), and burst length is set by magazine size.
+// These ammo tests are about the generic Mech MECHANICS (spend, cap, and the reload), not about any
+// particular weapon's balance, so they read the catalog's live numbers instead of hard-coding them
+// — a future retune can't silently break them.
 // PC = the slow cycled weapon under test, AC = a second, independent weapon in another slot.
-const PC = WEAPONS.plasmaCannon;      // ammoMax/ammoRegen read live
+const PC = WEAPONS.plasmaCannon;      // ammoMax read live
 const AC = WEAPONS.autocannon;
 
 // Unlimited-ammo (ammoMax: null) is a generic mechanic — historically exercised by the
@@ -156,7 +157,7 @@ describe('Mech weapons go offline with their part', () => {
   });
 });
 
-describe('Mech weapon ammo (self-regenerating magazines)', () => {
+describe('Mech weapon ammo (fixed magazines, reload-only refill)', () => {
   it('starts a mounted weapon with a full magazine', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('rightArm', 'autocannon');
@@ -173,15 +174,16 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
     expect(m.readyWeapons()).toHaveLength(0);
   });
 
-  it('regenAmmo refills over time but never past the magazine size (partial drain, no reload)', () => {
+  it('#402: ammo does NOT trickle back between shots — a partial drain stays put until reload', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
-    m.consumeAmmo('leftArm', 0, PC.ammoMax - 1); // leaves exactly 1 — a PARTIAL drain, not a
-    // full empty, so #402's auto-reload never engages here; the trickle proceeds immediately.
+    m.consumeAmmo('leftArm', 0, PC.ammoMax - 1); // leaves exactly 1 — a PARTIAL drain, so #402's
+    // auto-reload never engages (only a drain to exactly 0 does). With the passive trickle removed,
+    // regenAmmo must leave a non-reloading slot's ammo exactly where firing left it.
     m.regenAmmo(2);
-    expect(m.weapons()[0].ammo).toBeCloseTo(1 + PC.ammoRegen * 2, 5);
-    m.regenAmmo(1000); // would overshoot the magazine many times over
-    expect(m.weapons()[0].ammo).toBe(PC.ammoMax);
+    expect(m.weapons()[0].ammo).toBe(1);
+    m.regenAmmo(1000); // no matter how much time passes, no refill without a reload
+    expect(m.weapons()[0].ammo).toBe(1);
   });
 
   // #235: Overdrive halves the fire cycle (cycleMult 0.5 -> shots go out ~2x as often).
@@ -259,9 +261,9 @@ describe('Mech weapon ammo (self-regenerating magazines)', () => {
   });
 });
 
-// #402: a fully-drained weapon slot enters a RELOAD period (RELOAD_SECONDS) — it can't fire and
-// doesn't trickle while reloading, and when the timer expires its magazine comes back FULL (not a
-// trickle-from-0, which is how #238's flat empty-lockout behaved). Scoped to only that slot.
+// #402: a fully-drained weapon slot enters a RELOAD period (RELOAD_SECONDS) — it can't fire while
+// reloading, and when the timer expires its magazine comes back FULL. Since #402 removed the
+// passive trickle, reload is the ONLY way ammo ever comes back. Scoped to only that slot.
 describe('Mech per-weapon reload (#402) — auto on empty', () => {
   it('draining a magazine to exactly 0 starts that slot\'s reload', () => {
     const m = new Mech({ chassisId: 'medium' });
@@ -282,13 +284,13 @@ describe('Mech per-weapon reload (#402) — auto on empty', () => {
     expect(m.readyWeapons()).toHaveLength(0);
   });
 
-  it('regenAmmo does not tick ammo up mid-reload — it only counts the reload timer down', () => {
+  it('regenAmmo holds ammo at 0 mid-reload — it only counts the reload timer down', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.consumeAmmo('leftArm', 0, PC.ammoMax);
-    m.regenAmmo(2); // ammo would trickle if regen applied, but the reload blocks it
+    m.regenAmmo(RELOAD_SECONDS / 2); // partway through the reload, ammo stays empty
     expect(m.weapons()[0].ammo).toBe(0);
-    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS - 2, 5);
+    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS / 2, 5);
   });
 
   it('when the reload completes, the magazine comes back FULL and ready (not a trickle-from-0)', () => {
@@ -302,36 +304,36 @@ describe('Mech per-weapon reload (#402) — auto on empty', () => {
     expect(m.weapons()[0].ready).toBe(true);
   });
 
-  it('reload is scoped to only the affected slot — other weapons keep firing/trickling normally', () => {
+  it('reload is scoped to only the affected slot — an un-drained weapon is unaffected', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
     m.mount('rightArm', 'autocannon');   // unaffected by the other slot's reload
     m.consumeAmmo('leftArm', 0, PC.ammoMax); // drains leftArm to 0, starts ITS reload only
     m.consumeAmmo('rightArm', 0, 1); // rightArm just fires normally, no reload
-    m.regenAmmo(2);
+    m.regenAmmo(RELOAD_SECONDS / 2);
 
     const left = m.weapons().find((w) => w.location === 'leftArm');
     const right = m.weapons().find((w) => w.location === 'rightArm');
-    expect(left.ammo).toBe(0); // still reloading, trickle suppressed
+    expect(left.ammo).toBe(0); // still reloading
     expect(left.reloading).toBe(true);
     expect(right.reloading).toBe(false);
-    expect(right.ammo).toBeCloseTo(Math.min(AC.ammoMax, AC.ammoMax - 1 + AC.ammoRegen * 2), 5);
+    expect(right.ammo).toBe(AC.ammoMax - 1); // no trickle: sits where firing left it
     expect(right.ready).toBe(true);
   });
 
   it('repeatedly firing an already-dry weapon does not keep resetting the reload timer', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
-    m.consumeAmmo('leftArm', 0, 4); // drains to 0, reload starts at full
-    m.regenAmmo(1); // reload ticks down
+    m.consumeAmmo('leftArm', 0, PC.ammoMax); // drains to 0, reload starts at full
+    m.regenAmmo(RELOAD_SECONDS / 2); // reload ticks partway down
     m.consumeAmmo('leftArm', 0, 1); // still 0 ammo, a no-op drain — must not reset the timer
-    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS - 1, 5);
+    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS / 2, 5);
   });
 
   it('repairAll clears an active reload along with topping ammo back up', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
-    m.consumeAmmo('leftArm', 0, 4);
+    m.consumeAmmo('leftArm', 0, PC.ammoMax);
     expect(m.weapons()[0].reloading).toBe(true);
     m.repairAll();
     expect(m.weapons()[0].reload).toBe(0);

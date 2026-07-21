@@ -96,11 +96,6 @@ export function mountHasReadout(mech, loc) {
   return mech.mounts[loc].filter(isWeapon).some((id) => getWeapon(id)?.ammoMax != null);
 }
 
-// The readout housing's bar length (design units) for a mount, sized to the part's own width.
-function readoutBarLen(part) {
-  return Math.max(READOUT.barMin, part.w * READOUT.barSpan);
-}
-
 // Bake the persistent readout socket onto `loc`'s texture at the part's joint (the same anchor the
 // overlay draws to). Only for mounts that actually carry a limited-ammo readout, and never over a
 // destroyed part. Always drawn otherwise — armored or stripped — so the live readout stays put.
@@ -108,7 +103,7 @@ function drawReadoutMount(sg, mech, lay, loc, T) {
   if (!mountHasReadout(mech, loc)) return;
   const p = lay[loc];
   const jointY = p.y + p.h * (PART_PIVOT[loc] ?? 0.42);
-  readoutMount(sg, T, p.x, jointY, readoutBarLen(p));
+  readoutMount(sg, T, p.x, jointY);
 }
 
 // Per-location anchors + box sizes in mech-local design coords (origin = centre, -y =

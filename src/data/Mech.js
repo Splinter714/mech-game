@@ -15,23 +15,22 @@ import {
 } from './shield.js';
 
 // #402: the RELOAD period (seconds) — how long a weapon slot is locked out while it reloads,
-// after which its magazine comes back FULL (not a slow trickle-from-0). Two things start it:
+// after which its magazine comes back FULL. Two things start it:
 //   * AUTO — a magazine drained to exactly 0 reloads itself (consumeAmmo below);
 //   * MANUAL — the player triggers it early on R3/F to top a mag off before it runs dry
 //     (reloadAllWeapons below, driven from arena/firing.js).
-// This SUPERSEDES #238's flat empty-lockout: that also locked a dry slot out for 3s, but then
-// resumed the slow trickle from 0; now the same lockout ends with a full magazine, which reads
-// as a real reload beat rather than an invisible recharge.
 //
-// DELIBERATELY a FLAT duration, not `ammoMax / ammoRegen` (the trickle's own time-to-full):
-// tying it to magazine size would give big-magazine weapons (beamLaser's 60, swarmRack's 8)
-// punishing multi-second lockouts and would fight the per-weapon recovery pacing #372/#376/#377
-// tuned into `ammoRegen`. Instead the CONTINUOUS TRICKLE (regenAmmo) is left exactly as tuned —
-// it stays the everyday economy (ease off the trigger, rounds trickle back at `ammoRegen`) — and
-// the reload sits ON TOP as the running-dry beat plus an optional manual top-off. 3s matches the
-// old #238 lockout's magnitude, so running a mag dry costs about the same time as before but now
-// hands back a full magazine. One dial: raise it to make reloading a heavier commitment.
-export const RELOAD_SECONDS = 3;
+// #402 (owner decision): RELOAD IS THE ONLY REFILL PATH. There is NO passive between-shots trickle
+// anymore — a weapon's ammo stays exactly where firing left it until a reload completes, then snaps
+// to a full magazine. Sustained fire is balanced purely by MAGAZINE SIZE (`ammoMax` in weapons.js):
+// burst-before-reload = ammoMax ÷ fire rate. So the old continuous-regen economy (#372/#376/#377,
+// `ammoRegen`) is gone from the player model; each weapon's `ammoMax` was re-tuned so a held trigger
+// fires a few seconds before the reload beat.
+//
+// DELIBERATELY a FLAT duration, not tied to magazine size: a big magazine already costs more UPTIME
+// to burn through, so also making its reload longer would double-penalise it. One flat, fast beat
+// (1s) reads as a snappy magazine swap. One dial: raise it to make reloading a heavier commitment.
+export const RELOAD_SECONDS = 1;
 
 export class Mech {
   constructor(data = {}) {
@@ -86,7 +85,7 @@ export class Mech {
 
   // (Re)build the ammo arrays so each weapon starts with a full magazine. `reload` is a
   // parallel array (same shape/indexing as `ammo[loc]`) holding remaining RELOAD seconds
-  // per slot — 0 means "not reloading, trickle regen proceeds normally." Runtime-only, like ammo.
+  // per slot — 0 means "not reloading" (ammo just sits still, no trickle). Runtime-only, like ammo.
   _initAmmo() {
     this.ammo = {};
     this.reload = {};
@@ -380,23 +379,20 @@ export class Mech {
     return started;
   }
 
-  // Per-frame ammo upkeep: a slot mid-RELOAD counts its timer down and snaps to a FULL magazine
-  // the moment it expires (#402); every other slot tops back up over time at the weapon's own
-  // trickle rate (`ammoRegen`), capped at the magazine size. The trickle is the everyday economy
-  // (unchanged by #402 — see the weapon-balance comments in weapons.js); the reload is the beat
-  // on running dry. Name kept as `regenAmmo` since the arena/enemy update paths call it.
+  // Per-frame ammo upkeep: a slot mid-RELOAD counts its timer down and snaps to a FULL magazine the
+  // moment it expires (#402). That is the ONLY way ammo comes back — #402 removed the passive
+  // between-shots trickle, so a slot that ISN'T reloading holds its ammo exactly where firing left
+  // it (sustained fire is balanced by magazine size instead; see weapons.js). Name kept as
+  // `regenAmmo` since the arena/enemy update paths call it.
   regenAmmo(dt) {
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc].forEach((id, i) => {
-        if (this.ammo[loc][i] == null) return;   // unlimited: never reloads or trickles
+        if (this.ammo[loc][i] == null) return;   // unlimited: never reloads
         if (this.reload[loc][i] > 0) {
           const r = Math.max(0, this.reload[loc][i] - dt);
           this.reload[loc][i] = r;
           if (r === 0) this.ammo[loc][i] = getWeapon(id).ammoMax;   // reload complete → full mag
-          return;
         }
-        const w = getWeapon(id);
-        this.ammo[loc][i] = Math.min(w.ammoMax, this.ammo[loc][i] + w.ammoRegen * dt);
       });
     }
   }

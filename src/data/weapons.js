@@ -53,49 +53,37 @@
 // (ms between trigger pulls).
 //
 // Ammo: every weapon carries its own self-contained magazine — there are no separate
-// ammo bins or heat sinks. `ammoMax` is the magazine size and `ammoRegen` is how many
-// rounds it refills per second (energy = battery recharge, ballistic = autoloader), so
-// ammo is the only firing constraint and it tops back up over time. `ammoMax: null`
-// means unlimited (melee — the `melee` category is `usesAmmo: false`; no melee weapon is
-// currently in the table, but the null path is live and must stay unlimited).
+// ammo bins or heat sinks. `ammoMax` is the magazine size, and it is the ONLY firing
+// constraint. `ammoMax: null` means unlimited (melee — the `melee` category is
+// `usesAmmo: false`; no melee weapon is currently in the table, but the null path is live
+// and must stay unlimited).
 //
-// #402 — RELOAD sits ON TOP of this trickle, it does NOT replace it. The continuous `ammoRegen`
-// trickle below stays exactly as tuned (all of #372/#376/#377), and remains the everyday
-// economy: ease off the trigger and rounds come back at `ammoRegen`/s. What #402 adds is a real
-// RELOAD BEAT — a fixed lockout (Mech.RELOAD_SECONDS, magazine-size-independent) that ends with a
-// FULL magazine. It starts two ways: AUTOMATICALLY when a mag is drained to 0, or MANUALLY when
-// the player hits reload (R3/F) to top a mag off early. So none of the per-weapon `ammoMax`/
-// `ammoRegen` numbers below moved for #402 — the reload is a flat time layered over them, not a
-// re-derivation of them. `ammoMax: null` weapons are exempt (they never run dry or reload).
+// #402 — RELOAD IS THE ONLY REFILL PATH (owner decision). The old continuous `ammoRegen`
+// between-shots trickle is GONE from the player model: ammo no longer drifts back up while you
+// hold or ease off the trigger. A magazine only refills by RELOADING — a fixed 1s lockout
+// (Mech.RELOAD_SECONDS) that ends with a FULL magazine, started AUTOMATICALLY when a mag hits 0 or
+// MANUALLY on R3/F. `ammoMax: null` weapons are exempt (they never run dry or reload).
 //
-// #372 — THE ~6-SECOND RULE (uniform across every weapon). Jackson: "it's time we implement
-// actual limits to the reload rate that is lower than the fire rate for all weapons."
-// Before #372 exactly ONE weapon (plasmaLance) actually obeyed this; the rest were
-// effectively unlimited (beamLaser ~60s, autocannon/napalm/swarmRack literally never dry).
-// The model is plasmaLance's, generalized:
+// BALANCE IS PURELY MAGAZINE SIZE. With no trickle, a held trigger's burst-before-reload is exactly
+// `ammoMax ÷ consumption-per-second`. Consumption is ONE ROUND PER TRIGGER PULL — NOT per emitted
+// shot: `delivery.count` (a shotgun's 7 pellets, a swarm rack's 6 missiles) costs the same single
+// round as a lone slug (see fireWeapon in scenes/arena/firing.js). So the consumption rate is purely
+// the fire interval (`_fireInterval`): `fireRate`/s for a stream pattern, `1000 / max(120,
+// cycleTime)`/s for everything else. Each weapon's `ammoMax` below is tuned to `≈ burst-seconds ×
+// consumption-per-second` for a sensible pre-reload burst (the ~6s intent from the old #372/#376/#377
+// economy, kept as a rough anchor — most weapons land ~6s, with a few weapon-specific exceptions
+// carried over: napalm ~7.5s, streakPod ~7.2s, plasmaCannon ~8s, swarmRack ~15s). That is why a
+// 20/s stream carries a ~120-round magazine while a 1.1s-cycle autocannon carries 5.
 //
-//   * REFILL IS CONTINUOUS, NOT STOP-TO-RELOAD. You always regain ammo — you just lose it
-//     faster while the trigger is held, so easing off partially recovers you. There is no
-//     reload state and no magazine swap.
-//   * `ammoRegen` is MEANINGFULLY BELOW the weapon's consumption rate — roughly HALF it for
-//     the fast stream weapons (plasmaLance's original 10/s vs fireRate 20/s), 0.4–0.6x for
-//     the slow cycled ones.
-//   * Holding the trigger from a full magazine runs the weapon dry in ~6 SECONDS, for every
-//     weapon. weapons.test.js asserts this per weapon and is the merge gate for #372.
+// (Historical: #372 introduced a ~6s continuous-fire limit via a below-consumption `ammoRegen`
+// trickle; #376/#377 widened the missiles' magazines and swarmRack's recovery. #402 removed the
+// trickle entirely, so those regen numbers are gone and the magazines below were re-derived so the
+// burst windows land in the same ballpark without any passive refill.)
 //
-// Consumption is ONE ROUND PER TRIGGER PULL — NOT per emitted shot. `delivery.count` (a
-// shotgun's 7 pellets, a swarm rack's 6 missiles) costs the same single round as a lone
-// slug (see fireWeapon in scenes/arena/firing.js). So the consumption rate is purely the
-// fire interval (`_fireInterval`): `fireRate`/s for a stream pattern, `1000 / max(120,
-// cycleTime)`/s for everything else. That is why a 20/s stream carries a 60-round magazine
-// while a 1.1s-cycle autocannon carries 3 — both are ~3x their own shots-per-second.
-//
-// SUSTAINED vs BURST DPS: the `DPS = …` figures in each weapon's comment below are
-// WHILE-FIRING DPS and remain correct as written — but since #372 no weapon can hold that
-// number for more than ~6s. Sustained (indefinite) DPS is the while-firing figure scaled by
-// `ammoRegen / consumption-per-second`, i.e. roughly HALF the quoted DPS for the stream
-// weapons and ~0.4–0.6x for the cycled ones. Both numbers are real; the quoted one governs
-// a burst trade, the derived one governs a long grind. Don't "correct" the comments.
+// SUSTAINED vs BURST DPS: the `DPS = …` figures in each weapon's comment below are WHILE-FIRING DPS
+// and remain correct as written — they govern the burst. There is no separate lower "sustained"
+// figure now: a weapon fires its burst, reloads for 1s, and repeats, so its long-grind DPS is the
+// while-firing DPS scaled by burst / (burst + 1s). Don't "correct" the DPS comments.
 //
 // Display names are generic sci-fi, deliberately *not* franchise jargon; the ids stay
 // stable so saved builds keep resolving.
@@ -128,7 +116,7 @@ export const WEAPONS = {
     // DPS = damage(totalDamage/count) x count / cycleTime(s): pre-retune
     // (16/5)*5/3 = 5.33 dps -> (66/5)*5/3 = 22.0 dps.
     totalDamage: 66, range: { min: 0, opt: 340, max: 600 },
-    ammoMax: 2, ammoRegen: 0.13, slots: 1, cycleTime: 3000,   // #372: ~6.0s hold
+    ammoMax: 2, slots: 1, cycleTime: 3000,   // #402: ~6.0s burst (2 pulls × 3.0s), then 1s reload
     delivery: { hit: 'hitscan', pattern: 'single', count: 5, burst: { wubOn: 25, wubOff: 50 } },
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
@@ -136,7 +124,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 2 -> 1.5 to bring raw DPS down from 40 to the ~30 band.
     // DPS = damage x fireRate: 2*20 = 40 dps -> 1.5*20 = 30 dps.
     damage: 1.5, range: { min: 0, opt: 500, max: 640 },
-    ammoMax: 60, ammoRegen: 10, slots: 2, cycleTime: 0,   // #372: ~5.9s hold (plasmaLance's exact economy — same 20/s cadence)
+    ammoMax: 120, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (120 rounds ÷ 20/s), then 1s reload
     delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true },
   }),
   plasmaLance: w({  // #117: heavier, punchier travelling energy bolt — a real projectile
@@ -161,13 +149,10 @@ export const WEAPONS = {
     // #118 — only cadence and the numbers that have to move with it (damage, ammo) changed.
     // Rebalance math: a ~18x cadence jump can't keep 20-damage hits (that'd be ~400 dps), so
     // damage came down to 2/bolt — mirroring beamLaser's own per-tick damage (also 2), since
-    // both are now "many small hits at 20/sec" weapons. Ammo had to be redesigned from scratch
-    // for a stream instead of a single shot: ammoRegen (10/s) is deliberately HALF of fireRate
-    // (20/s), so — unlike #118's original retune note about the AI's ammoRegen accidentally
-    // outpacing its fire rate and giving de facto unlimited ammo — holding the trigger always
-    // drains the magazine net 10 ammo/s. ammoMax: 60 gives a real ~6s full-rate burst (60 /
-    // (20-10)) before the mag empties and fire throttles down to whatever the 10/s regen can
-    // support. Full recharge from empty takes ~6s (60 / 10), symmetric with the burst window.
+    // both are now "many small hits at 20/sec" weapons. #402: with the trickle gone, the magazine
+    // alone sets the burst — ammoMax: 120 at 20/s is a straight ~6.0s of held fire before the mag
+    // empties and the 1s reload beat kicks in (this weapon was the ~6s template; #372's old 60/10
+    // regen economy that hit the same window is retired).
     // cycleTime is unused for a stream pattern (see _fireInterval in firing.js), left at 0 like
     // every other stream weapon (beamLaser/machineGun/flamethrower).
     // #259 DPS-squish: damage 2 -> 1.5 (in step with beamLaser, still mirrored 1:1) to bring raw
@@ -177,7 +162,7 @@ export const WEAPONS = {
     // enemy-side code changes were needed for this to work as an enemy-fired projectile stream.
     id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
     damage: 1.5, range: { min: 0, opt: 460, max: 620 },
-    ammoMax: 60, ammoRegen: 10, slots: 2, cycleTime: 0,
+    ammoMax: 120, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (120 ÷ 20/s), then 1s reload
     // #213: very light per-bolt tracking bias (Halo Needler-style) — see `weakSeek` above.
     // NOT `guidance: 'homing'` — these bolts never lock on and never gate firing on a lock
     // (targetlock.js only checks `guidance === 'homing'`).
@@ -201,7 +186,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 34 -> 52.8 to bring raw DPS up from ~15.45 to the ~24 band.
     // DPS = damage / cycleTime(s): 34/2.2 = 15.45 dps -> 52.8/2.2 = 24.0 dps.
     damage: 52.8, range: { min: 120, opt: 400, max: 640 },
-    ammoMax: 2, ammoRegen: 0.26, slots: 2, cycleTime: 2200,   // #372: ~6.6s hold
+    ammoMax: 3, slots: 2, cycleTime: 2200,   // #402: ~6.6s burst (3 pulls × 2.2s), then 1s reload
     delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover
@@ -209,8 +194,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 18 -> 32 to bring raw DPS up from 11.25 to the ~20 band.
     // DPS = damage / cycleTime(s): 18/1.6 = 11.25 dps -> 32/1.6 = 20.0 dps.
     damage: 32, range: { min: 0, opt: 480, max: 820 },
-    // #376: ammoMax 3 -> 4 with regen 0.27 -> 0.22 — one extra pull (4 -> 5, 6.4s -> 8.0s).
-    ammoMax: 4, ammoRegen: 0.22, slots: 2, cycleTime: 1600,   // #376: ~8.0s hold
+    ammoMax: 5, slots: 2, cycleTime: 1600,   // #402: ~8.0s burst (5 pulls × 1.6s), then 1s reload
     // #252 playtest follow-up: "lobbed weapons should actually seek, not just fly to the spot
     // targeted when the shot was initiated." NOT `guidance: 'homing'` — that would flip
     // canFireWeapon's no-lock-no-fire gate on (targetlock.js only special-cases
@@ -256,15 +240,14 @@ export const WEAPONS = {
     // entirely from spreadJitter (9°) + makeProjectile's per-particle speed variance now
     // rather than partly from count variance, which reads the same in motion at 18 ticks/sec.
     damage: 0.5185, range: { min: 0, opt: 338, max: 600 },
-    ammoMax: 54, ammoRegen: 9, slots: 2, cycleTime: 0,   // #372: ~5.9s hold (regen 9 is HALF fireRate 18)
+    ammoMax: 108, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (108 ÷ 18/s), then 1s reload
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping 3 particles (count) instead of exactly one, so held
     // fire reads as one dense, unbroken gout rather than a thin single-file tracer or a
-    // series of pulses. #372 REVERSES the old economy note here: ammoRegen (22) used to sit
-    // ABOVE fireRate (18) so holding the trigger never ran the magazine dry — that was exactly
-    // the "effectively unlimited" state #372 removed. It's now 54 / 9, i.e. regen at half the
-    // 18/s consumption on a 3x-shots-per-second magazine, the same shape as plasmaLance:
-    // ~5.9s of held flame, then a taper. spreadJitter is narrower than the original pulsed
+    // series of pulses. #402: the magazine alone bounds the gout — 108 rounds at 18/s is ~6.0s of
+    // held flame, then the 1s reload beat (this replaces #372's old 54/9 below-consumption trickle,
+    // which itself had replaced an "effectively unlimited" ammoRegen-above-fireRate economy).
+    // spreadJitter is narrower than the original pulsed
     // version (9° vs 20°) for a tighter cone, and still randomizes each particle's angle
     // (and makeProjectile's speed) so the stream looks chaotic, not laser-straight.
     // range/velocity pushed out (#52): the flame reaches further (max 160, opt 90 at the
@@ -286,7 +269,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 16 -> 24.2 to bring raw DPS up from ~14.55 to the ~22 band.
     // DPS = damage / cycleTime(s): 16/1.1 = 14.55 dps -> 24.2/1.1 = 22.0 dps.
     damage: 24.2, range: { min: 0, opt: 347, max: 600 },
-    ammoMax: 3, ammoRegen: 0.54, slots: 2, cycleTime: 1100,   // #372: ~5.5s hold
+    ammoMax: 5, slots: 2, cycleTime: 1100,   // #402: ~5.5s burst (5 pulls × 1.1s), then 1s reload
     delivery: { hit: 'projectile', path: 'straight', velocity: 760, pattern: 'single', kind: 'slug' },
   }),
   machineGun: w({   // sustained stream of small fast tracer rounds
@@ -296,7 +279,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 1.667 -> 0.889 to bring raw DPS down from ~60 to the ~32 band.
     // DPS = damage x count(2) x fireRate(18): 1.667*2*18 = 60.01 -> 0.889*2*18 = 32.0 dps.
     damage: 0.889, range: { min: 0, opt: 338, max: 600 },
-    ammoMax: 54, ammoRegen: 9, slots: 1, cycleTime: 0,   // #372: ~5.9s hold (regen 9 is HALF fireRate 18)
+    ammoMax: 108, slots: 1, cycleTime: 0,   // #402: ~6.0s burst (108 ÷ 18/s), then 1s reload
     // count: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
     // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
     // `count: 3` for a triple stream (widen streamSpacing to taste if the lanes crowd).
@@ -307,7 +290,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 3 -> 4.457 to bring raw DPS up from 17.5 to the ~26 band.
     // DPS = damage x count(7) / cycleTime(s): 3*7/1.2 = 17.5 dps -> 4.457*7/1.2 = 26.0 dps.
     damage: 4.457, range: { min: 0, opt: 338, max: 600 },
-    ammoMax: 3, ammoRegen: 0.45, slots: 2, cycleTime: 1200,   // #372: ~6.0s hold
+    ammoMax: 5, slots: 2, cycleTime: 1200,   // #402: ~6.0s burst (5 pulls × 1.2s), then 1s reload
     // #101 correction: an earlier pass jittered each pellet's LAUNCH angle for an "organic"
     // feel, but the owner wants the fan itself perfectly even/deterministic every trigger
     // pull — no spreadJitter. Instead the pellets get Cluster Salvo's actual mechanism
@@ -328,8 +311,7 @@ export const WEAPONS = {
     // duration below) stays a separate bonus, untouched by this retune, per the #259 audit's
     // explicit call-out that napalm's low headline DPS undercounted its splash/burn utility.
     damage: 27, range: { min: 50, opt: 500, max: 780 },
-    // #376: ammoMax 3 -> 4 with regen 0.30 -> 0.22 — one extra pull (4 -> 5, 6.0s -> 7.5s).
-    ammoMax: 4, ammoRegen: 0.22, slots: 2, cycleTime: 1500,   // #376: ~7.5s hold
+    ammoMax: 5, slots: 2, cycleTime: 1500,   // #402: ~7.5s burst (5 pulls × 1.5s), then 1s reload
     // #252 playtest follow-up — see plasmaCannon's comment above for the full rationale:
     // `tracksLock: true`, not `guidance: 'homing'`, so this still fires unconditionally with no
     // lock (canFireWeapon is untouched), but steers at the lock's live target through the
@@ -374,20 +356,17 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 10.667 -> 6.933 to bring raw DPS down from ~40 to the ~26 band.
     // DPS = count(6) x damage / cycleTime(s): 6*10.667/1.6 = 40.0 -> 6*6.933/1.6 = 26.0.
     damage: 6.933, range: { min: 280, opt: 1050, max: 1750 },
-    // #376: ammoMax 3 -> 4 with regen 0.27 -> 0.20, buying one extra trigger pull per held
-    // burst (4 -> 5 pulls, 6.4s -> 8.0s) — see weapons.test.js's #376 note on why the slow
-    // cycled missiles can't gain a shot inside #372's 5-7s window.
     // #377 feel pass (Swarm Rack ONLY — no other missile touched):
     //   * cycleTime 1600 -> 1100. "I want to be able to fire them more often." ~45% more
     //     trigger pulls per second; while-firing DPS rides up with it (6 x 6.933 / 1.1 =
     //     ~37.8 vs ~26.0). That is a real buff, deliberately accepted — Jackson is tuning
     //     this weapon by feel, and every number here is a playtest dial.
-    //   * ammoMax 4 -> 8 and ammoRegen 0.20 -> 0.45 ("increase reload speed and magazine
-    //     size"). Both up, so this now BOTH holds fire far longer AND recovers much faster:
-    //     ~15.4s of continuous fire (14 pulls) from full, and ~2.2s to earn back a single
-    //     pull instead of ~5.0s. That blows through #372's ~6s rule and past #376's 8.0s;
-    //     the per-weapon exception in weapons.test.js is widened for swarmRack alone.
-    ammoMax: 8, ammoRegen: 0.45, slots: 2, cycleTime: 1100,   // #377: ~15.4s hold
+    //   * a DELIBERATELY BIG magazine ("increase magazine size"): 14 rounds at the 1.1s cycle is
+    //     ~15.4s of continuous fire before the 1s reload — far past the ~6s other weapons hold.
+    //     #402 carries that intent forward (it used to be ammoMax 8 + a fast 0.45/s regen; with
+    //     the trickle gone the magazine alone is sized to keep the ~15s burst). The per-weapon
+    //     burst-length exception in weapons.test.js is widened for swarmRack alone.
+    ammoMax: 14, slots: 2, cycleTime: 1100,   // #402: ~15.4s burst (14 pulls × 1.1s), then 1s reload (swarmRack's deliberate big mag, #377)
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
     // salvo can clear cover.
@@ -475,9 +454,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 12 -> 7.8 to bring raw DPS down from 40 to the ~26 band.
     // DPS = count(6) x damage / cycleTime(s): 12*6/1.8 = 40.0 -> 7.8*6/1.8 = 26.0.
     damage: 7.8, range: { min: 210, opt: 910, max: 1540 },
-    // #376: ammoMax 2 -> 3 with regen 0.33 -> 0.25 — one extra pull per burst (3 -> 4,
-    // 5.4s -> 7.2s).
-    ammoMax: 3, ammoRegen: 0.25, slots: 2, cycleTime: 1800,   // #376: ~7.2s hold
+    ammoMax: 4, slots: 2, cycleTime: 1800,   // #402: ~7.2s burst (4 pulls × 1.8s), then 1s reload
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
     // path: 'arcing' (#57) — same loft-over-cover treatment as Swarm Rack.
@@ -500,11 +477,9 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 8.8 -> 6.16 to bring raw DPS down from 40 to the ~28 band.
     // DPS = count(5) x damage / cycleTime(s): 8.8*5/1.1 = 40.0 -> 6.16*5/1.1 = 28.0.
     damage: 6.16, range: { min: 0, opt: 660, max: 960 },
-    // #376: ammoMax 3 -> 4 with regen 0.54 -> 0.40 — one extra pull (5 -> 6), and the only
-    // missile whose faster 1.1s cycle lets the extra shot land INSIDE #372's 5-7s window.
-    // Its velocity (1140) is untouched: it's the straight-flying reference every other
-    // missile was pulled just below.
-    ammoMax: 4, ammoRegen: 0.40, slots: 1, cycleTime: 1100,   // #376: ~6.6s hold
+    // velocity (1140) is untouched: it's the straight-flying reference every other missile was
+    // pulled just below.
+    ammoMax: 6, slots: 1, cycleTime: 1100,   // #402: ~6.6s burst (6 pulls × 1.1s), then 1s reload
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', count: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },

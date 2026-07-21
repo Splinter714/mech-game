@@ -141,39 +141,35 @@ describe('lobbed-weapon live tracking (#252 follow-up)', () => {
   });
 });
 
-// ── #372: every weapon reloads slower than it fires ──────────────────────────────────────
-// Jackson: "it's time we implement actual limits to the reload rate that is lower than the
-// fire rate for all weapons." Target ~6 seconds of continuous fire on EVERY weapon, matching
-// plasmaLance — the one weapon that already did this and the one he has actually felt in
-// play. The refill model is continuous (never stop-to-reload): regen keeps ticking, it is
-// just meaningfully below consumption, so a held trigger nets out to a drain.
+// ── #402: burst length is set by MAGAZINE SIZE, with no passive trickle ───────────────────
+// #402 (owner decision) removed the continuous `ammoRegen` refill entirely: a weapon only refills
+// by RELOADING (a fixed 1s lockout that ends with a full magazine — Mech.js). So sustained fire is
+// balanced purely by `ammoMax`: a held trigger fires `ammoMax ÷ consumption-per-second` seconds,
+// then reloads. Each weapon's magazine was re-tuned to keep the same ~6s burst intent the old
+// #372/#376/#377 economy targeted (a few weapons deliberately longer — see BURST_MAX_SECONDS).
 //
-// These assertions ARE the merge gate for #372. They are pure arithmetic over the data — no
-// Phaser, no frame timing — but they mirror the real runtime rules exactly:
+// These assertions ARE the merge gate for #402's balance. They are pure arithmetic over the data —
+// no Phaser, no frame timing — but they mirror the real runtime rules exactly:
 //   * consumption is ONE round per TRIGGER PULL, not per emitted shot (firing.js fireWeapon
 //     spends 1 regardless of delivery.count);
 //   * the interval between pulls is `_fireInterval` (firing.js): 1000/fireRate for a stream
 //     pattern, max(120, cycleTime) otherwise;
-//   * a weapon can only fire with ammo >= 1 (Mech.weapons()'s `ready`), and regen is capped
-//     at ammoMax (Mech.regenAmmo). The >= 1 gate is why this is simulated per shot rather
-//     than solved as `ammoMax / (rate - regen)`: for a slow cycled weapon the last fraction
-//     of a round is not spendable, and the continuous approximation is off by a whole cycle.
-// The #402 RELOAD is deliberately NOT modelled here — it starts once the magazine is already dry,
-// so it governs recovery, not the burst window being measured. The trickle economy #372 tuned is
-// unchanged by #402 (see the ammo note in weapons.js), so these bounds still stand.
-describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire', () => {
+//   * a weapon can only fire with ammo >= 1 (Mech.weapons()'s `ready`) and gets NO ammo back until
+//     it reloads, so a full magazine's burst is exactly its whole-round count of pulls.
+describe('#402 ammo economy — magazine size sets each weapon\'s ~6s burst (no trickle)', () => {
   // ms between trigger pulls — mirrors firing.js `_fireInterval` with identity (no-buff) mods.
   const fireIntervalMs = (w) => (w.delivery.pattern === 'stream' && w.delivery.fireRate > 0
     ? 1000 / w.delivery.fireRate
     : Math.max(120, w.cycleTime));
 
   // Seconds of held trigger, from a full magazine, until the first pull that ammo can't cover.
+  // #402: no regen — ammo only ever goes down until a reload, so this is just whole-round pulls.
   const burstSeconds = (w) => {
     const step = fireIntervalMs(w) / 1000;
     let ammo = w.ammoMax;
     for (let shot = 0; shot < 100000; shot += 1) {
       if (ammo < 1) return shot * step;          // dry: this pull is refused
-      ammo = Math.min(w.ammoMax, Math.max(0, ammo - 1) + w.ammoRegen * step);
+      ammo = Math.max(0, ammo - 1);
     }
     return Infinity;
   };
@@ -186,65 +182,40 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
     for (const [, w] of limited) expect(w.category).not.toBe('melee');
   });
 
-  // #376 — DELIBERATE, NARROW WIDENING OF #372's UPPER BOUND for the four slow-cycled arcing
-  // weapons. Jackson asked for "slightly more ammo" on all missiles (they were hitting #238's
-  // 3s empty lockout constantly). Because a magazine only ever buys WHOLE trigger pulls, and
-  // these weapons cycle at 1.5-1.8s, one extra pull is worth a full 1.5-1.8s of burst — there
-  // is no way to grant a single extra shot and stay under 7.0s. The choice was: bump the
-  // magazine and let these four land at 7.2-8.0s, or bump the magazine and cut regen to hold
-  // the pull count (a pure downgrade — same burst, slower recovery). We took the extra shot.
-  // clusterRocket's faster 1.1s cycle DID let its extra pull land inside the original window
-  // (6.6s), so it is not listed here. #372's rule and its intent stand for everything else.
-  //
-  // #377 — swarmRack ALONE goes much further, on a direct and explicit ask ("increase reload
-  // speed and magazine size", on top of a faster 1.1s cycle). ammoMax 4 -> 8 and ammoRegen
-  // 0.20 -> 0.45 together put it at ~15.4s of continuous fire. This is NOT a quiet widening
-  // to make a red test green: it is a deliberate, weapon-specific carve-out from #372's rule,
-  // Jackson tuning one weapon by feel with full knowledge that it breaks the general economy.
-  // Everything else, including the other three missiles, still sits inside its #376 bound.
+  it.each(limited)('%s carries a finite, positive magazine and NO leftover ammoRegen field', (id, w) => {
+    expect(w.ammoMax).toBeGreaterThan(0);
+    expect(Number.isFinite(w.ammoMax)).toBe(true);
+    // #402 removed the trickle from the player model — the field is gone from the base entries.
+    expect(w.ammoRegen).toBeUndefined();
+  });
+
+  // A few weapons deliberately hold fire LONGER than the ~6s norm, carried over from earlier feel
+  // passes: plasmaCannon (#376, 8s), napalm (#376, 7.5s), streakPod (#376, 7.2s), and swarmRack
+  // (#377) which is an explicit big-magazine carve-out at ~15s. Everything else lands ~5.5-6.6s.
   const BURST_MAX_SECONDS = {
     swarmRack: 15.5, streakPod: 7.2, napalm: 7.5, plasmaCannon: 8.0,
   };
 
-  it.each(limited)('%s holds fire for ~6s before running dry', (id, w) => {
+  it.each(limited)('%s holds fire for a few seconds before its reload', (id, w) => {
     const secs = burstSeconds(w);
-    expect(secs).toBeGreaterThanOrEqual(5.0);
-    expect(secs).toBeLessThanOrEqual(BURST_MAX_SECONDS[id] ?? 7.0);
+    expect(secs).toBeGreaterThanOrEqual(5.0);      // never a fraction-of-a-second burst
+    expect(secs).toBeLessThanOrEqual(BURST_MAX_SECONDS[id] ?? 6.7);
+    expect(secs).toBeLessThan(Infinity);           // and never effectively unlimited
   });
 
-  it.each(limited)('%s regenerates meaningfully SLOWER than it consumes (the actual ask)', (id, w) => {
-    const consumePerSec = 1000 / fireIntervalMs(w);
-    // Strictly below, and not by a token amount — a held trigger must be a real net drain.
-    expect(w.ammoRegen).toBeLessThan(consumePerSec * 0.65);
-    // ...but regen is never zero: the refill is CONTINUOUS, not a stop-to-reload. Easing off
-    // the trigger always buys some ammo back.
-    expect(w.ammoRegen).toBeGreaterThan(0);
-  });
-
-  it('leaves plasmaLance — the template Jackson already felt — exactly as it was', () => {
-    expect(WEAPONS.plasmaLance.ammoMax).toBe(60);
-    expect(WEAPONS.plasmaLance.ammoRegen).toBe(10);
-    expect(WEAPONS.plasmaLance.ammoRegen).toBe(WEAPONS.plasmaLance.delivery.fireRate / 2);
-  });
-
-  it('gives beamLaser plasmaLance\'s economy, since they share the 20/s cadence (it was the ' +
-     'worst offender pre-#372 at ~60s of continuous fire)', () => {
-    expect(WEAPONS.beamLaser.ammoMax).toBe(WEAPONS.plasmaLance.ammoMax);
-    expect(WEAPONS.beamLaser.ammoRegen).toBe(WEAPONS.plasmaLance.ammoRegen);
-  });
-
-  it('no longer lets any weapon out-regen its own fire rate (autocannon/napalm/swarmRack/' +
-     'flamethrower could all previously be held forever)', () => {
-    for (const id of ['autocannon', 'napalm', 'swarmRack', 'flamethrower', 'clusterRocket', 'pulseLaser']) {
-      expect(burstSeconds(WEAPONS[id])).toBeLessThan(Infinity);
-    }
+  it('sizes the stream weapons\' magazines to their 20/s or 18/s cadence (plasmaLance the ~6s ' +
+     'template, beamLaser matched to it)', () => {
+    expect(WEAPONS.plasmaLance.ammoMax).toBe(120);   // 120 ÷ 20/s = 6.0s
+    expect(WEAPONS.beamLaser.ammoMax).toBe(WEAPONS.plasmaLance.ammoMax);   // shares the 20/s cadence
+    expect(WEAPONS.machineGun.ammoMax).toBe(108);    // 108 ÷ 18/s = 6.0s
+    expect(WEAPONS.flamethrower.ammoMax).toBe(108);
   });
 
   it('a trigger pull costs ONE round no matter how many things it emits, so a multi-emission ' +
      'weapon is not double-charged by delivery.count (see firing.js fireWeapon)', () => {
     // Documents the assumption burstSeconds() is built on. shotgun emits 7 pellets and
     // swarmRack 6 missiles per pull, yet both are budgeted at 1 round per pull like the
-    // single-slug autocannon — which is why their magazines are the same size (3).
+    // single-slug autocannon — which is why shotgun and autocannon carry the same magazine (5).
     expect(WEAPONS.shotgun.delivery.count).toBe(7);
     expect(WEAPONS.swarmRack.delivery.count).toBe(6);
     expect(WEAPONS.autocannon.delivery.count).toBe(1);
@@ -252,11 +223,12 @@ describe('#372 ammo economy — every weapon runs dry in ~6s of continuous fire'
   });
 });
 
-// ── #377: Swarm Rack feel pass, in isolation ─────────────────────────────────────────────
-// Jackson tuned this ONE weapon by feel after #376: half the flight speed, a faster cycle, a
-// a steep-dropping arc, and a bigger/faster-refilling magazine. The point of this block is the
-// word "isolation" — the other missiles must be exactly where #376 left them.
-describe('#377 Swarm Rack feel pass', () => {
+// ── #377/#402: Swarm Rack feel pass, in isolation ────────────────────────────────────────
+// Jackson tuned this ONE weapon by feel: half the flight speed, a faster cycle, a steep-dropping
+// arc, and a deliberately big magazine. The point of this block is the word "isolation" — the
+// other missiles must be exactly where they were left. (#402 dropped the old fast-regen half of the
+// #377 buff along with every weapon's trickle; the big magazine that keeps its long burst stays.)
+describe('#377/#402 Swarm Rack feel pass', () => {
   it('flies far slower than it did (cut twice, 1000 -> 500 -> 320) and fires noticeably more ' +
      'often — a deliberate crawl next to the other missiles, not an oversight', () => {
     expect(WEAPONS.swarmRack.delivery.velocity).toBe(320);
@@ -277,19 +249,16 @@ describe('#377 Swarm Rack feel pass', () => {
     expect(WEAPONS.swarmRack.delivery.arcProfile).toBe('steepDrop');
   });
 
-  it('carries a bigger magazine that also refills faster (both raised, on the direct ask)', () => {
-    expect(WEAPONS.swarmRack.ammoMax).toBe(8);
-    expect(WEAPONS.swarmRack.ammoRegen).toBe(0.45);
-    // The ask was "reload speed" — what that means in play is how long a single trigger pull
-    // costs you: ~2.2s to earn one back, down from ~5.0s at #376's 0.20 regen.
-    expect(1 / WEAPONS.swarmRack.ammoRegen).toBeLessThan(1 / 0.20);
+  it('carries a deliberately big magazine — a ~15s burst, far past the ~6s norm', () => {
+    expect(WEAPONS.swarmRack.ammoMax).toBe(14);   // 14 pulls × 1.1s ≈ 15.4s
+    expect(WEAPONS.swarmRack.ammoMax).toBeGreaterThan(WEAPONS.clusterRocket.ammoMax);
   });
 
   it('keeps a slightly narrower in-flight salvo spread', () => {
     expect(WEAPONS.swarmRack.delivery.salvoSpread).toBe(40);
   });
 
-  it('leaves every OTHER missile exactly where #376 put it — speed, cycle and arc shape', () => {
+  it('leaves every OTHER missile exactly where it was — speed, cycle and arc shape', () => {
     for (const id of ['clusterRocket', 'streakPod', 'napalm', 'plasmaCannon']) {
       expect(WEAPONS[id].delivery.arcProfile).toBeUndefined();   // still the default lob
       expect(WEAPONS[id].delivery.salvoSpread).toBeUndefined();  // no late-converge offset

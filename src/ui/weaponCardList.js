@@ -292,7 +292,7 @@ export class WeaponCardList {
     else if (d.pattern === 'stream') parts.push(`stream ${d.fireRate}/s${(d.count ?? 1) > 1 ? ` ×${d.count}` : ''}`);
     if (d.burst) parts.push(`burst×${d.count ?? 1}`);
     if (d.guidance === 'homing') parts.push('homing');
-    const ammo = weapon.ammoMax == null ? '∞' : `${weapon.ammoMax} (+${weapon.ammoRegen}/s)`;
+    const ammo = weapon.ammoMax == null ? '∞' : `${weapon.ammoMax}`;   // #402: mag size only (no trickle)
     const cadence = d.pattern === 'stream' ? `${d.fireRate}/s` : `${(weapon.cycleTime / 1000).toFixed(2)}s`;
     return [parts.join(' · '), `dmg ${weapon.damage} · rng ${weapon.range.max} · ${cadence} · ammo ${ammo}`].join('\n');
   }
