@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, backwardSpeedScale, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
 import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
@@ -187,8 +187,10 @@ export const LocomotionMixin = {
     const mv = p.mech.movement;
     const legF = p.mech.legFactor();
 
-    // #45: moving opposite the turret facing (backing up) is slower than forward/strafe.
-    const backScale = backwardSpeedScale(intent.move.x, intent.move.y, p.turretAngle);
+    // #399 (owner decision): the PLAYER moves at full forward speed in EVERY direction — the old
+    // #45 reverse/backpedal penalty (`backwardSpeedScale`) is removed for the player, so backing
+    // up and strafing are no slower than driving forward. Enemy AI keeps its own backpedal scaling
+    // (enemies.js) — only the player's directional speed penalty is gone.
     // #41: the terrain UNDER the mech scales its top speed — a shallow river or forest bogs it
     // down (rubble mildly), open grass is normal.
     const terrainScale = this._speedFactorAt(p.x, p.y);
@@ -202,7 +204,7 @@ export const LocomotionMixin = {
     const sprintMult = p.sprint?.active ? SPRINT_SPEED_MULT : 1;
     const dashMult = p.dash?.active ? DASH_SPEED_MULT : 1;
     // #3 weight inertia drives the accel curve.
-    const maxSp = mv.maxSpeed * legF * backScale * terrainScale * sprintMult * dashMult;
+    const maxSp = mv.maxSpeed * legF * terrainScale * sprintMult * dashMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
     // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that

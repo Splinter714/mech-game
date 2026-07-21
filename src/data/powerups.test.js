@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   POWERUPS, POWERUP_IDS, POWERUP_POOL_IDS, pickPowerupType, isInstant, durationMs, buffModifiers, armorRepairPlan,
+  powerupSpotColors,
   dropChanceForToughness, dropChanceForKill, dropBounds, dropBoundsForRoster,
   MIN_DROP_CHANCE, MAX_DROP_CHANCE, CRUSH_KILL_DROP_CHANCE,
   stackedRemainingMs, maxStackedMs, MAX_STACK_MULT,
@@ -549,5 +550,29 @@ describe('#381: Mech.tempShieldRemainingMs exposes the temp-pool clock for stack
       expect(mech.shield.max).toBe(50);
     }
     expect(mech.tempShieldRemainingMs).toBe(maxStackedMs('shield'));
+  });
+});
+
+describe('powerupSpotColors (#400: the center-torso status spot in single-player)', () => {
+  it('no active powerups → no colours (the arena renders that as black)', () => {
+    expect(powerupSpotColors([])).toEqual([]);
+    expect(powerupSpotColors(undefined)).toEqual([]);
+  });
+
+  it('one active powerup → that powerup’s own colour', () => {
+    expect(powerupSpotColors(['overdrive'])).toEqual([POWERUPS.overdrive.color]);
+  });
+
+  it('several active → one section colour per powerup, in stable POWERUPS order (not pickup order)', () => {
+    const colors = powerupSpotColors(['barrage', 'overdrive', 'shield']);
+    const expected = POWERUP_IDS.filter((id) => ['barrage', 'overdrive', 'shield'].includes(id))
+      .map((id) => POWERUPS[id].color);
+    expect(colors).toEqual(expected);
+    // Order is independent of the input order — same set in → same list out.
+    expect(powerupSpotColors(['shield', 'overdrive', 'barrage'])).toEqual(colors);
+  });
+
+  it('ignores unknown ids', () => {
+    expect(powerupSpotColors(['overdrive', 'notAThing'])).toEqual([POWERUPS.overdrive.color]);
   });
 });
