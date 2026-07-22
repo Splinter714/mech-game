@@ -2225,6 +2225,23 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
     }
     return groups;
   };
+  // #427 (2026-07-22): a mouth is CONCAVE (its two leaves share one OUTER hex, wedged between two
+  // ADJACENT base hexes) or CONVEX (share one BASE hex, jutting out between two ADJACENT outer hexes).
+  // Asserts the pair is a well-formed double door either way and returns which kind it is.
+  const mouthKind = (m) => {
+    expect(m.length).toBe(2);
+    const [l0, l1] = m;
+    const sameOuter = axialKey(l0.b.q, l0.b.r) === axialKey(l1.b.q, l1.b.r);
+    const sameBase = axialKey(l0.a.q, l0.a.r) === axialKey(l1.a.q, l1.a.r);
+    if (sameOuter) {
+      expect(sameBase).toBe(false);
+      expect(distance(l0.a, l1.a)).toBe(1);    // two adjacent base hexes → a real concave notch
+      return 'concave';
+    }
+    expect(sameBase).toBe(true);
+    expect(distance(l0.b, l1.b)).toBe(1);      // two adjacent outer hexes → a real convex corner
+    return 'convex';
+  };
   // A mouth's outward bearing from the compound centre — averaged over its leaves' outer hexes.
   const mouthBearing = (mouth, c) => {
     let sx = 0, sy = 0;
@@ -2247,27 +2264,37 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       for (const m of mouths) expect(m.length).toBe(2);
     });
 
-    // #427 (Jackson 2026-07-21): every gate is placed at a CONCAVE NOTCH — the two leaves of a
-    // mouth share the SAME outer (non-base) hex, wedged between two ADJACENT base hexes — and never
-    // at a convex corner (which would share a base hex instead). This is what lets wallEdges.js re-
-    // seat the pair as a straight chord bulging into that one outer hex.
-    it('places gates ONLY at concave notches — each mouth shares one outer hex between two base hexes', () => {
+    // #427 (Jackson 2026-07-22, playtest follow-up): every gate is a well-formed double door at a
+    // CONCAVE notch (two leaves sharing one outer hex, between two adjacent base hexes) OR a CONVEX
+    // corner (sharing one base hex, between two adjacent outer hexes) — never a lone leaf and never a
+    // pair that meets at neither. `mouthKind` asserts the topology; both kinds are legitimate.
+    it('places every gate as a concave notch OR a convex corner — a real two-leaf double door', () => {
       const T = fillGroundDisc();
       for (const center of [{ q: 12, r: -4 }, { q: -9, r: 14 }, { q: 20, r: 0 }, { q: 5, r: 5 }]) {
         const base = discBase(center);
         const [ring] = placeBaseWalls(T, [base]);
         const mouths = gateMouths(ring.edges);
         expect(mouths.length).toBeGreaterThan(0);
-        for (const m of mouths) {
-          expect(m.length).toBe(2);
-          const [l0, l1] = m;
-          // Concave: same outer hex, DIFFERENT base hexes that are adjacent (so the two spans meet
-          // at one real corner — a notch, not an outer hex merely touched on two unconnected sides).
-          expect(axialKey(l0.b.q, l0.b.r)).toBe(axialKey(l1.b.q, l1.b.r));
-          expect(axialKey(l0.a.q, l0.a.r)).not.toBe(axialKey(l1.a.q, l1.a.r));
-          expect(distance(l0.a, l1.a)).toBe(1);
-        }
+        for (const m of mouths) expect(['concave', 'convex']).toContain(mouthKind(m));
       }
+    });
+
+    // #427 (2026-07-22): the mix is real — convex corners actually get placed, not just concave
+    // notches. Interleaving (even mouths prefer concave, odd prefer convex — worldgen `assignGates`)
+    // means a two-mouth ring lands one of each whenever both topologies exist near the wanted
+    // bearings, which the open ground of a full disc guarantees. Asserted across the compounds
+    // together rather than per base, since a single ring can degrade to one kind if terrain (here,
+    // none) leaves no separated site of the other near a target bearing.
+    it('places CONVEX corner gates too, mixed in with concave notches', () => {
+      const T = fillGroundDisc();
+      const kinds = [];
+      for (const center of [{ q: 12, r: -4 }, { q: -9, r: 14 }, { q: 20, r: 0 }, { q: 5, r: 5 }]) {
+        const base = discBase(center);
+        const [ring] = placeBaseWalls(T, [base]);
+        for (const m of gateMouths(ring.edges)) kinds.push(mouthKind(m));
+      }
+      expect(kinds).toContain('convex');
+      expect(kinds).toContain('concave');
     });
 
     // The ring is IDENTICAL with gates and without — same spans, same count. A gate does not
@@ -2386,6 +2413,7 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
     // actual base footprints (which get clipped by the corridor) and actual terrain.
     it('holds on real generated worlds across seeds', () => {
       const gateCounts = [];
+      const worldMouthKinds = [];
       for (let seed = 1; seed <= 20; seed++) {
         const { terrain, bases } = generateTerrain(realTerrainArgs(seed * 17 + 5));
         for (const base of bases) {
@@ -2398,13 +2426,12 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
           // leaves. Assert on the mouth count, not the raw leaf-span count.
           const mouths = gateMouths(base.wallEdges);
           expect(mouths.length).toBeLessThanOrEqual(want);
-          // #427: on real terrain too, every mouth is a concave notch — a pair of leaves sharing one
-          // outer hex between two adjacent base hexes (never a lone leaf, never a convex corner).
+          // #427: on real terrain too, every mouth is a real two-leaf double door — a CONCAVE notch
+          // (shared outer hex, two adjacent base hexes) or a CONVEX corner (shared base hex, two
+          // adjacent outer hexes). Never a lone leaf; both kinds appear across the run (see below).
           for (const m of mouths) {
-            expect(m.length).toBe(2);
-            const [l0, l1] = m;
-            expect(axialKey(l0.b.q, l0.b.r)).toBe(axialKey(l1.b.q, l1.b.r));
-            expect(distance(l0.a, l1.a)).toBe(1);
+            expect(['concave', 'convex']).toContain(mouthKind(m));
+            worldMouthKinds.push(mouthKind(m));
           }
           expect(want).toBeGreaterThanOrEqual(MIN_GATES_PER_RING);
           expect(want).toBeLessThanOrEqual(MAX_GATES_PER_RING);
@@ -2428,6 +2455,11 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       // that they ask for more than #309's flat two, which is the whole point of the issue. If
       // this ever fails, compounds shrank and the gate count silently fell back to the floor.
       expect(gateCounts.some(({ want }) => want > MIN_GATES_PER_RING)).toBe(true);
+      // #427 (2026-07-22): the concave+convex MIX is real on generated terrain too — across every
+      // base of 20 seeds BOTH topologies show up, so the comparison Jackson asked for actually
+      // appears in play rather than one kind quietly dominating.
+      expect(worldMouthKinds).toContain('concave');
+      expect(worldMouthKinds).toContain('convex');
     });
   });
 

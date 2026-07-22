@@ -309,16 +309,26 @@ export function makeWallEdgeSet(defs = [], hp = WALL_EDGE_HP) {
 // degenerate placement, or a partner that fell to a breach) keeps a null partner and defaults its
 // hinge to end 0, so it still animates and behaves as a single retracting leaf.
 //
-// #427 (geometry re-spec, Jackson 2026-07-21): gates are now placed only at CONCAVE notches (a
-// single non-base hex wedged between two base hexes — worldgen.js `assignGates`), and each leaf is
-// re-seated onto a STRAIGHT CHORD across the mouth of that notch rather than tracing the concave
-// corner. The two leaves' outer POSTS are their non-shared endpoints (real hex corners, shared with
-// the flanking plain walls); their MEETING point is moved from the concave inner vertex out to the
-// MIDPOINT of the two posts, which lands just inside the non-base hex — so a shut gate is one clean
-// straight span bulging a touch into the outer hex, and an open one parts at that midpoint. Only the
-// shared (meeting) endpoint of each leaf moves; the post endpoint is untouched, so the wall line
-// stays continuous at the posts and the breach/vertex bookkeeping downstream is unchanged. A lone
-// leaf keeps its original hex-edge geometry (nothing to chord to).
+// #427 (geometry re-spec, Jackson 2026-07-21; concave+convex MIX, 2026-07-22): a gate is a PAIR of
+// adjacent leaves, and worldgen (`assignGates`) now places both CONCAVE notches and CONVEX corners so
+// a base shows a mix. The two topologies want DIFFERENT geometry, distinguished here purely from the
+// hexes the paired leaves share — no marker is threaded, the pair's own `a`/`b` say which it is:
+//
+//   CONCAVE — the two leaves share the same OUTER hex (`e.b === partner.b`), a non-base hex wedged
+//     between two base hexes. Re-seated onto a STRAIGHT CHORD across the notch mouth: each leaf's
+//     outer POST (its non-shared endpoint, a real hex corner shared with the flanking plain wall) is
+//     left untouched, and the two MEETING ends are slid onto the MIDPOINT of the two posts — which
+//     lands just inside the outer hex, so a shut gate is one clean straight span bulging a touch into
+//     the notch, and an open one parts at that midpoint.
+//
+//   CONVEX — the two leaves share the same BASE hex (`e.a === partner.a`), which juts outward between
+//     two outer hexes. Left on its NATURAL hex-edge geometry: the two leaves already bow outward and
+//     meet at the real convex corner, so no chord flattening is wanted — flattening it would pull the
+//     meeting point inward and lose the outward bow entirely.
+//
+// Either way only the shared (meeting) endpoint can move; the post endpoints are untouched, so the
+// wall line stays continuous at the posts and the breach/vertex bookkeeping downstream is unchanged.
+// A lone leaf (no gate partner) keeps its original hex-edge geometry (nothing to pair or chord to).
 export function assignGateLeafDirections(set) {
   if (!set) return set;
   const gates = [...set.edges.values()].filter((e) => e.role === SPAN_ROLE_GATE);
@@ -336,14 +346,16 @@ export function assignGateLeafDirections(set) {
     e.gateHingeEnd = sharedEnd == null ? 0 : (sharedEnd === 0 ? 1 : 0);
     sharedEndOf.set(e, sharedEnd);
   }
-  // Pass 2: straight-chord re-seat. Once per pair (canonical key order), compute the midpoint of the
-  // two POSTS (the non-shared, unmoved ends) and slide BOTH leaves' shared ends onto it. Reading the
-  // post ends — never the shared ends — means the order pass 2 visits pairs in cannot matter.
+  // Pass 2: CONCAVE-ONLY straight-chord re-seat. Once per pair (canonical key order), and only when
+  // the pair shares its OUTER hex (concave); a convex pair keeps its natural outward-bowing edges.
+  // Reading the post ends — never the shared ends — means the order pass 2 visits pairs in cannot
+  // matter.
   for (const e of gates) {
     const pk = e.gatePartnerKey;
     if (!pk || e.key >= pk) continue;               // handle each pair exactly once
     const o = set.edges.get(pk);
     if (!o) continue;
+    if (!sharesOuterHex(e, o)) continue;            // convex pair → leave natural geometry
     const pe = postEnd(e), po = postEnd(o);
     if (!pe || !po) continue;
     const mx = (pe.x + po.x) / 2, my = (pe.y + po.y) / 2;
@@ -351,6 +363,14 @@ export function assignGateLeafDirections(set) {
     setSharedEnd(o, mx, my);
   }
   return set;
+}
+
+// A gate pair is CONCAVE when its two leaves share the SAME OUTER (non-base) hex `b` — the notch
+// topology worldgen's `assignGates` produces. A CONVEX pair shares its base hex `a` instead. Missing
+// hex data (a hand-built test span with no `a`/`b`) is treated as NOT concave, so it keeps its
+// natural geometry rather than being force-flattened.
+function sharesOuterHex(e, o) {
+  return !!(e?.b && o?.b && e.b.q === o.b.q && e.b.r === o.b.r);
 }
 
 // The leaf's OUTER POST endpoint — the one it hinges from (the non-shared end), read off

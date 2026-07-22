@@ -1605,41 +1605,72 @@ export function placeBaseWalls(T, bases) {
 function assignGates(T, base, edges) {
   const c = hexToPixel(base.center.q, base.center.r);
   const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
-  // #427 (concave-only, Jackson 2026-07-21): a gate is placed only at a CONCAVE NOTCH in the ring —
-  // a single NON-BASE hex wedged between two adjacent base hexes, so the wall dents inward there. In
-  // ring-span terms that is a PAIR of boundary spans (a1,b) and (a2,b) sharing the SAME outer hex
-  // `b` (and, since a1/a2 are mutually adjacent, a vertex). No convex corners, no straight runs — a
-  // gate only ever fills a notch. Each such pair, once flagged, is re-seated in wallEdges.js onto a
-  // straight chord across the notch mouth (`assignGateLeafDirections`), so the two leaves read as one
-  // clean double door bulging a touch into `b` rather than tracing the concave bend.
+  // #427 (concave + convex MIX, Jackson 2026-07-22 playtest follow-up): a gate is a PAIR of adjacent
+  // boundary spans meeting at one ring vertex. Two topologies qualify, and both are now placed so a
+  // base shows a mix to compare which reads better in play:
   //
-  // Group the eligible spans (outer hex passable ground — a gate must never open onto a cliff, and a
-  // notch whose mouth is impassable is skipped) by their outer hex, then pull out every adjacent
-  // pair as a candidate SITE, bearing = outward toward that shared outer hex.
+  //   CONCAVE NOTCH — the two spans (a1,b) and (a2,b) share the SAME OUTER (non-base) hex `b`, wedged
+  //     between two ADJACENT base hexes. The wall dents INWARD there. Downstream (wallEdges.js
+  //     `assignGateLeafDirections`) re-seats this pair onto a STRAIGHT CHORD across the notch mouth,
+  //     so the two leaves read as one clean double door bulging a touch into `b`.
+  //
+  //   CONVEX CORNER — the inverse: the two spans (a,b1) and (a,b2) share the SAME BASE hex `a`, which
+  //     juts out between two ADJACENT outer hexes. The wall bows OUTWARD there. This pair is left on
+  //     its natural hex edges downstream — the two leaves already bow outward and meet at the real
+  //     convex corner, so no chord flattening is wanted.
+  //
+  // Both cases require passable outer ground under every leaf (a gate must never open onto a cliff)
+  // and the same "≥1 hex apart" separation so mouths never fuse. Concave vs convex is fully implied
+  // by which hex the paired leaves share (`b` vs `a`), so nothing has to be marked — wallEdges.js and
+  // the tests re-derive it geometrically.
   const eligible = edges
     .map((e) => ({ e, outerKey: axialKey(e.b.q, e.b.r) }))
     .filter((w) => isPassableOf(T?.get(w.outerKey)));
   if (!eligible.length) return edges;
+  const sites = [];
+  // CONCAVE sites: group eligible spans by their shared OUTER hex, then every pair whose two BASE
+  // hexes are adjacent (so the two spans meet at one real corner — a genuine notch, not an outer hex
+  // merely touched on two unconnected sides). Bearing = outward toward that shared outer hex.
   const byOuter = new Map();
   for (const w of eligible) {
     if (!byOuter.has(w.outerKey)) byOuter.set(w.outerKey, []);
     byOuter.get(w.outerKey).push(w);
   }
-  const sites = [];
   for (const [, ws] of byOuter) {
     for (let i = 0; i < ws.length; i++) {
       for (let j = i + 1; j < ws.length; j++) {
-        // The two base-side hexes must be adjacent — that is what makes the two spans meet at one
-        // vertex (a real corner), i.e. a genuine notch rather than an outer hex touching the base on
-        // two unconnected sides.
         if (distance(ws[i].e.a, ws[j].e.a) !== 1) continue;
         const o = hexToPixel(ws[i].e.b.q, ws[i].e.b.r);
-        // The three hexes that define this notch — its two base hexes and its outer hex. Two notches
-        // whose hex clusters come within one step of each other could share a vertex, which would
-        // fuse their leaves into one tangled mouth (and mis-pair them in `assignGateLeafDirections`).
+        // The three hexes that define this notch — its two base hexes and its outer hex.
         sites.push({
+          kind: 'concave',
           pair: [ws[i].e, ws[j].e], bearing: Math.atan2(o.y - c.y, o.x - c.x),
           hexes: [ws[i].e.a, ws[j].e.a, ws[i].e.b],
+        });
+      }
+    }
+  }
+  // CONVEX sites: group eligible spans by their shared BASE hex, then every pair whose two OUTER
+  // hexes are adjacent (so the two spans meet at one real corner — an outward-jutting base hex, not a
+  // base hex merely walled on two unconnected sides). Bearing = outward toward the midpoint of the
+  // two outer hexes. The three hexes that define the corner are the base hex and its two outer hexes.
+  const byBase = new Map();
+  for (const w of eligible) {
+    const bk = axialKey(w.e.a.q, w.e.a.r);
+    if (!byBase.has(bk)) byBase.set(bk, []);
+    byBase.get(bk).push(w);
+  }
+  for (const [, ws] of byBase) {
+    for (let i = 0; i < ws.length; i++) {
+      for (let j = i + 1; j < ws.length; j++) {
+        if (distance(ws[i].e.b, ws[j].e.b) !== 1) continue;
+        const o1 = hexToPixel(ws[i].e.b.q, ws[i].e.b.r);
+        const o2 = hexToPixel(ws[j].e.b.q, ws[j].e.b.r);
+        sites.push({
+          kind: 'convex',
+          pair: [ws[i].e, ws[j].e],
+          bearing: Math.atan2((o1.y + o2.y) / 2 - c.y, (o1.x + o2.x) / 2 - c.x),
+          hexes: [ws[i].e.a, ws[i].e.b, ws[j].e.b],
         });
       }
     }
@@ -1650,24 +1681,35 @@ function assignGates(T, base, edges) {
   // The approach: back toward the origin, where the run spawns. Even angular steps around from it, so
   // one mouth faces the player and a sortie can come from bearings he cannot all cover.
   const approach = Math.atan2(-c.y, -c.x);
-  // Keep chosen notches SEPARATED — a candidate is rejected if any of its hexes is within one step of
-  // a hex already claimed by a chosen notch. That guarantees no two mouths share a vertex, so each
-  // stays a clean two-leaf double door and pairs unambiguously downstream.
+  // Keep chosen mouths SEPARATED — a candidate is rejected if any of its hexes is within one step of
+  // a hex already claimed by a chosen mouth. That guarantees no two mouths share a vertex, so each
+  // stays a clean two-leaf double door and pairs unambiguously downstream — and it also stops a
+  // concave and a convex site that overlap (they always share a hex) from both being taken.
   const usedHexes = new Set();
   const tooClose = (s) => s.hexes.some((h) => {
     if (usedHexes.has(axialKey(h.q, h.r))) return true;
     return neighbors(h.q, h.r).some((nb) => usedHexes.has(axialKey(nb.q, nb.r)));
   });
   const usedSites = new Set();
-  for (let i = 0; i < n; i++) {
-    const target = approach + (i * 2 * Math.PI) / n;
+  // Nearest-by-bearing pick among the still-available sites, optionally restricted to one KIND.
+  const pick = (target, kind) => {
     let best = null, bestD = Infinity;
     for (const s of sites) {
       if (usedSites.has(s) || tooClose(s)) continue;
+      if (kind && s.kind !== kind) continue;
       const d = angDiff(s.bearing, target);
       if (d < bestD) { best = s; bestD = d; }
     }
-    if (!best) break;   // fewer well-separated notches than mouths asked for — take as many as exist
+    return best;
+  };
+  for (let i = 0; i < n; i++) {
+    const target = approach + (i * 2 * Math.PI) / n;
+    // Interleave the two kinds so a base shows a MIX (roughly half-and-half): even mouths prefer a
+    // concave notch, odd mouths a convex corner — falling back to the other kind when the preferred
+    // one has no well-separated site near this bearing, so terrain never blocks a mouth entirely.
+    const preferKind = i % 2 === 0 ? 'concave' : 'convex';
+    const best = pick(target, preferKind) || pick(target, null);
+    if (!best) break;   // fewer well-separated sites than mouths asked for — take as many as exist
     usedSites.add(best);
     for (const h of best.hexes) usedHexes.add(axialKey(h.q, h.r));
     for (const e of best.pair) e.role = 'gate';
