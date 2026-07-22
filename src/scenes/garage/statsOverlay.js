@@ -24,6 +24,9 @@ import { aggregateRuns } from '../../data/runStats.js';
 import {
   WEAPON_COLUMNS, ENEMY_COLUMNS, compareRows, defaultDir,
 } from '../../data/runStatsColumns.js';
+import {
+  enemyWeaponInfo, enemyOverrideSummary, enemyRealHp,
+} from '../../data/enemyStatsMeta.js';
 
 const COL = {
   scrim: 0x05070a,
@@ -367,12 +370,24 @@ export class StatsOverlay {
 
   _enemyRows(run) {
     const { base, brood } = splitBroodSubsets(run.enemies ?? {});
-    return Object.values(base).map((e) => ({
-      data: { ...e, displayName: displayName(e.kind) },
-      sub: brood[e.kind]
-        ? { ...brood[e.kind], displayName: '  └ of which brood-spawned' }
-        : null,
-    }));
+    return Object.values(base).map((e) => {
+      // #440: mark kinds that fire a TUNED VARIANT of the player's base weapon with a `*` on the
+      // Enemy name + a hover tooltip listing the override diff. Also surface the DESIGNED durability
+      // ("Real HP") alongside the measured "Eff HP". Both come from the pure enemyStatsMeta helpers.
+      const info = enemyWeaponInfo(e.kind);
+      const realHp = enemyRealHp(e.kind);
+      const mark = info.hasOverride ? ' *' : '';
+      const tip = info.hasOverride ? enemyOverrideSummary(info) : '';
+      const b = brood[e.kind];
+      return {
+        data: { ...e, displayName: displayName(e.kind) + mark, realHp },
+        tip,
+        sub: b
+          ? { ...b, displayName: `  └ of which brood-spawned${mark}`, realHp }
+          : null,
+        subTip: b ? tip : '',
+      };
+    });
   }
 
   // Build one sortable table. Returns the y just past its bottom (in content-local coords).
@@ -411,10 +426,11 @@ export class StatsOverlay {
         color: ci === state.col ? COL.accent : COL.sub,
       });
     });
-    const bodyRows = [];   // { objs:[], dim:bool }
+    const bodyRows = [];   // { objs:[], dim:bool, tip:str }
     for (const r of sorted) {
       bodyRows.push({
         dim: false,
+        tip: r.tip ?? '',
         objs: columns.map((c) => s.add.text(0, 0, fmtCell(r.data[c.key], c.fmt), {
           fontFamily: FONT, fontSize: `${CELL_PX}px`, color: COL.text,
         })),
@@ -422,6 +438,7 @@ export class StatsOverlay {
       if (r.sub) {
         bodyRows.push({
           dim: true,
+          tip: r.subTip ?? '',
           objs: columns.map((c) => s.add.text(0, 0, fmtCell(r.sub[c.key], c.fmt), {
             fontFamily: FONT, fontSize: `${CELL_PX}px`, color: COL.dim,
           })),
@@ -471,6 +488,18 @@ export class StatsOverlay {
         place(obj, ci);
         obj.y = ry;
         this.content.add(obj);
+        // #440: the Enemy NAME cell of a kind firing a tuned weapon variant (asterisked) shows
+        // the override diff on hover — same _showTip infra the column headers use.
+        if (ci === 0 && br.tip) {
+          const rowY = ry;
+          obj.setInteractive();
+          obj.on('pointerover', () => this._showTip(
+            br.tip,
+            this.content.x + obj.x,
+            this.content.y + rowY + ROW_H,
+          ));
+          obj.on('pointerout', () => this._hideTip());
+        }
       });
       ry += ROW_H;
     }

@@ -9,6 +9,7 @@
 // reader doesn't need the header comment to know what a column means.
 
 import { splitBroodSubsets, displayName } from './runStatsEnemies.js';
+import { enemyWeaponInfo, enemyRealHp } from './enemyStatsMeta.js';
 
 function fmt(n, dp = 1) {
   if (n == null || !Number.isFinite(n)) return '-';
@@ -98,10 +99,20 @@ function enemiesSection(run) {
   const entries = Object.entries(base);
   if (!entries.length) return 'ENEMIES\n  (none encountered)';
 
+  // #440: an enemy kind that fires a TUNED VARIANT of the player's base weapon (a weaponOverride)
+  // gets a `*` on its name; a legend line below flags what that means. The `*` also lands on the
+  // brood subset line, since it's the same kind.
+  let anyOverride = false;
+  const nameOf = (kind) => {
+    const marked = enemyWeaponInfo(kind).hasOverride;
+    if (marked) anyOverride = true;
+    return displayName(kind) + (marked ? ' *' : '');
+  };
+
   const encounterHeader = ['Enemy', 'Seen', 'Killed', 'Avg. Time-to-Kill'];
   const encounterRows = [];
   for (const [kind, e] of entries) {
-    encounterRows.push([displayName(kind), e.spawned, e.killed, secs(e.avgTtkMs)]);
+    encounterRows.push([nameOf(kind), e.spawned, e.killed, secs(e.avgTtkMs)]);
     const b = brood[kind];
     if (b) {
       encounterRows.push([
@@ -111,31 +122,37 @@ function enemiesSection(run) {
   }
 
   const threatHeader = [
-    'Enemy', 'Effective HP', 'Their Accuracy', 'Their DPS',
+    'Enemy', 'Effective HP', 'Real HP', 'Their Accuracy', 'Their DPS',
     'Damage to You', 'Threat Share', 'Your Damage to Them', 'Your Overkill',
   ];
   const threatRows = [];
   for (const [kind, e] of entries) {
+    const realHp = enemyRealHp(kind);
     threatRows.push([
-      displayName(kind), fmt(e.effectiveHp), pct(e.weaponAccuracy), fmt(e.effectiveDps),
+      nameOf(kind), fmt(e.effectiveHp), fmt(realHp), pct(e.weaponAccuracy), fmt(e.effectiveDps),
       fmt(e.damageToYou), pct(e.threatShare), fmt(e.damageToKind), fmt(e.overkill),
     ]);
     const b = brood[kind];
     if (b) {
       threatRows.push([
-        `  └ of which brood-spawned`, fmt(b.effectiveHp), pct(b.weaponAccuracy), fmt(b.effectiveDps),
+        `  └ of which brood-spawned`, fmt(b.effectiveHp), fmt(realHp), pct(b.weaponAccuracy),
+        fmt(b.effectiveDps),
         fmt(b.damageToYou), pct(b.threatShare), fmt(b.damageToKind), fmt(b.overkill),
       ]);
     }
   }
 
-  return [
+  const out = [
     'ENEMIES — encounters',
     table(encounterHeader, encounterRows),
     '',
     'ENEMIES — how much they hurt you vs. how much you hurt them',
     table(threatHeader, threatRows),
-  ].join('\n');
+  ];
+  if (anyOverride) {
+    out.push('', '  * enemy fires a tuned variant of the weapon (see in-game tooltip for the override)');
+  }
+  return out.join('\n');
 }
 
 export function runReportText(run) {

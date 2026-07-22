@@ -51,6 +51,8 @@ export const ENEMY_COLUMNS = [
     def: 'TTK — average time from the first hit on a unit to its death.' },
   { key: 'effectiveHp', label: 'Eff HP', fmt: 'num',
     def: 'Effective HP — average damage needed to kill one unit.' },
+  { key: 'realHp', label: 'Real HP', fmt: 'num',
+    def: 'Real HP — the unit’s designed total durability (structure + armor + shield); compare against Eff HP to see wasted/overkilled damage.' },
   { key: 'weaponAccuracy', label: 'Their acc', fmt: 'pct',
     def: 'Their Accuracy — fraction of this kind’s shots that hit you.' },
   { key: 'effectiveDps', label: 'Their DPS', fmt: 'num',
