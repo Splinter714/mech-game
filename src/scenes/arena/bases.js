@@ -334,6 +334,15 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
 // Owner: tunable via playtest.
 const DOCK_VACATE_RADIUS_PX = 60;
 
+// #443: how long a RESUPPLY-spawned unit gets to stay parked at its own dock before the door
+// force-seals regardless of the vacate-radius check above. A resupply unit is born AWARE into a
+// fight already happening at that base and can legitimately hold a defensive standoff within
+// `DOCK_VACATE_RADIUS_PX` forever, which otherwise starves every later resupply's reopen
+// animation (see `_resupplyDock`). Long enough to see the fresh unit visibly emerge and be part
+// of the fight for a beat; short enough that the door cycle keeps reading as alive. Owner:
+// tunable via playtest.
+const DOCK_FORCE_CLOSE_AFTER_SPAWN_MS = 3000;
+
 // #395 part B (owner): a hex outline stroked around every DOCK hex at DEPTH.DOCK_BORDER (above the
 // tile, its doors and the DOCK_FX band, but BELOW the units) so a dock reads as a distinct,
 // clearly-bounded structure regardless of open/closed state — while a unit standing on the dock
@@ -1179,6 +1188,20 @@ export const BasesMixin = {
       // terrain snapping and mech/kind dispatch all come from there, so a swarm resupply arrives
       // as a properly-seated burst. AWARE, not DORMANT: the base is already fighting.
       spawnDockCluster(this, { x, y, kindId, count, baseId: meta.baseId, dockKey, awareness: AWARE });
+      // #443: a resupply unit spawns AWARE straight into a fight already happening AT this base
+      // (resupply only fires while the base is awake) — unlike a DORMANT unit waking and walking
+      // off to meet the player from wherever it approached from, a resupplied defender can settle
+      // into a standoff well within `DOCK_VACATE_RADIUS_PX` of its own dock and never register as
+      // "vacated" by `_updateDockOpenClose`'s distance check. That silently starves every LATER
+      // resupply's reopen animation (`_openDock` only fires when terrain is `'dockClosed'`) even
+      // though the platform-FX/unit-spawn above keeps happening — reading as "resupplies keep
+      // occurring but the doors never move again" (Jackson, playtest). Force-seal it a beat after
+      // the unit is fully up, unconditionally — this is a BACKSTOP: if `_updateDockOpenClose`
+      // already closed it sooner (the unit died fast / genuinely walked off), the terrain guard
+      // below makes this a no-op.
+      this.time.delayedCall(DOCK_FORCE_CLOSE_AFTER_SPAWN_MS, () => {
+        if (this.terrain.get(dockKey) === 'dock') this._closeDock(dockKey, meta);
+      });
     });
     // Once surfaced, fade the platform FX out. The bay stays OPEN (doors parted) while the unit(s)
     // occupy the hex; `_updateDockOpenClose` slides the doors shut once they vacate.

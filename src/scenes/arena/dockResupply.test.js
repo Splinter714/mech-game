@@ -103,6 +103,11 @@ function makeScene() {
   };
   scene._initAlertTowers();
   scene._runScheduled = () => { while (scheduled.length) scheduled.shift().fn(); };
+  // #443: single-step version — this stub drains `time.delayedCall`s in FIFO order with no real
+  // clock, so a test that needs to inspect an INTERMEDIATE moment (e.g. "just reopened, before
+  // the force-close backstop a few seconds later fires") can't use the full-drain `_runScheduled`
+  // above without also running every later nested callback in the same breath.
+  scene._runScheduledOne = () => { if (scheduled.length) scheduled.shift().fn(); };
   return scene;
 }
 
@@ -581,11 +586,48 @@ describe('#269 Part 2: dock open/closed states', () => {
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');   // sanity: actually closed first
 
     scene._updateDockResupply(PAST_COOLDOWN_S);
-    scene._runScheduled();
+    // #443: single-step past the rise-FX + spawn callbacks only — a full `_runScheduled()` would
+    // also run the new force-close backstop (queued a few seconds further out, from within the
+    // spawn callback) in this same breath, since the stub has no real clock. This test wants the
+    // INTERMEDIATE "just reopened" moment, which the dedicated backstop test below covers.
+    scene._runScheduledOne();   // 600ms: doors part (cosmetic tween only)
+    scene._runScheduledOne();   // 960ms: unit spawns
 
     expect(scene.enemies.length).toBe(1);   // the resupplied unit spawned
     expect(scene.terrain.get(dockKey)).toBe('dock');   // dome reopened
     expect(scene.buildingHp.has(dockKey)).toBe(false);
+  });
+
+  it('#443: force-seals a dock a beat after resupply even if the spawned unit never leaves the vacate radius', () => {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    scene.terrain.set(dockKey, 'dock');
+    clearDock(scene, dockKey);
+    scene._updateDockOpenClose();
+    expect(scene.terrain.get(dockKey)).toBe('dockClosed');   // sanity: actually closed first
+
+    scene._updateDockResupply(PAST_COOLDOWN_S);
+    // Full drain: rise FX, unit spawn, fade FX, and the force-close backstop the spawn callback
+    // queues a few seconds further out — the stub has no real clock, so all of it runs here.
+    scene._runScheduled();
+
+    // The resupplied unit lands exactly at the dock's own centre (a single-unit dock cluster's
+    // placement, `spawnDockCluster`'s `count === 1` case) — a real defensive/standoff posture can
+    // hold that indefinitely, well within `DOCK_VACATE_RADIUS_PX`. It is still alive, still
+    // tagged to this dock, and never moved:
+    const meta = scene._dockResupplyMeta.get(dockKey);
+    const resupplied = scene.enemies.find((e) => e.dockKey === dockKey);
+    expect(resupplied).toBeTruthy();
+    expect(Math.hypot(resupplied.x - meta.x, resupplied.y - meta.y)).toBeLessThan(1);
+    // …yet the dock is sealed again. The ordinary distance-based `_updateDockOpenClose` check
+    // could never have closed it (the unit is right on top of the dock centre), so this can only
+    // be the force-close backstop.
+    expect(scene.terrain.get(dockKey)).toBe('dockClosed');
+    expect(scene.buildingHp.has(dockKey)).toBe(true);
   });
 
   it('destroying a closed dock (_onTerrainCollapsed) permanently disables its resupply, even before it used its one shot', () => {
@@ -639,9 +681,12 @@ describe('#269 Part 2: dock open/closed states', () => {
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');
     expect(scene.buildingHp.has(dockKey)).toBe(true);
 
-    // 2) Resupply fires → reopens, spawns a fresh unit sitting right at the dock.
+    // 2) Resupply fires → reopens, spawns a fresh unit sitting right at the dock. #443:
+    // single-step past just the spawn — a full `_runScheduled()` would also run the force-close
+    // backstop queued a few seconds further out in the same breath (no real clock in this stub).
     scene._updateDockResupply(PAST_COOLDOWN_S);
-    scene._runScheduled();
+    scene._runScheduledOne();   // 600ms: doors part
+    scene._runScheduledOne();   // 960ms: unit spawns
     expect(scene.terrain.get(dockKey)).toBe('dock');
     expect(scene.buildingHp.has(dockKey)).toBe(false);
     expect(scene.enemies.length).toBe(1);
