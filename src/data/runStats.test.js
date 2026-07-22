@@ -148,6 +148,43 @@ describe('runStats — accumulator + reducer (#423)', () => {
       expect(w.effectiveSustainedDps).toBeCloseTo(22 / ((iv + 2000) / 1000), 5);
       expect(w.effectiveCombatDps).toBeCloseTo(22 / ((1000 + iv) / 1000), 5);
     });
+    it('#440: effective DPS numerator is USEFUL damage (damageDealt - overkill)', () => {
+      const r = createRunStats();
+      const iv = pullIntervalMs(getWeapon('autocannon'));
+      r.tick(1000, { inCombat: true });
+      r.shotFired('autocannon');
+      r.shotHit('autocannon', 'drone', 30);
+      // 30 total damage dealt, but 10 of it was overkill (killing-blow overshoot) — only 20
+      // contributed to the kill, so effective DPS should be based on 20, not 30.
+      r.damageDealt({ weaponId: 'autocannon', targetKind: 'drone', amount: 30, overkill: 10 });
+      r.tick(iv, { inCombat: true });
+      r.reloadStart('autocannon');
+      r.reloadEnd('autocannon', 2000);
+      const w = r.reduce().weapons.autocannon;
+      expect(w.damageDealt).toBe(30);
+      expect(w.overkill).toBe(10);
+      const useful = 20;
+      expect(w.effectiveBurstDps).toBeCloseTo(useful / (iv / 1000), 5);
+      expect(w.effectiveSustainedDps).toBeCloseTo(useful / ((iv + 2000) / 1000), 5);
+      expect(w.effectiveCombatDps).toBeCloseTo(useful / ((1000 + iv) / 1000), 5);
+      // Sanity: overkill-heavy weapon's Real DPS is honestly lower than raw-damage DPS would be.
+      const rawDamageDps = 30 / ((iv + 2000) / 1000);
+      expect(w.effectiveSustainedDps).toBeLessThan(rawDamageDps);
+    });
+    it('#440: a weapon with zero overkill is unaffected by the useful-damage change', () => {
+      const r = createRunStats();
+      const iv = pullIntervalMs(getWeapon('autocannon'));
+      r.tick(1000, { inCombat: true });
+      r.shotFired('autocannon');
+      r.shotHit('autocannon', 'drone', 22);
+      r.damageDealt({ weaponId: 'autocannon', targetKind: 'drone', amount: 22, overkill: 0 });
+      r.tick(iv, { inCombat: true });
+      r.reloadStart('autocannon');
+      r.reloadEnd('autocannon', 2000);
+      const w = r.reduce().weapons.autocannon;
+      expect(w.effectiveBurstDps).toBeCloseTo(22 / (iv / 1000), 5);
+      expect(w.effectiveSustainedDps).toBeCloseTo(22 / ((iv + 2000) / 1000), 5);
+    });
     it('landing ratio = effective sustained / theoretical sustained', () => {
       const r = createRunStats();
       r.shotFired('autocannon');

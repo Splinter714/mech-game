@@ -211,9 +211,12 @@ export function reduceRun(state) {
       ? Math.min(b.pendingIntervalMs, Math.max(0, state.clockMs - b.lastShotMs))
       : 0;
     const firingMs = b.firingTimeMs + pendingFiring;
-    const effBurst = perSec(b.damageDealt, firingMs);
-    const effSustained = perSec(b.damageDealt, firingMs + b.reloadTimeMs);
-    const effCombat = perSec(b.damageDealt, combatMs);
+    // #440: Real DPS is based on USEFUL damage (total minus overkill) — overkill is wasted
+    // damage that didn't contribute to a kill, so it shouldn't inflate the effective figures.
+    const usefulDamage = Math.max(0, b.damageDealt - b.overkill);
+    const effBurst = perSec(usefulDamage, firingMs);
+    const effSustained = perSec(usefulDamage, firingMs + b.reloadTimeMs);
+    const effCombat = perSec(usefulDamage, combatMs);
     weapons[id] = {
       id,
       name: w?.name ?? id,
@@ -353,7 +356,9 @@ export function aggregateRuns(runs) {
     const w = getWeapon(id);
     const theoBurst = w ? burstDps(w) : 0;
     const theoSustained = w ? sustainedDps(w) : 0;
-    const effSustained = perSec(b.damageDealt, b.firingTimeMs + b.reloadTimeMs);
+    // #440: Real DPS numerator is USEFUL damage (total minus overkill).
+    const usefulDamage = Math.max(0, b.damageDealt - b.overkill);
+    const effSustained = perSec(usefulDamage, b.firingTimeMs + b.reloadTimeMs);
     weapons[id] = {
       id,
       name: w?.name ?? id,
@@ -365,9 +370,9 @@ export function aggregateRuns(runs) {
       firingTimeMs: b.firingTimeMs,
       reloads: b.reloads,
       reloadTimeMs: b.reloadTimeMs,
-      effectiveBurstDps: perSec(b.damageDealt, b.firingTimeMs),
+      effectiveBurstDps: perSec(usefulDamage, b.firingTimeMs),
       effectiveSustainedDps: effSustained,
-      effectiveCombatDps: perSec(b.damageDealt, g.combatTimeMs),
+      effectiveCombatDps: perSec(usefulDamage, g.combatTimeMs),
       theoreticalBurstDps: theoBurst,
       theoreticalSustainedDps: theoSustained,
       landingRatio: div(effSustained, theoSustained),

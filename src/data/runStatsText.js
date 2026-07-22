@@ -67,9 +67,10 @@ function weaponsSection(run) {
     w.name, w.shotsFired, w.hits, pct(w.accuracy), fmt(w.damageDealt), fmt(w.overkill),
   ]);
 
-  // "Real" DPS is what the run actually measured; "Max possible" is the stat-sheet number
-  // assuming every shot lands — the gap between them (Landing %) is what to look at first when
-  // deciding whether a weapon needs a damage nerf/buff or just needs to be EASIER TO HIT WITH.
+  // "Real" DPS is USEFUL damage (total minus overkill) actually measured this run; "Max possible"
+  // is the stat-sheet number assuming every shot lands — the gap between them (Landing %) is what
+  // to look at first when deciding whether a weapon needs a damage nerf/buff, is wasting damage
+  // to overkill, or just needs to be EASIER TO HIT WITH.
   const dpsHeader = [
     'Weapon', 'Time Firing', 'Reloads', 'Time Reloading',
     'Real DPS (Burst)', 'Real DPS (Sustained)', 'Real DPS (In Combat)',
@@ -85,7 +86,7 @@ function weaponsSection(run) {
     'WEAPONS — what happened',
     table(outputHeader, outputRows),
     '',
-    'WEAPONS — damage-per-second (Real = measured this run, Max = stat-sheet if every shot hit)',
+    'WEAPONS — damage-per-second (Real = useful damage this run [total minus overkill], Max = stat-sheet if every shot hit)',
     table(dpsHeader, dpsRows),
   ].join('\n');
 }

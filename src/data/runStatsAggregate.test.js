@@ -88,6 +88,18 @@ describe('aggregateRuns — pooled ALL RUNS view (#432)', () => {
     expect(w.landingRatio).toBeCloseTo(w.effectiveSustainedDps / sustainedDps(gw), 10);
   });
 
+  it('#440: pooled DPS is recomputed from Σ(damageDealt - overkill), not ΣdamageDealt', () => {
+    const a = run({ global: { combatTimeMs: 1000 }, weapons: [{ id: WID, shotsFired: 10, hits: 6, damageDealt: 60, overkill: 20, firingTimeMs: 2000, reloadTimeMs: 500, reloads: 1 }] });
+    const b = run({ global: { combatTimeMs: 3000 }, weapons: [{ id: WID, shotsFired: 30, hits: 12, damageDealt: 140, overkill: 30, firingTimeMs: 2000, reloadTimeMs: 1500, reloads: 2 }] });
+    const w = aggregateRuns([a, b]).weapons[WID];
+    expect(w.damageDealt).toBe(200);   // raw total column stays raw
+    expect(w.overkill).toBe(50);
+    // useful = 200 - 50 = 150
+    expect(w.effectiveBurstDps).toBeCloseTo(150 / (4000 / 1000), 10);
+    expect(w.effectiveSustainedDps).toBeCloseTo(150 / (6000 / 1000), 10);
+    expect(w.effectiveCombatDps).toBeCloseTo(150 / (4000 / 1000), 10);
+  });
+
   it('weapon present in only some runs still pools correctly', () => {
     const a = run({ weapons: [{ id: WID, shotsFired: 5, hits: 5, damageDealt: 50, firingTimeMs: 1000 }] });
     const b = run({ weapons: [] });
