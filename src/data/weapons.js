@@ -194,12 +194,20 @@ export const WEAPONS = {
     ammoMax: 4, slots: 2, cycleTime: 1650,   // #408: ~6.6s burst (4 pulls × 1.65s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
   }),
-  plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover
+  plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover — now a saturating VOLLEY (#434)
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
     // #259 DPS-squish: damage 18 -> 32 to bring raw DPS up from 11.25 to the ~20 band.
-    // DPS = damage / cycleTime(s): 18/1.6 = 11.25 dps -> 32/1.6 = 20.0 dps.
-    damage: 32, range: { min: 0, opt: 480, max: 820 },
-    ammoMax: 5, slots: 2, cycleTime: 1600,   // #402: ~8.0s burst (5 pulls × 1.6s), then 1s reload
+    // #434 VOLLEY REWORK: one trigger pull now fires a rippling 5-bolt volley (delivery.count 5 +
+    // burst stagger) that SATURATES a small area, and EACH bolt spends 1 round (delivery.ammoPerShot)
+    // — so the single-shot economy is gone. Per-bolt damage 32 -> 24: kept MEANINGFUL (a full volley
+    // is 5 × 24 = 120 damage, ~3.75× the old 32 single shot — a real power increase, NOT the current
+    // damage divided across five). Cadence 1600 -> 2400ms to keep the theoretical peak sane.
+    // Peak DPS (all 5 bolts landing on one target) = 5 × 24 / 2.4 = 50.0 dps — a deliberate buff over
+    // the old 20.0, justified because the bolts SCATTER (area denial, not single-point) and the shot
+    // arcs, so realistic single-target DPS sits back down near the ~25 band; the payoff is against
+    // clustered enemies. Magazine 5 -> 30 = 6 volleys (30 ÷ 5 bolts/pull) before the reload beat.
+    damage: 24, range: { min: 0, opt: 480, max: 820 },
+    ammoMax: 30, slots: 2, cycleTime: 2400,   // #434: 6 volleys (30 ÷ 5 bolts/pull), ~14.4s burst, then reload
     // #252 playtest follow-up: "lobbed weapons should actually seek, not just fly to the spot
     // targeted when the shot was initiated." NOT `guidance: 'homing'` — that would flip
     // canFireWeapon's no-lock-no-fire gate on (targetlock.js only special-cases
@@ -227,7 +235,16 @@ export const WEAPONS = {
     // out on napalm above — `velocity` is now the bolt's literal speed at every range rather
     // than its speed at optimal only, and the seeker is live from launch. homingTurnRadius
     // stays 140 so it still reads as a heavy lobbed bolt, not a snapping missile.
-    delivery: { hit: 'projectile', path: 'arcing', velocity: 400, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0 },
+    // #434 VOLLEY: `count: 5` + `burst.interval` turns one pull into 5 staggered bolts (the
+    // projectile-burst branch of planEmissions), rippling out ~70ms apart rather than a single lob.
+    // `ammoPerShot` makes each bolt spend one round and TRUNCATES the volley to whatever the mag can
+    // afford (firing.js fireWeapon) — so a pull that can't cover all 5 fires only what it has, then
+    // the emptied mag reloads. `burstScatter` fans each bolt a random angle across `spreadAngle`
+    // (13°) so they don't stack on one point, and `salvoSpread` + `salvoNoConverge` give each bolt a
+    // PERSISTENT lateral aim offset (up to 46px) that does NOT converge — the scatter survives the
+    // lock-tracking seeker (which would otherwise home all 5 onto one pixel), landing them across a
+    // small swath around the tracked target. Arc + splash + tracksLock identity all kept.
+    delivery: { hit: 'projectile', path: 'arcing', velocity: 400, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0, count: 5, burst: { interval: 70 }, ammoPerShot: true, burstScatter: true, spreadAngle: 13, salvoSpread: 46, salvoNoConverge: true },
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
     id: 'flamethrower', name: 'Flamethrower', category: 'energy',

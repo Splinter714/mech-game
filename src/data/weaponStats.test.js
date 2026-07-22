@@ -39,7 +39,7 @@ describe('weaponStats — DPS helpers (#423)', () => {
 
   describe('burstDps matches the weapons.js DPS comments', () => {
     const cases = [
-      ['autocannon', 22], ['railLance', 24], ['plasmaCannon', 20], ['shotgun', 26],
+      ['autocannon', 22], ['railLance', 24], ['plasmaCannon', 50], ['shotgun', 26],
       ['beamLaser', 30], ['machineGun', 32], ['pulseLaser', 22],
     ];
     for (const [id, dps] of cases) {

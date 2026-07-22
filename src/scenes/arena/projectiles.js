@@ -119,7 +119,10 @@ export const ProjectilesMixin = {
         // Keyed to REMAINING DISTANCE, never to flight fraction — see salvoConvergeFalloff.
         // A fraction would make the tightening start further out on a long shot than a short
         // one; this way it looks identical at every range.
-        const f = len > 1e-6 ? salvoConvergeFalloff(len) : 0;
+        // #434: a `salvoNoConverge` round (Plasma Arc's saturating volley) keeps its offset at full
+        // authority the whole way in — it is meant to LAND spread across an area, not converge — so
+        // it never calls salvoConvergeFalloff.
+        const f = p.salvoNoConverge ? 1 : (len > 1e-6 ? salvoConvergeFalloff(len) : 0);
         if (f > 0) {
           const off = p.aimOffset * f;
           hx += (-dy / len) * off;

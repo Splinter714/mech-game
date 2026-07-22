@@ -26,7 +26,11 @@ import { WEAPONS } from '../../data/weapons.js';
 // tests, e.g. projectiles.test.js's `WEAPONS.streakPod`, do).
 const HITSCAN_WEAPON = WEAPONS.beamLaser.id;
 const PROJECTILE_WEAPON = WEAPONS.clusterRocket.id;
-const INDIRECT_WEAPON = WEAPONS.plasmaCannon.id;
+// #434: this fixture just needs an INDIRECT (arcing, lock-based) weapon that fires ONE round along
+// the turret. plasmaCannon used to serve, but it is now a scattering 5-bolt VOLLEY (each bolt fans a
+// random angle across its spreadAngle), so its shot no longer tracks the turret to within AIM_ERR_MAX.
+// napalm is the other arcing/tracksLock lobber and still fires a single clean round — same test intent.
+const INDIRECT_WEAPON = WEAPONS.napalm.id;
 
 // Smallest signed angular difference a-b, wrapped into (-pi, pi] — used so assertions don't
 // break on the +/-pi seam.
@@ -139,7 +143,7 @@ describe('enemy direct-fire round direction follows the turret angle, not an ide
 
 describe('enemy indirect (lock-based) fire REQUIRES line of sight to acquire/track the player (#424 — no more omniscient mortars)', () => {
   it('an indirect weapon with a live lock fires along the turret once LOS is clear, same as any other shot', () => {
-    // plasmaCannon is indirect (path: 'arcing') — the ROUND's own flight ignores walls once
+    // napalm is indirect (path: 'arcing') — the ROUND's own flight ignores walls once
     // fired (#153: every shot, direct or indirect, fires along the turret's actual current
     // angle) — but as of #424 the mech must actually SEE the player to acquire/hold the lock
     // that lets it pull the trigger at all.

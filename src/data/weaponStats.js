@@ -40,6 +40,14 @@ export function pullIntervalMs(weapon) {
   return Math.max(120, weapon?.cycleTime ?? 0);
 }
 
+// #434: magazine rounds spent per trigger pull. Normally ONE (the whole model above), but a
+// `delivery.ammoPerShot` volley weapon (Plasma Arc) spends one round PER EMITTED BOLT — i.e.
+// `count` per pull — so a 30-round mag is 6 volleys, not 30 pulls. Only sustainedDps (which
+// counts pulls-per-mag) cares; burstDps is per-pull and is unchanged.
+export function roundsPerPull(weapon) {
+  return weapon?.delivery?.ammoPerShot ? Math.max(1, weapon?.delivery?.count ?? 1) : 1;
+}
+
 // Burst DPS — output while dumping a magazine, reload ignored.
 export function burstDps(weapon) {
   const iv = pullIntervalMs(weapon);
@@ -53,9 +61,12 @@ export function sustainedDps(weapon) {
   const mag = weapon?.ammoMax;
   if (mag == null) return burstDps(weapon);
   const iv = pullIntervalMs(weapon);
-  const cycleMs = mag * iv + RELOAD_MS;
+  // #434: a mag empties in `mag / roundsPerPull` pulls, not `mag` — a per-bolt-ammo volley burns
+  // its magazine `count`× faster, so it reaches the reload beat sooner.
+  const pulls = mag / roundsPerPull(weapon);
+  const cycleMs = pulls * iv + RELOAD_MS;
   if (!cycleMs) return 0;
-  return (mag * damagePerPull(weapon)) / (cycleMs / 1000);
+  return (pulls * damagePerPull(weapon)) / (cycleMs / 1000);
 }
 
 // Full theoretical stat block for one weapon (id or resolved entry).

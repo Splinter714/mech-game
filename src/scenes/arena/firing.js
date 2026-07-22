@@ -238,7 +238,7 @@ export const FiringMixin = {
     // ~2x as often), so scaling consumption by the same factor spends 0.5 ammo/shot — exactly
     // offsetting the faster rate for a net-neutral ammo economy, distinct from free ammo's true
     // unlimited fire. Outside Overdrive cycleMult is 1, so this is the same flat 1-ammo spend.
-    if (!mods.freeAmmo) player.mech.consumeAmmo(w.location, w.index, mods.cycleMult ?? 1);
+    const cost = mods.cycleMult ?? 1;
     // #423: one trigger pull = one shot fired (regardless of how many projectiles it emits). The
     // returned pull id is threaded to this pull's emissions so a connecting one books the hit
     // exactly once (accuracy). Null on a stubbed test scene with no accumulator.
@@ -259,6 +259,20 @@ export const FiringMixin = {
     // burst — through each pattern's own existing expansion. Outside Barrage it's 1, i.e. the
     // exact plan as before. (Ammo is spent per trigger pull above, not per emitted shot.)
     const plan = planEmissions(w.weapon, { countMult: mods.countMult ?? 1 });
+    // #434 PER-BOLT AMMO: a volley weapon (Plasma Arc, delivery.ammoPerShot) spends ONE round per
+    // emitted bolt instead of the flat one-round-per-pull every other weapon uses — and TRUNCATES its
+    // volley to whatever the magazine can afford, so a pull that can't cover the whole volley fires
+    // only the rounds it has and the emptied mag then reloads (Mech.consumeAmmo auto-triggers reload
+    // at empty). `w.ammo` is this slot's live magazine (null = unlimited). The whole branch is skipped
+    // under free ammo (INFINITE FIRE) — those pulls spend nothing and are never truncated. Every other
+    // weapon keeps the historic flat spend below.
+    if (!mods.freeAmmo && w.weapon.delivery.ammoPerShot && w.ammo != null) {
+      const affordable = Math.max(0, Math.min(plan.shots.length, Math.floor(w.ammo / cost)));
+      if (affordable < plan.shots.length) plan.shots = plan.shots.slice(0, affordable);
+      player.mech.consumeAmmo(w.location, w.index, affordable * cost);
+    } else if (!mods.freeAmmo) {
+      player.mech.consumeAmmo(w.location, w.index, cost);
+    }
     // #307: a held continuous beam keeps one persistent beam object PER LANE (see
     // `_fireHitscan`). When Barrage expires mid-hold the plan drops from n lanes back to 1, so
     // retire any beam whose lane no longer exists rather than leaving it hanging in place

@@ -448,9 +448,18 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     // #243: the alternating stagger is per-weapon tunable (`delivery.burstStaggerDeg`, °).
     const staggerRad = ((d.burstStaggerDeg ?? STREAK_STAGGER_DEG) * Math.PI) / 180;
     const staggered = wobbleKind(weapon) === 'weave';
+    // #434: a `burstScatter` weapon (Plasma Arc) fans each bolt of its volley a RANDOM angle across
+    // `spreadAngle` so the 5 bolts saturate a small area instead of stacking on one point. The same
+    // cone feeds salvoAimOffset (below), which turns each bolt's fan position into a persistent
+    // lateral aim offset — that offset (not this launch angle, which the seeker corrects) is what
+    // actually holds the scatter through the lock-tracking descent. Distinct from the weave stagger
+    // above (tiny, alternating, cosmetic); a weapon could carry both, so they add.
+    const scatterHalfCone = d.burstScatter ? (((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180) / 2 : 0;
     const out = [];
     for (let i = 0; i < n; i++) {
-      out.push(shot({ angleOffset: staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0, delay: i * d.burst.interval }));
+      const scatter = scatterHalfCone ? (Math.random() * 2 - 1) * scatterHalfCone : 0;
+      const stagger = staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0;
+      out.push(shot({ angleOffset: scatter + stagger, delay: i * d.burst.interval }));
     }
     return { mode, shots: out };
   }
@@ -535,6 +544,11 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // faded out late by salvoConvergeFalloff — see salvoAimOffset above. 0 for every weapon
     // that doesn't opt in via `delivery.salvoSpread`.
     aimOffset: salvoAimOffset(d, angleOffset),
+    // #434: a salvo whose offset should NOT converge — each bolt HOLDS its lateral aim offset all
+    // the way to impact, so a saturating volley (Plasma Arc) stays spread across an area instead of
+    // tightening onto one point at the last moment (the Swarm Rack behaviour, salvoConvergeFalloff).
+    // Read by projectiles.js. Off (false) for every weapon that doesn't opt in via delivery.salvoNoConverge.
+    salvoNoConverge: !!d.salvoNoConverge,
     // Turn rate is derived from speed (#77) so the round can always corner within a fixed radius
     // instead of orbiting a target it's too fast to turn onto. Arcing lobs override `speed` after
     // this (firing.js) and re-derive `turn` from the new speed (passing the same per-weapon

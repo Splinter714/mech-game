@@ -68,6 +68,34 @@ describe('planEmissions', () => {
     );
   });
 
+  // #434 — Plasma Arc's saturating VOLLEY: one trigger pull emits 5 staggered, scattered bolts.
+  it('emits a 5-bolt staggered volley for Plasma Arc (delivery.count + burst.interval)', () => {
+    const { count, burst } = WEAPONS.plasmaCannon.delivery;
+    expect(count).toBe(5);
+    const p = planEmissions(WEAPONS.plasmaCannon);
+    expect(p.mode).toBe('projectile');
+    expect(p.shots).toHaveLength(5);
+    // Staggered in time — a rippling volley, 70ms apart, not one simultaneous salvo.
+    expect(p.shots.map((s) => s.delay)).toEqual(
+      Array.from({ length: count }, (_, i) => i * burst.interval),
+    );
+  });
+
+  it('scatters each Plasma Arc bolt a random angle across its spreadAngle (area saturation, ' +
+     'not one point)', () => {
+    const halfConeRad = ((WEAPONS.plasmaCannon.delivery.spreadAngle / 2) * Math.PI) / 180;
+    // Every bolt stays within the scatter cone…
+    const runs = Array.from({ length: 40 }, () => planEmissions(WEAPONS.plasmaCannon).shots);
+    for (const shots of runs) {
+      for (const s of shots) expect(Math.abs(s.angleOffset)).toBeLessThanOrEqual(halfConeRad + 1e-9);
+    }
+    // …and the scatter is genuinely RANDOM — the bolts don't all share one angle, and the set of
+    // angles differs run to run (so it saturates an area rather than stacking on a line).
+    const oneRun = runs[0].map((s) => s.angleOffset);
+    expect(new Set(oneRun).size).toBeGreaterThan(1);
+    expect(runs.some((shots) => shots.some((s, i) => s.angleOffset !== oneRun[i]))).toBe(true);
+  });
+
   it('routes melee to a contact swing', () => {
     const meleeFixture = { delivery: { hit: 'contact', pattern: 'single', kind: 'slash' } };
     expect(planEmissions(meleeFixture).mode).toBe('contact');
@@ -1122,10 +1150,22 @@ describe('#377 follow-up — salvo separation with a late converge', () => {
   });
 
   it('is opt-in per weapon: no salvoSpread means no offset at all (every other weapon)', () => {
-    for (const id of ['streakPod', 'napalm', 'plasmaCannon', 'clusterRocket']) {
+    // #434: plasmaCannon opted IN — its volley uses salvoSpread (a PERSISTENT, non-converging
+    // scatter; see the #434 coverage below), so it is no longer one of the no-offset weapons.
+    for (const id of ['streakPod', 'napalm', 'clusterRocket']) {
       expect(WEAPONS[id].delivery.salvoSpread).toBeUndefined();
       expect(salvoAimOffset(WEAPONS[id].delivery, 0.3)).toBe(0);
     }
+  });
+
+  // #434: Plasma Arc's volley keeps its scatter to impact — makeProjectile stamps `salvoNoConverge`
+  // so projectiles.js holds each bolt's aim offset at full authority (area saturation) instead of
+  // tightening onto one point late like Swarm Rack. Every other weapon leaves the flag off.
+  it('makeProjectile stamps salvoNoConverge only for a weapon that opts in (Plasma Arc)', () => {
+    const plasma = makeProjectile(WEAPONS.plasmaCannon, 0, 0, 0, { maxDist: 600, angleOffset: 0.1 });
+    expect(plasma.salvoNoConverge).toBe(true);
+    expect(Math.abs(plasma.aimOffset)).toBeGreaterThan(0);   // a real, held lateral scatter offset
+    expect(makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 600 }).salvoNoConverge).toBe(false);
   });
 
   it('the whole salvo spans a SLIGHT separation — real, but nowhere near the 44° fan #376 ' +

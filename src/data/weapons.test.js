@@ -164,12 +164,16 @@ describe('#402 ammo economy — magazine size sets each weapon\'s ~6s burst (no 
 
   // Seconds of held trigger, from a full magazine, until the first pull that ammo can't cover.
   // #402: no regen — ammo only ever goes down until a reload, so this is just whole-round pulls.
+  // #434: a per-bolt-ammo volley weapon (Plasma Arc) spends `count` rounds per pull, not one — so
+  // its magazine empties `count`× faster. Every other weapon still spends exactly one round per pull.
+  const roundsPerPull = (w) => (w.delivery.ammoPerShot ? Math.max(1, w.delivery.count ?? 1) : 1);
   const burstSeconds = (w) => {
     const step = fireIntervalMs(w) / 1000;
+    const perPull = roundsPerPull(w);
     let ammo = w.ammoMax;
     for (let shot = 0; shot < 100000; shot += 1) {
-      if (ammo < 1) return shot * step;          // dry: this pull is refused
-      ammo = Math.max(0, ammo - 1);
+      if (ammo < perPull) return shot * step;    // dry: this pull can't be covered
+      ammo = Math.max(0, ammo - perPull);
     }
     return Infinity;
   };
@@ -190,10 +194,11 @@ describe('#402 ammo economy — magazine size sets each weapon\'s ~6s burst (no 
   });
 
   // A few weapons deliberately hold fire LONGER than the ~6s norm, carried over from earlier feel
-  // passes: plasmaCannon (#376, 8s), napalm (#376, 7.5s), streakPod (#376, 7.2s), and swarmRack
-  // (#377) which is an explicit big-magazine carve-out at ~15s. Everything else lands ~5.5-6.6s.
+  // passes: napalm (#376, 7.5s), streakPod (#376, 7.2s), and swarmRack (#377) which is an explicit
+  // big-magazine carve-out at ~15s. plasmaCannon (#434) is now a 6-volley carve-out at ~14.4s — a
+  // 30-round mag spending 5 rounds/pull (ammoPerShot) over a 2.4s cadence. Everything else ~5.5-6.6s.
   const BURST_MAX_SECONDS = {
-    swarmRack: 15.5, streakPod: 7.2, napalm: 7.5, plasmaCannon: 8.0,
+    swarmRack: 15.5, streakPod: 7.2, napalm: 7.5, plasmaCannon: 14.5,
   };
 
   it.each(limited)('%s holds fire for a few seconds before its reload', (id, w) => {
@@ -259,7 +264,10 @@ describe('#377/#402 Swarm Rack feel pass', () => {
   });
 
   it('leaves every OTHER missile exactly where it was — speed, cycle and arc shape', () => {
-    for (const id of ['clusterRocket', 'streakPod', 'napalm', 'plasmaCannon']) {
+    // #434: plasmaCannon dropped out of this list — its volley rework gives it its own salvoSpread
+    // (a PERSISTENT, non-converging scatter, not Swarm Rack's late-converge). Its own dedicated
+    // coverage lives in the #434 block below.
+    for (const id of ['clusterRocket', 'streakPod', 'napalm']) {
       expect(WEAPONS[id].delivery.arcProfile).toBeUndefined();   // still the default lob
       expect(WEAPONS[id].delivery.salvoSpread).toBeUndefined();  // no late-converge offset
       expect(WEAPONS[id].delivery.wobbleFrequency).toBeUndefined();
