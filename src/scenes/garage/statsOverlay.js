@@ -10,6 +10,7 @@
 // what Copy yields. Everything is procedural Phaser (no assets), matching the rest of the garage.
 import { makeStatsHistory } from '../../data/statsHistory.js';
 import { runReportText } from '../../data/runStatsText.js';
+import { aggregateRuns } from '../../data/runStats.js';
 
 const COL = {
   scrim: 0x05070a,
@@ -56,18 +57,65 @@ export class StatsOverlay {
       fontFamily: 'monospace', fontSize: '11px', color: COL.text, lineSpacing: 2,
     });
 
-    // Controls row (bottom of the panel): browse prev/next, copy, close.
+    // Controls row (bottom of the panel): browse prev/next on the left; clear/copy/close clustered
+    // on the right (each 104 wide, 8 gap).
     const by = H - pad - 40;
     this.prevBtn = this._button(pad + 18, by, 96, 28, '◀ NEWER', () => this._step(-1));
     this.nextBtn = this._button(pad + 122, by, 96, 28, 'OLDER ▶', () => this._step(+1));
-    this.copyBtn = this._button(W - pad - 18 - 220, by, 108, 28, 'COPY', () => this._copy());
-    this.closeBtn = this._button(W - pad - 18 - 104, by, 104, 28, 'CLOSE', () => this.close());
+    const rx = (slot) => W - pad - 18 - 104 - slot * 112;   // slot 0 = rightmost
+    this.closeBtn = this._button(rx(0), by, 104, 28, 'CLOSE', () => this.close());
+    this.copyBtn = this._button(rx(1), by, 104, 28, 'COPY', () => this._copy());
+    this.clearBtn = this._button(rx(2), by, 104, 28, 'CLEAR', () => this._askClear());
 
     this.layer.add([
       this.scrim, this.panel, this.title, this.subtitle, this.body,
       this.prevBtn.r, this.prevBtn.t, this.nextBtn.r, this.nextBtn.t,
+      this.clearBtn.r, this.clearBtn.t,
       this.copyBtn.r, this.copyBtn.t, this.closeBtn.r, this.closeBtn.t,
     ]);
+
+    this._buildConfirm();
+  }
+
+  // In-overlay CLEAR confirm (no browser confirm()): a small centred panel over the scrim with
+  // CONFIRM / CANCEL. Hidden until the CLEAR button is pressed.
+  _buildConfirm() {
+    const s = this.scene;
+    const W = s.W, H = s.H;
+    const cw = 380, ch = 150;
+    const cx = (W - cw) / 2, cy = (H - ch) / 2;
+    this.confirm = s.add.container(0, 0).setDepth(2100).setVisible(false);
+    this.confirm.setScrollFactor?.(0);
+    const dim = s.add.rectangle(0, 0, W, H, COL.scrim, 0.55).setOrigin(0, 0).setInteractive();
+    const box = s.add.rectangle(cx, cy, cw, ch, COL.panel, 1).setOrigin(0, 0)
+      .setStrokeStyle(1, COL.edge);
+    const msg = s.add.text(cx + cw / 2, cy + 44, 'Wipe all run history?', {
+      fontFamily: 'monospace', fontSize: '15px', color: COL.text,
+    }).setOrigin(0.5);
+    const sub = s.add.text(cx + cw / 2, cy + 70, 'This cannot be undone.', {
+      fontFamily: 'monospace', fontSize: '11px', color: COL.dim,
+    }).setOrigin(0.5);
+    const bw = 130, bh = 30, by = cy + ch - 46;
+    const cancel = this._button(cx + 28, by, bw, bh, 'CANCEL', () => this._hideConfirm());
+    const wipe = this._button(cx + cw - 28 - bw, by, bw, bh, 'WIPE', () => this._doClear());
+    wipe.t.setColor('#e88');
+    this.confirm.add([dim, box, msg, sub, cancel.r, cancel.t, wipe.r, wipe.t]);
+    this.layer.add(this.confirm);
+  }
+
+  _askClear() {
+    if (!this.entries.length) return;   // nothing to wipe
+    this.confirm.setVisible(true);
+  }
+
+  _hideConfirm() { this.confirm.setVisible(false); }
+
+  _doClear() {
+    this.history.clear();
+    this._hideConfirm();
+    this.entries = [];
+    this.index = 0;
+    this._render();
   }
 
   _button(x, y, w, h, label, onClick) {
@@ -90,25 +138,35 @@ export class StatsOverlay {
     this._render();
   }
 
-  close() { this.layer.setVisible(false); }
+  close() { this._hideConfirm(); this.layer.setVisible(false); }
 
   isOpen() { return this.layer.visible; }
 
+  // #432: an ALL-RUNS pooled view rides at the END of the browse when there are >=2 runs (a lone
+  // run's aggregate equals itself, so it's suppressed). It's a virtual index past the real runs.
+  _hasAgg() { return this.entries.length >= 2; }
+
+  // Number of browsable views: the real runs plus the optional aggregate.
+  _viewCount() { return this.entries.length + (this._hasAgg() ? 1 : 0); }
+
+  _isAggIndex() { return this._hasAgg() && this.index >= this.entries.length; }
+
   _step(dir) {
-    if (!this.entries.length) return;
-    this.index = Math.max(0, Math.min(this.entries.length - 1, this.index + dir));
+    if (!this._viewCount()) return;
+    this.index = Math.max(0, Math.min(this._viewCount() - 1, this.index + dir));
     this._render();
   }
 
   _current() { return this.entries[this.index] ?? null; }
 
   _render() {
-    const entry = this._current();
-    const total = this.entries.length;
+    const total = this._viewCount();
     const showBrowse = total > 1;
     this.prevBtn.r.setVisible(showBrowse); this.prevBtn.t.setVisible(showBrowse);
     this.nextBtn.r.setVisible(showBrowse); this.nextBtn.t.setVisible(showBrowse);
-    if (!entry) {
+    const haveRuns = this.entries.length > 0;
+    this.clearBtn.r.setVisible(haveRuns); this.clearBtn.t.setVisible(haveRuns);
+    if (!haveRuns) {
       this.subtitle.setText('');
       this.body.setColor(COL.dim);
       this.body.setText('No runs recorded yet.\n\nDeploy, fight, and finish a sortie — a run commits\non a win, a death, or a manual exit of 10s or more.');
@@ -116,6 +174,16 @@ export class StatsOverlay {
       return;
     }
     this.copyBtn.r.setVisible(true); this.copyBtn.t.setVisible(true);
+    this.body.setColor(COL.text);
+    if (this._isAggIndex()) {
+      this.subtitle.setText(
+        `ALL RUNS   •   ${this.entries.length} pooled   •   view ${this.index + 1} / ${total}`,
+      );
+      this.body.setText(runReportText(this._aggregate()));
+      this._resetCopyLabel();
+      return;
+    }
+    const entry = this._current();
     const run = entry.run ?? {};
     const m = run.meta ?? {};
     const when = this._ago(entry.id);
@@ -123,15 +191,18 @@ export class StatsOverlay {
       `RUN ${this.index + 1} / ${total}   •   ${(entry.reason ?? '?').toUpperCase()}`
       + `   •   ${m.biome ?? '-'} / ${m.chassis ?? '-'}${when ? `   •   ${when}` : ''}`,
     );
-    this.body.setColor(COL.text);
     this.body.setText(runReportText(run));
     this._resetCopyLabel();
   }
 
+  // Pool every stored run's reduced report into the aggregate view.
+  _aggregate() { return aggregateRuns(this.entries.map((e) => e.run ?? {})); }
+
   _copy() {
-    const entry = this._current();
-    if (!entry) return;
-    const text = runReportText(entry.run ?? {});
+    if (!this.entries.length) return;
+    const text = this._isAggIndex()
+      ? runReportText(this._aggregate())
+      : runReportText(this._current()?.run ?? {});
     try {
       navigator.clipboard?.writeText(text);
       this.copyBtn.t.setText('COPIED ✓').setColor(COL.good);

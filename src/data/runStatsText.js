@@ -26,16 +26,23 @@ function table(header, rows) {
 
 function globalSection(run) {
   const m = run.meta ?? {};
-  const lines = [
-    'GLOBAL',
-    `  Biome:      ${m.biome ?? '-'}`,
-    `  Chassis:    ${m.chassis ?? '-'}`,
-    `  Loadout:    ${(m.loadout && m.loadout.length) ? m.loadout.join(', ') : '-'}`,
+  const agg = run.runCount != null;   // #432: the pooled ALL-RUNS view
+  const lines = ['GLOBAL'];
+  if (agg) {
+    lines.push(`  Runs:       ${run.runCount} pooled`);
+  } else {
+    lines.push(
+      `  Biome:      ${m.biome ?? '-'}`,
+      `  Chassis:    ${m.chassis ?? '-'}`,
+      `  Loadout:    ${(m.loadout && m.loadout.length) ? m.loadout.join(', ') : '-'}`,
+    );
+  }
+  lines.push(
     `  Duration:   ${secs(run.durationMs)}   (combat ${secs(run.combatTimeMs)})`,
     `  Damage:     dealt ${fmt(run.totalDealt)}   taken ${fmt(run.totalTaken)}`,
     `  Accuracy:   ${pct(run.accuracy)}   (${run.hits}/${run.shotsFired} pulls)`,
     `  Deaths:     ${run.deaths}   Respawns: ${run.respawns}`,
-  ];
+  );
   const pu = Object.entries(run.powerups ?? {});
   lines.push(`  Powerups:   ${pu.length ? pu.map(([k, v]) => `${k} x${v}`).join(', ') : 'none'}`);
   return lines.join('\n');
@@ -77,10 +84,18 @@ function enemiesSection(run) {
 
 export function runReportText(run) {
   if (!run) return '';
+  // #432: the pooled ALL-RUNS view carries `runCount` and gets its own header.
+  const header = run.runCount != null
+    ? `=== ALL RUNS (${run.runCount}) ===`
+    : '=== RUN REPORT ===';
   return [
-    '=== RUN REPORT ===',
+    header,
     globalSection(run),
     weaponsSection(run),
     enemiesSection(run),
   ].join('\n\n') + '\n';
 }
+
+// #432: alias for the pooled aggregate — same renderer, kept as a named entry point so callers
+// reading intent (the overlay's Copy on ALL RUNS) don't have to know it shares runReportText.
+export const aggregateReportText = runReportText;

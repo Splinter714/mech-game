@@ -9,7 +9,10 @@
 
 export const HISTORY_LIMIT = 20;                 // rolling last-N committed runs
 export const MANUAL_MIN_DURATION_MS = 10_000;    // manual-end runs shorter than this are discarded
-export const HISTORY_STORAGE_KEY = 'mech-game-stats-history-v1';
+// v2 (#432): the reduced enemy shape gained raw pooling counters (ttkSumMs/ttkCount/engagedMs/
+// shotsFired/hits). Old v1 entries only stored pre-averaged avgTtkMs, so they can't be pooled
+// exactly — bump the key so stale entries are dropped rather than corrupting the ALL-RUNS view.
+export const HISTORY_STORAGE_KEY = 'mech-game-stats-history-v2';
 
 // Pure gate — reason in { 'death', 'win', 'manual' }.
 export function shouldCommitRun(run, { reason } = {}) {

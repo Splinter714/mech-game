@@ -254,6 +254,15 @@ export function reduceRun(state) {
       threatShare: div(e.damageToYou, state.totalTaken),
       damageToKind: e.damageToKind,
       overkill: e.overkill,
+      // #432 RAW COUNTERS — kept in the reduced shape so ALL-RUNS pooling recomputes metrics
+      // from summed counts, not by averaging pre-averaged per-run numbers. avgTtkMs alone loses
+      // the sample count, so the raw ttk pair (sum + count), engaged time, and enemy shots/hits
+      // all ride along.
+      engagedMs: e.engagedMs,
+      ttkSumMs: e.ttkSumMs,
+      ttkCount: e.ttkCount,
+      shotsFired: e.shotsFired,
+      hits: e.hits,
     };
   }
 
@@ -269,6 +278,138 @@ export function reduceRun(state) {
     deaths: state.deaths,
     respawns: state.respawns,
     powerups: { ...state.powerups },
+    weapons,
+    enemies,
+  };
+}
+
+// ── #432 ALL RUNS — pooled aggregate across every stored run ────────────────────────────────────
+// Takes the array of REDUCED run reports (statsHistory stores `{ id, reason, run }`; pass the
+// `.run`s) and POOLS THE RAW COUNTS, then recomputes every ratio from the summed counters — NOT
+// an average of per-run metrics. Overall accuracy = Σhits/Σshots; per-weapon eBurst =
+// Σdamage/Σfiring; eSustained = Σdamage/Σ(firing+reload); eCombat = Σdamage/Σcombat; enemy TTK =
+// ΣttkSumMs/ΣttkCount; effectiveDps = ΣdamageToYou/ΣengagedMs; threatShare = ΣdamageToYou/Σtaken.
+// Theoretical DPS is static per weapon (from weaponStats) — reused as-is; landing ratio recomputes
+// from the pooled effective/theoretical. The output matches reduceRun's shape so the SAME
+// runStatsText renderer and Copy path work on it. Never divides by zero (div/perSec guard).
+export function aggregateRuns(runs) {
+  const list = (Array.isArray(runs) ? runs : []).filter((r) => r && typeof r === 'object');
+
+  // Global pooled totals.
+  const g = {
+    durationMs: 0, combatTimeMs: 0, totalDealt: 0, totalTaken: 0,
+    shotsFired: 0, hits: 0, deaths: 0, respawns: 0,
+  };
+  const powerups = {};
+  // Pooled per-weapon and per-enemy raw buckets, keyed by id/kind.
+  const wPool = {};   // id -> { shotsFired, hits, damageDealt, overkill, firingTimeMs, reloads, reloadTimeMs }
+  const ePool = {};   // kind -> { spawned, killed, damageToYou, damageToKind, overkill, engagedMs, ttkSumMs, ttkCount, shotsFired, hits }
+
+  for (const run of list) {
+    g.durationMs += run.durationMs ?? 0;
+    g.combatTimeMs += run.combatTimeMs ?? 0;
+    g.totalDealt += run.totalDealt ?? 0;
+    g.totalTaken += run.totalTaken ?? 0;
+    g.shotsFired += run.shotsFired ?? 0;
+    g.hits += run.hits ?? 0;
+    g.deaths += run.deaths ?? 0;
+    g.respawns += run.respawns ?? 0;
+    for (const [k, v] of Object.entries(run.powerups ?? {})) powerups[k] = (powerups[k] ?? 0) + (v ?? 0);
+
+    for (const w of Object.values(run.weapons ?? {})) {
+      const b = (wPool[w.id] ??= {
+        shotsFired: 0, hits: 0, damageDealt: 0, overkill: 0,
+        firingTimeMs: 0, reloads: 0, reloadTimeMs: 0,
+      });
+      b.shotsFired += w.shotsFired ?? 0;
+      b.hits += w.hits ?? 0;
+      b.damageDealt += w.damageDealt ?? 0;
+      b.overkill += w.overkill ?? 0;
+      b.firingTimeMs += w.firingTimeMs ?? 0;
+      b.reloads += w.reloads ?? 0;
+      b.reloadTimeMs += w.reloadTimeMs ?? 0;
+    }
+
+    for (const e of Object.values(run.enemies ?? {})) {
+      const b = (ePool[e.kind] ??= {
+        spawned: 0, killed: 0, damageToYou: 0, damageToKind: 0, overkill: 0,
+        engagedMs: 0, ttkSumMs: 0, ttkCount: 0, shotsFired: 0, hits: 0,
+      });
+      b.spawned += e.spawned ?? 0;
+      b.killed += e.killed ?? 0;
+      b.damageToYou += e.damageToYou ?? 0;
+      b.damageToKind += e.damageToKind ?? 0;
+      b.overkill += e.overkill ?? 0;
+      b.engagedMs += e.engagedMs ?? 0;
+      b.ttkSumMs += e.ttkSumMs ?? 0;
+      b.ttkCount += e.ttkCount ?? 0;
+      b.shotsFired += e.shotsFired ?? 0;
+      b.hits += e.hits ?? 0;
+    }
+  }
+
+  const weapons = {};
+  for (const [id, b] of Object.entries(wPool)) {
+    const w = getWeapon(id);
+    const theoBurst = w ? burstDps(w) : 0;
+    const theoSustained = w ? sustainedDps(w) : 0;
+    const effSustained = perSec(b.damageDealt, b.firingTimeMs + b.reloadTimeMs);
+    weapons[id] = {
+      id,
+      name: w?.name ?? id,
+      shotsFired: b.shotsFired,
+      hits: b.hits,
+      accuracy: div(b.hits, b.shotsFired),
+      damageDealt: b.damageDealt,
+      overkill: b.overkill,
+      firingTimeMs: b.firingTimeMs,
+      reloads: b.reloads,
+      reloadTimeMs: b.reloadTimeMs,
+      effectiveBurstDps: perSec(b.damageDealt, b.firingTimeMs),
+      effectiveSustainedDps: effSustained,
+      effectiveCombatDps: perSec(b.damageDealt, g.combatTimeMs),
+      theoreticalBurstDps: theoBurst,
+      theoreticalSustainedDps: theoSustained,
+      landingRatio: div(effSustained, theoSustained),
+    };
+  }
+
+  const enemies = {};
+  for (const [kind, e] of Object.entries(ePool)) {
+    enemies[kind] = {
+      kind,
+      avgTtkMs: div(e.ttkSumMs, e.ttkCount),
+      weaponAccuracy: Math.min(1, div(e.hits, e.shotsFired)),
+      effectiveDps: perSec(e.damageToYou, e.engagedMs),
+      effectiveHp: div(e.damageToKind, e.killed),
+      spawned: e.spawned,
+      killed: e.killed,
+      damageToYou: e.damageToYou,
+      threatShare: div(e.damageToYou, g.totalTaken),
+      damageToKind: e.damageToKind,
+      overkill: e.overkill,
+      engagedMs: e.engagedMs,
+      ttkSumMs: e.ttkSumMs,
+      ttkCount: e.ttkCount,
+      shotsFired: e.shotsFired,
+      hits: e.hits,
+    };
+  }
+
+  return {
+    // Marks this as the pooled view; the text renderer switches its header on it.
+    runCount: list.length,
+    meta: { biome: null, chassis: null, loadout: [] },
+    durationMs: g.durationMs,
+    combatTimeMs: g.combatTimeMs,
+    totalDealt: g.totalDealt,
+    totalTaken: g.totalTaken,
+    accuracy: div(g.hits, g.shotsFired),
+    shotsFired: g.shotsFired,
+    hits: g.hits,
+    deaths: g.deaths,
+    respawns: g.respawns,
+    powerups,
     weapons,
     enemies,
   };

@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { RunStatsMixin } from './runStatsHooks.js';
 import { createRunStats } from '../../data/runStats.js';
-import { makeStatsHistory } from '../../data/statsHistory.js';
+import { makeStatsHistory, HISTORY_STORAGE_KEY } from '../../data/statsHistory.js';
 
 function fakeStorage() {
   const m = new Map();
@@ -34,7 +34,7 @@ describe('#423 _commitRunStats — commit-once guard', () => {
     const ctx = makeCtx();
     RunStatsMixin._commitRunStats.call(ctx, 'win');
     RunStatsMixin._commitRunStats.call(ctx, 'manual');   // the RUN_OVER_DELAY toGarage() follow-up
-    const entries = JSON.parse(ctx.storage.getItem('mech-game-stats-history-v1'));
+    const entries = JSON.parse(ctx.storage.getItem(HISTORY_STORAGE_KEY));
     expect(entries).toHaveLength(1);
     expect(entries[0].reason).toBe('win');
   });
@@ -44,7 +44,7 @@ describe('#423 _commitRunStats — commit-once guard', () => {
     ctx.runStats = createRunStats({});
     ctx.runStats.tick(4000);   // < 10s
     RunStatsMixin._commitRunStats.call(ctx, 'manual');
-    expect(ctx.storage.getItem('mech-game-stats-history-v1')).toBe(null);
+    expect(ctx.storage.getItem(HISTORY_STORAGE_KEY)).toBe(null);
     expect(ctx._statsCommitted).toBe(true);
   });
 });
