@@ -74,11 +74,17 @@ export const AmmoIndicatorsMixin = {
 
   // One weapon's reload blink at its muzzle tip (cx, cy), in the weapon's CATEGORY neon colour.
   // Only ever called on the blink's ON phase for a weapon that is actively reloading.
+  // #433 revision: the first pass drew a small flat-filled circle with a black outline stroke —
+  // a completely different look from the weapon's actual BAKED muzzle glow (art/mechPrims.js
+  // `glowDot`, a soft layered bloom: halo -> mid-halo -> core -> hot spot, out to r*2.2), so it
+  // read as a foreign black-ringed blob sitting near the gun rather than the muzzle light itself.
+  // Mirroring `glowDot`'s own layering (same radii, no outline) makes the blink read as that
+  // glow visually intensifying/pulsing, not a new object appearing on top of it.
   _drawWeaponLight(g, cx, cy, w) {
-    g.fillStyle(neonFor(w.weapon?.category), 1);
-    g.fillCircle(cx, cy, LIGHT_R);
-    // A faint dark ring so the blink stays legible over bright terrain.
-    g.lineStyle(1, 0x000000, 0.4);
-    g.strokeCircle(cx, cy, LIGHT_R);
+    const n = neonFor(w.weapon?.category);
+    g.fillStyle(n.halo, 0.3);  g.fillCircle(cx, cy, LIGHT_R * 2.2);
+    g.fillStyle(n.halo, 0.6);  g.fillCircle(cx, cy, LIGHT_R * 1.35);
+    g.fillStyle(n.core, 1);    g.fillCircle(cx, cy, LIGHT_R);
+    g.fillStyle(n.hot, 1);     g.fillCircle(cx, cy, LIGHT_R * 0.42);
   },
 };
