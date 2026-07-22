@@ -31,13 +31,18 @@ export const ART_SCALE = 4;
 // bake a muzzle-glow-ONLY texture — transparent everywhere the gun hardware would be — with zero
 // per-mount changes. The reload blink toggles that overlay sprite's visibility instead of swapping
 // the part texture (arena/ammoIndicators.js), so the part texture stays CONSTANT (shield-shape fix).
+// The INVERSE gate `sg.glowSkip = true` suppresses ONLY glow-primitive output while the gun hardware
+// still draws — so the base part bakes with the muzzle glow OMITTED ENTIRELY (transparent where the
+// glow would be, not a dark blob). The glow-only overlay stays the sole source of the muzzle colour,
+// so the reload blink's off phase reads as the colour vanishing to nothing, not blinking to dark.
 export function scaledGraphics(g, r = ART_SCALE) {
   const s = (n) => n * r;
   const wrap = {
     raw: g,
     glowOnly: false,   // when true, only glow-primitive output reaches the canvas
+    glowSkip: false,   // when true, glow-primitive output is suppressed (gun hardware still draws)
     _glow: false,      // set by glowDot/glowBar while emitting their layers
-    _blocked() { return this.glowOnly && !this._glow; },
+    _blocked() { return (this.glowOnly && !this._glow) || (this.glowSkip && this._glow); },
     fillStyle: (c, a) => g.fillStyle(c, a),
     lineStyle: (w, c, a) => g.lineStyle(w * r, c, a),
     fillRect: (x, y, w, h) => { if (!wrap._blocked()) g.fillRect(s(x), s(y), s(w), s(h)); },

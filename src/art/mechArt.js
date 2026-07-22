@@ -128,11 +128,20 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
   const weaponIds = mech.mounts[loc].filter(isWeapon);
   const n = weaponIds.length;
   const front = p.y - p.h / 2;
+  // #433: the player's base part OMITS the muzzle glow ENTIRELY — `glowSkip` suppresses EVERY
+  // emissive layer (every glowDot/glowBar plus every `emissive()`-wrapped coloured layer — edge
+  // lights, rail slits, plasma pools, launch cells, blade edges) so that area bakes TRANSPARENT (bare
+  // gun hardware), not a dark blob. The muzzle colour lives solely in the separate glow-only overlay
+  // (drawPartGlow), which keeps EXACTLY those same layers — so base + overlay recombine to the
+  // original inline look per weapon, and the reload blink's off phase reads as the colour vanishing.
+  const prevSkip = sg.glowSkip;
+  if (muzzleOff) sg.glowSkip = true;
   weaponIds.forEach((id, i) => {
     const wpn = getWeapon(id);
     const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s, muzzleOff);
+    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s);
   });
+  sg.glowSkip = prevSkip;
 }
 
 // One arm (the weapon mount) — chunky plate + its weapons — in its OWN texture so the scene
@@ -147,11 +156,12 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
 // muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
 // a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
 // stump either way.
-// `muzzleOff` (#433): draw the arm's weapons with their muzzle glow in the theme's DARK tones
-// (see drawWeaponMount) instead of the category neon, so the baked muzzle light reads as OFF. For
-// the player this is now the arm's SOLE baked state — the colour lives in a separate glow-only
-// overlay sprite (MUZZLE_GLOW_SUFFIX, drawPartGlow) that the reload blink toggles on/off, leaving
-// this part texture constant. Enemies bake muzzleOff=false (glow straight in the part, no overlay).
+// `muzzleOff` (#433): draw the arm's weapons with their muzzle glow OMITTED — `glowSkip`
+// (drawWeaponsAt) suppresses the glowDot/glowBar layers so that area bakes TRANSPARENT (bare gun
+// hardware), not a dark blob. For the player this is now the arm's SOLE baked state — the muzzle
+// colour lives in a separate glow-only overlay sprite (MUZZLE_GLOW_SUFFIX, drawPartGlow) that the
+// reload blink toggles on/off, leaving this part texture constant; the off phase reads as the colour
+// vanishing to nothing. Enemies bake muzzleOff=false (glow straight in the part, no overlay).
 function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
@@ -174,8 +184,8 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
 // via `exposedInternals`, instead of the old brackets-on-top overlay.
 // `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
 // body-only raster for the player's shield shell (see drawArm's note).
-// `muzzleOff` (#433): see drawArm — the dark-muzzle bake (the player's sole part state; colour
-// lives in the separate glow overlay).
+// `muzzleOff` (#433): see drawArm — the muzzle-glow-OMITTED bake (transparent where the glow would
+// be; the player's sole part state; the colour lives in the separate glow overlay).
 function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;

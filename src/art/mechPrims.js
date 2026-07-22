@@ -63,14 +63,18 @@ export const NEON = {
 };
 export const neonFor = (catId) => NEON[catId] ?? NEON.melee;
 
-// #433: an "extinguished" neon ramp — the dark tones a weapon's muzzle glow collapses to while
-// it is RELOADING. A muzzle-off part variant (mechArt.buildMechTextures) is baked with this ramp
-// substituted for the weapon's category neon, and the reload blink swaps the part sprite to it on
-// the blink's OFF phase (arena/ammoIndicators.js) — so the muzzle light reads as PULSING OFF on
-// the weapon's own baked glow, not a coloured dot painted over the barrel tip. Derived from the
-// theme's own dark plate tones so every emitter (glowDot lens, glowBar slit, missile cell, edge
-// light) collapses into an unlit lens of the same metal instead of glowing its category colour.
-export const muzzleOffNeon = (T) => ({ halo: T.deep, core: T.faceDk, hot: T.faceMid, edge: T.faceDk });
+// #433: run `fn` as EMISSIVE output — flag its draw ops as glow (`_glow`) so the two muzzle-bake
+// gates treat them like glowDot/glowBar do. That's what lets the base-part bake OMIT them entirely
+// (drawWeaponsAt raises `sg.glowSkip` → they bake transparent, not dark) while the glow-only overlay
+// KEEPS them (`sg.glowOnly`). Wrap ANY coloured muzzle layer that isn't itself a glowDot/glowBar —
+// a barrel edge-light, a rail slit, a plasma pool, a launch cell, a blade edge — so recombining the
+// base part with its glow overlay reproduces the original single inline bake EXACTLY, per weapon.
+// A no-op when neither gate is set (enemy mechs bake glow straight into the part).
+export function emissive(sg, fn) {
+  const prev = sg._glow; sg._glow = true;
+  fn();
+  sg._glow = prev;
+}
 
 // ── Low-level draw helpers (all in mech-local design coords: origin = centre, -y up).
 

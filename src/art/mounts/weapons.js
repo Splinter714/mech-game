@@ -10,7 +10,7 @@
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
-import { barrel, rectC, roundC, ellipseC, poly, chamfer, glowDot, glowBar } from '../mechPrims.js';
+import { barrel, rectC, roundC, ellipseC, poly, chamfer, glowDot, glowBar, emissive } from '../mechPrims.js';
 import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ function pulseLaser(sg, T, bx, frontY, s, n, cap) {
 function beamLaser(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('beamLaser', s, cap), w = 2.2 * s;
   barrel(sg, T, bx, frontY - L / 2, w, L);
-  rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7);  // edge light down the barrel
+  emissive(sg, () => rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7)); // edge light down the barrel
   ellipseC(sg, bx, frontY - L * 0.9, w * 1.8, w * 1.1, T.deep);        // lens collar
   glowDot(sg, bx, frontY - L, 3.4 * s, n);                            // big emitter lens
 }
@@ -43,7 +43,7 @@ function railLance(sg, T, bx, frontY, s, n, cap) {
   rectC(sg, bx, frontY - L * 0.14, w * 2.8, 3 * s, T.deep);           // blocky breech
   for (const dx of [-1, 1]) {                                        // twin accelerator rails
     rectC(sg, bx + dx * off, frontY - L * 0.52, rail, L * 0.9, T.faceDk);
-    rectC(sg, bx + dx * off, frontY - L * 0.52, rail * 0.5, L * 0.9, n.core, 0.8);
+    emissive(sg, () => rectC(sg, bx + dx * off, frontY - L * 0.52, rail * 0.5, L * 0.9, n.core, 0.8)); // lit rail slit
   }
   barrel(sg, T, bx, frontY - L / 2, w, L);                           // heavy central rod
   glowBar(sg, bx, frontY - L * 0.9, w * 0.7, L * 0.5, n);            // charged rail slit
@@ -57,7 +57,7 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
   rectC(sg, bx, frontY - L * 0.35, w, L * 0.7, T.deep);              // short neck
   poly(sg, [[bx - w * 1.1, frontY - L], [bx + w * 1.1, frontY - L],
             [bx + w * 0.5, frontY - L * 0.6], [bx - w * 0.5, frontY - L * 0.6]], T.faceDk);  // flared cup
-  ellipseC(sg, bx, frontY - L, w * 1.5, w * 0.8, n.halo, 0.4);       // plasma pool
+  emissive(sg, () => ellipseC(sg, bx, frontY - L, w * 1.5, w * 0.8, n.halo, 0.4)); // plasma pool
   glowDot(sg, bx, frontY - L, 2.8 * s, n);                          // fat plasma ball
 }
 
@@ -124,8 +124,10 @@ function swarmRack(sg, T, bx, frontY, s, n, cap) {
   boxFrame(sg, T, bx, cy, w, h);
   for (const dx of [-1, 1]) for (const dy of [0, 1, 2]) {           // 2×3 launch cells
     const cxx = bx + dx * w * 0.22, cyy = frontY - h * (0.2 + dy * 0.28);
-    rectC(sg, cxx, cyy, w * 0.24, h * 0.13, n.halo, 0.5);
-    rectC(sg, cxx, cyy, w * 0.16, h * 0.09, n.core, 1);
+    emissive(sg, () => {
+      rectC(sg, cxx, cyy, w * 0.24, h * 0.13, n.halo, 0.5);
+      rectC(sg, cxx, cyy, w * 0.16, h * 0.09, n.core, 1);
+    });
   }
 }
 
