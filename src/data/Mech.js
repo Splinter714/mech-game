@@ -352,7 +352,12 @@ export class Mech {
       // #402: draining a slot to exactly empty AUTO-triggers its reload. Guarded by `before > 0`
       // so repeatedly firing an already-dry weapon (a trigger held past empty) doesn't keep
       // resetting the reload timer back to full each frame.
-      if (after === 0 && before > 0) this.reload[loc][index] = RELOAD_SECONDS;
+      // #425: a fractional spend (e.g. Overdrive's cycleMult 0.5) can land the mag in (0,1) —
+      // below the `ready` threshold (ammo >= 1, see `weapons()` above) but never exactly 0, so
+      // the old `after === 0` check never fired and the weapon was stuck forever. Schedule the
+      // reload as soon as the mag can no longer afford a full shot instead, closing that dead
+      // zone; `before >= 1` keeps the same "don't re-trigger an in-progress reload" guard.
+      if (after < 1 && before >= 1) this.reload[loc][index] = RELOAD_SECONDS;
     }
   }
 

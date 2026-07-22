@@ -275,6 +275,26 @@ describe('Mech per-weapon reload (#402) — auto on empty', () => {
     expect(m.weapons()[0].ready).toBe(false);
   });
 
+  // #425: Overdrive's cycleMult (0.5) spends 0.5 ammo/shot, so a held trigger can walk the
+  // magazine down to a FRACTIONAL value in (0,1) — below the `ready` threshold (ammo >= 1) but
+  // never exactly 0. Before the fix, auto-reload only scheduled at exactly 0, so this fractional
+  // remainder wedged the weapon forever: not ready to fire, not reloading either. This is the
+  // regression test that would have caught it.
+  it('#425: a fractional-spend drain into (0,1) still auto-triggers a reload, and refills to full', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.mount('leftArm', 'plasmaCannon');
+    // Drain to exactly 0.5 ammo left via 0.5-per-shot spends (as Overdrive's cycleMult does).
+    for (let i = 0; i < (PC.ammoMax - 0.5) / 0.5; i++) m.consumeAmmo('leftArm', 0, 0.5);
+    expect(m.weapons()[0].ammo).toBeCloseTo(0.5, 5);
+    expect(m.weapons()[0].ready).toBe(false); // below the ammo >= 1 threshold, can't fire
+    expect(m.weapons()[0].reloading).toBe(true); // but the reload must already be scheduled
+    expect(m.weapons()[0].reload).toBeCloseTo(RELOAD_SECONDS, 5);
+
+    m.regenAmmo(RELOAD_SECONDS); // let the reload complete
+    expect(m.weapons()[0].ammo).toBe(PC.ammoMax); // snaps to a full magazine, not 0.5 + trickle
+    expect(m.weapons()[0].ready).toBe(true);
+  });
+
   it('firing is blocked while a slot is reloading', () => {
     const m = new Mech({ chassisId: 'medium' });
     m.mount('leftArm', 'plasmaCannon');
