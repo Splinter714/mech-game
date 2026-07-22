@@ -28,7 +28,7 @@ describe('runStatsText — plain-text report (#423)', () => {
   it('renders the three sections', () => {
     const txt = runReportText(sampleRun());
     expect(txt).toContain('=== RUN REPORT ===');
-    expect(txt).toContain('GLOBAL');
+    expect(txt).toContain('SUMMARY');
     expect(txt).toContain('WEAPONS');
     expect(txt).toContain('ENEMIES');
   });
@@ -45,7 +45,7 @@ describe('runStatsText — plain-text report (#423)', () => {
   it('includes weapon + enemy rows by name/kind', () => {
     const txt = runReportText(sampleRun());
     expect(txt).toContain('Autocannon');   // weapon display name
-    expect(txt).toContain('drone');        // enemy kind
+    expect(txt).toContain('Drone');        // enemy kind (#440: Title Case display name)
   });
 
   it('handles an empty run without throwing', () => {
@@ -56,6 +56,21 @@ describe('runStatsText — plain-text report (#423)', () => {
 
   it('is deterministic', () => {
     expect(runReportText(sampleRun())).toBe(runReportText(sampleRun()));
+  });
+
+  it('folds a Brood-tagged enemy kind under its base kind as a subset line (#440)', () => {
+    const r = createRunStats();
+    r.tick(1000, { inCombat: true });
+    r.enemySpawned('drone');
+    r.damageTaken({ enemyKind: 'drone', amount: 10 });
+    r.enemyKill('drone', 500);
+    r.enemySpawned('droneBrood');
+    r.damageTaken({ enemyKind: 'droneBrood', amount: 5 });
+    r.enemyKill('droneBrood', 400);
+    const txt = runReportText(r.reduce());
+    expect(txt).toContain('Drone');
+    expect(txt).toContain('of which brood-spawned');
+    expect(txt).not.toContain('Drone Brood');   // never shown as its own opaque top-level kind
   });
 
   it('columns are aligned (rows share the header width)', () => {

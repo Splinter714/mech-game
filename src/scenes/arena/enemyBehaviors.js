@@ -445,7 +445,11 @@ function deployNearby(scene, e, kindId) {
   const r = Math.random() * 4;
   let x = e.x + Math.cos(a) * r, y = e.y + Math.sin(a) * r;
   for (let t = 0; t < 5 && scene._blocked(x, y); t++) { x = (x + e.x) / 2; y = (y + e.y) / 2; }
-  const spawned = scene._spawnKind(x, y, kindId);
+  // #440: a carrier-deployed unit is the EXACT SAME kind/art/stats as its dock-spawned twin (see
+  // #439) — only the run-stats BUCKET differs, so tuning can tell "damage from brood-spawned
+  // drones" apart from "damage from dock drones" without treating them as different units
+  // anywhere else. `statKind` only overrides the stats bucket string; gameplay is untouched.
+  const spawned = scene._spawnKind(x, y, kindId, `${kindId}Brood`);
   // #416: tag every deployed body with the carrier that birthed it, so `carrierDeployTick` can
   // count THIS carrier's own live brood (not the whole map's drone population) against the cap.
   if (spawned) spawned.carrierId = e;

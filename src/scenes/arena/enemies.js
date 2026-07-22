@@ -330,7 +330,11 @@ export const EnemiesMixin = {
   // infantry mob) redundant canvas-raster work entirely. `e.key` still only feeds texture lookups
   // for non-mech kinds (verified: no shooter/beam-identity or reskin code path reads it — those
   // are mech-only), so sharing it is safe.
-  _spawnKind(x, y, typeId) {
+  // #440: optional 4th arg `statKind` overrides the STATS bucket a spawn/kill/damage event
+  // files under, WITHOUT touching `typeId`/`e.kind` (gameplay identity stays untouched). Used by
+  // `deployNearby` so a carrier-deployed drone — the exact same unit as a dock drone in every
+  // other respect — buckets separately in the run-stats report as a subset of drone damage.
+  _spawnKind(x, y, typeId, statKind) {
     this._enemySeq++;   // keep the debug spawn-rotation counter advancing (unchanged behavior)
     const def = ENEMY_KINDS[typeId];
     const key = vehicleTextureKey(def);
@@ -376,7 +380,7 @@ export const EnemiesMixin = {
     // the glow hugs the airframe instead of ballooning around four rotor discs. Only the drone
     // sets it today; every other kind falls through to the shared hull+turret default unchanged.
     this._initEnemyShieldVisual(e, shieldPartKeys(def), vehicleScale(def));
-    this._statEnemySpawned?.(e, typeId);   // #423: stamp stats kind + birth time, count the spawn
+    this._statEnemySpawned?.(e, statKind ?? typeId);   // #423/#440: stamp stats kind + birth time, count the spawn
     this.enemies.push(e);
     this._enemiesSpawnedThisStage = (this._enemiesSpawnedThisStage ?? 0) + 1;
     this.registry.set('dummyMech', this.enemies[0].mech);

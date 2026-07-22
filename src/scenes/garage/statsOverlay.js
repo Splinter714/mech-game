@@ -133,7 +133,11 @@ export class StatsOverlay {
 
   open() {
     this.entries = this.history.list();   // newest-first
-    this.index = 0;
+    // #440: ALL RUNS sits all the way at the NEWER end of the browse (index 0, ahead of every
+    // real run), not the older end — see `_hasAgg`/`_isAggIndex` below. Default to the newest
+    // SINGLE run's report (unchanged from before this reorder) rather than opening straight on
+    // the aggregate; ALL RUNS is one NEWER press away.
+    this.index = this._hasAgg() ? 1 : 0;
     this.layer.setVisible(true);
     this._render();
   }
@@ -142,14 +146,15 @@ export class StatsOverlay {
 
   isOpen() { return this.layer.visible; }
 
-  // #432: an ALL-RUNS pooled view rides at the END of the browse when there are >=2 runs (a lone
-  // run's aggregate equals itself, so it's suppressed). It's a virtual index past the real runs.
+  // #432/#440: an ALL-RUNS pooled view occupies index 0 — all the way NEWER — whenever there are
+  // >=2 runs (a lone run's aggregate equals itself, so it's suppressed with only one). Real runs
+  // are pushed one slot later (index 1 = newest real run, … index N = oldest).
   _hasAgg() { return this.entries.length >= 2; }
 
   // Number of browsable views: the real runs plus the optional aggregate.
   _viewCount() { return this.entries.length + (this._hasAgg() ? 1 : 0); }
 
-  _isAggIndex() { return this._hasAgg() && this.index >= this.entries.length; }
+  _isAggIndex() { return this._hasAgg() && this.index === 0; }
 
   _step(dir) {
     if (!this._viewCount()) return;
@@ -157,7 +162,7 @@ export class StatsOverlay {
     this._render();
   }
 
-  _current() { return this.entries[this.index] ?? null; }
+  _current() { return this.entries[this._hasAgg() ? this.index - 1 : this.index] ?? null; }
 
   _render() {
     const total = this._viewCount();
@@ -177,7 +182,7 @@ export class StatsOverlay {
     this.body.setColor(COL.text);
     if (this._isAggIndex()) {
       this.subtitle.setText(
-        `ALL RUNS   •   ${this.entries.length} pooled   •   view ${this.index + 1} / ${total}`,
+        `ALL RUNS   •   ${this.entries.length} pooled   •   view 1 / ${total}`,
       );
       this.body.setText(runReportText(this._aggregate()));
       this._resetCopyLabel();
@@ -187,8 +192,11 @@ export class StatsOverlay {
     const run = entry.run ?? {};
     const m = run.meta ?? {};
     const when = this._ago(entry.id);
+    // #440: "RUN n" ranks among the REAL runs only (1 = newest), independent of ALL RUNS
+    // occupying view slot 0 ahead of it.
+    const runRank = this._hasAgg() ? this.index : this.index + 1;
     this.subtitle.setText(
-      `RUN ${this.index + 1} / ${total}   •   ${(entry.reason ?? '?').toUpperCase()}`
+      `RUN ${runRank} / ${this.entries.length}   •   ${(entry.reason ?? '?').toUpperCase()}`
       + `   •   ${m.biome ?? '-'} / ${m.chassis ?? '-'}${when ? `   •   ${when}` : ''}`,
     );
     this.body.setText(runReportText(run));

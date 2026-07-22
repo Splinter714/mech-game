@@ -147,7 +147,7 @@ describe('aggregateRuns — pooled ALL RUNS view (#432)', () => {
     const a = run({ global: { totalDealt: 10, shotsFired: 4, hits: 2 }, weapons: [{ id: WID, shotsFired: 4, hits: 2, damageDealt: 10, firingTimeMs: 1000 }], enemies: [{ kind: 'drone', spawned: 1, killed: 1, ttkSumMs: 300, ttkCount: 1 }] });
     const text = runReportText(aggregateRuns([a, a]));
     expect(text).toContain('ALL RUNS (2)');
-    expect(text).toContain('2 pooled');
+    expect(text).toContain('Runs pooled:       2');
     expect(text).toContain('WEAPONS');
     expect(text).toContain('ENEMIES');
   });
