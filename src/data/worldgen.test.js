@@ -2247,6 +2247,29 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       for (const m of mouths) expect(m.length).toBe(2);
     });
 
+    // #427 (Jackson 2026-07-21): every gate is placed at a CONCAVE NOTCH — the two leaves of a
+    // mouth share the SAME outer (non-base) hex, wedged between two ADJACENT base hexes — and never
+    // at a convex corner (which would share a base hex instead). This is what lets wallEdges.js re-
+    // seat the pair as a straight chord bulging into that one outer hex.
+    it('places gates ONLY at concave notches — each mouth shares one outer hex between two base hexes', () => {
+      const T = fillGroundDisc();
+      for (const center of [{ q: 12, r: -4 }, { q: -9, r: 14 }, { q: 20, r: 0 }, { q: 5, r: 5 }]) {
+        const base = discBase(center);
+        const [ring] = placeBaseWalls(T, [base]);
+        const mouths = gateMouths(ring.edges);
+        expect(mouths.length).toBeGreaterThan(0);
+        for (const m of mouths) {
+          expect(m.length).toBe(2);
+          const [l0, l1] = m;
+          // Concave: same outer hex, DIFFERENT base hexes that are adjacent (so the two spans meet
+          // at one real corner — a notch, not an outer hex merely touched on two unconnected sides).
+          expect(axialKey(l0.b.q, l0.b.r)).toBe(axialKey(l1.b.q, l1.b.r));
+          expect(axialKey(l0.a.q, l0.a.r)).not.toBe(axialKey(l1.a.q, l1.a.r));
+          expect(distance(l0.a, l1.a)).toBe(1);
+        }
+      }
+    });
+
     // The ring is IDENTICAL with gates and without — same spans, same count. A gate does not
     // remove a span or leave a hole in the definition; it only annotates one. This is the property
     // that lets #288's whole seal proof carry over untouched.
@@ -2375,6 +2398,14 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
           // leaves. Assert on the mouth count, not the raw leaf-span count.
           const mouths = gateMouths(base.wallEdges);
           expect(mouths.length).toBeLessThanOrEqual(want);
+          // #427: on real terrain too, every mouth is a concave notch — a pair of leaves sharing one
+          // outer hex between two adjacent base hexes (never a lone leaf, never a convex corner).
+          for (const m of mouths) {
+            expect(m.length).toBe(2);
+            const [l0, l1] = m;
+            expect(axialKey(l0.b.q, l0.b.r)).toBe(axialKey(l1.b.q, l1.b.r));
+            expect(distance(l0.a, l1.a)).toBe(1);
+          }
           expect(want).toBeGreaterThanOrEqual(MIN_GATES_PER_RING);
           expect(want).toBeLessThanOrEqual(MAX_GATES_PER_RING);
           gateCounts.push({ got: mouths.length, want });

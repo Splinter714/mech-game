@@ -380,6 +380,28 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
     expect(hingeVk(l0)).not.toBe(hingeVk(l1));
   });
 
+  // #427 (Jackson 2026-07-21): the two leaves are re-seated onto a STRAIGHT CHORD — each hinges at
+  // its outer post and the pair MEET at the MIDPOINT of the two posts, so a shut gate is one clean
+  // straight span (bulging a touch into the non-base hex) rather than a kinked concave corner.
+  it('re-seats the leaves as a straight chord meeting at the midpoint of the two posts', () => {
+    const set = gatedRun();
+    const [l0, l1] = leavesOf(set);
+    const post = (l) => (l.gateHingeEnd === 1 ? { x: l.x1, y: l.y1 } : { x: l.x0, y: l.y0 });
+    const meet = (l) => (l.gateHingeEnd === 1 ? { x: l.x0, y: l.y0 } : { x: l.x1, y: l.y1 });
+    const p0 = post(l0), p1 = post(l1);
+    // Both leaves' meeting ends land on the SAME point — the midpoint of the two outer posts.
+    const mid = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
+    for (const m of [meet(l0), meet(l1)]) {
+      expect(m.x).toBeCloseTo(mid.x, 6);
+      expect(m.y).toBeCloseTo(mid.y, 6);
+    }
+    // …and the whole gate is STRAIGHT: post0 → meet and post1 → meet run in exactly opposite
+    // directions (the chord post0—post1 is one line, with the meeting point between them).
+    const d0 = { x: mid.x - p0.x, y: mid.y - p0.y }, d1 = { x: mid.x - p1.x, y: mid.y - p1.y };
+    const dot = (d0.x * d1.x + d0.y * d1.y) / (Math.hypot(d0.x, d0.y) * Math.hypot(d1.x, d1.y));
+    expect(dot).toBeCloseTo(-1, 6);
+  });
+
   it('each leaf is INDEPENDENTLY solid to fire (open or shut) and a doorway to movement when open', () => {
     const set = gatedRun();
     for (const leaf of leavesOf(set)) {
@@ -424,19 +446,6 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
     expect(wallEdgeAt(set, m.x, m.y)).toBe(null);
   });
 
-  it('each leaf is INDEPENDENTLY destructible — destroying ONE breaches like a wall', () => {
-    const set = gatedRun();
-    const leaf = leavesOf(set)[0];
-    setGateOpen(set, leaf, true);
-    const { destroyed, felled } = damageWallEdge(set, leaf, WALL_EDGE_HP);
-    expect(destroyed).toBe(true);
-    // Same breach rule as any span: the hit leaf + its one collinear neighbour on each side (which
-    // includes its gate partner). The hit leaf is always among the felled.
-    expect(felled).toContain(leaf);
-    expect(felled.length).toBeGreaterThanOrEqual(2);
-    for (const span of felled) expect(span.destroyed).toBe(true);
-  });
-
   it('a leaf is damageable whether OPEN or SHUT — its own HP pool, chipped independently', () => {
     for (const open of [true, false]) {
       const set = gatedRun();
@@ -448,6 +457,72 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
       expect(l0.destroyed).toBe(false);
       expect(l1.hp).toBe(before1);   // chipping one leaf never touches its partner's pool
     }
+  });
+});
+
+describe('#441 gates die ONLY from gate hits', () => {
+  // Jackson 2026-07-21: destroying a gate leaf takes BOTH leaves but never the adjacent plain wall;
+  // destroying a plain wall next to a gate leaves the gate intact. So a gate only ever falls when a
+  // gate leaf is hit directly. gatedRun below is a 4-span run of hex A: plain, gate, gate, plain.
+  const ns = neighbors(A.q, A.r);
+  const gatedRun = () => makeWallEdgeSet([
+    { a: A, b: ns[0], baseId: 'b' },
+    { a: A, b: ns[1], baseId: 'b', role: SPAN_ROLE_GATE },
+    { a: A, b: ns[2], baseId: 'b', role: SPAN_ROLE_GATE },
+    { a: A, b: ns[3], baseId: 'b' },
+  ]);
+
+  it('a gate-leaf hit fells EXACTLY the two leaves and spares the flanking plain wall', () => {
+    const set = gatedRun();
+    const [w0, g1, g2, w3] = [...set.edges.values()];
+    const { destroyed, felled } = damageWallEdge(set, g1, WALL_EDGE_HP);
+    expect(destroyed).toBe(true);
+    // Exactly the two gate leaves — the hit leaf plus its partner — and nothing else. The collinear
+    // plain neighbour w0 that shares g1's post vertex is NOT dragged in (the old rule would have).
+    expect(new Set(felled)).toEqual(new Set([g1, g2]));
+    expect(g2.destroyed).toBe(true);
+    expect(w0.destroyed).toBe(false);
+    expect(w0.hp).toBe(WALL_EDGE_HP);
+    expect(w3.destroyed).toBe(false);
+    expect(w3.hp).toBe(WALL_EDGE_HP);
+  });
+
+  it('hitting EITHER leaf takes both — the partner falls whichever leaf is struck', () => {
+    const set = gatedRun();
+    const [, g1, g2] = [...set.edges.values()];
+    const { felled } = damageWallEdge(set, g2, WALL_EDGE_HP);   // hit the OTHER leaf
+    expect(new Set(felled)).toEqual(new Set([g1, g2]));
+  });
+
+  it('a plain-wall hit next to a gate leaves the GATE INTACT — its run stops at the leaf', () => {
+    // A 5-span run of hex A: plain(0), plain(1), gate(2), gate(3), plain(4). Breaching the inner
+    // plain wall (1) fells it + its plain neighbour (0); the collinear continuation on the other
+    // side is a gate leaf, so that side stops and the gate stays whole.
+    const set = makeWallEdgeSet([
+      { a: A, b: ns[0], baseId: 'b' },
+      { a: A, b: ns[1], baseId: 'b' },
+      { a: A, b: ns[2], baseId: 'b', role: SPAN_ROLE_GATE },
+      { a: A, b: ns[3], baseId: 'b', role: SPAN_ROLE_GATE },
+      { a: A, b: ns[4], baseId: 'b' },
+    ]);
+    const [w0, w1, g2, g3, w4] = [...set.edges.values()];
+    const { felled } = damageWallEdge(set, w1, WALL_EDGE_HP);
+    expect(new Set(felled)).toEqual(new Set([w1, w0]));   // no gate leaf among the felled
+    expect(g2.destroyed).toBe(false);
+    expect(g2.hp).toBe(WALL_EDGE_HP);
+    expect(g3.destroyed).toBe(false);
+    expect(g3.hp).toBe(WALL_EDGE_HP);
+    expect(w4.destroyed).toBe(false);
+  });
+
+  it('a lone gate leaf (partner already gone) fells only itself', () => {
+    const set = gatedRun();
+    const [, g1, g2] = [...set.edges.values()];
+    damageWallEdge(set, g2, WALL_EDGE_HP);   // takes g1 + g2
+    expect(g1.destroyed).toBe(true);
+    // g1 is already down; re-hitting it is a no-op, and it never had a live partner to drag.
+    const { felled } = damageWallEdge(set, g1, WALL_EDGE_HP);
+    expect(felled).toEqual([]);
   });
 });
 

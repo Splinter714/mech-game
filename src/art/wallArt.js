@@ -16,7 +16,6 @@ const WALL_DARK = 0x212429;    // shadowed base / outer edge
 const WALL_BODY = 0x34383e;    // main plate face
 const WALL_LIT = 0x4a505a;     // top-lit highlight strip along the plate's crest
 const WALL_POST = 0x3f454e;    // the pillar at each junction between spans
-const HAZARD = 0xc99a2c;       // amber hazard flash, so the gate reads as "defended", not scenery
 
 // A quad of half-width `hw` centred on the segment (x0,y0)→(x1,y1), as fillPoints-ready points.
 function band(x0, y0, x1, y1, hw) {
@@ -102,10 +101,6 @@ function drawGate(g, e, hw, timeMs) {
     g.fillPoints(band(bx, by, hinge.fx, hinge.fy, hw * 1.9), true);
     g.fillStyle(GATE_GLOW, 0.16 * f);
     g.fillPoints(band(bx, by, hinge.fx, hinge.fy, hw * 0.9), true);
-    // A small lamp at the leaf's retracted lip — the doorway's own edge lighting, and the cue that
-    // picks an open mouth out at distance now that the curtain is gone.
-    g.fillStyle(GATE_GLOW, 0.55 * f);
-    g.fillCircle(bx, by, hw * 0.3);
   }
   // The leaf.
   g.fillStyle(0x000000, 0.3);
@@ -120,9 +115,13 @@ function drawGate(g, e, hw, timeMs) {
   // shut gate is still identifiable as a gate from across the field.
   g.fillStyle(GATE_FRAME, 1);
   g.fillCircle(ax, ay, hw * 1.25);
-  // Amber warning pip on the leaf — the "this is a door" tell while it is shut.
-  g.fillStyle(HAZARD, 0.45 + 0.45 * frac);
-  g.fillCircle((ax + bx) / 2, (ay + by) / 2, hw * 0.3);
+  // #427 (Jackson 2026-07-21): the MEETING-POINT POST. Each leaf caps its inner (retracting) lip
+  // with the same junction pillar a plain wall carries at every span join (WALL_POST, hw * 0.92), so
+  // when the two leaves are SHUT their caps coincide at the chord midpoint and read as one clean
+  // wall-post — and when OPEN each leaf carries its own half at its retracted lip. Replaces the old
+  // amber warning pip, which Jackson cut for looking bad.
+  g.fillStyle(WALL_POST, 1);
+  g.fillCircle(bx, by, hw * 0.92);
 }
 
 // #310/#413 TURRET-SPAN MARK. A turret span used to draw a widened armoured PLINTH; #310 dropped

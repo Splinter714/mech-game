@@ -282,12 +282,11 @@ export function makeWallEdgeSet(defs = [], hp = WALL_EDGE_HP) {
   return set;
 }
 
-// #427: a gate is TWO ADJACENT wall spans — two collinear-neighbour leaves that part in OPPOSITE
-// directions to form a central passage, NOT one span drawn as two halves. Each leaf is a real,
-// INDEPENDENT span (its own HP pool, its own solidity, its own breach); what makes the pair read
-// and behave as one double door is that they share the vertex they part AWAY from and open in
-// lockstep (the scene drives both leaves from a single gate-cycle state, and combines their demand
-// — bases.js `_updateGates`).
+// #427: a gate is TWO ADJACENT wall spans — two leaves that part in OPPOSITE directions to form a
+// central passage, NOT one span drawn as two halves. Each leaf is a real, INDEPENDENT span (its own
+// HP pool, its own solidity, its own breach); what makes the pair read and behave as one double door
+// is that they share the vertex they part AWAY from and open in lockstep (the scene drives both
+// leaves from a single gate-cycle state, and combines their demand — bases.js `_updateGates`).
 //
 // This derives, for each gate span, its PARTNER (the other gate span sharing a vertex) and its
 // HINGE end — the endpoint the leaf retracts TOWARD as it opens, which is the endpoint NOT shared
@@ -297,9 +296,22 @@ export function makeWallEdgeSet(defs = [], hp = WALL_EDGE_HP) {
 // reads it to slide the single leaf the right way. A lone gate span with no gate neighbour (a
 // degenerate placement, or a partner that fell to a breach) keeps a null partner and defaults its
 // hinge to end 0, so it still animates and behaves as a single retracting leaf.
+//
+// #427 (geometry re-spec, Jackson 2026-07-21): gates are now placed only at CONCAVE notches (a
+// single non-base hex wedged between two base hexes — worldgen.js `assignGates`), and each leaf is
+// re-seated onto a STRAIGHT CHORD across the mouth of that notch rather than tracing the concave
+// corner. The two leaves' outer POSTS are their non-shared endpoints (real hex corners, shared with
+// the flanking plain walls); their MEETING point is moved from the concave inner vertex out to the
+// MIDPOINT of the two posts, which lands just inside the non-base hex — so a shut gate is one clean
+// straight span bulging a touch into the outer hex, and an open one parts at that midpoint. Only the
+// shared (meeting) endpoint of each leaf moves; the post endpoint is untouched, so the wall line
+// stays continuous at the posts and the breach/vertex bookkeeping downstream is unchanged. A lone
+// leaf keeps its original hex-edge geometry (nothing to chord to).
 export function assignGateLeafDirections(set) {
   if (!set) return set;
   const gates = [...set.edges.values()].filter((e) => e.role === SPAN_ROLE_GATE);
+  // Pass 1: pair each leaf and record which of its ends is the shared (meeting) vertex.
+  const sharedEndOf = new Map();
   for (const e of gates) {
     let partner = null, sharedEnd = null;
     for (const o of gates) {
@@ -310,8 +322,36 @@ export function assignGateLeafDirections(set) {
     e.gatePartnerKey = partner ? partner.key : null;
     // Retract toward the end that is NOT the shared vertex; default end 0 for a lone leaf.
     e.gateHingeEnd = sharedEnd == null ? 0 : (sharedEnd === 0 ? 1 : 0);
+    sharedEndOf.set(e, sharedEnd);
+  }
+  // Pass 2: straight-chord re-seat. Once per pair (canonical key order), compute the midpoint of the
+  // two POSTS (the non-shared, unmoved ends) and slide BOTH leaves' shared ends onto it. Reading the
+  // post ends — never the shared ends — means the order pass 2 visits pairs in cannot matter.
+  for (const e of gates) {
+    const pk = e.gatePartnerKey;
+    if (!pk || e.key >= pk) continue;               // handle each pair exactly once
+    const o = set.edges.get(pk);
+    if (!o) continue;
+    const pe = postEnd(e), po = postEnd(o);
+    if (!pe || !po) continue;
+    const mx = (pe.x + po.x) / 2, my = (pe.y + po.y) / 2;
+    setSharedEnd(e, mx, my);
+    setSharedEnd(o, mx, my);
   }
   return set;
+}
+
+// The leaf's OUTER POST endpoint — the one it hinges from (the non-shared end), read off
+// `gateHingeEnd`. This end is never moved by the chord re-seat, so it is the stable anchor both the
+// midpoint and every downstream vertex query rely on.
+function postEnd(e) {
+  if (!e) return null;
+  return (e.gateHingeEnd ?? 0) === 1 ? { x: e.x1, y: e.y1 } : { x: e.x0, y: e.y0 };
+}
+
+// Move the leaf's SHARED (meeting) endpoint — the one that is NOT the post — to (x,y).
+function setSharedEnd(e, x, y) {
+  if ((e.gateHingeEnd ?? 0) === 1) { e.x0 = x; e.y0 = y; } else { e.x1 = x; e.y1 = y; }
 }
 
 // Which endpoint of span `e` coincides with an endpoint of span `o` — 0 for (x0,y0), 1 for
@@ -607,7 +647,17 @@ const EMPTY_VISITED = new Set();
 // nothing itself; the caller collapses the returned spans.
 function breachRun(set, hit, count) {
   const felled = [hit];
-  if (!set || count <= 1) return felled;
+  if (!set) return felled;
+  // #441 (Jackson 2026-07-21): GATES DIE ONLY FROM GATE HITS, and a gate-leaf hit takes exactly the
+  // two leaves — never the flanking plain wall. So a gate breach removes precisely its two gate
+  // spans (the hit leaf + its partner) and STOPS, regardless of `count` or of any collinear plain
+  // neighbour that shares the post vertex. A lone leaf (partner already gone) fells only itself.
+  if (hit.role === SPAN_ROLE_GATE) {
+    const partner = hit.gatePartnerKey ? set.edges.get(hit.gatePartnerKey) : null;
+    if (partner && !partner.destroyed && !felled.includes(partner)) felled.push(partner);
+    return felled;
+  }
+  if (count <= 1) return felled;
   // One immediate neighbour per direction, seeded at each of the hit span's two corners.
   const sides = [
     { vx: hit.x0, vy: hit.y0, fx: hit.x1, fy: hit.y1 },
@@ -616,7 +666,10 @@ function breachRun(set, hit, count) {
   for (const s of sides) {
     if (felled.length >= count) break;
     const n = collinearNeighbor(set, hit, s.vx, s.vy, s.fx, s.fy);
-    if (n && !felled.includes(n)) felled.push(n);
+    // #441: a plain-wall breach NEVER drags in an adjacent gate leaf — the gate only dies from a
+    // direct gate hit. If this side's collinear continuation is a gate leaf, the run stops here
+    // (no backfill, matching the STRICT one-neighbour-per-side rule), leaving the gate intact.
+    if (n && n.role !== SPAN_ROLE_GATE && !felled.includes(n)) felled.push(n);
   }
   return felled;
 }
@@ -628,6 +681,11 @@ function breachRun(set, hit, count) {
 // opens, one span either side of the hole where the run has them. STRICT (owner 2026-07-21): no
 // backfill — an end-of-run hit fells 2, a lone span 1, only a mid-run hit 3; a corner/junction never
 // grabs a perpendicular span, only the collinear continuation of the same wall line.
+//
+// #441 (owner 2026-07-21): GATES are exempt from that plain-wall run in both directions (see
+// `breachRun`). A hit on a GATE LEAF fells exactly the two leaves (hit + partner) and never the
+// adjacent plain wall; a hit on a PLAIN WALL sitting next to a gate stops its run at the gate leaf
+// and leaves the gate intact. Net: a gate dies only when a gate leaf is hit directly.
 //
 // Returns `{ hp, destroyed, felled }`: `hp`/`destroyed` describe the span actually hit; `felled` is
 // every span this call brought down (the hit span first, then its cascaded neighbours), so the scene

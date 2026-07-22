@@ -24,7 +24,6 @@ import {
   nearestHex,
 } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory } from './terrain.js';
-import { edgeEndpoints } from './hexEdges.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
 // stage/squad system, data/run.js's retired `squadForStage`, and data/enemies.js's `DEFAULT_SQUAD`
@@ -1605,71 +1604,75 @@ export function placeBaseWalls(T, bases) {
 // degradation rather than a broken one.
 function assignGates(T, base, edges) {
   const c = hexToPixel(base.center.q, base.center.r);
-  // Outward bearing of each span: from the base centre toward the OUTER hex's centre. Using the
-  // outer hex rather than the edge midpoint makes the measure agree with the direction a unit
-  // actually travels as it steps through.
-  const withBearing = edges.map((e) => {
-    const o = hexToPixel(e.b.q, e.b.r);
-    return { e, bearing: Math.atan2(o.y - c.y, o.x - c.x), outerPassable: isPassableOf(T?.get(axialKey(e.b.q, e.b.r))) };
-  });
-  const eligible = withBearing.filter((w) => w.outerPassable);
-  if (!eligible.length) return edges;
-  // The approach: back toward the origin, where the run spawns.
-  const approach = Math.atan2(-c.y, -c.x);
   const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
-  const nearestTo = (target, taken) => {
-    let best = null, bestD = Infinity;
-    for (const w of eligible) {
-      if (taken?.has(w.e)) continue;
-      const d = angDiff(w.bearing, target);
-      if (d < bestD) { best = w; bestD = d; }
+  // #427 (concave-only, Jackson 2026-07-21): a gate is placed only at a CONCAVE NOTCH in the ring —
+  // a single NON-BASE hex wedged between two adjacent base hexes, so the wall dents inward there. In
+  // ring-span terms that is a PAIR of boundary spans (a1,b) and (a2,b) sharing the SAME outer hex
+  // `b` (and, since a1/a2 are mutually adjacent, a vertex). No convex corners, no straight runs — a
+  // gate only ever fills a notch. Each such pair, once flagged, is re-seated in wallEdges.js onto a
+  // straight chord across the notch mouth (`assignGateLeafDirections`), so the two leaves read as one
+  // clean double door bulging a touch into `b` rather than tracing the concave bend.
+  //
+  // Group the eligible spans (outer hex passable ground — a gate must never open onto a cliff, and a
+  // notch whose mouth is impassable is skipped) by their outer hex, then pull out every adjacent
+  // pair as a candidate SITE, bearing = outward toward that shared outer hex.
+  const eligible = edges
+    .map((e) => ({ e, outerKey: axialKey(e.b.q, e.b.r) }))
+    .filter((w) => isPassableOf(T?.get(w.outerKey)));
+  if (!eligible.length) return edges;
+  const byOuter = new Map();
+  for (const w of eligible) {
+    if (!byOuter.has(w.outerKey)) byOuter.set(w.outerKey, []);
+    byOuter.get(w.outerKey).push(w);
+  }
+  const sites = [];
+  for (const [, ws] of byOuter) {
+    for (let i = 0; i < ws.length; i++) {
+      for (let j = i + 1; j < ws.length; j++) {
+        // The two base-side hexes must be adjacent — that is what makes the two spans meet at one
+        // vertex (a real corner), i.e. a genuine notch rather than an outer hex touching the base on
+        // two unconnected sides.
+        if (distance(ws[i].e.a, ws[j].e.a) !== 1) continue;
+        const o = hexToPixel(ws[i].e.b.q, ws[i].e.b.r);
+        // The three hexes that define this notch — its two base hexes and its outer hex. Two notches
+        // whose hex clusters come within one step of each other could share a vertex, which would
+        // fuse their leaves into one tangled mouth (and mis-pair them in `assignGateLeafDirections`).
+        sites.push({
+          pair: [ws[i].e, ws[j].e], bearing: Math.atan2(o.y - c.y, o.x - c.x),
+          hexes: [ws[i].e.a, ws[j].e.a, ws[i].e.b],
+        });
+      }
     }
-    return best;
-  };
+  }
+  if (!sites.length) return edges;
   // #354: how many mouths this ring gets, from its own span count (see the header).
   const n = gateCountForRing(edges.length);
-  // Even angular steps starting at the approach bearing. `chosen` excludes spans already taken, so
-  // a ring whose eligible spans are clustered (much of it walled in by terrain) degrades to
-  // "as many distinct openings as it can actually offer" rather than flagging one span twice.
-  const chosen = new Set();
+  // The approach: back toward the origin, where the run spawns. Even angular steps around from it, so
+  // one mouth faces the player and a sortie can come from bearings he cannot all cover.
+  const approach = Math.atan2(-c.y, -c.x);
+  // Keep chosen notches SEPARATED — a candidate is rejected if any of its hexes is within one step of
+  // a hex already claimed by a chosen notch. That guarantees no two mouths share a vertex, so each
+  // stays a clean two-leaf double door and pairs unambiguously downstream.
+  const usedHexes = new Set();
+  const tooClose = (s) => s.hexes.some((h) => {
+    if (usedHexes.has(axialKey(h.q, h.r))) return true;
+    return neighbors(h.q, h.r).some((nb) => usedHexes.has(axialKey(nb.q, nb.r)));
+  });
+  const usedSites = new Set();
   for (let i = 0; i < n; i++) {
-    const w = nearestTo(approach + (i * 2 * Math.PI) / n, chosen);
-    if (!w) break;
-    chosen.add(w.e);
-    w.e.role = 'gate';
-    // #427: a gate is a PAIR OF ADJACENT LEAVES, not a single span. Claim the nearest eligible
-    // span sharing a vertex with the primary (preferring the one most parallel in outward facing,
-    // so the two leaves form a straight double door rather than a kink) as the second leaf. Both
-    // become gate spans; they part in OPPOSITE directions to open a central passage
-    // (wallEdges.js `assignGateLeafDirections`). If no adjacent eligible span is free — the primary
-    // sits at the end of a run, or its neighbours are already gates/turrets — the gate degrades
-    // gracefully to a single leaf, exactly as a ring with no eligible span gets no gate at all.
-    const mate = gatePartnerSpan(w, eligible, chosen, angDiff);
-    if (mate) { chosen.add(mate.e); mate.e.role = 'gate'; }
+    const target = approach + (i * 2 * Math.PI) / n;
+    let best = null, bestD = Infinity;
+    for (const s of sites) {
+      if (usedSites.has(s) || tooClose(s)) continue;
+      const d = angDiff(s.bearing, target);
+      if (d < bestD) { best = s; bestD = d; }
+    }
+    if (!best) break;   // fewer well-separated notches than mouths asked for — take as many as exist
+    usedSites.add(best);
+    for (const h of best.hexes) usedHexes.add(axialKey(h.q, h.r));
+    for (const e of best.pair) e.role = 'gate';
   }
   return edges;
-}
-
-// #427: the second leaf of a gate — the eligible span adjacent to `primaryW` (sharing one of its
-// two vertices) whose outward bearing is closest to the primary's, so the pair reads as one double
-// door facing the same way. Returns the chosen `withBearing` entry or null when nothing adjacent is
-// free. Works at the DEF level (axial `a`/`b` via `edgeEndpoints`) since roles are assigned before
-// the live wall-edge set is built.
-function gatePartnerSpan(primaryW, eligible, taken, angDiff) {
-  const pe = edgeEndpoints(primaryW.e.a, primaryW.e.b);
-  if (!pe) return null;
-  const vk = (x, y) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
-  const pv = new Set([vk(pe.x0, pe.y0), vk(pe.x1, pe.y1)]);
-  let best = null, bestD = Infinity;
-  for (const w of eligible) {
-    if (w === primaryW || taken.has(w.e)) continue;
-    const ce = edgeEndpoints(w.e.a, w.e.b);
-    if (!ce) continue;
-    if (!(pv.has(vk(ce.x0, ce.y0)) || pv.has(vk(ce.x1, ce.y1)))) continue;   // must share a vertex
-    const d = angDiff(w.bearing, primaryW.bearing);
-    if (d < bestD) { best = w; bestD = d; }
-  }
-  return best;
 }
 
 // #354: gates scale with the ring's span count — see `assignGates`' header for the reasoning and
