@@ -3,7 +3,7 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, homingShouldGiveUp } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, homingShouldGiveUp, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
 import { GATE_PIP_HIT_RADIUS } from './shared.js';
@@ -92,19 +92,20 @@ export const ProjectilesMixin = {
       // as it comes down. Scale the round's turn rate by that ascent/descent blend rather than
       // hard-gating the desired angle, so the turn-in reads as a smooth curve, not a snap.
       const homingActive = p.homing && !targetGone;
-      let restoreTurn = null;
+      const turnFull = p.turn;   // the round's true, undamped turn rate — always restored after stepProjectile
+      let turnScale = 1;
       let seekerLive = homingActive;   // #418: an arcing lob's seeker isn't engaged during ballistic ascent
       if (homingActive && p.arc) {
         const blend = arcHomingBlend(p.dist / p.maxDist, p.blendStart);
-        if (blend <= 0) {
-          restoreTurn = p.turn;
-          p.turn = 0;
-          seekerLive = false;
-        } else if (blend < 1) {
-          restoreTurn = p.turn;
-          p.turn = p.turn * blend;
-        }
+        if (blend <= 0) { seekerLive = false; turnScale = 0; }
+        else if (blend < 1) { turnScale = blend; }
       }
+      // #418 follow-up: once a failed pass has triggered give-up, ease turn authority to zero
+      // over HOMING_GIVEUP_BLEND_SEC instead of snapping straight — see homingGiveUpTurnScale.
+      if (homingActive && p.homingGivingUp) {
+        turnScale *= homingGiveUpTurnScale(p.homingGiveUpElapsed, HOMING_GIVEUP_BLEND_SEC);
+      }
+      if (turnScale !== 1) p.turn = turnFull * turnScale;
       // #377 follow-up — SALVO SEPARATION. A round carrying its own `aimOffset` steers at a
       // point pushed slightly sideways off the true target (perpendicular to its own line to
       // it), so the six rounds of a Swarm Rack salvo hold visible separation instead of all
@@ -148,15 +149,25 @@ export const ProjectilesMixin = {
       }
       const prevX = p.x, prevY = p.y;   // #77: for swept hit detection (fast rounds can tunnel)
       stepProjectile(p, dt, desiredAngle);
-      if (restoreTurn != null) p.turn = restoreTurn;
+      p.turn = turnFull;   // always restore — arc-blend and give-up scaling are both per-frame only
       // #418 FAILED-PASS GIVE-UP: a guided round that has overshot its target — begun receding
-      // from its closest approach past the give-up margin — stops homing here and flies straight
-      // on its current heading from now on, so it carries to ground/terrain or max range and
-      // detonates instead of orbiting the target forever hunting another pass. Only guided rounds
-      // whose seeker is actually live (an arcing lob mid-ascent is approaching, not orbiting, and
-      // always lands at maxDist regardless); dumbfire rounds never reach here.
-      if (seekerLive && !targetGone && homingShouldGiveUp(p, Math.hypot(tx - p.x, ty - p.y))) {
-        p.homing = false;
+      // from its closest approach past the give-up margin — stops steering here and eases its
+      // turn authority to zero over HOMING_GIVEUP_BLEND_SEC (rather than snapping straight
+      // instantly, which read as a visible kink) so it carries to ground/terrain or max range
+      // and detonates instead of orbiting the target forever hunting another pass. Only guided
+      // rounds whose seeker is actually live (an arcing lob mid-ascent is approaching, not
+      // orbiting, and always lands at maxDist regardless); dumbfire rounds never reach here.
+      // Turn authority only ever decreases across the blend — it never re-engages homing.
+      if (seekerLive && !targetGone) {
+        if (!p.homingGivingUp && homingShouldGiveUp(p, Math.hypot(tx - p.x, ty - p.y))) {
+          p.homingGivingUp = true;
+          p.homingGiveUpElapsed = 0;
+        } else if (p.homingGivingUp) {
+          p.homingGiveUpElapsed += dt;
+        }
+        if (p.homingGivingUp && p.homingGiveUpElapsed >= HOMING_GIVEUP_BLEND_SEC) {
+          p.homing = false;
+        }
       }
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if
       // that wall is a destructible outpost — or #72 a soft-cover hex — the round chips its HP

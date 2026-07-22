@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -275,36 +275,89 @@ describe('homing steering (#77)', () => {
     // A slow-turning missile fired at a target moving FASTER than it can corner: it closes to
     // its nearest approach, misses, and would classically bank around forever hunting another
     // pass. With the give-up rule it disables homing after the failed pass and flies straight —
-    // so it keeps travelling in one fixed direction to ground/range instead of orbiting.
+    // so it keeps travelling in one fixed direction to ground/range instead of orbiting. The
+    // hand-off itself is eased (#418 follow-up, see below); this test only checks it eventually
+    // settles into dead-straight flight, mirroring the scene's own blend loop.
     const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 99999 });
     p.arc = false;
     p.homing = true;
-    p.turn = 2.0;                                    // deliberately sluggish so it can't re-acquire
+    const turnFull = 2.0;
+    p.turn = turnFull;                                // deliberately sluggish so it can't re-acquire
     // A target streaking across, faster than the round — it can never be run down.
     const tgt = { x: 400, y: 40, vx: 700, vy: 0 };
     let gaveUp = false, gaveUpAt = -1;
+    let givingUp = false, elapsed = 0;
     for (let i = 0; i < 400; i++) {
       tgt.x += tgt.vx * 0.016; tgt.y += tgt.vy * 0.016;
-      const dist = Math.hypot(tgt.x - p.x, tgt.y - p.y);
       if (p.homing) {
         const desired = leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, tgt.vx, tgt.vy);
+        p.turn = givingUp ? turnFull * homingGiveUpTurnScale(elapsed) : turnFull;
         stepProjectile(p, 0.016, desired);
-        if (homingShouldGiveUp(p, Math.hypot(tgt.x - p.x, tgt.y - p.y))) {
-          p.homing = false; gaveUp = true; gaveUpAt = i;
+        p.turn = turnFull;
+        if (!givingUp && homingShouldGiveUp(p, Math.hypot(tgt.x - p.x, tgt.y - p.y))) {
+          givingUp = true; elapsed = 0; gaveUp = true; gaveUpAt = i;
+        } else if (givingUp) {
+          elapsed += 0.016;
         }
+        if (givingUp && elapsed >= HOMING_GIVEUP_BLEND_SEC) p.homing = false;
       } else {
         stepProjectile(p, 0.016, null);              // flies straight — no steering
       }
-      void dist;
     }
     expect(gaveUp).toBe(true);                        // the failed pass was detected
-    // After giving up it flew perfectly straight: heading is frozen from the give-up moment on.
+    // After the blend window it flew perfectly straight: heading is frozen from that point on.
     const frozenAngle = p.angle;
     stepProjectile(p, 0.1, 999);                      // even handed a steering target, it ignores it
     expect(p.angle).toBe(frozenAngle);                // heading frozen — no more steering
     // Velocity stays locked to that frozen heading (cosmetic wobble aside, the true flight is straight).
     expect(Math.atan2(p.vy, p.vx)).toBeCloseTo(frozenAngle, 6);
     void gaveUpAt;
+  });
+
+  it('homingGiveUpTurnScale eases steering authority monotonically from 1 down to 0 across the blend window (#418 follow-up)', () => {
+    // Regression guard for the "weird turn"/kink report: give-up must no longer snap turn
+    // authority straight to zero in one frame. Sampling across the blend window should show a
+    // smooth, monotonically non-increasing ramp that starts at full authority and ends at none.
+    let prev = homingGiveUpTurnScale(0);
+    expect(prev).toBe(1);                             // full authority the instant give-up starts
+    for (let t = 0.02; t <= HOMING_GIVEUP_BLEND_SEC; t += 0.02) {
+      const scale = homingGiveUpTurnScale(t);
+      expect(scale).toBeLessThanOrEqual(prev);         // never increases — no re-acquiring
+      prev = scale;
+    }
+    expect(homingGiveUpTurnScale(HOMING_GIVEUP_BLEND_SEC)).toBe(0);   // fully retired by the end
+    expect(homingGiveUpTurnScale(HOMING_GIVEUP_BLEND_SEC + 1)).toBe(0); // stays at 0 past the window
+  });
+
+  it('a round eased through give-up ends up flying dead straight, with no residual curve (#418 follow-up)', () => {
+    // Drive a round through a full give-up blend against a target it steers toward the whole
+    // time (worst case for a lingering curve), then confirm the heading has stopped changing.
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 99999 });
+    p.arc = false;
+    p.homing = true;
+    const turnFull = 3.0;
+    p.turn = turnFull;
+    const tgt = { x: 100, y: 400 };                    // steeply off-axis, so steering is doing real work
+    let elapsed = 0;
+    let lastAngle = p.angle;
+    let anyChange = false;
+    while (elapsed < HOMING_GIVEUP_BLEND_SEC) {
+      const desired = leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, 0, 0);
+      p.turn = turnFull * homingGiveUpTurnScale(elapsed);
+      stepProjectile(p, 0.016, desired);
+      p.turn = turnFull;
+      if (p.angle !== lastAngle) anyChange = true;
+      lastAngle = p.angle;
+      elapsed += 0.016;
+    }
+    expect(anyChange).toBe(true);                      // it did curve some during the blend
+    const settledAngle = p.angle;
+    for (let i = 0; i < 30; i++) {
+      const desired = leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, 0, 0);
+      p.turn = 0;                                       // scale is fully 0 past the blend window
+      stepProjectile(p, 0.016, desired);
+    }
+    expect(p.angle).toBe(settledAngle);                 // heading is locked — flight is dead straight
   });
 
   it('homingShouldGiveUp tracks closest approach and trips only once the round recedes past the margin', () => {

@@ -642,6 +642,28 @@ export function homingShouldGiveUp(p, dist, recede = HOMING_GIVEUP_RECEDE_PX) {
 
 export { HOMING_GIVEUP_RECEDE_PX };
 
+// ── Give-up transition smoothing (#418 follow-up) ──────────────────────────────────────────
+// The give-up CONDITION above is unchanged — this only smooths the hand-off out of homing.
+// Cutting a round's steering to zero the instant `homingShouldGiveUp` trips reads as a visible
+// kink: the frame before give-up the round is still hard-steering toward its target at full
+// turn rate, then the very next frame it's frozen on whatever heading it happened to be
+// mid-turn on. Instead, once give-up triggers, EASE the round's turn-rate authority down to
+// zero over `HOMING_GIVEUP_BLEND_SEC` — the round keeps nominally "homing" (still steering
+// toward the live target) but with rapidly shrinking authority, so it visibly straightens out
+// rather than snapping. `homingGiveUpTurnScale` is a pure multiplier on the round's normal turn
+// rate: 1 the instant give-up starts, linearly down to 0 once the blend window elapses — never
+// increasing, so a round can never re-acquire orbiting behaviour mid-blend. Once the scale
+// reaches 0 the caller retires the round to a normal ballistic (`p.homing = false`) round.
+const HOMING_GIVEUP_BLEND_SEC = 0.3;   // seconds over which steering authority eases from full to zero once give-up starts
+
+export function homingGiveUpTurnScale(elapsed, blendDuration = HOMING_GIVEUP_BLEND_SEC) {
+  if (blendDuration <= 0) return 0;
+  const scale = 1 - elapsed / blendDuration;
+  return scale > 0 ? scale : 0;
+}
+
+export { HOMING_GIVEUP_BLEND_SEC };
+
 // Rotate angle `a` toward `target` by at most `maxStep`, taking the shortest way around.
 export function rotateToward(a, target, maxStep) {
   const diff = wrapAngle(target - a);
