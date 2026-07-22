@@ -1046,14 +1046,92 @@ describe('#285: wake-response stagger — a base\'s units don\'t all start react
     expect(b.turret).not.toBe(0);
   });
 
-  it('the stagger is short — every unit is reacting well within a second of waking', () => {
+  it('every unit is reacting well within the widened 5s window', () => {
     const scene = makeTickableScene();
-    const units = ['tank', 'tank', 'tank', 'infantry', 'infantry'].map(() => makeTickableUnit('tank'));
+    const units = ['tank', 'tank', 'tank', 'tank', 'tank'].map((k) => makeTickableUnit(k));
     scene.enemies.push(...units);
     scene._wakeBase('base0');
-    // 60 ticks @16ms ≈ 1s — comfortably past even the maximum possible stagger window.
-    for (let i = 0; i < 60; i++) for (const u of units) scene._updateEnemy(u, 0.016, 16);
+    // 320 ticks @16ms ≈ 5.1s — comfortably past even the maximum possible stagger window (5000ms).
+    for (let i = 0; i < 320; i++) for (const u of units) scene._updateEnemy(u, 0.016, 16);
     for (const u of units) expect(u.turret).not.toBe(0);
+  });
+});
+
+// #430 ("units at a base shouldn't all snap into motion in the same instant" extended to a much
+// longer, TIERED window): infantry/drones react first (short band), helicopters/tanks/carriers
+// next (mid band), mechs last (long band) — each within the confirmed ~500-5000ms window, with
+// intra-tier randomization so a tier's units aren't lockstep either. Awareness itself keeps
+// flipping instantly for every unit (unchanged, covered above); only `reactDelayMs` changes.
+describe('#430: tiered wake-response stagger — infantry/drones first, then vehicles, mechs last', () => {
+  it('an infantry unit gets a short-band reactDelayMs (500-2000ms)', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('infantry');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(500);
+    expect(e.reactDelayMs).toBeLessThan(2000);
+  });
+
+  it('a drone unit gets a short-band reactDelayMs (500-2000ms)', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('drone');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(500);
+    expect(e.reactDelayMs).toBeLessThan(2000);
+  });
+
+  it('a tank unit gets a mid-band reactDelayMs (2000-3500ms)', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('tank');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(2000);
+    expect(e.reactDelayMs).toBeLessThan(3500);
+  });
+
+  it('a helicopter unit gets a mid-band reactDelayMs (2000-3500ms)', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('helicopter');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(2000);
+    expect(e.reactDelayMs).toBeLessThan(3500);
+  });
+
+  it('a carrier unit gets a mid-band reactDelayMs (2000-3500ms)', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('carrier');
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(2000);
+    expect(e.reactDelayMs).toBeLessThan(3500);
+  });
+
+  it('a mech gets a long-band reactDelayMs (3500-5000ms)', () => {
+    const scene = makeTickableScene();
+    const e = makeTickableUnit('turret');   // any kindDef works; kind is force-overridden below
+    e.kind = 'mech';
+    scene.enemies.push(e);
+    scene._wakeBase('base0');
+    expect(e.reactDelayMs).toBeGreaterThanOrEqual(3500);
+    expect(e.reactDelayMs).toBeLessThanOrEqual(5000);
+  });
+
+  it('every tier stays within the overall 500-5000ms window and awareness still flips instantly for all', () => {
+    const scene = makeTickableScene();
+    const kinds = ['infantry', 'drone', 'tank', 'helicopter', 'carrier'];
+    const units = kinds.map((k) => makeTickableUnit(k));
+    const mechUnit = makeTickableUnit('turret');
+    mechUnit.kind = 'mech';
+    units.push(mechUnit);
+    scene.enemies.push(...units);
+    scene._wakeBase('base0');
+    for (const u of units) {
+      expect(u.awareness).toBe(AWARE);   // instant, all-at-once — unchanged by #430
+      expect(u.reactDelayMs).toBeGreaterThanOrEqual(500);
+      expect(u.reactDelayMs).toBeLessThanOrEqual(5000);
+    }
   });
 });
 

@@ -162,8 +162,51 @@ const SIGNALED_RING_PULSE_ALPHA = 0.3;       // +/- alpha the ring throbs
 // ~1/4 second apart) without any single unit reading as slow to respond — well under the ~0.5s
 // threshold where a delay starts reading as "this thing hasn't noticed the fight yet" rather
 // than "reacting a beat after its neighbor." Owner: tunable via playtest.
-const WAKE_REACT_STAGGER_MIN_MS = 80;
-const WAKE_REACT_STAGGER_MAX_MS = 380;
+//
+// #430 (Jackson, confirmed): widened into a much longer, TIERED window — "Wake order confirmed
+// — three tiers, fastest to slowest across the ~0.5-5s window: FIRST infantry/drones, THEN
+// helicopters/tanks/carriers, LAST mechs. Each unit's reactDelayMs falls in its tier's band
+// (short/mid/long thirds of the window) with intra-tier randomization so it's not lockstep.
+// Awareness stays instant." The bands below split the 500-5000ms window into simple thirds;
+// each unit still rolls a random delay WITHIN its own tier's band so a tier's units don't all
+// snap awake in lockstep with each other. `WAKE_REACT_TIER_KIND` maps a unit's behaviour (or
+// 'mech') to its tier; anything unlisted defaults to the mid tier (see `wakeReactDelayFor`).
+const WAKE_REACT_TIER1_MIN_MS = 500;
+const WAKE_REACT_TIER1_MAX_MS = 2000;
+const WAKE_REACT_TIER2_MIN_MS = 2000;
+const WAKE_REACT_TIER2_MAX_MS = 3500;
+const WAKE_REACT_TIER3_MIN_MS = 3500;
+const WAKE_REACT_TIER3_MAX_MS = 5000;
+
+// Behaviour tag (enemyKinds.js `behavior`, or the literal 'mech' for a mech-kind dock) -> tier
+// (1 = fastest to react). `turret`/`wallTurret` are omitted deliberately — an emplaced gun never
+// "advances" on wake so its react delay only gates turret tracking/firing, and #430's ordering
+// was specified for the mobile roster; they fall through to the mid-tier default like any other
+// unlisted kind.
+const WAKE_REACT_TIER_KIND = {
+  infantry: 1,
+  drone: 1,
+  helicopter: 2,
+  tank: 2,
+  carrier: 2,
+  mech: 3,
+};
+
+// #430: which tier a woken unit belongs to, then a random delay within that tier's band.
+// `e.kind === 'mech'` covers every mech-kind dock (loadout ids vary, but `_spawnMech` always
+// stamps `kind: 'mech'`); everything else is looked up by `e.behavior` (the kind's own
+// behaviour tag — e.g. 'infantry'/'drone'/'tank'/'helicopter'/'carrier', see enemyKinds.js),
+// falling back to the mid tier for anything unlisted so an unrecognised kind never crashes or
+// gets stuck at an extreme.
+function wakeReactDelayFor(e) {
+  const tier = e.kind === 'mech' ? 3 : (WAKE_REACT_TIER_KIND[e.behavior] ?? 2);
+  const [min, max] = tier === 1
+    ? [WAKE_REACT_TIER1_MIN_MS, WAKE_REACT_TIER1_MAX_MS]
+    : tier === 3
+      ? [WAKE_REACT_TIER3_MIN_MS, WAKE_REACT_TIER3_MAX_MS]
+      : [WAKE_REACT_TIER2_MIN_MS, WAKE_REACT_TIER2_MAX_MS];
+  return min + Math.random() * (max - min);
+}
 
 // #269 playtest follow-up (patrol units): kind + headcount for the roaming units stationed near
 // each alert tower. A single cheap `infantry` trooper per tower (the smallest, weakest kind in
@@ -874,8 +917,7 @@ export const BasesMixin = {
       // standoff, driving the drone production INTO the fight rather than holding back at its normal
       // 320px camp. Scoped to the carrier kind; every other kind's wake response is unchanged.
       if (e.behavior === 'carrier') e.advanceOnAlert = true;
-      e.reactDelayMs = WAKE_REACT_STAGGER_MIN_MS
-        + Math.random() * (WAKE_REACT_STAGGER_MAX_MS - WAKE_REACT_STAGGER_MIN_MS);
+      e.reactDelayMs = wakeReactDelayFor(e);
     }
   },
 
