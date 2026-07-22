@@ -230,7 +230,6 @@ export default class ArenaScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
     this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);    // travelling projectiles (redrawn each frame)
-    this._initAmmoIndicators();          // #402: per-weapon on-mech ammo/reload lights + bars
     this.projectiles = [];
     this.beams = [];
     this.dyingBeams = [];

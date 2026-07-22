@@ -63,6 +63,15 @@ export const NEON = {
 };
 export const neonFor = (catId) => NEON[catId] ?? NEON.melee;
 
+// #433: an "extinguished" neon ramp — the dark tones a weapon's muzzle glow collapses to while
+// it is RELOADING. A muzzle-off part variant (mechArt.buildMechTextures) is baked with this ramp
+// substituted for the weapon's category neon, and the reload blink swaps the part sprite to it on
+// the blink's OFF phase (arena/ammoIndicators.js) — so the muzzle light reads as PULSING OFF on
+// the weapon's own baked glow, not a coloured dot painted over the barrel tip. Derived from the
+// theme's own dark plate tones so every emitter (glowDot lens, glowBar slit, missile cell, edge
+// light) collapses into an unlit lens of the same metal instead of glowing its category colour.
+export const muzzleOffNeon = (T) => ({ halo: T.deep, core: T.faceDk, hot: T.faceMid, edge: T.faceDk });
+
 // ── Low-level draw helpers (all in mech-local design coords: origin = centre, -y up).
 
 // Filled polygon from [x,y] pairs.

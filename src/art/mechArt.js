@@ -65,6 +65,13 @@ export const PIVOT_LOCATIONS = [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS];
 // ever gets retuned for visual reasons, the muzzle math moves with it instead of drifting.
 export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, rightTorso: 0.30 };
 
+// #433: texture-key suffix for a weapon-carrying part's "muzzle-off" variant — identical art with
+// the weapon's baked muzzle glow extinguished (drawn in the theme's dark tones). Built alongside
+// the normal part texture for the player (buildMechTextures), and swapped in per-frame on the
+// reload blink's off phase (arena/ammoIndicators.js). The one place the suffix is defined so the
+// baker and the swapper can never drift apart.
+export const MUZZLE_OFF_SUFFIX = '_muzzleOff';
+
 // Where a `${key}_<part>` sprite must sit and how it pivots, for a mech aimed along `angle`
 // at display `scale`. `ox/oy` is the joint as an origin fraction (so setOrigin makes the
 // sprite rotate around the joint); `dx/dy` is the joint's offset from the mech centre
@@ -112,7 +119,7 @@ export function mechLayout(mech) {
 
 // One mount location's weapon hardware: a shape per mounted weapon, spread across the part,
 // by category. Shared by the turret (torso/head mounts) and the arm textures (arm mounts).
-function drawWeaponsAt(sg, mech, lay, loc, T, s) {
+function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
   if (mech.isPartDestroyed(loc)) return;
   const p = lay[loc];
   const weaponIds = mech.mounts[loc].filter(isWeapon);
@@ -121,7 +128,7 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s) {
   weaponIds.forEach((id, i) => {
     const wpn = getWeapon(id);
     const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s);
+    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s, muzzleOff);
   });
 }
 
@@ -137,7 +144,10 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s) {
 // muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
 // a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
 // stump either way.
-function drawArm(sg, mech, loc, T, noWeapons = false) {
+// `muzzleOff` (#433): bake the reload-blink's EXTINGUISHED variant — identical arm, but its
+// weapons' muzzle glow is drawn in the theme's dark tones (see drawWeaponMount) so the muzzle
+// light reads as OFF. The blink swaps the part sprite to this variant on its off phase.
+function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
@@ -146,9 +156,9 @@ function drawArm(sg, mech, loc, T, noWeapons = false) {
   if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
-  // #433: the reload blink now lives at the weapon's MUZZLE TIP (arena/ammoIndicators.js draws it
-  // live in world space), so nothing is baked onto the part for it — no readout socket.
-  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
+  // #433: the reload blink extinguishes the weapon's own BAKED muzzle glow via a muzzle-off part
+  // variant that the scene swaps to on the blink's off phase — nothing extra is baked here.
+  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
 // One side torso (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
@@ -161,7 +171,8 @@ function drawArm(sg, mech, loc, T, noWeapons = false) {
 // via `exposedInternals`, instead of the old brackets-on-top overlay.
 // `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
 // body-only raster for the player's shield shell (see drawArm's note).
-function drawSideTorso(sg, mech, loc, T, noWeapons = false) {
+// `muzzleOff` (#433): see drawArm — the extinguished-muzzle variant for the reload blink.
+function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
@@ -171,8 +182,8 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false) {
   if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
-  // #433: reload blink lives at the weapon muzzle tip now (live overlay), nothing baked here.
-  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s);
+  // #433: the muzzle glow extinguishes via a muzzle-off part variant (see drawArm) — nothing baked here.
+  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
 // Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftTorso, > 0 → rightTorso),
@@ -342,6 +353,20 @@ export function buildMechTextures(scene, key, mech, opts) {
     for (const loc of ARM_LOCATIONS) {
       gen(scene, `${key}_${loc}_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
         (g) => drawArm(scaledGraphics(g), mech, loc, T, true));
+    }
+    // #433: the reload blink's EXTINGUISHED-MUZZLE variant of every weapon-carrying part (arms +
+    // side torsos — the four skill slots, all pivoting parts). Same plating (including the current
+    // damage/armor-stripped state, since this rebuilds in place with the rest on every reskin), but
+    // the weapon's baked muzzle glow drawn dark. The scene swaps a part sprite to this on the blink's
+    // off phase and back on the on phase, so the swap composes with damage reskins for free — both
+    // keys always carry the current damage state. Player-only: enemy mechs have no reload blink.
+    for (const loc of SIDE_TORSO_LOCATIONS) {
+      gen(scene, `${key}_${loc}${MUZZLE_OFF_SUFFIX}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, false, true));
+    }
+    for (const loc of ARM_LOCATIONS) {
+      gen(scene, `${key}_${loc}${MUZZLE_OFF_SUFFIX}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawArm(scaledGraphics(g), mech, loc, T, false, true));
     }
   }
 }
