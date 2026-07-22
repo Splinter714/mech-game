@@ -117,8 +117,20 @@ export function shieldOutlineGrowth(shield) {
 // the deepest by `halfD * d`. To turn a desired UNIFORM outward margin (`offsetPx`, display px)
 // into per-axis scales we need these half-extents; the max over all body boxes is the silhouette
 // edge on each axis. Pure (no Phaser) so it's unit-testable.
+// Guarded: `mechLayout` reads `mech.chassis.art`, which every REAL mech has (it's baked by
+// chassis/index.js) but a hand-built test double may omit (coop's test doubles build a bare
+// mech shape without going through the chassis pipeline — CLAUDE.md: "the arena's hand-built
+// test doubles work unchanged"). Returning null here (rather than letting the read throw) lets
+// `makeShieldOutline`/`outlineBaseScales` fall back to the pre-#422 uniform `scaleMult` shell
+// for that mech, instead of crashing the outline construction outright.
 export function mechHalfExtentPx(mech) {
-  const lay = mechLayout(mech);
+  let lay;
+  try {
+    lay = mechLayout(mech);
+  } catch {
+    return null;
+  }
+  if (!lay) return null;
   let w = 0, d = 0;
   for (const box of Object.values(lay)) {
     if (!box) continue;
