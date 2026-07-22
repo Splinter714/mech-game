@@ -8,6 +8,8 @@
 // "at a glance" table (what happened) and a "damage math" table (the DPS/tuning numbers) — so a
 // reader doesn't need the header comment to know what a column means.
 
+import { splitBroodSubsets, displayName } from './runStatsEnemies.js';
+
 function fmt(n, dp = 1) {
   if (n == null || !Number.isFinite(n)) return '-';
   return n.toFixed(dp);
@@ -87,34 +89,9 @@ function weaponsSection(run) {
   ].join('\n');
 }
 
-// #440: a carrier-deployed unit (e.g. a Broodhauler's drones) is stat-tagged with a "Brood"
-// suffix on its kind (see enemies.js `_spawnKind`'s statKind param, wired from
-// enemyBehaviors.js `deployNearby`) so its damage can be told apart from its dock-spawned twin
-// — #439 confirmed they're otherwise the EXACT SAME unit. Rather than show it as an opaque
-// extra row, fold it back under its base kind as an indented "of which: brood-spawned" subset
-// line, so the base kind's own row still reads as one coherent total.
-const BROOD_SUFFIX = 'Brood';
-function splitBroodSubsets(enemies) {
-  const base = {};
-  const brood = {};
-  for (const [kind, e] of Object.entries(enemies)) {
-    if (kind.endsWith(BROOD_SUFFIX) && kind.length > BROOD_SUFFIX.length) {
-      brood[kind.slice(0, -BROOD_SUFFIX.length)] = e;
-    } else {
-      base[kind] = e;
-    }
-  }
-  // A brood entry whose base kind never showed up on its own (edge case: only ever encountered
-  // carrier-deployed units of that kind) still needs a home — show it as its own top-level row.
-  for (const [baseKind, e] of Object.entries(brood)) {
-    if (!base[baseKind]) { base[baseKind] = e; delete brood[baseKind]; }
-  }
-  return { base, brood };
-}
-
-function displayName(kind) {
-  return kind.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
-}
+// #440: brood/base pooling now lives in runStatsEnemies.js (shared with the interactive overlay).
+// splitBroodSubsets returns the POOLED parent as base[kind] and the brood-only SUBSET as
+// brood[kind]; see that module for the accounting-bug fix.
 
 function enemiesSection(run) {
   const { base, brood } = splitBroodSubsets(run.enemies ?? {});
@@ -178,3 +155,14 @@ export function runReportText(run) {
 // #432: alias for the pooled aggregate — same renderer, kept as a named entry point so callers
 // reading intent (the overlay's Copy on ALL RUNS) don't have to know it shares runReportText.
 export const aggregateReportText = runReportText;
+
+// #440: the interactive overlay renders the WEAPONS/ENEMIES tables itself but reuses this exact
+// SUMMARY block (single source of truth for the header stats). Returns the same lines the Copy
+// export shows, sans the section title's own "SUMMARY" label handling done by the caller.
+export function runSummaryText(run) {
+  return run ? globalSection(run) : '';
+}
+
+// #440: the overlay builds its interactive enemy rows from the SAME pooled parents/subsets the
+// text export uses. Re-exported so the overlay has one import surface for the stats text layer.
+export { splitBroodSubsets, displayName };

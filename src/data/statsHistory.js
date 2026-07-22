@@ -64,5 +64,13 @@ export function makeStatsHistory({
 
   function clear() { write([]); }
 
-  return { list, commit, load, clear };
+  // #440 — delete ONE committed entry by id, leaving the rest untouched and in newest-first
+  // order. Returns the surviving entries. A missing id is a no-op (still returns the list).
+  function remove(id) {
+    const entries = list().filter((e) => e.id !== id);
+    write(entries);
+    return entries;
+  }
+
+  return { list, commit, load, clear, remove };
 }

@@ -82,6 +82,35 @@ describe('statsHistory — commit rule (#423)', () => {
     });
   });
 
+  describe('remove — single-run delete (#440)', () => {
+    it('removes only the named entry, leaving the rest newest-first', () => {
+      let t = 0;
+      const h = makeStatsHistory({ storage: fakeStorage(), now: () => (t += 10) });
+      h.commit({ durationMs: 5 }, { reason: 'death' });   // id 10
+      h.commit({ durationMs: 6 }, { reason: 'death' });   // id 20
+      h.commit({ durationMs: 7 }, { reason: 'death' });   // id 30
+      const survivors = h.remove(20);
+      expect(survivors.map((e) => e.id)).toEqual([30, 10]);   // newest-first preserved
+      expect(h.list().map((e) => e.id)).toEqual([30, 10]);
+    });
+    it('removing a missing id is a no-op', () => {
+      const h = makeStatsHistory({ storage: fakeStorage(), now: () => 1 });
+      h.commit({ durationMs: 5 }, { reason: 'death' });
+      expect(h.remove(999).map((e) => e.id)).toEqual([1]);
+      expect(h.list()).toHaveLength(1);
+    });
+    it('removing the last entry empties history', () => {
+      const h = makeStatsHistory({ storage: fakeStorage(), now: () => 1 });
+      h.commit({ durationMs: 5 }, { reason: 'death' });
+      expect(h.remove(1)).toEqual([]);
+      expect(h.list()).toEqual([]);
+    });
+    it('never throws when storage is null', () => {
+      const h = makeStatsHistory({ storage: null, now: () => 1 });
+      expect(() => h.remove(1)).not.toThrow();
+    });
+  });
+
   describe('robustness', () => {
     it('list returns [] on corrupt storage', () => {
       const s = fakeStorage();
