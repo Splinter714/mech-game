@@ -101,4 +101,27 @@ describe('runStatsEnemies — brood/base pooling (#440)', () => {
     expect(displayName('drone')).toBe('Drone');
     expect(displayName('wallTurret')).toBe('Wall Turret');
   });
+
+  // #440 — OLD/partial-shape runs (recorded before the #432 raw pooling counters landed) are
+  // MISSING ttkSumMs/ttkCount/engagedMs/shotsFired/hits. Pooling must default them to 0 and never
+  // throw or produce NaN, so the stats screen still renders these stored runs.
+  it('tolerates an OLD/partial-shape enemy entry (missing raw counters) without throwing', () => {
+    const oldShape = {
+      drone: { kind: 'drone', spawned: 18, killed: 12, avgTtkMs: 3000, damageToYou: 54, damageToKind: 300, overkill: 10 },
+      droneBrood: { kind: 'droneBrood', spawned: 21, killed: 8, avgTtkMs: 2500, damageToYou: 128, damageToKind: 200, overkill: 5 },
+    };
+    let result;
+    expect(() => { result = splitBroodSubsets(oldShape); }).not.toThrow();
+    const p = result.base.drone;
+    const b = result.brood.drone;
+    // Additive columns still pool cleanly from the present fields.
+    expect(p.spawned).toBe(39);
+    expect(p.damageToYou).toBe(182);
+    // Missing raw counters default to 0 → derived ratios are finite (0, never NaN).
+    for (const v of [p.avgTtkMs, p.weaponAccuracy, p.effectiveDps, p.ttkCount, p.shotsFired, p.hits]) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+    expect(p.avgTtkMs).toBe(0);      // no ttkCount → div guards to 0
+    expect(b.damageToYou).toBe(128);
+  });
 });

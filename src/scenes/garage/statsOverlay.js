@@ -331,16 +331,38 @@ export class StatsOverlay {
     this.content.add(summary);
     y += summary.height + 18;
 
-    // WEAPONS table.
-    const weaponRows = Object.values(run.weapons ?? {}).map((w) => ({ data: w, sub: null }));
-    y = this._buildTable('weapons', 'WEAPONS', WEAPON_COLUMNS, weaponRows, y);
-    y += 20;
+    // SAFETY NET (#440): the interactive tables must NEVER silently blank the screen. If anything
+    // in the grid layout throws (e.g. an unexpectedly-shaped stored run), catch it, log the run
+    // for diagnosis, and fall back to rendering the whole report as a plain-text block so the user
+    // always sees their data.
+    try {
+      // WEAPONS table.
+      const weaponRows = Object.values(run.weapons ?? {}).map((w) => ({ data: w, sub: null }));
+      y = this._buildTable('weapons', 'WEAPONS', WEAPON_COLUMNS, weaponRows, y);
+      y += 20;
 
-    // ENEMIES table (pooled parents + brood subsets attached under each parent).
-    y = this._buildTable('enemies', 'ENEMIES', ENEMY_COLUMNS, this._enemyRows(run), y);
+      // ENEMIES table (pooled parents + brood subsets attached under each parent).
+      y = this._buildTable('enemies', 'ENEMIES', ENEMY_COLUMNS, this._enemyRows(run), y);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[StatsOverlay] interactive table layout failed — falling back to text', err, run);
+      y = this._layoutTextFallback(run, y);
+    }
 
     this._contentHeight = y;
     this._applyScroll();
+  }
+
+  // Fallback renderer (#440): drop the whole run report in as one monospace text block. Reuses the
+  // tested Copy-export layout so even a run the grid can't lay out is still fully readable.
+  _layoutTextFallback(run, y0) {
+    let text = '(report unavailable)';
+    try { text = runReportText(run); } catch { /* keep the placeholder */ }
+    const block = this.scene.add.text(0, y0, text, {
+      fontFamily: FONT, fontSize: `${CELL_PX}px`, color: COL.text, lineSpacing: 2,
+    });
+    this.content.add(block);
+    return y0 + block.height + ROW_H;
   }
 
   _enemyRows(run) {
@@ -356,8 +378,11 @@ export class StatsOverlay {
   // Build one sortable table. Returns the y just past its bottom (in content-local coords).
   _buildTable(id, titleText, columns, rows, y0) {
     const s = this.scene;
-    const state = this.sort[id];
+    // `id` is the full table name ('weapons'/'enemies'); the per-table interaction state
+    // (sort + horizontal offset) is keyed by the SHORT name ('weapon'/'enemy'). Map first —
+    // indexing this.sort with the full id silently yields undefined and throws on .col (#440).
     const key = id === 'weapons' ? 'weapon' : 'enemy';
+    const state = this.sort[key];
     const hoff = this.hoff[key] ?? 0;
 
     const title = s.add.text(0, y0, titleText, {
@@ -459,7 +484,7 @@ export class StatsOverlay {
   }
 
   _sortBy(id, ci) {
-    const state = this.sort[id];
+    const state = this.sort[id === 'weapons' ? 'weapon' : 'enemy'];   // short-key state (#440)
     const columns = id === 'weapons' ? WEAPON_COLUMNS : ENEMY_COLUMNS;
     if (state.col === ci) state.dir = -state.dir;          // toggle
     else { state.col = ci; state.dir = defaultDir(columns[ci]); }

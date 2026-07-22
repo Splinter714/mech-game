@@ -26,9 +26,14 @@ const RAW_KEYS = [
   'engagedMs', 'ttkSumMs', 'ttkCount', 'shotsFired', 'hits', 'threatShare',
 ];
 
+// Read the raw counters off a (possibly OLD/partial-shape) reduced entry, defaulting anything
+// missing or non-numeric to 0 so pooling never yields NaN or reads a property of undefined.
 function rawOf(e) {
   const r = {};
-  for (const k of RAW_KEYS) r[k] = e?.[k] ?? 0;
+  for (const k of RAW_KEYS) {
+    const n = Number(e?.[k]);
+    r[k] = Number.isFinite(n) ? n : 0;
+  }
   return r;
 }
 
