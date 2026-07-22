@@ -85,6 +85,10 @@ function enemyBucket() {
     // the spawned unit's own direct damage still lands in ITS bucket, so folding this into the
     // spawner's threat share would double-count it. 0 for kinds that never spawn anything.
     spawnedDamage: 0,
+    // #440: the LINKAGE for the spawner sub-row — the stat kind that SPAWNED units of THIS kind
+    // (e.g. `droneBrood`'s spawnerKind is `carrier`). Recorded on first spawn/hit; stays null for a
+    // kind nothing spawned. Display nests this bucket's stats as a sub-row under its spawner.
+    spawnerKind: null,
   };
 }
 
@@ -165,7 +169,14 @@ export function createRunStats(meta = {}) {
     reloadStart(weaponId) { wb(weaponId).reloads += 1; return api; },
     reloadEnd(weaponId, ms = 0) { wb(weaponId).reloadTimeMs += ms; return api; },
 
-    enemySpawned(enemyKind) { eb(enemyKind).spawned += 1; return api; },
+    enemySpawned(enemyKind, spawnerKind = null) {
+      const e = eb(enemyKind);
+      e.spawned += 1;
+      // #440: record the spawner linkage so display can nest this kind's stats as a sub-row under
+      // its spawner (e.g. `droneBrood` → `carrier`). Stamped on first spawn; later spawns are no-ops.
+      if (spawnerKind != null && e.spawnerKind == null) e.spawnerKind = spawnerKind;
+      return api;
+    },
     enemyShotFired(enemyKind) { eb(enemyKind).shotsFired += 1; return api; },
     enemyShotHit(enemyKind) { eb(enemyKind).hits += 1; return api; },
     damageTaken({ enemyKind, weaponId, amount = 0, spawnerKind = null } = {}) {
@@ -177,6 +188,12 @@ export function createRunStats(meta = {}) {
       // `damageToYou` above is untouched, so threat share never double-counts. eb() ensures the
       // spawner gets a bucket even if it dealt zero direct damage itself (a pure carrier).
       if (spawnerKind != null) eb(spawnerKind).spawnedDamage += amount;
+      // #440: also stamp the reverse linkage on the SPAWNED kind's own bucket (a backstop in case
+      // its stat kind was never seen through enemySpawned with a spawnerKind), so the sub-row can
+      // still nest it under its spawner. Idempotent.
+      if (enemyKind != null && spawnerKind != null && eb(enemyKind).spawnerKind == null) {
+        eb(enemyKind).spawnerKind = spawnerKind;
+      }
       markDamage();
       return api;
     },
@@ -267,6 +284,8 @@ export function reduceRun(state) {
       threatShare: div(e.damageToYou, state.totalTaken),
       // #440: damage dealt to you by units this kind SPAWNED (separate from threat share).
       spawnedDamage: e.spawnedDamage,
+      // #440: the spawner-linkage label, carried through so display can nest this kind under it.
+      spawnerKind: e.spawnerKind ?? null,
       damageToKind: e.damageToKind,
       overkill: e.overkill,
       // #432 RAW COUNTERS — kept in the reduced shape so ALL-RUNS pooling recomputes metrics
@@ -348,8 +367,9 @@ export function aggregateRuns(runs) {
     for (const e of Object.values(run.enemies ?? {})) {
       const b = (ePool[e.kind] ??= {
         spawned: 0, killed: 0, damageToYou: 0, spawnedDamage: 0, damageToKind: 0, overkill: 0,
-        engagedMs: 0, ttkSumMs: 0, ttkCount: 0, shotsFired: 0, hits: 0,
+        engagedMs: 0, ttkSumMs: 0, ttkCount: 0, shotsFired: 0, hits: 0, spawnerKind: null,
       });
+      if (b.spawnerKind == null && e.spawnerKind != null) b.spawnerKind = e.spawnerKind;   // #440
       b.spawned += e.spawned ?? 0;
       b.killed += e.killed ?? 0;
       b.damageToYou += e.damageToYou ?? 0;
@@ -405,6 +425,7 @@ export function aggregateRuns(runs) {
       damageToYou: e.damageToYou,
       threatShare: div(e.damageToYou, g.totalTaken),
       spawnedDamage: e.spawnedDamage,   // #440
+      spawnerKind: e.spawnerKind ?? null,   // #440
       damageToKind: e.damageToKind,
       overkill: e.overkill,
       engagedMs: e.engagedMs,

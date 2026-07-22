@@ -18,6 +18,12 @@ function fmt(n, dp = 1) {
 const pct = (r) => (r == null || !Number.isFinite(r) ? '-' : `${(r * 100).toFixed(0)}%`);
 const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
+// #440: indented label for a spawner sub-row, e.g. `  └ spawned drones`. Mirrors the brood
+// subset's `  └ …` indentation; lower-cased + pluralised kind name reads as a plain-English line.
+function spawnedRowLabel(child) {
+  return `  └ spawned ${displayName(child.spawnedKind ?? child.kind).toLowerCase()}s`;
+}
+
 // Render a table: header row + body rows, each an array of cells. Columns are left-padded to
 // the widest cell (first column left-aligned, the rest right-aligned like a stat sheet).
 function table(header, rows) {
@@ -120,6 +126,10 @@ function enemiesSection(run) {
         `  └ of which brood-spawned`, b.spawned, b.killed, secs(b.avgTtkMs),
       ]);
     }
+    // #440: spawner sub-rows — the units this kind spawned, attributed to it (info, not a total).
+    for (const c of e.spawnedChildren ?? []) {
+      encounterRows.push([spawnedRowLabel(c), c.spawned, c.killed, secs(c.avgTtkMs)]);
+    }
   }
 
   const threatHeader = [
@@ -139,6 +149,15 @@ function enemiesSection(run) {
         `  └ of which brood-spawned`, fmt(b.effectiveHp), fmt(realHp), pct(b.weaponAccuracy),
         fmt(b.effectiveDps),
         fmt(b.damageToYou), pct(b.threatShare), pct(b.threatPerUnit), fmt(b.spawnedDamage), fmt(b.damageToKind), fmt(b.overkill),
+      ]);
+    }
+    // #440: spawner sub-rows — attributed threat of the units this kind spawned (info, not a total).
+    for (const c of e.spawnedChildren ?? []) {
+      const cRealHp = enemyRealHp(c.spawnedKind);
+      threatRows.push([
+        spawnedRowLabel(c), fmt(c.effectiveHp), fmt(cRealHp), pct(c.weaponAccuracy),
+        fmt(c.effectiveDps),
+        fmt(c.damageToYou), pct(c.threatShare), pct(c.threatPerUnit), fmt(c.spawnedDamage), fmt(c.damageToKind), fmt(c.overkill),
       ]);
     }
   }

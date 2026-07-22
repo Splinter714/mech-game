@@ -138,7 +138,10 @@ export const RunStatsMixin = {
   _statEnemyActivated(e) {
     if (!e || e._statActivated) return;
     e._statActivated = true;
-    this.runStats?.enemySpawned(e._statKind ?? e.kind ?? 'mech');
+    // #440: pass the SPAWNER's stat kind (set on spawned units in enemyBehaviors.js `deployNearby`)
+    // so the accumulator records the linkage that nests this kind's stats as a sub-row under its
+    // spawner (e.g. a Broodhauler's drones under the Broodhauler). null for a normally-spawned unit.
+    this.runStats?.enemySpawned(e._statKind ?? e.kind ?? 'mech', e.spawnerStatKind ?? null);
   },
   // #423 bug1: one enemy trigger pull. Returns a fresh shot id the caller threads to this pull's
   // emissions so a connecting one books the hit exactly once (enemy accuracy), the mirror of the

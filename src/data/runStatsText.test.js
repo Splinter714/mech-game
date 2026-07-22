@@ -73,6 +73,18 @@ describe('runStatsText — plain-text report (#423)', () => {
     expect(txt).not.toContain('Drone Brood');   // never shown as its own opaque top-level kind
   });
 
+  it('renders a spawner sub-row under the spawner listing its spawned units (#440)', () => {
+    const r = createRunStats();
+    r.tick(1000, { inCombat: true });
+    r.enemySpawned('carrier');                                // pure spawner, 0 direct damage
+    r.enemySpawned('droneBrood', 'carrier');
+    r.damageTaken({ enemyKind: 'droneBrood', amount: 30, spawnerKind: 'carrier' });
+    r.enemyKill('droneBrood', 400);
+    const txt = runReportText(r.reduce());
+    expect(txt).toContain('Carrier');
+    expect(txt).toContain('└ spawned drones');   // the indented spawner sub-row
+  });
+
   it('columns are aligned (rows share the header width)', () => {
     const txt = runReportText(sampleRun());
     const lines = txt.split('\n');

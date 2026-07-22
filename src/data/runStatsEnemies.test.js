@@ -151,6 +151,70 @@ describe('runStatsEnemies — brood/base pooling (#440)', () => {
     expect(brood.drone.threatPerUnit).not.toBeCloseTo(base.drone.threatPerUnit, 6);
   });
 
+  // #440 — SPAWNER SUB-ROWS: a spawner's menace (its spawned units' attributed stats) shows as an
+  // indented sub-row under the spawner, without being folded into any threat total.
+  describe('spawner sub-rows (#440)', () => {
+    // A carrier that deals 0 direct damage but spawns brood drones that hit you, plus an unrelated
+    // wallTurret so the threat-share/threat-unit distribution has more than one parent.
+    function carrierRun() {
+      const r = createRunStats();
+      r.enemySpawned('carrier');
+      r.enemySpawned('droneBrood', 'carrier');
+      r.enemySpawned('droneBrood', 'carrier');
+      r.damageTaken({ enemyKind: 'droneBrood', amount: 40, spawnerKind: 'carrier' });
+      r.damageTaken({ enemyKind: 'droneBrood', amount: 20, spawnerKind: 'carrier' });
+      r.enemyKill('droneBrood', 300);
+      for (let i = 0; i < 4; i++) r.enemySpawned('wallTurret');
+      r.damageTaken({ enemyKind: 'wallTurret', amount: 60 });
+      r.enemyKill('wallTurret', 500);
+      return r.reduce();
+    }
+
+    it('the spawner parent gets a spawnedChildren sub-row with the spawned kind attributed stats', () => {
+      const { base } = splitBroodSubsets(carrierRun().enemies);
+      const kids = base.carrier.spawnedChildren;
+      expect(Array.isArray(kids)).toBe(true);
+      expect(kids).toHaveLength(1);
+      const drones = kids[0];
+      expect(drones.spawnedKind).toBe('drone');   // Brood suffix stripped for the label
+      expect(drones.spawned).toBe(2);             // the two brood drones
+      expect(drones.damageToYou).toBe(60);        // 40 + 20 dealt to you by the brood
+      expect(drones.killed).toBe(1);
+    });
+
+    it("the spawner's OWN row stays direct (0 threat) — sub-rows never touch its totals", () => {
+      const { base } = splitBroodSubsets(carrierRun().enemies);
+      expect(base.carrier.damageToYou).toBe(0);
+      expect(base.carrier.threatShare).toBe(0);
+      expect(base.carrier.threatPerUnit).toBe(0);   // 0 direct dmg/unit → 0 share of the distribution
+    });
+
+    it('a non-spawner kind has no spawnedChildren', () => {
+      const { base } = splitBroodSubsets(carrierRun().enemies);
+      expect(base.wallTurret.spawnedChildren).toBeUndefined();
+    });
+
+    it('sub-rows do NOT affect the parent threat/unit 100% distribution (still sums to 1)', () => {
+      const { base } = splitBroodSubsets(carrierRun().enemies);
+      const sum = Object.values(base).reduce((s, e) => s + e.threatPerUnit, 0);
+      expect(sum).toBeCloseTo(1, 6);
+      // Only the two DIRECT-damage parents (droneBrood-promoted `drone`, wallTurret) carry the
+      // distribution; the carrier (0 direct dmg) contributes 0, and the sub-row is excluded.
+      expect(base.carrier.threatPerUnit).toBe(0);
+    });
+
+    it("the sub-row's threat/unit uses the SAME denominator as the parent kinds", () => {
+      const reduced = carrierRun().enemies;
+      const { base } = splitBroodSubsets(reduced);
+      // Parents' dmgPerUnit: drone(=droneBrood promoted) = 60/2 = 30; wallTurret = 60/4 = 15.
+      // carrier = 0. sumDpu = 45. The drones sub-row = its own dmgPerUnit (30) / 45.
+      const drones = base.carrier.spawnedChildren[0];
+      expect(drones.threatPerUnit).toBeCloseTo(30 / 45, 6);
+      // Same scale as the promoted top-level drone row.
+      expect(drones.threatPerUnit).toBeCloseTo(base.drone.threatPerUnit, 6);
+    });
+  });
+
   it('displayName splits camelCase and title-cases', () => {
     expect(displayName('drone')).toBe('Drone');
     expect(displayName('wallTurret')).toBe('Wall Turret');

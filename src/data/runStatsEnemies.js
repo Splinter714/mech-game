@@ -120,6 +120,34 @@ export function splitBroodSubsets(enemies) {
     e.threatPerUnit = div(dpu, sumDpu);
   }
 
+  // #440: SPAWNER SUB-ROWS. A spawner (e.g. a Broodhauler/carrier) deals 0 direct damage, so its
+  // own row reads 0 threat. Its menace is the units it SPAWNED — surface those as an INDENTED
+  // sub-row under the spawner, listing the spawned kind's attributed stats. Each spawned-kind
+  // bucket carries a `spawnerKind` linkage (recorded in runStats.js on spawn/first-hit); we build a
+  // sub-row from that bucket's OWN counts and nest it under `base[spawnerKind]`. These sub-rows are
+  // INFORMATIONAL — like the brood subset, they are NOT part of the threat-share / threat/unit 100%
+  // totals, so the parent's own numbers and the distribution across parents are untouched.
+  //
+  // A spawned kind can appear BOTH as its own top-level row (e.g. Drone, with its brood subset) AND
+  // as a sub-row under its spawner (e.g. under Broodhauler) — that double-listing is intended;
+  // neither view double-counts, because the sub-row is not summed into any total.
+  const childrenByParent = {};
+  for (const [kind, e] of Object.entries(enemies ?? {})) {
+    const sk = e?.spawnerKind;
+    if (!sk) continue;
+    const child = deriveEnemy(kind, rawOf(e));
+    // Label by the underlying kind (strip the `Brood` stat suffix): `droneBrood` → `drone`.
+    child.spawnedKind = (kind.endsWith(BROOD_SUFFIX) && kind.length > BROOD_SUFFIX.length)
+      ? kind.slice(0, -BROOD_SUFFIX.length)
+      : kind;
+    // Threat/unit on the SAME denominator as the parent kinds, so it reads on the same scale.
+    child.threatPerUnit = div(div(child.damageToYou, child.spawned), sumDpu);
+    (childrenByParent[sk] ??= []).push(child);
+  }
+  for (const [parent, list] of Object.entries(childrenByParent)) {
+    if (base[parent]) base[parent].spawnedChildren = list;
+  }
+
   return { base, brood };
 }
 

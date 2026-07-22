@@ -340,7 +340,7 @@ export class StatsOverlay {
     // always sees their data.
     try {
       // WEAPONS table.
-      const weaponRows = Object.values(run.weapons ?? {}).map((w) => ({ data: w, sub: null }));
+      const weaponRows = Object.values(run.weapons ?? {}).map((w) => ({ data: w, subs: [] }));
       y = this._buildTable('weapons', 'WEAPONS', WEAPON_COLUMNS, weaponRows, y);
       y += 20;
 
@@ -379,13 +379,31 @@ export class StatsOverlay {
       const mark = info.hasOverride ? ' *' : '';
       const tip = info.hasOverride ? enemyOverrideSummary(info) : '';
       const b = brood[e.kind];
+      // Sub-rows attached to (and sorted with) this parent — dim, informational, not in any total.
+      const subs = [];
+      if (b) {
+        subs.push({
+          data: { ...b, displayName: `  └ of which brood-spawned${mark}`, realHp },
+          tip,
+        });
+      }
+      // #440: one sub-row per kind THIS kind spawned (e.g. a Broodhauler's drones), attributed to it.
+      for (const c of e.spawnedChildren ?? []) {
+        const cInfo = enemyWeaponInfo(c.spawnedKind);
+        const cMark = cInfo.hasOverride ? ' *' : '';
+        subs.push({
+          data: {
+            ...c,
+            displayName: `  └ spawned ${displayName(c.spawnedKind).toLowerCase()}s${cMark}`,
+            realHp: enemyRealHp(c.spawnedKind),
+          },
+          tip: cInfo.hasOverride ? enemyOverrideSummary(cInfo) : '',
+        });
+      }
       return {
         data: { ...e, displayName: displayName(e.kind) + mark, realHp },
         tip,
-        sub: b
-          ? { ...b, displayName: `  └ of which brood-spawned${mark}`, realHp }
-          : null,
-        subTip: b ? tip : '',
+        subs,
       };
     });
   }
@@ -435,11 +453,12 @@ export class StatsOverlay {
           fontFamily: FONT, fontSize: `${CELL_PX}px`, color: COL.text,
         })),
       });
-      if (r.sub) {
+      // #440: dim sub-rows (brood subset + spawner-attributed spawns) stay attached to their parent.
+      for (const sub of r.subs ?? []) {
         bodyRows.push({
           dim: true,
-          tip: r.subTip ?? '',
-          objs: columns.map((c) => s.add.text(0, 0, fmtCell(r.sub[c.key], c.fmt), {
+          tip: sub.tip ?? '',
+          objs: columns.map((c) => s.add.text(0, 0, fmtCell(sub.data[c.key], c.fmt), {
             fontFamily: FONT, fontSize: `${CELL_PX}px`, color: COL.dim,
           })),
         });
