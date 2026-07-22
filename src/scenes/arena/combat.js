@@ -144,9 +144,6 @@ export const CombatMixin = {
   // roll, the reskin, the death FX and the death latch all act on that player's own mech and
   // view — none of it reads a global any more.
   _damagePlayerAt(dmg, player = primaryPlayerOf(this), meta = {}) {
-    // #423: book the damage the player took, attributed to the enemy kind (+ weapon) that dealt it.
-    // Placed up front so a fully-shielded hit still counts as taken damage / a landed enemy shot.
-    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, dmg, meta.shotId ?? null);
     const parts = [
       'leftTorso', 'leftTorso', 'leftTorso',
       'rightTorso', 'rightTorso', 'rightTorso',
@@ -158,6 +155,14 @@ export const CombatMixin = {
     // `pickLiveWeighted` rerolls among the still-live entries of the same pool instead.
     const loc = pickLiveWeighted(parts, (part) => player.mech.isPartDestroyed(part));
     const res = this.damagePlayer(loc, dmg, player);
+    // #423/#440: book the damage the player took, attributed to the enemy kind (+ weapon) that
+    // dealt it. Booked AFTER applyDamage so it records the EFFECTIVE damage — raw incoming MINUS
+    // the location OVERSHOOT that applyDamage clamped away (see Mech.applyDamage `overshoot`).
+    // Shield-absorbed damage is NOT overshoot, so it stays counted: a fully-shielded hit has zero
+    // overshoot and still books its full (shield-absorbed) amount, so it still registers as a
+    // landed enemy shot for accuracy — the placement semantics that used to sit up front.
+    const effective = dmg - (res.overshoot ?? 0);
+    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, effective, meta.shotId ?? null);
     // #348: stamp WHEN this player was last hit. This is the signal the co-op respawn's
     // out-of-combat gate reads (coop.js `_updateRespawns`) — the surviving player must have gone
     // 1-2s without taking fire before a downed teammate is allowed back in. Stamped for every hit

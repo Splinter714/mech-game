@@ -140,6 +140,7 @@ export class Mech {
       return {
         applied: 0, destroyed: false, location: locationId,
         partDestroyedNow: p ? partDestroyed(p) : false, shieldAbsorbed: 0, shielded: false,
+        overshoot: 0,
       };
     }
     const shieldRes = damageShield(this.shield, amount);
@@ -148,6 +149,7 @@ export class Mech {
       return {
         applied: 0, destroyed: false, location: locationId, partDestroyedNow: partDestroyed(p),
         shieldAbsorbed: shieldRes.absorbed, shielded: true, armorBrokeNow: false,
+        overshoot: 0,
       };
     }
     const beforeHp = p.hp;
@@ -162,9 +164,16 @@ export class Mech {
     // `destroyed` (which tracks HP) — a part can lose its armor plating well before it's
     // actually destroyed, and the art wants to reskin exactly on that crossing (see combat.js).
     const armorBrokeNow = armorBefore > 0 && p.armor <= 0;
+    // #440: LOCATION OVERSHOOT — the portion of this hit's HP damage that exceeded the part's
+    // remaining HP and was clamped away by `Math.max(0, …)` above, doing nothing. `applied`
+    // (== overflow) still reports the full post-shield amount for every existing consumer; this
+    // is an ADDITIVE field so the run-stats can book only the damage that actually removed
+    // durability (raw − overshoot), never the wasted excess. Shield-absorbed damage is NOT
+    // overshoot (it was really absorbed) and stays out of this figure.
+    const overshoot = Math.max(0, toHp - beforeHp);
     return {
       applied: overflow, destroyed, location: locationId, partDestroyedNow: p.hp <= 0,
-      shieldAbsorbed: shieldRes.absorbed, shielded: false, armorBrokeNow,
+      shieldAbsorbed: shieldRes.absorbed, shielded: false, armorBrokeNow, overshoot,
     };
   }
 

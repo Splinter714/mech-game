@@ -54,6 +54,37 @@ describe('Mech damage: armor then structure', () => {
   });
 });
 
+describe('Mech damage: location overshoot (#440)', () => {
+  it('reports zero overshoot for a normal non-destroying hit', () => {
+    const m = new Mech({ chassisId: 'light' });
+    const arm = m.parts.leftArm;
+    const res = m.applyDamage('leftArm', arm.maxArmor + 3);   // strips armor, 3 into hp
+    expect(res.overshoot).toBe(0);
+    expect(res.applied).toBe(arm.maxArmor + 3);
+  });
+
+  it('reports the wasted excess when a hit exceeds the part remaining armor+hp', () => {
+    const m = new Mech({ chassisId: 'light' });
+    const arm = m.parts.leftArm;
+    const excess = 40;
+    const res = m.applyDamage('leftArm', arm.maxArmor + arm.maxHp + excess);
+    expect(res.destroyed).toBe(true);
+    // overshoot = the amount beyond the part hp that was clamped away (armor was fully chewed first)
+    expect(res.overshoot).toBe(excess);
+    // effective (raw − overshoot) is exactly the durability actually removed: armor + hp
+    const raw = arm.maxArmor + arm.maxHp + excess;
+    expect(raw - res.overshoot).toBe(arm.maxArmor + arm.maxHp);
+  });
+
+  it('a fully-shielded hit reports its shield absorption and zero structure removal/overshoot', () => {
+    const m = new Mech({ chassisId: 'light', shield: { max: 50 } });
+    const res = m.applyDamage('leftArm', 20);
+    expect(res.shielded).toBe(true);
+    expect(res.shieldAbsorbed).toBe(20);
+    expect(res.overshoot).toBe(0);
+  });
+});
+
 describe('Mech build completeness (deploy gating)', () => {
   it('isComplete only once every weapon slot is filled with a legal item', () => {
     const m = new Mech({ chassisId: 'light' });
