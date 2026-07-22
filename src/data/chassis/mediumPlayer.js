@@ -36,6 +36,14 @@ export const MEDIUM_PLAYER_CONFIG = {
   // Plus the 100-point shield configured at deploy (PLAYER_SHIELD in scenes/ArenaScene.js).
   totalArmor: 2100,
   totalHp: 1400,
+  // #438: player-only leg proportions — SKINNIER (legW down from the 1.0 baseline) and
+  // WIDER-SET (legSpread up), so the stance reads more planted without going spindly.
+  // Deliberately just these two shape knobs: legH/legDrop (leg length/vertical drop) and
+  // the walk-cycle timing (drawHull's `shift`/stepInterval) are untouched — the animation
+  // speed/smoothness half of #438 is separate scope (overlaps #435, not done here). Only the
+  // player's chassis gets this override; the enemy Warden still rides plain MEDIUM_CONFIG's
+  // art (no shape override = DEFAULT_SHAPE), so its legs are unaffected.
+  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.72, legSpread: 1.4 } },
   // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties
   // cadence to speed already — it advances the walk frames by `speed / maxSpeed` and plants a
   // foot every `stepInterval` ms at full throttle. But the shared MEDIUM stepInterval (340) was
