@@ -24,16 +24,27 @@ export const ART_SCALE = 4;
 // Wrap a Phaser Graphics so draw code written in the small "design grid" renders onto
 // the R× texture transparently: geometry args are multiplied by R; colours pass
 // through. `.raw` exposes the underlying Graphics for native R× detail.
+//
+// #433 (glow-overlay bake): set `sg.glowOnly = true` and every draw op is SUPPRESSED except
+// those emitted from inside a glow primitive (glowDot/glowBar toggle `sg._glow` around their
+// body). That lets the EXACT same weapon-mount draw code (barrel + muzzle glowDot/glowBar, etc.)
+// bake a muzzle-glow-ONLY texture — transparent everywhere the gun hardware would be — with zero
+// per-mount changes. The reload blink toggles that overlay sprite's visibility instead of swapping
+// the part texture (arena/ammoIndicators.js), so the part texture stays CONSTANT (shield-shape fix).
 export function scaledGraphics(g, r = ART_SCALE) {
   const s = (n) => n * r;
-  return {
+  const wrap = {
     raw: g,
+    glowOnly: false,   // when true, only glow-primitive output reaches the canvas
+    _glow: false,      // set by glowDot/glowBar while emitting their layers
+    _blocked() { return this.glowOnly && !this._glow; },
     fillStyle: (c, a) => g.fillStyle(c, a),
     lineStyle: (w, c, a) => g.lineStyle(w * r, c, a),
-    fillRect: (x, y, w, h) => g.fillRect(s(x), s(y), s(w), s(h)),
-    fillCircle: (x, y, rad) => g.fillCircle(s(x), s(y), s(rad)),
-    fillEllipse: (x, y, w, h) => g.fillEllipse(s(x), s(y), s(w), s(h)),
-    fillTriangle: (a, b, c, d, e, f) => g.fillTriangle(s(a), s(b), s(c), s(d), s(e), s(f)),
-    fillPoints: (pts, closed) => g.fillPoints(pts.map((p) => ({ x: s(p.x), y: s(p.y) })), closed),
+    fillRect: (x, y, w, h) => { if (!wrap._blocked()) g.fillRect(s(x), s(y), s(w), s(h)); },
+    fillCircle: (x, y, rad) => { if (!wrap._blocked()) g.fillCircle(s(x), s(y), s(rad)); },
+    fillEllipse: (x, y, w, h) => { if (!wrap._blocked()) g.fillEllipse(s(x), s(y), s(w), s(h)); },
+    fillTriangle: (a, b, c, d, e, f) => { if (!wrap._blocked()) g.fillTriangle(s(a), s(b), s(c), s(d), s(e), s(f)); },
+    fillPoints: (pts, closed) => { if (!wrap._blocked()) g.fillPoints(pts.map((p) => ({ x: s(p.x), y: s(p.y) })), closed); },
   };
+  return wrap;
 }

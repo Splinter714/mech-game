@@ -86,6 +86,7 @@ export function rectC(sg, cx, cy, w, h, fill, alpha = 1) {
 }
 // Centred rounded rect (via the raw super-sampled graphics).
 export function roundC(sg, cx, cy, w, h, fill, r, alpha = 1) {
+  if (sg._blocked?.()) return;   // #433: suppressed during the glow-only overlay bake (it hits sg.raw directly)
   sg.fillStyle(fill, alpha);
   const k = ART_SCALE, rr = Math.min(r, w / 2, h / 2);
   sg.raw.fillRoundedRect((CENTER + cx - w / 2) * k, (CENTER + cy - h / 2) * k, w * k, h * k, rr * k);
@@ -138,17 +139,23 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
 }
 
 // Layered point-glow: wide faint halo → tighter halo → bright core → hot centre.
+// #433: `_glow` is raised around the emission so these layers survive the glow-only overlay bake
+// (scaledGraphics suppresses every other op) — the muzzle glow is the ONLY thing that texture keeps.
 export function glowDot(sg, cx, cy, r, n) {
+  const prev = sg._glow; sg._glow = true;
   sg.fillStyle(n.halo, 0.22); sg.fillCircle(CENTER + cx, CENTER + cy, r * 2.2);
   sg.fillStyle(n.halo, 0.5);  sg.fillCircle(CENTER + cx, CENTER + cy, r * 1.35);
   sg.fillStyle(n.core, 1);    sg.fillCircle(CENTER + cx, CENTER + cy, r);
   sg.fillStyle(n.hot, 1);     sg.fillCircle(CENTER + cx, CENTER + cy, r * 0.42);
+  sg._glow = prev;
 }
 // Emissive bar (reactor spine / vent slits): halo spill → core → hot streak.
 export function glowBar(sg, cx, cy, w, h, n) {
+  const prev = sg._glow; sg._glow = true;
   rectC(sg, cx, cy, w * 1.9 + 1.4, h * 1.5 + 1.4, n.halo, 0.38);
   rectC(sg, cx, cy, w, h, n.core, 1);
   rectC(sg, cx, cy, w * 0.36, h * 0.7, n.hot, 1);
+  sg._glow = prev;
 }
 
 // #400/#404: the center-torso STATUS SPOT — replaces the reactor spine's fixed purple with a

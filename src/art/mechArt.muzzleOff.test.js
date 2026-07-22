@@ -1,10 +1,10 @@
-// #433: buildMechTextures bakes a "muzzle-off" VARIANT of every weapon-carrying part (arms + side
-// torsos) for the player theme, so the reload blink can swap a part sprite to its extinguished-muzzle
-// twin. These lock in that the right keys get baked — for the PLAYER only (enemy mechs have no reload
-// blink, so no extra textures) — using a fake scene that records every generated texture key rather
-// than a real Phaser canvas.
+// #433 (re-architecture): buildMechTextures bakes a GLOW-ONLY overlay texture per weapon-carrying
+// part (the four skill slots) for the PLAYER theme — the muzzle glow alone, on a transparent canvas
+// the same size as the part — while the part texture itself is baked muzzle-OFF (no swap variant).
+// These lock in that the right keys get baked, for the player only (enemy mechs have no reload blink /
+// no overlay), using a fake scene that records every generated texture key.
 import { describe, it, expect } from 'vitest';
-import { buildMechTextures, MUZZLE_OFF_SUFFIX, PIVOT_LOCATIONS } from './mechArt.js';
+import { buildMechTextures, MUZZLE_GLOW_SUFFIX, PIVOT_LOCATIONS } from './mechArt.js';
 import { Mech } from '../data/Mech.js';
 
 // A stub graphics object: every draw call is a no-op; generateTexture records the key. A Proxy
@@ -36,16 +36,16 @@ function loadedMech() {
   });
 }
 
-describe('buildMechTextures muzzle-off variants (#433)', () => {
-  it('bakes a muzzle-off variant for every weapon-carrying part on the player theme', () => {
+describe('buildMechTextures muzzle-glow overlays (#433 re-architecture)', () => {
+  it('bakes a glow-only overlay for every weapon-carrying part on the player theme', () => {
     const scene = fakeScene();
     buildMechTextures(scene, 'playerMech', loadedMech(), { theme: 'player' });
     for (const loc of PIVOT_LOCATIONS) {
-      expect(scene.keys).toContain(`playerMech_${loc}${MUZZLE_OFF_SUFFIX}`);
+      expect(scene.keys).toContain(`playerMech_${loc}${MUZZLE_GLOW_SUFFIX}`);
     }
   });
 
-  it('still bakes the normal part texture alongside each muzzle-off variant', () => {
+  it('still bakes the (now muzzle-off) base part texture alongside each glow overlay', () => {
     const scene = fakeScene();
     buildMechTextures(scene, 'playerMech', loadedMech(), { theme: 'player' });
     for (const loc of PIVOT_LOCATIONS) {
@@ -53,17 +53,17 @@ describe('buildMechTextures muzzle-off variants (#433)', () => {
     }
   });
 
-  it('bakes NO muzzle-off variants for an enemy mech (no reload blink)', () => {
+  it('bakes NO glow overlays for an enemy mech (no reload blink, glow baked into the part)', () => {
     const scene = fakeScene();
     buildMechTextures(scene, 'enemyMech', loadedMech(), { theme: 'enemy' });
-    expect(scene.keys.some((k) => k.endsWith(MUZZLE_OFF_SUFFIX))).toBe(false);
+    expect(scene.keys.some((k) => k.endsWith(MUZZLE_GLOW_SUFFIX))).toBe(false);
   });
 
-  it('adds exactly one muzzle-off texture per weapon-carrying part (four total)', () => {
+  it('adds exactly one glow overlay per weapon-carrying part (four total)', () => {
     const scene = fakeScene();
     buildMechTextures(scene, 'playerMech', loadedMech(), { theme: 'player' });
-    const offKeys = scene.keys.filter((k) => k.endsWith(MUZZLE_OFF_SUFFIX));
-    expect(offKeys).toHaveLength(PIVOT_LOCATIONS.length);
+    const glowKeys = scene.keys.filter((k) => k.endsWith(MUZZLE_GLOW_SUFFIX));
+    expect(glowKeys).toHaveLength(PIVOT_LOCATIONS.length);
     expect(PIVOT_LOCATIONS).toHaveLength(4);
   });
 });

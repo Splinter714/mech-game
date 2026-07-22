@@ -8,7 +8,7 @@ import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
-import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
+import { PART_PIVOT, PIVOT_LOCATIONS, MUZZLE_GLOW_SUFFIX } from '../../art/mechArt.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
@@ -91,7 +91,23 @@ export const LocomotionMixin = {
     const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(ARENA_MECH_SCALE);
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
-    const c = this.add.container(x, y, [hull, torL, torR, armL, armR, turret]);
+    // #433 (re-architecture): a per-slot GLOW OVERLAY sprite carrying ONLY the weapon's muzzle glow
+    // (mechArt.MUZZLE_GLOW_SUFFIX), layered directly ABOVE its (muzzle-off) part sprite and sharing
+    // that part's transform (same canvas/origin, so _syncPivots poses both identically). Visible by
+    // default — this is where the lit muzzle now lives — and the reload blink toggles its visibility
+    // (arena/ammoIndicators.js). Player-only: these textures are baked only for the player theme.
+    const glow = {};
+    const children = [hull, torL, torR, armL, armR];
+    if (isPlayer) {
+      for (const [part, loc] of [[torL, 'leftTorso'], [torR, 'rightTorso'], [armL, 'leftArm'], [armR, 'rightArm']]) {
+        const o = this.add.sprite(0, 0, `${key}_${loc}${MUZZLE_GLOW_SUFFIX}`).setScale(ARENA_MECH_SCALE);
+        glow[loc] = o;
+        // Insert directly after its part so the overlay sits just above that part (and below the body).
+        children.splice(children.indexOf(part) + 1, 0, o);
+      }
+    }
+    children.push(turret);
+    const c = this.add.container(x, y, children);
     // #99: explicit depth — was relying on scene add-order, which put whichever mech view got
     // created LAST (any enemy spawned after the player) on top regardless of actual position.
     // #113/#289: enemy mechs are LARGE GROUND units — below the player (DEPTH.UNITS) but above the
@@ -99,6 +115,9 @@ export const LocomotionMixin = {
     // enemy mech is never flying (`flying=false`) and is never small (`small=false`).
     c.setDepth(unitDepth(isPlayer, false, false));
     c.hull = hull; c.torL = torL; c.torR = torR; c.armL = armL; c.armR = armR; c.turret = turret;
+    // #433: per-slot muzzle-glow overlays (empty {} for enemies), keyed by location; _syncPivots
+    // poses each onto its part, arena/ammoIndicators.js toggles its visibility for the reload blink.
+    c.glow = glow;
     // Per-view smoothing state: the CURRENTLY-APPLIED convergence tilt of each pivoting part,
     // eased toward its target each frame (see _syncTilts). Starts at the resting tilt (0) so a
     // fresh deploy/spawn doesn't swing in from a stale angle.
@@ -136,6 +155,14 @@ export const LocomotionMixin = {
       sprite.setOrigin(t.ox, t.oy);
       sprite.setPosition(baseX + t.dx, baseY + t.dy);
       sprite.rotation = t.rot + (tilts[loc] || 0);
+      // #433: the muzzle-glow overlay shares its part's exact transform (same canvas + origin), so
+      // the coloured glow stays welded to the muzzle as the part pivots toward convergence.
+      const g = view.glow?.[loc];
+      if (g) {
+        g.setOrigin(t.ox, t.oy);
+        g.setPosition(baseX + t.dx, baseY + t.dy);
+        g.rotation = t.rot + (tilts[loc] || 0);
+      }
     }
   },
 

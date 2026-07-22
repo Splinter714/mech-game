@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech, partSpriteTransform } from '../art/index.js';
+import { buildMechTextures, reskinMech, partSpriteTransform, MUZZLE_GLOW_SUFFIX } from '../art/index.js';
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
@@ -810,6 +810,14 @@ export default class GarageScene extends Phaser.Scene {
     this.previewTorR = this.add.sprite(cx, cy + 8, 'garageMech_rightTorso').setScale(scale);
     this.previewArmL = this.add.sprite(cx, cy + 8, 'garageMech_leftArm').setScale(scale);
     this.previewArmR = this.add.sprite(cx, cy + 8, 'garageMech_rightArm').setScale(scale);
+    // #433: the part textures are baked muzzle-OFF; the coloured muzzle glow lives in a per-slot
+    // overlay sprite layered above each part (same as the arena mech view). Static here — always
+    // visible — so the garage preview reads exactly as the lit mech does in the arena.
+    this.previewGlow = {};
+    for (const loc of ['leftTorso', 'rightTorso', 'leftArm', 'rightArm']) {
+      this.previewGlow[loc] = this.add.sprite(cx, cy + 8, `garageMech_${loc}${MUZZLE_GLOW_SUFFIX}`)
+        .setScale(scale);
+    }
     this.previewTurret = this.add.sprite(cx, cy + 8, 'garageMech_turret').setScale(scale);
     this._positionPreviewParts();
     this.add.text(cx, this.H - 34 + 13, this.mech.chassis.name.toUpperCase(), {
@@ -831,6 +839,13 @@ export default class GarageScene extends Phaser.Scene {
       sprite.setOrigin(t.ox, t.oy);
       sprite.setPosition(this._previewCx + t.dx, this._previewCy + t.dy);
       sprite.rotation = t.rot;
+      // #433: the muzzle-glow overlay shares its part's exact transform (same canvas + origin).
+      const g = this.previewGlow?.[loc];
+      if (g) {
+        g.setOrigin(t.ox, t.oy);
+        g.setPosition(this._previewCx + t.dx, this._previewCy + t.dy);
+        g.rotation = t.rot;
+      }
     }
   }
 

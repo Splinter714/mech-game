@@ -65,12 +65,15 @@ export const PIVOT_LOCATIONS = [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS];
 // ever gets retuned for visual reasons, the muzzle math moves with it instead of drifting.
 export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, rightTorso: 0.30 };
 
-// #433: texture-key suffix for a weapon-carrying part's "muzzle-off" variant — identical art with
-// the weapon's baked muzzle glow extinguished (drawn in the theme's dark tones). Built alongside
-// the normal part texture for the player (buildMechTextures), and swapped in per-frame on the
-// reload blink's off phase (arena/ammoIndicators.js). The one place the suffix is defined so the
-// baker and the swapper can never drift apart.
-export const MUZZLE_OFF_SUFFIX = '_muzzleOff';
+// #433 (re-architecture): texture-key suffix for a weapon-carrying part's GLOW-ONLY overlay — the
+// weapon's muzzle glow ALONE (glowDot/glowBar colour layers), on an otherwise-transparent canvas of
+// the SAME size + origin as the part, so it layers over the part sprite with perfect registration
+// and no muzzle-tip position math. The base part is now baked muzzle-OFF (dark) as its sole state;
+// this overlay carries the colour. The reload blink toggles the overlay sprite's VISIBILITY
+// (arena/ammoIndicators.js) — the part texture never changes, so the shield outline never re-derives
+// its shell. Player-only (enemy mechs bake their glow straight into the part). One place the suffix
+// is defined so the baker and the mech-view wiring can't drift apart.
+export const MUZZLE_GLOW_SUFFIX = '_muzzleGlow';
 
 // Where a `${key}_<part>` sprite must sit and how it pivots, for a mech aimed along `angle`
 // at display `scale`. `ox/oy` is the joint as an origin fraction (so setOrigin makes the
@@ -144,9 +147,11 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
 // muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
 // a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
 // stump either way.
-// `muzzleOff` (#433): bake the reload-blink's EXTINGUISHED variant — identical arm, but its
-// weapons' muzzle glow is drawn in the theme's dark tones (see drawWeaponMount) so the muzzle
-// light reads as OFF. The blink swaps the part sprite to this variant on its off phase.
+// `muzzleOff` (#433): draw the arm's weapons with their muzzle glow in the theme's DARK tones
+// (see drawWeaponMount) instead of the category neon, so the baked muzzle light reads as OFF. For
+// the player this is now the arm's SOLE baked state — the colour lives in a separate glow-only
+// overlay sprite (MUZZLE_GLOW_SUFFIX, drawPartGlow) that the reload blink toggles on/off, leaving
+// this part texture constant. Enemies bake muzzleOff=false (glow straight in the part, no overlay).
 function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
@@ -156,8 +161,6 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
-  // #433: the reload blink extinguishes the weapon's own BAKED muzzle glow via a muzzle-off part
-  // variant that the scene swaps to on the blink's off phase — nothing extra is baked here.
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
@@ -171,7 +174,8 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
 // via `exposedInternals`, instead of the old brackets-on-top overlay.
 // `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
 // body-only raster for the player's shield shell (see drawArm's note).
-// `muzzleOff` (#433): see drawArm — the extinguished-muzzle variant for the reload blink.
+// `muzzleOff` (#433): see drawArm — the dark-muzzle bake (the player's sole part state; colour
+// lives in the separate glow overlay).
 function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
@@ -182,8 +186,24 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
-  // #433: the muzzle glow extinguishes via a muzzle-off part variant (see drawArm) — nothing baked here.
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
+}
+
+// #433 (re-architecture): the GLOW-ONLY overlay raster for one weapon-carrying part — the mounted
+// weapons' muzzle glow ALONE, in the live CATEGORY neon, on an otherwise-transparent canvas the same
+// size + origin as the part. Runs the exact same `drawWeaponsAt` the part uses, but under the
+// scaledGraphics glow-gate (`sg.glowOnly`), so only the glowDot/glowBar layers reach the canvas and
+// all the gun hardware is suppressed. Layered over the (muzzle-off) part sprite it reproduces the lit
+// look; the reload blink toggles this overlay's visibility. A destroyed location draws nothing
+// (drawWeaponsAt early-returns), and a slot with no weapon draws nothing — so the overlay is
+// transparent there. Damage-INDEPENDENT: the muzzle colour doesn't change with armour, so this is one
+// texture per location regardless of damage state (rebuilt in place on reskin, always identical).
+function drawPartGlow(sg, mech, loc, T) {
+  sg.glowOnly = true;
+  const lay = mechLayout(mech);
+  const s = mech.chassis.art.bodyLen / 38;
+  drawWeaponsAt(sg, mech, lay, loc, T, s, false);   // muzzleOff=false → the CATEGORY neon glow
+  sg.glowOnly = false;
 }
 
 // Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftTorso, > 0 → rightTorso),
@@ -321,6 +341,7 @@ function drawHull(sg, mech, frame, T) {
 // ('player' | 'enemy') picks the faction palette/shape.
 export function buildMechTextures(scene, key, mech, opts) {
   const T = themeFor(opts);
+  const isPlayer = (opts?.theme ?? 'player') === 'player';
   for (let f = 0; f < 4; f++) {
     gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
       (g) => drawHull(scaledGraphics(g), mech, f, T));
@@ -329,13 +350,17 @@ export function buildMechTextures(scene, key, mech, opts) {
     (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot));
   // One texture per side torso + arm — the scene pivots each toward the weapon-convergence
   // point (side torsos subtly, arms more; see partSpriteTransform).
+  // #433 (re-architecture): the PLAYER bakes each weapon-carrying part MUZZLE-OFF (dark glow) as its
+  // SOLE state — the coloured muzzle glow now lives in a separate glow-only overlay (below) that the
+  // reload blink toggles, so this base texture NEVER swaps (the shield outline can't re-derive a wrong
+  // shell mid-blink). Enemies bake muzzleOff=false: glow straight into the part, no overlay, no blink.
   for (const loc of SIDE_TORSO_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, false));
+      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, false, isPlayer));
   }
   for (const loc of ARM_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawArm(scaledGraphics(g), mech, loc, T, false));
+      (g) => drawArm(scaledGraphics(g), mech, loc, T, false, isPlayer));
   }
   // #397 follow-up: the PLAYER's shield shell must hug the BODY ARMOR only — not the mounted guns
   // and not their baked-in muzzle glow. Weapons live INSIDE each part texture (drawWeaponsAt), so
@@ -343,7 +368,7 @@ export function buildMechTextures(scene, key, mech, opts) {
   // weapon-carrying part. The hull carries no weapons, so it needs no variant — the shield outline
   // just reuses the live hull frame. Only the player theme builds these (arena/shieldOutline.js
   // `bodyOnly` points the player's outline duplicates at them); enemies keep their full-part shell.
-  if ((opts?.theme ?? 'player') === 'player') {
+  if (isPlayer) {
     gen(scene, `${key}_turret_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
       (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot, true));
     for (const loc of SIDE_TORSO_LOCATIONS) {
@@ -354,19 +379,17 @@ export function buildMechTextures(scene, key, mech, opts) {
       gen(scene, `${key}_${loc}_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
         (g) => drawArm(scaledGraphics(g), mech, loc, T, true));
     }
-    // #433: the reload blink's EXTINGUISHED-MUZZLE variant of every weapon-carrying part (arms +
-    // side torsos — the four skill slots, all pivoting parts). Same plating (including the current
-    // damage/armor-stripped state, since this rebuilds in place with the rest on every reskin), but
-    // the weapon's baked muzzle glow drawn dark. The scene swaps a part sprite to this on the blink's
-    // off phase and back on the on phase, so the swap composes with damage reskins for free — both
-    // keys always carry the current damage state. Player-only: enemy mechs have no reload blink.
-    for (const loc of SIDE_TORSO_LOCATIONS) {
-      gen(scene, `${key}_${loc}${MUZZLE_OFF_SUFFIX}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-        (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, false, true));
-    }
-    for (const loc of ARM_LOCATIONS) {
-      gen(scene, `${key}_${loc}${MUZZLE_OFF_SUFFIX}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-        (g) => drawArm(scaledGraphics(g), mech, loc, T, false, true));
+    // #433 (re-architecture): the GLOW-ONLY overlay for every weapon-carrying part (the four skill
+    // slots). Same canvas size + origin as the part, containing ONLY the muzzle glow in the CATEGORY
+    // neon (drawPartGlow, via the scaledGraphics glow-gate). The mech view (locomotion.js) mounts one
+    // overlay sprite per slot ABOVE its part, sharing its transform; it's VISIBLE by default (so the
+    // glow shows normally) and the reload blink toggles its visibility (arena/ammoIndicators.js). The
+    // part texture itself never changes, so nothing downstream (the shield outline) re-derives its
+    // shape. Rebuilt in place on every reskin like the rest — always identical, since muzzle colour is
+    // damage-independent — so a reskin can never leave a stale glow. Player-only.
+    for (const loc of PIVOT_LOCATIONS) {
+      gen(scene, `${key}_${loc}${MUZZLE_GLOW_SUFFIX}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawPartGlow(scaledGraphics(g), mech, loc, T));
     }
   }
 }
