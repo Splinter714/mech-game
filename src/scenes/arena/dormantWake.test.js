@@ -128,6 +128,31 @@ describe('#269 §4: a DORMANT enemy is fully inert — _updateEnemy skips all AI
   });
 });
 
+describe('#440: _updateEnemy books the once-per-unit activation only for AWARE units', () => {
+  it('a DORMANT unit never reaches the activation hook', () => {
+    const scene = makeScene();
+    scene._statEnemyActivated = vi.fn();
+    const e = makeDockedUnit('turret');
+    scene._updateVehicle = vi.fn();
+    scene._updateEnemy(e, 0.016, 16);
+    expect(scene._statEnemyActivated).not.toHaveBeenCalled();
+    expect(e._statActivated).toBeUndefined();
+  });
+
+  it('an AWARE unit activates on its first tick, exactly once across repeated ticks', () => {
+    const scene = makeScene();
+    // real hook: flip _statActivated so the idempotent guard is exercised end to end
+    scene._statEnemyActivated = vi.fn((u) => { u._statActivated = true; });
+    scene._updateVehicle = vi.fn();
+    const e = makeDockedUnit('turret');
+    e.awareness = AWARE;
+    scene._updateEnemy(e, 0.016, 16);
+    scene._updateEnemy(e, 0.016, 16);
+    scene._updateEnemy(e, 0.016, 16);
+    expect(scene._statEnemyActivated).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('#269 §6: _wakeBase wakes only the target base\'s dormant units', () => {
   it('flips awareness to AWARE for the target base only, leaving other bases dormant', () => {
     const scene = makeScene();

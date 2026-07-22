@@ -1123,6 +1123,12 @@ export const EnemiesMixin = {
     // distance-only check (`_maybeProximityWake`, bases.js) so a unit the player walks right up
     // to wakes even with no alert tower involved — not full AI ticking, just a `Math.hypot`.
     if (e.awareness === DORMANT) { this._maybeProximityWake(e); return; }
+    // #440: 'Seen' counts only units that ACTUALLY ACTIVATED. A DORMANT unit early-returns above
+    // and never reaches here, so this single check — placed for BOTH the mech and vehicle paths,
+    // before the vehicle delegation below — books the once-per-unit Seen the first tick a unit is
+    // AWARE. Covers base-wake and proximity-wake (they arrive AWARE the tick after waking) AND
+    // units that spawn already-AWARE (resupply/brood/mid-fight, booked on their first update tick).
+    if (e.awareness === AWARE && !e._statActivated) this._statEnemyActivated?.(e);
     // #68: non-mech kinds run their own simple per-kind brain + integrate/render path.
     if (e.kind !== 'mech') { this._updateVehicle(e, dt, delta); return; }
     const mv = e.mech.movement;

@@ -307,6 +307,11 @@ export const CombatMixin = {
     // hit destroys the unit (the destroyed unit is removed from `this.enemies`, but its still-
     // dormant basemates get woken). `_wakeBase` is idempotent, so an already-woken base is a no-op.
     if (e.awareness === DORMANT && e.baseId != null) this._wakeBase(e.baseId);
+    // #440: taking player damage IS engaging the unit — activate it now so its damage/kill/TTK
+    // count. Idempotent (the `_statActivated` latch), and keeps the "never-activated unit
+    // contributes nothing" invariant consistent even for a baseId-less dormant unit that the wake
+    // above doesn't cover, without booking damage for a unit that was never activated.
+    this._statEnemyActivated?.(e);
     const isMech = e.kind === 'mech' || e.kind === undefined;
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
     const lx = x - e.x, ly = y - e.y;

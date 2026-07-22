@@ -104,6 +104,7 @@ describe('#423 enemy TTK — first-player-hit to death, not lifetime (bug2)', ()
     const e = {};
     ctx.time.now = 1000;
     RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');   // spawned at t=1000
+    RunStatsMixin._statEnemyActivated.call(ctx, e);            // #440: woke — now counts
     ctx.time.now = 30000;   // 29s just alive/aware — must NOT count toward TTK
     e._firstHitAt = 30000;  // combat.js stamps this on the first player weapon hit
     ctx.time.now = 30450;   // dies 450ms after first being hit
@@ -111,13 +112,64 @@ describe('#423 enemy TTK — first-player-hit to death, not lifetime (bug2)', ()
     expect(ctx.runStats.reduce().enemies.infantry.avgTtkMs).toBe(450);
   });
 
-  it('excludes a unit killed without ever being player-damaged (e.g. crush)', () => {
+  it('excludes a unit killed without ever being player-damaged (e.g. crush) but that DID activate', () => {
     const e = {};
     RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');
+    RunStatsMixin._statEnemyActivated.call(ctx, e);   // #440: it woke, so the kill counts…
     ctx.time.now = 5000;
-    RunStatsMixin._statEnemyKilled.call(ctx, e);   // no _firstHitAt → no TTK sample
+    RunStatsMixin._statEnemyKilled.call(ctx, e);   // …but no _firstHitAt → no TTK sample
     const en = ctx.runStats.reduce().enemies.infantry;
     expect(en.killed).toBe(1);
     expect(en.avgTtkMs).toBe(0);
+  });
+});
+
+describe('#440 Seen counts only ACTIVATED units', () => {
+  let ctx;
+  beforeEach(() => { ctx = makeCtx(); });
+
+  it('a dormant unit that never wakes contributes NOTHING (no Seen, no kill, no TTK)', () => {
+    const e = {};
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');   // stamps kind, books no Seen
+    expect(e._statActivated).toBe(false);
+    // it dies off-screen without ever activating — the kill is ignored entirely
+    ctx.time.now = 5000;
+    e._firstHitAt = 4000;   // even a stray hit stamp must not resurrect it into the stats
+    RunStatsMixin._statEnemyKilled.call(ctx, e);
+    const en = ctx.runStats.reduce().enemies.infantry;
+    expect(en).toBeUndefined();   // the kind never appears in the readout at all
+  });
+
+  it('a unit that wakes books exactly one Seen', () => {
+    const e = {};
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');
+    RunStatsMixin._statEnemyActivated.call(ctx, e);
+    expect(ctx.runStats.reduce().enemies.infantry.spawned).toBe(1);
+  });
+
+  it('activation is idempotent — re-checking every tick never double-counts Seen', () => {
+    const e = {};
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');
+    RunStatsMixin._statEnemyActivated.call(ctx, e);
+    RunStatsMixin._statEnemyActivated.call(ctx, e);
+    RunStatsMixin._statEnemyActivated.call(ctx, e);
+    expect(ctx.runStats.reduce().enemies.infantry.spawned).toBe(1);
+  });
+
+  it('a spawned-already-AWARE unit books its Seen on the first activation tick', () => {
+    // resupply/brood/mid-fight units spawn AWARE; enemies.js fires _statEnemyActivated on their
+    // first update tick. Kind falls back through _statKind when the caller passes only the entity.
+    const e = { _statKind: 'drone' };
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'drone');
+    RunStatsMixin._statEnemyActivated.call(ctx, e);
+    expect(ctx.runStats.reduce().enemies.drone.spawned).toBe(1);
+  });
+
+  it('an activated unit that is killed books the kill', () => {
+    const e = {};
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'tank');
+    RunStatsMixin._statEnemyActivated.call(ctx, e);
+    RunStatsMixin._statEnemyKilled.call(ctx, e);
+    expect(ctx.runStats.reduce().enemies.tank.killed).toBe(1);
   });
 });

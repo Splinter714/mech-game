@@ -125,8 +125,20 @@ export const RunStatsMixin = {
   // the FIRST player weapon hit on this unit) is stamped in combat.js `_damageEnemyAt`; it is what
   // TTK measures from — NOT spawn time (#423 bug2).
   _statEnemySpawned(e, kind) {
+    // #440: stamp the attribution fields at spawn (needed for `_bornAt`/kind-tagging even for a
+    // unit that never wakes), but DO NOT count the "Seen" (spawned) here anymore — that moves to
+    // `_statEnemyActivated`, fired the first tick a unit is actually AWARE. A garrison unit the
+    // player never approaches stays DORMANT, never activates, and is excluded from every stat.
     e._statKind = kind;
-    this.runStats?.enemySpawned(kind);
+    e._statActivated = false;
+  },
+  // #440: books the once-per-unit "Seen" the first time a unit is AWARE (see enemies.js
+  // `_updateEnemy`, right after the DORMANT early-return). Idempotent via the `_statActivated`
+  // latch so re-checking every tick can never double-count.
+  _statEnemyActivated(e) {
+    if (!e || e._statActivated) return;
+    e._statActivated = true;
+    this.runStats?.enemySpawned(e._statKind ?? e.kind ?? 'mech');
   },
   // #423 bug1: one enemy trigger pull. Returns a fresh shot id the caller threads to this pull's
   // emissions so a connecting one books the hit exactly once (enemy accuracy), the mirror of the
@@ -139,6 +151,9 @@ export const RunStatsMixin = {
   },
   _statEnemyKilled(e) {
     if (!this.runStats) return;
+    // #440: a unit that NEVER activated (dormant garrison killed off-screen / by another means
+    // without ever waking) is excluded from stats entirely — its death books no kill and no TTK.
+    if (!e?._statActivated) return;
     // #423 bug2: time-to-kill = first player damage → death. A unit the player never damaged
     // (crush/objective) has no `_firstHitAt`, so pass null — the kill counts, the TTK sample doesn't.
     const first = e?._firstHitAt;
