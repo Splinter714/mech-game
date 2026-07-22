@@ -30,6 +30,8 @@ export const RunStatsMixin = {
     });
     this._statHitPulls = new Set();   // pull ids that have already scored a hit (accuracy dedupe)
     this._statPullSeq = 0;            // monotonic trigger-pull id
+    this._statHitEnemyShots = new Set();  // #423: enemy shot ids that already booked a hit (enemy accuracy dedupe)
+    this._statEnemyShotSeq = 0;       // #423: monotonic enemy trigger-pull id (mirrors _statPullSeq)
     this._reloadWatch = {};           // `${playerId}:${loc}:${index}` → was-reloading last frame
     this._statsCommitted = false;     // commit-once latch (double-commit guard)
     this._statsHistory ??= makeStatsHistory({});
@@ -95,26 +97,50 @@ export const RunStatsMixin = {
     run.damageDealt({ weaponId, targetKind, amount, killed, overkill });
   },
 
-  // Damage the player took, attributed to the enemy kind (and weapon) that dealt it. Also books the
-  // enemy shot as a connecting hit (enemy accuracy is per-emission — a coarser number than the
-  // player's pull-level accuracy, which is fine: it is only a rough "how often does this kind land").
-  _statPlayerHurt(enemyKind, weaponId, amount) {
+  // Damage the player took, attributed to the enemy kind (and weapon) that dealt it. Books the enemy
+  // shot as a connecting hit AT MOST ONCE per enemy trigger pull (`shotId`) — the mirror of the
+  // player's pull-level dedupe (#423 bug1): one enemy shot can damage the player across several
+  // emissions (spread lanes / a beam damaging over multiple frames), and without this each connecting
+  // event booked its own hit while the pull counted one shot, pushing accuracy above 100%. A null
+  // shotId (a DOT tick with no discrete shot) still books its damage but never a hit.
+  _statPlayerHurt(enemyKind, weaponId, amount, shotId = null) {
     const run = this.runStats;
     if (!run) return;
-    if (enemyKind != null) run.enemyShotHit(enemyKind);
+    if (enemyKind != null) {
+      if (shotId != null) {
+        if (!this._statHitEnemyShots.has(shotId)) {
+          this._statHitEnemyShots.add(shotId);
+          run.enemyShotHit(enemyKind);
+        }
+      } else {
+        run.enemyShotHit(enemyKind);
+      }
+    }
     run.damageTaken({ enemyKind, weaponId, amount });
   },
 
-  // The two enemy-lifecycle seams, plus the small global events.
+  // The two enemy-lifecycle seams, plus the small global events. `_firstHitAt` (the scene-time of
+  // the FIRST player weapon hit on this unit) is stamped in combat.js `_damageEnemyAt`; it is what
+  // TTK measures from — NOT spawn time (#423 bug2).
   _statEnemySpawned(e, kind) {
     e._statKind = kind;
-    e._bornAt = this.time?.now ?? 0;
     this.runStats?.enemySpawned(kind);
   },
-  _statEnemyFired(e) { this.runStats?.enemyShotFired(e?._statKind ?? e?.kind ?? 'mech'); },
+  // #423 bug1: one enemy trigger pull. Returns a fresh shot id the caller threads to this pull's
+  // emissions so a connecting one books the hit exactly once (enemy accuracy), the mirror of the
+  // player's pull id.
+  _statEnemyFired(e) {
+    if (!this.runStats) return null;
+    const shotId = ++this._statEnemyShotSeq;
+    this.runStats.enemyShotFired(e?._statKind ?? e?.kind ?? 'mech');
+    return shotId;
+  },
   _statEnemyKilled(e) {
     if (!this.runStats) return;
-    const ttl = Math.max(0, (this.time?.now ?? 0) - (e?._bornAt ?? this.time?.now ?? 0));
+    // #423 bug2: time-to-kill = first player damage → death. A unit the player never damaged
+    // (crush/objective) has no `_firstHitAt`, so pass null — the kill counts, the TTK sample doesn't.
+    const first = e?._firstHitAt;
+    const ttl = first != null ? Math.max(0, (this.time?.now ?? 0) - first) : null;
     this.runStats.enemyKill(e?._statKind ?? e?.kind ?? 'mech', ttl);
   },
   _statPowerup(type) { this.runStats?.powerup(type); },

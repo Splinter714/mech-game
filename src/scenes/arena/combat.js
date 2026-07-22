@@ -146,7 +146,7 @@ export const CombatMixin = {
   _damagePlayerAt(dmg, player = primaryPlayerOf(this), meta = {}) {
     // #423: book the damage the player took, attributed to the enemy kind (+ weapon) that dealt it.
     // Placed up front so a fully-shielded hit still counts as taken damage / a landed enemy shot.
-    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, dmg);
+    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, dmg, meta.shotId ?? null);
     const parts = [
       'leftTorso', 'leftTorso', 'leftTorso',
       'rightTorso', 'rightTorso', 'rightTorso',
@@ -328,6 +328,10 @@ export const CombatMixin = {
     // damage. Overkill is the spill past the durability that was standing before this hit.
     const killedNow = e.mech.isDestroyed();
     if (meta.weaponId != null) {
+      // #423 bug2: stamp the FIRST time the player damaged THIS unit (with a weapon) — the TTK clock
+      // starts here, not at spawn. Set before the kill block below reads it, so a one-shot kill
+      // reads a ~0 ttl (first hit == death) rather than the unit's whole lifetime.
+      if (e._firstHitAt == null) e._firstHitAt = this.time?.now ?? 0;
       const overkill = this._statOverkill ? this._statOverkill(damage, remainingBefore, killedNow) : 0;
       this._statPlayerHit?.(meta.weaponId, meta.pullId ?? null, statKind, damage, killedNow, overkill);
     }

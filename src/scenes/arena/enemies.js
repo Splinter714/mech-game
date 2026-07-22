@@ -1656,7 +1656,9 @@ export const EnemiesMixin = {
   // staggered spread/burst, dispatched to melee/hitscan/projectile by `plan.mode` exactly like
   // the single-shot call sites used to.
   _fireEnemyShots(w, plan, mx, my, fireAngle, e) {
-    this._statEnemyFired?.(e);   // #423: one enemy trigger pull (whatever this plan emits)
+    // #423: one enemy trigger pull (whatever this plan emits). The returned shot id is threaded to
+    // every emission so a connecting one books the hit exactly once (enemy accuracy ≤ 1, bug1).
+    const statShotId = this._statEnemyFired?.(e) ?? null;
     const statKind = e._statKind ?? e.kind ?? 'mech';
     for (const [lane, s] of plan.shots.entries()) {
       const go = () => {
@@ -1664,7 +1666,7 @@ export const EnemiesMixin = {
         const perp = baseAngle + Math.PI / 2;
         const ox = mx + Math.cos(perp) * s.lateral, oy = my + Math.sin(perp) * s.lateral;
         if (plan.mode === 'contact') {
-          this._melee(w, ox, oy, baseAngle, 'enemy', undefined, { statKind });
+          this._melee(w, ox, oy, baseAngle, 'enemy', undefined, { statKind, statShotId });
         } else if (plan.mode === 'hitscan') {
           // #316 reverses #245: a FLYING kind (drone/helicopter — enemyKinds.js `flying: true`)
           // used to pass a cover exemption here so its beam skipped the wall trace. It doesn't any
@@ -1674,7 +1676,7 @@ export const EnemiesMixin = {
           // #310: `ignoreSpanKey` — a wall turret's beam is not stopped by the span it is bolted
           // to (`e.spanKey`; undefined for every other shooter, so nothing else changes). Without
           // it a centred gun would detonate its own lance on its own parapet every shot.
-          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, { lane, lateral: s.lateral, ignoreSpanKey: e.spanKey ?? null, statKind });
+          this._fireHitscan(w, ox, oy, baseAngle, 'enemy', e.key, { lane, lateral: s.lateral, ignoreSpanKey: e.spanKey ?? null, statKind, statShotId });
         } else {
           // No explicit seek target needed here (playtest follow-up #252 dropped the old
           // dead-reckoned blind-fire point): an enemy round with no seekOverride keeps its
@@ -1686,7 +1688,7 @@ export const EnemiesMixin = {
           // `aimAngle` param) stays `fireAngle` for every sub-shot so a fanned/streamed weapon's
           // arcing maxDist test (see `_spawnProjectile`) reads the same centre line the player
           // path uses.
-          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, null, { statKind });
+          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, null, { statKind, statShotId });
         }
       };
       if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();

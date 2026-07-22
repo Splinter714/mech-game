@@ -55,12 +55,36 @@ describe('runStats — accumulator + reducer (#423)', () => {
   });
 
   describe('player weapon metrics', () => {
-    it('shotFired accrues firing time = pullIntervalMs per pull', () => {
+    it('a weapon fired AT cadence accrues ≈ pullIntervalMs of firing time per pull', () => {
       const r = createRunStats();
-      r.shotFired('autocannon').shotFired('autocannon');
+      const iv = pullIntervalMs(getWeapon('autocannon'));
+      // Each voluntary pull lands exactly one cycle after the last — the weapon is busy the
+      // whole time — so firing time is shots × cycle.
+      r.shotFired('autocannon'); r.tick(iv);
+      r.shotFired('autocannon'); r.tick(iv);   // the second (last) shot's own cycle elapses too
       const w = r.reduce().weapons.autocannon;
       expect(w.shotsFired).toBe(2);
-      expect(w.firingTimeMs).toBeCloseTo(2 * pullIntervalMs(getWeapon('autocannon')), 5);
+      expect(w.firingTimeMs).toBeCloseTo(2 * iv, 5);
+    });
+    it('a slowly-TAPPED weapon counts one cycle per shot, NOT the idle gap between pulls (#423 bug3)', () => {
+      const r = createRunStats();
+      const iv = pullIntervalMs(getWeapon('autocannon'));
+      r.shotFired('autocannon');
+      r.tick(iv * 5);            // five cycles of idle before the next voluntary pull
+      r.shotFired('autocannon');
+      r.tick(iv);               // run ends one cycle after the last shot
+      const w = r.reduce().weapons.autocannon;
+      // Each shot was "firing/busy" for at most its own cycle — 2×iv total, NOT the old 6×iv
+      // (which counted the whole 5-cycle idle gap as firing and tanked Effective Burst DPS).
+      expect(w.firingTimeMs).toBeCloseTo(2 * iv, 5);
+    });
+    it('firing time is capped at the run end for a last shot fired near it', () => {
+      const r = createRunStats();
+      const iv = pullIntervalMs(getWeapon('autocannon'));
+      r.tick(1000);
+      r.shotFired('autocannon');
+      r.tick(iv / 4);           // run ends only a quarter-cycle after the shot
+      expect(r.reduce().weapons.autocannon.firingTimeMs).toBeCloseTo(iv / 4, 5);
     });
     it('accuracy = hits / shots', () => {
       const r = createRunStats();
@@ -94,17 +118,20 @@ describe('runStats — accumulator + reducer (#423)', () => {
     });
     it('effective DPS variants use the right denominators', () => {
       const r = createRunStats();
-      // one pull of autocannon: firing = 1100ms; reload 2000ms; combat 1000ms; 22 dmg landed
-      r.tick(1000, { inCombat: true });
+      const iv = pullIntervalMs(getWeapon('autocannon'));   // one cycle of firing time
+      // one pull of autocannon: firing = one full cycle; reload 2000ms; 22 dmg landed
+      r.tick(1000, { inCombat: true });   // 1000ms closing in (combat hot via override)
       r.shotFired('autocannon');
       r.shotHit('autocannon', 'drone', 22);
       r.damageDealt({ weaponId: 'autocannon', targetKind: 'drone', amount: 22 });
+      r.tick(iv, { inCombat: true });     // the shot's own cycle elapses → firing = iv
       r.reloadStart('autocannon');
       r.reloadEnd('autocannon', 2000);
       const w = r.reduce().weapons.autocannon;
-      expect(w.effectiveBurstDps).toBeCloseTo(22 / (1100 / 1000), 5);
-      expect(w.effectiveSustainedDps).toBeCloseTo(22 / ((1100 + 2000) / 1000), 5);
-      expect(w.effectiveCombatDps).toBeCloseTo(22 / (1000 / 1000), 5);
+      expect(w.firingTimeMs).toBeCloseTo(iv, 5);
+      expect(w.effectiveBurstDps).toBeCloseTo(22 / (iv / 1000), 5);
+      expect(w.effectiveSustainedDps).toBeCloseTo(22 / ((iv + 2000) / 1000), 5);
+      expect(w.effectiveCombatDps).toBeCloseTo(22 / ((1000 + iv) / 1000), 5);
     });
     it('landing ratio = effective sustained / theoretical sustained', () => {
       const r = createRunStats();
@@ -171,6 +198,21 @@ describe('runStats — accumulator + reducer (#423)', () => {
       expect(red.enemies.drone.threatShare).toBeCloseTo(30 / 40, 5);
       expect(red.enemies.drone.damageToKind).toBe(80);
       expect(red.enemies.drone.overkill).toBe(15);
+    });
+    it('a kill with no measurable TTK (null) counts the kill but not the TTK average (#423 bug2)', () => {
+      const r = createRunStats();
+      r.enemyKill('drone', 2000);   // a fought kill — first hit → death was 2000ms
+      r.enemyKill('drone', null);   // crushed / never player-damaged — excluded from the average
+      const e = r.reduce().enemies.drone;
+      expect(e.killed).toBe(2);          // both still count as kills
+      expect(e.avgTtkMs).toBe(2000);     // averaged over the ONE measured sample, not lifetime
+    });
+    it('enemy accuracy is clamped to [0,1] by construction even if hits somehow exceed shots (#423 bug1)', () => {
+      const r = createRunStats();
+      r.enemyShotFired('helicopter');
+      r.enemyShotHit('helicopter');
+      r.enemyShotHit('helicopter');   // a stray double-book — must never push accuracy over 1.0
+      expect(r.reduce().enemies.helicopter.weaponAccuracy).toBe(1);
     });
     it('no division-by-zero: unkilled / unengaged kinds report 0', () => {
       const r = createRunStats();

@@ -230,9 +230,9 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
       // flag that used to sit between them. Nothing else; `flying` is not consulted. #310 added
       // `ignoreSpanKey` to that descriptor — null for anything that isn't a wall turret, which is
       // every shooter here.
-      // #423 added `statKind` to the descriptor (the shooter's stats kind, for damage-taken
-      // attribution) — a telemetry label, not a cover flag.
-      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null, statKind: 'turret' }]);
+      // #423 added `statKind` + `statShotId` to the descriptor (the shooter's stats kind and its
+      // per-shot id, for damage-taken attribution + enemy-accuracy dedupe) — telemetry, not a cover flag.
+      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null, statKind: 'turret', statShotId: null }]);
     });
 
     // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
@@ -246,10 +246,10 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
         expect(args[6]).toBe(null);        // seekOverride
         // #374 dropped #269's `smallUnitInvolved` (formerly arg 8), so there is no cover flag on a
         // shot any more. #423 appended two telemetry args — the shooter (null for an enemy) and a
-        // stats-meta object `{ statKind }` (NOT a cover flag) — so the tail is now shooter, meta.
+        // stats-meta object `{ statKind, statShotId }` (NOT a cover flag) — so the tail is now shooter, meta.
         expect(args).toHaveLength(10);
         expect(args[8]).toBe(null);        // shooter (enemy rounds carry none)
-        expect(args[9]).toEqual({ statKind: expect.anything() });
+        expect(args[9]).toEqual({ statKind: expect.anything(), statShotId: null });
       }
     });
   }

@@ -22,6 +22,9 @@ function makeCtx() {
     _statsHistory: makeStatsHistory({ storage, now: () => 1 }),
     _statsCommitted: false,
     _statHitPulls: new Set(),
+    _statHitEnemyShots: new Set(),
+    _statEnemyShotSeq: 0,
+    time: { now: 0 },
     storage,
   };
 }
@@ -64,5 +67,57 @@ describe('#423 _statPlayerHit — pull-level accuracy dedupe', () => {
     RunStatsMixin._statPlayerHit.call(ctx, 'x', null, 'drone', 5, false, 0);
     RunStatsMixin._statPlayerHit.call(ctx, 'x', null, 'drone', 5, false, 0);
     expect(ctx.runStats.reduce().weapons.x.hits).toBe(2);
+  });
+});
+
+describe('#423 enemy accuracy — never exceeds 1.0 (per-shot hit dedupe, bug1)', () => {
+  let ctx;
+  beforeEach(() => { ctx = makeCtx(); });
+
+  it('books at most one enemy hit per enemy shot even when it connects several times', () => {
+    const e = { _statKind: 'helicopter' };
+    const shotId = RunStatsMixin._statEnemyFired.call(ctx, e);   // ONE enemy trigger pull
+    // The same shot damages the player three times (multi-pellet spread / a beam over frames).
+    RunStatsMixin._statPlayerHurt.call(ctx, 'helicopter', 'repeater', 4, shotId);
+    RunStatsMixin._statPlayerHurt.call(ctx, 'helicopter', 'repeater', 4, shotId);
+    RunStatsMixin._statPlayerHurt.call(ctx, 'helicopter', 'repeater', 4, shotId);
+    const en = ctx.runStats.reduce().enemies.helicopter;
+    expect(en.weaponAccuracy).toBeLessThanOrEqual(1);
+    expect(en.weaponAccuracy).toBeCloseTo(1, 5);   // 1 hit / 1 shot, not 3/1
+    expect(en.damageToYou).toBe(12);               // all three still book damage taken
+  });
+
+  it('distinct enemy shots each score independently (a genuine fraction)', () => {
+    const e = { _statKind: 'infantry' };
+    const s1 = RunStatsMixin._statEnemyFired.call(ctx, e);
+    RunStatsMixin._statEnemyFired.call(ctx, e);   // s2 — fired but misses
+    RunStatsMixin._statPlayerHurt.call(ctx, 'infantry', 'rifle', 3, s1);
+    expect(ctx.runStats.reduce().enemies.infantry.weaponAccuracy).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe('#423 enemy TTK — first-player-hit to death, not lifetime (bug2)', () => {
+  let ctx;
+  beforeEach(() => { ctx = makeCtx(); });
+
+  it('measures from the first player damage, ignoring the time alive before it', () => {
+    const e = {};
+    ctx.time.now = 1000;
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');   // spawned at t=1000
+    ctx.time.now = 30000;   // 29s just alive/aware — must NOT count toward TTK
+    e._firstHitAt = 30000;  // combat.js stamps this on the first player weapon hit
+    ctx.time.now = 30450;   // dies 450ms after first being hit
+    RunStatsMixin._statEnemyKilled.call(ctx, e);
+    expect(ctx.runStats.reduce().enemies.infantry.avgTtkMs).toBe(450);
+  });
+
+  it('excludes a unit killed without ever being player-damaged (e.g. crush)', () => {
+    const e = {};
+    RunStatsMixin._statEnemySpawned.call(ctx, e, 'infantry');
+    ctx.time.now = 5000;
+    RunStatsMixin._statEnemyKilled.call(ctx, e);   // no _firstHitAt → no TTK sample
+    const en = ctx.runStats.reduce().enemies.infantry;
+    expect(en.killed).toBe(1);
+    expect(en.avgTtkMs).toBe(0);
   });
 });

@@ -27,7 +27,11 @@
 //   run.enemyShotHit(enemyKind)                     // …and connected on you
 //   run.damageTaken({ enemyKind, weaponId, amount })// damage that kind did to you
 //   run.enemyEngaged(enemyKind, ms)                 // per-unit alive-and-aware time (DPS denom)
-//   run.enemyKill(enemyKind, ttlMs)                 // one unit died; ttlMs = its time-to-kill
+//   run.enemyKill(enemyKind, ttlMs)                 // one unit died; ttlMs = its time-to-kill —
+//                                                   //   FIRST PLAYER DAMAGE → death (NOT lifetime).
+//                                                   //   ttlMs == null ⇒ this unit was never damaged
+//                                                   //   by the player (crush / objective) → the kill
+//                                                   //   still counts, but is EXCLUDED from avg TTK.
 //
 //   // GLOBAL
 //   run.powerup(type)                               // a powerup was collected
@@ -39,8 +43,11 @@
 // ── LOCKED DEFINITIONS (issue #423) ──────────────────────────────────────────────────────────
 //   Combat time  — a recent-damage-either-way clock: combat is "on" while damage flowed in
 //                  EITHER direction within the last COMBAT_WINDOW_MS. Accrued during ticks.
-//   Firing time  — sum of active cycle windows: each shotFired occupies pullIntervalMs of firing
-//                  time; RELOAD time is a SEPARATE bucket, excluded from firing time.
+//   Firing time  — sum of ACTIVE cycle windows: each shotFired occupies at most one pullIntervalMs,
+//                  but only until the NEXT voluntary pull if that came sooner — a weapon tapped
+//                  slower than its cadence is not "busy" through the idle gap, so each shot
+//                  contributes min(cycleTime, gap-to-next-shot). The LAST shot contributes its full
+//                  cycle, capped at the run's end. RELOAD time is a SEPARATE bucket, excluded here.
 //   Enemy per-unit effective DPS — damage that kind dealt ÷ that kind's aggregate engaged time.
 //   Landing ratio — Effective Sustained DPS ÷ Theoretical Sustained DPS (both averaged over
 //                  firing+reload, so the pairing is apples-to-apples: the gap is purely "did the
@@ -60,12 +67,18 @@ const perSec = (dmg, ms) => div(dmg, ms / 1000);
 function weaponBucket() {
   return {
     shotsFired: 0, hits: 0, damageDealt: 0, overkill: 0,
-    firingTimeMs: 0, reloads: 0, reloadTimeMs: 0,
+    // #423 bug3: firing time is accrued lazily. `firingTimeMs` holds the FINALIZED windows of every
+    // shot except the currently-pending last one; `lastShotMs`/`pendingIntervalMs` describe that
+    // pending shot, finalized (capped at run end) only at reduce time. See shotFired below.
+    firingTimeMs: 0, lastShotMs: null, pendingIntervalMs: 0,
+    reloads: 0, reloadTimeMs: 0,
   };
 }
 function enemyBucket() {
   return {
-    spawned: 0, killed: 0, ttkSumMs: 0, engagedMs: 0,
+    // #423 bug2: ttkCount is how many kills had a MEASURABLE time-to-kill (a first-player-hit stamp);
+    // a crush/undamaged kill increments `killed` but not this, so it's the honest TTK denominator.
+    spawned: 0, killed: 0, ttkSumMs: 0, ttkCount: 0, engagedMs: 0,
     shotsFired: 0, hits: 0, damageToYou: 0, damageToKind: 0, overkill: 0,
   };
 }
@@ -111,7 +124,17 @@ export function createRunStats(meta = {}) {
       const b = wb(weaponId);
       b.shotsFired += 1;
       const w = getWeapon(weaponId);
-      if (w) b.firingTimeMs += pullIntervalMs(w);   // each pull occupies one cycle window
+      const iv = w ? pullIntervalMs(w) : 0;
+      // #423 bug3: FINALIZE the previous shot's active window now that we know when the next pull
+      // came — it was firing/busy for at most its own cycle, but only up to THIS shot if that
+      // arrived sooner (a slowly-tapped weapon isn't busy through the idle gap it left). Stamp
+      // against the internally-advanced clock (the arena ticks before feeding this frame's events).
+      if (b.lastShotMs != null) {
+        const gap = Math.max(0, state.clockMs - b.lastShotMs);
+        b.firingTimeMs += Math.min(b.pendingIntervalMs, gap);
+      }
+      b.lastShotMs = state.clockMs;
+      b.pendingIntervalMs = iv;
       return api;
     },
     shotHit(weaponId, _targetKind, _damage) {
@@ -148,10 +171,13 @@ export function createRunStats(meta = {}) {
       return api;
     },
     enemyEngaged(enemyKind, ms = 0) { eb(enemyKind).engagedMs += ms; return api; },
-    enemyKill(enemyKind, ttlMs = 0) {
+    enemyKill(enemyKind, ttlMs = null) {
       const e = eb(enemyKind);
       e.killed += 1;
-      e.ttkSumMs += ttlMs;
+      // #423 bug2: a real time-to-kill (first player hit → death) feeds the average; a null ttl (the
+      // unit was never player-damaged — crushed/objective/suicide) counts as a kill but not a TTK
+      // sample, so lifetime never leaks into the average.
+      if (ttlMs != null && ttlMs >= 0) { e.ttkSumMs += ttlMs; e.ttkCount += 1; }
       return api;
     },
 
@@ -179,8 +205,14 @@ export function reduceRun(state) {
     const w = getWeapon(id);
     const theoBurst = w ? burstDps(w) : 0;
     const theoSustained = w ? sustainedDps(w) : 0;
-    const effBurst = perSec(b.damageDealt, b.firingTimeMs);
-    const effSustained = perSec(b.damageDealt, b.firingTimeMs + b.reloadTimeMs);
+    // #423 bug3: finalize the still-pending last shot — its full cycle, capped at the run's end
+    // (the elapsed time since it fired) — and add it to the finalized windows for the real firing time.
+    const pendingFiring = b.lastShotMs != null
+      ? Math.min(b.pendingIntervalMs, Math.max(0, state.clockMs - b.lastShotMs))
+      : 0;
+    const firingMs = b.firingTimeMs + pendingFiring;
+    const effBurst = perSec(b.damageDealt, firingMs);
+    const effSustained = perSec(b.damageDealt, firingMs + b.reloadTimeMs);
     const effCombat = perSec(b.damageDealt, combatMs);
     weapons[id] = {
       id,
@@ -190,7 +222,7 @@ export function reduceRun(state) {
       accuracy: div(b.hits, b.shotsFired),
       damageDealt: b.damageDealt,
       overkill: b.overkill,
-      firingTimeMs: b.firingTimeMs,
+      firingTimeMs: firingMs,
       reloads: b.reloads,
       reloadTimeMs: b.reloadTimeMs,
       effectiveBurstDps: effBurst,
@@ -208,8 +240,11 @@ export function reduceRun(state) {
     enemies[kind] = {
       kind,
       // per-unit
-      avgTtkMs: div(e.ttkSumMs, e.killed),
-      weaponAccuracy: div(e.hits, e.shotsFired),
+      // #423 bug2: averaged over kills that actually had a first-player-hit stamp, not all kills.
+      avgTtkMs: div(e.ttkSumMs, e.ttkCount),
+      // #423 bug1: at most one hit is booked per enemy shot upstream (per-shot-id dedupe in the
+      // arena wiring), so this is a true fraction; the min() is a by-construction backstop.
+      weaponAccuracy: Math.min(1, div(e.hits, e.shotsFired)),
       effectiveDps: perSec(e.damageToYou, e.engagedMs),   // ÷ alive-and-aware time
       effectiveHp: div(e.damageToKind, e.killed),         // avg damage to down one unit
       // aggregate
