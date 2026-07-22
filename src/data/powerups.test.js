@@ -272,7 +272,7 @@ describe('#106: toughness = structure + armor + shield, uniformly across body ty
     expect(heli.toughness).toBe(50);     // + its 15-point shield (#299)
   });
 
-  it('counts all three layers at once (carrier: 50 hp + 50 armor + 50 shield)', () => {
+  it('counts both remaining layers (carrier: 50 hp + 100 armor, no shield since #436)', () => {
     expect(new HpBody(ENEMY_KINDS.carrier).toughness).toBe(150);
   });
 

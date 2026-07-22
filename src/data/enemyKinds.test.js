@@ -172,10 +172,11 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(q.move.turnRate).toBeLessThan(ENEMY_KINDS.tank.move.turnRate);
     // ...but still recognisably tank-like, not the old sub-0.5 lumbering-legs turn rate.
     expect(q.move.turnRate).toBeGreaterThan(0.5);
-    // #299 rebalance, UNCHANGED by #328: the comparison is on TOTAL toughness (all three
-    // layers), not the bare hp pool — the Broodhauler's 50 structure ties the tank's, and its
-    // lead comes from the armor and shield stacked on top (150 vs 80). It sits BELOW a light
-    // mech (200), which was an explicit, confirmed owner decision.
+    // #299 rebalance, UNCHANGED by #328: the comparison is on TOTAL toughness, not the bare hp
+    // pool — the Broodhauler's 50 structure ties the tank's, and its lead comes from its armor
+    // stacked on top (150 vs 80). It sits BELOW a light mech (200), which was an explicit,
+    // confirmed owner decision. #436 moved the old shield's 50 points onto armor (no more
+    // regenerating layer) without changing this total.
     expect(new HpBody(q).toughness).toBeGreaterThan(new HpBody(ENEMY_KINDS.tank).toughness);
     expect(new HpBody(q).toughness).toBeLessThan(new Mech(ENEMIES.raider).toughness);
     // #328: NO weapon at all. Jackson: "unarmed — pure carrier" — its only threat is what it
@@ -193,6 +194,16 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(q.deployEveryMs).toBeLessThanOrEqual(8000);
     expect(q.deployBatchMin).toBeGreaterThan(1);   // more than one unit per tick — a real "batch"
     expect(q.deployBatchMax).toBeGreaterThanOrEqual(q.deployBatchMin);
+  });
+
+  it('#436: the carrier has ARMOR instead of a SHIELD — same value, no regenerating layer', () => {
+    const q = ENEMY_KINDS.carrier;
+    expect(q.armor).toBe(100);       // was 50 armor + a separate 50-max shield pool
+    expect(q.shield).toBeUndefined();
+    const body = new HpBody(q);
+    expect(body.maxArmor).toBe(100);
+    expect(body.hasShield()).toBe(false);
+    expect(body.toughness).toBe(150); // total unchanged: 50 structure + 100 armor
   });
 
   it('#328 follow-up: the carrier is an INFINITE spawner — no lifetime deploy cap', () => {

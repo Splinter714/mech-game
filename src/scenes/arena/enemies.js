@@ -51,8 +51,9 @@ import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 import { tickUnstick, unstickBend, bendHeading } from '../../data/groundUnstick.js';
-// #302: shielded enemies (helicopter 30, carrier 50 — enemyKinds.js) wear the SAME glowing
-// shield outline the player does, from the same shared implementation.
+// #302: shielded enemies (helicopter 30 — enemyKinds.js) wear the SAME glowing shield outline
+// the player does, from the same shared implementation. #436: the carrier used to be shielded
+// too (50) but is now armor-only, so it no longer wears this outline.
 import {
   SHIELD_MECH_PART_KEYS, shieldPartKeys, makeShieldOutline, updateShieldOutline,
 } from './shieldOutline.js';
@@ -371,10 +372,11 @@ export const EnemiesMixin = {
       // def.legFrames / _updateVehicle below) — harmless/unused for kinds without it.
       stepMs: 0, hullFrame: 0,
     };
-    // #302: a shielded vehicle kind (helicopter/carrier) gets a TWO-sprite outline — hull +
-    // turret — which reads as one shell around the whole unit. That's the honest depiction: an
-    // HpBody has ONE unit-wide shield pool, not the player's per-location parts, so there's
-    // nothing to draw per-part.
+    // #302: a shielded vehicle kind (helicopter) gets a TWO-sprite outline — hull + turret —
+    // which reads as one shell around the whole unit. That's the honest depiction: an HpBody has
+    // ONE unit-wide shield pool, not the player's per-location parts, so there's nothing to draw
+    // per-part. #436: the visual is built unconditionally here and gated at draw time by
+    // `shieldPresent`, so an unshielded kind (carrier, now armor-only) simply never shows it.
     // #379: a kind whose second sprite ISN'T body — the drone's `turret` is a spinning-rotor
     // blur overlay, not a gun — names its own outline parts in data (`shieldOutlineParts`), so
     // the glow hugs the airframe instead of ballooning around four rotor discs. Only the drone

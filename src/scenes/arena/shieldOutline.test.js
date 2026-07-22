@@ -1,5 +1,6 @@
 // #302: the SHARED shield-outline visual — one implementation driven by both the player mech and
-// any shielded enemy (helicopter/carrier). These tests cover the state logic that decides
+// any shielded enemy (helicopter; the carrier was shielded too until #436 moved it to pure
+// armor). These tests cover the state logic that decides
 // whether a unit is wearing its shell right now, and the per-frame driver's show/hide/early-exit
 // behaviour against fake sprites — the same contract powerups.test.js locks in for the player,
 // now asserted on an arbitrary (two-sprite, vehicle-shaped) part set so a regression can't sneak

@@ -505,17 +505,16 @@ export const ENEMY_KINDS = {
   carrier: {
     name: 'Broodhauler',
     kind: 'carrier',
-    // #299 balance pass (owner-set): 50 structure / 50 armor / 50 shield = 150 total. #328
-    // leaves the whole toughness stack untouched — only art, weapon, movement and size moved.
+    // #299 balance pass (owner-set): 50 structure / 50 armor / 50 shield = 150 total.
+    // #436: the shield pool is gone — its 50 points moved onto armor instead, so the stack is
+    // now 50 structure / 100 armor = 150 total, same toughness, no regenerating layer. #328
+    // left the whole toughness stack untouched (only art, weapon, movement and size moved);
+    // #436 is the first change to touch it, and only to swap which layer holds the 50.
     hp: 50,
-    // #246: ALL THREE layers (shield + armor + hp) — the toughest non-mech kind gets the full
-    // stack, a deliberately different combination from tank's (armor-only) and helicopter's
-    // (shield-only) so the roster exercises every layer-combo the design calls for.
-    armor: 50,
-    // #382: shared pause/regen for ALL shields (3000ms, 25%-of-max/sec — see shield.js); the
-    // 50-point pool regens 12.5/sec and refills in the same 4s as every other shield. The old
-    // per-kind 3500ms/16-per-sec tuning is gone.
-    shield: { max: 50 },
+    // #436: was 50 (armor-only from #246's "all three layers") + a separate 50-point `shield`
+    // pool (#382's shared regen). Jackson: move the carrier from shields to armor, same value —
+    // it no longer regens a depleted layer, it just has more flat armor to grind through.
+    armor: 100,
     // #328: the hitboxes follow the new art. `hull` is byte-identical to the TANK's, because it
     // is now literally the same drawing (see art/vehicles/carrier.js); the tank's `turret` and
     // `barrel` parts are replaced by the single `bay` — the launch door on the deck. Both parts

@@ -92,8 +92,9 @@ describe('an armored vehicle strips its plating when the armor pool empties (#30
     const scene = makeScene(e);
     expect(ENEMY_KINDS.carrier.turretFrames).toBeGreaterThan(0);
 
-    // The carrier carries all three layers — one hit big enough to burn through the shield
-    // AND the armor pool in the same swing is what trips `armorBrokeNow`.
+    // #436: carrier is shieldless now (armor absorbed the old shield's 50 points) — one hit big
+    // enough to burn through the whole armor pool in one swing is what trips `armorBrokeNow`.
+    // `shield?.max ?? 0` stays as a defensive no-op in case a shield ever comes back.
     scene._damageEnemyAt(e, 0, 0, (ENEMY_KINDS.carrier.shield?.max ?? 0) + ENEMY_KINDS.carrier.armor);
     expect(e.mech.hasArmor()).toBe(false);
     // Hull is single-frame now (the legs went away with the rework), the DOOR keeps its frame —

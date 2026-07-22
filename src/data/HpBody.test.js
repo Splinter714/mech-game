@@ -97,9 +97,9 @@ describe('HpBody — single-pool damageable body for non-mech enemies', () => {
 
 // #246: layered HpBody — a non-mech kind can be configured as HP-only (the pre-#246 default,
 // unchanged), HP+armor, HP+shield, or all three, purely via `def.armor`/`def.shield`. Mirrors
-// the four combinations enemyKinds.js actually exercises (turret/drone/infantry HP-only, tank
-// HP+armor, helicopter HP+shield, carrier all three) with minimal fixtures so this file
-// covers the layering math independent of the real roster's tuning.
+// the combinations enemyKinds.js actually exercises (turret/drone/infantry HP-only, tank/carrier
+// HP+armor, helicopter HP+shield — #436 moved the carrier off "all three" onto HP+armor) with
+// minimal fixtures so this file covers the layering math independent of the real roster's tuning.
 describe('HpBody layered defense (#246: HP-only / HP+armor / HP+shield / all three)', () => {
   const layout = { core: { x: 0, y: 0, w: 20, h: 20 } };
 

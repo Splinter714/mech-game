@@ -1,7 +1,8 @@
 // Shared shield-outline visual (#302). ONE implementation of "a unit with a live shield pool
 // wears a glowing rim hugging its own silhouette", driven by BOTH the player mech (the Shield
-// powerup / the mech's native shield layer) and any shielded enemy (helicopter's 30, carrier's
-// 50 — data/enemyKinds.js). #302's hard requirement: a future rework of the shield look must
+// powerup / the mech's native shield layer) and any shielded enemy (helicopter's 30 —
+// data/enemyKinds.js; the carrier was shielded too until #436 moved it to pure armor). #302's
+// hard requirement: a future rework of the shield look must
 // change player and enemies together in ONE edit, so the technique, the colour, the alpha curve
 // and the hit-flash all live here and nothing outside this file knows how a shield is drawn.
 //

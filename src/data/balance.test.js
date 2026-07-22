@@ -32,7 +32,8 @@ const TABLE = {
   turret:      { structure: 35,  armor: 15,  shield: 0,   total: 50 },
   helicopter:  { structure: 35,  armor: 0,   shield: 15,  total: 50 },
   tank:        { structure: 50,  armor: 30,  shield: 0,   total: 80 },
-  carrier:   { structure: 50,  armor: 50,  shield: 50,  total: 150 },
+  // #436: shield -> armor, same value (50). 50 structure / 100 armor = 150 total, unchanged.
+  carrier:   { structure: 50,  armor: 100, shield: 0,   total: 150 },
   raider:      { structure: 100, armor: 75,  shield: 25,  total: 200 },
   skirmisher:  { structure: 100, armor: 75,  shield: 25,  total: 200 },
   sniper:      { structure: 150, armor: 150, shield: 50,  total: 350 },
@@ -199,9 +200,10 @@ describe('#299: the downstream roster bounds re-derive with no edits', () => {
 // only the per-kind VARIATION is removed.
 describe('#382: every shield shares one pause and one percent-of-max regen', () => {
   // Just the pool sizes now — pause and regen are constants, not per-kind data.
+  // #436: the carrier dropped out of this table — it's armor-only now, no shield pool.
   const POOLS = {
     player: 100, raider: 25, skirmisher: 25, sniper: 50, artillery: 75,
-    drone: 5, helicopter: 15, carrier: 50,
+    drone: 5, helicopter: 15,
   };
 
   it('the shared constants are the unified values (3000ms pause, 25%/s regen)', () => {
@@ -218,7 +220,7 @@ describe('#382: every shield shares one pause and one percent-of-max regen', () 
     });
   }
 
-  for (const id of ['drone', 'helicopter', 'carrier']) {
+  for (const id of ['drone', 'helicopter']) {
     it(`${id} (enemy vehicle) carries only a pool size, sharing pause+regen`, () => {
       const s = new HpBody(ENEMY_KINDS[id]).shield;
       expect(s.max).toBe(POOLS[id]);
@@ -236,7 +238,7 @@ describe('#382: every shield shares one pause and one percent-of-max regen', () 
     for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
       expect(refill(new Mech(ENEMIES[id]).shield), id).toBeCloseTo(1, 4);
     }
-    for (const id of ['drone', 'helicopter', 'carrier']) {
+    for (const id of ['drone', 'helicopter']) {
       expect(refill(new HpBody(ENEMY_KINDS[id]).shield), id).toBeCloseTo(1, 4);
     }
   });
