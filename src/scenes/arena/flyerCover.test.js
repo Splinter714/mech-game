@@ -230,7 +230,9 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
       // flag that used to sit between them. Nothing else; `flying` is not consulted. #310 added
       // `ignoreSpanKey` to that descriptor — null for anything that isn't a wall turret, which is
       // every shooter here.
-      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null }]);
+      // #423 added `statKind` to the descriptor (the shooter's stats kind, for damage-taken
+      // attribution) — a telemetry label, not a cover flag.
+      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null, statKind: 'turret' }]);
     });
 
     // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
@@ -242,9 +244,12 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
       for (const args of calls.projectile) {
         expect(args[4]).toBe('enemy');
         expect(args[6]).toBe(null);        // seekOverride
-        // #374 dropped #269's `smallUnitInvolved` (formerly arg 8), so `aimAngle` is now last on
-        // an enemy's call — there is no cover flag on a shot any more.
-        expect(args).toHaveLength(8);
+        // #374 dropped #269's `smallUnitInvolved` (formerly arg 8), so there is no cover flag on a
+        // shot any more. #423 appended two telemetry args — the shooter (null for an enemy) and a
+        // stats-meta object `{ statKind }` (NOT a cover flag) — so the tail is now shooter, meta.
+        expect(args).toHaveLength(10);
+        expect(args[8]).toBe(null);        // shooter (enemy rounds carry none)
+        expect(args[9]).toEqual({ statKind: expect.anything() });
       }
     });
   }
@@ -354,10 +359,14 @@ describe('#316 fireWeapon: the player\'s shot respects cover whatever it is aime
     const shotArgs = (calls) => calls.map((c) => c.slice(0, 8));
     expect(shotArgs(flyer._spawnProjectile.mock.calls))
       .toEqual(shotArgs(ground._spawnProjectile.mock.calls));
-    // ...and no trailing cover-exemption arg survives on either.
+    // ...and no trailing cover-exemption arg survives on either. #423 appended a stats-meta arg
+    // (`{ pullId }`, for pull-level accuracy) after #348's `shooter` handle — neither is a cover
+    // flag, and the byte-identical slice above (args 0..7) already covers everything a shot's
+    // geometry could leak into.
     for (const call of flyer._spawnProjectile.mock.calls) {
       expect(call[4]).toBe('player');
-      expect(call.length).toBeLessThanOrEqual(9);
+      expect(call.length).toBeLessThanOrEqual(10);
+      if (call.length === 10) expect(call[9]).toHaveProperty('pullId');
     }
   });
 });

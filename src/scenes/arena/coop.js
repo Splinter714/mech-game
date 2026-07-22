@@ -360,6 +360,7 @@ export const CoopMixin = {
     player.x = pt.x; player.y = pt.y;
     player.vx = 0; player.vy = 0; player.speed = 0;
     player.dead = false;
+    this._statRespawn?.(player);   // #423
     player.lastHitAt = -Infinity;
     player.respawn = makeRespawnState();
     player.view?.setVisible(true);

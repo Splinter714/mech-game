@@ -143,7 +143,10 @@ export const CombatMixin = {
   // (firing.js `_liveTargetsForTrace`, projectiles.js) and passes it here, so the hit-location
   // roll, the reskin, the death FX and the death latch all act on that player's own mech and
   // view — none of it reads a global any more.
-  _damagePlayerAt(dmg, player = primaryPlayerOf(this)) {
+  _damagePlayerAt(dmg, player = primaryPlayerOf(this), meta = {}) {
+    // #423: book the damage the player took, attributed to the enemy kind (+ weapon) that dealt it.
+    // Placed up front so a fully-shielded hit still counts as taken damage / a landed enemy shot.
+    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, dmg);
     const parts = [
       'leftTorso', 'leftTorso', 'leftTorso',
       'rightTorso', 'rightTorso', 'rightTorso',
@@ -186,6 +189,7 @@ export const CombatMixin = {
     // one place owning that transition (and the run-over banner/currency banking with it).
     if (player.mech.isDestroyed() && !player.dead) {
       player.dead = true;
+      this._statDeath?.(player);   // #423
       // #225 (playtest: "it needs to really be destroyed in a big explosion, not just have
       // parts missing and still be able to walk around as a husk"): freeze velocity/speed so
       // the stepped-gait animation (_stepGait, locomotion.js) stops dead on this frame's pose
@@ -286,8 +290,12 @@ export const CombatMixin = {
   // (world.js `_crushGroundEnemyAt`) rather than shooting it. Every weapon-damage caller leaves
   // it false; it only changes the powerup drop roll below (a free kill shouldn't pay out like a
   // fought one), nothing else in the damage/death pipeline.
-  _damageEnemyAt(e, x, y, damage, color, isCrush = false) {
+  _damageEnemyAt(e, x, y, damage, color, isCrush = false, meta = {}) {
     if (e.mech.isDestroyed()) return;
+    // #423: durability standing BEFORE this hit, to size a killing blow's overkill; and the stable
+    // stats label for this unit's kind (stamped at spawn). Cheap, and only read below.
+    const statKind = e._statKind ?? e.kind ?? 'mech';
+    const remainingBefore = this._statRemaining ? this._statRemaining(e.mech) : 0;
     // #269: being shot is the most unambiguous "you've been noticed" signal there is — a dormant
     // unit taking a hit wakes its whole base (via the BasesMixin `_wakeBase`, composed onto the
     // same scene). Done up front, before applyDamage/teardown below, so it fires even when THIS
@@ -315,7 +323,16 @@ export const CombatMixin = {
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     // #201: same shared part-loss cue as the player path above.
     if (res.destroyed) Audio.ui('partDestroyed');
+    // #423: record the player-side hit/damage. `meta.weaponId` is present only for real weapon fire
+    // (a crush/stomp and a napalm DOT tick pass none) — those still kill (below) but book no weapon
+    // damage. Overkill is the spill past the durability that was standing before this hit.
+    const killedNow = e.mech.isDestroyed();
+    if (meta.weaponId != null) {
+      const overkill = this._statOverkill ? this._statOverkill(damage, remainingBefore, killedNow) : 0;
+      this._statPlayerHit?.(meta.weaponId, meta.pullId ?? null, statKind, damage, killedNow, overkill);
+    }
     if (e.mech.isDestroyed()) {
+      this._statEnemyKilled?.(e);   // #423: one kill + its time-to-kill, whatever downed it
       // #87 (corrected per playtest 2026-07-10): a lingering, frozen corpse before cleanup read
       // as "horrible and looks dumb" — the corpse must vanish IMMEDIATELY on death, with the
       // explosion itself (sized to the enemy) AS the death feedback, not a delayed afterthought.

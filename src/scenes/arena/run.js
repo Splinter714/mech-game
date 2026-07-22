@@ -102,6 +102,9 @@ export const RunMixin = {
     this._runAdvancing = true;
     this.run = status === 'dead' ? endRunOnDeath(this.run) : winRun(this.run);
     this.registry.set('run', this.run);
+    // #423: commit this sortie's telemetry to history — a death or a win ALWAYS commits (and sets
+    // the commit-once latch, so the RUN_OVER_DELAY timer's later toGarage() manual-commit no-ops).
+    this._commitRunStats?.(status === 'dead' ? 'death' : 'win');
 
     const banked = (this.registry.get(RUN_CURRENCY_KEY) || 0) + this.run.currency;
     this.registry.set(RUN_CURRENCY_KEY, banked);

@@ -317,7 +317,7 @@ export const ProjectilesMixin = {
             this._damageSoftCoverHex?.(this._hexKeyAt(ally.x, ally.y));
           } else {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-            this._damagePlayerAt(dmg, ally);
+            this._damagePlayerAt(dmg, ally, { weaponId: p.weaponId });   // #423: friendly fire — no enemy kind
             this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           }
           continue;
@@ -350,8 +350,8 @@ export const ProjectilesMixin = {
             continue;
           }
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer);
-          else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color);
+          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer, { enemyKind: p._statKind ?? null, weaponId: p.weaponId });
+          else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color, false, { weaponId: p.weaponId, pullId: p.pullId ?? null });
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
         // design — it never runs the in-flight wall test at all — so it used to land on a targeted

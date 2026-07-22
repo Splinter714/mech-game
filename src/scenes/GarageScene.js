@@ -26,6 +26,7 @@ import { EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId } from '
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 import { SFX_UI_GROUPS, resolveSfxUiEntry } from '../audio/sfxDomains.js';
 import { Audio } from '../audio/index.js';
+import { StatsOverlay } from './garage/statsOverlay.js';
 
 // The mech lab. The build is four weapon skill slots (#188: the old fifth "ability" slot —
 // centerTorso, jumpJet/bubbleShield — is gone; #261: L3/Space is a hardcoded Dash, never
@@ -201,6 +202,15 @@ export default class GarageScene extends Phaser.Scene {
     }).setOrigin(1, 0);
     this._refreshCurrency();
     this._buildPlayerTabs();
+
+    // #423: the post-run stats screen. A STATS button (left of the currency readout, in the band
+    // under the tab bar) opens a modal overlay showing the committed run history — per-weapon and
+    // per-enemy tables + a copyable plain-text report. Built after the overlay so its click works
+    // the first frame.
+    this._statsOverlay = new StatsOverlay(this);
+    // Centered in the free middle of the band under the tab bar (player tabs sit at the left, the
+    // currency/last-run readout at the right).
+    this.button(Math.round(this.W / 2 - 50), TAB_BAR_H + 10, 100, 26, 'STATS', () => this._statsOverlay.open(), UI.accent);
 
     // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
     // catalog from the first pad press — the whole unfiltered weapon set, never a per-slot

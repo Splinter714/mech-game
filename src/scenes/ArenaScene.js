@@ -20,6 +20,7 @@ import { SalvageMixin } from './arena/salvage.js';
 import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
 import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
+import { RunStatsMixin } from './arena/runStatsHooks.js';
 import { primaryPlayerOf } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot } from '../data/hudLayout.js';
@@ -112,6 +113,10 @@ export default class ArenaScene extends Phaser.Scene {
     // co-op must not hand player 2 a differently-durable machine (coop.js `_mechForPlayer`).
     this._playerShieldConfig = PLAYER_SHIELD;
     this.registry.set('playerMech', activeMech);
+    // #423: start this sortie's run-stats accumulator now that the player mech (biome/chassis/
+    // loadout) is known. Everything downstream emits events into it; it commits to history on
+    // run end (see _commitRunStats / toGarage / run.js _endRun).
+    this._initRunStats(activeMech);
 
     // #76 concentrated-fire hit-feedback state — reset per run so a fresh arena never reuses a
     // stale (destroyed) impact-circle pool or a last-burst/sound timestamp from a prior fight.
@@ -250,6 +255,10 @@ export default class ArenaScene extends Phaser.Scene {
   // order. The few lines of overlay drawing + ammo regen stay inline.
   update(_time, delta) {
     const dt = Math.min(0.05, delta / 1000);
+    // #423: advance the run-stats clock FIRST, before any of this frame's fire/damage events, so
+    // each stamps against the advanced clock. Also accrues per-enemy engaged time + watches for
+    // reload transitions this frame.
+    this._statsTick(delta);
     // #348: ONE INTENT PER PLAYER. Phase 1 drove every player from a single shared intent
     // because there was only one device; phase 2's whole point is that there are now two. Each
     // player owns its own Controls (pad N, and the keyboard/mouse for player 1 only), so its
@@ -463,6 +472,11 @@ export default class ArenaScene extends Phaser.Scene {
     this._runOverTimer?.remove(false);
     this._runOverTimer = null;
     this.registry.set('runOverBanner', null);
+    // #423: the MANUAL return-to-garage funnel. A death/win already committed inside _endRun (and
+    // set the commit-once latch), so this is a no-op on that path; a genuine manual exit (G /
+    // Select-B while a run is live) commits as 'manual', which the pure gate keeps only if the run
+    // lasted >= 10s.
+    this._commitRunStats('manual');
     Audio.ui('returnToGarage');
     this.scene.stop('HudScene');
     this.scene.start('GarageScene');
@@ -475,7 +489,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

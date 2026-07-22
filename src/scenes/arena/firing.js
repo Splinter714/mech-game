@@ -230,6 +230,10 @@ export const FiringMixin = {
     // offsetting the faster rate for a net-neutral ammo economy, distinct from free ammo's true
     // unlimited fire. Outside Overdrive cycleMult is 1, so this is the same flat 1-ammo spend.
     if (!mods.freeAmmo) player.mech.consumeAmmo(w.location, w.index, mods.cycleMult ?? 1);
+    // #423: one trigger pull = one shot fired (regardless of how many projectiles it emits). The
+    // returned pull id is threaded to this pull's emissions so a connecting one books the hit
+    // exactly once (accuracy). Null on a stubbed test scene with no accumulator.
+    const pullId = this._statShotFired?.(w.weapon.id, player) ?? null;
     // #103 noise-aggro: a real shot just went off at the player's position — unaware enemies
     // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
     // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.
@@ -275,17 +279,17 @@ export const FiringMixin = {
         // re-origins the ray. Checked from the LATERAL muzzle actually used, so one lane of a
         // spread can be eaten by a wall corner while its siblings get out.
         if (this._muzzleWallBlocked?.(player.x, player.y, ox, oy)) return;
-        if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle, 'player', player);
+        if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle, 'player', player, { pullId });
         // #307: `lane`/`lateral` let a continuously-held beam own ONE persistent beam object
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
         // (two shots fired, one line drawn).
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player });
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player, pullId });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player);
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId });
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -314,7 +318,7 @@ export const FiringMixin = {
   // #348: FRIENDLY FIRE IS ON (Jackson). A player's melee sweep therefore scores the other live
   // players alongside the enemies, in exactly the same arc, and the nearest thing in the arc is
   // what gets hit — whichever side it is on. `shooter` is excluded from its own sweep.
-  _melee(w, mx, my, angle, owner = 'player', shooter = primaryPlayerOf(this)) {
+  _melee(w, mx, my, angle, owner = 'player', shooter = primaryPlayerOf(this), meta = {}) {
     const reach = w.weapon.range.max || 32;
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     let target = null, t = 0;
@@ -339,8 +343,11 @@ export const FiringMixin = {
     const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
     if (target) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
-      if (owner === 'enemy' || isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
-      else this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color);
+      if (owner === 'enemy' || isPlayerRef(this, target)) {
+        this._damagePlayerAt(dmg, target, { enemyKind: meta.statKind ?? null, weaponId: w.weapon.id });
+      } else {
+        this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color, false, { weaponId: w.weapon.id, pullId: meta.pullId ?? null });
+      }
     }
     // Animate the crescent across a few frames, then clear.
     for (const tt of [0.15, 0.45, 0.8]) {
@@ -489,7 +496,7 @@ export const FiringMixin = {
   // tracking object, preserving #86.
   // `shooter` (#348, optional): the PLAYER firing, for the per-player converge pick and for
   // friendly fire (they are excluded from their own candidate list).
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null } = {}) {
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -597,9 +604,9 @@ export const FiringMixin = {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
       // player damage sink, not the enemy one.
-      if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target));
-      else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target);
-      else this._damageEnemyAt(target, endX, endY, dmg, color);
+      if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target), { enemyKind: statKind, weaponId: w.weapon.id });
+      else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target, { weaponId: w.weapon.id });
+      else this._damageEnemyAt(target, endX, endY, dmg, color, false, { weaponId: w.weapon.id, pullId });
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (gateBlock) {
       // #412: the beam terminated on the open gate's pip — route the chip straight to that span's
@@ -643,7 +650,7 @@ export const FiringMixin = {
   // `shooter` (#348, optional): the PLAYER who fired, stamped onto the round so its own rounds
   // can never friendly-fire back onto it, and so the round's seek/target-hex come from THAT
   // player's aim rather than a scene singleton.
-  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, shooter = null) {
+  _spawnProjectile(w, x, y, angle, owner = 'player', angleOffset = 0, seekOverride = null, aimAngle = angle, shooter = null, meta = {}) {
     const d = w.weapon.delivery;
     let speed = d.velocity || 480;
     const maxRange = (w.weapon.range?.max ?? 400) + 40;
@@ -758,6 +765,10 @@ export const FiringMixin = {
       airTarget: ignoresCover,
       // #348: who fired it, so friendly fire (projectiles.js) can skip the shooter themselves.
       shooter: owner === 'player' ? (shooter ?? primaryPlayerOf(this)) : null,
+      // #423: the trigger pull this round belongs to (player rounds, for pull-level accuracy) and
+      // the shooting enemy's stats kind (enemy rounds, for damage-taken attribution).
+      pullId: meta.pullId ?? null,
+      _statKind: meta.statKind ?? null,
     };
     this.projectiles.push(pushed);
     return pushed;

@@ -284,6 +284,7 @@ export const PowerupsMixin = {
   _activatePowerup(typeId, player = primaryPlayerOf(this)) {
     const p = POWERUPS[typeId];
     if (!p) return;
+    this._statPowerup?.(typeId);   // #423: count the collected powerup
     // #196: each powerup type has its OWN independently-tunable pickup cue — dispatch keyed off
     // the actual type picked up.
     Audio.ui('powerupPickup' + typeId[0].toUpperCase() + typeId.slice(1));
