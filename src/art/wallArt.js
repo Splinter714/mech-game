@@ -7,7 +7,7 @@
 // Kept here in src/art/ (rather than inline in the scene) alongside the rest of the procedural art,
 // and written against the minimal Graphics surface (`clear/fillStyle/fillPoints/fillCircle`) so it
 // can be exercised with a plain recording stub in tests without Phaser.
-import { WALL_THICKNESS_PX } from '../data/wallEdges.js';
+import { WALL_THICKNESS_PX, GATE_RETRACT_FACTOR } from '../data/wallEdges.js';
 
 // Steel-plate palette — deliberately the same dark, cold, man-made family the removed
 // `wallSegment` tile used (0x34383e/0x212429), so the wall still reads as base infrastructure and
@@ -91,7 +91,9 @@ function drawGate(g, e, hw, timeMs) {
   const dx = hinge.fx - hinge.px, dy = hinge.fy - hinge.py;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
-  const leafLen = len * (1 - 0.75 * f);
+  // #427: the retract factor is shared with the shot-collision path (wallEdges.js `spanFireSegment`)
+  // so the solid door material that's DRAWN is exactly what's solid to FIRE — no drift between the two.
+  const leafLen = len * (1 - GATE_RETRACT_FACTOR * f);
   const ax = hinge.px, ay = hinge.py;                     // the anchored post end
   const bx = hinge.px + ux * leafLen, by = hinge.py + uy * leafLen;   // the free (retracting) lip
   // The leaf.

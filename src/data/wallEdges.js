@@ -172,6 +172,55 @@ export function blocksShot(edge) {
   return !!edge && !edge.destroyed;
 }
 
+// #427 (Jackson 2026-07-22, "shoot through the OPEN PART of an open gate"): a gate leaf that is OPEN
+// is solid to fire ONLY along the door material still physically present — the leaf visually retracts
+// toward its hinge post as it opens, and the gap it parted from (toward the meeting vertex) is now
+// open air a shot passes through. This is the ONE constant that governs how far the leaf pulls back
+// at full open, shared with the renderer (art/wallArt.js `drawGate`) so what LOOKS solid IS solid:
+// at f = 1 the solid door spans (1 - GATE_RETRACT_FACTOR) of the leaf, the rest is the passage. A
+// SHUT leaf (f = 0) is solid across its whole span, unchanged.
+export const GATE_RETRACT_FACTOR = 0.75;
+
+// A gate leaf's live open fraction, 0 (shut) .. 1 (fully parted). The scene writes the animated
+// `openFrac` onto the leaf record each frame (bases.js `_updateGates`); a leaf with only the boolean
+// `open` (or neither) is read as fully open / shut respectively — matching wallArt.js `openFracOf`,
+// so collision and art can never disagree about how far a door has travelled.
+export function gateOpenFrac(edge) {
+  return Math.max(0, Math.min(1, edge?.openFrac ?? (edge?.open ? 1 : 0)));
+}
+
+// The sub-segment of `edge` that is SOLID TO FIRE right now, as `{ x0, y0, x1, y1 }`. For a plain
+// span, a turret span, or a SHUT gate leaf this is the whole centreline (the edge is returned as-is).
+// For an OPEN gate leaf it is the retracted door material only — anchored at the leaf's HINGE end
+// (`gateHingeEnd`, the outer post the leaf retracts toward, the SAME anchor `drawGate` hangs the leaf
+// from) and running `1 - GATE_RETRACT_FACTOR * f` of the leaf's length toward its meeting end. Beyond
+// that stub, toward the shared vertex the two leaves parted from, is the open passage the shot passes
+// through. Movement never consults this — an open leaf is a full doorway to `blocksSpan` — so only the
+// SHOT queries (which pass `blocksShot`) narrow to this stub; see `collideGeom`.
+export function spanFireSegment(edge) {
+  if (!edge || edge.role !== SPAN_ROLE_GATE) return edge;
+  const f = gateOpenFrac(edge);
+  if (f <= 0) return edge;                                   // shut → the whole span is solid
+  const hingeAt1 = (edge.gateHingeEnd ?? 0) === 1;
+  const px = hingeAt1 ? edge.x1 : edge.x0, py = hingeAt1 ? edge.y1 : edge.y0;   // anchored post end
+  const fx = hingeAt1 ? edge.x0 : edge.x1, fy = hingeAt1 ? edge.y0 : edge.y1;   // free (meeting) lip
+  const dx = fx - px, dy = fy - py;
+  const len = Math.hypot(dx, dy) || 1;
+  const solidLen = len * (1 - GATE_RETRACT_FACTOR * f);
+  return { x0: px, y0: py, x1: px + (dx / len) * solidLen, y1: py + (dy / len) * solidLen };
+}
+
+// The geometry a query should test `edge` against for the caller's notion of solidity. SHOT queries
+// (`solid === blocksShot`) narrow an open gate leaf to its live solid stub (`spanFireSegment`) so a
+// round or beam crossing only the parted-open gap passes clean through, while still detonating on the
+// door material near the post. Every MOVEMENT/sight query (any other `solid`, e.g. `blocksSpan`) gets
+// the full edge unchanged — the retract is a FIRE-only refinement, and movement solidity is untouched
+// (a mid-animation gate that is not yet fully open still blocks the whole span to movement). Keyed on
+// the shot predicate itself, not a separate flag, so the two can never fall out of step.
+function collideGeom(edge, solid) {
+  return solid === blocksShot ? spanFireSegment(edge) : edge;
+}
+
 // Set a gate span's open/closed state. A no-op on a non-gate or a destroyed span — a blown gate is
 // just a breach and can never re-close, which is the answer to "what if the player destroys a
 // closed gate": the span dies like any other and the hole it leaves is permanent.
@@ -446,7 +495,9 @@ export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey =
   let best = null, bestD = Infinity;
   for (const e of cand) {
     if (ignoreKey && e.key === ignoreKey) continue;
-    const s = spanCollideSegment(e, radius);
+    // #427: for a SHOT query, an open gate leaf narrows to its live solid stub (`collideGeom`); every
+    // other span/caller tests the full edge exactly as before.
+    const s = spanCollideSegment(collideGeom(e, solid), radius);
     const d = pointSegmentDistance(s.x0, s.y0, s.x1, s.y1, x, y);
     if (d <= half && d < bestD) { best = e; bestD = d; }
   }
@@ -499,7 +550,10 @@ export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS
     let ob = null, obD = half + POINT_BLANK_SHOT_EPSILON;
     for (const e of cand) {
       if (ignoreKey && e.key === ignoreKey) continue;
-      const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x0, y0);
+      // #427: point-blank on an open gate leaf hits only if the muzzle sits on the retracted SOLID
+      // stub (`collideGeom`), not on the open passage the leaves parted from.
+      const g = collideGeom(e, solid);
+      const d = pointSegmentDistance(g.x0, g.y0, g.x1, g.y1, x0, y0);
       if (d <= obD) { ob = e; obD = d; }
     }
     if (ob) return { edge: ob, t: 0, x: x0, y: y0, dist: 0 };
@@ -507,6 +561,14 @@ export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS
   let best = null, bestT = Infinity;
   for (const e of cand) {
     if (ignoreKey && e.key === ignoreKey) continue;
+    // #427: for a SHOT query, an OPEN gate leaf is solid only along its retracted stub — the parted
+    // gap passes shots — so both clauses below test that live solid segment (`collideGeom`). For a
+    // plain span, a shut gate, or ANY movement query this is the full edge, bit-for-bit unchanged, so
+    // the anti-tunnelling seal and the #320 radius reasoning are preserved for everything but the one
+    // case (an open door's mouth) that is meant to pass fire. Shot queries always pass radius 0, so
+    // the FULL-centreline-vs-shortened asymmetry the movement path relies on never applies to the
+    // narrowed gate stub — it is used raw at both clauses.
+    const g = collideGeom(e, solid);
     // The two clauses use DIFFERENT geometry, and that asymmetry is load-bearing (#320).
     //
     // ANTI-TUNNELLING uses the span's FULL centreline, never the shortened one. Physically
@@ -516,13 +578,13 @@ export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS
     // through every 48px span at speed. (Caught by the "no speed out-steps an inflated span" test,
     // which failed exactly this way before the split.) Using the full line is also strictly the
     // stronger seal: it is the unchanged point-form clause.
-    let t = segmentCrossT(x0, y0, x1, y1, e.x0, e.y0, e.x1, e.y1);
+    let t = segmentCrossT(x0, y0, x1, y1, g.x0, g.y0, g.x1, g.y1);
     // PROXIMITY uses the shortened segment inflated by the body radius. A step that never crosses
     // the centreline can still END with the body overlapping the plate (driving at a wall and
     // stopping short, or a round detonating on its face) — a contact at t = 1. This is the clause
     // the corner chamfer belongs to, and the only one a breach's drivability depends on.
     if (t == null) {
-      const s = spanCollideSegment(e, radius);
+      const s = spanCollideSegment(g, radius);
       if (pointSegmentDistance(s.x0, s.y0, s.x1, s.y1, x1, y1) <= half) t = 1;
     }
     if (t == null || t >= bestT) continue;
@@ -564,7 +626,10 @@ export function nearestWallEdge(set, x, y, maxDist = HEX_SIZE, solid = blocksSpa
   candidatesNear(set, x, y, cand, 0, solid);
   let best = null, bestD = maxDist;
   for (const e of cand) {
-    const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x, y);
+    // #427: route a shot hit only onto the leaf's live solid stub for a SHOT query (`collideGeom`),
+    // so a hit that landed in an open gate's mouth never snaps onto the retracted leaf.
+    const g = collideGeom(e, solid);
+    const d = pointSegmentDistance(g.x0, g.y0, g.x1, g.y1, x, y);
     if (d <= bestD) { best = e; bestD = d; }
   }
   return best;

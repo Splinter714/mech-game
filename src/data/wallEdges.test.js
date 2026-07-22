@@ -6,6 +6,7 @@ import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
   WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan, wallSpanOutwardSign,
   blocksSpan, blocksShot, setGateOpen, gateEdges, SPAN_ROLE_GATE,
+  spanFireSegment, gateOpenFrac, GATE_RETRACT_FACTOR,
 } from './wallEdges.js';
 import { edgeKey, edgeEndpoints, edgeMidpoint, pointSegmentDistance } from './hexEdges.js';
 import { HEX_SIZE, hexToPixel, neighbors } from './hexgrid.js';
@@ -463,26 +464,83 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
     expect(blocksSpan(wall)).toBe(true);
   });
 
-  it('a shot crossing an OPEN leaf hits THAT leaf (blocksShot), while movement crosses freely', () => {
-    const set = gatedRun();
-    const leaf = leavesOf(set)[0];
-    setGateOpen(set, leaf, true);
-    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+  // #427 (Jackson 2026-07-22, "shoot through the OPEN PART of an open gate"): an OPEN leaf is solid to
+  // fire ONLY along its retracted DOOR MATERIAL (`spanFireSegment`, anchored at the hinge post); the
+  // central gap the leaves parted from is open air a shot passes through. `segMid` is the middle of
+  // that live solid stub; `gap` is the leaf's full-edge midpoint, which at full open is beyond the
+  // stub — i.e. the opened passage.
+  const segMid = (s) => ({ x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 });
+  const perp = (leaf, pt, r) => {   // a short segment crossing the leaf's line perpendicularly at pt
     const nx = -(leaf.y1 - leaf.y0), ny = (leaf.x1 - leaf.x0);
     const len = Math.hypot(nx, ny) || 1;
-    const ax = m.x - nx / len * 40, ay = m.y - ny / len * 40;
-    const bx = m.x + nx / len * 40, by = m.y + ny / len * 40;
+    return [pt.x - nx / len * r, pt.y - ny / len * r, pt.x + nx / len * r, pt.y + ny / len * r];
+  };
+
+  it('a shot crossing an OPEN leaf hits its SOLID stub but PASSES through the parted-open gap', () => {
+    const set = gatedRun();
+    const [leaf] = leavesOf(set);
+    setGateOpen(set, leaf, true);                       // fully open (openFrac defaults to 1)
+    // Through the retracted door material near the post → detonates on THAT leaf.
+    const solid = segMid(spanFireSegment(leaf));
+    const [ax, ay, bx, by] = perp(leaf, solid, 20);
     expect(wallEdgeCrossing(set, ax, ay, bx, by, WALL_THICKNESS_PX, null, 0, blocksShot)?.edge).toBe(leaf);
-    expect(wallEdgeCrossing(set, ax, ay, bx, by)).toBe(null);   // movement: the open leaf is a doorway
+    // Through the central gap the leaf parted from (its full-edge midpoint, now open air) → passes.
+    const gap = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    const [gx0, gy0, gx1, gy1] = perp(leaf, gap, 20);
+    expect(wallEdgeCrossing(set, gx0, gy0, gx1, gy1, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(null);
+    // Movement crosses freely at EITHER point — the whole open leaf is a doorway (unchanged).
+    expect(wallEdgeCrossing(set, ax, ay, bx, by)).toBe(null);
+    expect(wallEdgeCrossing(set, gx0, gy0, gx1, gy1)).toBe(null);
   });
 
-  it('a point on an OPEN leaf is solid to a shot query and clear to a movement query', () => {
+  it('a point on an OPEN leaf: solid to a shot on the door stub, CLEAR in the parted gap; movement always clear', () => {
     const set = gatedRun();
-    const leaf = leavesOf(set)[0];
+    const [leaf] = leavesOf(set);
     setGateOpen(set, leaf, true);
+    const solid = segMid(spanFireSegment(leaf));
+    const gap = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    // On the retracted door material: solid to a shot (the leaf itself is the nearest FIRE-solid span).
+    // (Movement solidity at this point is confounded — the stub anchors at the post it shares with the
+    // flanking plain wall — so the movement-passes-the-open-leaf case is proved at the gap point below,
+    // clear of any neighbour.)
+    expect(wallEdgeAt(set, solid.x, solid.y, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(leaf);
+    // In the parted-open gap: clear to BOTH — shots pass, units drive.
+    expect(wallEdgeAt(set, gap.x, gap.y, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(null);
+    expect(wallEdgeAt(set, gap.x, gap.y)).toBe(null);
+  });
+
+  it('a SHUT leaf is solid to fire across its WHOLE span — the full midpoint hits (control)', () => {
+    const set = gatedRun();
+    const [leaf] = leavesOf(set);       // left shut (openFrac 0 → spanFireSegment is the full edge)
+    expect(gateOpenFrac(leaf)).toBe(0);
+    expect(spanFireSegment(leaf)).toBe(leaf);            // no retract when shut
     const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    const [ax, ay, bx, by] = perp(leaf, m, 20);
+    expect(wallEdgeCrossing(set, ax, ay, bx, by, WALL_THICKNESS_PX, null, 0, blocksShot)?.edge).toBe(leaf);
     expect(wallEdgeAt(set, m.x, m.y, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(leaf);
-    expect(wallEdgeAt(set, m.x, m.y)).toBe(null);
+  });
+
+  it('the fire stub retracts by exactly GATE_RETRACT_FACTOR at full open — art and collision share it', () => {
+    const set = gatedRun();
+    const [leaf] = leavesOf(set);
+    const fullLen = Math.hypot(leaf.x1 - leaf.x0, leaf.y1 - leaf.y0);
+    setGateOpen(set, leaf, true);
+    const seg = spanFireSegment(leaf);
+    const stubLen = Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0);
+    expect(stubLen).toBeCloseTo(fullLen * (1 - GATE_RETRACT_FACTOR), 6);
+    // The stub is anchored at the HINGE post (the end NOT shared with the partner), matching drawGate.
+    const post = leaf.gateHingeEnd === 1 ? { x: leaf.x1, y: leaf.y1 } : { x: leaf.x0, y: leaf.y0 };
+    expect(seg.x0).toBeCloseTo(post.x, 6);
+    expect(seg.y0).toBeCloseTo(post.y, 6);
+  });
+
+  it('a HALF-open leaf retracts proportionally (openFrac 0.5) — collision follows the animation', () => {
+    const set = gatedRun();
+    const [leaf] = leavesOf(set);
+    leaf.openFrac = 0.5;                                 // mid-travel, as _updateGates writes each frame
+    const fullLen = Math.hypot(leaf.x1 - leaf.x0, leaf.y1 - leaf.y0);
+    const seg = spanFireSegment(leaf);
+    expect(Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0)).toBeCloseTo(fullLen * (1 - GATE_RETRACT_FACTOR * 0.5), 6);
   });
 
   it('a leaf is damageable whether OPEN or SHUT — its own HP pool, chipped independently', () => {
@@ -513,7 +571,9 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
     const set = gatedRun();
     const leaf = leavesOf(set)[0];
     setGateOpen(set, leaf, true);
-    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    // #427: the muzzle must be pressed onto the retracted DOOR MATERIAL (the solid stub), not the
+    // parted-open gap — a barrel poked into the open mouth is aiming through open air and hits nothing.
+    const m = segMid(spanFireSegment(leaf));
     const { nx, ny } = outwardNormal(leaf);
     // Muzzle 3px past the centreline (inside the plate), shot heading a further 60px OUTWARD — a
     // segment wholly on one side of the centreline, so it never crosses it going forward.

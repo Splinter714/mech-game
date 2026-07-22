@@ -523,8 +523,10 @@ export const WorldMixin = {
   _isWall(x, y, transparent = null, ignoreSpanKey = null) {
     const k = this._hexKeyAt(x, y);
     if (shotBlockedAt(this.terrain.get(k), k, transparent)) return true;
-    // #427: an OPEN gate is now solid to FIRE (`blocksShot`) — its leaves never fully retract, so a
-    // beam/ray stops on it rather than sailing through the mouth, and the gate is a hittable target.
+    // #427: an OPEN gate leaf is solid to FIRE (`blocksShot`) along its retracted DOOR MATERIAL only —
+    // a beam/ray stops on the door near the post but PASSES through the central gap the leaves parted
+    // from (wallEdges.js `spanFireSegment`), matching what the art draws. Shut leaves are solid across
+    // their whole span; units still DRIVE the whole open mouth (movement uses `blocksSpan`).
     return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey, 0, blocksShot);
   },
 
@@ -928,10 +930,11 @@ export const WorldMixin = {
   // #288: the first standing wall span a swept step crosses, as `{ edge, x, y, dist }` or null —
   // the projectile-facing form of the same crossing test movement uses (projectiles.js).
   _wallEdgeHit(x0, y0, x1, y1) {
-    // #427 (supersedes #309's pass-through): an OPEN gate is TWO leaves that only part ~70%, so it
-    // is always solid enough to stop a round — `blocksShot` includes it, and the round detonates on
-    // the gate and routes to its one HP pool rather than sailing through the mouth. Units still DRIVE
-    // through the centre (movement uses `blocksSpan`, under which an open gate is a doorway).
+    // #427: an OPEN gate leaf stops a round only along its retracted DOOR MATERIAL (near its post);
+    // a round crossing just the central gap the leaves parted from passes clean through
+    // (`blocksShot` + wallEdges.js `spanFireSegment`), matching the drawn geometry. A round that does
+    // meet the door detonates and routes to that leaf's HP. Units still DRIVE the whole open mouth
+    // (movement uses `blocksSpan`, under which an open gate is a full doorway).
     // #427 `shotOrigin` (true): a round spawned point-blank on/inside a leaf's plate — the muzzle
     // poked to an OPEN gate leaf the mech is pressed against — registers its hit at the muzzle
     // rather than sailing through, since it never crosses the centreline going forward.
