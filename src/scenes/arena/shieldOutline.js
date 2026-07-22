@@ -110,20 +110,35 @@ export function shieldOutlineGrowth(shield) {
   return 1 + SHIELD_TEMP_GROW_K * (temp / max);
 }
 
-// #422: the mech silhouette's half-extents in TEXTURE pixels (half-width across, half-depth
+// #422 (2nd pass): which `mechLayout` boxes make up each outline VIEW sprite. `turret` is the
+// single body texture drawn from head+cockpit+centerTorso (see drawTurret); `hull` is the legs;
+// the four pivoting parts are each exactly one location. A part's own silhouette only extends as
+// far as ITS OWN boxes — using the mech's single widest box (the old approach) for every part
+// meant a global scale tuned for the far-out arms also got applied to the shallow torso/hull,
+// and vice-versa, which is why the shell still read uneven. Per-part boxes fix that at the root.
+const OUTLINE_PART_LOCATIONS = {
+  turret: ['head', 'cockpit', 'centerTorso'],
+  hull: ['leftLeg', 'rightLeg'],
+  torL: ['leftTorso'],
+  torR: ['rightTorso'],
+  armL: ['leftArm'],
+  armR: ['rightArm'],
+};
+
+// #422: each outline part's own half-extents in TEXTURE pixels (half-width across, half-depth
 // front-to-back), read from the same `mechLayout` boxes the art and hit-areas use. Every part
-// duplicate is a full-canvas raster centred on the mech, so growing each duplicate's scale by
-// `d` beyond the real scale pushes the widest silhouette point out by `halfW * d` display px and
-// the deepest by `halfD * d`. To turn a desired UNIFORM outward margin (`offsetPx`, display px)
-// into per-axis scales we need these half-extents; the max over all body boxes is the silhouette
-// edge on each axis. Pure (no Phaser) so it's unit-testable.
+// duplicate is a full-canvas raster centred on the MECH (not the part), so growing a duplicate's
+// scale by `d` beyond the real scale pushes ITS silhouette edge out by `partHalfExtent * d`
+// display px — a function of that part's own farthest point from mech centre, not a mech-wide
+// figure. To turn a desired UNIFORM outward margin (`offsetPx`, display px) into per-part
+// per-axis scales we need these per-part half-extents. Pure (no Phaser) so it's unit-testable.
 // Guarded: `mechLayout` reads `mech.chassis.art`, which every REAL mech has (it's baked by
 // chassis/index.js) but a hand-built test double may omit (coop's test doubles build a bare
 // mech shape without going through the chassis pipeline — CLAUDE.md: "the arena's hand-built
 // test doubles work unchanged"). Returning null here (rather than letting the read throw) lets
 // `makeShieldOutline`/`outlineBaseScales` fall back to the pre-#422 uniform `scaleMult` shell
 // for that mech, instead of crashing the outline construction outright.
-export function mechHalfExtentPx(mech) {
+export function mechPartHalfExtentsPx(mech) {
   let lay;
   try {
     lay = mechLayout(mech);
@@ -131,13 +146,18 @@ export function mechHalfExtentPx(mech) {
     return null;
   }
   if (!lay) return null;
-  let w = 0, d = 0;
-  for (const box of Object.values(lay)) {
-    if (!box) continue;
-    w = Math.max(w, Math.abs(box.x || 0) + (box.w || 0) / 2);
-    d = Math.max(d, Math.abs(box.y || 0) + (box.h || 0) / 2);
+  const out = {};
+  for (const [key, locs] of Object.entries(OUTLINE_PART_LOCATIONS)) {
+    let w = 0, d = 0;
+    for (const loc of locs) {
+      const box = lay[loc];
+      if (!box) continue;
+      w = Math.max(w, Math.abs(box.x || 0) + (box.w || 0) / 2);
+      d = Math.max(d, Math.abs(box.y || 0) + (box.h || 0) / 2);
+    }
+    out[key] = { w: w * ART_SCALE, d: d * ART_SCALE };
   }
-  return { w: w * ART_SCALE, d: d * ART_SCALE };
+  return out;
 }
 
 // #422: the outline's per-axis base scales for a UNIFORM `offsetPx` display-px margin. Real parts
@@ -145,6 +165,8 @@ export function mechHalfExtentPx(mech) {
 // edge out by exactly `offsetPx` display px (edge display distance = halfExtentPx × scale, so the
 // added distance = halfExtentPx × (newScale − scale) = offsetPx). The shallower axis therefore gets
 // the LARGER scale, which is the whole point: equal px on every side instead of equal percentage.
+// `halfExtentPx` here is the ONE PART's own half-extent (see `mechPartHalfExtentsPx`), not a
+// mech-wide figure — that's what makes the margin equal on the sides AND front/back at once.
 // Falls back to the uniform `scale × scaleMult` shell when no offset/extent is available (enemies,
 // or a player caller that passed neither) so nothing else changes.
 export function outlineBaseScales({ scale, scaleMult, offsetPx = 0, halfExtentPx = null }) {
@@ -204,10 +226,12 @@ export function makeShieldOutline(scene, view, {
   scaleMult = SHIELD_OUTLINE_SCALE_MULT, blend = Phaser.BlendModes.ADD, bodyOnly = false,
   offsetPx = 0, mech = null,
 }) {
-  const halfExtentPx = offsetPx > 0 && mech ? mechHalfExtentPx(mech) : null;
-  const { sx: baseSx, sy: baseSy } = outlineBaseScales({ scale, scaleMult, offsetPx, halfExtentPx });
+  // #422 (2nd pass): PER-PART half-extents, not one mech-wide figure — see mechPartHalfExtentsPx.
+  const partExtents = offsetPx > 0 && mech ? mechPartHalfExtentsPx(mech) : null;
   const baseScale = scale * scaleMult;   // retained for the flash/grow fallback + existing callers
   const outlines = {};
+  const baseSxByKey = {};
+  const baseSyByKey = {};
   const texMap = {};
   for (const key of keys) {
     const real = view[key];
@@ -216,6 +240,10 @@ export function makeShieldOutline(scene, view, {
     const shieldKey = bodyOnly && scene.textures?.exists?.(`${realKey}_shield`)
       ? `${realKey}_shield` : realKey;
     if (shieldKey !== realKey) texMap[realKey] = shieldKey;
+    const halfExtentPx = partExtents ? partExtents[key] : null;
+    const { sx, sy } = outlineBaseScales({ scale, scaleMult, offsetPx, halfExtentPx });
+    baseSxByKey[key] = sx;
+    baseSyByKey[key] = sy;
     // #397 follow-up: the outline scales about its TEXTURE CENTRE (origin 0.5,0.5), never the
     // real part's origin. A side-torso/arm real origin is the convergence PIVOT — a joint set
     // toward the part's REAR (PART_PIVOT, mechArt.js). Growing a duplicate about that rear anchor
@@ -225,7 +253,7 @@ export function makeShieldOutline(scene, view, {
     // driver positions this at the real part's texture-centre so the two stay registered.
     const o = scene.add.sprite(real.x, real.y, shieldKey)
       .setOrigin(0.5, 0.5)
-      .setScale(baseSx, baseSy)
+      .setScale(sx, sy)
       .setTintFill(color)
       .setBlendMode(blend)
       .setVisible(false);
@@ -234,7 +262,7 @@ export function makeShieldOutline(scene, view, {
     // themselves doesn't matter since they're additive-blended and fully hidden by the real art.
     view.addAt(o, 0);
   }
-  return { outlines, active: false, t: 0, baseScale, baseSx, baseSy, grow: 1, texMap };
+  return { outlines, active: false, t: 0, baseScale, baseSxByKey, baseSyByKey, grow: 1, texMap };
 }
 
 // Per-frame upkeep for ONE unit's outline. Shows/hides on the 0↔>0 edge (pickup / regen-back-up /
@@ -286,12 +314,12 @@ export function updateShieldOutline(sv, view, shield, delta) {
     o.setPosition(real.x + cos * ex - sin * ey, real.y + sin * ex + cos * ey);
     o.rotation = real.rotation;
     o.setAlpha(alpha);
-    // #422: re-scale off the per-axis base (uniform-margin player shell) or the single uniform
-    // baseScale (enemies / any state built before #422). When the two axes match this is the same
-    // single-arg call as before.
+    // #422: re-scale off this PART's own per-axis base (uniform-margin player shell) or the
+    // single uniform baseScale (enemies / any state built before #422). When the two axes match
+    // this is the same single-arg call as before.
     if (growChanged && o.setScale) {
-      const sx = sv.baseSx ?? sv.baseScale;
-      const sy = sv.baseSy ?? sv.baseScale;
+      const sx = sv.baseSxByKey?.[key] ?? sv.baseScale;
+      const sy = sv.baseSyByKey?.[key] ?? sv.baseScale;
       if (sx === sy) o.setScale(sx * grow);
       else o.setScale(sx * grow, sy * grow);
     }
@@ -304,13 +332,25 @@ export function updateShieldOutline(sv, view, shield, delta) {
 export function flashShieldOutline(scene, sv) {
   if (!sv || !sv.active) return;
   // #381/#422: flash relative to the current (possibly temp-swollen) shell size, settling back to
-  // it. Per-axis so the uniform-margin player shell flashes evenly instead of snapping to a square.
+  // it. Per-PART per-axis so the uniform-margin player shell flashes evenly on every part instead
+  // of snapping every part to the same square scale. Parts that share the same rest scale (every
+  // enemy, and any player state built without a per-part offset) are still batched into ONE
+  // `tweens.add` call, same as before #422's 2nd pass — only parts whose rest scale actually
+  // differs (the uniform-margin player shell) get their own tween group.
   const g = sv.grow ?? 1;
-  const restX = (sv.baseSx ?? sv.baseScale) * g;
-  const restY = (sv.baseSy ?? sv.baseScale) * g;
-  const targets = Object.values(sv.outlines);
-  for (const o of targets) o.setScale(restX * SHIELD_HIT_FLASH_MULT, restY * SHIELD_HIT_FLASH_MULT);
-  scene.tweens.add({
-    targets, scaleX: restX, scaleY: restY, duration: 220, ease: 'Quad.out',
-  });
+  const groups = new Map();   // "restX,restY" -> { restX, restY, targets: [] }
+  for (const [key, o] of Object.entries(sv.outlines)) {
+    const restX = (sv.baseSxByKey?.[key] ?? sv.baseScale) * g;
+    const restY = (sv.baseSyByKey?.[key] ?? sv.baseScale) * g;
+    o.setScale(restX * SHIELD_HIT_FLASH_MULT, restY * SHIELD_HIT_FLASH_MULT);
+    const groupKey = `${restX},${restY}`;
+    let group = groups.get(groupKey);
+    if (!group) { group = { restX, restY, targets: [] }; groups.set(groupKey, group); }
+    group.targets.push(o);
+  }
+  for (const { restX, restY, targets } of groups.values()) {
+    scene.tweens.add({
+      targets, scaleX: restX, scaleY: restY, duration: 220, ease: 'Quad.out',
+    });
+  }
 }

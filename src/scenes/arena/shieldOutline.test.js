@@ -13,7 +13,8 @@ vi.mock('phaser', () => ({ default: {} }));
 
 import {
   shieldOutlineActive, shieldOutlineAlpha, shieldOutlineGrowth, updateShieldOutline,
-  makeShieldOutline, SHIELD_VEHICLE_PART_KEYS, shieldPartKeys,
+  makeShieldOutline, SHIELD_VEHICLE_PART_KEYS, SHIELD_MECH_PART_KEYS, shieldPartKeys,
+  mechPartHalfExtentsPx, outlineBaseScales, SHIELD_PLAYER_OFFSET_PX, SHIELD_PLAYER_SCALE_MULT,
 } from './shieldOutline.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { createShield, damageShield, tickShield, grantTempShield } from '../../data/shield.js';
@@ -272,5 +273,103 @@ describe('shieldPartKeys (#379)', () => {
       if (id === 'drone') continue;
       expect(shieldPartKeys(def), id).toEqual(SHIELD_VEHICLE_PART_KEYS);
     }
+  });
+});
+
+// #422 (2nd pass): a single mech-wide half-extent applied to every part gave the arms (whose own
+// silhouette sits far out to the side) a different actual outward margin than the turret (whose
+// own silhouette is a shallow front/back box) — the playtest report ("still bulges more at the
+// SIDES than front/back") after the first #422 fix. The fix computes each outline PART's own
+// half-extent (`mechPartHalfExtentsPx`) and solves that part's own scale for the margin, so the
+// side-most part (an arm, displaced on X) and the front/back part (the turret, displaced on Y)
+// must land on the SAME outward pixel displacement.
+describe('uniform player shield margin across parts (#422 2nd pass)', () => {
+  // A bare test-double mech shape — just enough for mechLayout (chassis/index.js's real baking is
+  // not needed here; mechLayout only reads bodyLen/bodyWid + the default shape).
+  const fakeMech = () => ({ chassis: { art: { bodyLen: 40, bodyWid: 30 } } });
+
+  it('mechPartHalfExtentsPx gives each part its OWN half-extent, not one mech-wide figure', () => {
+    const extents = mechPartHalfExtentsPx(fakeMech());
+    // The arm sits far out to the side (wide X, shallow Y); the turret is the body, wide on X too
+    // but its own box doesn't reach nearly as far out as the arm's mount point.
+    expect(extents.armL.w).toBeGreaterThan(extents.turret.w);
+    expect(Object.keys(extents)).toEqual(
+      expect.arrayContaining(['turret', 'hull', 'torL', 'torR', 'armL', 'armR']),
+    );
+  });
+
+  it('falls back to null for a chassis-less test double (coop hand-built mechs) instead of throwing', () => {
+    expect(mechPartHalfExtentsPx({})).toBeNull();
+    expect(mechPartHalfExtentsPx(null)).toBeNull();
+  });
+
+  it('solves an equal outward PIXEL displacement for a far-out side part (arm, X) and a front/back part (turret, Y)', () => {
+    const mech = fakeMech();
+    const extents = mechPartHalfExtentsPx(mech);
+    const scale = 1;
+    const offsetPx = SHIELD_PLAYER_OFFSET_PX;
+
+    const arm = outlineBaseScales({
+      scale, scaleMult: SHIELD_PLAYER_SCALE_MULT, offsetPx, halfExtentPx: extents.armL,
+    });
+    const turret = outlineBaseScales({
+      scale, scaleMult: SHIELD_PLAYER_SCALE_MULT, offsetPx, halfExtentPx: extents.turret,
+    });
+
+    // Displacement of a part's OWN silhouette edge = that part's own half-extent × the scale delta.
+    const armSideDisplacement = extents.armL.w * (arm.sx - scale);
+    const turretFrontBackDisplacement = extents.turret.d * (turret.sy - scale);
+
+    expect(armSideDisplacement).toBeCloseTo(offsetPx, 5);
+    expect(turretFrontBackDisplacement).toBeCloseTo(offsetPx, 5);
+    expect(armSideDisplacement).toBeCloseTo(turretFrontBackDisplacement, 5);
+
+    // This is the actual bug fix: the two parts need DIFFERENT scales to land on the SAME px
+    // margin, because their own half-extents differ. Applying the arm's scale to the turret's own
+    // (much shallower) half-extent would NOT reproduce the same offsetPx margin — proving a single
+    // shared scale can't give both parts an equal margin at once.
+    const turretDisplacementUnderArmScale = extents.turret.d * (arm.sx - scale);
+    expect(turretDisplacementUnderArmScale).not.toBeCloseTo(offsetPx, 1);
+  });
+
+  it('makeShieldOutline assigns each outline sprite a PER-PART scale (not one shared sx/sy)', () => {
+    const sprites = {};
+    const scene = {
+      add: {
+        sprite: vi.fn((x, y, key) => {
+          const s = {
+            texture: { key }, x, y,
+            setOrigin: function () { return this; },
+            setScale: vi.fn(function (sx, sy) { this.sx = sx; this.sy = sy ?? sx; return this; }),
+            setTintFill: function () { return this; },
+            setBlendMode: function () { return this; },
+            setVisible: function () { return this; },
+          };
+          sprites[key] = s;
+          return s;
+        }),
+      },
+      textures: { exists: () => false },
+    };
+    const view = { addAt: vi.fn() };
+    for (const key of SHIELD_MECH_PART_KEYS) {
+      view[key] = { x: 0, y: 0, originX: 0.5, originY: 0.5, rotation: 0, texture: { key: `${key}_tex` } };
+    }
+    const mech = fakeMech();
+    const sv = makeShieldOutline(scene, view, {
+      keys: SHIELD_MECH_PART_KEYS, scale: 1, scaleMult: SHIELD_PLAYER_SCALE_MULT,
+      offsetPx: SHIELD_PLAYER_OFFSET_PX, mech, blend: 0,
+    });
+
+    // The arm and the turret must NOT have received the same sx (that was the bug) — the arm's
+    // side displacement and turret's own front/back displacement land at the same px only because
+    // each got its OWN scale.
+    expect(sv.outlines.armL.setScale).toHaveBeenCalled();
+    expect(sv.baseSxByKey.armL).not.toBeCloseTo(sv.baseSxByKey.turret, 3);
+
+    const extents = mechPartHalfExtentsPx(mech);
+    const armDisplacement = extents.armL.w * (sv.baseSxByKey.armL - 1);
+    const turretDisplacement = extents.turret.d * (sv.baseSyByKey.turret - 1);
+    expect(armDisplacement).toBeCloseTo(turretDisplacement, 5);
   });
 });
