@@ -20,7 +20,7 @@ import { kindWeaponSlot } from '../../data/kindWeapons.js';
 import { AWARE } from '../../data/awareness.js';
 import {
   APPROACH, STRAFE, FACE_PLAYER, FACE_BROADSIDE,
-  initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial,
+  initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial, strafeHeading,
 } from '../../data/gunshipCycle.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -352,16 +352,20 @@ function helicopterBehavior(scene, e, ctx) {
     // Straight in at the player. ctx.ux/uy already point enemy → player.
     desiredX = ctx.ux; desiredY = ctx.uy;
   } else if (st.phase === STRAFE) {
-    // Slide laterally across the player's front, roughly at the standoff radius. #362: the
-    // radial component NO LONGER reuses `tankMoveIntent`'s tight per-frame band — on an
-    // aircraft that read as an invisible tether, cancelling out any range the player opened.
-    // `strafeRadial` is a wide latched dead band instead: normally zero, so the range drifts
-    // with the player's movement, and it only eases back once the drift is large. The lateral
-    // component (#305's strafe) is untouched.
-    const side = e.handed || 1;
+    // Slide laterally across the player's front, roughly at the standoff radius. #362 fixes the
+    // "invisible tether" on BOTH axes:
+    //   * RADIAL — `strafeRadial` replaces `tankMoveIntent`'s tight per-frame band with a wide
+    //     latched dead band: normally zero, so the range drifts with the player's movement, and
+    //     it only eases back once the drift is large.
+    //   * LATERAL — `strafeHeading` LATCHES the slide direction to a committed straight line
+    //     instead of the old `(-uy, ux)` perpendicular-to-live-bearing, which curved the path to
+    //     keep tracking the player (an orbit — the residual tether). The line only re-acquires
+    //     when the PLAYER physically relocates (STRAFE_REACQUIRE_PX), so the gunship's own travel
+    //     and the player's small repositions no longer bend it back onto the player.
     const radial = strafeRadial(st, ctx.dist);
-    desiredX = ctx.ux * radial + (-ctx.uy * side);
-    desiredY = ctx.uy * radial + (ctx.ux * side);
+    const lateral = strafeHeading(st, { px: tgt.x, py: tgt.y, ex: e.x, ey: e.y, handed: e.handed || 1 });
+    desiredX = ctx.ux * radial + Math.cos(lateral);
+    desiredY = ctx.uy * radial + Math.sin(lateral);
   } else {
     // REPOSITION — cruise out to the fresh attack point the machine picked on entry.
     const dx = (st.repoX ?? tgt.x) - e.x, dy = (st.repoY ?? tgt.y) - e.y;

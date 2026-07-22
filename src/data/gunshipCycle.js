@@ -113,6 +113,44 @@ export const RECAPTURE_LO_FRAC = 0.85; // correcting outward stops here
 export const DRIFT_CLOSE_RATE = 0.55;  // gentle, not the ground units' full-throttle 1
 export const DRIFT_BACKOFF_RATE = -0.5;
 
+// #362 (residual gap after the radial latch above): the STRAFE-phase LATERAL heading must ALSO be
+// latched, not just the radial correction. `strafeRadial` stopped the gunship from correcting its
+// RANGE every frame, but the lateral slide was still computed as perpendicular-to-the-LIVE-bearing
+// (`(-uy, ux)`) every single frame. That is an ORBIT: as the gunship slides, the bearing to the
+// player rotates, so the perpendicular rotates with it and the path curves to keep tracking the
+// player — the exact "it moves to compensate when I move" tether the issue is about, just on the
+// lateral axis instead of the radial one.
+//
+// Fix: commit to a STRAIGHT strafe line. On entering the pass the gunship latches ONE lateral
+// heading (perpendicular to the bearing at that instant) and flies it straight, ignoring the
+// bearing drift its own travel and the player's small movements produce. It only re-acquires when
+// the PLAYER has physically relocated more than STRAFE_REACQUIRE_PX from where the line was latched
+// — measured off the player's position, NOT the bearing, so the gunship's own lateral travel (which
+// swings the bearing a lot over a pass) never re-triggers it; only a real player reposition does.
+// The felt result: a moving player CHANGES the range/bearing (the line stays put) instead of being
+// tracked out. Only the helicopter uses this — drones/ground units are untouched (see below).
+export const STRAFE_REACQUIRE_PX = 260;
+
+// Pure: the committed lateral strafe heading (world radians). `ctx` is { px, py, ex, ey, handed } —
+// player + gunship position and the unit's handedness (±1 = which way it slides). Latches the
+// heading onto `st.strafeAngle` and the anchor player-position onto `st.strafeAnchorX/Y`, and
+// re-acquires only when the player has moved past STRAFE_REACQUIRE_PX from that anchor. Mutates
+// only those three latch fields.
+export function strafeHeading(st, ctx) {
+  const { px, py, ex, ey, handed } = ctx;
+  const stale = st.strafeAngle == null
+    || Math.hypot(px - st.strafeAnchorX, py - st.strafeAnchorY) > STRAFE_REACQUIRE_PX;
+  if (stale) {
+    // Perpendicular to the gunship→player bearing at latch time, signed by handedness: a clean
+    // tangential slide across the player's front.
+    const bearing = Math.atan2(py - ey, px - ex);
+    st.strafeAngle = bearing + (Math.PI / 2) * (handed || 1);
+    st.strafeAnchorX = px;
+    st.strafeAnchorY = py;
+  }
+  return st.strafeAngle;
+}
+
 // Pure: given cycle state and the current distance, return the radial throttle for the STRAFE
 // phase (+ toward the player, − away, 0 = let it drift). Mutates only `st.closing` — the latch.
 export function strafeRadial(st, dist) {
@@ -156,6 +194,9 @@ export function initGunshipCycle(rng = Math.random) {
     // #362 strafe-range latch: 0 = drifting (no range correction), 1 = easing back in,
     // -1 = easing back out. See strafeRadial.
     closing: 0,
+    // #362 strafe-heading latch: the committed lateral world heading + the player position it was
+    // acquired at. null until the first strafe frame acquires one. See strafeHeading.
+    strafeAngle: null, strafeAnchorX: 0, strafeAnchorY: 0,
   };
 }
 
@@ -177,8 +218,10 @@ export function stepGunshipCycle(st, delta, dist, ctx, rng = Math.random) {
       st.phase = STRAFE;
       st.timer = roll(STRAFE_MIN_MS, STRAFE_MAX_MS, rng);
       // #362: each pass starts from a clean slate — it just arrived at its standoff, so there
-      // is nothing to correct and the range is free to drift from here.
+      // is nothing to correct and the range is free to drift from here. Clearing strafeAngle
+      // makes the pass acquire a FRESH straight line off wherever the player is right now.
       st.closing = 0;
+      st.strafeAngle = null;
     }
   } else if (st.phase === STRAFE) {
     if (st.timer <= 0) {

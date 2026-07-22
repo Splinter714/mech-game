@@ -194,9 +194,12 @@ describe('gunship attack cycle — facing drives the weapon (#305)', () => {
     // that swing dips inside the old radius partway through — so neither "further every frame"
     // nor "ends at a fixed radius" is an honest claim (on a long arc the phase can also time
     // out mid-swing). What IS always true, and is what the player actually sees, is that the
-    // break-off carries it well clear of the pass it was just flying.
+    // break-off carries it clear of the pass it was just flying. #362 made the strafe pass
+    // itself fly a straight line that drifts OUTWARD (the lateral heading no longer curves to
+    // hold radius), so the pass often ends already well out — the break-off adds less extra
+    // distance than it used to, but still opens beyond the strafe.
     const strafeDist = log[start - 1].dist;                 // where it was strafing, just before
-    expect(Math.max(...repo.map((f) => f.dist))).toBeGreaterThan(strafeDist * 1.3);
+    expect(Math.max(...repo.map((f) => f.dist))).toBeGreaterThan(strafeDist * 1.1);
   });
 
   it('re-enters the cycle after repositioning — approach, strafe, break off, approach again', () => {

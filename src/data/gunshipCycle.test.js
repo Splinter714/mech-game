@@ -11,8 +11,9 @@ import {
   SLOT_NOSE, SLOT_FLANK,
   STANDOFF_MIN, STANDOFF_MAX, APPROACH_TIMEOUT_MS, STRAFE_MAX_MS, REPOSITION_TIMEOUT_MS,
   REPOSITION_ARRIVE_PX, REPOSITION_OUT_FRAC,
-  initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial,
+  initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial, strafeHeading,
   DRIFT_FAR_FRAC, DRIFT_NEAR_FRAC, RECAPTURE_HI_FRAC, RECAPTURE_LO_FRAC,
+  STRAFE_REACQUIRE_PX,
 } from './gunshipCycle.js';
 
 // A deterministic rng that always returns the midpoint, so rolled durations/standoffs are exact.
@@ -235,6 +236,66 @@ describe('stepGunshipCycle — transitions', () => {
       stepGunshipCycle(st, 16, 0, ctx(), mid);
       expect(st.phase).toBe(STRAFE);
       expect(st.closing).toBe(0);
+    });
+  });
+
+  // ── #362 residual: the LATERAL heading latch ─────────────────────────────────────────────
+  // The radial rule above stopped the gunship correcting its RANGE. The lateral slide still
+  // re-tracked the player's LIVE bearing every frame (an orbit). `strafeHeading` latches the
+  // slide onto a committed straight line; a moving player must NOT bend it back onto himself.
+  describe('strafeHeading (#362) — the lateral slide is a committed line, not a live orbit', () => {
+    const hctx = (over = {}) => ({ px: 0, py: 0, ex: 300, ey: 0, handed: 1, ...over });
+
+    it('latches ONE heading on the first call (perpendicular to the gunship→player bearing)', () => {
+      const st = initGunshipCycle(mid);
+      // Gunship out along +x, player at origin: bearing gunship→player is π, so a +1 handed
+      // slide is π + π/2, i.e. straight −y — tangential to the line of sight. (Compare via the
+      // direction vector so the ±2π wrap of the raw angle doesn't matter.)
+      const a = strafeHeading(st, hctx());
+      expect(Math.cos(a)).toBeCloseTo(0, 6);
+      expect(Math.sin(a)).toBeCloseTo(-1, 6);
+      expect(st.strafeAngle).toBeCloseTo(a, 6);
+    });
+
+    it('does NOT re-track a small player move — the committed line is HELD frame-to-frame', () => {
+      const st = initGunshipCycle(mid);
+      const a0 = strafeHeading(st, hctx());
+      // The player nudges around inside the re-acquire radius; every frame returns the SAME line.
+      for (const [px, py] of [[30, 20], [-40, 25], [60, -50], [80, 80]]) {
+        expect(Math.hypot(px, py)).toBeLessThan(STRAFE_REACQUIRE_PX);   // genuinely a small move
+        expect(strafeHeading(st, hctx({ px, py }))).toBeCloseTo(a0, 6);
+      }
+    });
+
+    it('the gunship sliding along its own line never re-triggers acquisition (player is still)', () => {
+      const st = initGunshipCycle(mid);
+      const a0 = strafeHeading(st, hctx({ ex: 300, ey: 0 }));
+      // Player parked at the origin; the gunship travels a long way down its −y line. Even though
+      // that swings the bearing hugely, the heading is measured off the PLAYER position, which
+      // hasn't moved, so the line stays put.
+      for (let ey = 0; ey >= -400; ey -= 40) {
+        expect(strafeHeading(st, hctx({ ex: 300, ey })).valueOf()).toBeCloseTo(a0, 6);
+      }
+    });
+
+    it('re-acquires a fresh line only once the PLAYER has relocated past the threshold', () => {
+      const st = initGunshipCycle(mid);
+      const a0 = strafeHeading(st, hctx());
+      // A relocation larger than the threshold: the line re-aims at the new bearing.
+      const a1 = strafeHeading(st, hctx({ px: 0, py: STRAFE_REACQUIRE_PX + 50 }));
+      expect(a1).not.toBeCloseTo(a0, 2);
+      // And the anchor moved to the new player position, so it holds there in turn.
+      expect(st.strafeAnchorY).toBeCloseTo(STRAFE_REACQUIRE_PX + 50, 6);
+    });
+
+    it('entering a strafe pass clears the heading latch so each pass acquires fresh', () => {
+      const st = initGunshipCycle(mid);
+      strafeHeading(st, hctx());
+      expect(st.strafeAngle).not.toBeNull();
+      st.strafeAngle = 1.234;                       // pretend a stale line survived
+      stepGunshipCycle(st, 16, 0, ctx(), mid);      // APPROACH -> STRAFE
+      expect(st.phase).toBe(STRAFE);
+      expect(st.strafeAngle).toBeNull();
     });
   });
 });
