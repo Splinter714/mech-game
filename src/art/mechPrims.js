@@ -268,37 +268,6 @@ export function exposedInternals(sg, T, cx, cy, w, h) {
   glowDot(sg, cx - rw * 0.5, cy + rh * 0.45, Math.max(0.7, m * 0.05), SPARK);
 }
 
-// #402: geometry of the persistent per-mount READOUT housing, in mech-local DESIGN units. The
-// housing is a small round instrument bezel bolted to a weapon-carrying mount (arm / side torso)
-// AT ITS JOINT — the point the part sprite pivots around. `readoutMount` (below) bakes the STATIC
-// bezel + dark light socket into the part texture so it ALWAYS draws — armored or stripped — while
-// arena/ammoIndicators.js paints the LIVE status LIGHT on top in world space at the SAME anchor
-// (the joint). Because the socket sits ON the pivot, the light rides the arm/torso as it slews and
-// cants without swinging, and never floats free or vanishes when the segment's armor is torn off.
-// #402 follow-up dropped the old horizontal ammo/reload BAR — owner's call, "just a reload light
-// and no bar" — so this is now a light only. Sizes are shared by both call sites (mechArt bakes at
-// design scale; the overlay multiplies by the arena display scale) so the dot sits in the socket.
-export const READOUT = {
-  lightR: 1.1,   // status-light radius (design units) — the whole readout now
-  pad: 0.7,      // bezel margin around the light
-};
-// Inner light-slot radius (design units): the recessed socket the baked housing carves out and the
-// exact radius the LIVE reload dot fills flush to. SINGLE SOURCE OF TRUTH for the dot size — the
-// arena overlay multiplies this by the display scale rather than hand-tuning its own radius (#402).
-export const READOUT_SLOT_R = READOUT.lightR + 0.5;
-const READOUT_SLOT = 0x0b0f13;   // dark instrument recess (light socket), both themes
-
-// The static readout socket at (cx, cy) — a small round bezelled module carrying a recessed light
-// socket at its centre. No live state here; the overlay renders the lit dot into the recess.
-export function readoutMount(sg, T, cx, cy) {
-  const { lightR, pad } = READOUT;
-  const R = lightR + pad;
-  roundC(sg, cx, cy, (R + 0.6) * 2, (R + 0.6) * 2, T.outline, R + 0.6);   // bezel edge
-  roundC(sg, cx, cy, R * 2, R * 2, T.housing, R);                        // housing face
-  sg.fillStyle(READOUT_SLOT, 1);
-  sg.fillCircle(CENTER + cx, CENTER + cy, READOUT_SLOT_R);               // recessed light socket
-}
-
 // A destroyed location: a charred lump with faint embers.
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
