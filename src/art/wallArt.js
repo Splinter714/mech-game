@@ -40,7 +40,6 @@ function band(x0, y0, x1, y1, hw) {
 // vanishing, which is indistinguishable from the player having breached it.
 const GATE_LEAF = 0x4b4030;     // brass-toned door leaf: warm, machined, obviously a moving part
 const GATE_LEAF_LIT = 0x8a7645;
-const GATE_GLOW = 0xffc65a;     // warm threshold light spilling from an OPEN gate's mouth
 const GATE_FRAME = 0x6a5a3a;    // the heavy jamb posts a gate hangs from
 // #427 removed the open-gate TARGET PIP (was #412): an open gate is now solid to fire everywhere
 // along its span (wallEdges.js `blocksShot`), so there is nothing to single out to "shoot here" —
@@ -66,12 +65,10 @@ function openFracOf(e) {
 // have been worse than useless: a big glowing screen across a doorway that everything now drives
 // straight through reads as broken art, or as a hazard that has stopped working. So it is gone.
 //
-// In its place the open mouth gets a THRESHOLD GLOW — a soft warm spill of light on the ground
-// between the retracted leaves, dim and wide rather than bright and flat. It is an invitation, not
-// a barrier, and that is precisely the new meaning: this is a way in, for anyone who can reach it
-// before it shuts. The leaves themselves do the rest of the work — they slide apart into their jamb
-// posts, so the opening is unmistakably an opening you can see through, shoot through, and drive
-// through.
+// #427 (Jackson 2026-07-21): the THRESHOLD GLOW that briefly replaced it — a soft warm amber spill
+// on the ground between the retracted leaves — is ALSO gone ("the yellow is weird and
+// unnecessary"). An open gate now reads purely from its two parted leaves and their posts: the
+// opening is simply the gap between them, no coloured light needed to sell it.
 function drawGate(g, e, hw, timeMs) {
   const f = openFracOf(e);
   const frac = e.maxHp ? Math.max(0, Math.min(1, e.hp / e.maxHp)) : 1;
@@ -92,16 +89,6 @@ function drawGate(g, e, hw, timeMs) {
   const leafLen = len * (1 - 0.75 * f);
   const ax = hinge.px, ay = hinge.py;                     // the anchored post end
   const bx = hinge.px + ux * leafLen, by = hinge.py + uy * leafLen;   // the free (retracting) lip
-  // The threshold glow first, so the leaf sits on top of it where they overlap. A wide, faint spill
-  // along the opened gap — from the leaf's retracted lip toward the shared vertex it parted away
-  // from. At these alphas it can never be mistaken for a solid object in the gap. No pulse — a
-  // steady light is a doorway, a pulsing one is a hazard.
-  if (f > 0.02) {
-    g.fillStyle(GATE_GLOW, 0.10 * f);
-    g.fillPoints(band(bx, by, hinge.fx, hinge.fy, hw * 1.9), true);
-    g.fillStyle(GATE_GLOW, 0.16 * f);
-    g.fillPoints(band(bx, by, hinge.fx, hinge.fy, hw * 0.9), true);
-  }
   // The leaf.
   g.fillStyle(0x000000, 0.3);
   g.fillPoints(band(ax, ay + 3, bx, by + 3, hw), true);
@@ -115,13 +102,17 @@ function drawGate(g, e, hw, timeMs) {
   // shut gate is still identifiable as a gate from across the field.
   g.fillStyle(GATE_FRAME, 1);
   g.fillCircle(ax, ay, hw * 1.25);
-  // #427 (Jackson 2026-07-21): the MEETING-POINT POST. Each leaf caps its inner (retracting) lip
-  // with the same junction pillar a plain wall carries at every span join (WALL_POST, hw * 0.92), so
-  // when the two leaves are SHUT their caps coincide at the chord midpoint and read as one clean
-  // wall-post — and when OPEN each leaf carries its own half at its retracted lip. Replaces the old
-  // amber warning pip, which Jackson cut for looking bad.
+  // #427 (Jackson 2026-07-22): the MEETING-POINT POST, now SQUARED. Each leaf caps its inner
+  // (retracting) lip with a crisp rectangular pillar aligned to the wall line, so when the two leaves
+  // are SHUT their caps coincide at the chord midpoint and read as one clean, angular wall-junction
+  // post — and when OPEN each leaf carries its own square at its retracted lip. This replaces the
+  // earlier `fillCircle` cap: two coincident circular caps merged into a ROUNDED blob at the midpoint
+  // that Jackson said "feels like a weird style, make it not rounded." A square of the same footprint
+  // (side ≈ the old circle's diameter, hw * 1.84) drawn as a short band along the leaf axis reads as a
+  // squared post matching a plain wall's angular junction rather than a soft dot.
+  const cap = hw * 0.92;
   g.fillStyle(WALL_POST, 1);
-  g.fillCircle(bx, by, hw * 0.92);
+  g.fillPoints(band(bx - ux * cap, by - uy * cap, bx + ux * cap, by + uy * cap, cap), true);
 }
 
 // #310/#413 TURRET-SPAN MARK. A turret span used to draw a widened armoured PLINTH; #310 dropped

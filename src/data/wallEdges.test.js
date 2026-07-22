@@ -458,6 +458,70 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
       expect(l1.hp).toBe(before1);   // chipping one leaf never touches its partner's pool
     }
   });
+
+  // #427 (Jackson 2026-07-22): POINT-BLANK SHOT vs a leaf/wall. A muzzle pressed onto a leaf's plate
+  // (an OPEN leaf is open to movement, so the mech can sit its body right on the leaf line) fires a
+  // shot whose ORIGIN is already on/past the centreline aiming OUTWARD — the swept forward path never
+  // crosses the centreline, so without the `shotOrigin` guard the round sails clean through. With it,
+  // the shot registers a hit AT the muzzle on that leaf. This is the exact "shoot past a gate leaf
+  // while walking right up against it" bug.
+  const outwardNormal = (e) => {
+    const nx = -(e.y1 - e.y0), ny = (e.x1 - e.x0);
+    const len = Math.hypot(nx, ny) || 1;
+    return { nx: nx / len, ny: ny / len };
+  };
+  it('a point-blank shot ORIGINATING on an OPEN leaf and aimed OUTWARD still hits it (shotOrigin)', () => {
+    const set = gatedRun();
+    const leaf = leavesOf(set)[0];
+    setGateOpen(set, leaf, true);
+    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    const { nx, ny } = outwardNormal(leaf);
+    // Muzzle 3px past the centreline (inside the plate), shot heading a further 60px OUTWARD — a
+    // segment wholly on one side of the centreline, so it never crosses it going forward.
+    const ox = m.x + nx * 3, oy = m.y + ny * 3;
+    const ex = m.x + nx * 60, ey = m.y + ny * 60;
+    // Without the guard the shot passes clean through (the reported bug).
+    expect(wallEdgeCrossing(set, ox, oy, ex, ey, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(null);
+    // With it, the shot detonates on the leaf at the muzzle (t = 0).
+    const hit = wallEdgeCrossing(set, ox, oy, ex, ey, WALL_THICKNESS_PX, null, 0, blocksShot, true);
+    expect(hit?.edge).toBe(leaf);
+    expect(hit.dist).toBe(0);
+  });
+
+  it('point-blank origin-hit works the SAME on an ordinary wall span, not just gate leaves', () => {
+    const set = gatedRun();
+    const wall = liveWallEdges(set).find((e) => e.role !== SPAN_ROLE_GATE);
+    const m = { x: (wall.x0 + wall.x1) / 2, y: (wall.y0 + wall.y1) / 2 };
+    const { nx, ny } = outwardNormal(wall);
+    const ox = m.x + nx * 3, oy = m.y + ny * 3;
+    const ex = m.x + nx * 60, ey = m.y + ny * 60;
+    expect(wallEdgeCrossing(set, ox, oy, ex, ey, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(null);
+    expect(wallEdgeCrossing(set, ox, oy, ex, ey, WALL_THICKNESS_PX, null, 0, blocksShot, true)?.edge).toBe(wall);
+  });
+
+  it('the origin-hit is POINT-BLANK only — a shot fired from clear of the wall is NOT falsely eaten', () => {
+    const set = gatedRun();
+    const leaf = leavesOf(set)[0];
+    setGateOpen(set, leaf, true);
+    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    const { nx, ny } = outwardNormal(leaf);
+    // Muzzle 40px out from the centreline (well beyond band + POINT_BLANK_SHOT_EPSILON) firing
+    // further outward — e.g. a mech that has driven THROUGH the open mouth and shoots away. No hit.
+    const ox = m.x + nx * 40, oy = m.y + ny * 40;
+    const ex = m.x + nx * 120, ey = m.y + ny * 120;
+    expect(wallEdgeCrossing(set, ox, oy, ex, ey, WALL_THICKNESS_PX, null, 0, blocksShot, true)).toBe(null);
+  });
+
+  it('the origin-hit respects ignoreKey — a wall turret never self-detonates on its own span', () => {
+    const set = gatedRun();
+    const leaf = leavesOf(set)[0];
+    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    const { nx, ny } = outwardNormal(leaf);
+    const ox = m.x + nx * 3, oy = m.y + ny * 3;
+    const ex = m.x + nx * 60, ey = m.y + ny * 60;
+    // Same point-blank origin, but this span is the shooter's own — ignored, so no hit on it.
+    expect(wallEdgeCrossing(set, ox, oy, ex, ey, WALL_THICKNESS_PX, leaf.key, 0, blocksShot, true)).toBe(null);
+  });
 });
 
 describe('#441 gates die ONLY from gate hits', () => {

@@ -932,7 +932,10 @@ export const WorldMixin = {
     // is always solid enough to stop a round — `blocksShot` includes it, and the round detonates on
     // the gate and routes to its one HP pool rather than sailing through the mouth. Units still DRIVE
     // through the centre (movement uses `blocksSpan`, under which an open gate is a doorway).
-    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, null, 0, blocksShot);
+    // #427 `shotOrigin` (true): a round spawned point-blank on/inside a leaf's plate — the muzzle
+    // poked to an OPEN gate leaf the mech is pressed against — registers its hit at the muzzle
+    // rather than sailing through, since it never crosses the centreline going forward.
+    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, null, 0, blocksShot, true);
   },
 
   // #320, the SECOND half of "I'm able to shoot OVER walls if I stand real close." Inflating
@@ -1114,7 +1117,11 @@ export const WorldMixin = {
   // either the shooter or the thing being shot at. See wallEdges.js `wallEdgeCrossing`'s
   // `ignoreKey` for why it exists and why it is scoped to one named span.
   _wallEdgeDistance(x0, y0, x1, y1, ignoreSpanKey = null) {
-    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, ignoreSpanKey);
+    // #427: FIRE solidity (`blocksShot`) so an OPEN gate stops a beam up front exactly as the sampled
+    // march already treats it, and `shotOrigin` (true) so a beam whose muzzle is pressed against a
+    // leaf clamps ON the leaf instead of lancing through the plate at point-blank. `ignoreSpanKey`
+    // still exempts a wall turret's own span, so a centred gun's outgoing beam isn't self-clamped.
+    const hit = wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, ignoreSpanKey, 0, blocksShot, true);
     return hit ? hit.dist : Infinity;
   },
 

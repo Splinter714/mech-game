@@ -47,6 +47,18 @@ export const WALL_STOMP_FACTOR = 0.25;
 // enough to step over a 14px band from tunnelling.
 export const WALL_THICKNESS_PX = 14;
 
+// #427 (Jackson 2026-07-22): POINT-BLANK SHOT SLACK. A shot whose muzzle already sits on/inside a
+// solid-to-fire span's plate never CROSSES that span's centreline along its forward path — the swept
+// crossing test sees nothing and the round sails clean through. This is the "shoot past a gate leaf
+// while pressed against it" bug: an OPEN gate leaf is solid to fire but open to MOVEMENT, so the mech
+// can drive its body right onto the leaf line and poke its muzzle to (or a touch past) the plate.
+// `wallEdgeCrossing`'s `shotOrigin` clause registers the hit at the muzzle when it lies within
+// `WALL_THICKNESS_PX / 2 + this` of a solid-to-fire span. Sized so a muzzle nosed a few px past a
+// leaf still counts (7 + 8 = 15px) while staying WELL inside the standoff a body keeps when hugging a
+// wall side-on (~20px+ for the player's 20px collide radius), so a shot fired ALONG a wall the mech
+// is hugging is never falsely eaten. Owner: tunable.
+export const POINT_BLANK_SHOT_EPSILON = 8;
+
 // ── #320: collision inflation by BODY RADIUS ────────────────────────────────────────────
 // Playtest: "sometimes tanks can visibly poke through a bit" — and its twin symptom, "I'm able to
 // shoot OVER walls if I stand real close." Both had ONE cause: every query below treated a unit as
@@ -491,12 +503,30 @@ export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey =
 // point-swept behaviour for rounds and rays. The caller (locomotion.js) rejects the whole step on
 // a contact, so a `t` that names the centreline rather than the exact moment of first touch never
 // has to be resolved.
-export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0, solid = blocksSpan) {
+export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0, solid = blocksSpan, shotOrigin = false) {
   if (!set || set.edges.size === 0) return null;
   const cand = candidatesAlong(set, x0, y0, x1, y1, radius, solid);
   if (cand.size === 0) return null;
   const len = Math.hypot(x1 - x0, y1 - y0);
   const half = thickness / 2 + Math.max(0, radius);
+  // #427 POINT-BLANK ORIGIN HIT (SHOT queries only). A muzzle already on/inside a solid-to-fire
+  // span's plate never crosses its centreline going forward, so the swept test below misses it and
+  // the shot passes through — the "shoot past a gate leaf at point-blank" bug (see
+  // POINT_BLANK_SHOT_EPSILON). When `shotOrigin` is set, register the hit at the origin itself if it
+  // lies within the band (+slack) of a solid candidate. Only the SHOT callers pass it — movement
+  // keeps its deliberate "a path that merely STARTS inside the band is not a contact" rule (below),
+  // so a unit parked in a band is never frozen. Respects `ignoreKey`, so a wall turret seated on its
+  // own span (#310) never self-detonates its outgoing fire on that span. The FULL centreline is used
+  // (not the shortened collision segment), matching the anti-tunnelling clause's geometry.
+  if (shotOrigin) {
+    let ob = null, obD = half + POINT_BLANK_SHOT_EPSILON;
+    for (const e of cand) {
+      if (ignoreKey && e.key === ignoreKey) continue;
+      const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x0, y0);
+      if (d <= obD) { ob = e; obD = d; }
+    }
+    if (ob) return { edge: ob, t: 0, x: x0, y: y0, dist: 0 };
+  }
   let best = null, bestT = Infinity;
   for (const e of cand) {
     if (ignoreKey && e.key === ignoreKey) continue;
