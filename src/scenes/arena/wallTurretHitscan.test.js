@@ -1,6 +1,8 @@
-// #426 — wall turrets are hittable from their EXPOSED side; their own wall may still block a
-// player's shot fired from BEHIND them. This is the HITSCAN half (`_fireHitscan` +
-// `_hitscanReach`'s `exposedTargetSpanKey` gate); the travelling-round half is covered in
+// #426 — wall turrets are hittable from ANY side, like a flying unit (commit 9fb928e): the
+// turret's own wall span never blocks a shot aimed at it, including one fired from BEHIND
+// (inside the compound) — the earlier "exposed side only" gate was deliberately removed. This is
+// the HITSCAN half (`_fireHitscan` + `_hitscanReach`'s `exposedTargetSpanKey`, which is now just
+// the target's span key, unconditionally); the travelling-round half is covered in
 // projectiles.test.js. Runs the REAL WorldMixin geometry against a real wallEdges set — same
 // "real geometry, minimal scene" convention wallTurrets.test.js §1b uses for the gun's own LOS.
 import { describe, it, expect, vi } from 'vitest';
@@ -39,7 +41,7 @@ function makeScene() {
   return { scene, gun, edge, inner: hexToPixel(A.q, A.r), outer: hexToPixel(B.q, B.r) };
 }
 
-describe('#426 hitscan: a wall turret is hittable from its exposed side, blocked from behind', () => {
+describe('#426 hitscan: a wall turret is hittable from any side, like a flying unit', () => {
   it('a beam fired from the EXPOSED (outward) side hits the gun through its own wall', () => {
     const { scene, gun, outer } = makeScene();
     const from = { x: gun.x + (outer.x - gun.x) * 4, y: gun.y + (outer.y - gun.y) * 4 };
@@ -49,18 +51,20 @@ describe('#426 hitscan: a wall turret is hittable from its exposed side, blocked
     expect(scene._damageBuildingAt).not.toHaveBeenCalled();
   });
 
-  it('a beam fired from BEHIND (the inward/base-interior side) is stopped by the wall instead', () => {
+  it('a beam fired from BEHIND (the inward/base-interior side) also hits the gun through its own wall', () => {
+    // Deliberately changed by commit 9fb928e: the turret's own wall no longer gates the exemption
+    // by which side the shot came from — it is hittable from any side, exactly like a flying unit.
     const { scene, gun, inner } = makeScene();
     const from = { x: gun.x + (inner.x - gun.x) * 4, y: gun.y + (inner.y - gun.y) * 4 };
     const angle = Math.atan2(gun.y - from.y, gun.x - from.x);
     scene._fireHitscan(HITSCAN_W, from.x, from.y, angle);
-    expect(scene._damageEnemyAt).not.toHaveBeenCalled();
-    expect(scene._damageBuildingAt).toHaveBeenCalled();
+    expect(scene._damageEnemyAt).toHaveBeenCalled();
+    expect(scene._damageBuildingAt).not.toHaveBeenCalled();
   });
 
-  it('an explicit `ignoreSpanKey` (the turret\'s OWN beam, firing off its own centreline) is untouched by the side gate', () => {
+  it('an explicit `ignoreSpanKey` (the turret\'s OWN beam, firing off its own centreline) is untouched by the any-side rule', () => {
     // #310's existing mechanism — a wall turret firing its OWN weapon off its own span — is a
-    // different rule from #426's target-side gate and must stay unconditional either way.
+    // different rule from the target-span exemption above and must stay unconditional either way.
     const { scene, gun, inner } = makeScene();
     const from = { x: gun.x + (inner.x - gun.x) * 4, y: gun.y + (inner.y - gun.y) * 4 };
     const angle = Math.atan2(gun.y - from.y, gun.x - from.x);

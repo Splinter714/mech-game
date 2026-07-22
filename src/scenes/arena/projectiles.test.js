@@ -304,12 +304,14 @@ describe('#377 follow-up: a Swarm Rack salvo separates in flight and converges l
   });
 });
 
-// #426: wall turrets are hittable from the EXPOSED side; their own wall may still block a shot
-// fired from BEHIND them (inside the compound). This exercises the real WorldMixin geometry
-// (`_wallEdgeHit`/`_isWallForRound`/`_spanExposedTo`) against real wallEdges.js state, composed
+// #426: wall turrets are hittable from ANY side, like a flying unit (commit 9fb928e) — their
+// own wall never blocks a shot aimed at them, including one fired from BEHIND (inside the
+// compound); the earlier "exposed side only" gate was deliberately removed (`turretBlocked` is
+// now hardcoded `false` in projectiles.js). This exercises the real WorldMixin geometry
+// (`_wallEdgeHit`/`_isWallForRound`/`hittingItsGun`) against real wallEdges.js state, composed
 // with ProjectilesMixin — the same "real geometry, minimal scene" approach wallTurrets.test.js
 // uses for the turret's own LOS.
-describe('#426 a wall turret is hittable from its exposed side, blocked from behind', () => {
+describe('#426 a wall turret is hittable from any side, like a flying unit', () => {
   function makeWallScene(gunOverrides = {}) {
     const A = { q: 0, r: 0 };            // base-interior hex
     const B = neighbors(A.q, A.r)[0];    // outer hex — the exposed side
@@ -371,14 +373,16 @@ describe('#426 a wall turret is hittable from its exposed side, blocked from beh
     expect(scene._damageBuildingAt).not.toHaveBeenCalled();
   });
 
-  it('a round fired from BEHIND (the inward/base-interior side) is stopped by the wall instead', () => {
+  it('a round fired from BEHIND (the inward/base-interior side) also hits the gun through its own wall', () => {
+    // Deliberately changed by commit 9fb928e: `turretBlocked` is now hardcoded `false`, and the
+    // `hittingItsGun` crossing-exemption carries no side restriction — a round aimed at the gun's
+    // own span connects regardless of which side it was fired from.
     const { scene, gun, damaged, inner } = makeWallScene();
     const from = { x: gun.x + (inner.x - gun.x) * 4, y: gun.y + (inner.y - gun.y) * 4 };
     fireAt(scene, gun, from.x, from.y);
-    expect(damaged.some((d) => d.target === 'gun')).toBe(false);
-    // A direct wall-span crossing routes through `_damageWallEdge` (see `wallHit` above), not the
-    // generic `_damageBuildingAt` — the round detonates on the SPAN itself.
-    expect(scene._damageWallEdge).toHaveBeenCalled();
+    expect(damaged.some((d) => d.target === 'gun')).toBe(true);
+    expect(scene._damageBuildingAt).not.toHaveBeenCalled();
+    expect(scene._damageWallEdge).not.toHaveBeenCalled();
   });
 
   it('an ordinary enemy behind the wall (no spanKey) gets no exemption — the wall still blocks the shot', () => {
