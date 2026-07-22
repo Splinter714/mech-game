@@ -201,10 +201,16 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(ENEMY_KINDS.carrier.deployCap).toBeUndefined();
   });
 
-  it('#152: carrier deploy batch minimum is at least 5 (round-2 playtest floor)', () => {
+  it('#416: carrier deploy batch is a small burst (cadence slowed to cut the drone-flood)', () => {
+    // #152's original floor was 5-8; #416 shrinks the burst (and slows the cadence, see
+    // deployEveryMs) so the brood reads as a steady trickle rather than a self-reloading swarm,
+    // on top of carrierDeployTick's new live-drone cap. Still a real multi-unit batch, not a drip.
     const q = ENEMY_KINDS.carrier;
-    expect(q.deployBatchMin).toBeGreaterThanOrEqual(5);
+    expect(q.deployBatchMin).toBeGreaterThanOrEqual(2);
     expect(q.deployBatchMax).toBeGreaterThanOrEqual(q.deployBatchMin);
+    // Batch max stays modest so a single launch never overshoots carrierDeployTick's live cap
+    // (CARRIER_MAX_LIVE_DRONES = 12, enemyBehaviors.js).
+    expect(q.deployBatchMax).toBeLessThanOrEqual(12);
   });
 
   it('#328: the carrier is drawn on the TANK\'s art, visibly bigger than a tank', () => {

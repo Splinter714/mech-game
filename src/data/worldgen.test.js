@@ -908,8 +908,9 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // Early bases are no longer 100% tanks — helicopter is an equal-weight early presence.
     expect(BASE_EARLY_KIND_POOL).toContain('tank');
     expect(BASE_EARLY_KIND_POOL).toContain('helicopter');
-    // Kept SOFT: only the two vehicle kinds early — no carrier, no mechs (those stay late-only).
-    expect(BASE_EARLY_KIND_POOL).not.toContain('carrier');
+    // #416: carrier now has a thin early-pool presence too (Broodhaulers should be able to show
+    // up earlier in the run) — mechs alone stay late-only.
+    expect(BASE_EARLY_KIND_POOL).toContain('carrier');
     for (const mech of ['raider', 'skirmisher', 'sniper', 'artillery']) {
       expect(BASE_EARLY_KIND_POOL).not.toContain(mech);
     }

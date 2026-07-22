@@ -439,6 +439,9 @@ function deployNearby(scene, e, kindId) {
   let x = e.x + Math.cos(a) * r, y = e.y + Math.sin(a) * r;
   for (let t = 0; t < 5 && scene._blocked(x, y); t++) { x = (x + e.x) / 2; y = (y + e.y) / 2; }
   const spawned = scene._spawnKind(x, y, kindId);
+  // #416: tag every deployed body with the carrier that birthed it, so `carrierDeployTick` can
+  // count THIS carrier's own live brood (not the whole map's drone population) against the cap.
+  if (spawned) spawned.carrierId = e;
   if (spawned?.view) {
     const view = spawned.view;
     view.setScale(0.05, 0.05).setAlpha(0.15);
@@ -511,6 +514,20 @@ function carrierBehavior(scene, e, ctx) {
 // left far behind does eventually button up. Owner: tunable.
 export const CARRIER_DEPLOY_GRACE_MS = 6000;
 
+// #416 (playtest, prior "move the carrier closer" attempt didn't fix it — Jackson: "still
+// floods/camps"): the #328 follow-up made the carrier an INFINITE spawner with no lifetime cap,
+// which is exactly what turned "a periodic threat" into "an unbounded pile-up" once the player
+// couldn't reach it fast enough — every 4s batch just kept stacking on top of whatever the
+// player hadn't cleared yet. This is a LIVE cap, not the old lifetime cap: it bounds how many of
+// THIS carrier's own drones (tagged via `carrierId` in `deployNearby`) may be alive/on-map at
+// once, so the carrier is throttled by "is there room in the swarm" rather than by a kill-count
+// that eventually silences it for good. Killing drones frees up room for more — the carrier
+// stays a real, permanent threat — but it can no longer flood faster than the player can thin it.
+// 12 is comfortably above one deploy batch (5-8, see enemyKinds.js `deployBatchMax`) so a single
+// launch never gets awkwardly truncated mid-batch by the cap, while still being a small, readable
+// number rather than the dozens a few uncapped cycles used to produce.
+export const CARRIER_MAX_LIVE_DRONES = 12;
+
 // #130/#147 deploy mechanic — lazily initializes the per-enemy timer on first tick so the
 // generic _spawnKind constructor never needs kind-specific bootstrapping.
 //
@@ -518,6 +535,13 @@ export const CARRIER_DEPLOY_GRACE_MS = 6000;
 // (~12-16s), which is why a Broodhauler stopped producing "long enough". Jackson: "yes make
 // broodhauler an infinite spawner, yes" — a carrier now deploys for as long as it is alive, and
 // killing it is the only lever, exactly as docks work post-#326.
+//
+// #416: the deploy CADENCE (`deployEveryMs`/`deployBatchMin`/`deployBatchMax`) is also slowed —
+// see enemyKinds.js `carrier` def — and a LIVE cap (`CARRIER_MAX_LIVE_DRONES` above) now gates
+// the batch itself: if the carrier's brood is already at or past the cap when its timer fires,
+// the batch is skipped outright (the timer still resets to the full cadence, so a carrier that's
+// been throttled doesn't "catch up" with a double-size batch the instant room opens); otherwise
+// the batch is trimmed to whatever headroom remains under the cap.
 export function carrierDeployTick(scene, e, def, delta) {
   if (e.deployCd == null) e.deployCd = rand(def.deployEveryMs * 0.4, def.deployEveryMs);
   e.deployCd -= delta;
@@ -526,15 +550,20 @@ export function carrierDeployTick(scene, e, def, delta) {
   e.doorMs = Math.max(0, (e.doorMs ?? 0) - delta);
   e.turretFrame = e.doorMs > 0 ? 1 : 0;
   if (e.deployCd <= 0) {
+    e.deployCd = def.deployEveryMs;
+    // #416: count THIS carrier's own live brood (enemies still on `scene.enemies` — dead ones
+    // are pruned the same tick they die, #87 `_removeEnemy`) against the cap before spawning.
+    const liveDrones = (scene.enemies ?? []).filter((u) => u.carrierId === e).length;
+    const room = CARRIER_MAX_LIVE_DRONES - liveDrones;
+    if (room <= 0) return;   // #416: bay stays shut this cycle — the brood is already at capacity.
     // #147: deploy a whole SWARM-sized batch at once (not one unit per tick), sized between
-    // deployBatchMin/Max.
+    // deployBatchMin/Max, trimmed to whatever room is left under the live cap.
     const batchMin = def.deployBatchMin ?? 1, batchMax = def.deployBatchMax ?? batchMin;
-    const batchSize = batchMin + Math.floor(Math.random() * (batchMax - batchMin + 1));
+    const batchSize = Math.min(room, batchMin + Math.floor(Math.random() * (batchMax - batchMin + 1)));
     for (let i = 0; i < batchSize; i++) {
       const kindId = CARRIER_DEPLOY_KINDS[Math.floor(Math.random() * CARRIER_DEPLOY_KINDS.length)];
       deployNearby(scene, e, kindId);
     }
-    e.deployCd = def.deployEveryMs;
     // #328: the doors fly open for the launch, then shut again (DOOR_OPEN_MS above).
     e.doorMs = DOOR_OPEN_MS;
     e.turretFrame = 1;

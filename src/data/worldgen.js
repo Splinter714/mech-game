@@ -101,9 +101,19 @@ export const DOCKS_PER_BASE_MAX = 8;
 // the "too many tanks" complaint (early bases are where the run is mostly spent, and they read as
 // wall-to-wall armour). It's now a 50/50 tank/helicopter mix: tanks stay the basic ground opener,
 // but helicopters are an immediate, equal presence from base 0 instead of not showing up until the
-// late pool bleeds in. Kept to just these two soft vehicle kinds (no carrier, no mechs) so the
-// early tier stays the SOFT opener half of the escalation — mechs/carrier remain late-only per
-// `BASE_LATE_KIND_POOL` below, preserving the early→late difficulty ramp `baseLateFraction` drives.
+// late pool bleeds in. Kept to just these two soft vehicle kinds plus the thin carrier/swarm
+// exceptions below (no mechs) so the early tier stays the SOFT opener half of the escalation —
+// mechs remain late-only per `BASE_LATE_KIND_POOL` below, preserving the early→late difficulty
+// ramp `baseLateFraction` drives.
+//
+// #416 (playtest: "Broodhaulers should spawn at earlier bases — show up earlier in the difficulty
+// curve"): `'carrier'` joins the early pool too, at the same deliberately-thin 1-entry weight as
+// the swarm kinds below (~1/19 of early draws). Before this, a carrier could only be drawn from
+// `BASE_LATE_KIND_POOL`, gated behind `baseLateFraction` — at BASE_COUNT 5 that floor made a
+// carrier structurally impossible at base 0 and rare before the run's second half. It's still a
+// single non-swarm body (`dockCountFor` leaves it at 1) and still much rarer than tank/helicopter,
+// so this doesn't turn early bases into carrier bases — it just makes "meet a Broodhauler early"
+// a real, if uncommon, roll instead of a late-run guarantee.
 //
 // #314 (Jackson 2026-07-19: "add a burst of drones to the potential spawns for a dock; maybe like
 // 10 of them? same for infantry, maybe like 10 of them?"): `'drone'` is BACK in the pool — but as
@@ -129,7 +139,7 @@ export const DOCKS_PER_BASE_MAX = 8;
 export const BASE_EARLY_KIND_POOL = [
   'tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'tank', 'tank',
   'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter', 'helicopter',
-  'drone', 'infantry',
+  'drone', 'infantry', 'carrier',
 ];
 // #269 playtest follow-up ("where did all the enemy mechs go?" / "fold mechs into the dock
 // system"): mechs (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery, the full

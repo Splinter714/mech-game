@@ -557,11 +557,17 @@ export const ENEMY_KINDS = {
     // #328 follow-up: NO `deployCap`. The old lifetime cap of 24 exhausted a carrier after 3-4
     // batches (~12-16s), then it never deployed again. Jackson: "yes make broodhauler an infinite
     // spawner, yes" — it now deploys for as long as it lives, and killing it is the only lever,
-    // exactly as docks work post-#326. Cadence and batch size are deliberately untouched so the
-    // cap removal can be felt in isolation.
-    deployEveryMs: 4000,
-    deployBatchMin: 5,
-    deployBatchMax: 8,
+    // exactly as docks work post-#326.
+    // #416 (playtest: "still floods/camps" even after the carrier was moved closer): the cadence
+    // is now slowed and the batch shrunk on top of `carrierDeployTick`'s new live-drone cap
+    // (`CARRIER_MAX_LIVE_DRONES`, enemyBehaviors.js) — the cap alone bounds the PILE-UP, but the
+    // old 4s/5-8 cadence still refilled that cap almost the instant the player cracked it open.
+    // Slower production (6s, was 4s) plus a smaller burst (3-5, was 5-8) makes the brood read as
+    // a steady trickle the player can keep pace with, rather than a swarm that reloads itself
+    // in one breath. Owner: tunable playtest dial, same as the cap.
+    deployEveryMs: 6000,
+    deployBatchMin: 3,
+    deployBatchMax: 5,
     art: 'carrier',
     behavior: 'carrier',
     // #269: 'large' — not crushable, and it towers over the tree canopy.
