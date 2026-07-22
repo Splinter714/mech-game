@@ -21,10 +21,11 @@ vi.mock('phaser', () => ({
 }));
 
 import { EnemiesMixin } from './enemies.js';
-import { CARRIER_DEPLOY_GRACE_MS } from './enemyBehaviors.js';
+import { CARRIER_DEPLOY_GRACE_MS, carrierDeployTick } from './enemyBehaviors.js';
 import { HpBody } from '../../data/HpBody.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
-import { AWARE, detectionRangeFor } from '../../data/awareness.js';
+import { AWARE, UNAWARE, detectionRangeFor } from '../../data/awareness.js';
+import { baseClearState } from '../../data/bases.js';
 
 // Just enough scene for a carrier's full `_updateVehicle` tick to run end to end. `_spawnKind` is
 // the seam the deploy mechanic actually goes through, so counting its calls counts drones.
@@ -85,6 +86,67 @@ describe('#328 follow-up: carrier deploy has no lifetime cap', () => {
     const early = spawned.length;
     run(scene, e, 60000);
     expect(spawned.length).toBeGreaterThan(early);
+  });
+});
+
+describe('#428: carrier-deployed drones count toward base-clear', () => {
+  // A minimal fake `_spawnKind` that returns a real (bare) enemy record, so `deployNearby`
+  // (private to enemyBehaviors.js) has something to tag — the earlier suites above deliberately
+  // return null since they only care about spawn COUNT.
+  function makeTaggingScene() {
+    const spawned = [];
+    const scene = {
+      time: { now: 0 }, enemies: [],
+      _blocked: () => false,
+      tweens: { add: () => {} },
+      _spawnKind: (x, y, kindId) => {
+        const rec = { x, y, kindId, baseId: undefined, awareness: UNAWARE, view: null };
+        spawned.push(rec);
+        scene.enemies.push(rec);
+        return rec;
+      },
+    };
+    return { scene, spawned };
+  }
+
+  it('tags a deployed drone with the carrier\'s baseId and spawns it AWARE', () => {
+    const { scene, spawned } = makeTaggingScene();
+    const e = makeCarrier();
+    e.baseId = 'base-7';
+    scene.enemies.push(e);
+    carrierDeployTick(scene, e, ENEMY_KINDS.carrier, ENEMY_KINDS.carrier.deployEveryMs);
+    expect(spawned.length).toBeGreaterThan(0);
+    for (const drone of spawned) {
+      expect(drone.baseId).toBe('base-7');
+      expect(drone.awareness).toBe(AWARE);
+      expect(drone.reactDelayMs).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('leaves a spawned drone untagged (undefined baseId) if the carrier itself has none', () => {
+    const { scene, spawned } = makeTaggingScene();
+    const e = makeCarrier();   // no e.baseId set
+    scene.enemies.push(e);
+    carrierDeployTick(scene, e, ENEMY_KINDS.carrier, ENEMY_KINDS.carrier.deployEveryMs);
+    expect(spawned.length).toBeGreaterThan(0);
+    expect(spawned.every((d) => d.baseId === undefined)).toBe(true);
+  });
+
+  it('makes baseClearState count a live carrier-deployed drone as a required kill', () => {
+    const { scene, spawned } = makeTaggingScene();
+    const e = makeCarrier();
+    e.baseId = 'base-9';
+    scene.enemies.push(e);
+    carrierDeployTick(scene, e, ENEMY_KINDS.carrier, ENEMY_KINDS.carrier.deployEveryMs);
+    expect(spawned.length).toBeGreaterThan(0);
+    const base = { id: 'base-9', docks: [] };
+    const state = baseClearState(base, {
+      objectiveDestroyed: true,
+      isDockStanding: () => false,
+      enemies: spawned,
+    });
+    expect(state.enemiesLeft).toBe(spawned.length);
+    expect(state.cleared).toBe(false);
   });
 });
 

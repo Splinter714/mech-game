@@ -17,6 +17,7 @@ import Phaser from 'phaser';
 import { enemyTargetOf } from './players.js';
 import { rotateToward, hullTravelAngle } from './shared.js';
 import { kindWeaponSlot } from '../../data/kindWeapons.js';
+import { AWARE } from '../../data/awareness.js';
 import {
   APPROACH, STRAFE, FACE_PLAYER, FACE_BROADSIDE,
   initGunshipCycle, stepGunshipCycle, phasePlan, strafeRadial,
@@ -425,6 +426,12 @@ const CARRIER_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone']
 // the carrier spends most of its 4s deploy cycle visibly buttoned up. Owner: tunable.
 const DOOR_OPEN_MS = 900;
 
+// #428: same reaction-stagger window `_wakeBase` (bases.js) gives a newly-woken unit — a
+// carrier-deployed drone is spawned already AWARE (see below), so without this it would snap to
+// full aggression a frame after birth instead of reading as "just noticed the fight."
+const DEPLOY_REACT_STAGGER_MIN_MS = 80;
+const DEPLOY_REACT_STAGGER_MAX_MS = 380;
+
 // Drop a fresh kind spawn essentially AT the nest's own body position — #152 (round-2 playtest:
 // "spawn from within the body, not beside it" — the old 50-80px offset read as popping in beside
 // the unit rather than emerging from it). A tiny few-px jitter keeps simultaneous spawns
@@ -442,6 +449,19 @@ function deployNearby(scene, e, kindId) {
   // #416: tag every deployed body with the carrier that birthed it, so `carrierDeployTick` can
   // count THIS carrier's own live brood (not the whole map's drone population) against the cap.
   if (spawned) spawned.carrierId = e;
+  // #428: a spawned drone inherits the carrier's `baseId` so `baseClearState` (data/bases.js)
+  // counts it as a required kill — previously drones spawned with no `baseId` at all and the
+  // base-clear objective silently ignored them. Undefined carrier baseId (shouldn't happen, but
+  // don't crash on it) just leaves the drone untagged, same as before this change. It also
+  // spawns AWARE (mirrors `_wakeBase`, bases.js) so it engages immediately rather than idling
+  // through its usual UNAWARE detection window, with the same reaction stagger a woken unit
+  // gets so it doesn't snap to full aggression the instant it's born.
+  if (spawned) {
+    spawned.baseId = e.baseId;
+    spawned.awareness = AWARE;
+    spawned.reactDelayMs = DEPLOY_REACT_STAGGER_MIN_MS
+      + Math.random() * (DEPLOY_REACT_STAGGER_MAX_MS - DEPLOY_REACT_STAGGER_MIN_MS);
+  }
   if (spawned?.view) {
     const view = spawned.view;
     view.setScale(0.05, 0.05).setAlpha(0.15);
