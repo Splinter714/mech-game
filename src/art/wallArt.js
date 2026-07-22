@@ -38,9 +38,14 @@ function band(x0, y0, x1, y1, hw) {
 // #309 GATE PALETTE. A gate must read as a different KIND of thing from the blank spans either
 // side of it even at a glance and even while shut — otherwise the moment it opens is just a span
 // vanishing, which is indistinguishable from the player having breached it.
-const GATE_LEAF = 0x4b4030;     // brass-toned door leaf: warm, machined, obviously a moving part
-const GATE_LEAF_LIT = 0x8a7645;
-const GATE_FRAME = 0x6a5a3a;    // the heavy jamb posts a gate hangs from
+// #427 (Jackson 2026-07-22): all warm brass/gold recolored to NEUTRAL cool steel-greys matching the
+// wall palette (WALL_DARK/WALL_BODY/WALL_LIT/WALL_POST) — no yellow/amber anywhere on a gate. A gate
+// still reads as a distinct machined moving part by its SHAPE (parting leaves, heavy jamb posts,
+// squared meeting post), not by colour: its leaf sits a touch lighter/bluer than a plain wall's face
+// so a shut gate is still legible against the blank spans beside it, just in steel not brass.
+const GATE_LEAF = 0x454b55;     // cool steel door leaf: a touch lighter than a plain wall's plate face
+const GATE_LEAF_LIT = 0x5b626d; // cool grey top-lit highlight (a shade brighter than WALL_LIT)
+const GATE_FRAME = 0x353a42;    // the heavy jamb posts a gate hangs from — neutral grey, heavier/darker than a plain post
 // #427 removed the open-gate TARGET PIP (was #412): an open gate is now solid to fire everywhere
 // along its span (wallEdges.js `blocksShot`), so there is nothing to single out to "shoot here" —
 // the player just aims at the door. The two parted leaves and their stubs ARE the target now.
@@ -104,8 +109,10 @@ function drawGate(g, e, hw, timeMs) {
   g.fillCircle(ax, ay, hw * 1.25);
   // #427 (Jackson 2026-07-22): the MEETING-POINT POST, now SQUARED. Each leaf caps its inner
   // (retracting) lip with a crisp rectangular pillar aligned to the wall line, so when the two leaves
-  // are SHUT their caps coincide at the chord midpoint and read as one clean, angular wall-junction
-  // post — and when OPEN each leaf carries its own square at its retracted lip. This replaces the
+  // are SHUT their caps coincide at the shared hex corner where the two leaves meet and read as one
+  // clean, angular wall-junction post — and when OPEN each leaf carries its own square at its
+  // retracted lip. (With the chord re-seat gone the meeting point is that natural hex corner rather
+  // than a chord midpoint, but the cap logic is unchanged — it just reads each leaf's free lip.) This replaces the
   // earlier `fillCircle` cap: two coincident circular caps merged into a ROUNDED blob at the midpoint
   // that Jackson said "feels like a weird style, make it not rounded." A square of the same footprint
   // (side ≈ the old circle's diameter, hw * 1.84) drawn as a short band along the leaf axis reads as a

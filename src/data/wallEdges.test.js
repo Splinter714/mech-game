@@ -409,10 +409,11 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
     expect(dirDot(post(l0), post(l1), meet(l0))).toBeGreaterThan(-0.99);
   });
 
-  // #427 (Jackson 2026-07-21): a CONCAVE gate — its two leaves share ONE OUTER hex, wedged between
-  // two ADJACENT base hexes — IS re-seated onto a STRAIGHT CHORD: each hinges at its outer post and
-  // the pair MEET at the MIDPOINT of the two posts, so a shut gate is one clean straight span bulging
-  // a touch into the non-base hex rather than tracing the concave bend.
+  // #427 (Jackson 2026-07-22, NO-CHORD): a CONCAVE gate — its two leaves share ONE OUTER hex, wedged
+  // between two ADJACENT base hexes — now keeps its NATURAL hex-edge geometry too, exactly like a
+  // convex gate. The earlier straight-chord re-seat (meeting ends slid onto the midpoint of the two
+  // posts, cutting a flat line across the notch) was REMOVED after playtest — cutting across looked
+  // too weird; a concave gate stays on the curve of the hex, bowing INWARD with the notch.
   const OUT = { q: 2, r: -1 };
   const concaveGate = () => {
     const bn = neighbors(OUT.q, OUT.r);           // two CONSECUTIVE neighbours of OUT are adjacent
@@ -421,20 +422,23 @@ describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent
       { a: bn[1], b: OUT, baseId: 'b', role: SPAN_ROLE_GATE },
     ]);
   };
-  it('re-seats a CONCAVE gate onto a straight chord meeting at the midpoint of the two posts', () => {
+  it('leaves a CONCAVE gate on its natural inward-bowing edges — no chord re-seat', () => {
     const set = concaveGate();
     const [l0, l1] = gateEdges(set);
     expect(l0.gatePartnerKey).toBe(l1.key);       // the two really did pair as one mouth
-    const p0 = post(l0), p1 = post(l1);
-    // Both leaves' meeting ends land on the SAME point — the midpoint of the two outer posts.
-    const mid = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
-    for (const m of [meet(l0), meet(l1)]) {
-      expect(m.x).toBeCloseTo(mid.x, 6);
-      expect(m.y).toBeCloseTo(mid.y, 6);
+    // No re-seat: each leaf's endpoints match the raw hex edge it sits on, bit for bit.
+    for (const l of [l0, l1]) {
+      const raw = edgeEndpoints(l.a, l.b);
+      expect(l.x0).toBeCloseTo(raw.x0, 6);
+      expect(l.y0).toBeCloseTo(raw.y0, 6);
+      expect(l.x1).toBeCloseTo(raw.x1, 6);
+      expect(l.y1).toBeCloseTo(raw.y1, 6);
     }
-    // …and the whole gate is STRAIGHT: post0 → meet and post1 → meet run in exactly opposite
-    // directions (the chord post0—post1 is one line, with the meeting point between them).
-    expect(dirDot(p0, p1, mid)).toBeCloseTo(-1, 6);
+    // Both meeting ends coincide at the shared hex corner…
+    expect(meet(l0).x).toBeCloseTo(meet(l1).x, 6);
+    expect(meet(l0).y).toBeCloseTo(meet(l1).y, 6);
+    // …and the two leaves make a REAL bend there — they trace the notch, not a flat chord.
+    expect(dirDot(post(l0), post(l1), meet(l0))).toBeGreaterThan(-0.99);
   });
 
   it('each leaf is INDEPENDENTLY solid to fire (open or shut) and a doorway to movement when open', () => {
