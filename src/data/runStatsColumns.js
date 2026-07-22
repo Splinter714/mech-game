@@ -61,6 +61,8 @@ export const ENEMY_COLUMNS = [
     def: 'Damage to You — total damage this kind dealt you.' },
   { key: 'threatShare', label: 'Threat', fmt: 'pct',
     def: 'Threat Share — % of all damage you took that came from this kind.' },
+  { key: 'threatPerUnit', label: 'Threat/unit', fmt: 'pct',
+    def: 'Threat/unit — each kind’s per-unit danger (damage per unit) as a share of all kinds combined; sums to 100%.' },
   { key: 'damageToKind', label: 'Your dmg', fmt: 'num',
     def: 'Your Damage to Them — total damage you dealt this kind.' },
   { key: 'overkill', label: 'Overkill', fmt: 'num',

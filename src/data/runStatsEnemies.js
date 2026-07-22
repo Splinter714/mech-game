@@ -89,11 +89,33 @@ export function splitBroodSubsets(enemies) {
       base[kind] = deriveEnemy(kind, addRaw(rawOf(be), rawOf(bre)));
       brood[kind] = deriveEnemy(kind, rawOf(bre));
     } else if (be) {
-      base[kind] = be;                            // no brood twin — leave the entry as-is
+      base[kind] = { ...be };                     // no brood twin — shallow copy (never mutate input)
     } else {
       base[kind] = deriveEnemy(kind, rawOf(bre)); // only brood ever seen — promote, no subset
     }
   }
+
+  // #440: Threat/unit is a DISTRIBUTION across the pooled PARENT kinds (sums to 100%), so its
+  // denominator (sumDpu) is only known once every parent row exists — computed here, after the
+  // pooling pass above, not per-row. dmgPerUnit = damageToYou / spawned for each parent; each
+  // parent's threatPerUnit is its share of the sum of every parent's dmgPerUnit. The brood SUBSET
+  // is its own per-unit damage (brood damageToYou / brood spawned) over the SAME denominator, so
+  // it reads on the same scale as its parent — but it's a sub-row, not part of the 100% total.
+  let sumDpu = 0;
+  const dpuByKind = {};
+  for (const [kind, e] of Object.entries(base)) {
+    const dpu = div(e.damageToYou, e.spawned);
+    dpuByKind[kind] = dpu;
+    sumDpu += dpu;
+  }
+  for (const [kind, e] of Object.entries(base)) {
+    e.threatPerUnit = div(dpuByKind[kind], sumDpu);
+  }
+  for (const [kind, e] of Object.entries(brood)) {
+    const dpu = div(e.damageToYou, e.spawned);
+    e.threatPerUnit = div(dpu, sumDpu);
+  }
+
   return { base, brood };
 }
 

@@ -123,21 +123,21 @@ function enemiesSection(run) {
 
   const threatHeader = [
     'Enemy', 'Effective HP', 'Real HP', 'Their Accuracy', 'Their DPS',
-    'Damage to You', 'Threat Share', 'Your Damage to Them', 'Your Overkill',
+    'Damage to You', 'Threat Share', 'Threat/unit', 'Your Damage to Them', 'Your Overkill',
   ];
   const threatRows = [];
   for (const [kind, e] of entries) {
     const realHp = enemyRealHp(kind);
     threatRows.push([
       nameOf(kind), fmt(e.effectiveHp), fmt(realHp), pct(e.weaponAccuracy), fmt(e.effectiveDps),
-      fmt(e.damageToYou), pct(e.threatShare), fmt(e.damageToKind), fmt(e.overkill),
+      fmt(e.damageToYou), pct(e.threatShare), pct(e.threatPerUnit), fmt(e.damageToKind), fmt(e.overkill),
     ]);
     const b = brood[kind];
     if (b) {
       threatRows.push([
         `  └ of which brood-spawned`, fmt(b.effectiveHp), fmt(realHp), pct(b.weaponAccuracy),
         fmt(b.effectiveDps),
-        fmt(b.damageToYou), pct(b.threatShare), fmt(b.damageToKind), fmt(b.overkill),
+        fmt(b.damageToYou), pct(b.threatShare), pct(b.threatPerUnit), fmt(b.damageToKind), fmt(b.overkill),
       ]);
     }
   }

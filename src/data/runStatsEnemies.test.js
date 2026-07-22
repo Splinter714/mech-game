@@ -77,13 +77,19 @@ describe('runStatsEnemies — brood/base pooling (#440)', () => {
     expect(b.damageToKind).toBeLessThanOrEqual(p.damageToKind);
   });
 
-  it('a base kind with no brood twin is passed through unchanged', () => {
+  it('a base kind with no brood twin is passed through unchanged (plus threatPerUnit)', () => {
     const r = createRunStats();
     r.enemySpawned('turret'); r.damageTaken({ enemyKind: 'turret', amount: 10 });
     r.enemyKill('turret', 800);
     const reduced = r.reduce();
     const { base, brood } = splitBroodSubsets(reduced.enemies);
-    expect(base.turret).toBe(reduced.enemies.turret);   // same object, untouched
+    // Same values as the original entry (never mutates the caller's data) — but a NEW object,
+    // since threatPerUnit is added post-hoc once every parent row's dmgPerUnit is known.
+    expect(base.turret).not.toBe(reduced.enemies.turret);
+    for (const k of Object.keys(reduced.enemies.turret)) {
+      expect(base.turret[k]).toBe(reduced.enemies.turret[k]);
+    }
+    expect(reduced.enemies.turret.threatPerUnit).toBeUndefined();  // input untouched
     expect(brood.turret).toBeUndefined();
   });
 
@@ -95,6 +101,41 @@ describe('runStatsEnemies — brood/base pooling (#440)', () => {
     expect(base.wasp).toBeDefined();
     expect(base.wasp.damageToYou).toBe(7);
     expect(brood.wasp).toBeUndefined();
+  });
+
+  it('threatPerUnit is a distribution across parent kinds that sums to 100%', () => {
+    const r = createRunStats();
+    // Two parent kinds: drone (rare, deadly) and wallTurret (numerous, weak).
+    r.enemySpawned('drone'); r.damageTaken({ enemyKind: 'drone', amount: 100 });
+    r.enemyKill('drone', 500);
+    for (let i = 0; i < 10; i++) r.enemySpawned('wallTurret');
+    r.damageTaken({ enemyKind: 'wallTurret', amount: 100 });
+    r.enemyKill('wallTurret', 500);
+    const { base } = splitBroodSubsets(r.reduce().enemies);
+    // dmgPerUnit: drone = 100/1 = 100, wallTurret = 100/10 = 10. sumDpu = 110.
+    expect(base.drone.threatPerUnit).toBeCloseTo(100 / 110, 6);
+    expect(base.wallTurret.threatPerUnit).toBeCloseTo(10 / 110, 6);
+    // The rare-but-deadly kind reads higher per-unit despite equal aggregate Threat Share.
+    expect(base.drone.threatPerUnit).toBeGreaterThan(base.wallTurret.threatPerUnit);
+    // Sums to 100% across every parent kind.
+    const sum = Object.values(base).reduce((s, e) => s + e.threatPerUnit, 0);
+    expect(sum).toBeCloseTo(1, 6);
+  });
+
+  it('threatPerUnit guards spawned=0 and sumDpu=0 to 0 (never NaN)', () => {
+    const oldShape = { drone: { kind: 'drone', spawned: 0, damageToYou: 0 } };
+    const { base } = splitBroodSubsets(oldShape);
+    expect(base.drone.threatPerUnit).toBe(0);
+  });
+
+  it('the brood subset gets its OWN threatPerUnit over the same denominator (not copied from the parent)', () => {
+    const { base, brood } = splitBroodSubsets(droneRun().enemies);
+    // Pooled parent: spawned 3+2=5, damageToYou 54+128=182 → dmgPerUnit = 182/5 = 36.4.
+    // drone is the only kind here, so sumDpu = the parent's own dmgPerUnit.
+    const sumDpu = 182 / 5;
+    // Brood-only: spawned 2, damageToYou 128 → dmgPerUnit = 64, over the SAME sumDpu.
+    expect(brood.drone.threatPerUnit).toBeCloseTo((128 / 2) / sumDpu, 6);
+    expect(brood.drone.threatPerUnit).not.toBeCloseTo(base.drone.threatPerUnit, 6);
   });
 
   it('displayName splits camelCase and title-cases', () => {
