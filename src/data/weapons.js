@@ -60,7 +60,7 @@
 //
 // #402 — RELOAD IS THE ONLY REFILL PATH (owner decision). The old continuous `ammoRegen`
 // between-shots trickle is GONE from the player model: ammo no longer drifts back up while you
-// hold or ease off the trigger. A magazine only refills by RELOADING — a fixed 1s lockout
+// hold or ease off the trigger. A magazine only refills by RELOADING — a fixed 2s lockout
 // (Mech.RELOAD_SECONDS) that ends with a FULL magazine, started AUTOMATICALLY when a mag hits 0 or
 // MANUALLY on R3/F. `ammoMax: null` weapons are exempt (they never run dry or reload).
 //
@@ -82,7 +82,7 @@
 //
 // SUSTAINED vs BURST DPS: the `DPS = …` figures in each weapon's comment below are WHILE-FIRING DPS
 // and remain correct as written — they govern the burst. There is no separate lower "sustained"
-// figure now: a weapon fires its burst, reloads for 1s, and repeats, so its long-grind DPS is the
+// figure now: a weapon fires its burst, reloads for 2s, and repeats, so its long-grind DPS is the
 // while-firing DPS scaled by burst / (burst + 1s). Don't "correct" the DPS comments.
 //
 // Display names are generic sci-fi, deliberately *not* franchise jargon; the ids stay
@@ -117,16 +117,19 @@ export const WEAPONS = {
     // downtime), holding DPS by scaling totalDamage 66 -> 39.6 (= 66 × 1800/3000). Still a slow,
     // punchy pulse burst — not a machine gun. DPS = totalDamage / cycleTime(s): 66/3 = 22.0 dps ->
     // 39.6/1.8 = 22.0 dps (unchanged).
-    totalDamage: 39.6, range: { min: 0, opt: 340, max: 600 },
+    // 24-SUSTAINED FLOOR: totalDamage 39.6 -> 60 to lift sustained (over the mag->reload cycle,
+    // RELOAD 2s) from 16.1 to 24.3 dps. Burst DPS = totalDamage / cycleTime(s): 60/1.8 = 33.3.
+    totalDamage: 60, range: { min: 0, opt: 340, max: 600 },
     ammoMax: 3, slots: 1, cycleTime: 1800,   // #408: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'single', count: 5, burst: { wubOn: 25, wubOff: 50 } },
   }),
   beamLaser: w({    // hold for ONE continuous beam locked on target; drains fast
     id: 'beamLaser', name: 'Beam Laser', category: 'energy',
     // #259 DPS-squish: damage 2 -> 1.5 to bring raw DPS down from 40 to the ~30 band.
-    // DPS = damage x fireRate: 2*20 = 40 dps -> 1.5*20 = 30 dps.
-    damage: 1.5, range: { min: 0, opt: 500, max: 640 },
-    ammoMax: 120, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (120 rounds ÷ 20/s), then 1s reload
+    // 24-SUSTAINED FLOOR: damage 1.5 -> 1.6 to lift sustained (mag->reload cycle, RELOAD 2s) from
+    // 22.5 to 24.0 dps. Burst DPS = damage x fireRate: 1.6*20 = 32.0 dps.
+    damage: 1.6, range: { min: 0, opt: 500, max: 640 },
+    ammoMax: 120, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (120 rounds ÷ 20/s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'stream', fireRate: 20, sustained: true },
   }),
   plasmaLance: w({  // #117: heavier, punchier travelling energy bolt — a real projectile
@@ -153,18 +156,20 @@ export const WEAPONS = {
     // damage came down to 2/bolt — mirroring beamLaser's own per-tick damage (also 2), since
     // both are now "many small hits at 20/sec" weapons. #402: with the trickle gone, the magazine
     // alone sets the burst — ammoMax: 120 at 20/s is a straight ~6.0s of held fire before the mag
-    // empties and the 1s reload beat kicks in (this weapon was the ~6s template; #372's old 60/10
+    // empties and the 2s reload beat kicks in (this weapon was the ~6s template; #372's old 60/10
     // regen economy that hit the same window is retired).
     // cycleTime is unused for a stream pattern (see _fireInterval in firing.js), left at 0 like
     // every other stream weapon (beamLaser/machineGun/flamethrower).
     // #259 DPS-squish: damage 2 -> 1.5 (in step with beamLaser, still mirrored 1:1) to bring raw
     // DPS down from 40 to the ~30 band: damage x fireRate = 2*20 = 40 dps -> 1.5*20 = 30 dps.
+    // 24-SUSTAINED FLOOR: damage 1.5 -> 1.6 (still mirroring beamLaser 1:1) to lift sustained
+    // (mag->reload cycle, RELOAD 2s) from 22.5 to 24.0 dps. Burst DPS = 1.6*20 = 32.0 dps.
     // The enemy sniper/artillery fire loop (src/scenes/arena/enemies.js) already drives cadence
     // generically off `_fireInterval`, which already branches on `pattern === 'stream'` — no
     // enemy-side code changes were needed for this to work as an enemy-fired projectile stream.
     id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
-    damage: 1.5, range: { min: 0, opt: 460, max: 620 },
-    ammoMax: 120, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (120 ÷ 20/s), then 1s reload
+    damage: 1.6, range: { min: 0, opt: 460, max: 620 },
+    ammoMax: 120, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (120 ÷ 20/s), then 2s reload
     // #213: very light per-bolt tracking bias (Halo Needler-style) — see `weakSeek` above.
     // NOT `guidance: 'homing'` — these bolts never lock on and never gate firing on a lock
     // (targetlock.js only checks `guidance === 'homing'`).
@@ -190,7 +195,9 @@ export const WEAPONS = {
     // downtime), holding DPS by scaling damage 52.8 -> 39.6 (= 52.8 × 1650/2200). Still a slow,
     // heavy sniper lance — not a machine gun. DPS = damage / cycleTime(s): 52.8/2.2 = 24.0 dps ->
     // 39.6/1.65 = 24.0 dps (unchanged).
-    damage: 39.6, range: { min: 120, opt: 400, max: 640 },
+    // 24-SUSTAINED FLOOR: damage 39.6 -> 52 to lift SUSTAINED (over the 4-round mag -> 2s reload
+    // cycle) from 18.4 to 24.2 dps. Burst DPS = damage / cycleTime(s): 52/1.65 = 31.5.
+    damage: 52, range: { min: 120, opt: 400, max: 640 },
     ammoMax: 4, slots: 2, cycleTime: 1650,   // #408: ~6.6s burst (4 pulls × 1.65s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
   }),
@@ -255,19 +262,20 @@ export const WEAPONS = {
     // corrected target is ~35 dps — well below Repeater, not a near-miss of it — so damage
     // came down further to 0.65: 18*3*0.65 = 35.1 dps.
     // #259 DPS-squish: damage 0.65 -> 0.5185 to bring raw DPS down from 35.1 to the ~28 band.
-    // DPS = fireRate(18) x count(3) x damage: 18*3*0.5185 = 28.0 dps.
+    // 24-SUSTAINED FLOOR: damage 0.5185 -> 0.6 to lift SUSTAINED (mag->reload cycle, RELOAD 2s)
+    // from 21.0 to 24.3 dps. Burst DPS = fireRate(18) x count(3) x damage: 18*3*0.6 = 32.4 dps.
     // #137: `count` was a random {min:2,max:4} spray range (average 3) before the delivery
     // fields were unified; it's now a FIXED 3 — the same average, so this DPS math holds
     // exactly instead of only on average, and damage is unchanged. The gout's chaos comes
     // entirely from spreadJitter (9°) + makeProjectile's per-particle speed variance now
     // rather than partly from count variance, which reads the same in motion at 18 ticks/sec.
-    damage: 0.5185, range: { min: 0, opt: 338, max: 600 },
-    ammoMax: 108, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (108 ÷ 18/s), then 1s reload
+    damage: 0.6, range: { min: 0, opt: 338, max: 600 },
+    ammoMax: 108, slots: 2, cycleTime: 0,   // #402: ~6.0s burst (108 ÷ 18/s), then 2s reload
     // pattern: 'stream' + fireRate (continuous rework, #46): a cadence tick every ~55ms,
     // each popping 3 particles (count) instead of exactly one, so held
     // fire reads as one dense, unbroken gout rather than a thin single-file tracer or a
     // series of pulses. #402: the magazine alone bounds the gout — 108 rounds at 18/s is ~6.0s of
-    // held flame, then the 1s reload beat (this replaces #372's old 54/9 below-consumption trickle,
+    // held flame, then the 2s reload beat (this replaces #372's old 54/9 below-consumption trickle,
     // which itself had replaced an "effectively unlimited" ammoRegen-above-fireRate economy).
     // spreadJitter is narrower than the original pulsed
     // version (9° vs 20°) for a tighter cone, and still randomizes each particle's angle
@@ -289,9 +297,10 @@ export const WEAPONS = {
   autocannon: w({   // one heavy, very fast direct-fire shell — punchy single hits
     id: 'autocannon', name: 'Autocannon', category: 'ballistic',
     // #259 DPS-squish: damage 16 -> 24.2 to bring raw DPS up from ~14.55 to the ~22 band.
-    // DPS = damage / cycleTime(s): 16/1.1 = 14.55 dps -> 24.2/1.1 = 22.0 dps.
-    damage: 24.2, range: { min: 0, opt: 347, max: 600 },
-    ammoMax: 5, slots: 2, cycleTime: 1100,   // #402: ~5.5s burst (5 pulls × 1.1s), then 1s reload
+    // 24-SUSTAINED FLOOR: damage 24.2 -> 36 to lift SUSTAINED (over the 5-round mag -> 2s reload
+    // cycle) from 16.1 to 24.0 dps. Burst DPS = damage / cycleTime(s): 36/1.1 = 32.7.
+    damage: 36, range: { min: 0, opt: 347, max: 600 },
+    ammoMax: 5, slots: 2, cycleTime: 1100,   // #402: ~5.5s burst (5 pulls × 1.1s), then 2s reload
     delivery: { hit: 'projectile', path: 'straight', velocity: 760, pattern: 'single', kind: 'slug' },
   }),
   machineGun: w({   // sustained stream of small fast tracer rounds
@@ -301,7 +310,7 @@ export const WEAPONS = {
     // #259 DPS-squish: damage 1.667 -> 0.889 to bring raw DPS down from ~60 to the ~32 band.
     // DPS = damage x count(2) x fireRate(18): 1.667*2*18 = 60.01 -> 0.889*2*18 = 32.0 dps.
     damage: 0.889, range: { min: 0, opt: 338, max: 600 },
-    ammoMax: 108, slots: 1, cycleTime: 0,   // #402: ~6.0s burst (108 ÷ 18/s), then 1s reload
+    ammoMax: 108, slots: 1, cycleTime: 0,   // #402: ~6.0s burst (108 ÷ 18/s), then 2s reload
     // count: 2 — each cadence tick fires 2 rounds in parallel lanes (streamSpacing px
     // apart, straddling the aim line), reading as twin tracer streams, not a fan. Bump to
     // `count: 3` for a triple stream (widen streamSpacing to taste if the lanes crowd).
@@ -310,9 +319,11 @@ export const WEAPONS = {
   shotgun: w({      // tight, very fast pellet burst — a shotgun, not a wide scatter
     id: 'shotgun', name: 'Scatter Gun', category: 'ballistic',
     // #259 DPS-squish: damage 3 -> 4.457 to bring raw DPS up from 17.5 to the ~26 band.
-    // DPS = damage x count(7) / cycleTime(s): 3*7/1.2 = 17.5 dps -> 4.457*7/1.2 = 26.0 dps.
-    damage: 4.457, range: { min: 0, opt: 338, max: 600 },
-    ammoMax: 5, slots: 2, cycleTime: 1200,   // #402: ~6.0s burst (5 pulls × 1.2s), then 1s reload
+    // 24-SUSTAINED FLOOR: damage 4.457 -> 5.5 (per pellet) to lift SUSTAINED (over the 5-round
+    // mag -> 2s reload cycle) from 19.5 to 24.1 dps. Burst DPS = damage x count(7) / cycleTime(s):
+    // 5.5*7/1.2 = 32.1.
+    damage: 5.5, range: { min: 0, opt: 338, max: 600 },
+    ammoMax: 5, slots: 2, cycleTime: 1200,   // #402: ~6.0s burst (5 pulls × 1.2s), then 2s reload
     // #101 correction: an earlier pass jittered each pellet's LAUNCH angle for an "organic"
     // feel, but the owner wants the fan itself perfectly even/deterministic every trigger
     // pull — no spreadJitter. Instead the pellets get Cluster Salvo's actual mechanism
@@ -332,8 +343,12 @@ export const WEAPONS = {
     // direct-hit only, same as the original 4.0 figure — the groundFire DOT (radius/dps/
     // duration below) stays a separate bonus, untouched by this retune, per the #259 audit's
     // explicit call-out that napalm's low headline DPS undercounted its splash/burn utility.
-    damage: 27, range: { min: 50, opt: 500, max: 780 },
-    ammoMax: 5, slots: 2, cycleTime: 1500,   // #402: ~7.5s burst (5 pulls × 1.5s), then 1s reload
+    // 24-SUSTAINED FLOOR: damage 27 -> 46 to lift the DIRECT-HIT SUSTAINED (over the 5-round mag
+    // -> 2s reload cycle) from 14.2 to 24.2 dps. Still direct-hit only: the groundFire DOT + splash
+    // are NOT counted here, so napalm's REAL sustained output exceeds 24 once the burn is added.
+    // Burst DPS = damage / cycleTime(s): 46/1.5 = 30.7 (direct hit).
+    damage: 46, range: { min: 50, opt: 500, max: 780 },
+    ammoMax: 5, slots: 2, cycleTime: 1500,   // #402: ~7.5s burst (5 pulls × 1.5s), then 2s reload
     // #252 playtest follow-up — see plasmaCannon's comment above for the full rationale:
     // `tracksLock: true`, not `guidance: 'homing'`, so this still fires unconditionally with no
     // lock (canFireWeapon is untouched), but steers at the lock's live target through the
@@ -384,11 +399,11 @@ export const WEAPONS = {
     //     ~37.8 vs ~26.0). That is a real buff, deliberately accepted — Jackson is tuning
     //     this weapon by feel, and every number here is a playtest dial.
     //   * a DELIBERATELY BIG magazine ("increase magazine size"): 14 rounds at the 1.1s cycle is
-    //     ~15.4s of continuous fire before the 1s reload — far past the ~6s other weapons hold.
+    //     ~15.4s of continuous fire before the 2s reload — far past the ~6s other weapons hold.
     //     #402 carries that intent forward (it used to be ammoMax 8 + a fast 0.45/s regen; with
     //     the trickle gone the magazine alone is sized to keep the ~15s burst). The per-weapon
     //     burst-length exception in weapons.test.js is widened for swarmRack alone.
-    ammoMax: 14, slots: 2, cycleTime: 1100,   // #402: ~15.4s burst (14 pulls × 1.1s), then 1s reload (swarmRack's deliberate big mag, #377)
+    ammoMax: 14, slots: 2, cycleTime: 1100,   // #402: ~15.4s burst (14 pulls × 1.1s), then 2s reload (swarmRack's deliberate big mag, #377)
     // wobble: 'jostle' — chaotic random-phase jiggle, constant all the way to impact (#49).
     // path: 'arcing' (#57) — lofts up then down like a real missile leaving the tube, so the
     // salvo can clear cover.
@@ -484,9 +499,10 @@ export const WEAPONS = {
     // burst over cycleTime(1.8s): 5*6/1.8 = 16.7 dps pre-rebalance -> 9*6/1.8 = 30 dps.
     // #256 playtest round 2: damage 9 -> 12 to land at ~40 dps (12*6/1.8 = 40).
     // #259 DPS-squish: damage 12 -> 7.8 to bring raw DPS down from 40 to the ~26 band.
-    // DPS = count(6) x damage / cycleTime(s): 12*6/1.8 = 40.0 -> 7.8*6/1.8 = 26.0.
-    damage: 7.8, range: { min: 210, opt: 910, max: 1540 },
-    ammoMax: 4, slots: 2, cycleTime: 1800,   // #402: ~7.2s burst (4 pulls × 1.8s), then 1s reload
+    // 24-SUSTAINED FLOOR: damage 7.8 -> 9.3 to lift SUSTAINED (over the 4-round mag -> 2s reload
+    // cycle) from 20.3 to 24.3 dps. Burst DPS = count(6) x damage / cycleTime(s): 9.3*6/1.8 = 31.0.
+    damage: 9.3, range: { min: 210, opt: 910, max: 1540 },
+    ammoMax: 4, slots: 2, cycleTime: 1800,   // #402: ~7.2s burst (4 pulls × 1.8s), then 2s reload
     // wobble: 'weave' — smooth deliberate sine weave, no decay (#50). burst (#50): a single
     // trigger pull fires the whole 6-missile stream in rapid succession, not held-to-fire.
     // path: 'arcing' (#57) — same loft-over-cover treatment as Swarm Rack.
@@ -507,11 +523,13 @@ export const WEAPONS = {
     // cluster in the same ~30 dps missile band as its two homing siblings above.
     // #256 playtest round 2: damage 7 -> 8.8 to land at ~40 dps (5*8.8/1.1 = 40).
     // #259 DPS-squish: damage 8.8 -> 6.16 to bring raw DPS down from 40 to the ~28 band.
-    // DPS = count(5) x damage / cycleTime(s): 8.8*5/1.1 = 40.0 -> 6.16*5/1.1 = 28.0.
-    damage: 6.16, range: { min: 0, opt: 660, max: 960 },
+    // 24-SUSTAINED FLOOR: damage 6.16 -> 6.9 (per rocket) to lift SUSTAINED (over the 6-round mag
+    // -> 2s reload cycle) from 21.5 to 24.1 dps. Burst DPS = count(5) x damage / cycleTime(s):
+    // 6.9*5/1.1 = 31.4.
+    damage: 6.9, range: { min: 0, opt: 660, max: 960 },
     // velocity (1140) is untouched: it's the straight-flying reference every other missile was
     // pulled just below.
-    ammoMax: 6, slots: 1, cycleTime: 1100,   // #402: ~6.6s burst (6 pulls × 1.1s), then 1s reload
+    ammoMax: 6, slots: 1, cycleTime: 1100,   // #402: ~6.6s burst (6 pulls × 1.1s), then 2s reload
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', count: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },

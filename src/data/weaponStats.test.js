@@ -13,14 +13,14 @@ describe('weaponStats — DPS helpers (#423)', () => {
 
   describe('damagePerPull = damage × count', () => {
     it('single-count weapon = its damage', () => {
-      expect(damagePerPull(getWeapon('autocannon'))).toBeCloseTo(24.2, 5);
+      expect(damagePerPull(getWeapon('autocannon'))).toBeCloseTo(36, 5);
     });
     it('spread weapon multiplies by count (shotgun 7 pellets)', () => {
-      expect(damagePerPull(getWeapon('shotgun'))).toBeCloseTo(4.457 * 7, 5);
+      expect(damagePerPull(getWeapon('shotgun'))).toBeCloseTo(5.5 * 7, 5);
     });
     it('burst weapon uses per-sub-shot damage × count (pulseLaser)', () => {
-      // w() split totalDamage 39.6 across count 5 → 7.92 each; pull emits all 5.
-      expect(damagePerPull(getWeapon('pulseLaser'))).toBeCloseTo(39.6, 5);
+      // w() split totalDamage 60 across count 5 → 12 each; pull emits all 5.
+      expect(damagePerPull(getWeapon('pulseLaser'))).toBeCloseTo(60, 5);
     });
   });
 
@@ -39,8 +39,8 @@ describe('weaponStats — DPS helpers (#423)', () => {
 
   describe('burstDps matches the weapons.js DPS comments', () => {
     const cases = [
-      ['autocannon', 22], ['railLance', 24], ['plasmaCannon', 50], ['shotgun', 26],
-      ['beamLaser', 30], ['machineGun', 32], ['pulseLaser', 22],
+      ['autocannon', 33], ['railLance', 31.5], ['plasmaCannon', 50], ['shotgun', 32],
+      ['beamLaser', 32], ['machineGun', 32], ['pulseLaser', 33],
     ];
     for (const [id, dps] of cases) {
       it(`${id} ≈ ${dps} dps`, () => {
@@ -52,7 +52,7 @@ describe('weaponStats — DPS helpers (#423)', () => {
   describe('sustainedDps', () => {
     it('formula = (mag*dmg) / (mag*interval + reload) in seconds (autocannon)', () => {
       const w = getWeapon('autocannon');
-      const expected = (5 * 24.2) / ((5 * 1100 + RELOAD_MS) / 1000);
+      const expected = (5 * 36) / ((5 * 1100 + RELOAD_MS) / 1000);
       expect(sustainedDps(w)).toBeCloseTo(expected, 5);
     });
     it('is strictly below burst for a reloading weapon', () => {

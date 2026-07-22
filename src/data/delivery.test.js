@@ -31,7 +31,7 @@ describe('planEmissions', () => {
     const cone = (spreadAngle * Math.PI) / 180;
 
     expect(count).toBe(7);
-    expect(WEAPONS.shotgun.damage).toBe(4.457);   // #259 DPS-squish retune (was 3)
+    expect(WEAPONS.shotgun.damage).toBe(5.5);   // 24-sustained-DPS floor (was 4.457)
     expect(spreadJitter).toBeUndefined(); // no launch-angle jitter (reverted)
 
     // Repeated trigger pulls produce the EXACT same evenly-spaced fan every time.
