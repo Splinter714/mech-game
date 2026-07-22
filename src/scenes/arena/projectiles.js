@@ -212,8 +212,7 @@ export const ProjectilesMixin = {
         // perimeter.
         const wallHit0 = this._wallEdgeHit?.(prevX, prevY, p.x, p.y);
         const hittingItsGun = !!(wallHit0 && hitEnemy && !enemyShot && wallHit0.edge.key === hitEnemy.spanKey
-          && segmentPointDistance(prevX, prevY, p.x, p.y, hitEnemy.x, hitEnemy.y) < HIT_RADIUS + p.splash
-          && this._spanExposedTo?.(hitEnemy.spanKey, p.originX, p.originY));
+          && segmentPointDistance(prevX, prevY, p.x, p.y, hitEnemy.x, hitEnemy.y) < HIT_RADIUS + p.splash);
         const wallHit = hittingItsGun ? null : wallHit0;
         if (wallHit) {
           p.dead = true;
@@ -337,8 +336,9 @@ export const ProjectilesMixin = {
       // carries it into the wall band moments later and the ordinary `wallHit0` crossing test above
       // catches it there instead. Enemy-fired rounds never target a wall turret, so `enemyShot` is
       // always false on this branch already; the explicit check just keeps the intent readable.
-      const turretBlocked = !enemyShot && !!hitEnemy?.spanKey
-        && !this._spanExposedTo?.(hitEnemy.spanKey, p.originX, p.originY);
+      // #426 (revised): wall turrets are always hittable (flying-unit rule) — never blocked by
+      // their own wall from any side.
+      const turretBlocked = false;
       // Swept distance (#77): closest approach of THIS step's segment to the target, not just the
       // end point — so a fast round that passes clean through the target in one frame still detonates.
       const toTarget = (targetGone || turretBlocked) ? Infinity : segmentPointDistance(prevX, prevY, p.x, p.y, tx, ty);

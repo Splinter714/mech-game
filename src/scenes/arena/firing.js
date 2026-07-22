@@ -554,8 +554,10 @@ export const FiringMixin = {
     // blocked exactly like any other shot at any other span. `ignoreSpanKey` (an explicit caller
     // override, e.g. the turret's OWN beam firing off its centreline) is untouched by this — that
     // is a different rule (#310) and stays unconditional.
-    const exposedTargetSpanKey = (targetSpanKey && this._spanExposedTo?.(targetSpanKey, muzzleX, muzzleY))
-      ? targetSpanKey : null;
+    // #426 (revised): wall turrets behave like a FLYING UNIT — always hittable, so the turret's
+    // own wall span is ignored from ANY side, including from inside the compound (the earlier
+    // exposed-side-only rule wrongly made turrets unshootable from behind their own wall).
+    const exposedTargetSpanKey = targetSpanKey;
     const wallT = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this)) ? Infinity
       : this._hitscanReach(muzzleX, muzzleY, angle, endDist, ignoreSpanKey ?? exposedTargetSpanKey);
     let blocked = wallT < endDist;
