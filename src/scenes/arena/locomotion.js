@@ -15,6 +15,12 @@ import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
 import { DASH_SPEED_MULT } from '../../data/dash.js';
 
+// #435: how sharply the per-step body bob skews toward the front of the stride. 1 = a pure
+// symmetric sine (smooth rise/fall); higher values bias the drop toward a hard punchy settle
+// right at the plant. Was 1.4 (read as a boomy thud each step); dialled toward 1 for a
+// smooth, flowing heavy bound instead.
+const BOB_EASE_POWER = 1.15;
+
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
 // snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
 // convergence geometry — the turret slewing, the target moving, and ESPECIALLY a soft-lock
@@ -335,13 +341,18 @@ export const LocomotionMixin = {
           Audio.footstep(foot);
         }
       }
-      // Stompy lurch: the body rides UP mid-stride and DROPS onto the plant. Skewing the
-      // sine toward the front of the stride (the ^1.4 easing) makes the drop feel like the
-      // mech's mass settling onto the foot rather than a smooth float. Scales with speed so a
-      // crawl barely bobs and a full-tilt march heaves. `stepBob` is the per-chassis amplitude.
+      // Stompy lurch: the body rides UP mid-stride and DROPS onto the plant. Scales with
+      // speed so a crawl barely bobs and a full-tilt march heaves. `stepBob` is the
+      // per-chassis amplitude.
+      //
+      // #435 feel follow-up: the drop used to be skewed sharply toward the front of the
+      // stride (^1.4 easing), which read as a hard punchy thud on every footfall — "boomy"
+      // rather than heavy. BOB_EASE_POWER dialled down toward 1 (closer to a pure sine)
+      // keeps the settle-onto-the-foot weight without the snap, so the bound flows smoothly
+      // step to step instead of jolting.
       const phase = p.stepMs / mv.stepInterval;                 // 0→1 across one step
       const speedScale = Phaser.Math.Clamp(Math.abs(p.speed) / mv.maxSpeed, 0, 1);
-      bob = Math.pow(Math.abs(Math.sin(phase * Math.PI)), 1.4) * mv.stepBob * speedScale;
+      bob = Math.pow(Math.abs(Math.sin(phase * Math.PI)), BOB_EASE_POWER) * mv.stepBob * speedScale;
     }
     p.view.hull.setTexture(`${p.textureKey ?? 'playerMech'}_hull_${p.hullFrame}`);
     p.view.hull.rotation = p.angle + Math.PI / 2;
@@ -404,11 +415,20 @@ export const LocomotionMixin = {
   // here — a lower px→offset cap (SHAKE_MAX_PX), a smaller share of the kick coming from the
   // per-chassis magnitude (SHAKE_GAIN), and a shorter duration (SHAKE_MS). A heavy still
   // "thumps" but no longer heaves the frame. All three are named knobs, easy to re-tune.
+  //
+  // #435 feel follow-up: even dialled back, a short sharp shake retriggered fresh on every
+  // single footfall (force=true cuts the previous one off) read as a hard "boom-boom-boom"
+  // rather than a heavy, flowing sway. Lowered SHAKE_GAIN/SHAKE_MAX_PX further so each kick is
+  // gentler, and LENGTHENED SHAKE_MS so consecutive footfalls' shakes overlap instead of
+  // resetting to a sharp new jolt each time — the overlap blends into one continuous heavy
+  // sway rather than discrete punches, while `force=true` still keeps the most recent step
+  // driving the camera.
   _footShake(powerPx, player = primaryPlayerOf(this)) {
     if (!powerPx) return;
-    const SHAKE_GAIN = 0.45;  // fraction of the chassis footShake px that reaches the camera
-    const SHAKE_MAX_PX = 4;   // hard cap on camera offset (was 9) — kills the nausea ceiling
-    const SHAKE_MS = 60;      // duration of the jolt (was 90) — a shorter, softer tick
+    const SHAKE_GAIN = 0.22;  // fraction of the chassis footShake px that reaches the camera
+    const SHAKE_MAX_PX = 2.5; // hard cap on camera offset (was 4) — softer ceiling
+    const SHAKE_MS = 150;     // duration of the sway (was 60) — overlaps the next footfall
+                               // instead of resetting to a sharp new jolt, so it flows
     const cam = this.cameras.main;
     const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / player.mech.movement.maxSpeed, 0, 1);
     const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);
