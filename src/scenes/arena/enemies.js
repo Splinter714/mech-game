@@ -21,9 +21,12 @@
 // (LOS-gated, with lead) is preserved. Everything is gated by this.enemyMove / this.enemyFire.
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
-import { ENEMIES, ENEMY_ROTATION } from '../../data/enemies.js';
+import { ENEMIES } from '../../data/enemies.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
-import { allPlayersDeadIn, enemyTargetOf, listenerOf, targetPlayerFor } from './players.js';
+import { allPlayersDeadIn, enemyTargetOf, listenerOf, playersOf, targetPlayerFor } from './players.js';
+import { drawDockKind, dockCountFor } from '../../data/worldgen.js';
+import { scaleDockWave } from '../../data/playerScaling.js';
+import { spawnDockCluster } from './bases.js';
 // #305: the multi-weapon seam. A kind may declare several weapon SLOTS; the behaviour names the
 // live one via `e.weaponSlot` and this file resolves it — no weapon-id literal (#243) and no
 // slot-key literal ever appears here. See data/kindWeapons.js's header for the whole model.
@@ -568,10 +571,10 @@ export const EnemiesMixin = {
   // -only, no LOS needed) dwarfs the ~700-1000px this viewport math normally produces, so a
   // turret nest was AWARE and shelling the player within the first second of every deploy
   // regardless of window size (and a narrow/small browser window could shrink the off-view
-  // distance below even an ordinary mech's detection range too). `typeId` (optional — omitted
-  // for the debug free-spawn, which is meant to walk into view fast) looks up that enemy's own
-  // detection-range floor (`minSafeSpawnDist`, data/spawnPlacement.js) and the actual distance
-  // never lands inside it (`spawnDistance`, same file).
+  // distance below even an ordinary mech's detection range too). `typeId` (optional — every
+  // caller including #444's debug free-spawn now passes the actual kind being spawned) looks up
+  // that enemy's own detection-range floor (`minSafeSpawnDist`, data/spawnPlacement.js) and the
+  // actual distance never lands inside it (`spawnDistance`, same file).
   _offscreenSpawnPoint(typeId = null) {
     const zoom = this.cameras.main.zoom || this.registry.get('dpr') || 1;
     const vw = this.scale.width / zoom;   // world-space viewport width
@@ -607,12 +610,21 @@ export const EnemiesMixin = {
     return Math.atan2(oy - this.py, ox - this.px);
   },
 
-  // Drop an extra enemy from OFF-SCREEN so it walks into view (#44 follow-up), cycling the
-  // loadout rotation so successive spawns differ in role instead of stacking identical orbits.
+  // Drop an extra enemy from OFF-SCREEN so it walks into view (#44 follow-up). #444: this now
+  // draws from the SAME weighted dock tables bases/docks use instead of a fixed rotation, so a
+  // debug spawn matches what the game actually produces — `drawDockKind` for the kind,
+  // `dockCountFor`/`scaleDockWave` for the cluster size, `spawnDockCluster` to place it. There's
+  // no real base behind a debug spawn, so `lateFraction` (which normally comes from a base's
+  // position on the early→late difficulty ramp, see bases.js `baseLateFraction`) has no natural
+  // value here — pinned at a mid 0.5 so repeated presses cover the table's full kind range
+  // rather than skewing all-early or all-late. AWARE (engages immediately) and no baseId/dockKey
+  // (it's a free spawn, not tied to a base/dock).
   _spawnEnemyDebug() {
-    const typeId = ENEMY_ROTATION[this._enemySeq % ENEMY_ROTATION.length];
-    const p = this._offscreenSpawnPoint();
-    this._spawnEnemy(p.x, p.y, typeId);
+    const rng = this._dockRng ?? Math.random;
+    const kindId = drawDockKind(rng, 0.5);
+    const count = scaleDockWave(kindId, dockCountFor(kindId, rng), playersOf(this).length);
+    const p = this._offscreenSpawnPoint(kindId);
+    spawnDockCluster(this, { x: p.x, y: p.y, kindId, count, awareness: AWARE });
   },
 
   // Restore every enemy to full health at its spawn point (in place, no re-deploy). Mech and
