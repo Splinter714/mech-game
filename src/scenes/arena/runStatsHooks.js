@@ -103,7 +103,7 @@ export const RunStatsMixin = {
   // emissions (spread lanes / a beam damaging over multiple frames), and without this each connecting
   // event booked its own hit while the pull counted one shot, pushing accuracy above 100%. A null
   // shotId (a DOT tick with no discrete shot) still books its damage but never a hit.
-  _statPlayerHurt(enemyKind, weaponId, amount, shotId = null) {
+  _statPlayerHurt(enemyKind, weaponId, amount, shotId = null, spawnerKind = null) {
     const run = this.runStats;
     if (!run) return;
     if (enemyKind != null) {
@@ -116,7 +116,9 @@ export const RunStatsMixin = {
         run.enemyShotHit(enemyKind);
       }
     }
-    run.damageTaken({ enemyKind, weaponId, amount });
+    // #440: `spawnerKind` (the kind that SPAWNED this attacker, if any) cross-attributes this
+    // damage to the spawner's separate "Spawned Dmg" bucket — additive, leaves damageToYou intact.
+    run.damageTaken({ enemyKind, weaponId, amount, spawnerKind });
   },
 
   // The two enemy-lifecycle seams, plus the small global events. `_firstHitAt` (the scene-time of

@@ -457,6 +457,12 @@ function deployNearby(scene, e, kindId) {
   // #416: tag every deployed body with the carrier that birthed it, so `carrierDeployTick` can
   // count THIS carrier's own live brood (not the whole map's drone population) against the cap.
   if (spawned) spawned.carrierId = e;
+  // #440: tag every deployed body with its SPAWNER's stats kind, so damage it later deals to the
+  // player can be cross-attributed to the spawner (a carrier's "Spawned Dmg" column). Generic:
+  // ANY unit that spawns another passes its own `_statKind` down (the carrier's is stamped at
+  // spawn by `_statEnemySpawned`; fall back to `e.kind` if unset). Kept separate from the drone's
+  // own direct damage-taken bucket — never folded into threat share.
+  if (spawned) spawned.spawnerStatKind = e._statKind ?? e.kind ?? null;
   // #428: a spawned drone inherits the carrier's `baseId` so `baseClearState` (data/bases.js)
   // counts it as a required kill — previously drones spawned with no `baseId` at all and the
   // base-clear objective silently ignored them. Undefined carrier baseId (shouldn't happen, but

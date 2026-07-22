@@ -7,7 +7,7 @@ import { splitBroodSubsets, displayName } from './runStatsEnemies.js';
 // The columns the tables display; each must hold parent = base+brood (for additive raw counts) or
 // be a correctly re-derived ratio, and brood <= parent.
 const ADDITIVE = ['spawned', 'killed', 'damageToYou', 'damageToKind', 'overkill',
-  'engagedMs', 'ttkSumMs', 'ttkCount', 'shotsFired', 'hits', 'threatShare'];
+  'engagedMs', 'ttkSumMs', 'ttkCount', 'shotsFired', 'hits', 'threatShare', 'spawnedDamage'];
 
 // Build a reduced-run enemies map with a base `drone` and a `droneBrood` twin, matching the shape
 // reduceRun emits (raw counters + derived metrics). Uses the real reducer so the fields are honest.
@@ -46,6 +46,19 @@ describe('runStatsEnemies — brood/base pooling (#440)', () => {
     for (const k of ADDITIVE) {
       expect(brood.drone[k]).toBeCloseTo(broodOnly[k] ?? 0, 6);
     }
+  });
+
+  it('#440: pooling sums spawnedDamage onto the parent (carrier with 0 direct dmg, drones dealt X)', () => {
+    const r = createRunStats();
+    // A carrier that only spawns, plus its brood twin drones dealing damage cross-attributed to it.
+    r.enemySpawned('carrier');
+    r.enemySpawned('droneBrood');
+    r.damageTaken({ enemyKind: 'droneBrood', amount: 40, spawnerKind: 'carrier' });
+    r.damageTaken({ enemyKind: 'droneBrood', amount: 25, spawnerKind: 'carrier' });
+    const { base } = splitBroodSubsets(r.reduce().enemies);
+    expect(base.carrier.spawnedDamage).toBe(65);
+    expect(base.carrier.damageToYou).toBe(0);    // still zero direct damage
+    expect(base.carrier.threatShare).toBe(0);    // spawnedDamage is NOT folded into threat share
   });
 
   it('parent ratios are RE-DERIVED from the pooled raw counts, not base-only', () => {

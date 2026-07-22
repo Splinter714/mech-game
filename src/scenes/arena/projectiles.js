@@ -366,7 +366,7 @@ export const ProjectilesMixin = {
             continue;
           }
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer, { enemyKind: p._statKind ?? null, weaponId: p.weaponId, shotId: p._statShotId ?? null });
+          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer, { enemyKind: p._statKind ?? null, weaponId: p.weaponId, shotId: p._statShotId ?? null, spawnerKind: p._spawnerKind ?? null });
           else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color, false, { weaponId: p.weaponId, pullId: p.pullId ?? null });
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by

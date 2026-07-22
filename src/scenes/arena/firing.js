@@ -367,7 +367,7 @@ export const FiringMixin = {
     if (target) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       if (owner === 'enemy' || isPlayerRef(this, target)) {
-        this._damagePlayerAt(dmg, target, { enemyKind: meta.statKind ?? null, weaponId: w.weapon.id, shotId: meta.statShotId ?? null });
+        this._damagePlayerAt(dmg, target, { enemyKind: meta.statKind ?? null, weaponId: w.weapon.id, shotId: meta.statShotId ?? null, spawnerKind: meta.spawnerKind ?? null });
       } else {
         this._damageEnemyAt(target, mx + dirX * t, my + dirY * t, dmg, color, false, { weaponId: w.weapon.id, pullId: meta.pullId ?? null });
       }
@@ -519,7 +519,7 @@ export const FiringMixin = {
   // tracking object, preserving #86.
   // `shooter` (#348, optional): the PLAYER firing, for the per-player converge pick and for
   // friendly fire (they are excluded from their own candidate list).
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null, statShotId = null } = {}) {
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null, statShotId = null, spawnerKind = null } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -628,7 +628,7 @@ export const FiringMixin = {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
       // player damage sink, not the enemy one.
-      if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target), { enemyKind: statKind, weaponId: w.weapon.id, shotId: statShotId });
+      if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, target), { enemyKind: statKind, weaponId: w.weapon.id, shotId: statShotId, spawnerKind });
       else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target, { weaponId: w.weapon.id });
       else this._damageEnemyAt(target, endX, endY, dmg, color, false, { weaponId: w.weapon.id, pullId });
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
@@ -790,6 +790,9 @@ export const FiringMixin = {
       // #423 bug1: the enemy trigger pull this round belongs to, so a connecting enemy round books
       // its shot's hit exactly once (spread lanes of one pull share this id).
       _statShotId: meta.statShotId ?? null,
+      // #440: the SPAWNER kind of the shooter (a carrier, if this round came from its drone), so a
+      // connecting round can cross-attribute its damage to the spawner's "Spawned Dmg". null otherwise.
+      _spawnerKind: meta.spawnerKind ?? null,
     };
     this.projectiles.push(pushed);
     return pushed;

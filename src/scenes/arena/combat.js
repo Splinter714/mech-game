@@ -162,7 +162,7 @@ export const CombatMixin = {
     // overshoot and still books its full (shield-absorbed) amount, so it still registers as a
     // landed enemy shot for accuracy — the placement semantics that used to sit up front.
     const effective = dmg - (res.overshoot ?? 0);
-    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, effective, meta.shotId ?? null);
+    this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, effective, meta.shotId ?? null, meta.spawnerKind ?? null);
     // #348: stamp WHEN this player was last hit. This is the signal the co-op respawn's
     // out-of-combat gate reads (coop.js `_updateRespawns`) — the surviving player must have gone
     // 1-2s without taking fire before a downed teammate is allowed back in. Stamped for every hit

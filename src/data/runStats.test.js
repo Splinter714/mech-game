@@ -251,6 +251,31 @@ describe('runStats — accumulator + reducer (#423)', () => {
       expect(red.enemies.drone.damageToKind).toBe(80);
       expect(red.enemies.drone.overkill).toBe(15);
     });
+    it('#440: spawned-unit damage is cross-attributed to the spawner kind, additively', () => {
+      const r = createRunStats();
+      // A carrier that deals ZERO direct damage, but whose drones hit the player for 30 + 20.
+      r.enemySpawned('carrier');
+      r.enemySpawned('droneBrood').enemySpawned('droneBrood');
+      r.damageTaken({ enemyKind: 'droneBrood', amount: 30, spawnerKind: 'carrier' });
+      r.damageTaken({ enemyKind: 'droneBrood', amount: 20, spawnerKind: 'carrier' });
+      const red = r.reduce();
+      // The spawner gets a bucket even with 0 direct damage, and its spawnedDamage sums the drones'.
+      expect(red.enemies.carrier.damageToYou).toBe(0);
+      expect(red.enemies.carrier.threatShare).toBe(0);   // NOT inflated by the spawned damage
+      expect(red.enemies.carrier.spawnedDamage).toBe(50);
+      // The drone's OWN direct bucket is untouched — this is additive cross-attribution, not a move.
+      expect(red.enemies.droneBrood.damageToYou).toBe(50);
+      expect(red.enemies.droneBrood.threatShare).toBeCloseTo(1, 5);   // all 50 of totalTaken
+      expect(red.enemies.droneBrood.spawnedDamage).toBe(0);
+    });
+    it('#440: a null spawnerKind (normal unit) never books spawnedDamage', () => {
+      const r = createRunStats();
+      r.enemySpawned('drone');
+      r.damageTaken({ enemyKind: 'drone', amount: 12 });
+      const e = r.reduce().enemies.drone;
+      expect(e.damageToYou).toBe(12);
+      expect(e.spawnedDamage).toBe(0);
+    });
     it('a kill with no measurable TTK (null) counts the kill but not the TTK average (#423 bug2)', () => {
       const r = createRunStats();
       r.enemyKill('drone', 2000);   // a fought kill — first hit → death was 2000ms

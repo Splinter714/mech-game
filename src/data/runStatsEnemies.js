@@ -24,6 +24,9 @@ const perSec = (dmg, ms) => div(dmg, ms / 1000);
 const RAW_KEYS = [
   'spawned', 'killed', 'damageToYou', 'damageToKind', 'overkill',
   'engagedMs', 'ttkSumMs', 'ttkCount', 'shotsFired', 'hits', 'threatShare',
+  // #440: spawnedDamage is a plain additive counter — pool it like damageToYou. A carrier's
+  // parent row sums base+brood (though only the base carrier bucket ever carries it today).
+  'spawnedDamage',
 ];
 
 // Read the raw counters off a (possibly OLD/partial-shape) reduced entry, defaulting anything
@@ -55,6 +58,7 @@ function deriveEnemy(kind, r) {
     effectiveHp: div(r.damageToKind, r.killed),
     damageToYou: r.damageToYou,
     threatShare: r.threatShare,
+    spawnedDamage: r.spawnedDamage,
     damageToKind: r.damageToKind,
     overkill: r.overkill,
     engagedMs: r.engagedMs,

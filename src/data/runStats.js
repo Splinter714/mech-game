@@ -80,6 +80,11 @@ function enemyBucket() {
     // a crush/undamaged kill increments `killed` but not this, so it's the honest TTK denominator.
     spawned: 0, killed: 0, ttkSumMs: 0, ttkCount: 0, engagedMs: 0,
     shotsFired: 0, hits: 0, damageToYou: 0, damageToKind: 0, overkill: 0,
+    // #440: CROSS-ATTRIBUTED damage — total damage dealt to the player by units THIS kind
+    // spawned (a carrier's drones). Additive, kept SEPARATE from `damageToYou`/threat share:
+    // the spawned unit's own direct damage still lands in ITS bucket, so folding this into the
+    // spawner's threat share would double-count it. 0 for kinds that never spawn anything.
+    spawnedDamage: 0,
   };
 }
 
@@ -163,10 +168,15 @@ export function createRunStats(meta = {}) {
     enemySpawned(enemyKind) { eb(enemyKind).spawned += 1; return api; },
     enemyShotFired(enemyKind) { eb(enemyKind).shotsFired += 1; return api; },
     enemyShotHit(enemyKind) { eb(enemyKind).hits += 1; return api; },
-    damageTaken({ enemyKind, weaponId, amount = 0 } = {}) {
+    damageTaken({ enemyKind, weaponId, amount = 0, spawnerKind = null } = {}) {
       void weaponId;
       state.totalTaken += amount;
       if (enemyKind != null) eb(enemyKind).damageToYou += amount;
+      // #440: if the attacker was SPAWNED by another unit, ALSO credit this damage to the
+      // spawner's kind as a separate `spawnedDamage` figure. Additive — the direct
+      // `damageToYou` above is untouched, so threat share never double-counts. eb() ensures the
+      // spawner gets a bucket even if it dealt zero direct damage itself (a pure carrier).
+      if (spawnerKind != null) eb(spawnerKind).spawnedDamage += amount;
       markDamage();
       return api;
     },
@@ -255,6 +265,8 @@ export function reduceRun(state) {
       killed: e.killed,
       damageToYou: e.damageToYou,
       threatShare: div(e.damageToYou, state.totalTaken),
+      // #440: damage dealt to you by units this kind SPAWNED (separate from threat share).
+      spawnedDamage: e.spawnedDamage,
       damageToKind: e.damageToKind,
       overkill: e.overkill,
       // #432 RAW COUNTERS — kept in the reduced shape so ALL-RUNS pooling recomputes metrics
@@ -335,12 +347,13 @@ export function aggregateRuns(runs) {
 
     for (const e of Object.values(run.enemies ?? {})) {
       const b = (ePool[e.kind] ??= {
-        spawned: 0, killed: 0, damageToYou: 0, damageToKind: 0, overkill: 0,
+        spawned: 0, killed: 0, damageToYou: 0, spawnedDamage: 0, damageToKind: 0, overkill: 0,
         engagedMs: 0, ttkSumMs: 0, ttkCount: 0, shotsFired: 0, hits: 0,
       });
       b.spawned += e.spawned ?? 0;
       b.killed += e.killed ?? 0;
       b.damageToYou += e.damageToYou ?? 0;
+      b.spawnedDamage += e.spawnedDamage ?? 0;   // #440: pooled cross-attributed spawn damage
       b.damageToKind += e.damageToKind ?? 0;
       b.overkill += e.overkill ?? 0;
       b.engagedMs += e.engagedMs ?? 0;
@@ -391,6 +404,7 @@ export function aggregateRuns(runs) {
       killed: e.killed,
       damageToYou: e.damageToYou,
       threatShare: div(e.damageToYou, g.totalTaken),
+      spawnedDamage: e.spawnedDamage,   // #440
       damageToKind: e.damageToKind,
       overkill: e.overkill,
       engagedMs: e.engagedMs,
