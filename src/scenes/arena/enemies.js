@@ -50,6 +50,7 @@ import { makeTakeoff, stepTakeoff } from '../../data/takeoff.js';
 import { planEmissions } from '../../data/delivery.js';
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
+import { tickUnstick, unstickBend, bendHeading } from '../../data/groundUnstick.js';
 // #302: shielded enemies (helicopter 30, carrier 50 — enemyKinds.js) wear the SAME glowing
 // shield outline the player does, from the same shared implementation.
 import {
@@ -820,6 +821,31 @@ export const EnemiesMixin = {
     });
   },
 
+  // #361 follow-up: a generic anti-stall nudge, layered on top of `_separateGroundUnits` above —
+  // see `data/groundUnstick.js`'s header for the full "why" (soft separation is deadlock-free but
+  // doesn't stop an asymptotically-slow symmetric standoff at a chokepoint, which still reads as
+  // "stuck" to a player). This only tracks "is this unit actually covering ground" and, once it
+  // hasn't for a while, bends its TRAVEL heading (`ctx.tux/tuy`) — never its AIM (`ctx.ux/uy`, what
+  // `aimAndFire` uses) — a little further each tick it stays stuck. `e._unstick` is opaque state
+  // owned entirely by `groundUnstick.js`; this method's only job is to feed it this unit's current
+  // position and apply the bend it returns to the ctx the caller is about to hand to the kind's
+  // behaviour function.
+  //
+  // Deliberately called only from the branch that actually runs a unit's tactical brain
+  // (`_updateVehicle`: `reacting && (this.enemyMove || turret)`) — an idle/loitering/stand-down
+  // unit isn't trying to get anywhere, so it must never accrue stuck time or twitch sideways while
+  // legitimately holding position. Flying kinds and immobile ones (no `move.maxSpeed`, e.g.
+  // turrets) are exempt outright: a flyer never gets stuck on ground geometry, and an immobile
+  // kind's `ctx.tux/tuy` are irrelevant to it.
+  _applyGroundUnstick(e, ctx, delta) {
+    if (e.flying || !e.kindDef?.move?.maxSpeed) return;
+    e._unstick = tickUnstick(e._unstick, e.x, e.y, delta);
+    const bend = unstickBend(e._unstick.ms, e.handed);
+    if (!bend) return;
+    const bent = bendHeading(ctx.tux, ctx.tuy, bend);
+    ctx.tux = bent.tux; ctx.tuy = bent.tuy;
+  },
+
   // ── Fire-cue throttle (#200, extended by its reopen follow-up) ────────────────────────
   // Per-weapon-id gate shared by both enemy fire paths below (the mech loop's readyWeapons
   // firing + _fireVehicleWeapon). Keyed by weapon id, not per-enemy, so a turret cluster
@@ -1444,6 +1470,7 @@ export const EnemiesMixin = {
         e.vx = approach(e.vx, 0, (mv.accel || 200) * dt); e.vy = approach(e.vy, 0, (mv.accel || 200) * dt);
       }
     } else if (this.enemyMove || e.behavior === 'turret') {
+      this._applyGroundUnstick(e, ctx, delta);
       behavior(this, e, ctx);
     } else { e.vx = approach(e.vx, 0, (e.kindDef.move.accel || 200) * dt); e.vy = approach(e.vy, 0, (e.kindDef.move.accel || 200) * dt); }
 
