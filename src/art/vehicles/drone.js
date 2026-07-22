@@ -34,9 +34,12 @@ function drawFrame(sg, accent) {
   // The rotor booms (ARMS, ±8) and their rotor discs are untouched. The shield-glow rim traces
   // this same hull silhouette, so it hugs the leaner body automatically
   // (shieldOutlineParts: ['hull'] in enemyKinds.js).
-  poly(sg, [[-2.7, -2.3], [2.7, -2.3], [3.1, 2.3], [-3.1, 2.3]], V.halo);   // #129
-  poly(sg, [[-2.0, -1.7], [2.0, -1.7], [2.4, 1.7], [-2.4, 1.7]], V.outline);
-  poly(sg, [[-1.5, -1.2], [1.5, -1.2], [1.9, 1.2], [-1.9, 1.2]], V.bodyHi);
+  // #379 3rd pass (owner playtest 2026-07-21: "slightly too thin") — widened ~30% from the
+  // 2nd-pass trim above (x-extent only; length/y unchanged) so the pod reads as a beefier
+  // body rather than a sliver, without undoing the earlier small-footprint fix.
+  poly(sg, [[-3.5, -2.3], [3.5, -2.3], [4.0, 2.3], [-4.0, 2.3]], V.halo);   // #129
+  poly(sg, [[-2.6, -1.7], [2.6, -1.7], [3.1, 1.7], [-3.1, 1.7]], V.outline);
+  poly(sg, [[-2.0, -1.2], [2.0, -1.2], [2.5, 1.2], [-2.5, 1.2]], V.bodyHi);
   // Forward sensor eye (accent glow), pointing −y — pulled in to sit on the smaller pod's nose.
   ellipseC(sg, 0, -1.6, 1.5, 1.4, V.outline);
   ellipseC(sg, 0, -1.6, 0.9, 0.85, A.core, 0.95);

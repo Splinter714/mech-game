@@ -382,8 +382,9 @@ export const ENEMY_KINDS = {
     // 'small' tier the way tank/infantry do.
     size: 'large',
     themeColor: 0xe0b13a,
-    scale: 0.40,           // #379: 0.30 still not quite it — bumped to 0.40, essentially the
-                           // original 0.44 rounded (was 0.52 per #91, 0.62 before that).
+    scale: 0.35,           // #379 3rd pass (owner playtest 2026-07-21: "a touch too big") —
+                           // trimmed from 0.40 (which was itself a bump from 0.30; original
+                           // 0.44 rounded, 0.52 per #91, 0.62 before that).
                            // Still just above the infantry trooper's 0.19 (#411), so troopers
                            // stay the smallest unit. PLAYTEST DIAL.
     // #379: the drone is the one shielded kind whose two sprites are NOT both "the unit's body".
