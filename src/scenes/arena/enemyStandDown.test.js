@@ -173,7 +173,10 @@ describe('#304 the stand-down gate is actually wired into both enemy loops', () 
   });
 
   it('a stood-down mech stops tracking the player with its turret and drops its lock', () => {
-    expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) e\.turret = rotateToward\(e\.turret, bearing/);
+    // #398 third pass: the turret-tracking assignment moved inside an `if (reacting && !stood) { … }`
+    // block (to make room for aim-slop bookkeeping) rather than a single-line `if`; match the gate
+    // and the rotateToward call loosely rather than pinning them to one line.
+    expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) \{[\s\S]*?e\.turret = rotateToward\(e\.turret, bearing/);
     expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) this\._updateEnemyLock\(/);
   });
 });

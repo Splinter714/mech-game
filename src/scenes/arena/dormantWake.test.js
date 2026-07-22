@@ -298,6 +298,10 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
         role: 'skirmisher', standoff: 200, handed: 1, allIndirect: false,
         state: 'flank', decideAt: 0, goal: null, lastHealth: 1, hurtUntil: 0, recampAt: 0,
         coverSpot: null, lockTarget: null, idleGoal: null, idleAt: 0,
+        // #398 third pass: lumbering-gait + aim-slop state a real `_spawnMech` also sets (via
+        // `_resetAiState`) — needed so the movement/aim block in `_updateEnemy` doesn't compute
+        // against `undefined` timers.
+        lurchDriving: true, lurchAt: 900, aimOffset: 0, aimSlopAt: 0,
       };
       scene.enemies.push(e);
       return e;

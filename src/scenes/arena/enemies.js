@@ -136,7 +136,28 @@ const TURRET_HUDDLE_OFFSET = 10;
 // move via enemyBehaviors.js and never touch it, and the player has its own locomotion. Cut, not
 // zeroed, so mechs still close distance eventually — just as a heavy, deliberate advance. Owner
 // verifies the lumbering feel in play; this is the dial to nudge.
-const MOVE_SPEED_FRAC = 0.6;        // fraction of chassis maxSpeed the AI drives at
+// #398 third pass (playtest: "still too fast AND not lurchy enough... LASER-FOCUSED"): the two
+// prior cuts (0.85→0.6 speed, then a capped turret slew) still read as a fast, perfectly-aimed
+// machine. This pass cuts speed further, makes the accel/decel itself heavier so velocity changes
+// lag behind intent, adds an intermittent "stomp, hitch, stomp" drive cycle instead of constant
+// beelining, and gives the turret real aim slop instead of a bare slew cap. All of this is scoped
+// to the mech AI movement path only (`_updateEnemy`'s `kind === 'mech'` branch) — non-mech
+// vehicle kinds and the player are untouched.
+const MOVE_SPEED_FRAC = 0.42;       // fraction of chassis maxSpeed the AI drives at (was 0.6)
+// Heavier accel: the AI's target velocity is unchanged, but how fast e.vx/e.vy actually CATCH UP
+// to it is scaled down for mechs only — the chassis's own `mv.accel` (used by real per-frame
+// physics elsewhere) is never mutated, just multiplied down at the point of use below. Makes
+// starting, stopping, and turning corners feel like momentum, not an instant velocity snap.
+const ENEMY_MECH_ACCEL_FRAC = 0.45;
+// Lurch cycle: rather than driving continuously toward the goal, a mech alternates between a
+// committed "stomp" burst (full speedFrac) and a brief hitch/settle beat (reduced speedFrac, not
+// a full stop — a frozen mech reads as broken, not heavy). Reads as a lumbering gait instead of a
+// smooth glide, and the pauses are exactly the moments a player can put real distance on.
+const LURCH_DRIVE_MIN_MS = 700;     // ms — how long a stomp burst is committed to
+const LURCH_DRIVE_MAX_MS = 1300;
+const LURCH_PAUSE_MIN_MS = 280;     // ms — the hitch/settle beat between stomps
+const LURCH_PAUSE_MAX_MS = 600;
+const LURCH_PAUSE_SPEED_FRAC = 0.3; // speed multiplier applied during the hitch beat
 // #398: enemy mechs felt "floaty" — the movement slowdown above wasn't the whole story. The tell
 // Jackson named was the TURRET: it "constantly aims directly at me", snapping to the player's
 // bearing every frame with the chassis's own (fast) turretSlew. A heavy machine's gun should LAG
@@ -146,7 +167,15 @@ const MOVE_SPEED_FRAC = 0.6;        // fraction of chassis maxSpeed the AI drive
 // MECHS only (the floaty ones); turrets/tanks/other kinds keep their own per-kind slew. The
 // PLAYER is untouched — it still tracks at its chassis turretSlew within its turretArc. Owner:
 // tunable — raise toward the chassis values for snappier enemy aim, lower for heavier lag.
-export const ENEMY_MECH_TURRET_SLEW = 0.9;  // rad/s — capped aim-tracking rate for enemy mechs (#398)
+export const ENEMY_MECH_TURRET_SLEW = 0.55; // rad/s — capped aim-tracking rate for enemy mechs (was 0.9, #398)
+// Aim slop (#398 third pass): the slew cap alone still tracks TOWARD the player's exact bearing,
+// so it eventually settles dead-on and holds there. Instead, the turret chases a noisy offset
+// from the true bearing that's re-rolled periodically — combined with the slow slew above, the
+// gun visibly wanders near the player rather than pinning to them, so strafing genuinely breaks
+// the bead instead of just delaying a perfect lock.
+const ENEMY_MECH_AIM_SLOP_RAD = 0.24;    // rad — max random aim offset from true bearing (~14°)
+const ENEMY_MECH_AIM_SLOP_MIN_MS = 450;  // ms — min hold before re-rolling the aim offset
+const ENEMY_MECH_AIM_SLOP_MAX_MS = 1000; // ms — max hold before re-rolling the aim offset
 const ARRIVE_SLOW = 70;             // px from a destination where the enemy eases to a stop
 const REPICK_ON_ARRIVE = true;      // arriving at a FLANK/COVER goal forces an early re-decide
 
@@ -501,6 +530,11 @@ export const EnemiesMixin = {
     e.holdGround = false;
     e.reactDelayMs = null;        // #285: any pending post-wake stagger is transient AI state too
     e.standDownGoal = null;       // #304: cached withdrawal point — transient, re-resolved on demand
+    // #398 third pass: lumbering-gait + aim-slop state, transient AI state same as everything above.
+    e.lurchDriving = true;        // whether the mech is in a "stomp" burst (true) or a hitch beat (false)
+    e.lurchAt = rand(LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS); // ms until the lurch phase flips
+    e.aimOffset = 0;              // rad — current aim-slop offset from true bearing
+    e.aimSlopAt = 0;              // ms until the aim offset is re-rolled (0 ⇒ roll next frame)
   },
 
   // A spawn point OUTSIDE the current camera viewport but inside the world disc, on a random
@@ -1182,6 +1216,18 @@ export const EnemiesMixin = {
       // it's marching home with purpose, not patrolling — and eases to a stop on arrival at its
       // withdrawal point via the same ARRIVE_SLOW ramp every other goal uses.
       let speedFrac = (reacting || stood) ? MOVE_SPEED_FRAC : MOVE_SPEED_FRAC * IDLE_SPEED_FRAC;
+      // #398 third pass: the lumbering "stomp, hitch, stomp" drive cycle — flip between a
+      // committed drive burst and a brief slowed hitch beat on its own timer, independent of the
+      // tactical decision cadence above, so the lurch reads as a gait quirk rather than a
+      // re-plan artifact.
+      e.lurchAt -= delta;
+      if (e.lurchAt <= 0) {
+        e.lurchDriving = !e.lurchDriving;
+        e.lurchAt = e.lurchDriving
+          ? rand(LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS)
+          : rand(LURCH_PAUSE_MIN_MS, LURCH_PAUSE_MAX_MS);
+      }
+      if (!e.lurchDriving) speedFrac *= LURCH_PAUSE_SPEED_FRAC;
       const goal = stood ? e.standDownGoal : (reacting ? e.goal : e.idleGoal);
       if (goal) {
         const gd = Math.hypot(goal.x - e.x, goal.y - e.y);
@@ -1190,8 +1236,11 @@ export const EnemiesMixin = {
       // #41: rough terrain (river/forest/rubble) under the enemy slows it too, same data-driven factor.
       const terrainScale = this._speedFactorAt(e.x, e.y);
       const spd = mv.maxSpeed * speedFrac * backScale * terrainScale;
-      e.vx = approach(e.vx, mx * spd, mv.accel * dt);
-      e.vy = approach(e.vy, my * spd, mv.accel * dt);
+      // #398 third pass: scale the chassis's own accel down for this AI drive step only (never
+      // mutating mv.accel itself) so velocity ramps toward the target heavily/lag behind intent,
+      // instead of snapping there — a slow, heavy machine winding up to speed.
+      e.vx = approach(e.vx, mx * spd, mv.accel * ENEMY_MECH_ACCEL_FRAC * dt);
+      e.vy = approach(e.vy, my * spd, mv.accel * ENEMY_MECH_ACCEL_FRAC * dt);
       let nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
       // #282: an enemy mech is always a LARGE ground unit (isSmallUnit(e) is false for the
       // 'mech' kind — see #269's unitSize), so it always also respects the mutual ground-unit
@@ -1228,7 +1277,17 @@ export const EnemiesMixin = {
     // turretSlew — this is the aim LAG that makes an enemy mech read as a heavy machine swinging
     // its gun toward me rather than a turret welded to my position. The idle/travel-follow branch
     // below keeps the chassis slew (it's cosmetic, not aiming at the player).
-    if (reacting && !stood) e.turret = rotateToward(e.turret, bearing, ENEMY_MECH_TURRET_SLEW, dt);
+    if (reacting && !stood) {
+      // #398 third pass: chase a noisy offset from the true bearing, re-rolled periodically,
+      // rather than the exact bearing — see ENEMY_MECH_AIM_SLOP_RAD above. Combined with the slow
+      // slew this keeps the gun visibly wandering near the player instead of pinning dead-on.
+      e.aimSlopAt -= delta;
+      if (e.aimSlopAt <= 0) {
+        e.aimOffset = (Math.random() * 2 - 1) * ENEMY_MECH_AIM_SLOP_RAD;
+        e.aimSlopAt = rand(ENEMY_MECH_AIM_SLOP_MIN_MS, ENEMY_MECH_AIM_SLOP_MAX_MS);
+      }
+      e.turret = rotateToward(e.turret, bearing + e.aimOffset, ENEMY_MECH_TURRET_SLEW, dt);
+    }
     else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     // #269 Part 1: a held-ground mech runs the same movement brain as a normal one so it's
     // usually in motion and the ordinary "turn to face travel direction" rule below already
