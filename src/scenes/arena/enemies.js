@@ -108,10 +108,14 @@ const COVER_DAMAGE_WINDOW = 1400;   // ms after taking a hit that the enemy pref
 const PEEK_DIST = 26;               // px past a cover edge the enemy leans out to shoot
 
 // Artillery posture (#44 follow-up): a mech whose weapons are ALL indirect-fire (every one is
-// homing or arcing, so it never needs line-of-sight to hit) camps behind cover as its PRIMARY
-// state — it bombards over walls and never willingly exposes itself. When it can't find cover
-// it falls back to holding at standoff. These bound how far it ranges and how often it hunts a
-// fresh camp spot even while safely behind a wall (so it isn't perfectly static).
+// homing or arcing, so its ROUNDS never need line-of-sight to hit) camps behind cover as its
+// PRIMARY state — it prefers cover over standing in the open and never willingly exposes itself
+// for long. When it can't find cover it falls back to holding at standoff. These bound how far it
+// ranges and how often it hunts a fresh camp spot while camped.
+// #424: the mech itself still needs LOS to ACQUIRE/TRACK the player before it can fire at all
+// (`_updateEnemyLock`) — camping cover no longer means "never needs to see the target," so it
+// peeks out from its camp spot (`_enemyMoveIntent`'s 'cover' case) to re-open a firing lane,
+// exactly like a direct-fire mech.
 const ARTY_RECAMP_MIN = 2600;       // ms — min interval an all-indirect mech holds one camp spot
 const ARTY_RECAMP_MAX = 5200;       // ms — max before it looks for a fresh cover position
 
@@ -1307,14 +1311,16 @@ export const EnemiesMixin = {
     // it's actually reacting; a not-yet-reacting (or unaware) enemy has no business tracking the
     // player at all.
     // #304: a stood-down unit also drops its indirect-fire lock work — nothing left to lock onto.
-    if (reacting && !stood) this._updateEnemyLock(e, dist, bearing);
+    if (reacting && !stood) this._updateEnemyLock(e, dist, bearing, los);
 
     // Fire ready weapons at the player (gated by #28, and by #103/#285 reacting — an unaware or
     // still-noticing enemy never fires). Direct-fire weapons need current LOS. An indirect-fire
-    // weapon (homing/arcing) fires straight through cover (#62/#44, rework #252; playtest
-    // follow-up #252 dropped the old dead-reckoned "blind fire" — it now just tracks the
-    // player's LIVE position, no LOS needed) whenever this enemy has a target at all (no
-    // charge-up wait, no maintain-timer expiry — see `_updateEnemyLock` below).
+    // weapon (homing/arcing) still fires straight through cover once it HAS a target — the shell's
+    // own flight ignores walls — but as of #424, `e.lockTarget` (`_updateEnemyLock` above) is
+    // itself now gated on `los`, so `indirect && !!e.lockTarget` can only be true on a tick where
+    // LOS was actually clear; a mortar can no longer keep tracking/firing through cover it hasn't
+    // actually got a bead through. (`los ||` stays first for the direct-fire path, which fires the
+    // instant sight is clear with no separate lock at all.)
     // #304: `_enemyFireAllowed()` is `this.enemyFire` PLUS the player-dead stand-down gate — the
     // one choke point both enemy fire paths share (see its comment).
     if (this._enemyFireAllowed() && reacting) for (const w of e.mech.readyWeapons()) {
@@ -1979,15 +1985,18 @@ export const EnemiesMixin = {
 
       case 'flank':  // steer toward the flank/cover destination.
       case 'cover': {
-        // An all-indirect bombardier with no goal is already camped — hold dead still and shell
-        // over the wall (it never needs to expose). A direct-fire mech without a goal drifts.
-        if (!e.goal) return e.allIndirect ? { mx: 0, my: 0 } : this._strafeIntent(e, ux, uy);
+        // A mech with no goal drifts (a gentle strafe) rather than sitting dead still.
+        if (!e.goal) return this._strafeIntent(e, ux, uy);
         const gx = e.goal.x - e.x, gy = e.goal.y - e.y;
         const gm = Math.hypot(gx, gy) || 1;
-        // Near a COVER goal: a direct-fire mech peeks (leans toward the player to shoot); an
-        // all-indirect bombardier stays tucked (no peek — it lobs/locks over the wall).
+        // #424: near a COVER goal every mech now PEEKS (leans toward the player to get a firing
+        // lane) — including the all-indirect bombardier. It used to stay fully tucked here on the
+        // theory that it "lobs/locks over the wall" and never needed LOS to hit; now that indirect
+        // fire requires LOS to acquire/track the player (`_updateEnemyLock`) just like everything
+        // else, staying fully hidden would mean it can never re-acquire and just sits mute behind
+        // its wall forever. Peeking is what lets it re-open the bombardment once it's re-exposed.
         if (e.state === 'cover' && gm < PEEK_DIST * 2) {
-          return e.allIndirect ? { mx: 0, my: 0 } : { mx: ux * 0.4, my: uy * 0.4 };
+          return { mx: ux * 0.4, my: uy * 0.4 };
         }
         // #312: routed — a flank/cover destination is frequently on the far side of exactly the
         // wall the unit picked it to hide behind, which is precisely when a straight steer stalls.
@@ -2036,11 +2045,17 @@ export const EnemiesMixin = {
   // the player IS the target whenever in range, with no charge-up wait and no maintain-timer
   // expiry (matching the player's own convergence, which has no LOS gate or decay in its
   // selection either — see targeting.js `_updateLock`; sight gating for the PLAYER's picks is done
-  // when candidates are gathered, #306/#337). Playtest follow-up (#252): LOS no longer
-  // gates anything here either — an all-indirect mech can camp behind cover and bombard the
-  // player's LIVE position indefinitely (as long as it stays in range), no need to peek for a
-  // fix first; the old dead-reckoned "blind fire" fallback is gone (see targetlock.js).
-  _updateEnemyLock(e, dist, bearing) {
+  // when candidates are gathered, #306/#337).
+  // #424 (playtest: mortars/artillery hitting the player with NO line of sight read as
+  // "omniscient"): the #252 playtest follow-up had dropped LOS entirely from this lock, so an
+  // all-indirect mech could bombard the player's live position through solid walls indefinitely.
+  // Reversed here — indirect-fire acquisition/tracking now requires the SAME `los` the direct-fire
+  // gate already uses (`_cachedLosToPlayer`, computed once per tick in `_updateEnemy` and passed
+  // in): no LOS this tick ⇒ no lock, so a mech that just lobbed a shell loses its bead the instant
+  // the player breaks cover, exactly like every direct-fire enemy already does. The shell's own
+  // flight still ignores walls once fired (that's the arcing DELIVERY, untouched) — this only gates
+  // the decision to keep tracking/firing at the player.
+  _updateEnemyLock(e, dist, bearing, los) {
     const LOCK_RANGE = 700;   // px within which an enemy can target the player at all
     // The player as a STABLE target handle (one per enemy, mutated in place rather than re-created
     // each frame) — this is the LIVE handle a homing round stashes and re-reads every frame, so it
@@ -2053,7 +2068,7 @@ export const EnemiesMixin = {
     const player = e.playerTarget ??= { mech: tp.mech, x: 0, y: 0, vx: 0, vy: 0 };
     player.mech = tp.mech; player.x = tp.x; player.y = tp.y;
     player.vx = tp.vx || 0; player.vy = tp.vy || 0;
-    e.lockTarget = dist <= LOCK_RANGE ? player : null;
+    e.lockTarget = (dist <= LOCK_RANGE && los) ? player : null;
   },
 
   // Firing aim with a simple lead: aim where the player will be by the time a projectile

@@ -137,18 +137,15 @@ describe('enemy direct-fire round direction follows the turret angle, not an ide
   });
 });
 
-describe('enemy indirect (lock-based) fire still fires through cover, always along the turret angle (#153, playtest follow-up #252)', () => {
-  it('an indirect weapon fires with no LOS (behind cover) as long as it has a live lock, aimed along the turret same as any other shot', () => {
-    // plasmaCannon is indirect (path: 'arcing'), so it needs no LOS to fire once it has a target
-    // (#252's playtest follow-up dropped the old dead-reckoned "blind fire" aim entirely — there
-    // is no more distinct off-turret aim point for a no-LOS shot; every shot, direct or indirect,
-    // fires along the turret's actual current angle, #153).
+describe('enemy indirect (lock-based) fire REQUIRES line of sight to acquire/track the player (#424 — no more omniscient mortars)', () => {
+  it('an indirect weapon with a live lock fires along the turret once LOS is clear, same as any other shot', () => {
+    // plasmaCannon is indirect (path: 'arcing') — the ROUND's own flight ignores walls once
+    // fired (#153: every shot, direct or indirect, fires along the turret's actual current
+    // angle) — but as of #424 the mech must actually SEE the player to acquire/hold the lock
+    // that lets it pull the trigger at all.
     const e = makeMechEnemy({ chassisId: 'heavy', mounts: { leftTorso: [INDIRECT_WEAPON] }, turret: 0 });
-    // A live (#252: convergence-mirroring) lock — just needs a target, no last-known/blind state.
-    e.lockTarget = 'player';
-    // LOS currently blocked (behind cover) but close/in-range, so the indirect fire gate is
-    // satisfied purely by having a lock, with no LOS requirement at all.
-    const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: true });
+    // Real _updateEnemyLock runs here (not stubbed) so the LOS gate under test is genuine.
+    const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: false });
 
     scene._updateEnemy(e, 0.016, 16);
 
@@ -158,10 +155,26 @@ describe('enemy indirect (lock-based) fire still fires through cover, always alo
     expect(Math.abs(angDiff(fireAngle, e.turret))).toBeLessThanOrEqual(AIM_ERR_MAX + 1e-9);
   });
 
-  it('an indirect weapon with no lock at all (player out of lock range) does not fire despite being in weapon range', () => {
+  it('an indirect weapon with NO line of sight (behind cover) does not fire, even well within lock/weapon range (#424)', () => {
+    // Same setup as the passing case above, except LOS is blocked — breaking cover must break
+    // the mortar's bead. Real _updateEnemyLock runs (not stubbed): it should refuse to set
+    // e.lockTarget at all this tick, so the fire gate never opens.
     const e = makeMechEnemy({ chassisId: 'heavy', mounts: { leftTorso: [INDIRECT_WEAPON] }, turret: 0 });
-    e.lockTarget = null;
     const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: true });
+
+    scene._updateEnemy(e, 0.016, 16);
+
+    expect(projectiles.length).toBe(0);
+    expect(e.lockTarget).toBeFalsy();
+  });
+
+  it('an indirect weapon with no lock at all (player out of lock range) does not fire despite being in weapon range', () => {
+    // This test is about RANGE, not LOS, so it stubs _updateEnemyLock back out to isolate it
+    // from the real LOS gate exercised by the two tests above.
+    const e = makeMechEnemy({ chassisId: 'heavy', mounts: { leftTorso: [INDIRECT_WEAPON] }, turret: 0 });
+    const { scene, projectiles } = makeScene({ px: 50, py: 0, blocked: true });
+    scene._updateEnemyLock = () => {};
+    e.lockTarget = null;
 
     scene._updateEnemy(e, 0.016, 16);
 
