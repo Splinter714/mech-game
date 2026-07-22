@@ -198,16 +198,20 @@ export const ProjectilesMixin = {
         // this wall test runs first, and without an exception the gun would be literally
         // unhittable, leaving its 200hp span as the only way to silence it (4x what #310 shipped).
         //
-        // The exception is deliberately narrow on BOTH axes, because a wall you can shoot through
+        // The exception is deliberately narrow on THREE axes, because a wall you can shoot through
         // is a much worse bug than a gun you cannot shoot. It applies only to the one span the
-        // target gun stands on, AND only on the step where the round is genuinely landing on that
-        // gun (`hittingItsGun` — the same swept HIT_RADIUS test that resolves the hit a few lines
-        // below). A round merely passing near an armed span still detonates on the wall, exactly
-        // as it always did, so `enemyIndex.nearest` happening to name a wall turret can never open
-        // a hole in the perimeter.
+        // target gun stands on, only on the step where the round is genuinely landing on that gun
+        // (`hittingItsGun` — the same swept HIT_RADIUS test that resolves the hit a few lines
+        // below), AND (#426) only when the round was fired from the span's EXPOSED (outward) side
+        // — a round fired from behind the turret's own wall (inside the compound) gets no pass and
+        // detonates on the wall exactly like any other round at any other span. A round merely
+        // passing near an armed span still detonates on the wall, exactly as it always did, so
+        // `enemyIndex.nearest` happening to name a wall turret can never open a hole in the
+        // perimeter.
         const wallHit0 = this._wallEdgeHit?.(prevX, prevY, p.x, p.y);
         const hittingItsGun = !!(wallHit0 && hitEnemy && !enemyShot && wallHit0.edge.key === hitEnemy.spanKey
-          && segmentPointDistance(prevX, prevY, p.x, p.y, hitEnemy.x, hitEnemy.y) < HIT_RADIUS + p.splash);
+          && segmentPointDistance(prevX, prevY, p.x, p.y, hitEnemy.x, hitEnemy.y) < HIT_RADIUS + p.splash
+          && this._spanExposedTo?.(hitEnemy.spanKey, p.originX, p.originY));
         const wallHit = hittingItsGun ? null : wallHit0;
         if (wallHit) {
           p.dead = true;
@@ -334,9 +338,22 @@ export const ProjectilesMixin = {
           continue;
         }
       }
+      // #426: HIT_RADIUS (32px) is wider than a wall span's own painted band (14px), and a wall
+      // turret sits exactly ON its span's centreline — so a round aimed straight at the gun from
+      // BEHIND its wall gets "close enough" to trigger the swept-distance hit test below well
+      // before its per-step segment ever physically crosses the (much thinner) wall band, and the
+      // `hittingItsGun` crossing-exemption a few lines up never even gets exercised. This is the
+      // coarser second half of the same rule: a round whose target is a wall turret it is NOT
+      // exposed to never registers close enough to hit it (`toTarget` stays Infinity), so it keeps
+      // flying on its existing line — which, since it is still steering at the gun's position,
+      // carries it into the wall band moments later and the ordinary `wallHit0` crossing test above
+      // catches it there instead. Enemy-fired rounds never target a wall turret, so `enemyShot` is
+      // always false on this branch already; the explicit check just keeps the intent readable.
+      const turretBlocked = !enemyShot && !!hitEnemy?.spanKey
+        && !this._spanExposedTo?.(hitEnemy.spanKey, p.originX, p.originY);
       // Swept distance (#77): closest approach of THIS step's segment to the target, not just the
       // end point — so a fast round that passes clean through the target in one frame still detonates.
-      const toTarget = targetGone ? Infinity : segmentPointDistance(prevX, prevY, p.x, p.y, tx, ty);
+      const toTarget = (targetGone || turretBlocked) ? Infinity : segmentPointDistance(prevX, prevY, p.x, p.y, tx, ty);
       const landed = p.dist >= p.maxDist;
       if (toTarget < HIT_RADIUS || landed) {
         p.dead = true;

@@ -10,7 +10,7 @@ import {
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
+  WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
@@ -524,6 +524,15 @@ export const WorldMixin = {
     const k = this._hexKeyAt(x, y);
     if (shotBlockedAt(this.terrain.get(k), k, transparent)) return true;
     return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #309: see through an open gate
+  },
+
+  // #426: is `(x, y)` on the EXPOSED side of the span keyed `spanKey` — the side a wall turret
+  // riding on it is meant to be freely hittable from? A missing span (bad key, already collapsed)
+  // fails CLOSED — not exposed — so a stale/garbage key can never open a shot through a wall.
+  // Pure geometry lookup; see wallEdges.js `isOutwardOfSpan` for the actual side test.
+  _spanExposedTo(spanKey, x, y) {
+    const edge = this.wallEdges?.edges?.get(spanKey);
+    return !!edge && isOutwardOfSpan(edge, x, y);
   },
 
   // #168: like `_isWall`, but the see-through set is the UNION of a shared per-frame Set (all

@@ -18,7 +18,7 @@ import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel } from '../../data/sprint.js';
 import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
 import { targetHexKeyOf, openGateOf } from './shared.js';
-import { targetCoverExempt } from '../../data/visibility.js';
+import { targetCoverExempt, targetSoftCoverExempt } from '../../data/visibility.js';
 
 export const FiringMixin = {
   // #338: the SHOT half of the one shared predicate (data/visibility.js `targetCoverExempt`) —
@@ -34,6 +34,15 @@ export const FiringMixin = {
   // aiming at different things must not share one cover exemption.
   _shotIgnoresCover(owner = 'player', player = primaryPlayerOf(this)) {
     return owner === 'player' && targetCoverExempt(player.convergeTarget);
+  },
+
+  // #426: the SOFT-cover-only sibling of the above — also true while the lock is a wall turret,
+  // so foliage never eats a shot aimed at one, exactly like a flyer. Deliberately NOT folded into
+  // `_shotIgnoresCover`: that one also short-circuits the WALL trace (`wallT = Infinity`), and a
+  // wall turret's own wall must still block a shot from behind it. This only feeds the soft-cover
+  // block (`_softCoverBeamBlock`'s `airAimed`, and the round's own `airTarget` flag).
+  _shotIgnoresSoftCover(owner = 'player', player = primaryPlayerOf(this)) {
+    return owner === 'player' && targetSoftCoverExempt(player.convergeTarget);
   },
 
   // ── Per-slot firing ── each skill slot (body location) has its own button; a held button
@@ -526,8 +535,15 @@ export const FiringMixin = {
     // the shot half of the shared predicate; without it the player locks a helicopter over a base
     // wall (which targeting permits by rule) and watches every beam splash on the stone.
     const targetSpanKey = (target && typeof target === 'object' && target.spanKey) || null;
+    // #426: the target-span exemption only fires from the EXPOSED side of that span — a shot
+    // aimed at a wall turret from behind its own wall (inside the compound) gets no pass and is
+    // blocked exactly like any other shot at any other span. `ignoreSpanKey` (an explicit caller
+    // override, e.g. the turret's OWN beam firing off its centreline) is untouched by this — that
+    // is a different rule (#310) and stays unconditional.
+    const exposedTargetSpanKey = (targetSpanKey && this._spanExposedTo?.(targetSpanKey, muzzleX, muzzleY))
+      ? targetSpanKey : null;
     const wallT = this._shotIgnoresCover(owner, shooter ?? primaryPlayerOf(this)) ? Infinity
-      : this._hitscanReach(muzzleX, muzzleY, angle, endDist, ignoreSpanKey ?? targetSpanKey);
+      : this._hitscanReach(muzzleX, muzzleY, angle, endDist, ignoreSpanKey ?? exposedTargetSpanKey);
     let blocked = wallT < endDist;
     if (blocked) { endDist = wallT; hit = false; }
     // #317, hitscan half of the targeted-hex rule: a beam has no per-step position to test, so its
@@ -564,7 +580,7 @@ export const FiringMixin = {
     // it identically (`_shotIgnoresCover` is false for enemies, so `airAimed` is player-only, which
     // is correct: enemies only ever shoot at ground mechs). A held stream asks once per TICK, so it
     // loses ~10% of its DPS per crossed hex rather than being gated all-or-nothing.
-    const airAimed = this._shotIgnoresCover?.(owner, shooter ?? primaryPlayerOf(this));
+    const airAimed = this._shotIgnoresSoftCover?.(owner, shooter ?? primaryPlayerOf(this));
     const eatenAt = this._softCoverBeamBlock?.(muzzleX, muzzleY, endX, endY, hit ? target : null, airAimed);
     if (eatenAt) {
       // Stop the beam at the eating hex — its centre projected onto the ray — so it visibly
@@ -757,12 +773,14 @@ export const FiringMixin = {
       // in-flight-rolled. projectiles.js rolls the flat per-hex 10% on each NEW soft-cover hex the
       // round enters (`_lastHexKey` is how "new" is detected).
       originX: x, originY: y, _lastHexKey: this._hexKeyAt(x, y),
-      // #374 REWORK: is this shot aimed at an AIRBORNE target? Air targets are exempt from soft
-      // cover eating entirely — in flight and at resolution. Derived from the SAME
-      // locked-target-airborne predicate as #338's `ignoresCover` (a shot aimed at something in the
-      // air is no more eaten by trees than it is stopped by walls), so it is player-only and reads
-      // the intended/locked target, never a caller param — the prior art the issue points at.
-      airTarget: ignoresCover,
+      // #374 REWORK, #426 follow-up: is this shot exempt from soft cover eating it entirely — in
+      // flight and at resolution? True for an AIRBORNE lock (the original rule: a shot aimed at
+      // something in the air is no more eaten by trees than it is stopped by walls) OR a WALL
+      // TURRET lock (#426: foliage never gates a shot at one, same as a flyer) — see
+      // `_shotIgnoresSoftCover`/`targetSoftCoverExempt`. Deliberately NOT the same value as
+      // `ignoresCover` any more: that one also licenses the wall-bypass path, and a wall turret's
+      // own wall must still block a shot fired from behind it.
+      airTarget: this._shotIgnoresSoftCover(owner, shooter ?? primaryPlayerOf(this)),
       // #348: who fired it, so friendly fire (projectiles.js) can skip the shooter themselves.
       shooter: owner === 'player' ? (shooter ?? primaryPlayerOf(this)) : null,
       // #423: the trigger pull this round belongs to (player rounds, for pull-level accuracy) and

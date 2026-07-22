@@ -6,8 +6,11 @@
 // exercised here directly against a minimal fake ArenaScene `this`.
 import { describe, it, expect, vi } from 'vitest';
 import { ProjectilesMixin } from './projectiles.js';
+import { WorldMixin } from './world.js';
 import { WEAPONS } from '../../data/weapons.js';
 import { makeProjectile, planEmissions, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX } from '../../data/delivery.js';
+import { makeWallEdgeSet, spanTurretMount, SPAN_ROLE_TURRET } from '../../data/wallEdges.js';
+import { hexToPixel, neighbors } from '../../data/hexgrid.js';
 
 function makeEnemy(id, x, y, destroyed = false) {
   return { id, x, y, vx: 0, vy: 0, mech: { isDestroyed: () => destroyed } };
@@ -298,5 +301,133 @@ describe('#377 follow-up: a Swarm Rack salvo separates in flight and converges l
       expect(r.aimOffset).toBe(0);
     }
     expect(target.id).toBe('t');
+  });
+});
+
+// #426: wall turrets are hittable from the EXPOSED side; their own wall may still block a shot
+// fired from BEHIND them (inside the compound). This exercises the real WorldMixin geometry
+// (`_wallEdgeHit`/`_isWallForRound`/`_spanExposedTo`) against real wallEdges.js state, composed
+// with ProjectilesMixin — the same "real geometry, minimal scene" approach wallTurrets.test.js
+// uses for the turret's own LOS.
+describe('#426 a wall turret is hittable from its exposed side, blocked from behind', () => {
+  function makeWallScene(gunOverrides = {}) {
+    const A = { q: 0, r: 0 };            // base-interior hex
+    const B = neighbors(A.q, A.r)[0];    // outer hex — the exposed side
+    const set = makeWallEdgeSet([{ a: A, b: B, baseId: 'base0', role: SPAN_ROLE_TURRET }]);
+    const edge = [...set.edges.values()][0];
+    const mount = spanTurretMount(edge);
+    const damaged = [];
+    const gun = {
+      id: 'gun', x: mount.x, y: mount.y, vx: 0, vy: 0,
+      spanKey: edge.key, mech: { isDestroyed: () => false },
+      ...gunOverrides,
+    };
+    const scene = {
+      enemies: [gun],
+      projectiles: [],
+      firePatches: [],
+      px: 0, py: 0,
+      mech: { isDestroyed: () => false },
+      time: { now: 0 },
+      projFx: { clear: vi.fn() },
+      terrain: new Map(),
+      wallEdges: set,
+      _rangeFactor: () => 1,
+    };
+    // Mixins FIRST — `_wallEdgeHit`/`_isWallForRound`/`_spanExposedTo`/`_hexKeyAt` are the REAL
+    // implementations under test, run against the real `wallEdges` set built above. The FX/damage
+    // methods they call out to are stubbed AFTER, same convention as wallTurrets.test.js.
+    Object.assign(scene, WorldMixin, ProjectilesMixin);
+    scene._damageBuildingAt = vi.fn();
+    scene._damageWallEdge = vi.fn(() => false);
+    scene._impactFx = vi.fn();
+    scene._damagePlayerAt = vi.fn();
+    scene._damageEnemyAt = vi.fn((e, x, y, dmg) => damaged.push({ target: e.id, dmg }));
+    scene._drawProjectile = vi.fn();
+    return { scene, gun, edge, set, damaged, inner: hexToPixel(A.q, A.r), outer: hexToPixel(B.q, B.r) };
+  }
+
+  function fireAt(scene, gun, fromX, fromY) {
+    const angle = Math.atan2(gun.y - fromY, gun.x - fromX);
+    const round = makeProjectile(WEAPONS.railLance, fromX, fromY, angle, { maxDist: 2000 });
+    round.owner = 'player';
+    round.trail = [];
+    round.originHexes = [];
+    round.originX = fromX;
+    round.originY = fromY;
+    round._lastHexKey = 'origin';
+    scene.projectiles = [round];
+    for (let i = 0; i < 400 && scene.projectiles.length && !scene.projectiles[0].dead; i++) {
+      scene._updateProjectiles(0.016);
+    }
+    return round;
+  }
+
+  it('a round fired from the EXPOSED (outward) side hits the gun through its own wall', () => {
+    const { scene, gun, damaged, outer } = makeWallScene();
+    const from = { x: gun.x + (outer.x - gun.x) * 4, y: gun.y + (outer.y - gun.y) * 4 };
+    fireAt(scene, gun, from.x, from.y);
+    expect(damaged.some((d) => d.target === 'gun')).toBe(true);
+    expect(scene._damageBuildingAt).not.toHaveBeenCalled();
+  });
+
+  it('a round fired from BEHIND (the inward/base-interior side) is stopped by the wall instead', () => {
+    const { scene, gun, damaged, inner } = makeWallScene();
+    const from = { x: gun.x + (inner.x - gun.x) * 4, y: gun.y + (inner.y - gun.y) * 4 };
+    fireAt(scene, gun, from.x, from.y);
+    expect(damaged.some((d) => d.target === 'gun')).toBe(false);
+    // A direct wall-span crossing routes through `_damageWallEdge` (see `wallHit` above), not the
+    // generic `_damageBuildingAt` — the round detonates on the SPAN itself.
+    expect(scene._damageWallEdge).toHaveBeenCalled();
+  });
+
+  it('an ordinary enemy behind the wall (no spanKey) gets no exemption — the wall still blocks the shot', () => {
+    // A bystander well inside the compound, behind the gun's own span (a shape that never occurs
+    // in the real game — only wall turrets ride a span — but pins the exemption to the SPECIFIC
+    // exempted ENTITY, not "anything near that point"). Fired at from the outward side, exactly
+    // the geometry that lets a shot through to the gun: without `spanKey` this bystander gets no
+    // pass at all, so the shot detonates on the wall exactly as it always did pre-#426.
+    const { scene, gun, inner, outer } = makeWallScene();
+    const bystander = { id: 'bystander', x: inner.x, y: inner.y, vx: 0, vy: 0, spanKey: undefined, mech: { isDestroyed: () => false } };
+    scene.enemies = [bystander];   // no gun on this span at all — a plain span behind which stands an ordinary enemy
+    const from = { x: gun.x + (outer.x - gun.x) * 4, y: gun.y + (outer.y - gun.y) * 4 };
+    fireAt(scene, bystander, from.x, from.y);
+    expect(scene._damageEnemyAt).not.toHaveBeenCalled();
+    expect(scene._damageWallEdge).toHaveBeenCalled();
+  });
+
+  it('the exemption never opens a lane through a DIFFERENT span — a second wall still blocks the shot', () => {
+    // Mirrors wallTurrets.test.js's LOS assertion ("is still blocked by a DIFFERENT span") but for
+    // the player's OWN shot hitting the gun, not the gun's own firing lane.
+    const A = { q: 0, r: 0 };
+    const B = neighbors(A.q, A.r)[0];
+    const C = neighbors(A.q, A.r)[1];   // a second, unrelated span on the same base hex
+    const set = makeWallEdgeSet([
+      { a: A, b: B, baseId: 'base0', role: SPAN_ROLE_TURRET },
+      { a: A, b: C, baseId: 'base0', role: 'wall' },
+    ]);
+    const gunEdge = [...set.edges.values()].find((e) => e.role === SPAN_ROLE_TURRET);
+    const otherEdge = [...set.edges.values()].find((e) => e.role === 'wall');
+    const mount = spanTurretMount(gunEdge);
+    const damaged = [];
+    const gun = { id: 'gun', x: mount.x, y: mount.y, vx: 0, vy: 0, spanKey: gunEdge.key, mech: { isDestroyed: () => false } };
+    const scene = {
+      enemies: [gun], projectiles: [], firePatches: [], px: 0, py: 0,
+      mech: { isDestroyed: () => false }, time: { now: 0 }, projFx: { clear: vi.fn() },
+      terrain: new Map(), wallEdges: set, _rangeFactor: () => 1,
+    };
+    Object.assign(scene, WorldMixin, ProjectilesMixin);
+    scene._damageBuildingAt = vi.fn();
+    scene._damageWallEdge = vi.fn(() => false);
+    scene._impactFx = vi.fn();
+    scene._damagePlayerAt = vi.fn();
+    scene._damageEnemyAt = vi.fn((e, x, y, dmg) => damaged.push({ target: e.id, dmg }));
+    scene._drawProjectile = vi.fn();
+    // Fire from squarely behind the OTHER span, aimed through it at the gun.
+    const om = { x: (otherEdge.x0 + otherEdge.x1) / 2, y: (otherEdge.y0 + otherEdge.y1) / 2 };
+    const from = { x: om.x + (om.x - gun.x) * 3, y: om.y + (om.y - gun.y) * 3 };
+    fireAt(scene, gun, from.x, from.y);
+    expect(damaged.some((d) => d.target === 'gun')).toBe(false);
+    expect(scene._damageWallEdge).toHaveBeenCalled();
   });
 });

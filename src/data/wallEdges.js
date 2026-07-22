@@ -208,6 +208,32 @@ export function spanTurretMount(edge, offset = TURRET_MOUNT_OFFSET_PX) {
   return { x: mx + (dx / len) * offset, y: my + (dy / len) * offset };
 }
 
+// #426 (owner decision): a wall turret is hittable from its EXPOSED side, but its own wall may
+// still block a shot fired from BEHIND it (inside the compound). "Exposed" is OUTWARD — away from
+// `edge.a` (the base-interior hex) toward `edge.b` (the outer hex) — the exact same direction
+// `spanTurretMount`'s `offset` already pushes along, so "outward" means one consistent thing
+// everywhere a span is reasoned about.
+//
+// Returns a SIGNED distance of `(x, y)` from the span's centreline along that outward normal:
+// positive is outward/exposed, negative is inward/behind. Callers that just need a boolean use
+// `isOutwardOfSpan` below; the signed form exists so a caller can also ask "how far", though
+// nothing needs that yet.
+export function wallSpanOutwardSign(edge, x, y) {
+  if (!edge?.a || !edge?.b) return 0;
+  const inner = hexToPixel(edge.a.q, edge.a.r);
+  const outer = hexToPixel(edge.b.q, edge.b.r);
+  const nx = outer.x - inner.x, ny = outer.y - inner.y;
+  const len = Math.hypot(nx, ny) || 1;
+  const mx = (edge.x0 + edge.x1) / 2, my = (edge.y0 + edge.y1) / 2;
+  return (x - mx) * (nx / len) + (y - my) * (ny / len);
+}
+
+// #426: is `(x, y)` on the EXPOSED (outward) side of `edge`? A missing/malformed edge fails
+// CLOSED (false — not exposed), so a bad lookup can never accidentally open a shot through a wall.
+export function isOutwardOfSpan(edge, x, y) {
+  return wallSpanOutwardSign(edge, x, y) > 0;
+}
+
 // ── Construction ────────────────────────────────────────────────────────────────────────
 // Build the run's live wall state from a plain list of edge definitions (`{ a, b, baseId }`, where
 // `a`/`b` are adjacent axial coords — worldgen.js `placeBaseWalls` produces these). Each edge gets

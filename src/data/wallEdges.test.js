@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR,
+  WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan, wallSpanOutwardSign,
 } from './wallEdges.js';
 import { edgeKey, edgeEndpoints, edgeMidpoint, pointSegmentDistance } from './hexEdges.js';
 import { HEX_SIZE, hexToPixel, neighbors } from './hexgrid.js';
@@ -541,5 +541,32 @@ describe('#320 wall collision inflated by body radius', () => {
         expect(hit).toBeTruthy();
       }
     }
+  });
+});
+
+// #426: wall turrets are hittable from their EXPOSED side; their own wall may still block a shot
+// from behind. This is the pure geometry the scene-side exemption (firing.js/projectiles.js) is
+// gated on — see wallTurrets.test.js / projectiles.test.js for the behaviour built on top of it.
+describe('#426 isOutwardOfSpan / wallSpanOutwardSign', () => {
+  it('a point on the OUTER hex side of the span is outward (positive sign, isOutwardOfSpan true)', () => {
+    const set = oneWall();
+    const edge = [...set.edges.values()][0];
+    const outer = hexToPixel(B.q, B.r);
+    expect(wallSpanOutwardSign(edge, outer.x, outer.y)).toBeGreaterThan(0);
+    expect(isOutwardOfSpan(edge, outer.x, outer.y)).toBe(true);
+  });
+
+  it('a point on the INNER (base-interior) hex side of the span is inward (negative sign, false)', () => {
+    const set = oneWall();
+    const edge = [...set.edges.values()][0];
+    const inner = hexToPixel(A.q, A.r);
+    expect(wallSpanOutwardSign(edge, inner.x, inner.y)).toBeLessThan(0);
+    expect(isOutwardOfSpan(edge, inner.x, inner.y)).toBe(false);
+  });
+
+  it('a missing/malformed edge fails CLOSED — not exposed', () => {
+    expect(isOutwardOfSpan(null, 0, 0)).toBe(false);
+    expect(isOutwardOfSpan({}, 0, 0)).toBe(false);
+    expect(wallSpanOutwardSign(undefined, 0, 0)).toBe(0);
   });
 });

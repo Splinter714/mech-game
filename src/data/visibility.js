@@ -170,3 +170,14 @@ export function enemyTargetable(enemy, visible, hexKeyOf) {
 export function targetCoverExempt(target) {
   return !!(target && target.flying && target.airborne !== false);
 }
+
+// #426: SOFT cover only — forest/canopy, never a wall. A shot aimed at a wall turret should not
+// be eaten by foliage the way a shot at a ground mech tucked in the trees is, exactly like a
+// flying target already isn't (`targetCoverExempt` above). Deliberately a SEPARATE predicate: a
+// wall turret's own WALL still blocks a shot from behind it (#426's whole point), so this must
+// never feed the wall-bypass path `targetCoverExempt` feeds — only the soft-cover-eats-a-shot
+// path. `spanKey` is the wall-turret enemy record's own tell (bases.js `_spawnWallTurrets`
+// stamps it at spawn); every other enemy kind lacks it, so this is a no-op for them.
+export function targetSoftCoverExempt(target) {
+  return targetCoverExempt(target) || !!(target && target.spanKey);
+}
