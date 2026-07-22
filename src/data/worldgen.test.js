@@ -1038,11 +1038,11 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       expect(CORRIDOR_LENGTH_PX).toBe(CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT);
       // #308's structural claim — corridor length is a MULTIPLE of the count, so raising the
       // count can never mean "the same trek, more crowded" — is what this pins, and it survives
-      // #340 untouched. What #340 changed is the SHARE itself (1140 → 4800): #308 had pinned it at
-      // what the old radius-2 disc bases got out of a 3400px/3-base corridor, then #333 grew the
-      // compound ~3.5x without revisiting it, and five compounds of the new size filled the lane
-      // end to end. The share is now sized off `MIN_BASE_SEPARATION_PX` instead (see below), which
-      // is a real geometric requirement rather than a historical figure.
+      // every retune of the SHARE untouched. The share itself has moved over time (1140 → #340's
+      // 4800 → #442's HEX_STEP_PX * 40 ≈ 3326, when Jackson asked for ~40 hex STEPS of travel per
+      // leg). The invariant below — the per-base share stays comfortably ABOVE the base-separation
+      // floor so `placeBases` has headroom to place bases without collapsing the last leg — holds
+      // across all of those (3326 > 2900 today).
       expect(CORRIDOR_LENGTH_PER_BASE_PX).toBeGreaterThan(MIN_BASE_SEPARATION_PX);
     });
 
@@ -1050,14 +1050,21 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // the gap-tower calm-travel floor; `MIN_BASE_SEPARATION_PX` is #340's much larger base-to-base
     // one, and it is the binding one. `placeBases` picks randomly within the slice above the
     // floor, so the floor must leave real headroom or the fallback path starts taking over and the
-    // floor stops being reliably achieved — the shipped ratio was 600/1140 ≈ 0.53.
+    // floor stops being reliably achieved.
+    //
+    // #442 (Jackson: ~40 hex STEPS per leg) tightened this ratio. The slice is now HEX_STEP_PX * 40 ≈
+    // 3326px and the floor is 2900px, so the floor eats ~0.87 of the slice — tighter than #340's
+    // 0.71, but still leaving real headroom. The bound here is 0.9, not the old 0.75: measured on the
+    // real pipeline (worldgen sweeps), a floor this size still places all five bases with the last
+    // leg holding ~35 hex (no collapse); the collapse cliff is empirically ~37 hex (≈0.92 of slice),
+    // which this bound keeps clear of.
     it('leaves both spacing floors comfortably inside each base\'s slice of corridor', () => {
       const slicePx = CORRIDOR_LENGTH_PX / BASE_COUNT;
       expect(MIN_GAP_PROGRESS_PX).toBeLessThan(slicePx * 0.6);
-      expect(MIN_BASE_SEPARATION_PX).toBeLessThan(slicePx * 0.75);
+      expect(MIN_BASE_SEPARATION_PX).toBeLessThan(slicePx * 0.9);
       // All `BASE_COUNT` separations must also fit end-to-end inside one corridor, with room to
       // spare — otherwise the last base runs out of corridor and its gap collapses.
-      expect(MIN_BASE_SEPARATION_PX * BASE_COUNT).toBeLessThan(CORRIDOR_LENGTH_PX * 0.75);
+      expect(MIN_BASE_SEPARATION_PX * BASE_COUNT).toBeLessThan(CORRIDOR_LENGTH_PX * 0.9);
       // #340: a gap tower must fit at least `MIN_GAP_PROGRESS_PX` past the previous base AND that
       // far before the next one, so a base gap has to hold 2x the calm-travel floor. This is
       // exactly what broke when base separation was first tried as a bigger MIN_GAP_PROGRESS_PX:
@@ -1071,14 +1078,25 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // reach, so anything less than the sum means a base can shoot the player while he is inside a
     // DIFFERENT base — the overlap #340 exists to remove. Asserted as arithmetic on the constants
     // so a future footprint or range change can't silently reintroduce it.
-    it('separates bases by more than two full wall-turret envelopes plus both footprints', () => {
+    //
+    // #442 (Jackson: "decrease map travel distance" — ~40 hex STEPS per leg) RELAXES the second half
+    // of this. #340 wanted the floor to clear the envelope-touch PLUS a guaranteed 400px+ strip of
+    // genuinely neutral ground on every leg. A 40-hex leg (≈3326px slice) simply can't hold a floor
+    // that large — 2798 + 400 = 3198px would leave `placeBases` no headroom and collapse the last
+    // leg. So the CORE guarantee is kept (envelopes still never overlap — the floor still clears
+    // envelopeTouch, and the real-pipeline sweep below confirms it in straight-line terms) while the
+    // extra guaranteed-neutral-strip shrinks to a thin margin; on the typical (non-floor) leg there
+    // is still real open ground, it is just no longer guaranteed on the very tightest roll.
+    it('separates bases by more than two full wall-turret envelopes (no cross-base fire)', () => {
       const halfLengthPx = BASE_FOOTPRINT_HALF_LENGTH * HEX_STEP_PX;
       const envelopeTouch = 2 * (halfLengthPx + ENEMY_KINDS.wallTurret.fireRange);
+      // The line that must never cross: a base is never inside another base's wall-turret envelope,
+      // so you are never shot from a base while standing in a different one.
       expect(MIN_BASE_SEPARATION_PX).toBeGreaterThan(envelopeTouch);
-      // …and beyond merely touching, there is GENUINE open ground: a stretch no wall turret
-      // anywhere can reach, wider than the 400px graphics cull margin (so it is somewhere that
-      // actually stops drawing a compound — the measurable proxy #340 names).
-      expect(MIN_BASE_SEPARATION_PX - envelopeTouch).toBeGreaterThan(400);
+      // #442: there is still a POSITIVE neutral margin past mere touching (so the guarantee is a
+      // real gap, not a knife-edge equality), but it is deliberately thin now — #340's guaranteed
+      // 400px+ breather is relaxed to typical-not-guaranteed in exchange for the shorter travel.
+      expect(MIN_BASE_SEPARATION_PX - envelopeTouch).toBeGreaterThan(0);
     });
 
     // …and the arithmetic above is only worth anything if the REAL pipeline honours the floor.
@@ -1101,6 +1119,67 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
         }
       }
     }, 60000);
+
+    // ── #442: ~40 hex STEPS of travel per leg, alert tower ~20 into each leg ────────────────────
+    // Jackson's two hard numbers for "decrease map travel distance between bases": each base-to-base
+    // leg should be ~40 hex STEPS (down from ~58), and each leg's alert tower should land ~20 into it
+    // — the leg's own midpoint — INCLUDING the first leg. Measured on the real generateTerrain
+    // pipeline (not just the constants) so a future geometry change that quietly lengthens or shortens
+    // the real trek is caught, the way the #340 sweep above catches a spacing regression.
+    describe('#442: shorter travel — ~40 hex per leg, tower near each leg midpoint', () => {
+      // Sweep many real corridors and collect every leg + every tower's position INTO its leg. The
+      // player spawns at the rear pad (a few hex behind origin), so "into the leg" for the FIRST leg
+      // is measured from the actual spawn hex, exactly as the player experiences it.
+      function sweep() {
+        const legs = [], spawnLegs = [], firstTowerInto = [], midTowerInto = [];
+        for (let seed = 1; seed <= 40; seed++) {
+          const args = realArgsFor(seed * 41 + 3);
+          const { bases, alertTowers } = generateTerrain(args);
+          expect(bases.length).toBe(BASE_COUNT);
+          const prog = (h) => spineProgressHexOf(args.spine, h.q, h.r);
+          const bp = bases.map((b) => prog(b.center));
+          const sp = prog(args.safeCenter);
+          spawnLegs.push(bp[0] - sp);
+          for (let i = 1; i < bp.length; i++) legs.push(bp[i] - bp[i - 1]);
+          const idToIdx = new Map(bases.map((b, i) => [b.id, i]));
+          for (const t of alertTowers) {
+            const idx = idToIdx.get(t.baseId);
+            const into = prog(t) - (idx === 0 ? sp : bp[idx - 1]);
+            (idx === 0 ? firstTowerInto : midTowerInto).push(into);
+          }
+        }
+        const mean = (a) => a.reduce((p, c) => p + c, 0) / a.length;
+        return { legs, spawnLegs, firstTowerInto, midTowerInto, mean };
+      }
+
+      it('lands each base-to-base leg at ~40 hex steps, none collapsed', () => {
+        const { legs, spawnLegs, mean } = sweep();
+        // The mean leg is right around Jackson's 40 (down from the old ~56). A generous ±4 band keeps
+        // this a real regression guard without pinning the RNG spread.
+        expect(mean(legs)).toBeGreaterThan(36);
+        expect(mean(legs)).toBeLessThan(44);
+        expect(mean(spawnLegs)).toBeGreaterThan(36);
+        expect(mean(spawnLegs)).toBeLessThan(44);
+        // No leg collapses toward zero (the placement-cliff failure) and none balloons back toward
+        // the old ~58 — every single leg stays in a sane band around 40.
+        expect(Math.min(...legs, ...spawnLegs)).toBeGreaterThan(28);
+        expect(Math.max(...legs, ...spawnLegs)).toBeLessThan(56);
+      }, 60000);
+
+      it('lands every alert tower ~20 hex into its leg, first leg included', () => {
+        const { firstTowerInto, midTowerInto, mean } = sweep();
+        // Mid-run towers sit near their leg's midpoint (~20 of ~40).
+        expect(mean(midTowerInto)).toBeGreaterThan(16);
+        expect(mean(midTowerInto)).toBeLessThan(24);
+        // The FIRST tower too — #442 raised the #359 cap so the opener is no longer front-loaded to
+        // ~12 but sits at its leg midpoint like the rest, measured from the actual spawn hex.
+        expect(mean(firstTowerInto)).toBeGreaterThan(16);
+        expect(mean(firstTowerInto)).toBeLessThan(24);
+        // …but the #359 calm floor off spawn survives: the first tower never lands right on top of
+        // the player. It stays at least MIN_GAP_PROGRESS_HEX of travel out from origin.
+        expect(Math.min(...firstTowerInto)).toBeGreaterThan(MIN_GAP_PROGRESS_HEX - 1e-6);
+      }, 60000);
+    });
 
     // The early→late difficulty ramp is normalized, so it adapts to any count for free — but
     // "adapts" isn't the same as "reads smoothly." Over five bases the steps must be even and
@@ -1162,11 +1241,18 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
           const { bases, terrain } = generateTerrain(args);
           const spawn = spineSpawnHex(args.spine);
           const progressOf = (h) => spineProgressHexOf(args.spine, h.q, h.r);
-          for (const base of bases) {
+          // `bases` come back progress-ordered, so the last is the run's FINAL objective. Skip it:
+          // "walk past" is meaningless for the base nothing lies beyond, and #442's shorter corridor
+          // (40-hex legs) lands that last base right against the far end — its farthest-passable-hex
+          // "goal" then sits in a sliver only reachable through the compound, which is a geometry
+          // artefact, not a seal. That base's own reachability is covered by the breach-to-objective
+          // soft-lock test below ('every objective is inside its own ring and reachable after ONE
+          // breach'). This test's job is the THROUGH-lane past INTERMEDIATE bases.
+          for (const base of bases.slice(0, -1)) {
             // "Past it" means reaching the corridor's own FAR END without entering this compound.
-            // Deliberately not "some progress beyond the base": the last base sits near the end of
-            // the run, so there may be no corridor beyond it at all and such a test would fail on
-            // geometry rather than on sealing.
+            // Deliberately not "some progress beyond the base": a base near the end of the run may
+            // have little corridor beyond it, and such a test would fail on geometry rather than on
+            // sealing.
             const fpKeys = new Set(base.footprint.map((h) => axialKey(h.q, h.r)));
             let goal = null, best = -Infinity;
             for (const [k, t] of terrain) {
@@ -1606,10 +1692,14 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     });
 
     // ── #359: the OPENING run-in is capped, and only the opening ────────────────────────────
-    // Jackson: "mainly the opening — get me to the first tower faster." Total corridor length,
-    // base spacing and wall-turret range all stay exactly as #340 set them; the only thing that
-    // moves is where inside the FIRST gap the tower may land.
-    describe('#359: the first alert tower is front-loaded', () => {
+    // #359 (Jackson: "mainly the opening — get me to the first tower faster") capped WHERE inside
+    // the FIRST gap the tower may land, without touching corridor length, base spacing or wall-turret
+    // range. What these tests pin is that MECHANISM: gap 0 gets a cap (past the calm floor), every
+    // later gap keeps its full random window. #442 later RAISED the cap value (1400 → 1900px) so the
+    // first tower now lands ~20 hex into its leg — its natural midpoint — rather than being pulled
+    // aggressively early, since #442 also shortened the whole corridor (40-hex legs) and that alone
+    // removed the long dead run-in #359 was fighting. The mechanism is unchanged; only the cap moved.
+    describe('#359/#442: the first alert tower has its own gap-0 window cap', () => {
       it('puts gap 0\'s tower inside the FIRST_TOWER_MAX_PROGRESS cap, still past the calm floor', () => {
         for (const seed of [1, 2, 3, 42, 777]) {
           const { all, T, isGround, progressOf } = buildSpaciousLine();
@@ -1648,9 +1738,12 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       it('is its own quantity, distinct from the calm floor and the base separation', () => {
         expect(FIRST_TOWER_MAX_PROGRESS_PX).toBeGreaterThan(MIN_GAP_PROGRESS_PX);
         expect(FIRST_TOWER_MAX_PROGRESS_PX).toBeLessThan(MIN_BASE_SEPARATION_PX);
-        // And the levers #359 explicitly must NOT touch are still where #340 left them.
-        expect(CORRIDOR_LENGTH_PER_BASE_PX).toBe(4800);
-        expect(MIN_BASE_SEPARATION_PX).toBe(3400);
+        // #442 set the corridor-length and base-separation levers to their new values (the whole
+        // point of #442 was to change them — see their own constants). Pinned here so a later edit
+        // can't drift them silently: the per-base share is 40 hex STEPS of travel, and the base
+        // separation sits between the wall-turret envelope-touch and the placement-collapse cliff.
+        expect(CORRIDOR_LENGTH_PER_BASE_PX).toBeCloseTo(HEX_STEP_PX * 40, 6);
+        expect(MIN_BASE_SEPARATION_PX).toBe(2900);
       });
     });
 

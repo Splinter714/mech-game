@@ -1335,8 +1335,32 @@ export const CORRIDOR_HALF_WIDTH_PX = 250;
 // margin. Wall-turret range (900) is deliberately NOT touched — the issue says revisit it only if
 // spacing alone doesn't fix the overlap, and spacing alone does.
 //
-// At BASE_COUNT = 5 this is 24000px ≈ 289 hexes of travel end-to-end (was 5700px ≈ 69).
-export const CORRIDOR_LENGTH_PER_BASE_PX = 4800;
+// #442 SUPERSEDES the specific 4800/3400 numbers above (the ARGUMENT — slice must hold the floor with
+// headroom — still holds; the quantities no longer do). Jackson asked for ~40 hex STEPS per leg, so
+// the slice is now HEX_STEP_PX * 40 ≈ 3326px and the floor dropped to 2900px (see both `export const`s
+// for the full reasoning, including which part of the "genuine open ground beyond the envelope" target
+// above is preserved vs. relaxed by the shorter travel).
+//
+// Euclidean centre-to-centre distance between adjacent hexes — constant in every direction on this
+// regular grid (unlike the hex "distance" metric), so it's the real px depth each `boundaryRingKeys`
+// BFS ring layer adds outward, and the natural unit for "how many hex STEPS of travel is this". #442
+// moved its definition up here (from below, near BOUNDARY_RING_WIDTH) so `CORRIDOR_LENGTH_PER_BASE_PX`
+// can be sized directly off it without a temporal-dead-zone error.
+export const HEX_STEP_PX = HEX_SIZE * Math.sqrt(3); // ≈83.14px for HEX_SIZE=48
+//
+// #442 (Jackson, playtest: "decrease map travel distance between bases" — hard number: ~40 hex STEPS
+// per base-to-base leg, down from ~58): sized in hex steps directly rather than a raw px guess, so it
+// stays exact if HEX_SIZE ever changes. 40 * HEX_STEP_PX ≈ 3326px. This is the SLICE each base gets,
+// and it drives the base-to-base leg: measured over 40 real corridors the mean leg lands ~39-40 hex
+// (was ~56). Every alert tower then lands ~20 hex into its leg (its leg's own midpoint), which is the
+// second half of Jackson's ask. The stale note this replaces claimed "24000px ≈ 289 hexes end-to-end"
+// (the #340 value of 4800); at 40 hex/base the run is now HEX_STEP_PX * 40 * 5 ≈ 16628px ≈ 200 hexes.
+//
+// NOTE the collision with `MIN_BASE_SEPARATION_PX` (below): #340 set that floor to 3400px (≈40.9 hex)
+// for a turret-envelope reason, which is LARGER than this 40-hex slice — the two cannot both hold, so
+// #442 also lowered the floor to 2900px. See that constant's comment for exactly what #340 guarantee
+// that relaxes and what it preserves.
+export const CORRIDOR_LENGTH_PER_BASE_PX = HEX_STEP_PX * 40;
 export const CORRIDOR_LENGTH_PX = CORRIDOR_LENGTH_PER_BASE_PX * BASE_COUNT;
 
 // REAR PAD — how far the corridor extends BEHIND the spawn end (origin sits at spine u=0, the
@@ -1753,11 +1777,12 @@ function assignWallTurrets(T, base, edges) {
 // divisor already uses the SMALLEST px-per-hex-step, so the term in front of the margin is an
 // over-estimate of the real reach on its own; all the margin has to absorb is a few hexes of
 // rounding and boundary-ring slop, which is a fixed quantity that does not grow with the run. At
-// the old 5700px corridor a 20% margin was ~17 hexes and looked harmless; at #340's 24000px it
-// balloons to ~68 hexes of pure slack, and `worldRadius` is what sizes `nearestValidHex`'s search
-// budget (data/spawnPlacement.js) and the fallback spawn ring, so an inflated cap is real wasted
-// work rather than a harmless number. Measured worst-case reach at 24000px is ~336 hexes; this
-// gives 351.
+// the old 5700px corridor a 20% margin was ~17 hexes and looked harmless; at a long corridor it
+// balloons into dozens of hexes of pure slack, and `worldRadius` is what sizes `nearestValidHex`'s
+// search budget (data/spawnPlacement.js) and the fallback spawn ring, so an inflated cap is real
+// wasted work rather than a harmless number. #442 shortened the corridor from #340's 24000px to
+// HEX_STEP_PX * 40 * 5 ≈ 16628px; the formula is derived, so this cap tracks it automatically
+// (worst-case reach ≈ 237 hexes now, this gives ≈ 249) with no hand-edit needed.
 export const MAX_WORLD_RADIUS = Math.ceil(
   (CORRIDOR_LENGTH_PX + CORRIDOR_CURVINESS * 1.35) / (HEX_SIZE * 1.5) + 12,
 );
@@ -1790,10 +1815,11 @@ const VIEW_DEPTH_SAFETY_MARGIN = 1.3;
 // actually derives from — and covers — this figure, rather than re-guessing a magic number.
 export const REQUIRED_VIEW_DEPTH_PX =
   0.5 * Math.hypot(WORST_CASE_VIEWPORT_W, WORST_CASE_VIEWPORT_H) * VIEW_DEPTH_SAFETY_MARGIN; // ≈2864px
-// Euclidean centre-to-centre distance between adjacent hexes — constant in every direction on
-// this regular grid (unlike the hex "distance" metric), so it's the real px depth each BFS ring
-// layer in `boundaryRingKeys` adds outward.
-export const HEX_STEP_PX = HEX_SIZE * Math.sqrt(3); // ≈83.14px for HEX_SIZE=48
+// #442: `HEX_STEP_PX` is now DEFINED EARLIER (just above `CORRIDOR_LENGTH_PER_BASE_PX`), because
+// that constant is sized off it (`HEX_STEP_PX * 40`) and a module-level const initializer would hit
+// the temporal-dead-zone if the definition still sat here below it. Same value, same meaning; only
+// its position moved. See its comment there for what it is (the Euclidean centre-to-centre distance
+// between adjacent hexes, the real px depth each `boundaryRingKeys` BFS ring layer adds outward).
 // BOUNDARY_RING_WIDTH: how many hexes thick the impassable boundary ring is, just outside the
 // pre-built area's own edge. Derived (not guessed) from the camera math above.
 export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_PX); // = 35
@@ -1877,8 +1903,19 @@ export const MIN_GAP_PROGRESS_HEX = MIN_GAP_PROGRESS_PX / HEX_STEP_PX; // ≈7.2
 // It applies to the FIRST GAP ONLY. Every later gap keeps its full random window, so the pacing
 // between bases mid-run is exactly what it was — this is a front-loading of the opening tripwire,
 // not a general compression. 1400px is a playtest dial like every other placement constant here.
-export const FIRST_TOWER_MAX_PROGRESS_PX = 1400;
-export const FIRST_TOWER_MAX_PROGRESS_HEX = FIRST_TOWER_MAX_PROGRESS_PX / HEX_STEP_PX; // ≈16.9
+//
+// #442 (Jackson, playtest: alert tower should land ~20 hex STEPS into each leg, "about the middle",
+// INCLUDING the first leg): RAISED from 1400px to 1900px. #359 front-loaded the first tower to ~12
+// hex to cut the dead run-in on #340's long corridor; #442 shortened the whole corridor (40-hex legs),
+// which already removes that dead time, and Jackson now wants the first tower at the leg's natural
+// midpoint (~20 from spawn) like every other tower, not pulled early. Measured on 40 real corridors,
+// 1900px lands the first tower ~20 hex from the actual spawn hex (the player spawns at the rear pad,
+// ~4 hex behind origin, so "into the leg" is counted from there) — right on target. The #359 calm
+// floor off spawn is UNTOUCHED: `lo` still holds `MIN_GAP_PROGRESS_HEX` (600px ≈ 7.2 hex) of quiet
+// between spawn and the earliest the tower may land, so the opening is never a detect bubble on top
+// of the player. This only moves the far end of the first-gap window outward.
+export const FIRST_TOWER_MAX_PROGRESS_PX = 1900;
+export const FIRST_TOWER_MAX_PROGRESS_HEX = FIRST_TOWER_MAX_PROGRESS_PX / HEX_STEP_PX; // ≈22.9
 
 // #340: HOW FAR APART TWO BASES MUST SIT. Split out of `MIN_GAP_PROGRESS_PX` above, which
 // `placeBases` used to borrow. They were never the same quantity and #340 is what forced the two
@@ -1906,14 +1943,41 @@ export const FIRST_TOWER_MAX_PROGRESS_HEX = FIRST_TOWER_MAX_PROGRESS_PX / HEX_ST
 // genuine open ground pre-#333).
 //
 // Wall-turret range (900) is deliberately left alone — #340 says revisit it only if spacing alone
-// doesn't fix the overlap, and spacing alone does.
+// doesn't fix the overlap, and spacing alone did.
 //
-// This floor is what `CORRIDOR_LENGTH_PER_BASE_PX` (4800) is sized to hold: `placeBases` needs
-// real headroom above the floor inside each 1/`baseCount` slice for its random pick, and
-// 3400/4800 ≈ 0.71 leaves a comparable margin to the shipped 600/1140 ≈ 0.53. Verified against
-// the REAL pipeline by the gap-floor sweep in worldgen.test.js rather than assumed.
-export const MIN_BASE_SEPARATION_PX = 3400;
-export const MIN_BASE_SEPARATION_HEX = MIN_BASE_SEPARATION_PX / HEX_STEP_PX; // ≈40.9
+// #442 (Jackson, playtest: "decrease map travel distance between bases" — ~40 hex STEPS per leg):
+// LOWERED from 3400px to 2900px, because the 40-hex leg forced the issue. `CORRIDOR_LENGTH_PER_BASE_PX`
+// is now HEX_STEP_PX * 40 ≈ 3326px — the SLICE each base gets — and `placeBases` needs the separation
+// floor to sit COMFORTABLY BELOW that slice (with real headroom for its random pick) or it can't place
+// bases without collapsing the last leg. The old 3400px floor is LARGER than the 3326px slice, so at
+// 40-hex legs it is geometrically impossible: the two constants directly contradict. Something had to
+// give, and Jackson's hard number is the leg length.
+//
+// WHAT THIS PRESERVES vs. RELAXES — the change is deliberately the MINIMAL one:
+//   - #340's CORE guarantee SURVIVES: two neighbouring bases still never sit inside each other's
+//     900px wall-turret envelopes. That touch distance is 2*(6*HEX_STEP_PX + 900) ≈ 2798px, and
+//     2900 > 2798, so the floor still clears it (the `separates bases by more than two full
+//     wall-turret envelopes` test still passes on this constant). You are never shot from a base
+//     while standing in a different base.
+//   - What RELAXES is #340's EXTRA margin: it wanted 3400px = the 2798px envelope-touch PLUS a
+//     guaranteed 400px+ strip of genuinely neutral ground (wider than the graphics cull margin) on
+//     EVERY leg. That guaranteed strip is now THIN: this floor is a spine-PROGRESS distance, and the
+//     straight-line centre gap the turrets actually shoot across is a bit shorter (the corridor
+//     meanders between the two centres) — swept over 80 real corridors × 5 biomes the tightest
+//     straight-line adjacent gap is ~2823px, i.e. envelopes still never overlap but only ~25px of
+//     genuinely neutral ground separates them on the tightest roll. It is only a FLOOR, though: the
+//     typical leg is the full ~40-hex slice, leaving a few hundred px of real neutral ground on most
+//     legs. So the "genuine open-ground breather" #340 guaranteed on every leg is now typical rather
+//     than guaranteed — the direct, unavoidable cost of Jackson's shorter travel.
+//
+// SIZING against the two hard limits, both measured on the real pipeline (scratch sweeps, 40 seeds):
+//   - Above 2798px, or bases overlap wall-turret envelopes (the #340 line that must not cross).
+//   - Below ~3076px (≈37 hex), or the floor eats too much of the 3326px slice and `placeBases`'
+//     fallback takes over — measured, the LAST leg collapses toward 0 at 37 hex. 2900px sits ~176px
+//     under that cliff, so placement stays healthy (last-leg min ≈ 35 hex across the sweep) with the
+//     variance intact, while 2900/3326 ≈ 0.87 keeps the headroom ratio on the tighter-but-fine side.
+export const MIN_BASE_SEPARATION_PX = 2900;
+export const MIN_BASE_SEPARATION_HEX = MIN_BASE_SEPARATION_PX / HEX_STEP_PX; // ≈34.9
 
 // #110/#169: the Set of hex keys forming a ring `ringWidth` hexes thick immediately OUTSIDE the
 // playable shape — the world's impassable outer boundary. Found by BFS-expanding outward from the
