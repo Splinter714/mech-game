@@ -38,13 +38,18 @@ function drawMount(sg, accent, armored = false) {
   if (armored) armorShell(sg, 0, 4, 18, 13);
 }
 
-// The rotating rail gun: a compact pivot block and a long twin-rail barrel with a charge line.
+// The rotating rail gun: a full-circle turret ring and a long twin-rail barrel with a charge
+// line. #429: the pivot base used to be a rounded RECTANGLE, which against the wall read as a
+// lopsided semicircle rather than a clean rotating mount. It's now a true circle — a
+// rotating-turret ring sitting on top of the parapet — with a lit rim band so the ring reads as
+// a distinct collar, not just a flat disc.
 function drawRail(sg, accent, armored = false) {
   const A = accentGlow(accent);
-  // Pivot block — smaller than the sentry's housing, so the BARREL is the dominant shape.
-  roundC(sg, 0, 0, 14.6, 12.6, V.halo, 4.2);
-  roundC(sg, 0, 0, 13, 11, V.outline, 3.6);
-  roundC(sg, 0, 0, 10, 8, V.bodyHi, 3);
+  // Pivot ring — smaller than the sentry's housing, so the BARREL is still the dominant shape.
+  ellipseC(sg, 0, 0, 15.6, 15.6, V.halo);
+  ellipseC(sg, 0, 0, 14, 14, V.outline);
+  ellipseC(sg, 0, 0, 12.4, 12.4, V.rim, 0.55);
+  ellipseC(sg, 0, 0, 10.6, 10.6, V.bodyHi);
   // Targeting eye.
   ellipseC(sg, 0, -0.5, 3.4, 3, V.outline);
   ellipseC(sg, 0, -0.5, 2.2, 2, A.core, 0.95);
