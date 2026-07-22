@@ -149,13 +149,13 @@ export function blocksSpan(edge) {
 }
 
 // #427: the SHOT-solidity predicate, the counterpart to `blocksSpan`'s MOVEMENT solidity. A gate is
-// now TWO door leaves that part toward their posts when it opens but only retract ~70%, leaving a
-// solid stub on each side and — as the confirmed simplification — kept as ONE logical edge that is
-// always hittable rather than two literal 70%/30% hitboxes. So an OPEN gate blocks and receives fire
-// even though a unit may drive through the central passage: shots no longer sail through the mouth,
-// they detonate on the gate and route to its single HP pool (superseding #412's aim-pip workaround).
-// Every OTHER standing span is solid to shots exactly as it is to movement, so this differs from
-// `blocksSpan` for gates alone. Destroyed spans stop nothing either way — that is the breach.
+// now TWO ADJACENT LEAVES, each its OWN real span with its own HP pool. A leaf, open or shut, stays
+// solid to FIRE: it is a real wall segment you can always target and destroy, even while it stands
+// open to let units through the central passage between the pair. So an OPEN leaf blocks and
+// receives fire even though a unit may drive past it: shots no longer sail through the mouth, they
+// detonate on the leaf and route to that leaf's HP (superseding #412's aim-pip workaround). Every
+// OTHER standing span is solid to shots exactly as it is to movement, so this differs from
+// `blocksSpan` for gate leaves alone. Destroyed spans stop nothing either way — that is the breach.
 export function blocksShot(edge) {
   return !!edge && !edge.destroyed;
 }
@@ -277,7 +277,51 @@ export function makeWallEdgeSet(defs = [], hp = WALL_EDGE_HP) {
       byHex.get(hk).push(rec);
     }
   }
-  return { edges, byHex };
+  const set = { edges, byHex };
+  assignGateLeafDirections(set);
+  return set;
+}
+
+// #427: a gate is TWO ADJACENT wall spans — two collinear-neighbour leaves that part in OPPOSITE
+// directions to form a central passage, NOT one span drawn as two halves. Each leaf is a real,
+// INDEPENDENT span (its own HP pool, its own solidity, its own breach); what makes the pair read
+// and behave as one double door is that they share the vertex they part AWAY from and open in
+// lockstep (the scene drives both leaves from a single gate-cycle state, and combines their demand
+// — bases.js `_updateGates`).
+//
+// This derives, for each gate span, its PARTNER (the other gate span sharing a vertex) and its
+// HINGE end — the endpoint the leaf retracts TOWARD as it opens, which is the endpoint NOT shared
+// with its partner (its outer "post"). Its partner retracts toward ITS own outer post, so the two
+// leaves swing apart and the opening appears at the shared vertex between them. `gateHingeEnd` is 0
+// when the leaf retracts toward (x0,y0) and 1 toward (x1,y1); the renderer (wallArt.js `drawGate`)
+// reads it to slide the single leaf the right way. A lone gate span with no gate neighbour (a
+// degenerate placement, or a partner that fell to a breach) keeps a null partner and defaults its
+// hinge to end 0, so it still animates and behaves as a single retracting leaf.
+export function assignGateLeafDirections(set) {
+  if (!set) return set;
+  const gates = [...set.edges.values()].filter((e) => e.role === SPAN_ROLE_GATE);
+  for (const e of gates) {
+    let partner = null, sharedEnd = null;
+    for (const o of gates) {
+      if (o === e) continue;
+      const s = sharedVertexEnd(e, o);
+      if (s != null) { partner = o; sharedEnd = s; break; }
+    }
+    e.gatePartnerKey = partner ? partner.key : null;
+    // Retract toward the end that is NOT the shared vertex; default end 0 for a lone leaf.
+    e.gateHingeEnd = sharedEnd == null ? 0 : (sharedEnd === 0 ? 1 : 0);
+  }
+  return set;
+}
+
+// Which endpoint of span `e` coincides with an endpoint of span `o` — 0 for (x0,y0), 1 for
+// (x1,y1), or null if the two share no vertex. Rounded compare, matching `vertexKey`'s tolerance.
+function sharedVertexEnd(e, o) {
+  const e0 = vertexKey(e.x0, e.y0), e1 = vertexKey(e.x1, e.y1);
+  const o0 = vertexKey(o.x0, o.y0), o1 = vertexKey(o.x1, o.y1);
+  if (e0 === o0 || e0 === o1) return 0;
+  if (e1 === o0 || e1 === o1) return 1;
+  return null;
 }
 
 // Every STANDING edge record, in insertion order.

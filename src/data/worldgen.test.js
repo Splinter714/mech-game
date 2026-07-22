@@ -23,7 +23,7 @@ import {
 import { getBiome } from './biomes.js';
 import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
 import { axialKey, range, neighbors, distance, hexToPixel, pixelToHex } from './hexgrid.js';
-import { edgeKey, edgeMidpoint } from './hexEdges.js';
+import { edgeKey, edgeMidpoint, edgeEndpoints } from './hexEdges.js';
 import { ALERT_DETECT_RADIUS } from './alertTower.js';
 // #340: read the wall turret's reach off the KIND rather than re-typing 900 — the whole point of
 // the separation floor is that it tracks the real engagement envelope, so a range change must
@@ -2111,12 +2111,47 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
   // #354 raised the count on LARGE rings; the synthetic radius-2 disc these use has 18 spans, so
   // it still sits on the `MIN_GATES_PER_RING` floor of two and #309's original geometry tests
   // (opposite sides, one facing the approach) read exactly as they always did.
+  // #427: a gate is now a PAIR of adjacent leaves (a double door). Group a ring's gate spans into
+  // MOUTHS — connected components under "shares a vertex" — so placement can be asserted in terms of
+  // openings (what `gateCountForRing` counts) rather than raw leaf spans (up to two per mouth).
+  const gateMouths = (edges) => {
+    const gates = (edges ?? []).filter((e) => e.role === 'gate');
+    const vk = (x, y) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
+    const corners = (e) => { const p = edgeEndpoints(e.a, e.b); return [vk(p.x0, p.y0), vk(p.x1, p.y1)]; };
+    const groups = [];
+    const used = new Set();
+    for (const e of gates) {
+      if (used.has(e)) continue;
+      const group = [e]; used.add(e);
+      const ec = corners(e);
+      for (const o of gates) {
+        if (used.has(o) || o === e) continue;
+        if (corners(o).some((v) => ec.includes(v))) { group.push(o); used.add(o); }
+      }
+      groups.push(group);
+    }
+    return groups;
+  };
+  // A mouth's outward bearing from the compound centre — averaged over its leaves' outer hexes.
+  const mouthBearing = (mouth, c) => {
+    let sx = 0, sy = 0;
+    for (const e of mouth) {
+      const o = hexToPixel(e.b.q, e.b.r);
+      const a = Math.atan2(o.y - c.y, o.x - c.x);
+      sx += Math.cos(a); sy += Math.sin(a);
+    }
+    return Math.atan2(sy, sx);
+  };
+
   describe('#309: gates on opposite sides, opening onto passable ground', () => {
-    it('flags exactly two spans of a small ring as gates', () => {
+    it('flags two double-door mouths (each a pair of adjacent leaves) on a small ring', () => {
       const T = fillGroundDisc();
       const base = discBase({ q: 12, r: -4 });
       const [ring] = placeBaseWalls(T, [base]);
-      expect(ring.edges.filter((e) => e.role === 'gate').length).toBe(2);
+      const mouths = gateMouths(ring.edges);
+      expect(mouths.length).toBe(2);
+      // #427: each mouth is a PAIR of adjacent leaves — a real double door, not a single span.
+      for (const m of mouths) expect(m.length).toBe(2);
     });
 
     // The ring is IDENTICAL with gates and without — same spans, same count. A gate does not
@@ -2143,14 +2178,10 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
       for (const center of [{ q: 12, r: -4 }, { q: -9, r: 14 }, { q: 20, r: 0 }, { q: 5, r: 5 }]) {
         const base = discBase(center);
         const [ring] = placeBaseWalls(T, [base]);
-        const gates = ring.edges.filter((e) => e.role === 'gate');
-        expect(gates.length).toBe(2);
+        const mouths = gateMouths(ring.edges);
+        expect(mouths.length).toBe(2);
         const c = hexToPixel(center.q, center.r);
-        const bearing = (e) => {
-          const o = hexToPixel(e.b.q, e.b.r);
-          return Math.atan2(o.y - c.y, o.x - c.x);
-        };
-        const [b0, b1] = gates.map(bearing);
+        const [b0, b1] = mouths.map((m) => mouthBearing(m, c));
         const sep = Math.abs(Math.atan2(Math.sin(b0 - b1), Math.cos(b0 - b1)));
         // A radius-2 ring only offers so many discrete outward bearings, so "opposite" means
         // within a hex-direction step of 180°, not exactly 180°.
@@ -2247,10 +2278,13 @@ describe('placeBaseWalls (#288: base perimeter wall, as a sealed RING of hex EDG
           // MORE than the rule allows (the ring must stay a wall, not a fence); it may be fewer
           // only where terrain leaves too few eligible spans, which the ratio below bounds.
           const want = gateCountForRing((base.wallEdges ?? []).length);
-          expect(gates.length).toBeLessThanOrEqual(want);
+          // #427: `want` counts MOUTHS; each mouth is now a double door of up to two adjacent
+          // leaves. Assert on the mouth count, not the raw leaf-span count.
+          const mouths = gateMouths(base.wallEdges);
+          expect(mouths.length).toBeLessThanOrEqual(want);
           expect(want).toBeGreaterThanOrEqual(MIN_GATES_PER_RING);
           expect(want).toBeLessThanOrEqual(MAX_GATES_PER_RING);
-          gateCounts.push({ got: gates.length, want });
+          gateCounts.push({ got: mouths.length, want });
           for (const e of gates) {
             const k = axialKey(e.b.q, e.b.r);
             expect(terrain.has(k) && isPassable(terrain.get(k))).toBe(true);

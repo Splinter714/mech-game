@@ -345,96 +345,108 @@ describe('#392 a breach fells the hit span + its two contiguous neighbours (fixe
   });
 });
 
-describe('#427 the DOUBLE-DOOR gate — one logical edge, solid to fire, passable to movement', () => {
-  // A gate span flanked on the SAME wall run by a plain span on each side, so a breach has real
-  // neighbours to take with it. ns[0..2] are three consecutive outward faces of hex A (a 3-span
-  // run); the middle one (ns[1]) is the gate.
+describe('#427 the DOUBLE-DOOR gate — TWO adjacent leaves, each an independent span, parting apart', () => {
+  // A gate is now TWO ADJACENT gate leaves flanked on the SAME wall run by a plain span on each
+  // side. ns[0..3] are four consecutive outward faces of hex A (a 4-span run, consecutive faces
+  // share a corner); the middle two (ns[1], ns[2]) are the gate's two leaves.
   const ns = neighbors(A.q, A.r);
   const gatedRun = () => makeWallEdgeSet([
     { a: A, b: ns[0], baseId: 'b' },
     { a: A, b: ns[1], baseId: 'b', role: SPAN_ROLE_GATE },
-    { a: A, b: ns[2], baseId: 'b' },
+    { a: A, b: ns[2], baseId: 'b', role: SPAN_ROLE_GATE },
+    { a: A, b: ns[3], baseId: 'b' },
   ]);
-  const gateOf = (set) => gateEdges(set)[0];
+  const leavesOf = (set) => gateEdges(set);
 
-  it('blocksShot: an open gate stays SOLID to fire; blocksSpan: it is a doorway to movement', () => {
+  it('a gate is TWO adjacent gate edges, paired to each other, opening OPPOSITE ways', () => {
     const set = gatedRun();
-    const gate = gateOf(set);
-    setGateOpen(set, gate, true);
-    // ONE logical edge in two states: hittable (shot) but drive-through (movement).
-    expect(blocksShot(gate)).toBe(true);
-    expect(blocksSpan(gate)).toBe(false);
-    // A shut gate blocks both; a destroyed one blocks neither (that is the breach).
-    setGateOpen(set, gate, false);
-    expect(blocksShot(gate)).toBe(true);
-    expect(blocksSpan(gate)).toBe(true);
-    gate.destroyed = true;
-    expect(blocksShot(gate)).toBe(false);
-    expect(blocksSpan(gate)).toBe(false);
+    const leaves = leavesOf(set);
+    expect(leaves).toHaveLength(2);
+    const [l0, l1] = leaves;
+    // Each names the other as its partner.
+    expect(l0.gatePartnerKey).toBe(l1.key);
+    expect(l1.gatePartnerKey).toBe(l0.key);
+    // They share exactly one vertex (the passage centre they part away from).
+    const vk = (x, y) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
+    const l0v = [vk(l0.x0, l0.y0), vk(l0.x1, l0.y1)];
+    const l1v = [vk(l1.x0, l1.y0), vk(l1.x1, l1.y1)];
+    const shared = l0v.filter((v) => l1v.includes(v));
+    expect(shared).toHaveLength(1);
+    // Each leaf's HINGE end (the post it retracts TOWARD) is the endpoint that is NOT the shared
+    // vertex — so the two leaves retract in opposite directions, parting at the shared vertex.
+    const hingeVk = (l) => (l.gateHingeEnd === 1 ? vk(l.x1, l.y1) : vk(l.x0, l.y0));
+    expect(hingeVk(l0)).not.toBe(shared[0]);
+    expect(hingeVk(l1)).not.toBe(shared[0]);
+    expect(hingeVk(l0)).not.toBe(hingeVk(l1));
   });
 
-  it('a plain wall span is identical under both predicates — the split touches gates alone', () => {
+  it('each leaf is INDEPENDENTLY solid to fire (open or shut) and a doorway to movement when open', () => {
+    const set = gatedRun();
+    for (const leaf of leavesOf(set)) {
+      setGateOpen(set, leaf, true);
+      expect(blocksShot(leaf)).toBe(true);    // open leaf still stops shots
+      expect(blocksSpan(leaf)).toBe(false);   // ...but units drive past it
+      setGateOpen(set, leaf, false);
+      expect(blocksShot(leaf)).toBe(true);
+      expect(blocksSpan(leaf)).toBe(true);
+      leaf.destroyed = true;
+      expect(blocksShot(leaf)).toBe(false);   // a breach stops neither
+      expect(blocksSpan(leaf)).toBe(false);
+    }
+  });
+
+  it('a plain wall span is identical under both predicates — the split touches gate leaves alone', () => {
     const set = gatedRun();
     const wall = liveWallEdges(set).find((e) => e.role !== SPAN_ROLE_GATE);
     expect(blocksShot(wall)).toBe(true);
     expect(blocksSpan(wall)).toBe(true);
   });
 
-  it('a shot crossing an OPEN gate hits it (blocksShot), while movement crosses freely (default)', () => {
+  it('a shot crossing an OPEN leaf hits THAT leaf (blocksShot), while movement crosses freely', () => {
     const set = gatedRun();
-    const gate = gateOf(set);
-    setGateOpen(set, gate, true);
-    const m = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
-    // A segment straight through the mouth, well to each side of the midpoint.
-    const nx = -(gate.y1 - gate.y0), ny = (gate.x1 - gate.x0);
+    const leaf = leavesOf(set)[0];
+    setGateOpen(set, leaf, true);
+    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    const nx = -(leaf.y1 - leaf.y0), ny = (leaf.x1 - leaf.x0);
     const len = Math.hypot(nx, ny) || 1;
     const ax = m.x - nx / len * 40, ay = m.y - ny / len * 40;
     const bx = m.x + nx / len * 40, by = m.y + ny / len * 40;
-    // Shot semantics: the open gate STOPS the crossing (it is solid to fire).
-    expect(wallEdgeCrossing(set, ax, ay, bx, by, WALL_THICKNESS_PX, null, 0, blocksShot)?.edge).toBe(gate);
-    // Movement semantics (default blocksSpan): the mouth is open, nothing crosses.
-    expect(wallEdgeCrossing(set, ax, ay, bx, by)).toBe(null);
+    expect(wallEdgeCrossing(set, ax, ay, bx, by, WALL_THICKNESS_PX, null, 0, blocksShot)?.edge).toBe(leaf);
+    expect(wallEdgeCrossing(set, ax, ay, bx, by)).toBe(null);   // movement: the open leaf is a doorway
   });
 
-  it('a point on an OPEN gate is solid to a shot query and clear to a movement query', () => {
+  it('a point on an OPEN leaf is solid to a shot query and clear to a movement query', () => {
     const set = gatedRun();
-    const gate = gateOf(set);
-    setGateOpen(set, gate, true);
-    const m = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
-    expect(wallEdgeAt(set, m.x, m.y, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(gate);
-    expect(wallEdgeAt(set, m.x, m.y)).toBe(null);   // default movement query: driveable
+    const leaf = leavesOf(set)[0];
+    setGateOpen(set, leaf, true);
+    const m = { x: (leaf.x0 + leaf.x1) / 2, y: (leaf.y0 + leaf.y1) / 2 };
+    expect(wallEdgeAt(set, m.x, m.y, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(leaf);
+    expect(wallEdgeAt(set, m.x, m.y)).toBe(null);
   });
 
-  it('a hit near an OPEN gate routes to it under blocksShot (nearestWallEdge)', () => {
+  it('each leaf is INDEPENDENTLY destructible — destroying ONE breaches like a wall', () => {
     const set = gatedRun();
-    const gate = gateOf(set);
-    setGateOpen(set, gate, true);
-    const m = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
-    expect(nearestWallEdge(set, m.x, m.y, WALL_THICKNESS_PX, blocksShot)).toBe(gate);
-    expect(nearestWallEdge(set, m.x, m.y)).not.toBe(gate);   // default (movement) never routes to the open gate
-  });
-
-  it('destroying an OPEN gate breaches like a wall: gate PLUS both flanking spans fall', () => {
-    const set = gatedRun();
-    const gate = gateOf(set);
-    setGateOpen(set, gate, true);
-    const { destroyed, felled } = damageWallEdge(set, gate, WALL_EDGE_HP);
+    const leaf = leavesOf(set)[0];
+    setGateOpen(set, leaf, true);
+    const { destroyed, felled } = damageWallEdge(set, leaf, WALL_EDGE_HP);
     expect(destroyed).toBe(true);
-    // Same breach rule as any span: the hit span + its one collinear neighbour on each side.
-    expect(felled).toHaveLength(3);
-    expect(felled).toContain(gate);
+    // Same breach rule as any span: the hit leaf + its one collinear neighbour on each side (which
+    // includes its gate partner). The hit leaf is always among the felled.
+    expect(felled).toContain(leaf);
+    expect(felled.length).toBeGreaterThanOrEqual(2);
     for (const span of felled) expect(span.destroyed).toBe(true);
   });
 
-  it('a gate is damageable whether OPEN or SHUT — one HP pool, one breach', () => {
+  it('a leaf is damageable whether OPEN or SHUT — its own HP pool, chipped independently', () => {
     for (const open of [true, false]) {
       const set = gatedRun();
-      const gate = gateOf(set);
-      setGateOpen(set, gate, open);
-      const before = gate.hp;
-      damageWallEdge(set, gate, 30);
-      expect(gate.hp).toBe(before - 30);
-      expect(gate.destroyed).toBe(false);
+      const [l0, l1] = leavesOf(set);
+      setGateOpen(set, l0, open);
+      const before0 = l0.hp, before1 = l1.hp;
+      damageWallEdge(set, l0, 30);
+      expect(l0.hp).toBe(before0 - 30);
+      expect(l0.destroyed).toBe(false);
+      expect(l1.hp).toBe(before1);   // chipping one leaf never touches its partner's pool
     }
   });
 });

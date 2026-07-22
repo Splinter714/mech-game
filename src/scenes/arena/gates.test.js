@@ -528,11 +528,15 @@ describe('#355 gates lock open once the objective is destroyed', () => {
   // not resurrect a cycle for it.
   it('leaves an already-destroyed gate span alone', () => {
     const s = makeScene({ gateAt: FOUR_GATES, objectiveAlive: false, enemies: [] });
-    const dead = allGates(s)[1];
+    // #427: FOUR_GATES forms TWO double-door mouths, so there is one cycle state per mouth (its
+    // PRIMARY leaf). Kill a leaf that OWNS its mouth's cycle and confirm fail-open never resurrects
+    // it and retires exactly that one cycle.
+    const before = s._gateStates.size;
+    const dead = allGates(s).find((g) => s._gateStates.has(g.key));
     dead.destroyed = true;
     run(s, GATE_OPENING_MS + 200);
     expect(s._gateStates.has(dead.key)).toBe(false);
-    expect(s._gateStates.size).toBe(3);
+    expect(s._gateStates.size).toBe(before - 1);
   });
 
   // A dormant base whose objective got sniped from outside still fails open — there is nothing

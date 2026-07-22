@@ -24,6 +24,7 @@ import {
   nearestHex,
 } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory } from './terrain.js';
+import { edgeEndpoints } from './hexEdges.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
 // stage/squad system, data/run.js's retired `squadForStage`, and data/enemies.js's `DEFAULT_SQUAD`
@@ -1612,8 +1613,39 @@ function assignGates(T, base, edges) {
     if (!w) break;
     chosen.add(w.e);
     w.e.role = 'gate';
+    // #427: a gate is a PAIR OF ADJACENT LEAVES, not a single span. Claim the nearest eligible
+    // span sharing a vertex with the primary (preferring the one most parallel in outward facing,
+    // so the two leaves form a straight double door rather than a kink) as the second leaf. Both
+    // become gate spans; they part in OPPOSITE directions to open a central passage
+    // (wallEdges.js `assignGateLeafDirections`). If no adjacent eligible span is free — the primary
+    // sits at the end of a run, or its neighbours are already gates/turrets — the gate degrades
+    // gracefully to a single leaf, exactly as a ring with no eligible span gets no gate at all.
+    const mate = gatePartnerSpan(w, eligible, chosen, angDiff);
+    if (mate) { chosen.add(mate.e); mate.e.role = 'gate'; }
   }
   return edges;
+}
+
+// #427: the second leaf of a gate — the eligible span adjacent to `primaryW` (sharing one of its
+// two vertices) whose outward bearing is closest to the primary's, so the pair reads as one double
+// door facing the same way. Returns the chosen `withBearing` entry or null when nothing adjacent is
+// free. Works at the DEF level (axial `a`/`b` via `edgeEndpoints`) since roles are assigned before
+// the live wall-edge set is built.
+function gatePartnerSpan(primaryW, eligible, taken, angDiff) {
+  const pe = edgeEndpoints(primaryW.e.a, primaryW.e.b);
+  if (!pe) return null;
+  const vk = (x, y) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
+  const pv = new Set([vk(pe.x0, pe.y0), vk(pe.x1, pe.y1)]);
+  let best = null, bestD = Infinity;
+  for (const w of eligible) {
+    if (w === primaryW || taken.has(w.e)) continue;
+    const ce = edgeEndpoints(w.e.a, w.e.b);
+    if (!ce) continue;
+    if (!(pv.has(vk(ce.x0, ce.y0)) || pv.has(vk(ce.x1, ce.y1)))) continue;   // must share a vertex
+    const d = angDiff(w.bearing, primaryW.bearing);
+    if (d < bestD) { best = w; bestD = d; }
+  }
+  return best;
 }
 
 // #354: gates scale with the ring's span count — see `assignGates`' header for the reasoning and

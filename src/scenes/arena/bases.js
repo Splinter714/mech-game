@@ -1255,11 +1255,26 @@ export const BasesMixin = {
     this._gateClockMs = 0;
     this._gateDemandStats = makeGateDemandStats();
     const rng = mulberry32(0x9e3779b9 ^ (this.runSeed ?? 1));
+    // #427: a gate is TWO adjacent LEAVES (`gatePartnerKey`), and they must open in LOCKSTEP or a
+    // double door would gape half-shut. So only the PRIMARY leaf of each pair owns a cycle state;
+    // `_updateGates` drives both leaves from it (combining their demand and mirroring the phase). A
+    // lone leaf (no partner) is its own primary. Every leaf still gets `open`/`openFrac` seeded.
     for (const edge of gateEdges(this.wallEdges)) {
-      this._gateStates.set(edge.key, makeGateState(rng() * GATE_STAGGER_MAX_MS));
       edge.open = false;
       edge.openFrac = 0;
+      if (this._isPrimaryGateLeaf(edge)) this._gateStates.set(edge.key, makeGateState(rng() * GATE_STAGGER_MAX_MS));
     }
+  },
+
+  // #427: the leaf that owns its pair's cycle state — the lone leaf, or (for a real pair) the one
+  // with the smaller canonical key, a stable deterministic pick that does not depend on Map order.
+  _isPrimaryGateLeaf(edge) {
+    return !edge.gatePartnerKey || edge.key < edge.gatePartnerKey;
+  },
+
+  // #427: the partner leaf record of a gate edge, or null for a lone leaf / a partner already gone.
+  _gatePartnerLeaf(edge) {
+    return edge.gatePartnerKey ? (this.wallEdges?.edges?.get(edge.gatePartnerKey) ?? null) : null;
   },
 
   // ── The DEMAND scan (#309 playtest) ────────────────────────────────────────────────────
@@ -1437,16 +1452,25 @@ export const BasesMixin = {
     let redraw = false;
     for (const edge of gateEdges(this.wallEdges)) {
       const state = this._gateStates.get(edge.key);
-      if (!state) continue;
+      if (!state) continue;                          // #427: only PRIMARY leaves carry a state
+      const partner = this._gatePartnerLeaf(edge);   // the other leaf of this double door, if any
       if (edge.destroyed) {
+        // The primary fell (a breach usually fells its partner too — collinear neighbours). The
+        // pair's cycle is over; the surviving spans, if any, are just a permanent breach now.
         this._gateStates.delete(edge.key);
         this._gateDemand?.forget(edge.key);   // a blown door's stale demand must not outlive it
         redraw = true;
         continue;
       }
+      // #427: a leaf swings for its PAIR. Demand and occupancy are read across BOTH leaves so one
+      // unit routing through the shared passage opens the whole door, and a body standing in the
+      // mouth holds both leaves open.
+      const livePartner = partner && !partner.destroyed ? partner : null;
+      const demand = !!this._gateDemand?.wanted(edge.key, nowMs)
+        || (livePartner ? !!this._gateDemand?.wanted(livePartner.key, nowMs) : false);
       const next = tickGate(state, {
         awake: this._wokenBases.has(edge.baseId),
-        demand: !!this._gateDemand?.wanted(edge.key, nowMs),
+        demand,
         failOpen: failedOpen.has(edge.baseId),
         // #369 ELEVATOR DOORS: is anything standing in the mouth? Only asked in the two phases
         // where the answer can change anything — the open gate deciding whether to shut, and the
@@ -1454,19 +1478,23 @@ export const BasesMixin = {
         // geometry entirely, which matters with #354's 2-5 gates per ring: the common case (every
         // gate on every dormant or shut ring, every frame) stays free.
         occupied: (state.phase === GATE_OPEN || state.phase === GATE_CLOSING) && !state.lockedOpen
-          && this._gateMouthOccupied(edge),
+          && (this._gateMouthOccupied(edge) || (livePartner ? this._gateMouthOccupied(livePartner) : false)),
         dt,
       });
       if (next === state) continue;
       this._gateStates.set(edge.key, next);
       // Passable ONLY in the fully-open phase — never mid-travel, so nothing can be caught in a
-      // closing span. `setGateOpen` is the one place the flag is written.
-      setGateOpen(this.wallEdges, edge, gatePassable(next));
+      // closing span. `setGateOpen` is the one place the flag is written. Both leaves move together.
+      const passable = gatePassable(next);
       // The leaves' visible travel: 0 shut -> 1 open, ramped across the opening/closing phases so
       // the doors are seen to move rather than snapping between two states.
-      edge.openFrac = next.phase === GATE_OPENING ? Math.min(1, next.phaseMs / GATE_OPENING_MS)
+      const openFrac = next.phase === GATE_OPENING ? Math.min(1, next.phaseMs / GATE_OPENING_MS)
         : next.phase === GATE_CLOSING ? Math.max(0, 1 - next.phaseMs / GATE_CLOSING_MS)
-          : gatePassable(next) ? 1 : 0;
+          : passable ? 1 : 0;
+      for (const leaf of livePartner ? [edge, livePartner] : [edge]) {
+        setGateOpen(this.wallEdges, leaf, passable);
+        leaf.openFrac = openFrac;
+      }
       redraw = true;
       if (next.startedOpening) this._gateOpenFx(edge);
       if (next.justClosed) this._gateCloseFx(edge);

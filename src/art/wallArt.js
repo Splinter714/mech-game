@@ -75,58 +75,54 @@ function openFracOf(e) {
 // through.
 function drawGate(g, e, hw, timeMs) {
   const f = openFracOf(e);
-  const dx = e.x1 - e.x0, dy = e.y1 - e.y0;
+  const frac = e.maxHp ? Math.max(0, Math.min(1, e.hp / e.maxHp)) : 1;
+  // #427: ONE leaf per edge — a gate is TWO ADJACENT edges, each drawn here, and the double-door
+  // look emerges from the two neighbouring leaves, NOT from one edge split into halves. The leaf
+  // hangs from its outer POST (its `gateHingeEnd` endpoint) and its free (meeting) end retracts
+  // TOWARD that post as the gate opens: full length shut, a short stub tucked into the jamb open.
+  // Its partner leaf on the adjacent gate edge retracts toward ITS own post in the OPPOSITE
+  // direction, so the two parting leaves leave a central passage at the vertex they share. The
+  // whole leaf stays solid to fire open or shut (wallEdges.js `blocksShot`), so the retracted stub
+  // is a real, targetable segment — not decoration.
+  const hinge = (e.gateHingeEnd ?? 0) === 1
+    ? { px: e.x1, py: e.y1, fx: e.x0, fy: e.y0 }
+    : { px: e.x0, py: e.y0, fx: e.x1, fy: e.y1 };
+  const dx = hinge.fx - hinge.px, dy = hinge.fy - hinge.py;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
-  const frac = e.maxHp ? Math.max(0, Math.min(1, e.hp / e.maxHp)) : 1;
-  // #427: each leaf spans from its own end (its jamb post) toward the centre. Shut: they meet
-  // exactly at the midpoint (0.5·len each) and the span is a solid door. Open: each leaf retracts
-  // only ~70% of its travel toward its post — 0.5·len → 0.15·len — leaving a solid STUB of door on
-  // each side and a central passage between them. The gate stays ONE logical edge with one HP pool;
-  // this two-leaf part is animation only, and (per `blocksShot`) the whole span is hittable open or
-  // shut, so the stubs a shot lands on are real, not decoration.
-  const leaf = len * (0.5 - 0.35 * f);
-  const leaves = [
-    [e.x0, e.y0, e.x0 + ux * leaf, e.y0 + uy * leaf],
-    [e.x1, e.y1, e.x1 - ux * leaf, e.y1 - uy * leaf],
-  ];
-  // The threshold glow first, so the leaves sit on top of it where they overlap. Two wide, faint
-  // bands rather than one bright one: the light falls off away from the opening, which reads as
-  // spill rather than as a painted stripe, and at these alphas it can never be mistaken for a
-  // solid object in the gap. No pulse — a steady light is a doorway, a pulsing one is a hazard.
+  const leafLen = len * (1 - 0.75 * f);
+  const ax = hinge.px, ay = hinge.py;                     // the anchored post end
+  const bx = hinge.px + ux * leafLen, by = hinge.py + uy * leafLen;   // the free (retracting) lip
+  // The threshold glow first, so the leaf sits on top of it where they overlap. A wide, faint spill
+  // along the opened gap — from the leaf's retracted lip toward the shared vertex it parted away
+  // from. At these alphas it can never be mistaken for a solid object in the gap. No pulse — a
+  // steady light is a doorway, a pulsing one is a hazard.
   if (f > 0.02) {
-    const gapA = { x: e.x0 + ux * leaf, y: e.y0 + uy * leaf };
-    const gapB = { x: e.x1 - ux * leaf, y: e.y1 - uy * leaf };
     g.fillStyle(GATE_GLOW, 0.10 * f);
-    g.fillPoints(band(gapA.x, gapA.y, gapB.x, gapB.y, hw * 1.9), true);
+    g.fillPoints(band(bx, by, hinge.fx, hinge.fy, hw * 1.9), true);
     g.fillStyle(GATE_GLOW, 0.16 * f);
-    g.fillPoints(band(gapA.x, gapA.y, gapB.x, gapB.y, hw * 0.9), true);
-    // A small lamp at each jamb where the leaf has retracted to — the doorway's own edge lighting,
-    // and the cue that picks an open mouth out at distance now that the curtain is gone.
+    g.fillPoints(band(bx, by, hinge.fx, hinge.fy, hw * 0.9), true);
+    // A small lamp at the leaf's retracted lip — the doorway's own edge lighting, and the cue that
+    // picks an open mouth out at distance now that the curtain is gone.
     g.fillStyle(GATE_GLOW, 0.55 * f);
-    g.fillCircle(gapA.x, gapA.y, hw * 0.3);
-    g.fillCircle(gapB.x, gapB.y, hw * 0.3);
+    g.fillCircle(bx, by, hw * 0.3);
   }
-  // The leaves.
-  for (const [ax, ay, bx, by] of leaves) {
-    g.fillStyle(0x000000, 0.3);
-    g.fillPoints(band(ax, ay + 3, bx, by + 3, hw), true);
-    g.fillStyle(WALL_DARK, 1);
-    g.fillPoints(band(ax, ay, bx, by, hw), true);
-    g.fillStyle(GATE_LEAF, 1);
-    g.fillPoints(band(ax, ay, bx, by, hw * (0.36 + 0.44 * frac)), true);
-    g.fillStyle(GATE_LEAF_LIT, 0.3 + 0.6 * frac);
-    g.fillPoints(band(ax, ay - 1, bx, by - 1, hw * 0.24 * frac), true);
-  }
-  // Heavy jamb posts — visibly chunkier than a plain span's junction pillar, so a shut gate is
-  // still identifiable as a gate from across the field.
+  // The leaf.
+  g.fillStyle(0x000000, 0.3);
+  g.fillPoints(band(ax, ay + 3, bx, by + 3, hw), true);
+  g.fillStyle(WALL_DARK, 1);
+  g.fillPoints(band(ax, ay, bx, by, hw), true);
+  g.fillStyle(GATE_LEAF, 1);
+  g.fillPoints(band(ax, ay, bx, by, hw * (0.36 + 0.44 * frac)), true);
+  g.fillStyle(GATE_LEAF_LIT, 0.3 + 0.6 * frac);
+  g.fillPoints(band(ax, ay - 1, bx, by - 1, hw * 0.24 * frac), true);
+  // Heavy jamb post at the hinge end — visibly chunkier than a plain span's junction pillar, so a
+  // shut gate is still identifiable as a gate from across the field.
   g.fillStyle(GATE_FRAME, 1);
-  g.fillCircle(e.x0, e.y0, hw * 1.25);
-  g.fillCircle(e.x1, e.y1, hw * 1.25);
-  // Amber warning pip on each leaf (rather than one at the midpoint, which the opening would
-  // swallow) — the paired lamps are the "this is a door" tell while it is shut.
+  g.fillCircle(ax, ay, hw * 1.25);
+  // Amber warning pip on the leaf — the "this is a door" tell while it is shut.
   g.fillStyle(HAZARD, 0.45 + 0.45 * frac);
-  for (const [ax, ay, bx, by] of leaves) g.fillCircle((ax + bx) / 2, (ay + by) / 2, hw * 0.3);
+  g.fillCircle((ax + bx) / 2, (ay + by) / 2, hw * 0.3);
 }
 
 // #310/#413 TURRET-SPAN MARK. A turret span used to draw a widened armoured PLINTH; #310 dropped
