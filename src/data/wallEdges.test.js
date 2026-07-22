@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
   WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan, wallSpanOutwardSign,
+  blocksSpan, blocksShot, setGateOpen, gateEdges, SPAN_ROLE_GATE,
 } from './wallEdges.js';
 import { edgeKey, edgeEndpoints, edgeMidpoint, pointSegmentDistance } from './hexEdges.js';
 import { HEX_SIZE, hexToPixel, neighbors } from './hexgrid.js';
@@ -341,6 +342,100 @@ describe('#392 a breach fells the hit span + its two contiguous neighbours (fixe
     expect(felled).not.toContain(spur);
     expect(spur.destroyed).toBe(false);
     expect(spur.hp).toBe(WALL_EDGE_HP);
+  });
+});
+
+describe('#427 the DOUBLE-DOOR gate — one logical edge, solid to fire, passable to movement', () => {
+  // A gate span flanked on the SAME wall run by a plain span on each side, so a breach has real
+  // neighbours to take with it. ns[0..2] are three consecutive outward faces of hex A (a 3-span
+  // run); the middle one (ns[1]) is the gate.
+  const ns = neighbors(A.q, A.r);
+  const gatedRun = () => makeWallEdgeSet([
+    { a: A, b: ns[0], baseId: 'b' },
+    { a: A, b: ns[1], baseId: 'b', role: SPAN_ROLE_GATE },
+    { a: A, b: ns[2], baseId: 'b' },
+  ]);
+  const gateOf = (set) => gateEdges(set)[0];
+
+  it('blocksShot: an open gate stays SOLID to fire; blocksSpan: it is a doorway to movement', () => {
+    const set = gatedRun();
+    const gate = gateOf(set);
+    setGateOpen(set, gate, true);
+    // ONE logical edge in two states: hittable (shot) but drive-through (movement).
+    expect(blocksShot(gate)).toBe(true);
+    expect(blocksSpan(gate)).toBe(false);
+    // A shut gate blocks both; a destroyed one blocks neither (that is the breach).
+    setGateOpen(set, gate, false);
+    expect(blocksShot(gate)).toBe(true);
+    expect(blocksSpan(gate)).toBe(true);
+    gate.destroyed = true;
+    expect(blocksShot(gate)).toBe(false);
+    expect(blocksSpan(gate)).toBe(false);
+  });
+
+  it('a plain wall span is identical under both predicates — the split touches gates alone', () => {
+    const set = gatedRun();
+    const wall = liveWallEdges(set).find((e) => e.role !== SPAN_ROLE_GATE);
+    expect(blocksShot(wall)).toBe(true);
+    expect(blocksSpan(wall)).toBe(true);
+  });
+
+  it('a shot crossing an OPEN gate hits it (blocksShot), while movement crosses freely (default)', () => {
+    const set = gatedRun();
+    const gate = gateOf(set);
+    setGateOpen(set, gate, true);
+    const m = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
+    // A segment straight through the mouth, well to each side of the midpoint.
+    const nx = -(gate.y1 - gate.y0), ny = (gate.x1 - gate.x0);
+    const len = Math.hypot(nx, ny) || 1;
+    const ax = m.x - nx / len * 40, ay = m.y - ny / len * 40;
+    const bx = m.x + nx / len * 40, by = m.y + ny / len * 40;
+    // Shot semantics: the open gate STOPS the crossing (it is solid to fire).
+    expect(wallEdgeCrossing(set, ax, ay, bx, by, WALL_THICKNESS_PX, null, 0, blocksShot)?.edge).toBe(gate);
+    // Movement semantics (default blocksSpan): the mouth is open, nothing crosses.
+    expect(wallEdgeCrossing(set, ax, ay, bx, by)).toBe(null);
+  });
+
+  it('a point on an OPEN gate is solid to a shot query and clear to a movement query', () => {
+    const set = gatedRun();
+    const gate = gateOf(set);
+    setGateOpen(set, gate, true);
+    const m = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
+    expect(wallEdgeAt(set, m.x, m.y, WALL_THICKNESS_PX, null, 0, blocksShot)).toBe(gate);
+    expect(wallEdgeAt(set, m.x, m.y)).toBe(null);   // default movement query: driveable
+  });
+
+  it('a hit near an OPEN gate routes to it under blocksShot (nearestWallEdge)', () => {
+    const set = gatedRun();
+    const gate = gateOf(set);
+    setGateOpen(set, gate, true);
+    const m = { x: (gate.x0 + gate.x1) / 2, y: (gate.y0 + gate.y1) / 2 };
+    expect(nearestWallEdge(set, m.x, m.y, WALL_THICKNESS_PX, blocksShot)).toBe(gate);
+    expect(nearestWallEdge(set, m.x, m.y)).not.toBe(gate);   // default (movement) never routes to the open gate
+  });
+
+  it('destroying an OPEN gate breaches like a wall: gate PLUS both flanking spans fall', () => {
+    const set = gatedRun();
+    const gate = gateOf(set);
+    setGateOpen(set, gate, true);
+    const { destroyed, felled } = damageWallEdge(set, gate, WALL_EDGE_HP);
+    expect(destroyed).toBe(true);
+    // Same breach rule as any span: the hit span + its one collinear neighbour on each side.
+    expect(felled).toHaveLength(3);
+    expect(felled).toContain(gate);
+    for (const span of felled) expect(span.destroyed).toBe(true);
+  });
+
+  it('a gate is damageable whether OPEN or SHUT — one HP pool, one breach', () => {
+    for (const open of [true, false]) {
+      const set = gatedRun();
+      const gate = gateOf(set);
+      setGateOpen(set, gate, open);
+      const before = gate.hp;
+      damageWallEdge(set, gate, 30);
+      expect(gate.hp).toBe(before - 30);
+      expect(gate.destroyed).toBe(false);
+    }
   });
 });
 

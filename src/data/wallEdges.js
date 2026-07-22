@@ -148,6 +148,18 @@ export function blocksSpan(edge) {
   return true;
 }
 
+// #427: the SHOT-solidity predicate, the counterpart to `blocksSpan`'s MOVEMENT solidity. A gate is
+// now TWO door leaves that part toward their posts when it opens but only retract ~70%, leaving a
+// solid stub on each side and — as the confirmed simplification — kept as ONE logical edge that is
+// always hittable rather than two literal 70%/30% hitboxes. So an OPEN gate blocks and receives fire
+// even though a unit may drive through the central passage: shots no longer sail through the mouth,
+// they detonate on the gate and route to its single HP pool (superseding #412's aim-pip workaround).
+// Every OTHER standing span is solid to shots exactly as it is to movement, so this differs from
+// `blocksSpan` for gates alone. Destroyed spans stop nothing either way — that is the breach.
+export function blocksShot(edge) {
+  return !!edge && !edge.destroyed;
+}
+
 // Set a gate span's open/closed state. A no-op on a non-gate or a destroyed span — a blown gate is
 // just a breach and can never re-close, which is the answer to "what if the player destroys a
 // closed gate": the span dies like any other and the hole it leaves is permanent.
@@ -298,26 +310,30 @@ function offsetFan(rings) {
   return fan;
 }
 
-function collectAround(set, q, r, out, radius) {
+function collectAround(set, q, r, out, radius, solid) {
   // Hex inradius (centre to edge midpoint) for pointy-top hexes of side HEX_SIZE — one extra ring
   // per inradius of reach. R = 0 gives 1 ring, i.e. exactly the original fan.
   const rings = 1 + Math.ceil(Math.max(0, radius) / (HEX_SIZE * Math.sqrt(3) / 2));
   const fan = offsetFan(rings);
-  for (let i = 0; i < fan.length; i += 2) collectHex(set, q + fan[i], r + fan[i + 1], out);
+  for (let i = 0; i < fan.length; i += 2) collectHex(set, q + fan[i], r + fan[i + 1], out, solid);
 }
 
-function candidatesNear(set, x, y, out, radius = 0) {
+function candidatesNear(set, x, y, out, radius = 0, solid = blocksSpan) {
   const h = pixelToHex(x, y);
-  collectAround(set, h.q, h.r, out, radius);
+  collectAround(set, h.q, h.r, out, radius, solid);
 }
 
 // #309: the single choke point where "is this span solid to THIS caller" is decided — every query
 // below funnels through here, so an open gate can never leak into one query's notion of solidity
 // while staying solid in another's.
-function collectHex(set, q, r, out) {
+// #427: `solid` is that notion, made explicit. It defaults to `blocksSpan` (MOVEMENT solidity — an
+// open gate is a doorway), so every existing movement/sight caller is bit-for-bit unchanged; the
+// shot-collision queries (world.js `_wallEdgeHit`/`_isWall`/`_isWallForRound`, and hit routing)
+// pass `blocksShot`, under which an open gate is a solid, hittable target.
+function collectHex(set, q, r, out, solid = blocksSpan) {
   const list = set.byHex.get(axialKey(q, r));
   if (!list) return;
-  for (const e of list) if (blocksSpan(e)) out.add(e);
+  for (const e of list) if (solid(e)) out.add(e);
 }
 
 // Candidate edges a straight segment could possibly cross. If a segment crosses the boundary
@@ -328,9 +344,9 @@ function collectHex(set, q, r, out) {
 // at grazing angles: if it ever skipped BOTH hexes flanking one edge, that edge would otherwise be
 // missed. Cheap — the whole thing is a handful of Map lookups that miss immediately on a map with
 // no walls near the ray.
-function candidatesAlong(set, x0, y0, x1, y1, radius = 0) {
+function candidatesAlong(set, x0, y0, x1, y1, radius = 0, solid = blocksSpan) {
   const out = new Set();
-  for (const h of hexesAlongSegment(x0, y0, x1, y1)) collectAround(set, h.q, h.r, out, radius);
+  for (const h of hexesAlongSegment(x0, y0, x1, y1)) collectAround(set, h.q, h.r, out, radius, solid);
   return out;
 }
 
@@ -349,10 +365,10 @@ function candidatesAlong(set, x0, y0, x1, y1, radius = 0) {
 // that. A positive radius tests the unit's whole circle against the span's collision segment; see
 // `spanCollideSegment`. The broad phase widens with it, since an inflated span reaches further
 // than its own hex pair.
-export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0) {
+export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0, solid = blocksSpan) {
   if (!set || set.edges.size === 0) return null;
   const cand = new Set();
-  candidatesNear(set, x, y, cand, radius);
+  candidatesNear(set, x, y, cand, radius, solid);
   const half = thickness / 2 + Math.max(0, radius);
   let best = null, bestD = Infinity;
   for (const e of cand) {
@@ -391,9 +407,9 @@ export function wallEdgeAt(set, x, y, thickness = WALL_THICKNESS_PX, ignoreKey =
 // point-swept behaviour for rounds and rays. The caller (locomotion.js) rejects the whole step on
 // a contact, so a `t` that names the centreline rather than the exact moment of first touch never
 // has to be resolved.
-export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0) {
+export function wallEdgeCrossing(set, x0, y0, x1, y1, thickness = WALL_THICKNESS_PX, ignoreKey = null, radius = 0, solid = blocksSpan) {
   if (!set || set.edges.size === 0) return null;
-  const cand = candidatesAlong(set, x0, y0, x1, y1, radius);
+  const cand = candidatesAlong(set, x0, y0, x1, y1, radius, solid);
   if (cand.size === 0) return null;
   const len = Math.hypot(x1 - x0, y1 - y0);
   const half = thickness / 2 + Math.max(0, radius);
@@ -451,10 +467,10 @@ export function wallEdgeSeparating(set, x0, y0, x1, y1) {
 
 // The standing wall nearest a world point within `maxDist` (used to route a weapon hit that landed
 // on/next to a wall onto the right span), or null.
-export function nearestWallEdge(set, x, y, maxDist = HEX_SIZE) {
+export function nearestWallEdge(set, x, y, maxDist = HEX_SIZE, solid = blocksSpan) {
   if (!set || set.edges.size === 0) return null;
   const cand = new Set();
-  candidatesNear(set, x, y, cand);
+  candidatesNear(set, x, y, cand, 0, solid);
   let best = null, bestD = maxDist;
   for (const e of cand) {
     const d = pointSegmentDistance(e.x0, e.y0, e.x1, e.y1, x, y);

@@ -10,7 +10,7 @@ import {
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan,
+  WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan, blocksShot,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
@@ -22,7 +22,7 @@ import {
 import { Audio } from '../../audio/index.js';
 import {
   DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
-  isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH, GATE_PIP_HIT_RADIUS,
+  isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH,
 } from './shared.js';
 import { listenerOf, livePlayersOf } from './players.js';
 
@@ -523,7 +523,9 @@ export const WorldMixin = {
   _isWall(x, y, transparent = null, ignoreSpanKey = null) {
     const k = this._hexKeyAt(x, y);
     if (shotBlockedAt(this.terrain.get(k), k, transparent)) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #309: see through an open gate
+    // #427: an OPEN gate is now solid to FIRE (`blocksShot`) — its leaves never fully retract, so a
+    // beam/ray stops on it rather than sailing through the mouth, and the gate is a hittable target.
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey, 0, blocksShot);
   },
 
   // #426: is `(x, y)` on the EXPOSED side of the span keyed `spanKey` — the side a wall turret
@@ -550,7 +552,7 @@ export const WorldMixin = {
       (sharedTransparent != null && sharedTransparent.has(k)) ||
       (originHexes != null && originHexes.includes(k));
     if (coverBlocksForRay(id, ownHexExempt)) return true;
-    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey);   // #288/#309 — see `_isWall`
+    return !!wallEdgeAt(this.wallEdges, x, y, WALL_THICKNESS_PX, ignoreSpanKey, 0, blocksShot);   // #288/#309/#427 — see `_isWall`
   },
 
   // #374 REWORK: the SOFT-COVER LANE for one shot — every soft-cover hex between the muzzle and
@@ -799,7 +801,9 @@ export const WorldMixin = {
     // one shot never chips both a wall and a building. `nearestWallEdge`'s search radius is a touch
     // wider than the wall's own painted thickness so a round detonating against its face — which
     // stops a hair short of the centreline — still counts as hitting it.
-    const wall = nearestWallEdge(this.wallEdges, x, y, WALL_THICKNESS_PX);
+    // #427: `blocksShot` so a hit landing on an OPEN gate routes to it — the gate is a fire target
+    // now, and its damage must not fall through to the terrain hex under the mouth.
+    const wall = nearestWallEdge(this.wallEdges, x, y, WALL_THICKNESS_PX, blocksShot);
     if (wall) return this._damageWallEdge(wall, opts.stomp ? amount * WALL_STOMP_FACTOR : amount);
     const h = pixelToHex(x, y);
     const k = axialKey(h.q, h.r);
@@ -924,9 +928,11 @@ export const WorldMixin = {
   // #288: the first standing wall span a swept step crosses, as `{ edge, x, y, dist }` or null —
   // the projectile-facing form of the same crossing test movement uses (projectiles.js).
   _wallEdgeHit(x0, y0, x1, y1) {
-    // #309: an open gate does not stop a round — the opening is a real opening. Rounds still stop
-    // on the gate's own leaves while it is shut, so the span is shootable-down like any other.
-    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX);
+    // #427 (supersedes #309's pass-through): an OPEN gate is TWO leaves that only part ~70%, so it
+    // is always solid enough to stop a round — `blocksShot` includes it, and the round detonates on
+    // the gate and routes to its one HP pool rather than sailing through the mouth. Units still DRIVE
+    // through the centre (movement uses `blocksSpan`, under which an open gate is a doorway).
+    return wallEdgeCrossing(this.wallEdges, x0, y0, x1, y1, WALL_THICKNESS_PX, null, 0, blocksShot);
   },
 
   // #320, the SECOND half of "I'm able to shoot OVER walls if I stand real close." Inflating
@@ -1031,22 +1037,9 @@ export const WorldMixin = {
     return Infinity;
   },
 
-  // #412, hitscan half of the targeted-open-gate rule: distance from (x0,y0) along `angle` to the
-  // point where the ray comes within `GATE_PIP_HIT_RADIUS` of an open gate's PIP (its span
-  // midpoint), or Infinity if the ray never grazes it within `maxT`. The beam counterpart of the
-  // projectile's per-step proximity test — a beam does not travel in steps, so its stopping point
-  // is solved up front, exactly as `_targetHexDistance` solves the targeted-hex one. Only ever
-  // asked about the ONE open gate the player has locked, so it can never manufacture solidity in a
-  // mouth the player is merely firing past.
-  _targetGateDistance(x0, y0, angle, maxT, edge) {
-    if (!edge) return Infinity;
-    const mx = (edge.x0 + edge.x1) / 2, my = (edge.y0 + edge.y1) / 2;
-    const cx = Math.cos(angle), cy = Math.sin(angle);
-    // Nearest point on the ray to the pip centre, clamped to the beam's own [0, maxT] span.
-    const t = Math.max(0, Math.min(maxT, (mx - x0) * cx + (my - y0) * cy));
-    const px = x0 + cx * t, py = y0 + cy * t;
-    return Math.hypot(px - mx, py - my) <= GATE_PIP_HIT_RADIUS ? t : Infinity;
-  },
+  // #427 removed `_targetGateDistance`: an open gate is now solid to a beam via `blocksShot` in
+  // `_isWall`/`_wallDistance`, so the beam stops on it like any other span — no locked-pip special
+  // case needed (superseding #412's aim-pip workaround).
 
   // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush
   // damage (a fixed per-second rate scaled by how fast the mech is driving into it) so leaning

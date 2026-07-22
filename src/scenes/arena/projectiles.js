@@ -6,7 +6,6 @@ import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, homingShouldGiveUp, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
-import { GATE_PIP_HIT_RADIUS } from './shared.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
@@ -220,24 +219,10 @@ export const ProjectilesMixin = {
           this._impactFx(wallHit.x, wallHit.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }
-        // #412 THE TARGETED-OPEN-GATE RULE. An open gate is a doorway a round passes straight
-        // through — `wallEdgeCrossing` treats it as non-solid, so `_wallEdgeHit` above never fires
-        // on one and the span, though perfectly lockable, is almost impossible to actually hit. A
-        // round whose TARGET is that open gate impacts its PIP: a small targetable point at the
-        // mouth's midpoint. On contact the damage routes straight to the span's HP
-        // (`_damageWallEdge`), not through the terrain/nearest-wall path (which excludes open gates
-        // by design). Mirrors the targeted-hex rule just below — scoped to the ONE gate the player
-        // aimed at (`targetGate`, stamped at spawn from the live lock), and only while it stands.
-        if (p.targetGate && !p.targetGate.destroyed) {
-          const mx = (p.targetGate.x0 + p.targetGate.x1) / 2, my = (p.targetGate.y0 + p.targetGate.y1) / 2;
-          if (segmentPointDistance(prevX, prevY, p.x, p.y, mx, my) < GATE_PIP_HIT_RADIUS) {
-            p.dead = true;
-            p.stopTrajectorySfx?.();
-            this._damageWallEdge(p.targetGate, p.damage);
-            this._impactFx(mx, my, p.color, p.kind, p.splash, p.weaponId);
-            continue;
-          }
-        }
+        // #427 (supersedes #412's targeted-open-gate pip): an OPEN gate is now solid to a round via
+        // `blocksShot`, so `_wallEdgeHit` above already detonates the round on it and routes the
+        // damage to the span's HP (the `wallHit` branch), exactly like any other span. No locked-pip
+        // proximity test is needed — the gate's parted leaves leave it always solid enough to hit.
         // #317 THE TARGETED-HEX RULE: a round whose TARGET is a destructible hex impacts that hex
         // the moment it enters it, regardless of whether that terrain would normally stop a ray.
         // This is checked BEFORE the cover test and is deliberately independent of it — soft cover
