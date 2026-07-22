@@ -66,7 +66,7 @@ describe('runStats — accumulator + reducer (#423)', () => {
       expect(w.shotsFired).toBe(2);
       expect(w.firingTimeMs).toBeCloseTo(2 * iv, 5);
     });
-    it('a slowly-TAPPED weapon counts one cycle per shot, NOT the idle gap between pulls (#423 bug3)', () => {
+    it('a slowly-TAPPED weapon never counts the idle gap beyond a cycle (#423 bug3)', () => {
       const r = createRunStats();
       const iv = pullIntervalMs(getWeapon('autocannon'));
       r.shotFired('autocannon');
@@ -74,9 +74,24 @@ describe('runStats — accumulator + reducer (#423)', () => {
       r.shotFired('autocannon');
       r.tick(iv);               // run ends one cycle after the last shot
       const w = r.reduce().weapons.autocannon;
-      // Each shot was "firing/busy" for at most its own cycle — 2×iv total, NOT the old 6×iv
-      // (which counted the whole 5-cycle idle gap as firing and tanked Effective Burst DPS).
+      // Each shot is "firing/busy" for at most its own cycle — 2×iv total. The 4 idle cycles in
+      // the 5-cycle gap are NOT counted (guards against a future "add the whole gap" regression).
       expect(w.firingTimeMs).toBeCloseTo(2 * iv, 5);
+    });
+    it('a weapon fired FASTER than cadence counts the real gap, not a full cycle each (#423 bug3)', () => {
+      // The genuine over-count the old code had: it booked a full pullInterval per shot even when
+      // shots came closer together than that (e.g. under Overdrive's cycleMult), so a rapidly-tapped
+      // slow weapon showed far more firing time than it was actually busy — tanking Effective Burst DPS.
+      const r = createRunStats();
+      const iv = pullIntervalMs(getWeapon('autocannon'));
+      const gap = iv / 3;       // three shots inside one nominal cycle
+      r.shotFired('autocannon'); r.tick(gap);
+      r.shotFired('autocannon'); r.tick(gap);
+      r.shotFired('autocannon'); r.tick(gap);
+      const w = r.reduce().weapons.autocannon;
+      // Two interior shots capped at their real gap (iv/3 each) + last shot's own gap-to-run-end
+      // (iv/3), = iv total — NOT the old 3×iv over-count.
+      expect(w.firingTimeMs).toBeCloseTo(iv, 5);
     });
     it('firing time is capped at the run end for a last shot fired near it', () => {
       const r = createRunStats();
