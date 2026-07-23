@@ -166,6 +166,39 @@ const LURCH_DRIVE_MAX_MS = 1300;
 const LURCH_PAUSE_MIN_MS = 280;     // ms — the hitch/settle beat between stomps
 const LURCH_PAUSE_MAX_MS = 600;
 const LURCH_PAUSE_SPEED_FRAC = 0.3; // speed multiplier applied during the hitch beat
+// #398 FOURTH pass (playtest 2026-07-22 — "slower, but I want MORE lumbering: heavier footstep
+// weight, a telegraphed wind-up before it moves, and tank-like SEGMENTED movement between
+// legs/torso/arms instead of the current fluid interpolation"). Three dials below, all scoped to
+// the enemy-mech path (`_updateEnemy`'s `kind === 'mech'` branch) — vehicle kinds and the player
+// are untouched.
+//
+// (2) WIND-UP: the lurch cycle gains a THIRD phase between the hitch and the next stomp. The mech
+// plants (near-zero speed) and PIVOTS ITS HULL onto the direction it's about to walk before it
+// actually goes, so the move is telegraphed — you see the legs line up, then the lunge. A heavy
+// machine doesn't change direction and accelerate in the same instant.
+const LURCH_WINDUP_MIN_MS = 260;    // ms — how long the plant-and-pivot telegraph lasts
+const LURCH_WINDUP_MAX_MS = 480;
+const LURCH_WINDUP_SPEED_FRAC = 0.05; // speed multiplier during the wind-up (planted, not frozen)
+const WINDUP_TURN_FRAC = 0.8;       // fraction of chassis turnRate the hull pivots at while winding up
+// (3) SEGMENTED ROTATION: a real rotation accumulator per axis (`e.angleRaw`/`e.turretRaw`) still
+// slews continuously, but what's RENDERED (and what the guns fire along) is that accumulator
+// snapped to fixed angular DETENTS — so the mech ratchets round in servo steps instead of gliding.
+// The legs get a COARSE detent and the turret (which carries the torsos + arms via _syncTilts) a
+// finer one, so the two halves visibly step at different moments rather than turning as one fluid
+// piece — that mismatch is the "segmented between legs/torso/arms" read. Firing keys off the same
+// snapped `e.turret` the art uses, so shots always leave along the barrel you can see (and the
+// snap itself contributes a few degrees of extra aim slop, which is the direction asked for).
+const HULL_DETENT_RAD = Math.PI / 15;    // 12° — leg/hull facing steps
+const TURRET_DETENT_RAD = Math.PI / 30;  // 6°  — turret/torso/arm facing steps
+// (1) FOOTSTEP WEIGHT: enemy mechs never ran a walk cycle at all — their hull sat on frame 0 and
+// slid, which is most of why they read as floaty. They now run the same stompy stepped gait the
+// player does (locomotion.js `_stepGait`): step frames advanced by REAL ground speed, a body bob
+// that heaves up mid-stride and drops onto the plant, and the shared footfall impact FX (ground
+// shock ring + dust + a squash of the body) on each planted frame. Deliberately NO camera shake —
+// a squad of five stomping mechs would heave the frame constantly, and #435 already dialled the
+// player's own shake way back for exactly that reason.
+const ENEMY_STEP_BOB_FRAC = 1.35;   // enemy bob amplitude vs. the chassis's own stepBob (heavier)
+const ENEMY_FOOTFALL_POWER_FRAC = 1.0; // scales the shared footfall impact FX off the chassis stepBob
 // #398: enemy mechs felt "floaty" — the movement slowdown above wasn't the whole story. The tell
 // Jackson named was the TURRET: it "constantly aims directly at me", snapping to the player's
 // bearing every frame with the chassis's own (fast) turretSlew. A heavy machine's gun should LAG
@@ -232,6 +265,10 @@ const vehicleScale = (def) => ARENA_MECH_SCALE * (def.scale ?? VEHICLE_SCALE_MUL
 // Small helpers ---------------------------------------------------------------------------
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+// #398 fourth pass: snap an angle to the nearest multiple of `step` radians. Applied to a
+// SEPARATE continuous accumulator, never in place — snapping a value and then rotating that same
+// snapped value would stall any slew slower than half a detent per frame.
+const detent = (rad, step) => (step > 0 ? Math.round(rad / step) * step : rad);
 
 // Mean optimum range of a mech's mounted weapons → drives role + standoff. Approximation.
 function meanOpt(mech) {
@@ -546,10 +583,22 @@ export const EnemiesMixin = {
     e.reactDelayMs = null;        // #285: any pending post-wake stagger is transient AI state too
     e.standDownGoal = null;       // #304: cached withdrawal point — transient, re-resolved on demand
     // #398 third pass: lumbering-gait + aim-slop state, transient AI state same as everything above.
-    e.lurchDriving = true;        // whether the mech is in a "stomp" burst (true) or a hitch beat (false)
-    e.lurchAt = rand(LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS); // ms until the lurch phase flips
+    // #398 fourth pass: `lurchPhase` replaces the old boolean `lurchDriving` — the cycle is now
+    // drive → hitch → WINDUP → drive, so the mech telegraphs each stomp instead of flipping
+    // straight from a hitch into full pace.
+    e.lurchPhase = 'drive';       // 'drive' (committed stomp) | 'hitch' (settle beat) | 'windup' (telegraph)
+    e.lurchAt = rand(LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS); // ms until the lurch phase advances
     e.aimOffset = 0;              // rad — current aim-slop offset from true bearing
     e.aimSlopAt = 0;              // ms until the aim offset is re-rolled (0 ⇒ roll next frame)
+    // #398 fourth pass: the stompy walk cycle + segmented-rotation accumulators. `angleRaw`/
+    // `turretRaw` are the CONTINUOUS headings the slew actually integrates; `e.angle`/`e.turret`
+    // are those values snapped to their detents (see HULL_DETENT_RAD / TURRET_DETENT_RAD) — the
+    // split is what stops a snapped value from stalling its own rotation.
+    e.stepMs = 0;                 // ms of walk-cycle progress accumulated at real ground speed
+    e.hullFrame = 0;              // which of the 4 baked hull walk frames is showing
+    e.angleRaw = e.angle ?? 0;
+    e.turretRaw = e.turret ?? 0;
+    e.moveIntentAngle = null;     // rad — direction the mech WANTS to walk (drives the wind-up pivot)
   },
 
   // A spawn point OUTSIDE the current camera viewport but inside the world disc, on a random
@@ -1253,14 +1302,18 @@ export const EnemiesMixin = {
       // committed drive burst and a brief slowed hitch beat on its own timer, independent of the
       // tactical decision cadence above, so the lurch reads as a gait quirk rather than a
       // re-plan artifact.
+      // #398 fourth pass: the cycle is now a THREE-beat drive → hitch → windup → drive, so every
+      // stomp is telegraphed by a planted pivot first (see LURCH_WINDUP_* above). `moveIntentAngle`
+      // is stashed for the hull-facing block further down, which is outside this scope.
       e.lurchAt -= delta;
       if (e.lurchAt <= 0) {
-        e.lurchDriving = !e.lurchDriving;
-        e.lurchAt = e.lurchDriving
-          ? rand(LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS)
-          : rand(LURCH_PAUSE_MIN_MS, LURCH_PAUSE_MAX_MS);
+        if (e.lurchPhase === 'drive') { e.lurchPhase = 'hitch'; e.lurchAt = rand(LURCH_PAUSE_MIN_MS, LURCH_PAUSE_MAX_MS); }
+        else if (e.lurchPhase === 'hitch') { e.lurchPhase = 'windup'; e.lurchAt = rand(LURCH_WINDUP_MIN_MS, LURCH_WINDUP_MAX_MS); }
+        else { e.lurchPhase = 'drive'; e.lurchAt = rand(LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS); }
       }
-      if (!e.lurchDriving) speedFrac *= LURCH_PAUSE_SPEED_FRAC;
+      if (e.lurchPhase === 'hitch') speedFrac *= LURCH_PAUSE_SPEED_FRAC;
+      else if (e.lurchPhase === 'windup') speedFrac *= LURCH_WINDUP_SPEED_FRAC;
+      e.moveIntentAngle = (mx || my) ? Math.atan2(my, mx) : null;
       const goal = stood ? e.standDownGoal : (reacting ? e.goal : e.idleGoal);
       if (goal) {
         const gd = Math.hypot(goal.x - e.x, goal.y - e.y);
@@ -1319,9 +1372,14 @@ export const EnemiesMixin = {
         e.aimOffset = (Math.random() * 2 - 1) * ENEMY_MECH_AIM_SLOP_RAD;
         e.aimSlopAt = rand(ENEMY_MECH_AIM_SLOP_MIN_MS, ENEMY_MECH_AIM_SLOP_MAX_MS);
       }
-      e.turret = rotateToward(e.turret, bearing + e.aimOffset, ENEMY_MECH_TURRET_SLEW, dt);
+      e.turretRaw = rotateToward(e.turretRaw ?? e.turret, bearing + e.aimOffset, ENEMY_MECH_TURRET_SLEW, dt);
     }
-    else if (Math.hypot(e.vx, e.vy) > 5) e.turret = rotateToward(e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
+    else if (Math.hypot(e.vx, e.vy) > 5) e.turretRaw = rotateToward(e.turretRaw ?? e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
+    // #398 fourth pass: SNAP the continuously-slewed heading onto its detent — the turret (and
+    // with it the torsos/arms that _syncTilts poses off `e.turret`) steps round in servo clicks
+    // instead of interpolating smoothly. Done once, after both branches, so the rendered gun and
+    // the fired shot always agree.
+    e.turret = detent(e.turretRaw ?? e.turret, TURRET_DETENT_RAD);
     // #269 Part 1: a held-ground mech runs the same movement brain as a normal one so it's
     // usually in motion and the ordinary "turn to face travel direction" rule below already
     // applies fine. It can still occasionally sit still while holding (e.g. 'hold'/camped-
@@ -1331,8 +1389,18 @@ export const EnemiesMixin = {
     // holdGround branch established.
     // #304: `&& !stood` — a held-ground mech that has finished withdrawing must NOT pivot its
     // hull back to face the crater; standing at its post facing wherever it stopped is the point.
-    if (e.holdGround && reacting && !stood && Math.hypot(e.vx, e.vy) <= 5) e.angle = rotateToward(e.angle, bearing, mv.turnRate, dt);
-    else if (Math.hypot(e.vx, e.vy) > 5) e.angle = rotateToward(e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
+    // #398 fourth pass: the WIND-UP pivot comes first — while a mech is planted telegraphing its
+    // next stomp it's below the >5 speed gate below, so without this it would stand facing its old
+    // heading and then slide off sideways. Instead it turns its legs onto the direction it's about
+    // to walk, which IS the telegraph: plant, line up, then go.
+    if (e.lurchPhase === 'windup' && e.moveIntentAngle != null) {
+      e.angleRaw = rotateToward(e.angleRaw ?? e.angle, e.moveIntentAngle, mv.turnRate * WINDUP_TURN_FRAC, dt);
+    }
+    else if (e.holdGround && reacting && !stood && Math.hypot(e.vx, e.vy) <= 5) e.angleRaw = rotateToward(e.angleRaw ?? e.angle, bearing, mv.turnRate, dt);
+    else if (Math.hypot(e.vx, e.vy) > 5) e.angleRaw = rotateToward(e.angleRaw ?? e.angle, Math.atan2(e.vy, e.vx), mv.turnRate, dt);
+    // Snap the legs onto their own, COARSER detent than the turret's — the two step at different
+    // moments, so the hull and the gun read as separate segments rather than one rigid piece.
+    e.angle = detent(e.angleRaw ?? e.angle, HULL_DETENT_RAD);
 
     // This enemy's indirect-fire lock ON the player (#62, rework #252) — only meaningful once
     // it's actually reacting; a not-yet-reacting (or unaware) enemy has no business tracking the
@@ -1419,12 +1487,48 @@ export const EnemiesMixin = {
     // (shield.max stays 0) — same as the vehicle path above.
     e.mech.tickShield(dt);
 
-    e.view.setPosition(e.x, e.y);
+    // #398 fourth pass: the stompy stepped gait (see ENEMY_STEP_BOB_FRAC above) — an enemy mech
+    // used to render on hull frame 0 forever and glide, which is most of the "floaty" read. Now it
+    // walks: frames advance with real ground speed, the body heaves and drops, and each plant
+    // kicks the shared footfall FX.
+    const bob = this._enemyMechGait(e, dt, mv);
+    e.view.setPosition(e.x, e.y - bob);
     e.view.hull.rotation = e.angle + Math.PI / 2;
     e.view.turret.rotation = e.turret + Math.PI / 2;
     // Place + rotate all four pivoting parts each frame at the enemy's turret facing, tilt 0.
     this._syncTilts(e.view, e.mech, e.turret, ARENA_MECH_SCALE, 0, 0, {}, dt);
     this._updateEnemyShieldVisual(e, delta);   // #302 — no-op for an unshielded mech (all of them today)
+  },
+
+  // #398 fourth pass — one enemy mech's stompy walk cycle, returning the body BOB in px for the
+  // caller to apply to the view. Deliberately the same shape as the player's `_stepGait`
+  // (locomotion.js): `stepMs` advances by REAL ground speed rather than a fixed timer, so the gait
+  // speeds up with the mech and stops dead when it does; the four baked hull frames alternate
+  // planted (0, 2) and mid-stride (1, 3); and each plant kicks the shared footfall impact FX
+  // (ground shock ring, dust, a squash of the body). Two deliberate differences from the player's:
+  // a HEAVIER bob (ENEMY_STEP_BOB_FRAC) so the lumbering reads from across the arena, and NO
+  // camera shake — a whole squad's footfalls would heave the frame continuously (#435 dialled even
+  // the player's single-source shake way back). `legFactor()` folds in leg damage for free: a mech
+  // that's lost its legs stops walking and stops bobbing instead of sliding along mid-stride.
+  _enemyMechGait(e, dt, mv) {
+    const speed = Math.hypot(e.vx, e.vy);
+    const legF = e.mech.legFactor?.() ?? 1;
+    let bob = 0;
+    if (speed > 5 && legF > 0 && mv.stepInterval && mv.maxSpeed) {
+      e.stepMs = (e.stepMs ?? 0) + dt * 1000 * (speed / mv.maxSpeed);
+      if (e.stepMs >= mv.stepInterval) {
+        e.stepMs -= mv.stepInterval;
+        e.hullFrame = ((e.hullFrame ?? 0) + 1) % 4;
+        if (e.hullFrame % 2 === 0) {
+          this._footImpactFx?.(e.hullFrame === 0 ? 0 : 1, (mv.stepBob ?? 0) * ENEMY_FOOTFALL_POWER_FRAC, e);
+        }
+      }
+      const phase = e.stepMs / mv.stepInterval;                 // 0→1 across one step
+      const speedScale = clamp(speed / mv.maxSpeed, 0, 1);
+      bob = Math.abs(Math.sin(phase * Math.PI)) * (mv.stepBob ?? 0) * ENEMY_STEP_BOB_FRAC * speedScale;
+    }
+    e.view.hull.setTexture?.(`${e.key}_hull_${e.hullFrame ?? 0}`);
+    return bob;
   },
 
   // ── Non-mech unit update (#68) ────────────────────────────────────────────────────────
