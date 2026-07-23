@@ -40,8 +40,22 @@ describe('CHASSIS — weight-class movement stats', () => {
     const { stepInterval: pStep, ...pRest } = CHASSIS.mediumPlayer.movement;
     const { stepInterval: mStep, ...mRest } = CHASSIS.medium.movement;
     expect(pRest).toEqual(mRest);
-    expect(pStep).toBe(250);
+    expect(pStep).toBe(215);   // #438 playtest follow-up: 250 → 215, "slightly faster"
     expect(pStep).toBeLessThan(mStep);
+  });
+
+  it('#438: the player\'s legs are wide-set, thickened again, and reach FORWARD', () => {
+    const shape = CHASSIS.mediumPlayer.art.shape;
+    expect(shape.legSpread).toBe(1.4);                  // the wide stance the playtest kept
+    expect(shape.legW).toBeGreaterThan(0.72);           // thicker than the first (skinny) pass
+    expect(shape.legW).toBeLessThan(1);                 // ...but not all the way back to baseline
+    expect(shape.legH).toBeGreaterThan(1);              // longer legs
+    // ...spent FORWARD: front edge = L*(0.15*legDrop − 0.16*legH) must move toward -y (forward)
+    // relative to the un-shaped baseline, which is what "longer forward also" asks for.
+    const front = (s) => 0.15 * (s.legDrop ?? 1) - 0.16 * (s.legH ?? 1);
+    expect(front(shape)).toBeLessThan(front({}));
+    // The enemy Warden rides plain medium art — untouched by any of this.
+    expect(CHASSIS.medium.art.shape).toBeUndefined();
   });
 
   it('#159: heavy maxSpeed now matches light\'s OLD (pre-#159) maxSpeed of 135', () => {

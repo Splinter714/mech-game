@@ -36,14 +36,25 @@ export const MEDIUM_PLAYER_CONFIG = {
   // Plus the 100-point shield configured at deploy (PLAYER_SHIELD in scenes/ArenaScene.js).
   totalArmor: 2100,
   totalHp: 1400,
-  // #438: player-only leg proportions — SKINNIER (legW down from the 1.0 baseline) and
-  // WIDER-SET (legSpread up), so the stance reads more planted without going spindly.
-  // Deliberately just these two shape knobs: legH/legDrop (leg length/vertical drop) and
-  // the walk-cycle timing (drawHull's `shift`/stepInterval) are untouched — the animation
-  // speed/smoothness half of #438 is separate scope (overlaps #435, not done here). Only the
-  // player's chassis gets this override; the enemy Warden still rides plain MEDIUM_CONFIG's
-  // art (no shape override = DEFAULT_SHAPE), so its legs are unaffected.
-  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.72, legSpread: 1.4 } },
+  // #438: player-only leg proportions. First pass went SKINNIER (legW 1.0 → 0.72) and
+  // WIDER-SET (legSpread 1.0 → 1.4); the playtest kept the wide stance but asked for the legs
+  // "a bit thicker again, and longer forward also".
+  //
+  //   legSpread 1.4  — UNCHANGED, the wide set is the part that landed.
+  //   legW      0.90 — most of the width back (was 0.72), so they read as load-bearing struts
+  //                    rather than sticks, without undoing the first pass entirely.
+  //   legH      1.30 — the leg BOX is 30% longer...
+  //   legDrop   0.86 — ...and its centre rides FORWARD (legDrop scales the leg's +y offset, and
+  //                    -y is forward), so nearly all of that extra length is spent out in FRONT
+  //                    rather than trailing behind. Front edge = L*(0.15*legDrop − 0.16*legH):
+  //                    −0.4 → −3.0 design units, i.e. ~2.6 forward, against ~1.0 added at the
+  //                    heel. The outboard half of each leg sits outside the centre torso's
+  //                    footprint, so that reach is actually visible from directly overhead
+  //                    instead of disappearing under the chest plate.
+  //
+  // Only the player's chassis gets this override; the enemy Warden still rides plain
+  // MEDIUM_CONFIG's art (no shape override = DEFAULT_SHAPE), so its legs are unaffected.
+  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.90, legSpread: 1.4, legH: 1.30, legDrop: 0.86 } },
   // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties
   // cadence to speed already — it advances the walk frames by `speed / maxSpeed` and plants a
   // foot every `stepInterval` ms at full throttle. But the shared MEDIUM stepInterval (340) was
@@ -54,5 +65,12 @@ export const MEDIUM_PLAYER_CONFIG = {
   // steps slowly. Weight is carried by stepBob/footShake/footstep audio (all inherited,
   // untouched), so the step is faster without going floaty. Player-only: overriding here (not in
   // medium.js) leaves the enemy Warden's medium chassis alone.
-  movement: { ...MEDIUM_CONFIG.movement, stepInterval: 250 },
+  //
+  // #438 (playtest follow-up): "play the animation slightly faster" — 250 → 215, about 14%
+  // quicker. This one number sets the WHOLE gait clock, not just the footfalls: the cycle is
+  // `stepInterval × CYCLE_BEATS` (locomotion.js), and the baked leg frame, the body bob and the
+  // hip wobble all read off that same phase, so they speed up together and stay in lockstep. A
+  // deliberately small step — the brief was "slightly", and the heavy bounding feel from #435
+  // lives on this dial too.
+  movement: { ...MEDIUM_CONFIG.movement, stepInterval: 215 },
 };
