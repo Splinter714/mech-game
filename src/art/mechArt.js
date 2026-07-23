@@ -1,6 +1,7 @@
 // Procedural top-down mech art. A mech is drawn as two stacked sprites so the turret
 // can aim independently of the legs (tank feel):
-//   <key>_hull_0..3 — legs (feet) + pelvis + skirts. 4-frame stompy walk cycle; this
+//   <key>_hull_0..N — legs (feet) + pelvis + skirts. The baked walk cycle (N = HULL_FRAMES
+//                     for enemies/garage, PLAYER_HULL_FRAMES for a player mech); this
 //                     sprite rotates to face the movement direction.
 //   <key>_turret    — side/center torsos + arms + head + weapon hardware. Rotates to
 //                     face the aim (within the chassis' turret arc).
@@ -58,6 +59,33 @@ const shapeOf = (mech) => ({ ...DEFAULT_SHAPE, ...(mech.chassis.art.shape || {})
 // doesn't slide the plate out from under the centre torso.
 export const ARM_LOCATIONS = ['leftArm', 'rightArm'];
 export const SIDE_TORSO_LOCATIONS = ['leftTorso', 'rightTorso'];
+
+// ── Walk-cycle sampling (#435) ────────────────────────────────────────────────────────────
+// The gait is BAKED: the legs' fore/aft swing is drawn into N hull textures and the scene
+// swaps between them. N is therefore the animation's frame rate — the whole cycle plays in
+// `4 × stepInterval` ms no matter what N is, so raising N buys smoothness, not speed.
+//
+// `HULL_FRAMES` (4) is the historical default and stays the default for ENEMY mechs and the
+// garage preview, neither of which actually cycles (an enemy mech sits on `hull_0`, the garage
+// preview on `garageMech_hull_0`) — so spending textures on them would buy nothing.
+//
+// `PLAYER_HULL_FRAMES` is the PLAYER's count. At 4 the cycle had only THREE distinct poses
+// (frames 0 and 2 are both legs-neutral), so the legs teleported between full stride and
+// neutral roughly four times a second — the "needs more frames / too steppy" read. 16 samples
+// the same swing finely enough that it flows. Cost is linear: one 256×256 texture per frame
+// per player mech (see buildMechTextures' note on the reskin path, which no longer redraws
+// them at all).
+export const HULL_FRAMES = 4;
+export const PLAYER_HULL_FRAMES = 16;
+
+// The LEFT leg's stride offset for one walk frame, in [-1, 1] (+1 = forward, -1 = back; the
+// right leg is always the exact opposite). A continuous sine of the cycle phase rather than a
+// hand-written {-1, 0, +1} table, so any frame count samples the same smooth swing. Chosen so
+// the legacy 4-frame set is reproduced EXACTLY — frame 0 neutral, 1 = left back, 2 neutral,
+// 3 = left forward — which keeps enemy/garage hull art byte-identical to before.
+export function strideDir(frame, frames = HULL_FRAMES) {
+  return -Math.sin((frame / frames) * Math.PI * 2);
+}
 // Every location that gets its own pivoting texture (drawn in this back-to-front order).
 export const PIVOT_LOCATIONS = [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS];
 // Exported (not just a local const) so shared.js's muzzle geometry (`partMuzzle`'s `pivotFrac`)
@@ -290,15 +318,15 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   }
 }
 
-// Legs (feet) + pelvis + skirts. `frame` 0..3 is the stompy walk cycle; the legs
-// alternate forward/back. Body bob is applied in the scene, not here.
-function drawHull(sg, mech, frame, T) {
+// Legs (feet) + pelvis + skirts. `frame` is one sample of the walk cycle (0..`frames`-1);
+// the legs alternate forward/back. Body bob is applied in the scene, not here.
+function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   const lay = mechLayout(mech);
   const a = mech.chassis.art;
   const s = a.bodyLen / 38;
   const shift = a.bodyLen * 0.09;     // stride: legs swing less so feet don't jut out far
-  const lDir = frame === 1 ? -1 : frame === 3 ? 1 : 0;
-  const rDir = frame === 1 ? 1 : frame === 3 ? -1 : 0;
+  const lDir = strideDir(frame, frames);
+  const rDir = -lDir;
 
   // Pelvis block ties the legs together (sits under the torso, tucked up so it's mostly
   // occluded from the top-down view).
@@ -352,9 +380,21 @@ function drawHull(sg, mech, frame, T) {
 export function buildMechTextures(scene, key, mech, opts) {
   const T = themeFor(opts);
   const isPlayer = (opts?.theme ?? 'player') === 'player';
-  for (let f = 0; f < 4; f++) {
-    gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawHull(scaledGraphics(g), mech, f, T));
+  // #435: `opts.hullFrames` picks how finely the walk cycle is sampled — the player asks for
+  // PLAYER_HULL_FRAMES, everything else keeps the historical 4 (see the constants above).
+  //
+  // `opts.skipHull` is the RESKIN path (reskinMech). The hull is the one texture that is
+  // completely damage-independent — it draws pelvis + legs + skirts, and legs are animation-only
+  // (never destroyed, no armour state, no weapons, no status spot) — so a re-raster after damage
+  // would redraw pixel-identical frames. Skipping them makes a reskin CHEAPER than it was at 4
+  // frames, which is what keeps the 16-frame player set free at runtime: the extra frames are
+  // paid for exactly once, when the mech is first built.
+  const hullFrames = opts?.hullFrames ?? HULL_FRAMES;
+  if (!opts?.skipHull || !scene.textures.exists(`${key}_hull_0`)) {
+    for (let f = 0; f < hullFrames; f++) {
+      gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawHull(scaledGraphics(g), mech, f, T, hullFrames));
+    }
   }
   gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
     (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot));
@@ -404,7 +444,9 @@ export function buildMechTextures(scene, key, mech, opts) {
   }
 }
 
-// Re-draw after damage so destroyed parts become stumps / weapons vanish.
+// Re-draw after damage so destroyed parts become stumps / weapons vanish. `skipHull` (#435):
+// the walk-cycle hull frames carry no damage state at all, so they're left standing rather than
+// redrawn identically — see buildMechTextures.
 export function reskinMech(scene, key, mech, opts) {
-  buildMechTextures(scene, key, mech, opts);
+  buildMechTextures(scene, key, mech, { ...opts, skipHull: true });
 }

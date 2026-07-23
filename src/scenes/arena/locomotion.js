@@ -3,7 +3,7 @@
 // the prototype via Object.assign. The pure relocation keeps `update()` a thin orchestrator
 // that calls `_drive` then `_stepGait`.
 import Phaser from 'phaser';
-import { mechLayout, ART_SCALE, partSpriteTransform } from '../../art/index.js';
+import { mechLayout, ART_SCALE, partSpriteTransform, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
@@ -20,6 +20,25 @@ import { DASH_SPEED_MULT } from '../../data/dash.js';
 // right at the plant. Was 1.4 (read as a boomy thud each step); dialled toward 1 for a
 // smooth, flowing heavy bound instead.
 const BOB_EASE_POWER = 1.15;
+
+// #435 (frame-rate pass): the gait is now driven by one continuous CYCLE PHASE (0→1) instead of
+// a per-frame countdown, so every part of the animation — the baked leg frame, the body bob and
+// the hip wobble — reads off the same clock and stays in lockstep however many hull frames the
+// mech bakes.
+//
+// One cycle is TWO footfalls, and `stepInterval` has always been "ms per walk-frame advance" in a
+// 4-frame cycle that planted on 2 of them. Keeping the cycle at 4 × stepInterval means cadence is
+// bit-identical to before at every frame count — raising PLAYER_HULL_FRAMES buys smoothness only,
+// never speed (the owner's "keep it heavy, don't just speed it up").
+const CYCLE_BEATS = 4;
+
+// Hip wobble (#435): a tiny gait-locked YAW on the hull sprite, on top of the mech's real facing.
+// The leg poses are baked and therefore stepped no matter how many we bake, but rotation is a
+// float the scene can animate at the full frame rate — so this is the thing that actually carries
+// the eye smoothly BETWEEN leg frames, and it reads as the hips swinging under a heavy machine
+// rather than as extra animation. Purely cosmetic: `p.angle` (facing, collision, aim) is untouched.
+// ~1.3° peak — enough to feel, small enough that the mech never looks like it's fishtailing.
+const GAIT_YAW = 0.023;
 
 // Convergence tilt is temporal-smoothed so a part EASES toward its target angle instead of
 // snapping every frame. Without this the tilt snaps on each frame-to-frame change in the
@@ -354,20 +373,28 @@ export const LocomotionMixin = {
     const mv = p.mech.movement;
     const legF = p.mech.legFactor();
     let bob = 0;
+    let yaw = 0;
     if (Math.abs(p.speed) > 5 && legF > 0) {
-      p.stepMs += dt * 1000 * (Math.abs(p.speed) / mv.maxSpeed);
-      if (p.stepMs >= mv.stepInterval) {
-        p.stepMs -= mv.stepInterval;
-        p.hullFrame = (p.hullFrame + 1) % 4;
-        // A footfall lands only on the two planted frames (0 and 2); frames 1/3 are the
-        // mid-stride swing. Kick the local impact FX + weight-scaled camera shake + sound.
-        if (p.hullFrame % 2 === 0) {
-          const foot = p.hullFrame === 0 ? 0 : 1;
-          this._footImpactFx(foot, mv.stepBob, p);
-          this._footShake(mv.footShake, p);
-          Audio.footstep(foot);
-        }
+      // One continuous phase for the whole cycle. `stepMs` is still the accumulator (advanced by
+      // how fast we're actually going, so a crawl steps slowly), it just wraps at the CYCLE now
+      // rather than at a single frame.
+      const cycleMs = mv.stepInterval * CYCLE_BEATS;
+      p.stepMs = (p.stepMs + dt * 1000 * (Math.abs(p.speed) / mv.maxSpeed)) % cycleMs;
+      const phase = p.stepMs / cycleMs;                          // 0→1 across ONE FULL gait cycle
+      p.hullFrame = Math.min(PLAYER_HULL_FRAMES - 1, Math.floor(phase * PLAYER_HULL_FRAMES));
+
+      // Two footfalls per cycle: left at phase 0, right at phase 0.5 (the two legs-neutral
+      // crossings — exactly where the old 4-frame cycle planted, so the cadence is unchanged).
+      // Detected as a change of BEAT rather than a change of frame, so a long frame can't skip a
+      // footfall now that frames tick ~4x more often.
+      const beat = phase < 0.5 ? 0 : 1;
+      if (beat !== p._gaitBeat) {
+        p._gaitBeat = beat;
+        this._footImpactFx(beat, mv.stepBob, p);
+        this._footShake(mv.footShake, p);
+        Audio.footstep(beat);
       }
+
       // Stompy lurch: the body rides UP mid-stride and DROPS onto the plant. Scales with
       // speed so a crawl barely bobs and a full-tilt march heaves. `stepBob` is the
       // per-chassis amplitude.
@@ -375,14 +402,37 @@ export const LocomotionMixin = {
       // #435 feel follow-up: the drop used to be skewed sharply toward the front of the
       // stride (^1.4 easing), which read as a hard punchy thud on every footfall — "boomy"
       // rather than heavy. BOB_EASE_POWER dialled down toward 1 (closer to a pure sine)
-      // keeps the settle-onto-the-foot weight without the snap, so the bound flows smoothly
-      // step to step instead of jolting.
-      const phase = p.stepMs / mv.stepInterval;                 // 0→1 across one step
+      // keeps the settle-onto-the-foot weight without the snap.
+      //
+      // #435 (frame-rate pass): the bob used to reset to zero at every WALK-FRAME boundary — four
+      // rise-and-falls per cycle, two of them landing mid-swing with no footfall under them. That
+      // double-rate flutter is a big part of why the gait read as choppy, and it got worse the more
+      // frames we bake. Tied to the cycle instead it's ONE long rise-and-fall per footfall, bottoming
+      // out exactly on the plant: the body lifts through the swing and settles onto the foot. Same
+      // amplitude, half the frequency — heavier and smoother, not faster.
       const speedScale = Phaser.Math.Clamp(Math.abs(p.speed) / mv.maxSpeed, 0, 1);
-      bob = Math.pow(Math.abs(Math.sin(phase * Math.PI)), BOB_EASE_POWER) * mv.stepBob * speedScale;
+      const lift = Math.abs(Math.sin(phase * Math.PI * 2));
+      bob = Math.pow(lift, BOB_EASE_POWER) * mv.stepBob * speedScale;
+      // Hip wobble — the one part of the gait that animates continuously (see GAIT_YAW). In phase
+      // with the stride, so the hips lead the leg that's swinging through.
+      yaw = Math.sin(phase * Math.PI * 2) * GAIT_YAW * speedScale;
+    } else {
+      p._gaitBeat = undefined;   // standing still: the next stride starts on a fresh footfall
+      // #435: ease the legs back UNDER the body when you stop instead of freezing them mid-stride.
+      // With 4 frames half the cycle was already legs-neutral so this rarely showed; at 16 it would
+      // leave the mech standing in a permanent lunge. Walks the phase to the nearest plant (the two
+      // legs-together points) over ~a third of a cycle — a settle, not a snap.
+      const cycleMs = mv.stepInterval * CYCLE_BEATS;
+      if (dt > 0 && cycleMs > 0) {
+        const half = cycleMs / 2;
+        const target = Math.round(p.stepMs / half) * half;
+        p.stepMs = approach(p.stepMs, target, cycleMs * 3 * dt) % cycleMs;
+        p.hullFrame = Math.min(PLAYER_HULL_FRAMES - 1,
+          Math.floor((p.stepMs / cycleMs) * PLAYER_HULL_FRAMES));
+      }
     }
     p.view.hull.setTexture(`${p.textureKey ?? 'playerMech'}_hull_${p.hullFrame}`);
-    p.view.hull.rotation = p.angle + Math.PI / 2;
+    p.view.hull.rotation = p.angle + Math.PI / 2 + yaw;
     p.view.turret.rotation = p.turretAngle + Math.PI / 2;
     // Ease each pivoting part toward its convergence tilt (smoothing kills the lock-engage snap).
     this._syncTilts(p.view, p.mech, p.turretAngle, ARENA_MECH_SCALE, 0, 0, {
@@ -419,12 +469,19 @@ export const LocomotionMixin = {
     // Squash the body briefly (heavier stomp = deeper). Guard against stacking tweens so a
     // fast gait doesn't leave the container mis-scaled.
     // (Camera shake is kicked separately by _footShake, synced to the same footfall.)
+    //
+    // #435: this squash — not the camera, whose shake for the player chassis is already well under
+    // a pixel — is what actually reads as the per-step PUNCH. It was a 70ms Quad.easeOut spike,
+    // i.e. most of the deformation in the first ~20ms: a snap. Sine.easeInOut over 130ms carries
+    // the same depth as a weighted compression and rebound, which is the "smooth heavy bounding"
+    // read, and it now spans a decent share of the ~500ms between footfalls so the body is always
+    // in motion rather than popping and sitting still. Slightly shallower to match.
     const v = player.view;
     if (!v._stomping) {
       v._stomping = true;
-      const sq = Math.min(0.12, 0.04 + p * 0.012);
+      const sq = Math.min(0.10, 0.035 + p * 0.010);
       this.tweens.add({
-        targets: v, scaleX: 1 + sq * 0.6, scaleY: 1 - sq, duration: 70, yoyo: true, ease: 'Quad.easeOut',
+        targets: v, scaleX: 1 + sq * 0.6, scaleY: 1 - sq, duration: 130, yoyo: true, ease: 'Sine.easeInOut',
         onComplete: () => { v.setScale(1); v._stomping = false; },
       });
     }
@@ -445,17 +502,21 @@ export const LocomotionMixin = {
   //
   // #435 feel follow-up: even dialled back, a short sharp shake retriggered fresh on every
   // single footfall (force=true cuts the previous one off) read as a hard "boom-boom-boom"
-  // rather than a heavy, flowing sway. Lowered SHAKE_GAIN/SHAKE_MAX_PX further so each kick is
-  // gentler, and LENGTHENED SHAKE_MS so consecutive footfalls' shakes overlap instead of
-  // resetting to a sharp new jolt each time — the overlap blends into one continuous heavy
-  // sway rather than discrete punches, while `force=true` still keeps the most recent step
-  // driving the camera.
+  // rather than a heavy, flowing sway. Lowered SHAKE_GAIN/SHAKE_MAX_PX so each kick is gentler,
+  // and LENGTHENED SHAKE_MS so the tremble carries between footfalls instead of being a brief tick.
+  //
+  // Worth knowing when re-tuning: Phaser's `camera.shake` is FLAT random jitter for its whole
+  // duration and then stops dead — there is no decay envelope, so a longer duration is a longer
+  // rumble, not a softer tail. At the player chassis' `footShake` of 2 the offset lands well under
+  // one pixel (2 × SHAKE_GAIN), i.e. SHAKE_MAX_PX never binds for the player and the camera is not
+  // where the per-step punch is coming from — that's the body squash in `_footImpactFx`. Kept as a
+  // low continuous ground-tremble cue; push SHAKE_GAIN if the world should move more.
   _footShake(powerPx, player = primaryPlayerOf(this)) {
     if (!powerPx) return;
-    const SHAKE_GAIN = 0.22;  // fraction of the chassis footShake px that reaches the camera
+    const SHAKE_GAIN = 0.18;  // fraction of the chassis footShake px that reaches the camera
     const SHAKE_MAX_PX = 2.5; // hard cap on camera offset (was 4) — softer ceiling
-    const SHAKE_MS = 150;     // duration of the sway (was 60) — overlaps the next footfall
-                               // instead of resetting to a sharp new jolt, so it flows
+    const SHAKE_MS = 260;     // long, low tremble rather than a discrete per-step tick (was 150,
+                               // originally 60); still shorter than the ~500ms between footfalls
     const cam = this.cameras.main;
     const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / player.mech.movement.maxSpeed, 0, 1);
     const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);

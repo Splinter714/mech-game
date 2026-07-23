@@ -9,7 +9,7 @@
 //   data/players.js  — the collection, nearest-player targeting, the identifying colours
 //
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
-import { buildMechTextures } from '../../art/index.js';
+import { buildMechTextures, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { Mech } from '../../data/Mech.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
@@ -74,7 +74,10 @@ export const CoopMixin = {
     const textureKey = index === 0 ? 'playerMech' : `playerMech${index}`;
     const player = makePlayer({ id: index, mech, x, y, textureKey });
     // #348: player 1's accent is null, so its textures are byte-identical to single-player.
-    buildMechTextures(this, textureKey, mech, { theme: 'player', accent: playerAccent(index) });
+    // #435: a PLAYER mech bakes the fine-grained walk cycle (PLAYER_HULL_FRAMES) — it's the only
+    // mech that actually cycles its hull frames, so it's the only one that pays for them.
+    buildMechTextures(this, textureKey, mech,
+      { theme: 'player', accent: playerAccent(index), hullFrames: PLAYER_HULL_FRAMES });
     player.view = this._makeMechView(textureKey, x, y, player.angle, true);
     // Created hidden: `_updatePlayerMarkers` owns visibility every frame, and starting hidden
     // means a solo player never sees a one-frame flash of a ring before that rule first runs.
@@ -382,7 +385,7 @@ export const CoopMixin = {
     const statusSpot = statusSpotColorsFor(this, player);
     player._statusSpotKey = statusSpot.join(',');
     buildMechTextures(this, player.textureKey ?? 'playerMech', player.mech,
-      { theme: 'player', accent: playerAccent(player.id), statusSpot });
+      { theme: 'player', accent: playerAccent(player.id), statusSpot, hullFrames: PLAYER_HULL_FRAMES });
   },
 
   // The world-space distance from the camera focus at which a player is hard-stopped, published
