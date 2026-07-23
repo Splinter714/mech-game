@@ -289,8 +289,8 @@ export const CombatMixin = {
   // Apply `damage` to enemy `e`'s part nearest the world point (x, y). Works for BOTH a mech
   // (parts positioned via mechLayout, re-skinned to show damage) and a non-mech HpBody unit
   // (#68: parts carry their own {x,y}; single-pool, so the nearest part only decides where the
-  // damage number floats — the whole unit shares the hp — and #300's armor "reskin" is a
-  // texture-set swap, not a re-raster).
+  // damage number floats — the whole unit shares the hp — and a vehicle's art never changes at
+  // all, since #472 removed the enemy armor visual).
   // `isCrush` (#106) marks a CRUSH/stomp kill — the player driving over a small ground unit
   // (world.js `_crushGroundEnemyAt`) rather than shooting it. Every weapon-damage caller leaves
   // it false; it only changes the powerup drop roll below (a free kill shouldn't pay out like a
@@ -322,13 +322,11 @@ export const CombatMixin = {
     // for why that redirect matters — otherwise the hit silently wastes into a dead part).
     const best = resolveHitLocation(lay, locs, lx, ly, dispUnit, (loc) => e.mech.isPartDestroyed(loc));
     const res = e.mech.applyDamage(best, damage);
-    // #71: same as the player path — rebuild the enemy's textures only when a part just broke
-    // or lost its armor plating (#246 armor-shell overlay), not on every single hit. Vehicle
-    // (non-mech) kinds instead swap between two pre-built shared texture sets — see below.
-    if (isMech && (res.destroyed || res.armorBrokeNow)) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
-    // #300: a non-mech unit (tank/carrier) with an armor pool swaps from its PLATED texture set
-    // to the bare one the moment that pool empties, so the player sees the plating strip off.
-    else if (!isMech && res.armorBrokeNow) this._reskinVehicle(e);
+    // #71: same as the player path — rebuild the enemy's textures only when a part just broke,
+    // not on every single hit. #472: an armor break no longer changes an enemy's art (the enemy
+    // armor visual is gone — it reads off the HUD's locked-enemy disc), so it no longer triggers
+    // a reskin here, and a non-mech unit's shared textures never change at all.
+    if (isMech && res.destroyed) reskinMech(this, e.key, e.mech, { theme: 'enemy' });
     // #83: no floating damage number on enemy hits either — damage still applies above (res),
     // just nothing pops the amount as text. DESTROYED below still floats as narrative feedback.
     // #201: same shared part-loss cue as the player path above.

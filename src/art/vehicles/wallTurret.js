@@ -25,7 +25,7 @@
 // than a heavy solid autocannon barrel. It should read as an energy weapon at a glance, and read
 // as LONG — the barrel is the tell that this thing out-ranges you.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, armorShell } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow, haloEllipse, haloRect } from './palette.js';
 
 // The collar mount (the HULL — never rotates, and after #429 never needs to). Deliberately NO
@@ -36,7 +36,7 @@ import { VEHICLE as V, accentGlow, haloEllipse, haloRect } from './palette.js';
 // Every element here is rotationally symmetric ON PURPOSE — the four bolts sit on the diagonals,
 // the capacitor is a full band rather than a bar across one face. That is what makes the mount
 // read as flush no matter which bearing its span runs at (see the header note).
-function drawMount(sg, accent, armored = false) {
+function drawMount(sg, accent) {
   // Halo pass first, oversized, behind the outline shapes (#129 legibility convention).
   haloEllipse(sg, 0, 0, 33.2, 33.2);
   // r = 15: the collar's outer edge lands on the wall's own half-thickness, so it sits flush
@@ -54,7 +54,6 @@ function drawMount(sg, accent, armored = false) {
     ellipseC(sg, x, y, 3.6, 3.6, V.outline);
     ellipseC(sg, x, y, 2.2, 2.2, V.rim);
   }
-  if (armored) armorShell(sg, 0, 0, 28, 28);
 }
 
 // The rotating rail gun: a full-circle turret ring and a long twin-rail barrel with a charge
@@ -62,7 +61,7 @@ function drawMount(sg, accent, armored = false) {
 // semicircle rather than a clean rotating mount. It's a true circle now — deliberately kept
 // SMALLER than the hull's collar, so the fixed collar shows as a ring of parapet all the way
 // around it and the gun reads as swivelling INSIDE its mount rather than capping it.
-function drawRail(sg, accent, armored = false) {
+function drawRail(sg, accent) {
   const A = accentGlow(accent);
   // Pivot ring — kept small, so the BARREL is still the dominant shape.
   haloEllipse(sg, 0, 0, 15.6, 15.6);
@@ -91,13 +90,11 @@ function drawRail(sg, accent, armored = false) {
   // as a barrel glued to a box.
   roundC(sg, 0, 8, 8, 5, V.outline, 2);
   roundC(sg, 0, 8, 6.4, 3.6, V.bodyDk, 1.6);
-  if (armored) armorShell(sg, 0, 0, 12, 10);
 }
 
-export function drawWallTurret(scene, key, def, opts = {}) {
+export function drawWallTurret(scene, key, def) {
   const accent = def.themeColor ?? V.rim;
-  const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
-  gen(scene, `${key}_hull`, D, D, (g) => drawMount(scaledGraphics(g), accent, armored));
-  gen(scene, `${key}_turret`, D, D, (g) => drawRail(scaledGraphics(g), accent, armored));
+  gen(scene, `${key}_hull`, D, D, (g) => drawMount(scaledGraphics(g), accent));
+  gen(scene, `${key}_turret`, D, D, (g) => drawRail(scaledGraphics(g), accent));
 }

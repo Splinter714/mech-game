@@ -71,3 +71,48 @@ describe('#446 every enemy mech still bakes its full texture set', () => {
     });
   }
 });
+
+// #472: an ENEMY mech no longer shows its ARMOR state on the body. The player still does (the
+// #401 torn-open-panel look, `exposedInternals`) — that question stays with #401. This runs the
+// real part-draw path twice, fully armored and armor-stripped, and compares the emitted draw
+// calls: identical for an enemy (nothing about armor reaches the sprite), different for the
+// player (the panel tears open).
+function recordingScene() {
+  const calls = [];
+  const g = new Proxy({}, {
+    get(_t, prop) {
+      if (prop === 'generateTexture' || prop === 'destroy') return () => {};
+      return (...args) => { calls.push(`${String(prop)}(${args.join(',')})`); };
+    },
+  });
+  return { calls, make: { graphics: () => g }, textures: { exists: () => false } };
+}
+
+function armorStates(theme) {
+  const draw = (strip) => {
+    const mech = new Mech(ENEMIES[Object.keys(ENEMIES)[0]]);
+    mech.repairAll();
+    if (strip) {
+      // Drain the arm's ARMOR only — the location must still be alive, which is exactly the
+      // state the torn-panel look exists for.
+      while (mech.hasArmor('rightArm')) mech.applyDamage('rightArm', 1);
+      expect(mech.isPartDestroyed('rightArm')).toBe(false);
+    }
+    const scene = recordingScene();
+    buildMechTextures(scene, 'k', mech, { theme });
+    return scene.calls.join('|');
+  };
+  return { full: draw(false), stripped: draw(true) };
+}
+
+describe('#472 the enemy armor visual is gone from the mech body', () => {
+  it('an enemy mech draws IDENTICALLY whether its armor holds or is stripped', () => {
+    const { full, stripped } = armorStates('enemy');
+    expect(stripped).toBe(full);
+  });
+
+  it('the player mech still tears open when a location loses its armor (#401, untouched)', () => {
+    const { full, stripped } = armorStates('player');
+    expect(stripped).not.toBe(full);
+  });
+});

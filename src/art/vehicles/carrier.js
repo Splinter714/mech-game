@@ -19,7 +19,7 @@
 // beat each time a drone batch launches, exactly mirroring the `legFrames` hull-frame convention
 // the old Broodwalker used for its walk cycle. No new machinery — same seam, other sprite.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, armorShell } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow, haloRound } from './palette.js';
 import { drawTankHull } from './tank.js';
 
@@ -32,7 +32,7 @@ export const CARRIER_DOOR_FRAMES = 2;
 // down the centreline. Drawn pointing "up" (−y = forward), same convention as the hull, and
 // sized to sit INSIDE the tank hull tub's own silhouette (half-width ~7-8 at the deck) so it
 // reads as a hatch cut into the deck rather than a box balanced on top.
-function drawBay(sg, accent, open, armored = false) {
+function drawBay(sg, accent, open) {
   const A = accentGlow(accent);
   // Coaming (the raised rim around the opening) — halo/outline/body layering, same language as
   // every other vehicle mass in this folder.
@@ -65,20 +65,16 @@ function drawBay(sg, accent, open, armored = false) {
   // Launch beacon on the port lip — steady when shut, hot when open.
   ellipseC(sg, -8.6, -6, 2.2, 2.2, V.outline);
   ellipseC(sg, -8.6, -6, 1.3, 1.3, open ? A.hot : A.core, open ? 1 : 0.7);
-  // #300: shared plating overlay on the bay mass while the unit's armor pool holds — the very
-  // same `armorShell` primitive the player mech, enemy mechs and the tank all draw.
-  if (armored) armorShell(sg, 0, 1, 12, 18);
 }
 
-// `opts.armored` (#300) draws the shared armorShell plating over the hull tub + bay (on BOTH
-// door frames, so the door keeps animating while plated).
-export function drawCarrier(scene, key, def, opts = {}) {
+// #472: no armored variant — enemies have no on-sprite armor visual any more, so a carrier is
+// one look plus its two door frames.
+export function drawCarrier(scene, key, def) {
   const accent = def.themeColor ?? V.rim;
-  const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
   // The hull is the tank's, unmodified — one shared function, no fork.
-  gen(scene, `${key}_hull`, D, D, (g) => drawTankHull(scaledGraphics(g), accent, armored));
+  gen(scene, `${key}_hull`, D, D, (g) => drawTankHull(scaledGraphics(g), accent));
   for (let f = 0; f < CARRIER_DOOR_FRAMES; f++) {
-    gen(scene, `${key}_turret_${f}`, D, D, (g) => drawBay(scaledGraphics(g), accent, f === 1, armored));
+    gen(scene, `${key}_turret_${f}`, D, D, (g) => drawBay(scaledGraphics(g), accent, f === 1));
   }
 }

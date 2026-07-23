@@ -437,9 +437,9 @@ export function hudTargetSnapshot(p) {
   return {
     kind: isMech ? 'mech' : 'vehicle',
     name: (body.name ?? 'CONTACT').toUpperCase(),
-    // The set this unit is CURRENTLY rendering from — for an armored kind that flips to the bare
-    // set the moment its plating breaks (#300), so the pod strips its armor off in sympathy.
-    texKey: t.texKey ?? t.key ?? null,
+    // The texture set this unit's art is assembled from. One set per unit now (#472 removed the
+    // second, "plated" enemy set), so this is simply the unit's own key.
+    texKey: t.key ?? null,
     mech: isMech ? body : null,
     art: def?.art ?? null,
     legFrames: def?.legFrames ?? 0,

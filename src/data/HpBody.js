@@ -119,9 +119,9 @@ export class HpBody {
 
   isPartDestroyed() { return this.hp <= 0; }
 
-  // #300: "is this unit still wearing plating?" — the flat-pool analogue of `Mech.hasArmor(loc)`,
-  // and the predicate the vehicle art keys off to decide whether to draw the shared `armorShell()`
-  // overlay. A Mech answers this PER LOCATION (one arm can be stripped while the other isn't); an
+  // "is this unit still wearing plating?" — the flat-pool analogue of `Mech.hasArmor(loc)`.
+  // (#300 keyed the vehicle's plated art off this; #472 removed that visual, so this is now a
+  // pure model query.) A Mech answers this PER LOCATION (one arm can be stripped while the other isn't); an
   // HpBody has ONE unit-wide armor pool, so the answer is the same for every location — the
   // `locationId` argument exists only for interface parity (callers can pass one or not). That
   // means a vehicle's plating is all-or-nothing across the whole unit, which is exactly what the

@@ -196,7 +196,8 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
 // Once the location's armor pool hits 0 (but the arm still has structure/hp), a jagged panel
 // is TORN OFF to bare the internals (`exposedInternals`, mechPrims.js): wires/struts/sparks in
 // a dark cavity, so armor loss reads as the shell being ripped open rather than plating
-// vanishing. Full destruction still falls through to `stump`.
+// vanishing. Full destruction still falls through to `stump`. #472: that armor read is
+// PLAYER-ONLY (`T.armorArt`) — an enemy mech never shows its armor state on the body.
 // `noWeapons` (#397 follow-up): draw the arm's PLATING only, skipping its mounted guns +
 // muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
 // a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
@@ -215,7 +216,7 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // hull/attachment logic is unaffected (this part texture is simply blank when the location is gone).
   if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
-  if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
+  if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
@@ -226,7 +227,7 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
 // it cants; other decor (mast/vane/stack/spine) stays on the body. `stump` if destroyed.
 // #401: same treatment as drawArm above — clean plate = armored, and once this torso's armor
 // is stripped (even though it's still alive) a jagged panel tears off to bare its internals
-// via `exposedInternals`, instead of the old brackets-on-top overlay.
+// via `exposedInternals`, instead of the old brackets-on-top overlay. Player-only since #472.
 // `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
 // body-only raster for the player's shield shell (see drawArm's note).
 // `muzzleOff` (#433): see drawArm — the muzzle-glow-OMITTED bake (transparent where the glow would
@@ -239,7 +240,7 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
   rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
-  if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
+  if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }

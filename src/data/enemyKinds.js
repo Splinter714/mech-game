@@ -430,7 +430,7 @@ export const ENEMY_KINDS = {
     move: { maxSpeed: 48, accel: 110, turnRate: 1.3 },
     // #328: how many BAY-DOOR frames this kind's art builds (art/vehicles/carrier.js
     // CARRIER_DOOR_FRAMES — [0] shut, [1] open). Presence of this field is what tells the arena
-    // (enemies.js _makeVehicleView/_updateVehicle/_reskinVehicle) to render
+    // (enemies.js _makeVehicleView/_updateVehicle) to render
     // `<key>_turret_0..N` instead of one static `<key>_turret`, exactly mirroring how
     // `legFrames` drives multi-frame HULL art. `carrierBehavior` flips the live frame to 1 for
     // a beat whenever a batch launches.

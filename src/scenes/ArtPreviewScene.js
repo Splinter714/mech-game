@@ -9,11 +9,10 @@ import { ENEMY_KINDS, ENEMY_KIND_IDS } from '../data/enemyKinds.js';
 import { ENEMIES } from '../data/enemies.js';
 import { Mech } from '../data/Mech.js';
 import {
-  buildMechTextures, buildVehicleTextures, ARMORED_SUFFIX, ART_SCALE, mountIconKey, itemFxKey,
+  buildMechTextures, buildVehicleTextures, ART_SCALE, mountIconKey, itemFxKey,
   HULL_FRAMES,
 } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
-import { vehicleHasArmorArt } from '../art/vehicles/index.js';
 // #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
 // target readout renders an enemy by the exact same rules rather than a second copy of them.
 import { InkCache, texSize, fitScale } from '../art/inkBounds.js';
@@ -559,9 +558,10 @@ export default class ArtPreviewScene extends Phaser.Scene {
   }
 
   // ── ENEMIES ───────────────────────────────────────────────────────────────────────────
-  // Non-mech kinds are two sprites (hull + turret) stacked exactly as the arena stacks them;
-  // an armored kind (#300) also gets its plated variant beside the bare one. Enemy MECHS are
-  // built from their real data defs and posed with the same part transforms the arena uses.
+  // Non-mech kinds are two sprites (hull + turret) stacked exactly as the arena stacks them —
+  // one look per kind, since #472 removed the enemy armor visual (and with it the second,
+  // "plated" texture set). Enemy MECHS are built from their real data defs and posed with the
+  // same part transforms the arena uses.
 
   _vehicleKey(id) { return `${TEX_PREFIX}veh_${id}`; }
 
@@ -611,10 +611,8 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const def = ENEMY_KINDS[id];
       const key = this._vehicleKey(id);
       if (!this.textures.exists(`${key}_turret`)) buildVehicleTextures(this, key, def);
-      const armored = vehicleHasArmorArt(def);
       const factor = on ? vehicleScaleFactor(def) : null;
-      if (armored) cells.push(this._vehicleCell(`${id}\narmored`, key + ARMORED_SUFFIX, def, { factor }));
-      cells.push(this._vehicleCell(armored ? `${id}\nbare (#401)` : id, key, def, { factor }));
+      cells.push(this._vehicleCell(id, key, def, { factor }));
       note(this._vehicleTexKeys(key, def), factor);
     }
 

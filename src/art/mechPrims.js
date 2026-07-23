@@ -21,15 +21,22 @@ export const CENTER = DESIGN / 2;
 // top rim light, a straight bottom AO band and a panel seam. Still unmistakably the "sleek pale
 // machine" faction against the player's dark chamfered gunmetal — just built out of panels
 // instead of blobs.
+// `armorArt` (#472): does a mech of this faction show its ARMOR state on the sprite at all?
+// The player still tears open (`exposedInternals`) when a location's armor is stripped — that's
+// the player-side look #401 owns. Enemies do NOT: the owner's read was that the visual "looks so
+// dumb on enemies", and an enemy's armor already has a home in the HUD's locked-enemy disc
+// (#452's structure/armor/shield arcs), so an enemy mech has exactly ONE body look per damage
+// state. It's a theme property rather than a call-site branch because the faction palette table
+// is already the single place a mech's LOOK is decided.
 const THEMES = {
   player: {
-    rounded: false,
+    rounded: false, armorArt: true,
     outline: 0x0b0e14, deep: 0x1b212b, ao: 0x10131a, recess: 0x14181f, housing: 0x14181f,
     lower: 0x252c38, faceDk: 0x2a323e, faceMid: 0x2e3543, face: 0x3a4250,
     rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
   },
   enemy: {
-    rounded: true, cornerR: 0.13, legibilityHalo: true,
+    rounded: true, cornerR: 0.13, legibilityHalo: true, armorArt: false,
     outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
     lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
@@ -242,31 +249,6 @@ export function barrel(sg, T, cx, cy, w, h) {
   return T.rounded
     ? roundC(sg, cx, cy, w, h, T.faceDk, Math.min(w, h) * 0.45)
     : rectC(sg, cx, cy, w, h, T.faceDk);
-}
-
-// #246: a bright plating-shell overlay drawn OVER a part's base plate — four corner brackets
-// (a circuit-board/bolted-plating read) in a fixed steel-blue tone, deliberately NOT a faction
-// color so it reads as the same "still armored" language on both the player's dark gunmetal
-// theme and the enemy's light rounded theme. This is what makes armor a VISIBLE trait on the
-// mech itself (not just a HUD number): the caller only invokes this while the location's armor
-// pool is > 0 (see mechArt.js drawArm/drawSideTorso) — once armor hits 0 the caller simply stops
-// drawing it, and the bare plate underneath (no brackets) reads as "armor stripped." Binary
-// present/absent (not a continuous fade) deliberately mirrors `stump`'s own all-or-nothing
-// visual state and the existing "only rebuild the texture when a discrete state crosses"
-// performance rule (see combat.js's `armorBrokeNow` reskin trigger) — a per-hit fade would
-// require rebuilding this texture on every single hit instead of only when armor actually
-// breaks/returns.
-const ARMOR_SHELL = 0x9fe0ff;
-export function armorShell(sg, cx, cy, w, h) {
-  const bw = Math.max(1.1, Math.min(w, h) * 0.09);   // bracket arm thickness
-  const len = Math.min(w, h) * 0.32;                  // bracket arm length
-  const x0 = cx - w / 2 + bw / 2, x1 = cx + w / 2 - bw / 2;
-  const y0 = cy - h / 2 + bw / 2, y1 = cy + h / 2 - bw / 2;
-  const corners = [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]];
-  for (const [sx, sy, dx, dy] of corners) {
-    rectC(sg, sx + (dx * len) / 2, sy, len, bw, ARMOR_SHELL, 0.8);
-    rectC(sg, sx, sy + (dy * len) / 2, bw, len, ARMOR_SHELL, 0.8);
-  }
 }
 
 // A thick line segment (a rotated quad) between two design-coord points — used to draw the

@@ -3,7 +3,7 @@
 // barrel (aims at the player independently). Reads unmistakably as a tank: tracks down each
 // side, a boxy sloped glacis at the front, a rounded turret with a big gun.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, poly, armorShell } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC, poly } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow, haloRound, haloPoly, haloRect } from './palette.js';
 
 // Hull + two tracks, drawn pointing "up" (−y = forward). The front is a sloped glacis (tough
@@ -19,7 +19,7 @@ import { VEHICLE as V, accentGlow, haloRound, haloPoly, haloRect } from './palet
 // rather than forking a near-copy of it — Jackson asked to "re-use tank art exactly, but minus
 // the tank turret." Any future tweak to the tank's silhouette therefore lands on both units by
 // construction; there is no second copy of this to keep in sync.
-export function drawTankHull(sg, accent, armored = false) {
+export function drawTankHull(sg, accent) {
   // Ground shadow.
   ellipseC(sg, 0, 5, 28, 38, V.deep, 0.35);
 
@@ -46,15 +46,10 @@ export function drawTankHull(sg, accent, armored = false) {
   for (const y of [11, 13, 15]) rectC(sg, 0, y, 10, 1, V.tread, 0.8);
   // A hazard accent stripe on the glacis.
   rectC(sg, 0, -13, 8, 1.4, accent, 0.7);
-  // #300: while the unit's armor pool is > 0, overlay the SHARED plating primitive (mechPrims'
-  // `armorShell` — the very same function the player mech and enemy mechs draw) over the hull
-  // tub, so a reworked armor look propagates everywhere in one edit. Sized to the tub's own
-  // silhouette (not the tracks — treads read as running gear, not plating).
-  if (armored) armorShell(sg, 0, 0.5, 15.5, 33);
 }
 
 // Rotating turret: a rounded cast body, a mantlet, a long forward gun, and a commander hatch.
-function drawTurret(sg, accent, armored = false) {
+function drawTurret(sg, accent) {
   const A = accentGlow(accent);
   // Turret body.
   haloRound(sg, 0, 0, 21.6, 18.6, 6.8);   // #129: legibility halo (outer ring)
@@ -80,16 +75,13 @@ function drawTurret(sg, accent, armored = false) {
   rectC(sg, 0, -30, 5, 3.5, V.bodyDk);
   ellipseC(sg, 0, -31, 2.6, 2, A.hot, 0.85);
   ellipseC(sg, 0, -31, 4, 3, A.halo, 0.3);
-  // #300: shared plating overlay on the turret mass (see drawHull) — the gun barrel is left
-  // bare, same reasoning as the tracks.
-  if (armored) armorShell(sg, 0, 0, 17, 14);
 }
 
-// `opts.armored` (#300) draws the shared armorShell plating over the hull tub + turret body.
-export function drawTank(scene, key, def, opts = {}) {
+// #472: enemies no longer carry an on-sprite ARMOR visual — a unit's plating state is read
+// off the HUD's locked-enemy disc, not its body — so there is one look per kind, full stop.
+export function drawTank(scene, key, def) {
   const accent = def.themeColor ?? V.rim;
-  const armored = !!opts.armored;
   const D = DESIGN * ART_SCALE;
-  gen(scene, `${key}_hull`, D, D, (g) => drawTankHull(scaledGraphics(g), accent, armored));
-  gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent, armored));
+  gen(scene, `${key}_hull`, D, D, (g) => drawTankHull(scaledGraphics(g), accent));
+  gen(scene, `${key}_turret`, D, D, (g) => drawTurret(scaledGraphics(g), accent));
 }

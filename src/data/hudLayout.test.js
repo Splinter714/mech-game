@@ -293,7 +293,7 @@ describe('bodyPools — one target\'s condition, whatever kind of body it has', 
 
 describe('hudTargetSnapshot — the readout can only ever show what the reticle is on', () => {
   const vehicle = {
-    kind: 'tank', texKey: 'kind_tank_armored', kindDef: { art: 'tank' },
+    kind: 'tank', key: 'kind_tank', kindDef: { art: 'tank' },
     mech: { name: 'Tank', hp: 30, maxHp: 40, armor: 0, maxArmor: 20, isDestroyed: () => false },
   };
 
@@ -306,7 +306,7 @@ describe('hudTargetSnapshot — the readout can only ever show what the reticle 
     const s = hudTargetSnapshot({ convergeTarget: vehicle });
     expect(s.kind).toBe('vehicle');
     expect(s.name).toBe('TANK');
-    expect(s.texKey).toBe('kind_tank_armored');   // the CURRENT (plated) set, not the bare one
+    expect(s.texKey).toBe('kind_tank');   // #472: one texture set per kind, so it's just the key
     expect(s.pools.hp).toBeCloseTo(0.75, 5);
     expect(s.mech).toBe(null);                    // only a mech needs its live handle, for posing
   });
