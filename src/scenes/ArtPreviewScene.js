@@ -457,21 +457,29 @@ export default class ArtPreviewScene extends Phaser.Scene {
 
   // ── HEXES ─────────────────────────────────────────────────────────────────────────────
   // Every hex tile the world can stamp: one row per biome (its six terrain ROLES in the same
-  // order biomes.js declares them, each destructible role trailed by its own cleared/rubble
-  // derivatives), the fabricated base hexes, the transparent canopy overlays composited over
-  // their own ground tile (they read as nothing on their own), the dock doors over a dock bay
-  // in both states, and finally every remaining TERRAIN id so nothing hides.
+  // order biomes.js declares them, each role trailed by whatever belongs TO it — its canopy
+  // overlay, its cleared/rubble derivatives), then the fabricated base hexes (with the whole
+  // dock assembly as one contiguous run), and finally two catch-all safety nets so nothing
+  // can hide.
   //
-  // #461 playtest follow-up: the biome-specific `clearedId`/`rubbleId` derivatives (forest →
-  // forestCleared/forestRubble, scrub → scrubCleared/scrubRubble, …) used to fall through to
-  // the catch-all row, which is exactly the wrong context for judging them — #227/#405 gave
-  // each one its OWN look (charred plant debris vs. scattered dead scrub vs. broken masonry)
-  // precisely so it reads as that biome's wreckage. They're now shown inline after the terrain
-  // they come from, so the intact → cleared → rubble lifecycle reads in place. Derived from the
-  // TERRAIN fields, never a hand-written map, so a new destructible flows through by itself.
-  // A derivative reachable from two biomes appears in both rows — duplicated in context beats
-  // orphaned. The generic biome-INDEPENDENT `rubble` is deliberately excluded (all the base
-  // infra collapses to it); it stays in BASE + STRUCTURE.
+  // #461 playtest follow-ups (twice, same complaint): things that belong to a tile were
+  // floating in their own anonymous standalone groups instead of sitting with it.
+  //   1. The biome-specific `clearedId`/`rubbleId` derivatives (forest → forestCleared/
+  //      forestRubble, …) fell through to the catch-all row — exactly the wrong context, since
+  //      #227/#405 gave each one its OWN look (charred plant debris vs. scattered dead scrub vs.
+  //      broken masonry) precisely so it reads as that biome's wreckage.
+  //   2. The #289 canopy overlays had a standalone COVER CANOPY group, and the #395 dock doors
+  //      a standalone DOCK DOORS group while `dock`/`dockClosed` sat in BASE + STRUCTURE.
+  // Now: each cover role reads intact → + canopy → cleared → rubble in one place per biome, and
+  // every dock piece is one run inside the base grouping. Both memberships are DERIVED (canopy
+  // from the biome's own role ids, derivatives from the TERRAIN fields), never a hand-written
+  // map, so new content flows through by itself. A derivative reachable from two biomes appears
+  // in both rows — duplicated in context beats orphaned. The generic biome-INDEPENDENT `rubble`
+  // is deliberately excluded (all the base infra collapses to it); it stays in BASE + STRUCTURE.
+  //
+  // The standalone-group mechanism survives ONLY as a safety net: an unclaimed canopy or an
+  // unclaimed terrain id still surfaces rather than vanishing. Both are empty today, and
+  // `_group` no-ops on an empty list, so neither header renders.
 
   // The cleared/rubble tiles a destructible terrain id collapses into, in lifecycle order.
   _derivativesOf(id) {
@@ -483,10 +491,18 @@ export default class ArtPreviewScene extends Phaser.Scene {
 
   _buildHexes() {
     const shown = new Set();
+    const canopyShown = new Set();
     const tile = (id, label) => {
       shown.add(id);
       return this._stackCell(label ?? id, [`hex_${id}`]);
     };
+    // A canopy is a transparent foliage-only raster — it reads as nothing on its own, so it is
+    // always composited over the ground tile it overlays.
+    const canopyCell = (id, label) => {
+      canopyShown.add(id);
+      return this._stackCell(label, [`hex_${id}`, canopyTexKey(id)]);
+    };
+    const hasCanopy = (id) => COVER_CANOPY_IDS.includes(id) && this.textures.exists(canopyTexKey(id));
 
     for (const bid of BIOME_IDS) {
       const B = BIOMES[bid];
@@ -497,6 +513,9 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const cells = [];
       for (const [role, id] of roles) {
         cells.push(tile(id, `${id}\n${role}`));
+        // The full lifecycle of this role, in order: the canopy overlay it wears while intact,
+        // then what it collapses into once shot away.
+        if (hasCanopy(id)) cells.push(canopyCell(id, `${id}\n↳ ${role} + canopy`));
         for (const [kind, did] of this._derivativesOf(id)) {
           cells.push(tile(did, `${did}\n↳ ${role} ${kind}`));
         }
@@ -505,35 +524,51 @@ export default class ArtPreviewScene extends Phaser.Scene {
     }
 
     // The fabricated base/objective hexes + the two structural tiles that aren't biome roles.
+    // The dock is an ASSEMBLY, not one tile — the open bay, the two #395 door leaves over it
+    // (shut, and parted by the same DOCK_DOOR_SLIDE the arena tweens them across), and the
+    // sealed `dockClosed` hex a vacated dock swaps to. They render as one contiguous run,
+    // emitted where the first dock piece falls in TERRAIN order.
     const baseIds = Object.keys(TERRAIN).filter(isBaseCategory);
     const structural = ['rubble', 'wall'].filter((id) => this.textures.exists(`hex_${id}`));
-    this._group('BASE + STRUCTURE',
-      [...baseIds, ...structural].filter((id) => this.textures.exists(`hex_${id}`)).map((id) => tile(id)));
-
-    // #289 canopy overlays are transparent foliage-only rasters — shown OVER their ground tile,
-    // which is the only way they read at all.
-    this._group('COVER CANOPY (overlay over its ground tile)',
-      COVER_CANOPY_IDS.filter((id) => this.textures.exists(canopyTexKey(id)))
-        .map((id) => this._stackCell(`${id}\n+ canopy`, [`hex_${id}`, canopyTexKey(id)])));
-
-    // #395 dock doors: two transparent half-hex leaves over the dock's black bay, shut and
-    // parted by the same DOCK_DOOR_SLIDE the arena tweens them across.
-    if (this.textures.exists(DOCK_DOOR_TEX.L)) {
-      this._group('DOCK DOORS (#395)', [
-        this._stackCell('dock\nshut', ['hex_dock', DOCK_DOOR_TEX.L, DOCK_DOOR_TEX.R]),
-        this._stackCell('dock\nopen', ['hex_dock', DOCK_DOOR_TEX.L, DOCK_DOOR_TEX.R], {
-          offsets: [null, { x: -DOCK_DOOR_SLIDE * ART_SCALE, y: 0 }, { x: DOCK_DOOR_SLIDE * ART_SCALE, y: 0 }],
-        }),
-        this._stackCell('dockClosed\n(sealed hex)', ['hex_dockClosed']),
-      ]);
+    const dockPieces = ['dock', 'dockClosed'];
+    let dockRunEmitted = false;
+    const baseCells = [];
+    for (const id of [...baseIds, ...structural].filter((i) => this.textures.exists(`hex_${i}`))) {
+      if (!dockPieces.includes(id)) { baseCells.push(tile(id)); continue; }
+      if (dockRunEmitted) continue;          // the rest of the assembly went out with the first
+      dockRunEmitted = true;
+      baseCells.push(...this._dockRunCells(tile));
     }
+    this._group('BASE + STRUCTURE', baseCells);
 
-    // Safety net, not a bucket: anything no row above claimed still shows up here. With every
-    // cover derivative now homed in its biome row this is EMPTY today (`_group` no-ops on an
-    // empty list, so no stray header) — it exists so a future terrain id can never hide.
+    // Safety nets, not buckets: anything no row above claimed still shows up. Both are empty
+    // today (`_group` no-ops on an empty list, so no stray header) — they exist so a future
+    // canopy or terrain id can never hide.
+    this._group('COVER CANOPY (claimed by no biome)',
+      COVER_CANOPY_IDS.filter((id) => !canopyShown.has(id) && this.textures.exists(canopyTexKey(id))
+        && this.textures.exists(`hex_${id}`))
+        .map((id) => canopyCell(id, `${id}\n+ canopy`)));
+
     const rest = Object.keys(TERRAIN)
       .filter((id) => !shown.has(id) && this.textures.exists(`hex_${id}`));
     this._group('EVERY OTHER TERRAIN (unclaimed)', rest.map((id) => tile(id)));
+  }
+
+  // The dock assembly as one ordered run: open bay → doors shut → doors parted → sealed hex.
+  // `tile` is passed in so the plain hexes still register as SHOWN for the catch-all row.
+  _dockRunCells(tile) {
+    const cells = [];
+    if (this.textures.exists('hex_dock')) {
+      cells.push(tile('dock', 'dock\nopen bay'));
+      if (this.textures.exists(DOCK_DOOR_TEX.L)) {
+        cells.push(this._stackCell('dock\n↳ doors shut', ['hex_dock', DOCK_DOOR_TEX.L, DOCK_DOOR_TEX.R]));
+        cells.push(this._stackCell('dock\n↳ doors parted', ['hex_dock', DOCK_DOOR_TEX.L, DOCK_DOOR_TEX.R], {
+          offsets: [null, { x: -DOCK_DOOR_SLIDE * ART_SCALE, y: 0 }, { x: DOCK_DOOR_SLIDE * ART_SCALE, y: 0 }],
+        }));
+      }
+    }
+    if (this.textures.exists('hex_dockClosed')) cells.push(tile('dockClosed', 'dockClosed\n↳ sealed hex'));
+    return cells;
   }
 
   // ── ENEMIES ───────────────────────────────────────────────────────────────────────────
