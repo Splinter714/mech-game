@@ -9,10 +9,6 @@
 // player's panel goes, plus where the SHARED readouts (the objective line, buff rings) go so they
 // don't collide with a right-hand panel. No Phaser, no scene — HudScene just builds to these numbers.
 //
-// **Solo is byte-identical.** With `count === 1` every number below is literally the constant
-// that was hardcoded in HudScene before this issue: the column at x=16, the tile row spanning
-// `W*0.12 .. W*0.88`, the top-right readout right-aligned at `W-16`, the buff rings hugging the
-// right edge. One player therefore gets exactly today's HUD in today's position, on every path.
 //
 // #449: the top-right shared slot used to hold the ENEMY COUNT; it now holds the OBJECTIVE LINE
 // (the enemy/structure tally folded into that line via data/bases.js `baseClearLabel`), so the
@@ -22,77 +18,80 @@
 // #348's player-ring fix had exactly the mid-sortie-join bug that comes from deciding at build
 // time, so pressing START on gamepad 2 mid-sortie has to grow a second panel with no redeploy.
 //
-// #448: the integrity readout itself moved from a top-left COLUMN to a bottom-corner block of
-// vertical bars — see `INTEGRITY_BARS`/`integrityLayout` below. A panel's `columnX` still names
-// which edge that player's chrome hugs (and still places the block), so the panel geometry here
-// is unchanged; only what gets drawn against it changed.
+// #448: the integrity readout itself moved from a top-left COLUMN to a block of vertical bars on
+// the tile row's baseline — see `INTEGRITY_BARS`/`integrityLayout` below.
+//
+// #452 (style pass): nothing in the bottom band hugs a screen edge any more. The integrity block
+// and the tile row are packed into ONE centred console band (`consoleBand`) whose width is the
+// width of its contents, and the locked-enemy readout left the band entirely for a disc in the
+// top-left corner (`targetDiscBox`), mirroring the minimap's disc top-right.
 
 import { LOCATIONS } from './anatomy.js';
 
-// Width reserved for ONE player's side of the screen. It used to be the literal width of the
-// top-left integrity column (label + bar + the "255+255/255+255" numbers beside it); #448 moved
-// that readout to the bottom corner and deleted the numbers, so it is now simply the band each
-// player's chrome owns on its own edge — what decides how far in from the right edge a second
-// panel starts, and the right edge a right-hand panel's bottom block hangs off. Unchanged value:
-// the co-op column/tile geometry is tuned around it.
-export const HUD_COLUMN_W = 226;
-
-// Screen inset shared by both panels' columns — today's left-hand column sits at x=16.
+// Screen inset for the top-corner chrome (the objective line, the buff rings).
 export const HUD_EDGE = 16;
+
+// ── #452 (style pass): the two CORNER DISCS ──────────────────────────────────────────────────
+//
+// The minimap has always been a disc pinned to the top-RIGHT corner. The locked-enemy preview —
+// which shipped as a bay in the bottom-right of the console — now mirrors it as a disc in the
+// top-LEFT (Jackson: "the locked enemy preview should be in a circle top left similar to the
+// minimap on top right; both circles should be the same size, and should be slightly larger than
+// current minimap size"). ONE size constant feeds both, so they can never drift apart; it is a
+// touch larger than the 132px the map used to be.
+//
+// Co-op stacks a second target disc directly under the first rather than putting one in each top
+// corner: the right corner is the map's, and two players each need their own lock readout.
+export const HUD_DISC = {
+  d: 150,          // diameter of BOTH discs (was 132 for the map alone)
+  inset: 14,       // screen inset, unchanged from the map's
+  nameH: 20,       // room under a target disc for its unit-name line
+  stackGap: 8,     // between one target disc's name line and the next disc down
+};
+
+// The minimap's bounding box (a square whose inscribed circle is the disc).
+export function minimapBox(W) {
+  const { d, inset } = HUD_DISC;
+  return { x: W - inset - d, y: inset, w: d, h: d };
+}
+
+// One player's target disc, stacked down the left edge.
+export function targetDiscBox(index = 0) {
+  const { d, inset, nameH, stackGap } = HUD_DISC;
+  return { x: inset, y: inset + index * (d + nameH + stackGap), w: d, h: d };
+}
+
+// How far down the screen the top-corner chrome reaches — what the wayfinding chevrons and the
+// objective line have to clear.
+export function discReserveBottom(count = 1) {
+  const b = targetDiscBox(Math.max(1, count | 0) - 1);
+  return b.y + b.h + HUD_DISC.nameH;
+}
 
 // Buff-ring geometry that has to agree between here and HudScene's `_updateBuffHud` (the ring
 // radius decides how far in from its anchor the stack of rings actually starts).
 export const BUFF_RING_R = 15;
 
-// Where each player's panel lives, plus where the shared readouts move to.
+// Which panels exist, plus where the shared readouts sit.
 //
-//  - `count === 1` → one panel, all of today's numbers.
-//  - `count >= 2`  → player 1 keeps the left column, player 2 gets a mirrored right column, and
-//    the bottom tile row splits into two half-width rows (left half = P1, right half = P2) so
-//    the two rows read as belonging to the column above them. The shared objective/buff readouts
-//    move to top-centre, which is the one region neither panel claims — leaving them top-right
-//    would have them draw straight through player 2's integrity column.
+// #452 (style pass) took the per-panel SCREEN-EDGE geometry out of here. The bottom readouts no
+// longer hug the left/right edges at all: they are packed into ONE centred console whose width is
+// the width of its contents (see `consoleBand`), so a panel spec is now just "player N exists" and
+// the band decides where that player's block and tile row land. What survives here is the only
+// thing that still differs by count: the shared objective line + buff rings are right-aligned
+// under the corner minimap in solo, and move to top-centre in co-op (where the top-left corner is
+// a stack of target discs and the top-right is the map).
 export function hudLayout(count, W) {
   const n = Math.max(1, count | 0);
-  if (n === 1) {
-    return {
-      count: 1,
-      panels: [{
-        index: 0,
-        side: 'left',
-        columnX: HUD_EDGE,
-        tilesX: W * 0.12,
-        tilesW: W * 0.76,
-      }],
-      // Today's shared readouts: right-aligned objective line, rings hugging the right edge.
-      shared: { objectiveX: W - HUD_EDGE, objectiveOriginX: 1, buffCx: W - HUD_EDGE - BUFF_RING_R },
-      // Today's wayfinding margins (HudScene adds the top/bottom, which don't change).
-      margins: { left: 24, right: 24 },
-    };
-  }
-  const half = 0.45;
-  const panels = [
-    {
-      index: 0,
-      side: 'left',
-      columnX: HUD_EDGE,
-      tilesX: W * 0.03,
-      tilesW: W * half,
-    },
-    {
-      index: 1,
-      side: 'right',
-      columnX: Math.round(W - HUD_EDGE - HUD_COLUMN_W),
-      tilesX: W * 0.52,
-      tilesW: W * half,
-    },
-  ];
   return {
     count: n,
-    panels: panels.slice(0, n),
-    shared: { objectiveX: Math.round(W / 2), objectiveOriginX: 0.5, buffCx: Math.round(W / 2 + 78) },
-    // Keep the off-screen chevrons clear of BOTH columns now that the right edge is occupied.
-    margins: { left: 24, right: HUD_COLUMN_W + 24 },
+    panels: Array.from({ length: n }, (_, index) => ({ index })),
+    shared: n === 1
+      ? { objectiveX: W - HUD_EDGE, objectiveOriginX: 1, buffCx: W - HUD_EDGE - BUFF_RING_R }
+      : { objectiveX: Math.round(W / 2), objectiveOriginX: 0.5, buffCx: Math.round(W / 2 + 78) },
+    // Wayfinding margins. Both edges are now free of HUD chrome below the corner discs (the
+    // console is centred and narrow), so a chevron only has to clear the screen inset.
+    margins: { left: 24, right: 24 },
   };
 }
 
@@ -177,95 +176,122 @@ export function integrityLayout(locs, { anchorX, bottomY, availW, side = 'left' 
   };
 }
 
-// ── #452: the CONSOLE, and the bottom-right target readout ───────────────────────────────────
+// ── #452: the CONSOLE ────────────────────────────────────────────────────────────────────────
 //
-// Stages 1 and 2 cleared the top of the screen and moved the integrity readout down beside the
-// skill tiles. This is the frame that makes them ONE THING: a single mech-style instrument shell
-// running the width of the bottom edge, with the tiles, the integrity block and the target
-// readout sitting in it as recessed BAYS. The shell is drawn from these numbers alone (HudScene
-// `_paintConsole` only paints); nothing about it is hardcoded in the scene.
+// The integrity readout and the skill tiles sit in ONE mech-style instrument shell along the
+// bottom edge. The style pass changed two things about that shell (Jackson: "too much
+// transparency and too full-screen-width; it should have similar opaque colors and styles as the
+// mech art itself, and it should be centered and only as wide as it needs to be"):
+//
+//   - it is drawn OPAQUE, in the player mech's own plate palette (HudScene borrows `themeFor`
+//     from art/mechPrims.js, so the console is literally painted in the mech's colours), and
+//   - it is only as wide as its CONTENTS, centred on the screen — which means the contents can no
+//     longer be placed against the screen edges. `consoleBand` packs each player's group
+//     (integrity block, then that player's four skill tiles) into one centred run and hands back
+//     where each piece lands; the shell is then simply that run plus its padding.
+//
+// The target readout is no longer in here at all — it moved to the top-left disc (`targetDiscBox`).
 export const CONSOLE = {
-  edgeGap: 5,       // px of bare screen left showing past the shell on the left/right/bottom
-  padTop: 9,        // inner padding above the tallest bay
-  radius: 16,       // the shell's TOP corner rounding (the bottom is flush with the screen edge)
+  edgeGap: 6,       // px of bare screen left showing past the shell at the bottom
+  padX: 16,         // inner padding at each END of the shell
+  padTop: 10,       // inner padding above the tallest bay
+  radius: 14,       // the shell's TOP corner rounding (the bottom is flush with the screen edge)
   bayRadius: 8,     // a recessed bay's corner rounding
   bayPad: 6,        // how far a bay's frame stands off the content inside it
   railInset: 18,    // how far in from each end the lit top rail runs
   boltInset: 10,    // bolt heads, in from each end of the rail
   boltR: 1.7,
-  // Co-op splits the target readouts into the gap BETWEEN the two tile rows (see
-  // `targetPodAnchor`); this is each pod's clearance from the screen's centre line.
-  splitGap: 7,
+  blockGap: 16,     // one player's integrity block ↔ that player's own tile row
+  playerGap: 34,    // one player's whole group ↔ the next player's
 };
 
-// The shell's rectangle. `contentTop` is the highest thing in the band (in practice the integrity
-// header line, which sits a touch above the tile row) — the shell wraps whatever that is.
-export function consoleLayout(W, H, contentTop) {
-  const x = CONSOLE.edgeGap;
+// The skill tile row's own dial. The row is FOUR tiles, and in a centred console they want their
+// natural size — only a genuinely narrow window (or a co-op pair) ever squeezes them.
+export const CONSOLE_TILES = { n: 4, gap: 12, max: 92, min: 46 };
+
+export function tileRowWidth(size, n = CONSOLE_TILES.n, gap = CONSOLE_TILES.gap) {
+  return size * n + gap * (n - 1);
+}
+
+// The biggest tile size that still lets every player's group fit across the screen. `blockWs` is
+// each player's integrity-block width (which differs per readout mode — bars, orbs, paper doll —
+// so it is measured, not assumed).
+export function consoleTileSize(W, blockWs) {
+  const n = Math.max(1, blockWs.length);
+  const budget = W - CONSOLE.edgeGap * 2 - CONSOLE.padX * 2
+    - blockWs.reduce((s, b) => s + b + CONSOLE.blockGap, 0)
+    - CONSOLE.playerGap * (n - 1);
+  const size = Math.floor((budget / n - CONSOLE_TILES.gap * (CONSOLE_TILES.n - 1)) / CONSOLE_TILES.n);
+  return Math.max(CONSOLE_TILES.min, Math.min(CONSOLE_TILES.max, size));
+}
+
+// Pack the groups into one centred run. `groups` is `[{ blockW, tilesW }]` in player order; each
+// one comes back with the x its integrity block and its tile row start at. The band's own
+// `{ x, w }` is what the shell is drawn to — so the shell is exactly its contents plus `padX`,
+// and centring the band centres the console.
+export function consoleBand(W, groups) {
+  const inner = groups.reduce((s, g) => s + g.blockW + CONSOLE.blockGap + g.tilesW, 0)
+    + CONSOLE.playerGap * Math.max(0, groups.length - 1);
+  const w = Math.round(inner + CONSOLE.padX * 2);
+  const x = Math.round((W - w) / 2);
+  let cx = x + CONSOLE.padX;
+  const placed = groups.map((g) => {
+    const blockX = cx;
+    const tilesX = cx + g.blockW + CONSOLE.blockGap;
+    cx = tilesX + g.tilesW + CONSOLE.playerGap;
+    return { blockX, blockW: g.blockW, tilesX, tilesW: g.tilesW };
+  });
+  return { x, w, groups: placed };
+}
+
+// The shell's rectangle: the band's own x/width, running from the tallest thing in it down to the
+// bottom edge. `contentTop` is the highest thing any panel put in the band (in practice the
+// integrity header line, which sits a touch above the tile row).
+export function consoleLayout(H, contentTop, band) {
   const y = Math.round(contentTop - CONSOLE.padTop);
-  return { x, y, w: W - CONSOLE.edgeGap * 2, h: H - CONSOLE.edgeGap - y };
+  return { x: band.x, y, w: band.w, h: H - CONSOLE.edgeGap - y };
 }
 
-// The TARGET READOUT (bottom-right in solo): an animated preview of the enemy the lock is on,
-// with its health/armor/shield beside it in the SAME bars-and-no-numbers language as the player's
-// own integrity block — the two corners are one instrument, so they have to read alike.
-export const TARGET_POD = {
-  artMax: 84,       // widest the animated preview bay gets
-  artMin: 38,       // ...and the narrowest, before the pod simply gives up its art
-  gap: 9,           // between the preview bay and the bars
-  headerH: 16,      // the 'TARGET' / unit-name line, sharing the integrity header's baseline
-  inset: 5,         // padding inside the preview bay's frame, so art never touches its edge
+// ── #452 (style pass): the TARGET DISC ───────────────────────────────────────────────────────
+//
+// The locked-enemy readout, as the top-left mirror of the corner minimap: an animated preview of
+// the unit posed inside the disc, ringed by three concentric GAUGE ARCS carrying the same three
+// layers the player's own block draws — structure, armor, shield — so the two readouts still say
+// the same thing in the same order, just wrapped round a circle instead of stood up as bars.
+export const TARGET_DISC = {
+  ringW: 3,         // one gauge ring's stroke width
+  ringGap: 2.5,     // between rings
+  rimInset: 4,      // the outermost ring, in from the disc's frame
+  artPad: 5,        // between the innermost ring and the art's bounding square
+  order: ['hp', 'armor', 'shield'],   // outermost → innermost, matching the bars' left → right
 };
 
-// Where one player's target pod hangs, given how many players are on the field.
-//
-//  - SOLO: the far bottom-RIGHT, mirroring the integrity block on the bottom-left, so the console
-//    reads left-to-right as YOU → your guns → what you're shooting at.
-//  - CO-OP: the right edge belongs to player 2's integrity block, so the pods move INBOARD to the
-//    gap between the two tile rows — each player's own pod on their own side of the centre line,
-//    still inside the same shell. Deliberately NOT stacked above the integrity blocks (there is no
-//    vertical room in the band) and deliberately not dropped: each player is aiming at their own
-//    target, so one shared readout would be wrong for at least one of them.
-export function targetPodAnchor(index, count, W) {
-  if (count <= 1) return { anchorX: W - HUD_EDGE, side: 'right' };
-  const mid = Math.round(W / 2);
-  return index === 0
-    ? { anchorX: mid - CONSOLE.splitGap, side: 'right' }
-    : { anchorX: mid + CONSOLE.splitGap, side: 'left' };
+// Every number the target disc is painted from, for a given bounding box (`targetDiscBox`).
+export function targetDiscLayout(box) {
+  const T = TARGET_DISC;
+  const cx = box.x + box.w / 2, cy = box.y + box.h / 2, r = box.w / 2;
+  const rings = T.order.map((key, i) => ({
+    key,
+    r: r - T.rimInset - T.ringW / 2 - i * (T.ringW + T.ringGap),
+    w: T.ringW,
+  }));
+  // The art sits in the largest square that fits inside the innermost ring.
+  const inner = Math.max(0, rings[rings.length - 1].r - T.ringW / 2 - T.artPad);
+  const side = inner * Math.SQRT2;
+  return {
+    cx, cy, r, rings, inner,
+    art: { x: cx - side / 2, y: cy - side / 2, w: side, h: side },
+    nameX: cx,
+    nameY: box.y + box.h + 4,
+  };
 }
 
-// Where every piece of one target pod goes. Same contract as `integrityLayout`: `anchorX` is the
-// pod's outer edge on its own side, `bottomY` the baseline it shares with the tiles and the
-// integrity block, `availW` how much room there is between that edge and the tiles beside it.
-// The BARS are laid out by `integrityLayout` itself over a single pseudo-location, so the target's
-// HP/armor pair and shield bar are literally the same geometry (and the same painters) as the
-// player's own — that is what makes the two ends of the console match. The preview bay takes
-// whatever width is left, capped, and gives up entirely rather than squeezing to nothing.
-export function targetPodLayout({ anchorX, bottomY, availW = 0, side = 'right' }) {
-  const T = TARGET_POD;
-  const bars = integrityLayout(['target'], { anchorX: 0, bottomY, availW: 0, side: 'left' });
-  const room = (availW > 0 ? availW : T.artMax + T.gap + bars.w) - bars.w - T.gap;
-  const artW = Math.min(T.artMax, room);
-  const showArt = artW >= T.artMin;
-  const w = (showArt ? artW + T.gap : 0) + bars.w;
-  const x = side === 'right' ? anchorX - w : anchorX;
-  const artX = x;
-  // The bars keep their own internal geometry; they just move to the pod's right-hand end.
-  const dx = x + w - bars.w - bars.x;
-  const moved = {
-    ...bars,
-    x: bars.x + dx,
-    segments: bars.segments.map((s) => ({ ...s, x: s.x + dx, cx: s.cx + dx, hpX: s.hpX + dx, armorX: s.armorX + dx })),
-    shield: { ...bars.shield, x: bars.shield.x + dx },
-  };
-  return {
-    x, w, showArt,
-    bars: moved,
-    art: { x: artX, y: bars.top, w: showArt ? artW : 0, h: bottomY - bars.top, inset: T.inset },
-    headerY: bars.top - T.headerH,
-    top: bars.top - T.headerH,
-    bottom: bottomY,
-  };
+// One gauge arc's sweep: clockwise from twelve o'clock, so a full ring means full and a draining
+// one unwinds the way a dial does. `frac` outside 0..1 is clamped; 0 draws nothing.
+export function ringSweep(frac) {
+  const f = Math.max(0, Math.min(1, frac ?? 0));
+  const start = -Math.PI / 2;
+  return { start, end: start + f * Math.PI * 2, drawn: f > 0 };
 }
 
 // The header over an integrity column. Solo keeps the bare 'INTEGRITY' it has always had; only

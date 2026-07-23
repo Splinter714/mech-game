@@ -12,13 +12,15 @@ import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
-  integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER, HUD_COLUMN_W,
-  CONSOLE, consoleLayout, targetPodAnchor, targetPodLayout,
+  integrityLayout, INTEGRITY_ORDER,
+  CONSOLE, CONSOLE_TILES, consoleLayout, consoleBand, consoleTileSize, tileRowWidth,
+  HUD_DISC, minimapBox, targetDiscBox, targetDiscLayout, ringSweep, discReserveBottom,
 } from '../data/hudLayout.js';
 import {
-  normalizeReadoutMode, nextReadoutMode, readoutLabel,
+  normalizeReadoutMode, nextReadoutMode,
   orbLayout, orbFillPolygon, paperDollLayout, perimeterRun, mechPools,
 } from '../data/healthReadout.js';
+import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
 
@@ -170,37 +172,42 @@ function drawShieldBar(g, x, bottom, w, fh) {
 
 // ── #452: the CONSOLE ────────────────────────────────────────────────────────────────────────
 //
-// The skill tiles and the integrity block used to float on the bottom edge as two unrelated
-// widgets. They now sit in ONE mech-style instrument shell that runs the width of the screen —
-// a plated body with a lit top rail and bolt heads, with each readout recessed into it as a BAY.
-// That shell is what physically connects the integrity block (bottom-left), the buttons (centre)
-// and the new target readout (bottom-right): they are bays in the same panel, not neighbours.
-// All geometry comes from data/hudLayout.js `consoleLayout`; this is only the paint.
+// The skill tiles and the integrity block sit in ONE mech-style instrument shell along the bottom
+// edge: a plated body with a lit top rail and bolt heads, with each readout recessed into it as a
+// BAY. All geometry comes from data/hudLayout.js (`consoleBand`/`consoleLayout`); this is the paint.
+//
+// The style pass took the shell's colours straight from the PLAYER MECH's own palette
+// (art/mechPrims.js `themeFor`) rather than inventing HUD greys — the console is a piece of the
+// machine you are sitting in, so it is painted out of the same tones its plates are, in the same
+// order (dark outline → shadowed lower body → mid face → lit top rim). It is fully OPAQUE: the
+// old 0.78 shell let the fight read through the instrument panel, which is exactly what Jackson
+// called "too much transparency".
+const MECH = themeFor({ theme: 'player' });
 const CONSOLE_COL = {
-  shell: 0x171d25,      // the plate body
-  shellEdge: 0x39475a,  // its lit outer edge
-  rail: 0x5ec8e0,       // the accent rail along the top lip
-  bolt: 0x55637a,
-  bay: 0x0b0e13,        // a recessed bay's floor
-  bayEdge: 0x2a333f,
+  outline: MECH.outline,   // 0x0b0e14 — the plate edge, same as every mech part's
+  body: MECH.faceMid,      // the plate face
+  bodyLo: MECH.lower,      // its shadowed lower half
+  bodyHi: MECH.face,       // the lit upper band
+  rim: MECH.rim,           // the top highlight rim / rail
+  bolt: MECH.rimHi,
+  bay: MECH.ao,            // a recessed bay's floor (the mech's own ambient-occlusion tone)
+  bayEdge: MECH.deep,
 };
-const CONSOLE_ALPHA = 0.78;   // the shell is a shade translucent, so the fight still reads behind it
 
-// Recess one bay into the console plate: a dark floor plus (optionally) a hairline frame. The
-// tile bay skips the frame — the tiles carry their own edge + halo now, and a second outline
-// around them read as a box in a box.
+// Recess one bay into the console plate: a dark floor, a shadowed top lip and (optionally) a
+// hairline frame. The tile bay skips the frame — the tiles carry their own edge + halo now, and a
+// second outline around them read as a box in a box. Opaque throughout, like the shell.
 function drawBay(g, rect, { framed = true } = {}) {
-  g.fillStyle(CONSOLE_COL.bay, framed ? 0.55 : 0.38);
+  g.fillStyle(CONSOLE_COL.bay, 1);
   g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, CONSOLE.bayRadius);
   if (!framed) return;
-  g.lineStyle(1, CONSOLE_COL.bayEdge, 0.85);
+  g.lineStyle(1, CONSOLE_COL.bayEdge, 1);
   g.strokeRoundedRect(rect.x, rect.y, rect.w, rect.h, CONSOLE.bayRadius);
 }
 
-// #452: the target readout's own colours. The name line takes the reticle's red so the panel and
+// #452: the target readout's own colours. The name line takes the reticle's red so the disc and
 // the bracket drawn around the unit in the world read as the same lock.
 const POD_LIVE = '#e2533a';
-const POD_BAY_FILL = 0x0a0d12;
 // How fast the pod spins a rotor overlay, per enemy art kind — the SAME rates the arena drives
 // them at (arena/enemies.js `_updateVehicle`), which is what makes the preview read as the unit
 // you are looking at rather than a generic idle loop.
@@ -267,9 +274,14 @@ export default class HudScene extends Phaser.Scene {
     // #296: the control-method indicator (CONTROLLER / MOUSE + KB) and the AI move/fire debug
     // readout are dev-only overlays — created only under `import.meta.env.DEV` and updated behind
     // the same guard below, so they're absent from a production build entirely.
+    // #452 (style pass): the dev overlays used to sit in opposite bottom corners — the perf block
+    // bottom-LEFT and these two bottom-RIGHT — where the now-centred console could run under them.
+    // Jackson: the FPS counter and the control-mode indicator must sit NEXT TO EACH OTHER and
+    // ABOVE the instrument panel. They are laid out together in `_placeDevReadouts`, off the
+    // console's own top edge, so they can never overlap it at any window size.
     if (import.meta.env.DEV) {
-      this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
-      this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
+      this.modeText = this.add.text(16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(0, 1);
+      this.aiText = this.add.text(16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1);
     }
 
     // #142: performance readout, bottom-left. Phaser's own `game.loop.actualFps` is already an EMA
@@ -283,7 +295,7 @@ export default class HudScene extends Phaser.Scene {
     // production bundle), so the per-frame update below is gated too and `fpsText` simply doesn't
     // exist in production. See src/data/perfReadout.js for why each field is a suspect.
     if (import.meta.env.DEV) {
-      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1);
+      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 0);
       // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
       // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
       // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing.
@@ -358,26 +370,25 @@ export default class HudScene extends Phaser.Scene {
     // doll — data/healthReadout.js) and the point of building all three was to judge them in play,
     // so the switch has to be reachable mid-run: H cycles it. The mode lives in the REGISTRY, which
     // is game-wide, so it survives redeploying to the garage and back rather than resetting to the
-    // shipped readout every sortie. Deliberately NOT gated behind `import.meta.env.DEV` — the
-    // comparison is the whole deliverable, and it has to work wherever the game is actually played.
-    this.readoutHint = this.add.text(16, 16, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: C.dim,
-    }).setOrigin(0, 0);
+    // shipped readout every sortie.
+    // #452 (style pass): the on-screen `READOUT: BARS   [H] to switch` prompt is GONE (Jackson
+    // doesn't want the control prompt on the HUD, and the top-left corner it sat in is the target
+    // disc's now). The KEY still cycles — only the instruction text was chrome.
     this.input.keyboard?.on('keydown-H', () => this._cycleReadout());
 
     this.panels = [];
     this._panelCount = 0;
     this._syncPanels();
-    this._updateReadoutHint();
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. #452: the bottom margin is now the
     // whole CONSOLE shell (which wraps the tiles, the integrity block and the target readout), not
     // just the tile row's top edge — one number for one panel.
-    // #366: the left/right insets come from the layout — a second, right-hand column has to be
-    // cleared too. Top clears the corner minimap.
+    // #366: the left/right insets come from the layout. The top clears the CORNER DISCS — the
+    // minimap on the right and the (possibly stacked) target discs on the left are the same
+    // height, so one number covers both (`discReserveBottom`).
     this.wayMargins = {
-      top: 116, right: this._layout.margins.right,
+      top: discReserveBottom(this._layout.count) + 20, right: this._layout.margins.right,
       bottom: this.H - this._consoleTop + 6, left: this._layout.margins.left,
     };
     // #260: the lock-target arrow uses the same margins, bumped out a further 16px on every edge —
@@ -399,9 +410,12 @@ export default class HudScene extends Phaser.Scene {
     // the disc, whose centre is (x+w/2, y+h/2) and radius w/2. The HiDPI anchor is the top-right
     // corner (W is the logical width; the HUD camera's zoom=dpr scales the whole thing to physical),
     // so the disc stays glued to the corner at any resolution.
-    const mmD = 132;                       // diameter (also the square bounding box's side)
-    this._miniSize = { w: mmD, h: mmD };
-    this.miniBox = { x: this.W - 14 - mmD, y: 14, w: mmD, h: mmD };
+    // #452 (style pass): the diameter is now the SHARED disc size (data/hudLayout.js `HUD_DISC`) —
+    // the map and the new top-left target disc are the same circle, a touch larger than the 132px
+    // the map used to be, because Jackson asked for both "the same size, and slightly larger than
+    // current minimap size". One constant, so they cannot drift apart.
+    this._miniSize = { w: HUD_DISC.d, h: HUD_DISC.d };
+    this.miniBox = minimapBox(this.W);
     // The top-right corner otherwise hosts the objective line + buff rings; push those down to sit
     // just below the map so they clear it (solo only — co-op moves both to top-centre, untouched).
     // #449 is exactly this slot: "put the current objective label below the top-right minimap."
@@ -478,8 +492,17 @@ export default class HudScene extends Phaser.Scene {
     for (const panel of this.panels ?? []) this._destroyPanel(panel);
     this.panels = [];
     this._layout = hudLayout(count, this.W);
+    // #452 (style pass): the console is only as wide as its contents, so the contents have to be
+    // MEASURED before they can be placed. The integrity block's width depends on which of the
+    // three readouts is switched on (#448), so it is asked for at full size (`availW: 0` =
+    // unsqueezed) rather than assumed; the tiles then take the biggest size that still fits every
+    // player's group across the screen, and `consoleBand` packs the lot into one centred run.
+    const blockW = this._integrityLayoutFor(0, 0).w;
+    const blockWs = this._layout.panels.map(() => blockW);
+    const tilesW = tileRowWidth(consoleTileSize(this.W, blockWs));
+    this._band = consoleBand(this.W, blockWs.map((b) => ({ blockW: b, tilesW })));
     for (const spec of this._layout.panels) {
-      this.panels.push(this._makePanel(spec, count, snapshots[spec.index]));
+      this.panels.push(this._makePanel(spec, count, snapshots[spec.index], this._band.groups[spec.index]));
     }
     this._panelCount = this._layout.panels.length;
     // #452: the shell wraps whatever the panels just laid out, so it is painted from them rather
@@ -505,30 +528,38 @@ export default class HudScene extends Phaser.Scene {
     // The band's content ceiling: the highest thing any panel put in it (in practice the integrity
     // header line, which sits a little above the tile row).
     let contentTop = Infinity;
-    for (const p of this.panels) {
-      contentTop = Math.min(contentTop, p.tileTop, p.bars.headerY, p.pod ? p.pod.top : Infinity);
-    }
-    const c = consoleLayout(this.W, this.H, contentTop);
+    for (const p of this.panels) contentTop = Math.min(contentTop, p.tileTop, p.bars.headerY);
+    const c = consoleLayout(this.H, contentTop, this._band);
     this._consoleTop = c.y;
 
-    // The plate: rounded along the TOP only — the bottom is flush with the screen edge, which is
-    // what makes it read as a console built into the frame rather than a floating card.
+    // The plate, in the PLAYER MECH's own palette and fully opaque: outline, a shadowed body, a
+    // lit upper band and a highlight rim along the top lip — the same dark-edge → shadow → face →
+    // rim stack every armour plate in art/mechPrims.js is built from. Rounded along the TOP only;
+    // the bottom runs off the screen edge, which is what makes it read as a console built into the
+    // frame rather than a floating card.
     const corners = { tl: CONSOLE.radius, tr: CONSOLE.radius, bl: 4, br: 4 };
-    g.fillStyle(CONSOLE_COL.shell, CONSOLE_ALPHA);
+    g.fillStyle(CONSOLE_COL.outline, 1);
+    g.fillRoundedRect(c.x - 1.5, c.y - 1.5, c.w + 3, c.h + 3, corners);
+    g.fillStyle(CONSOLE_COL.bodyLo, 1);
     g.fillRoundedRect(c.x, c.y, c.w, c.h, corners);
-    g.lineStyle(1, CONSOLE_COL.shellEdge, 0.8);
-    g.strokeRoundedRect(c.x, c.y, c.w, c.h, corners);
-    // Lit top rail + bolt heads at each end — the whole "mech-style" read, in three strokes.
-    g.lineStyle(2, CONSOLE_COL.rail, 0.35);
+    // The lit upper band: the top third of the plate, catching the same overhead light the mech's
+    // own plates do.
+    g.fillStyle(CONSOLE_COL.body, 1);
+    g.fillRoundedRect(c.x, c.y, c.w, Math.max(8, c.h * 0.34), corners);
+    // Highlight rim along the very top lip, plus the rail line and its bolt heads just under it.
+    g.lineStyle(2, CONSOLE_COL.bodyHi, 1);
     g.beginPath();
-    g.moveTo(c.x + CONSOLE.railInset, c.y + 3.5);
-    g.lineTo(c.x + c.w - CONSOLE.railInset, c.y + 3.5);
+    g.moveTo(c.x + CONSOLE.radius * 0.6, c.y + 1);
+    g.lineTo(c.x + c.w - CONSOLE.radius * 0.6, c.y + 1);
     g.strokePath();
-    // The bolts ride the RAIL's own line (the bays below start only a few px down, and would
-    // otherwise paint straight over them).
-    g.fillStyle(CONSOLE_COL.bolt, 0.9);
+    g.lineStyle(1, CONSOLE_COL.rim, 1);
+    g.beginPath();
+    g.moveTo(c.x + CONSOLE.railInset, c.y + 5.5);
+    g.lineTo(c.x + c.w - CONSOLE.railInset, c.y + 5.5);
+    g.strokePath();
+    g.fillStyle(CONSOLE_COL.bolt, 1);
     for (const bx of [c.x + CONSOLE.boltInset, c.x + c.w - CONSOLE.boltInset]) {
-      g.fillCircle(bx, c.y + 3.5, CONSOLE.boltR);
+      g.fillCircle(bx, c.y + 5.5, CONSOLE.boltR);
     }
 
     const bottom = this.H - 10 + pad;
@@ -537,9 +568,8 @@ export default class HudScene extends Phaser.Scene {
       drawBay(g, { x: b.x - pad, y: b.headerY - 2, w: b.w + pad * 2, h: bottom - (b.headerY - 2) });
       const t = panel.tileBox;
       if (t) drawBay(g, { x: t.x - pad, y: t.y - pad, w: t.w + pad * 2, h: bottom - (t.y - pad) }, { framed: false });
-      const pod = panel.pod;
-      if (pod) drawBay(g, { x: pod.x - pad, y: pod.headerY - 2, w: pod.w + pad * 2, h: bottom - (pod.headerY - 2) });
     }
+    this._placeDevReadouts();
   }
 
   // ── #448: which of the three health readouts is on ───────────────────────────────────────────
@@ -553,18 +583,16 @@ export default class HudScene extends Phaser.Scene {
   _cycleReadout() {
     this.registry.set('hudReadout', nextReadoutMode(this._readoutMode()));
     this._buildPanels(Math.max(1, this._panelCount), this._playerSnapshots());
-    this._updateReadoutHint();
-  }
-
-  _updateReadoutHint() {
-    this.readoutHint?.setText(`READOUT: ${readoutLabel(this._readoutMode())}   [H] to switch`);
   }
 
   // One panel's integrity geometry, in whichever readout is currently on. All three return the same
   // shape (x/w/top/bottom/headerY/labelY/segments/shieldLabel/extraLabels), which is what lets the
-  // console shell, the labels and the downed line stay mode-agnostic.
-  _integrityLayoutFor(spec, anchorX, availW) {
-    const box = { anchorX, side: spec.side, bottomY: this.H - 10, availW };
+  // console shell, the labels and the downed line stay mode-agnostic — and what lets `_buildPanels`
+  // MEASURE the block (`availW: 0` = unsqueezed) before the band decides where to put it.
+  // #452 (style pass): every block now hangs off its own LEFT edge, because the band packs them
+  // into a centred run rather than pinning one to each screen edge.
+  _integrityLayoutFor(anchorX, availW) {
+    const box = { anchorX, side: 'left', bottomY: this.H - 10, availW };
     const mode = this._readoutMode();
     if (mode === 'orbs') return orbLayout(box);
     if (mode === 'paperdoll') return paperDollLayout(INTEGRITY_ORDER, box);
@@ -586,7 +614,8 @@ export default class HudScene extends Phaser.Scene {
       .setOrigin(shared.objectiveOriginX, 0);
     if (!this.wayMargins) return;   // first build: create() sets these itself, just below
     this.wayMargins = {
-      top: 116, right: margins.right, bottom: this.H - this._consoleTop + 6, left: margins.left,
+      top: discReserveBottom(this._layout.count) + 20,
+      right: margins.right, bottom: this.H - this._consoleTop + 6, left: margins.left,
     };
     this.lockWayMargins = {
       top: this.wayMargins.top + 16, right: this.wayMargins.right + 16,
@@ -604,31 +633,26 @@ export default class HudScene extends Phaser.Scene {
   // scene paints, it doesn't decide — so #452 can reframe/reposition the block from those
   // constants alone. Only the labels/header are display objects; every bar is drawn into the one
   // Graphics layer each frame.
-  _makePanel(spec, count, snapshot) {
-    const x = spec.columnX;
+  _makePanel(spec, count, snapshot, group) {
     const color = snapshot?.color ?? playerColor(spec.index);
     const colStr = '#' + color.toString(16).padStart(6, '0');
     // #348's rule, reused: the identifying COLOUR only means something once there is a second
     // player to be told apart from, so solo's header stays the plain dim 'INTEGRITY'.
     const identify = showsPlayerColor(count);
     const panel = {
-      index: spec.index, spec, columnX: x, color,
+      index: spec.index, spec, columnX: group.blockX, color,
       partLabels: {}, skillRefs: {}, extras: [],
     };
 
-    // The tile row is laid out FIRST (it's pure geometry — the tiles themselves are built at the
-    // bottom of this method, keeping the draw order) because the integrity block has to know how
-    // much room is left between its edge of the screen and the tiles beside it.
-    const tiles = tileRow(spec.tilesX, spec.tilesW, { bottom: this.H - 10, maxSize: 92 });
-    const right = spec.side === 'right';
+    // #452 (style pass): both pieces are placed by the centred BAND — the integrity block first,
+    // then this player's tile row immediately to its right — rather than each hugging a screen
+    // edge with the leftovers in between. Nothing here has to negotiate for room any more: the
+    // band already sized the group, so the block is laid out at full size (`availW: 0`).
+    const tiles = tileRow(group.tilesX, group.tilesW, { bottom: this.H - 10, maxSize: CONSOLE_TILES.max });
     const last = tiles[tiles.length - 1];
-    const anchorX = right ? x + HUD_COLUMN_W : x;
-    const availW = right
-      ? anchorX - ((last ? last.x + last.w : 0) + INTEGRITY_BARS.tileClear)
-      : (tiles.length ? tiles[0].x : this.W) - INTEGRITY_BARS.tileClear - anchorX;
     // #448: whichever of the three readouts is switched on. Same shape either way, so everything
     // below this line — header, labels, downed line, console bay — is mode-agnostic.
-    const bars = this._integrityLayoutFor(spec, anchorX, availW);
+    const bars = this._integrityLayoutFor(group.blockX, 0);
     panel.bars = bars;
     panel.mode = bars.mode;
 
@@ -681,58 +705,51 @@ export default class HudScene extends Phaser.Scene {
       ? { x: tiles[0].x, y: tiles[0].y, w: last.x + last.w - tiles[0].x, h: last.h }
       : null;
 
-    this._makeTargetPod(panel, spec, count, tiles);
+    this._makeTargetDisc(panel, spec, count);
     return panel;
   }
 
-  // ── #452: the TARGET readout ──────────────────────────────────────────────────────────────
+  // ── #452: the TARGET readout, as the top-left DISC ────────────────────────────────────────
   //
-  // The far end of the console: an ANIMATED preview of the unit this player currently has locked
-  // — the same `convergeTarget` the red reticle is drawn on, so the two can never disagree — with
-  // its health / armor / shield beside it in the identical bars-and-no-numbers language the
-  // player's own integrity block uses (the bars are literally laid out by `integrityLayout` and
-  // painted by the same functions). Bottom-right in solo; in co-op both pods move inboard to the
-  // gap between the two tile rows, because the right edge belongs to player 2's integrity block
-  // — see `targetPodAnchor`.
-  _makeTargetPod(panel, spec, count, tiles) {
-    const anchor = targetPodAnchor(spec.index, count, this.W);
-    const first = tiles[0], last = tiles[tiles.length - 1];
-    // Room between the pod's outer edge and this panel's own tile row.
-    const availW = anchor.side === 'right'
-      ? anchor.anchorX - ((last ? last.x + last.w : 0) + INTEGRITY_BARS.tileClear)
-      : ((first ? first.x : this.W) - INTEGRITY_BARS.tileClear) - anchor.anchorX;
-    const pod = targetPodLayout({
-      anchorX: anchor.anchorX, side: anchor.side, bottomY: this.H - 10, availW,
-    });
-    // A window narrow enough that the pod would overlap the tiles gets no pod at all rather than
-    // a squashed one — the tiles and the integrity block are the readouts you cannot lose.
-    if (pod.w > Math.max(0, availW)) return;
-    panel.pod = pod;
-    panel.podGfx = this.add.graphics();
-    panel.podArt = this.add.container(pod.art.x + pod.art.w / 2, pod.art.y + pod.art.h / 2);
-    panel.podName = this.add.text(pod.x, pod.headerY, '', {
+  // An ANIMATED preview of the unit this player currently has locked — the same `convergeTarget`
+  // the red reticle is drawn on, so the two can never disagree — posed inside a circle in the
+  // top-LEFT corner, mirroring the corner minimap top-right (Jackson: "the locked enemy preview
+  // should be in a circle top left similar to the minimap on top right"). Both discs are the same
+  // size, from one constant (`HUD_DISC`).
+  //
+  // Its condition rides three concentric GAUGE RINGS around the preview — structure, armor,
+  // shield, outermost first, the same three layers in the same order the player's own block draws
+  // as bars. Co-op stacks player 2's disc under player 1's: the right corner is the map's, and
+  // each player is locked onto their own target, so one shared readout would be wrong for someone.
+  _makeTargetDisc(panel, spec, count) {
+    const box = targetDiscBox(spec.index);
+    const disc = targetDiscLayout(box);
+    panel.pod = disc;
+    // Behind the art: the dark backing + frame. In front: the gauge rings, so a big posed unit
+    // can never paint over its own readout.
+    panel.podGfx = this.add.graphics().setDepth(19);
+    panel.podArt = this.add.container(disc.cx, disc.cy).setDepth(20);
+    panel.podRings = this.add.graphics().setDepth(21);
+    // Clip the pose to the disc, exactly as the minimap clips its scrolling corridor.
+    panel.podMask = this.make.graphics();
+    panel.podArt.setMask(panel.podMask.createGeometryMask());
+    panel.podMask.clear().fillStyle(0xffffff).fillCircle(disc.cx, disc.cy, disc.inner);
+    // The unit name under the disc — the same slot the objective line takes under the map.
+    panel.podName = this.add.text(disc.nameX, disc.nameY, '', {
       fontFamily: 'monospace', fontSize: '11px', color: C.dim,
-    });
-    // Same two-letter labels under the bars as the integrity block's segments: what the bar is,
-    // never how much of it.
-    const L = pod.bars;
-    panel.podLabels = [
-      this.add.text(L.segments[0].cx, L.labelY, 'TGT', {
-        fontFamily: 'monospace', fontSize: '10px', color: C.dim,
-      }).setOrigin(0.5, 0),
-      this.add.text(L.shield.x + L.shield.w / 2, L.labelY, 'SH', {
-        fontFamily: 'monospace', fontSize: '10px', color: C.accent,
-      }).setOrigin(0.5, 0).setVisible(false),
-    ];
+    }).setOrigin(0.5, 0).setDepth(21);
     panel.podSig = undefined;   // identity of the art currently built (undefined = nothing built)
     panel.podAnim = null;
   }
 
   _destroyPanel(panel) {
     panel.podArt?.removeAll(true);
+    // Drop the geometry mask with its container (a rebuild makes a fresh one), then the Graphics
+    // the mask was cut from — otherwise a readout cycle leaves a mask per rebuild behind.
+    panel.podArt?.clearMask(true);
     const objs = [
       panel.header, panel.partBarsGfx, panel.shieldLabel, panel.statusText, panel.skillBar,
-      panel.podGfx, panel.podArt, panel.podName, ...(panel.podLabels ?? []),
+      panel.podGfx, panel.podRings, panel.podArt, panel.podMask, panel.podName,
       ...Object.values(panel.partLabels), ...panel.extras,
     ];
     for (const o of objs) o?.destroy();
@@ -806,11 +823,11 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
-  // The target pod's per-frame refresh: rebuild its posed art when the locked unit changes, redraw
-  // its bars, and advance whatever that unit is doing (rotors, walk cycle, bay doors).
+  // The target disc's per-frame refresh: rebuild its posed art when the locked unit changes,
+  // redraw its gauge rings, and advance whatever that unit is doing (rotors, walk cycle, doors).
   _updateTargetPod(panel, snapshot, delta) {
-    const pod = panel.pod;
-    if (!pod) return;
+    const disc = panel.pod;
+    if (!disc) return;
     // A downed player has no live pick — the same rule the off-screen lock chevron follows.
     const t = snapshot && !snapshot.dead ? (snapshot.target ?? null) : null;
     const sig = t ? `${t.kind}|${t.texKey}|${t.damageSig}` : null;
@@ -819,46 +836,54 @@ export default class HudScene extends Phaser.Scene {
       this._buildPodArt(panel, t);
     }
 
-    // The name line — the unit you are locked on, in the reticle's own red; a dim 'NO TARGET'
-    // when there is nothing, so the pod reads as idle instead of vanishing.
-    const wide = Math.max(4, Math.floor(pod.w / 6.7));
+    // The name line under the disc — the unit you are locked on, in the reticle's own red; a dim
+    // 'NO TARGET' when there is nothing, so the disc reads as idle instead of vanishing.
+    const wide = Math.max(4, Math.floor(disc.r * 2 / 6.7));
     panel.podName.setText(t ? t.name.slice(0, wide) : 'NO TARGET').setColor(t ? POD_LIVE : C.dim);
 
+    // The backing, painted once per box (it only moves on a rebuild) — same dark disc + bright
+    // frame the minimap uses, so the two corners read as one pair of instruments.
     const g = panel.podGfx;
-    const L = pod.bars;
     g.clear();
-    // The preview bay, always drawn: an empty recess reads as "nothing locked", where hiding it
-    // would collapse the pod's shape every time a target dies.
-    if (pod.showArt) {
-      const a = pod.art;
-      g.fillStyle(POD_BAY_FILL, 0.75);
-      g.fillRoundedRect(a.x, a.y, a.w, a.h, 6);
+    g.fillStyle(MM.panelFill, 0.92);
+    g.fillCircle(disc.cx, disc.cy, disc.r);
+    g.lineStyle(1, MM.panelInner, 0.8);
+    g.strokeCircle(disc.cx, disc.cy, disc.r - 1.5);
+    g.lineStyle(2, MM.panelStroke, 0.95);
+    g.strokeCircle(disc.cx, disc.cy, disc.r);
+    if (!t) {
+      // Idle: a faint crosshair where the unit would stand.
+      const r = 8;
       g.lineStyle(1, BAR_EDGE, 0.9);
-      g.strokeRoundedRect(a.x, a.y, a.w, a.h, 6);
-      if (!t) {
-        // Idle: a faint crosshair where the unit would stand.
-        const cx = a.x + a.w / 2, cy = a.y + a.h / 2, r = 7;
-        g.lineStyle(1, BAR_EDGE, 0.9);
-        g.beginPath();
-        g.moveTo(cx - r, cy); g.lineTo(cx + r, cy);
-        g.moveTo(cx, cy - r); g.lineTo(cx, cy + r);
-        g.strokePath();
-      }
+      g.beginPath();
+      g.moveTo(disc.cx - r, disc.cy); g.lineTo(disc.cx + r, disc.cy);
+      g.moveTo(disc.cx, disc.cy - r); g.lineTo(disc.cx, disc.cy + r);
+      g.strokePath();
     }
 
-    // ...and the bars, in exactly the language the player's own block uses: HP left, armor right,
-    // shield last, every track drawn full height whether or not there is anything to put in it.
-    const seg = L.segments[0];
+    // ...and the condition, in exactly the three layers the player's own block draws — structure,
+    // armor, shield — wound round the disc as gauge arcs. Every ring's empty TRACK is drawn
+    // whether or not that layer exists, for the same reason the bars keep their empty space: the
+    // gap is half the readout.
+    const rings = panel.podRings;
     const p = t?.pools ?? null;
-    drawBarTrack(g, seg.hpX, L.top, L.barW, L.barH);
-    drawBarTrack(g, seg.armorX, L.top, L.barW, L.barH);
-    drawBarTrack(g, L.shield.x, L.top, L.shield.w, L.barH);
-    if (p) {
-      drawHpBar(g, seg.hpX, L.top, L.barW, L.barH, p.hp);
-      if (p.hasArmor) drawArmorBar(g, seg.armorX, L.top, L.barW, L.barH, p.armor);
-      if (p.hasShield) drawShieldBar(g, L.shield.x, L.bottom, L.shield.w, L.barH * p.shield);
+    const layers = {
+      hp: { frac: p?.hp ?? 0, color: HP_COLOR, on: !!p },
+      armor: { frac: p?.armor ?? 0, color: ARMOR_PLATE, on: !!p?.hasArmor },
+      shield: { frac: p?.shield ?? 0, color: SHIELD_BAR_COLOR, on: !!p?.hasShield },
+    };
+    rings.clear();
+    for (const ring of disc.rings) {
+      const layer = layers[ring.key];
+      rings.lineStyle(ring.w, BAR_TRACK, 1);
+      rings.strokeCircle(disc.cx, disc.cy, ring.r);
+      const sweep = ringSweep(layer.on ? layer.frac : 0);
+      if (!sweep.drawn) continue;
+      rings.lineStyle(ring.w, layer.color, 1);
+      rings.beginPath();
+      rings.arc(disc.cx, disc.cy, ring.r, sweep.start, sweep.end, false);
+      rings.strokePath();
     }
-    panel.podLabels[1].setVisible(!!p?.hasShield);
 
     this._animatePod(panel, t, delta);
   }
@@ -909,9 +934,9 @@ export default class HudScene extends Phaser.Scene {
   _buildPodArt(panel, t) {
     panel.podArt.removeAll(true);
     panel.podAnim = null;
-    if (!t || !panel.pod.showArt || !t.texKey) return;
+    if (!t || !panel.pod || !t.texKey) return;
     const a = panel.pod.art;
-    const box = Math.min(a.w, a.h) - a.inset * 2;
+    const box = Math.min(a.w, a.h);
     if (box <= 0) return;
 
     if (t.kind === 'mech') {
@@ -980,6 +1005,22 @@ export default class HudScene extends Phaser.Scene {
       }
     }
     if (a.turretPrefix && a.turret) a.turret.setTexture(`${a.turretPrefix}${t?.turretFrame ?? 0}`);
+  }
+
+  // #452 (style pass): the dev overlays as ONE cluster, sitting on the console's top edge rather
+  // than in the bottom corners the console now reaches into. Laid out left-to-right — the perf
+  // block, then the control-method indicator, then the AI debug line — off each object's measured
+  // width, so a longer GPU string pushes its neighbours along instead of drawing over them. No-op
+  // in production, where none of these objects exist.
+  _placeDevReadouts() {
+    const y = (this._consoleTop ?? this.H) - 8;
+    const gap = 18;
+    let x = 16;
+    for (const o of [this.fpsText, this.modeText, this.aiText]) {
+      if (!o) continue;
+      o.setOrigin(0, 1).setPosition(x, y);
+      x += (o.width || 0) + gap;
+    }
   }
 
   // Dev overlay label for the active input scheme. #346 added a third one, 'touch';
@@ -1076,6 +1117,8 @@ export default class HudScene extends Phaser.Scene {
         height: this.scale.height,
         dpr: this.registry.get('dpr') || window.devicePixelRatio || 1,
       }));
+      // Re-flow the cluster now every line's text (and so its width) is current.
+      this._placeDevReadouts();
     }
   }
 

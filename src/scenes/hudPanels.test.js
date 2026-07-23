@@ -57,6 +57,11 @@ function stub(extra = {}) {
     fillPoints(pts) { o.filledPoints = pts; return o; },
     strokePoints(pts) { o.strokedPoints = pts; return o; },
     beginPath() { return o; },
+    // #452 (style pass): the target disc's gauge arcs, and the circular clip its pose sits in.
+    arc() { return o; },
+    createGeometryMask() { return o; },
+    setMask() { return o; },
+    clearMask() { return o; },
     moveTo() { return o; },
     lineTo() { return o; },
     strokePath() { return o; },
@@ -82,6 +87,10 @@ function fakeScene(hudPlayers) {
       container: () => { const o = stub({ kind: 'container' }); created.push(o); return o; },
       image: (x, y) => { const o = stub({ x, y, kind: 'image' }); created.push(o); return o; },
     },
+    // #452 (style pass): the target disc builds a geometry mask, the same way the minimap does.
+    make: {
+      graphics: () => { const o = stub({ kind: 'graphics' }); created.push(o); return o; },
+    },
   });
   return { scene, created, registry };
 }
@@ -97,12 +106,39 @@ function snap(id, { dead = false, respawn = null } = {}) {
 }
 
 describe('HudScene panels — solo', () => {
-  it('builds exactly one panel, with the column where it has always been', () => {
+  // #452 (style pass): the readouts no longer hug the screen edges — they are packed into one
+  // CENTRED console band that is only as wide as they are, which is exactly what Jackson asked
+  // for ("centered and only as wide as it needs to be"), so that is what is pinned.
+  it('builds exactly one panel, in a console band centred on the screen', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     expect(scene.panels).toHaveLength(1);
-    expect(scene.panels[0].columnX).toBe(16);
     expect(scene.panels[0].header.text).toBe('INTEGRITY');
+    // The band is narrower than the screen and sits in the middle of it.
+    expect(scene._band.w).toBeLessThan(scene.W);
+    expect(Math.abs(scene._band.x + scene._band.w / 2 - scene.W / 2)).toBeLessThanOrEqual(1);
+    // ...and the integrity block starts inside it, well clear of the old x=16 screen edge.
+    expect(scene.panels[0].columnX).toBeGreaterThan(scene._band.x);
+    expect(scene.panels[0].columnX).toBeGreaterThan(100);
+  });
+
+  it('hangs the target readout in a top-left disc, mirroring the corner minimap', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    const disc = scene.panels[0].pod;
+    expect(disc.cy).toBeLessThan(scene.H / 2);        // top of the screen...
+    expect(disc.cx).toBeLessThan(scene.W / 2);        // ...on the left.
+    expect(disc.rings.map((r) => r.key)).toEqual(['hp', 'armor', 'shield']);
+  });
+
+  it('stacks the second player\'s disc under the first rather than over the map', () => {
+    const { scene, registry } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    registry.set('hudPlayers', [snap(0), snap(1)]);
+    scene._syncPanels();
+    const [a, b] = scene.panels.map((p) => p.pod);
+    expect(b.cx).toBe(a.cx);
+    expect(b.cy).toBeGreaterThan(a.cy);
   });
 
   it('rebuilds nothing on subsequent frames', () => {
@@ -362,7 +398,6 @@ describe('HudScene lock chevron — co-op', () => {
 describe('HudScene health readout modes (#448)', () => {
   const modeScene = () => {
     const built = fakeScene([snap(0)]);
-    built.scene.readoutHint = stub({ kind: 'text' });
     built.scene._syncPanels();
     return built;
   };
@@ -392,13 +427,19 @@ describe('HudScene health readout modes (#448)', () => {
     expect(registry.get('hudReadout')).toBe('orbs');
   });
 
-  it('names the live readout on screen, with the key that switches it', () => {
+  // #452 (style pass): the on-screen `READOUT: … [H] to switch` prompt was removed at Jackson's
+  // request — the KEY is what has to keep working, so that is what is pinned. Pinned against the
+  // source as well, because a prompt is trivially re-added by a later readout change.
+  it('cycles on the H key with no on-screen control prompt', () => {
     const { scene } = modeScene();
-    scene._updateReadoutHint();
-    expect(scene.readoutHint.text).toMatch(/BARS/);
-    expect(scene.readoutHint.text).toMatch(/H/);
+    expect(scene.readoutHint).toBeUndefined();
     scene._cycleReadout();
-    expect(scene.readoutHint.text).toMatch(/ORBS/);
+    expect(scene.panels[0].mode).toBe('orbs');
+    // Nothing anywhere in the HUD names the key.
+    const { created } = modeScene();
+    expect(created.filter((o) => typeof o.text === 'string' && /READOUT|\[H\]/.test(o.text))).toEqual([]);
+    const src = readFileSync(new URL('./HudScene.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/keydown-H/);
   });
 
   it('puts BOTH co-op panels on the same readout', () => {

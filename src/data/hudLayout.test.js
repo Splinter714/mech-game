@@ -8,101 +8,124 @@
 import { describe, it, expect } from 'vitest';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, hudPlayerSnapshot, lockPointOf,
-  HUD_COLUMN_W, integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER,
-  consoleLayout, targetPodAnchor, targetPodLayout, bodyPools, hudTargetSnapshot,
-  minimapEnemyDots,
+  integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER,
+  CONSOLE, CONSOLE_TILES, consoleLayout, consoleBand, consoleTileSize, tileRowWidth,
+  HUD_DISC, minimapBox, targetDiscBox, targetDiscLayout, ringSweep, discReserveBottom,
+  bodyPools, hudTargetSnapshot, minimapEnemyDots,
 } from './hudLayout.js';
 import { LOCATIONS } from './anatomy.js';
 
 const W = 1280;
 
-describe('hudLayout — solo is exactly the pre-#366 HUD', () => {
-  const l = hudLayout(1, W);
-
-  it('has one panel', () => {
+describe('hudLayout — one panel per player, and the shared top-corner chrome', () => {
+  it('has one panel in solo', () => {
+    const l = hudLayout(1, W);
     expect(l.panels).toHaveLength(1);
     expect(l.count).toBe(1);
   });
 
-  it('puts the integrity column at x=16, as it always was', () => {
-    expect(l.panels[0].columnX).toBe(16);
-  });
-
-  it('spans the tile row across W*0.12 .. W*0.88, as it always was', () => {
-    expect(l.panels[0].tilesX).toBe(W * 0.12);
-    expect(l.panels[0].tilesW).toBe(W * 0.76);
-  });
-
-  it('keeps the objective line right-aligned and the buff rings on the right edge', () => {
+  it('keeps the objective line right-aligned and the buff rings on the right edge in solo', () => {
+    const l = hudLayout(1, W);
     expect(l.shared.objectiveX).toBe(W - 16);
     expect(l.shared.objectiveOriginX).toBe(1);
     expect(l.shared.buffCx).toBe(W - 16 - 15);
   });
 
-  it('keeps the 24px wayfinding margins', () => {
-    expect(l.margins).toEqual({ left: 24, right: 24 });
+  it('keeps the 24px wayfinding margins on both edges — the console is centred, not against them', () => {
+    for (const n of [1, 2]) expect(hudLayout(n, W).margins).toEqual({ left: 24, right: 24 });
   });
 
-  it('labels the column plainly, with no player number', () => {
+  it('labels the column plainly in solo, by player once there are two', () => {
     expect(panelLabel(0, 1)).toBe('INTEGRITY');
-  });
-
-  it('is the same layout at any width — no co-op branch leaks into one player', () => {
-    for (const w of [640, 900, 1920]) {
-      expect(hudLayout(1, w).panels[0].columnX).toBe(16);
-      expect(hudLayout(1, w).shared.objectiveOriginX).toBe(1);
-    }
-  });
-});
-
-describe('hudLayout — co-op mirrors a second panel', () => {
-  const l = hudLayout(2, W);
-
-  it('builds one panel per player', () => {
-    expect(l.panels.map((p) => p.index)).toEqual([0, 1]);
-  });
-
-  it('keeps player 1 on the left and puts player 2 on the right', () => {
-    expect(l.panels[0].side).toBe('left');
-    expect(l.panels[0].columnX).toBe(16);
-    expect(l.panels[1].side).toBe('right');
-    expect(l.panels[1].columnX).toBe(W - 16 - HUD_COLUMN_W);
-  });
-
-  it('does not let the two integrity columns overlap', () => {
-    const [a, b] = l.panels;
-    expect(a.columnX + HUD_COLUMN_W).toBeLessThanOrEqual(b.columnX);
-  });
-
-  it('does not let the two tile rows overlap, and keeps both on screen', () => {
-    const [a, b] = l.panels;
-    expect(a.tilesX + a.tilesW).toBeLessThanOrEqual(b.tilesX);
-    expect(b.tilesX + b.tilesW).toBeLessThanOrEqual(W);
-    expect(a.tilesX).toBeGreaterThanOrEqual(0);
-  });
-
-  it('moves the shared objective/buff readouts off the right edge, clear of panel 2', () => {
-    expect(l.shared.objectiveOriginX).toBe(0.5);
-    expect(l.shared.objectiveX).toBe(W / 2);
-    expect(l.shared.buffCx).toBeLessThan(l.panels[1].columnX);
-  });
-
-  it('widens the right wayfinding margin past the second column', () => {
-    expect(l.margins.right).toBeGreaterThan(HUD_COLUMN_W);
-  });
-
-  it('names each column by player once there is somebody to tell apart', () => {
     expect(panelLabel(0, 2)).toBe('P1 INTEGRITY');
     expect(panelLabel(1, 2)).toBe('P2 INTEGRITY');
   });
 
-  it('still lays out sanely at a narrow window (#330/#342: no negative or off-screen boxes)', () => {
-    for (const w of [700, 820, 1024]) {
-      const n = hudLayout(2, w);
-      expect(n.panels[1].columnX).toBeGreaterThan(n.panels[0].columnX);
-      expect(n.panels[1].tilesX + n.panels[1].tilesW).toBeLessThanOrEqual(w);
-      for (const p of n.panels) expect(p.tilesW).toBeGreaterThan(0);
+  it('builds one panel per player in co-op and moves the shared readouts to top-centre', () => {
+    const l = hudLayout(2, W);
+    expect(l.panels.map((p) => p.index)).toEqual([0, 1]);
+    expect(l.shared.objectiveOriginX).toBe(0.5);
+    expect(l.shared.objectiveX).toBe(W / 2);
+  });
+});
+
+// ── #452 (style pass) — the two corner DISCS ────────────────────────────────────────────────
+//
+// Jackson: "the locked enemy preview should be in a circle top left similar to the minimap on top
+// right; both circles should be the same size, and should be slightly larger than current minimap
+// size". Both halves of that are easy to break silently by tuning one disc's numbers alone.
+describe('the corner discs — target top-left, minimap top-right', () => {
+  it('makes both circles exactly the same size', () => {
+    const map = minimapBox(W), tgt = targetDiscBox(0);
+    expect(map.w).toBe(tgt.w);
+    expect(map.h).toBe(tgt.h);
+    expect(map.w).toBe(map.h);
+  });
+
+  it('is bigger than the 132px the minimap used to be', () => {
+    expect(HUD_DISC.d).toBeGreaterThan(132);
+  });
+
+  it('pins the target disc to the top LEFT and the map to the top RIGHT, on the same line', () => {
+    const map = minimapBox(W), tgt = targetDiscBox(0);
+    expect(tgt.x).toBe(HUD_DISC.inset);
+    expect(map.x + map.w).toBe(W - HUD_DISC.inset);
+    expect(tgt.y).toBe(map.y);
+    expect(tgt.x + tgt.w).toBeLessThan(map.x);   // they never meet, even side by side
+  });
+
+  it('stacks a second player\'s disc under the first rather than into the map\'s corner', () => {
+    const [a, b] = [targetDiscBox(0), targetDiscBox(1)];
+    expect(b.x).toBe(a.x);
+    expect(b.y).toBeGreaterThanOrEqual(a.y + a.h);
+    expect(discReserveBottom(2)).toBeGreaterThan(discReserveBottom(1));
+  });
+});
+
+describe('targetDiscLayout — the preview and its three gauge rings', () => {
+  const disc = targetDiscLayout(targetDiscBox(0));
+
+  it('centres on the disc and keeps every ring inside its frame', () => {
+    expect(disc.cx).toBe(HUD_DISC.inset + HUD_DISC.d / 2);
+    for (const ring of disc.rings) expect(ring.r + ring.w / 2).toBeLessThan(disc.r);
+  });
+
+  it('runs the same three layers, in the same order, the player\'s own block draws', () => {
+    expect(disc.rings.map((r) => r.key)).toEqual(['hp', 'armor', 'shield']);
+    // Outermost first, each one strictly inside the last.
+    for (let i = 1; i < disc.rings.length; i++) {
+      expect(disc.rings[i].r).toBeLessThan(disc.rings[i - 1].r);
     }
+  });
+
+  it('fits the art square inside the innermost ring, so a pose can never paint over the gauges', () => {
+    expect(disc.art.w).toBeGreaterThan(0);
+    expect(disc.art.w).toBeCloseTo(disc.art.h, 5);
+    // The square's corner is exactly the inner radius away from the centre.
+    expect(Math.hypot(disc.art.w / 2, disc.art.h / 2)).toBeCloseTo(disc.inner, 5);
+  });
+
+  it('hangs the unit-name line under the disc, centred', () => {
+    expect(disc.nameX).toBe(disc.cx);
+    expect(disc.nameY).toBeGreaterThan(disc.cy + disc.r);
+  });
+});
+
+describe('ringSweep — a gauge arc winds clockwise from twelve o\'clock', () => {
+  it('draws nothing at empty and a full turn at full', () => {
+    expect(ringSweep(0).drawn).toBe(false);
+    const full = ringSweep(1);
+    expect(full.end - full.start).toBeCloseTo(Math.PI * 2, 5);
+  });
+
+  it('clamps anything out of range rather than winding past the ring', () => {
+    expect(ringSweep(4).end).toBe(ringSweep(1).end);
+    expect(ringSweep(-2).drawn).toBe(false);
+    expect(ringSweep(undefined).drawn).toBe(false);
+  });
+
+  it('starts at the top of the dial', () => {
+    expect(ringSweep(0.5).start).toBeCloseTo(-Math.PI / 2, 5);
   });
 });
 
@@ -164,75 +187,78 @@ describe('integrityLayout — the bottom-corner bar block', () => {
   });
 });
 
-// ── #452 — the console shell and the target readout ──────────────────────────────────────────
+// ── #452 (style pass) — the CENTRED console band ─────────────────────────────────────────────
 //
-// What is easy to get silently wrong here: the pod landing ON TOP of player 2's integrity block in
-// co-op (the corner it would naturally want is taken), and the target's bars drifting out of the
-// language the player's own block is drawn in.
-describe('consoleLayout — the shell that frames the whole bottom band', () => {
-  it('spans the screen and runs flush to the bottom edge', () => {
-    const c = consoleLayout(1280, 800, 676);
-    expect(c.x).toBeGreaterThan(0);
-    expect(c.x + c.w).toBe(1280 - c.x);
-    expect(c.y + c.h).toBe(800 - c.x);   // the same gap all the way round the three outer edges
+// Jackson: the console "should be centered and only as wide as it needs to be" — not the
+// full-screen-width shell it shipped as. The two failure modes are a band that is wider than its
+// contents (the thing he objected to) and one that packs so tightly at co-op/narrow widths that
+// the groups overlap or run off the screen.
+const band1 = consoleBand(W, [{ blockW: 120, tilesW: 404 }]);
+
+describe('consoleBand — the console is its contents, centred', () => {
+  it('is exactly the contents plus one padding at each end', () => {
+    expect(band1.w).toBe(120 + CONSOLE.blockGap + 404 + CONSOLE.padX * 2);
   });
 
-  it('wraps whatever the band\'s tallest readout is, never less', () => {
-    const c = consoleLayout(1280, 800, 676);
+  it('is narrower than the screen, and centred on it', () => {
+    expect(band1.w).toBeLessThan(W);
+    expect(band1.x + band1.w / 2).toBeCloseTo(W / 2, 0);
+    expect(W - (band1.x + band1.w)).toBeCloseTo(band1.x, 0);
+  });
+
+  it('puts a player\'s integrity block first and their own tile row right beside it', () => {
+    const [g] = band1.groups;
+    expect(g.blockX).toBe(band1.x + CONSOLE.padX);
+    expect(g.tilesX).toBe(g.blockX + 120 + CONSOLE.blockGap);
+    expect(g.tilesX + g.tilesW).toBe(band1.x + band1.w - CONSOLE.padX);
+  });
+
+  it('lays two players\' groups side by side without overlapping or leaving the band', () => {
+    const b = consoleBand(W, [{ blockW: 120, tilesW: 404 }, { blockW: 120, tilesW: 404 }]);
+    const [a, c] = b.groups;
+    expect(a.tilesX + a.tilesW).toBeLessThanOrEqual(c.blockX);
+    expect(c.tilesX + c.tilesW).toBeLessThanOrEqual(b.x + b.w);
+    expect(b.x).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('consoleTileSize — the tiles give before the band runs off the screen', () => {
+  it('gives solo its full-size tiles at a normal window', () => {
+    expect(consoleTileSize(W, [120])).toBe(CONSOLE_TILES.max);
+  });
+
+  it('squeezes rather than overflowing at a narrow window, and never below the floor', () => {
+    for (const w of [520, 700, 900]) {
+      const size = consoleTileSize(w, [120, 120]);
+      expect(size).toBeGreaterThanOrEqual(CONSOLE_TILES.min);
+      expect(size).toBeLessThanOrEqual(CONSOLE_TILES.max);
+    }
+  });
+
+  it('keeps the band on screen wherever there is room to', () => {
+    for (const w of [900, 1280, 1920]) {
+      for (const n of [1, 2]) {
+        const blockWs = Array(n).fill(120);
+        const b = consoleBand(w, blockWs.map(() => ({ blockW: 120, tilesW: tileRowWidth(consoleTileSize(w, blockWs)) })));
+        expect(b.x).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.w).toBeLessThanOrEqual(w);
+      }
+    }
+  });
+});
+
+describe('consoleLayout — the shell that frames the band', () => {
+  it('is the band\'s own rectangle, not the screen\'s', () => {
+    const c = consoleLayout(800, 676, band1);
+    expect(c.x).toBe(band1.x);
+    expect(c.w).toBe(band1.w);
+    expect(c.w).toBeLessThan(W);
+  });
+
+  it('runs from above the band\'s tallest readout down to the bottom edge', () => {
+    const c = consoleLayout(800, 676, band1);
     expect(c.y).toBeLessThan(676);
-  });
-});
-
-describe('targetPodAnchor — where the target readout hangs', () => {
-  it('takes the far bottom-RIGHT in solo, mirroring the integrity block', () => {
-    expect(targetPodAnchor(0, 1, 1280)).toEqual({ anchorX: 1280 - 16, side: 'right' });
-  });
-
-  it('moves BOTH pods inboard in co-op, clear of player 2\'s right-hand integrity block', () => {
-    const [a, b] = [targetPodAnchor(0, 2, 1280), targetPodAnchor(1, 2, 1280)];
-    // Player 2's block hangs off the right edge (hudLayout co-op panel 1), so nothing else may.
-    const p2 = hudLayout(2, 1280).panels[1];
-    expect(a.anchorX).toBeLessThan(p2.columnX);
-    expect(b.anchorX).toBeLessThan(p2.columnX);
-    // ...and the two pods sit either side of the centre line, never overlapping each other.
-    expect(a.side).toBe('right');
-    expect(b.side).toBe('left');
-    expect(a.anchorX).toBeLessThan(b.anchorX);
-  });
-});
-
-describe('targetPodLayout — the target reads in the player\'s own bar language', () => {
-  const pod = targetPodLayout({ anchorX: 1264, bottomY: 790, availW: 400, side: 'right' });
-
-  it('hangs off its anchor edge and shares the tile row\'s baseline', () => {
-    expect(pod.x + pod.w).toBeCloseTo(1264, 5);
-    expect(pod.bars.bottom).toBe(790 - INTEGRITY_BARS.labelH);
-    expect(pod.bars.barH).toBe(INTEGRITY_BARS.barH);   // same bar length as the player's own
-  });
-
-  it('keeps HP left of armor, with the shield rightmost — exactly the integrity block\'s order', () => {
-    const seg = pod.bars.segments[0];
-    expect(seg.hpX).toBeLessThan(seg.armorX);
-    expect(pod.bars.shield.x).toBeGreaterThan(seg.armorX);
-    expect(pod.bars.shield.x + pod.bars.shield.w).toBeCloseTo(pod.x + pod.w, 5);
-  });
-
-  it('puts the preview bay inboard of the bars, inside the pod', () => {
-    expect(pod.showArt).toBe(true);
-    expect(pod.art.x).toBe(pod.x);
-    expect(pod.art.x + pod.art.w).toBeLessThanOrEqual(pod.bars.x);
-  });
-
-  it('gives up its art rather than squeezing it to nothing in a cramped co-op half', () => {
-    const tight = targetPodLayout({ anchorX: 400, bottomY: 790, availW: 50, side: 'right' });
-    expect(tight.showArt).toBe(false);
-    expect(tight.w).toBeCloseTo(tight.bars.w, 5);
-  });
-
-  it('mirrors onto a left anchor without reordering the bars', () => {
-    const left = targetPodLayout({ anchorX: 600, bottomY: 790, availW: 400, side: 'left' });
-    expect(left.x).toBe(600);
-    expect(left.bars.segments[0].hpX).toBeLessThan(left.bars.segments[0].armorX);
+    expect(c.y + c.h).toBe(800 - CONSOLE.edgeGap);
   });
 });
 
