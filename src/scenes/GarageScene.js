@@ -38,8 +38,9 @@ import { StatsOverlay } from './garage/statsOverlay.js';
 // its sound-tuning sliders in the persistent right-side WeaponSfxPanel (#121) — the two aren't
 // mutually exclusive, one click does both. A small strip above the catalog picks one of the
 // #107 destruction-explosion size categories instead of a weapon, feeding the SAME panel. A
-// small live mech preview + a chassis label sit bottom-right (#248: the chassis switch is
-// disabled for now — light/heavy are off, every mech is locked to medium). "Deploy" (greyed
+// small live mech preview sits bottom-right (#248: the chassis switch is disabled for now —
+// light/heavy are off, every mech is locked to medium; #454 dropped the leftover chassis-name
+// label, since there's only one chassis to show). "Deploy" (greyed
 // until every slot is filled) enters the arena.
 const UI = {
   text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', dim: '#7c8794',
@@ -139,7 +140,7 @@ export default class GarageScene extends Phaser.Scene {
 
     // Layout: the top region holds the weapon catalog (shared WeaponCardList) + a persistent
     // SFX panel on the right (#121, see _topRegion); a bottom strip holds the skill tiles
-    // (left) and the small live mech preview + chassis switch (right).
+    // (left) and the small live mech preview (right).
     this.bottomH = 200;                             // bottom strip height (tiles + preview)
     this.previewW = 210;                            // right slice of the strip for the preview
     this.dollX = 20;
@@ -203,14 +204,14 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshCurrency();
     this._buildPlayerTabs();
 
-    // #423: the post-run stats screen. A STATS button (left of the currency readout, in the band
-    // under the tab bar) opens a modal overlay showing the committed run history — per-weapon and
-    // per-enemy tables + a copyable plain-text report. Built after the overlay so its click works
-    // the first frame.
-    this._statsOverlay = new StatsOverlay(this);
-    // Centered in the free middle of the band under the tab bar (player tabs sit at the left, the
-    // currency/last-run readout at the right).
-    this.button(Math.round(this.W / 2 - 50), TAB_BAR_H + 10, 100, 26, 'STATS', () => this._statsOverlay.open(), UI.accent);
+    // #423: the post-run stats screen — a modal overlay showing the committed run history
+    // (per-weapon and per-enemy tables + a copyable plain-text report). #445: it's a dev-only
+    // tuning tool, so both the overlay and the STATS button that opens it are built only under
+    // `import.meta.env.DEV` (Vite's build-time flag, stripped/dead-code-eliminated in
+    // `npm run build`) — a production garage has neither. The button itself is no longer a
+    // free-floating rect in the band under the tab bar: it's an `actions` entry in the shared tab
+    // bar's own row, next to MECH LAB / MUSIC / Deploy (see _buildHeader).
+    if (import.meta.env.DEV) this._statsOverlay = new StatsOverlay(this);
 
     // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
     // catalog from the first pad press — the whole unfiltered weapon set, never a per-slot
@@ -515,6 +516,11 @@ export default class GarageScene extends Phaser.Scene {
       // #349: in co-op, while player 1 is the one building, the pinned action is the HANDOFF —
       // same button, different label, so no new control was added to the bar.
       deployLabel: garageActionLabel(this.session),
+      // #445: the run-stats overlay's opener lives IN the tab row (same size/gap/alignment as the
+      // tabs), and only in dev builds — spread in exactly like the MUSIC tab is in tabBar.js.
+      actions: import.meta.env.DEV
+        ? [{ key: 'STATS', onClick: () => this._statsOverlay.open() }]
+        : [],
     });
   }
 
@@ -789,16 +795,21 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // A small live, top-down render of the actual mech (hull + turret), in the bottom strip's
-  // right slice with a chassis label beneath it. The sprites reference fixed texture keys;
-  // onChange re-skins those textures in place.
+  // right slice. The sprites reference fixed texture keys; onChange re-skins those textures in
+  // place.
   // #248: light/heavy chassis are disabled for now, so the clickable chassis-switch button is
-  // replaced with a plain, non-interactive label (no rect, no hover, no onClick) — just enough
-  // to still show which chassis is mounted. Swap this back to a `this.button(...)` call (see
-  // cycleChassis) to re-enable switching.
+  // gone — swap a `this.button(...)` call (see cycleChassis) back in here to re-enable switching.
+  // #454: the plain chassis-name label that #248 left in its place is gone too — with exactly one
+  // chassis to fly, "TROOPER" told the player nothing. Only the label was removed; the chassis
+  // data + cycleChassis are untouched.
   _buildPreview() {
     const box = this.bottomH - 56;                              // square preview size
     const cx = this.W - this.previewW / 2 - 20;                 // centred in the right slice
-    const cy = this.H - this.bottomH + box / 2 + 6;
+    // #454: the label used to sit in the space below the box, so the box hugged the top of the
+    // strip. With it gone the box keeps its size (same render scale) and is simply centred in the
+    // strip's usable band — the strip's top down to the skill-tile row's bottom edge — so it no
+    // longer reads as hanging above an empty gap.
+    const cy = (this.H - this.bottomH + 6 + this._rowBottom) / 2;
     this.previewPanel = this.add.rectangle(cx, cy, box, box, 0x10151c).setStrokeStyle(1, UI.panelEdge);
     const scale = (box - 30) / 230;
     this._previewScale = scale;
@@ -820,9 +831,6 @@ export default class GarageScene extends Phaser.Scene {
     }
     this.previewTurret = this.add.sprite(cx, cy + 8, 'garageMech_turret').setScale(scale);
     this._positionPreviewParts();
-    this.add.text(cx, this.H - 34 + 13, this.mech.chassis.name.toUpperCase(), {
-      fontFamily: 'monospace', fontSize: '13px', color: UI.dim,
-    }).setOrigin(0.5);
   }
 
   // Place + pivot the static preview side-torso + arm sprites at their joints (tilt 0). The

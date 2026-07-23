@@ -10,6 +10,11 @@
 //   buildTabBar(this, { active: 'GarageScene', onDeploy: () => this.deploy(), canDeploy });
 // Returns { height } so the caller can lay content out below it.
 //
+// #445: `actions` adds extra in-row buttons after the tabs — same chrome/size/gap/vertical
+// alignment as a tab, but they run a callback instead of starting a scene (the garage's dev-only
+// STATS overlay is the first one). They flow in the row's own layout rather than being positioned
+// on top of the bar.
+//
 // Controller (#70): attachPadTabCycle(scene, active) — call ONCE per scene create() (not per
 // buildTabBar; the garage rebuilds its bar every refresh) — makes SELECT cycle to the next tab.
 
@@ -60,7 +65,9 @@ export function attachPadTabCycle(scene, active) {
 // button: in co-op the Garage's Deploy becomes "▶ P1 READY" while player 1 is building, which
 // IS the handoff step. Keeping it on the existing button is deliberate — the garage is already
 // tight at narrow widths (#330/#342) and a new primary control would make that worse.
-export function buildTabBar(scene, { active, onDeploy, canDeploy = true, deployLabel = '▶ DEPLOY' } = {}) {
+export function buildTabBar(scene, {
+  active, onDeploy, canDeploy = true, deployLabel = '▶ DEPLOY', actions = [],
+} = {}) {
   const dpr = scene.registry.get('dpr') || 1;
   const W = Math.round(scene.scale.width / dpr);
   const layer = scene.add.container(0, 0).setDepth(50);
@@ -84,6 +91,22 @@ export function buildTabBar(scene, { active, onDeploy, canDeploy = true, deployL
       r.on('pointerout', () => r.setFillStyle(TAB_UI.tab));
       r.on('pointerdown', () => { Audio.ui('menuNav'); scene.scene.start(tab.scene); });
     }
+    x += tabW + gap;
+  }
+
+  // #445: the caller's extra actions, continuing the same left-to-right flow the tabs use — same
+  // rect size, same y, same gap — so they read as another item in the row. Chrome matches an
+  // INACTIVE tab (they never own the bar's "you are here" highlight).
+  for (const action of actions) {
+    const r = scene.add.rectangle(x, y, tabW, tabH, TAB_UI.tab).setOrigin(0, 0)
+      .setStrokeStyle(1, TAB_UI.barEdge).setInteractive({ useHandCursor: true });
+    const t = scene.add.text(x + tabW / 2, y + tabH / 2, action.key, {
+      fontFamily: 'monospace', fontSize: '14px', color: TAB_UI.text,
+    }).setOrigin(0.5);
+    layer.add([r, t]);
+    r.on('pointerover', () => r.setFillStyle(TAB_UI.tabHover));
+    r.on('pointerout', () => r.setFillStyle(TAB_UI.tab));
+    r.on('pointerdown', () => { Audio.ui('menuNav'); action.onClick?.(); });
     x += tabW + gap;
   }
 

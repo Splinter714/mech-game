@@ -66,6 +66,15 @@ describe('#296 tabBar: the MUSIC tab is dev-only', () => {
   it("MECH LAB stays unconditional so production still has the garage tab", () => {
     expect(tabBar).toMatch(/const TABS = \[\s*\n\s*\{ key: 'MECH LAB', scene: 'GarageScene' \},/);
   });
+
+  it('#445: in-row `actions` reuse the tab rect geometry (same size + vertical alignment)', () => {
+    expect(tabBar).toMatch(/for \(const action of actions\) \{[\s\S]*?scene\.add\.rectangle\(x, y, tabW, tabH/);
+  });
+
+  it('#445: in-row actions advance the same x cursor the tabs do (one shared gap)', () => {
+    const body = tabBar.match(/for \(const action of actions\) \{[\s\S]*?\n {2}\}/)[0];
+    expect(body).toMatch(/x \+= tabW \+ gap;/);
+  });
 });
 
 describe('#296 GarageScene: the SFX-authoring surface is dev-only', () => {
@@ -82,6 +91,18 @@ describe('#296 GarageScene: the SFX-authoring surface is dev-only', () => {
 
   it('the shutdown teardown of panel/explosion row is guarded', () => {
     expect(garage).toMatch(/this\.list\.destroy\(\);\s*\n\s*\/\/[\s\S]*?if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.panel\.destroy\(\);/);
+  });
+
+  it('#445: the run-stats overlay is constructed only under import.meta.env.DEV', () => {
+    expect(garage).toMatch(/if \(import\.meta\.env\.DEV\) this\._statsOverlay = new StatsOverlay\(this\);/);
+  });
+
+  it('#445: the STATS button is spread into the tab bar row only under import.meta.env.DEV', () => {
+    expect(garage).toMatch(/actions: import\.meta\.env\.DEV\s*\n?\s*\? \[\{ key: 'STATS', onClick: \(\) => this\._statsOverlay\.open\(\) \}\]\s*\n?\s*: \[\],/);
+  });
+
+  it('#445: STATS is an in-row tab-bar action, never a free-floating this.button(...)', () => {
+    expect(garage).not.toMatch(/this\.button\([^\n]*'STATS'/);
   });
 
   it('_topRegion returns a full-width catalog (no panel reserve) in production', () => {
