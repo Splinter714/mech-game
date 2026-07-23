@@ -293,11 +293,12 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
   if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.4, ct.h * 0.7, T.housing);            // reactor housing
   else rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);
-  // #400/#404: the reactor spine doubles as the STATUS SPOT for player mechs. When the caller
-  // hands in a `statusSpot` colour list (arena players only) it renders that instead of the
-  // fixed purple: single-player → active-powerup colours (sectioned when several, black when
-  // none); co-op → the player's identifying colour. Enemies & the garage preview pass nothing
-  // and keep the original reactor purple.
+  // #400/#404: the reactor spine doubles as the POWERUP SPOT for player mechs. When the caller
+  // hands in a `statusSpot` colour list (arena players only) it renders that instead of the fixed
+  // purple: the active-powerup colours, sectioned when several and a dark core when none — the
+  // same in single-player and co-op (#404 reserved this spot for powerups; player identity moved
+  // entirely onto the rim accent + ground ring). Enemies & the garage preview pass nothing and
+  // keep the original reactor purple.
   if (statusSpot) statusSpotBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, statusSpot);
   else glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                      // reactor spine
   // The two vents flanking the spine complete the reactor cluster. #400 follow-up: for player mechs

@@ -26,7 +26,7 @@
 // (which carries `px`/`py`/`mech` instead of a collection) present as a one-player array.
 import {
   allPlayersDead, anyPlayerAlive, livePlayers, nearestPlayer, playersCentroid, primaryPlayer,
-  playerColor, showsPlayerColor,
+  playerColor,
 } from '../../data/players.js';
 import { powerupSpotColors } from '../../data/powerups.js';
 
@@ -109,13 +109,18 @@ export function cameraFocusOf(scene) {
 }
 
 // (4a) #400/#404: the center-torso STATUS-SPOT colour list for `player` RIGHT NOW. The one
-// place both the per-frame sync (coop.js `_updatePlayerMarkers`) and the damage re-raster
+// place both the per-frame sync (coop.js `_updateStatusSpots`) and the damage re-raster
 // (combat.js `_damagePlayerAt`) resolve it from, so a damage rebuild can never disagree with the
-// live indicator. CO-OP (2+ players) → the player's own identifying colour, so mechs are told
-// apart; SINGLE-PLAYER → the active-powerup colours (sectioned when several; empty = the "no
-// powerup" black). `scene.activePowerups` is the shared timed-buff overlay (powerups.js).
-export function statusSpotColorsFor(scene, player) {
-  if (showsPlayerColor(playersOf(scene).length)) return [playerColor(player.id ?? 0)];
+// live indicator.
+//
+// #404 playtest: the spot USED to double as player identity in co-op, which meant the powerup
+// readout silently disappeared the moment a second player joined. Jackson: "keep the middle torso
+// spot for powerups, even in multiplayer". So it is now POWERUPS ONLY, in solo and co-op alike —
+// player identity is carried entirely by the rim tint on every segment + the ground ring, which is
+// what #404 made standard for every player. `player` is unused today and kept only so a future
+// per-player buff can be resolved here without touching the call sites.
+// Empty list = the "no powerup" black core; several active = a sectioned bar.
+export function statusSpotColorsFor(scene, _player) {
   return powerupSpotColors(Object.keys(scene.activePowerups || {}));
 }
 

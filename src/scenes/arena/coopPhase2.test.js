@@ -4,8 +4,9 @@
 // fire, which is a routing decision rather than a formula.
 import { describe, it, expect, vi } from 'vitest';
 import { FiringMixin } from './firing.js';
-import { cameraFocusOf, isPlayerRef, otherLivePlayers, targetPlayerFor } from './players.js';
-import { MAX_PLAYERS, makePlayer, playerAccent, playerColor } from '../../data/players.js';
+import { cameraFocusOf, isPlayerRef, otherLivePlayers, statusSpotColorsFor, targetPlayerFor } from './players.js';
+import { powerupSpotColors } from '../../data/powerups.js';
+import { MAX_PLAYERS, PLAYER_COLORS, makePlayer, playerAccent, playerColor } from '../../data/players.js';
 import { CoopMixin } from './coop.js';
 import { axialKey, hexToPixel, pixelToHex } from '../../data/hexgrid.js';
 import { isPassable } from '../../data/terrain.js';
@@ -108,9 +109,12 @@ describe('player identification', () => {
     expect(playerColor(0)).not.toBe(playerColor(1));
   });
 
-  it('leaves player 1 art untouched — only later players are tinted', () => {
-    expect(playerAccent(0)).toBeNull();
-    expect(playerAccent(1)).toBeTruthy();
+  // #404 (was the opposite in #348): the rim tint is now the STANDARD player look, so player 1
+  // and a solo player are tinted too — Jackson asked for "the P2 styling for single player also
+  // and for P1".
+  it('tints EVERY player, player 1 included, each in its own colour', () => {
+    for (let i = 0; i < MAX_PLAYERS; i++) expect(playerAccent(i)).toBe(playerColor(i));
+    expect(new Set(PLAYER_COLORS).size).toBe(PLAYER_COLORS.length);
   });
 
   it('carries the colour on the player itself, so every draw site reads one source', () => {
@@ -142,6 +146,36 @@ describe('player identification', () => {
       scene.players[1].dead = true;
       scene._updatePlayerMarkers();
       expect(scene.players.map((p) => p.marker.visible)).toEqual([true, false]);
+    });
+  });
+
+  // #404: the centre-torso spot is RESERVED FOR POWERUPS — Jackson: "keep the middle torso spot
+  // for powerups, even in multiplayer". It used to be overwritten with the player's identifying
+  // colour as soon as a second player joined, which silently ate the powerup readout in co-op.
+  describe('the centre-torso status spot shows POWERUPS, never player identity', () => {
+    const scene = (count, powerups) => ({
+      players: Array.from({ length: count }, (_, i) => P(i, 0, 0)),
+      activePowerups: powerups,
+    });
+
+    it('is the powerup colours in co-op, exactly as in single-player', () => {
+      const solo = scene(1, { shield: {} });
+      const coop = scene(2, { shield: {} });
+      expect(statusSpotColorsFor(coop, coop.players[0]))
+        .toEqual(statusSpotColorsFor(solo, solo.players[0]));
+      expect(statusSpotColorsFor(coop, coop.players[0])).toEqual(powerupSpotColors(['shield']));
+    });
+
+    it('never carries a player colour, and reads the same for both players', () => {
+      const s = scene(2, { overdrive: {}, barrage: {} });
+      const [a, b] = s.players.map((p) => statusSpotColorsFor(s, p));
+      expect(a).toEqual(b);
+      for (const c of a) expect(PLAYER_COLORS).not.toContain(c);
+    });
+
+    it('is the empty "no powerup" list when nothing is active, in co-op too', () => {
+      const s = scene(2, {});
+      expect(statusSpotColorsFor(s, s.players[1])).toEqual([]);
     });
   });
 });

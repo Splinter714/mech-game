@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makePlayer, playerAlive, livePlayers, anyPlayerAlive, allPlayersDead,
   nearestPlayer, primaryPlayer, playersCentroid, showsPlayerColor,
+  PLAYER_COLORS, playerAccent, playerColor,
 } from './players.js';
 
 const liveMech = () => ({ isDestroyed: () => false });
@@ -154,5 +155,78 @@ describe('showsPlayerColor', () => {
     expect(showsPlayerColor(players.length)).toBe(true);
     players.pop();
     expect(showsPlayerColor(players.length)).toBe(false);
+  });
+});
+
+// #404: the player palette must not read as any of the game's other coloured signals. The old set
+// literally WAS three weapon-category muzzle cores (gold = ballistic, which is what Jackson
+// noticed), so this pins the new one against every colour vocabulary already on screen: muzzle
+// glows, powerup pickups, and enemy kind accents. The bar is a hue+tone distance, not just
+// "different number" — two colours 3° apart are the same colour in a firefight.
+describe('PLAYER_COLORS are clash-proof against every other colour in play (#404)', () => {
+  // 0xRRGGBB → { h: 0..360, s: 0..1, l: 0..1 }
+  const hsl = (c) => {
+    const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+    let h = 0;
+    if (d) {
+      if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0));
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+    }
+    return { h, s: d ? d / (1 - Math.abs(2 * l - 1)) : 0, l };
+  };
+  const hueGap = (a, b) => { const d = Math.abs(hsl(a).h - hsl(b).h) % 360; return Math.min(d, 360 - d); };
+  // "Confusable" = close in hue AND close in tone (lightness × saturation). A drab olive body
+  // accent and a vivid lime rim share a hue family but never read as the same marking.
+  const confusable = (a, b) => {
+    if (hueGap(a, b) > 20) return false;
+    const A = hsl(a), B = hsl(b);
+    return Math.abs(A.l - B.l) < 0.18 && Math.abs(A.s - B.s) < 0.3;
+  };
+
+  const OTHERS = {
+    // Weapon-category muzzle/projectile cores (art/mechPrims.js NEON) — the ones Jackson named.
+    ballisticMuzzle: 0xffb24a, energyMuzzle: 0x38d9ff, missileMuzzle: 0xff4fa3,
+    supportMuzzle: 0x6dff9e, meleeMuzzle: 0xcfd6e0,
+    // Mech reactor glow + the enemy legibility halo / pale ceramic body.
+    reactor: 0xb15cff, halo: 0xfbfdff, enemyBody: 0xd3dae2,
+    // Powerup pickups (data/powerups.js) — these now own the centre-torso spot, so a player
+    // colour must never be mistaken for one.
+    overdrive: 0xe2533a, overclock: 0x7bd17b, armorPatch: 0x9fa8b2,
+    shield: 0x5ec8e0, infiniteFire: 0x28e0d8, barrage: 0xc06be0,
+    // Enemy kind theme accents (data/enemyKinds.js) + the alert/UI reds.
+    wallTurretCyan: 0x5ac8e0, tankRust: 0xc65a34, helicopterGold: 0xe0b13a,
+    carrierRed: 0xcf4d4d, carrierViolet: 0x8a4fc9, infantryOlive: 0x8fae4a,
+    uiWarn: 0xefc14a, uiBad: 0xe2533a,
+  };
+
+  it('are four distinct colours, none of them an exact reuse of another signal', () => {
+    expect(new Set(PLAYER_COLORS).size).toBe(PLAYER_COLORS.length);
+    for (const c of PLAYER_COLORS) expect(Object.values(OTHERS)).not.toContain(c);
+  });
+
+  it('are not confusable with any muzzle, powerup or enemy accent', () => {
+    const clashes = [];
+    for (const [i, c] of PLAYER_COLORS.entries()) {
+      for (const [name, other] of Object.entries(OTHERS)) {
+        if (confusable(c, other)) clashes.push(`P${i + 1} vs ${name}`);
+      }
+    }
+    expect(clashes).toEqual([]);
+  });
+
+  it('are well separated from EACH OTHER — that is the whole point of them', () => {
+    for (let i = 0; i < PLAYER_COLORS.length; i++) {
+      for (let j = i + 1; j < PLAYER_COLORS.length; j++) {
+        expect(hueGap(PLAYER_COLORS[i], PLAYER_COLORS[j])).toBeGreaterThan(40);
+      }
+    }
+  });
+
+  // #404: every player is tinted now (#348 left player 1 null so its art was unchanged).
+  it('gives every player, player 1 included, its own rim accent', () => {
+    for (let i = 0; i < PLAYER_COLORS.length; i++) expect(playerAccent(i)).toBe(playerColor(i));
   });
 });

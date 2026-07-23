@@ -76,7 +76,9 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     mid-sortie with START on gamepad 2 (`scenes/arena/coop.js`), each player owns its own
     `Controls`/fire cooldowns/sprint/dash/converge pick/reticle, enemies target the nearest
     player, friendly fire is ON, and each player has an identifying colour (`PLAYER_COLORS` —
-    a ground ring, plus a rim-accent on the procedural mech theme for players after the first).
+    a ground ring shown only in co-op, plus a rim-accent on the procedural mech theme that #404
+    made standard for EVERY player, single-player included; the centre-torso spot is reserved for
+    POWERUP state and never carries player identity).
     The camera frames the live players' centroid and `data/leash.js` HARD-STOPS anyone leaving
     that frame (no zoom-out, no rubber-band — owner's explicit choice). `data/respawn.js` is
     the 20s respawn clock gated on the survivors being out of combat ~1.5s.

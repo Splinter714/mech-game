@@ -73,7 +73,8 @@ export const CoopMixin = {
   _makePlayerAt(index, x, y, mech) {
     const textureKey = index === 0 ? 'playerMech' : `playerMech${index}`;
     const player = makePlayer({ id: index, mech, x, y, textureKey });
-    // #348: player 1's accent is null, so its textures are byte-identical to single-player.
+    // #404: EVERY player is accent-tinted now, player 1 and single-player included — the rim
+    // tint over every segment and the head is simply what a player mech looks like.
     // #435: a PLAYER mech bakes the fine-grained walk cycle (PLAYER_HULL_FRAMES) — it's the only
     // mech that actually cycles its hull frames, so it's the only one that pays for them.
     buildMechTextures(this, textureKey, mech,
@@ -241,9 +242,9 @@ export const CoopMixin = {
     }
   },
 
-  // #400/#404: keep every player's center-torso STATUS SPOT current. Single-player shows the
-  // active-powerup colours (sectioned when several, black when none); co-op shows each player's
-  // identifying colour. The turret raster is the same 9-texture cost as a damage reskin, so only
+  // #400/#404: keep every player's center-torso STATUS SPOT current. It shows the active-powerup
+  // colours — sectioned when several, black when none — in SOLO AND CO-OP alike (#404: it used to
+  // be hijacked for player identity in co-op). The turret raster is the same 9-texture cost as a damage reskin, so only
   // rebuild (through `_reskinPlayer`) when the resolved colour list actually changes — a cached
   // key, exactly like combat.js gates its own reskin. Separate from `_updatePlayerMarkers` so the
   // cheap per-frame ring update never drags in a texture rebuild.

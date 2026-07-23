@@ -81,20 +81,67 @@ export function makePlayer({
 // same colour. The ring is what actually reads at a glance in a top-down fight; the rim tint is
 // what makes the two mechs look like different machines when they are stood next to each other.
 //
-// Player 1 keeps the EXISTING mech art untouched (its accent is null — Jackson already knows
-// what his mech looks like and this must not change it); it gains only the ring. Player 2 is
-// the one that gets tinted. Adding a third player is one more entry here.
-export const PLAYER_COLORS = [0x4fc3f7, 0xffb24a, 0x6dff9e, 0xff4fa3];
+// #404: EVERY player is tinted now, player 1 and single-player included. #348 had deliberately
+// left player 1's accent null so its art was byte-identical to the pre-co-op mech; the playtest
+// answer was the opposite — Jackson: "I like the P2 styling better overall; can we move to the P2
+// styling for single player also and for P1". So the rim tint is simply the standard player look:
+// the accent runs over every segment and the head (it recolours the palette's rim tones, which
+// every plate uses), and the CENTER-TORSO spot is no longer part of player identity at all — it
+// is reserved for POWERUP state in solo AND co-op (see scenes/arena/players.js
+// `statusSpotColorsFor`).
+//
+// ── THE COLOURS (#404) ────────────────────────────────────────────────────────────────────────
+// Repicked because the old set WAS the weapon-category glow set: 0xffb24a is literally
+// NEON.ballistic.core, 0x6dff9e is NEON.support.core, 0xff4fa3 is NEON.missile.core. Jackson:
+// "we might need different player colors since gold (p2) looks similar to ballistics muzzle
+// colour" — that was true of three of the four.
+//
+// Hues already spoken for, which this set is picked AROUND:
+//   ~0-20°  alert/kill red 0xcf4d4d, OVERDRIVE powerup 0xe2533a, tank rust 0xc65a34
+//   ~38°    BALLISTIC muzzle 0xffb24a (+ helicopter gold 0xe0b13a, UI warn 0xefc14a)
+//   ~76°    infantry olive 0x8fae4a
+//   ~145°   SUPPORT muzzle 0x6dff9e, OVERCLOCK powerup 0x7bd17b
+//   ~177-193° INFINITE FIRE 0x28e0d8, SHIELD 0x5ec8e0 (= UI accent), wall-turret cyan 0x5ac8e0,
+//             ENERGY muzzle 0x38d9ff
+//   ~272-288° reactor purple 0xb15cff, BARRAGE powerup 0xc06be0, carrier violet 0x8a4fc9
+//   ~330°   MISSILE muzzle 0xff4fa3
+//   neutrals white/pale-ceramic enemy bodies + halo 0xfbfdff, ARMOR PATCH silver 0x9fa8b2
+//
+// Everything from red through gold (0-45°) is either an ALERT or a ballistic muzzle, so no player
+// lives there — the four sit in the four widest remaining gaps, each ≥20° of hue from the nearest
+// signal and ≥40° from each other. Players 1 and 2 are the only two the garage builds, so they get
+// the two cleanest slots. `players.test.js` pins all of this: change a colour here and the clash
+// check re-runs against the whole vocabulary above. This array is the ONLY place a player colour
+// is chosen — PLAYER_ACCENTS derives from it, so the ground ring, the mech rim tint, the reticle
+// and the HUD panel all move together.
+export const PLAYER_COLORS = [
+  0x427ffa,   // P1 AZURE (h220) — the empty blue gap. Nearest signals are the DESATURATED steels
+              //    around h210 (melee muzzle 0xcfd6e0, enemy ceramic, armour-patch silver); the
+              //    nearest saturated colours are energy cyan 0x38d9ff (h191, 29° greener)
+              //    and reactor violet 0xb15cff (h271, 51° away).
+  0x7cf042,   // P2 LIME (h100) — replaces the gold that read as a ballistic muzzle. 57° off
+              //    ballistic 0xffb24a, 40° off support-muzzle green 0x6dff9e, and though it shares
+              //    a family with infantry olive 0x8fae4a it is twice as saturated on a dark body.
+  0xff3de8,   // P3 MAGENTA (h307) — the gap between barrage violet 0xc06be0 (h284) and missile
+              //    pink 0xff4fa3 (h331); vivider than both, and 23-24° clear of each.
+  0x17cf82,   // P4 JADE (h155) — the gap between support green 0xd6ffe6/0x6dff9e (h140, far paler)
+              //    and INFINITE FIRE teal 0x28e0d8 (h177). Deliberately deep-toned so the two
+              //    bright green-cyan glows never read as it.
+];
 
-// The rim-highlight accent per player, parallel to PLAYER_COLORS. `null` = leave the base
-// `player` theme exactly as it is.
-export const PLAYER_ACCENTS = [null, 0xffb24a, 0x6dff9e, 0xff4fa3];
+// The rim-highlight accent per player. #404: identical to PLAYER_COLORS — every player is
+// tinted, so there is no longer a "null = leave this one alone" entry. Kept as its own export
+// (rather than folded into playerColor) because the accent is a distinct question from the
+// ring/HUD colour, and a future player could want them to differ.
+export const PLAYER_ACCENTS = [...PLAYER_COLORS];
 
 // Should the identifying COLOUR be shown at all? Only once there is somebody to be told apart
 // from (#348 playtest: "we don't need the color ring around player 1 when there isn't any second
 // player"). This is the same rule the reticle tint already used, pulled out so the ground ring
 // and the reticle share one definition instead of two copies of `players.length > 1`. It is
 // asked every frame, so a mid-sortie START join turns the rings ON and nobody has to re-deploy.
+// #404: this gates the RING and the RETICLE/HUD tint only — NOT the mech's rim accent, which is
+// now unconditional (a solo player's mech is tinted in its own colour too).
 export function showsPlayerColor(playerCount) { return playerCount > 1; }
 
 export function playerColor(id) { return PLAYER_COLORS[id % PLAYER_COLORS.length]; }
