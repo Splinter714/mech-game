@@ -136,8 +136,7 @@ function swarmRack(sg, T, bx, frontY, s, n, cap) {
 function streakPod(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('streakPod', s, cap), w = 1.9 * s, off = 1.7 * s;
   for (const dx of [-1, 1]) {
-    if (T.bubbly) ellipseC(sg, bx + dx * off, frontY - L / 2, w * 1.4, L, T.faceDk);
-    else roundC(sg, bx + dx * off, frontY - L / 2, w, L, T.faceDk, w * 0.5);
+    roundC(sg, bx + dx * off, frontY - L / 2, w, L, T.faceDk, w * 0.5);   // #446: no bubbly variant
     glowDot(sg, bx + dx * off, frontY - L + 0.4, 1.5 * s, n);       // seeker eye
   }
   rectC(sg, bx, frontY - L * 0.2, (off * 2 + w), 2 * s, T.deep);    // yoke tying the tubes
@@ -147,8 +146,7 @@ function streakPod(sg, T, bx, frontY, s, n, cap) {
 // small warhead glints packed in the mouth. Reads as a tight clump, not a rack.
 function clusterRocket(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('clusterRocket', s, cap), w = 5 * s;
-  if (T.bubbly) ellipseC(sg, bx, frontY - L / 2, w * 1.2, L, T.faceDk);
-  else roundC(sg, bx, frontY - L / 2, w, L, T.faceDk, w * 0.3);     // fat tube
+  roundC(sg, bx, frontY - L / 2, w, L, T.faceDk, w * 0.3);          // fat tube (#446: one variant)
   rectC(sg, bx, frontY - L * 0.85, w * 0.86, L * 0.14, T.deep);     // muzzle lip
   for (const dx of [-1, 1]) for (const dy of [-1, 1]) {             // packed cluster of warheads
     glowDot(sg, bx + dx * w * 0.2, frontY - L * (0.86 + dy * 0.06), 0.9 * s, n);
@@ -156,11 +154,10 @@ function clusterRocket(sg, T, bx, frontY, s, n, cap) {
   glowDot(sg, bx, frontY - L * 0.86, 1.0 * s, n);
 }
 
-// A theme-aware boxy launcher frame (shared by the rack). Angular for player, rounded/bubbly
-// for enemy — mirrors the generic missile box.
+// A theme-aware boxy launcher frame (shared by the rack). Angular for the player, hard-cornered
+// rounded for the enemy — mirrors the generic missile box. (#446 dropped the bubbly ellipse.)
 function boxFrame(sg, T, bx, cy, w, h) {
-  if (T.bubbly) ellipseC(sg, bx, cy, w * 1.1, h, T.faceDk);
-  else if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.6);
+  if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.0);
   else { poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), T.outline); poly(sg, chamfer(bx, cy, w, h, 1), T.faceDk); }
 }
 

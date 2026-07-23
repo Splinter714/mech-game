@@ -238,7 +238,7 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // #419: a fully-destroyed location draws NOTHING — no charred stump, no leftover piece.
   if (mech.isPartDestroyed(loc)) return;
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
-  if (!T.bubbly) rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);
+  rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
   if (!mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   drawPauldronFor(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
@@ -288,11 +288,12 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // stump.
   const ct = lay.centerTorso;
   plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
-  if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.6, ct.h * 0.78, T.faceMid);
-  else if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * 0.2);
+  // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
+  // stacked blobs on the chest, the single most "bubbly" read on the mech. Both now take the same
+  // hard-cornered inset / straight housing bar the player has always had.
+  if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * (T.cornerR ?? 0.2));
   else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
-  if (T.bubbly) ellipseC(sg, ct.x, ct.y, ct.w * 0.4, ct.h * 0.7, T.housing);            // reactor housing
-  else rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);
+  rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);                           // reactor housing
   // #400/#404: the reactor spine doubles as the POWERUP SPOT for player mechs. When the caller
   // hands in a `statusSpot` colour list (arena players only) it renders that instead of the fixed
   // purple: the active-powerup colours, sectioned when several and a dark core when none — the
@@ -356,24 +357,18 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
     ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
     plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.rim, seam: false });
-    if (!T.bubbly) {
-      rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);          // toe cap (forward)
-      rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, T.joint);             // ankle actuator
-      rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, T.grime, 0.7);
-    }
+    // #446: the enemy used to skip all three (a bare glossy pod for a leg). They're mechanical
+    // detail, not a player-theme flourish, so both factions get them now.
+    rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);            // toe cap (forward)
+    rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, T.joint);               // ankle actuator
+    rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, T.grime, 0.7);
   }
 
   // Hip skirts over the inner-top of each leg (read as "legs tuck under the body").
-  const legSpread = a.shape?.legSpread ?? 1;
   for (const dx of [-1, 1]) {
-    const sx = dx * a.bodyWid * 0.24 * legSpread;
-    if (T.bubbly) {
-      if (T.legibilityHalo) ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.34 + 1.4, a.bodyLen * 0.13 + 1.4, HALO);
-      ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.34, a.bodyLen * 0.13, T.outline);
-      ellipseC(sg, sx, a.bodyLen * 0.11, a.bodyWid * 0.3, a.bodyLen * 0.11, T.faceMid);
-      ellipseC(sg, sx - a.bodyWid * 0.05, a.bodyLen * 0.08, a.bodyWid * 0.12, a.bodyLen * 0.04, T.rim, 0.9);
-      continue;
-    }
+    // #446: the enemy's hip used to be a stack of four ellipses (a shoulder-of-ham blob over each
+    // leg). Both factions now use the angular tucked skirt below — the silhouette that actually
+    // reads as plating.
     // A tucked hip plate that sits OVER the top of the leg — mirrored per side and kept
     // inside the leg's own outer edge, so it reads as "leg tucks under the body" rather than
     // a slab winging out past the leg. Local x-magnitudes ×dx so left/right are true mirrors

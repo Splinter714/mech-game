@@ -8,8 +8,19 @@ export { scaledGraphics };
 export const DESIGN = 64;              // design-grid canvas size (square)
 export const CENTER = DESIGN / 2;
 
-// Faction palettes. `rounded` swaps the plate primitive (chamfered ↔ rounded). Tones run
-// outline (edge) → deep/ao (shadow) → faceDk/faceMid/face (panels) → rim/rimHi (light).
+// Faction palettes. `rounded` swaps the plate primitive (chamfered ↔ rounded), and `cornerR`
+// (fraction of the plate's short side) says HOW rounded. Tones run outline (edge) → deep/ao
+// (shadow) → faceDk/faceMid/face (panels) → rim/rimHi (light).
+//
+// #446: the enemy theme used to carry a third mode, `bubbly` — every part drawn as a glossy
+// ELLIPSE with a soft bottom shadow and a bright highlight spot, which is what read as "too
+// bubbly": inflated ceramic pods rather than armour. That mode is gone entirely (there is no
+// flag left to set), and the enemy falls back to the `rounded` plate it already had a branch
+// for — but with a HARD corner radius (0.13 of the short side, vs the 0.34 that branch used to
+// assume) and, now that it takes the standard plate path, real flat panel furniture: a straight
+// top rim light, a straight bottom AO band and a panel seam. Still unmistakably the "sleek pale
+// machine" faction against the player's dark chamfered gunmetal — just built out of panels
+// instead of blobs.
 const THEMES = {
   player: {
     rounded: false,
@@ -18,12 +29,15 @@ const THEMES = {
     rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
   },
   enemy: {
-    rounded: true, bubbly: true, legibilityHalo: true,
+    rounded: true, cornerR: 0.13, legibilityHalo: true,
     outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
     lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
   },
 };
+// Default plate corner radius for a `rounded` theme, as a fraction of the plate's short side.
+// A theme overrides it with `cornerR`; the enemy does, hard (see #446 above).
+export const ROUNDED_CORNER_R = 0.34;
 // #348 (local co-op, player identification): an optional per-OWNER accent layered on top of a
 // faction palette. Two mechs on the same side must be told apart at a glance, and the theme
 // table is already the one place a mech's colour is decided — so rather than bolt on a parallel
@@ -112,28 +126,20 @@ export function chamfer(cx, cy, w, h, c) {
 }
 
 // A shaded armour plate: dark outline, mid face, a top highlight rim catching overhead
-// light, a lower ambient-occlusion shadow, and an optional panel seam. Angular for the
-// player theme, rounded for the enemy theme.
+// light, a lower ambient-occlusion shadow, and an optional panel seam. Angular (chamfered
+// octagon) for the player theme, hard-cornered rounded rect for the enemy theme.
 export function plate(sg, T, cx, cy, w, h, opts = {}) {
   const fill = opts.fill ?? T.face;
-  // Bubbly: each part is a glossy blob — an ellipse with a soft bottom shadow and a
-  // bright highlight spot up top so it reads like an inflated/ceramic pod.
-  if (T.bubbly) {
-    if (T.legibilityHalo) ellipseC(sg, cx, cy, w + 2.8, h + 2.8, HALO);
-    ellipseC(sg, cx, cy, w + 1.4, h + 1.4, T.outline);
-    ellipseC(sg, cx, cy, w, h, fill);
-    ellipseC(sg, cx, cy + h * 0.24, w * 0.8, h * 0.4, T.ao, 0.35);
-    ellipseC(sg, cx - w * 0.13, cy - h * 0.2, w * 0.42, h * 0.32, opts.rim ?? T.rim, 0.9);
-    ellipseC(sg, cx - w * 0.16, cy - h * 0.26, w * 0.18, h * 0.14, T.rimHi);
-    return;
-  }
   let inset;
   if (T.rounded) {
-    const r = Math.min(w, h) * 0.34;
+    // #446: `cornerR` is the de-bubbling dial — the enemy sets it hard (0.13) so a plate reads as
+    // a panel with broken corners, not a lozenge. The rim/AO/seam furniture below is shared with
+    // the angular path, so both factions now get the same flat panel language.
+    const r = Math.min(w, h) * (T.cornerR ?? ROUNDED_CORNER_R);
     if (T.legibilityHalo) roundC(sg, cx, cy, w + 2.6, h + 2.6, HALO, r + 0.8);
     roundC(sg, cx, cy, w + 1.2, h + 1.2, T.outline, r + 0.4);
     roundC(sg, cx, cy, w, h, fill, r);
-    inset = Math.min(w, h) * 0.16;
+    inset = Math.min(w, h) * 0.1;
   } else {
     const c = opts.chamfer ?? Math.min(w, h) * 0.22;
     if (T.legibilityHalo) poly(sg, chamfer(cx, cy, w + 2.6, h + 2.6, c + 0.8), HALO);
@@ -208,12 +214,11 @@ function mixToWhite(c, t) {
   return (m(r) << 16) | (m(g) << 8) | m(b);
 }
 
-// A weapon barrel: a glossy ellipse (bubbly), a rounded bar (rounded), or a plain dark
-// bar (angular). Shared by the ballistic/support/energy mounts.
+// A weapon barrel: a rounded bar (rounded theme) or a plain dark bar (angular). #446: the
+// enemy's old glossy-ellipse barrel is gone with the rest of the bubbly mode; a tube stays
+// capsule-ended here because a gun barrel genuinely is round, unlike an armour panel.
 export function barrel(sg, T, cx, cy, w, h) {
-  return T.bubbly
-    ? ellipseC(sg, cx, cy, w * 1.5, h, T.faceDk)
-    : T.rounded
+  return T.rounded
     ? roundC(sg, cx, cy, w, h, T.faceDk, Math.min(w, h) * 0.45)
     : rectC(sg, cx, cy, w, h, T.faceDk);
 }
@@ -295,11 +300,7 @@ export function exposedInternals(sg, T, cx, cy, w, h) {
 // A destroyed location: a charred lump with faint embers.
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
-  if (T.bubbly) {
-    if (T.legibilityHalo) ellipseC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO);
-    ellipseC(sg, cx, cy, w * 0.62, h * 0.5, T.outline);
-    ellipseC(sg, cx, cy, w * 0.56, h * 0.44, T.char);
-  } else if (T.rounded) {
+  if (T.rounded) {
     if (T.legibilityHalo) roundC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO, m * 0.18 + 0.5);
     roundC(sg, cx, cy, w * 0.62, h * 0.5, T.outline, m * 0.18);
     roundC(sg, cx, cy, w * 0.56, h * 0.44, T.char, m * 0.16);
