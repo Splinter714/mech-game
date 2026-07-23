@@ -334,13 +334,13 @@ export function spawnDockCluster(scene, { x, y, kindId, count, baseId, dockKey, 
 // Owner: tunable via playtest.
 const DOCK_VACATE_RADIUS_PX = 60;
 
-// #443: how long a RESUPPLY-spawned unit gets to stay parked at its own dock before the door
-// force-seals regardless of the vacate-radius check above. A resupply unit is born AWARE into a
-// fight already happening at that base and can legitimately hold a defensive standoff within
-// `DOCK_VACATE_RADIUS_PX` forever, which otherwise starves every later resupply's reopen
-// animation (see `_resupplyDock`). Long enough to see the fresh unit visibly emerge and be part
-// of the fight for a beat; short enough that the door cycle keeps reading as alive. Owner:
-// tunable via playtest.
+// #443: how long after a resupply unit surfaces the dock's doors slide shut again. This is now
+// the ONLY thing that closes a dock during a resupply — for the whole sequence, the vacate-radius
+// check above is suspended (see `_dockResupplying` below), because that check cannot be trusted
+// while the bay is mid-cycle: a resupply fires precisely BECAUSE the dock is empty, and the fresh
+// unit does not exist until ~1s into the sequence. Long enough to see the doors part, the unit
+// rise out and be part of the fight for a beat; short enough that the door cycle keeps reading as
+// alive. Owner: tunable via playtest.
 const DOCK_FORCE_CLOSE_AFTER_SPAWN_MS = 3000;
 
 // #395 part B (owner): a hex outline stroked around every DOCK hex at DEPTH.DOCK_BORDER (above the
@@ -972,6 +972,17 @@ export const BasesMixin = {
     if (!this._dockResupplyMeta || !this._dockResupplyMeta.size) return;
     for (const [dockKey, meta] of this._dockResupplyMeta) {
       if (this.terrain.get(dockKey) !== 'dock') continue;   // already closed, or destroyed
+      // #443 (THE bug behind "the doors never re-open"): a dock mid-resupply is deliberately
+      // EMPTY — `tickDockResupply`'s `cleared` gate is what let it fire — and stays empty until
+      // `_resupplyDock`'s spawn callback runs ~1s later. This vacate check runs LATER IN THE SAME
+      // FRAME as `_updateDockResupply` (ArenaScene.update), so without this guard it saw an open
+      // hex with zero units on it and re-sealed the dock roughly one frame after `_openDock` had
+      // just parted the doors — stopping the 950ms parting tween ~1.6% in and sliding the leaves
+      // straight back. Every later resupply then did the same, which on screen is exactly the
+      // reported "they close once at the start and never re-open" while units keep appearing.
+      // The resupply sequence owns its own closing beat (`DOCK_FORCE_CLOSE_AFTER_SPAWN_MS`), so
+      // hands off entirely until it hands the dock back.
+      if (this._dockResupplying?.has(dockKey)) continue;
       const occupied = this.enemies.some((e) => e.dockKey === dockKey
         && Math.hypot(e.x - meta.x, e.y - meta.y) <= DOCK_VACATE_RADIUS_PX);
       if (!occupied) this._closeDock(dockKey, meta);
@@ -1086,8 +1097,10 @@ export const BasesMixin = {
     const state = this._dockResupplyStates?.get(hexKey);
     if (state) this._dockResupplyStates.set(hexKey, spendDockResupply(state));
     // #395: a dock blown open collapses to rubble — drop its door sprites so they don't float over
-    // the wreck.
+    // the wreck. #443: and release any live resupply claim on it, so a dock destroyed mid-sequence
+    // doesn't leave a stale key sitting in `_dockResupplying` for the rest of the run.
     this._destroyDockDoors(hexKey);
+    this._dockResupplying?.delete(hexKey);
     this._maybeDropObjectiveReward(hexKey);
   },
 
@@ -1166,9 +1179,16 @@ export const BasesMixin = {
     // so no separate reopen animation is needed. If the dock never actually closed (e.g. its
     // original unit died right on the pad before ever moving — see `_updateDockOpenClose`'s own
     // comment), this is a harmless no-op: the hex is already the open `dock` terrain.
-    // #395: the doors are the real sliding sprites now — `_openDock` parts them (heavy, ~750ms)
+    // #395: the doors are the real sliding sprites now — `_openDock` parts them (heavy, ~950ms)
     // to reveal the black bay. No throwaway door leaves or shaft are drawn here any more; the bay
     // tile IS the dark gap. A dock that never actually closed has no doors, and this is a no-op.
+    // #443: claim the dock for the whole sequence FIRST. From here until the force-close below,
+    // `_updateDockOpenClose` must keep its hands off — its "no live unit within
+    // `DOCK_VACATE_RADIUS_PX`" test is guaranteed to be true right now (that emptiness is the
+    // precondition for resupplying at all) and would otherwise re-seal the bay a frame after the
+    // doors start parting. See that method for the full story.
+    if (!this._dockResupplying) this._dockResupplying = new Set();
+    this._dockResupplying.add(dockKey);
     if (this.terrain.get(dockKey) === 'dockClosed') this._openDock(dockKey);
     const riseFrom = 22;
 
@@ -1188,23 +1208,22 @@ export const BasesMixin = {
       // terrain snapping and mech/kind dispatch all come from there, so a swarm resupply arrives
       // as a properly-seated burst. AWARE, not DORMANT: the base is already fighting.
       spawnDockCluster(this, { x, y, kindId, count, baseId: meta.baseId, dockKey, awareness: AWARE });
-      // #443: a resupply unit spawns AWARE straight into a fight already happening AT this base
-      // (resupply only fires while the base is awake) — unlike a DORMANT unit waking and walking
-      // off to meet the player from wherever it approached from, a resupplied defender can settle
-      // into a standoff well within `DOCK_VACATE_RADIUS_PX` of its own dock and never register as
-      // "vacated" by `_updateDockOpenClose`'s distance check. That silently starves every LATER
-      // resupply's reopen animation (`_openDock` only fires when terrain is `'dockClosed'`) even
-      // though the platform-FX/unit-spawn above keeps happening — reading as "resupplies keep
-      // occurring but the doors never move again" (Jackson, playtest). Force-seal it a beat after
-      // the unit is fully up, unconditionally — this is a BACKSTOP: if `_updateDockOpenClose`
-      // already closed it sooner (the unit died fast / genuinely walked off), the terrain guard
-      // below makes this a no-op.
+      // #443: the sequence's own CLOSING beat, and the release of the `_dockResupplying` claim
+      // taken above. This is what actually slides the doors shut on every resupply now — the
+      // distance-based `_updateDockOpenClose` is suspended for the whole cycle, so it can neither
+      // re-seal the bay before the doors have parted (the bug) nor be starved by a resupplied
+      // defender that holds a standoff inside `DOCK_VACATE_RADIUS_PX` of its own dock and never
+      // reads as "vacated" (the previously-suspected cause). Unconditional and self-contained:
+      // doors part → unit rises → doors shut, the same beats every cycle for the dock's life.
+      // The terrain guard only skips the swap for a dock that stopped being an open dock in the
+      // meantime (its dome was blown open and collapsed to rubble mid-sequence).
       this.time.delayedCall(DOCK_FORCE_CLOSE_AFTER_SPAWN_MS, () => {
+        this._dockResupplying?.delete(dockKey);
         if (this.terrain.get(dockKey) === 'dock') this._closeDock(dockKey, meta);
       });
     });
-    // Once surfaced, fade the platform FX out. The bay stays OPEN (doors parted) while the unit(s)
-    // occupy the hex; `_updateDockOpenClose` slides the doors shut once they vacate.
+    // Once surfaced, fade the platform FX out. The bay stays OPEN (doors parted) while the fresh
+    // unit(s) emerge and get clear, until the sequence's own close above shuts it again.
     this.time.delayedCall(1260, () => {
       this.tweens.add({ targets: [platform, glow], alpha: 0, duration: 220, onComplete: destroyFx });
     });

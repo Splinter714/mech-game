@@ -58,7 +58,7 @@ function fakeGameObject() {
 function makeScene() {
   const scheduled = [];
   const scene = {
-    time: { now: 0, delayedCall: (ms, fn) => { scheduled.push({ ms, fn }); } },
+    time: { now: 0, delayedCall: (ms, fn) => { scheduled.push({ ms, at: scene.time.now + ms, fn }); } },
     tweens: { add: (cfg) => { if (cfg.onComplete) cfg.onComplete(); return {}; } },
     add: {
       rectangle: () => fakeGameObject(),
@@ -108,7 +108,49 @@ function makeScene() {
   // the force-close backstop a few seconds later fires") can't use the full-drain `_runScheduled`
   // above without also running every later nested callback in the same breath.
   scene._runScheduledOne = () => { if (scheduled.length) scheduled.shift().fn(); };
+  // #443 (repeat door animation): a real VIRTUAL CLOCK, for the tests that have to reproduce the
+  // scene's actual frame loop across several resupply cycles. Both drains above ignore time
+  // entirely (FIFO, immediate), which is exactly what hid this bug: the failure lives in the
+  // ~1s window between a dock reopening and its fresh unit surfacing, and only a stepper that
+  // runs `_updateDockOpenClose` DURING that window can see it. `_advance(ms)` fires only the
+  // callbacks genuinely due inside the window, in due order, including ones scheduled by an
+  // earlier callback in the same window.
+  scene._advance = (ms) => {
+    const target = scene.time.now + ms;
+    for (;;) {
+      let bi = -1;
+      for (let i = 0; i < scheduled.length; i++) if (bi < 0 || scheduled[i].at < scheduled[bi].at) bi = i;
+      if (bi < 0 || scheduled[bi].at > target) break;
+      const due = scheduled.splice(bi, 1)[0];
+      scene.time.now = due.at;
+      due.fn();
+    }
+    scene.time.now = target;
+  };
   return scene;
+}
+
+// #443: ONE arena frame's worth of the dock system, in the exact order ArenaScene.update() runs
+// it — `_updateDockResupply` and then, in the SAME frame, `_updateDockOpenClose` (ArenaScene.js).
+// That adjacency is the whole story of this bug, so the tests below must not fake it away.
+function dockFrame(scene, dtS) {
+  scene._advance(dtS * 1000);
+  scene._updateDockResupply(dtS);
+  scene._updateDockOpenClose();
+}
+
+// #443: record every door-animation beat (`_animateDock`, bases.js) while still running the real
+// implementation. Terrain state alone can't tell the story the owner reported — he was watching
+// the DOORS, and the symptom was door animations that stopped firing while the terrain/spawn
+// bookkeeping kept cycling.
+function recordDoorAnimations(scene) {
+  const beats = [];
+  const inner = scene._animateDock;
+  scene._animateDock = (dockKey, x, y, opening) => {
+    beats.push({ dockKey, opening, t: scene.time.now });
+    return inner.call(scene, dockKey, x, y, opening);
+  };
+  return beats;
 }
 
 function oneDockBase({ kindId = 'tank', count = 1 } = {}) {
@@ -691,13 +733,101 @@ describe('#269 Part 2: dock open/closed states', () => {
     expect(scene.buildingHp.has(dockKey)).toBe(false);
     expect(scene.enemies.length).toBe(1);
 
-    // 3) That fresh unit walks off / dies too → closes again. The OPEN/CLOSED visual cycle just
-    // tracks physical occupancy, and post-#326 it is the only cycle there is — this open ⇄ closed
-    // ⇄ reopened loop now repeats for the whole fight, until the dome is destroyed.
+    // 3) …and the sequence shuts the bay again a beat later, completing the loop. #443: the
+    // resupply sequence OWNS the dock from the moment its doors part until this close — the
+    // distance-based `_updateDockOpenClose` is suspended throughout (it would otherwise re-seal a
+    // mid-resupply dock instantly, since a dock only resupplies while it is empty), so the fresh
+    // unit dying right now no longer closes anything on its own. This open ⇄ closed ⇄ reopened
+    // loop repeats for the whole fight, until the dome is destroyed.
     clearDock(scene, dockKey);
     scene._updateDockOpenClose();
+    expect(scene.terrain.get(dockKey)).toBe('dock');   // still the sequence's, not the vacate check's
+    scene._runScheduled();   // drains the fade FX + the sequence's own closing beat
     expect(scene.terrain.get(dockKey)).toBe('dockClosed');
     expect(scene.buildingHp.get(dockKey)).toBe(TERRAIN.dockClosed.hp);
+    // Released: an ordinary vacate can close this dock again on the next cycle.
+    expect(scene._dockResupplying.has(dockKey)).toBe(false);
+  });
+});
+
+// #443 ("dock doors still animate at the beginning only — they start open, then close, then
+// never re-open even though the dock DOES resupply"). Everything above drives the dock system by
+// calling its two per-frame methods in isolation, or by draining timers with no clock — so the
+// door cycle was only ever pinned at moments a real frame loop never actually visits. These tests
+// run the REAL frame order (`dockFrame`) on a REAL virtual clock, which is the only way to see
+// the window between a dock reopening and its resupplied unit surfacing ~1s later.
+describe('#443: dock doors animate on EVERY resupply, not just the first cycle', () => {
+  const DT = 1 / 30;
+
+  // Wake a one-dock base, then vacate it so it is sealed and eligible — the state a dock is in
+  // just before every resupply of the fight.
+  function sealedDock() {
+    const scene = makeScene();
+    scene.bases = [oneDockBase({ kindId: 'tank' })];
+    scene._spawnDormantUnits();
+    pinDockDraw(scene, 'tank');
+    scene._wakeBase('base0');
+    const dockKey = [...scene._dockResupplyMeta.keys()][0];
+    scene.terrain.set(dockKey, 'dock');
+    clearDock(scene, dockKey);
+    return { scene, dockKey };
+  }
+
+  it('stays OPEN through the window between reopening and the fresh unit surfacing', () => {
+    const { scene, dockKey } = sealedDock();
+    const beats = recordDoorAnimations(scene);
+    scene._updateDockOpenClose();   // the vacated dock seals: the one close the owner does see
+    expect(scene.terrain.get(dockKey)).toBe('dockClosed');
+
+    // Run frames until the resupply actually fires.
+    for (let i = 0; i < 60 * 30 && scene._dockResupplyStates.get(dockKey).count === 0; i++) {
+      dockFrame(scene, DT);
+    }
+    expect(scene._dockResupplyStates.get(dockKey).count).toBe(1);
+
+    // THE BUG: a resupply can only fire when the dock is CLEARED (`tickDockResupply`), and the
+    // fresh unit isn't spawned until ~1s into the elevator sequence — so for that whole window
+    // the dock is open with zero units on it, and `_updateDockOpenClose`, which runs later in
+    // the very same frame, used to re-seal it instantly and kill the parting tween ~1 frame in.
+    expect(scene.terrain.get(dockKey)).toBe('dock');
+    expect(beats.at(-1)).toMatchObject({ dockKey, opening: true });
+
+    // …and it must still be open half a second later, with no close beat in between.
+    const beatsAtOpen = beats.length;
+    for (let i = 0; i < 15; i++) dockFrame(scene, DT);
+    expect(scene.terrain.get(dockKey)).toBe('dock');
+    expect(beats.length).toBe(beatsAtOpen);
+  });
+
+  it('opens and closes again on the 2nd, 3rd and 4th resupply — not only the 1st', () => {
+    const { scene, dockKey } = sealedDock();
+    const beats = recordDoorAnimations(scene);
+    scene._updateDockOpenClose();
+
+    // ~90s of real frames. The player keeps killing each wave a few seconds after it lands (the
+    // `cleared` gate is what lets the next resupply fire at all), so the dock cycles repeatedly.
+    const seenAt = new Map();
+    for (let i = 0; i < 90 * 30; i++) {
+      dockFrame(scene, DT);
+      for (const e of scene.enemies) if (!seenAt.has(e)) seenAt.set(e, scene.time.now);
+      scene.enemies = scene.enemies.filter((e) => scene.time.now - seenAt.get(e) < 5000);
+    }
+
+    expect(scene._dockResupplyStates.get(dockKey).count).toBeGreaterThanOrEqual(4);
+    // One parting animation per resupply — the count the owner was actually watching.
+    const opens = beats.filter((b) => b.opening).length;
+    expect(opens).toBe(scene._dockResupplyStates.get(dockKey).count);
+    // …and the doors genuinely CLOSE between cycles rather than a run of opens with no shut:
+    // the sequence must strictly alternate, starting with the initial garrison's close.
+    expect(beats[0].opening).toBe(false);
+    for (let i = 1; i < beats.length; i++) expect(beats[i].opening).toBe(!beats[i - 1].opening);
+    // The beat that matters visually: every parting must be left ALONE long enough to actually
+    // play (the leaves take 950ms to slide clear, then the unit surfaces). A close scheduled a
+    // frame or two after the open — the original bug — technically alternates and technically
+    // counts as an animation, while on screen the doors merely twitch and stay shut.
+    for (let i = 0; i < beats.length - 1; i++) {
+      if (beats[i].opening) expect(beats[i + 1].t - beats[i].t).toBeGreaterThanOrEqual(1000);
+    }
   });
 });
 
