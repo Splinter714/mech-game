@@ -109,7 +109,7 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setZoom(dpr);
     this.cameras.main.setOrigin(0, 0);
 
-    this.add.text(16, 12, 'ARENA', { fontFamily: 'monospace', fontSize: '18px', color: C.accent });
+    // #449: the top-left 'ARENA' title is gone — it named the screen you are obviously looking at.
     // #296: the control-hints line and the debug d-pad/keys cheat sheet are dev-only playtest
     // aids, never a shipped HUD feature — gated behind `import.meta.env.DEV` (Vite's build-time
     // flag, stripped/dead-code-eliminated in `npm run build`; same pattern as the hex labels in
@@ -121,10 +121,15 @@ export default class HudScene extends Phaser.Scene {
         { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
     }
 
-    // #64: run/stage readout, sitting right next to the objective line.
-    this.stageText = this.add.text(16, 70, '', { fontFamily: 'monospace', fontSize: '13px', color: C.accent });
     // #66: objective line, reading the live Mission published to the registry each frame.
-    this.objectiveText = this.add.text(16, 88, '', { fontFamily: 'monospace', fontSize: '13px', color: C.warn });
+    // #449: it moved out of the old top-LEFT text block (which also carried an 'ARENA' title, an
+    // OBJECTIVES/SCRAP run readout and — top-right — a separate enemy count) to sit directly UNDER
+    // the corner minimap, and it is now the ONLY line up there: the remaining-structures /
+    // remaining-garrison tally the enemy count used to carry folds into this same line, because
+    // data/bases.js `baseClearLabel` already renders exactly that (see update()). Positioned by
+    // `_applyChromeLayout` once the minimap box exists — the layout's shared slot, so co-op still
+    // moves it to top-centre clear of player 2's column.
+    this.objectiveText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: C.warn });
     // Big centred "MISSION COMPLETE" banner, hidden until the mission resolves.
     this.completeBanner = this.add.text(this.W / 2, this.H * 0.32, 'MISSION COMPLETE', {
       fontFamily: 'monospace', fontSize: '40px', color: C.good, fontStyle: 'bold',
@@ -143,28 +148,29 @@ export default class HudScene extends Phaser.Scene {
       this.modeText = this.add.text(this.W - 16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(1, 1);
       this.aiText = this.add.text(this.W - 16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(1, 1);
     }
-    this.dummyText = this.add.text(this.W - 16, 16, '', { fontFamily: 'monospace', fontSize: '13px', color: C.text }).setOrigin(1, 0);
 
-    // #142: FPS readout, bottom-left — the one corner nothing else occupies (top-left has the
-    // hints/stage/objective/integrity block, top-right has enemy count + buff rings, bottom-right
-    // has mode/AI text, bottom-centre has the skill bar). Phaser's own `game.loop.actualFps` is
-    // already an EMA (25% new / 75% old, see TimeStep.js) refreshed once a second — plenty stable
-    // frame-to-frame on its own, so no extra rolling-average layer is needed on top of it.
-    // #296 gated this dev-only; #334 puts it BACK in production builds (Jackson: "put FPS counter
-    // back on production server") and widens it into a small performance readout — FPS plus the
-    // renderer/GPU/resolution facts needed to diagnose great-on-macOS-Safari vs awful-on-Windows-
-    // Edge. Deliberately NOT dev-gated; every OTHER #296 surface (hex labels, control hints, debug
-    // panels) stays dev-only. See src/data/perfReadout.js for why each field is a suspect.
-    this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1);
-    // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
-    // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
-    // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing.
-    this._perfRenderer = rendererLabel(this.game.renderer?.type, Phaser.WEBGL, Phaser.CANVAS);
-    this._perfGpu = gpuRendererString(
-      probeGl(this.game.renderer?.gl, () => document.createElement('canvas')),
-    );
+    // #142: performance readout, bottom-left. Phaser's own `game.loop.actualFps` is already an EMA
+    // (25% new / 75% old, see TimeStep.js) refreshed once a second — plenty stable frame-to-frame
+    // on its own, so no extra rolling-average layer is needed on top of it.
+    // #296 gated this dev-only; #334 put it BACK in production to diagnose a Windows/Edge frame-rate
+    // problem, widened into FPS + renderer/GPU/resolution facts. #449 gates it dev-only AGAIN
+    // (Jackson: "remove FPS data from production") — that diagnostic run is over and it is debug
+    // chrome on a shipped HUD. It keeps every field; it just no longer ships. Same
+    // `import.meta.env.DEV` treatment as the hints/AI overlays above (Vite strips it from the
+    // production bundle), so the per-frame update below is gated too and `fpsText` simply doesn't
+    // exist in production. See src/data/perfReadout.js for why each field is a suspect.
+    if (import.meta.env.DEV) {
+      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1);
+      // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
+      // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
+      // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing.
+      this._perfRenderer = rendererLabel(this.game.renderer?.type, Phaser.WEBGL, Phaser.CANVAS);
+      this._perfGpu = gpuRendererString(
+        probeGl(this.game.renderer?.gl, () => document.createElement('canvas')),
+      );
+    }
 
-    // #60: active timed-buff readout, top-right under the enemy count. One radial "cooldown-pie"
+    // #60: active timed-buff readout, top-right under the objective line. One radial "cooldown-pie"
     // per active buff — a ring tinted the buff colour that drains clockwise as it runs out, with
     // the label + remaining seconds beside it. A single Graphics layer draws all the rings; the
     // labels are pooled Text objects. Armor Patch is instant so it never appears here.
@@ -242,8 +248,9 @@ export default class HudScene extends Phaser.Scene {
     const mmD = 132;                       // diameter (also the square bounding box's side)
     this._miniSize = { w: mmD, h: mmD };
     this.miniBox = { x: this.W - 14 - mmD, y: 14, w: mmD, h: mmD };
-    // The top-right corner otherwise hosts the enemy count + buff rings; push those down to sit
+    // The top-right corner otherwise hosts the objective line + buff rings; push those down to sit
     // just below the map so they clear it (solo only — co-op moves both to top-centre, untouched).
+    // #449 is exactly this slot: "put the current objective label below the top-right minimap."
     this._mapReserveBottom = this.miniBox.y + this.miniBox.h + 8;
     // Panel layer: the dark disc backing + frame, repainted only when the box moves (a panel
     // rebuild). Dynamic layer: the corridor silhouette AND the live markers, cleared/redrawn each
@@ -261,17 +268,17 @@ export default class HudScene extends Phaser.Scene {
     this.miniGfx.setMask(this.miniMaskG.createGeometryMask());
     this._miniBoxRef = null;   // identity of the box the panel + mask were last painted for
 
-    // The map now occupies the top-right corner, so shift the enemy count clear of it (down to just
-    // below the disc in solo; co-op's centred origin leaves it at the top).
-    this.dummyText?.setPosition(this._layout.shared.enemyX, this._enemyTextY())
-      .setOrigin(this._layout.shared.enemyOriginX, 0);
+    // The map now occupies the top-right corner, so tuck the objective line just under the disc in
+    // solo (co-op's centred origin leaves it at the top).
+    this.objectiveText?.setPosition(this._layout.shared.objectiveX, this._objectiveTextY())
+      .setOrigin(this._layout.shared.objectiveOriginX, 0);
   }
 
-  // Is the top-right shared chrome (enemy count + buff rings) right-aligned? True in solo, false in
-  // co-op (where the layout moves both to top-centre). When right-aligned they share the corner with
-  // the map, so they drop below it; centred, they keep their original top positions.
-  _rightStack() { return this._layout?.shared?.enemyOriginX === 1; }
-  _enemyTextY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom : 16; }
+  // Is the top-right shared chrome (objective line + buff rings) right-aligned? True in solo, false
+  // in co-op (where the layout moves both to top-centre). When right-aligned they share the corner
+  // with the map, so they drop below it; centred, they keep their original top positions.
+  _rightStack() { return this._layout?.shared?.objectiveOriginX === 1; }
+  _objectiveTextY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom : 16; }
   _buffStartY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom + 24 : 44; }
 
   // ── #366: per-player panels ──────────────────────────────────────────────────────────────
@@ -329,8 +336,9 @@ export default class HudScene extends Phaser.Scene {
   // object existing because the first build runs mid-create(), before the minimap exists.
   _applyChromeLayout() {
     const { shared, margins } = this._layout;
-    // Enemy count rides below the map in solo (right-aligned corner), back at the top in co-op.
-    this.dummyText?.setPosition(shared.enemyX, this._enemyTextY()).setOrigin(shared.enemyOriginX, 0);
+    // Objective line rides below the map in solo (right-aligned corner), top-centre in co-op.
+    this.objectiveText?.setPosition(shared.objectiveX, this._objectiveTextY())
+      .setOrigin(shared.objectiveOriginX, 0);
     if (!this.wayMargins) return;   // first build: create() sets these itself, just below
     this.wayMargins = {
       top: 116, right: margins.right, bottom: this.H - this._tileTop + 12, left: margins.left,
@@ -506,34 +514,28 @@ export default class HudScene extends Phaser.Scene {
     // same objects at the same coordinates the singleton HUD used.
     for (const panel of this.panels) this._updatePanel(panel, snapshots[panel.index]);
 
-    const total = this.registry.get('enemyCount') || 0;
-    const alive = this.registry.get('enemiesAlive') ?? total;
-    if (total) {
-      this.dummyText.setText(`ENEMIES ${alive}/${total}`).setColor(alive ? C.dim : C.bad);
-    }
-
-    // #64/#269: run readout, driven by the Run the arena publishes each frame. Retired the old
-    // fixed-stage-count display (the stage/squad system is gone) in favor of the objectives
-    // cleared so far this run.
-    const run = this.registry.get('run');
-    if (run) {
-      this.stageText.setText(`OBJECTIVES ${run.objectivesCleared}   SCRAP ${run.currency}`);
-    }
+    // #449: the standalone `ENEMIES alive/total` readout and the `OBJECTIVES n  SCRAP n` run line
+    // are both gone. The enemy tally was not deleted, it MOVED: `baseClearLabel` below already
+    // renders the live requirement — remaining structures first, then the remaining garrison —
+    // so the one line under the minimap says everything those two used to.
 
     // #66: objective line + win banner, driven by the Mission the arena publishes each frame.
     const mission = this.registry.get('mission');
     if (mission) {
       const complete = mission.status === 'complete';
-      // #356: the objective line now names the ONE thing the player has to do right now — destroy
-      // the objective, then destroy the docks, then eliminate what's left — instead of the bare
-      // mission type. The step and its wording both come from the pure model (data/bases.js
-      // `baseClearState`/`baseClearLabel`), which is what guarantees no enemy count is ever shown
-      // while a dock still stands: docks reinforce forever (#326), so a live count at that point
-      // would climb rather than fall.
+      // #356: the objective line names the ONE thing the player has to do right now — destroy
+      // the objective/docks, then eliminate what's left — instead of the bare mission type. The
+      // step and its wording both come from the pure model (data/bases.js `baseClearState`/
+      // `baseClearLabel`), which is what guarantees no enemy count is ever shown while a dock
+      // still stands: docks reinforce forever (#326), so a live count at that point would climb
+      // rather than fall. #449 folded the old standalone enemy count into this same line, so it
+      // is now the ONLY place a count appears — rendering `baseClearLabel` verbatim rather than
+      // composing our own string from `baseClear`'s raw fields is what keeps that guarantee
+      // enforced in ONE place.
       const clear = this.registry.get('baseClear');
       const line = clear ? baseClearLabel(clear) : mission.objective;
       this.objectiveText
-        .setText(`OBJECTIVE: ${line}${complete ? '  [COMPLETE]' : ''}`)
+        .setText(`${line}${complete ? '  [COMPLETE]' : ''}`)
         .setColor(complete ? C.good : C.warn);
       // #64: the mission-complete banner only makes sense mid-run (a stage cleared, more to
       // come) — once the run itself is over (run-over banner below takes precedence), suppress
@@ -563,17 +565,20 @@ export default class HudScene extends Phaser.Scene {
     this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
-    // #334: ships in production now, so no DEV guard. Resolution/DPR are re-read every frame (a
-    // window move between displays changes DPR live, and main.js resizes the backing store to
-    // match); renderer/GPU were probed once in create().
-    this.fpsText.setText(perfLines({
-      fps: this.game.loop.actualFps,
-      renderer: this._perfRenderer,
-      gpu: this._perfGpu,
-      width: this.scale.width,
-      height: this.scale.height,
-      dpr: this.registry.get('dpr') || window.devicePixelRatio || 1,
-    }));
+    // #449: dev-only again — the object itself only exists under DEV, so its per-frame update sits
+    // behind the same flag and the whole readout is stripped from the production bundle.
+    // Resolution/DPR are re-read every frame (a window move between displays changes DPR live, and
+    // main.js resizes the backing store to match); renderer/GPU were probed once in create().
+    if (import.meta.env.DEV) {
+      this.fpsText.setText(perfLines({
+        fps: this.game.loop.actualFps,
+        renderer: this._perfRenderer,
+        gpu: this._perfGpu,
+        width: this.scale.width,
+        height: this.scale.height,
+        dpr: this.registry.get('dpr') || window.devicePixelRatio || 1,
+      }));
+    }
   }
 
   // #80: point at the current objective whenever it's off-camera. Reads the SAME live source

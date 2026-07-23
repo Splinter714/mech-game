@@ -6,13 +6,17 @@
 // #364 and #365. Jackson chose a FULL second HUD, not a compact health/ammo strip.
 //
 // This module is the pure part: given how many players are on the field it hands back where each
-// player's panel goes, plus where the SHARED readouts (enemy count, buff rings) go so they don't
-// collide with a right-hand panel. No Phaser, no scene — HudScene just builds to these numbers.
+// player's panel goes, plus where the SHARED readouts (the objective line, buff rings) go so they
+// don't collide with a right-hand panel. No Phaser, no scene — HudScene just builds to these numbers.
 //
 // **Solo is byte-identical.** With `count === 1` every number below is literally the constant
 // that was hardcoded in HudScene before this issue: the column at x=16, the tile row spanning
-// `W*0.12 .. W*0.88`, the enemy count right-aligned at `W-16`, the buff rings hugging the right
-// edge. One player therefore gets exactly today's HUD in today's position, on every path.
+// `W*0.12 .. W*0.88`, the top-right readout right-aligned at `W-16`, the buff rings hugging the
+// right edge. One player therefore gets exactly today's HUD in today's position, on every path.
+//
+// #449: the top-right shared slot used to hold the ENEMY COUNT; it now holds the OBJECTIVE LINE
+// (the enemy/structure tally folded into that line via data/bases.js `baseClearLabel`), so the
+// fields are named for what actually rides there. The geometry is unchanged.
 //
 // The layout is asked EVERY FRAME from the live player list, never decided once at construction —
 // #348's player-ring fix had exactly the mid-sortie-join bug that comes from deciding at build
@@ -36,7 +40,7 @@ export const BUFF_RING_R = 15;
 //  - `count === 1` → one panel, all of today's numbers.
 //  - `count >= 2`  → player 1 keeps the left column, player 2 gets a mirrored right column, and
 //    the bottom tile row splits into two half-width rows (left half = P1, right half = P2) so
-//    the two rows read as belonging to the column above them. The shared enemy/buff readouts
+//    the two rows read as belonging to the column above them. The shared objective/buff readouts
 //    move to top-centre, which is the one region neither panel claims — leaving them top-right
 //    would have them draw straight through player 2's integrity column.
 export function hudLayout(count, W) {
@@ -51,8 +55,8 @@ export function hudLayout(count, W) {
         tilesX: W * 0.12,
         tilesW: W * 0.76,
       }],
-      // Today's shared readouts: right-aligned enemy count, rings hugging the right edge.
-      shared: { enemyX: W - HUD_EDGE, enemyOriginX: 1, buffCx: W - HUD_EDGE - BUFF_RING_R },
+      // Today's shared readouts: right-aligned objective line, rings hugging the right edge.
+      shared: { objectiveX: W - HUD_EDGE, objectiveOriginX: 1, buffCx: W - HUD_EDGE - BUFF_RING_R },
       // Today's wayfinding margins (HudScene adds the top/bottom, which don't change).
       margins: { left: 24, right: 24 },
     };
@@ -77,7 +81,7 @@ export function hudLayout(count, W) {
   return {
     count: n,
     panels: panels.slice(0, n),
-    shared: { enemyX: Math.round(W / 2), enemyOriginX: 0.5, buffCx: Math.round(W / 2 + 78) },
+    shared: { objectiveX: Math.round(W / 2), objectiveOriginX: 0.5, buffCx: Math.round(W / 2 + 78) },
     // Keep the off-screen chevrons clear of BOTH columns now that the right edge is occupied.
     margins: { left: 24, right: HUD_COLUMN_W + 24 },
   };

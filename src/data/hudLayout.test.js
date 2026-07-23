@@ -30,9 +30,9 @@ describe('hudLayout — solo is exactly the pre-#366 HUD', () => {
     expect(l.panels[0].tilesW).toBe(W * 0.76);
   });
 
-  it('keeps the enemy count right-aligned and the buff rings on the right edge', () => {
-    expect(l.shared.enemyX).toBe(W - 16);
-    expect(l.shared.enemyOriginX).toBe(1);
+  it('keeps the objective line right-aligned and the buff rings on the right edge', () => {
+    expect(l.shared.objectiveX).toBe(W - 16);
+    expect(l.shared.objectiveOriginX).toBe(1);
     expect(l.shared.buffCx).toBe(W - 16 - 15);
   });
 
@@ -47,7 +47,7 @@ describe('hudLayout — solo is exactly the pre-#366 HUD', () => {
   it('is the same layout at any width — no co-op branch leaks into one player', () => {
     for (const w of [640, 900, 1920]) {
       expect(hudLayout(1, w).panels[0].columnX).toBe(16);
-      expect(hudLayout(1, w).shared.enemyOriginX).toBe(1);
+      expect(hudLayout(1, w).shared.objectiveOriginX).toBe(1);
     }
   });
 });
@@ -78,9 +78,9 @@ describe('hudLayout — co-op mirrors a second panel', () => {
     expect(a.tilesX).toBeGreaterThanOrEqual(0);
   });
 
-  it('moves the shared enemy/buff readouts off the right edge, clear of panel 2', () => {
-    expect(l.shared.enemyOriginX).toBe(0.5);
-    expect(l.shared.enemyX).toBe(W / 2);
+  it('moves the shared objective/buff readouts off the right edge, clear of panel 2', () => {
+    expect(l.shared.objectiveOriginX).toBe(0.5);
+    expect(l.shared.objectiveX).toBe(W / 2);
     expect(l.shared.buffCx).toBeLessThan(l.panels[1].columnX);
   });
 

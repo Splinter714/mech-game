@@ -17,18 +17,22 @@ const hud = read('HudScene.js');
 const garage = read('GarageScene.js');
 const tabBar = read('../ui/tabBar.js');
 
-describe('#334 HudScene: the performance readout is NOT dev-gated (it ships to production)', () => {
-  // #296 originally gated the FPS counter dev-only; #334 reverses that for the performance readout
-  // ONLY, so Jackson can diagnose the Windows/Edge frame-rate problem on the live build. The rest
-  // of #296's gating (below) is unchanged — that's the whole point of keeping these in one file.
-  it('the performance readout is created unconditionally', () => {
-    expect(hud).toMatch(/\n\s*this\.fpsText = this\.add\.text/);
-    expect(hud).not.toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text/);
+describe('#449 HudScene: the performance readout is dev-gated again (stripped from production)', () => {
+  // #296 gated the FPS counter dev-only; #334 reversed that so Jackson could diagnose a Windows/Edge
+  // frame-rate problem on the live build; #449 puts it BACK behind DEV ("remove FPS data from
+  // production") now that diagnostic run is over. The assertions below are #334's, inverted.
+  it('the performance readout is created only under import.meta.env.DEV', () => {
+    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text/);
   });
 
-  it('the performance readout is updated unconditionally', () => {
-    expect(hud).toMatch(/\n\s*this\.fpsText\.setText\(perfLines\(\{/);
-    expect(hud).not.toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText\.setText/);
+  it('the performance readout is updated only under import.meta.env.DEV', () => {
+    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText\.setText\(perfLines\(\{/);
+  });
+
+  it('the one-off renderer/GPU probes are inside the same guard (no probe in production)', () => {
+    // Anchored on the fpsText guard itself, so the probes have to sit in THAT block — not merely
+    // somewhere after some earlier DEV guard.
+    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text[\s\S]*?this\._perfRenderer = rendererLabel[\s\S]*?this\._perfGpu = gpuRendererString/);
   });
 
   it('reads the renderer type LIVE off the game rather than inferring it from config', () => {
