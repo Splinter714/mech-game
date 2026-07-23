@@ -16,7 +16,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 // below — see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel } from '../../data/sprint.js';
-import { triggerDash, updateDash, DASH_COOLDOWN } from '../../data/dash.js';
+import { triggerDash, updateDash } from '../../data/dash.js';
 import { targetHexKeyOf } from './shared.js';
 import { targetCoverExempt, targetSoftCoverExempt } from '../../data/visibility.js';
 
@@ -176,8 +176,12 @@ export const FiringMixin = {
   // triggers one burst; pressing again mid-burst or mid-cooldown is a no-op (`triggerDash`
   // itself is a no-op in that case — see data/dash.js). The pure state machine
   // (active/burstRemaining/cooldown) lives entirely in data/dash.js; this just wires the press
-  // + per-frame tick and publishes the live state for the HUD's cooldown indicator.
+  // + per-frame tick.
   // #348: per player — each player's own L3/Space, own burst, own cooldown.
+  // #450: the `dashActive`/`dashCooldown`/`dashCooldownMax` publishes that used to sit at the end
+  // of this method are GONE along with the HUD's dash cooldown bar — the same treatment #368 gave
+  // the sprint gauge's channels. The dash itself is untouched; nothing reads the cooldown but the
+  // player's own sense of when it comes back.
   _handleDash(intent, delta, player = primaryPlayerOf(this)) {
     const dt = delta / 1000;
     const wasActive = player.dash.active;
@@ -188,12 +192,6 @@ export const FiringMixin = {
     // just engaged/disengaged" cue language, no new SFX plumbing needed for a ~0.2s burst.
     if (player.dash.active && !wasActive) Audio.ui('sprintOn');
     else if (!player.dash.active && wasActive) Audio.ui('sprintOff');
-
-    if (player === primaryPlayerOf(this)) {
-      this.registry.set('dashActive', player.dash.active);
-      this.registry.set('dashCooldown', player.dash.cooldown);
-      this.registry.set('dashCooldownMax', DASH_COOLDOWN);
-    }
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the

@@ -1,7 +1,7 @@
 // Per-player HUD layout (#366, co-op phase 4).
 //
 // The arena HUD was written for THE player: one integrity column top-left, one skill-tile row
-// along the bottom, one dash bar. In co-op that left player 2 with no weapon, ammo or health
+// along the bottom. In co-op that left player 2 with no weapon, ammo or health
 // readout at all — the same "a player-1 value used where each-player was meant" shape as #360,
 // #364 and #365. Jackson chose a FULL second HUD, not a compact health/ammo strip.
 //
@@ -50,9 +50,6 @@ export function hudLayout(count, W) {
         columnX: HUD_EDGE,
         tilesX: W * 0.12,
         tilesW: W * 0.76,
-        // Today's dash bar: `min(260, W*0.32)` wide, centred on the screen.
-        dashW: Math.min(260, W * 0.32),
-        dashCx: W / 2,
       }],
       // Today's shared readouts: right-aligned enemy count, rings hugging the right edge.
       shared: { enemyX: W - HUD_EDGE, enemyOriginX: 1, buffCx: W - HUD_EDGE - BUFF_RING_R },
@@ -61,9 +58,6 @@ export function hudLayout(count, W) {
     };
   }
   const half = 0.45;
-  // Each half-width tile row gets its dash bar centred on that row, so the bar belongs
-  // unambiguously to the four tiles above it rather than floating between the two rows.
-  const dashW = Math.min(220, W * half * 0.62);
   const panels = [
     {
       index: 0,
@@ -71,8 +65,6 @@ export function hudLayout(count, W) {
       columnX: HUD_EDGE,
       tilesX: W * 0.03,
       tilesW: W * half,
-      dashW,
-      dashCx: W * 0.03 + (W * half) / 2,
     },
     {
       index: 1,
@@ -80,8 +72,6 @@ export function hudLayout(count, W) {
       columnX: Math.round(W - HUD_EDGE - HUD_COLUMN_W),
       tilesX: W * 0.52,
       tilesW: W * half,
-      dashW,
-      dashCx: W * 0.52 + (W * half) / 2,
     },
   ];
   return {
@@ -128,8 +118,8 @@ export function lockPointOf(p) {
 
 // The per-frame snapshot ONE player publishes to the HUD. Everything the HUD needs about a
 // player and nothing else, so the HUD never reaches into scene internals (and so a test can
-// build one by hand). Pure — the caller passes the dash cooldown maximum.
-export function hudPlayerSnapshot(p, dashCooldownMax) {
+// build one by hand). Pure.
+export function hudPlayerSnapshot(p) {
   return {
     id: p.id,
     color: p.color,
@@ -138,11 +128,6 @@ export function hudPlayerSnapshot(p, dashCooldownMax) {
     // #368: each player's own off-screen lock chevron rides this same channel rather than a
     // second parallel one — the count-change rebuild in HudScene then covers the chevrons too.
     lock: lockPointOf(p),
-    dash: {
-      active: !!p.dash?.active,
-      cooldown: p.dash?.cooldown ?? 0,
-      max: dashCooldownMax,
-    },
     respawn: p.respawn ? { ...p.respawn } : null,
   };
 }

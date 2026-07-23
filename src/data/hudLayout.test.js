@@ -30,11 +30,6 @@ describe('hudLayout — solo is exactly the pre-#366 HUD', () => {
     expect(l.panels[0].tilesW).toBe(W * 0.76);
   });
 
-  it('keeps the dash bar min(260, W*0.32) wide and screen-centred', () => {
-    expect(l.panels[0].dashW).toBe(Math.min(260, W * 0.32));
-    expect(l.panels[0].dashCx).toBe(W / 2);
-  });
-
   it('keeps the enemy count right-aligned and the buff rings on the right edge', () => {
     expect(l.shared.enemyX).toBe(W - 16);
     expect(l.shared.enemyOriginX).toBe(1);
@@ -83,13 +78,6 @@ describe('hudLayout — co-op mirrors a second panel', () => {
     expect(a.tilesX).toBeGreaterThanOrEqual(0);
   });
 
-  it('centres each dash bar on its own tile row', () => {
-    for (const p of l.panels) {
-      expect(p.dashCx).toBeCloseTo(p.tilesX + p.tilesW / 2, 5);
-      expect(p.dashW).toBeLessThanOrEqual(p.tilesW);
-    }
-  });
-
   it('moves the shared enemy/buff readouts off the right edge, clear of panel 2', () => {
     expect(l.shared.enemyOriginX).toBe(0.5);
     expect(l.shared.enemyX).toBe(W / 2);
@@ -110,7 +98,7 @@ describe('hudLayout — co-op mirrors a second panel', () => {
       const n = hudLayout(2, w);
       expect(n.panels[1].columnX).toBeGreaterThan(n.panels[0].columnX);
       expect(n.panels[1].tilesX + n.panels[1].tilesW).toBeLessThanOrEqual(w);
-      for (const p of n.panels) expect(p.dashW).toBeGreaterThan(0);
+      for (const p of n.panels) expect(p.tilesW).toBeGreaterThan(0);
     }
   });
 });
@@ -158,29 +146,33 @@ describe('hudPlayerSnapshot — what each player publishes to the HUD', () => {
     color: 0xffb24a,
     mech: { tag: 'p2 mech' },
     dead: true,
-    dash: { active: false, cooldown: 2.5 },
     respawn: { remainingMs: 8000, waitingOnCombat: false },
   };
 
-  it('carries that player\'s OWN mech, colour, dash and respawn state', () => {
-    const s = hudPlayerSnapshot(player, 4);
+  it('carries that player\'s OWN mech, colour and respawn state', () => {
+    const s = hudPlayerSnapshot(player);
     expect(s.id).toBe(1);
     expect(s.color).toBe(0xffb24a);
     expect(s.mech).toBe(player.mech);
     expect(s.dead).toBe(true);
-    expect(s.dash).toEqual({ active: false, cooldown: 2.5, max: 4 });
     expect(s.respawn).toEqual({ remainingMs: 8000, waitingOnCombat: false });
   });
 
   it('copies the respawn state rather than handing out the live object', () => {
-    const s = hudPlayerSnapshot(player, 4);
+    const s = hudPlayerSnapshot(player);
     expect(s.respawn).not.toBe(player.respawn);
   });
 
-  it('survives a half-built player (no dash/respawn yet)', () => {
-    const s = hudPlayerSnapshot({ id: 0, color: 1, mech: null }, 4);
-    expect(s.dash).toEqual({ active: false, cooldown: 0, max: 4 });
+  it('survives a half-built player (no respawn yet)', () => {
+    const s = hudPlayerSnapshot({ id: 0, color: 1, mech: null });
     expect(s.respawn).toBe(null);
+  });
+
+  // #450: the dash cooldown readout was removed from the HUD, so the snapshot no longer
+  // carries any dash state at all — the mechanic itself is untouched (data/dash.js).
+  it('publishes no dash state', () => {
+    expect(hudPlayerSnapshot({ ...player, dash: { active: true, cooldown: 2.5 } }).dash)
+      .toBeUndefined();
   });
 });
 
@@ -211,8 +203,8 @@ describe('lockPointOf — one player\'s own lock target', () => {
   });
 
   it('is what hudPlayerSnapshot publishes as `lock`', () => {
-    const s = hudPlayerSnapshot({ id: 1, color: 2, mech: null, convergeTarget: { x: 7, y: 8 } }, 4);
+    const s = hudPlayerSnapshot({ id: 1, color: 2, mech: null, convergeTarget: { x: 7, y: 8 } });
     expect(s.lock).toEqual({ x: 7, y: 8 });
-    expect(hudPlayerSnapshot({ id: 0, color: 1, mech: null }, 4).lock).toBe(null);
+    expect(hudPlayerSnapshot({ id: 0, color: 1, mech: null }).lock).toBe(null);
   });
 });

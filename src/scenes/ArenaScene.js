@@ -24,7 +24,6 @@ import { RunStatsMixin } from './arena/runStatsHooks.js';
 import { primaryPlayerOf } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot } from '../data/hudLayout.js';
-import { DASH_COOLDOWN } from '../data/dash.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -371,7 +370,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
     // #366/#368: the per-player HUD snapshot — panels AND off-screen lock chevrons — published
     // here so each player's `lock` is this frame's pick, not last frame's.
-    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p, DASH_COOLDOWN)));
+    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p)));
     for (const player of this.players) this._stepGait(dt, player);
     this._updatePlayerMarkers();   // #348: keep each identifying ring under its own mech
     for (const player of this.players) {

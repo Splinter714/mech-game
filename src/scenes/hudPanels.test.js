@@ -78,9 +78,8 @@ function snap(id, { dead = false, respawn = null } = {}) {
     color: PLAYER_COLORS[id],
     mech: new Mech({ chassisId: 'medium' }),
     dead,
-    dash: { active: false, cooldown: 0 },
     respawn,
-  }, 4);
+  });
 }
 
 describe('HudScene panels — solo', () => {
@@ -103,12 +102,12 @@ describe('HudScene panels — solo', () => {
 
   it('falls back to the old singleton channel when nothing publishes hudPlayers', () => {
     const { scene, registry } = fakeScene(null);
-    registry.set('playerMech', new Mech({ chassisId: 'medium' }));
-    registry.set('dashCooldown', 1.5);
+    const mech = new Mech({ chassisId: 'medium' });
+    registry.set('playerMech', mech);
     const snaps = scene._syncPanels();
     expect(snaps).toHaveLength(1);
     expect(scene.panels).toHaveLength(1);
-    expect(snaps[0].dash.cooldown).toBe(1.5);
+    expect(snaps[0].mech).toBe(mech);
   });
 
   it('renders no panels at all with no player anywhere', () => {

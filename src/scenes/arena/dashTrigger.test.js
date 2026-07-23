@@ -74,20 +74,16 @@ describe('#261 _handleDash — press-to-trigger burst + cooldown', () => {
     expect(scene.dash.active).toBe(true);
   });
 
-  it('publishes dashActive/dashCooldown/dashCooldownMax to the registry every frame', () => {
+  // #450: the HUD's dash cooldown bar is gone, and with it the `dashActive`/`dashCooldown`/
+  // `dashCooldownMax` channels that existed only to feed it. The state machine above is
+  // untouched — this pins that the dash no longer publishes anything at all.
+  it('publishes no dash channels to the registry — nothing reads them since #450', () => {
     const published = {};
     const scene = makeScene();
     scene.registry = { set: (k, v) => { published[k] = v; } };
 
     scene._handleDash({ dashPressed: true }, 16);
-    expect(published.dashActive).toBe(true);
-    expect(published.dashCooldownMax).toBe(DASH_COOLDOWN);
-    // The same frame's tick already shaves the first 16ms off — close to, not exactly, the max.
-    expect(published.dashCooldown).toBeCloseTo(DASH_COOLDOWN, 1);
-
     scene._handleDash({ dashPressed: false }, DASH_BURST_DURATION * 1000);
-    expect(published.dashActive).toBe(false);
-    expect(published.dashCooldown).toBeGreaterThan(0);
-    expect(published.dashCooldown).toBeLessThan(DASH_COOLDOWN);
+    expect(Object.keys(published)).toEqual([]);
   });
 });

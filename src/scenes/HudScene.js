@@ -6,7 +6,6 @@ import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { miniProjector, clampToBox } from '../data/minimap.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
-import { DASH_BIND } from '../input/Controls.js';
 import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
@@ -193,7 +192,7 @@ export default class HudScene extends Phaser.Scene {
     // the inset-offset note on `lockWayMargins` below).
     this.lockWayGfx = this.add.graphics().setDepth(20);
 
-    // #366: the PER-PLAYER panels — integrity column, shield row, skill-tile row and dash bar,
+    // #366: the PER-PLAYER panels — integrity column, shield row and skill-tile row,
     // one complete set per player on the field. Before this, every one of those read
     // `registry.get('playerMech')`, which is only ever player 1's mech, so co-op's player 2 had
     // no weapon, ammo or health readout at all. Jackson chose a FULL second HUD over a compact
@@ -278,8 +277,8 @@ export default class HudScene extends Phaser.Scene {
   // ── #366: per-player panels ──────────────────────────────────────────────────────────────
   //
   // A PANEL is one player's whole readout: the integrity column (per-location armor/hp bars +
-  // numbers), the shield row, the four skill tiles with their live ammo, the dash bar, and the
-  // downed/respawn line. Everything here used to be one hardcoded set of objects fed from
+  // numbers), the shield row, the four skill tiles with their live ammo, and the downed/respawn
+  // line. Everything here used to be one hardcoded set of objects fed from
   // `registry.get('playerMech')`.
 
   // The live per-player snapshots the arena publishes each frame (data/hudLayout.js
@@ -296,11 +295,6 @@ export default class HudScene extends Phaser.Scene {
       color: playerColor(0),
       mech,
       dead: false,
-      dash: {
-        active: !!this.registry.get('dashActive'),
-        cooldown: this.registry.get('dashCooldown'),
-        max: this.registry.get('dashCooldownMax') || 1,
-      },
       respawn: null,
       // #368: the pre-`hudPlayers` singleton channel is still the fallback source for the
       // off-screen lock chevron, so this path draws exactly the one chevron it always did.
@@ -350,7 +344,7 @@ export default class HudScene extends Phaser.Scene {
   }
 
   // Build one player's set of objects at the layout's coordinates. Creation ORDER mirrors the
-  // pre-#366 code exactly (header, bars layer, per-row labels + numbers, shield, tiles, dash) so
+  // pre-#366 code exactly (header, bars layer, per-row labels + numbers, shield, tiles) so
   // a solo HUD is the same objects in the same draw order at the same positions as before.
   _makePanel(spec, count, snapshot) {
     const x = spec.columnX;
@@ -409,16 +403,6 @@ export default class HudScene extends Phaser.Scene {
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
     }
     panel.tileTop = tiles.length ? tiles[0].y : this.H - 10;
-
-    const barW = spec.dashW, barH = 8;
-    const barX = spec.dashCx - barW / 2, barY = panel.tileTop - 22;
-    panel.dashBarTrack = this.add.rectangle(barX, barY, barW, barH, 0x0e1218)
-      .setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f);
-    panel.dashBarFill = this.add.rectangle(barX, barY, barW, barH, C.accent).setOrigin(0, 0.5);
-    panel.dashLabel = this.add.text(barX + barW / 2, barY - 12, '', {
-      fontFamily: 'monospace', fontSize: '10px', color: C.dim,
-    }).setOrigin(0.5, 1);
-    panel.dashBarW = barW;
     return panel;
   }
 
@@ -426,13 +410,12 @@ export default class HudScene extends Phaser.Scene {
     const objs = [
       panel.header, panel.partBarsGfx, panel.shieldLabel, panel.shieldBarTrack,
       panel.shieldBarFill, panel.shieldText, panel.statusText, panel.skillBar,
-      panel.dashBarTrack, panel.dashBarFill, panel.dashLabel,
       ...Object.values(panel.partTexts), ...panel.extras,
     ];
     for (const o of objs) o?.destroy();
   }
 
-  // Which control glyphs a panel's tiles/dash bar should show. Player 1 owns the keyboard+mouse
+  // Which control glyphs a panel's tiles should show. Player 1 owns the keyboard+mouse
   // and so follows the live `inputMode`; every later player is gamepad-only by construction
   // (scenes/arena/coop.js builds their Controls with `keyboard: false`), so their binds are
   // always the pad's — showing them Q/E/LMB would be showing them keys they cannot press.
@@ -454,8 +437,8 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // Skill tiles: live ammo on each weapon (#188: the old per-slot ability cooldown/shield
-    // display is gone along with the ability slot — #261: the always-available Dash renders in
-    // its own cooldown bar below instead, since it isn't tied to a body location any more).
+    // display is gone along with the ability slot — the always-available Dash has no readout at
+    // all since #450, since it isn't tied to a body location any more).
     const mode = this._panelMode(panel);
     const weapons = mech.weapons();
     for (const loc of TILE_ORDER) {
@@ -485,9 +468,6 @@ export default class HudScene extends Phaser.Scene {
       updateSkillTile(panel.skillRefs[loc], opts);
     }
 
-    // #188/#261: Dash cooldown bar — fill fraction + color track how close the next dash is to
-    // ready; the label shows the bind + READY/ACTIVE/COOLDOWN state.
-    this._updateDashBar(panel, snapshot.dash);
     this._updatePartBars(panel, mech);
     this._updateShieldBar(panel, mech);
 
@@ -495,7 +475,6 @@ export default class HudScene extends Phaser.Scene {
     // waiting on. Everything else in the panel keeps reading true.
     const status = panelStatusText(snapshot);
     panel.skillBar.setAlpha(snapshot.dead ? 0.3 : 1);
-    panel.dashBarFill.setAlpha(snapshot.dead ? 0.3 : 1);
     if (status) panel.statusText.setText(status).setVisible(true);
   }
 
@@ -523,7 +502,7 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // #366: one pass per PANEL — its own tiles/ammo, its own integrity bars, its own shield row,
-    // its own dash bar, its own downed-and-waiting line. Solo runs this exactly once, over the
+    // its own downed-and-waiting line. Solo runs this exactly once, over the
     // same objects at the same coordinates the singleton HUD used.
     for (const panel of this.panels) this._updatePanel(panel, snapshots[panel.index]);
 
@@ -795,28 +774,6 @@ export default class HudScene extends Phaser.Scene {
       const m = toMini(w.x, w.y);
       if (inBox(m)) drawChevron(g, m.x, m.y, w.angle, 7.5, identify ? w.color : MM.player, 1);
     }
-  }
-
-  // #188/#261: Dash cooldown bar — fill width tracks how much of the cooldown has ELAPSED
-  // (registry-published by arena/firing.js's `_handleDash` each frame) — empty right after a
-  // dash, filling back up to full as it becomes ready again; color/label reflect
-  // ACTIVE/READY/COOLDOWN so the owner can read at a glance whether a dash is mid-burst, ready
-  // to fire, or still recharging (and roughly how long is left).
-  // #366: per panel — each player has their own L3/Space, own burst, own cooldown (arena/firing.js
-  // has tracked them per player since #348; only the HUD was still reading player 1's).
-  _updateDashBar(panel, dash) {
-    const cooldown = dash?.cooldown;
-    if (cooldown == null) return;   // no player mech / dash state published yet
-    const max = dash.max || 1;
-    const active = !!dash.active;
-    const frac = Phaser.Math.Clamp(1 - cooldown / max, 0, 1);   // 0 = just used, 1 = ready
-    panel.dashBarFill.setSize(Math.max(1, panel.dashBarW * frac), panel.dashBarFill.height);
-    const ready = cooldown <= 0;
-    const color = active ? C.accent : ready ? C.good : C.warn;
-    panel.dashBarFill.setFillStyle(Phaser.Display.Color.HexStringToColor(color).color);
-    const bind = this._panelMode(panel) === 'pad' ? DASH_BIND.pad : DASH_BIND.key;
-    const state = active ? 'DASHING' : ready ? 'READY' : `COOLDOWN ${cooldown.toFixed(1)}s`;
-    panel.dashLabel.setText(`DASH (${bind})  ${state}`).setColor(color);
   }
 
   // #246: per-location armor/hp split bar — TWO adjacent segments in one bar frame, armor
