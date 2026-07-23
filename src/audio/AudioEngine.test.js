@@ -501,13 +501,19 @@ describe('AudioEngine (mock context)', () => {
         const events = fades[0]._events;
         // endTime = _now (== currentTime 1.0) + played 0.4s = 1.4s; fade starts at 1.4 - 0.12.
         const endTime = ctx.currentTime + 0.4;
-        expect(events).toHaveLength(2);
+        // #479: the gain is now ANCHORED at `vol` from playback start — a Web Audio gain holds its
+        // 1.0 default until its first scheduled event, so without this anchor the whole pre-fade
+        // window played at unity. Three events now: anchor@start, hold@fade-start, ramp→0@end.
+        expect(events).toHaveLength(3);
         expect(events[0][0]).toBe('set');
-        expect(events[0][1]).toBe(1);                        // holds FULL gain...
-        expect(events[0][2]).toBeCloseTo(endTime - 0.12, 5); // ...until end - fadeOut
-        expect(events[1][0]).toBe('ramp');
-        expect(events[1][1]).toBe(0);                        // ramps to SILENCE...
-        expect(events[1][2]).toBeCloseTo(endTime, 5);        // ...landing exactly on the trim point
+        expect(events[0][1]).toBe(1);                        // anchored at start...
+        expect(events[0][2]).toBeCloseTo(ctx.currentTime, 5);// ...from the very first sample
+        expect(events[1][0]).toBe('set');
+        expect(events[1][1]).toBe(1);                        // still holds FULL gain...
+        expect(events[1][2]).toBeCloseTo(endTime - 0.12, 5); // ...until end - fadeOut
+        expect(events[2][0]).toBe('ramp');
+        expect(events[2][1]).toBe(0);                        // ramps to SILENCE...
+        expect(events[2][2]).toBeCloseTo(endTime, 5);        // ...landing exactly on the trim point
       });
 
       it('clamps a fade longer than the played window down to the played duration (never over-runs)', async () => {
@@ -517,9 +523,12 @@ describe('AudioEngine (mock context)', () => {
         eng.fire(getWeapon('autocannon'));
         const events = ctx._fadeGains()[0]._events;
         const endTime = ctx.currentTime + 0.2;
-        // clamped: fade spans the WHOLE 200ms window — set anchor sits at endTime - 0.2 == start.
-        expect(events[0][2]).toBeCloseTo(endTime - 0.2, 5);
-        expect(events[1][2]).toBeCloseTo(endTime, 5);
+        // clamped: fade spans the WHOLE 200ms window. #479: event[0] anchors at playback start
+        // (== endTime - 0.2 here, since the fade fills the whole window), event[1] holds at the
+        // fade-start (same instant), event[2] ramps to 0 at end.
+        expect(events[0][2]).toBeCloseTo(ctx.currentTime, 5);
+        expect(events[1][2]).toBeCloseTo(endTime - 0.2, 5);
+        expect(events[2][2]).toBeCloseTo(endTime, 5);
       });
 
       it('composes with a start offset: endTime = start-offset window, fade rides on top of #166 trim', async () => {
@@ -533,8 +542,10 @@ describe('AudioEngine (mock context)', () => {
         expect(duration).toBeCloseTo(0.3, 5);
         const events = ctx._fadeGains()[0]._events;
         const endTime = when + 0.3;                   // played window is the trim duration
-        expect(events[0][2]).toBeCloseTo(endTime - 0.1, 5);
-        expect(events[1][2]).toBeCloseTo(endTime, 5);
+        // #479: anchor at playback start (== `when`), hold at fade-start, ramp to 0 at end.
+        expect(events[0][2]).toBeCloseTo(when, 5);
+        expect(events[1][2]).toBeCloseTo(endTime - 0.1, 5);
+        expect(events[2][2]).toBeCloseTo(endTime, 5);
       });
 
       it('clearing the fade back to 0 restores the hard cut (no ramp scheduled)', async () => {
@@ -585,8 +596,11 @@ describe('AudioEngine (mock context)', () => {
         expect(fades.length).toBe(1);
         const events = fades[0]._events;
         const endTime = ctx.currentTime + 0.4;
-        expect(events[0]).toEqual(['set', 1.5, expect.closeTo(endTime - 0.12, 5)]); // holds at VOLUME, not 1
-        expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);          // still ramps to silence
+        // #479: anchored at VOLUME (1.5, not 1) from playback START — so the loud head plays at the
+        // authored volume, not unity. Then holds at 1.5 to the fade-start and ramps to 0 at end.
+        expect(events[0]).toEqual(['set', 1.5, expect.closeTo(ctx.currentTime, 5)]);   // anchor at start, at VOLUME
+        expect(events[1]).toEqual(['set', 1.5, expect.closeTo(endTime - 0.12, 5)]);    // still VOLUME at fade-start
+        expect(events[2]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);            // ramps to silence
       });
 
       it('clamps volume into the 0..2 range via setVolume, reflected in the gain node', async () => {
@@ -712,8 +726,11 @@ describe('AudioEngine (mock context)', () => {
       expect(fades.length).toBe(1);
       const events = fades[0]._events;
       const endTime = ctx.currentTime + 0.17;
-      expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.17, 5)]);
-      expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
+      // #479: gain anchored at start (== endTime - 0.17, since the clamped fade fills the window),
+      // held at the fade-start, then ramped to 0 at end.
+      expect(events[0]).toEqual(['set', 1, expect.closeTo(ctx.currentTime, 5)]);
+      expect(events[1]).toEqual(['set', 1, expect.closeTo(endTime - 0.17, 5)]);
+      expect(events[2]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
     });
 
     it('plasmaLance impact is unbaked — never plays the baked fire buffer (bake is fire-only)', () => {
@@ -773,8 +790,10 @@ describe('AudioEngine (mock context)', () => {
       expect(fades.length).toBe(1);
       const events = fades[0]._events;
       const endTime = ctx.currentTime + 0.06;
-      expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.06, 5)]);
-      expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
+      // #479: anchor at start (== endTime - 0.06, clamped fade fills the window), hold, ramp to 0.
+      expect(events[0]).toEqual(['set', 1, expect.closeTo(ctx.currentTime, 5)]);
+      expect(events[1]).toEqual(['set', 1, expect.closeTo(endTime - 0.06, 5)]);
+      expect(events[2]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
     });
 
     // #176: the other bakes and pulseLaser's own impact stage are unaffected by the pulseLaser/fire
@@ -813,8 +832,10 @@ describe('AudioEngine (mock context)', () => {
         expect(fades.length).toBe(1);
         const events = fades[0]._events;
         const endTime = ctx.currentTime + 0.5;
-        expect(events[0]).toEqual(['set', 1, expect.closeTo(endTime - 0.09, 5)]);
-        expect(events[1]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
+        // #479: anchor at start, hold at fade-start (end - 0.09), ramp to 0 at end.
+        expect(events[0]).toEqual(['set', 1, expect.closeTo(ctx.currentTime, 5)]);
+        expect(events[1]).toEqual(['set', 1, expect.closeTo(endTime - 0.09, 5)]);
+        expect(events[2]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);
       } finally {
         entry.trimMs = saved.trimMs;
         entry.fadeOutMs = saved.fadeOutMs;

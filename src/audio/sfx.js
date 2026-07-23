@@ -152,10 +152,17 @@ function playBuffer(e, bus, buffer, startMs, trimMs, proc, fadeOutMs, volume) {
   // fadeOutMs AND a known, positive played duration). Clamp the fade so it can't exceed the
   // played window, then anchor gain at #182's `vol` (not always 1) at the fade-start and ramp
   // linearly to 0 at endTime — so the fade rides FROM the volume level, not from unity.
+  // #479 fix: a Web Audio GainNode.gain defaults to 1.0 and HOLDS that default until its FIRST
+  // scheduled event. Before this fix the first event was at the fade-start (endTime - fadeSec),
+  // so the whole window BEFORE the fade played at unity — `vol` was ignored for the loud head of
+  // the cue, then it jumped to `vol` and faded (Jackson: "starts loud then becomes very quiet very
+  // quickly"). Anchor `vol` at `startAt` too, so it HOLDS at `vol` from playback start until the
+  // fade point, then ramps to 0.
   if (fadeOutMs > 0 && playedSec != null && playedSec > 0) {
     const fadeSec = Math.min(fadeOutMs / 1000, playedSec);
     const endTime = startAt + playedSec;
     const fadeGain = ctx.createGain();
+    fadeGain.gain.setValueAtTime(vol, startAt);
     fadeGain.gain.setValueAtTime(vol, endTime - fadeSec);
     fadeGain.gain.linearRampToValueAtTime(0, endTime);
     tail.connect(fadeGain);
