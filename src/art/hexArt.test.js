@@ -3,6 +3,7 @@ import {
   HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor,
   buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId, BOUNDARY_ONLY_IDS,
   buildStreaks, clipSegToHex, HEX_LATTICE, RIVER_STREAK_SETS,
+  buildFractalCracks, QUICKSAND_SWIRL_SETS, ICE_CRACK_LEVELS, SLAB_SETS,
 } from './hexArt.js';
 import { ART_SCALE } from './_frames.js';
 import { BIOMES, BIOME_IDS } from '../data/biomes.js';
@@ -461,5 +462,129 @@ describe('the river lines are simple horizontal waves (#471)', () => {
         Math.hypot(qx - (px - ox), qy - (py - oy)) < 1e-6);
       expect(hit, `crossing ${px.toFixed(2)},${py.toFixed(2)}`).toBe(true);
     }
+  });
+});
+
+// ── #475: the owner's per-tile review ─────────────────────────────────────────────────────────
+// Three tiles got a shape change that the existing sweep above (mark count / six-sector reach /
+// containment) is blind to, which is exactly how the river shipped wrong four times. Each block
+// below pins the INTENT that was asked for, in the property the ask is actually about — the swirl's
+// curvature, the fracture's self-similarity, the debris piece's SIZE — and deliberately not a
+// threshold carried over from the look being replaced.
+
+// Total signed turn of a polyline, and the per-step turn deltas it's made of.
+function turning(line) {
+  let total = 0;
+  const steps = [];
+  for (let i = 0; i + 5 < line.length; i += 2) {
+    const a = Math.atan2(line[i + 3] - line[i + 1], line[i + 2] - line[i]);
+    const b = Math.atan2(line[i + 5] - line[i + 3], line[i + 4] - line[i + 2]);
+    let d = b - a;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    steps.push(d);
+    total += d;
+  }
+  return { total, steps };
+}
+
+// #475 (owner: quicksand "could be more swirly/wet looking"). "Wet" is palette and can be eyeballed
+// in the gallery; SWIRLY is geometry, and a wobbled streak can look swirly in a diff while being an
+// essentially straight line — so that's what's pinned here. A swirl turns steadily ONE way through
+// a large total angle; a wobble drifts both ways and nets out to nearly nothing.
+describe('quicksand\'s ripples actually swirl (#475)', () => {
+  for (const [name, set] of Object.entries(QUICKSAND_SWIRL_SETS)) {
+    describe(name, () => {
+      it('sweeps through a big total turn — an arc, not a line', () => {
+        for (const line of set) expect(Math.abs(turning(line).total)).toBeGreaterThan(1.5);
+      });
+
+      it('turns consistently one way, so the arc reads as a curl', () => {
+        for (const line of set) {
+          const { total, steps } = turning(line);
+          const same = steps.filter((d) => Math.sign(d) === Math.sign(total)).length;
+          expect(same / steps.length).toBeGreaterThanOrEqual(0.9);
+        }
+      });
+    });
+  }
+
+  it('a plain wobbled streak set would fail the same properties', () => {
+    const wobbled = buildStreaks(0x77, { count: 8, len: 40, segs: 10, wobble: 0.12 });
+    expect(wobbled.every((l) => Math.abs(turning(l).total) > 1.5)).toBe(false);
+  });
+});
+
+// #475 (owner: broken ice "could be slightly more fractal"). The old web was 26 cracks of one
+// length — uniform scale. Fractal means each generation is a smaller copy of the one above it AND
+// is attached to it; both halves are asserted, because a set of short loose sticks next to a set of
+// long ones would satisfy "smaller" while looking nothing like a fracture.
+describe('the broken-ice fracture web is self-similar (#475)', () => {
+  const pathLen = (l) => {
+    let s = 0;
+    for (let i = 0; i + 3 < l.length; i += 2) s += Math.hypot(l[i + 2] - l[i], l[i + 3] - l[i + 1]);
+    return s;
+  };
+  const meanLen = (lines) => lines.reduce((a, l) => a + pathLen(l), 0) / lines.length;
+
+  it('has several generations of crack', () => {
+    expect(ICE_CRACK_LEVELS.length).toBeGreaterThanOrEqual(3);
+    for (const lv of ICE_CRACK_LEVELS) expect(lv.length).toBeGreaterThan(0);
+  });
+
+  it('each generation is markedly shorter and more numerous than its parent', () => {
+    for (let i = 1; i < ICE_CRACK_LEVELS.length; i++) {
+      expect(meanLen(ICE_CRACK_LEVELS[i]), `level ${i} length`)
+        .toBeLessThan(meanLen(ICE_CRACK_LEVELS[i - 1]) * 0.75);
+      expect(ICE_CRACK_LEVELS[i].length, `level ${i} count`)
+        .toBeGreaterThan(ICE_CRACK_LEVELS[i - 1].length);
+    }
+  });
+
+  it('every branch is rooted on a vertex of the generation above it', () => {
+    const key = (x, y) => `${x.toFixed(6)},${y.toFixed(6)}`;
+    for (let i = 1; i < ICE_CRACK_LEVELS.length; i++) {
+      const parents = new Set();
+      for (const l of ICE_CRACK_LEVELS[i - 1]) {
+        for (let k = 0; k < l.length; k += 2) parents.add(key(l[k], l[k + 1]));
+      }
+      for (const l of ICE_CRACK_LEVELS[i]) {
+        expect(parents.has(key(l[0], l[1])), `level ${i} root ${l[0]},${l[1]}`).toBe(true);
+      }
+    }
+  });
+
+  it('the fracture tree still tiles: every branch generation is lattice-periodic', () => {
+    // Same argument as the channel test above — a mark that leaves the tile has to re-enter the
+    // neighbour at the identical point, and a branch is no exception.
+    for (const lv of ICE_CRACK_LEVELS) {
+      expect(lv.length % HEX_LATTICE.length).toBe(0);
+      const seeds = lv.length / HEX_LATTICE.length;
+      expect(seeds).toBeGreaterThan(0);
+    }
+  });
+});
+
+// #475 (owner: debris "needs work... needs more chunky-ness maybe?"). CHUNKINESS IS ABOUT PIECE
+// SIZE, so that is what's asserted — not the mark count, which would just re-pin the small-scrap
+// look that was rejected. Debris stays distinct from `rubble` by DENSITY: rubble is a tight-packed
+// collapse heap, debris is big solid pieces lying loose on a street.
+describe('debris pieces are chunky (#475)', () => {
+  const HEX_AREA = 3 * Math.sqrt(3) / 2 * HEX_SIZE * HEX_SIZE;
+  const widths = SLAB_SETS.debris.map(([, , w]) => w);
+  const areas = SLAB_SETS.debris.map(([, , w, h]) => w * h);
+  const coverage = (set) => set.reduce((a, [, , w, h]) => a + w * h, 0) / HEX_AREA;
+
+  it('has no small scraps left — every piece is a solid chunk', () => {
+    expect(Math.min(...widths)).toBeGreaterThanOrEqual(6.5);
+  });
+
+  it('the average piece carries real visual weight', () => {
+    expect(areas.reduce((a, b) => a + b, 0) / areas.length).toBeGreaterThan(55);
+  });
+
+  it('is still a strewn street, not a packed heap like rubble', () => {
+    expect(coverage(SLAB_SETS.debris)).toBeLessThan(coverage(SLAB_SETS.rubble));
+    expect(SLAB_SETS.debris.length).toBeLessThan(SLAB_SETS.rubble.length);
   });
 });

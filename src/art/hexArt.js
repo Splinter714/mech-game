@@ -526,6 +526,31 @@ function rubbleScatter(sg, baseCol, slabCol, litCol, ashSpots, slabSpots, baseAl
   }
 }
 
+// An ellipse mark clipped to the tile — the same fits-inside-fast-path / clip-the-polygon rule
+// `mottle` uses, for a one-off shape that isn't part of a mottle set (e.g. a chunk's drop shadow).
+function clippedEllipse(sg, dx, dy, rx, ry) {
+  if (ellipseInHex(dx, dy, rx, ry, HEX_SIZE)) sg.fillEllipse(C.cx + dx, C.cy + dy, rx * 2, ry * 2);
+  else fillClippedPoly(sg, ellipsePoly(dx, dy, rx, ry));
+}
+
+// #475 (owner: debris "needs more chunky-ness maybe?"). `rubbleScatter` paints each slab as ONE
+// flat rect with a lit top edge — fine for a dense heap, but a strewn street of those reads as
+// small loose SCRAPS with no weight. A chunk is the same rectangle given mass: a soft drop shadow
+// under it, a dark body, a lit top face inset from the body (so the piece has a visible thickness
+// rather than being a painted patch), and a dark cast edge along its lower side. Bigger, fewer and
+// solid-looking — which is the whole ask. Everything clips to the tile like every other mark.
+function chunkScatter(sg, baseCol, ashSpots, chunkSpots, darkCol, bodyCol, litCol, baseAlpha = 0.5) {
+  mottle(sg, ashSpots, baseCol, baseAlpha);
+  for (const [dx, dy, w, h] of chunkSpots) {
+    sg.fillStyle(0x000000, 0.34);
+    clippedEllipse(sg, dx + w * 0.12, dy + h * 0.42, w * 0.62, h * 0.5);   // ground shadow under the mass
+    sg.fillStyle(darkCol, 1); clippedRect(sg, dx, dy, w, h);               // dark body
+    sg.fillStyle(bodyCol, 1); clippedRect(sg, dx - w * 0.06, dy - h * 0.18, w * 0.86, h * 0.62); // top face
+    sg.fillStyle(litCol, 1);
+    clippedRect(sg, dx - w * 0.06, dy - h * 0.42, w * 0.86, h * 0.16);     // top-lit leading edge
+  }
+}
+
 // #464: the three bespoke soft-cover debris scatters that lived here (`organicDebrisScatter`,
 // `iceShardScatter`, `cinderScatter`) are gone with the `*Rubble` tiles they painted — see the
 // `rubbleId` note in data/terrain.js. `rubbleScatter` above stays: `hex_debris` still uses it.
@@ -653,7 +678,12 @@ export function clipSegToHex(x0, y0, x1, y1, s) {
 // curve, so a waved streak wants many more of them (~2px per sample) than a walked one. Still built
 // from one seed inside the fundamental domain and replicated over the lattice, so periodicity —
 // hence tile-to-tile channel continuity — is untouched by the shape of the path.
-export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle = null, angleJitter = Math.PI, wave = null }) {
+// `curl` (#475) is the third path shape: a CONSTANT turn rate (radians per step, sign picked at
+// random per streak) that the wobble rides on top of, so the path sweeps steadily around one way
+// instead of wandering. Over enough steps that's an arc / part-spiral — a SWIRL, which is what
+// quicksand wants and what no amount of `wobble` gives you (wobble is a drift with no preferred
+// direction, so it averages out to a straightish line).
+export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle = null, angleJitter = Math.PI, wave = null, curl = 0 }) {
   const rnd = seeded(seed);
   const hw = HEX_SIZE * SQRT3 / 2;
   const bases = [];
@@ -678,9 +708,10 @@ export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle =
     }
     const step = len / segs;
     const line = [sx, sy];
+    const spin = curl === 0 ? 0 : (rnd() < 0.5 ? -curl : curl);
     let x = sx, y = sy;
     for (let i = 0; i < segs; i++) {
-      th += (rnd() - 0.5) * 2 * wobble;
+      th += spin + (rnd() - 0.5) * 2 * wobble;
       x += Math.cos(th) * step; y += Math.sin(th) * step;
       line.push(x, y);
     }
@@ -695,6 +726,68 @@ export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle =
     }
   }
   return out;
+}
+
+// #475: a SELF-SIMILAR fracture web. `buildStreaks` gives a field of cracks that are all the same
+// size — uniform scale, so the eye reads "hatching" rather than "this ice broke". A real fracture
+// branches: a trunk splits into shorter limbs, each of which splits again into shorter twigs. This
+// builds exactly that, `levels` generations deep, each generation `shrink`× the length of its
+// parent and attached AT one of the parent's own vertices (so the web is connected, not a pile of
+// loose sticks). Returns one lattice-replicated line set PER LEVEL — the caller strokes level 0
+// widest/brightest down to the twigs, which is what makes the self-similarity legible.
+// Each trunk seed is drawn from inside the hex (the fundamental domain) exactly as `buildStreaks`
+// does, and the whole tree is replicated over `HEX_LATTICE`, so the periodicity that makes a mark
+// continue into the neighbouring tile is preserved — including a branch attachment, since parent
+// and child are translated by the same lattice vector.
+export function buildFractalCracks(seed, { count, len, levels = 3, segs = 3, wobble = 0.3, shrink = 0.52, branches = 2 }) {
+  const rnd = seeded(seed);
+  const hw = HEX_SIZE * SQRT3 / 2;
+  const out = Array.from({ length: levels }, () => []);
+
+  const walk = (sx, sy, th0, L) => {
+    const step = L / segs;
+    const line = [sx, sy];
+    let x = sx, y = sy, th = th0;
+    for (let i = 0; i < segs; i++) {
+      th += (rnd() - 0.5) * 2 * wobble;
+      x += Math.cos(th) * step; y += Math.sin(th) * step;
+      line.push(x, y);
+    }
+    return line;
+  };
+
+  const grow = (sx, sy, th, L, lvl) => {
+    const line = walk(sx, sy, th, L);
+    out[lvl].push(line);
+    if (lvl + 1 >= levels) return;
+    for (let b = 0; b < branches; b++) {
+      const vi = 1 + Math.floor(rnd() * segs);               // a vertex of the parent, never its root
+      const ax = line[vi * 2], ay = line[vi * 2 + 1];
+      const ph = Math.atan2(ay - line[vi * 2 - 1], ax - line[vi * 2 - 2]);   // parent heading there
+      const off = (0.45 + rnd() * 0.65) * (rnd() < 0.5 ? -1 : 1);           // ~26°–63° off the parent
+      grow(ax, ay, ph + off, L * shrink, lvl + 1);
+    }
+  };
+
+  let made = 0;
+  while (made < count) {
+    const sx = (rnd() - 0.5) * 2 * hw, sy = (rnd() - 0.5) * 2 * HEX_SIZE;
+    if (!inHex(sx, sy, HEX_SIZE)) continue;
+    grow(sx, sy, rnd() * Math.PI * 2, len, 0);
+    made++;
+  }
+
+  return out.map((lines) => {
+    const rep = [];
+    for (const line of lines) {
+      for (const [ox, oy] of HEX_LATTICE) {
+        const t = new Array(line.length);
+        for (let i = 0; i < line.length; i += 2) { t[i] = line[i] + ox; t[i + 1] = line[i + 1] + oy; }
+        rep.push(t);
+      }
+    }
+    return rep;
+  });
 }
 
 // Paint a `buildStreaks` set, clipping each sub-segment to the tile so a translate that only
@@ -785,16 +878,38 @@ const MUD_PITS = buildMottle(0xd4, 8, 0.7, 1.7, 0.8);
 
 // TIER 1 — quicksand: clean warm sand, no cracks and no hard edges; its signature is long, soft
 // surface RIPPLES over pale/damp blotching (mud has pitting and no ripples).
+// #475 (owner: quicksand "could be more swirly/wet looking"). Two changes, both in that direction
+// and neither of them a crack (cracks are dryRiver's language and stay out of this tile):
+//   SWIRLY — the ripples are `curl`ed now (see buildStreaks), so each one sweeps steadily around
+//     one way into an arc rather than wandering; a second, tighter, shorter set curls harder still,
+//     so the surface reads as sand being drawn round in eddies. A `wet` sheen set curls with them.
+//   WET — the damp layer goes darker and more saturated, and gains a specular SHEEN pass (a pale
+//     cool highlight over the pale sand, the same trick slush uses for standing water) plus a dark
+//     saturated soak underneath, so the pit looks waterlogged instead of dusty.
 const QS_PALE = buildMottle(0xe1, 12, 5, 10, 0.5);
 const QS_DAMP = buildMottle(0xe2, 10, 4, 8, 0.5);
 const QS_GRAIN = buildMottle(0xe3, 7, 0.6, 1.4, 0.9);
-const QS_RIPPLE = buildStreaks(0xe4, { count: 20, len: 34, segs: 4, wobble: 0.28 });
+const QS_SOAK = buildMottle(0x110, 14, 5, 11, 0.55);
+const QS_SHEEN = buildMottle(0x111, 16, 3.5, 8, 0.45);
+const QS_RIPPLE = buildStreaks(0xe4, { count: 18, len: 40, segs: 10, wobble: 0.12, curl: 0.26 });
+const QS_EDDY = buildStreaks(0x112, { count: 14, len: 26, segs: 9, wobble: 0.1, curl: 0.42 });
+// Exported for the swirl property test — "the ripples actually curl round" is exactly the kind of
+// intent a count/containment check can't see (see the river's wave test for the same lesson).
+export const QUICKSAND_SWIRL_SETS = { ripple: QS_RIPPLE, eddy: QS_EDDY };
 
 // TIER 1 — brokenIce: big PALE PLATES with dark water in the gaps and a bright FRACTURE WEB
 // (short, near-straight, every direction) — the crack network is the read, not a single crack.
+// #475 (owner: broken ice "could be slightly more fractal, but overall looks good"). A light touch:
+// the palette, the plates, the water in the gaps and the pressure ridges all stay. Only the crack
+// WEB changes — it was 26 cracks all the same 26px length (uniform scale reads as hatching), and is
+// now a three-generation branching tree (`buildFractalCracks`): a few trunks, each splitting into
+// roughly-half-length limbs, each splitting again into twigs, strokes thinning per generation. Same
+// number of marks on screen, self-similar structure instead of one size.
 const ICE_PLATE = buildMottle(0xe5, 17, 6, 12.5, 0.62);
 const ICE_WATER = buildMottle(0xe6, 11, 3, 6.5, 0.5);
-const ICE_CRACK = buildStreaks(0xe7, { count: 26, len: 26, segs: 2, wobble: 0.22 });
+export const ICE_CRACK_LEVELS = buildFractalCracks(0xe7, {
+  count: 6, len: 30, levels: 3, segs: 3, wobble: 0.24, shrink: 0.5, branches: 2,
+});
 // #471 playtest follow-up: the long wandering crest lines #471 gave the RIVER read as ice, not as
 // water ("would be great for ice or something, but looks horrible as a river"). They move here —
 // brokenIce keeps its own identity (pale plates, dark water in the gaps, the short fracture web)
@@ -806,9 +921,16 @@ const ICE_GLINT = buildStreaks(0x104, { count: 18, len: 20, segs: 2, wobble: 0.3
 
 // TIER 1 — cinderField: the point-light tile. Dark ash blotching with MANY small embers scattered
 // right across the hex (crust does its glow as lines, this one as points).
+// #475 (owner: "cinder field should look like a combination between cinder field and crust"). It
+// keeps its ember POINTS — that's still what the tile is — but gains crust's MATERIAL: dark cooled
+// plates with a seam network running between them, so the embers now sit in a broken-plate surface
+// instead of on featureless ash. (The plates/seams are crust's own primitives at cinderField's
+// scale; `crust` itself is untouched here — it's volcanic's channel and gets reworked separately.)
 const CIN_ASH = buildMottle(0xe8, 12, 5, 10, 0.5);
 const CIN_WARM = buildMottle(0xe9, 15, 4, 8.5, 0.5);
 const CIN_EMBER = buildMottle(0xea, 11, 0.7, 1.6, 0.9);
+const CIN_PLATE = buildMottle(0x113, 16, 5, 11.5, 0.6);
+const CIN_SEAM = buildStreaks(0x114, { count: 16, len: 30, segs: 3, wobble: 0.3 });
 
 // TIER 1 — crust: dark cooled plates with a MOLTEN CRACK NETWORK glowing through — same fracture
 // primitive as brokenIce, inverted palette (dark plate / hot line instead of pale plate / cold line).
@@ -827,8 +949,17 @@ const DR_CRAZE = buildStreaks(0xf0, { count: 34, len: 17, segs: 2, wobble: 0.5 }
 const RUBBLE_ASH = buildMottle(0xf1, 12, 5, 10, 0.55);
 const RUBBLE_SLABS = buildSlabs(0xf2, 11, 5, 9);
 const RUBBLE_GAPS = buildMottle(0xf3, 14, 1.2, 2.6, 0.8);
+// #475 (owner: debris "needs work... needs more chunky-ness maybe?"). The pieces were 3–6px wide
+// scraps on a 14px lattice — small and flat. They're 7–12px CHUNKS on a 17px lattice now: bigger
+// individual pieces, fewer of them, and drawn by `chunkScatter` (shadow + body + inset lit top
+// face) so each one has real mass. Rubble stays a different read for a different reason than size:
+// it's a tight-packed HEAP of slabs with dark voids between them, this is a street with big solid
+// pieces lying loose on it.
 const DEBRIS_ASH = buildMottle(0xf4, 13, 5, 10, 0.55);
-const DEBRIS_SLABS = buildSlabs(0xf5, 14, 3, 6);
+const DEBRIS_SLABS = buildSlabs(0xf5, 17, 7, 12);
+// Exported so the "debris is chunky" property can be asserted on PIECE SIZE (the thing the owner
+// actually asked for) rather than on a mark count, which would have pinned the old scrappy look.
+export const SLAB_SETS = { rubble: RUBBLE_SLABS, debris: DEBRIS_SLABS };
 
 // TIER 3 — the CHANNELS. All three use `buildStreaks`, so the water lines run straight across the
 // hex boundary into the next channel tile (see the lattice note above). They stay distinct by how
@@ -1023,11 +1154,18 @@ const DETAIL = {
   // #471: was a 22x14 ellipse + a 14x8 highlight + one crack, all within ±11px of the centre. Now
   // the whole tile is soft sand: pale sunlit blotches, damp sunken blotches, fine grain, and long
   // shallow surface ripples running right off the edges. No cracks — that's dryRiver's language.
+  // #475: swirlier and wetter. The ripples curl into eddies (two sets, the tighter one over the
+  // broad one), and a dark saturated soak plus a pale specular sheen make the surface read as
+  // waterlogged sand being drawn round rather than dry sand with lines on it. Still no cracks.
   hex_quicksand: (sg) => {
-    mottle(sg, QS_PALE, 0xa5854a, 0.30);      // pale sunlit dry sand
-    mottle(sg, QS_DAMP, 0x53431f, 0.32);      // damp, sunken hollows
-    streaks(sg, QS_RIPPLE, 0xc7a877, 0.20, 1.8);  // long shallow surface ripples
-    mottle(sg, QS_GRAIN, 0x6b5830, 0.22);     // fine grain
+    mottle(sg, QS_PALE, 0xa5854a, 0.30);           // pale sunlit dry sand
+    mottle(sg, QS_SOAK, 0x2e2410, 0.30);           // dark saturated soak — water in the sand
+    mottle(sg, QS_DAMP, 0x53431f, 0.34);           // damp, sunken hollows
+    streaks(sg, QS_RIPPLE, 0x6b5830, 0.26, 3.0);   // broad swirling drag, dark side
+    streaks(sg, QS_RIPPLE, 0xc7a877, 0.22, 1.6);   // its lit crest
+    streaks(sg, QS_EDDY, 0xd8c092, 0.20, 1.2);     // tighter eddies curling into the pit
+    mottle(sg, QS_SHEEN, 0xdfd8bd, 0.13);          // wet specular sheen sitting on the surface
+    mottle(sg, QS_GRAIN, 0x6b5830, 0.18);          // fine grain
   },
 
   // ── Snow / arctic ──────────────────────────────────────────────────────────────────────
@@ -1063,7 +1201,12 @@ const DETAIL = {
   hex_brokenIce: (sg) => {
     mottle(sg, ICE_WATER, 0x2c4a5e, 0.34);       // cold water in the gaps
     mottle(sg, ICE_PLATE, 0xa9c6d8, 0.30);       // pale floating plates
-    streaks(sg, ICE_CRACK, 0x3a5b70, 0.45, 1.6); // the dark fracture web beneath the plates
+    // #475: the fracture web is a branching tree now — trunks, then half-length limbs, then twigs,
+    // each generation thinner and fainter, so the break reads as self-similar rather than as a
+    // field of same-sized cracks.
+    streaks(sg, ICE_CRACK_LEVELS[0], 0x2f5069, 0.50, 2.0);  // trunk fractures
+    streaks(sg, ICE_CRACK_LEVELS[1], 0x3a5b70, 0.45, 1.3);  // limbs splitting off them
+    streaks(sg, ICE_CRACK_LEVELS[2], 0x466b80, 0.38, 0.8);  // twigs
     streaks(sg, ICE_RIDGE, 0x7fb0c8, 0.38, 2.2); // long pressure ridges running through the floe
     streaks(sg, ICE_GLINT, 0xe4f2fa, 0.45, 1.2); // light catching along the ridge crests
   },
@@ -1084,7 +1227,9 @@ const DETAIL = {
   // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed-tower heap.
   // #275: also urban's `channel` role now (see biomes.js) — a paved lane and a rubble-strewn
   // street both read as "urban street" well enough to share one texture.
-  hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, DEBRIS_ASH, DEBRIS_SLABS, 0.5),
+  // #475: chunkier — bigger, fewer, solid-looking pieces (shadow + body + lit top face) instead of
+  // small flat scraps. See the DEBRIS_SLABS note above.
+  hex_debris: (sg) => chunkScatter(sg, 0x35322d, DEBRIS_ASH, DEBRIS_SLABS, 0x2a2723, 0x4f4a43, 0x6f675c, 0.5),
   // #278: canal — urban's own channel: a flooded concrete drainage culvert. Straight parallel
   // concrete-lip edges (unlike the organic riverbank curve of `river`/`dryRiver`) with a
   // rippled water fill, so it reads as man-made rather than a natural stream.
@@ -1134,9 +1279,16 @@ const DETAIL = {
   // #110: cinder field — a hot ash/ember patch, milder read than a full molten-lava pool.
   // #471: was a 22x13 scorch ellipse with two embers in it. Now a full-tile ash field with embers
   // scattered right across it — many small glowing POINTS (crust glows in lines, this in dots).
+  // #475 (owner: "cinder field should look like a combination between cinder field and crust"):
+  // crust's cooled-plate material — dark plates with a hot seam network running between them —
+  // now carries cinderField's own scattered ember points, which stay the brightest thing on the
+  // tile. `crust` is deliberately unchanged; the two are meant to converge here.
   hex_cinderField: (sg) => {
     mottle(sg, CIN_ASH, 0x241209, 0.40);            // cold ash
+    mottle(sg, CIN_PLATE, 0x18100b, 0.42);          // dark cooled plates (crust's material)
     mottle(sg, CIN_WARM, 0x6b2a10, 0.28);           // heat-soaked patches
+    streaks(sg, CIN_SEAM, 0xc4400f, 0.55, 1.4);     // the seams between the plates, still hot
+    streaks(sg, CIN_SEAM, 0xffa23a, 0.35, 0.6);     // brighter core down in the seam
     mottle(sg, CIN_EMBER, 0xd8461a, 0.16, 3.2);     // each ember's soft halo
     mottle(sg, CIN_EMBER, 0xff8a3a, 0.7);           // the ember itself
   },
