@@ -156,7 +156,7 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     // confirmed owner decision. #436 moved the old shield's 50 points onto armor (no more
     // regenerating layer) without changing this total.
     expect(new HpBody(q).toughness).toBeGreaterThan(new HpBody(ENEMY_KINDS.tank).toughness);
-    expect(new HpBody(q).toughness).toBeLessThan(new Mech(ENEMIES.raider).toughness);
+    expect(new HpBody(q).toughness).toBeLessThan(new Mech(ENEMIES.light).toughness);
     // #328: NO weapon at all. Jackson: "unarmed — pure carrier" — its only threat is what it
     // unloads, so every weapon-shaped field is gone and the seam resolves zero slots.
     expect(q.weaponId).toBeUndefined();
@@ -233,7 +233,7 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('isEnemyKind distinguishes kinds from mech loadouts', () => {
     expect(isEnemyKind('tank')).toBe(true);
     expect(isEnemyKind('helicopter')).toBe(true);
-    expect(isEnemyKind('raider')).toBe(false);   // a mech loadout
+    expect(isEnemyKind('light')).toBe(false);   // a mech chassis loadout id (#474)
     expect(isEnemyKind('nope')).toBe(false);
   });
 

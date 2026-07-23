@@ -316,16 +316,16 @@ describe('#269 §3 dock resupply: cooldown + spawn', () => {
 });
 
 describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
-  it('a resupply that DRAWS a mech kind (e.g. sniper) spawns via _spawnMech, directly AWARE', () => {
+  it('a resupply that DRAWS a mech kind (e.g. a medium mech) spawns via _spawnMech, directly AWARE', () => {
     const scene = makeScene();
-    scene.bases = [oneDockBase({ kindId: 'sniper' })];
+    scene.bases = [oneDockBase({ kindId: 'medium' })];
     scene._spawnDormantUnits();
     scene._wakeBase('base0');
     const dockKey = [...scene._dockResupplyMeta.keys()][0];
     // #323: mechs live ONLY in the late pool, which a base reaches via its `lateFraction` — a
     // lone base sits at 0 (pure early pool), so this forces the late end of the difficulty ramp.
     scene._dockResupplyMeta.get(dockKey).lateFraction = 1;
-    pinDockDraw(scene, 'sniper', { late: true });
+    pinDockDraw(scene, 'medium', { late: true });
     clearDock(scene, dockKey);
 
     scene._updateDockResupply(PAST_COOLDOWN_S);
@@ -334,7 +334,7 @@ describe('#269 playtest follow-up: dock resupply for a mech-kind dock', () => {
     expect(scene.enemies.length).toBe(1);
     const e = scene.enemies[0];
     expect(e.kind).toBe('mech');
-    expect(e.typeId).toBe('sniper');
+    expect(e.typeId).toBe('medium');
     expect(e.awareness).toBe(AWARE);
     expect(e.baseId).toBe('base0');
     expect(e.dockKey).toBe(dockKey);

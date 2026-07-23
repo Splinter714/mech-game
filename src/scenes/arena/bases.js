@@ -545,7 +545,7 @@ export const BasesMixin = {
   // #357: the huddle ring is now sized by the tier's OWN unit count rather than the flat
   // `TOWER_PATROL_COUNT`, so a late 11-strong patrol spreads around its circle just as evenly as
   // the 5-strong opener instead of overlapping. Spawning goes through `_spawnEnemy` (not
-  // `_spawnKind` directly) because a late tier includes a light MECH ('raider'), and `_spawnEnemy`
+  // `_spawnKind` directly) because a late tier includes a light MECH ('light'), and `_spawnEnemy`
   // is the existing `isEnemyKind` dispatcher that routes kind-vs-mech — the same one
   // `_spawnDormantUnits` above already relies on for mech docks. Everything else is unchanged:
   // patrol units still get NO `baseId`/`dockKey` and still spawn UNAWARE (both `_spawnKind` and

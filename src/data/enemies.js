@@ -2,13 +2,24 @@
 // fresh Mech from one of these configs on spawn, so the scene layer never hardcodes an
 // enemy's chassis or weapons. **Add an enemy = one entry here.**
 //
-// #44: enemy variety now feeds the tactical AI. The AI reads each mech's weapons' optimum
-// range to pick a ROLE (brawler presses in, sniper kites, skirmisher flanks mid-range), so
-// giving enemies distinct loadouts makes them read as behaving differently — not one orbit.
-export const ENEMIES = {
-// #299: enemy mechs get a full-body SHIELD for the first time (they had none before this pass).
-// The pool sizes are the owner's (light 25 / medium 50 / heavy 75) and are the ONLY per-kind
-// shield dial that survives.
+// #474: the FOUR hand-written archetypes (Raider/Stalker/Warden/Mortarhead) are RETIRED. Enemy
+// mechs are now just the three CHASSIS — Light / Medium / Heavy Mech — and all three appear
+// equally (before #474 light was doubled up and medium was barely used). Each entry carries NO
+// fixed `mounts`: a mech rolls its own four-weapon loadout PER SPAWN, constrained by its chassis
+// (data/enemyLoadout.js `rollLoadout`, called from scenes/arena/enemies.js `_spawnMech` with a
+// seeded RNG). Every mech fills all four MOUNT_LOCATIONS, so it reads as a proper four-weapon mech.
+//
+// ROLES STAY EMERGENT. Since #44 the tactical AI (scenes/arena/enemies.js) reads the mounted
+// weapons' optimum range to pick behaviour, and `isAllIndirect` (every weapon arcing/homing) drives
+// the camp-behind-cover posture. With per-spawn loadouts the chassis pools are RANGE-BANDED (light
+// short/press, heavy long/siege, medium between), so a light roll still presses in, a heavy roll
+// still kites, and a heavy roll that happens to come up all-indirect turns on camping by itself —
+// the old Mortarhead's identity is now something the dice can produce, not a hand-written entry.
+// There is deliberately NO role field here.
+//
+// #299: enemy mechs get a full-body SHIELD (they had none before that pass). The pool sizes are the
+// owner's (light 25 / medium 50 / heavy 75), keyed to weight class, and are the ONLY per-kind shield
+// dial. #474 leaves them untouched.
 //
 // #382 (playtest 2026-07-20, Jackson: "why do we have different shield pauses for different types
 // of things? that should all be the same for all enemies and player, for now" + "rate should maybe
@@ -19,92 +30,44 @@ export const ENEMIES = {
 // NOTE the asymmetry that remains: enemy mechs rarely choose to break contact, so the long pause
 // mostly costs them the mid-fight trickle they used to get, while the player (who can disengage on
 // purpose) gets the real recharge tool.
-
-  // Mid-range flanker: an autocannon (opt 347, was 220 before #135's range-floor pass) +
-  // cluster salvo (opt 660). The original Raider — a skirmisher that fights at a middling
-  // standoff and flanks.
-  raider: {
+export const ENEMIES = {
+  // Light Mech — fast, short-range guns; presses in (skirmisher role). Loadout rolled per spawn
+  // from the light pool (data/enemyLoadout.js).
+  light: {
     chassisId: 'light',
-    name: 'Raider',
+    name: 'Light Mech',
     shield: { max: 25 }, // #382: shared pause/regen (see shield.js)
-    mounts: { rightArm: ['autocannon'], leftTorso: ['clusterRocket'] },
   },
 
-  // Brawler: short/mid-range weapons on a fast light chassis, so it wants to CLOSE and stay
-  // in the player's face. Reads as aggressive.
-  // #96: flamethrower (opt 90) was shelved per Jackson's weapon curation pass, so this mount
-  // swaps to machineGun/Repeater — still a close/mid-range direct-fire weapon that keeps the
-  // pairing with shotgun reading as an aggressive, get-in-your-face brawler.
-  // #135: machineGun/shotgun opt both moved from 180 to 338 (range-floor pass, every weapon's
-  // max brought to >=600) — this pushes the brawler's standoff distance out further than
-  // before; still reads as close/mid-range relative to the sniper/artillery loadouts below,
-  // but worth an eye during playtest if "brawler" no longer feels like it's pressing in enough.
-  skirmisher: {
-    chassisId: 'light',
-    name: 'Stalker',
-    shield: { max: 25 }, // #382: shared pause/regen (see shield.js)
-    mounts: { rightArm: ['shotgun'], leftArm: ['machineGun'] },
-  },
-
-  // Sniper: long-range weapons that KITE — holds distance, backpedals when the player
-  // closes, uses cover.
-  // #96: railLance (opt 400) and napalm (opt 500) were both shelved per Jackson's weapon
-  // curation pass. Swapped to beamLaser (opt 500, max 640 — the longest-range keeper) and
-  // clusterRocket (opt 660, max 960 — the other long-range keeper), preserving the "holds
-  // distance and kites" read.
-  // #117: beamLaser swapped to plasmaLance (opt 460/max 620) — Jackson liked the pre-#117
-  // accidental look of an enemy "beamLaser" actually firing as a travelling plasma bolt (a bug:
-  // enemies never routed hitscan weapons through the beam-fire path at all), so that look is now
-  // formalized as its own real projectile weapon rather than "fixed" to an instant beam. See
-  // plasmaLance's definition in data/weapons.js for the full story.
-  // #273: chassisId moved 'heavy' -> 'medium'. All 4 mech archetypes were keyed to only 2 of
-  // the 3 chassis weight classes (raider+skirmisher both 'light', sniper+artillery both
-  // 'heavy' — 'medium' unused), so any two sharing a class read as near-identical mechs (same
-  // body shape, same decor) apart from mounted weapon icons. Reassigning the sniper to
-  // 'medium' puts all 3 weight classes in play using the existing chassis art exactly as-is —
-  // no new art system needed. Thematically medium fits a kiter better than heavy did anyway:
-  // "backpedal when the player closes" wants the mobility a heavy chassis (the slowest,
-  // most ponderous of the three) actively works against; medium's balanced speed/turn lets
-  // it actually hold a kiting standoff instead of getting run down. Artillery keeps 'heavy'
-  // alone (the "camp behind cover and bombard" siege unit is exactly heavy's "immovable
-  // object" identity), and raider+skirmisher keep sharing 'light' (both want mobility to
-  // flank/close) — the one still-shared pair Jackson called out as fine and expected.
-  sniper: {
+  // Medium Mech — mid-range guns; holds a mid standoff and kites. Loadout rolled per spawn from
+  // the medium pool.
+  medium: {
     chassisId: 'medium',
-    name: 'Warden',
+    name: 'Medium Mech',
     shield: { max: 50 }, // #382: shared pause/regen (see shield.js)
-    mounts: { rightArm: ['plasmaLance'], leftTorso: ['clusterRocket'] },
   },
 
-  // Artillery / bombardier: EVERY weapon is indirect-fire — both mounts lob an arcing shell
-  // (path 'arcing'), so neither needs line-of-sight to hit. The AI detects "all weapons
-  // indirect" and treats hugging cover as this mech's PRIMARY posture: it camps behind a wall
-  // and bombards over it, only shifting to a fresh cover spot, essentially never exposing
-  // itself. On a heavy chassis (slow, tanky) it reads as an entrenched siege unit. Keep BOTH
-  // weapons indirect (arcing/homing) or it loses its camp-cover behaviour.
-  // #272: #244 emptied SHELVED_WEAPON_IDS (see weapons.js), un-shelving plasmaCannon and napalm
-  // — both still real, live, arcing (indirect) weapons — so the #96 stopgap that had artillery
-  // reusing the sniper's direct-fire plasmaLance/clusterRocket loadout (and, as a side effect,
-  // made isAllIndirect false and killed the camp-cover AI posture) is no longer needed. Restored
-  // to its own distinct siege loadout: plasmaCannon (arcing splash energy lob, opt 480/max 820)
-  // + napalm (arcing splash + burning ground patch, opt 500/max 780) — both indirect, both
-  // long-range, and thematically an entrenched bombardier that lobs shells and burning canisters
-  // over cover rather than trading direct shots like the sniper. This restores isAllIndirect ===
-  // true for artillery, so the tactical AI's cover-camping posture actually triggers again.
-  artillery: {
+  // Heavy Mech — long, heavy shells (and every indirect weapon lives in this pool); kites at long
+  // range, and a fully-indirect roll camps behind cover and bombards. Loadout rolled per spawn from
+  // the heavy pool.
+  heavy: {
     chassisId: 'heavy',
-    name: 'Mortarhead',
+    name: 'Heavy Mech',
     shield: { max: 75 }, // #382: shared pause/regen (see shield.js)
-    mounts: { rightTorso: ['plasmaCannon'], leftTorso: ['napalm'] },
   },
 };
 
+// The three enemy mech loadout ids (data/enemies.js keys) — the chassis weight classes. Exported so
+// consumers (worldgen pools, run-stats, the art gallery) reference the set by name instead of
+// re-listing the literals. All three are meant to appear EQUALLY (#474).
+export const MECH_CHASSIS_IDS = Object.keys(ENEMIES);
+
 // Spawn rotation for the debug "add enemy" control (#39) and the arena's mixed opener, so
-// consecutive spawns cycle through roles instead of stacking identical orbits. Mixes the mech
-// loadouts with the #68 non-mech KINDS (tank / drone 'swarm' / helicopter — the ids
-// live in data/enemyKinds.js; 'swarm' expands into several drones), so pressing N cycles
-// through the whole bestiary. The starting enemy is index 0 (the Raider), keeping the first
-// deploy stable.
+// consecutive spawns cycle through the bestiary instead of stacking identical orbits. Mixes the
+// three mech chassis (#474 — each rolls a fresh loadout when spawned) with the #68 non-mech KINDS
+// (tank / drone 'swarm' / helicopter — the ids live in data/enemyKinds.js; 'swarm' expands into
+// several drones), so pressing N cycles through the whole bestiary. The starting enemy is index 0
+// (a Light Mech), keeping the first deploy stable.
 // #469: the 'turretNest' entry (a cluster of free-roaming sentry turrets) is GONE along with the
 // sentry `turret` kind itself — worldgen never placed it and this debug list was its only path
 // into a run. Base defenses use the separate, very much alive `wallTurret` kind.
@@ -120,16 +83,17 @@ export const ENEMIES = {
 // late-stage squad draws; that whole squad-draw system was retired by #269). That's why Jackson
 // had seen it, but rarely, per his playtest note ("those enemies
 // that spawn drones are so cool but I barely ever see them"). Appended once here — same tier as
-// artillery/swarm/infantryMob, not doubled up like tank/helicopter — so the debug
+// the mech chassis/swarm/infantryMob, not doubled up like tank/helicopter — so the debug
 // spawn-more control (keydown-N / dpad-up) cycles through it too. This list is consumed by index
 // (`ENEMY_ROTATION[this._enemySeq % ENEMY_ROTATION.length]`, scenes/arena/enemies.js), i.e. a
 // straight round-robin cycle, NOT a weighted random draw — every id gets exactly 1-in-N of the
 // cycle regardless of position, so "how often" is controlled purely by how many times an id is
 // repeated in the array (see tank/helicopter's double entries elsewhere in this file's spirit),
 // not by where it sits.
+// #474: the four archetype ids (raider/skirmisher/sniper/artillery) are replaced by the three
+// chassis ids (light/medium/heavy), one entry each so all three appear equally.
 export const ENEMY_ROTATION = [
-  'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'artillery', 'swarm',
-  'carrier',
+  'light', 'tank', 'medium', 'helicopter', 'heavy', 'swarm', 'carrier',
 ];
 
 // #344 (2026-07-19): `DEFAULT_SQUAD` — the old opening-squad table (#44/#68/#75/#89) — is GONE,

@@ -47,7 +47,7 @@ export function rosterToughnessBounds(enemies = ENEMIES, kinds = ENEMY_KINDS) {
 
 // The LIVE roster's bounds, computed lazily ONCE on first use (the registries are static data, and
 // building a few Mechs at module-eval time would be needless import-order coupling). Post-#299 this
-// derives to floor 3 (infantry/drone, tied) and ceiling 500 (the artillery mech on the heavy
+// derives to floor 3 (infantry/drone, tied) and ceiling 500 (the heavy mech on the heavy
 // chassis). #299 retuned every unit in the roster and needed ZERO edits here or in either
 // consumer, which is exactly what this module was built for. Note the PLAYER's mech (600) sits
 // deliberately OUTSIDE the span: only ENEMIES + ENEMY_KINDS are read, so "ceiling" means the

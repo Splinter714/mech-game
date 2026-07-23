@@ -7,6 +7,8 @@ import {
 } from '../art/hexArt.js';
 import { ENEMY_KINDS, ENEMY_KIND_IDS } from '../data/enemyKinds.js';
 import { ENEMIES } from '../data/enemies.js';
+import { rollLoadout } from '../data/enemyLoadout.js';
+import { mulberry32 } from '../data/rng.js';
 import { Mech } from '../data/Mech.js';
 import {
   buildMechTextures, buildVehicleTextures, ART_SCALE, mountIconKey, itemFxKey,
@@ -616,8 +618,13 @@ export default class ArtPreviewScene extends Phaser.Scene {
       note(this._vehicleTexKeys(key, def), factor);
     }
 
+    // #474: enemy mechs roll their loadout per spawn, so the ENEMIES entries carry no fixed mounts.
+    // For the gallery, roll a REPRESENTATIVE loadout per chassis with a FIXED seed, so the row shows
+    // a stable four-weapon mech (the visual payoff of #474) instead of a bare, weaponless chassis.
     const built = Object.keys(ENEMIES).map((id) => {
-      const mech = new Mech(ENEMIES[id]);
+      const def = ENEMIES[id];
+      const mounts = rollLoadout(def.chassisId, mulberry32(0x5eed ^ def.chassisId.length));
+      const mech = new Mech({ ...def, mounts });
       mech.repairAll();
       const key = `${TEX_PREFIX}emech_${id}`;
       buildMechTextures(this, key, mech, { theme: 'enemy' });

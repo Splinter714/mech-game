@@ -334,13 +334,13 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     return scene;
   }
 
-  it('a mech-kind dock (e.g. raider) spawns via _spawnMech, not _spawnKind', () => {
+  it('a mech-kind dock (e.g. a light mech) spawns via _spawnMech, not _spawnKind', () => {
     const scene = makeSceneWithSpawnStubs();
     scene._spawnKind = vi.fn(scene._spawnKind);
     scene._spawnMech = vi.fn(scene._spawnMech);
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
-      docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
+      docks: [{ q: 0, r: 0, kindId: 'light', count: 1 }], turrets: [],
     }];
     scene._spawnDormantUnits();
 
@@ -348,7 +348,7 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     expect(scene._spawnKind).not.toHaveBeenCalled();
     expect(scene.enemies.length).toBe(1);
     expect(scene.enemies[0].kind).toBe('mech');
-    expect(scene.enemies[0].typeId).toBe('raider');
+    expect(scene.enemies[0].typeId).toBe('light');
   });
 
   it('a mixed base (vehicle-kind dock + mech-kind dock) dispatches each to the right constructor', () => {
@@ -359,7 +359,7 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
       id: 'base0', center: { q: 0, r: 0 },
       docks: [
         { q: 0, r: 0, kindId: 'tank', count: 1 },
-        { q: 1, r: 0, kindId: 'sniper', count: 1 },
+        { q: 1, r: 0, kindId: 'medium', count: 1 },
       ],
       turrets: [],
     }];
@@ -368,14 +368,14 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     expect(scene._spawnKind).toHaveBeenCalledTimes(1);
     expect(scene._spawnMech).toHaveBeenCalledTimes(1);
     expect(scene.enemies.find((e) => e.typeId === 'tank').kind).not.toBe('mech');
-    expect(scene.enemies.find((e) => e.typeId === 'sniper').kind).toBe('mech');
+    expect(scene.enemies.find((e) => e.typeId === 'medium').kind).toBe('mech');
   });
 
   it('the mech gets the same DORMANT/baseId/dockKey tagging a vehicle-kind unit gets', () => {
     const scene = makeSceneWithSpawnStubs();
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
-      docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
+      docks: [{ q: 0, r: 0, kindId: 'light', count: 1 }], turrets: [],
     }];
     scene._spawnDormantUnits();
 
@@ -389,7 +389,7 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     const scene = makeSceneWithSpawnStubs();
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
-      docks: [{ q: 0, r: 0, kindId: 'artillery', count: 1 }], turrets: [],
+      docks: [{ q: 0, r: 0, kindId: 'heavy', count: 1 }], turrets: [],
     }];
     scene._spawnDormantUnits();
     expect(scene.enemies.length).toBe(1);
@@ -455,8 +455,8 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     });
   });
 
-  it('_wakeBase flips a docked mech to AWARE and unconditionally sets holdGround, for every archetype', () => {
-    for (const typeId of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+  it('_wakeBase flips a docked mech to AWARE and unconditionally sets holdGround, for every chassis', () => {
+    for (const typeId of ['light', 'medium', 'heavy']) {
       const scene = makeSceneWithSpawnStubs();
       scene.bases = [{
         id: 'base0', center: { q: 0, r: 0 },
@@ -488,7 +488,7 @@ describe('#269 playtest follow-up: mech-kind docks (_spawnDormantUnits branches 
     scene.mech = { partHealthFraction: () => 1 };
     scene.bases = [{
       id: 'base0', center: { q: 0, r: 0 },
-      docks: [{ q: 0, r: 0, kindId: 'raider', count: 1 }], turrets: [],
+      docks: [{ q: 0, r: 0, kindId: 'light', count: 1 }], turrets: [],
     }];
     scene._spawnDormantUnits();
     scene._wakeBase('base0');
@@ -537,7 +537,7 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
       scene.enemies.push(e);
       return e;
     };
-    // #357: a late tier includes a light MECH ('raider'), so the patrol spawner now goes through
+    // #357: a late tier includes a light MECH ('light'), so the patrol spawner now goes through
     // `_spawnEnemy`'s kind-vs-mech dispatcher. Stub it the same lightweight way — a mech id just
     // gets a `kind: 'mech'` body stand-in; what's in scope here is still
     // spawnX/spawnY/awareness/baseId shape, not Phaser texture/view building.

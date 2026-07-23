@@ -63,11 +63,12 @@ describe('enemyWeaponInfo — overrides', () => {
     expect(info.hasOverride).toBe(false);
   });
 
-  it('reports no override for a mech-loadout kind (base weapons)', () => {
-    const info = enemyWeaponInfo('raider');
+  it('reports no override and no fixed weapons for a mech chassis kind (rolled per spawn, #474)', () => {
+    // #474: enemy mechs roll their loadout at spawn, so a chassis kind has no fixed designed
+    // weapon to report — the weapon list is empty and nothing is flagged as an override.
+    const info = enemyWeaponInfo('light');
     expect(info.hasOverride).toBe(false);
-    expect(info.weapons.map((w) => w.weaponId).sort())
-      .toEqual(['autocannon', 'clusterRocket']);
+    expect(info.weapons).toEqual([]);
   });
 
   it('flags the wall turret (rail lance range override)', () => {
@@ -94,7 +95,7 @@ describe('enemyOverrideSummary', () => {
 
   it('returns empty string when there is no override', () => {
     expect(enemyOverrideSummary('drone')).toBe('');
-    expect(enemyOverrideSummary('raider')).toBe('');
+    expect(enemyOverrideSummary('light')).toBe('');
   });
 });
 
@@ -111,11 +112,11 @@ describe('enemyRealHp — designed durability', () => {
     expect(enemyRealHp('droneBrood')).toBe(enemyRealHp('drone'));
   });
 
-  it('sums a mech kind: chassis armor+structure across locations + shield', () => {
-    // Raider = light chassis (75 armor + 100 structure) + 25 shield = 200.
-    expect(enemyRealHp('raider')).toBe(200);
-    // Artillery = heavy chassis (225 + 200) + 75 shield = 500.
-    expect(enemyRealHp('artillery')).toBe(500);
+  it('sums a mech chassis kind: chassis armor+structure across locations + shield', () => {
+    // Light mech = light chassis (75 armor + 100 structure) + 25 shield = 200.
+    expect(enemyRealHp('light')).toBe(200);
+    // Heavy mech = heavy chassis (225 + 200) + 75 shield = 500.
+    expect(enemyRealHp('heavy')).toBe(500);
   });
 
   it('returns null for an unknown kind', () => {

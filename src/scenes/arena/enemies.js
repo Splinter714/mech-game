@@ -22,6 +22,8 @@
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES } from '../../data/enemies.js';
+import { rollLoadout } from '../../data/enemyLoadout.js';
+import { mulberry32 } from '../../data/rng.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { allPlayersDeadIn, enemyTargetOf, listenerOf, playersOf, targetPlayerFor } from './players.js';
 import { drawDockKind, dockCountFor } from '../../data/worldgen.js';
@@ -311,19 +313,33 @@ export const EnemiesMixin = {
   // mech loadout (data/enemies.js, the default). Dispatched on isEnemyKind so the mech path
   // stays byte-for-byte unchanged; non-mech kinds go through _spawnKind. Returns the enemy (or
   // the last unit for a 'swarm' request, which expands into several).
-  _spawnEnemy(x, y, typeId = 'raider') {
+  _spawnEnemy(x, y, typeId = 'light') {
     if (typeId === 'swarm') return this._spawnSwarm(x, y);
     if (typeId === 'infantryMob') return this._spawnInfantryMob(x, y);
     if (isEnemyKind(typeId)) return this._spawnKind(x, y, typeId);
     return this._spawnMech(x, y, typeId);
   },
 
+  // The per-spawn loadout RNG (#474). Seeded once from the run's world seed so a given run is
+  // reproducible, but ADVANCES every spawn so consecutive mechs of the same chassis roll different
+  // loadouts. Lazily created so a bare test double (no world build) still spawns cleanly.
+  _loadoutRngFn() {
+    if (!this._loadoutRng) {
+      const seed = (this._worldSeed ?? Math.floor(Math.random() * 0x100000000)) ^ 0x9e3779b9;
+      this._loadoutRng = mulberry32(seed | 0);
+    }
+    return this._loadoutRng;
+  },
+
   // A MECH enemy (the original path): a Mech + mech textures + the six-sprite view + the #44
-  // tactical AI state. Unchanged from the pre-#68 _spawnEnemy body.
-  _spawnMech(x, y, typeId = 'raider') {
+  // tactical AI state. #474: the four fixed archetypes are gone — `typeId` is a chassis id
+  // (light/medium/heavy) and the four-weapon loadout is ROLLED per spawn from that chassis' pool
+  // (data/enemyLoadout.js), so no two spawns are identical and roles stay emergent off the roll.
+  _spawnMech(x, y, typeId = 'light') {
     const key = `enemy${this._enemySeq++}`;
-    const def = ENEMIES[typeId] ?? ENEMIES.raider;
-    const mech = new Mech(def);
+    const def = ENEMIES[typeId] ?? ENEMIES.light;
+    const mounts = rollLoadout(def.chassisId, this._loadoutRngFn());
+    const mech = new Mech({ ...def, mounts });
     mech.repairAll();
     buildMechTextures(this, key, mech, { theme: 'enemy' });
     const angle = Math.PI / 2;

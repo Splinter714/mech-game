@@ -832,16 +832,18 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     }
   });
 
-  it('#314: doubling the late pool preserved the #269 relative mix exactly', () => {
+  it('#474: the late pool fields all three chassis EQUALLY, mixed with the vehicle kinds', () => {
     const plain = BASE_LATE_KIND_POOL.filter((k) => !isSwarmDockKind(k));
     const count = (k) => plain.filter((x) => x === k).length;
-    // #269's ratios (helicopter 3 : carrier 1 : tank 1 : raider 2 : the three specialists 1 each),
-    // just doubled — helicopter still beats tank, mechs still dominate late.
+    // #474 retired the four archetypes for the three chassis, each appearing equally (before it,
+    // light was doubled and medium barely used). Vehicle mix unchanged: helicopter 3 : carrier 1 :
+    // tank 1 per half-pool, doubled — helicopter still beats tank.
     expect(count('helicopter')).toBe(6);
     expect(count('carrier')).toBe(2);
     expect(count('tank')).toBe(2);
-    expect(count('raider')).toBe(4);
-    for (const m of ['skirmisher', 'sniper', 'artillery']) expect(count(m)).toBe(2);
+    for (const m of ['light', 'medium', 'heavy']) expect(count(m)).toBe(2);
+    // Equal chassis weighting: no chassis appears more often than another.
+    expect(new Set(['light', 'medium', 'heavy'].map(count)).size).toBe(1);
     expect(count('helicopter')).toBeGreaterThan(count('tank'));
   });
 
@@ -913,7 +915,7 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     // #416: carrier now has a thin early-pool presence too (Broodhaulers should be able to show
     // up earlier in the run) — mechs alone stay late-only.
     expect(BASE_EARLY_KIND_POOL).toContain('carrier');
-    for (const mech of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+    for (const mech of ['light', 'medium', 'heavy']) {
       expect(BASE_EARLY_KIND_POOL).not.toContain(mech);
     }
     // Late pool: helicopter weighting raised from 2 to 3 entries — expressed as a RATIO against

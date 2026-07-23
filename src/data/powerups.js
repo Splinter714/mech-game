@@ -147,8 +147,8 @@ export const POWERUPS = {
 // floor ever being lowered to match. They're now COMPUTED from the live roster: the min and
 // max toughness across every mech enemy (data/enemies.js) and every vehicle kind
 // (data/enemyKinds.js). Retuning enemy health, or adding/removing a unit, needs NO edit here —
-// the endpoints move on their own. Today that derives to floor 6 (infantry) and ceiling 430
-// (the artillery mech on the heavy chassis).
+// the endpoints move on their own. Today that derives to floor 6 (infantry) and ceiling 500
+// (the heavy mech on the heavy chassis).
 //
 // CURVE (#106): CONVEX, exponent 1.5. The previous 0.7 exponent was CONCAVE — it bowed the
 // middle of the curve UP, roughly +10 percentage points across the mid-range versus a straight

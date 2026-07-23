@@ -80,8 +80,8 @@ describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its 
     expect(minSafeSpawnDist('tank')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.tank.fireRange) + SAFETY_MARGIN_PX);
   });
 
-  it('a mech typeId (e.g. raider/sniper) returns a finite, sane distance derived from its loadout, plus the margin', () => {
-    for (const typeId of ['raider', 'sniper']) {
+  it('a mech chassis typeId (light/medium/heavy) returns a finite, sane distance from its pool, plus the margin', () => {
+    for (const typeId of ['light', 'medium', 'heavy']) {
       const d = minSafeSpawnDist(typeId);
       expect(Number.isFinite(d)).toBe(true);
       expect(d).toBeGreaterThan(0);

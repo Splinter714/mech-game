@@ -123,7 +123,7 @@ describe('playerScaling (#350)', () => {
     });
 
     it('never erases a population (a zero-count wave stays zero)', () => {
-      expect(scaleDockWave('raider', 0, 2)).toBe(0);
+      expect(scaleDockWave('light', 0, 2)).toBe(0);
       expect(scaleDockWave('drone', 0, 2)).toBe(0);
     });
   });

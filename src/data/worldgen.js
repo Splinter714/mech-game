@@ -24,6 +24,7 @@ import {
   nearestHex,
 } from './hexgrid.js';
 import { buildingHp as buildingHpOf, isPassable as isPassableOf, isBaseCategory } from './terrain.js';
+import { mulberry32 } from './rng.js';
 
 // #269 §3 (issue: base population rework — dormant docks + alert towers, REPLACES the old
 // stage/squad system, data/run.js's retired `squadForStage`, and data/enemies.js's `DEFAULT_SQUAD`
@@ -81,7 +82,7 @@ export const DOCKS_PER_BASE_MAX = 8;
 //
 // #269 playtest follow-up ("fold mechs into the dock system"): the pool now mixes the non-mech
 // ENEMY_KINDS roster (tank/drone/helicopter/carrier/infantry) WITH full mech loadouts
-// (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery), late-pool only — see
+// (data/enemies.js `ENEMIES` — the three chassis light/medium/heavy, #474), late-pool only — see
 // `BASE_LATE_KIND_POOL`'s own comment for the full reasoning (mechs are the toughest kind, they
 // belong in the hard tier; `holdGround` now applies to mechs too, see scenes/arena/bases.js
 // `_wakeBase`, so their heavier tactical AI reads fine as a defender). `swarm`/`infantryMob`
@@ -143,40 +144,33 @@ export const BASE_EARLY_KIND_POOL = [
   'drone', 'infantry', 'carrier',
 ];
 // #269 playtest follow-up ("where did all the enemy mechs go?" / "fold mechs into the dock
-// system"): mechs (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery, the full
-// tactical-AI Mech roster) are now dockable too, but ONLY in the LATE pool — they're the
-// toughest thing in the game, so they read as the hard/late-run tier, never an early-base
-// opener. `_spawnDormantUnits` (scenes/arena/bases.js) tells a mech id apart from a vehicle-kind
-// id via `isEnemyKind` (data/enemyKinds.js) and constructs it through `_spawnMech` instead of
-// `_spawnKind`; every woken mech defaults to `holdGround` regardless of chassis (see
-// scenes/arena/bases.js `_wakeBase` and its comment) — a stronger dock defender than a fast
-// vehicle kind, unlike the old off-screen-squad system where a slow heavy chassis artillery
-// would otherwise never catch up to the player (#273: sniper moved off the heavy chassis onto
-// medium — see enemies.js). #285: `holdGround` no longer leashes movement or forces a
-// stand-and-fight posture — once woken, a docked mech runs the exact same tactical AI
-// (PRESS/KITE/FLANK/COVER/HOLD) as any other mech and fully commits to closing on the player,
-// same as a non-docked one. `raider` is weighted 2x (a mid-range brawler/skirmisher hybrid — the
-// most generic, always-reads-right defender) over the three specialists (each 1x): `skirmisher`
-// (an aggressive brawler), `sniper` (kites/holds at long range), and `artillery` (every weapon
-// indirect-fire — camps behind cover and lobs shells, the normal `allIndirect` behavior every
-// artillery already has, docked or not).
+// system"): mechs (data/enemies.js `ENEMIES` — the three chassis, #474) are now dockable too, but
+// ONLY in the LATE pool — they're the toughest thing in the game, so they read as the hard/late-run
+// tier, never an early-base opener. `_spawnDormantUnits` (scenes/arena/bases.js) tells a mech id
+// apart from a vehicle-kind id via `isEnemyKind` (data/enemyKinds.js) and constructs it through
+// `_spawnMech` instead of `_spawnKind`; every woken mech defaults to `holdGround` regardless of
+// chassis (see scenes/arena/bases.js `_wakeBase` and its comment) — a stronger dock defender than a
+// fast vehicle kind. #285: `holdGround` no longer leashes movement or forces a stand-and-fight
+// posture — once woken, a docked mech runs the exact same tactical AI (PRESS/KITE/FLANK/COVER/HOLD)
+// as any other mech and fully commits to closing on the player, same as a non-docked one.
 //
-// #269 playtest follow-up ("get some helicopters up in this bitch"): helicopter weight raised from
-// 2/9 to 3/10 (~22% → 30% of late draws) so gunships stay a clear presence even in the mech-heavy
-// late tier, not just the early pool. Tank is left at its already-minimal 1/10 (late bases lean on
-// the tougher mech roster, not armour columns — the "too many tanks" complaint is fixed in the
-// EARLY pool and the per-dock count, not by touching the already-thin late tank slot). Mech roster
-// (raider ×2, skirmisher/sniper/artillery ×1 each = 5/10) still dominates late, keeping the
-// escalation intent intact.
+// #269 playtest follow-up ("get some helicopters up in this bitch"): helicopter is the dominant
+// late presence (×3 per half-pool) so gunships stay a clear presence even in the mech-heavy late
+// tier, not just the early pool. Tank is left at its already-minimal 1 slot (late bases lean on the
+// tougher mech roster, not armour columns).
 //
 // #314: `drone`/`infantry` swarm docks are available in the LATE pool too ("a swarm can show up at
-// any point in a run"), at the same deliberately-thin 1 entry each. Every pre-existing late entry
-// is doubled so the ORIGINAL late mix (helicopter 3 : carrier 1 : tank 1 : raider 2 :
-// skirmisher/sniper/artillery 1 each) is preserved EXACTLY in relative terms while the two swarm
-// kinds land at 1/22 of draws apiece — same density reasoning as the early pool's comment above.
+// any point in a run"), at the same deliberately-thin 1 entry each. The list is doubled so the two
+// swarm kinds land at 1/N of draws apiece — same density reasoning as the early pool's comment above.
+// #474: the four archetype mech ids (raider/skirmisher/sniper/artillery) are replaced by the three
+// CHASSIS ids (light/medium/heavy), EACH EQUALLY WEIGHTED (the point of #474 — before it, light was
+// doubled up and medium barely used). Per half-pool: helicopter ×3, carrier ×1, tank ×1, and the
+// three mech chassis ×1 each (3 mech slots). Each spawn rolls its own four-weapon loadout, so two
+// heavies in the same run field different guns. The whole list is doubled (as #314 established) so
+// the drone/infantry swarm docks stay at 1/N apiece.
 export const BASE_LATE_KIND_POOL = [
-  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
-  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'raider', 'raider', 'skirmisher', 'sniper', 'artillery',
+  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'light', 'medium', 'heavy',
+  'helicopter', 'helicopter', 'helicopter', 'carrier', 'tank', 'light', 'medium', 'heavy',
   'drone', 'infantry',
 ];
 
@@ -242,7 +236,7 @@ export function baseLateFraction(baseIndex, baseCount) {
 //   0  infantry x5                                          the unchanged #269 opener
 //   1  infantry x5, tank                                    armour arrives
 //   2  infantry x4, tank x2, drone x3                       air joins; the drones make it mobile
-//   3  infantry x4, tank x2, drone x3, helicopter, raider    the gunship + a light mech
+//   3  infantry x4, tank x2, drone x3, helicopter, light     the gunship + a light mech
 //
 // SIZE GROWS TOO, not just composition (5 → 6 → 9 → 11). The issue explicitly left this open;
 // escalating only the mix would have made a late patrol a *different* five-unit fight rather than
@@ -250,7 +244,7 @@ export function baseLateFraction(baseIndex, baseCount) {
 // stays deliberately under a base's own population (5-8 docks, several of them swarm-sized) so
 // #269's "a patrol is clearly lighter than a base fight" framing survives the growth.
 //
-// 'raider' is the LIGHT MECH Jackson named — a full `ENEMIES` loadout id, not an ENEMY_KINDS id.
+// 'light' is the LIGHT MECH — a full `ENEMIES` chassis id (#474), not an ENEMY_KINDS id.
 // That's fine: the spawn side goes through `_spawnEnemy`'s existing `isEnemyKind` dispatcher
 // (scenes/arena/bases.js `_spawnTowerPatrols`), the same predicate the dock system already uses
 // to route mech-vs-kind, so no patrol-specific spawn plumbing exists.
@@ -267,7 +261,7 @@ export const TOWER_PATROL_TIERS = [
   ['infantry', 'infantry', 'infantry', 'infantry', 'infantry', 'tank'],
   ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'tank', 'drone', 'drone', 'drone'],
   ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'tank',
-   'drone', 'drone', 'drone', 'helicopter', 'raider'],
+   'drone', 'drone', 'drone', 'helicopter', 'light'],
 ];
 
 // Which tier a given tower falls in, and the flat list of type ids to spawn for it. Returns a
@@ -1043,15 +1037,11 @@ export function placeGapTowers(
 }
 
 // Small seeded PRNG (mulberry32) — deterministic given `a`, so the same seed always yields
-// the same terrain layout.
-export function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// the same terrain layout. Moved to data/rng.js (the shared randomness primitive) and re-exported
+// here so world.js and this file's existing importers keep resolving it from worldgen unchanged.
+// NOTE: imported (not a bare `export … from`) so the name is also bound LOCALLY for this file's own
+// generateTerrain() to use.
+export { mulberry32 };
 
 // The hex keys the safe-clear zone occupies when centered at `center` — a filled disc of
 // `radius` hexes (default 3, matching the original fixed spawn clearing). Exported so the

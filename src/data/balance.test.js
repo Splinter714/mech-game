@@ -34,10 +34,12 @@ const TABLE = {
   tank:        { structure: 50,  armor: 30,  shield: 0,   total: 80 },
   // #436: shield -> armor, same value (50). 50 structure / 100 armor = 150 total, unchanged.
   carrier:   { structure: 50,  armor: 100, shield: 0,   total: 150 },
-  raider:      { structure: 100, armor: 75,  shield: 25,  total: 200 },
-  skirmisher:  { structure: 100, armor: 75,  shield: 25,  total: 200 },
-  sniper:      { structure: 150, armor: 150, shield: 50,  total: 350 },
-  artillery:   { structure: 200, armor: 225, shield: 75,  total: 500 },
+  // #474: the four archetypes are retired — enemy mechs are the three chassis, each rolling its
+  // loadout per spawn. Stats are chassis-derived (weapons add no toughness), so the numbers below
+  // are unchanged from the old raider(light)/sniper(medium)/artillery(heavy) rows.
+  light:       { structure: 100, armor: 75,  shield: 25,  total: 200 },
+  medium:      { structure: 150, armor: 150, shield: 50,  total: 350 },
+  heavy:       { structure: 200, armor: 225, shield: 75,  total: 500 },
   // #324: the player's row as it ACTUALLY is. The owner set 200/300/100 in the #299 pass, but
   // ArenaScene then multiplied armor+structure by 7 at deploy (#64's `boostHealth`), so the mech
   // on the field was never the 600 this table claimed. The multiplier is now folded into the
@@ -63,7 +65,7 @@ describe('#299: every unit hits its confirmed structure / armor / shield numbers
     });
   }
 
-  for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+  for (const id of ['light', 'medium', 'heavy']) {
     it(`${id} (enemy mech)`, () => {
       expect(mechLayers(new Mech(ENEMIES[id]))).toEqual(TABLE[id]);
     });
@@ -88,10 +90,10 @@ describe('#299: the player shield baseline', () => {
 describe('#299: the player and the enemy medium chassis are genuinely separable', () => {
   // The whole reason chassis/mediumPlayer.js exists. Both are medium weight class, both ride the
   // same movement feel, but their stat blocks differ — which one config could not express.
-  it('the player rides mediumPlayer, the Warden rides medium, and they differ', () => {
-    expect(ENEMIES.sniper.chassisId).toBe('medium');
+  it('the player rides mediumPlayer, the enemy medium mech rides medium, and they differ', () => {
+    expect(ENEMIES.medium.chassisId).toBe('medium');
     const player = new Mech({ chassisId: 'mediumPlayer' });
-    const warden = new Mech(ENEMIES.sniper);
+    const warden = new Mech(ENEMIES.medium);
     expect(mechLayers(player).structure).toBe(1400);
     expect(mechLayers(player).armor).toBe(2100);
     expect(mechLayers(warden).structure).toBe(150);
@@ -118,7 +120,7 @@ describe('#299/#382: enemy mechs now carry a regenerating shield', () => {
   // #382: pause and regen are now shared across ALL shields (no per-kind rate), so the only
   // per-kind dial is the pool SIZE.
   it.each([
-    ['raider', 25], ['skirmisher', 25], ['sniper', 50], ['artillery', 75],
+    ['light', 25], ['medium', 50], ['heavy', 75],
   ])('%s has a %i-point shield that actually regenerates', (id, max) => {
     const s = new Mech(ENEMIES[id]).shield;
     expect(s.max).toBe(max);
@@ -129,7 +131,7 @@ describe('#299/#382: enemy mechs now carry a regenerating shield', () => {
   });
 
   it('every enemy-mech shield refills in the SAME 4s regardless of pool size (#382)', () => {
-    for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+    for (const id of ['light', 'medium', 'heavy']) {
       const s = new Mech(ENEMIES[id]).shield;
       s.hp = 0;
       for (let t = 0; t < 4; t += 0.1) tickShield(s, 0.1);
@@ -204,7 +206,7 @@ describe('#382: every shield shares one pause and one percent-of-max regen', () 
   // Just the pool sizes now — pause and regen are constants, not per-kind data.
   // #436: the carrier dropped out of this table — it's armor-only now, no shield pool.
   const POOLS = {
-    player: 100, raider: 25, skirmisher: 25, sniper: 50, artillery: 75,
+    player: 100, light: 25, medium: 50, heavy: 75,
     drone: 5, helicopter: 15,
   };
 
@@ -213,7 +215,7 @@ describe('#382: every shield shares one pause and one percent-of-max regen', () 
     expect(SHIELD_REGEN_FRACTION).toBe(0.25);
   });
 
-  for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+  for (const id of ['light', 'medium', 'heavy']) {
     it(`${id} (enemy mech) carries only a pool size, sharing pause+regen`, () => {
       const s = new Mech(ENEMIES[id]).shield;
       expect(s.max).toBe(POOLS[id]);
@@ -237,7 +239,7 @@ describe('#382: every shield shares one pause and one percent-of-max regen', () 
       for (let t = 0; t < 4; t += 0.1) tickShield(s, 0.1);
       return s.hp / s.max;
     };
-    for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
+    for (const id of ['light', 'medium', 'heavy']) {
       expect(refill(new Mech(ENEMIES[id]).shield), id).toBeCloseTo(1, 4);
     }
     for (const id of ['drone', 'helicopter']) {
@@ -246,7 +248,7 @@ describe('#382: every shield shares one pause and one percent-of-max regen', () 
   });
 
   it('regen is percent-of-MAX (linear, fully fills) NOT percent-of-current (would asymptote)', () => {
-    const s = new Mech(ENEMIES.sniper).shield;   // 50 pool
+    const s = new Mech(ENEMIES.medium).shield;   // 50 pool
     s.hp = 0;
     tickShield(s, 1);
     expect(s.hp).toBeCloseTo(12.5, 5);   // 25% of MAX 50, off zero — not fraction-of-current

@@ -1,97 +1,73 @@
 import { describe, it, expect } from 'vitest';
 import { Mech } from './Mech.js';
 import * as enemiesModule from './enemies.js';
-import { ENEMIES, ENEMY_ROTATION } from './enemies.js';
+import { ENEMIES, ENEMY_ROTATION, MECH_CHASSIS_IDS } from './enemies.js';
 import { CHASSIS_IDS } from './chassis/index.js';
+import { ENEMY_KINDS } from './enemyKinds.js';
 
-// #272: artillery/Mortarhead is meant to be an entrenched siege unit whose ENTIRE loadout is
-// indirect-fire (homing or arcing), so the tactical AI's `isAllIndirect` (scenes/arena/
-// enemies.js) reads true and its "camp behind cover and bombard" posture actually triggers —
-// see the design comment on ENEMIES.artillery above. #96 had it reusing the sniper's direct-fire
-// plasmaLance/clusterRocket loadout as a stopgap (since its original indirect weapons were
-// shelved), which silently broke that AI posture. #244 later un-shelved every weapon, so this
-// locks in that artillery got its own distinct, fully-indirect loadout back — mirrors the exact
-// condition `isIndirectWeapon` in scenes/arena/enemies.js checks (guidance 'homing' or path
-// 'arcing'), without needing to import that Phaser-adjacent scene file here.
-function isIndirect(weapon) {
-  const d = weapon?.delivery;
-  return !!d && (d.guidance === 'homing' || d.path === 'arcing');
-}
+// #474: the four hand-written archetypes (Raider/Stalker/Warden/Mortarhead) are RETIRED. Enemy
+// mechs are now exactly the three chassis weight classes, each appearing equally, and each rolls
+// its own four-weapon loadout per spawn (data/enemyLoadout.js) rather than carrying a fixed one.
+// The old artillery/all-indirect guarantee moved to enemyLoadout.test.js (a heavy roll CAN come up
+// all-indirect), since there is no longer a hand-written Mortarhead entry to pin.
 
-describe('ENEMIES.artillery loadout', () => {
-  it('is fully indirect-fire — every mounted weapon is arcing or homing', () => {
-    const mech = new Mech(ENEMIES.artillery);
-    const weapons = mech.weapons().map((w) => w.weapon).filter(Boolean);
-    expect(weapons.length).toBeGreaterThan(0);
-    expect(weapons.every(isIndirect)).toBe(true);
+describe('ENEMIES — the three chassis (retired archetypes, #474)', () => {
+  it('defines exactly the three chassis weight classes as enemy mechs', () => {
+    expect(Object.keys(ENEMIES).sort()).toEqual(['heavy', 'light', 'medium']);
+    expect([...MECH_CHASSIS_IDS].sort()).toEqual(['heavy', 'light', 'medium']);
   });
 
-  it('is distinct from the sniper loadout (not just a reskinned Warden)', () => {
-    const artillery = new Mech(ENEMIES.artillery);
-    const sniper = new Mech(ENEMIES.sniper);
-    const artilleryIds = artillery.weapons().map((w) => w.weapon?.id).sort();
-    const sniperIds = sniper.weapons().map((w) => w.weapon?.id).sort();
-    expect(artilleryIds).not.toEqual(sniperIds);
-  });
-});
-
-// #273: "each weapon loadout should actually have a different mech art type" — the 4 mech
-// archetypes were keyed to only 2 of the 3 chassis weight classes (raider+skirmisher both
-// 'light', sniper+artillery both 'heavy'; 'medium' unused), so any two sharing a class were
-// visually near-identical apart from mounted weapon icons. Fixed as a pure data change: no
-// new art-override mechanism, just reassigning chassisId so all 3 chassis weight classes
-// (each with its own distinct procedural body shape + decor set — see src/data/chassis/*.js)
-// are represented across the 4 archetypes.
-describe('ENEMIES — mech archetype chassis assignment (#273)', () => {
-  it('defines exactly the 4 expected mech archetypes', () => {
-    expect(Object.keys(ENEMIES).sort()).toEqual(['artillery', 'raider', 'skirmisher', 'sniper']);
-  });
-
-  it('every archetype uses a real, known chassis weight class', () => {
+  it('each entry keys onto its own real chassis weight class', () => {
+    expect(ENEMIES.light.chassisId).toBe('light');
+    expect(ENEMIES.medium.chassisId).toBe('medium');
+    expect(ENEMIES.heavy.chassisId).toBe('heavy');
     for (const [id, def] of Object.entries(ENEMIES)) {
       expect(CHASSIS_IDS, `${id}.chassisId`).toContain(def.chassisId);
     }
   });
 
-  it('all 3 chassis weight classes are represented across the 4 archetypes (not just 2)', () => {
-    const usedChassisIds = new Set(Object.values(ENEMIES).map((def) => def.chassisId));
-    expect([...usedChassisIds].sort()).toEqual(['heavy', 'light', 'medium']);
+  it('all three chassis weight classes are represented (none doubled up)', () => {
+    const used = Object.values(ENEMIES).map((def) => def.chassisId).sort();
+    expect(used).toEqual(['heavy', 'light', 'medium']);
   });
 
-  it('sniper is the medium chassis (moved off heavy so it no longer doubles artillery\'s look)', () => {
-    expect(ENEMIES.sniper.chassisId).toBe('medium');
-  });
-
-  it('artillery keeps the heavy chassis — fits its camp-and-bombard siege identity', () => {
-    expect(ENEMIES.artillery.chassisId).toBe('heavy');
-  });
-
-  it('raider and skirmisher still share the light chassis — the one pair still allowed to overlap', () => {
-    expect(ENEMIES.raider.chassisId).toBe('light');
-    expect(ENEMIES.skirmisher.chassisId).toBe('light');
-  });
-
-  it('with all 3 weight classes in play, at most one pair of archetypes shares a chassis', () => {
-    const counts = {};
+  it('carries NO fixed mounts — the loadout is rolled per spawn (#474)', () => {
     for (const def of Object.values(ENEMIES)) {
-      counts[def.chassisId] = (counts[def.chassisId] ?? 0) + 1;
+      expect(def.mounts).toBeUndefined();
     }
-    const shared = Object.values(counts).filter((n) => n > 1);
-    expect(shared).toEqual([2]); // exactly one chassis id used by exactly 2 archetypes
   });
 
-  it('ENEMY_ROTATION still only references real ENEMIES/kind ids (no typos from the edit)', () => {
-    // Loose sanity check, not an exhaustive kind registry cross-check — just confirms the
-    // archetype ids touched by this change (raider/skirmisher/sniper/artillery) still appear.
-    for (const id of ['raider', 'skirmisher', 'sniper', 'artillery']) {
-      expect(ENEMY_ROTATION).toContain(id);
+  it('keeps the shield pools keyed to weight class (light 25 / medium 50 / heavy 75)', () => {
+    expect(ENEMIES.light.shield.max).toBe(25);
+    expect(ENEMIES.medium.shield.max).toBe(50);
+    expect(ENEMIES.heavy.shield.max).toBe(75);
+  });
+
+  it('builds a valid, weaponless Mech straight from a static def (mounts come at spawn)', () => {
+    for (const id of Object.keys(ENEMIES)) {
+      const mech = new Mech(ENEMIES[id]);
+      expect(mech.onlineWeapons()).toHaveLength(0);
+      expect(mech.toughness).toBeGreaterThan(0);
+    }
+  });
+
+  it('ENEMY_ROTATION references only real ENEMIES chassis ids or real ENEMY_KINDS ids', () => {
+    for (const id of ENEMY_ROTATION) {
+      const known = Boolean(ENEMIES[id]) || Boolean(ENEMY_KINDS[id])
+        || id === 'swarm' || id === 'infantryMob';
+      expect(known, id).toBe(true);
+    }
+  });
+
+  it('ENEMY_ROTATION includes all three chassis, each once (equal debug-cycle weight)', () => {
+    for (const id of ['light', 'medium', 'heavy']) {
+      expect(ENEMY_ROTATION.filter((x) => x === id)).toHaveLength(1);
     }
   });
 
   // #344: `DEFAULT_SQUAD` was documented as retired in two files while still being exported AND
-  // still wired as `_spawnSquad`'s default argument. Traced: `_spawnSquad` had no call sites, so
-  // the table was genuinely dead and both it and the method were deleted. Guard the deletion so a
-  // future edit can't quietly reintroduce a second, unreachable opening-difficulty table.
+  // still wired as `_spawnSquad`'s default argument. Guard the deletion so a future edit can't
+  // quietly reintroduce a second, unreachable opening-difficulty table.
   it('DEFAULT_SQUAD is gone (#344 — dead opening-squad table, no call sites)', () => {
     expect(enemiesModule.DEFAULT_SQUAD).toBeUndefined();
   });

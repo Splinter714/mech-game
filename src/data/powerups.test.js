@@ -306,7 +306,7 @@ describe('#106: drop-curve bounds are DERIVED from the live roster, not hardcode
   it('derives floor = the weakest unit (infantry, 3) and ceil = the toughest (heavy mech, 500)', () => {
     const { floor, ceil } = dropBounds();
     expect(floor).toBe(kindToughness('infantry'));
-    expect(ceil).toBe(mechToughness('artillery'));
+    expect(ceil).toBe(mechToughness('heavy'));
     expect(floor).toBe(3);
     expect(ceil).toBe(500);
   });
@@ -349,9 +349,9 @@ describe('#106: the convex drop curve over the current roster', () => {
     ['helicopter', kindToughness('helicopter'), 50, 0.08],
     ['tank', kindToughness('tank'), 80, 0.10],
     ['carrier', kindToughness('carrier'), 150, 0.19],
-    ['light mech', mechToughness('raider'), 200, 0.27],
-    ['medium mech', mechToughness('sniper'), 350, 0.58],
-    ['heavy mech', mechToughness('artillery'), 500, 0.95],
+    ['light mech', mechToughness('light'), 200, 0.27],
+    ['medium mech', mechToughness('medium'), 350, 0.58],
+    ['heavy mech', mechToughness('heavy'), 500, 0.95],
   ];
 
   for (const [label, toughness, expectedToughness, expectedChance] of TABLE) {
@@ -409,7 +409,7 @@ describe('#106: crush/stomp kills use a fixed, extremely low chance', () => {
   });
 
   it('leaves weapon kills on the curve, completely unchanged', () => {
-    for (const [, t] of [['tank', kindToughness('tank')], ['heavy', mechToughness('artillery')]]) {
+    for (const [, t] of [['tank', kindToughness('tank')], ['heavy', mechToughness('heavy')]]) {
       expect(dropChanceForKill(t)).toBe(dropChanceForToughness(t));
       expect(dropChanceForKill(t, false)).toBe(dropChanceForToughness(t));
     }

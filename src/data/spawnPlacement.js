@@ -12,8 +12,8 @@
 import { axialKey, hexToPixel, pixelToHex, nearestHex } from './hexgrid.js';
 import { isPassable } from './terrain.js';
 import { BOUNDARY_RING_WIDTH } from './worldgen.js';
-import { Mech } from './Mech.js';
 import { ENEMIES } from './enemies.js';
+import { chassisMaxOpt } from './enemyLoadout.js';
 import { ENEMY_KINDS, isEnemyKind } from './enemyKinds.js';
 import { detectionRangeFor } from './awareness.js';
 
@@ -81,10 +81,14 @@ const STANDOFF_FRAC = 0.85;        // mirrors STANDOFF_FRAC, enemies.js
 const DEFAULT_OPT = 220;           // mirrors DEFAULT_OPT, enemies.js
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
-function meanOptRange(mech) {
-  const ws = mech.weapons().map((w) => w.weapon).filter(Boolean);
-  if (!ws.length) return DEFAULT_OPT;
-  return ws.reduce((a, w) => a + (w.range?.opt ?? DEFAULT_OPT), 0) / ws.length;
+// #474: a mech's loadout is now rolled PER SPAWN (data/enemyLoadout.js), so at safe-distance time
+// (before the mech exists) there's no fixed loadout to read. Use the chassis pool's LONGEST optimum
+// range — the worst (farthest-reaching) roll — so the safe zone is generous enough for whatever the
+// dice produce, never too small for a long-range roll. Falls back to DEFAULT_OPT for an unknown id.
+function chassisOptRange(typeId) {
+  const def = ENEMIES[typeId];
+  if (!def) return DEFAULT_OPT;
+  return chassisMaxOpt(def.chassisId) || DEFAULT_OPT;
 }
 
 // #203 (playtest report: enemies near the deploy point already actively engaging the instant the
@@ -116,8 +120,7 @@ export function minSafeSpawnDist(typeId) {
   if (typeId === 'swarm') return detectionRangeFor(ENEMY_KINDS.drone.fireRange) + SAFETY_MARGIN_PX;
   if (typeId === 'infantryMob') return detectionRangeFor(ENEMY_KINDS.infantry.fireRange) + SAFETY_MARGIN_PX;
   if (isEnemyKind(typeId)) return detectionRangeFor(ENEMY_KINDS[typeId].fireRange) + SAFETY_MARGIN_PX;
-  const def = ENEMIES[typeId] ?? ENEMIES.raider;
-  const opt = meanOptRange(new Mech(def));
+  const opt = chassisOptRange(ENEMIES[typeId] ? typeId : 'light');
   const standoff = clamp(opt * STANDOFF_FRAC, BRAWLER_STANDOFF_MIN, BRAWLER_STANDOFF_MAX);
   return detectionRangeFor(standoff) + SAFETY_MARGIN_PX;
 }
