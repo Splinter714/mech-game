@@ -20,10 +20,12 @@ describe('#479 leg-lift gait wiring', () => {
     expect(locomotion).toMatch(/Audio\.footstep\(beat\)/);
   });
 
-  it('fires Audio.legLift on a beat that flips at the OPPOSITE phases 0.25 and 0.75', () => {
-    // The lift beat spans the mid-stride window [0.25, 0.75) — its two transitions land exactly on
-    // the peak-swing crossings, a quarter-cycle off the phase 0/0.5 plants.
-    expect(locomotion).toMatch(/liftBeat = \(phase >= 0\.25 && phase < 0\.75\) \? 1 : 0/);
+  it('#485 fires Audio.legLift on a SWUNG beat offset shortly after each plant', () => {
+    // The lift beat spans [GAIT_SWING_OFFSET, GAIT_SWING_OFFSET + 0.5) — its two transitions land
+    // just after the phase 0/0.5 plants (~0.16/~0.66), so the rhythm reads plant-lift…space rather
+    // than the old even 0.25/0.75 spacing. The offset is a named, tunable constant.
+    expect(locomotion).toMatch(/const GAIT_SWING_OFFSET = 0\.16;/);
+    expect(locomotion).toMatch(/liftBeat = \(phase >= GAIT_SWING_OFFSET && phase < GAIT_SWING_OFFSET \+ 0\.5\) \? 1 : 0/);
     expect(locomotion).toMatch(/Audio\.legLift\(liftBeat\)/);
   });
 
