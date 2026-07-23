@@ -8,19 +8,24 @@ export { scaledGraphics };
 export const DESIGN = 64;              // design-grid canvas size (square)
 export const CENTER = DESIGN / 2;
 
-// Faction palettes. `rounded` swaps the plate primitive (chamfered ↔ rounded), and `cornerR`
-// (fraction of the plate's short side) says HOW rounded. Tones run outline (edge) → deep/ao
-// (shadow) → faceDk/faceMid/face (panels) → rim/rimHi (light).
+// Faction palettes. `faceted` swaps the plate primitive (tapered cut-plane wedge ↔ the player's
+// symmetric chamfered octagon), and `roundBarrel` keeps gun tubes capsule-ended. Tones run
+// outline (edge) → deep/ao (shadow) → faceDk/faceMid/face (panels) → rim/rimHi (light).
 //
-// #446: the enemy theme used to carry a third mode, `bubbly` — every part drawn as a glossy
-// ELLIPSE with a soft bottom shadow and a bright highlight spot, which is what read as "too
-// bubbly": inflated ceramic pods rather than armour. That mode is gone entirely (there is no
-// flag left to set), and the enemy falls back to the `rounded` plate it already had a branch
-// for — but with a HARD corner radius (0.13 of the short side, vs the 0.34 that branch used to
-// assume) and, now that it takes the standard plate path, real flat panel furniture: a straight
-// top rim light, a straight bottom AO band and a panel seam. Still unmistakably the "sleek pale
-// machine" faction against the player's dark chamfered gunmetal — just built out of panels
-// instead of blobs.
+// #446, pass 1 (de-bubbling): the enemy theme used to carry a third mode, `bubbly` — every part
+// drawn as a glossy ELLIPSE with a soft bottom shadow and a bright highlight spot, which is what
+// read as "too bubbly": inflated ceramic pods rather than armour. That mode is gone entirely.
+// It fell back onto a `rounded` plate with a very hard corner radius (0.13).
+//
+// #446, pass 2 (this one): the owner's read on that was "a bit more angular instead of BLOCKY" —
+// a rounded rect with its corners squeezed to nearly nothing is just a rectangle, so the fix is
+// NOT a smaller radius (that only makes it blockier). The whole rounded mode is gone with the
+// bubbly one; the enemy now draws a FACETED plate — a trapezoid, narrower at the top, whose
+// corners are cut back into visible chamfer planes (deep at the top, shallow at the bottom), with
+// a shaded cut plane down one side, a bright highlight along the fold between the two planes, and
+// a DIAGONAL panel seam. Slanted sides + cut corners + diagonal panel lines is what reads as
+// angular at ~40px; orthogonal edges and right angles are what read as blocky. Still unmistakably
+// the "sleek pale machine" faction against the player's dark symmetric gunmetal.
 // `armorArt` (#472): does a mech of this faction show its ARMOR state on the sprite at all?
 // The player still tears open (`exposedInternals`) when a location's armor is stripped — that's
 // the player-side look #401 owns. Enemies do NOT: the owner's read was that the visual "looks so
@@ -30,21 +35,26 @@ export const CENTER = DESIGN / 2;
 // is already the single place a mech's LOOK is decided.
 const THEMES = {
   player: {
-    rounded: false, armorArt: true,
+    faceted: false, armorArt: true,
     outline: 0x0b0e14, deep: 0x1b212b, ao: 0x10131a, recess: 0x14181f, housing: 0x14181f,
     lower: 0x252c38, faceDk: 0x2a323e, faceMid: 0x2e3543, face: 0x3a4250,
     rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
   },
   enemy: {
-    rounded: true, cornerR: 0.13, legibilityHalo: true, armorArt: false,
+    faceted: true, roundBarrel: true, legibilityHalo: true, armorArt: false,
     outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
     lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,
   },
 };
-// Default plate corner radius for a `rounded` theme, as a fraction of the plate's short side.
-// A theme overrides it with `cornerR`; the enemy does, hard (see #446 above).
-export const ROUNDED_CORNER_R = 0.34;
+// #446 pass 2 — the two dials of the FACETED plate, both fractions:
+//   FACET_TAPER — how much narrower the plate's TOP edge is than its bottom, so the sides slant
+//     instead of running vertical (a wedge, not a box).
+//   FACET_CUT — the base corner cut as a fraction of the short side. The top corners take 1.5× it
+//     and the bottom corners 0.6×, so the cut planes are unmistakably deliberate at the shoulder
+//     line rather than a symmetric bevel that just reads as "slightly rounded".
+export const FACET_TAPER = 0.18;
+export const FACET_CUT = 0.26;
 // #348 (local co-op, player identification): an optional per-OWNER accent layered on top of a
 // faction palette. Two mechs on the same side must be told apart at a glance, and the theme
 // table is already the one place a mech's colour is decided — so rather than bolt on a parallel
@@ -145,39 +155,87 @@ export function chamfer(cx, cy, w, h, c) {
           [x1 - c, y1], [x0 + c, y1], [x0, y1 - c], [x0, y0 + c]];
 }
 
-// A shaded armour plate: dark outline, mid face, a top highlight rim catching overhead
-// light, a lower ambient-occlusion shadow, and an optional panel seam. Angular (chamfered
-// octagon) for the player theme, hard-cornered rounded rect for the enemy theme.
+// #446 pass 2 — the FACETED plate outline, the enemy's angular counterpart to `chamfer`. A
+// trapezoid narrower at the top (so both side edges slant) with all four corners cut back into
+// chamfer planes: deep at the top, shallow at the bottom. Eight points, same as `chamfer`, so it
+// drops into every place that took a chamfered octagon — including the halo/outline rings, which
+// just call it at a larger size.
+export function facet(cx, cy, w, h, c, taper = FACET_TAPER) {
+  const hw = w / 2, hh = h / 2, tw = hw * (1 - taper), slope = hw - tw;
+  const ct = Math.max(0.4, Math.min(c * 1.5, tw * 0.8, hh * 0.8));   // top corners: the deep cut
+  const cb = Math.max(0.3, Math.min(c * 0.6, hw * 0.8, hh * 0.8));   // bottom corners: barely broken
+  const dt = slope * (ct / h), db = slope * (cb / h);                // sideways drift along the slant
+  return [
+    [cx - tw + ct, cy - hh], [cx + tw - ct, cy - hh],
+    [cx + tw + dt, cy - hh + ct], [cx + hw - db, cy + hh - cb],
+    [cx + hw - cb, cy + hh], [cx - hw + cb, cy + hh],
+    [cx - hw + db, cy + hh - cb], [cx - tw - dt, cy - hh + ct],
+  ];
+}
+
+// The theme's plate OUTLINE primitive — faceted wedge (enemy) or symmetric chamfered octagon
+// (player). Shared with the non-`plate` places that draw a plate-shaped inset (the cockpit core,
+// the launcher boxes) so a faction has ONE silhouette language across the whole mech.
+export function plateOutline(T, cx, cy, w, h, c) {
+  return T.faceted ? facet(cx, cy, w, h, c) : chamfer(cx, cy, w, h, c);
+}
+// The default corner cut for a theme, as a fraction of the plate's short side.
+export const plateCut = (T, w, h) => Math.min(w, h) * (T.faceted ? FACET_CUT : 0.22);
+
+// A shaded armour plate: dark outline, mid face, a highlight rim catching overhead light, an
+// ambient-occlusion shadow, and an optional panel seam. The player gets the symmetric chamfered
+// octagon with orthogonal furniture (straight rim band, straight AO band, horizontal seam); the
+// enemy gets the faceted wedge with DIAGONAL furniture — a shaded cut plane down its right side,
+// a lit fold where the two planes meet, and a diagonal seam (#446 pass 2).
 export function plate(sg, T, cx, cy, w, h, opts = {}) {
   const fill = opts.fill ?? T.face;
-  let inset;
-  if (T.rounded) {
-    // #446: `cornerR` is the de-bubbling dial — the enemy sets it hard (0.13) so a plate reads as
-    // a panel with broken corners, not a lozenge. The rim/AO/seam furniture below is shared with
-    // the angular path, so both factions now get the same flat panel language.
-    const r = Math.min(w, h) * (T.cornerR ?? ROUNDED_CORNER_R);
-    if (T.legibilityHalo) {
-      const e = HALO_EDGE_W;
-      roundC(sg, cx, cy, w + 2.6 + e * 2, h + 2.6 + e * 2, HALO_EDGE, r + 0.8 + e);   // #421
-      roundC(sg, cx, cy, w + 2.6, h + 2.6, HALO, r + 0.8);
-    }
-    roundC(sg, cx, cy, w + 1.2, h + 1.2, T.outline, r + 0.4);
-    roundC(sg, cx, cy, w, h, fill, r);
-    inset = Math.min(w, h) * 0.1;
-  } else {
-    const c = opts.chamfer ?? Math.min(w, h) * 0.22;
-    if (T.legibilityHalo) {
-      const e = HALO_EDGE_W;
-      poly(sg, chamfer(cx, cy, w + 2.6 + e * 2, h + 2.6 + e * 2, c + 0.8 + e), HALO_EDGE);   // #421
-      poly(sg, chamfer(cx, cy, w + 2.6, h + 2.6, c + 0.8), HALO);
-    }
-    poly(sg, chamfer(cx, cy, w + 1.2, h + 1.2, c + 0.4), T.outline);
-    poly(sg, chamfer(cx, cy, w, h, c), fill);
-    inset = c;
+  const c = opts.chamfer ?? plateCut(T, w, h);
+  const shape = (ww, hh, cc) => plateOutline(T, cx, cy, ww, hh, cc);
+  if (T.legibilityHalo) {
+    const e = HALO_EDGE_W;
+    poly(sg, shape(w + 2.6 + e * 2, h + 2.6 + e * 2, c + 0.8 + e), HALO_EDGE);   // #421
+    poly(sg, shape(w + 2.6, h + 2.6, c + 0.8), HALO);
   }
+  poly(sg, shape(w + 1.2, h + 1.2, c + 0.4), T.outline);
+  poly(sg, shape(w, h, c), fill);
+  if (T.faceted) return facetFurniture(sg, T, cx, cy, w, h, c, opts);
+  const inset = c;
   rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
   rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
   if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7);
+}
+
+// The faceted plate's surface detail. Everything here runs on a DIAGONAL, which is the whole point:
+// the previous pass kept the player's orthogonal bands on a near-rectangular plate, and horizontal
+// stripes on a rectangle are exactly what reads as blocky. Order: the shaded second plane, the lit
+// fold between the planes, a tapering rim strip along the (slanted) top edge, an AO wedge along the
+// bottom, then a diagonal seam on the unshaded half.
+function facetFurniture(sg, T, cx, cy, w, h, c, opts) {
+  const hw = w / 2, hh = h / 2, tw = hw * (1 - FACET_TAPER);
+  const ct = Math.max(0.4, Math.min(c * 1.5, tw * 0.8, hh * 0.8));
+  // The cut plane: everything right of a diagonal ridge running from upper-left to lower-right,
+  // a shade darker so the body reads as two surfaces meeting at an angle rather than one flat face.
+  const ridgeTop = [cx - tw * 0.30, cy - hh + h * 0.12];
+  const ridgeBot = [cx + hw * 0.12, cy + hh - h * 0.13];
+  poly(sg, [ridgeTop, [cx + tw * 0.80, cy - hh + h * 0.12], [cx + hw * 0.80, cy + hh - h * 0.13], ridgeBot],
+       opts.plane ?? T.faceDk);
+  // The lit fold along that ridge — a hard bright line on the diagonal, the strongest angular cue
+  // at arena size.
+  thickLine(sg, ridgeTop[0], ridgeTop[1], ridgeBot[0], ridgeBot[1], Math.max(0.7, Math.min(w, h) * 0.07),
+            opts.rim ?? T.rim, 0.85);
+  // Rim strip hugging the top edge, tapering with it (a trapezoid, not a rectangle).
+  poly(sg, [[cx - tw + ct * 0.85, cy - hh + h * 0.02], [cx + tw - ct * 0.85, cy - hh + h * 0.02],
+            [cx + tw - ct * 1.25, cy - hh + h * 0.15], [cx - tw + ct * 1.25, cy - hh + h * 0.15]],
+       opts.rim ?? T.rim);
+  // AO wedge along the bottom, wider on the shaded side so the shadow leans with the fold.
+  poly(sg, [[cx - hw * 0.86, cy + hh - h * 0.19], [cx + hw * 0.9, cy + hh - h * 0.12],
+            [cx + hw * 0.9, cy + hh - h * 0.02], [cx - hw * 0.86, cy + hh - h * 0.02]], T.ao, 0.5);
+  // A second, shorter panel line on the LIT half, parallel to nothing — a diagonal cut across the
+  // corner, the kind of thing that reads as panelling rather than as a stripe.
+  if (opts.seam !== false) {
+    thickLine(sg, cx - tw * 0.78, cy + hh * 0.20, cx - tw * 0.05, cy - hh * 0.34,
+              Math.max(0.7, Math.min(w, h) * 0.05), T.grime, 0.7);
+  }
 }
 
 // Layered point-glow: wide faint halo → tighter halo → bright core → hot centre.
@@ -242,11 +300,12 @@ function mixToWhite(c, t) {
   return (m(r) << 16) | (m(g) << 8) | m(b);
 }
 
-// A weapon barrel: a rounded bar (rounded theme) or a plain dark bar (angular). #446: the
-// enemy's old glossy-ellipse barrel is gone with the rest of the bubbly mode; a tube stays
-// capsule-ended here because a gun barrel genuinely is round, unlike an armour panel.
+// A weapon barrel: a capsule (`roundBarrel` themes) or a plain dark bar. #446: the enemy's old
+// glossy-ellipse barrel went with the rest of the bubbly mode, but the tube stays capsule-ended
+// because a gun barrel genuinely IS round — that's the one part the de-facet doesn't apply to,
+// which is why it has its own flag rather than riding on the plate mode.
 export function barrel(sg, T, cx, cy, w, h) {
-  return T.rounded
+  return T.roundBarrel
     ? roundC(sg, cx, cy, w, h, T.faceDk, Math.min(w, h) * 0.45)
     : rectC(sg, cx, cy, w, h, T.faceDk);
 }
@@ -303,23 +362,13 @@ export function exposedInternals(sg, T, cx, cy, w, h) {
 // A destroyed location: a charred lump with faint embers.
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
-  if (T.rounded) {
-    if (T.legibilityHalo) {
-      const e = HALO_EDGE_W;
-      roundC(sg, cx, cy, w * 0.62 + 1.4 + e * 2, h * 0.5 + 1.4 + e * 2, HALO_EDGE, m * 0.18 + 0.5 + e);   // #421
-      roundC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO, m * 0.18 + 0.5);
-    }
-    roundC(sg, cx, cy, w * 0.62, h * 0.5, T.outline, m * 0.18);
-    roundC(sg, cx, cy, w * 0.56, h * 0.44, T.char, m * 0.16);
-  } else {
-    if (T.legibilityHalo) {
-      const e = HALO_EDGE_W;
-      poly(sg, chamfer(cx, cy, w * 0.62 + 1.4 + e * 2, h * 0.5 + 1.4 + e * 2, m * 0.14 + 0.4 + e), HALO_EDGE);   // #421
-      poly(sg, chamfer(cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, m * 0.14 + 0.4), HALO);
-    }
-    poly(sg, chamfer(cx, cy, w * 0.62, h * 0.5, m * 0.14), T.outline);
-    poly(sg, chamfer(cx, cy, w * 0.56, h * 0.44, m * 0.14), T.char);
+  if (T.legibilityHalo) {
+    const e = HALO_EDGE_W;
+    poly(sg, plateOutline(T, cx, cy, w * 0.62 + 1.4 + e * 2, h * 0.5 + 1.4 + e * 2, m * 0.14 + 0.4 + e), HALO_EDGE);   // #421
+    poly(sg, plateOutline(T, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, m * 0.14 + 0.4), HALO);
   }
+  poly(sg, plateOutline(T, cx, cy, w * 0.62, h * 0.5, m * 0.14), T.outline);
+  poly(sg, plateOutline(T, cx, cy, w * 0.56, h * 0.44, m * 0.14), T.char);
   sg.fillStyle(0x7a2a12, 0.6); sg.fillCircle(CENTER + cx, CENTER + cy, m * 0.12);
   sg.fillStyle(0xd6601e, 0.5); sg.fillCircle(CENTER + cx, CENTER + cy, m * 0.06);
 }

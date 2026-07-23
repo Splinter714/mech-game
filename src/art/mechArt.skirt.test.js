@@ -7,21 +7,25 @@
 import { describe, it, expect } from 'vitest';
 import { buildMechTextures, mechLayout } from './mechArt.js';
 import { ART_SCALE } from './_frames.js';
-import { CENTER } from './mechPrims.js';
+import { CENTER, themeFor } from './mechPrims.js';
 import { Mech } from '../data/Mech.js';
 
 // A fake scene that records every fillPoints polygon per generated texture key, in DESIGN-space
-// local coords (undoing scaledGraphics' CENTER offset + ART_SCALE super-sampling).
+// local coords (undoing scaledGraphics' CENTER offset + ART_SCALE super-sampling), tagged with the
+// fill colour it was drawn in (the last `fillStyle` before it — how every primitive here works).
 function recordingScene() {
   const polysByKey = {};
   let pending = [];
+  let fill = 0;
   const g = new Proxy({}, {
     get(_t, prop) {
+      if (prop === 'fillStyle') return (c) => { fill = c; };
       if (prop === 'fillPoints') {
-        return (pts) => pending.push(pts.map((p) => ({
-          x: p.x / ART_SCALE - CENTER,
-          y: p.y / ART_SCALE - CENTER,
-        })));
+        return (pts) => {
+          const q = pts.map((p) => ({ x: p.x / ART_SCALE - CENTER, y: p.y / ART_SCALE - CENTER }));
+          q.tint = fill;
+          pending.push(q);
+        };
       }
       if (prop === 'generateTexture') return (key) => { polysByKey[key] = pending; pending = []; };
       if (prop === 'destroy') return () => { pending = []; };
@@ -35,24 +39,28 @@ function recordingScene() {
   };
 }
 
-// The two skirt plates are the only FOUR-point polygons in the hull (plates chamfer to 8).
-// Each is drawn three times (halo / outline / face); we want the un-inset face pass, which is
-// the innermost — i.e. the smallest outer extent.
-function skirtOuterEdge(mech, theme) {
+// Each skirt is drawn in several shade passes (halo / dark edge / outline / face); the one we
+// measure is the un-inset FACE pass, which is the only quad in the hull filled in `T.faceMid` —
+// every other faceMid mark is a rect, and the plates themselves are 8-point outlines. (#446 pass 2
+// added diagonal surface furniture to the enemy's plates, so "the only four-point polys" no longer
+// identifies the skirt on its own.)
+function skirtQuads(mech, theme) {
   const scene = recordingScene();
   buildMechTextures(scene, 'k', mech, { theme });
-  const quads = (scene.polysByKey.k_hull_0 ?? []).filter((p) => p.length === 4);
-  expect(quads.length).toBeGreaterThan(0);
-  const rightSide = quads.filter((q) => q.some((p) => p.x > 0));
+  const T = themeFor({ theme });
+  const quads = (scene.polysByKey.k_hull_0 ?? []).filter((p) => p.length === 4 && p.tint === T.faceMid);
+  expect(quads.length).toBe(2);          // exactly the two skirt face passes, one per side
+  return quads;
+}
+
+function skirtOuterEdge(mech, theme) {
+  const rightSide = skirtQuads(mech, theme).filter((q) => q.some((p) => p.x > 0));
   const extents = rightSide.map((q) => Math.max(...q.map((p) => p.x)));
   return Math.min(...extents);
 }
 
 function skirtInnerEdge(mech, theme) {
-  const scene = recordingScene();
-  buildMechTextures(scene, 'k', mech, { theme });
-  const quads = (scene.polysByKey.k_hull_0 ?? []).filter((p) => p.length === 4);
-  const rightSide = quads.filter((q) => q.some((p) => p.x > 0));
+  const rightSide = skirtQuads(mech, theme).filter((q) => q.some((p) => p.x > 0));
   // Inner edge = the smallest x on the plate; take the outermost (least inset) of the three passes.
   return Math.max(...rightSide.map((q) => Math.min(...q.map((p) => p.x))));
 }

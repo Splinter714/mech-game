@@ -10,7 +10,7 @@
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
-import { barrel, rectC, roundC, ellipseC, poly, chamfer, glowDot, glowBar, emissive } from '../mechPrims.js';
+import { barrel, rectC, roundC, ellipseC, poly, plateOutline, glowDot, glowBar, emissive } from '../mechPrims.js';
 import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
@@ -154,11 +154,12 @@ function clusterRocket(sg, T, bx, frontY, s, n, cap) {
   glowDot(sg, bx, frontY - L * 0.86, 1.0 * s, n);
 }
 
-// A theme-aware boxy launcher frame (shared by the rack). Angular for the player, hard-cornered
-// rounded for the enemy — mirrors the generic missile box. (#446 dropped the bubbly ellipse.)
+// A theme-aware boxy launcher frame (shared by the rack). Chamfered for the player, faceted for
+// the enemy — mirrors the generic missile box. (#446 dropped the bubbly ellipse, then pass 2
+// dropped the rounded-rect fallback.)
 function boxFrame(sg, T, bx, cy, w, h) {
-  if (T.rounded) roundC(sg, bx, cy, w, h, T.faceDk, 1.0);
-  else { poly(sg, chamfer(bx, cy, w + 1, h + 1, 1), T.outline); poly(sg, chamfer(bx, cy, w, h, 1), T.faceDk); }
+  poly(sg, plateOutline(T, bx, cy, w + 1, h + 1, 1), T.outline);
+  poly(sg, plateOutline(T, bx, cy, w, h, 1), T.faceDk);
 }
 
 export const WEAPON_MOUNT_ART = {

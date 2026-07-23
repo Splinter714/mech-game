@@ -12,7 +12,8 @@
 //
 // Two visual THEMES distinguish the factions:
 //   player — "gritty cyberpunk": dark weathered ANGULAR gunmetal plates (hard chamfers).
-//   enemy  — "sleek": light/white ROUNDED panels.
+//   enemy  — "sleek": light/white FACETED panels (#446) — tapered wedges with cut corners and
+//            diagonal panel lines, so the two factions differ in silhouette as well as tone.
 // Both share the glow language, which is theme-independent:
 //   purple — the mech's OWN power: reactor spine, cockpit optic, leg thrusters.
 //   neon   — each weapon glows its CATEGORY colour (energy cyan, ballistic amber,
@@ -23,7 +24,7 @@ import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
-  DESIGN, themeFor, REACTOR, HALO, HALO_EDGE, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar,
+  DESIGN, themeFor, REACTOR, HALO, HALO_EDGE, poly, rectC, roundC, ellipseC, plateOutline, plate, glowBar,
   exposedInternals, statusSpotBar,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
@@ -290,10 +291,10 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   const ct = lay.centerTorso;
   plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
   // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
-  // stacked blobs on the chest, the single most "bubbly" read on the mech. Both now take the same
-  // hard-cornered inset / straight housing bar the player has always had.
-  if (T.rounded) roundC(sg, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, T.faceMid, Math.min(ct.w, ct.h) * (T.cornerR ?? 0.2));
-  else poly(sg, chamfer(ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
+  // stacked blobs on the chest, the single most "bubbly" read on the mech. Pass 2: the inset takes
+  // the theme's own plate outline, so on an enemy it's a faceted wedge echoing the chest plate
+  // around it rather than a rounded rect sitting inside an angular one.
+  poly(sg, plateOutline(T, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
   rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);                           // reactor housing
   // #400/#404: the reactor spine doubles as the POWERUP SPOT for player mechs. When the caller
   // hands in a `statusSpot` colour list (arena players only) it renders that instead of the fixed
