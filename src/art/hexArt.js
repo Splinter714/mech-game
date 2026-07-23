@@ -428,20 +428,90 @@ function dockDoor(sg, side) {
 export const DOCK_DOOR_TEX = { L: 'hex_dockDoorL', R: 'hex_dockDoorR' };
 export const DOCK_DOOR_SLIDE = DOCK_HALF_W + 3;
 
-// One straight segment drawn as a thin oriented quad (the scaledGraphics wrapper has no
-// stroke-path API, so we approximate a stroke with fillTriangle pairs). Caller sets the fill.
-function segQuad(sg, x0, y0, x1, y1, width) {
-  const dx = x1 - x0, dy = y1 - y0;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = (-dy / len) * (width / 2), ny = (dx / len) * (width / 2);
-  // Quad (x0±n, y0±n)–(x1±n) as two triangles.
-  sg.fillTriangle(x0 + nx, y0 + ny, x0 - nx, y0 - ny, x1 + nx, y1 + ny);
-  sg.fillTriangle(x0 - nx, y0 - ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny);
+// (#471: the hand-placed `crackLine` polyline helper is gone — every tile that drew one drew it
+// mid-tile, and they all use the full-tile `streaks` network now. Its `segQuad` stroke helper went
+// with the #471 playtest follow-up: `streaks` builds the stroke quad itself so it can clip the
+// QUAD — not just the centreline — to the tile.)
+
+// ── #471 playtest follow-up: DETAIL NEVER SPILLS PAST THE HEX BORDER ──────────────────────
+// The full-tile primitives (#447's `mottle`, #471's `streaks`/`buildSlabs`) all place a mark by
+// its CENTRE and then draw a shape of some size around it, so a mark seeded near the rim painted
+// its outer half over the neighbouring tile — a blotch's radius, a slab's half-width, a stroke's
+// half-width. The owner sees that as texture bleeding outside the hex outline.
+//
+// The fix is geometric, not a fudge factor: every mark is clipped as a POLYGON against the true
+// hex (Sutherland–Hodgman over the six inward half-planes), so the painted pixels stop exactly
+// at the border. Note this is the DETAIL layer only — the base fill keeps its `HEX_BLEED`
+// overdraw (see `drawHex`), which is what stops the hairline seams of #255. Fill may bleed;
+// marks may not.
+//
+// Clipping (rather than shrinking or dropping rim marks) is also what preserves #471's
+// channel-continuity property: a streak still runs right up to the edge and terminates ON it, so
+// the neighbouring tile — painting the same lattice-periodic pattern — picks it up at the very
+// same point.
+
+// Clip a convex polygon (flat [x0,y0,x1,y1,…] offsets from the hex centre) to the pointy-top
+// hexagon of circumradius `s`. Returns a new flat array, or null if nothing survives.
+function clipPolyToHex(poly, s) {
+  const corners = hexCorners(s);
+  let cur = poly;
+  for (let e = 0; e < 6 && cur.length; e++) {
+    const a = corners[e], b = corners[(e + 1) % 6];
+    let nx = -(b.y - a.y), ny = b.x - a.x;
+    if (-a.x * nx - a.y * ny < 0) { nx = -nx; ny = -ny; }   // inward normal (the centre is inside)
+    const dist = (x, y) => (x - a.x) * nx + (y - a.y) * ny; // ≥ 0 means inside this edge
+    const next = [];
+    for (let i = 0; i < cur.length; i += 2) {
+      const j = (i + 2) % cur.length;
+      const x0 = cur[i], y0 = cur[i + 1], x1 = cur[j], y1 = cur[j + 1];
+      const d0 = dist(x0, y0), d1 = dist(x1, y1);
+      if (d0 >= 0) next.push(x0, y0);
+      if ((d0 >= 0) !== (d1 >= 0)) {
+        const t = d0 / (d0 - d1);
+        next.push(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+      }
+    }
+    cur = next;
+  }
+  return cur.length >= 6 ? cur : null;
 }
 
-// (#471: the hand-placed `crackLine` polyline helper is gone — every tile that drew one drew it
-// mid-tile, and they all use the full-tile `streaks` network now. `segQuad` above is the piece
-// that survived, and is what `streaks` paints each clipped segment with.)
+// Paint a centre-relative polygon clipped to the tile, as a triangle fan (the scaledGraphics
+// wrapper has fillTriangle but no clip/mask API).
+function fillClippedPoly(sg, poly, s = HEX_SIZE) {
+  const c = clipPolyToHex(poly, s);
+  if (!c) return;
+  for (let i = 2; i + 3 < c.length; i += 2) {
+    sg.fillTriangle(C.cx + c[0], C.cy + c[1], C.cx + c[i], C.cy + c[i + 1],
+      C.cx + c[i + 2], C.cy + c[i + 3]);
+  }
+}
+
+// Is an axis-aligned ellipse (centre dx,dy, radii rx,ry) wholly inside the hex? Exact: compare
+// each edge's signed distance from the centre against the ellipse's support along that normal.
+function ellipseInHex(dx, dy, rx, ry, s) {
+  const corners = hexCorners(s);
+  for (let e = 0; e < 6; e++) {
+    const a = corners[e], b = corners[(e + 1) % 6];
+    let nx = -(b.y - a.y), ny = b.x - a.x;
+    if (-a.x * nx - a.y * ny < 0) { nx = -nx; ny = -ny; }
+    const len = Math.hypot(nx, ny) || 1;
+    nx /= len; ny /= len;
+    const d = (dx - a.x) * nx + (dy - a.y) * ny;            // distance from the ellipse centre
+    if (d < Math.hypot(rx * nx, ry * ny)) return false;     // support radius along this normal
+  }
+  return true;
+}
+
+// An ellipse as a polygon, for the clipped path.
+function ellipsePoly(dx, dy, rx, ry, segs = 20) {
+  const p = [];
+  for (let i = 0; i < segs; i++) {
+    const t = (i / segs) * Math.PI * 2;
+    p.push(dx + Math.cos(t) * rx, dy + Math.sin(t) * ry);
+  }
+  return p;
+}
 
 
 // A generic rubble scatter (broken slabs over a scorched base), palette-driven per biome.
@@ -451,8 +521,8 @@ function segQuad(sg, x0, y0, x1, y1, width) {
 function rubbleScatter(sg, baseCol, slabCol, litCol, ashSpots, slabSpots, baseAlpha = 0.5) {
   mottle(sg, ashSpots, baseCol, baseAlpha);
   for (const [dx, dy, w, h] of slabSpots) {
-    sg.fillStyle(slabCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
-    sg.fillStyle(litCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.2);  // top-lit edge
+    sg.fillStyle(slabCol, 1); clippedRect(sg, dx, dy, w, h);
+    sg.fillStyle(litCol, 1); clippedRect(sg, dx, dy - h / 2 + 0.6, w, 1.2);  // top-lit edge
   }
 }
 
@@ -490,11 +560,27 @@ function buildMottle(seed, step, rMin, rMax, squash = 0.55, inset = 0.94) {
 // Paint one mottle layer (a set of `buildMottle` spots) in a single colour/alpha. Layering two or
 // three of these — a lighter dry tone, a darker wet tone, a faint sheen — is what makes the surface
 // read as vague and organic rather than as a stamped shape.
+// A blotch that fits inside the tile is drawn as a plain ellipse; one that would overhang the
+// border is drawn as its clipped polygon instead, so the layer still reaches the rim without
+// painting over the neighbour (see the clipping note above `clipPolyToHex`).
 function mottle(sg, spots, color, alpha, scale = 1) {
   sg.fillStyle(color, alpha);
-  for (const [dx, dy, rx, ry] of spots) {
-    sg.fillEllipse(C.cx + dx, C.cy + dy, rx * 2 * scale, ry * 2 * scale);
+  for (const [dx, dy, rx0, ry0] of spots) {
+    const rx = rx0 * scale, ry = ry0 * scale;
+    if (ellipseInHex(dx, dy, rx, ry, HEX_SIZE)) sg.fillEllipse(C.cx + dx, C.cy + dy, rx * 2, ry * 2);
+    else fillClippedPoly(sg, ellipsePoly(dx, dy, rx, ry));
   }
+}
+
+// A rectangular mark (rubble/debris slab), clipped to the tile the same way.
+function clippedRect(sg, dx, dy, w, h) {
+  const x0 = dx - w / 2, y0 = dy - h / 2, x1 = x0 + w, y1 = y0 + h;
+  if (inHex(x0, y0, HEX_SIZE) && inHex(x1, y0, HEX_SIZE)
+    && inHex(x1, y1, HEX_SIZE) && inHex(x0, y1, HEX_SIZE)) {
+    sg.fillRect(C.cx + x0, C.cy + y0, w, h);
+    return;
+  }
+  fillClippedPoly(sg, [x0, y0, x1, y0, x1, y1, x0, y1]);
 }
 
 // ── #471: DETAIL THAT CONTINUES ACROSS THE TILE BOUNDARY ──────────────────────────────────
@@ -587,13 +673,20 @@ export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle =
 }
 
 // Paint a `buildStreaks` set, clipping each sub-segment to the tile so a translate that only
-// grazes this hex contributes just the sliver that belongs to it.
+// grazes this hex contributes just the sliver that belongs to it. The stroke is then clipped as a
+// QUAD as well (#471 follow-up) — clipping the centreline alone still let half the stroke width
+// paint past the border where a line met the edge.
 function streaks(sg, lines, color, alpha, width) {
   sg.fillStyle(color, alpha);
   for (const line of lines) {
     for (let i = 0; i + 3 < line.length; i += 2) {
       const c = clipSegToHex(line[i], line[i + 1], line[i + 2], line[i + 3], HEX_SIZE);
-      if (c) segQuad(sg, C.cx + c[0], C.cy + c[1], C.cx + c[2], C.cy + c[3], width);
+      if (!c) continue;
+      const dx = c[2] - c[0], dy = c[3] - c[1];
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = (-dy / len) * (width / 2), ny = (dx / len) * (width / 2);
+      fillClippedPoly(sg, [c[0] + nx, c[1] + ny, c[2] + nx, c[3] + ny,
+        c[2] - nx, c[3] - ny, c[0] - nx, c[1] - ny]);
     }
   }
 }
@@ -677,6 +770,14 @@ const QS_RIPPLE = buildStreaks(0xe4, { count: 20, len: 34, segs: 4, wobble: 0.28
 const ICE_PLATE = buildMottle(0xe5, 17, 6, 12.5, 0.62);
 const ICE_WATER = buildMottle(0xe6, 11, 3, 6.5, 0.5);
 const ICE_CRACK = buildStreaks(0xe7, { count: 26, len: 26, segs: 2, wobble: 0.22 });
+// #471 playtest follow-up: the long wandering crest lines #471 gave the RIVER read as ice, not as
+// water ("would be great for ice or something, but looks horrible as a river"). They move here —
+// brokenIce keeps its own identity (pale plates, dark water in the gaps, the short fracture web)
+// and gains those long lattice-continuous lines as PRESSURE RIDGES running through the floe. They
+// replace the old duplicate bright-lip pass over ICE_CRACK, so the tile doesn't get busier — the
+// bright tone now travels along the ridges instead of double-drawing the same short cracks.
+const ICE_RIDGE = buildStreaks(0x103, { count: 16, len: 46, segs: 4, wobble: 0.22 });
+const ICE_GLINT = buildStreaks(0x104, { count: 18, len: 20, segs: 2, wobble: 0.3 });
 
 // TIER 1 — cinderField: the point-light tile. Dark ash blotching with MANY small embers scattered
 // right across the hex (crust does its glow as lines, this one as points).
@@ -710,8 +811,12 @@ const DEBRIS_SLABS = buildSlabs(0xf5, 14, 3, 6);
 // ice skins; canal = dead-straight parallel courses plus a cross-run of culvert joints.
 const RIV_BED = buildMottle(0xf6, 13, 5, 10, 0.5);
 const RIV_DEEP = buildMottle(0xf7, 16, 4, 9, 0.5);
-const RIV_FLOW = buildStreaks(0xf8, { count: 22, len: 46, segs: 4, wobble: 0.22 });
-const RIV_CREST = buildStreaks(0xf9, { count: 26, len: 20, segs: 2, wobble: 0.3 });
+// #471 playtest follow-up — river: CALMED. The 22 long crests + 26 short bright ones were far too
+// much texture for water; the tile read as a lattice of lines rather than a surface. Now it's a
+// mostly FLAT water tone with a handful of broad, low-contrast current lines and only a few glints.
+// Still `buildStreaks`, still lattice-periodic — a calm river must still connect hex to hex.
+const RIV_FLOW = buildStreaks(0xf8, { count: 8, len: 58, segs: 3, wobble: 0.13 });
+const RIV_CREST = buildStreaks(0xf9, { count: 6, len: 26, segs: 2, wobble: 0.22 });
 const SLU_WATER = buildMottle(0xfa, 12, 5, 10, 0.5);
 const SLU_SKIN = buildMottle(0xfb, 16, 5.5, 11, 0.62);
 const SLU_SPARK = buildMottle(0xfc, 13, 0.6, 1.3, 0.9);
@@ -765,12 +870,15 @@ const DETAIL = {
   // #471 (tier 3): the ripples used to be nine short ellipses clustered mid-tile, so a river of
   // ten hexes read as ten identical stamps rather than one stream. They're `buildStreaks` now —
   // long wandering crests that leave one edge and continue into the neighbouring river hex at
-  // exactly the same point. River is the FAST one: the longest lines, the brightest crests.
+  // exactly the same point. #471 playtest: that first pass was TOO BUSY to read as water at all —
+  // the crest lattice looked like ice (it has since moved to `brokenIce`). The river is calm now:
+  // a mostly flat water tone, a few broad soft current lines and the odd glint, all still
+  // lattice-periodic so a run of river hexes remains one continuous stream.
   hex_river: (sg) => {
-    mottle(sg, RIV_DEEP, 0x1f4f64, 0.28);          // deeper channel shadow
-    mottle(sg, RIV_BED, 0x6d8a7a, 0.18);           // sandy bed through the shallows
-    streaks(sg, RIV_FLOW, 0x4f95b2, 0.45, 2.2);    // the current
-    streaks(sg, RIV_CREST, 0x8fc4d8, 0.45, 1.2);   // sun on the ripple crests
+    mottle(sg, RIV_DEEP, 0x1f4f64, 0.20);          // deeper channel shadow, softened
+    mottle(sg, RIV_BED, 0x6d8a7a, 0.12);           // sandy bed faintly through the shallows
+    streaks(sg, RIV_FLOW, 0x3f8099, 0.20, 3.6);    // broad, slow current lines — barely there
+    streaks(sg, RIV_CREST, 0x8fc4d8, 0.22, 1.4);   // an occasional glint on a crest
   },
   // #464: the five BOUNDARY-ONLY ids (deepWater / mesa / ice / collapsed / lava) have no DETAIL
   // painter — `buildHexTextures` has skipped them since #222 (they'd tile into an obviously-
@@ -915,8 +1023,9 @@ const DETAIL = {
   hex_brokenIce: (sg) => {
     mottle(sg, ICE_WATER, 0x2c4a5e, 0.34);       // cold water in the gaps
     mottle(sg, ICE_PLATE, 0xa9c6d8, 0.30);       // pale floating plates
-    streaks(sg, ICE_CRACK, 0x3a5b70, 0.45, 1.6); // the dark fracture beneath…
-    streaks(sg, ICE_CRACK, 0xe4f2fa, 0.45, 0.8); // …with a bright lip catching the light
+    streaks(sg, ICE_CRACK, 0x3a5b70, 0.45, 1.6); // the dark fracture web beneath the plates
+    streaks(sg, ICE_RIDGE, 0x7fb0c8, 0.38, 2.2); // long pressure ridges running through the floe
+    streaks(sg, ICE_GLINT, 0xe4f2fa, 0.45, 1.2); // light catching along the ridge crests
   },
 
   // ── Urban ruins ────────────────────────────────────────────────────────────────────────

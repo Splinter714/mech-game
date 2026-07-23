@@ -11,6 +11,17 @@ import { TERRAIN } from '../data/terrain.js';
 
 const SQRT3 = Math.sqrt(3);
 
+// True containment in the pointy-top hex of circumradius `s` — the tile's actual BORDER, not a
+// bounding circle. (#471 playtest follow-up: "none of the nice texture stuff should ever spill
+// beyond the hex border". The base FILL still bleeds by HEX_BLEED on purpose — that's #255's seam
+// fix — but a detail mark must stop at the border.)
+const EPS = 1e-6;
+function insideHex(dx, dy, s = HEX_SIZE) {
+  const hw = (s + EPS) * SQRT3 / 2;
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  return ax <= hw && ay <= (s + EPS) * (1 - ax / (2 * hw));
+}
+
 // #255: hairline seams between adjacent hex tiles. hexToPixel places tile centres at their
 // exact (irrational) tessellating spacing, and the placement math itself has no rounding
 // (see hexgrid.test.js's round-trip coverage) — the seam comes from the RENDERED tile's own
@@ -181,6 +192,12 @@ describe('world-boundary "deep" terrain has no baked tile (#464)', () => {
 // The recording scene captures the shapes each texture's draw fn emits, keyed by the texture name
 // `generateTexture` is finally called with. Coordinates come through scaled by ART_SCALE (the
 // super-sampling wrapper), so they're divided back down to the design grid here.
+//
+// #471 playtest follow-up: this used to record only each shape's ANCHOR (an ellipse's centre, a
+// triangle's first vertex), which is exactly why the containment check below couldn't see the
+// spill the owner reported — a blotch seeded just inside the rim has a centre inside the hex and
+// paints half its radius over the neighbour. Every shape is now recorded by its OUTLINE, so
+// "inside the tile" means the painted pixels, not the anchor point.
 function recordingScene() {
   const drawn = {};
   return {
@@ -188,12 +205,18 @@ function recordingScene() {
       graphics: () => {
         const marks = [];
         const rec = (x, y) => marks.push([x / ART_SCALE, y / ART_SCALE]);
+        const recEllipse = (x, y, w, h) => {          // w/h are full diameters
+          for (let i = 0; i < 16; i++) {
+            const t = (i / 16) * Math.PI * 2;
+            rec(x + Math.cos(t) * w / 2, y + Math.sin(t) * h / 2);
+          }
+        };
         return {
           fillStyle: () => {}, lineStyle: () => {}, destroy: () => {},
-          fillRect: (x, y) => rec(x, y),
-          fillCircle: (x, y) => rec(x, y),
-          fillEllipse: (x, y) => rec(x, y),
-          fillTriangle: (x, y) => rec(x, y),
+          fillRect: (x, y, w, h) => { rec(x, y); rec(x + w, y); rec(x + w, y + h); rec(x, y + h); },
+          fillCircle: (x, y, r) => recEllipse(x, y, r * 2, r * 2),
+          fillEllipse: (x, y, w, h) => recEllipse(x, y, w, h),
+          fillTriangle: (x1, y1, x2, y2, x3, y3) => { rec(x1, y1); rec(x2, y2); rec(x3, y3); },
           fillPoints: () => {},                      // the base hex polygon, not "detail"
           generateTexture: (key) => { drawn[key] = marks; },
         };
@@ -228,7 +251,9 @@ describe('mud is a diffuse full-tile texture, not a central motif (#447)', () =>
   });
 
   it('keeps every mark inside the tile', () => {
-    for (const [dx, dy] of offsets) expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(HEX_SIZE);
+    for (const [dx, dy] of offsets) {
+      expect(insideHex(dx, dy), `${dx.toFixed(2)},${dy.toFixed(2)}`).toBe(true);
+    }
   });
 });
 
@@ -237,9 +262,11 @@ describe('mud is a diffuse full-tile texture, not a central motif (#447)', () =>
 // ones). Same three properties as the #447 mud checks above, run over every reworked tile at once.
 // Tier 2 — the bulk ground tiles — is deliberately NOT in this list: the owner excluded them.
 //
-// The tolerance on "inside the tile" is HEX_SIZE + 2: `streaks` clips each segment's CENTRELINE to
-// the exact hex, so a stroke of width w sitting on the boundary puts its quad corners up to w/2
-// (max 1.6px here) outside — still well inside the tile's own HEX_BLEED-extended polygon.
+// "Inside the tile" is now EXACT (`insideHex`, no tolerance). It used to allow HEX_SIZE + 2,
+// because `streaks` clipped each segment's CENTRELINE only and `mottle`/`buildSlabs` placed a mark
+// by its centre — so a stroke, blotch or slab on the rim painted its outer half over the
+// neighbouring hex. The owner saw that as texture spilling past the hex border; every primitive
+// now clips the drawn SHAPE to the tile, and this assertion is what keeps it that way.
 describe('the audit\'s remaining centre-motif tiles are full-tile textures (#471)', () => {
   const scene = recordingScene();
   buildHexTextures(scene);
@@ -275,7 +302,9 @@ describe('the audit\'s remaining centre-motif tiles are full-tile textures (#471
       });
 
       it('keeps every mark inside the tile', () => {
-        for (const [dx, dy] of offsets) expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(HEX_SIZE + 2);
+        for (const [dx, dy] of offsets) {
+          expect(insideHex(dx, dy), `${dx.toFixed(2)},${dy.toFixed(2)}`).toBe(true);
+        }
       });
     });
   }
