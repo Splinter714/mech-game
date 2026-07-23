@@ -22,7 +22,27 @@ const config = {
   type: forceCanvas ? Phaser.CANVAS : Phaser.AUTO,
   parent: 'game',
   backgroundColor: '#0d1014',
-  pixelArt: true,
+  // #455: this used to be `pixelArt: true`, which is a SHORTHAND — Phaser expands it to
+  // `antialias:false, antialiasGL:false, roundPixels:TRUE` (core/Config.js) and ignores any
+  // roundPixels you pass alongside it. The texture-filter half (nearest-neighbour, "don't blur
+  // my art") is what this game wanted; the `roundPixels` half is what made the mech's parts
+  // jostle whenever the torso turned.
+  //
+  // Why: with roundPixels on, the renderer does `gx = Math.floor(gameObject.x)` PER TEXTURED
+  // GAME OBJECT (MultiPipeline.batchSprite), and for a CONTAINER CHILD that `x` is its LOCAL
+  // offset. A mech view is six stacked sprites in a container: hull and turret-body sit at local
+  // (0,0) and so never quantize, but the four pivoting parts (both arms, both side torsos) sit at
+  // local offsets that sweep continuously as the turret rotates (partSpriteTransform's dx/dy).
+  // Each of those four floors independently, crossing its integer boundary at a different turret
+  // angle from the others — so a smooth slew made each arm/shoulder POP a whole world pixel
+  // (~2-4 device px after DPR + gameplay zoom) against a body that hadn't moved. That is the
+  // "components don't align, they jiggle when the torso turns" bug: quantization, not animation.
+  //
+  // So: keep the filtering, drop the snapping. Everything renders at its true sub-pixel position
+  // now, which also retires the hex-seam jitter HEX_BLEED was added to paper over (hexArt.js).
+  antialias: false,
+  antialiasGL: false,
+  roundPixels: false,
   scale: {
     mode: Phaser.Scale.NONE,
     width: window.innerWidth * getDpr(),

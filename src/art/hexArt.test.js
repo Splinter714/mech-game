@@ -15,8 +15,9 @@ const SQRT3 = Math.sqrt(3);
 // exact (irrational) tessellating spacing, and the placement math itself has no rounding
 // (see hexgrid.test.js's round-trip coverage) — the seam comes from the RENDERED tile's own
 // polygon fading to fully transparent exactly at the true hex boundary, combined with
-// Phaser's `roundPixels` (forced on by `pixelArt: true`, main.js) snapping each tile's
-// on-screen position independently every frame as the camera scrolls. The fix is bleeding
+// Phaser's `roundPixels` (then forced on by `pixelArt: true`, main.js — #455 has since turned
+// it off) snapping each tile's on-screen position independently every frame as the camera
+// scrolls. The bleed is kept as belt-and-braces regardless. The fix is bleeding
 // each tile's outer polygon `HEX_BLEED` px past the true radius so its opaque interior
 // already covers the boundary — these are pure-geometry checks that the bleed actually
 // creates overlap (not just a bigger number) and that the texture canvas still comfortably

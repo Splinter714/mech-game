@@ -31,9 +31,13 @@ const DOCK_BAY = { fill: 0x0d0f13, edge: 0x2b2f36 };
 
 // #255: adjacent hex tiles are placed at their mathematically-exact centre spacing
 // (hexgrid.hexToPixel, e.g. HEX_SIZE*SQRT3 for same-row neighbours) — but that spacing is
-// IRRATIONAL, so on-screen it never lands on a whole device pixel. Phaser's `pixelArt: true`
-// (main.js) forces `roundPixels: true`, which independently snaps each tile sprite's
-// rendered position to the nearest whole device pixel every frame. As the camera scrolls
+// IRRATIONAL, so on-screen it never lands on a whole device pixel. Phaser used to snap each
+// tile sprite's rendered position to a whole pixel independently every frame (`pixelArt: true`
+// forces `roundPixels: true`). #455 turned that snapping OFF game-wide — it was also what made
+// the mech's arms/shoulders jostle against the body — so this particular seam should no longer
+// occur at all. The bleed below is KEPT regardless: overlapping tile edges are harmless, and it
+// costs nothing to stay robust to sub-pixel seams. The original diagnosis, for the record: as
+// the camera scrolls
 // continuously, the rounding residual at any two neighbouring tiles' shared edge drifts in
 // and out of alignment — sometimes the two roundings cancel (no visible seam), sometimes
 // they don't (a hairline gap of background colour shows through the tiles' anti-aliased
