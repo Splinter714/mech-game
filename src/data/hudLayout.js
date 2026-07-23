@@ -230,7 +230,12 @@ export function integrityLayout(locs, { anchorX, bottomY, availW, side = 'left' 
 //
 // The target readout is no longer in here at all — it moved to the top-left disc (`targetDiscBox`).
 export const CONSOLE = {
-  edgeGap: 6,       // px of bare screen left showing past the shell at the bottom
+  // #452 follow-up (Jackson: the console must reach the BOTTOM EDGE of the screen — "there's
+  // currently a gap between the console and the bottom of the viewport"). The shell is FLUSH: its
+  // rounded top lip is the only visible edge, and the bottom runs off the frame, which is what
+  // makes it read as built into the machine rather than as a floating card. This stays 0 whatever
+  // is inside the band — a NONE-mode band (#448) is shorter, not lifted.
+  edgeGap: 0,       // px of bare screen left showing past the shell at the bottom
   padX: 16,         // inner padding at each END of the shell
   padTop: 10,       // inner padding above the tallest bay
   radius: 14,       // the shell's TOP corner rounding (the bottom is flush with the screen edge)

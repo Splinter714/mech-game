@@ -59,6 +59,45 @@ export function clip(s, max = 54) {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// ── #452 follow-up: WHERE the dev cluster sits ───────────────────────────────────────────────
+//
+// The FPS block and the control-scheme indicator are one cluster (Jackson wants them next to each
+// other, not in opposite corners). #452 put them on the console's top edge; the follow-up moves
+// them to the BOTTOM-RIGHT corner of the screen with a backing panel behind them, because the
+// centred console no longer reaches the corners and bare monospace over terrain is unreadable.
+//
+// Laid out right-to-left from the corner off each object's MEASURED size, so a long GPU string
+// grows the cluster leftward instead of running off the screen — and the backing is exactly the
+// cluster's bounding box plus its padding, so it can never be the wrong size for what it backs.
+// Pure: HudScene measures its Text objects and paints these numbers.
+export const DEV_CLUSTER = { inset: 10, gap: 14, padX: 8, padY: 6 };
+
+// `items` is `[{ w, h }]` in LEFT-TO-RIGHT order (the same order the cluster has always read in).
+// Every item is BOTTOM-aligned, so the returned positions are for an origin of (0, 1).
+export function devClusterLayout(W, H, items, opts = {}) {
+  const { inset, gap, padX, padY } = { ...DEV_CLUSTER, ...opts };
+  const live = items.filter(Boolean);
+  if (!live.length) return { panel: null, positions: [] };
+  const totalW = live.reduce((s, it) => s + (it.w || 0), 0) + gap * (live.length - 1);
+  const maxH = live.reduce((m, it) => Math.max(m, it.h || 0), 0);
+  const bottom = H - inset - padY;
+  let x = W - inset - padX - totalW;
+  const positions = live.map((it) => {
+    const at = { x: Math.round(x), y: Math.round(bottom) };
+    x += (it.w || 0) + gap;
+    return at;
+  });
+  return {
+    panel: {
+      x: Math.round(W - inset - totalW - padX * 2),
+      y: Math.round(bottom - maxH - padY),
+      w: Math.round(totalW + padX * 2),
+      h: Math.round(maxH + padY * 2),
+    },
+    positions,
+  };
+}
+
 // Two compact lines. Line 1 is the per-frame number; line 2 is the static machine profile, so the
 // overlay reads as "how fast / on what" at a glance without obstructing play.
 export function perfLines({ fps, renderer, gpu, width, height, dpr }) {

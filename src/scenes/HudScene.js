@@ -9,7 +9,7 @@ import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { miniProjector, clampToBox } from '../data/minimap.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
-import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
+import { rendererLabel, gpuRendererString, probeGl, perfLines, devClusterLayout } from '../data/perfReadout.js';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
   integrityLayout, INTEGRITY_ORDER,
@@ -290,12 +290,17 @@ export default class HudScene extends Phaser.Scene {
     // the same guard below, so they're absent from a production build entirely.
     // #452 (style pass): the dev overlays used to sit in opposite bottom corners — the perf block
     // bottom-LEFT and these two bottom-RIGHT — where the now-centred console could run under them.
-    // Jackson: the FPS counter and the control-mode indicator must sit NEXT TO EACH OTHER and
-    // ABOVE the instrument panel. They are laid out together in `_placeDevReadouts`, off the
-    // console's own top edge, so they can never overlap it at any window size.
+    // Jackson: the FPS counter and the control-mode indicator must sit NEXT TO EACH OTHER.
+    // #452 follow-up: as ONE cluster in the BOTTOM-RIGHT corner, over a backing panel so the text
+    // is readable against any terrain — the console is centred and content-width, so the corner is
+    // free. Laid out together in `_placeDevReadouts` (geometry: perfReadout.js `devClusterLayout`).
+    // Their text COLOURS are deliberately unchanged.
     if (import.meta.env.DEV) {
-      this.modeText = this.add.text(16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(0, 1);
-      this.aiText = this.add.text(16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1);
+      // Behind its own text but ABOVE the console shell — a wide co-op band could otherwise reach
+      // the corner and paint over a debug overlay that is supposed to be readable at all times.
+      this.devPanelGfx = this.add.graphics().setDepth(30);
+      this.modeText = this.add.text(16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(0, 1).setDepth(31);
+      this.aiText = this.add.text(16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1).setDepth(31);
     }
 
     // #142: performance readout, bottom-left. Phaser's own `game.loop.actualFps` is already an EMA
@@ -309,7 +314,7 @@ export default class HudScene extends Phaser.Scene {
     // production bundle), so the per-frame update below is gated too and `fpsText` simply doesn't
     // exist in production. See src/data/perfReadout.js for why each field is a suspect.
     if (import.meta.env.DEV) {
-      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 0);
+      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 0).setDepth(31);
       // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
       // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
       // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing.
@@ -1080,14 +1085,22 @@ export default class HudScene extends Phaser.Scene {
   // width, so a longer GPU string pushes its neighbours along instead of drawing over them. No-op
   // in production, where none of these objects exist.
   _placeDevReadouts() {
-    const y = (this._consoleTop ?? this.H) - 8;
-    const gap = 18;
-    let x = 16;
-    for (const o of [this.fpsText, this.modeText, this.aiText]) {
-      if (!o) continue;
-      o.setOrigin(0, 1).setPosition(x, y);
-      x += (o.width || 0) + gap;
-    }
+    const objs = [this.fpsText, this.modeText, this.aiText].filter(Boolean);
+    if (!objs.length) return;
+    const { panel, positions } = devClusterLayout(
+      this.W, this.H, objs.map((o) => ({ w: o.width || 0, h: o.height || 0 })),
+    );
+    objs.forEach((o, i) => o.setOrigin(0, 1).setPosition(positions[i].x, positions[i].y));
+    // The backing plate, so the cluster reads over any terrain. Painted in the console's own
+    // palette (the same material every other instrument surface is made of) and left BEHIND the
+    // text — the colours of the text itself are deliberately untouched.
+    const g = this.devPanelGfx;
+    if (!g || !panel) return;
+    g.clear();
+    g.fillStyle(CONSOLE_COL.outline, 0.92);
+    g.fillRoundedRect(panel.x - 1.5, panel.y - 1.5, panel.w + 3, panel.h + 3, 7);
+    g.fillStyle(CONSOLE_COL.bodyLo, 0.92);
+    g.fillRoundedRect(panel.x, panel.y, panel.w, panel.h, 6);
   }
 
   // Dev overlay label for the active input scheme. #346 added a third one, 'touch';

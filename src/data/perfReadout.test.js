@@ -3,7 +3,7 @@
 // configurations, and this overlay ships to production, so it must degrade to 'unavailable' and
 // never throw no matter how the WebGL API misbehaves.
 import { describe, it, expect } from 'vitest';
-import { rendererLabel, gpuRendererString, probeGl, clip, perfLines } from './perfReadout.js';
+import { rendererLabel, gpuRendererString, probeGl, clip, perfLines, devClusterLayout, DEV_CLUSTER } from './perfReadout.js';
 
 // Phaser's real constants: CANVAS 1, WEBGL 2, HEADLESS 3.
 const WEBGL = 2, CANVAS = 1;
@@ -100,5 +100,50 @@ describe('perfLines', () => {
   it('shows a fractional DPR (a 4K Windows display) without a wall of decimals', () => {
     expect(perfLines({ fps: 24.2, renderer: 'Canvas', gpu: 'unavailable', width: 3840, height: 2160, dpr: 1.5 })[0])
       .toBe('FPS 24  ·  Canvas  ·  3840x2160 @1.5x');
+  });
+});
+
+// ── #452 follow-up: the dev cluster moved to the BOTTOM-RIGHT with a backing panel ───────────
+describe('devClusterLayout — one cluster, bottom-right, on a plate', () => {
+  const W = 1280, H = 800;
+  const items = [{ w: 300, h: 26 }, { w: 110, h: 14 }, { w: 90, h: 12 }];
+
+  it('sits in the BOTTOM-RIGHT corner', () => {
+    const { panel } = devClusterLayout(W, H, items);
+    expect(panel.x + panel.w).toBe(W - DEV_CLUSTER.inset);
+    expect(panel.y + panel.h).toBe(H - DEV_CLUSTER.inset);
+  });
+
+  it('keeps the items in one horizontal cluster, left-to-right, in order', () => {
+    const { positions } = devClusterLayout(W, H, items);
+    expect(positions).toHaveLength(3);
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i].x).toBeGreaterThan(positions[i - 1].x);
+      expect(positions[i].x - (positions[i - 1].x + items[i - 1].w)).toBe(DEV_CLUSTER.gap);
+    }
+    // Bottom-aligned: one baseline for the whole cluster (origin 0,1).
+    expect(new Set(positions.map((p) => p.y)).size).toBe(1);
+  });
+
+  it('backs every item — the plate contains the whole cluster with padding', () => {
+    const { panel, positions } = devClusterLayout(W, H, items);
+    positions.forEach((p, i) => {
+      expect(p.x).toBeGreaterThanOrEqual(panel.x);
+      expect(p.x + items[i].w).toBeLessThanOrEqual(panel.x + panel.w);
+      expect(p.y).toBeLessThanOrEqual(panel.y + panel.h);
+      expect(p.y - items[i].h).toBeGreaterThanOrEqual(panel.y);
+    });
+  });
+
+  it('grows LEFTWARD as the GPU string lengthens instead of running off the screen', () => {
+    const wide = devClusterLayout(W, H, [{ w: 700, h: 26 }, { w: 110, h: 14 }]);
+    expect(wide.panel.x).toBeGreaterThanOrEqual(0);
+    expect(wide.panel.x + wide.panel.w).toBe(W - DEV_CLUSTER.inset);
+    expect(wide.panel.x).toBeLessThan(devClusterLayout(W, H, items).panel.x);
+  });
+
+  it('is a no-op in production, where none of these objects exist', () => {
+    expect(devClusterLayout(W, H, [])).toEqual({ panel: null, positions: [] });
+    expect(devClusterLayout(W, H, [null, undefined])).toEqual({ panel: null, positions: [] });
   });
 });

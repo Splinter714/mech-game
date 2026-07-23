@@ -44,7 +44,11 @@ describe('#449 HudScene: the performance readout is dev-gated again (stripped fr
 
 describe('#296 HudScene: control hints / control-method / AI readouts stay dev-gated', () => {
   it('the control-method (modeText) + AI (aiText) overlays are created only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.modeText = this\.add\.text[\s\S]*?this\.aiText = this\.add\.text/);
+    // #452 follow-up: the cluster's backing plate (`devPanelGfx`) was created inside this same
+    // guard, so the assertion allows lines between the guard and `modeText` — what it pins is
+    // that BOTH overlays (and the plate that backs them) are inside a DEV block, not their order.
+    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?this\.modeText = this\.add\.text[\s\S]*?this\.aiText = this\.add\.text/);
+    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?this\.devPanelGfx = this\.add\.graphics/);
   });
 
   it('the control-method + AI overlays are updated only under import.meta.env.DEV', () => {

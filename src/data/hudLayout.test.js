@@ -565,3 +565,21 @@ describe('consoleBand — a zero-width integrity block (the NONE readout)', () =
     expect(b.w).toBe(120 + CONSOLE.blockGap + 404 + CONSOLE.padX * 2);
   });
 });
+
+// ── #452 follow-up: the console reaches the bottom edge ──────────────────────────────────────
+describe('consoleLayout — the shell is FLUSH with the bottom of the viewport', () => {
+  it('leaves no bare screen under the console', () => {
+    expect(CONSOLE.edgeGap).toBe(0);
+    const c = consoleLayout(800, 676, consoleBand(W, [{ blockW: 120, tilesW: 404 }]));
+    expect(c.y + c.h).toBe(800);
+  });
+
+  it('stays flush with a SHORTER band too (the NONE readout does not float it)', () => {
+    const band = consoleBand(W, [{ blockW: 0, tilesW: 404 }]);
+    for (const contentTop of [676, 700, 730]) {
+      const c = consoleLayout(800, contentTop, band);
+      expect(c.y + c.h).toBe(800);
+      expect(c.h).toBeGreaterThan(0);
+    }
+  });
+});
