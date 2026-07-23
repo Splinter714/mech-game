@@ -67,3 +67,16 @@ window.visualViewport?.addEventListener('resize', applySize);
 if (window.ResizeObserver && gameEl) new ResizeObserver(applySize).observe(gameEl);
 
 if (import.meta.env.DEV) window.__game = game;
+
+// #461: the ART PREVIEW gallery is a DEV-only authoring tool (reachable only from the DEV-gated
+// ART tab in ui/tabBar.js). It's registered via a DEV-guarded DYNAMIC import rather than a static
+// one at the top of this file, because a static import keeps the module in the production bundle
+// even when the scene-list entry is dead-code-eliminated: Rollup treats `class X extends
+// Phaser.Scene {}` as a side-effecting declaration and can't drop it. With the import inside the
+// `import.meta.env.DEV` branch, Vite folds the whole branch away in a production build and the
+// module is never emitted at all. Async is harmless — the scene only has to exist by the time
+// someone clicks the tab, which is long after boot.
+if (import.meta.env.DEV) {
+  import('./scenes/ArtPreviewScene.js')
+    .then(({ default: ArtPreviewScene }) => game.scene.add('ArtPreviewScene', ArtPreviewScene));
+}

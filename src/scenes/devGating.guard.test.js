@@ -63,6 +63,10 @@ describe('#296 tabBar: the MUSIC tab is dev-only', () => {
     expect(tabBar).toMatch(/\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'MUSIC', scene: 'MusicScene' \}\] : \[\]\)/);
   });
 
+  it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {
+    expect(tabBar).toMatch(/\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'ART', scene: 'ArtPreviewScene' \}\] : \[\]\)/);
+  });
+
   it("MECH LAB stays unconditional so production still has the garage tab", () => {
     expect(tabBar).toMatch(/const TABS = \[\s*\n\s*\{ key: 'MECH LAB', scene: 'GarageScene' \},/);
   });

@@ -39,6 +39,9 @@ export const TAB_BAR_H = 52;   // logical px
 const TABS = [
   { key: 'MECH LAB', scene: 'GarageScene' },
   ...(import.meta.env.DEV ? [{ key: 'MUSIC', scene: 'MusicScene' }] : []),
+  // #461: the ART tab (→ ArtPreviewScene, the procedural-art gallery) is dev-only for exactly
+  // the same reason as MUSIC — an authoring/review tool, not player-facing.
+  ...(import.meta.env.DEV ? [{ key: 'ART', scene: 'ArtPreviewScene' }] : []),
 ];
 
 // The scene key SELECT moves to from `active` (wrapping through TABS in order).
