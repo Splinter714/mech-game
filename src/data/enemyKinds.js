@@ -67,148 +67,28 @@
 //              off this table — that's the one canonical query point both the crush-eligibility
 //              check (world.js `_crushTargetAt`) and the hex-vocabulary cover/LOS work go
 //              through. 'small': tank, infantry (the two kinds already crushable on contact,
-//              pre-#269 gated by the now-superseded CRUSHABLE_BEHAVIORS Set). 'large': turret,
-//              drone, helicopter. A mech enemy (data/enemies.js) has no entry in this
+//              pre-#269 gated by the now-superseded CRUSHABLE_BEHAVIORS Set). 'large': wall
+//              turret, drone, helicopter. A mech enemy (data/enemies.js) has no entry in this
 //              table at all and is always 'large' — `unitSize` special-cases that.
 //   scale      on-screen sprite size as a MULTIPLE of the arena mech scale (data-driven per #75;
 //              the arena multiplies ARENA_MECH_SCALE by this). Absent ⇒ the old global 1.15×
 //              fallback. Tuned per-kind so each vehicle reads at the right heft (playtest #75,
 //              shrunk further per #89's composition/sizing pass, then nudged down again per
-//              #91, then again per #145's follow-up): turret 0.42 (down from 0.55, itself way
-//              down from 1.15 — it now spawns in tight clusters, see TURRET_CLUSTER_SIZE, so a
-//              nest of tiny sentries reads right instead of one big one), tank 0.4 (down from
+//              #91, then again per #145's follow-up): wallTurret 0.34 (it sits ON a wall line and
+//              must not swamp the span it is mounted on), tank 0.4 (down from
 //              0.48 per the #269 dock-composition follow-up — 2-3 tanks now dock-cluster on one
 //              hex), drone 0.52 (down from 0.62 per #91 — "drones slightly smaller again"),
 //              helicopter 0.6 (down from 0.75 per the same #269 follow-up — a paired 2-heli
 //              dock cluster needs the extra headroom).
 
 export const ENEMY_KINDS = {
-  // 1) TURRET / emplacement — static objective defender. No locomotion. #94 (playtest: "turrets
-  //    should have INSANE range and not be LOS, they should do some kind of artillery shit"):
-  //    reworked from a short-range direct-fire autocannon sentry into a long-range artillery
-  //    emplacement — it lobs an arcing artillery shell (napalm + the weaponOverride below, #244;
-  //    formerly the dedicated siegeShell entry) that never needs line-of-sight (arcing rounds
-  //    skip wall collision entirely, see scenes/arena/projectiles.js) at a fireRange far beyond
-  //    any other enemy's engagement envelope in the game. Tough, rooted, can't chase — but you
-  //    can't just hide from it either; you have to hunt it down or leave its enormous range.
-  //    Per-shot damage/cadence are tuned down from the old autocannon numbers (see the
-  //    weaponOverride below) since turrets now spawn in clusters (TURRET_CLUSTER_SIZE, currently
-  //    4 — bumped up from 3 per #145's follow-up, alongside a further scale shrink, so the nest
-  //    reads as more/smaller sentries) with guaranteed uptime (no LOS to break) — several of the
-  //    old autocannon's 16-dmg/1.1s cadence firing constantly and unavoidably would be brutal;
-  //    the shell's 10 dmg (with range falloff further softening it near max range) on a slower
-  //    2.6s cadence keeps a nest a real but survivable threat to actively deal with rather than an
-  //    instant unavoidable shred. #145-followup: went from 3→4 turrets without raising per-shot
-  //    damage/cadence, so a nest's total DPS rises ~33% — worth another playtest pass to confirm
-  //    a 4-turret nest doesn't tip into "unavoidable shred" territory; if it does, softening the
-  //    override's damage or cycleTime a touch (rather than the turret count) is the likely lever.
-  turret: {
-    name: 'Sentry Turret',
-    kind: 'turret',
-    // #299 balance pass (owner-set): 35 structure + 15 armor = 50 total, down from a flat 90.
-    // Armor-only, NO shield — the owner explicitly corrected an earlier "turrets get shields"
-    // to "no shields at all, just armor", so the 15 lands in the armor pool.
-    hp: 35,
-    armor: 15,
-    parts: {
-      base: { x: 0, y: 6, w: 26, h: 16 },
-      gun: { x: 0, y: -8, w: 12, h: 20 },
-    },
-    muzzlePart: 'gun',
-    // #233 ("shots should originate from the muzzle art's tip"): `gun`'s own front edge
-    // (y:-8, h:20 ⇒ front at y=-18 in art/vehicles/turret.js's drawGun coords) sits well
-    // BEHIND the barrel's actual rendered tip — the muzzle-glow ellipse at y=-22 in that
-    // file. `muzzleForward` is that gap (design units, added to partMuzzle's forward
-    // distance) so vehicle-kind shots spawn from the real barrel tip, not the gun housing's
-    // own box edge, same fix as the mech mount art (src/art/mounts/barrelSpec.js).
-    muzzleForward: 4,
-    // #244: the dedicated `siegeShell` WEAPONS entry was mechanically identical to napalm
-    // (both arcing projectile + splash + groundFire lobs) and differed only in tuning, so it
-    // was consolidated away — the turret now mounts napalm with the FULL artillery tuning as
-    // a weaponOverride (#243 resolveWeapon: top-level + `delivery` merge field-by-field, but
-    // OTHER nested objects — `range`, `groundFire` — are replaced WHOLESALE, so both are
-    // restated complete). Numbers are byte-identical to the old siegeShell entry.
-    // #94's design intent carries over unchanged: a heavy mortar shell lobbed from EXTREME
-    // range ("turrets should have INSANE range and not be LOS, they should do some kind of
-    // artillery shit"). Arcing (never needs LOS — arcing rounds skip wall collision entirely,
-    // scenes/arena/projectiles.js), with a long, slow flight time (opt 1600 / velocity 550 ≈
-    // 2.9s) so an incoming shell reads as a telegraphed "incoming!" lob rather than an
-    // instant snipe; splash + a lingering burn patch reward hunting the emplacement down or
-    // leaving its enormous engagement envelope rather than trying to out-trade it.
-    // NOTE (SFX): per #243's resolver semantics the resolved weapon keeps the BASE id
-    // ('napalm'), so the turret's fire/impact cues now resolve as napalm's tuned sound
-    // (sfxParams.js) instead of the old siegeShell id (which had no DEFAULT_SFX entry of its
-    // own and fell back to FALLBACK_SFX) — an audible change, flagged in #244.
-    weaponId: 'napalm',
-    weaponOverride: {
-      // #259: this ABSOLUTE damage override is untouched by the DPS-squish base retune
-      // (napalm's direct-hit damage 6 -> 27) — it's the old dedicated siegeShell value,
-      // deliberately independent of the player's napalm tuning (see #244 above), and its own
-      // DPS (10/2.6s ≈ 3.85, x4 turrets in a nest ≈ 15.4 total) was already checked against
-      // the retuned roster and still reads as a reasonable long-range-artillery threat, not a
-      // trivial tickle or a one-shot — no change needed here.
-      damage: 10,                                     // vs napalm's base 27 (was 6 pre-#259)
-      range: { min: 300, opt: 1600, max: 2400 },      // vs base 50/500/780 — the #94 INSANE envelope
-      // #375 (redefined): the turret fires the PLAYER's version of napalm. The cadence-slowing
-      // `cycleTime: 2600` and the enlarged `ammoMax: 10` are BOTH gone — cadence and magazine now
-      // inherit the base napalm entry (cycleTime 1500, ammoMax 5). So the turret dumps its 5-shell
-      // mag at the player's own bombardment rate, then the emptied magazine locks the gun out for
-      // RELOAD_SECONDS and comes back FULL (PLAYER RELOAD model — `ammoLimited` below + kindAmmo.js;
-      // no `ammoRegen` trickle), exactly like the player's own gun. The reload is the beat a player
-      // reads to time an approach. Only the non-speed siege identity survives the override: the
-      // absolute damage (#259/#244), the INSANE range envelope (#94), and the heavy-shell delivery.
-      delivery: {
-        velocity: 550,                                // faster, flatter-feeling heavy shell (base 300)
-        splash: 55,                                   // bigger burst (base 30)
-        groundFire: { radius: 44, dps: 5, duration: 3 },  // wider but softer/shorter burn (base 46/8/4)
-      },
-    },
-    fireRange: 2400,       // #94: INSANE — well beyond the next-longest engagement range in the
-                           // game (streakPod max 1540 / swarmRack max 1750) so a turret nest
-                           // threatens from far outside normal combat distance. Matches the
-                           // override's range.max above.
-    // #243: no separate fire timer — cadence always derives from the resolved weapon. With the
-    // #375 override no longer touching cadence, that is the base napalm's own 1500ms cycleTime.
-    flying: false,
-    // #375: this kind's guns run on a real MAGAZINE (data/kindAmmo.js) — the opt-in flag for
-    // ammo on the vehicle fire path. Deliberately scoped to the two EMPLACED kinds: a rooted gun
-    // going quiet reads as suppression, whereas a tank or drone pausing mid-chase would read as a
-    // bug. Tanks/drones/helicopters/carriers/infantry stay pure cadence + trigger discipline.
-    ammoLimited: true,
-    move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 2.6 },
-    art: 'turret',
-    behavior: 'turret',
-    // #269 (ground-unit size-tier section): the formal size-tier field — 'small' | 'large' —
-    // read by shared.js's `unitSize`/`isSmallUnit` (the canonical query point for "how big is
-    // this ground unit," used by both the crush-eligibility check below and the hex-vocabulary
-    // cover/LOS work). A rooted emplacement reads as a large, hard-to-miss target.
-    size: 'large',
-    themeColor: 0xd66a3a,
-    scale: 0.42,           // #145-followup: shrunk further (was 0.55) — playtest feedback
-                           // "turrets are too large" alongside bumping TURRET_CLUSTER_SIZE up
-                           // to 4, so a nest of even smaller sentries reads busy rather than
-                           // just big. #89: originally shrunk way down from 1.15 since turrets
-                           // spawn in tight clusters (see TURRET_CLUSTER_SIZE / 'turretNest').
-  },
-
-  // 1b) WALL TURRET (#310) — the rail-lance gun mounted on a base wall's parapet.
-  //
-  // A DISTINCT KIND, not the `turret` above with a weaponOverride. Three reasons, in order of
-  // weight:
-  //   1. `weaponOverride` is a per-KIND field, not per-spawn. There is no mechanism by which two
-  //      spawns of one kind mount different weapons, so "the turret kind with railLance instead of
-  //      napalm" is not expressible as an override at all — it would require a forked kind
-  //      regardless. The #243 mechanism is for tuning ONE weapon per owner, which is exactly what
-  //      the `weaponOverride` below does do (rail lance, but a fortification's version of it).
-  //   2. Almost nothing else would survive the override anyway. The sentry's identity is its
-  //      napalm artillery: fireRange 2400, an arcing no-LOS lob, a 2.6s bombardment cadence. A
-  //      parapet gun is a direct-fire hitscan sniper with an ordinary engagement envelope. The
-  //      shared part is the HP pool and the "rooted, no locomotion" chassis — the smaller half.
-  //   3. They must read as different objects. The player has to learn "sentry nest = incoming
-  //      lobs you can hide from, wall gun = a lance down your throat if you're in its lane" and
-  //      that lesson is impossible if they share a silhouette and a name.
-  // Stats are deliberately IDENTICAL to the sentry's (#299's owner-set 35 structure + 15 armor) —
-  // this is a different weapon on the same emplacement chassis, and the owner set that table.
+  // 1) WALL TURRET (#310) — the rail-lance gun mounted on a base wall's parapet. The game's only
+  //    EMPLACED kind: no locomotion, rooted on the span it is seated on (scenes/arena/bases.js
+  //    `assignWallTurrets`), a direct-fire hitscan sniper covering the approach to a walled base.
+  //    #469 deleted the old free-roaming `turret` sentry (a napalm artillery emplacement that
+  //    worldgen never placed and only the debug spawn list could reach), so this is now the sole
+  //    `behavior: 'turret'` unit. Its 35 structure + 15 armor is #299's owner-set emplacement
+  //    table, kept unchanged through that deletion.
   wallTurret: {
     name: 'Wall Lance',
     kind: 'turret',
@@ -219,7 +99,11 @@ export const ENEMY_KINDS = {
       gun: { x: 0, y: -6, w: 10, h: 22 },
     },
     muzzlePart: 'gun',
-    muzzleForward: 6,     // see the sentry's note — the drawn barrel tip sits ahead of the box edge
+    // #233 ("shots should originate from the muzzle art's tip"): `gun`'s own front edge sits
+    // BEHIND the barrel's actual rendered tip, so `muzzleForward` is that gap (design units,
+    // added to partMuzzle's forward distance) — vehicle-kind shots then spawn from the real
+    // barrel tip rather than the gun housing's box edge, same fix as the mech mount art.
+    muzzleForward: 6,
     // #310 (owner-confirmed weapon): the RAIL LANCE — "it telegraphs, it hits hard, and it makes
     // closing on a walled base a real gauntlet rather than a stream of chip damage." The override
     // (#243 resolveWeapon: top-level merged, `delivery` merged field-by-field, `range` replaced
@@ -227,10 +111,8 @@ export const ENEMY_KINDS = {
     //
     //   - NO damage override. The gun hits for the rail lance's own full 52.8, exactly as the
     //     player's does. This is the #243 playtest rule ("enemy rounds always match the player's
-    //     weapon") and it is deliberately NOT bent here: the one standing exception is the
-    //     sentry's shell, and that is excused only because it is a distinct consolidated weapon
-    //     with its own damage identity (#244), not an enemy-side retune of a gun the player also
-    //     mounts — which is precisely what softening the lance would be. It also turns out to be
+    //     weapon") and it is deliberately NOT bent here: softening the lance would be exactly the
+    //     enemy-side retune of a player gun that the rule forbids. It also turns out to be
     //     the right call on the merits: a half-weight lance would undercut the whole brief. The
     //     owner picked this weapon because "it telegraphs, it hits hard"; a 52.8 hit is ~9% of the
     //     player's health in one crack, which is the "hits hard" doing its job.
@@ -244,8 +126,7 @@ export const ENEMY_KINDS = {
     //   - range opt 520 / max 900, LONGER than the player's 400/640. A fixed emplacement on a
     //     parapet with a prepared field of fire should out-range a walking mech; it is what
     //     makes the guns matter during the APPROACH (the point of the issue) rather than only once
-    //     the player is already at the wall. Still far short of the sentry's 2400 artillery
-    //     envelope, so the two never occupy the same tactical niche.
+    //     the player is already at the wall.
     //   - The base rail lance's own magazine (4 rounds) on the player RELOAD model: dump the mag,
     //     then a full lockout-and-reload beat before it fires again, exactly like the player's gun.
     // Per #243 the resolved weapon keeps the BASE id ('railLance'), so its fire/impact cues
@@ -266,14 +147,17 @@ export const ENEMY_KINDS = {
     },
     fireRange: 900,        // matches the override's range.max above
     flying: false,
-    ammoLimited: true,     // #375: emplaced ⇒ real magazine; see the sentry turret's note above
+    // #375: this kind's gun runs on a real MAGAZINE (data/kindAmmo.js) — the opt-in flag for ammo
+    // on the vehicle fire path, deliberately scoped to EMPLACED kinds: a rooted gun going quiet
+    // reads as suppression, whereas a tank or drone pausing mid-chase would read as a bug.
+    ammoLimited: true,
     move: { maxSpeed: 0, accel: 0, turnRate: 0, turretSlew: 1.5 },   // slow, heavy traverse: part of the telegraph
     art: 'wallTurret',
     behavior: 'turret',
     size: 'large',
-    themeColor: 0x5ac8e0,  // cold cyan — rail/energy, and distinct from the sentry's warm orange
-    scale: 0.34,           // smaller than the sentry (0.42): it sits ON a 14px-thick wall line and
-                           // must not swamp the span it is mounted on.
+    themeColor: 0x5ac8e0,  // cold cyan — rail/energy
+    scale: 0.34,           // small: it sits ON a 14px-thick wall line and must not swamp the
+                           // span it is mounted on.
   },
 
   // 2) TANK — ground armour. Slow, heavy, tough frontal facing; a turreted main gun (direct
@@ -492,7 +376,7 @@ export const ENEMY_KINDS = {
   //    Its only threat is what it unloads — while alive and AWARE it acts as a mobile "nest,"
   //    dropping a whole BATCH of drones from its own body on a cadence (carrierBehavior in
   //    enemyBehaviors.js) up to a lifetime cap, rather than a cluster spawning everything up
-  //    front like turretNest/infantryMob.
+  //    front like infantryMob.
   //
   //    #328 (playtest 2026-07-19, Jackson): the old four-legged Broodwalker "honestly looks
   //    bad" — re-skinned onto the tank body ("re-use tank art exactly, but minus the tank
@@ -655,17 +539,6 @@ export const ENEMY_KINDS = {
 // built to hold up under; profiled at 18 concurrent drones (see #89 report) with headroom to
 // spare, so this is picked as a strong "way more" without measurably hurting frame rate.
 export const SWARM_SIZE = 18;
-
-// A 'turretNest' spawn expands into this many turrets dropped close together in a tight, fixed
-// formation (#89 — "a few of them should spawn together"). Turrets are stationary (maxSpeed 0),
-// so unlike the drone swarm's loose orbiting cloud, the nest is a small static cluster — picked
-// small and sensible so it reads as an emplacement, not a wall of guns. #145-followup (playtest
-// 2026-07-12: "could we try 2 or 4 at a time instead of 3?" — owner left the pick open): bumped
-// 3 → 4, paired with a further scale shrink on the `turret` kind above, so the nest reads as
-// "more, smaller" sentries rather than fewer, bigger ones. Easy to retune — just change this
-// constant (see the turretClusterHexes/_spawnTurretCluster call sites, which are fully
-// parameterized by count, not hardcoded to 3 or 4).
-export const TURRET_CLUSTER_SIZE = 4;
 
 // An 'infantryMob' spawn expands into this many infantry dropped in a loose cluster (#97 —
 // "let's add infantry in large volumes, smaller than drones"). Deliberately bigger than the

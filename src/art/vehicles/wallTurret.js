@@ -1,16 +1,16 @@
 // #310: Wall Lance art — the rail-lance gun mounted on a base wall's parapet.
 //
-// THE DESIGN PROBLEM this solves is that the sentry turret (turret.js) reads as a thing standing
+// THE DESIGN PROBLEM this solves is that a free-standing sentry-turret silhouette reads as a thing standing
 // ON THE GROUND: it has a ground shadow, a wide octagonal footing, sandbag mass. Reused as-is on a
 // wall it would look like a turret that happened to be standing in front of the wall — which is
 // exactly the wrong read, because the whole mechanic is that this gun belongs to the span and dies
 // with it. So the hull here is not a base plate at all, it is a PINTLE MOUNT: a narrow bracket
 // that reads as bolted THROUGH the parapet, with no ground shadow and no footprint wider than the
 // wall line it sits on (wallArt.js draws the matching plinth on the span itself, so the two halves
-// meet). Narrow and tall rather than wide and squat — the opposite silhouette to the sentry's.
+// meet). Narrow and tall rather than wide and squat — the opposite of a squat sentry silhouette.
 //
 // The gun is a long thin RAIL: twin parallel rails with a charge glow running between them, rather
-// than the sentry's heavy solid barrel. It should read as an energy weapon at a glance, and read
+// than a heavy solid autocannon barrel. It should read as an energy weapon at a glance, and read
 // as LONG — the barrel is the tell that this thing out-ranges you.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, poly, armorShell } from '../mechPrims.js';
@@ -45,7 +45,7 @@ function drawMount(sg, accent, armored = false) {
 // a distinct collar, not just a flat disc.
 function drawRail(sg, accent, armored = false) {
   const A = accentGlow(accent);
-  // Pivot ring — smaller than the sentry's housing, so the BARREL is still the dominant shape.
+  // Pivot ring — kept small, so the BARREL is still the dominant shape.
   ellipseC(sg, 0, 0, 15.6, 15.6, V.halo);
   ellipseC(sg, 0, 0, 14, 14, V.outline);
   ellipseC(sg, 0, 0, 12.4, 12.4, V.rim, 0.55);

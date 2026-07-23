@@ -251,14 +251,9 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
     expect(ENEMY_KINDS.carrier.weaponOverride).toBeUndefined();
     // Infantry's old 700ms timer, byte-identical, in stream terms: 1000 / (10/7) = 700.
     expect(1000 / ENEMY_KINDS.infantry.weaponOverride.delivery.fireRate).toBeCloseTo(700, 6);
-    // Turret (#375 redefined): the napalm override no longer touches cadence — the turret fires the
-    // PLAYER's version of the weapon, so its effective cycleTime is the base napalm's own.
+    // wallTurret (#375 redefined): the override no longer touches cadence — the wall gun fires
+    // the PLAYER's version of the weapon, so it inherits the base rail lance's rate.
     const { resolveWeapon, WEAPONS } = await import('../../data/weapons.js');
-    expect(ENEMY_KINDS.turret.weaponOverride.cycleTime).toBeUndefined();
-    const turretMount = ENEMY_KINDS.turret;
-    expect(resolveWeapon(turretMount.weaponId, turretMount.weaponOverride).cycleTime)
-      .toBe(WEAPONS.napalm.cycleTime);
-    // wallTurret (#375): same — no cadence override, inherits the base rail lance's rate.
     expect(ENEMY_KINDS.wallTurret.weaponOverride.cycleTime).toBeUndefined();
     const wallMount = ENEMY_KINDS.wallTurret;
     expect(resolveWeapon(wallMount.weaponId, wallMount.weaponOverride).cycleTime)
@@ -267,7 +262,7 @@ describe('_fireVehicleWeapon derives cadence from the resolved weapon\'s own del
 });
 
 // #233 ("projectiles should originate from the tip of the weapon muzzle art"): non-mech KIND
-// enemies (turret/tank/drone/…) spawn shots via this same `_fireVehicleWeapon` path, keyed off
+// enemies (wallTurret/tank/drone/…) spawn shots via this same `_fireVehicleWeapon` path, keyed off
 // `def.muzzlePart`'s box — but that box's own front edge sits behind (or, for the carrier,
 // past) the kind's hand-drawn gun/barrel art. `def.muzzleForward` (enemyKinds.js) closes that
 // gap; these tests prove `_fireVehicleWeapon` actually applies it.

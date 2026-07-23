@@ -196,7 +196,7 @@ export function baseMarkTargets(state, base, { isDockStanding = () => false, ene
 // off the #370 shield outline. A wall gun is not that unit. #310 mounts it with
 // TURRET_MOUNT_OFFSET_PX = 0, i.e. its view container is anchored EXACTLY on the span midpoint,
 // dead centre of the 14px wall band (and #337 v3 draws it, with its wall, on DEPTH.WALLS). It is
-// also the smallest unit on the field — `scale: 0.34` against the sentry's 0.42 precisely so it
+// also the smallest unit on the field — `scale: 0.34` precisely so it
 // doesn't swamp the line it rides.
 //
 // So a screen-up lift is wrong for it twice over. It floats ~19px of empty space above a ~13px

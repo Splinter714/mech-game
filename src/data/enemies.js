@@ -101,14 +101,15 @@ export const ENEMIES = {
 
 // Spawn rotation for the debug "add enemy" control (#39) and the arena's mixed opener, so
 // consecutive spawns cycle through roles instead of stacking identical orbits. Mixes the mech
-// loadouts with the #68 non-mech KINDS (turret / tank / drone 'swarm' / helicopter — the ids
-// live in data/enemyKinds.js; 'swarm' expands into several drones) plus the #89 'turretNest'
-// (expands into a small cluster of turrets — see TURRET_CLUSTER_SIZE), so pressing N cycles
+// loadouts with the #68 non-mech KINDS (tank / drone 'swarm' / helicopter — the ids
+// live in data/enemyKinds.js; 'swarm' expands into several drones), so pressing N cycles
 // through the whole bestiary. The starting enemy is index 0 (the Raider), keeping the first
 // deploy stable.
+// #469: the 'turretNest' entry (a cluster of free-roaming sentry turrets) is GONE along with the
+// sentry `turret` kind itself — worldgen never placed it and this debug list was its only path
+// into a run. Base defenses use the separate, very much alive `wallTurret` kind.
 // #97: 'infantryMob' is appended to the rotation so the debug spawn-more control cycles through
-// it too (expands into INFANTRY_MOB_SIZE troopers — data/enemyKinds.js — mirroring 'swarm'/
-// 'turretNest').
+// it too (expands into INFANTRY_MOB_SIZE troopers — data/enemyKinds.js — mirroring 'swarm').
 // #239 (temporary): 'infantryMob' pulled back OUT of this rotation while Jackson plans a redesign
 // of the kind — see enemyKinds.js's infantryMob/infantry definitions, which are left completely
 // intact (art + behavior untouched too), so restoring it here is a one-line add, not an
@@ -119,7 +120,7 @@ export const ENEMIES = {
 // late-stage squad draws; that whole squad-draw system was retired by #269). That's why Jackson
 // had seen it, but rarely, per his playtest note ("those enemies
 // that spawn drones are so cool but I barely ever see them"). Appended once here — same tier as
-// turretNest/artillery/swarm/infantryMob, not doubled up like tank/helicopter — so the debug
+// artillery/swarm/infantryMob, not doubled up like tank/helicopter — so the debug
 // spawn-more control (keydown-N / dpad-up) cycles through it too. This list is consumed by index
 // (`ENEMY_ROTATION[this._enemySeq % ENEMY_ROTATION.length]`, scenes/arena/enemies.js), i.e. a
 // straight round-robin cycle, NOT a weighted random draw — every id gets exactly 1-in-N of the
@@ -127,7 +128,7 @@ export const ENEMIES = {
 // repeated in the array (see tank/helicopter's double entries elsewhere in this file's spirit),
 // not by where it sits.
 export const ENEMY_ROTATION = [
-  'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'turretNest', 'artillery', 'swarm',
+  'raider', 'tank', 'skirmisher', 'helicopter', 'sniper', 'artillery', 'swarm',
   'carrier',
 ];
 

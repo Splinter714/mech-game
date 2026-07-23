@@ -345,7 +345,7 @@ describe('#106: the convex drop curve over the current roster', () => {
     // #370: drone 3 -> 10 (5 structure + 5 shield). Infantry still holds the roster floor at 3,
     // so the derived span is unchanged (3..500) and only the drone's own point on the curve moves.
     ['drone', kindToughness('drone'), 10, 0.05],
-    ['turret', kindToughness('turret'), 50, 0.08],
+    ['wallTurret', kindToughness('wallTurret'), 50, 0.08],
     ['helicopter', kindToughness('helicopter'), 50, 0.08],
     ['tank', kindToughness('tank'), 80, 0.10],
     ['carrier', kindToughness('carrier'), 150, 0.19],

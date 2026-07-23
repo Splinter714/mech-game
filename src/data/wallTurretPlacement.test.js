@@ -152,9 +152,11 @@ describe('#310 §1b: the gun the wall mounts', () => {
     expect(def.fireRange).toBe(resolved.range.max);
   });
 
-  it('reuses the sentry\'s emplacement stat line (#299), armor included', () => {
-    expect(def.hp).toBe(ENEMY_KINDS.turret.hp);
-    expect(def.armor).toBe(ENEMY_KINDS.turret.armor);
+  it('carries the #299 emplacement stat line, armor included', () => {
+    // 35 structure + 15 armor, the owner-set emplacement table (#299) — kept unchanged when #469
+    // deleted the sentry turret that used to share it.
+    expect(def.hp).toBe(35);
+    expect(def.armor).toBe(15);
     expect(def.armor).toBeGreaterThan(0);   // the precondition for the #287 toughness-bite bug
     expect(def.move.maxSpeed).toBe(0);      // rooted
   });

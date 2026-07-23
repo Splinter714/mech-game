@@ -71,8 +71,8 @@ export const DOCKS_PER_BASE_MAX = 8;
 // #287 (owner, playtest 2026-07-19: "remove interior base turret hexes now that we have them on
 // walls"): the interior `turretEmplacement` bunker and its per-base placement loop are GONE. #310
 // put rail-lance guns on the wall ring itself, which made two different turret-bearing structures
-// per base pure noise — a base's fixed guns now live on its parapet and nowhere else. The `turret`
-// enemy KIND survives, still used by the free-roaming `turretNest` spawn (enemies.js).
+// per base pure noise — a base's fixed guns now live on its parapet and nowhere else. (#469 then
+// deleted the free-roaming sentry `turret` KIND entirely; `wallTurret` is the only one left.)
 
 // #269 §3: replaces run.js's retired EARLY_POOL/LATE_POOL (which drew a STAGE's squad
 // composition) with an analogous pair for DOCK composition — same "softer openers vs. tougher
@@ -80,21 +80,22 @@ export const DOCKS_PER_BASE_MAX = 8;
 // the run, 0→1) instead of per-stage.
 //
 // #269 playtest follow-up ("fold mechs into the dock system"): the pool now mixes the non-mech
-// ENEMY_KINDS roster (turret/tank/drone/helicopter/carrier/infantry) WITH full mech loadouts
+// ENEMY_KINDS roster (tank/drone/helicopter/carrier/infantry) WITH full mech loadouts
 // (data/enemies.js `ENEMIES` — raider/skirmisher/sniper/artillery), late-pool only — see
 // `BASE_LATE_KIND_POOL`'s own comment for the full reasoning (mechs are the toughest kind, they
 // belong in the hard tier; `holdGround` now applies to mechs too, see scenes/arena/bases.js
-// `_wakeBase`, so their heavier tactical AI reads fine as a defender). `swarm`/
-// `turretNest`/`infantryMob` (multi-unit cluster EXPANSIONS, not single kinds) are excluded too —
+// `_wakeBase`, so their heavier tactical AI reads fine as a defender). `swarm`/`infantryMob`
+// (multi-unit cluster EXPANSIONS, not single kinds) are excluded too —
 // a dock hosts a KIND, spawned in the COUNT `dockCountFor` below assigns for that kind, not a
 // bespoke cluster-expansion typeId.
 //
 // #269 playtest follow-up (dock composition): `'drone'` is REMOVED entirely — carriers already
 // have their own independent drone-deploy mechanic (enemyBehaviors.js `carrierDeployTick`'s
 // `deployEveryMs`/`deployBatchMin/Max`, uncapped since the #328 follow-up), so a dock ALSO producing standalone drones
-// was redundant with that. `'turret'` is REMOVED entirely too — a base's fixed guns are its WALL
-// turrets (#310 `assignWallTurrets`), never a kind drawn from the generic dock pool. (#287 removed
-// the interim interior `turretEmplacement` bunker that briefly served that role.)
+// was redundant with that. The sentry `'turret'` kind was likewise never in this pool — a base's
+// fixed guns are its WALL turrets (#310 `assignWallTurrets`), never a kind drawn from the generic
+// dock pool (#287 removed the interim interior `turretEmplacement` bunker that briefly served that
+// role) — and #469 deleted that kind outright.
 //
 // #269 playtest follow-up ("too many fuckin' tanks; get some helicopters up in this bitch"):
 // the early pool was a single `['tank']` entry, so EVERY early base was 100% tanks — the core of

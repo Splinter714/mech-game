@@ -2,7 +2,6 @@
 // maps that key to a builder that draws the unit's `<key>_hull` + `<key>_turret` textures. The
 // arena calls buildVehicleTextures(scene, texKey, def) on spawn. Adding a new non-mech unit's
 // art = one entry here + its draw module — dispatch is a registry lookup, never a variant branch.
-import { drawTurret } from './turret.js';
 import { drawWallTurret } from './wallTurret.js';
 import { drawTank } from './tank.js';
 import { drawDrone } from './drone.js';
@@ -11,7 +10,6 @@ import { drawInfantry } from './infantry.js';
 import { drawCarrier } from './carrier.js';
 
 const VEHICLE_ART = {
-  turret: drawTurret,
   wallTurret: drawWallTurret,   // #310: the parapet-mounted rail lance
   tank: drawTank,
   drone: drawDrone,

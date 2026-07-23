@@ -14,7 +14,7 @@ import {
 
 // The kinds that ride the vehicle fire path. Only the two EMPLACED ones are ammo-limited (the
 // scope decision recorded in kindAmmo.js's header).
-const EMPLACED = ['turret', 'wallTurret'];
+const EMPLACED = ['wallTurret'];
 const MOBILE = ['tank', 'drone', 'helicopter', 'carrier', 'infantry'];
 
 // Mirrors the production loop for ONE slot: `_updateVehicle` ticks the cooldown and calls
@@ -129,7 +129,7 @@ describe('#375 the RELOAD model — same as the player version of the gun', () =
   });
 
   it('NO trickle: a slot that is not reloading holds its ammo exactly where firing left it', () => {
-    const def = ENEMY_KINDS.turret;
+    const def = ENEMY_KINDS.wallTurret;
     const ammo = { [DEFAULT_SLOT]: 4 };
     const reload = { [DEFAULT_SLOT]: 0 };
     tickKindReload(def, ammo, reload, 30);                 // half a minute idle mid-magazine
@@ -159,7 +159,7 @@ describe('#375 the RELOAD model — same as the player version of the gun', () =
   });
 
   it('fire a whole mag, then a real reload cycle refills it to full', () => {
-    const def = ENEMY_KINDS.turret;
+    const def = ENEMY_KINDS.wallTurret;
     const max = initKindAmmo(def)[DEFAULT_SLOT];
     const ammo = initKindAmmo(def);
     const reload = initKindReload(def);
@@ -176,7 +176,7 @@ describe('#375 the RELOAD model — same as the player version of the gun', () =
 // fire interval AND its magazine size are the BASE weapon's, with no cadence/mag override slowing
 // them. This is the core of the issue: pin cadence + mag to the base entry, not to a bespoke value.
 describe('#375 emplaced turrets fire the PLAYER version (base cadence + mag, not slowed)', () => {
-  const BASE = { turret: 'napalm', wallTurret: 'railLance' };
+  const BASE = { wallTurret: 'railLance' };
   it.each(EMPLACED)('%s effective fire interval equals the base (player) weapon cadence', (id) => {
     const def = ENEMY_KINDS[id];
     const mount = kindWeaponSlot(def);

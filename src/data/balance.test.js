@@ -29,7 +29,7 @@ const TABLE = {
   // #370 (owner-set): drone went 3 -> 5 structure + 5 shield = 10 total ("10 total, 5 of each",
   // having just picked shields over armor).
   drone:       { structure: 5,   armor: 0,   shield: 5,   total: 10 },
-  turret:      { structure: 35,  armor: 15,  shield: 0,   total: 50 },
+  wallTurret:  { structure: 35,  armor: 15,  shield: 0,   total: 50 },
   helicopter:  { structure: 35,  armor: 0,   shield: 15,  total: 50 },
   tank:        { structure: 50,  armor: 30,  shield: 0,   total: 80 },
   // #436: shield -> armor, same value (50). 50 structure / 100 armor = 150 total, unchanged.
@@ -57,7 +57,7 @@ function bodyLayers(b) {
 }
 
 describe('#299: every unit hits its confirmed structure / armor / shield numbers', () => {
-  for (const id of ['infantry', 'drone', 'turret', 'helicopter', 'tank', 'carrier']) {
+  for (const id of ['infantry', 'drone', 'wallTurret', 'helicopter', 'tank', 'carrier']) {
     it(`${id} (vehicle kind)`, () => {
       expect(bodyLayers(new HpBody(ENEMY_KINDS[id]))).toEqual(TABLE[id]);
     });
@@ -175,7 +175,7 @@ describe('#370: the drone is HP+SHIELD, reusing the helicopter\'s regen tuning',
 
 describe('#299: turrets are armor-only — the owner explicitly ruled out a turret shield', () => {
   it('has armor and no shield at all', () => {
-    const t = new HpBody(ENEMY_KINDS.turret);
+    const t = new HpBody(ENEMY_KINDS.wallTurret);
     expect(t.maxArmor).toBe(15);
     expect(t.hasShield()).toBe(false);
   });

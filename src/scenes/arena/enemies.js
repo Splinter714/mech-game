@@ -22,7 +22,7 @@
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES } from '../../data/enemies.js';
-import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
+import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { allPlayersDeadIn, enemyTargetOf, listenerOf, playersOf, targetPlayerFor } from './players.js';
 import { drawDockKind, dockCountFor } from '../../data/worldgen.js';
 import { scaleDockWave } from '../../data/playerScaling.js';
@@ -36,7 +36,7 @@ import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
 import { buildMechTextures, reskinMech, buildVehicleTextures, vehicleTextureSet, mechLayout, ART_SCALE } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE, axialKey, pixelToHex, hexesAlongSegment } from '../../data/hexgrid.js';
-import { nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
+import { nearestValidPixel, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
 import { isWaterTerrain, isPassable } from '../../data/terrain.js';
 import { makeRouter, routeDistancePx } from '../../data/hexRoute.js';
@@ -128,13 +128,6 @@ const ARTY_RECAMP_MAX = 5200;       // ms — max before it looks for a fresh co
 // on a random bearing from the player, then clamped inside the world disc so it stays on the map.
 const OFFSCREEN_MARGIN = 120;       // px beyond the visible edge to drop a spawning enemy
 const SPAWN_WORLD_INSET = 1.5;      // hexes of inset from the world edge kept clear for spawns
-
-// #145: a turret-nest cluster's TURRET_CLUSTER_SIZE turrets all share ONE validated hex — this is
-// just enough of a px nudge, spread evenly around that hex's centre, that the overlapping sprites
-// still read as distinct turrets rather than rendering as one indistinguishable blob. Small
-// relative to the hex radius (48px) so the emplacement still reads as tightly "centered on this
-// one hex."
-const TURRET_HUDDLE_OFFSET = 10;
 
 // Movement feel.
 // #398 (owner-set): enemy MECHS drive NOTICEABLY SLOWER / more lumbering across the board —
@@ -314,13 +307,12 @@ function lethalHealth(mech) {
 export const EnemiesMixin = {
   // ── Enemy lifecycle (#39 debug controls) ──────────────────────────────────────────
   // Build a fresh enemy with its own textures + view + AI state and track it. `typeId`
-  // selects EITHER a non-mech KIND (data/enemyKinds.js — turret/tank/drone/helicopter) or a
+  // selects EITHER a non-mech KIND (data/enemyKinds.js — tank/drone/helicopter/…) or a
   // mech loadout (data/enemies.js, the default). Dispatched on isEnemyKind so the mech path
   // stays byte-for-byte unchanged; non-mech kinds go through _spawnKind. Returns the enemy (or
-  // the last unit for a 'swarm'/'turretNest' request, which each expand into several).
+  // the last unit for a 'swarm' request, which expands into several).
   _spawnEnemy(x, y, typeId = 'raider') {
     if (typeId === 'swarm') return this._spawnSwarm(x, y);
-    if (typeId === 'turretNest') return this._spawnTurretCluster(x, y);
     if (typeId === 'infantryMob') return this._spawnInfantryMob(x, y);
     if (isEnemyKind(typeId)) return this._spawnKind(x, y, typeId);
     return this._spawnMech(x, y, typeId);
@@ -436,33 +428,6 @@ export const EnemiesMixin = {
     for (let i = 0; i < SWARM_SIZE; i++) {
       const a = (i / SWARM_SIZE) * Math.PI * 2;
       last = this._spawnKind(x + Math.cos(a) * 40, y + Math.sin(a) * 40, 'drone');
-    }
-    return last;
-  },
-
-  // #89 (fixed per #114 — playtest 2026-07-10: clusters spawning off-map / on forest/water),
-  // tightened per #145 (playtest 2026-07-11: "turrets are in 3 separate hexes, but they should be
-  // in 1 hex centered on that hex's center"): expand a 'turretNest' request into
-  // TURRET_CLUSTER_SIZE turrets dropped together on a SINGLE VALIDATED hex, rather than blindly
-  // grid-offsetting from the raw (x, y) spawn point (the old fixed 2-per-row pixel-offset grid
-  // never checked terrain/bounds) or spreading across a neighborhood of distinct hexes (#114's
-  // fix, which #145 walks back). `turretClusterHexes` (data/spawnPlacement.js, pure + unit-tested)
-  // finds the nearest passable/in-bounds hex to the raw point (mirrors the `_reachableDropPos`
-  // primitive powerups.js/#73 uses for drop placement) — every turret lands on that one hex, just
-  // nudged a few px apart around its centre (`TURRET_HUDDLE_OFFSET`) so the overlapping sprites
-  // still read as distinct turrets rather than one blob. Returns the last turret spawned.
-  _spawnTurretCluster(x, y) {
-    const hexes = turretClusterHexes(this.terrain, this.worldRadius, x, y, TURRET_CLUSTER_SIZE);
-    const { x: cx, y: cy } = hexToPixel(hexes[0].q, hexes[0].r);
-    let last = null;
-    for (let i = 0; i < hexes.length; i++) {
-      // #145 (playtest 2026-07-15: liked the cluster, but wants it rotated 45° from an
-      // upright NSEW plus-shape to a diagonal NE/SE/SW/NW X-shape) — constant Math.PI / 4
-      // offset rotates every turret's placement angle by 45°.
-      const a = (i / hexes.length) * Math.PI * 2 + Math.PI / 4;
-      const px = cx + Math.cos(a) * TURRET_HUDDLE_OFFSET;
-      const py = cy + Math.sin(a) * TURRET_HUDDLE_OFFSET;
-      last = this._spawnKind(px, py, 'turret');
     }
     return last;
   },

@@ -1,12 +1,12 @@
 // #114/#115 — spawn/movement bounds-checking. Both bugs share the same root cause: an
-// enemy-cluster expansion (`_spawnTurretCluster`, `_spawnInfantryMob` — scenes/arena/enemies.js)
-// placed extra units at a fixed pixel offset from an already-validated raw spawn point, without
-// checking whether that offset point was itself passable/in-bounds — so a turret or trooper on
-// the edge of the cluster could land off the playable map or on top of forest/water. These pure
+// enemy-cluster expansion (`_spawnInfantryMob` — scenes/arena/enemies.js, and the since-deleted
+// turret-nest one) placed extra units at a fixed pixel offset from an already-validated raw spawn
+// point, without checking whether that offset point was itself passable/in-bounds — so a trooper
+// on the edge of the cluster could land off the playable map or on top of forest/water. These pure
 // helpers (extracted so they're testable without pulling in Phaser) are the fix: every unit's
 // FINAL position is snapped to the nearest passable, in-bounds hex before it's placed.
 import { describe, it, expect } from 'vitest';
-import { nearestValidHex, nearestValidPixel, turretClusterHexes, minSafeSpawnDist, spawnDistance, SAFETY_MARGIN_PX, EDGE_BUFFER_PX } from './spawnPlacement.js';
+import { nearestValidHex, nearestValidPixel, minSafeSpawnDist, spawnDistance, SAFETY_MARGIN_PX, EDGE_BUFFER_PX } from './spawnPlacement.js';
 import { axialKey, hexToPixel, pixelToHex, distance } from './hexgrid.js';
 import { isPassable } from './terrain.js';
 import { ENEMY_KINDS } from './enemyKinds.js';
@@ -65,73 +65,12 @@ describe('nearestValidHex / nearestValidPixel', () => {
   });
 });
 
-describe('turretClusterHexes (#114)', () => {
-  it('returns `count` hexes, every one individually passable + in-bounds', () => {
-    const terrain = makeTerrain([[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1]]);
-    const { x, y } = hexToPixel(0, 0);   // raw point sits in the middle of the lake
-    const hexes = turretClusterHexes(terrain, BIG_RADIUS, x, y, 3);
-    expect(hexes.length).toBe(3);
-    for (const h of hexes) {
-      expect(isPassable(terrain.get(axialKey(h.q, h.r)))).toBe(true);
-    }
-  });
-
-  it('never returns a hex off the generated map when the raw point is beyond the edge', () => {
-    const terrain = makeTerrain();
-    const { x, y } = hexToPixel(RADIUS + 20, 0);
-    const hexes = turretClusterHexes(terrain, BIG_RADIUS, x, y, 3);
-    expect(hexes.length).toBe(3);
-    for (const h of hexes) {
-      expect(terrain.has(axialKey(h.q, h.r))).toBe(true);
-      expect(isPassable(terrain.get(axialKey(h.q, h.r)))).toBe(true);
-    }
-  });
-
-  it('#145: puts every unit on the exact SAME single validated hex (a tight one-hex nest)', () => {
-    const terrain = makeTerrain();
-    const { x, y } = hexToPixel(3, -2);
-    const hexes = turretClusterHexes(terrain, BIG_RADIUS, x, y, 3);
-    const centerHex = nearestValidHex(terrain, BIG_RADIUS, x, y);
-    for (const h of hexes) {
-      expect(distance(h, centerHex)).toBe(0);
-      expect(h.q).toBe(centerHex.q);
-      expect(h.r).toBe(centerHex.r);
-    }
-  });
-
-  it('across many random raw points, every cluster hex is always valid (stress check)', () => {
-    const waterHexes = [[2, 0], [2, 1], [1, 1], [-2, 0], [-2, -1], [-1, -1]];
-    const terrain = makeTerrain(waterHexes);
-    for (let trial = 0; trial < 50; trial++) {
-      const q = Math.round((Math.random() - 0.5) * (RADIUS * 4));
-      const r = Math.round((Math.random() - 0.5) * (RADIUS * 4));
-      const { x, y } = hexToPixel(q, r);
-      const hexes = turretClusterHexes(terrain, BIG_RADIUS, x, y, 3);
-      expect(hexes.length).toBe(3);
-      for (const h of hexes) {
-        expect(terrain.has(axialKey(h.q, h.r))).toBe(true);
-        expect(isPassable(terrain.get(axialKey(h.q, h.r)))).toBe(true);
-      }
-    }
-  });
-});
-
-// #203 — enemies near the deploy point could already be AWARE (and, for a turret nest, already
-// firing) the instant the player deployed: the old offscreen-spawn distance was purely a
-// function of the camera viewport, with no floor tied to the enemy's OWN detection range. A
-// turret nest's 2400px fireRange (2880px detect range, distance-only, no LOS needed) dwarfed the
-// ~700-1000px "just off view" distance a normal viewport produces, so it was reliably AWARE and
-// shelling the player within the first second of every deploy regardless of window size.
+// #203 — enemies near the deploy point could already be AWARE (and firing) the instant the
+// player deployed: the old offscreen-spawn distance was purely a function of the camera viewport,
+// with no floor tied to the enemy's OWN detection range. A long-range kind's detect range can
+// dwarf the ~700-1000px "just off view" distance a normal viewport produces, so such an enemy was
+// reliably AWARE and shooting within the first second of every deploy regardless of window size.
 describe('minSafeSpawnDist / spawnDistance (#203 — no enemy starts within its own detect range)', () => {
-  it('a turretNest\'s safe distance is its artillery detect range PLUS the flat safety margin — far beyond ordinary off-view distances', () => {
-    const expected = detectionRangeFor(ENEMY_KINDS.turret.fireRange) + SAFETY_MARGIN_PX;
-    expect(minSafeSpawnDist('turretNest')).toBeCloseTo(expected);
-    // #94: turret fireRange is INSANE (2400px) — its safe distance must dwarf a typical desktop
-    // "just off view" radius (roughly 700-900px for common window sizes) so the old viewport-only
-    // math could never have accidentally satisfied it.
-    expect(minSafeSpawnDist('turretNest')).toBeGreaterThan(2000);
-  });
-
   it('derives the swarm/infantryMob cluster safe distance from the kind they actually expand into, plus the margin', () => {
     expect(minSafeSpawnDist('swarm')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.drone.fireRange) + SAFETY_MARGIN_PX);
     expect(minSafeSpawnDist('infantryMob')).toBeCloseTo(detectionRangeFor(ENEMY_KINDS.infantry.fireRange) + SAFETY_MARGIN_PX);

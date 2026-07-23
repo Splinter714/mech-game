@@ -240,11 +240,10 @@ const TOWER_PATROL_HUDDLE_OFFSET = 16;
 
 // #269 playtest follow-up (dock composition): how far apart a multi-unit dock's units (2-3
 // tanks, 2 helicopters — see data/worldgen.js `dockCountFor`) are scattered around their shared
-// dock hex's centre pixel, so they don't all render exactly on top of one another. Mirrors
-// enemies.js's `TURRET_HUDDLE_OFFSET` (10px) for the same "huddle, don't stack" idea, just a
-// bit wider — tank/helicopter sprites (scale 0.4/0.6, both shrunk for this exact reason, see
-// enemyKinds.js) read bigger on screen than a turret (scale 0.42), so they need more room to
-// stay visually distinct as several units rather than reading as one blob.
+// dock hex's centre pixel, so they don't all render exactly on top of one another — the
+// "huddle, don't stack" idea. Tank/helicopter sprites (scale 0.4/0.6, both shrunk for this exact
+// reason, see enemyKinds.js) read big on screen, so they need room to stay visually distinct as
+// several units rather than reading as one blob.
 const DOCK_HUDDLE_OFFSET = 16;
 
 // #314 (swarm docks: 10 drones / 10 infantry from ONE dock hex): a single ring of
@@ -377,7 +376,7 @@ export const BasesMixin = {
   // (`dock.count`, data/worldgen.js `dockCountFor`) — 2-3 tanks or 2 helicopters can share ONE
   // dock hex. Each unit in that cluster is scattered a small `DOCK_HUDDLE_OFFSET` around the
   // dock's centre pixel (same "huddle around one validated point" idea as enemies.js's
-  // `_spawnTurretCluster`/`_spawnInfantryMob`, just inlined here since a dock cluster shares
+  // `_spawnInfantryMob`, just inlined here since a dock cluster shares
   // one already-terrain-validated hex — no fresh nearest-passable-hex lookup needed). Every
   // unit in the cluster shares the SAME `baseId`/`dockKey` so `_wakeBase` wakes them together
   // as one group.

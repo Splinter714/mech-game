@@ -186,7 +186,7 @@ describe('#361 — the scene seam', () => {
 
   it('a turret is never displaced by the tank that bumps it', () => {
     const scene = makeScene();
-    const turret = unit(scene, 'turret', 0, 0);
+    const turret = unit(scene, 'wallTurret', 0, 0);
     turret.emplaced = true;
     const tank = unit(scene, 'tank', 8, 0);
     scene._separateGroundUnits();
@@ -204,7 +204,7 @@ describe('#361 — the scene seam', () => {
   it('but another ENEMY no longer blocks a unit\'s movement — that is the deadlock removal', () => {
     const scene = makeScene();
     const a = unit(scene, 'tank', 0, 0);
-    unit(scene, 'turret', 10, 0);
+    unit(scene, 'wallTurret', 10, 0);
     expect(scene._blockedByOtherGroundUnit(a, 10, 0)).toBe(false);
   });
 });

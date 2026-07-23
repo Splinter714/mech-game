@@ -407,7 +407,7 @@ function helicopterBehavior(scene, e, ctx) {
 // follow-up). The tick is deliberately NOT called from here: it is driven straight from
 // _updateVehicle so a frame on which the carrier isn't running its tactical brain (lost sight,
 // post-wake stagger) doesn't stall the cadence. This is PER-FRAME incremental spawning (unlike
-// turretNest/infantryMob, which expand everything up front at spawn time) — the timer state
+// swarm/infantryMob, which expand everything up front at spawn time) — the timer state
 // (`e.deployCd`) is lazily initialized there since _spawnKind stays a generic, kind-agnostic
 // constructor.
 //

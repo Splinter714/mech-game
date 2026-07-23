@@ -107,7 +107,7 @@ function skipWakeStagger(e) {
 describe('#269 §4: a DORMANT enemy is fully inert — _updateEnemy skips all AI/movement/firing', () => {
   it('never calls _updateVehicle, and leaves position/velocity untouched', () => {
     const scene = makeScene();
-    const e = makeDockedUnit('turret');
+    const e = makeDockedUnit('wallTurret');
     e.x = 42; e.y = 17;
     scene._updateVehicle = vi.fn();
     scene._updateEnemy(e, 0.016, 16);
@@ -120,7 +120,7 @@ describe('#269 §4: a DORMANT enemy is fully inert — _updateEnemy skips all AI
 
   it('a destroyed dormant enemy still short-circuits on the isDestroyed check first', () => {
     const scene = makeScene();
-    const e = makeDockedUnit('turret');
+    const e = makeDockedUnit('wallTurret');
     e.mech.hp = 0;   // HpBody treats hp<=0 as destroyed
     scene._updateVehicle = vi.fn();
     expect(() => scene._updateEnemy(e, 0.016, 16)).not.toThrow();
@@ -132,7 +132,7 @@ describe('#440: _updateEnemy books the once-per-unit activation only for AWARE u
   it('a DORMANT unit never reaches the activation hook', () => {
     const scene = makeScene();
     scene._statEnemyActivated = vi.fn();
-    const e = makeDockedUnit('turret');
+    const e = makeDockedUnit('wallTurret');
     scene._updateVehicle = vi.fn();
     scene._updateEnemy(e, 0.016, 16);
     expect(scene._statEnemyActivated).not.toHaveBeenCalled();
@@ -144,7 +144,7 @@ describe('#440: _updateEnemy books the once-per-unit activation only for AWARE u
     // real hook: flip _statActivated so the idempotent guard is exercised end to end
     scene._statEnemyActivated = vi.fn((u) => { u._statActivated = true; });
     scene._updateVehicle = vi.fn();
-    const e = makeDockedUnit('turret');
+    const e = makeDockedUnit('wallTurret');
     e.awareness = AWARE;
     scene._updateEnemy(e, 0.016, 16);
     scene._updateEnemy(e, 0.016, 16);
@@ -156,9 +156,9 @@ describe('#440: _updateEnemy books the once-per-unit activation only for AWARE u
 describe('#269 §6: _wakeBase wakes only the target base\'s dormant units', () => {
   it('flips awareness to AWARE for the target base only, leaving other bases dormant', () => {
     const scene = makeScene();
-    const a1 = makeDockedUnit('turret', { baseId: 'base0' });
+    const a1 = makeDockedUnit('wallTurret', { baseId: 'base0' });
     const a2 = makeDockedUnit('tank', { baseId: 'base0' });
-    const b1 = makeDockedUnit('turret', { baseId: 'base1' });
+    const b1 = makeDockedUnit('wallTurret', { baseId: 'base1' });
     scene.enemies.push(a1, a2, b1);
 
     scene._wakeBase('base0');
@@ -170,7 +170,7 @@ describe('#269 §6: _wakeBase wakes only the target base\'s dormant units', () =
 
   it('is idempotent — waking an already-woken base a second time is a harmless no-op', () => {
     const scene = makeScene();
-    const a1 = makeDockedUnit('turret', { baseId: 'base0' });
+    const a1 = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(a1);
     scene._wakeBase('base0');
     a1.awareness = UNAWARE;   // simulate some other transition happening after wake
@@ -192,7 +192,7 @@ describe('#269 §7: wake-response split by speed (data/bases.js isFastWakeKind)'
 
   it('slow/defensive kinds (turret/tank/carrier/infantry) get holdGround: true', () => {
     const scene = makeScene();
-    const units = ['turret', 'tank', 'carrier', 'infantry'].map((k) => makeDockedUnit(k, { baseId: 'base0' }));
+    const units = ['wallTurret', 'tank', 'carrier', 'infantry'].map((k) => makeDockedUnit(k, { baseId: 'base0' }));
     scene.enemies.push(...units);
     scene._wakeBase('base0');
     for (const u of units) expect(u.holdGround).toBe(true);
@@ -680,7 +680,7 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
 
     // Conversely: a base-origin enemy alive with the patrol also alive still reads as NOT
     // cleared — the patrol's presence/absence has zero bearing on the win condition either way.
-    scene.enemies.push(makeDockedUnit('turret', { baseId: 'base0' }));
+    scene.enemies.push(makeDockedUnit('wallTurret', { baseId: 'base0' }));
     expect(scene._allBasesCleared()).toBe(false);
   });
 });
@@ -696,7 +696,7 @@ describe('#284: alert tower wake-trigger uses its own linked baseId, not geometr
       { id: 'base0', center: { q: 0, r: 0 }, docks: [], turrets: [] },
       { id: 'base1', center: { q: 1, r: 0 }, docks: [], turrets: [] },   // geometrically closer to (0,0)
     ];
-    const dormant = makeDockedUnit('turret', { baseId: 'base0' });
+    const dormant = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(dormant);
     scene._triggerAlert('base0');
     expect(dormant.awareness).toBe(AWARE);
@@ -705,7 +705,7 @@ describe('#284: alert tower wake-trigger uses its own linked baseId, not geometr
 
   it('a null baseId (tower somehow unlinked) wakes nothing rather than guessing a base', () => {
     const scene = makeScene();
-    const dormant = makeDockedUnit('turret', { baseId: 'base0' });
+    const dormant = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(dormant);
     scene._triggerAlert(null);
     expect(dormant.awareness).toBe(DORMANT);
@@ -729,8 +729,8 @@ describe('#284: alert tower wake-trigger uses its own linked baseId, not geometr
     scene._initAlertTowers();   // re-init now that alertTowerHexes/terrain are populated
     scene._updateSignaledPulse = () => {};   // #385: pure-graphics pulse, out of scope here (no `this.add`)
 
-    const base0Unit = makeDockedUnit('turret', { baseId: 'base0' });
-    const base1Unit = makeDockedUnit('turret', { baseId: 'base1' });
+    const base0Unit = makeDockedUnit('wallTurret', { baseId: 'base0' });
+    const base1Unit = makeDockedUnit('wallTurret', { baseId: 'base1' });
     scene.enemies.push(base0Unit, base1Unit);
 
     const { x, y } = hexToPixel(towerHex.q, towerHex.r);
@@ -768,7 +768,7 @@ describe('#269 overhaul: alert-tower activation triggers + sticky countdown (_up
     // graphics, out of scope for these countdown/activation-logic tests — stub it to a no-op so a
     // completing countdown (which now records the tower as signaled) doesn't need `this.add`.
     scene._updateSignaledPulse = () => {};
-    const unit = makeDockedUnit('turret', { baseId: 'base0' });
+    const unit = makeDockedUnit('wallTurret', { baseId: 'base0' });
     unit.x = 99999; unit.y = 99999;   // nowhere near the tower or the player
     scene.enemies.push(unit);
     // Default: player and any gunshot far away — each test opts INTO exactly one trigger.
@@ -1135,7 +1135,7 @@ describe('#430: tiered wake-response stagger — infantry/drones first, then veh
 
   it('a mech gets a long-band reactDelayMs (3500-5000ms)', () => {
     const scene = makeTickableScene();
-    const e = makeTickableUnit('turret');   // any kindDef works; kind is force-overridden below
+    const e = makeTickableUnit('wallTurret');   // any kindDef works; kind is force-overridden below
     e.kind = 'mech';
     scene.enemies.push(e);
     scene._wakeBase('base0');
@@ -1147,7 +1147,7 @@ describe('#430: tiered wake-response stagger — infantry/drones first, then veh
     const scene = makeTickableScene();
     const kinds = ['infantry', 'drone', 'tank', 'helicopter', 'carrier'];
     const units = kinds.map((k) => makeTickableUnit(k));
-    const mechUnit = makeTickableUnit('turret');
+    const mechUnit = makeTickableUnit('wallTurret');
     mechUnit.kind = 'mech';
     units.push(mechUnit);
     scene.enemies.push(...units);
@@ -1168,7 +1168,7 @@ describe('#269 playtest follow-up: DORMANT units wake on player proximity, no al
   it('a DORMANT unit\'s whole base wakes once the player enters its own detection range', () => {
     const scene = makeScene();
     const near = makeDockedUnit('tank', { baseId: 'base0' });
-    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(near, dockmate);
     // Tank's detectRange is detectionRangeFor(fireRange=420) = 504 — put the player just inside it.
     scene.px = near.x + near.detectRange - 1;
@@ -1240,7 +1240,7 @@ describe('#269 playtest follow-up: DORMANT units wake on nearby gunfire noise, n
   it('a DORMANT unit within noise-aggro range of a recent player shot wakes its whole base', () => {
     const scene = makeScene();
     const near = makeDockedUnit('tank', { baseId: 'base0' });
-    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(near, dockmate);
     // Player physically FAR away — the proximity branch must not be what wakes anyone here.
     scene.px = near.x + 100000; scene.py = near.y;
@@ -1313,7 +1313,7 @@ describe('#269 playtest follow-up: DORMANT units wake when directly shot (_damag
   it('a non-lethal hit on a DORMANT unit wakes its whole base', () => {
     const scene = makeCombatScene();
     const hit = makeDockedUnit('tank', { baseId: 'base0' });
-    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(hit, dockmate);
     // Small damage relative to the tank's hp pool — survives the hit, still gets its base woken.
     scene._damageEnemyAt(hit, hit.x, hit.y, 1, 0xffffff);
@@ -1325,7 +1325,7 @@ describe('#269 playtest follow-up: DORMANT units wake when directly shot (_damag
   it('a hit that DESTROYS the DORMANT unit still wakes its base (its dockmates notice)', () => {
     const scene = makeCombatScene();
     const hit = makeDockedUnit('infantry', { baseId: 'base0' });   // fragile — one big hit kills it
-    const dockmate = makeDockedUnit('turret', { baseId: 'base0' });
+    const dockmate = makeDockedUnit('wallTurret', { baseId: 'base0' });
     scene.enemies.push(hit, dockmate);
     scene._damageEnemyAt(hit, hit.x, hit.y, 100000, 0xffffff);   // overkill — destroys it outright
     expect(hit.mech.isDestroyed()).toBe(true);
@@ -1366,14 +1366,14 @@ describe('#269 §8: _allBasesCleared — the run\'s simplified win condition', (
 
   it('false while any base-origin enemy (dormant or awake) is still alive', () => {
     const scene = makeScene();
-    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'turret' }] }];
-    scene.enemies.push(makeDockedUnit('turret'));
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'wallTurret' }] }];
+    scene.enemies.push(makeDockedUnit('wallTurret'));
     expect(scene._allBasesCleared()).toBe(false);
   });
 
   it('true once every base-origin enemy has been removed from this.enemies', () => {
     const scene = makeScene();
-    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'turret' }] }];
+    scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, docks: [{ q: 0, r: 0, kindId: 'wallTurret' }] }];
     // #87: a killed enemy is pruned out of `this.enemies` the same tick it dies — so "cleared"
     // is modeled here simply as an empty enemies array, matching that real invariant.
     expect(scene._allBasesCleared()).toBe(true);
@@ -1404,7 +1404,7 @@ describe('#269 playtest follow-up: _allObjectivesDestroyed — objective-hex-bas
     const scene = makeScene();
     scene.bases = [{ id: 'base0', center: { q: 0, r: 0 }, objectiveHex: { q: 0, r: 0 } }];
     scene.buildingHp = new Map();   // key deleted — this is what `_damageBuildingAt` does on collapse
-    scene.enemies = [makeDockedUnit('turret', { baseId: 'base0' })];   // defenders still alive
+    scene.enemies = [makeDockedUnit('wallTurret', { baseId: 'base0' })];   // defenders still alive
     expect(scene._allObjectivesDestroyed()).toBe(true);
   });
 
@@ -1412,7 +1412,7 @@ describe('#269 playtest follow-up: _allObjectivesDestroyed — objective-hex-bas
     const scene = makeScene();
     scene.bases = [{ id: 'base0', center: { q: 5, r: 5 } }];   // no objectiveHex field
     scene.buildingHp = new Map();
-    scene.enemies = [makeDockedUnit('turret', { baseId: 'base0' })];
+    scene.enemies = [makeDockedUnit('wallTurret', { baseId: 'base0' })];
     expect(scene._allObjectivesDestroyed()).toBe(false);
 
     scene.enemies = [];

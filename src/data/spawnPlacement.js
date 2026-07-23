@@ -2,9 +2,9 @@
 // scenes/arena/enemies.js (which pulls in Phaser and so can't be unit-tested directly) so the
 // actual placement math is tested in isolation, same spirit as data/worldgen.js.
 //
-// #114 (turret clusters spawning off-map / on forest-water) and #115 (infantry ending up off
-// the playable map) share one root cause: an enemy-cluster expansion (`_spawnTurretCluster`,
-// `_spawnInfantryMob`) placed extra units at a fixed PIXEL offset from an already-validated raw
+// #114 (clusters spawning off-map / on forest-water) and #115 (infantry ending up off
+// the playable map) share one root cause: an enemy-cluster expansion (`_spawnInfantryMob`, and
+// the since-deleted turret-nest one) placed extra units at a fixed PIXEL offset from a raw
 // spawn point, without checking whether that offset point was itself passable/in-bounds. The
 // fix mirrors the existing `_reachableDropPos` primitive (scenes/arena/powerups.js, #73) used
 // for powerup drops: snap to the nearest passable, in-bounds hex via `nearestHex` + an
@@ -71,21 +71,6 @@ export function nearestValidPixel(terrain, worldRadius, x, y) {
   return hexToPixel(hex.q, hex.r);
 }
 
-// #145 (playtest 2026-07-11: "turrets are in 3 separate hexes, but they should be in 1 hex
-// centered on that hex's center"): a turret-nest cluster is now a single tight emplacement, not
-// spread across a neighborhood — every one of the `count` turrets shares the SAME validated hex
-// (the nearest passable/in-bounds hex to the raw point). Callers still get an array of `count`
-// hexes back (same shape as before #145) so they don't need to special-case a single-hex result;
-// they're just all identical now. `_spawnTurretCluster` (scenes/arena/enemies.js) is responsible
-// for nudging the turrets a few px apart around that one hex's centre so they don't render as an
-// indistinguishable blob.
-export function turretClusterHexes(terrain, worldRadius, x, y, count) {
-  const centerHex = nearestValidHex(terrain, worldRadius, x, y);
-  const hexes = [];
-  for (let i = 0; i < count; i++) hexes.push(centerHex);
-  return hexes;
-}
-
 // #203 — mirrors the mech-role tuning in scenes/arena/enemies.js (`meanOpt`/`roleFor`'s standoff
 // clamp) so this file's `minSafeSpawnDist` can derive the SAME detection range a mech enemy will
 // actually be spawned with, without duplicating the tuning constants in two places or importing
@@ -103,33 +88,32 @@ function meanOptRange(mech) {
 }
 
 // #203 (playtest report: enemies near the deploy point already actively engaging the instant the
-// player drops in): a turret nest's artillery fireRange (2400px, ENEMY_KINDS.turret) is
-// distance-only-gated (no LOS needed) and dwarfs the ~700-1000px "just off view" distance the
-// camera-viewport-based offscreen spawn point (`_offscreenSpawnPoint`, scenes/arena/enemies.js)
-// normally produces — so a turret nest was AWARE and lobbing shells within the first second of
-// EVERY deploy, regardless of window size, and a narrow/small browser window could shrink the
-// off-view distance below even an ordinary mech's detection range too. This computes the
+// player drops in): a long-range kind's fireRange can be distance-only-gated (no LOS needed) and
+// dwarf the ~700-1000px "just off view" distance the camera-viewport-based offscreen spawn point
+// (`_offscreenSpawnPoint`, scenes/arena/enemies.js) normally produces — so such an enemy was
+// AWARE and firing within the first second of a deploy, regardless of window size, and a
+// narrow/small browser window could shrink the off-view distance below even an ordinary mech's
+// detection range too. This computes the
 // distance below which a freshly-placed enemy of `typeId` would already be within its own
 // detection range of the player standing at the spawn point origin — callers clamp the actual
 // spawn distance to never land inside it (see `spawnDistance` below).
 // #203 (reopened after playtest — "safety zone doesn't feel quite big enough — enemies
-// (especially turret nests) still engage too soon after deploy"): landing EXACTLY at an
+// still engage too soon after deploy"): landing EXACTLY at an
 // enemy's own detection-range boundary is the bare minimum, not a comfortable margin — the
 // player is deploying at roughly the centre of the safe zone and the enemy only has to close
 // a step (or the player takes one) before the two distances meet. A flat px buffer, not a
 // multiplier, is added on top of every type's detect-range floor: the per-type detect ranges
-// here span a huge spread (infantry ~240px / drone ~336px up to the turret nest's already-large
-// 2880px), and a multiplier applied uniformly would barely move the small, fast-closing types
-// (infantry/drone/mech) that need the extra room just as much, while ballooning the turret
-// nest's floor by hundreds more px than necessary (it's already the biggest number in the
-// table). A flat buffer instead gives every type the SAME extra breathing room in the units
-// that actually matter for "how many steps before I'm spotted" — proportionally huge for the
-// small-range types, a modest ~16% top-up for the turret nest, whose floor was already generous.
+// here span a huge spread (infantry ~240px / drone ~336px up to the long-range emplacements),
+// and a multiplier applied uniformly would barely move the small, fast-closing types
+// (infantry/drone/mech) that need the extra room just as much, while ballooning the
+// longest-range kinds' floors by hundreds more px than necessary. A flat buffer instead gives
+// every type the SAME extra breathing room in the units that actually matter for "how many
+// steps before I'm spotted" — proportionally huge for the small-range types, a modest top-up
+// for the long-range ones, whose floors were already generous.
 export const SAFETY_MARGIN_PX = 450;
 
 export function minSafeSpawnDist(typeId) {
   if (typeId === 'swarm') return detectionRangeFor(ENEMY_KINDS.drone.fireRange) + SAFETY_MARGIN_PX;
-  if (typeId === 'turretNest') return detectionRangeFor(ENEMY_KINDS.turret.fireRange) + SAFETY_MARGIN_PX;
   if (typeId === 'infantryMob') return detectionRangeFor(ENEMY_KINDS.infantry.fireRange) + SAFETY_MARGIN_PX;
   if (isEnemyKind(typeId)) return detectionRangeFor(ENEMY_KINDS[typeId].fireRange) + SAFETY_MARGIN_PX;
   const def = ENEMIES[typeId] ?? ENEMIES.raider;
@@ -154,7 +138,7 @@ export const EDGE_BUFFER_PX = 40;
 // "just off screen" radius) NOR closer than `minSafeDist` (the enemy's own detection range, see
 // `minSafeSpawnDist`), plus the fixed `EDGE_BUFFER_PX` so the floor itself is a strict margin
 // past the viewport edge (not merely touching it), then jittered outward by `jitter` px and
-// finally capped at `maxR` (the world edge) so a huge detection range (e.g. the turret nest)
+// finally capped at `maxR` (the world edge) so a huge detection range
 // still can't be pushed past the playable map. Pure so the floor-enforcement itself is
 // unit-testable without a Phaser scene.
 export function spawnDistance({ viewR, minSafeDist = 0, maxR, jitter = 0 }) {

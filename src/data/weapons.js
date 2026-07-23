@@ -371,10 +371,9 @@ export const WEAPONS = {
   }),
   // #244: siegeShell (the #94 sentry-turret artillery round) was deleted from this registry —
   // it was mechanically identical to napalm (both arcing projectile + splash + groundFire
-  // lobbed rounds), differing only in tuning numbers. The turret now mounts napalm with a
-  // `weaponOverride` carrying the full artillery tuning (damage 10 / range 300-2400 / velocity
-  // 550 / etc.) — see ENEMY_KINDS.turret in data/enemyKinds.js, which also inherited #94's
-  // telegraphed-lob design commentary.
+  // lobbed rounds), differing only in tuning numbers. Its tuning survived for a while as the
+  // sentry turret kind's `weaponOverride` on napalm; #469 deleted that kind, so nothing mounts
+  // the artillery numbers any more and napalm is purely the player's own lobber.
 
   // ── MISSILE ── three guidance archetypes: an all-at-once homing swarm, a rapid
   // stream of seekers, and a tight dumbfire cluster that flies straight as a clump. ──

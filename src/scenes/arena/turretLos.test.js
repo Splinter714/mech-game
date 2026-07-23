@@ -22,11 +22,11 @@ vi.mock('phaser', () => ({
 import { ENEMY_BEHAVIORS } from './enemyBehaviors.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 
-// A turret enemy record shaped like the real one the arena builds from ENEMY_KINDS.turret,
+// A turret enemy record shaped like the real one the arena builds from ENEMY_KINDS.wallTurret,
 // sitting dead ahead of the player (bearing 0) and already on-target (turret angle 0) so the
 // `onTarget` gate in aimAndFire never masks the LOS behavior this test is actually proving.
 function makeTurret({ dist = 500 } = {}) {
-  const kindDef = ENEMY_KINDS.turret;
+  const kindDef = ENEMY_KINDS.wallTurret;
   return {
     key: 'testTurret', kind: 'turret', behavior: 'turret',
     fireCd: 0, x: 0, y: 0, turret: 0, vx: 0, vy: 0,

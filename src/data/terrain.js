@@ -233,8 +233,8 @@ export const TERRAIN = {
   // garrisoning each. #310 put rail-lance guns on the base's WALL RING, which made a second,
   // interior turret-bearing structure redundant noise, so both entries (and their textures, their
   // worldgen placement loop and the `_onTerrainCollapsed` garrison-kill wiring) are gone. A base's
-  // fixed guns are now exclusively its wall turrets. The `turret` enemy KIND is unaffected — it is
-  // still what the free-roaming `turretNest` spawn fields.
+  // fixed guns are now exclusively its wall turrets (#469 deleted the free-roaming sentry `turret`
+  // enemy KIND too, so `wallTurret` is the only emplacement left).
 
   // #269 playtest follow-up ("objectives are picking an arbitrary hex, not a real target"): a
   // dedicated, DESTRUCTIBLE base hex the mission marker actually points at — previously

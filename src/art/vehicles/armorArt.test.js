@@ -3,7 +3,6 @@
 // predicate into which pre-built texture set a unit renders from, and (c) the registry building
 // BOTH sets for an armored kind. All three are Phaser-free and tested here; the scene-side
 // re-point is a two-line setTexture call driven entirely by (b).
-import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { vehicleTextureSet, vehicleHasArmorArt, buildVehicleTextures, ARMORED_SUFFIX, VEHICLE_ART } from './index.js';
 import { HpBody } from '../../data/HpBody.js';
@@ -86,16 +85,5 @@ describe('the live armored kinds get armored art', () => {
   it('the tank and the carrier are among them (the two units #300 was filed for)', () => {
     expect(vehicleHasArmorArt(ENEMY_KINDS.tank)).toBe(true);
     expect(vehicleHasArmorArt(ENEMY_KINDS.carrier)).toBe(true);
-  });
-
-  // #299 gave the Sentry Turret a real armor pool for the first time. #300 noted that only the
-  // tank and carrier art builders honoured `opts.armored` — the turret would have silently
-  // rendered its "plated" set identically to its bare one, so plating would never visibly strip.
-  // Its builder now takes the flag too; this pins that it actually varies its output.
-  it('#299: the newly-armored turret both needs and draws a plated variant', () => {
-    expect(vehicleHasArmorArt(ENEMY_KINDS.turret)).toBe(true);
-    const src = readFileSync(new URL('./turret.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/armorShell\(/);
-    expect(src).toMatch(/opts\.armored/);
   });
 });

@@ -809,9 +809,11 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
     });
   });
 
-  it('#269/#287: the turret kind never appears in the dock kind pools (base guns live on the wall)', () => {
-    expect(BASE_EARLY_KIND_POOL).not.toContain('turret');
+  it('#269/#287: no turret kind ever appears in the dock kind pools (base guns live on the wall)', () => {
+    expect(BASE_EARLY_KIND_POOL).not.toContain('turret');      // #469 deleted this kind outright
     expect(BASE_LATE_KIND_POOL).not.toContain('turret');
+    expect(BASE_EARLY_KIND_POOL).not.toContain('wallTurret');
+    expect(BASE_LATE_KIND_POOL).not.toContain('wallTurret');
   });
 
   it('#314: drone and infantry swarm docks are available in BOTH pools', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, TURRET_CLUSTER_SIZE, INFANTRY_MOB_SIZE, isEnemyKind } from './enemyKinds.js';
+import { ENEMY_KINDS, ENEMY_KIND_IDS, SWARM_SIZE, INFANTRY_MOB_SIZE, isEnemyKind } from './enemyKinds.js';
 import { getWeapon, resolveWeapon, WEAPONS } from './weapons.js';
 // #305: a kind may now declare MULTIPLE weapon slots (`weapons: {...}`) instead of a single
 // top-level `weaponId`. `kindWeaponSlots` normalises both forms into the same slot map, so these
@@ -12,7 +12,7 @@ import { ENEMIES } from './enemies.js';
 
 describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('defines the seven expected kinds', () => {
-    expect(ENEMY_KIND_IDS.sort()).toEqual(['carrier', 'drone', 'helicopter', 'infantry', 'tank', 'turret', 'wallTurret']);
+    expect(ENEMY_KIND_IDS.sort()).toEqual(['carrier', 'drone', 'helicopter', 'infantry', 'tank', 'wallTurret']);
   });
 
   // #328: an UNARMED kind (the Carrier) resolves to ZERO weapon slots, so this loop simply has
@@ -43,9 +43,9 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     }
   });
 
-  it('marks turret static and the flyers as flying (ignore ground cover)', () => {
-    expect(ENEMY_KINDS.turret.move.maxSpeed).toBe(0);
-    expect(ENEMY_KINDS.turret.flying).toBe(false);
+  it('marks the wall turret static and the flyers as flying (ignore ground cover)', () => {
+    expect(ENEMY_KINDS.wallTurret.move.maxSpeed).toBe(0);
+    expect(ENEMY_KINDS.wallTurret.flying).toBe(false);
     expect(ENEMY_KINDS.tank.flying).toBe(false);
     expect(ENEMY_KINDS.drone.flying).toBe(true);
     expect(ENEMY_KINDS.helicopter.flying).toBe(true);
@@ -82,10 +82,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   });
 
   it('#269: small is exactly tank + infantry (the pre-#269 crushable-on-contact scope); '
-    + 'turret/drone/helicopter/carrier are large', () => {
+    + 'wallTurret/drone/helicopter/carrier are large', () => {
     expect(ENEMY_KINDS.tank.size).toBe('small');
     expect(ENEMY_KINDS.infantry.size).toBe('small');
-    expect(ENEMY_KINDS.turret.size).toBe('large');
+    expect(ENEMY_KINDS.wallTurret.size).toBe('large');
     expect(ENEMY_KINDS.drone.size).toBe('large');
     expect(ENEMY_KINDS.helicopter.size).toBe('large');
     expect(ENEMY_KINDS.carrier.size).toBe('large');
@@ -104,13 +104,11 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
       expect(typeof s, `${id} scale`).toBe('number');
       expect(s, `${id} scale`).toBeGreaterThan(0);
     }
-    // #89 retune: every vehicle shrank further from its #75 size — tank/drone/helicopter/turret
-    // all read noticeably smaller now (turret especially, since it now spawns in clusters).
+    // #89 retune: every vehicle shrank further from its #75 size — tank/drone/helicopter
+    // all read noticeably smaller now.
     expect(ENEMY_KINDS.tank.scale).toBeLessThan(0.82);
     expect(ENEMY_KINDS.drone.scale).toBeLessThan(0.72);
     expect(ENEMY_KINDS.helicopter.scale).toBeLessThan(1.0);
-    expect(ENEMY_KINDS.turret.scale).toBeLessThan(1.15);
-    expect(ENEMY_KINDS.turret.scale).toBeLessThanOrEqual(0.6);
     // #91 retune: drones and tanks nudged smaller again (further than #89's already-reduced size).
     expect(ENEMY_KINDS.tank.scale).toBeLessThan(0.6);
     expect(ENEMY_KINDS.drone.scale).toBeLessThan(0.62);
@@ -133,32 +131,12 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
 
   it('#151: infantry avoids voluntarily wandering into water; no other kind is flagged', () => {
     expect(ENEMY_KINDS.infantry.avoidWater).toBe(true);
-    // Explicitly infantry-only per the #151 report: turret is static (N/A), drone/helicopter fly
+    // Explicitly infantry-only per the #151 report: the wall turret is static (N/A), drone/helicopter fly
     // over water regardless, tank/carrier are bulkier and read fine wading through it.
     for (const id of ENEMY_KIND_IDS) {
       if (id === 'infantry') continue;
       expect(ENEMY_KINDS[id].avoidWater, id).toBeFalsy();
     }
-  });
-
-  it('#94: turret is an artillery emplacement — arcing indirect weapon at an insane range', () => {
-    const t = ENEMY_KINDS.turret;
-    // #244: the turret's artillery tuning lives in its weaponOverride on napalm (the dedicated
-    // siegeShell entry was consolidated away), so the RESOLVED weapon is what must satisfy the
-    // #94 envelope — the base napalm entry keeps its short player-facing range.
-    const weapon = resolveWeapon(t.weaponId, t.weaponOverride);
-    // Indirect: arcing (or homing) delivery never needs line-of-sight (mirrors the "all-indirect"
-    // detection in scenes/arena/enemies.js isIndirectWeapon).
-    expect(weapon.delivery.path === 'arcing' || weapon.delivery.guidance === 'homing').toBe(true);
-    // INSANE range: meaningfully farther than every other weapon's max range in the catalog.
-    const otherMaxRanges = Object.values(WEAPONS)
-      .filter((w) => w.id !== t.weaponId)
-      .map((w) => w.range?.max ?? 0);
-    expect(t.fireRange).toBeGreaterThan(Math.max(...otherMaxRanges));
-    // The weapon's own max range must comfortably cover the turret's fireRange, or shells fired
-    // right at the edge of engagement would fizzle short of the target (see arcMaxDist in
-    // scenes/arena/firing.js, which bounds an arcing round's travel to weapon.range.max + 40).
-    expect(weapon.range.max).toBeGreaterThanOrEqual(t.fireRange);
   });
 
   it('#130/#328: carrier (Broodhauler) is a slow, tanky, UNARMED ground unit with a deploy mechanic', () => {
@@ -259,9 +237,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
     expect(isEnemyKind('nope')).toBe(false);
   });
 
-  it('isEnemyKind does not recognize the swarm/turretNest/infantryMob cluster-expansion ids', () => {
-    // 'swarm', 'turretNest', and 'infantryMob' are squad-composition ids the arena expands into
-    // several real kind spawns (drone / turret / infantry) — none is itself an ENEMY_KINDS entry.
+  it('isEnemyKind does not recognize the swarm/infantryMob cluster-expansion ids', () => {
+    // 'swarm' and 'infantryMob' are squad-composition ids the arena expands into several real
+    // kind spawns (drone / infantry) — neither is itself an ENEMY_KINDS entry. (#469 deleted
+    // 'turretNest' along with the sentry `turret` kind it expanded into.)
     expect(isEnemyKind('swarm')).toBe(false);
     expect(isEnemyKind('turretNest')).toBe(false);
     expect(isEnemyKind('infantryMob')).toBe(false);
@@ -270,11 +249,6 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   it('#89: SWARM_SIZE is a much larger swarm count ("waaaaaay more")', () => {
     expect(SWARM_SIZE).toBeGreaterThan(14);
     expect(SWARM_SIZE).toBeLessThan(30);
-  });
-
-  it('#89: TURRET_CLUSTER_SIZE is a small positive count', () => {
-    expect(TURRET_CLUSTER_SIZE).toBeGreaterThan(1);
-    expect(TURRET_CLUSTER_SIZE).toBeLessThan(6);
   });
 
   it('#97: INFANTRY_MOB_SIZE is a bigger volume than the drone SWARM_SIZE ("large volumes")', () => {
@@ -334,12 +308,10 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
   });
 
   it('#243 playtest follow-up: NO kind overrides damage — enemy rounds always match the player\'s weapon', () => {
-    // #244 exception: the turret. Its override isn't an enemy-side retune of a weapon the
-    // player also mounts — it's the old DEDICATED siegeShell entry (damage 10, a distinct
-    // weapon with its own damage identity) consolidated into a napalm override, preserved
-    // byte-identical. Every other kind fires its weapon at the player's own per-round damage.
+    // #469: the one standing exception (the sentry turret's consolidated siegeShell damage) is
+    // gone with that kind, so the rule is now universal — every kind fires its weapon at the
+    // player's own per-round damage.
     for (const id of ENEMY_KIND_IDS) {
-      if (id === 'turret') continue;
       const k = ENEMY_KINDS[id];
       for (const s of Object.values(kindWeaponSlots(k))) {
         expect(s.weaponOverride?.damage, `${id}.${s.slot}`).toBeUndefined();
@@ -347,10 +319,6 @@ describe('ENEMY_KINDS — non-mech enemy data', () => {
         expect(resolved.damage, `${id}.${s.slot} resolved damage`).toBe(WEAPONS[s.weaponId].damage);
       }
     }
-    // The turret's consolidated artillery shell keeps the old siegeShell numbers exactly.
-    const t = resolveWeapon(ENEMY_KINDS.turret.weaponId, ENEMY_KINDS.turret.weaponOverride);
-    expect(t.damage).toBe(10);
-    expect(WEAPONS.napalm.damage).toBe(46);   // the player's napalm (24-sustained-floor) is untouched by the override
   });
 });
 
