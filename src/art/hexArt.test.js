@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor,
   buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId, BOUNDARY_ONLY_IDS,
-  buildStreaks, clipSegToHex, HEX_LATTICE,
+  buildStreaks, clipSegToHex, HEX_LATTICE, RIVER_STREAK_SETS,
 } from './hexArt.js';
 import { ART_SCALE } from './_frames.js';
 import { BIOMES, BIOME_IDS } from '../data/biomes.js';
@@ -357,6 +357,86 @@ describe('channel streaks continue across the hex boundary (#471)', () => {
       // neighbour paints the same texture, so it must have a crossing there too.
       const want = [px - ox, py - oy];
       const hit = crossings.some(([qx, qy]) => Math.hypot(qx - want[0], qy - want[1]) < 1e-6);
+      expect(hit, `crossing ${px.toFixed(2)},${py.toFixed(2)}`).toBe(true);
+    }
+  });
+});
+
+// #471 playtest, third pass — "river shouldn't have any straight lines like that; if any line-esque
+// stuff, give it squiggly wave lines, very subtle". The pass before this one CALMED the river (fewer
+// marks) but left the marks straight, and every test still passed: counts and containment can't see
+// the difference between a squiggle and a gently-wobbled straight. These two properties can.
+//
+//   WANDER — total path length vs. the straight line between its endpoints. A straight streak scores
+//            ~1.00; a wobbled one barely more. A real sine undulation is well above it.
+//   REVERSALS — how many times the path changes which WAY it turns. A random walk drifts, so it can
+//            hold one turn direction for its whole length; an undulation must flip once per half
+//            wave. This is the property that actually says "squiggly" rather than "not straight".
+describe('the river lines are squiggly, not straight (#471)', () => {
+  function wander(line) {
+    let arc = 0;
+    for (let i = 0; i + 3 < line.length; i += 2) {
+      arc += Math.hypot(line[i + 2] - line[i], line[i + 3] - line[i + 1]);
+    }
+    const span = Math.hypot(line[line.length - 2] - line[0], line[line.length - 1] - line[1]);
+    return arc / (span || 1);
+  }
+
+  // Sign changes of the turn (2-D cross product of consecutive segment directions), sampled coarsely
+  // so floating-point noise on a near-collinear pair can't count as a reversal.
+  function reversals(line) {
+    const turns = [];
+    for (let i = 0; i + 5 < line.length; i += 2) {
+      const ax = line[i + 2] - line[i], ay = line[i + 3] - line[i + 1];
+      const bx = line[i + 4] - line[i + 2], by = line[i + 5] - line[i + 3];
+      const cross = ax * by - ay * bx;
+      if (Math.abs(cross) > 1e-6) turns.push(Math.sign(cross));
+    }
+    let n = 0;
+    for (let i = 1; i < turns.length; i++) if (turns[i] !== turns[i - 1]) n++;
+    return n;
+  }
+
+  for (const [name, set] of Object.entries(RIVER_STREAK_SETS)) {
+    describe(name, () => {
+      it('every line wanders well past its straight-line distance', () => {
+        for (const line of set) expect(wander(line)).toBeGreaterThan(1.2);
+      });
+
+      it('every line reverses its turn direction several times', () => {
+        for (const line of set) expect(reversals(line)).toBeGreaterThanOrEqual(3);
+      });
+    });
+  }
+
+  it('a straight streak set would fail the same properties', () => {
+    const straight = buildStreaks(0x77, { count: 8, len: 58, segs: 3, wobble: 0.13 });
+    expect(straight.every((l) => wander(l) > 1.2)).toBe(false);
+    expect(straight.every((l) => reversals(l) >= 3)).toBe(false);
+  });
+
+  // A waved path still has to satisfy the lattice property the whole channel scheme rests on.
+  it('keeps the tile-to-tile crossing match with a waved path', () => {
+    const lines = buildStreaks(0x8c, { count: 10, len: 58, segs: 26, wave: { amp: 4.6, period: 17 } });
+    const crossings = [];
+    for (const line of lines) {
+      for (let i = 0; i + 3 < line.length; i += 2) {
+        const c = clipSegToHex(line[i], line[i + 1], line[i + 2], line[i + 3], HEX_SIZE);
+        if (!c) continue;
+        if (Math.hypot(c[0] - line[i], c[1] - line[i + 1]) > 1e-6) crossings.push([c[0], c[1]]);
+        if (Math.hypot(c[2] - line[i + 2], c[3] - line[i + 3]) > 1e-6) crossings.push([c[2], c[3]]);
+      }
+    }
+    expect(crossings.length).toBeGreaterThan(20);
+    const ring1 = HEX_LATTICE.filter(([x, y]) => {
+      const d = Math.hypot(x, y);
+      return d > 1 && d < HEX_SIZE * Math.sqrt(3) + 1;
+    });
+    for (const [px, py] of crossings) {
+      const [ox, oy] = ring1.reduce((best, o) =>
+        Math.hypot(px - o[0], py - o[1]) < Math.hypot(px - best[0], py - best[1]) ? o : best);
+      const hit = crossings.some(([qx, qy]) =>
+        Math.hypot(qx - (px - ox), qy - (py - oy)) < 1e-6);
       expect(hit, `crossing ${px.toFixed(2)},${py.toFixed(2)}`).toBe(true);
     }
   });

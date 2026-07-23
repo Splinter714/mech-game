@@ -643,7 +643,15 @@ export function clipSegToHex(x0, y0, x1, y1, s) {
 // Returns polylines as flat arrays of plane coords: [x0, y0, x1, y1, …] offset from the hex centre.
 // Exported (with `clipSegToHex` and `HEX_LATTICE`) so the tile-to-tile continuity property can be
 // asserted directly in hexArt.test.js rather than inferred from the baked pixels.
-export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle = null, angleJitter = Math.PI }) {
+// `wave: { amp, period }` swaps the random walk for a real SINE — the streak holds one heading and
+// swings side to side across it by `amp` px every `period` px of travel (both jittered ±25% per
+// streak, with a random phase). That's the difference between a gently-wobbled straight and a mark
+// that is visibly SQUIGGLY: the wander is a repeating undulation, not a drift, so the path reverses
+// its turn direction several times over its length. `segs` becomes the sampling resolution of the
+// curve, so a waved streak wants many more of them (~2px per sample) than a walked one. Still built
+// from one seed inside the fundamental domain and replicated over the lattice, so periodicity —
+// hence tile-to-tile channel continuity — is untouched by the shape of the path.
+export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle = null, angleJitter = Math.PI, wave = null }) {
   const rnd = seeded(seed);
   const hw = HEX_SIZE * SQRT3 / 2;
   const bases = [];
@@ -651,6 +659,20 @@ export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle =
     const sx = (rnd() - 0.5) * 2 * hw, sy = (rnd() - 0.5) * 2 * HEX_SIZE;
     if (!inHex(sx, sy, HEX_SIZE)) continue;
     let th = (angle === null ? rnd() * Math.PI * 2 : angle + (rnd() - 0.5) * 2 * angleJitter);
+    if (wave) {
+      const amp = wave.amp * (0.75 + rnd() * 0.5);
+      const period = wave.period * (0.75 + rnd() * 0.5);
+      const phase = rnd() * Math.PI * 2;
+      const dx = Math.cos(th), dy = Math.sin(th);
+      const line = [];
+      for (let i = 0; i <= segs; i++) {
+        const s = (i / segs) * len;
+        const o = amp * Math.sin((s / period) * Math.PI * 2 + phase);
+        line.push(sx + dx * s - dy * o, sy + dy * s + dx * o);
+      }
+      bases.push(line);
+      continue;
+    }
     const step = len / segs;
     const line = [sx, sy];
     let x = sx, y = sy;
@@ -811,12 +833,18 @@ const DEBRIS_SLABS = buildSlabs(0xf5, 14, 3, 6);
 // ice skins; canal = dead-straight parallel courses plus a cross-run of culvert joints.
 const RIV_BED = buildMottle(0xf6, 13, 5, 10, 0.5);
 const RIV_DEEP = buildMottle(0xf7, 16, 4, 9, 0.5);
-// #471 playtest follow-up — river: CALMED. The 22 long crests + 26 short bright ones were far too
-// much texture for water; the tile read as a lattice of lines rather than a surface. Now it's a
-// mostly FLAT water tone with a handful of broad, low-contrast current lines and only a few glints.
-// Still `buildStreaks`, still lattice-periodic — a calm river must still connect hex to hex.
-const RIV_FLOW = buildStreaks(0xf8, { count: 8, len: 58, segs: 3, wobble: 0.13 });
-const RIV_CREST = buildStreaks(0xf9, { count: 6, len: 26, segs: 2, wobble: 0.22 });
+// #471 playtest follow-up — river: CALMED, then made SQUIGGLY. The first calming pass cut the
+// density (22 long crests + 26 bright ripples → 8 + 6) but kept the marks essentially straight,
+// which is what the water still read wrong as: "no straight lines; if any line-esque stuff, give it
+// squiggly wave lines, very subtle". So the two remaining sets now use `wave` — a real sine
+// undulation, ~3 full swings per line, arc length ~1.4× the straight distance between the ends —
+// while the alpha comes DOWN again. Pronounced SHAPE, faint CONTRAST: it should read as water
+// moving, not as a pattern drawn on water. Still `buildStreaks`, still lattice-periodic.
+const RIV_FLOW = buildStreaks(0xf8, { count: 8, len: 58, segs: 26, wave: { amp: 4.6, period: 17 } });
+const RIV_CREST = buildStreaks(0xf9, { count: 6, len: 26, segs: 14, wave: { amp: 2.6, period: 11 } });
+// Exported for the squiggle property test — "the river has no straight lines" is the one thing a
+// density/containment test can't see, and it's exactly how the previous pass shipped wrong.
+export const RIVER_STREAK_SETS = { flow: RIV_FLOW, crest: RIV_CREST };
 const SLU_WATER = buildMottle(0xfa, 12, 5, 10, 0.5);
 const SLU_SKIN = buildMottle(0xfb, 16, 5.5, 11, 0.62);
 const SLU_SPARK = buildMottle(0xfc, 13, 0.6, 1.3, 0.9);
@@ -873,12 +901,14 @@ const DETAIL = {
   // exactly the same point. #471 playtest: that first pass was TOO BUSY to read as water at all —
   // the crest lattice looked like ice (it has since moved to `brokenIce`). The river is calm now:
   // a mostly flat water tone, a few broad soft current lines and the odd glint, all still
-  // lattice-periodic so a run of river hexes remains one continuous stream.
+  // lattice-periodic so a run of river hexes remains one continuous stream. #471 playtest, again:
+  // those calm lines were still STRAIGHT. They squiggle now (see RIV_FLOW/RIV_CREST above) and the
+  // alpha dropped with it, so the shape is obvious and the contrast is not.
   hex_river: (sg) => {
     mottle(sg, RIV_DEEP, 0x1f4f64, 0.20);          // deeper channel shadow, softened
     mottle(sg, RIV_BED, 0x6d8a7a, 0.12);           // sandy bed faintly through the shallows
-    streaks(sg, RIV_FLOW, 0x3f8099, 0.20, 3.6);    // broad, slow current lines — barely there
-    streaks(sg, RIV_CREST, 0x8fc4d8, 0.22, 1.4);   // an occasional glint on a crest
+    streaks(sg, RIV_FLOW, 0x3f8099, 0.15, 3.0);    // broad squiggling current lines — barely there
+    streaks(sg, RIV_CREST, 0x7cb2c8, 0.16, 1.1);   // an occasional glint riding the same swing
   },
   // #464: the five BOUNDARY-ONLY ids (deepWater / mesa / ice / collapsed / lava) have no DETAIL
   // painter — `buildHexTextures` has skipped them since #222 (they'd tile into an obviously-
