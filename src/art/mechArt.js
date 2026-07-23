@@ -18,7 +18,7 @@
 //   neon   — each weapon glows its CATEGORY colour (energy cyan, ballistic amber,
 //            missile pink, melee white, support green), so loadout reads at a glance.
 
-import { gen, scaledGraphics, ART_SCALE } from './_frames.js';
+import { gen, scaledGraphics, drawDilated, ART_SCALE } from './_frames.js';
 import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
@@ -102,6 +102,23 @@ export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, righ
 // its shell. Player-only (enemy mechs bake their glow straight into the part). One place the suffix
 // is defined so the baker and the mech-view wiring can't drift apart.
 export const MUZZLE_GLOW_SUFFIX = '_muzzleGlow';
+
+// #422/#456: the player's shield SHELL is baked as its own raster — the body-only art DILATED
+// outward by this many DESIGN units — and then drawn at the mech's EXACT display scale (see
+// arena/shieldOutline.js). That is what makes the shell sit a consistent distance outside the
+// silhouette: a dilation moves every edge by the same distance, whereas the old percentage scale
+// moved each edge in proportion to its own distance from the mech centre, so the wide arm-to-arm
+// axis got a fatter rim than the shallow nose-to-tail axis ("wider than it is deep").
+// In display px the margin is `SHIELD_SHELL_PAD × ART_SCALE × ARENA_MECH_SCALE` = 1.8 × 4 × 0.34
+// ≈ 2.4px, i.e. the same overall thickness the tuned #397/#422 shell had on its FRONT face — now
+// on every face. Tunable; it is the ONLY dial for shell size, and nothing at runtime changes it
+// (#456: strength drives opacity, never size).
+export const SHIELD_SHELL_PAD = 1.8;
+
+// #422: texture-key suffix for a part's baked shield shell (body-only art, dilated by
+// SHIELD_SHELL_PAD). The hull gets one PER WALK FRAME so the shell's feet stride with the real
+// legs. Shared with arena/shieldOutline.js so the baker and the consumer can't drift.
+export const SHIELD_SHELL_SUFFIX = '_shield';
 
 // Where a `${key}_<part>` sprite must sit and how it pivots, for a mech aimed along `angle`
 // at display `scale`. `ox/oy` is the joint as an origin fraction (so setOrigin makes the
@@ -418,16 +435,30 @@ export function buildMechTextures(scene, key, mech, opts) {
   // weapon-carrying part. The hull carries no weapons, so it needs no variant — the shield outline
   // just reuses the live hull frame. Only the player theme builds these (arena/shieldOutline.js
   // `bodyOnly` points the player's outline duplicates at them); enemies keep their full-part shell.
+  //
+  // #422: each shell raster is the body-only art DILATED by SHIELD_SHELL_PAD (drawDilated) instead
+  // of the plain body art. The outline sprite then draws it at the mech's EXACT display scale, so
+  // the shell's margin is a constant number of pixels on every side of the silhouette rather than a
+  // percentage of each edge's distance from the mech centre. The HULL now needs shells too (one per
+  // walk frame): at equal scale the un-dilated hull would be perfectly covered by the real legs and
+  // no rim would show at all. They carry no damage state (legs are animation-only), so they follow
+  // the same build-once `skipHull` gate as the real hull frames.
+  const shell = (name, drawFn) => gen(scene, name, DESIGN * ART_SCALE, DESIGN * ART_SCALE, (g) => {
+    const sg = scaledGraphics(g);
+    drawDilated(sg, SHIELD_SHELL_PAD, () => drawFn(sg));
+  });
   if (isPlayer) {
-    gen(scene, `${key}_turret_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot, true));
+    if (!opts?.skipHull || !scene.textures.exists(`${key}_hull_0${SHIELD_SHELL_SUFFIX}`)) {
+      for (let f = 0; f < hullFrames; f++) {
+        shell(`${key}_hull_${f}${SHIELD_SHELL_SUFFIX}`, (sg) => drawHull(sg, mech, f, T, hullFrames));
+      }
+    }
+    shell(`${key}_turret${SHIELD_SHELL_SUFFIX}`, (sg) => drawTurret(sg, mech, T, opts?.statusSpot, true));
     for (const loc of SIDE_TORSO_LOCATIONS) {
-      gen(scene, `${key}_${loc}_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-        (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, true));
+      shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawSideTorso(sg, mech, loc, T, true));
     }
     for (const loc of ARM_LOCATIONS) {
-      gen(scene, `${key}_${loc}_shield`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-        (g) => drawArm(scaledGraphics(g), mech, loc, T, true));
+      shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawArm(sg, mech, loc, T, true));
     }
     // #433 (re-architecture): the GLOW-ONLY overlay for every weapon-carrying part (the four skill
     // slots). Same canvas size + origin as the part, containing ONLY the muzzle glow in the CATEGORY

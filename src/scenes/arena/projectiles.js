@@ -3,7 +3,7 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
-import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, homingShouldGiveUp, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC } from '../../data/delivery.js';
+import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
 
@@ -53,7 +53,9 @@ export const ProjectilesMixin = {
       // — reading as the bystander "blocking" the shot. Non-homing rounds and blind-fire lobs
       // (no live handle to scope to) keep the previous any-target-nearby behavior.
       const enemyShot = p.owner === 'enemy';
-      const lockedLive = !enemyShot && p.homing && p.seekTarget?.mech ? p.seekTarget : null;
+      // #418: a round that has GIVEN UP is no longer scoped to its lock — it is a ballistic round
+      // now, so it hits whatever it runs into on the way down, like any dumbfire shot.
+      const lockedLive = !enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech ? p.seekTarget : null;
       const hitEnemy = enemyShot
         ? null
         : lockedLive
@@ -76,21 +78,39 @@ export const ProjectilesMixin = {
       // last-known/predicted position (#62), which has no `.mech` and is steered toward as a static
       // aimpoint. A live enemy that dies mid-flight makes the round go dumb; it does not retarget
       // to the nearest.
+      //
+      // #418 audit — TARGET LOST is one of the ways a guided round can fail to resolve a target,
+      // and it must NOT snap the seeker off mid-turn (that was its own little kink, and it left
+      // the round frozen on whatever heading it happened to be banking through). Every failure
+      // path now routes through the SAME eased give-up as a failed pass: mark the round as giving
+      // up, let it coast out of the turn it's in over the blend window, then go plain ballistic.
+      // Three ways a target stops resolving here: the seek handle no longer resolves (target
+      // destroyed mid-flight, or a stale record with unusable coordinates — resolveSeekPoint), a
+      // player round has no lock handle at all, or the hit target is gone (`targetGone`).
       let hx = tx, hy = ty, seekVx = 0, seekVy = 0;
+      let targetLost = false;
       if (p.homing && p.seekTarget) {
         const resolved = resolveSeekPoint(p.seekTarget);
         if (resolved.alive) { hx = resolved.x; hy = resolved.y; seekVx = resolved.vx; seekVy = resolved.vy; }
-        else p.homing = false;
+        else targetLost = true;
       } else if (p.homing && !enemyShot) {
-        p.homing = false;
+        targetLost = true;
       }
+      // An enemy round with no seek handle keeps chasing the nearest live player (tx/ty) — that
+      // is its designed behaviour, not a lost target; but if there's no live player to chase,
+      // there is nothing to steer at either.
+      if (p.homing && targetGone) targetLost = true;
+      if (p.homing && targetLost) beginHomingGiveUp(p, 'targetLost');
+      const givingUp = p.homing && !!p.homingGivingUp;
       // Advance via the shared kinematics — guided rounds steer toward the live target
       // (capped by turn rate); ballistic rounds just integrate velocity. An arcing homing
       // round (#57) doesn't engage its seeker until it's descending — mostly ballistic on the
       // way up (like a missile still climbing out of the tube), then curving onto the target
       // as it comes down. Scale the round's turn rate by that ascent/descent blend rather than
       // hard-gating the desired angle, so the turn-in reads as a smooth curve, not a snap.
-      const homingActive = p.homing && !targetGone;
+      // A round that is giving up no longer steers at ANY target — it coasts out of its turn
+      // (stepHomingGiveUp, below), so it can never keep chasing the thing it was circling.
+      const homingActive = p.homing && !targetLost && !givingUp;
       const turnFull = p.turn;   // the round's true, undamped turn rate — always restored after stepProjectile
       let turnScale = 1;
       let seekerLive = homingActive;   // #418: an arcing lob's seeker isn't engaged during ballistic ascent
@@ -98,11 +118,6 @@ export const ProjectilesMixin = {
         const blend = arcHomingBlend(p.dist / p.maxDist, p.blendStart);
         if (blend <= 0) { seekerLive = false; turnScale = 0; }
         else if (blend < 1) { turnScale = blend; }
-      }
-      // #418 follow-up: once a failed pass has triggered give-up, ease turn authority to zero
-      // over HOMING_GIVEUP_BLEND_SEC instead of snapping straight — see homingGiveUpTurnScale.
-      if (homingActive && p.homingGivingUp) {
-        turnScale *= homingGiveUpTurnScale(p.homingGiveUpElapsed, HOMING_GIVEUP_BLEND_SEC);
       }
       if (turnScale !== 1) p.turn = turnFull * turnScale;
       // #377 follow-up — SALVO SEPARATION. A round carrying its own `aimOffset` steers at a
@@ -150,26 +165,29 @@ export const ProjectilesMixin = {
         }
       }
       const prevX = p.x, prevY = p.y;   // #77: for swept hit detection (fast rounds can tunnel)
-      stepProjectile(p, dt, desiredAngle);
-      p.turn = turnFull;   // always restore — arc-blend and give-up scaling are both per-frame only
-      // #418 FAILED-PASS GIVE-UP: a guided round that has overshot its target — begun receding
-      // from its closest approach past the give-up margin — stops steering here and eases its
-      // turn authority to zero over HOMING_GIVEUP_BLEND_SEC (rather than snapping straight
-      // instantly, which read as a visible kink) so it carries to ground/terrain or max range
-      // and detonates instead of orbiting the target forever hunting another pass. Only guided
-      // rounds whose seeker is actually live (an arcing lob mid-ascent is approaching, not
-      // orbiting, and always lands at maxDist regardless); dumbfire rounds never reach here.
-      // Turn authority only ever decreases across the blend — it never re-engages homing.
-      if (seekerLive && !targetGone) {
-        if (!p.homingGivingUp && homingShouldGiveUp(p, Math.hypot(tx - p.x, ty - p.y))) {
-          p.homingGivingUp = true;
-          p.homingGiveUpElapsed = 0;
-        } else if (p.homingGivingUp) {
-          p.homingGiveUpElapsed += dt;
-        }
-        if (p.homingGivingUp && p.homingGiveUpElapsed >= HOMING_GIVEUP_BLEND_SEC) {
-          p.homing = false;
-        }
+      const prevAngle = p.angle;        // #418: for reading how hard the round actually steered
+      // #418 GIVE-UP COAST: a round that has quit guiding — for ANY reason (failed pass, orbit,
+      // fuel, lost/destroyed target) — eases out of the turn it was in over
+      // HOMING_GIVEUP_BLEND_SEC rather than freezing mid-bank (the "visible kink"), then flies
+      // dead straight to ground/terrain or max range and detonates there.
+      if (givingUp) {
+        if (stepHomingGiveUp(p, dt)) p.homing = false;   // blend done — a plain ballistic round now
+        stepProjectile(p, dt, null);
+      } else {
+        stepProjectile(p, dt, desiredAngle);
+      }
+      p.turn = turnFull;   // always restore — the arc blend is per-frame only
+      // #418 GIVE-UP DECISION. A guided round with a live seeker is judged every frame on the
+      // three ways it can fail to convert: it OVERSHOT (receded past its closest approach), it is
+      // ORBITING (net one-way steering past a 270° swing — the case the recede test is blind to,
+      // and the one the owner kept seeing as "missiles spin around chasing their target"), or it
+      // is out of seeker FUEL. Any of them starts the same eased give-up. Only rounds whose seeker
+      // is actually live (an arcing lob mid-ascent is approaching, not orbiting, and always lands
+      // at maxDist regardless); dumbfire rounds never reach here.
+      if (seekerLive) {
+        trackHomingSteering(p, prevAngle, dt);
+        const reason = homingGiveUpReason(p, Math.hypot(tx - p.x, ty - p.y));
+        if (reason) beginHomingGiveUp(p, reason);
       }
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if
       // that wall is a destructible outpost — or #72 a soft-cover hex — the round chips its HP

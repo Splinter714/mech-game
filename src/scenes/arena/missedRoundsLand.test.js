@@ -123,6 +123,59 @@ describe('#377: a missile that misses strikes the ground instead of flying on fo
     }
   });
 
+  // #418 (2026-07-22): the owner kept reporting missiles that "spin around chasing their target"
+  // even after the failed-pass give-up shipped. These drive the REAL arena update loop, one per
+  // orbit path, and assert the round quits guiding and comes down instead of wheeling.
+  it('#418 ORBIT: a round wheeling after a fast circling target quits guiding and lands', () => {
+    const target = makeEnemy('target', 500, 0);
+    const { scene, impacts } = makeScene([target]);
+    const round = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 4000 });
+    round.owner = 'player'; round.trail = []; round.seekTarget = target;
+    round.arc = false;          // the steering the descent phase of its real lob flies with
+    round.aimOffset = 0;
+    scene.projectiles = [round];
+    // The target wheels around a point faster than the missile flies — ordinary strafing
+    // movement, and the shape that makes a seeker fall into a co-rotating chase.
+    let t = 0, net = 0;
+    const R = 120, w = 4;
+    for (let i = 0; i < 4000 && scene.projectiles.length; i++) {
+      t += 0.016;
+      const nx = 500 + R * Math.cos(w * t), ny = R * Math.sin(w * t);
+      target.vx = (nx - target.x) / 0.016; target.vy = (ny - target.y) / 0.016;
+      target.x = nx; target.y = ny;
+      const prev = round.angle;
+      scene._updateProjectiles(0.016);
+      net += Math.atan2(Math.sin(round.angle - prev), Math.cos(round.angle - prev));
+    }
+    expect(round.homingGiveUpReason).toBe('orbit');
+    expect(round.homing).toBe(false);                       // fully ballistic
+    expect(scene.projectiles.length).toBe(0);               // it came down
+    expect(impacts.length).toBe(1);
+    expect(Math.abs(net) / (2 * Math.PI)).toBeLessThan(1.5); // it never got to spin
+  });
+
+  it('#418 TARGET DESTROYED: the round routes through the eased give-up, then flies dead straight', () => {
+    const target = makeEnemy('target', 900, 400);
+    const { scene } = makeScene([target]);
+    const round = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist: 3000 });
+    round.owner = 'player'; round.trail = []; round.seekTarget = target;
+    round.arc = false; round.aimOffset = 0;
+    scene.projectiles = [round];
+    const deltas = [];
+    for (let i = 0; i < 400 && scene.projectiles.length; i++) {
+      if (i === 25) target.kill();
+      const prev = round.angle;
+      scene._updateProjectiles(0.016);
+      deltas.push(Math.abs(Math.atan2(Math.sin(round.angle - prev), Math.cos(round.angle - prev))));
+    }
+    expect(round.homingGiveUpReason).toBe('targetLost');
+    expect(round.homing).toBe(false);
+    // It kept turning for a moment after the target died (no snap/kink), then went perfectly
+    // straight and stayed straight.
+    expect(deltas[26]).toBeGreaterThan(0);
+    for (const d of deltas.slice(60)) expect(d).toBeLessThan(1e-9);
+  });
+
   it('dist advances every single frame, for a homing round with no target left — the ' +
      'invariant the landed check depends on', () => {
     const target = makeEnemy('target', 900, 0);

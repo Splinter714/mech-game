@@ -93,7 +93,11 @@ export function roundC(sg, cx, cy, w, h, fill, r, alpha = 1) {
   if (sg._blocked?.()) return;   // #433: suppressed during the glow-only overlay bake (it hits sg.raw directly)
   sg.fillStyle(fill, alpha);
   const k = ART_SCALE, rr = Math.min(r, w / 2, h / 2);
-  sg.raw.fillRoundedRect((CENTER + cx - w / 2) * k, (CENTER + cy - h / 2) * k, w * k, h * k, rr * k);
+  // #422: this one primitive draws straight onto the raw R× graphics, so it has to apply the
+  // scaledGraphics translate itself (every other primitive gets it for free). Zero unless a
+  // `drawDilated` pass is running.
+  const ox = sg.ox || 0, oy = sg.oy || 0;
+  sg.raw.fillRoundedRect((CENTER + cx + ox - w / 2) * k, (CENTER + cy + oy - h / 2) * k, w * k, h * k, rr * k);
 }
 // Centred filled ellipse (used for soft glow pools).
 export function ellipseC(sg, cx, cy, w, h, fill, alpha = 1) {

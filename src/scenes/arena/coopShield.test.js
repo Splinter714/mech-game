@@ -149,8 +149,12 @@ describe('#364(a): every player wears their own shield outline', () => {
 
     scene._shieldHitFlash(scene.players[1]);
 
+    // #456: the flash is an OPACITY pop on the hit player's visual state (the shell's size is now
+    // constant), so the tween targets that player's shieldVisual — and nobody else's.
     expect(scene.tweens.add).toHaveBeenCalledTimes(1);
     const flashed = scene.tweens.add.mock.calls[0][0].targets;
-    expect(flashed).toEqual(Object.values(scene.players[1].shieldVisual.outlines));
+    expect(flashed).toBe(scene.players[1].shieldVisual);
+    expect(scene.players[1].shieldVisual.flash).toBe(1);
+    expect(scene.players[0].shieldVisual.flash).toBe(0);
   });
 });

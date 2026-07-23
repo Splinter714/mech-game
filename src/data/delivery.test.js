@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -415,6 +415,256 @@ describe('homing steering (#77)', () => {
     // are 40px away (would miss a 32px hit test), but the SWEPT segment passes through it.
     expect(segmentPointDistance(-40, 0, 40, 0, 0, 0)).toBeCloseTo(0, 6);
     expect(Math.hypot(40, 0)).toBeGreaterThan(32);   // end-point test alone would have missed
+  });
+});
+
+// ── #418 (2026-07-22 audit): EVERY way a guided round can fail to resolve its target ────────
+// Owner, after two rounds of playtest: "I feel like they still spin sometimes." These drive the
+// arena's real per-frame guidance block (scenes/arena/projectiles.js) Phaser-free, one case per
+// orbit path found in the audit, and assert the same outcome each time: the round stops guiding,
+// eases out of its turn without a kink, flies straight, and lands.
+describe('guided rounds always commit to the ground — no orbiting (#418)', () => {
+  const DT = 1 / 60;
+  const HIT_RADIUS = 32;               // the arena's own hit radius
+  const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+
+  // Mirrors the arena's per-frame guidance block in the same order: resolve target → start a
+  // give-up if it's unresolvable → advance (coasting if giving up) → track steering → judge.
+  // `targetAt(t)` returns the target this frame, or null for "target gone / destroyed".
+  function flyGuided(p, targetAt, { steps = 3000 } = {}) {
+    const out = { hit: false, landed: false, netTurn: 0, dists: [], headingDeltas: [], gaveUpAt: -1 };
+    let t = 0;
+    for (let i = 0; i < steps; i++) {
+      t += DT;
+      const tgt = targetAt(t);
+      if (p.homing && !tgt) beginHomingGiveUp(p, 'targetLost');
+      const givingUp = p.homing && !!p.homingGivingUp;
+      const homingActive = p.homing && !!tgt && !givingUp;
+      const prevAngle = p.angle;
+      const desired = homingActive
+        ? leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, tgt.vx || 0, tgt.vy || 0)
+        : null;
+      if (givingUp) {
+        if (stepHomingGiveUp(p, DT)) p.homing = false;
+        stepProjectile(p, DT, null);
+      } else {
+        stepProjectile(p, DT, desired);
+      }
+      if (homingActive) {
+        trackHomingSteering(p, prevAngle, DT);
+        const d = Math.hypot(tgt.x - p.x, tgt.y - p.y);
+        const reason = homingGiveUpReason(p, d);
+        if (reason && beginHomingGiveUp(p, reason)) out.gaveUpAt = i;
+      }
+      out.headingDeltas.push(wrap(p.angle - prevAngle));
+      out.netTurn += wrap(p.angle - prevAngle);
+      if (tgt) {
+        const d = Math.hypot(tgt.x - p.x, tgt.y - p.y);
+        out.dists.push(d);
+        if (d < HIT_RADIUS) { out.hit = true; break; }
+      }
+      if (p.dist >= p.maxDist) { out.landed = true; break; }
+    }
+    out.reason = p.homingGiveUpReason ?? null;
+    out.revolutions = out.netTurn / (2 * Math.PI);
+    return out;
+  }
+
+  // THE ORBIT CASE, in real numbers. A Swarm Rack missile (400 px/s, ~64px turn radius) fired at
+  // a target that is CIRCLING faster than the missile flies — a strafing flyer/vehicle wheeling
+  // around a point, which is ordinary enemy movement. The missile falls into a co-rotating chase:
+  // it wheels around with the target, holding a distance it can never close to the 32px hit
+  // radius, and — because that distance barely changes — it never "recedes" either.
+  const swarmRound = (maxDist = (WEAPONS.swarmRack.range.max + 40)) => {
+    const p = makeProjectile(WEAPONS.swarmRack, 0, 0, 0, { maxDist });
+    p.arc = false;         // the same steering the descent phase of its real lob flies with
+    p.homing = true;
+    p.aimOffset = 0;
+    return p;
+  };
+  const circlingTarget = (t) => {
+    const R = 120, w = 4;                       // 480 px/s — faster than the missile itself
+    return { x: 500 + R * Math.cos(w * t), y: R * Math.sin(w * t),
+             vx: -R * w * Math.sin(w * t), vy: R * w * Math.cos(w * t) };
+  };
+
+  it('ORBIT: a round wheeling after a circling target gives up and lands (the reported spin)', () => {
+    const p = swarmRound();
+    const flight = flyGuided(p, circlingTarget);
+    expect(flight.hit).toBe(false);                    // it genuinely can never connect
+    expect(flight.reason).toBe('orbit');               // caught as circling, not as an overshoot
+    expect(flight.gaveUpAt).toBeGreaterThan(0);
+    expect(flight.landed).toBe(true);                  // it reaches the ground at max range
+    expect(Math.abs(flight.revolutions)).toBeLessThan(1.5);   // barely more than the swing that convicts it
+    expect(p.homing).toBe(false);                      // fully ballistic by the end
+    // …and the last stretch is dead straight: it committed to a heading and flew it in.
+    for (const d of flight.headingDeltas.slice(-30)) expect(Math.abs(d)).toBeLessThan(1e-9);
+  });
+
+  it('ORBIT: the recede-only rule was BLIND to that flight — distance alone never trips (regression note)', () => {
+    // Why the first two attempts at #418 didn't fix it: in a wheeling chase the round holds an
+    // almost constant distance, so it never recedes past the margin and homingShouldGiveUp — the
+    // whole of the original rule — stays false for the entire flight. Flown here with a generous
+    // budget so the point is unmistakable: many full revolutions, not one give-up.
+    const p = swarmRound(8000);
+    const dists = [];
+    let t = 0, net = 0;
+    for (let i = 0; i < 3000 && p.dist < p.maxDist; i++) {
+      t += DT;
+      const tgt = circlingTarget(t);
+      const prev = p.angle;
+      stepProjectile(p, DT, leadAngle(p.x, p.y, p.speed, tgt.x, tgt.y, tgt.vx, tgt.vy));
+      net += wrap(p.angle - prev);
+      dists.push(Math.hypot(tgt.x - p.x, tgt.y - p.y));
+    }
+    expect(Math.min(...dists)).toBeGreaterThan(HIT_RADIUS);     // never close enough to detonate
+    expect(Math.abs(net) / (2 * Math.PI)).toBeGreaterThan(5);   // round and round and round
+    const probe = {};
+    expect(dists.some((d) => homingShouldGiveUp(probe, d))).toBe(false);   // the old rule: blind
+  });
+
+  it('TARGET DESTROYED mid-flight: the round stops guiding and flies straight to ground', () => {
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 2000 });
+    p.arc = false;
+    p.homing = true;
+    // A crossing target that simply ceases to exist a third of a second in.
+    const flight = flyGuided(p, (t) => (t > 0.35 ? null : { x: 500, y: 300, vx: 200, vy: 0 }));
+    expect(flight.reason).toBe('targetLost');
+    expect(flight.landed).toBe(true);
+    expect(p.homing).toBe(false);
+    // The last stretch of flight is dead straight — no residual curve, no orbit around a corpse.
+    const tail = flight.headingDeltas.slice(-40);
+    for (const d of tail) expect(Math.abs(d)).toBeLessThan(1e-9);
+  });
+
+  it('TARGET UNRESOLVABLE: a handle with unusable coordinates reads as dead, not as a NaN bearing', () => {
+    expect(resolveSeekPoint({ x: NaN, y: 10 }).alive).toBe(false);
+    expect(resolveSeekPoint({ x: 10, y: undefined }).alive).toBe(false);
+    expect(resolveSeekPoint({ x: Infinity, y: 0 }).alive).toBe(false);
+    // …and even if a NaN bearing did reach the kinematics, it is ignored rather than poisoning
+    // the round's heading (which would make it fly to nowhere for the rest of its life).
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0.4, { maxDist: 1000 });
+    p.homing = true;
+    stepProjectile(p, DT, NaN);
+    expect(p.angle).toBe(0.4);
+    expect(Number.isFinite(p.x)).toBe(true);
+    expect(Number.isFinite(p.y)).toBe(true);
+  });
+
+  it('OVERSHOOT still works: a round that misses an uncatchable crossing target gives up and lands', () => {
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 3000 });
+    p.arc = false;
+    p.homing = true;
+    p.turn = 2.0;                                   // deliberately sluggish — it cannot re-acquire
+    const flight = flyGuided(p, (t) => ({ x: 400 + 1400 * t, y: 40, vx: 1400, vy: 0 }));
+    expect(flight.hit).toBe(false);
+    expect(flight.reason).toBe('overshoot');
+    expect(flight.landed).toBe(true);
+    expect(p.homing).toBe(false);
+  });
+
+  it('a round that CAN convert still hits — the new rules never rob an honest intercept', () => {
+    const p = makeProjectile(WEAPONS.streakPod, 0, 0, 0, { maxDist: 4000 });
+    p.arc = false;
+    p.homing = true;
+    // A target crossing at a speed the round can lead, starting well off the launch bearing.
+    const flight = flyGuided(p, (t) => ({ x: 700 + 260 * t, y: 260, vx: 260, vy: 0 }));
+    expect(flight.hit).toBe(true);
+    expect(p.homingGivingUp).toBeFalsy();           // never accused of orbiting
+  });
+
+  it('no give-up path can stop a round from eventually reaching the ground (dist always accrues)', () => {
+    // The terminal guarantee behind all of this: `dist` grows every frame no matter what the
+    // seeker is doing, so `dist >= maxDist` (the arena's "landed") is always reached.
+    const p = swarmRound();
+    let last = -1;
+    for (let i = 0; i < 500; i++) {
+      const before = p.dist;
+      stepProjectile(p, DT, 1.2);
+      expect(p.dist).toBeGreaterThan(before);
+      last = p.dist;
+    }
+    expect(last).toBeGreaterThan(0);
+  });
+});
+
+describe('give-up bookkeeping: orbit / fuel / the eased hand-off (#418)', () => {
+  it('trackHomingSteering accumulates NET signed turn, so a weaving round is never accused', () => {
+    const p = { angle: 0 };
+    let net = 0;
+    for (let i = 0; i < 200; i++) {
+      const prev = p.angle;
+      p.angle = Math.sin(i * 0.4) * 0.5;            // a weave: turns both ways, nets ~nothing
+      trackHomingSteering(p, prev, 1 / 60);
+      net = p.homingTurnNet;
+    }
+    expect(Math.abs(net)).toBeLessThan(Math.PI);    // nowhere near the orbit threshold
+    expect(homingIsOrbiting(p)).toBe(false);
+  });
+
+  it('homingIsOrbiting trips once net one-way steering passes the threshold, either direction', () => {
+    expect(homingIsOrbiting({ homingTurnNet: HOMING_ORBIT_TURN - 0.01 })).toBe(false);
+    expect(homingIsOrbiting({ homingTurnNet: HOMING_ORBIT_TURN })).toBe(true);
+    expect(homingIsOrbiting({ homingTurnNet: -HOMING_ORBIT_TURN })).toBe(true);
+    expect(homingIsOrbiting({})).toBe(false);
+    expect(HOMING_ORBIT_TURN).toBeGreaterThan(Math.PI);   // a full reversal is still an honest correction
+  });
+
+  it('the seeker FUEL rail sits above the longest real guided flight, and terminates', () => {
+    expect(homingOutOfSeekTime({ homingSeekTime: HOMING_MAX_SEEK_SEC - 0.01 })).toBe(false);
+    expect(homingOutOfSeekTime({ homingSeekTime: HOMING_MAX_SEEK_SEC })).toBe(true);
+    // Longest guided flight in the game: the slowest homing weapon at its own max range.
+    const longest = Math.max(...Object.values(WEAPONS)
+      .filter((w) => w.delivery?.guidance === 'homing' || w.delivery?.tracksLock)
+      .map((w) => ((w.range?.max ?? 0) + 40) / (w.delivery.velocity || 480)));
+    expect(longest).toBeLessThan(HOMING_MAX_SEEK_SEC);
+  });
+
+  it('homingGiveUpReason names which failure convicted the round', () => {
+    expect(homingGiveUpReason({}, 500)).toBe(null);                       // first sample, still closing
+    expect(homingGiveUpReason({ homingMinDist: 40 }, 40 + HOMING_GIVEUP_RECEDE_PX + 1)).toBe('overshoot');
+    expect(homingGiveUpReason({ homingMinDist: 40, homingTurnNet: HOMING_ORBIT_TURN }, 40)).toBe('orbit');
+    expect(homingGiveUpReason({ homingMinDist: 40, homingSeekTime: HOMING_MAX_SEEK_SEC }, 40)).toBe('fuel');
+  });
+
+  it('beginHomingGiveUp is idempotent — nothing can restart or extend a give-up in progress', () => {
+    const p = { angle: 0, homingTurnRate: 4 };
+    expect(beginHomingGiveUp(p, 'orbit')).toBe(true);
+    p.homingGiveUpElapsed = 0.2;
+    expect(beginHomingGiveUp(p, 'targetLost')).toBe(false);
+    expect(p.homingGiveUpReason).toBe('orbit');
+    expect(p.homingGiveUpElapsed).toBe(0.2);        // clock untouched — the blend can't be reset
+  });
+
+  it('stepHomingGiveUp eases the round out of its turn (no kink) and ends dead straight', () => {
+    const p = { angle: 0, speed: 400, vx: 400, vy: 0, homingTurnRate: 6 };
+    beginHomingGiveUp(p, 'orbit');
+    const deltas = [];
+    let done = false;
+    for (let i = 0; i < 60; i++) {
+      const prev = p.angle;
+      done = stepHomingGiveUp(p, 1 / 60) || done;
+      deltas.push(p.angle - prev);
+    }
+    expect(done).toBe(true);
+    expect(deltas[0]).toBeGreaterThan(0);            // still turning the instant it gives up — no snap
+    for (let i = 1; i < deltas.length; i++) {
+      expect(deltas[i]).toBeLessThanOrEqual(deltas[i - 1] + 1e-12);   // monotonically easing off
+    }
+    expect(deltas[deltas.length - 1]).toBe(0);       // …to exactly zero: straight flight
+    // Velocity ends consistent with the settled heading.
+    expect(Math.atan2(p.vy, p.vx)).toBeCloseTo(p.angle, 6);
+    // Past the window it stays straight forever.
+    const settled = p.angle;
+    for (let i = 0; i < 30; i++) stepHomingGiveUp(p, 1 / 60);
+    expect(p.angle).toBe(settled);
+  });
+
+  it('a round that was flying straight when it gave up does not curve at all', () => {
+    const p = { angle: 1.1, speed: 400, vx: 0, vy: 0, homingTurnRate: 0 };
+    beginHomingGiveUp(p, 'targetLost');
+    for (let i = 0; i < 40; i++) stepHomingGiveUp(p, 1 / 60);
+    expect(p.angle).toBe(1.1);
   });
 });
 

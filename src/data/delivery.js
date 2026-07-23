@@ -587,18 +587,25 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
 //     predicted position). No velocity to lead with; it's just steered toward directly.
 // Returns `{ x, y, vx, vy, alive }` — `alive: false` means the live target died mid-flight, and the
 // caller should stop homing (a dead target doesn't retarget to the nearest enemy).
+// #418 audit: a handle whose coordinates aren't finite numbers (a stale/half-torn-down record,
+// an un-initialised aim point) is treated as NOT resolvable — `alive: false` — rather than
+// producing a NaN bearing that would leave the round steering on garbage. Same outcome as a
+// dead target: the round stops homing and commits to a ballistic path.
 export function resolveSeekPoint(seekTarget) {
   if (!seekTarget) return null;
-  if (!seekTarget.mech) return { x: seekTarget.x, y: seekTarget.y, vx: 0, vy: 0, alive: true };
-  if (seekTarget.mech.isDestroyed()) return { x: seekTarget.x, y: seekTarget.y, vx: 0, vy: 0, alive: false };
-  return { x: seekTarget.x, y: seekTarget.y, vx: seekTarget.vx || 0, vy: seekTarget.vy || 0, alive: true };
+  const x = seekTarget.x, y = seekTarget.y;
+  const usable = Number.isFinite(x) && Number.isFinite(y);
+  if (!usable) return { x: 0, y: 0, vx: 0, vy: 0, alive: false };
+  if (!seekTarget.mech) return { x, y, vx: 0, vy: 0, alive: true };
+  if (seekTarget.mech.isDestroyed()) return { x, y, vx: 0, vy: 0, alive: false };
+  return { x, y, vx: seekTarget.vx || 0, vy: seekTarget.vy || 0, alive: true };
 }
 
 // Advance a round one frame. `desiredAngle` (radians) is where a guided round should steer
 // — the arena passes the bearing to its live target, the Lab passes straight-ahead;
 // `null` (or a non-homing round) flies ballistically.
 export function stepProjectile(p, dt, desiredAngle = null) {
-  if (p.homing && desiredAngle != null) {
+  if (p.homing && desiredAngle != null && Number.isFinite(desiredAngle)) {
     p.angle = rotateToward(p.angle, desiredAngle, p.turn * dt);
     p.vx = Math.cos(p.angle) * p.speed;
     p.vy = Math.sin(p.angle) * p.speed;
@@ -677,6 +684,93 @@ export function homingGiveUpTurnScale(elapsed, blendDuration = HOMING_GIVEUP_BLE
 }
 
 export { HOMING_GIVEUP_BLEND_SEC };
+
+// ── ORBIT DETECTION + the one give-up path (#418, 2026-07-22 audit) ────────────────────────
+// Playtest: "I feel like they still spin sometimes." The recede test above only catches a round
+// that OVERSHOOTS and pulls away — and a round in a stable ORBIT never does. Simulated against
+// the real Streak Pod: a round that whips past a stationary/slow target settles into a circle at
+// roughly its own turn radius (>32px hit radius, so it never connects) and holds that distance
+// almost exactly, so `homingShouldGiveUp` never trips. It just spins until it exhausts its range
+// budget — ~4 revolutions for a Swarm Rack missile. That is the reported bug.
+//
+// Distance can't see it, but STEERING can: an orbiting round turns the same way, forever. So
+// track the round's NET signed heading change while its seeker is live. An honest intercept is
+// a bounded correction (launch error plus a little lead), always well under half a turn; a round
+// that has swung a full 270° in one consistent direction is going round and round. Signed, not
+// absolute, so a weaving/leading round (which turns both ways and nets ~0) is never accused.
+const HOMING_ORBIT_TURN = Math.PI * 1.5;   // rad of NET one-way steering that means "circling"
+
+// A hard seeker FUEL rail, independent of all geometry. A round's `dist` grows every frame and
+// it dies at `maxDist`, so nothing can literally fly forever — but this bounds how long a round
+// may steer at all, so any future path that fools both tests above still ends up ballistic. It
+// sits far above the longest real guided flight in the game (Swarm Rack, ~4.5s at max range),
+// so it never fires in normal play.
+const HOMING_MAX_SEEK_SEC = 6;
+
+export { HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC };
+
+// Fold one frame of actual steering into the round's guidance bookkeeping: net signed turn (the
+// orbit signal), how long its seeker has been live (the fuel rail), and the signed rate it was
+// turning at this frame (what the give-up coast eases out — see stepHomingGiveUp). `prevAngle`
+// is the round's heading BEFORE this frame's stepProjectile.
+export function trackHomingSteering(p, prevAngle, dt) {
+  const delta = wrapAngle(p.angle - prevAngle);
+  p.homingTurnNet = (p.homingTurnNet || 0) + delta;
+  p.homingSeekTime = (p.homingSeekTime || 0) + dt;
+  p.homingTurnRate = dt > 0 ? delta / dt : 0;
+}
+
+export function homingIsOrbiting(p, limit = HOMING_ORBIT_TURN) {
+  return Math.abs(p.homingTurnNet || 0) >= limit;
+}
+
+export function homingOutOfSeekTime(p, limit = HOMING_MAX_SEEK_SEC) {
+  return (p.homingSeekTime || 0) >= limit;
+}
+
+// THE single "should this round stop guiding?" question, covering every way a guided round can
+// fail to resolve its target. Returns the reason string (for readability/tests) or null:
+//   'overshoot' — closed, missed, now receding past the margin (the original #418 rule)
+//   'orbit'     — circling: net one-way steering past HOMING_ORBIT_TURN
+//   'fuel'      — seeker has been live longer than any real flight
+// The caller passes the round's CURRENT distance to its target; target-lost / target-destroyed
+// / unresolvable-target are the caller's own branch (it has no distance to report) and start the
+// same give-up with reason 'targetLost'.
+export function homingGiveUpReason(p, dist) {
+  if (homingShouldGiveUp(p, dist)) return 'overshoot';
+  if (homingIsOrbiting(p)) return 'orbit';
+  if (homingOutOfSeekTime(p)) return 'fuel';
+  return null;
+}
+
+// Start the give-up (idempotent — a round already giving up keeps its original reason and clock,
+// so nothing can restart or extend the blend). Steering authority is not cut here; stepHomingGiveUp
+// eases it out from the rate the round was ACTUALLY turning at.
+export function beginHomingGiveUp(p, reason = 'overshoot') {
+  if (p.homingGivingUp) return false;
+  p.homingGivingUp = true;
+  p.homingGiveUpElapsed = 0;
+  p.homingGiveUpReason = reason;
+  p.homingGiveUpTurn = p.homingTurnRate || 0;   // signed rad/s it was turning at the moment it quit
+  return true;
+}
+
+// One frame of the give-up coast. The round no longer steers at ANY target — it simply continues
+// the turn it was already in at a linearly decaying rate, so its heading eases to a constant
+// instead of freezing mid-turn (the "visible kink" report) and, crucially, so a round that gave up
+// because it was ORBITING cannot keep chasing the very target it was circling. Returns true once
+// the blend is finished and the caller should retire the round to plain ballistic flight
+// (`p.homing = false`). Mutates angle/velocity only; stepProjectile still does the integration.
+export function stepHomingGiveUp(p, dt, blendDuration = HOMING_GIVEUP_BLEND_SEC) {
+  const scale = homingGiveUpTurnScale(p.homingGiveUpElapsed || 0, blendDuration);
+  if (scale > 0 && p.homingGiveUpTurn) {
+    p.angle = wrapAngle(p.angle + p.homingGiveUpTurn * scale * dt);
+    p.vx = Math.cos(p.angle) * p.speed;
+    p.vy = Math.sin(p.angle) * p.speed;
+  }
+  p.homingGiveUpElapsed = (p.homingGiveUpElapsed || 0) + dt;
+  return p.homingGiveUpElapsed >= blendDuration;
+}
 
 // Rotate angle `a` toward `target` by at most `maxStep`, taking the shortest way around.
 export function rotateToward(a, target, maxStep) {
