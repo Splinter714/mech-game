@@ -15,6 +15,10 @@ import {
   integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER, HUD_COLUMN_W,
   CONSOLE, consoleLayout, targetPodAnchor, targetPodLayout,
 } from '../data/hudLayout.js';
+import {
+  normalizeReadoutMode, nextReadoutMode, readoutLabel,
+  orbLayout, orbFillPolygon, paperDollLayout, perimeterRun, mechPools,
+} from '../data/healthReadout.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
 
@@ -350,9 +354,21 @@ export default class HudScene extends Phaser.Scene {
     this.textures.on(TEXTURE_REMOVE_EVENT, this._onTextureRemoved, this);
     this.events.once('shutdown', () => this.textures.off(TEXTURE_REMOVE_EVENT, this._onTextureRemoved, this));
 
+    // #448: the READOUT SWITCH. Three health readouts exist (the shipped bars, ARPG orbs, a paper
+    // doll — data/healthReadout.js) and the point of building all three was to judge them in play,
+    // so the switch has to be reachable mid-run: H cycles it. The mode lives in the REGISTRY, which
+    // is game-wide, so it survives redeploying to the garage and back rather than resetting to the
+    // shipped readout every sortie. Deliberately NOT gated behind `import.meta.env.DEV` — the
+    // comparison is the whole deliverable, and it has to work wherever the game is actually played.
+    this.readoutHint = this.add.text(16, 16, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.dim,
+    }).setOrigin(0, 0);
+    this.input.keyboard?.on('keydown-H', () => this._cycleReadout());
+
     this.panels = [];
     this._panelCount = 0;
     this._syncPanels();
+    this._updateReadoutHint();
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. #452: the bottom margin is now the
@@ -526,6 +542,41 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
+  // ── #448: which of the three health readouts is on ───────────────────────────────────────────
+  //
+  // The mode is a single registry value read here and NOWHERE else, so every panel (both co-op
+  // players) is always on the same readout and nothing can end up half-switched. Cycling rebuilds
+  // the panels outright — the three readouts have completely different geometry, and a rebuild is
+  // exactly the path a mid-sortie co-op join already takes, so it is a proven one.
+  _readoutMode() { return normalizeReadoutMode(this.registry.get('hudReadout')); }
+
+  _cycleReadout() {
+    this.registry.set('hudReadout', nextReadoutMode(this._readoutMode()));
+    this._buildPanels(Math.max(1, this._panelCount), this._playerSnapshots());
+    this._updateReadoutHint();
+  }
+
+  _updateReadoutHint() {
+    this.readoutHint?.setText(`READOUT: ${readoutLabel(this._readoutMode())}   [H] to switch`);
+  }
+
+  // One panel's integrity geometry, in whichever readout is currently on. All three return the same
+  // shape (x/w/top/bottom/headerY/labelY/segments/shieldLabel/extraLabels), which is what lets the
+  // console shell, the labels and the downed line stay mode-agnostic.
+  _integrityLayoutFor(spec, anchorX, availW) {
+    const box = { anchorX, side: spec.side, bottomY: this.H - 10, availW };
+    const mode = this._readoutMode();
+    if (mode === 'orbs') return orbLayout(box);
+    if (mode === 'paperdoll') return paperDollLayout(INTEGRITY_ORDER, box);
+    const bars = integrityLayout(INTEGRITY_ORDER, box);
+    return {
+      mode: 'bars',
+      ...bars,
+      shieldLabel: { x: bars.shield.x + bars.shield.w / 2, y: bars.labelY },
+      extraLabels: [],
+    };
+  }
+
   // Reposition the SHARED chrome that has to move out of a second panel's way. Guarded on each
   // object existing because the first build runs mid-create(), before the minimap exists.
   _applyChromeLayout() {
@@ -575,10 +626,11 @@ export default class HudScene extends Phaser.Scene {
     const availW = right
       ? anchorX - ((last ? last.x + last.w : 0) + INTEGRITY_BARS.tileClear)
       : (tiles.length ? tiles[0].x : this.W) - INTEGRITY_BARS.tileClear - anchorX;
-    const bars = integrityLayout(INTEGRITY_ORDER, {
-      anchorX, side: spec.side, bottomY: this.H - 10, availW,
-    });
+    // #448: whichever of the three readouts is switched on. Same shape either way, so everything
+    // below this line — header, labels, downed line, console bay — is mode-agnostic.
+    const bars = this._integrityLayoutFor(spec, anchorX, availW);
     panel.bars = bars;
+    panel.mode = bars.mode;
 
     panel.header = this.add.text(bars.x, bars.headerY, panelLabel(spec.index, count), {
       fontFamily: 'monospace', fontSize: '12px', color: identify ? colStr : C.dim,
@@ -591,10 +643,21 @@ export default class HudScene extends Phaser.Scene {
         fontFamily: 'monospace', fontSize: '10px', color: C.dim,
       }).setOrigin(0.5, 0);
     }
-    // ...and one for the rightmost bar, which is the whole mech's shield rather than a segment.
-    panel.shieldLabel = this.add.text(bars.shield.x + bars.shield.w / 2, bars.labelY, 'SH', {
-      fontFamily: 'monospace', fontSize: '10px', color: C.accent,
-    }).setOrigin(0.5, 0).setVisible(false);
+    // #448: captions the SEGMENT loop above can't produce — the orb readout has no per-location
+    // segments at all, so its HP/armor globe captions ride this channel instead.
+    for (const l of bars.extraLabels ?? []) {
+      panel.extras.push(this.add.text(l.x, l.y, l.text, {
+        fontFamily: 'monospace', fontSize: '10px', color: C.dim,
+      }).setOrigin(0.5, 0));
+    }
+    // ...and one for the whole mech's SHIELD, which is a pool rather than a segment. The paper doll
+    // draws the shield as the outline around the entire doll, so it asks for no caption at all
+    // (`shieldLabel: null`) and this is simply never created there.
+    panel.shieldLabel = bars.shieldLabel
+      ? this.add.text(bars.shieldLabel.x, bars.shieldLabel.y, 'SH', {
+        fontFamily: 'monospace', fontSize: '10px', color: C.accent,
+      }).setOrigin(0.5, 0).setVisible(false)
+      : null;
 
     // A downed player must read as DOWN — WAITING/RESPAWN, not as a stale or zeroed block. The
     // bars themselves keep showing the wreck truthfully; this line says why nothing is happening
@@ -730,8 +793,7 @@ export default class HudScene extends Phaser.Scene {
       updateSkillTile(panel.skillRefs[loc], opts);
     }
 
-    this._updatePartBars(panel, mech);
-    this._updateShieldBar(panel, mech);
+    this._updateIntegrity(panel, mech);
 
     // Downed: dim this player's own controls (they cannot use them) and say what they are
     // waiting on. Everything else in the panel keeps reading true.
@@ -1217,6 +1279,127 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
+  // #448: paint whichever health readout is switched on (H cycles them). All three read the SAME
+  // live mech and draw the SAME three layers — armor, structure, shield — with no numerals
+  // anywhere; they differ only in how those three quantities are shaped. Geometry is decided in
+  // data/healthReadout.js; this is the paint.
+  _updateIntegrity(panel, mech) {
+    if (panel.mode === 'orbs') return this._paintOrbReadout(panel, mech);
+    if (panel.mode === 'paperdoll') return this._paintDollReadout(panel, mech);
+    this._updatePartBars(panel, mech);
+    this._updateShieldBar(panel, mech);
+  }
+
+  // ORBS: three ARPG-style globes that drain from the top down, aggregate over the whole mech
+  // (structure, armor, shield). The fill is a circular SEGMENT, not a rect, so the liquid narrows
+  // as it empties — that narrowing is what makes a globe read as a globe rather than a round bar.
+  _paintOrbReadout(panel, mech) {
+    const g = panel.partBarsGfx;
+    const L = panel.bars;
+    g.clear();
+    const p = mechPools(mech, INTEGRITY_ORDER);
+    const layers = {
+      hp: { frac: p.hp, color: HP_COLOR, cap: HP_CAP, on: true },
+      armor: { frac: p.armor, color: ARMOR_PLATE, cap: ARMOR_RIM, on: p.hasArmor },
+      shield: { frac: p.shield, color: SHIELD_BAR_COLOR, cap: SHIELD_CAP, on: p.hasShield },
+    };
+    for (const orb of L.orbs) {
+      const layer = layers[orb.key];
+      // The empty vessel is always drawn — the same rule the bars follow, for the same reason: the
+      // empty space IS half the readout.
+      g.fillStyle(BAR_TRACK, 1);
+      g.fillCircle(orb.cx, orb.cy, orb.r);
+      if (layer.on && layer.frac > 0) {
+        const pts = orbFillPolygon(orb.cx, orb.cy, orb.r, layer.frac);
+        if (orb.key === 'shield') {
+          // Same stand-in-for-a-blur trick the shield bar uses: oversized, fainter copies behind.
+          for (const { pad, a } of SHIELD_GLOW) {
+            g.fillStyle(SHIELD_BAR_COLOR, a);
+            g.fillCircle(orb.cx, orb.cy, orb.r + pad);
+          }
+        }
+        g.fillStyle(layer.color, 1);
+        g.fillPoints(pts, true);
+        // The water line, brightened, so the actual reading is crisp against the dark vessel.
+        if (pts.length > 1) {
+          g.lineStyle(1.5, layer.cap, 0.95);
+          g.beginPath();
+          g.moveTo(pts[0].x, pts[0].y);
+          g.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+          g.strokePath();
+        }
+      }
+      g.lineStyle(1.5, BAR_EDGE, 0.9);
+      g.strokeCircle(orb.cx, orb.cy, orb.r);
+    }
+    panel.shieldLabel?.setVisible(p.hasShield);
+  }
+
+  // PAPER DOLL: one rounded rect per damage-tracked location, arranged as a mech silhouette.
+  // Per-segment FILL = that part's structure, per-segment OUTLINE = that part's armor, and ONE
+  // outline around the whole doll = the mech's shield — exactly the three-layer reading the issue
+  // asked for. An outline can only carry a fraction if it DRAINS around the frame, which is what
+  // `perimeterRun` is for: the dim full perimeter is the track, the lit run over it is what's left.
+  _paintDollReadout(panel, mech) {
+    const g = panel.partBarsGfx;
+    const L = panel.bars;
+    const R = 3;   // segment corner rounding
+    g.clear();
+    for (const seg of L.segments) {
+      const part = mech.parts[seg.loc];
+      if (!part) continue;
+      const destroyed = mech.isPartDestroyed(seg.loc);
+      const hpFrac = part.maxHp > 0 ? Math.max(0, Math.min(1, part.hp / part.maxHp)) : 0;
+      const armorFrac = part.maxArmor > 0 ? Math.max(0, Math.min(1, part.armor / part.maxArmor)) : 0;
+      // The empty body: a dark cell showing how much of this part is already gone.
+      g.fillStyle(BAR_TRACK, 1);
+      g.fillRoundedRect(seg.x, seg.y, seg.w, seg.h, R);
+      // FILL = structure, rising from the bottom of the part.
+      const fh = seg.h * hpFrac;
+      if (fh > 0) {
+        g.fillStyle(HP_COLOR, 1);
+        g.fillRect(seg.x, seg.y + seg.h - fh, seg.w, fh);
+        g.fillStyle(HP_CAP, 0.9);
+        g.fillRect(seg.x, seg.y + seg.h - fh, seg.w, 1.5);
+      }
+      // OUTLINE = armor: the whole perimeter dim as the track, the surviving run lit over it.
+      g.lineStyle(2, BAR_EDGE, 0.9);
+      g.strokeRect(seg.x, seg.y, seg.w, seg.h);
+      const run = perimeterRun(seg, armorFrac);
+      if (run.length > 1) {
+        g.lineStyle(2.5, destroyed ? ARMOR_SEAM : ARMOR_RIM, 1);
+        g.strokePoints(run, false);
+      }
+      if (destroyed) {
+        g.lineStyle(1.5, HP_COLOR, 0.9);
+        g.beginPath();
+        g.moveTo(seg.x, seg.y);
+        g.lineTo(seg.x + seg.w, seg.y + seg.h);
+        g.moveTo(seg.x + seg.w, seg.y);
+        g.lineTo(seg.x, seg.y + seg.h);
+        g.strokePath();
+      }
+      panel.partLabels[seg.loc]?.setColor(destroyed ? C.bad : C.dim);
+    }
+    // ONE outline around ALL segments = the shield. Drawn last so it reads as a field OVER the
+    // body, and only when this mech actually has one — an empty box around everything would say
+    // "your shield is down" on a build that never had a shield at all.
+    const p = mechPools(mech, INTEGRITY_ORDER);
+    if (p.hasShield) {
+      g.lineStyle(2, SHIELD_BAR_COLOR, 0.22);
+      g.strokeRect(L.outline.x, L.outline.y, L.outline.w, L.outline.h);
+      const run = perimeterRun(L.outline, p.shield);
+      if (run.length > 1) {
+        for (const { a } of SHIELD_GLOW) {
+          g.lineStyle(5, SHIELD_BAR_COLOR, a);
+          g.strokePoints(run, false);
+        }
+        g.lineStyle(2.5, SHIELD_CAP, 0.95);
+        g.strokePoints(run, false);
+      }
+    }
+  }
+
   // #448: the per-location integrity bars — one SEGMENT per damage-tracked location (the four
   // mount locations, which are also the kill condition), each segment a PAIR of vertical bars:
   // HP on the left, armor on the right. Armor absorbs before HP does, so in play the right-hand
@@ -1264,7 +1447,7 @@ export default class HudScene extends Phaser.Scene {
   // exactly to a bar the same height as the segment bars beside it.
   _updateShieldBar(panel, mech) {
     const has = mech.hasShield?.() ?? false;
-    panel.shieldLabel.setVisible(has);
+    panel.shieldLabel?.setVisible(has);
     if (!has) return;
     const L = panel.bars, g = panel.partBarsGfx, sh = L.shield;
     const baseMax = mech.shield.max || 0;

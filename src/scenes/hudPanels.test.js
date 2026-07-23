@@ -52,6 +52,10 @@ function stub(extra = {}) {
     fillRoundedRect() { return o; },
     strokeRoundedRect() { return o; },
     fillCircle() { return o; },
+    // #448: the orb readout's globes and the paper doll's draining outlines.
+    strokeCircle() { return o; },
+    fillPoints(pts) { o.filledPoints = pts; return o; },
+    strokePoints(pts) { o.strokedPoints = pts; return o; },
     beginPath() { return o; },
     moveTo() { return o; },
     lineTo() { return o; },
@@ -347,5 +351,112 @@ describe('HudScene lock chevron — co-op', () => {
     scene._syncPanels();
     scene._updateLockArrow(scene._playerSnapshots());
     expect(painted).toHaveLength(3);   // 1 from the solo frame + 2 from the co-op frame
+  });
+});
+
+// ── #448: the switchable health readout ──────────────────────────────────────────────────────
+//
+// Three readouts (bars / orbs / paper doll) exist to be compared IN PLAY, so what matters here is
+// the wiring: H cycles the mode, the mode is shared by every panel, switching actually rebuilds
+// the panels at the new geometry, and all three paint against a real Mech without throwing.
+describe('HudScene health readout modes (#448)', () => {
+  const modeScene = () => {
+    const built = fakeScene([snap(0)]);
+    built.scene.readoutHint = stub({ kind: 'text' });
+    built.scene._syncPanels();
+    return built;
+  };
+
+  it('starts on the SHIPPED bars readout', () => {
+    const { scene } = modeScene();
+    expect(scene._readoutMode()).toBe('bars');
+    expect(scene.panels[0].mode).toBe('bars');
+    expect(scene.panels[0].bars.segments.map((s) => s.loc)).toHaveLength(4);
+  });
+
+  it('H cycles bars → orbs → paper doll → bars, rebuilding the panel each time', () => {
+    const { scene } = modeScene();
+    const first = scene.panels[0].header;
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('orbs');
+    expect(first.destroyed).toBe(true);       // rebuilt, not left stacked on screen
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('paperdoll');
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('bars');
+  });
+
+  it('keeps the mode in the registry so it survives a redeploy', () => {
+    const { scene, registry } = modeScene();
+    scene._cycleReadout();
+    expect(registry.get('hudReadout')).toBe('orbs');
+  });
+
+  it('names the live readout on screen, with the key that switches it', () => {
+    const { scene } = modeScene();
+    scene._updateReadoutHint();
+    expect(scene.readoutHint.text).toMatch(/BARS/);
+    expect(scene.readoutHint.text).toMatch(/H/);
+    scene._cycleReadout();
+    expect(scene.readoutHint.text).toMatch(/ORBS/);
+  });
+
+  it('puts BOTH co-op panels on the same readout', () => {
+    const { scene, registry } = modeScene();
+    scene._cycleReadout();
+    registry.set('hudPlayers', [snap(0), snap(1)]);
+    scene._syncPanels();
+    expect(scene.panels.map((p) => p.mode)).toEqual(['orbs', 'orbs']);
+  });
+
+  it('every mode still hands the console shell a header line and a block to frame', () => {
+    const { scene } = modeScene();
+    for (const mode of ['bars', 'orbs', 'paperdoll']) {
+      expect(scene.panels[0].mode).toBe(mode);
+      const b = scene.panels[0].bars;
+      expect(b.headerY).toBeLessThan(b.top);
+      expect(b.w).toBeGreaterThan(0);
+      expect(scene.panels[0].header.y).toBe(b.headerY);
+      scene._cycleReadout();
+    }
+  });
+
+  it('the orb readout captions its globes and keeps the shield caption', () => {
+    const { scene } = modeScene();
+    scene._cycleReadout();
+    const p = scene.panels[0];
+    expect(p.bars.orbs.map((o) => o.key)).toEqual(['hp', 'armor', 'shield']);
+    expect(Object.keys(p.partLabels)).toHaveLength(0);   // aggregate: no per-location segments
+    expect(p.extras.map((t) => t.text)).toEqual(['HP', 'AR']);
+    expect(p.shieldLabel).not.toBeNull();
+  });
+
+  it('the paper doll keeps per-location captions and needs no shield caption', () => {
+    const { scene } = modeScene();
+    scene._cycleReadout();
+    scene._cycleReadout();
+    const p = scene.panels[0];
+    expect(Object.keys(p.partLabels)).toHaveLength(4);
+    expect(p.shieldLabel).toBeNull();          // the shield IS the outline around everything
+    expect(p.bars.outline.w).toBeGreaterThan(p.bars.segments[0].w);
+  });
+
+  it('paints every mode against a real damaged mech without throwing', () => {
+    const { scene } = modeScene();
+    const mech = new Mech({ chassisId: 'medium' });
+    mech.applyDamage('leftArm', 9999);
+    for (let i = 0; i < 3; i++) {
+      expect(() => scene._updateIntegrity(scene.panels[0], mech)).not.toThrow();
+      scene._cycleReadout();
+    }
+  });
+
+  it('the paper doll actually strokes a draining outline for a damaged part', () => {
+    const { scene } = modeScene();
+    scene._cycleReadout();
+    scene._cycleReadout();
+    const mech = new Mech({ chassisId: 'medium' });
+    scene._updateIntegrity(scene.panels[0], mech);
+    expect(scene.panels[0].partBarsGfx.strokedPoints.length).toBeGreaterThan(1);
   });
 });
