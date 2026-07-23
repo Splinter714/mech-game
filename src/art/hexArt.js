@@ -4,7 +4,7 @@
 // one of these at each hex centre (hexgrid.hexToPixel).
 
 import { gen, scaledGraphics, ART_SCALE } from './_frames.js';
-import { HEX_SIZE, hexCorners } from '../data/hexgrid.js';
+import { HEX_SIZE, hexCorners, hexToPixel } from '../data/hexgrid.js';
 import { TERRAIN } from '../data/terrain.js';
 
 const SQRT3 = Math.sqrt(3);
@@ -333,9 +333,12 @@ function coverFloor(sg, color, alpha = 0.7) {
 // was blasted flat and you can see the ground it grew on", NOT a swap to a different biome tile.
 // `stubble` is a low-alpha darker speck of what the lumps left behind; `seed` keeps each biome's
 // scatter stable per tile.
+// #471: the stubble used to be a 7-speck `speckle` inside a ±15px box — a little clump in the
+// middle of a 48-radius tile. It's a full-tile mottle lattice now (see `stubbleSpots`), so the
+// remnants read as scattered evenly across the cleared ground.
 function clearedCoverFloor(sg, floor, floorAlpha, stubble, seed) {
   coverFloor(sg, floor, floorAlpha);
-  speckle(sg, seed, stubble, 0.22, 7, 1, 2.4, 15);
+  mottle(sg, stubbleSpots(seed), stubble, 0.22);
 }
 
 // ── #395: dock bay + sliding doors ─────────────────────────────────────────────────────────
@@ -421,31 +424,31 @@ function dockDoor(sg, side) {
 export const DOCK_DOOR_TEX = { L: 'hex_dockDoorL', R: 'hex_dockDoorR' };
 export const DOCK_DOOR_SLIDE = DOCK_HALF_W + 3;
 
-// A thin "crack"/seam line between successive points, drawn as a chain of thin oriented quads
-// (the scaledGraphics wrapper has no stroke-path API, so we approximate with fillTriangle pairs).
-function crackLine(sg, pts, color, alpha, width = 1) {
-  sg.fillStyle(color, alpha);
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
-    const dx = x1 - x0, dy = y1 - y0;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = (-dy / len) * (width / 2), ny = (dx / len) * (width / 2);
-    // Quad (x0±n, y0±n)–(x1±n) as two triangles.
-    sg.fillTriangle(x0 + nx, y0 + ny, x0 - nx, y0 - ny, x1 + nx, y1 + ny);
-    sg.fillTriangle(x0 - nx, y0 - ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny);
-  }
+// One straight segment drawn as a thin oriented quad (the scaledGraphics wrapper has no
+// stroke-path API, so we approximate a stroke with fillTriangle pairs). Caller sets the fill.
+function segQuad(sg, x0, y0, x1, y1, width) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * (width / 2), ny = (dx / len) * (width / 2);
+  // Quad (x0±n, y0±n)–(x1±n) as two triangles.
+  sg.fillTriangle(x0 + nx, y0 + ny, x0 - nx, y0 - ny, x1 + nx, y1 + ny);
+  sg.fillTriangle(x0 - nx, y0 - ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny);
 }
+
+// (#471: the hand-placed `crackLine` polyline helper is gone — every tile that drew one drew it
+// mid-tile, and they all use the full-tile `streaks` network now. `segQuad` above is the piece
+// that survived, and is what `streaks` paints each clipped segment with.)
 
 
 // A generic rubble scatter (broken slabs over a scorched base), palette-driven per biome.
-function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
-  sg.fillStyle(baseCol, 0.8); sg.fillEllipse(C.cx, C.cy, 26, 20);
-  const rnd = seeded(seed);
-  for (let i = 0; i < 7; i++) {
-    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 16;
-    const w = 4 + rnd() * 4, h = 3 + rnd() * 3;
+// #471: was a 26x20 ellipse of scorch with 7 slabs inside ±11px of the centre — a small heap in
+// the middle of a big empty tile. Now the scorch is a full-tile mottle and the slabs come from a
+// full-tile `buildSlabs` lattice, so the debris field covers the whole hex.
+function rubbleScatter(sg, baseCol, slabCol, litCol, ashSpots, slabSpots, baseAlpha = 0.5) {
+  mottle(sg, ashSpots, baseCol, baseAlpha);
+  for (const [dx, dy, w, h] of slabSpots) {
     sg.fillStyle(slabCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
-    sg.fillStyle(litCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.5);
+    sg.fillStyle(litCol, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.2);  // top-lit edge
   }
 }
 
@@ -483,9 +486,133 @@ function buildMottle(seed, step, rMin, rMax, squash = 0.55, inset = 0.94) {
 // Paint one mottle layer (a set of `buildMottle` spots) in a single colour/alpha. Layering two or
 // three of these — a lighter dry tone, a darker wet tone, a faint sheen — is what makes the surface
 // read as vague and organic rather than as a stamped shape.
-function mottle(sg, spots, color, alpha) {
+function mottle(sg, spots, color, alpha, scale = 1) {
   sg.fillStyle(color, alpha);
-  for (const [dx, dy, rx, ry] of spots) sg.fillEllipse(C.cx + dx, C.cy + dy, rx * 2, ry * 2);
+  for (const [dx, dy, rx, ry] of spots) {
+    sg.fillEllipse(C.cx + dx, C.cy + dy, rx * 2 * scale, ry * 2 * scale);
+  }
+}
+
+// ── #471: DETAIL THAT CONTINUES ACROSS THE TILE BOUNDARY ──────────────────────────────────
+// Mottle (above) fixes "the motif sits in the middle of the tile", but it doesn't fix the OTHER
+// half of the problem the #447 audit found on the channel tiles (`river`/`slush`/`canal`): a
+// river hex has to read as a river RUNNING THROUGH, i.e. its ripples have to line up with the
+// neighbouring river hex's ripples across the shared edge. Every hex of a terrain shares ONE
+// baked texture, so the only way to get that is to make the texture PERIODIC UNDER THE HEX
+// LATTICE.
+//
+// The trick: pick feature seeds inside the hex (one fundamental domain of the lattice), then
+// also emit every lattice TRANSLATE of each feature, and clip the lot to the hex. If P is the
+// resulting lattice-invariant pattern and H the hex, each tile paints P ∩ H — so the world,
+// which is ∪_L ((P ∩ H) + L), equals P ∩ ∪_L (H + L) = P. A streak that leaves the right edge
+// of one tile re-enters the left edge of its neighbour at exactly the same point, because the
+// neighbour is painting the same pattern shifted by exactly that lattice vector. No neighbour
+// awareness needed at bake time, and no per-hex texture variants.
+//
+// Lattice translates out to ring 2 — a streak seeded anywhere in the hex reaches at most
+// ~HEX_SIZE + streak length, which ring 2 covers for every length used here.
+export const HEX_LATTICE = (() => {
+  const v = [];
+  for (let q = -2; q <= 2; q++) {
+    for (let r = -2; r <= 2; r++) {
+      if (Math.abs(q + r) > 2) continue;
+      const p = hexToPixel(q, r);
+      v.push([p.x, p.y]);
+    }
+  }
+  return v;
+})();
+
+// Clip a segment to the pointy-top hexagon of circumradius `s` (convex parametric clip against
+// the six edge half-planes). Returns [x0, y0, x1, y1] or null if the segment misses the hex.
+// This is what keeps the lattice translates from painting over the neighbouring tile.
+export function clipSegToHex(x0, y0, x1, y1, s) {
+  const pts = hexCorners(s);
+  const dx = x1 - x0, dy = y1 - y0;
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 6; i++) {
+    const a = pts[i], b = pts[(i + 1) % 6];
+    let nx = -(b.y - a.y), ny = b.x - a.x;               // a normal of this edge
+    if (-a.x * nx - a.y * ny < 0) { nx = -nx; ny = -ny; } // orient it inward (centre is inside)
+    const f0 = (x0 - a.x) * nx + (y0 - a.y) * ny;         // signed distance at t=0
+    const g = dx * nx + dy * ny;                          // rate of change along the segment
+    if (Math.abs(g) < 1e-9) { if (f0 < 0) return null; continue; }
+    const t = -f0 / g;
+    if (g > 0) { if (t > t0) t0 = t; } else if (t < t1) t1 = t;
+    if (t0 > t1) return null;
+  }
+  return [x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1];
+}
+
+// Build a lattice-periodic set of streak polylines — flow lines, ripple crests, fracture cracks.
+// Seeds are drawn uniformly from INSIDE the hex (the fundamental domain), each walks `segs` steps
+// of `len / segs` in a direction that wanders by up to `wobble` radians per step, and every seed
+// is then replicated at all `HEX_LATTICE` offsets. `angle` pins the base heading (radians, null =
+// random per streak); `angleJitter` is how far each streak may deviate from it — 0 gives the dead-
+// straight parallel lines a man-made culvert wants, PI gives an every-which-way fracture web.
+// Returns polylines as flat arrays of plane coords: [x0, y0, x1, y1, …] offset from the hex centre.
+// Exported (with `clipSegToHex` and `HEX_LATTICE`) so the tile-to-tile continuity property can be
+// asserted directly in hexArt.test.js rather than inferred from the baked pixels.
+export function buildStreaks(seed, { count, len, segs = 3, wobble = 0.3, angle = null, angleJitter = Math.PI }) {
+  const rnd = seeded(seed);
+  const hw = HEX_SIZE * SQRT3 / 2;
+  const bases = [];
+  while (bases.length < count) {
+    const sx = (rnd() - 0.5) * 2 * hw, sy = (rnd() - 0.5) * 2 * HEX_SIZE;
+    if (!inHex(sx, sy, HEX_SIZE)) continue;
+    let th = (angle === null ? rnd() * Math.PI * 2 : angle + (rnd() - 0.5) * 2 * angleJitter);
+    const step = len / segs;
+    const line = [sx, sy];
+    let x = sx, y = sy;
+    for (let i = 0; i < segs; i++) {
+      th += (rnd() - 0.5) * 2 * wobble;
+      x += Math.cos(th) * step; y += Math.sin(th) * step;
+      line.push(x, y);
+    }
+    bases.push(line);
+  }
+  const out = [];
+  for (const line of bases) {
+    for (const [ox, oy] of HEX_LATTICE) {
+      const t = new Array(line.length);
+      for (let i = 0; i < line.length; i += 2) { t[i] = line[i] + ox; t[i + 1] = line[i + 1] + oy; }
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+// Paint a `buildStreaks` set, clipping each sub-segment to the tile so a translate that only
+// grazes this hex contributes just the sliver that belongs to it.
+function streaks(sg, lines, color, alpha, width) {
+  sg.fillStyle(color, alpha);
+  for (const line of lines) {
+    for (let i = 0; i + 3 < line.length; i += 2) {
+      const c = clipSegToHex(line[i], line[i + 1], line[i + 2], line[i + 3], HEX_SIZE);
+      if (c) segQuad(sg, C.cx + c[0], C.cy + c[1], C.cx + c[2], C.cy + c[3], width);
+    }
+  }
+}
+
+// A full-tile scatter of broken slabs (rubble/debris), on the same jittered lattice as `mottle`.
+// Returns [dx, dy, w, h] offsets from the hex centre.
+function buildSlabs(seed, step, wMin, wMax) {
+  const s = HEX_SIZE * 0.94;
+  const rnd = seeded(seed);
+  const n = Math.ceil(HEX_SIZE / step) + 1;
+  const out = [];
+  for (let row = -n; row <= n; row++) {
+    const oy = row * step * 0.86;
+    const xoff = (row & 1) ? step / 2 : 0;
+    for (let col = -n; col <= n; col++) {
+      const dx = col * step + xoff + (rnd() - 0.5) * step * 0.9;
+      const dy = oy + (rnd() - 0.5) * step * 0.9;
+      const w = wMin + rnd() * (wMax - wMin);
+      const h = w * (0.5 + rnd() * 0.5);
+      if (inHex(dx, dy, s)) out.push([dx, dy, w, h]);
+    }
+  }
+  return out;
 }
 
 // Is (dx,dy) — offset from the hex centre — inside a pointy-top hexagon of circumradius s?
@@ -529,6 +656,79 @@ const MUD_WET = buildMottle(0xd2, 9, 3.5, 7.5, 0.5);
 const MUD_SHEEN = buildMottle(0xd3, 15, 2.2, 5, 0.4);
 const MUD_PITS = buildMottle(0xd4, 8, 0.7, 1.7, 0.8);
 
+// ── #471: the rest of the audit's centre-motif tiles ──────────────────────────────────────
+// Each tile keeps its OWN language so they don't all collapse into "mud in a different hue":
+// what varies is which primitives it uses (blotch layers vs. fracture streaks vs. slab lattice
+// vs. ember points), how tight/loose the lattices are, and the palette. Built once at module load.
+
+// TIER 1 — quicksand: clean warm sand, no cracks and no hard edges; its signature is long, soft
+// surface RIPPLES over pale/damp blotching (mud has pitting and no ripples).
+const QS_PALE = buildMottle(0xe1, 12, 5, 10, 0.5);
+const QS_DAMP = buildMottle(0xe2, 10, 4, 8, 0.5);
+const QS_GRAIN = buildMottle(0xe3, 7, 0.6, 1.4, 0.9);
+const QS_RIPPLE = buildStreaks(0xe4, { count: 20, len: 34, segs: 4, wobble: 0.28 });
+
+// TIER 1 — brokenIce: big PALE PLATES with dark water in the gaps and a bright FRACTURE WEB
+// (short, near-straight, every direction) — the crack network is the read, not a single crack.
+const ICE_PLATE = buildMottle(0xe5, 17, 6, 12.5, 0.62);
+const ICE_WATER = buildMottle(0xe6, 11, 3, 6.5, 0.5);
+const ICE_CRACK = buildStreaks(0xe7, { count: 26, len: 26, segs: 2, wobble: 0.22 });
+
+// TIER 1 — cinderField: the point-light tile. Dark ash blotching with MANY small embers scattered
+// right across the hex (crust does its glow as lines, this one as points).
+const CIN_ASH = buildMottle(0xe8, 12, 5, 10, 0.5);
+const CIN_WARM = buildMottle(0xe9, 15, 4, 8.5, 0.5);
+const CIN_EMBER = buildMottle(0xea, 11, 0.7, 1.6, 0.9);
+
+// TIER 1 — crust: dark cooled plates with a MOLTEN CRACK NETWORK glowing through — same fracture
+// primitive as brokenIce, inverted palette (dark plate / hot line instead of pale plate / cold line).
+const CRUST_PLATE = buildMottle(0xeb, 15, 5, 11, 0.6);
+const CRUST_WARM = buildMottle(0xec, 19, 4, 9, 0.5);
+const CRUST_CRACK = buildStreaks(0xed, { count: 20, len: 30, segs: 3, wobble: 0.3 });
+
+// TIER 1 — dryRiver: a baked bed. Dense, FINE, dark crazing (many more, much shorter streaks than
+// crust's cracks) over warm bed tones and pale dry sandbanks. No glow anywhere.
+const DR_BED = buildMottle(0xee, 12, 5, 10, 0.5);
+const DR_BANK = buildMottle(0xef, 16, 4, 9, 0.45);
+const DR_CRAZE = buildStreaks(0xf0, { count: 34, len: 17, segs: 2, wobble: 0.5 });
+
+// TIER 1 — rubble vs. debris: the same slab primitive at two densities. `rubble` is a collapsed
+// structure (bigger slabs, tightly packed); `debris` is a strewn street (smaller scraps, looser).
+const RUBBLE_ASH = buildMottle(0xf1, 12, 5, 10, 0.55);
+const RUBBLE_SLABS = buildSlabs(0xf2, 11, 5, 9);
+const RUBBLE_GAPS = buildMottle(0xf3, 14, 1.2, 2.6, 0.8);
+const DEBRIS_ASH = buildMottle(0xf4, 13, 5, 10, 0.55);
+const DEBRIS_SLABS = buildSlabs(0xf5, 14, 3, 6);
+
+// TIER 3 — the CHANNELS. All three use `buildStreaks`, so the water lines run straight across the
+// hex boundary into the next channel tile (see the lattice note above). They stay distinct by how
+// the lines behave: river = long, fast, wandering crests; slush = few, broad, sluggish drags under
+// ice skins; canal = dead-straight parallel courses plus a cross-run of culvert joints.
+const RIV_BED = buildMottle(0xf6, 13, 5, 10, 0.5);
+const RIV_DEEP = buildMottle(0xf7, 16, 4, 9, 0.5);
+const RIV_FLOW = buildStreaks(0xf8, { count: 22, len: 46, segs: 4, wobble: 0.22 });
+const RIV_CREST = buildStreaks(0xf9, { count: 26, len: 20, segs: 2, wobble: 0.3 });
+const SLU_WATER = buildMottle(0xfa, 12, 5, 10, 0.5);
+const SLU_SKIN = buildMottle(0xfb, 16, 5.5, 11, 0.62);
+const SLU_SPARK = buildMottle(0xfc, 13, 0.6, 1.3, 0.9);
+const SLU_DRAG = buildStreaks(0xfd, { count: 16, len: 30, segs: 2, wobble: 0.16 });
+const CAN_STAIN = buildMottle(0xfe, 13, 4, 9, 0.5);
+const CAN_FLOW = buildStreaks(0xff, { count: 16, len: 62, segs: 1, angle: 0, angleJitter: 0.02 });
+const CAN_JOINT = buildStreaks(0x101, { count: 9, len: 62, segs: 1, angle: Math.PI / 3, angleJitter: 0.02 });
+
+// TIER 4 — fumaroleCleared's vent embers: several small hot points spread over the tile instead of
+// the one glow disc parked at dead centre.
+const FUM_VENT = buildMottle(0x102, 24, 0.9, 2.0, 0.9);
+
+// TIER 4 — the `*Cleared` floors' stubble. The old `speckle` call scattered it inside a ±15px box,
+// so every cleared hex had a small clump of stems in the middle and bare floor out to the edges.
+// One full-tile lattice per biome seed, built lazily and cached (five tiles, once at boot).
+const STUBBLE = new Map();
+function stubbleSpots(seed) {
+  if (!STUBBLE.has(seed)) STUBBLE.set(seed, buildMottle(seed, 9, 0.7, 1.9, 0.85));
+  return STUBBLE.get(seed);
+}
+
 // Per-terrain detail painted over the base hex.
 const DETAIL = {
   // #288 (ring placement): `baseYard` — the compound's paved apron. Deliberately UNDERSTATED: this
@@ -557,17 +757,16 @@ const DETAIL = {
     sg.fillStyle(0x284a24, 0.7);
     for (const [dx, dy] of [[-8, 4], [6, 8], [10, -5], [-11, -4], [2, -8]]) sg.fillEllipse(C.cx + dx, C.cy + dy, 5, 2.4);
   },
-  // Shallow river: many bright, thin ripple streaks (lighter/animated feel) plus a couple of
-  // sandy riverbed glints showing through — reads as fast, shallow water you can wade/shoot over.
+  // Shallow river: fast water you can wade/shoot over, with the sandy bed showing through.
+  // #471 (tier 3): the ripples used to be nine short ellipses clustered mid-tile, so a river of
+  // ten hexes read as ten identical stamps rather than one stream. They're `buildStreaks` now —
+  // long wandering crests that leave one edge and continue into the neighbouring river hex at
+  // exactly the same point. River is the FAST one: the longest lines, the brightest crests.
   hex_river: (sg) => {
-    sg.fillStyle(0x4f95b2, 0.55);
-    for (const [dx, dy, w] of [[-7, -7, 15], [4, -3, 17], [-4, 2, 14], [6, 7, 13], [-8, 9, 11]]) {
-      sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2);
-    }
-    sg.fillStyle(0x8fc4d8, 0.5);   // bright crest highlights (sun on ripples)
-    for (const [dx, dy, w] of [[-2, -5, 9], [3, 4, 8], [-5, 8, 7]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.4);
-    sg.fillStyle(0x6d8a7a, 0.35);  // riverbed peeking through the shallows
-    sg.fillEllipse(C.cx + 2, C.cy - 1, 6, 3);
+    mottle(sg, RIV_DEEP, 0x1f4f64, 0.28);          // deeper channel shadow
+    mottle(sg, RIV_BED, 0x6d8a7a, 0.18);           // sandy bed through the shallows
+    streaks(sg, RIV_FLOW, 0x4f95b2, 0.45, 2.2);    // the current
+    streaks(sg, RIV_CREST, 0x8fc4d8, 0.45, 1.2);   // sun on the ripple crests
   },
   // #464: the five BOUNDARY-ONLY ids (deepWater / mesa / ice / collapsed / lava) have no DETAIL
   // painter — `buildHexTextures` has skipped them since #222 (they'd tile into an obviously-
@@ -575,19 +774,13 @@ const DETAIL = {
   // tiles. Their PAL + TERRAIN entries are load-bearing and stay; only the dead art is gone.
 
   // Rubble: a scatter of broken slabs + ash over the ashen base — the remains of a stomped outpost.
+  // #471: was 7 hand-placed chunks on a 26x20 scorch ellipse. Now the heap covers the whole hex —
+  // BIG slabs on a TIGHT lattice with dark voids between them, so it reads as a collapsed
+  // structure. (`debris` uses the same primitive at smaller size and looser spacing: a strewn
+  // street, not a heap.)
   hex_rubble: (sg) => {
-    sg.fillStyle(0x24262b, 0.8);   // scorch/ash base
-    sg.fillEllipse(C.cx, C.cy, 26, 20);
-    const chunks = [
-      [-9, -6, 7, 5], [3, -8, 6, 4], [8, 2, 5, 6], [-6, 6, 6, 4],
-      [1, 7, 5, 4], [-2, -2, 4, 4], [11, -3, 4, 3],
-    ];
-    for (const [dx, dy, w, h] of chunks) {
-      sg.fillStyle(0x3a3d44, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
-      sg.fillStyle(0x4c4f57, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 1.5);  // top-lit edge
-    }
-    sg.fillStyle(0x191b1f, 0.6);   // a couple of dark gaps between the debris
-    sg.fillRect(C.cx - 2, C.cy + 1, 3, 3); sg.fillRect(C.cx + 5, C.cy - 5, 2, 3);
+    rubbleScatter(sg, 0x24262b, 0x3a3d44, 0x4c4f57, RUBBLE_ASH, RUBBLE_SLABS, 0.55);
+    mottle(sg, RUBBLE_GAPS, 0x191b1f, 0.5);   // dark voids down between the slabs
   },
   // #289: ground layer only — the shadowy forest floor, with a faint stubble of stumps/remnants.
   // The tree canopy itself renders as a SEPARATE overlay image (see CANOPY_DETAIL.forest below +
@@ -650,11 +843,14 @@ const DETAIL = {
     for (const [dx, dy, w] of [[-7, 4, 15], [6, 8, 13], [9, -4, 12], [-10, -3, 11]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2);
     speckle(sg, 0x37, 0x8a6a3a, 0.55, 3, 1, 2, 14);
   },
-  hex_dryRiver: (sg) => {   // a cracked, dry riverbed channel
-    sg.fillStyle(0x836838, 0.7); sg.fillEllipse(C.cx, C.cy, 26, 12);
-    crackLine(sg, [[C.cx - 12, C.cy - 3], [C.cx - 2, C.cy + 1], [C.cx + 5, C.cy - 2], [C.cx + 12, C.cy + 2]], 0x6a5228, 0.8, 1);
-    crackLine(sg, [[C.cx - 8, C.cy + 4], [C.cx + 1, C.cy + 2], [C.cx + 9, C.cy + 5]], 0x6a5228, 0.8, 1);
-    sg.fillStyle(0xc7a666, 0.4); sg.fillEllipse(C.cx - 4, C.cy - 4, 8, 2);   // dry sandbank
+  // A cracked, dry riverbed.
+  // #471: was a 26x12 bed ellipse with two cracks and a sandbank streak, all mid-tile. Now the
+  // whole hex is baked bed: warm bed tone, pale dry sandbanks, and DENSE FINE CRAZING — many more,
+  // much shorter cracks than crust's molten network, and nothing glowing.
+  hex_dryRiver: (sg) => {
+    mottle(sg, DR_BED, 0x836838, 0.38);           // damp-dark bed
+    mottle(sg, DR_BANK, 0xc7a666, 0.24);          // sun-bleached dry sandbanks
+    streaks(sg, DR_CRAZE, 0x6a5228, 0.55, 1.0);   // fine crazed mud-crack network
   },
   // #289/#464: the brush FLOOR (canopy clumps live in CANOPY_DETAIL.scrub) + a faint stubble of
   // cut stems — one tile for both the standing `scrub` hex and its cleared state.
@@ -672,10 +868,14 @@ const DETAIL = {
     mottle(sg, MUD_PITS, 0x241b0e, 0.35);   // fine pitting / churned pockmarks
   },
   // #110: quicksand — a sunken, rippled pit distinct from the dry-riverbed channel.
+  // #471: was a 22x14 ellipse + a 14x8 highlight + one crack, all within ±11px of the centre. Now
+  // the whole tile is soft sand: pale sunlit blotches, damp sunken blotches, fine grain, and long
+  // shallow surface ripples running right off the edges. No cracks — that's dryRiver's language.
   hex_quicksand: (sg) => {
-    sg.fillStyle(0x6b5830, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 14);
-    sg.fillStyle(0xa5854a, 0.5); sg.fillEllipse(C.cx - 2, C.cy - 1, 14, 8);
-    crackLine(sg, [[C.cx - 9, C.cy - 2], [C.cx, C.cy + 2], [C.cx + 8, C.cy - 1]], 0x574726, 0.6, 1);
+    mottle(sg, QS_PALE, 0xa5854a, 0.30);      // pale sunlit dry sand
+    mottle(sg, QS_DAMP, 0x53431f, 0.32);      // damp, sunken hollows
+    streaks(sg, QS_RIPPLE, 0xc7a877, 0.20, 1.8);  // long shallow surface ripples
+    mottle(sg, QS_GRAIN, 0x6b5830, 0.22);     // fine grain
   },
 
   // ── Snow / arctic ──────────────────────────────────────────────────────────────────────
@@ -691,18 +891,28 @@ const DETAIL = {
     sg.fillStyle(0xffffff, 0.75);
     for (const [dx, dy] of [[-7, 6], [8, 3], [-2, -6]]) sg.fillCircle(C.cx + dx, C.cy + dy, 1.1);
   },
-  hex_slush: (sg) => {   // half-frozen melt: cold water streaks with ice skins
-    sg.fillStyle(0x7f9cb0, 0.6); for (const [dx, dy, w] of [[-6, -5, 15], [4, 1, 16], [-3, 6, 13]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
-    sg.fillStyle(0xdbe7f0, 0.55); for (const [dx, dy, w] of [[-4, -3, 9], [3, 4, 8]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.6); // ice skins
+  // Half-frozen melt: cold water under ice skins.
+  // #471 (tier 3): same continuous-channel treatment as `river`, tuned SLUGGISH — few, broad,
+  // barely-wandering drags instead of many long fast crests, mostly hidden under pale ice skins.
+  // That's what keeps it from reading as "river in a cold palette".
+  hex_slush: (sg) => {
+    mottle(sg, SLU_WATER, 0x5c7c92, 0.34);         // cold melt water
+    streaks(sg, SLU_DRAG, 0x7f9cb0, 0.40, 3.2);    // slow, broad drag of the current
+    mottle(sg, SLU_SKIN, 0xdbe7f0, 0.32);          // ice skins floating on it
+    mottle(sg, SLU_SPARK, 0xffffff, 0.45);         // frost sparkle
   },
   // #289/#464: the packed-snow FLOOR (drift clumps live in CANOPY_DETAIL.drift) + faint
   // churned-snow flecks — one tile for both the standing `drift` hex and its cleared state.
   hex_driftCleared: (sg) => clearedCoverFloor(sg, 0xb2c3d3, 0.6, 0x93a6b6, 0xc3),
   // #110: broken ice — thin cracked plates over cold water, lighter/weaker read than solid ice.
+  // #471: was a 20x10 ellipse with a single crack across it. Now the plates and the fracture web
+  // cover the whole hex — big pale plates, cold water showing in the gaps between them, and a
+  // network of short bright fractures in every direction (crust uses the same web, hot and dark).
   hex_brokenIce: (sg) => {
-    sg.fillStyle(0x638094, 0.55); sg.fillEllipse(C.cx, C.cy, 20, 10);
-    crackLine(sg, [[C.cx - 9, C.cy - 3], [C.cx - 1, C.cy], [C.cx + 7, C.cy - 3]], 0x4a6478, 0.7, 1);
-    sg.fillStyle(0xc4dcec, 0.35); sg.fillEllipse(C.cx + 3, C.cy + 2, 8, 2);
+    mottle(sg, ICE_WATER, 0x2c4a5e, 0.34);       // cold water in the gaps
+    mottle(sg, ICE_PLATE, 0xa9c6d8, 0.30);       // pale floating plates
+    streaks(sg, ICE_CRACK, 0x3a5b70, 0.45, 1.6); // the dark fracture beneath…
+    streaks(sg, ICE_CRACK, 0xe4f2fa, 0.45, 0.8); // …with a bright lip catching the light
   },
 
   // ── Urban ruins ────────────────────────────────────────────────────────────────────────
@@ -721,16 +931,20 @@ const DETAIL = {
   // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed-tower heap.
   // #275: also urban's `channel` role now (see biomes.js) — a paved lane and a rubble-strewn
   // street both read as "urban street" well enough to share one texture.
-  hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, 0x82),
+  hex_debris: (sg) => rubbleScatter(sg, 0x35322d, 0x4a4640, 0x6a6258, DEBRIS_ASH, DEBRIS_SLABS, 0.5),
   // #278: canal — urban's own channel: a flooded concrete drainage culvert. Straight parallel
   // concrete-lip edges (unlike the organic riverbank curve of `river`/`dryRiver`) with a
   // rippled water fill, so it reads as man-made rather than a natural stream.
+  // #471 (tier 3): the culvert used to be a 28x14 concrete box centred on the tile, so a run of
+  // canal hexes read as a row of separate bathtubs. Now it's built from the same continuous streak
+  // system as `river`/`slush`, but with the angle jitter and wobble taken to ~zero: DEAD-STRAIGHT
+  // parallel courses, plus a sparse cross-run of joints at 60°. Straightness and regularity are
+  // what make it read as man-made next to the river's wandering natural crests.
   hex_canal: (sg) => {
-    sg.fillStyle(0x293338, 0.85); sg.fillRect(C.cx - 14, C.cy - 7, 28, 14);   // concrete channel bed
-    sg.fillStyle(0x3d5a63, 0.7); sg.fillRect(C.cx - 12, C.cy - 5, 24, 10);    // standing water
-    sg.fillStyle(0x5a7d87, 0.4); sg.fillRect(C.cx - 12, C.cy - 5, 24, 1.5);   // concrete lip highlight
-    sg.fillStyle(0x5a7d87, 0.4); sg.fillRect(C.cx - 12, C.cy + 3.5, 24, 1.5);
-    sg.fillStyle(0x9fc4dd, 0.3); sg.fillEllipse(C.cx - 3, C.cy, 10, 1.6); sg.fillEllipse(C.cx + 6, C.cy - 2, 6, 1.2); // ripples
+    mottle(sg, CAN_STAIN, 0x293338, 0.34);        // concrete staining / silt
+    streaks(sg, CAN_JOINT, 0x1f2a2f, 0.45, 1.2);  // culvert joints running across the course
+    streaks(sg, CAN_FLOW, 0x5a7d87, 0.35, 1.6);   // straight concrete lips + channelled water
+    streaks(sg, CAN_FLOW, 0x9fc4dd, 0.16, 0.7);   // a thin highlight along each course
   },
 
   // ── Volcanic wasteland ─────────────────────────────────────────────────────────────────
@@ -743,25 +957,35 @@ const DETAIL = {
     sg.fillStyle(0x201d19, 0.5); for (const [dx, dy, w] of [[-6, 4, 15], [7, -4, 13], [-9, -3, 12]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
     sg.fillStyle(0xff6a1e, 0.8); sg.fillCircle(C.cx + 4, C.cy + 5, 0.9); sg.fillCircle(C.cx - 7, C.cy - 4, 0.8);
   },
-  hex_crust: (sg) => {   // cooling lava crust: dark plates with molten cracks glowing through
-    sg.fillStyle(0x1c110d, 0.6); sg.fillEllipse(C.cx, C.cy, 26, 16);
-    crackLine(sg, [[C.cx - 12, C.cy - 3], [C.cx - 2, C.cy + 1], [C.cx + 6, C.cy - 3], [C.cx + 12, C.cy + 2]], 0xff5a14, 0.85, 1.4);
-    crackLine(sg, [[C.cx - 6, C.cy + 4], [C.cx + 3, C.cy + 6]], 0xff5a14, 0.85, 1.4);
-    crackLine(sg, [[C.cx - 11, C.cy - 3], [C.cx - 3, C.cy + 0.5]], 0xffc23a, 0.7, 0.8);
+  // Cooling lava crust: dark plates with molten cracks glowing through.
+  // #471: was three hand-placed cracks over a 26x16 ellipse. Now a full-tile network of molten
+  // cracks over full-tile dark plates — the glow is LINEAR here, which is what separates crust
+  // from cinderField's field of glowing POINTS.
+  hex_crust: (sg) => {
+    mottle(sg, CRUST_PLATE, 0x140c09, 0.45);       // dark cooled plates
+    mottle(sg, CRUST_WARM, 0x3a1408, 0.34);        // heat still in the rock
+    streaks(sg, CRUST_CRACK, 0xff5a14, 0.80, 1.4); // molten crack
+    streaks(sg, CRUST_CRACK, 0xffc23a, 0.55, 0.6); // white-hot core of the crack
   },
   // #289/#464: the ashen FLOOR (ash mounds live in CANOPY_DETAIL.fumarole) + a faint vent ember
   // and cinder flecks — one tile for both the standing `fumarole` hex and its cleared state. The
   // intact tile's brighter vent ember went with the merge (owner-accepted).
+  // #471: the vent ember was one 5px glow disc parked at dead centre of every fumarole hex. It's
+  // now a handful of small vents spread over the tile — same "the ground is still venting" read,
+  // no bullseye.
   hex_fumaroleCleared: (sg) => {
     clearedCoverFloor(sg, 0x211d19, 0.6, 0x140f0c, 0xc5);
-    sg.fillStyle(0xff6a1e, 0.15); sg.fillCircle(C.cx, C.cy, 5);
+    mottle(sg, FUM_VENT, 0xff6a1e, 0.10, 3.4);   // vent glow
+    mottle(sg, FUM_VENT, 0xff8a3a, 0.40);        // ember at the vent mouth
   },
   // #110: cinder field — a hot ash/ember patch, milder read than a full molten-lava pool.
+  // #471: was a 22x13 scorch ellipse with two embers in it. Now a full-tile ash field with embers
+  // scattered right across it — many small glowing POINTS (crust glows in lines, this in dots).
   hex_cinderField: (sg) => {
-    sg.fillStyle(0x341c0f, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 13);
-    sg.fillStyle(0xd8461a, 0.5); sg.fillCircle(C.cx - 3, C.cy + 1, 3);
-    sg.fillStyle(0xff8a3a, 0.7); sg.fillCircle(C.cx - 3, C.cy + 1, 1.4);
-    sg.fillStyle(0xff6a1e, 0.6); sg.fillCircle(C.cx + 6, C.cy - 3, 1);
+    mottle(sg, CIN_ASH, 0x241209, 0.40);            // cold ash
+    mottle(sg, CIN_WARM, 0x6b2a10, 0.28);           // heat-soaked patches
+    mottle(sg, CIN_EMBER, 0xd8461a, 0.16, 3.2);     // each ember's soft halo
+    mottle(sg, CIN_EMBER, 0xff8a3a, 0.7);           // the ember itself
   },
 };
 

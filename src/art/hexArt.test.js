@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor,
   buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId, BOUNDARY_ONLY_IDS,
+  buildStreaks, clipSegToHex, HEX_LATTICE,
 } from './hexArt.js';
 import { ART_SCALE } from './_frames.js';
 import { BIOMES, BIOME_IDS } from '../data/biomes.js';
@@ -227,5 +228,106 @@ describe('mud is a diffuse full-tile texture, not a central motif (#447)', () =>
 
   it('keeps every mark inside the tile', () => {
     for (const [dx, dy] of offsets) expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(HEX_SIZE);
+  });
+});
+
+// #471: the same sweep applied to the rest of the audit's centre-motif tiles — tier 1 (mud's exact
+// twins: a centred ellipse plus a crack or a glow), tier 3 (the channels) and tier 4 (the minor
+// ones). Same three properties as the #447 mud checks above, run over every reworked tile at once.
+// Tier 2 — the bulk ground tiles — is deliberately NOT in this list: the owner excluded them.
+//
+// The tolerance on "inside the tile" is HEX_SIZE + 2: `streaks` clips each segment's CENTRELINE to
+// the exact hex, so a stroke of width w sitting on the boundary puts its quad corners up to w/2
+// (max 1.6px here) outside — still well inside the tile's own HEX_BLEED-extended polygon.
+describe('the audit\'s remaining centre-motif tiles are full-tile textures (#471)', () => {
+  const scene = recordingScene();
+  buildHexTextures(scene);
+  const cx = HEX_TEX_W / 2, cy = HEX_TEX_H / 2;
+  const TILES = [
+    // tier 1
+    'hex_quicksand', 'hex_brokenIce', 'hex_cinderField', 'hex_crust', 'hex_dryRiver',
+    'hex_rubble', 'hex_debris',
+    // tier 3 — the channels
+    'hex_river', 'hex_slush', 'hex_canal',
+    // tier 4 — the fumarole vent ember + the cleared floors' stubble
+    'hex_fumaroleCleared', 'hex_forestCleared', 'hex_scrubCleared', 'hex_driftCleared',
+    'hex_wreckCleared',
+  ];
+
+  for (const key of TILES) {
+    describe(key, () => {
+      const offsets = scene._drawn[key].map(([x, y]) => [x - cx, y - cy]);
+
+      it('paints many marks, not a handful of hand-placed shapes', () => {
+        expect(offsets.length).toBeGreaterThan(60);
+      });
+
+      it('reaches the outer half of the tile in every direction', () => {
+        for (let sector = 0; sector < 6; sector++) {
+          const lo = sector * 60 - 180, hi = lo + 60;
+          const reach = offsets.some(([dx, dy]) => {
+            const a = Math.atan2(dy, dx) * 180 / Math.PI;
+            return a >= lo && a < hi && Math.hypot(dx, dy) > HEX_SIZE * 0.6;
+          });
+          expect(reach, `sector ${sector}`).toBe(true);
+        }
+      });
+
+      it('keeps every mark inside the tile', () => {
+        for (const [dx, dy] of offsets) expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(HEX_SIZE + 2);
+      });
+    });
+  }
+});
+
+// #471, the SECOND half of the channel problem: `river`/`slush`/`canal` also had to stop reading as
+// a motif stamped once per hex and start reading as one continuous watercourse. Every hex of a
+// terrain shares ONE baked texture, so the fix is to make that texture periodic under the hex
+// lattice: `buildStreaks` seeds features inside one hex and emits every lattice translate, and
+// `streaks` clips them to the tile.
+//
+// The property that proves it: where a streak crosses the hex boundary, the neighbouring tile —
+// which paints the identical texture shifted by that neighbour's lattice vector — must have a
+// crossing at exactly the same world point. Equivalently: the crossing set on edge E equals the
+// crossing set on the OPPOSITE edge, translated by the neighbour offset. That's what's asserted
+// here; if it holds, a channel is visually continuous across the boundary with no neighbour
+// awareness at bake time.
+describe('channel streaks continue across the hex boundary (#471)', () => {
+  const lines = buildStreaks(0x51, { count: 18, len: 42, segs: 3, wobble: 0.25 });
+
+  // Every point where a streak segment crosses the hex boundary, as {x, y} at circumradius HEX_SIZE.
+  const crossings = [];
+  for (const line of lines) {
+    for (let i = 0; i + 3 < line.length; i += 2) {
+      const c = clipSegToHex(line[i], line[i + 1], line[i + 2], line[i + 3], HEX_SIZE);
+      if (!c) continue;
+      // A clipped endpoint that moved off the original endpoint sits ON the boundary.
+      if (Math.hypot(c[0] - line[i], c[1] - line[i + 1]) > 1e-6) crossings.push([c[0], c[1]]);
+      if (Math.hypot(c[2] - line[i + 2], c[3] - line[i + 3]) > 1e-6) crossings.push([c[2], c[3]]);
+    }
+  }
+
+  it('actually crosses the boundary in the first place', () => {
+    expect(crossings.length).toBeGreaterThan(20);
+  });
+
+  it('has a matching crossing one lattice step away for every boundary crossing', () => {
+    // The six neighbour centre offsets (ring 1 of HEX_LATTICE, i.e. length ≈ sqrt(3)*HEX_SIZE).
+    const ring1 = HEX_LATTICE.filter(([x, y]) => {
+      const d = Math.hypot(x, y);
+      return d > 1 && d < HEX_SIZE * Math.sqrt(3) + 1;
+    });
+    expect(ring1.length).toBe(6);
+
+    for (const [px, py] of crossings) {
+      // Which neighbour does this crossing point face? The one whose centre it is closest to.
+      const [ox, oy] = ring1.reduce((best, o) =>
+        Math.hypot(px - o[0], py - o[1]) < Math.hypot(px - best[0], py - best[1]) ? o : best);
+      // In the neighbour's own tile-local coords that same world point is (p - offset); the
+      // neighbour paints the same texture, so it must have a crossing there too.
+      const want = [px - ox, py - oy];
+      const hit = crossings.some(([qx, qy]) => Math.hypot(qx - want[0], qy - want[1]) < 1e-6);
+      expect(hit, `crossing ${px.toFixed(2)},${py.toFixed(2)}`).toBe(true);
+    }
   });
 });
