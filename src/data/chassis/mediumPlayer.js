@@ -43,18 +43,18 @@ export const MEDIUM_PLAYER_CONFIG = {
   //   legSpread 1.4  — UNCHANGED, the wide set is the part that landed.
   //   legW      0.90 — most of the width back (was 0.72), so they read as load-bearing struts
   //                    rather than sticks, without undoing the first pass entirely.
-  //   legH      1.30 — the leg BOX is 30% longer.
-  //   legDrop   0    — #482 redefined legDrop as the leg's front/back OFFSET from the centre-torso
+  //   legH      1.5  — the leg BOX is 50% longer front/back (#482 follow-up: 1.30 → 1.5).
+  //   legDrop   0.45 — #482 redefined legDrop as the leg's front/back OFFSET from the centre-torso
   //                    centre (mechArt.mechLayout: y = −0.05·L + 0.20·L·legDrop). 0 sits the legs
-  //                    DEAD-CENTRE on the torso, so the box's extra length is split evenly front/
-  //                    back instead of trailing out the rear. (Was 0.86 under the old absolute
-  //                    +0.15·L·legDrop form, which left ~0.18·L more leg poking out the back than
-  //                    the front — the asymmetry the owner flagged.)
+  //                    DEAD-CENTRE on the torso; this #482 follow-up nudges them toward the REAR
+  //                    (0 → 0.45) — about half the old rearward offset (≈ legDrop 0.9 in the new
+  //                    form, ~0.18·L behind centre), so the legs trail slightly without the full
+  //                    pre-#482 asymmetry the owner flagged.
   //
   // Only the player's chassis gets this override; the enemy Warden still rides plain
   // MEDIUM_CONFIG's art (no shape override = DEFAULT_SHAPE, legDrop 1 → the old +0.15·L), so its
   // legs are unaffected.
-  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.90, legSpread: 1.4, legH: 1.30, legDrop: 0 } },
+  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.90, legSpread: 1.4, legH: 1.5, legDrop: 0.45 } },
   // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties
   // cadence to speed already — it advances the walk frames by `speed / maxSpeed` and plants a
   // foot every `stepInterval` ms at full throttle. But the shared MEDIUM stepInterval (340) was
