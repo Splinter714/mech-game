@@ -114,7 +114,19 @@ export const CoopMixin = {
     // anchor sits exactly on that player every frame, so the framing is identical to before.
     const first = primaryPlayerOf(this);
     this._camAnchor = this.add.container(first.x, first.y);
-    this.cameras.main.startFollow(this._camAnchor, true, 0.12, 0.12);
+    // #455 (second cause): the second argument is `roundPixels`, and Phaser's `startFollow`
+    // ASSIGNS it onto the camera — `this.roundPixels = roundPixels` (Camera.js) — so passing
+    // `true` here silently overrode the game-config `roundPixels: false` that #455's first pass
+    // set in main.js, for the arena camera specifically. And `camera.roundPixels` is exactly what
+    // MultiPipeline.batchSprite tests before doing `gx = Math.floor(gameObject.x)` per textured
+    // object (it is NOT the integer-zoom-gated `renderRoundPixels`), so the per-container-child
+    // flooring the config fix was meant to remove was still running here. That is why the fix
+    // didn't take: main.js turned it off game-wide and this line turned it straight back on for
+    // the only camera that renders mechs. MUST stay false — see mechPartSnap.test.js for the
+    // measured cost (a smooth slew moves a part ≤0.1px per frame; flooring pops it a full pixel,
+    // hundreds of times per revolution, at a different angle for each of the four parts).
+    // Camera-scroll smoothness is a free bonus: rounding also floored scrollX/scrollY.
+    this.cameras.main.startFollow(this._camAnchor, false, 0.12, 0.12);
     // START on any UNCLAIMED pad is the join button (#387: up to four players). One PadEdges per
     // joiner pad — indices 1..MAX_PLAYERS-1 — keyed by pad index. The scene's existing `padEdges`
     // watches pad 0 (player 1's debug/exit buttons) and must stay that way, so pad 0 is not here.

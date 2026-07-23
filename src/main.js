@@ -40,6 +40,13 @@ const config = {
   //
   // So: keep the filtering, drop the snapping. Everything renders at its true sub-pixel position
   // now, which also retires the hex-seam jitter HEX_BLEED was added to paper over (hexArt.js).
+  //
+  // #455 SECOND PASS — this setting alone did NOT fix it, because a per-CAMERA override undid it.
+  // `Camera.startFollow(target, roundPixels, …)` assigns its second argument straight onto the
+  // camera, and the arena passed `true` (arena/coop.js `_initCoop`) — turning the flooring back on
+  // for the only camera that renders mechs, a few lines after this config turned it off. Setting
+  // `roundPixels` here is therefore necessary but not sufficient: any `startFollow` must pass
+  // false too. See arena/mechPartSnap.test.js, which measures the cost and guards that call site.
   antialias: false,
   antialiasGL: false,
   roundPixels: false,
