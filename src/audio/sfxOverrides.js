@@ -642,15 +642,34 @@ export async function syncTuningToVariants(weaponId, stage) {
 // untuned. Returns null if there's no live override yet for variant 0 to read a shared tuning
 // FROM (the very first file ever loaded into this stage correctly starts untuned).
 export function getSharedTuningSnapshot(weaponId, stage) {
-  if (!hasOverride(weaponId, stage)) return null;
+  if (hasOverride(weaponId, stage)) {
+    return {
+      startMs: getStartMs(weaponId, stage),
+      trimMs: getTrimMs(weaponId, stage),
+      fadeOutMs: getFadeOutMs(weaponId, stage),
+      volume: getVolume(weaponId, stage),
+      loopStartMs: getLoopStartMs(weaponId, stage),
+      retriggerMs: getRetriggerMs(weaponId, stage),
+      processing: getProcessing(weaponId, stage),
+    };
+  }
+  // #486: variant 0 has no LIVE override yet, but the "shared tuning" the panel DISPLAYS for a
+  // still-baked pool (see sfxOverridePanelState.getOverrideRowState's 'baked' branch) comes from
+  // the shipped bake's own recipe — so the snapshot must too, or a variant added/loaded into a
+  // baked pool comes in at untuned UNITY defaults while every other take plays the bake's tuning.
+  // With a multi-variant pool that meant ~1/N triggers hit the untuned-loud variant on playback
+  // (the legLift "quiet a lot, loud randomly ~1/6" report). Mirrors seedOverrideFromBaked's own
+  // bake-recipe fallback so an added variant inherits the SAME full shared tuning (all fields).
+  const baked = getBaked(weaponId, stage);
+  if (!baked?.buffer) return null;
   return {
-    startMs: getStartMs(weaponId, stage),
-    trimMs: getTrimMs(weaponId, stage),
-    fadeOutMs: getFadeOutMs(weaponId, stage),
-    volume: getVolume(weaponId, stage),
-    loopStartMs: getLoopStartMs(weaponId, stage),
-    retriggerMs: getRetriggerMs(weaponId, stage),
-    processing: getProcessing(weaponId, stage),
+    startMs: baked.startMs,
+    trimMs: baked.trimMs,
+    fadeOutMs: baked.fadeOutMs,
+    volume: baked.volume,
+    loopStartMs: baked.loopStartMs,
+    retriggerMs: baked.retriggerMs,
+    processing: baked.processing,
   };
 }
 

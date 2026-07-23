@@ -7,6 +7,7 @@ import {
   MAX_VARIANTS, variantStage, getOverrideVariantCount, pickOverrideStage, removeOverrideVariant,
   syncTuningToVariants, getSharedTuningSnapshot, applySharedTuningSnapshot,
 } from './sfxOverrides.js';
+import { _setBakedBufferForTest, _resetForTest as _resetBakedForTest } from './bakedSfx.js';
 
 // A minimal fake IndexedDB — just enough of the API surface sfxOverrides.js actually calls
 // (open/onupgradeneeded/onsuccess, one object store, put/delete/getAll, tx.oncomplete) to
@@ -89,6 +90,7 @@ function fakeCtx() {
 describe('sfxOverrides (#150 real-file SFX overrides)', () => {
   beforeEach(() => {
     _resetForTest();
+    _resetBakedForTest();
     globalThis.indexedDB = makeFakeIndexedDB();
     setAudioContext(fakeCtx());
   });
@@ -894,6 +896,43 @@ describe('sfxOverrides (#150 real-file SFX overrides)', () => {
       await storeOverride('autocannon', 'fire', fakeFile('v0.wav', 'V0'));
       await expect(applySharedTuningSnapshot('autocannon', 'fire', null)).resolves.toBeUndefined();
       expect(getStartMs('autocannon', 'fire')).toBeNull();
+    });
+
+    // #486: when variant 0 has no LIVE override yet, the shared tuning the panel shows comes from
+    // the shipped BAKE's recipe — so the snapshot must fall back to it, or a variant added to a
+    // still-baked pool comes in at untuned UNITY defaults while every other take plays the bake's
+    // tuning (the legLift "quiet a lot, loud randomly ~1/6" report: ~1/N triggers hit the loud one).
+    it('falls back to the shipped bake recipe when variant 0 has no live override yet', () => {
+      // legLift's shipped bake ships a 6-variant pool, uniformly volume 0.10 (bakedSfx.js).
+      for (let i = 0; i < 6; i++) _setBakedBufferForTest('legLift', 'play', { __decodedFrom: `BAKE${i}` }, i);
+      const snap = getSharedTuningSnapshot('legLift', 'play');
+      expect(snap).not.toBeNull();
+      expect(snap.volume).toBeCloseTo(0.10, 6);
+      expect(snap.trimMs).toBe(400);
+      expect(snap.fadeOutMs).toBe(50);
+      expect(snap.processing).toEqual({ detune: -980, reverbMix: 0.17, reverbSize: 0.4 });
+    });
+
+    it('a variant loaded into a still-baked 0.10 pool inherits the full shared tuning (not unity)', async () => {
+      // Reproduces the panel's file-load path against a baked (no-live-override) pool: snapshot the
+      // shared tuning at click, load the variant's file, reapply the snapshot, then sync — exactly
+      // as WeaponSfxPanel._onFileChosen does. Before #486 the snapshot was null (bake ignored), so
+      // the loaded take came in at unity and played LOUD against the 0.10 bake.
+      for (let i = 0; i < 6; i++) _setBakedBufferForTest('legLift', 'play', { __decodedFrom: `BAKE${i}` }, i);
+      const base = 'play';
+      const snap = getSharedTuningSnapshot('legLift', base);          // captured at click
+      const newStage = variantStage(base, getOverrideVariantCount('legLift', base));
+      const buffer = await storeOverride('legLift', newStage, fakeFile('mine.wav', 'MINE'));
+      await applySharedTuningSnapshot('legLift', newStage, buffer && snap);
+      await syncTuningToVariants('legLift', base);
+
+      // The freshly loaded variant carries the bake's shared tuning — NOT storeOverride's unity default.
+      expect(getVolume('legLift', newStage)).toBeCloseTo(0.10, 6);
+      expect(getTrimMs('legLift', newStage)).toBe(400);
+      expect(getFadeOutMs('legLift', newStage)).toBe(50);
+      expect(getProcessing('legLift', newStage)).toEqual({ detune: -980, reverbMix: 0.17, reverbSize: 0.4 });
+      // ...and the file it points to is its own recording, untouched by the tuning reapply.
+      expect(getOverride('legLift', newStage)).toEqual({ __decodedFrom: 'MINE' });
     });
   });
 
