@@ -303,7 +303,7 @@ export default class HudScene extends Phaser.Scene {
 
     // #80: edge-direction arrow — an always-on indicator pointing at the current mission
     // objective whenever it's off-screen. Own Graphics layer, cleared/redrawn each frame.
-    // Explicit depth (mirroring tabBar/MusicScene/mission-marker's use of setDepth) keeps it
+    // Explicit depth (mirroring tabBar/AudioScene/mission-marker's use of setDepth) keeps it
     // drawn above the skill-tile toolbar regardless of scene add-order, since a playtest found
     // the arrow getting lost behind that bottom bar (#80 follow-up).
     this.wayGfx = this.add.graphics().setDepth(20);

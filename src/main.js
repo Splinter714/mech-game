@@ -3,7 +3,6 @@ import BootScene from './scenes/BootScene.js';
 import GarageScene from './scenes/GarageScene.js';
 import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
-import MusicScene from './scenes/MusicScene.js';
 
 // `?canvas` forces Phaser's Canvas renderer. Headless browsers (the smoke test)
 // often lack WebGL framebuffers, and the game logic we verify there is
@@ -30,7 +29,7 @@ const config = {
     height: window.innerHeight * getDpr(),
   },
   input: { gamepad: true },
-  scene: [BootScene, GarageScene, ArenaScene, HudScene, MusicScene],
+  scene: [BootScene, GarageScene, ArenaScene, HudScene],
 };
 
 const game = new Phaser.Game(config);
@@ -76,7 +75,13 @@ if (import.meta.env.DEV) window.__game = game;
 // `import.meta.env.DEV` branch, Vite folds the whole branch away in a production build and the
 // module is never emitted at all. Async is harmless — the scene only has to exist by the time
 // someone clicks the tab, which is long after boot.
+// #470: the AUDIO tab (music tuner + the whole SFX-authoring surface, which #470 moved out of
+// GarageScene) is dev-only for exactly the same reason, and is registered exactly the same way —
+// a DEV-guarded dynamic import, so neither the scene nor the WeaponSfxPanel/trigger-row code it
+// pulls in is emitted into a production bundle at all.
 if (import.meta.env.DEV) {
   import('./scenes/ArtPreviewScene.js')
     .then(({ default: ArtPreviewScene }) => game.scene.add('ArtPreviewScene', ArtPreviewScene));
+  import('./scenes/AudioScene.js')
+    .then(({ default: AudioScene }) => game.scene.add('AudioScene', AudioScene));
 }

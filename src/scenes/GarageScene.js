@@ -20,11 +20,7 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
-import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
-import { Slider } from '../ui/slider.js';
-import { EXPLOSION_CATEGORIES, EXPLOSION_CATEGORY_LABEL, explosionSfxId } from '../audio/sfxParams.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
-import { SFX_UI_GROUPS, resolveSfxUiEntry } from '../audio/sfxDomains.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
 
@@ -34,42 +30,19 @@ import { StatsOverlay } from './garage/statsOverlay.js';
 // (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
 // a tile to edit that slot: the catalog (the SHARED WeaponCardList, formerly also hosted by the
 // now-retired Weapon Lab tab) filters to the items that fit it, each card running its live
-// shot/fx preview. Click a card to mount it (or to unmount if it's already there) AND to open
-// its sound-tuning sliders in the persistent right-side WeaponSfxPanel (#121) — the two aren't
-// mutually exclusive, one click does both. A small strip above the catalog picks one of the
-// #107 destruction-explosion size categories instead of a weapon, feeding the SAME panel. A
+// shot/fx preview. Click a card to mount it (or to unmount if it's already there).
+// #470: the sound-authoring surface that #121 folded in here — the sound-tuning panel and the
+// explosion-category / UI-cue / catalog-demo-sound trigger rows — has MOVED OUT to the dev-only
+// AUDIO tab (scenes/AudioScene.js). The mech lab is player-facing UI again: the catalog spans the
+// full width and this scene has no dev-vs-prod layout branch at all. A
 // small live mech preview sits bottom-right (#248: the chassis switch is disabled for now —
 // light/heavy are off, every mech is locked to medium; #454 dropped the leftover chassis-name
 // label, since there's only one chassis to show). "Deploy" (greyed
 // until every slot is filled) enters the arena.
 const UI = {
-  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', dim: '#7c8794',
-  panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744, sel: 0xefc14a,
+  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a',
+  panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
 };
-const PANEL_W = 300;
-const PANEL_GAP = 14;
-const EXPLOSION_ROW_H = 46;   // header line + one row of category buttons
-const EXPLOSION_GAP = 10;     // gap below the row before the weapon catalog starts
-// #178/#196/#207/#210: a small strip of buttons for the `ui` sfxDomains entries (equip/deploy/
-// returnToGarage/menuNav/scrapPickup/the 5 per-powerup powerupPickup* cues/sprint on-off/the
-// death-and-loss cues) — mirrors the #107 explosion-category row immediately above it, feeding the
-// SAME WeaponSfxPanel via setTarget() so the owner can preview/trim/bake a real file over
-// each new UI/pickup cue exactly like a weapon or explosion category. #207: 13 buttons
-// crammed under one "UI / PICKUP SOUNDS" header read as a wall of tiny text, so the row is
-// split into a few labeled subsections (UI_GROUPS below) — same button chrome/positioning
-// per subsection, just narrower (fewer buttons per row) and stacked with their own headers.
-const UI_ROW_H = 40;      // one subsection: its header line + one row of buttons
-const UI_ROW_GAP = 8;     // gap between stacked subsection rows
-const UI_GAP = 10;        // gap below the whole UI block before the autofire row
-// The display grouping lives in ../audio/sfxDomains.js (SFX_UI_GROUPS) so it's a pure module
-// that unit tests can check against SFX_DOMAINS.ui — see #303.
-const UI_GROUPS = SFX_UI_GROUPS;
-// #197: a small toggle button for the weapon catalog's auto-fire demo SOUND (each card's
-// continuous live shot/beam animation always runs; this only mutes/unmutes the automatic
-// fire/trajectory/impact sound it would otherwise play) — sits in its own thin row between
-// the UI/pickup row and the catalog list, mirroring their button chrome.
-const AUTOFIRE_ROW_H = 24;
-const AUTOFIRE_GAP = 8;
 
 // The skill-tile row (order, layout, drawing) is shared with the arena HUD via
 // ../ui/skillTiles.js, so the two read identically. TILE_ORDER comes from there.
@@ -95,11 +68,6 @@ export default class GarageScene extends Phaser.Scene {
     this.cameras.main.setOrigin(0, 0);
     this.cameras.main.setBackgroundColor('#0d1014');
     this.cameras.main.fadeIn(400, 13, 16, 20);   // ~0x0d1014, matches the background color above (#215, mirrors #202's Arena fade)
-
-    // Wire the shared pointermove/pointerup listeners that Slider._applyPointer needs to
-    // track an in-progress drag (see slider.js) — the SFX panel's sliders live in this scene
-    // since #121 folded WeaponSfxPanel in, so this scene must call it (mirrors MusicScene).
-    Slider.attachDrag(this);
 
     this.allMechs = this.registry.get('allMechs');
     // #349/#388: the co-op session `{ count, editing }`. The joined COUNT survives a return from
@@ -138,9 +106,8 @@ export default class GarageScene extends Phaser.Scene {
       for (const id of this.catalogIds) this.unlocked.add(id);
     }
 
-    // Layout: the top region holds the weapon catalog (shared WeaponCardList) + a persistent
-    // SFX panel on the right (#121, see _topRegion); a bottom strip holds the skill tiles
-    // (left) and the small live mech preview (right).
+    // Layout: the top region is the weapon catalog (shared WeaponCardList) at full width; a
+    // bottom strip holds the skill tiles (left) and the small live mech preview (right).
     this.bottomH = 200;                             // bottom strip height (tiles + preview)
     this.previewW = 210;                            // right slice of the strip for the preview
     this.dollX = 20;
@@ -149,45 +116,17 @@ export default class GarageScene extends Phaser.Scene {
 
     buildMechTextures(this, 'garageMech', this.mech);
 
-    // #121 follow-up: the SCRAP/last-run readout (below) is right-anchored to the raw screen
-    // edge, independent of the SFX panel — at narrow widths the panel's left-aligned header
-    // text ("Select a weapon" / a weapon name) and that right-anchored readout end up in the
-    // same row with no gap between them and visibly collide. Starting the WHOLE catalog region
-    // (list/panel/explosion row) below the two-line readout instead of right under the tab bar
-    // keeps them on separate rows at every width, so there's no shared horizontal band to
-    // collide in. CATALOG_TOP_GAP clears currencyText + lastRunText (2 lines, see below).
+    // The catalog starts below the two-line SCRAP/last-run readout (right-anchored, see below)
+    // rather than right under the tab bar, so the two never share a horizontal band at narrow
+    // widths. CATALOG_TOP_GAP clears currencyText + lastRunText (2 lines).
     const CATALOG_TOP_GAP = 54;
-    const catalogTop = TAB_BAR_H + CATALOG_TOP_GAP;
-    // #121: the top catalog region is split list+panel (mirrors the retired Weapon Lab's
-    // _region()) — the catalog gets the remaining width after the fixed-width SFX panel, with
-    // the #107 explosion-category row sitting above the catalog, feeding the same panel.
-    const r = this._topRegion(catalogTop);
-    this.selectedExplosion = null;
-    this.selectedUi = null;
-    // Picking a card both mounts it into the selected slot (unchanged Garage behavior) AND
-    // opens its sound-tuning sliders in the panel (formerly the Weapon Lab's job) — see
-    // _onCardSelect.
+    const r = this._topRegion(TAB_BAR_H + CATALOG_TOP_GAP);
     this.list = new WeaponCardList(this, {
       x: r.list.x, y: r.list.y, w: r.list.w, h: r.list.h,
-      ids: this.catalogIds, onSelect: (id) => this._onCardSelect(id),
+      ids: this.catalogIds, onSelect: (id) => this._pickItem(id),
       isLocked: (id) => !this.unlocked.has(id),
       costOf: (id) => costOf(id),
     });
-    // #296: the whole sound-authoring surface — the WeaponSfxPanel (per-weapon SFX sliders/
-    // preview/bake) plus the explosion-category / UI-sound / catalog-demo-sound trigger rows that
-    // feed it — is a dev-only tool. Built only under `import.meta.env.DEV` (Vite's build-time flag,
-    // stripped/dead-code-eliminated in `npm run build`), so a production garage shows none of it and
-    // the weapon catalog takes the whole region (see _topRegion). Every call site that touches
-    // `this.panel` / the row state (_onCardSelect, shutdown) is guarded to match. The catalog cards'
-    // own auto-fire demo SOUND stays silent in prod for free: its toggle (the gated autofire row)
-    // never turns on, and WeaponCardList defaults `autoFireEnabled` to false.
-    if (import.meta.env.DEV) {
-      this.panel = new WeaponSfxPanel(this, r.panel);
-      this.panelEdge = this.add.rectangle(r.panel.x - PANEL_GAP / 2, r.panel.y, 1, r.panel.h, UI.panelEdge).setOrigin(0.5, 0);
-      this._buildExplosionRow(r.explosion);
-      this._buildUiRow(r.ui);
-      this._buildAutofireRow(r.autofire);
-    }
 
     this._buildPreview();
     this.doll = this.add.container(0, 0);
@@ -242,15 +181,7 @@ export default class GarageScene extends Phaser.Scene {
     // #248: the keyboard 'C' cycle-chassis shortcut is disabled along with the rest of the
     // chassis switcher (see cycleChassis + _buildPreview below) — light/heavy are off for now.
     this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));
-    this.events.once('shutdown', () => {
-      this.list.destroy();
-      // #296: the SFX panel + explosion row only exist in dev builds — guard their teardown.
-      if (import.meta.env.DEV) {
-        this.panel.destroy();
-        this.explosionHeader.destroy();
-        for (const b of this.explosionButtons) { b.rect.destroy(); b.text.destroy(); }
-      }
-    });
+    this.events.once('shutdown', () => this.list.destroy());
 
     // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
     this.input.on('pointermove', () => this._setInputMode('kbm'));
@@ -566,195 +497,13 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
   }
 
-  // #121: split the top catalog area into a list region (remaining width) and a fixed-width
-  // SFX panel + explosion-category row above it, mirroring the retired Weapon Lab's _region().
+  // The top catalog area: the card list, full width, between `top` and the bottom strip.
+  // #470: there is nothing else in this region any more — the SFX panel and the explosion/UI/
+  // demo-sound trigger rows that used to reserve space here moved to the AUDIO tab — so this is
+  // ONE unconditional rect, identical in dev and production.
   _topRegion(top) {
     const bottom = this.H - this.bottomH - 16;
-    // #296: production has no SFX panel or sound-trigger rows (see create()), so the weapon
-    // catalog spans the whole region — full width, starting right at `top`. Only the dev build
-    // reserves space for the panel/rows below.
-    if (!import.meta.env.DEV) {
-      return { list: { x: 20, y: top, w: this.W - 40, h: bottom - top } };
-    }
-    const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
-    // #207: the UI/pickup strip is now UI_GROUPS.length stacked subsection rows instead of
-    // one, so its total height is the sum of those rows plus the gaps between them.
-    const uiH = UI_GROUPS.length * UI_ROW_H + (UI_GROUPS.length - 1) * UI_ROW_GAP;
-    const uiTop = top + EXPLOSION_ROW_H + EXPLOSION_GAP;
-    const autofireTop = uiTop + uiH + UI_GAP;
-    const listTop = autofireTop + AUTOFIRE_ROW_H + AUTOFIRE_GAP;
-    return {
-      explosion: { x: 20, y: top, w: listW, h: EXPLOSION_ROW_H },
-      ui: { x: 20, y: uiTop, w: listW, h: uiH },
-      autofire: { x: 20, y: autofireTop, w: listW, h: AUTOFIRE_ROW_H },
-      list: { x: 20, y: listTop, w: listW, h: bottom - listTop },
-      panel: { x: 20 + listW + PANEL_GAP, y: top, w: PANEL_W - PANEL_GAP, h: bottom - top },
-    };
-  }
-
-  // Selecting a catalog card does both of its jobs at once (#121): mount it into the selected
-  // slot (Garage's existing behavior, _pickItem) AND populate the SFX panel with it (formerly
-  // the Weapon Lab's _select) — the two don't conflict, since mounting doesn't need exclusive
-  // control of "which card is selected for tuning."
-  _onCardSelect(id) {
-    this.selectedExplosion = null;
-    this.selectedUi = null;
-    // #296: the SFX panel + its category/UI trigger rows only exist in dev builds — in production
-    // a card click just mounts the item (below). Guarded so a null panel/absent rows can't throw.
-    if (import.meta.env.DEV) {
-      this.panel.setWeapon(id);
-      this._paintExplosionRow();
-      this._paintUiRow();
-    }
-    this._pickItem(id);
-  }
-
-  // #107: the destruction-explosion size-category row — a fixed strip of 4 buttons (small/
-  // medium/large/massive) above the catalog. Picking one feeds its sfxParams id
-  // (explosionSfxId) into the SAME WeaponSfxPanel a weapon card would, with a friendly label
-  // instead of the raw id, so tuning an explosion category is the identical slider/preview/
-  // reset flow the weapon-sound cards already use — just a different id going into the panel.
-  _buildExplosionRow(region) {
-    this.explosionHeader = this.add.text(region.x, region.y, 'DESTRUCTION EXPLOSION — size category', {
-      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
-    });
-    this.explosionButtons = EXPLOSION_CATEGORIES.map((category, i) => {
-      const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
-        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      const text = this.add.text(0, 0, category[0].toUpperCase() + category.slice(1), {
-        fontFamily: 'monospace', fontSize: '11px', color: UI.text,
-      }).setOrigin(0.5);
-      rect.on('pointerover', () => { if (this.selectedExplosion !== category) rect.setFillStyle(UI.btnHover); });
-      rect.on('pointerout', () => this._paintExplosionRow());
-      rect.on('pointerdown', () => this._selectExplosion(category));
-      return { category, rect, text, i };
-    });
-    this._layoutExplosionRow(region);
-  }
-
-  _layoutExplosionRow(region) {
-    this.explosionHeader.setPosition(region.x, region.y);
-    const gap = 6;
-    const bw = Math.floor((region.w - gap * (this.explosionButtons.length - 1)) / this.explosionButtons.length);
-    const by = region.y + 18;
-    for (const b of this.explosionButtons) {
-      const bx = region.x + b.i * (bw + gap);
-      b.rect.setPosition(bx, by).setSize(bw, 22);
-      b.text.setPosition(bx + bw / 2, by + 11);
-    }
-  }
-
-  // Explosion-category selection is independent of the catalog's mount-highlight state (unlike
-  // the retired Weapon Lab, where selecting a card and selecting a category were mutually
-  // exclusive) — it only drives the SFX panel + its own row's highlight.
-  _selectExplosion(category) {
-    this.selectedExplosion = category;
-    this.selectedUi = null;
-    this.panel.setWeapon(explosionSfxId(category), EXPLOSION_CATEGORY_LABEL[category]);
-    this._paintExplosionRow();
-    this._paintUiRow();
-  }
-
-  _paintExplosionRow() {
-    for (const b of this.explosionButtons) {
-      const on = b.category === this.selectedExplosion;
-      b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
-    }
-  }
-
-  // #178/#196: the `ui` sfxDomains buttons (equip/deploy/menuNav/scrapPickup/5x
-  // powerupPickup*/sprint on-off/3x death-and-loss) — one per registered UI/pickup sound,
-  // mirroring the #107 explosion row directly above it. Picking one feeds its (id, stages)
-  // into the SAME WeaponSfxPanel a weapon card or explosion category would, so the owner
-  // gets the identical slider/preview/reset/bake flow for these new stub cues.
-  // #207: one header + button row per UI_GROUPS entry, stacked top to bottom. this.uiButtons
-  // stays a single flat array (across all groups) since _paintUiRow/_selectUi/shutdown just
-  // need "every button", but each entry also remembers which group row it belongs to (`row`)
-  // and its index within that row (`i`) for layout.
-  _buildUiRow(region) {
-    this.uiHeaders = UI_GROUPS.map((group) => this.add.text(region.x, region.y, group.header, {
-      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
-    }));
-    this.uiButtons = [];
-    UI_GROUPS.forEach((group, row) => {
-      group.ids.forEach((id, i) => {
-        const entry = resolveSfxUiEntry(id);
-        const rect = this.add.rectangle(0, 0, 10, 22, UI.btn).setOrigin(0, 0)
-          .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-        const text = this.add.text(0, 0, entry.label, {
-          fontFamily: 'monospace', fontSize: '10px', color: UI.text,
-        }).setOrigin(0.5);
-        rect.on('pointerover', () => { if (this.selectedUi !== entry.id) rect.setFillStyle(UI.btnHover); });
-        rect.on('pointerout', () => this._paintUiRow());
-        rect.on('pointerdown', () => this._selectUi(entry));
-        this.uiButtons.push({ entry, rect, text, row, i });
-      });
-    });
-    this._layoutUiRow(region);
-  }
-
-  _layoutUiRow(region) {
-    const gap = 6;
-    this.uiHeaders.forEach((header, row) => {
-      header.setPosition(region.x, region.y + row * (UI_ROW_H + UI_ROW_GAP));
-    });
-    for (const group of UI_GROUPS) {
-      const row = UI_GROUPS.indexOf(group);
-      const buttons = this.uiButtons.filter((b) => b.row === row);
-      const bw = Math.floor((region.w - gap * (buttons.length - 1)) / buttons.length);
-      const by = region.y + row * (UI_ROW_H + UI_ROW_GAP) + 18;
-      for (const b of buttons) {
-        const bx = region.x + b.i * (bw + gap);
-        b.rect.setPosition(bx, by).setSize(bw, 22);
-        b.text.setPosition(bx + bw / 2, by + 11);
-      }
-    }
-  }
-
-  // Selecting a UI/pickup sound is independent of the catalog + explosion-row state (same as
-  // explosion categories) — it only drives the SFX panel + its own row's highlight. Also plays
-  // the cue immediately so clicking the row is itself a quick preview.
-  _selectUi(entry) {
-    this.selectedUi = entry.id;
-    this.selectedExplosion = null;
-    this.panel.setTarget(entry.id, { label: entry.label, stages: entry.stages });
-    this._paintExplosionRow();
-    this._paintUiRow();
-    Audio.ui(entry.id, entry.stages[0][0]);
-  }
-
-  _paintUiRow() {
-    for (const b of this.uiButtons) {
-      const on = b.entry.id === this.selectedUi;
-      b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
-    }
-  }
-
-  // #197: the catalog's auto-fire demo SOUND toggle — each weapon card auto-fires a live
-  // shot/beam preview on a loop regardless (that visual animation is unaffected), but it also
-  // plays its real fire/trajectory/impact sound automatically, which is noisy/distracting
-  // just browsing the catalog or tuning sounds in the adjacent panel. Defaults OFF (see
-  // WeaponCardList.loadAutoFireEnabled); this button flips it on the shared list instance,
-  // which owns both persistence and the actual audio gate (_isAudible).
-  _buildAutofireRow(region) {
-    this.autofireBtn = this.add.rectangle(region.x, region.y, region.w, region.h, UI.btn)
-      .setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-    this.autofireText = this.add.text(region.x + region.w / 2, region.y + region.h / 2, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: UI.text,
-    }).setOrigin(0.5);
-    this.autofireBtn.on('pointerover', () => { if (!this.list.autoFireEnabled) this.autofireBtn.setFillStyle(UI.btnHover); });
-    this.autofireBtn.on('pointerout', () => this._paintAutofireRow());
-    this.autofireBtn.on('pointerdown', () => {
-      this.list.setAutoFireEnabled(!this.list.autoFireEnabled);
-      this._paintAutofireRow();
-    });
-    this._paintAutofireRow();
-  }
-
-  _paintAutofireRow() {
-    const on = this.list.autoFireEnabled;
-    this.autofireText.setText(on ? 'CATALOG DEMO SOUND: ON (click to mute)' : 'CATALOG DEMO SOUND: OFF (click to unmute)');
-    this.autofireBtn.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
+    return { list: { x: 20, y: top, w: this.W - 40, h: bottom - top } };
   }
 
   // Pick a catalog item: mount it into the selected slot. With no slot selected, picking a card

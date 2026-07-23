@@ -1,5 +1,6 @@
-// #296: dev/debug UI (FPS counter, control hints, control-method + AI readouts, the MUSIC tab,
-// and the whole SFX-authoring surface — sound-tuning panel + sound-trigger rows) is gated behind
+// #296: dev/debug UI (FPS counter, control hints, control-method + AI readouts, and the AUDIO tab
+// — which since #470 holds the whole SFX-authoring surface: sound-tuning panel + sound-trigger
+// rows) is gated behind
 // `import.meta.env.DEV` (Vite's build-time flag, stripped/dead-code-eliminated in `npm run build`)
 // so none of it ships in a production bundle. HudScene/GarageScene extend Phaser.Scene and are
 // Phaser-API-heavy, so — same technique as sfxCallSites.guard.test.js
@@ -16,6 +17,7 @@ const read = (rel) => readFileSync(join(DIR, rel), 'utf8');
 const hud = read('HudScene.js');
 const garage = read('GarageScene.js');
 const tabBar = read('../ui/tabBar.js');
+const main = read('../main.js');
 
 describe('#449 HudScene: the performance readout is dev-gated again (stripped from production)', () => {
   // #296 gated the FPS counter dev-only; #334 reversed that so Jackson could diagnose a Windows/Edge
@@ -63,9 +65,16 @@ describe('#296 HudScene: control hints / control-method / AI readouts stay dev-g
   });
 });
 
-describe('#296 tabBar: the MUSIC tab is dev-only', () => {
-  it('the MUSIC/MusicScene tab is spread into TABS only under import.meta.env.DEV', () => {
-    expect(tabBar).toMatch(/\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'MUSIC', scene: 'MusicScene' \}\] : \[\]\)/);
+describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
+  it('the AUDIO/AudioScene tab is spread into TABS only under import.meta.env.DEV', () => {
+    expect(tabBar).toMatch(/\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'AUDIO', scene: 'AudioScene' \}\] : \[\]\)/);
+  });
+
+  it('#470: AudioScene is registered by a DEV-guarded dynamic import (never in a prod bundle)', () => {
+    expect(main).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?import\('\.\/scenes\/AudioScene\.js'\)/);
+    // ...and NOT statically imported / listed in the always-on scene array.
+    expect(main).not.toMatch(/^import AudioScene from/m);
+    expect(main).toMatch(/scene: \[BootScene, GarageScene, ArenaScene, HudScene\],/);
   });
 
   it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {
@@ -86,20 +95,34 @@ describe('#296 tabBar: the MUSIC tab is dev-only', () => {
   });
 });
 
-describe('#296 GarageScene: the SFX-authoring surface is dev-only', () => {
-  it('the WeaponSfxPanel + explosion/UI/autofire rows are built only under import.meta.env.DEV', () => {
-    expect(garage).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.panel = new WeaponSfxPanel[\s\S]*?this\._buildExplosionRow[\s\S]*?this\._buildUiRow[\s\S]*?this\._buildAutofireRow/);
+// #470: the SFX-authoring surface used to live in the garage behind a #296 DEV gate, which meant
+// the mech lab LAID ITSELF OUT differently in dev (a 300px panel reserve) than in production. The
+// whole surface moved to the dev-only AUDIO tab (scenes/AudioScene.js), so the fix isn't a better
+// gate — it's that the garage has no sound surface to gate. These assertions are the inverse of
+// the ones they replaced: the references must be ABSENT, and the catalog region unconditional.
+describe('#470 GarageScene: the SFX-authoring surface is gone (not merely dev-gated)', () => {
+  it('never references the WeaponSfxPanel or any of its trigger rows', () => {
+    for (const symbol of [
+      'WeaponSfxPanel', 'weaponSfxPanel', 'this.panel', 'sfxDomains', 'SFX_UI_GROUPS',
+      'EXPLOSION_CATEGORIES', 'explosionSfxId', '_buildExplosionRow', '_buildUiRow',
+      '_buildAutofireRow', 'autoFireEnabled',
+    ]) {
+      expect(garage).not.toContain(symbol);
+    }
   });
 
-  it('_onCardSelect guards its panel/row calls so a production card-click just mounts the item', () => {
-    const body = garage.match(/_onCardSelect\(id\)\s*\{[\s\S]*?\n {2}\}/)[0];
-    expect(body).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.panel\.setWeapon\(id\)/);
-    // the mount call must stay OUTSIDE the guard (production still mounts)
-    expect(body).toMatch(/\}\s*\n\s*this\._pickItem\(id\);/);
+  it('_topRegion is a single unconditional full-width catalog rect — no dev-vs-prod branch', () => {
+    const body = garage.match(/_topRegion\(top\)\s*\{[\s\S]*?\n {2}\}/)[0];
+    expect(body).toMatch(/return \{ list: \{ x: 20, y: top, w: this\.W - 40, h: bottom - top \} \};/);
+    expect(body).not.toContain('import.meta.env.DEV');
   });
 
-  it('the shutdown teardown of panel/explosion row is guarded', () => {
-    expect(garage).toMatch(/this\.list\.destroy\(\);\s*\n\s*\/\/[\s\S]*?if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.panel\.destroy\(\);/);
+  it('a catalog card click goes straight to the mount path (no panel detour)', () => {
+    expect(garage).toMatch(/onSelect: \(id\) => this\._pickItem\(id\)/);
+  });
+
+  it('shutdown just destroys the card list', () => {
+    expect(garage).toMatch(/this\.events\.once\('shutdown', \(\) => this\.list\.destroy\(\)\);/);
   });
 
   it('#445: the run-stats overlay is constructed only under import.meta.env.DEV', () => {
@@ -112,10 +135,5 @@ describe('#296 GarageScene: the SFX-authoring surface is dev-only', () => {
 
   it('#445: STATS is an in-row tab-bar action, never a free-floating this.button(...)', () => {
     expect(garage).not.toMatch(/this\.button\([^\n]*'STATS'/);
-  });
-
-  it('_topRegion returns a full-width catalog (no panel reserve) in production', () => {
-    const body = garage.match(/_topRegion\(top\)\s*\{[\s\S]*?\n {2}\}/)[0];
-    expect(body).toMatch(/if \(!import\.meta\.env\.DEV\)\s*\{\s*\n\s*return \{ list: \{ x: 20, y: top, w: this\.W - 40/);
   });
 });

@@ -23,7 +23,8 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
 ## Architecture
 
 - **`src/main.js`** — Phaser config + HiDPI/DPR sizing. Scenes: Boot → Garage ↔ Arena
-  (+ Hud overlay during Arena, + MusicScene).
+  (+ Hud overlay during Arena, + the dev-only AudioScene — the AUDIO tab: music tuner +
+  the whole SFX-authoring surface, #470).
 - **`src/data/`** — pure logic, no Phaser, fully unit-tested:
   - `Mech.js` — the generic model: per-location armor/structure, `applyDamage`, the
     kill rule, mounting, per-weapon ammo (self-regenerating magazines), weapon queries.

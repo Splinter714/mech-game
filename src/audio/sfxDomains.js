@@ -68,11 +68,12 @@ export function findSfxDomainEntry(id) {
   return ALL_SFX_DOMAIN_ENTRIES.find((e) => e.id === id) ?? null;
 }
 
-// #207: purely a DISPLAY grouping over SFX_DOMAINS.ui for the garage's dev-only sfx panel —
+// #207: purely a DISPLAY grouping over SFX_DOMAINS.ui for the dev-only sfx tuner (#470: the
+// AUDIO tab, scenes/AudioScene.js; it lived in the garage until then) —
 // ids/labels/stages above are unchanged, and order within a group follows the id order here,
-// not SFX_DOMAINS.ui's own order. It lives here rather than in GarageScene so it's a pure,
+// not SFX_DOMAINS.ui's own order. It lives here rather than in the scene so it's a pure,
 // importable module the unit tests can hold against SFX_DOMAINS.ui (#303: a Barrage id was
-// added to this list without its SFX_DOMAINS.ui entry, and the garage crashed on `.label`).
+// added to this list without its SFX_DOMAINS.ui entry, and the panel crashed on `.label`).
 export const SFX_UI_GROUPS = [
   { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
   { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage', 'powerupPickupInfiniteFire'] },

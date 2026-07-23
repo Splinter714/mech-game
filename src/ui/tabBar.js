@@ -1,4 +1,4 @@
-// Shared top tab bar for the lab scenes (Mech Lab / Music), with a Deploy
+// Shared top tab bar for the lab scenes (Mech Lab / Audio / Art), with a Deploy
 // action pinned to the right. One source of truth so every lab screen gets an identical
 // header and navigation reads the same everywhere. Each tab just starts its scene; the
 // active tab is highlighted and inert.
@@ -30,15 +30,16 @@ const TAB_UI = {
 export const TAB_BAR_H = 52;   // logical px
 
 // The tabs, in order. `scene` is the Phaser scene key each one navigates to.
-// #296: the MUSIC tab (→ MusicScene, the global music/mix tuner) is a dev-only authoring tool —
-// included only under `import.meta.env.DEV` (Vite's build-time flag, stripped/dead-code-eliminated
-// in `npm run build`), so a production garage shows no MUSIC tab and MusicScene is unreachable via
-// the UI. The scene itself stays registered (main.js) — there's just no tab/nav pointing at it.
-// nextTabScene()/attachPadTabCycle() below both derive from TABS, so in production the single
-// remaining tab makes SELECT a harmless no-op cycle back to the garage.
+// #296: the AUDIO tab (→ AudioScene, every sound-authoring surface there is — the music/mix
+// tuner plus, since #470, the per-sound SFX tuner and its weapon/explosion/UI trigger rows) is a
+// dev-only authoring tool — included only under `import.meta.env.DEV` (Vite's build-time flag,
+// stripped/dead-code-eliminated in `npm run build`), so a production build shows no AUDIO tab and
+// AudioScene is unreachable via the UI. The scene isn't even registered in production (main.js
+// dev-guards its dynamic import). nextTabScene()/attachPadTabCycle() below both derive from TABS,
+// so in production the single remaining tab makes SELECT a harmless no-op cycle back to the garage.
 const TABS = [
   { key: 'MECH LAB', scene: 'GarageScene' },
-  ...(import.meta.env.DEV ? [{ key: 'MUSIC', scene: 'MusicScene' }] : []),
+  ...(import.meta.env.DEV ? [{ key: 'AUDIO', scene: 'AudioScene' }] : []),
   // #461: the ART tab (→ ArtPreviewScene, the procedural-art gallery) is dev-only for exactly
   // the same reason as MUSIC — an authoring/review tool, not player-facing.
   ...(import.meta.env.DEV ? [{ key: 'ART', scene: 'ArtPreviewScene' }] : []),
