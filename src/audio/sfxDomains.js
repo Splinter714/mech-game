@@ -51,8 +51,13 @@ export const SFX_DOMAINS = {
     { id: 'powerupPickupShield', label: 'Pickup: Shield', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupBarrage', label: 'Pickup: Barrage', stages: [['play', 'PLAY']] },
     { id: 'powerupPickupInfiniteFire', label: 'Pickup: Infinite Fire', stages: [['play', 'PLAY']] },
-    { id: 'sprintOn', label: 'Sprint On', stages: [['play', 'PLAY']] },
-    { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
+    // #484: the internal ids stay `sprintOn`/`sprintOff` (renaming them ripples through
+    // firing.js + sfx.js trigger sites — out of scope), but the DISPLAY labels are relabeled to
+    // what they actually drive today. Player sprint-triggering was removed (#261/#343); these
+    // cues now fire on Dash burst start/end (firing.js `_handleDash`) — and sprintOn also serves
+    // the reload chirp — plus Overclock's auto-sprint activation/expiry.
+    { id: 'sprintOn', label: 'Movement / Dash On (+ reload chirp)', stages: [['play', 'PLAY']] },
+    { id: 'sprintOff', label: 'Movement / Dash Off', stages: [['play', 'PLAY']] },
     { id: 'partDestroyed', label: 'Part Destroyed', stages: [['play', 'PLAY']] },
     { id: 'mechDestroyed', label: 'Mech Destroyed', stages: [['play', 'PLAY']] },
     // #479: the two GAIT cues. Registered as ordinary `ui`-domain (id, 'play') entries so they
@@ -83,7 +88,7 @@ export function findSfxDomainEntry(id) {
 export const SFX_UI_GROUPS = [
   { header: 'GENERAL UI', ids: ['equip', 'deploy', 'returnToGarage', 'menuNav'] },
   { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage', 'powerupPickupInfiniteFire'] },
-  { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
+  { header: 'MOVEMENT / DASH', ids: ['sprintOn', 'sprintOff'] },
   { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
   { header: 'GAIT', ids: ['footstep', 'legLift'] },
 ];
