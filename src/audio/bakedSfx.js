@@ -129,11 +129,23 @@ import mechDestroyed17 from '../assets/sfx/mechDestroyed-play-mechaDamaged17.m4a
 // back as the FULL untrimmed file (startMs 0, trimMs null — the whole 2555ms length). No fade,
 // no pitch/filter/reverb/volume processing, per Jackson's Weapon Lab copy-recipe.
 import returnToGaragePhaseSwish from '../assets/sfx/returnToGarage-play-phaseSwish.m4a';
-// #479: the SYNTHESISED gait cues (footstep + legLift). These carry NO `asset` — each entry is a
-// `{ synth: <recipe> }` variant pool that loadAllBaked renders offline into a buffer at boot,
-// instead of fetch+decoding a file. They join the baked pool as first-class multi-variant entries
-// (spread into BAKED_SFX below) so they play through the exact same pickBakedVariant path as
-// mechDestroyed's file-backed pool. See gaitSfx.js for the recipes + the offline renderer.
+// #479: the player mech's FOOTSTEP (foot-plant) cue — now a 4-VARIANT FILE pool (like the
+// mechDestroyed bake), REPLACING the earlier synthesised footstep. Four "FEETMisc_STEP-Hard
+// Step_HY_PC-00N.wav" files from the same Helton Yan pack (STEREO, ~2.5s each; the pack's variant
+// 003 is deliberately dropped, so the four are 001/002/004/005). Converted with macOS `afconvert`
+// to 48kHz STEREO AAC/.m4a (~192kbps, ~7-8KB each). Played back as the FULL file (startMs 0, no
+// trim/fade/processing/volume — the tuner export's 0→2500ms window IS the whole clip: a clean
+// passthrough). legLift stays synth (see gaitSfx.js) — a separate decision.
+import footstepHardStep1 from '../assets/sfx/footstep-play-hardStep1.m4a';
+import footstepHardStep2 from '../assets/sfx/footstep-play-hardStep2.m4a';
+import footstepHardStep4 from '../assets/sfx/footstep-play-hardStep4.m4a';
+import footstepHardStep5 from '../assets/sfx/footstep-play-hardStep5.m4a';
+// #479: the SYNTHESISED gait cue that remains — legLift ONLY (footstep is now the file pool above).
+// This carries NO `asset` — each entry is a `{ synth: <recipe> }` variant pool that loadAllBaked
+// renders offline into a buffer at boot, instead of fetch+decoding a file. It joins the baked pool
+// as a first-class multi-variant entry (spread into BAKED_SFX below) so it plays through the exact
+// same pickBakedVariant path as mechDestroyed's file-backed pool. See gaitSfx.js for the recipe +
+// the offline renderer.
 import { GAIT_SFX_ENTRIES, renderSynthBuffer } from './gaitSfx.js';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
@@ -361,11 +373,24 @@ export const BAKED_SFX = {
     trimMs: null,
     processing: null,
   },
-  // #479: the SYNTHESISED gait cues — `footstep::play` and `legLift::play`, each a multi-variant
-  // `{ synth }` pool (no `asset`). loadAllBaked renders these offline instead of fetching a file;
-  // getBaked/pickBakedVariant treat them identically to a file-backed pool (the recipe fields
+  // #479: the FOOTSTEP (foot-plant) cue — a 4-VARIANT FILE pool (#195), one entry per
+  // "FEETMisc_STEP-Hard Step_HY_PC-00N.wav" (N = 1, 2, 4, 5 — 003 deliberately dropped) from the
+  // Helton Yan pack. REPLACES the earlier synthesised footstep pool. Played back as the FULL file
+  // (startMs 0, no trim → play to the end — the tuner export's 0→2500ms window IS the whole clip):
+  // no fade, no pitch/filter/reverb, unity gain — the cleanest passthrough. Playback
+  // (pickBakedVariant) picks uniformly at random among the 4 decoded variants, exactly like
+  // mechDestroyed, so a walk cycle rotates through the four instead of repeating one.
+  'footstep::play': [
+    { asset: footstepHardStep1, startMs: 0 },
+    { asset: footstepHardStep2, startMs: 0 },
+    { asset: footstepHardStep4, startMs: 0 },
+    { asset: footstepHardStep5, startMs: 0 },
+  ],
+  // #479: the SYNTHESISED gait cue that remains — `legLift::play` ONLY, a multi-variant `{ synth }`
+  // pool (no `asset`). loadAllBaked renders it offline instead of fetching a file;
+  // getBaked/pickBakedVariant treat it identically to a file-backed pool (the recipe fields
   // startMs/trimMs/processing/etc are simply absent → null, so the whole rendered buffer plays at
-  // unity). Spread in from gaitSfx.js so the recipes live next to the offline renderer.
+  // unity). Spread in from gaitSfx.js so the recipe lives next to the offline renderer.
   ...GAIT_SFX_ENTRIES,
 };
 

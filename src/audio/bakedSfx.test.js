@@ -482,12 +482,15 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
   describe('getBaked isSynth flag (#479)', () => {
     beforeEach(() => _resetForTest());
 
-    it('reports isSynth:true for a synth pool (footstep) and isSynth:false for a file bake', () => {
-      // footstep::play is the real GAIT synth pool; plasmaLance::fire is a real file bake.
-      _setBakedBufferForTest('footstep', 'play', { duration: 0.18 });
+    it('reports isSynth:true for a synth pool (legLift) and isSynth:false for a file bake', () => {
+      // legLift::play is the remaining GAIT synth pool (footstep is now a file bake); plasmaLance::
+      // fire is a real file bake — as is footstep::play now, so both report isSynth:false.
+      _setBakedBufferForTest('legLift', 'play', { duration: 0.15 });
       _setBakedBufferForTest('plasmaLance', 'fire', { duration: 1.2 });
-      expect(getBaked('footstep', 'play').isSynth).toBe(true);
+      _setBakedBufferForTest('footstep', 'play', { duration: 2.5 });
+      expect(getBaked('legLift', 'play').isSynth).toBe(true);
       expect(getBaked('plasmaLance', 'fire').isSynth).toBe(false);
+      expect(getBaked('footstep', 'play').isSynth).toBe(false);
     });
   });
 });

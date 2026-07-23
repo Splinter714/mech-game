@@ -69,8 +69,11 @@ const VARIANTS = 4;
 
 // The gait pools, keyed `id::stage` exactly like every other BAKED_SFX entry — `play` is the
 // single stage these `ui`-domain cues use (sfxDomains.js). Spread into BAKED_SFX by bakedSfx.js.
+// #479 follow-up: FOOTSTEP was promoted out of this synth table into a 4-variant FILE bake in
+// bakedSfx.js (real "Hard Step" recordings, replacing the synthesised foot-plant). legLift stays
+// synthesised here — a separate decision. `footstepVariant` above is intentionally retained (unused
+// for now) so the synth recipe isn't lost if the file pool is ever reverted.
 export const GAIT_SFX_ENTRIES = {
-  'footstep::play': makePool(footstepVariant, VARIANTS, 0x1a2b3c),
   'legLift::play': makePool(legLiftVariant, VARIANTS, 0x77c5e9),
 };
 

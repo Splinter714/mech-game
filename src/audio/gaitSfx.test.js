@@ -6,70 +6,77 @@ import {
 } from './bakedSfx.js';
 import { AudioEngine } from './AudioEngine.js';
 
-// #479: the two GAIT cues are SYNTHESISED then BAKED to a buffer — a multi-variant pool joining
+// #479: legLift is the remaining SYNTHESISED-then-BAKED gait cue — a multi-variant pool joining
 // bakedSfx.js's baked-pool mechanism, sourced from offline synthesis instead of a recorded file.
-// Audio can't be unit-tested for how it SOUNDS; these pin the WIRING: the pools are registered as
-// real BAKED_SFX entries, carry several distinct variants, resolve through the same
+// (FOOTSTEP was promoted to a 4-variant FILE bake in bakedSfx.js — real "Hard Step" recordings —
+// so it no longer lives here; the file pool is covered in bakedSfx.test.js.) Audio can't be
+// unit-tested for how it SOUNDS; these pin the WIRING: the legLift pool is registered as a real
+// BAKED_SFX entry, carries several distinct variants, resolves through the same
 // getBaked/pickBakedVariant path as every other bake, and the cues play a baked variant (falling
 // back to the live procedural stub) without throwing.
 
 describe('gaitSfx (#479 synth-baked gait cues)', () => {
   describe('GAIT_SFX_ENTRIES data', () => {
-    it('registers footstep::play and legLift::play as multi-variant synth pools', () => {
-      for (const key of ['footstep::play', 'legLift::play']) {
-        const pool = GAIT_SFX_ENTRIES[key];
-        expect(Array.isArray(pool), key).toBe(true);
-        expect(pool.length, key).toBeGreaterThanOrEqual(2);   // more than one so a walk doesn't machine-gun
-        for (const entry of pool) {
-          expect(entry.asset, key).toBeUndefined();           // zero-asset: NOT a recorded file
-          expect(entry.synth, key).toBeTruthy();
-          expect(typeof entry.synth.durMs, key).toBe('number');
-          expect(Array.isArray(entry.synth.layers), key).toBe(true);
-          expect(entry.synth.layers.length, key).toBeGreaterThan(0);
-          for (const layer of entry.synth.layers) {
-            expect(['tone', 'noise'], key).toContain(layer.kind);
-            expect(typeof layer.freq, key).toBe('number');
-            expect(typeof layer.gain, key).toBe('number');
-          }
+    it('registers legLift::play as a multi-variant synth pool (footstep is now a file bake)', () => {
+      // footstep::play was moved out of the synth table into a file pool; only legLift stays synth.
+      expect(GAIT_SFX_ENTRIES['footstep::play']).toBeUndefined();
+      const pool = GAIT_SFX_ENTRIES['legLift::play'];
+      expect(Array.isArray(pool)).toBe(true);
+      expect(pool.length).toBeGreaterThanOrEqual(2);   // more than one so a walk doesn't machine-gun
+      for (const entry of pool) {
+        expect(entry.asset).toBeUndefined();           // zero-asset: NOT a recorded file
+        expect(entry.synth).toBeTruthy();
+        expect(typeof entry.synth.durMs).toBe('number');
+        expect(Array.isArray(entry.synth.layers)).toBe(true);
+        expect(entry.synth.layers.length).toBeGreaterThan(0);
+        for (const layer of entry.synth.layers) {
+          expect(['tone', 'noise']).toContain(layer.kind);
+          expect(typeof layer.freq).toBe('number');
+          expect(typeof layer.gain).toBe('number');
         }
       }
     });
 
-    it('spreads its pools into BAKED_SFX so they decode/resolve like every other bake', () => {
-      expect(BAKED_SFX['footstep::play']).toBe(GAIT_SFX_ENTRIES['footstep::play']);
+    it('spreads the legLift pool into BAKED_SFX so it decodes/resolves like every other bake', () => {
       expect(BAKED_SFX['legLift::play']).toBe(GAIT_SFX_ENTRIES['legLift::play']);
     });
 
-    it('gives each cue VARYING variants so consecutive steps differ', () => {
-      for (const key of ['footstep::play', 'legLift::play']) {
-        // The first layer's base frequency should not be identical across all variants (the seeded
-        // jitter spreads them), otherwise the "random variant" pick would still machine-gun one tone.
-        const freqs = GAIT_SFX_ENTRIES[key].map((e) => e.synth.layers[0].freq);
-        expect(new Set(freqs).size, key).toBeGreaterThan(1);
+    it('registers footstep::play as a 4-variant FILE pool in BAKED_SFX (each an asset, no synth)', () => {
+      const pool = BAKED_SFX['footstep::play'];
+      expect(Array.isArray(pool)).toBe(true);
+      expect(pool.length).toBe(4);
+      for (const entry of pool) {
+        expect(entry.synth).toBeUndefined();           // NOT synth — a real recorded file
+        expect(entry.asset).toBeTruthy();
+        expect(entry.startMs).toBe(0);                 // clean full-file passthrough
       }
+      // The four variants point at four DISTINCT source files (a walk rotates through them).
+      expect(new Set(pool.map((e) => e.asset)).size).toBe(4);
     });
 
-    it('keeps the leg-lift quieter than the footstep (texture, not a second accent)', () => {
-      const loudest = (key) => Math.max(...GAIT_SFX_ENTRIES[key].flatMap((e) => e.synth.layers.map((l) => l.gain)));
-      expect(loudest('legLift::play')).toBeLessThan(loudest('footstep::play'));
+    it('gives legLift VARYING variants so consecutive steps differ', () => {
+      // The first layer's base frequency should not be identical across all variants (the seeded
+      // jitter spreads them), otherwise the "random variant" pick would still machine-gun one tone.
+      const freqs = GAIT_SFX_ENTRIES['legLift::play'].map((e) => e.synth.layers[0].freq);
+      expect(new Set(freqs).size).toBeGreaterThan(1);
     });
   });
 
   describe('baked-pool resolution', () => {
     beforeEach(() => { _resetBaked(); });
 
-    it('resolves an injected gait buffer through getBaked/pickBakedVariant with a whole-buffer recipe', () => {
-      const buf = { __fake: 'footstep-v0' };
-      _setBakedBufferForTest('footstep', 'play', buf);
-      expect(getBakedVariantCount('footstep', 'play')).toBe(1);
-      const baked = getBaked('footstep', 'play');
+    it('resolves an injected legLift buffer through getBaked/pickBakedVariant with a whole-buffer recipe', () => {
+      const buf = { __fake: 'legLift-v0' };
+      _setBakedBufferForTest('legLift', 'play', buf);
+      expect(getBakedVariantCount('legLift', 'play')).toBe(1);
+      const baked = getBaked('legLift', 'play');
       expect(baked.buffer).toBe(buf);
       // A synth entry carries no start/trim/processing recipe → the whole rendered buffer plays at unity.
       expect(baked.startMs).toBeNull();
       expect(baked.trimMs).toBeNull();
       expect(baked.processing).toBeNull();
       expect(baked.volume).toBe(1);
-      expect(pickBakedVariant('footstep', 'play').buffer).toBe(buf);
+      expect(pickBakedVariant('legLift', 'play').buffer).toBe(buf);
     });
 
     it('picks among several decoded leg-lift variants', () => {
@@ -87,7 +94,7 @@ describe('gaitSfx (#479 synth-baked gait cues)', () => {
       // node/jsdom has no OfflineAudioContext — loadAllBaked catches this per-slot so the cue plays
       // its live procedural stub. Asserting the reject documents that fallback contract.
       expect(typeof OfflineAudioContext).toBe('undefined');
-      await expect(renderSynthBuffer(GAIT_SFX_ENTRIES['footstep::play'][0].synth, 48000)).rejects.toThrow();
+      await expect(renderSynthBuffer(GAIT_SFX_ENTRIES['legLift::play'][0].synth, 48000)).rejects.toThrow();
     });
   });
 });
