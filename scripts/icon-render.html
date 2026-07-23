@@ -11,7 +11,7 @@
       scripts/gen-icons.mjs through a programmatic Vite dev server so the REAL
       procedural art pipeline (src/art/*) resolves via ESM. It boots a tiny Phaser
       scene, builds the default player mech's textures with the shipping art code,
-      composites hull + arms + side torsos + turret onto a dark-background canvas,
+      composites hull + arms + side torsos + muzzle-glow overlays + turret onto a dark-background canvas,
       and exposes window.__renderIcon(size, { maskable }) for Playwright to snapshot.
     -->
     <script type="module">
@@ -23,10 +23,12 @@
         ART_SCALE,
         SIDE_TORSO_LOCATIONS,
         ARM_LOCATIONS,
+        MUZZLE_GLOW_SUFFIX,
         partSpriteTransform,
       } from '/src/art/mechArt.js';
       import { Mech } from '/src/data/Mech.js';
       import { ROSTERS, ACTIVE_MECH_KEY } from '/src/data/rosters.js';
+      import { playerMechArt } from '/src/art/playerMechLook.js';
 
       // The shipping default build — same mech the garage opens with.
       const buildData = ROSTERS.mech.defaultRoster()[ACTIVE_MECH_KEY];
@@ -36,7 +38,13 @@
       class IconScene extends Phaser.Scene {
         constructor() { super('IconScene'); }
         create() {
-          buildMechTextures(this, KEY, mech, { theme: 'player' });
+          // #404 (third pass): `playerMechArt()` is THE definition of the player look — the arena
+          // spawn, the damage re-raster and the garage preview all bake from it, and nowhere else
+          // writes the options literal. The icon is a fourth surface showing the same machine, so
+          // it bakes from it too: player 1's azure rim accent, and the empty `statusSpot` list
+          // (the dark no-powerup core) rather than the enemy branch's reactor-purple spine, vents
+          // and cockpit optic. That is exactly what a player looks like the instant they deploy.
+          buildMechTextures(this, KEY, mech, playerMechArt(0));
           this.scene.pause();
           window.__ready = true;
         }
@@ -102,6 +110,11 @@
         for (const loc of [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS]) {
           const t = partSpriteTransform(mech, loc, angle, S);
           blit(tex(`${KEY}_${loc}`), t.dx, t.dy, t.rot, t.ox, t.oy);
+          // #433 split the lit muzzle out of the part texture into a glow-only overlay that the
+          // arena mounts directly above its part, sharing the same transform, VISIBLE by default
+          // (the reload blink is the only thing that hides it). Compositing it here is what keeps
+          // the icon's guns lit like the mech you actually drive.
+          blit(tex(`${KEY}_${loc}${MUZZLE_GLOW_SUFFIX}`), t.dx, t.dy, t.rot, t.ox, t.oy);
         }
         blit(tex(`${KEY}_turret`), 0, 0, angle + Math.PI / 2, 0.5, 0.5);
 
