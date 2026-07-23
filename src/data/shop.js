@@ -12,6 +12,14 @@ import { WEAPON_IDS } from './weapons.js';
 // dropped out (equipment.js removed — Sprint is a hardcoded built-in, never unlocked/bought).
 export const STARTING_UNLOCKED = ['autocannon', 'pulseLaser', 'clusterRocket', 'machineGun'];
 
+// #453 TEMPORARY FULL UNLOCK — every weapon is available from the start, in PRODUCTION as well
+// as dev (dev already skipped the grind via the `import.meta.env.DEV` branch in GarageScene).
+// The shop/economy is left completely intact underneath: this only widens what `loadUnlocked()`
+// hands back (data/save.js), so nothing is ever written to localStorage and no save is touched.
+// TO REVERT: flip this to `false` (or delete it and its one use in data/save.js) — the SCRAP
+// grind comes straight back, including for anyone who played while it was on.
+export const UNLOCK_ALL = true;
+
 // Costs are pitched against the run's stage payout curve (50 + 25*stageIndex per stage,
 // data/run.js) — early/cheap unlocks clear in a run or two, heavier late-game weapons take
 // several. Starting-kit items are listed at 0 for completeness (they're never actually locked).

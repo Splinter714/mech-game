@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { loadAllMechs, saveAllMechs, loadUnlocked, saveUnlocked } from './save.js';
-import { STARTING_UNLOCKED } from './shop.js';
+import { STARTING_UNLOCKED, SHOPPABLE_IDS, UNLOCK_ALL } from './shop.js';
+import { WEAPON_IDS } from './weapons.js';
 
 // Minimal in-memory localStorage stub (vitest runs in node, which has none). save.js
 // reads localStorage lazily inside its functions, so installing it per-test is enough.
@@ -61,5 +62,27 @@ describe('unlocked-catalog persistence (#65)', () => {
     const unlocked = loadUnlocked();
     for (const id of STARTING_UNLOCKED) expect(unlocked.has(id)).toBe(true);
     expect(unlocked.has('shotgun')).toBe(true);
+  });
+});
+
+// #453 TEMPORARY: every weapon is unlocked from the start in production too. Delete this whole
+// block along with shop.js's UNLOCK_ALL flag when the shop grind comes back.
+describe('#453 temporary full unlock', () => {
+  it('the flag is on', () => {
+    expect(UNLOCK_ALL).toBe(true);
+  });
+
+  it('a fresh save has the ENTIRE weapon catalog unlocked', () => {
+    const unlocked = loadUnlocked();
+    for (const id of WEAPON_IDS) expect(unlocked.has(id)).toBe(true);
+    expect(unlocked.size).toBe(SHOPPABLE_IDS.length);
+  });
+
+  it('an old save with only part of the catalog is widened, not wiped', () => {
+    globalThis.localStorage.setItem('mech-game-unlocked-v1', JSON.stringify(['shotgun']));
+    const unlocked = loadUnlocked();
+    for (const id of WEAPON_IDS) expect(unlocked.has(id)).toBe(true);
+    // ...and nothing is written back, so the saved progression survives a revert of the flag.
+    expect(JSON.parse(globalThis.localStorage.getItem('mech-game-unlocked-v1'))).toEqual(['shotgun']);
   });
 });

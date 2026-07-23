@@ -5,7 +5,7 @@
 
 import { ROSTERS } from './rosters.js';
 import { RUN_CURRENCY_KEY } from './events.js';
-import { STARTING_UNLOCKED } from './shop.js';
+import { STARTING_UNLOCKED, SHOPPABLE_IDS, UNLOCK_ALL } from './shop.js';
 
 export function makeRoster({ storageKey, Model, defaultRoster, migrate }) {
   function readSaved() {
@@ -97,15 +97,24 @@ export function saveRunCurrency(amount) {
 // fresh deploy un-buildable.
 const UNLOCKED_STORAGE_KEY = 'mech-game-unlocked-v1';
 
+// #453 TEMPORARY: fold the WHOLE catalog into whatever was loaded when shop.js's UNLOCK_ALL flag
+// is on. Purely additive — an existing save's own ids are kept and nothing is written back, so
+// turning the flag off restores the real progression untouched. Delete this and its two call
+// sites below to revert.
+function withTemporaryFullUnlock(set) {
+  if (UNLOCK_ALL) for (const id of SHOPPABLE_IDS) set.add(id);
+  return set;
+}
+
 export function loadUnlocked() {
   try {
     const raw = localStorage.getItem(UNLOCKED_STORAGE_KEY);
     const arr = raw != null ? JSON.parse(raw) : null;
     const set = new Set(Array.isArray(arr) ? arr : STARTING_UNLOCKED);
     for (const id of STARTING_UNLOCKED) set.add(id);
-    return set;
+    return withTemporaryFullUnlock(set);
   } catch {
-    return new Set(STARTING_UNLOCKED);
+    return withTemporaryFullUnlock(new Set(STARTING_UNLOCKED));
   }
 }
 
