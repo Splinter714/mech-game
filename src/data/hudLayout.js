@@ -72,6 +72,43 @@ export function discReserveBottom(count = 1) {
 // radius decides how far in from its anchor the stack of rings actually starts).
 export const BUFF_RING_R = 15;
 
+// ── #449: the OBJECTIVE BLOCK ────────────────────────────────────────────────────────────────
+//
+// Jackson, playtest 2026-07-22: "it's hard to read" → triage: "fewer lines, bigger, and solid
+// backing". The block is now ONE line (the base-clear requirement, which #449 already folded the
+// enemy tally into), set large, on an OPAQUE plate so it reads over snow, sand or a burning
+// compound alike — the same problem the minimap's near-solid backing solved in #383, solved the
+// same way rather than with an outline or a shadow.
+//
+// It hangs under the top-right minimap disc in solo and moves to top-centre in co-op (see
+// `hudLayout` below); the plate is sized to whatever the line MEASURES, so neither placement can
+// clip it and neither can collide with the disc above it.
+export const OBJECTIVE_PANEL = {
+  fontSize: 20,     // px — "bigger", up from the 13px it shipped at
+  padX: 14,
+  padY: 8,
+  radius: 8,
+  minW: 120,        // a very short line still reads as a plate, not a chip
+};
+
+// The backing plate for a measured objective line. `x`/`y` are where the TEXT is anchored and
+// `originX` how it is anchored there (1 = right-aligned under the map, 0.5 = centred in co-op) —
+// exactly the two values `hudLayout().shared` hands the scene, so the plate can never drift off
+// the text it backs. Pure: HudScene measures the Text object and paints this rect.
+export function objectivePanelRect(textW, textH, { x, y, originX = 1 }) {
+  const P = OBJECTIVE_PANEL;
+  // The text's own span, inflated by the padding...
+  let left = x - originX * textW - P.padX;
+  let w = textW + P.padX * 2;
+  // ...then grown to the floor width AWAY from whichever edge the text is anchored to, so a
+  // right-aligned plate grows leftward (never out past the screen edge it is tucked against) and
+  // a centred one grows both ways.
+  if (w < P.minW) {
+    left -= (P.minW - w) * originX;
+    w = P.minW;
+  }
+  return { x: Math.round(left), y: Math.round(y - P.padY), w: Math.round(w), h: Math.round(textH + P.padY * 2) };
+}
 // Which panels exist, plus where the shared readouts sit.
 //
 // #452 (style pass) took the per-panel SCREEN-EDGE geometry out of here. The bottom readouts no

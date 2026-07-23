@@ -15,6 +15,7 @@ import {
   integrityLayout, INTEGRITY_ORDER,
   CONSOLE, CONSOLE_TILES, consoleLayout, consoleBand, consoleTileSize, tileRowWidth,
   HUD_DISC, minimapBox, targetDiscBox, targetDiscLayout, ringSweep, discReserveBottom,
+  OBJECTIVE_PANEL, objectivePanelRect,
 } from '../data/hudLayout.js';
 import {
   normalizeReadoutMode, nextReadoutMode,
@@ -259,7 +260,14 @@ export default class HudScene extends Phaser.Scene {
     // data/bases.js `baseClearLabel` already renders exactly that (see update()). Positioned by
     // `_applyChromeLayout` once the minimap box exists — the layout's shared slot, so co-op still
     // moves it to top-centre clear of player 2's column.
-    this.objectiveText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: C.warn });
+    // #449 (playtest follow-up): "fewer lines, bigger, and solid backing". It is ONE line, set at
+    // `OBJECTIVE_PANEL.fontSize` rather than the 13px it shipped at, painted over an OPAQUE plate
+    // (`objectivePanel`, drawn under the text each frame from the line's measured width) so it
+    // reads on snow, sand or a burning compound alike instead of dissolving into the terrain.
+    this.objectivePanel = this.add.graphics();
+    this.objectiveText = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: `${OBJECTIVE_PANEL.fontSize}px`, color: C.warn, fontStyle: 'bold',
+    });
     // Big centred "MISSION COMPLETE" banner, hidden until the mission resolves.
     this.completeBanner = this.add.text(this.W / 2, this.H * 0.32, 'MISSION COMPLETE', {
       fontFamily: 'monospace', fontSize: '40px', color: C.good, fontStyle: 'bold',
@@ -419,7 +427,10 @@ export default class HudScene extends Phaser.Scene {
     // The top-right corner otherwise hosts the objective line + buff rings; push those down to sit
     // just below the map so they clear it (solo only — co-op moves both to top-centre, untouched).
     // #449 is exactly this slot: "put the current objective label below the top-right minimap."
-    this._mapReserveBottom = this.miniBox.y + this.miniBox.h + 8;
+    // #449: the gap has to clear the objective PLATE's own top padding, not just the text's
+    // ascender — the block is a solid panel now, and a plate touching the disc above it reads as
+    // one smeared blob rather than two instruments.
+    this._mapReserveBottom = this.miniBox.y + this.miniBox.h + 8 + OBJECTIVE_PANEL.padY;
     // Panel layer: the dark disc backing + frame, repainted only when the box moves (a panel
     // rebuild). Dynamic layer: the corridor silhouette AND the live markers, cleared/redrawn each
     // frame — a scrolling window means the corridor can no longer be a one-time static paint. Both
@@ -447,7 +458,35 @@ export default class HudScene extends Phaser.Scene {
   // with the map, so they drop below it; centred, they keep their original top positions.
   _rightStack() { return this._layout?.shared?.objectiveOriginX === 1; }
   _objectiveTextY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom : 16; }
-  _buffStartY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom + 24 : 44; }
+  // The buff rings start under the objective PLATE, whose height is its font plus its own padding
+  // (#449 made it much taller than the 13px line the old +24 was measured against).
+  _objectivePanelH() { return OBJECTIVE_PANEL.fontSize + OBJECTIVE_PANEL.padY * 2 + 6; }
+  _buffStartY() {
+    return this._objectiveTextY() + this._objectivePanelH() + (this._rightStack() ? 8 : 12);
+  }
+
+  // #449: the objective line's opaque backing plate, repainted whenever the line's text (and so
+  // its measured width) changes. Painted in the console's own plate palette so the two instrument
+  // surfaces on screen are made of the same material. Hidden entirely when there is no line —
+  // an empty plate floating under the map would read as a broken widget.
+  _paintObjectivePanel() {
+    const g = this.objectivePanel;
+    const t = this.objectiveText;
+    if (!g || !t) return;
+    g.clear();
+    if (!t.text) return;
+    const r = objectivePanelRect(t.width || 0, t.height || OBJECTIVE_PANEL.fontSize, {
+      x: t.x, y: t.y, originX: t.originX ?? 1,
+    });
+    g.fillStyle(CONSOLE_COL.outline, 1);
+    g.fillRoundedRect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3, OBJECTIVE_PANEL.radius + 1);
+    g.fillStyle(CONSOLE_COL.bodyLo, 1);
+    g.fillRoundedRect(r.x, r.y, r.w, r.h, OBJECTIVE_PANEL.radius);
+    g.fillStyle(CONSOLE_COL.body, 1);
+    g.fillRoundedRect(r.x, r.y, r.w, Math.max(6, r.h * 0.36), OBJECTIVE_PANEL.radius);
+    g.lineStyle(1, CONSOLE_COL.rim, 0.9);
+    g.strokeRoundedRect(r.x, r.y, r.w, r.h, OBJECTIVE_PANEL.radius);
+  }
 
   // ── #366: per-player panels ──────────────────────────────────────────────────────────────
   //
@@ -1074,7 +1113,7 @@ export default class HudScene extends Phaser.Scene {
       const clear = this.registry.get('baseClear');
       const line = clear ? baseClearLabel(clear) : mission.objective;
       this.objectiveText
-        .setText(`${line}${complete ? '  [COMPLETE]' : ''}`)
+        .setText(complete ? 'COMPLETE' : line)
         .setColor(complete ? C.good : C.warn);
       // #64: the mission-complete banner only makes sense mid-run (a stage cleared, more to
       // come) — once the run itself is over (run-over banner below takes precedence), suppress
@@ -1117,6 +1156,8 @@ export default class HudScene extends Phaser.Scene {
         height: this.scale.height,
         dpr: this.registry.get('dpr') || window.devicePixelRatio || 1,
       }));
+      // #449: the plate is measured off the line, so it is repainted with it.
+      this._paintObjectivePanel();
       // Re-flow the cluster now every line's text (and so its width) is current.
       this._placeDevReadouts();
     }

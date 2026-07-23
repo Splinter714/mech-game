@@ -129,7 +129,7 @@ describe('#391 base clear exempts immobile defenders', () => {
   it('the garrison count the player is told excludes turrets', () => {
     const enemies = [mobile(), turret(), turret()];
     const s = state({ objectiveDestroyed: true, isDockStanding: noneUp, enemies });
-    expect(baseClearLabel(s)).toMatch(/GARRISON.*1 LEFT/);
+    expect(baseClearLabel(s)).toBe('ELIMINATE 1 ENEMY');
   });
 });
 
@@ -137,24 +137,39 @@ describe('#384 what the player is told', () => {
   it('never shows an enemy count while a structure still stands', () => {
     const s = state({ objectiveDestroyed: true, isDockStanding: allUp, enemies: Array(7).fill({ baseId: 'base0' }) });
     const label = baseClearLabel(s);
-    expect(label).toMatch(/DESTROY THE BASE/);
+    expect(label).toMatch(/DESTROY \d+ STRUCTURE/);
     expect(label).not.toMatch(/7/);
-    expect(label).not.toMatch(/GARRISON/);
+    expect(label).not.toMatch(/ENEM/);
   });
 
-  it('names exactly what still stands in phase 1, then the garrison count, then done', () => {
-    // Objective + both docks up.
+  // #449: the line COUNTS what is still standing rather than naming which kind of hex each one is
+  // (Jackson: "the objectives for destroying bases doesn't need to distinguish hex types").
+  it('counts what still stands in phase 1 without naming hex types, then the enemies, then done', () => {
+    // Objective + both docks up = three structures, no type words anywhere.
     expect(baseClearLabel(state({ objectiveDestroyed: false, isDockStanding: allUp })))
-      .toBe('DESTROY THE BASE  (OBJECTIVE + 2 DOCKS)');
-    // Objective down, one dock left — objective drops out of the line, dock singularised.
+      .toBe('DESTROY 3 STRUCTURES');
+    // Objective down, one dock left — a single structure, singularised.
     expect(baseClearLabel(state({ objectiveDestroyed: true, isDockStanding: oneUp })))
-      .toBe('DESTROY THE BASE  (1 DOCK)');
-    // Docks down, objective still up.
+      .toBe('DESTROY 1 STRUCTURE');
+    // Docks down, objective still up: reads identically, because the type no longer matters.
     expect(baseClearLabel(state({ objectiveDestroyed: false, isDockStanding: noneUp })))
-      .toBe('DESTROY THE BASE  (OBJECTIVE)');
-    // Structures gone: garrison count.
-    expect(baseClearLabel(state({ objectiveDestroyed: true, enemies: [{ baseId: 'base0' }] }))).toMatch(/GARRISON.*1 LEFT/);
+      .toBe('DESTROY 1 STRUCTURE');
+    // Structures gone: the enemy count.
+    expect(baseClearLabel(state({ objectiveDestroyed: true, enemies: [{ baseId: 'base0' }] })))
+      .toBe('ELIMINATE 1 ENEMY');
+    expect(baseClearLabel(state({ objectiveDestroyed: true, enemies: [{ baseId: 'base0' }, { baseId: 'base0' }] })))
+      .toBe('ELIMINATE 2 ENEMIES');
     // All done.
     expect(baseClearLabel(state({ objectiveDestroyed: true }))).toMatch(/CLEAR/);
+  });
+
+  it('never names a DOCK or an OBJECTIVE in the phase-1 line', () => {
+    for (const objectiveDestroyed of [true, false]) {
+      for (const isDockStanding of [allUp, oneUp, noneUp]) {
+        const label = baseClearLabel(state({ objectiveDestroyed, isDockStanding }));
+        expect(label).not.toMatch(/DOCK/);
+        expect(label).not.toMatch(/OBJECTIVE/);
+      }
+    }
   });
 });

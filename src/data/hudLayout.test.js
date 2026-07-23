@@ -12,6 +12,7 @@ import {
   CONSOLE, CONSOLE_TILES, consoleLayout, consoleBand, consoleTileSize, tileRowWidth,
   HUD_DISC, minimapBox, targetDiscBox, targetDiscLayout, ringSweep, discReserveBottom,
   bodyPools, hudTargetSnapshot, minimapEnemyDots,
+  OBJECTIVE_PANEL, objectivePanelRect,
 } from './hudLayout.js';
 import { LOCATIONS } from './anatomy.js';
 
@@ -490,5 +491,48 @@ describe('minimapEnemyDots', () => {
   it('tolerates a missing/empty enemy list', () => {
     expect(minimapEnemyDots(null, () => true)).toEqual([]);
     expect(minimapEnemyDots([], () => true)).toEqual([]);
+  });
+});
+
+// ── #449: the objective block's solid backing plate ──────────────────────────────────────────
+describe('objectivePanelRect — the objective line reads on any terrain', () => {
+  it('wraps the measured line with its own padding', () => {
+    const r = objectivePanelRect(200, 24, { x: 1264, y: 180, originX: 1 });
+    expect(r.w).toBe(200 + OBJECTIVE_PANEL.padX * 2);
+    expect(r.h).toBe(24 + OBJECTIVE_PANEL.padY * 2);
+  });
+
+  it('covers a RIGHT-aligned line exactly, and never runs past the edge it is tucked against', () => {
+    const x = 1264, textW = 200;
+    const r = objectivePanelRect(textW, 24, { x, y: 180, originX: 1 });
+    // The text occupies [x - textW, x]; the plate has to contain it with padding on both sides.
+    expect(r.x).toBeLessThanOrEqual(x - textW);
+    expect(r.x + r.w).toBe(x + OBJECTIVE_PANEL.padX);
+  });
+
+  it('covers a CENTRED line (co-op) symmetrically', () => {
+    const x = 640, textW = 300;
+    const r = objectivePanelRect(textW, 24, { x, y: 16, originX: 0.5 });
+    expect(r.x + r.w / 2).toBeCloseTo(x, 0);
+    expect(r.x).toBeLessThanOrEqual(x - textW / 2);
+  });
+
+  it('grows a very short line to the floor width AWAY from its anchor edge', () => {
+    const x = 1264;
+    const r = objectivePanelRect(20, 24, { x, y: 180, originX: 1 });
+    expect(r.w).toBe(OBJECTIVE_PANEL.minW);
+    // Still right-anchored: it grew leftward, not off the screen.
+    expect(r.x + r.w).toBe(x + OBJECTIVE_PANEL.padX);
+  });
+
+  it('sits clear of the top-right minimap disc rather than under it', () => {
+    const map = minimapBox(W);
+    const y = map.y + map.h + 8 + OBJECTIVE_PANEL.padY;   // HudScene's `_mapReserveBottom`
+    const r = objectivePanelRect(220, 24, { x: W - HUD_DISC.inset, y, originX: 1 });
+    expect(r.y).toBeGreaterThanOrEqual(map.y + map.h);
+  });
+
+  it('is set BIGGER than the 13px line it replaced', () => {
+    expect(OBJECTIVE_PANEL.fontSize).toBeGreaterThan(13);
   });
 });

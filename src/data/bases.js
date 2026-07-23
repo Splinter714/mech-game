@@ -113,18 +113,22 @@ export function baseClearState(base, { objectiveDestroyed = false, isDockStandin
 // stays a renderer and the "never show a kill count while a structure stands" guarantee is enforced
 // by the same code that decides the step rather than by a second, drift-prone copy in the HUD.
 //
-// Phase 1 names exactly what is still standing (objective and/or N docks) so an any-order sweep
-// reads right whichever piece the player takes first — and, per #356's discipline, never shows a
-// garrison count while any structure remains.
+// #449 (Jackson, playtest 2026-07-22: "the objectives for destroying bases doesn't need to
+// distinguish hex types"): phase 1 used to spell out WHICH kinds of hex were left — `OBJECTIVE +
+// 2 DOCKS`. It no longer does. Every standing structure is marked in the world at once and can be
+// taken in any order (#384), so the type split bought the player nothing and cost the HUD its two
+// longest words. The line is now a bare COUNT of what is still standing — `structuresLeft`, the
+// same field the phase itself is decided from.
+//
+// The #356 discipline is untouched: a garrison count still never appears while any structure
+// remains, because that is decided by the STEP, not by the wording.
 export function baseClearLabel(state) {
   switch (state?.step) {
     case CLEAR_STRUCTURES: {
-      const parts = [];
-      if (state.objectiveStanding) parts.push('OBJECTIVE');
-      if (state.docksLeft > 0) parts.push(`${state.docksLeft} DOCK${state.docksLeft === 1 ? '' : 'S'}`);
-      return `DESTROY THE BASE  (${parts.join(' + ')})`;
+      const n = state.structuresLeft ?? 0;
+      return `DESTROY ${n} STRUCTURE${n === 1 ? '' : 'S'}`;
     }
-    case CLEAR_ENEMIES: return `ELIMINATE THE GARRISON  (${state.enemiesLeft} LEFT)`;
+    case CLEAR_ENEMIES: return `ELIMINATE ${state.enemiesLeft} ENEM${state.enemiesLeft === 1 ? 'Y' : 'IES'}`;
     default: return 'BASE CLEAR';
   }
 }

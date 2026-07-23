@@ -74,7 +74,7 @@ describe('#384 objective marker targets — objective + docks marked at once', (
     // A standing dock (objective already down) still holds the enemy markers back.
     const m = marks({ objectiveDestroyed: true, isDockStanding: allUp, enemies });
     expect(m.enemies).toEqual([]);
-    expect(baseClearLabel(m.state)).toMatch(/DESTROY THE BASE/);
+    expect(baseClearLabel(m.state)).toMatch(/DESTROY \d+ STRUCTURE/);
     expect(baseClearLabel(m.state)).not.toMatch(/7/);
     // …and so does a standing objective (docks already down).
     const n = marks({ objectiveDestroyed: false, isDockStanding: noneUp, enemies });
