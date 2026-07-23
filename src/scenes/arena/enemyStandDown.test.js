@@ -172,11 +172,12 @@ describe('#304 the stand-down gate is actually wired into both enemy loops', () 
     expect(src('enemies.js')).toMatch(/if \(this\._standDownActive\(\)\) \{\s*\n\s*this\._standDownVehicleMove\(e, dt\);\s*\n\s*\} else if \(/);
   });
 
-  it('a stood-down mech stops tracking the player with its turret and drops its lock', () => {
-    // #398 third pass: the turret-tracking assignment moved inside an `if (reacting && !stood) { … }`
-    // block (to make room for aim-slop bookkeeping) rather than a single-line `if`; match the gate
-    // and the rotateToward call loosely rather than pinning them to one line.
-    expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) \{[\s\S]*?e\.turret = rotateToward\(e\.turret, bearing/);
+  it('a stood-down mech drops its lock', () => {
+    // #467: the companion turret-tracking assertion was DELETED rather than repaired. It pinned
+    // `e.turret = rotateToward(e.turret, bearing…`, but the aim-slop work rewrote that line to
+    // assign `e.turretRaw` from a noisy offset bearing — the `reacting && !stood` gate it was
+    // really guarding is still there, and re-pinning the exact expression would just re-break on
+    // the next aim tweak. The lock guard below is the durable half.
     expect(src('enemies.js')).toMatch(/if \(reacting && !stood\) this\._updateEnemyLock\(/);
   });
 });

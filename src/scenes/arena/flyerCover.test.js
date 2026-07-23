@@ -232,7 +232,10 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
       // every shooter here.
       // #423 added `statKind` + `statShotId` to the descriptor (the shooter's stats kind and its
       // per-shot id, for damage-taken attribution + enemy-accuracy dedupe) — telemetry, not a cover flag.
-      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null, statKind: 'turret', statShotId: null }]);
+      // #440 added a third telemetry field, `spawnerKind` (the kind that SPAWNED this shooter, for
+      // the Spawned Dmg run-stats column) — null for anything not deployed by a carrier, and read
+      // only on the damage-attribution path. Also not a cover flag.
+      expect(calls.hitscan[0].slice(4)).toEqual(['enemy', 'testKind', { lane: 0, lateral: 0, ignoreSpanKey: null, statKind: 'turret', statShotId: null, spawnerKind: null }]);
     });
 
     // #269 playtest follow-up (streams bug fix): STRAIGHT_PROJECTILE (machineGun) is a twin-lane
@@ -247,9 +250,10 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
         // #374 dropped #269's `smallUnitInvolved` (formerly arg 8), so there is no cover flag on a
         // shot any more. #423 appended two telemetry args — the shooter (null for an enemy) and a
         // stats-meta object `{ statKind, statShotId }` (NOT a cover flag) — so the tail is now shooter, meta.
+        // #440 added `spawnerKind` to that same meta object (run-stats cross-attribution), still not a cover flag.
         expect(args).toHaveLength(10);
         expect(args[8]).toBe(null);        // shooter (enemy rounds carry none)
-        expect(args[9]).toEqual({ statKind: expect.anything(), statShotId: null });
+        expect(args[9]).toEqual({ statKind: expect.anything(), statShotId: null, spawnerKind: null });
       }
     });
   }

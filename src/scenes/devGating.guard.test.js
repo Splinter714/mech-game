@@ -49,9 +49,10 @@ describe('#296 HudScene: control hints / control-method / AI readouts stay dev-g
     expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.modeText\.setText[\s\S]*?this\.aiText\.setText/);
   });
 
-  it('the control-hints + debug d-pad cheat-sheet lines are created only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.add\.text\(16, 36, 'WASD\/L-stick/);
-  });
+  // #467: the control-hints + debug d-pad cheat-sheet assertion was DELETED here rather than
+  // repaired. #463 removed that top-left help text from HudScene outright ("all the 'controls'
+  // help text on top left should also be removed"), so there is no longer any line for a
+  // dev-gate guard to guard — the per-slot skill tiles carry the binds now.
 
   it('MOUSE + KB (a control-method-only string) is never emitted outside a DEV guard', () => {
     // Belt-and-braces: the only occurrence of the literal sits inside the gated update() block.
