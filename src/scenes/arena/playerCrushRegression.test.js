@@ -92,3 +92,28 @@ describe('#282 regression — player _drive still crushes small units and blocks
     expect(scene.px).toBeLessThan(50);
   });
 });
+
+describe('#466 — a crush pass that removes no hp bails out instead of spinning forever', () => {
+  it('driving into a SHIELDED crushable unit terminates the frame (would hang without the guard)', () => {
+    // A small (crushable) unit whose shield eats the whole crush hit: `_damageEnemyAt` leaves
+    // `mech.hp` untouched and the unit alive, so `_crushTargetAt` keeps finding the very same
+    // enemy. Before the fix this is an infinite loop inside a single `_drive` call — a true
+    // hard hang, not a dropped frame — and this test never returns (vitest kills it on timeout).
+    const shielded = makeTank(50, 0);
+    shielded.mech.shield = 9999;
+    const { scene, damageCalls } = makeScene({ enemies: [shielded] });
+    scene._damageEnemyAt = vi.fn((e, x, y, dmg) => {
+      damageCalls.push(e);
+      e.mech.shield = Math.max(0, e.mech.shield - dmg);   // absorbs everything; hp never drops
+    });
+
+    for (let i = 0; i < 10; i++) scene._drive(DRIVE_EAST, 1 / 30);
+
+    // It still got crushed at (dealt damage), just never died — and the drive completed.
+    expect(damageCalls.length).toBeGreaterThanOrEqual(1);
+    expect(shielded.mech.isDestroyed()).toBe(false);
+    expect(shielded.mech.hp).toBe(160);
+    // One crush attempt per substep at most — the guard stops the re-scan repeat dead.
+    expect(damageCalls.length).toBeLessThan(50);
+  });
+});

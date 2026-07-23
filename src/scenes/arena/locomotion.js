@@ -304,9 +304,16 @@ export const LocomotionMixin = {
       // either finds the next overlapping trooper to crush too, or nothing — in which case the
       // player rolls straight through into the space just vacated instead of still sliding/stopping
       // against a corpse that no longer blocks.
+      // #466: a crush pass is only guaranteed to converge while it actually removes hp.
+      // `_crushGroundEnemyAt` deals hp+1, but ARMOUR/SHIELDS absorb first — a crushable unit
+      // whose damage is fully absorbed comes back alive with its hp untouched, and re-scanning
+      // would hand back the same enemy forever (a hard hang, not a dropped frame). So bail out
+      // of the repeat the moment a pass leaves the target alive without taking any hp off it.
       let crushTarget = this._crushTargetAt(nx, ny);
       while (crushTarget) {
+        const hpBefore = crushTarget.mech.hp ?? crushTarget.mech.maxHp;
         this._crushGroundEnemyAt(crushTarget);
+        if (!crushTarget.mech.isDestroyed() && (crushTarget.mech.hp ?? crushTarget.mech.maxHp) >= hpBefore) break;
         crushTarget = this._crushTargetAt(nx, ny);
       }
       // General ground-enemy blocking (mech/turret, or a crushable enemy just outside the tighter
