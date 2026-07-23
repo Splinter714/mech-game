@@ -8,8 +8,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, hudPlayerSnapshot, lockPointOf,
-  HUD_COLUMN_W,
+  HUD_COLUMN_W, integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER,
 } from './hudLayout.js';
+import { LOCATIONS } from './anatomy.js';
 
 const W = 1280;
 
@@ -99,6 +100,64 @@ describe('hudLayout — co-op mirrors a second panel', () => {
       expect(n.panels[1].columnX).toBeGreaterThan(n.panels[0].columnX);
       expect(n.panels[1].tilesX + n.panels[1].tilesW).toBeLessThanOrEqual(w);
       for (const p of n.panels) expect(p.tilesW).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ── #448 — the integrity readout's bar geometry ──────────────────────────────────────────────
+//
+// What matters and is easy to get silently wrong: the segments only name locations the model
+// tracks, HP sits LEFT of armor inside each pair, the shield is the RIGHTMOST bar, and a cramped
+// co-op half squeezes the widths instead of running the block into the skill tiles.
+describe('integrityLayout — the bottom-corner bar block', () => {
+  const solo = integrityLayout(INTEGRITY_ORDER, {
+    anchorX: 16, side: 'left', bottomY: 790, availW: 400,
+  });
+
+  it('only ever names damage-tracked locations', () => {
+    expect(INTEGRITY_ORDER.slice().sort()).toEqual(LOCATIONS.slice().sort());
+  });
+
+  it('puts HP on the LEFT and armor on the RIGHT inside every segment', () => {
+    for (const seg of solo.segments) expect(seg.hpX).toBeLessThan(seg.armorX);
+  });
+
+  it('lines the shield up as the RIGHTMOST bar, past every segment', () => {
+    const lastSeg = solo.segments[solo.segments.length - 1];
+    expect(solo.shield.x).toBeGreaterThan(lastSeg.armorX);
+    expect(solo.shield.x + solo.shield.w).toBeCloseTo(solo.x + solo.w, 5);
+  });
+
+  it('hangs off the given edge, sharing the tile row\'s baseline', () => {
+    expect(solo.x).toBe(16);
+    expect(solo.bottom).toBe(790 - INTEGRITY_BARS.labelH);
+    expect(solo.top).toBe(solo.bottom - INTEGRITY_BARS.barH);
+    expect(solo.scale).toBe(1);
+  });
+
+  it('mirrors a right-hand panel so the block ends at its anchor edge', () => {
+    const right = integrityLayout(INTEGRITY_ORDER, {
+      anchorX: 1264, side: 'right', bottomY: 790, availW: 400,
+    });
+    expect(right.x + right.w).toBeCloseTo(1264, 5);
+    expect(right.segments[0].hpX).toBeLessThan(right.segments[0].armorX);
+  });
+
+  it('squeezes the WIDTHS (never the height) to fit a cramped co-op half', () => {
+    const tight = integrityLayout(INTEGRITY_ORDER, {
+      anchorX: 16, side: 'left', bottomY: 790, availW: 98,
+    });
+    expect(tight.w).toBeLessThanOrEqual(98);
+    expect(tight.barW).toBeLessThan(solo.barW);
+    expect(tight.barH).toBe(solo.barH);      // both players' bars stay the same length
+    expect(tight.scale).toBeGreaterThanOrEqual(INTEGRITY_BARS.minScale);
+  });
+
+  it('never collapses the bars to nothing, however little room there is', () => {
+    for (const availW of [0, 20, 60]) {
+      const l = integrityLayout(INTEGRITY_ORDER, { anchorX: 16, side: 'left', bottomY: 790, availW });
+      expect(l.barW).toBeGreaterThan(2);
+      expect(l.segments).toHaveLength(INTEGRITY_ORDER.length);
     }
   });
 });

@@ -46,6 +46,10 @@ function stub(extra = {}) {
     fillRect() { return o; },
     lineStyle() { return o; },
     strokeRect() { return o; },
+    beginPath() { return o; },
+    moveTo() { return o; },
+    lineTo() { return o; },
+    strokePath() { return o; },
     destroy() { o.destroyed = true; },
   };
   return o;
@@ -167,15 +171,29 @@ describe('HudScene panels — the mid-sortie join (START on gamepad 2)', () => {
 });
 
 describe('HudScene panels — per player readouts', () => {
+  // #448: the readout is BARS ONLY now — no numbers to compare — so "each panel reads its own
+  // mech" is pinned on the rectangles each panel's bar layer is actually asked to fill.
   it('reads each panel off its OWN mech, not player 1\'s', () => {
     const a = snap(0), b = snap(1);
     b.mech.applyDamage('rightArm', 40);
     const { scene } = fakeScene([a, b]);
     scene._syncPanels();
-    scene._updatePanel(scene.panels[0], a);
-    scene._updatePanel(scene.panels[1], b);
-    expect(scene.panels[0].partTexts.rightArm.text)
-      .not.toBe(scene.panels[1].partTexts.rightArm.text);
+    const fillsOf = (panel, s) => {
+      const seen = [];
+      panel.partBarsGfx.fillRect = (...r) => { seen.push(r); return panel.partBarsGfx; };
+      scene._updatePanel(panel, s);
+      return seen;
+    };
+    expect(fillsOf(scene.panels[0], a)).not.toEqual(fillsOf(scene.panels[1], b));
+  });
+
+  it('draws no numbers anywhere in the integrity block', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    const panel = scene.panels[0];
+    scene._updatePanel(panel, snap(0));
+    const labels = [panel.header, panel.shieldLabel, ...Object.values(panel.partLabels)];
+    for (const t of labels) expect(String(t.text ?? '')).not.toMatch(/\d/);
   });
 
   it('shows player 2 the PAD binds — they are gamepad-only by construction', () => {

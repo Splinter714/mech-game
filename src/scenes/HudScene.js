@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
+import { LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 import { POWERUPS, durationMs } from '../data/powerups.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
@@ -9,6 +9,7 @@ import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/perfReadout.js';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
+  integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER, HUD_COLUMN_W,
 } from '../data/hudLayout.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
@@ -59,7 +60,8 @@ function drawChevronGlow(g, x, y, angle, size, color, alpha) {
 
 // Screen-fixed overlay for the arena. The skills are shown with the SAME tile UI as the
 // garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
-// cooldown) read right on its button. A compact per-part integrity column sits top-left.
+// cooldown) read right on its button. The per-part integrity readout is a block of vertical
+// bars in the BOTTOM-LEFT corner beside them (#448), sharing their baseline.
 // Runs as its own scene so it lays out in logical screen space without fighting the arena's
 // follow camera; tiles are built once and updated in place each frame.
 // #238: `cooldown` matches skillTiles.js's TILE_UI.cooldown so the subtitle text and the
@@ -69,17 +71,86 @@ const C = {
   cooldown: '#5e7ce0',
 };
 
-// #246: per-location armor/hp split-bar geometry + colors. `ARMOR_BAR_COLOR` matches the mech-
-// ART armor-shell overlay's steel-blue (src/art/mechPrims.js `ARMOR_SHELL`, 0x9fe0ff) exactly,
-// so the HUD and the mech's own on-screen art read as the same "armor" visual language rather
-// than two unrelated color choices. `SHIELD_BAR_COLOR` matches the Shield powerup's own color
-// (data/powerups.js `POWERUPS.shield.color`) for the same reason.
-const PART_BAR_X = 26;          // px offset of the bar from the row's left edge (past the short label)
-const PART_BAR_W = 90;
-const PART_BAR_H = 7;
-const PART_ROW_H = 20;
-const ARMOR_BAR_COLOR = 0x9fe0ff;
+// #448: the integrity readout's palette. The three layers have to be told apart INSTANTLY and
+// with no numbers to fall back on, so each one is a different hue AND a different surface:
+//
+//  - ARMOR is the player mech's own dark plate tone (src/art/mechPrims.js `THEMES.player`:
+//    `face`/`deep`/`rimHi`, mirrored here as literals the same way the old bar mirrored the
+//    armor-shell colour), drawn with plate seams + a lit edge so it reads as armor, not a fill.
+//    #246's steel-blue armor bar is gone with it — a bright blue armor bar next to a bright blue
+//    SHIELD bar was most of what made the old readout hard to read at a glance.
+//  - SHIELD keeps the Shield powerup's own colour (data/powerups.js `POWERUPS.shield.color`),
+//    now with a soft glow so it reads as energy rather than paint.
+//  - HP is plain red, with a brighter cap on the top of the fill so its level is crisp.
+//
+// The dark track under every bar is always drawn full height: the EMPTY space is half the
+// readout (armor's empty space is what it can be patched back into, HP's is the damage you are
+// never getting back).
+const BAR_TRACK = 0x0e1218;
+const BAR_EDGE = 0x2a333f;
+const ARMOR_PLATE = 0x3a4250;
+const ARMOR_SEAM = 0x1b212b;
+const ARMOR_RIM = 0x566273;
+const ARMOR_SEAM_H = 7;         // px between plate seams down the armor bar
+const HP_COLOR = 0xd8433a;
+const HP_CAP = 0xff8f80;
 const SHIELD_BAR_COLOR = 0x5ec8e0;
+const SHIELD_CAP = 0xd6f6ff;
+// Plain Graphics has no blur filter, so a couple of oversized, low-alpha copies behind the fill
+// stand in for one — the same trick `drawChevronGlow` above uses for the wayfinding chevron.
+const SHIELD_GLOW = [{ pad: 4, a: 0.10 }, { pad: 2, a: 0.20 }];
+
+// One vertical bar's dark backing + frame, always full height (see the palette note above).
+function drawBarTrack(g, x, top, w, h) {
+  g.fillStyle(BAR_TRACK, 1);
+  g.fillRect(x, top, w, h);
+  g.lineStyle(1, BAR_EDGE, 0.9);
+  g.strokeRect(x, top, w, h);
+}
+
+// The ARMOR bar: fills bottom-up in the mech's own plate tone, banded by thin dark seams every
+// `ARMOR_SEAM_H` px and lit along its left and top edges — the same "dark face, rim on the lit
+// edge" language the mech art itself is drawn in, so a glance at the HUD and a glance at the
+// mech agree about what armor looks like. Seams are laid out from the BOTTOM of the bar so they
+// stay put as the fill drains instead of sliding around.
+function drawArmorBar(g, x, top, w, h, frac) {
+  const fh = Math.max(0, Math.min(1, frac)) * h;
+  if (fh <= 0) return;
+  const y = top + h - fh;
+  g.fillStyle(ARMOR_PLATE, 1);
+  g.fillRect(x, y, w, fh);
+  g.fillStyle(ARMOR_SEAM, 0.85);
+  for (let sy = top + h - ARMOR_SEAM_H; sy > y; sy -= ARMOR_SEAM_H) g.fillRect(x, sy, w, 1);
+  g.fillStyle(ARMOR_RIM, 0.9);
+  g.fillRect(x, y, Math.min(1.5, w), fh);
+  g.fillRect(x, y, w, 1.5);
+}
+
+// The HP bar: flat red, with a brighter cap so the top of the fill (the actual reading) is crisp
+// against the dark track.
+function drawHpBar(g, x, top, w, h, frac) {
+  const fh = Math.max(0, Math.min(1, frac)) * h;
+  if (fh <= 0) return;
+  const y = top + h - fh;
+  g.fillStyle(HP_COLOR, 1);
+  g.fillRect(x, y, w, fh);
+  g.fillStyle(HP_CAP, 0.9);
+  g.fillRect(x, y, w, 1.5);
+}
+
+// The SHIELD bar: the shield colour with a slight glow bleeding past its edges.
+function drawShieldBar(g, x, bottom, w, fh) {
+  if (fh <= 0) return;
+  const y = bottom - fh;
+  for (const { pad, a } of SHIELD_GLOW) {
+    g.fillStyle(SHIELD_BAR_COLOR, a);
+    g.fillRect(x - pad, y - pad, w + pad * 2, fh + pad * 2);
+  }
+  g.fillStyle(SHIELD_BAR_COLOR, 1);
+  g.fillRect(x, y, w, fh);
+  g.fillStyle(SHIELD_CAP, 0.95);
+  g.fillRect(x, y, w, 1.5);
+}
 
 // #116/#383: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is
 // a light steel that stands off the near-opaque dark backing; the player rides a brightened accent,
@@ -217,8 +288,9 @@ export default class HudScene extends Phaser.Scene {
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
     // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
-    // toolbar (its top edge + a little breathing room); top excludes the hints/objective text
-    // block (INTEGRITY starts at y=112, so keep clear of that).
+    // toolbar (its top edge + a little breathing room — #448's integrity block shares that
+    // baseline and its bars are shorter than the tiles are tall, so the same margin clears
+    // them); top excludes the hints/objective text block.
     // #366: `_tileTop` is published by the panel build (the tile row's own top edge), and the
     // left/right insets come from the layout — a second, right-hand column has to be cleared too.
     const tileTop = this._tileTop;
@@ -351,9 +423,14 @@ export default class HudScene extends Phaser.Scene {
     // so a co-op panel rebuild no longer moves it — nothing to recompute here.
   }
 
-  // Build one player's set of objects at the layout's coordinates. Creation ORDER mirrors the
-  // pre-#366 code exactly (header, bars layer, per-row labels + numbers, shield, tiles) so
-  // a solo HUD is the same objects in the same draw order at the same positions as before.
+  // Build one player's set of objects at the layout's coordinates.
+  //
+  // #448: the integrity readout is now a block of VERTICAL bars in this panel's bottom corner,
+  // sharing the skill-tile row's baseline, instead of a top-left column of horizontal bars with
+  // numbers beside them. Its geometry all comes from `integrityLayout` (data/hudLayout.js) — the
+  // scene paints, it doesn't decide — so #452 can reframe/reposition the block from those
+  // constants alone. Only the labels/header are display objects; every bar is drawn into the one
+  // Graphics layer each frame.
   _makePanel(spec, count, snapshot) {
     const x = spec.columnX;
     const color = snapshot?.color ?? playerColor(spec.index);
@@ -363,49 +440,49 @@ export default class HudScene extends Phaser.Scene {
     const identify = showsPlayerColor(count);
     const panel = {
       index: spec.index, spec, columnX: x, color,
-      partTexts: {}, partRowY: {}, skillRefs: {}, extras: [],
+      partLabels: {}, skillRefs: {}, extras: [],
     };
 
-    panel.header = this.add.text(x, 112, panelLabel(spec.index, count), {
+    // The tile row is laid out FIRST (it's pure geometry — the tiles themselves are built at the
+    // bottom of this method, keeping the draw order) because the integrity block has to know how
+    // much room is left between its edge of the screen and the tiles beside it.
+    const tiles = tileRow(spec.tilesX, spec.tilesW, { bottom: this.H - 10, maxSize: 92 });
+    const right = spec.side === 'right';
+    const last = tiles[tiles.length - 1];
+    const anchorX = right ? x + HUD_COLUMN_W : x;
+    const availW = right
+      ? anchorX - ((last ? last.x + last.w : 0) + INTEGRITY_BARS.tileClear)
+      : (tiles.length ? tiles[0].x : this.W) - INTEGRITY_BARS.tileClear - anchorX;
+    const bars = integrityLayout(INTEGRITY_ORDER, {
+      anchorX, side: spec.side, bottomY: this.H - 10, availW,
+    });
+    panel.bars = bars;
+
+    panel.header = this.add.text(bars.x, bars.headerY, panelLabel(spec.index, count), {
       fontFamily: 'monospace', fontSize: '12px', color: identify ? colStr : C.dim,
     });
     panel.partBarsGfx = this.add.graphics();
-    let y = 130;
-    for (const loc of LOCATIONS) {
-      panel.partRowY[loc] = y;
-      panel.extras.push(this.add.text(x, y, LOCATION_INFO[loc].short.padEnd(2), {
-        fontFamily: 'monospace', fontSize: '11px', color: C.dim,
-      }).setOrigin(0, 0.15));
-      panel.partTexts[loc] = this.add.text(x + PART_BAR_X + PART_BAR_W + 8, y, '', {
-        fontFamily: 'monospace', fontSize: '11px', color: C.text,
-      }).setOrigin(0, 0.15);
-      y += PART_ROW_H;
+    // Two-letter location label centred under each segment — which part, not how much of it: the
+    // bar fill is the entire quantity readout (#448: no numbers anywhere).
+    for (const seg of bars.segments) {
+      panel.partLabels[seg.loc] = this.add.text(seg.cx, bars.labelY, LOCATION_INFO[seg.loc].short, {
+        fontFamily: 'monospace', fontSize: '10px', color: C.dim,
+      }).setOrigin(0.5, 0);
     }
+    // ...and one for the rightmost bar, which is the whole mech's shield rather than a segment.
+    panel.shieldLabel = this.add.text(bars.shield.x + bars.shield.w / 2, bars.labelY, 'SH', {
+      fontFamily: 'monospace', fontSize: '10px', color: C.accent,
+    }).setOrigin(0.5, 0).setVisible(false);
 
-    panel.shieldRowY = y + 4;
-    panel.shieldLabel = this.add.text(x, panel.shieldRowY, 'SHIELD', {
-      fontFamily: 'monospace', fontSize: '11px', color: C.accent,
-    }).setVisible(false);
-    panel.shieldBarTrack = this.add.rectangle(
-      x + PART_BAR_X, panel.shieldRowY + 6, PART_BAR_W, PART_BAR_H, 0x0e1218,
-    ).setOrigin(0, 0.5).setStrokeStyle(1, 0x2a333f).setVisible(false);
-    panel.shieldBarFill = this.add.rectangle(
-      x + PART_BAR_X, panel.shieldRowY + 6, PART_BAR_W, PART_BAR_H, SHIELD_BAR_COLOR,
-    ).setOrigin(0, 0.5).setVisible(false);
-    panel.shieldText = this.add.text(x + PART_BAR_X + PART_BAR_W + 8, panel.shieldRowY, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: C.text,
-    }).setOrigin(0, 0.15).setVisible(false);
-
-    // A downed player must read as DOWN — WAITING/RESPAWN, not as a stale or zeroed column. The
+    // A downed player must read as DOWN — WAITING/RESPAWN, not as a stale or zeroed block. The
     // bars themselves keep showing the wreck truthfully; this line says why nothing is happening
     // and how long it has left (data/hudLayout.js `panelStatusText`, off data/respawn.js's clock).
-    panel.statusText = this.add.text(x, panel.shieldRowY + 20, '', {
+    panel.statusText = this.add.text(bars.x, bars.statusY, '', {
       fontFamily: 'monospace', fontSize: '11px', color: C.bad,
     }).setVisible(false);
 
     // Skill tiles for THIS player's own mech, in this panel's half of the bottom edge.
     panel.skillBar = this.add.container(0, 0);
-    const tiles = tileRow(spec.tilesX, spec.tilesW, { bottom: this.H - 10, maxSize: 92 });
     for (const r of tiles) {
       const id = snapshot?.mech?.mounts?.[r.loc]?.[0] ?? null;
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
@@ -416,9 +493,8 @@ export default class HudScene extends Phaser.Scene {
 
   _destroyPanel(panel) {
     const objs = [
-      panel.header, panel.partBarsGfx, panel.shieldLabel, panel.shieldBarTrack,
-      panel.shieldBarFill, panel.shieldText, panel.statusText, panel.skillBar,
-      ...Object.values(panel.partTexts), ...panel.extras,
+      panel.header, panel.partBarsGfx, panel.shieldLabel, panel.statusText, panel.skillBar,
+      ...Object.values(panel.partLabels), ...panel.extras,
     ];
     for (const o of objs) o?.destroy();
   }
@@ -781,85 +857,64 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
-  // #246: per-location armor/hp split bar — TWO adjacent segments in one bar frame, armor
-  // first (left) then hp (right), each segment's own WIDTH proportional to that layer's share
-  // of the location's combined max (maxArmor + maxHp), each segment's FILL proportional to its
-  // own current/max. So a location with a bigger armor rating than hp rating (or vice versa)
-  // reads as a wider armor (or hp) segment, and within each segment the fill drains as that
-  // specific layer takes damage — armor drains first in play (it absorbs before hp), which
-  // reads here as the LEFT segment emptying before the right one starts to. This is the
-  // supporting HUD readout; the PRIMARY at-a-glance armor read is the mech-art armor-shell
-  // overlay on the mech itself (see mechArt.js).
+  // #448: the per-location integrity bars — one SEGMENT per damage-tracked location (the four
+  // mount locations, which are also the kill condition), each segment a PAIR of vertical bars:
+  // HP on the left, armor on the right. Armor absorbs before HP does, so in play the right-hand
+  // bar of a pair is the one that drains first and the left one only starts moving once that
+  // part is stripped. Both bars always show their empty space — armor's because a repair can
+  // fill it back in, HP's because the damage you can never get back is exactly what has to stay
+  // legible. No numbers, by design: the fill IS the readout.
+  //
+  // A destroyed part gets a red cross over its pair, which is the numberless replacement for the
+  // old 'DESTROYED' text (its bars are already empty; the cross says "and it is gone").
   _updatePartBars(panel, mech) {
     const g = panel.partBarsGfx;
+    const L = panel.bars;
     g.clear();
-    for (const loc of LOCATIONS) {
-      const p = mech.parts[loc];
-      const y = panel.partRowY[loc];
-      const bx = panel.columnX + PART_BAR_X;
-      const totalMax = p.maxArmor + p.maxHp;
-      const armorShare = totalMax > 0 ? p.maxArmor / totalMax : 0;
-      const armorW = PART_BAR_W * armorShare;
-      const hpW = PART_BAR_W - armorW;
-
-      // Track (dim full-width backing) so an empty segment still reads as "there" but spent.
-      g.fillStyle(0x0e1218, 1);
-      g.fillRect(bx, y - PART_BAR_H / 2, PART_BAR_W, PART_BAR_H);
-
-      // Armor segment (left): fills leftover-to-right within its own share of the bar width.
-      if (armorW > 0) {
-        const armorFrac = p.maxArmor > 0 ? p.armor / p.maxArmor : 0;
-        g.fillStyle(ARMOR_BAR_COLOR, 1);
-        g.fillRect(bx, y - PART_BAR_H / 2, Math.max(0, armorW * armorFrac), PART_BAR_H);
+    for (const seg of L.segments) {
+      const p = mech.parts[seg.loc];
+      if (!p) continue;
+      const destroyed = mech.isPartDestroyed(seg.loc);
+      drawBarTrack(g, seg.hpX, L.top, L.barW, L.barH);
+      drawBarTrack(g, seg.armorX, L.top, L.barW, L.barH);
+      drawHpBar(g, seg.hpX, L.top, L.barW, L.barH, p.maxHp > 0 ? p.hp / p.maxHp : 0);
+      drawArmorBar(g, seg.armorX, L.top, L.barW, L.barH, p.maxArmor > 0 ? p.armor / p.maxArmor : 0);
+      if (destroyed) {
+        g.lineStyle(1.5, HP_COLOR, 0.9);
+        g.beginPath();
+        g.moveTo(seg.x, L.top);
+        g.lineTo(seg.x + seg.w, L.top + L.barH);
+        g.moveTo(seg.x + seg.w, L.top);
+        g.lineTo(seg.x, L.top + L.barH);
+        g.strokePath();
       }
-      // HP segment (right): same idea, its own share/fraction, colored by remaining health.
-      if (hpW > 0) {
-        const hpFrac = p.maxHp > 0 ? p.hp / p.maxHp : 0;
-        const hpCol = mech.isPartDestroyed(loc) ? 0xe2533a : hpFrac > 0.5 ? 0x7bd17b : 0xefc14a;
-        g.fillStyle(hpCol, 1);
-        g.fillRect(bx + armorW, y - PART_BAR_H / 2, Math.max(0, hpW * hpFrac), PART_BAR_H);
-      }
-      // Thin divider between the two segments so they read as distinct, not one blended bar.
-      if (armorW > 0 && hpW > 0) {
-        g.fillStyle(0x0e1218, 1);
-        g.fillRect(bx + armorW - 0.5, y - PART_BAR_H / 2, 1, PART_BAR_H);
-      }
-      g.lineStyle(1, 0x2a333f, 0.9);
-      g.strokeRect(bx, y - PART_BAR_H / 2, PART_BAR_W, PART_BAR_H);
-
-      const destroyed = mech.isPartDestroyed(loc);
-      const col = destroyed ? C.bad : C.text;
-      panel.partTexts[loc]
-        .setText(destroyed ? 'DESTROYED' : `${Math.ceil(p.armor)}+${Math.ceil(p.hp)}/${p.maxArmor}+${p.maxHp}`)
-        .setColor(col);
+      panel.partLabels[seg.loc]?.setColor(destroyed ? C.bad : C.dim);
     }
   }
 
-  // #246: full-mech shield readout — a single bar (same visual language as the per-location
-  // bars above), hidden ENTIRELY (bar + label) when the mech has no native shield at all
-  // (`hasShield()` false — some enemy kinds and loadouts genuinely have none).
-  // #381: the bar physically GROWS with a live TEMPORARY pool. The full base shield is `PART_BAR_W`
-  // wide; a temp pool on top widens BOTH the track and the fill in proportion to the total capacity
-  // (base 100 + 150 temp ⇒ a 2.5x-wide bar), and the readout number follows the track's right edge.
-  // As the temp pool is spent the bar shrinks back to base — the "truly grows, then you lose it"
-  // read. With no temp pool the maths reduces exactly to the old fixed-width bar.
+  // #448: full-mech shield readout — the block's RIGHTMOST vertical bar, lining up alongside the
+  // per-segment pairs, because the shield is one pool for the whole mech rather than per part.
+  // Hidden entirely (bar + label) when the mech has no native shield at all (`hasShield()` false
+  // — some enemy kinds and loadouts genuinely have none); its slot in the layout is reserved
+  // either way so a shieldless build doesn't shift the other bars sideways.
+  // #381: the bar physically GROWS with a live TEMPORARY pool — vertically now, so the track
+  // climbs ABOVE the segment bars' top while the temp pool is up (base 100 + 150 temp ⇒ a bar
+  // 2.5x tall, capped by `shield.maxGrowth`) and shrinks back to their height as it is spent.
+  // That keeps #381's "truly grows, then you lose it" read; with no temp pool the maths reduces
+  // exactly to a bar the same height as the segment bars beside it.
   _updateShieldBar(panel, mech) {
     const has = mech.hasShield?.() ?? false;
     panel.shieldLabel.setVisible(has);
-    panel.shieldBarTrack.setVisible(has);
-    panel.shieldBarFill.setVisible(has);
-    panel.shieldText.setVisible(has);
     if (!has) return;
+    const L = panel.bars, g = panel.partBarsGfx, sh = L.shield;
     const baseMax = mech.shield.max || 0;
     const totalHp = mech.shieldTotalHp?.() ?? mech.shield.hp;
     const totalMax = mech.shieldTotalMax?.() ?? mech.shield.max;
-    const growth = baseMax > 0 ? totalMax / baseMax : 1;     // >= 1 while a temp pool is live
-    const trackW = PART_BAR_W * growth;
-    const fillW = baseMax > 0 ? Phaser.Math.Clamp(PART_BAR_W * (totalHp / baseMax), 1, trackW) : 1;
-    panel.shieldBarTrack.setSize(trackW, PART_BAR_H);
-    panel.shieldBarFill.setSize(fillW, PART_BAR_H);
-    panel.shieldText.setX(panel.shieldBarTrack.x + trackW + 8);
-    panel.shieldText.setText(`${Math.ceil(totalHp)}/${Math.ceil(totalMax)}`);
+    const growth = baseMax > 0 ? Phaser.Math.Clamp(totalMax / baseMax, 1, sh.maxGrowth) : 1;
+    const trackH = L.barH * growth;
+    drawBarTrack(g, sh.x, L.bottom - trackH, sh.w, trackH);
+    const fillH = baseMax > 0 ? Phaser.Math.Clamp(L.barH * (totalHp / baseMax), 0, trackH) : 0;
+    drawShieldBar(g, sh.x, L.bottom, sh.w, fillH);
   }
 
   // #60: draw one radial "draining" ring per active timed buff. Each is a rounded circular
