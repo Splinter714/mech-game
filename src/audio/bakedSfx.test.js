@@ -328,7 +328,7 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
     expect(getBaked('pulseLaser', 'impact')).toBeNull();      // #176: impact stays procedural — bake is fire-only
     expect(getBaked('deathExplosionMassive', 'impact')).toBeNull(); // #180: impact stays procedural — bake is fire-only
     expect(getBaked('deploy', 'showResult')).toBeNull();      // #192: other UI stages stay procedural — bake is deploy/play + equip/play only
-    expect(getBaked('powerupPickupShield', 'play')).toBeNull(); // #198/#199: sibling powerup ids (armorPatch/shield/etc.) stay procedural
+    expect(getBaked('powerupPickupBarrage', 'play')).toBeNull(); // #480/#481 baked shield + armorPatch; barrage/infiniteFire siblings stay procedural
   });
 
   it('loadAllBaked is a safe no-op with no context set yet (nothing decodes, never throws)', async () => {

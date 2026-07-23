@@ -86,6 +86,14 @@ import powerupPickupOverdrivePlay from '../assets/sfx/powerupPickupOverdrive-pla
 // 0→2500ms window IS the whole 2500ms length). No fade, no pitch/filter/reverb, unity gain, per
 // the tuner export.
 import powerupPickupShieldPlay from '../assets/sfx/powerupPickupShield-play-zapSelect.m4a';
+// #481: the UI domain's `powerupPickupArmorPatch` cue (#196 split of the powerup-pickup sfx) —
+// the FIRST baked entry for this cue, replacing its procedural sound. "DSGNSynth_BUFF-Mecha
+// Stats_HY_PC-002.wav" from the same Helton Yan pack (STEREO 96kHz 24-bit, 2.678s). Converted with
+// macOS `afconvert` to 48kHz STEREO AAC/.m4a (~192kbps, ~20KB) — kept stereo like the other
+// UI-domain stereo bakes. Played back as the full file (startMs 0, no trim — the export's
+// 0→2678ms window IS the whole 2678ms length). No fade, no pitch/filter/reverb, unity gain, per
+// the tuner export.
+import powerupPickupArmorPatchPlay from '../assets/sfx/powerupPickupArmorPatch-play-mechaStats.m4a';
 // #206: the UI domain's `menuNav` cue — "UIClick_INTERFACE-Strong Click 1_HY_PC-001.wav" from
 // the same Helton Yan pack (STEREO 96kHz 24-bit, 2.5s). Converted with macOS `afconvert` to
 // 44.1kHz STEREO AAC/.m4a (~192kbps target) — kept stereo like the other UI-domain stereo bakes
@@ -274,6 +282,15 @@ export const BAKED_SFX = {
   // unity gain — the cleanest passthrough, per the tuner export.
   'powerupPickupShield::play': {
     asset: powerupPickupShieldPlay,
+    startMs: 0,
+  },
+  // #481: Helton Yan's Pixel Combat pack — "DSGNSynth_BUFF-Mecha Stats_HY_PC-002.wav" (stereo).
+  // The FULL file (startMs 0, trimMs omitted → play to the end — the tuner export's 0→2678ms
+  // window IS the whole 2678ms length) as the UI domain's powerupPickupArmorPatch cue. The FIRST
+  // baked entry for this cue, replacing its procedural sound. No trim, no fade, no processing,
+  // unity gain — the cleanest passthrough, per the tuner export.
+  'powerupPickupArmorPatch::play': {
+    asset: powerupPickupArmorPatchPlay,
     startMs: 0,
   },
   // Helton Yan's Pixel Combat pack — "UIClick_INTERFACE-Strong Click 1_HY_PC-001.wav" (stereo).
