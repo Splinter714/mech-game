@@ -20,18 +20,18 @@ describe('#479 leg-lift gait wiring', () => {
     expect(locomotion).toMatch(/Audio\.footstep\(beat\)/);
   });
 
-  it('#485 fires Audio.legLift on a SWUNG beat offset shortly after each plant', () => {
-    // The lift beat spans [GAIT_SWING_OFFSET, GAIT_SWING_OFFSET + 0.5) — its two transitions land
-    // just after the phase 0/0.5 plants (~0.16/~0.66), so the rhythm reads plant-lift…space rather
-    // than the old even 0.25/0.75 spacing. The offset is a named, tunable constant.
+  it('#485 fires Audio.legLift on a SWUNG beat offset shortly before each plant', () => {
+    // The lift beat spans [0.5 − GAIT_SWING_OFFSET, 1.0 − GAIT_SWING_OFFSET) — its two transitions
+    // land just before the phase 0.5/1.0 plants (~0.34/~0.84), so the rhythm reads lift-plant…space
+    // rather than the old even 0.25/0.75 spacing. The offset is a named, tunable constant.
     expect(locomotion).toMatch(/const GAIT_SWING_OFFSET = 0\.16;/);
-    expect(locomotion).toMatch(/liftBeat = \(phase >= GAIT_SWING_OFFSET && phase < GAIT_SWING_OFFSET \+ 0\.5\) \? 1 : 0/);
+    expect(locomotion).toMatch(/liftBeat = \(phase >= 0\.5 - GAIT_SWING_OFFSET && phase < 1\.0 - GAIT_SWING_OFFSET\) \? 1 : 0/);
     expect(locomotion).toMatch(/Audio\.legLift\(liftBeat\)/);
   });
 
   it('arms the lift beat without firing on the first frame (no lift cue at the phase-0 start)', () => {
     // Unlike the footfall (which fires immediately when _gaitBeat is undefined), the lift guards on
-    // a defined previous beat, so the restart frame only arms it — the first lift comes at 0.25.
+    // a defined previous beat, so the restart frame only arms it — the first lift comes at ~0.34.
     expect(locomotion).toMatch(/p\._gaitLiftBeat !== undefined && liftBeat !== p\._gaitLiftBeat/);
   });
 

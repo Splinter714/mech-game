@@ -35,10 +35,11 @@ const CYCLE_BEATS = 4;
 
 // #485: SWUNG gait rhythm. The foot-PLANT stays on the footfall beats (phase 0 / 0.5). The
 // leg-LIFT used to fire a quarter-cycle later, at the even 0.25 / 0.75 peak-swing crossings, so all
-// four cues were evenly spaced. Pulling the lift EARLIER — to phase GAIT_SWING_OFFSET / (0.5 +
-// offset) — makes it land shortly AFTER each plant, so the groove reads plant-lift…space…
-// plant-lift…space instead of even ticks. Tradeoff: the lift SOUND now leads the visible leg
-// pickup (strideDir peak at 0.25/0.75, #479/#455) — a deliberate decouple for feel. Tune here.
+// four cues were evenly spaced. #485 SWINGS the lift so it LEADS each plant instead — to phase
+// (0.5 − offset) / (1.0 − offset), i.e. a swing-offset BEFORE each plant, so the groove reads
+// lift-plant…space…lift-plant…space instead of even ticks. Tradeoff: the lift SOUND now leads the
+// visible leg pickup (strideDir peak at 0.25/0.75, #479/#455) — a deliberate decouple for feel.
+// Tune here.
 const GAIT_SWING_OFFSET = 0.16;
 
 // Hip wobble (#435): a tiny gait-locked YAW on the hull sprite, on top of the mech's real facing.
@@ -381,14 +382,14 @@ export const LocomotionMixin = {
 
       // #479/#485: leg-MOVEMENT (servo/hydraulic limb lift). #479 fired it on the OPPOSITE stride
       // phase from the plant (the even 0.25/0.75 peak-swing crossings, where `strideDir` = ±1 and the
-      // body bob peaks — the visible leg pickup). #485 SWINGS it earlier, to the window
-      // [GAIT_SWING_OFFSET, GAIT_SWING_OFFSET + 0.5), so its two crossings land shortly AFTER each
-      // plant (~0.16 / ~0.66) — the plant-lift…space groove. The lift SOUND therefore now LEADS the
-      // visual leg pickup rather than matching it; accepted for feel. Same beat-change detection as
-      // the footfall, but ARM-then-fire (no fire on the first frame): unlike the plant, we do NOT
-      // want a lift cue at the phase-0 start alongside the first footfall — the first lift should
-      // come a swing-offset later, at the first real GAIT_SWING_OFFSET crossing.
-      const liftBeat = (phase >= GAIT_SWING_OFFSET && phase < GAIT_SWING_OFFSET + 0.5) ? 1 : 0;
+      // body bob peaks — the visible leg pickup). #485 SWINGS it to LEAD each plant, to the window
+      // [0.5 − GAIT_SWING_OFFSET, 1.0 − GAIT_SWING_OFFSET), so its two crossings land shortly BEFORE
+      // each plant (~0.34 / ~0.84) — the lift-plant…space groove. The lift SOUND therefore now LEADS
+      // the visual leg pickup rather than matching it; accepted for feel. Same beat-change detection
+      // as the footfall, but ARM-then-fire (no fire on the first frame): unlike the plant, we do NOT
+      // want a lift cue firing on the restart frame — the window is 0 at phase 0, so the first lift
+      // comes at the first real (0.5 − GAIT_SWING_OFFSET) crossing.
+      const liftBeat = (phase >= 0.5 - GAIT_SWING_OFFSET && phase < 1.0 - GAIT_SWING_OFFSET) ? 1 : 0;
       if (p._gaitLiftBeat !== undefined && liftBeat !== p._gaitLiftBeat) {
         Audio.legLift(liftBeat);
       }
