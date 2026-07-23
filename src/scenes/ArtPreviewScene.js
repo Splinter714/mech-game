@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
-import { TERRAIN, isBaseCategory } from '../data/terrain.js';
+import { TERRAIN, isBaseCategory, RUBBLE } from '../data/terrain.js';
 import { BIOMES, BIOME_IDS } from '../data/biomes.js';
 import {
   COVER_CANOPY_IDS, canopyTexKey, DOCK_DOOR_TEX, DOCK_DOOR_SLIDE, terrainFillColor,
@@ -457,9 +457,29 @@ export default class ArtPreviewScene extends Phaser.Scene {
 
   // ── HEXES ─────────────────────────────────────────────────────────────────────────────
   // Every hex tile the world can stamp: one row per biome (its six terrain ROLES in the same
-  // order biomes.js declares them), the fabricated base hexes, the transparent canopy overlays
-  // composited over their own ground tile (they read as nothing on their own), the dock doors
-  // over a dock bay in both states, and finally every remaining TERRAIN id so nothing hides.
+  // order biomes.js declares them, each destructible role trailed by its own cleared/rubble
+  // derivatives), the fabricated base hexes, the transparent canopy overlays composited over
+  // their own ground tile (they read as nothing on their own), the dock doors over a dock bay
+  // in both states, and finally every remaining TERRAIN id so nothing hides.
+  //
+  // #461 playtest follow-up: the biome-specific `clearedId`/`rubbleId` derivatives (forest →
+  // forestCleared/forestRubble, scrub → scrubCleared/scrubRubble, …) used to fall through to
+  // the catch-all row, which is exactly the wrong context for judging them — #227/#405 gave
+  // each one its OWN look (charred plant debris vs. scattered dead scrub vs. broken masonry)
+  // precisely so it reads as that biome's wreckage. They're now shown inline after the terrain
+  // they come from, so the intact → cleared → rubble lifecycle reads in place. Derived from the
+  // TERRAIN fields, never a hand-written map, so a new destructible flows through by itself.
+  // A derivative reachable from two biomes appears in both rows — duplicated in context beats
+  // orphaned. The generic biome-INDEPENDENT `rubble` is deliberately excluded (all the base
+  // infra collapses to it); it stays in BASE + STRUCTURE.
+
+  // The cleared/rubble tiles a destructible terrain id collapses into, in lifecycle order.
+  _derivativesOf(id) {
+    const t = TERRAIN[id];
+    if (!t) return [];
+    return [['cleared', t.clearedId], ['rubble', t.rubbleId]]
+      .filter(([, did]) => did && did !== RUBBLE && TERRAIN[did] && this.textures.exists(`hex_${did}`));
+  }
 
   _buildHexes() {
     const shown = new Set();
@@ -474,8 +494,14 @@ export default class ArtPreviewScene extends Phaser.Scene {
         ['groundA', B.groundA], ['groundB', B.groundB], ['channel', B.channel],
         ['deep', B.deep], ['hazard', B.hazard], ['cover', B.cover],
       ].filter(([, id]) => id && this.textures.exists(`hex_${id}`));
-      this._group(`${B.name.toUpperCase()}  (${bid})`,
-        roles.map(([role, id]) => tile(id, `${id}\n${role}`)));
+      const cells = [];
+      for (const [role, id] of roles) {
+        cells.push(tile(id, `${id}\n${role}`));
+        for (const [kind, did] of this._derivativesOf(id)) {
+          cells.push(tile(did, `${did}\n↳ ${role} ${kind}`));
+        }
+      }
+      this._group(`${B.name.toUpperCase()}  (${bid})`, cells);
     }
 
     // The fabricated base/objective hexes + the two structural tiles that aren't biome roles.
@@ -502,9 +528,12 @@ export default class ArtPreviewScene extends Phaser.Scene {
       ]);
     }
 
+    // Safety net, not a bucket: anything no row above claimed still shows up here. With every
+    // cover derivative now homed in its biome row this is EMPTY today (`_group` no-ops on an
+    // empty list, so no stray header) — it exists so a future terrain id can never hide.
     const rest = Object.keys(TERRAIN)
       .filter((id) => !shown.has(id) && this.textures.exists(`hex_${id}`));
-    this._group('EVERY OTHER TERRAIN', rest.map((id) => tile(id)));
+    this._group('EVERY OTHER TERRAIN (unclaimed)', rest.map((id) => tile(id)));
   }
 
   // ── ENEMIES ───────────────────────────────────────────────────────────────────────────
