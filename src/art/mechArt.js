@@ -313,11 +313,10 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
   glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
 
-  // Head + cockpit optic + antenna. #128: neither is damage-tracked any more — always
+  // Head + cockpit optic. #128: neither is damage-tracked any more — always
   // draws intact, never a stump/charred cockpit.
   const hd = lay.head;
   plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
-  rectC(sg, hd.x + hd.w * 0.42, hd.y - hd.h * 0.9, Math.max(0.7, 0.5 * s), hd.h * 0.7, T.rimHi); // antenna
   // #400 follow-up: the head cockpit optic no longer glows purple on PLAYER mechs — Jackson wanted
   // no purple head light. Players (statusSpot supplied) get no optic glow; enemies & garage preview
   // keep the fixed reactor-purple optic.
