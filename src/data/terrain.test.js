@@ -6,7 +6,7 @@ import {
   isWaterTerrain, isMissionObjective,
   SLOW_MOVEMENT_FACTOR, movementTier, coverTier, isBaseCategory,
   coverBlocksForRay, NATURAL_TERRAIN_DESTRUCTIBLE,
-  softCoverStopsShot, softCoverHexBlockChance,
+  clearedSoftCoverFor, softCoverStopsShot, softCoverHexBlockChance,
   SOFT_COVER_HEX_BLOCK_CHANCE, SOFT_COVER_OWN_HEX_BLOCK_CHANCE,
 } from './terrain.js';
 
@@ -228,8 +228,9 @@ describe('#351 natural terrain is permanent scenery — indestructible + untarge
     expect(TERRAIN.scrub.hp).toBe(30);
     expect(TERRAIN.drift.hp).toBe(30);
     expect(TERRAIN.fumarole.hp).toBe(30);
-    // ...and each still declares the rubble it WOULD collapse into.
-    expect(rubbleFor('forest')).toBe('forestRubble');
+    // #464: the per-biome `*Rubble` tiles those entries used to name are GONE — unreachable art
+    // while the flag is off. A revert falls back to the generic masonry `RUBBLE` instead.
+    expect(rubbleFor('forest')).toBe(RUBBLE);
   });
 });
 
@@ -270,18 +271,19 @@ describe('#72 soft cover (forest/scrub/drift/wreck/fumarole) — own-hex transpa
       const rub = rubbleFor(id);
       expect(isPassable(rub)).toBe(true);
       expect(blocksLOS(rub)).toBe(false);
-      expect(getTerrain(rub).tex).not.toBe(getTerrain(id).tex);   // the hex visibly changes
     }
   });
 
-  it('cover terrain flattens to its own biome rubble (data-driven)', () => {
-    // #227: each cover destructible has its OWN rubble id, distinct from its biome's hard
-    // base-infra (outpost) rubble.
-    expect(rubbleFor('forest')).toBe('forestRubble');
-    expect(rubbleFor('scrub')).toBe('scrubRubble');
-    expect(rubbleFor('drift')).toBe('driftRubble');
-    expect(rubbleFor('wreck')).toBe('wreckRubble');
-    expect(rubbleFor('fumarole')).toBe('fumaroleRubble');
+  // #464 REPLACES the old "cover terrain flattens to its own biome rubble" test. The five bespoke
+  // `*Rubble` tiles are deleted (unreachable since #351 made natural terrain indestructible), so
+  // every soft-cover entry falls through `rubbleFor` to the generic masonry `RUBBLE`. What cover
+  // DOES have — and the only transition it can actually make in play — is its #405 cleared ground.
+  it('cover terrain no longer declares a bespoke rubble id; it declares a cleared ground id', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(TERRAIN[id].rubbleId, id).toBeUndefined();
+      expect(rubbleFor(id), id).toBe(RUBBLE);
+      expect(clearedSoftCoverFor(id), id).toBe(`${id}Cleared`);
+    }
   });
 
   // #374 UPDATED this test. It used to drive the own-hex exemption with smallUnitInvolved=true,
@@ -378,11 +380,13 @@ describe('isWaterTerrain (#151) — reads as actual water, not just slow terrain
 
   it('does NOT flag other slow-but-not-water terrain (dry riverbeds, sand, ash, rubble, debris)', () => {
     for (const id of [
-      'grass', 'grassB', 'forest', 'rubble', 'forestRubble', 'mud',
-      'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'scrubRubble', 'quicksand',
-      'snow', 'snowB', 'drift', 'driftRubble',
-      'pavement', 'pavementB', 'collapsed', 'wreck', 'wreckRubble', 'debris',
-      'ash', 'ashB', 'crust', 'lava', 'fumarole', 'fumaroleRubble', 'cinderField',
+      // #464: the five `*Rubble` soft-cover debris ids are gone; their cleared counterparts (which
+      // are what a soft-cover hex actually becomes) take their place in this negative list.
+      'grass', 'grassB', 'forest', 'rubble', 'forestCleared', 'mud',
+      'sand', 'sandB', 'dryRiver', 'mesa', 'scrub', 'scrubCleared', 'quicksand',
+      'snow', 'snowB', 'drift', 'driftCleared',
+      'pavement', 'pavementB', 'collapsed', 'wreck', 'wreckCleared', 'debris',
+      'ash', 'ashB', 'crust', 'lava', 'fumarole', 'fumaroleCleared', 'cinderField',
       undefined, 'nope',
     ]) {
       expect(isWaterTerrain(id), String(id)).toBe(false);
@@ -421,31 +425,48 @@ describe('rubbleFor — a destructible collapses into its biome rubble (#67)', (
   });
 });
 
-describe('#227 — destroyed soft cover leaves DIFFERENT rubble than the generic base-infra rubble, per biome', () => {
-  it('every biome\'s soft-destructible rubble id differs from the generic base-infra rubble id', () => {
-    for (const soft of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
-      const softRub = rubbleFor(soft);
-      const hardRub = RUBBLE;   // #275: every base-infra destructible collapses to this now
-      expect(softRub, `${soft} rubble`).not.toBe(hardRub);
-      // Both still land on ordinary passable, non-cover debris.
-      expect(isPassable(softRub)).toBe(true);
-      expect(blocksLOS(softRub)).toBe(false);
-      expect(isPassable(hardRub)).toBe(true);
-      expect(blocksLOS(hardRub)).toBe(false);
-      // And the two rubbles render with visibly different textures.
-      expect(getTerrain(softRub).tex).not.toBe(getTerrain(hardRub).tex);
+// #464 REPLACES #227's suite. #227 gave each biome's soft cover its own bespoke debris tile
+// (charred plant debris / dead brush / ice shards / burnt scraps / cinders) so a destroyed thicket
+// wouldn't read as broken masonry. #351 then made natural terrain permanent scenery, which took
+// soft cover out of `buildingHp`/`coverHp` entirely — so nothing could ever reach `rubbleFor` for
+// it and those five tiles became unrenderable. They're deleted; what remains is the guarantee that
+// the ids are GONE, not merely unused, so a future reader isn't misled into thinking they render.
+describe('#464 — the bespoke soft-cover rubble tiles are gone entirely', () => {
+  it('has no *Rubble terrain entry for any soft cover', () => {
+    for (const id of ['forestRubble', 'scrubRubble', 'driftRubble', 'wreckRubble', 'fumaroleRubble']) {
+      expect(TERRAIN[id], id).toBeUndefined();
     }
   });
 
-  it('names the 5 new soft-destructible rubble ids', () => {
-    expect(TERRAIN.forestRubble).toBeDefined();
-    expect(TERRAIN.scrubRubble).toBeDefined();
-    expect(TERRAIN.driftRubble).toBeDefined();
-    expect(TERRAIN.wreckRubble).toBeDefined();
-    expect(TERRAIN.fumaroleRubble).toBeDefined();
-    for (const id of ['forestRubble', 'scrubRubble', 'driftRubble', 'wreckRubble', 'fumaroleRubble']) {
-      expect(TERRAIN[id].passable).toBe(true);
-      expect(TERRAIN[id].blocksLOS).toBe(false);
+  it('every soft-cover hex now falls through to the generic passable, no-cover rubble', () => {
+    for (const soft of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(rubbleFor(soft), soft).toBe(RUBBLE);
+      expect(isPassable(RUBBLE)).toBe(true);
+      expect(blocksLOS(RUBBLE)).toBe(false);
+    }
+  });
+});
+
+// #464: the five soft-cover ids share their CLEARED twin's ground texture — the lumps have lived
+// in the separate #289 canopy overlay since then, so the intact tile was a near-duplicate of the
+// cleared one. Pinned because it breaks the once-safe `'hex_' + id` assumption: anything needing a
+// terrain's texture must read `.tex`, and anything needing its canopy must key off the ID.
+describe('#464 — intact soft cover shares its cleared twin\'s ground texture', () => {
+  it('each soft-cover entry points tex at its clearedId\'s texture', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      const cleared = TERRAIN[id].clearedId;
+      expect(cleared, id).toBe(`${id}Cleared`);
+      expect(TERRAIN[id].tex, id).toBe(TERRAIN[cleared].tex);
+      expect(TERRAIN[id].tex, id).not.toBe(`hex_${id}`);
+    }
+  });
+
+  it('leaves the cover CONTRACT untouched — only the ground raster is shared', () => {
+    for (const id of ['forest', 'scrub', 'drift', 'wreck', 'fumarole']) {
+      expect(isSoftCover(id), id).toBe(true);
+      expect(blocksLOS(id), id).toBe(true);
+      expect(isSoftCover(TERRAIN[id].clearedId), id).toBe(false);
+      expect(blocksLOS(TERRAIN[id].clearedId), id).toBe(false);
     }
   });
 });
@@ -562,6 +583,7 @@ describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one spe
     // every rubble, desert/snow/urban/volcanic hazards) — not a trivially small/empty set.
     // #275: 4 biome-specific rubble ids (sandRubble/snowRubble/cityRubble/ashRubble) were removed
     // along with their now-gone outposts, so the threshold here dropped accordingly.
+    // #464: the 5 soft-cover `*Rubble` ids went too (17 slow entries left, still comfortably over).
     expect(slowIds.length).toBeGreaterThan(15);
     for (const id of slowIds) {
       expect(TERRAIN[id].speedFactor, id).toBe(SLOW_MOVEMENT_FACTOR);

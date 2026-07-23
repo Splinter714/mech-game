@@ -122,12 +122,17 @@ describe('cover terrain ground/canopy texture split (#289)', () => {
     expect(isCoverCanopyId('hex_alertTower')).toBe(false);
   });
 
+  // #464: a cover id's GROUND texture is whatever its TERRAIN entry names — since the merge that's
+  // its cleared twin's tile (`hex_forestCleared`), not `hex_<id>`. The canopy key is still derived
+  // from the ID, which is exactly the split this asserts.
   it('buildHexTextures bakes both a ground texture and a canopy texture for every cover id', () => {
     const scene = fakeGraphicsScene();
     buildHexTextures(scene);
     for (const id of COVER_CANOPY_IDS) {
-      expect(scene._registered.has(`hex_${id}`)).toBe(true);
-      expect(scene._registered.has(canopyTexKey(id))).toBe(true);
+      expect(scene._registered.has(TERRAIN[id].tex), id).toBe(true);
+      expect(scene._registered.has(canopyTexKey(id)), id).toBe(true);
+      // The old per-id ground tile is genuinely gone, not just unreferenced.
+      expect(scene._registered.has(`hex_${id}`), id).toBe(false);
     }
     // Non-cover terrain (e.g. plain grass) still gets exactly its one ground texture — no
     // canopy key is ever baked for it.

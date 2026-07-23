@@ -75,18 +75,15 @@ const PAL = {
   river:    { fill: 0x2f6d86, edge: 0x24566a },
   // Deep water: darker, colder navy.
   deepWater:{ fill: 0x163a58, edge: 0x0f2c45 },
-  forest:   { fill: 0x223f20, edge: 0x18311a },
-  // #405: a CLEARED forest hex — the same base fill as `forest` (the ground the trees stood on),
-  // so its under-lump floor shows through; the canopy-removed floor + faint stubble is painted by
-  // the `hex_forestCleared` DETAIL painter below.
+  // #405/#464: the forest GROUND tile — the floor the trees stand on, worn by BOTH the standing
+  // `forest` hex and its cleared state (the trees themselves are the separate #289 canopy overlay,
+  // so the two only ever differed by a stubble speckle — see the SOFT-COVER GROUND TEXTURE note in
+  // data/terrain.js). `TERRAIN.forest.tex` points here too; there is no separate `hex_forest`.
   forestCleared: { fill: 0x223f20, edge: 0x18311a },
   // Rubble: the ashen debris a flattened destructible hex leaves behind.
   rubble:   RUBBLE_COLOR,
-  // #227: a destroyed forest hex — charred plant debris, distinct from the generic rubble.
-  forestRubble:{ fill: 0x241f16, edge: 0x1a1610 },
   // #278: grassland's own in-map hazard — a boggy mud patch. Warm dark brown, distinct from
-  // both forest's greens and forestRubble's char (rather than an earthy tone that could read as
-  // "just more forest floor").
+  // forest's greens (rather than an earthy tone that could read as "just more forest floor").
   mud:      { fill: 0x4a3a20, edge: 0x352918 },
   // #251 (playtest follow-up): base-infrastructure hex types (dock/alertTower/objective) render with ONE fixed neutral colour regardless of which biome they're stamped
   // into — a dock must look like a dock on grass, desert, ice, or ash alike. Reusing the CURRENT
@@ -137,11 +134,8 @@ const PAL = {
   sandB:     { fill: 0xc7a666, edge: 0xab8a4e },
   dryRiver:  { fill: 0x9c7f4a, edge: 0x836838 },
   mesa:      { fill: 0x8a5a3a, edge: 0x633c26 },
-  scrub:     { fill: 0xb1904f, edge: 0x8f7440 },
-  // #405: cleared scrub — same base fill as `scrub`; floor painted by `hex_scrubCleared` below.
+  // #405/#464: the scrub GROUND tile, worn by both the standing `scrub` hex and its cleared state.
   scrubCleared: { fill: 0xb1904f, edge: 0x8f7440 },
-  // #227: a destroyed scrub hex — scattered dead brush, distinct from the generic rubble.
-  scrubRubble:{ fill: 0x6b5738, edge: 0x513f28 },
   // #110: quicksand — a lesser desert hazard (mesa is now boundary-only).
   quicksand: { fill: 0x8a723e, edge: 0x6b5830 },
 
@@ -150,11 +144,8 @@ const PAL = {
   snowB:     { fill: 0xcfdeeb, edge: 0xb2c3d3 },
   slush:     { fill: 0x9db6c6, edge: 0x84a0b3 },
   ice:       { fill: 0x9fc4dd, edge: 0x76a3c4 },
-  drift:     { fill: 0xe4eef5, edge: 0xc3d3e0 },
-  // #405: cleared snowdrift — same base fill as `drift`; floor painted by `hex_driftCleared` below.
+  // #405/#464: the snowdrift GROUND tile, worn by both the standing `drift` hex and its cleared state.
   driftCleared: { fill: 0xe4eef5, edge: 0xc3d3e0 },
-  // #227: a destroyed snowdrift hex — shattered ice/snow chunks, distinct from the generic rubble.
-  driftRubble:{ fill: 0x7f93a3, edge: 0x647a8c },
   // #110: broken ice — a lesser arctic hazard (solid ice is now boundary-only).
   brokenIce: { fill: 0x7f9cb0, edge: 0x678698 },
 
@@ -162,11 +153,8 @@ const PAL = {
   pavement:  { fill: 0x4b4f56, edge: 0x3a3e44 },
   pavementB: { fill: 0x53575e, edge: 0x40444a },
   collapsed: { fill: 0x44484f, edge: 0x2f3238 },
-  wreck:     { fill: 0x4a4640, edge: 0x35322d },
-  // #405: cleared wreckage — same base fill as `wreck`; floor painted by `hex_wreckCleared` below.
+  // #405/#464: the wreckage GROUND tile, worn by both the standing `wreck` hex and its cleared state.
   wreckCleared: { fill: 0x4a4640, edge: 0x35322d },
-  // #227: a destroyed wreck hex — burnt debris scraps, distinct from the generic rubble.
-  wreckRubble:{ fill: 0x2c2924, edge: 0x201d19 },
   // #110: debris field — a lesser urban hazard (the collapsed heap is now boundary-only).
   debris:    { fill: 0x4a4640, edge: 0x35322d },
   // #278: urban's own channel — a flooded concrete drainage canal. Cool blue-grey (distinct from
@@ -179,11 +167,8 @@ const PAL = {
   ashB:      { fill: 0x322d28, edge: 0x201d19 },
   crust:     { fill: 0x3a2620, edge: 0x281713 },
   lava:      { fill: 0x7a2410, edge: 0x4a1608 },
-  fumarole:  { fill: 0x35302b, edge: 0x211d19 },
-  // #405: cleared fumarole — same base fill as `fumarole`; floor painted by `hex_fumaroleCleared` below.
+  // #405/#464: the fumarole GROUND tile, worn by both the standing `fumarole` hex and its cleared state.
   fumaroleCleared: { fill: 0x35302b, edge: 0x211d19 },
-  // #227: a destroyed fumarole hex — loose ash/cinder scatter, distinct from the generic rubble.
-  fumaroleRubble:{ fill: 0x2a2117, edge: 0x1c160f },
   // #110: cinder field — a lesser volcanic hazard, distinct from boundary-only 'lava'.
   cinderField: { fill: 0x4a2a18, edge: 0x341c0f },
 };
@@ -232,24 +217,15 @@ function isBoundaryTerrainId(key) {
   return BOUNDARY_ONLY_IDS.has(key.replace(/^hex_/, ''));
 }
 
-// #222 (3rd playtest pass): the #211 sunken-shadow ring is baked into the SAME texture every
-// boundary tile uses, so it gets painted independently by every single hex in the (up to
-// 35-hex-deep) boundary ring — not just the ones actually bordering playable ground. Since the
-// ring is one continuous field of identical terrain, that reproduces exactly the "obviously
-// tiled hex grid" look the overdraw/bleed fixes (above) were meant to erase: a dense lattice of
-// dark rings, one per tile, rather than a single drop-off only where the deep terrain truly
-// meets the playable corridor. The fix is per-INSTANCE, not per-texture: bake a second, flat
-// (non-sunken) texture for each boundary-only id, and have the placement code (world.js) choose
-// it for any boundary tile whose hex neighbours are ALL the same boundary terrain (a true
-// "interior" tile with no adjacent drop-off to depict) — only tiles that actually border
-// something else (playable ground, or the edge of the generated map) keep the sunken texture.
-// This needs neighbour-awareness at placement time, which a texture baked once per terrain id
-// can't have on its own — hence two textures per id and a per-hex choice, rather than trying to
-// make one texture context-sensitive.
-export function flatBoundaryTexKey(key) {
-  const id = key.replace(/^hex_/, '');
-  return `hex_${id}_flat`;
-}
+// #222's 3rd playtest pass baked a SECOND, flat (non-sunken) texture per boundary-only id
+// (`flatBoundaryTexKey`) so world.js could pick it for interior ring tiles. The 4th pass replaced
+// per-tile boundary art with a single flat camera-background fill (`terrainFillColor(B.deep)`,
+// world.js) and stopped placing tile Images in the ring at all — which stranded both that helper
+// and its whole texture-build pass with zero consumers. #464 deleted them, along with the five
+// DETAIL painters for `deepWater`/`mesa`/`ice`/`collapsed`/`lava`, which the `boundary` guard in
+// `buildHexTextures` had already been skipping. The ids' PAL and TERRAIN entries STAY: the ring's
+// `passable: false` is the invisible wall keeping the mech in the corridor, and the PAL fill is
+// what the camera background reads.
 export { isBoundaryTerrainId, BOUNDARY_ONLY_IDS };
 
 // #222 (2nd playtest pass): even with identical fill and no per-hex decoration, the boundary
@@ -487,59 +463,9 @@ function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
   }
 }
 
-// #227: a scatter of organic charred/dead debris (elongated ellipse "stalks" + a few faint
-// ember/highlight flecks) over a scorched base — the remains of a destroyed SOFT-cover hex
-// (forest/scrub/wreck). Deliberately distinct from `rubbleScatter`'s rectangular masonry
-// slabs, since soft cover (vegetation/wreckage) doesn't leave square debris.
-function organicDebrisScatter(sg, baseCol, bitCol, litCol, seed, count = 8) {
-  sg.fillStyle(baseCol, 0.78); sg.fillEllipse(C.cx, C.cy, 26, 19);
-  const rnd = seeded(seed);
-  for (let i = 0; i < count; i++) {
-    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 16;
-    const len = 4 + rnd() * 5, wid = 1.3 + rnd() * 1.4;
-    const ang = rnd() * Math.PI;
-    sg.fillStyle(bitCol, 0.9);
-    // A thin oriented "stalk" of debris, approximated with a rotated ellipse via two overlapped
-    // narrow ellipses (scaledGraphics has no ellipse-rotation arg).
-    sg.fillEllipse(C.cx + dx, C.cy + dy, len * Math.abs(Math.cos(ang)) + wid, len * Math.abs(Math.sin(ang)) + wid);
-  }
-  sg.fillStyle(litCol, 0.45);
-  for (let i = 0; i < 3; i++) {
-    const dx = (rnd() - 0.5) * 18, dy = (rnd() - 0.5) * 12;
-    sg.fillCircle(C.cx + dx, C.cy + dy, 0.9 + rnd() * 1.1);
-  }
-}
-
-// #227: shattered angular ice/snow shard scatter — jagged triangular shards over a cold base,
-// the destroyed-snowdrift analog. Distinct from both `rubbleScatter`'s rectangular slabs and
-// `organicDebrisScatter`'s soft ellipse bits.
-function iceShardScatter(sg, baseCol, shardCol, litCol, seed, count = 7) {
-  sg.fillStyle(baseCol, 0.75); sg.fillEllipse(C.cx, C.cy, 26, 19);
-  const rnd = seeded(seed);
-  for (let i = 0; i < count; i++) {
-    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 15;
-    const s = 3 + rnd() * 3;
-    sg.fillStyle(shardCol, 0.95);
-    sg.fillTriangle(C.cx + dx, C.cy + dy - s, C.cx + dx - s * 0.7, C.cy + dy + s * 0.6, C.cx + dx + s * 0.8, C.cy + dy + s * 0.5);
-    sg.fillStyle(litCol, 0.7);
-    sg.fillTriangle(C.cx + dx, C.cy + dy - s, C.cx + dx - s * 0.3, C.cy + dy - s * 0.1, C.cx + dx + s * 0.3, C.cy + dy - s * 0.1);
-  }
-}
-
-// #227: loose ash/cinder scatter — small soft mounds + a few glowing ember flecks over a dark
-// bed, the destroyed-fumarole analog. Distinct from `rubbleScatter`'s masonry slabs.
-function cinderScatter(sg, baseCol, moundCol, emberCol, seed) {
-  sg.fillStyle(baseCol, 0.75); sg.fillEllipse(C.cx, C.cy, 26, 19);
-  const rnd = seeded(seed);
-  for (let i = 0; i < 8; i++) {
-    const dx = (rnd() - 0.5) * 22, dy = (rnd() - 0.5) * 15;
-    sg.fillStyle(moundCol, 0.8); sg.fillCircle(C.cx + dx, C.cy + dy, 2 + rnd() * 2);
-  }
-  for (let i = 0; i < 4; i++) {
-    const dx = (rnd() - 0.5) * 20, dy = (rnd() - 0.5) * 14;
-    sg.fillStyle(emberCol, 0.8); sg.fillCircle(C.cx + dx, C.cy + dy, 0.8 + rnd() * 0.6);
-  }
-}
+// #464: the three bespoke soft-cover debris scatters that lived here (`organicDebrisScatter`,
+// `iceShardScatter`, `cinderScatter`) are gone with the `*Rubble` tiles they painted — see the
+// `rubbleId` note in data/terrain.js. `rubbleScatter` above stays: `hex_debris` still uses it.
 
 // Is (dx,dy) — offset from the hex centre — inside a pointy-top hexagon of circumradius s?
 function inHex(dx, dy, s) {
@@ -613,14 +539,11 @@ const DETAIL = {
     sg.fillStyle(0x6d8a7a, 0.35);  // riverbed peeking through the shallows
     sg.fillEllipse(C.cx + 2, C.cy - 1, 6, 3);
   },
-  // Deep water: a few slow, dark swells and a faint cold sheen — heavier and stiller than the river.
-  hex_deepWater: (sg) => {
-    sg.fillStyle(0x1f4d6e, 0.6);
-    sg.fillEllipse(C.cx - 5, C.cy - 4, 18, 3.2);
-    sg.fillEllipse(C.cx + 5, C.cy + 6, 16, 3);
-    sg.fillStyle(0x2c6488, 0.4); sg.fillEllipse(C.cx + 1, C.cy + 1, 12, 2.4);
-    sg.fillStyle(0x0e2a40, 0.5); sg.fillEllipse(C.cx - 3, C.cy + 8, 14, 2.6);  // dark depths
-  },
+  // #464: the five BOUNDARY-ONLY ids (deepWater / mesa / ice / collapsed / lava) have no DETAIL
+  // painter — `buildHexTextures` has skipped them since #222 (they'd tile into an obviously-
+  // repeating pattern across the ring), and since #222's 4th pass the ring isn't even rendered as
+  // tiles. Their PAL + TERRAIN entries are load-bearing and stay; only the dead art is gone.
+
   // Rubble: a scatter of broken slabs + ash over the ashen base — the remains of a stomped outpost.
   hex_rubble: (sg) => {
     sg.fillStyle(0x24262b, 0.8);   // scorch/ash base
@@ -636,19 +559,12 @@ const DETAIL = {
     sg.fillStyle(0x191b1f, 0.6);   // a couple of dark gaps between the debris
     sg.fillRect(C.cx - 2, C.cy + 1, 3, 3); sg.fillRect(C.cx + 5, C.cy - 5, 2, 3);
   },
-  // #227: destroyed forest — charred plant debris (organic ellipse bits), NOT the building's
-  // masonry-slab look.
-  hex_forestRubble: (sg) => organicDebrisScatter(sg, 0x1a1610, 0x33301c, 0x50492c, 0x91),
-  // #289: ground layer only — the shadowy forest floor. The tree canopy itself now renders as
-  // a SEPARATE overlay image (see CANOPY_DETAIL.forest below + `buildHexTextures`'s canopy pass)
-  // so a small ground unit standing in cover can render between the floor and the canopy sprites
-  // instead of being fully hidden under (or drawn flat on top of) one combined texture.
-  hex_forest: (sg) => {
-    sg.fillStyle(0x14290f, 0.7);
-    sg.fillPoints(hexCorners(HEX_SIZE * 0.95).map((p) => ({ x: C.cx + p.x, y: C.cy + p.y })), true);
-  },
-  // #405: cleared forest — the forest FLOOR (same 0x14290f as hex_forest) with the trees gone,
-  // plus a faint stubble of cut stumps.
+  // #289: ground layer only — the shadowy forest floor, with a faint stubble of stumps/remnants.
+  // The tree canopy itself renders as a SEPARATE overlay image (see CANOPY_DETAIL.forest below +
+  // `buildHexTextures`'s canopy pass) so a small ground unit standing in cover can render between
+  // the floor and the canopy sprites instead of being fully hidden under (or drawn flat on top of)
+  // one combined texture. #464: this ONE tile serves both the standing `forest` hex and its cleared
+  // state — under a full canopy the stubble is invisible anyway.
   hex_forestCleared: (sg) => clearedCoverFloor(sg, 0x14290f, 0.7, 0x0c1c08, 0xc1),
   // #269 playtest follow-up: `dock` — a rectangular bay/mooring pad. Reads as a loading bay: a
   // squared-off deck with a painted border frame, two corner bollard studs, and a chevron "lane"
@@ -710,24 +626,9 @@ const DETAIL = {
     crackLine(sg, [[C.cx - 8, C.cy + 4], [C.cx + 1, C.cy + 2], [C.cx + 9, C.cy + 5]], 0x6a5228, 0.8, 1);
     sg.fillStyle(0xc7a666, 0.4); sg.fillEllipse(C.cx - 4, C.cy - 4, 8, 2);   // dry sandbank
   },
-  hex_mesa: (sg) => {   // a stepped rock butte casting a shadow — reads as a tall impassable cliff
-    sg.fillStyle(0x000000, 0.3); sg.fillEllipse(C.cx + 2, C.cy + 4, 26, 16);
-    sg.fillStyle(0x633c26, 1); sg.fillEllipse(C.cx, C.cy + 2, 26, 18);        // base
-    sg.fillStyle(0x8a5a3a, 1); sg.fillEllipse(C.cx - 1, C.cy - 1, 22, 14);    // mid ledge
-    sg.fillStyle(0xa5714a, 1); sg.fillEllipse(C.cx - 2, C.cy - 4, 15, 9);     // top plateau
-    sg.fillStyle(0xc08a5c, 0.9); sg.fillEllipse(C.cx - 3, C.cy - 6, 9, 4);    // sun-lit cap
-    sg.fillStyle(0x4a2c1c, 0.5); sg.fillRect(C.cx + 4, C.cy - 2, 2, 8);       // strata shadow
-  },
-  // #289: ground layer only — see the hex_forest comment above. Canopy clumps moved to
-  // CANOPY_DETAIL.scrub.
-  hex_scrub: (sg) => {   // sparse desert brush cover
-    coverFloor(sg, 0x8f7440, 0.55);
-  },
-  // #405: cleared scrub — the brush FLOOR with the bushes gone + a faint stubble of cut stems.
+  // #289/#464: the brush FLOOR (canopy clumps live in CANOPY_DETAIL.scrub) + a faint stubble of
+  // cut stems — one tile for both the standing `scrub` hex and its cleared state.
   hex_scrubCleared: (sg) => clearedCoverFloor(sg, 0x8f7440, 0.55, 0x6b5730, 0xc2),
-  // #227: destroyed scrub — scattered dead brush (organic ellipse bits), NOT the generic
-  // rubble's masonry look.
-  hex_scrubRubble: (sg) => organicDebrisScatter(sg, 0x513f28, 0x8f7548, 0xb2955e, 0x59),
   // #278: mud — grassland's own in-map hazard: a soft boggy patch with glossy standing-water
   // pools and a few sunken cracked-mud rings, distinct from quicksand's cleaner sand-pit look.
   hex_mud: (sg) => {
@@ -760,22 +661,9 @@ const DETAIL = {
     sg.fillStyle(0x7f9cb0, 0.6); for (const [dx, dy, w] of [[-6, -5, 15], [4, 1, 16], [-3, 6, 13]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
     sg.fillStyle(0xdbe7f0, 0.55); for (const [dx, dy, w] of [[-4, -3, 9], [3, 4, 8]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 1.6); // ice skins
   },
-  hex_ice: (sg) => {   // a solid frozen lake: pale sheen + cracks
-    sg.fillStyle(0xc4dcec, 0.5); sg.fillEllipse(C.cx - 3, C.cy - 3, 20, 10);
-    crackLine(sg, [[C.cx - 11, C.cy - 5], [C.cx - 1, C.cy - 1], [C.cx + 6, C.cy - 5]], 0x76a3c4, 0.8, 1);
-    crackLine(sg, [[C.cx - 2, C.cy - 1], [C.cx + 3, C.cy + 7]], 0x76a3c4, 0.8, 1);
-    sg.fillStyle(0xffffff, 0.5); sg.fillEllipse(C.cx + 4, C.cy + 2, 8, 2);   // glare
-  },
-  // #289: ground layer only — see the hex_forest comment above. Canopy clumps moved to
-  // CANOPY_DETAIL.drift.
-  hex_drift: (sg) => {   // snowdrifts / frosted pines cover
-    coverFloor(sg, 0xb2c3d3, 0.6);
-  },
-  // #405: cleared snowdrift — the packed-snow FLOOR with the drifts gone + faint churned-snow flecks.
+  // #289/#464: the packed-snow FLOOR (drift clumps live in CANOPY_DETAIL.drift) + faint
+  // churned-snow flecks — one tile for both the standing `drift` hex and its cleared state.
   hex_driftCleared: (sg) => clearedCoverFloor(sg, 0xb2c3d3, 0.6, 0x93a6b6, 0xc3),
-  // #227: destroyed snowdrift — jagged broken ice/snow shards, NOT the generic rubble's
-  // masonry-slab look.
-  hex_driftRubble: (sg) => iceShardScatter(sg, 0x647a8c, 0xaebfcc, 0xe4eef5, 0x6b),
   // #110: broken ice — thin cracked plates over cold water, lighter/weaker read than solid ice.
   hex_brokenIce: (sg) => {
     sg.fillStyle(0x638094, 0.55); sg.fillEllipse(C.cx, C.cy, 20, 10);
@@ -792,29 +680,10 @@ const DETAIL = {
     sg.fillStyle(0x3a3e44, 0.7); sg.fillRect(C.cx - 13, C.cy + 3.5, 26, 1); sg.fillRect(C.cx - 5.5, C.cy - 12, 1, 24);
     sg.fillStyle(0x2f3238, 0.5); sg.fillCircle(C.cx + 5, C.cy + 6, 1.3);
   },
-  hex_collapsed: (sg) => {   // an impassable heap of collapsed structure
-    sg.fillStyle(0x000000, 0.28); sg.fillEllipse(C.cx + 2, C.cy + 4, 26, 15);
-    const rnd = seeded(0x99);
-    for (let i = 0; i < 9; i++) {
-      const dx = (rnd() - 0.5) * 24, dy = (rnd() - 0.5) * 18;
-      const w = 6 + rnd() * 7, h = 5 + rnd() * 6;
-      sg.fillStyle(0x2f3238, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, h);
-      sg.fillStyle(0x5a5f68, 1); sg.fillRect(C.cx + dx - w / 2, C.cy + dy - h / 2, w, 2);
-    }
-    sg.fillStyle(0x6d7480, 0.8); sg.fillRect(C.cx - 3, C.cy - 8, 4, 14);   // a leaning girder
-  },
-  // #289: ground layer only — the floor + a ground-level smoulder glow (a flat decal, not part
-  // of the obstructing silhouette a unit peeks out from under). Canopy clumps moved to
-  // CANOPY_DETAIL.wreck.
-  hex_wreck: (sg) => {   // burned-out wreckage / low walls cover
-    coverFloor(sg, 0x35322d, 0.6);
-    sg.fillStyle(0xd8632a, 0.35); sg.fillCircle(C.cx + 3, C.cy - 2, 5);   // a faint smoulder glow
-  },
-  // #405: cleared wreckage — the scorched FLOOR with the wreck piles gone + faint scattered scraps.
+  // #289/#464: the scorched FLOOR (wreck piles live in CANOPY_DETAIL.wreck) + faint scattered
+  // scraps — one tile for both the standing `wreck` hex and its cleared state. The intact tile's
+  // ground-level smoulder glow went with the merge (owner-accepted).
   hex_wreckCleared: (sg) => clearedCoverFloor(sg, 0x35322d, 0.6, 0x201d19, 0xc4),
-  // #227: destroyed wreck — burnt debris scraps + a faint ember fleck, NOT the generic
-  // rubble's masonry-slab look.
-  hex_wreckRubble: (sg) => organicDebrisScatter(sg, 0x201d19, 0x4a423a, 0xd8632a, 0x84),
   // #110: debris field — a loose rubble-strewn street patch, lighter than a collapsed-tower heap.
   // #275: also urban's `channel` role now (see biomes.js) — a paved lane and a rubble-strewn
   // street both read as "urban street" well enough to share one texture.
@@ -846,27 +715,13 @@ const DETAIL = {
     crackLine(sg, [[C.cx - 6, C.cy + 4], [C.cx + 3, C.cy + 6]], 0xff5a14, 0.85, 1.4);
     crackLine(sg, [[C.cx - 11, C.cy - 3], [C.cx - 3, C.cy + 0.5]], 0xffc23a, 0.7, 0.8);
   },
-  hex_lava: (sg) => {   // molten lava: bright flow with hot crests and dark cooling skin
-    sg.fillStyle(0xd8461a, 0.8); sg.fillEllipse(C.cx, C.cy, 24, 14);
-    sg.fillStyle(0xffb028, 0.9); sg.fillEllipse(C.cx - 3, C.cy - 2, 14, 6);
-    sg.fillStyle(0xfff0a0, 0.85); sg.fillEllipse(C.cx - 4, C.cy - 3, 7, 3);   // white-hot core
-    sg.fillStyle(0x2a1108, 0.7); sg.fillEllipse(C.cx + 7, C.cy + 4, 8, 3); sg.fillEllipse(C.cx - 8, C.cy + 5, 6, 2); // cooling skin islands
-  },
-  // #289: ground layer only — the floor + the vent's ember glow (ground-level, not part of the
-  // obstructing silhouette). Canopy clumps moved to CANOPY_DETAIL.fumarole.
-  hex_fumarole: (sg) => {   // ash mounds / smoke plumes cover
-    coverFloor(sg, 0x211d19, 0.6);
-    sg.fillStyle(0xff6a1e, 0.3); sg.fillCircle(C.cx, C.cy, 6);   // ember glow at the vent
-  },
-  // #405: cleared fumarole — the ashen FLOOR (keeping a fainter vent ember) with the mounds gone
-  // + faint cinder flecks.
+  // #289/#464: the ashen FLOOR (ash mounds live in CANOPY_DETAIL.fumarole) + a faint vent ember
+  // and cinder flecks — one tile for both the standing `fumarole` hex and its cleared state. The
+  // intact tile's brighter vent ember went with the merge (owner-accepted).
   hex_fumaroleCleared: (sg) => {
     clearedCoverFloor(sg, 0x211d19, 0.6, 0x140f0c, 0xc5);
     sg.fillStyle(0xff6a1e, 0.15); sg.fillCircle(C.cx, C.cy, 5);
   },
-  // #227: destroyed fumarole — loose ash/cinder scatter with glowing embers, NOT the generic
-  // rubble's masonry-slab look.
-  hex_fumaroleRubble: (sg) => cinderScatter(sg, 0x1c160f, 0x453a2c, 0xff6a1e, 0x9c),
   // #110: cinder field — a hot ash/ember patch, milder read than a full molten-lava pool.
   hex_cinderField: (sg) => {
     sg.fillStyle(0x341c0f, 0.6); sg.fillEllipse(C.cx, C.cy, 22, 13);
@@ -910,8 +765,10 @@ const CANOPY_DETAIL = {
 // The 5 cover terrain ids that get a separate canopy overlay texture (#289). Exported so
 // world.js can iterate/check membership without re-deriving the list.
 export const COVER_CANOPY_IDS = Object.keys(CANOPY_DETAIL);
-// The canopy overlay texture key for a cover terrain id (bare id, or a `hex_`-prefixed tex key —
-// same tolerant pattern as `flatBoundaryTexKey` above).
+// The canopy overlay texture key for a cover terrain id. Tolerates a `hex_` prefix, but #464 makes
+// the BARE ID the only correct input from a caller holding a terrain id: since a standing cover hex
+// shares its cleared twin's ground texture, passing `TERRAIN[id].tex` here names a
+// `hex_forestCleared_canopy` that is never baked.
 export function canopyTexKey(key) {
   const id = key.replace(/^hex_/, '');
   return `hex_${id}_canopy`;
@@ -932,12 +789,11 @@ export function terrainFillColor(id) {
 }
 
 export function buildHexTextures(scene) {
-  const tiles = {
-    hex_ground: PAL.ground, hex_groundB: PAL.groundB,
-    hex_grass: PAL.grass, hex_grassB: PAL.grassB,
-    hex_river: PAL.river, hex_deepWater: PAL.deepWater,
-    hex_forest: PAL.forest, hex_rubble: PAL.rubble,
-  };
+  // The abstract-arena tiles, which the biome loop below deliberately skips. (#464: this seed list
+  // used to re-declare grass/river/deepWater/forest/rubble too — every one of them redundant with
+  // the loop, and `hex_forest` no longer a tile at all now that a standing forest wears the same
+  // ground texture as a cleared one.)
+  const tiles = { hex_ground: PAL.ground, hex_groundB: PAL.groundB };
   // Biome tiles (#67): every palette key besides the abstract-arena ones maps to a `hex_<key>`
   // texture, so adding a biome terrain is just its PAL entry (+ optional DETAIL painter) — no
   // per-tile wiring here.
@@ -949,31 +805,21 @@ export function buildHexTextures(scene) {
     gen(scene, key, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
       const sg = scaledGraphics(g);
       // #222: the world-boundary-only terrain ids (deep water / mesa / ice / collapsed / lava)
-      // are stamped edge-to-edge across a very wide ring (worldgen.js BOUNDARY_RING_WIDTH) with
-      // this SAME baked texture — previously that meant every hex showed the identical bordered
-      // tile PLUS an identical "icon" (a wave swell, a rock butte, a rubble heap, a lava pool),
-      // which reads as an obviously-repeating tiled pattern rather than one continuous surface.
-      // Two changes make adjacent boundary tiles visually indistinguishable from one another (so
-      // the seam between them disappears and the whole ring reads as one continuous sea/wasteland):
-      // an inset of >=1.0 (instead of 0.9) removes the darker inset border band entirely — the
-      // fill now runs flush to (and slightly past, see BOUNDARY_OVERDRAW_INSET above) the tile's
-      // true edge, so there's no per-hex grid line — and the terrain's DETAIL painter (the
-      // recognizable per-hex icon) is skipped. This texture ALSO carries the #211 sunken-shadow
-      // depth cue (`isImpassableTerrainId`) so it still reads as sitting below playable ground
-      // where it truly borders it — see `flatBoundaryTexKey` above for the 3rd-pass companion
-      // texture (no sunken ring) that world.js selects for interior boundary tiles instead, so
-      // the ring doesn't repeat across every tile of the whole boundary field.
+      // were stamped edge-to-edge across a very wide ring, which made every hex show the identical
+      // bordered tile PLUS an identical "icon" (a wave swell, a rock butte, a rubble heap, a lava
+      // pool) — an obviously-repeating tiled pattern rather than one continuous surface. So a
+      // boundary tile drops the darker inset border band (an inset of >=1.0 instead of 0.9, the
+      // fill running flush to and slightly past the true edge, see BOUNDARY_OVERDRAW_INSET) and
+      // skips the terrain's DETAIL painter entirely.
+      // #464: those five DETAIL painters were then DELETED — the guard below meant they could
+      // never run, and #222's 4th pass went further still and stopped placing ring tiles at all
+      // (world.js paints the camera background `terrainFillColor(B.deep)` instead), so nothing
+      // renders these textures in play today. The guard stays because it's what makes that true,
+      // and the textures themselves are still cheap to keep for the art gallery.
       const boundary = isBoundaryTerrainId(key);
       drawHex(sg, pal.fill, pal.edge, boundary ? BOUNDARY_OVERDRAW_INSET : 0.9, isImpassableTerrainId(key));
       if (!boundary) DETAIL[key]?.(sg);
     });
-    if (isBoundaryTerrainId(key)) {
-      // The interior (non-coastline) variant: identical fill/overdraw, but no sunken ring.
-      gen(scene, flatBoundaryTexKey(key), HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
-        const sg = scaledGraphics(g);
-        drawHex(sg, pal.fill, pal.edge, BOUNDARY_OVERDRAW_INSET, false);
-      });
-    }
   }
   // #393: the wall reads as a SOLID, RAISED block so it's unmistakable against a (now flat-looking)
   // base-infra hex — and so a destroyed span reads as a real OPENING. Three stacked layers: a dark

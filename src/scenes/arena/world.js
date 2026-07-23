@@ -243,8 +243,13 @@ export const WorldMixin = {
       this.tileImages.set(k, img);
       // #405: every standing soft-cover hex gets clear-HP so caught shots can wear it down.
       if (isSoftCover(id)) this.softCoverHp.set(k, SOFT_COVER_CLEAR_HP);
-      if (isCoverCanopyId(tex)) {
-        const canopy = this.add.image(x, y, canopyTexKey(tex)).setScale(1 / ART_SCALE).setDepth(DEPTH.COVER_CANOPY);
+      // #464: keyed off the terrain ID, never the texture key. A standing cover hex now SHARES its
+      // cleared twin's ground texture (`TERRAIN.forest.tex === 'hex_forestCleared'`), so deriving
+      // the canopy from `tex` would look up `hex_forestCleared_canopy` — which doesn't exist, and
+      // every forest in the world would render bare. `isCoverCanopyId`/`canopyTexKey` both take a
+      // bare id, which is what `CANOPY_DETAIL` is actually keyed by.
+      if (isCoverCanopyId(id)) {
+        const canopy = this.add.image(x, y, canopyTexKey(id)).setScale(1 / ART_SCALE).setDepth(DEPTH.COVER_CANOPY);
         this.canopyImages.set(k, canopy);
       }
     }

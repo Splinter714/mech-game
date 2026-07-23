@@ -36,15 +36,18 @@ describe('biome registry (#67)', () => {
       expect(isPassable(b.deep)).toBe(false);
       // Cover: walk-through cover — passable AND blocks LOS. #351 made every biome's cover
       // INDESTRUCTIBLE (natural terrain is permanent scenery now); its cover CONTRACT is
-      // deliberately unchanged, which is what this assertion pins. The rubble it would collapse
-      // into is still declared and still passable/non-cover, ready if the flag is flipped back.
+      // deliberately unchanged, which is what this assertion pins.
       expect(isPassable(b.cover)).toBe(true);
       expect(blocksLOS(b.cover)).toBe(true);
       expect(isDestructible(b.cover)).toBe(false);
+      // #464 deleted the bespoke `*Rubble` tile each cover used to name, so this now resolves to
+      // the generic masonry fallback. Still a real, passable, non-cover entry.
       const rub = rubbleFor(b.cover);
       expect(TERRAIN[rub]).toBeDefined();
       expect(isPassable(rub)).toBe(true);     // you can drive over the debris
       expect(blocksLOS(rub)).toBe(false);
+      // What cover ACTUALLY becomes in play (#405): its own cleared ground, declared per entry.
+      expect(TERRAIN[TERRAIN[b.cover].clearedId], b.cover).toBeDefined();
     }
   });
 

@@ -83,7 +83,10 @@ describe('#289 cover terrain ground/canopy split', () => {
       if (isCoverCanopyId(id)) {
         sawCoverHex = true;
         expect(canopyImg).toBeTruthy();
-        expect(canopyImg.tex).toBe(canopyTexKey(tex));
+        // #464: the canopy key comes from the terrain ID, never the ground texture — a standing
+        // cover hex now shares its cleared twin's tile, so `canopyTexKey(tex)` would name a
+        // `hex_forestCleared_canopy` that is never baked and every forest would render bare.
+        expect(canopyImg.tex).toBe(canopyTexKey(id));
         expect(canopyImg.depth).toBe(DEPTH.COVER_CANOPY);
         // #289 follow-up: the canopy sits strictly between the SMALL ground tier (GROUND_UNITS)
         // and the LARGE ground tier (LARGE_GROUND_UNITS) — small units peek out under it, large

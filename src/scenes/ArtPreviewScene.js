@@ -403,10 +403,11 @@ export default class ArtPreviewScene extends Phaser.Scene {
   //
   // #461 playtest follow-ups (twice, same complaint): things that belong to a tile were
   // floating in their own anonymous standalone groups instead of sitting with it.
-  //   1. The biome-specific `clearedId`/`rubbleId` derivatives (forest → forestCleared/
-  //      forestRubble, …) fell through to the catch-all row — exactly the wrong context, since
-  //      #227/#405 gave each one its OWN look (charred plant debris vs. scattered dead scrub vs.
-  //      broken masonry) precisely so it reads as that biome's wreckage.
+  //   1. The biome-specific `clearedId`/`rubbleId` derivatives (forest → forestCleared, …) fell
+  //      through to the catch-all row — exactly the wrong context, since #405 gave each one its
+  //      OWN look precisely so it reads as that biome's own cleared ground. (#464 deleted the
+  //      dead `*Rubble` soft-cover derivatives, so `cleared` is the only one soft cover has left;
+  //      the mechanism still handles both.)
   //   2. The #289 canopy overlays had a standalone COVER CANOPY group, and the #395 dock doors
   //      a standalone DOCK DOORS group while `dock`/`dockClosed` sat in BASE + STRUCTURE.
   // Now: each cover role reads intact → + canopy → cleared → rubble in one place per biome, and
@@ -420,12 +421,20 @@ export default class ArtPreviewScene extends Phaser.Scene {
   // unclaimed terrain id still surfaces rather than vanishing. Both are empty today, and
   // `_group` no-ops on an empty list, so neither header renders.
 
+  // #464: a terrain id's ground texture is whatever its TERRAIN entry NAMES, never `hex_<id>`
+  // reconstructed from the id. The five soft-cover ids now ALIAS their cleared twin's tile
+  // (`TERRAIN.forest.tex === 'hex_forestCleared'`), so the old assumption would have looked up a
+  // `hex_forest` that no longer gets baked and silently dropped every cover role out of its biome
+  // row. The `?? hex_<id>` fallback covers the one non-TERRAIN key this view shows: `wall`.
+  _hexTex(id) { return TERRAIN[id]?.tex ?? `hex_${id}`; }
+  _hasHexTex(id) { return this.textures.exists(this._hexTex(id)); }
+
   // The cleared/rubble tiles a destructible terrain id collapses into, in lifecycle order.
   _derivativesOf(id) {
     const t = TERRAIN[id];
     if (!t) return [];
     return [['cleared', t.clearedId], ['rubble', t.rubbleId]]
-      .filter(([, did]) => did && did !== RUBBLE && TERRAIN[did] && this.textures.exists(`hex_${did}`));
+      .filter(([, did]) => did && did !== RUBBLE && TERRAIN[did] && this._hasHexTex(did));
   }
 
   _buildHexes() {
@@ -433,13 +442,14 @@ export default class ArtPreviewScene extends Phaser.Scene {
     const canopyShown = new Set();
     const tile = (id, label) => {
       shown.add(id);
-      return this._stackCell(label ?? id, [`hex_${id}`]);
+      return this._stackCell(label ?? id, [this._hexTex(id)]);
     };
     // A canopy is a transparent foliage-only raster — it reads as nothing on its own, so it is
-    // always composited over the ground tile it overlays.
+    // always composited over the ground tile it overlays. Keyed by terrain ID (the canopy registry's
+    // own key), NOT by the ground texture — see `_hexTex` above.
     const canopyCell = (id, label) => {
       canopyShown.add(id);
-      return this._stackCell(label, [`hex_${id}`, canopyTexKey(id)]);
+      return this._stackCell(label, [this._hexTex(id), canopyTexKey(id)]);
     };
     const hasCanopy = (id) => COVER_CANOPY_IDS.includes(id) && this.textures.exists(canopyTexKey(id));
 
@@ -448,7 +458,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const roles = [
         ['groundA', B.groundA], ['groundB', B.groundB], ['channel', B.channel],
         ['deep', B.deep], ['hazard', B.hazard], ['cover', B.cover],
-      ].filter(([, id]) => id && this.textures.exists(`hex_${id}`));
+      ].filter(([, id]) => id && this._hasHexTex(id));
       const cells = [];
       for (const [role, id] of roles) {
         cells.push(tile(id, `${id}\n${role}`));
@@ -468,11 +478,11 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // sealed `dockClosed` hex a vacated dock swaps to. They render as one contiguous run,
     // emitted where the first dock piece falls in TERRAIN order.
     const baseIds = Object.keys(TERRAIN).filter(isBaseCategory);
-    const structural = ['rubble', 'wall'].filter((id) => this.textures.exists(`hex_${id}`));
+    const structural = ['rubble', 'wall'].filter((id) => this._hasHexTex(id));
     const dockPieces = ['dock', 'dockClosed'];
     let dockRunEmitted = false;
     const baseCells = [];
-    for (const id of [...baseIds, ...structural].filter((i) => this.textures.exists(`hex_${i}`))) {
+    for (const id of [...baseIds, ...structural].filter((i) => this._hasHexTex(i))) {
       if (!dockPieces.includes(id)) { baseCells.push(tile(id)); continue; }
       if (dockRunEmitted) continue;          // the rest of the assembly went out with the first
       dockRunEmitted = true;
@@ -485,11 +495,11 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // canopy or terrain id can never hide.
     this._group('COVER CANOPY (claimed by no biome)',
       COVER_CANOPY_IDS.filter((id) => !canopyShown.has(id) && this.textures.exists(canopyTexKey(id))
-        && this.textures.exists(`hex_${id}`))
+        && this._hasHexTex(id))
         .map((id) => canopyCell(id, `${id}\n+ canopy`)));
 
     const rest = Object.keys(TERRAIN)
-      .filter((id) => !shown.has(id) && this.textures.exists(`hex_${id}`));
+      .filter((id) => !shown.has(id) && this._hasHexTex(id));
     this._group('EVERY OTHER TERRAIN (unclaimed)', rest.map((id) => tile(id)));
   }
 
