@@ -521,10 +521,27 @@ function returnToGarageCue(e) {
   e.tone(e.sfx, { type: 'sine', freq: 500, freqEnd: 330, dur: 0.2, gain: 0.07, attack: 0.02 }); // soft settling chime
 }
 
+// #479: the two GAIT cues' LIVE procedural fallbacks — played only in the brief window before
+// their synth-baked buffers finish rendering at boot (or in a context with no OfflineAudioContext),
+// exactly like any other baked cue's procedural stub. Once baked, the multi-variant pool
+// (bakedSfx.js's GAIT_SFX_ENTRIES, via playOverride below) plays instead. footstepCue is the
+// original hardcoded footstep synth; legLiftCue is the new servo/hydraulic limb-lift whir.
+function footstepCue(e, foot = 0) {                          // heavy low foot-plant thud + crunch
+  e.tone(e.sfx, { type: 'sine', freq: foot ? 78 : 66, freqEnd: 38, dur: 0.16, gain: 0.30, attack: 0.002 });
+  e.noise(e.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
+}
+function legLiftCue(e) {                                     // rising servo/hydraulic limb-lift whir
+  e.noise(e.sfx, { dur: 0.13, gain: 0.05, type: 'bandpass', freq: 900, freqEnd: 1600, q: 1.2, attack: 0.008 });
+  e.tone(e.sfx, { type: 'sawtooth', freq: 300, freqEnd: 520, dur: 0.11, gain: 0.035, attack: 0.006 });
+  e.tone(e.sfx, { type: 'sine', freq: 1700, dur: 0.05, gain: 0.02, attack: 0.004 }); // faint high servo tick
+}
+
 export const UI_CUES = {
   equip: equipCue,
   deploy: deployCue,
   returnToGarage: returnToGarageCue,
+  footstep: footstepCue,
+  legLift: legLiftCue,
   menuNav: menuNavCue,
   scrapPickup: scrapPickupCue,
   powerupPickupOverdrive: powerupPickupOverdriveCue,
@@ -546,15 +563,25 @@ export function uiCue(e, id, stage = 'play') {
   UI_CUES[id]?.(e);
 }
 
-// ── One-shot cues (no variants). ────────────────────────────────────────────────────────
-// Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly. Throttled so a
-// fast gait can't machine-gun the sound (throttle state lives on the engine).
+// ── Gait cues (#34/#479) — footstep PLANT + legLift SERVO SWING. ─────────────────────────────
+// Both now route through the generic (id, 'play') override/bake path (uiCue → playOverride):
+// their SYNTH-BAKED multi-variant pools (bakedSfx.js's GAIT_SFX_ENTRIES) play by default, a dev
+// file override/bake can still win, and the live procedural stub (UI_CUES.footstep/legLift) is the
+// pre-bake fallback. Both are throttled (separate timestamps) so a fast gait can't machine-gun
+// either sound — belt-and-suspenders on top of locomotion.js's own per-beat firing.
 export function footstep(e, foot = 0) {
   const t = e._now();
   if (t - e._lastStepSound < 0.07) return;
   e._lastStepSound = t;
-  e.tone(e.sfx, { type: 'sine', freq: foot ? 78 : 66, freqEnd: 38, dur: 0.16, gain: 0.30, attack: 0.002 });
-  e.noise(e.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
+  uiCue(e, 'footstep');
+}
+// #479: leg-MOVEMENT — the servo/hydraulic swing of a limb picking up, fired on the OPPOSITE
+// stride phase from the plant (see scenes/arena/locomotion.js `_stepGait`).
+export function legLift(e, foot = 0) {
+  const t = e._now();
+  if (t - e._lastLiftSound < 0.07) return;
+  e._lastLiftSound = t;
+  uiCue(e, 'legLift');
 }
 
 // #269 playtest follow-up — alert tower "spooling up" warning: a periodic radar-style beep,

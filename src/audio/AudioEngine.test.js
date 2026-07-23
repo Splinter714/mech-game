@@ -106,6 +106,16 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators).toBeGreaterThan(0);
   });
 
+  // #479: the leg-MOVEMENT (lift) cue is a sibling of footstep — same synth-baked-pool-then-
+  // procedural-fallback dispatch, on its own throttle. On a mock context with nothing baked yet it
+  // plays its live procedural stub (legLiftCue) without throwing.
+  it('plays the leg-lift (leg-movement) cue without throwing', () => {
+    const before = ctx._counts().oscillators + ctx._counts().sources;
+    eng.legLift(0);
+    eng.legLift(1);   // throttled by time, but must not throw
+    expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(before);
+  });
+
   // #178/#188/#196/#201/#210: the generic UI/pickup cue dispatch (equip/deploy/returnToGarage/
   // menuNav/scrapPickup/the 5 per-powerup powerupPickup* ids/sprintOn/sprintOff/partDestroyed/
   // mechDestroyed) — every id registered in sfxDomains.js's `ui` domain plays a procedural stub
@@ -199,7 +209,7 @@ describe('AudioEngine (mock context)', () => {
   it('no-ops safely with no context (headless / pre-init)', () => {
     const bare = new AudioEngine();
     expect(bare.ready).toBe(false);
-    expect(() => { bare.fire(getWeapon('autocannon')); bare.explosion(); bare.footstep(); }).not.toThrow();
+    expect(() => { bare.fire(getWeapon('autocannon')); bare.explosion(); bare.footstep(); bare.legLift(); }).not.toThrow();
   });
 
   // #53: held/looping fire sound (flamethrower/beam laser) instead of a retriggered one-shot.

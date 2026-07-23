@@ -55,6 +55,12 @@ export const SFX_DOMAINS = {
     { id: 'sprintOff', label: 'Sprint Off', stages: [['play', 'PLAY']] },
     { id: 'partDestroyed', label: 'Part Destroyed', stages: [['play', 'PLAY']] },
     { id: 'mechDestroyed', label: 'Mech Destroyed', stages: [['play', 'PLAY']] },
+    // #479: the two GAIT cues. Registered as ordinary `ui`-domain (id, 'play') entries so they
+    // appear in the AUDIO tab's SFX section (SFX_UI_GROUPS 'GAIT' below) and route through the same
+    // override/bake authoring plumbing (WeaponSfxPanel) as every other UI cue. Their DEFAULT sound
+    // is the synth-baked variant pool in bakedSfx.js (GAIT_SFX_ENTRIES), NOT a live per-play synth.
+    { id: 'footstep', label: 'Footstep (plant)', stages: [['play', 'PLAY']] },
+    { id: 'legLift', label: 'Leg Movement (lift)', stages: [['play', 'PLAY']] },
   ],
 };
 
@@ -79,6 +85,7 @@ export const SFX_UI_GROUPS = [
   { header: 'PICKUPS', ids: ['scrapPickup', 'powerupPickupOverdrive', 'powerupPickupOverclock', 'powerupPickupArmorPatch', 'powerupPickupShield', 'powerupPickupBarrage', 'powerupPickupInfiniteFire'] },
   { header: 'SPRINT', ids: ['sprintOn', 'sprintOff'] },
   { header: 'DEATH / LOSS', ids: ['partDestroyed', 'mechDestroyed'] },
+  { header: 'GAIT', ids: ['footstep', 'legLift'] },
 ];
 
 // Resolve one SFX_UI_GROUPS id to its SFX_DOMAINS.ui entry, throwing a clear, id-naming error

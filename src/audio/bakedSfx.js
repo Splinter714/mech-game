@@ -129,6 +129,12 @@ import mechDestroyed17 from '../assets/sfx/mechDestroyed-play-mechaDamaged17.m4a
 // back as the FULL untrimmed file (startMs 0, trimMs null — the whole 2555ms length). No fade,
 // no pitch/filter/reverb/volume processing, per Jackson's Weapon Lab copy-recipe.
 import returnToGaragePhaseSwish from '../assets/sfx/returnToGarage-play-phaseSwish.m4a';
+// #479: the SYNTHESISED gait cues (footstep + legLift). These carry NO `asset` — each entry is a
+// `{ synth: <recipe> }` variant pool that loadAllBaked renders offline into a buffer at boot,
+// instead of fetch+decoding a file. They join the baked pool as first-class multi-variant entries
+// (spread into BAKED_SFX below) so they play through the exact same pickBakedVariant path as
+// mechDestroyed's file-backed pool. See gaitSfx.js for the recipes + the offline renderer.
+import { GAIT_SFX_ENTRIES, renderSynthBuffer } from './gaitSfx.js';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -355,6 +361,12 @@ export const BAKED_SFX = {
     trimMs: null,
     processing: null,
   },
+  // #479: the SYNTHESISED gait cues — `footstep::play` and `legLift::play`, each a multi-variant
+  // `{ synth }` pool (no `asset`). loadAllBaked renders these offline instead of fetching a file;
+  // getBaked/pickBakedVariant treat them identically to a file-backed pool (the recipe fields
+  // startMs/trimMs/processing/etc are simply absent → null, so the whole rendered buffer plays at
+  // unity). Spread in from gaitSfx.js so the recipes live next to the offline renderer.
+  ...GAIT_SFX_ENTRIES,
 };
 
 // Decoded AudioBuffer cache — the only thing playback (sfx.js) ever reads, synchronously.
@@ -378,6 +390,19 @@ export async function loadAllBaked() {
     // #195: decode every variant independently (same fire-and-forget-per-asset contract as
     // before) — a single-entry bake decodes exactly one buffer at the plain key, unchanged.
     await Promise.all(entries.map(async (entry, i) => {
+      // #479: a SYNTH entry (`{ synth }`, the gait cues) is RENDERED offline into a buffer rather
+      // than fetch+decoded from a file. Same fire-and-forget-per-slot contract: if there's no
+      // OfflineAudioContext (test env) or the render throws, the slot stays empty and the cue falls
+      // back to its live procedural stub in sfx.js, exactly like a file that failed to decode.
+      if (entry?.synth) {
+        try {
+          const buffer = await renderSynthBuffer(entry.synth, _ctx?.sampleRate);
+          _cache.set(variantCacheKey(key, i), buffer);
+        } catch {
+          // no OfflineAudioContext / render failed — leave the slot empty (procedural fallback).
+        }
+        return;
+      }
       if (!entry?.asset) return;
       try {
         const res = await fetch(entry.asset);

@@ -371,6 +371,21 @@ export const LocomotionMixin = {
         Audio.footstep(beat);
       }
 
+      // #479: leg-MOVEMENT (servo/hydraulic limb lift) fires on the OPPOSITE stride phase from the
+      // plant — the two peak-swing crossings at phase 0.25 and 0.75. That's where `strideDir`
+      // (mechArt.js, = -sin(phase·2π)) is at ±1 (the legs maximally split, one leg swung fully
+      // through) AND the body bob (= |sin(phase·2π)|) is at its HIGHEST — i.e. the machine picking
+      // itself up, visually the leg pickup. Firing here makes the servo-whir and the foot-thud
+      // ALTERNATE every quarter-cycle instead of landing together. Same beat-change detection as
+      // the footfall, but ARM-then-fire (no fire on the first frame): unlike the plant, we do NOT
+      // want a lift cue at the phase-0 start alongside the first footfall — the first lift should
+      // come a quarter-cycle later, at the first real 0.25 crossing.
+      const liftBeat = (phase >= 0.25 && phase < 0.75) ? 1 : 0;
+      if (p._gaitLiftBeat !== undefined && liftBeat !== p._gaitLiftBeat) {
+        Audio.legLift(liftBeat);
+      }
+      p._gaitLiftBeat = liftBeat;
+
       // Stompy lurch: the body rides UP mid-stride and DROPS onto the plant. Scales with
       // speed so a crawl barely bobs and a full-tilt march heaves. `stepBob` is the
       // per-chassis amplitude.
@@ -394,6 +409,7 @@ export const LocomotionMixin = {
       yaw = Math.sin(phase * Math.PI * 2) * GAIT_YAW * speedScale;
     } else {
       p._gaitBeat = undefined;   // standing still: the next stride starts on a fresh footfall
+      p._gaitLiftBeat = undefined;   // #479: re-arm the leg-lift so it doesn't fire on the restart frame
       // #435: ease the legs back UNDER the body when you stop instead of freezing them mid-stride.
       // With 4 frames half the cycle was already legs-neutral so this rarely showed; at 16 it would
       // leave the mech standing in a permanent lunge. Walks the phase to the nearest plant (the two

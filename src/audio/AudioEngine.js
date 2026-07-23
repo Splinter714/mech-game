@@ -42,7 +42,8 @@ export class AudioEngine {
     this._musicTimer = null;
     this._step = 0;
     this._nextStepTime = 0;
-    this._lastStepSound = 0;   // throttles rapid footfalls
+    this._lastStepSound = 0;   // throttles rapid footfalls (plant)
+    this._lastLiftSound = 0;   // #479: throttles rapid leg-movement (lift) cues, independently
     this.track = DEFAULT_TRACK;   // active soundtrack id (a key of TRACKS)
     this._trackDef = TRACKS[DEFAULT_TRACK];
     // DAW-style mixer audibility (separate from the level params, so soloing/muting a track
@@ -521,11 +522,21 @@ export class AudioEngine {
     return Sfx.startTrajectory(this, weaponId) || null;
   }
 
-  // Footfall (#34) — a heavy low thud; alternating feet shift pitch slightly (throttled).
+  // Footfall PLANT (#34) — a heavy low thud (throttled). Since #479 this plays a random variant
+  // from the synth-baked footstep pool (bakedSfx.js), falling back to the live stub pre-bake.
   footstep(foot = 0) {
     this._resume();
     if (!this.ready) return;
     Sfx.footstep(this, foot);
+  }
+
+  // Leg-MOVEMENT / LIFT (#479) — the servo/hydraulic swing of a limb picking up, fired on the
+  // OPPOSITE stride phase from the plant (see scenes/arena/locomotion.js) so whir + thud alternate.
+  // Same synth-baked multi-variant pool + procedural fallback as footstep, on its own throttle.
+  legLift(foot = 0) {
+    this._resume();
+    if (!this.ready) return;
+    Sfx.legLift(this, foot);
   }
 
   // Generic UI/pickup cue (#178) — equip/deploy/menu-nav/scrap/powerup/sprint, any (id,
