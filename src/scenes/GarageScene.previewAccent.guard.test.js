@@ -26,15 +26,21 @@ const src = readFileSync(join(DIR, 'GarageScene.js'), 'utf8');
 const previewAccent = (session) => playerAccent(makeGarageSession(session).editing);
 
 describe('#404 the garage preview mech wears the building player’s colour', () => {
-  it('_previewArt() tints with the ARENA accent table, keyed by who is editing', () => {
+  // #404 third pass: _previewArt() no longer writes the option object at all — it asks
+  // art/playerMechLook.js for the shared PLAYER LOOK (which is where `theme`/`accent` and, the
+  // thing that was still missing, the powerup `statusSpot` now live). The subject it keys on —
+  // whoever is editing — is still this scene's own decision, and is what the rest of this file
+  // exercises for real. The full lab-vs-arena parity is pinned in art/playerMechLook.test.js.
+  it('_previewArt() asks for the shared player look, keyed by who is editing', () => {
     const body = src.match(/_previewArt\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
     expect(body, 'expected a _previewArt() method').toBeTruthy();
-    expect(body).toContain("theme: 'player'");
-    expect(body).toContain('playerAccent(this.session.editing)');
+    expect(body).toContain('playerMechArt(this.session.editing');
   });
 
-  it('the accent comes from data/players.js — not a garage-local colour list', () => {
-    expect(src).toMatch(/import \{[^}]*playerAccent[^}]*\} from '\.\.\/data\/players\.js'/);
+  it('the accent comes from the shared look (and so from data/players.js), not a garage-local list', () => {
+    expect(src).toMatch(/import \{[^}]*playerMechArt[^}]*\} from '\.\.\/art\/playerMechLook\.js'/);
+    const look = readFileSync(join(DIR, '..', 'art', 'playerMechLook.js'), 'utf8');
+    expect(look).toMatch(/import \{[^}]*playerAccent[^}]*\} from '\.\.\/data\/players\.js'/);
   });
 
   it('every bake of the garageMech textures passes the preview art opts', () => {

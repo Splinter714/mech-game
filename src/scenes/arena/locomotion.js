@@ -3,12 +3,13 @@
 // the prototype via Object.assign. The pure relocation keeps `update()` a thin orchestrator
 // that calls `_drive` then `_stepGait`.
 import Phaser from 'phaser';
-import { mechLayout, ART_SCALE, partSpriteTransform, PLAYER_HULL_FRAMES } from '../../art/index.js';
+import { mechLayout, ART_SCALE, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
-import { PART_PIVOT, PIVOT_LOCATIONS, MUZZLE_GLOW_SUFFIX } from '../../art/mechArt.js';
+import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
+import { makeMechParts, poseMechParts } from '../../art/mechView.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
@@ -102,31 +103,16 @@ export const LocomotionMixin = {
   // always a LARGE ground unit (`small=false`), so an enemy mech renders at DEPTH.LARGE_GROUND_UNITS
   // — below the player but ABOVE the cover canopy, so it towers over tree tops (see `unitDepth`).
   _makeMechView(key, x, y, angle, isPlayer = false) {
-    const hull = this.add.sprite(0, 0, `${key}_hull_0`).setScale(ARENA_MECH_SCALE);
-    const torL = this.add.sprite(0, 0, `${key}_leftTorso`).setScale(ARENA_MECH_SCALE);
-    const torR = this.add.sprite(0, 0, `${key}_rightTorso`).setScale(ARENA_MECH_SCALE);
-    const armL = this.add.sprite(0, 0, `${key}_leftArm`).setScale(ARENA_MECH_SCALE);
-    const armR = this.add.sprite(0, 0, `${key}_rightArm`).setScale(ARENA_MECH_SCALE);
-    const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(ARENA_MECH_SCALE);
+    // #404: the sprite stack itself (which parts exist, their back-to-front order, and the #433
+    // per-slot muzzle-glow overlays layered above each weapon-carrying part) is built by the
+    // SHARED art/mechView.js — the same function the garage lab preview builds from, so the two
+    // surfaces can't drift. What's arena-specific stays here: the container, its depth tier, the
+    // world scale and the per-view convergence-tilt state.
+    const p = makeMechParts(this, key, { x: 0, y: 0, scale: ARENA_MECH_SCALE, isPlayer });
+    const { hull, torL, torR, armL, armR, turret, glow } = p;
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
-    // #433 (re-architecture): a per-slot GLOW OVERLAY sprite carrying ONLY the weapon's muzzle glow
-    // (mechArt.MUZZLE_GLOW_SUFFIX), layered directly ABOVE its (muzzle-off) part sprite and sharing
-    // that part's transform (same canvas/origin, so _syncPivots poses both identically). Visible by
-    // default — this is where the lit muzzle now lives — and the reload blink toggles its visibility
-    // (arena/ammoIndicators.js). Player-only: these textures are baked only for the player theme.
-    const glow = {};
-    const children = [hull, torL, torR, armL, armR];
-    if (isPlayer) {
-      for (const [part, loc] of [[torL, 'leftTorso'], [torR, 'rightTorso'], [armL, 'leftArm'], [armR, 'rightArm']]) {
-        const o = this.add.sprite(0, 0, `${key}_${loc}${MUZZLE_GLOW_SUFFIX}`).setScale(ARENA_MECH_SCALE);
-        glow[loc] = o;
-        // Insert directly after its part so the overlay sits just above that part (and below the body).
-        children.splice(children.indexOf(part) + 1, 0, o);
-      }
-    }
-    children.push(turret);
-    const c = this.add.container(x, y, children);
+    const c = this.add.container(x, y, p.children);
     // #99: explicit depth — was relying on scene add-order, which put whichever mech view got
     // created LAST (any enemy spawned after the player) on top regardless of actual position.
     // #113/#289: enemy mechs are LARGE GROUND units — below the player (DEPTH.UNITS) but above the
@@ -164,25 +150,11 @@ export const LocomotionMixin = {
   // Place + pivot a mech view's four off-centre part sprites (side torsos + arms) toward their
   // convergence tilt. The sprites are children of the container (local origin = centre), so
   // callers pass baseX = baseY = 0. `tilts` maps a loc → its convergence tilt (0 = straight).
+  // #404: the joint math (and keeping each #433 muzzle-glow overlay welded to its part) lives in
+  // the shared art/mechView.js, so the garage's still preview poses its parts through the exact
+  // same function — with tilt 0 instead of live convergence tilts.
   _syncPivots(view, mech, angle, scale, baseX, baseY, tilts) {
-    const parts = [
-      [view.torL, 'leftTorso'], [view.torR, 'rightTorso'],
-      [view.armL, 'leftArm'], [view.armR, 'rightArm'],
-    ];
-    for (const [sprite, loc] of parts) {
-      const t = partSpriteTransform(mech, loc, angle, scale);
-      sprite.setOrigin(t.ox, t.oy);
-      sprite.setPosition(baseX + t.dx, baseY + t.dy);
-      sprite.rotation = t.rot + (tilts[loc] || 0);
-      // #433: the muzzle-glow overlay shares its part's exact transform (same canvas + origin), so
-      // the coloured glow stays welded to the muzzle as the part pivots toward convergence.
-      const g = view.glow?.[loc];
-      if (g) {
-        g.setOrigin(t.ox, t.oy);
-        g.setPosition(baseX + t.dx, baseY + t.dy);
-        g.rotation = t.rot + (tilts[loc] || 0);
-      }
-    }
+    poseMechParts(view, mech, angle, scale, baseX, baseY, tilts);
   },
 
   // Convergence tilt for one off-centre part (arm or side torso), from its own first mounted

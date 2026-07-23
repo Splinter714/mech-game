@@ -10,7 +10,9 @@ import { ENEMIES } from '../data/enemies.js';
 import { Mech } from '../data/Mech.js';
 import {
   buildMechTextures, buildVehicleTextures, ARMORED_SUFFIX, ART_SCALE, mountIconKey, itemFxKey,
+  HULL_FRAMES,
 } from '../art/index.js';
+import { playerMechArt } from '../art/playerMechLook.js';
 import { vehicleHasArmorArt } from '../art/vehicles/index.js';
 // #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
 // target readout renders an enemy by the exact same rules rather than a second copy of them.
@@ -773,13 +775,17 @@ export default class ArtPreviewScene extends Phaser.Scene {
     const cfg = this._playerConfig();
     const live = this._freshPlayerMech();
     const liveKey = `${TEX_PREFIX}player_live`;
-    buildMechTextures(this, liveKey, live, { theme: 'player' });
+    // #404: bake the REAL player look (art/playerMechLook.js) — the same options the arena and the
+    // garage lab use — so this gallery row shows the mech as it actually deploys rather than the
+    // bare palette (which renders the enemy reactor-purple centre spot). HULL_FRAMES because the
+    // walk-cycle row below shows every baked frame.
+    buildMechTextures(this, liveKey, live, playerMechArt(0, { hullFrames: HULL_FRAMES }));
     this._group(`PLAYER BUILD — ${cfg.chassisId}`, [
       this._mechCell(`${live.name}\nwalking`, liveKey, live, { animate: true }),
     ]);
 
     this._group('HULL WALK CYCLE (#403 legs — frame by frame)',
-      [0, 1, 2, 3].map((f) => this._mechCell(`hull frame ${f}`, liveKey, live, { frame: f })));
+      Array.from({ length: HULL_FRAMES }, (_, f) => this._mechCell(`hull frame ${f}`, liveKey, live, { frame: f })));
 
     // Damage progression. Each step is its OWN Mech + texture set (rather than mutating one),
     // so all four states are on screen at once for comparison instead of one at a time.
@@ -793,7 +799,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const m = this._freshPlayerMech();
       for (const loc of step.hits) m.applyDamage(loc, 99999, 'ballistic');
       const key = `${TEX_PREFIX}player_dmg${i}`;
-      buildMechTextures(this, key, m, { theme: 'player' });
+      buildMechTextures(this, key, m, playerMechArt(0, { hullFrames: HULL_FRAMES }));
       return { step, m, key };
     });
     // One shared scale across the row — otherwise each step re-zooms to fill its cell and the

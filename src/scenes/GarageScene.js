@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech, partSpriteTransform, MUZZLE_GLOW_SUFFIX } from '../art/index.js';
+import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
+import { playerMechArt } from '../art/playerMechLook.js';
+import { makeMechParts, poseMechParts } from '../art/mechView.js';
 import { Mech } from '../data/Mech.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
@@ -8,7 +10,7 @@ import {
   garageAction, garageActionLabel, garageStatusText, advanceEditing, joinPlayer, canJoin,
   playerTabs,
 } from '../data/coopGarage.js';
-import { playerAccent, playerColor } from '../data/players.js';
+import { playerColor } from '../data/players.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -219,15 +221,23 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshPlayerTabs();
   }
 
-  // #404 follow-up: the art options the lab preview is baked with. The preview used to be built
-  // with NO opts at all, so it fell back to the untinted base player palette — the mech read grey
-  // in the lab and azure the instant it deployed. It now carries the rim accent of whoever is
-  // BUILDING RIGHT NOW (`session.editing`), through the very same PLAYER_ACCENTS table the arena
-  // uses (data/players.js), so the two surfaces cannot disagree: solo shows player 1's colour, and
-  // in the sequential co-op flow the preview re-tints to player 2's colour the moment the handoff
-  // rebinds the editing surface to their slot.
+  // #404 follow-up (third pass): the art options the lab preview is baked with. This method no
+  // longer WRITES those options — it asks `art/playerMechLook.js` for them, the one definition the
+  // arena's spawn/join and damage-reskin paths bake from too. Two rounds of this issue were caused
+  // by the lab assembling its own option object and being a field behind: first no accent at all
+  // (grey in the lab, azure the instant it deployed), then the accent but no `statusSpot` — which
+  // dropped mechArt into its ENEMY branch and painted the reactor spine, its two vents and the
+  // cockpit optic REACTOR PURPLE, which the deployed mech has never had.
+  //
+  // The subject is whoever is BUILDING RIGHT NOW (`session.editing`), so the co-op handoff re-tints
+  // the preview to player 2 the moment the editing surface rebinds to their slot.
+  //
+  // The one deliberate lab-vs-arena difference is `hullFrames`: the preview is a STILL pose that
+  // only ever shows `_hull_0`, and frame 0 is pixel-identical at any frame count
+  // (`strideDir(0, n) === 0`), so it bakes the cheap 4 rather than the arena player's 16 and still
+  // shows the exact same legs. Everything else is the arena's own player look, unedited.
   _previewArt() {
-    return { theme: 'player', accent: playerAccent(this.session.editing) };
+    return playerMechArt(this.session.editing, { hullFrames: HULL_FRAMES });
   }
 
   _refreshPlayerTabs() {
@@ -579,47 +589,28 @@ export default class GarageScene extends Phaser.Scene {
     const scale = (box - 30) / 230;
     this._previewScale = scale;
     this._previewCx = cx; this._previewCy = cy + 8;
-    // Add in draw order back→front: hull → side torsos → arms → body, so the body occludes the
-    // side torsos' inner edges and the arms occlude the side torsos (matches the arena layering).
-    this.previewHull = this.add.sprite(cx, cy + 8, 'garageMech_hull_0').setScale(scale);
-    this.previewTorL = this.add.sprite(cx, cy + 8, 'garageMech_leftTorso').setScale(scale);
-    this.previewTorR = this.add.sprite(cx, cy + 8, 'garageMech_rightTorso').setScale(scale);
-    this.previewArmL = this.add.sprite(cx, cy + 8, 'garageMech_leftArm').setScale(scale);
-    this.previewArmR = this.add.sprite(cx, cy + 8, 'garageMech_rightArm').setScale(scale);
-    // #433: the part textures are baked muzzle-OFF; the coloured muzzle glow lives in a per-slot
-    // overlay sprite layered above each part (same as the arena mech view). Static here — always
-    // visible — so the garage preview reads exactly as the lit mech does in the arena.
-    this.previewGlow = {};
-    for (const loc of ['leftTorso', 'rightTorso', 'leftArm', 'rightArm']) {
-      this.previewGlow[loc] = this.add.sprite(cx, cy + 8, `garageMech_${loc}${MUZZLE_GLOW_SUFFIX}`)
-        .setScale(scale);
-    }
-    this.previewTurret = this.add.sprite(cx, cy + 8, 'garageMech_turret').setScale(scale);
+    // #404 (third pass): the sprite stack is built by the SAME shared helper the arena mech view
+    // uses (art/mechView.js) — hull → side torsos → arms, each with its #433 muzzle-glow overlay
+    // above it → turret — rather than a hand-maintained copy of that list. `isPlayer: true`,
+    // because the lab is showing a PLAYER mech: it gets the lit muzzle overlays exactly as the
+    // deployed mech does. The only lab-specific bits are the fixed screen position and the preview
+    // scale; the sprites are free (not containered) because nothing here moves.
+    this._preview = makeMechParts(this, 'garageMech', { x: cx, y: cy + 8, scale, isPlayer: true });
+    this.previewHull = this._preview.hull;
+    this.previewTurret = this._preview.turret;
     this._positionPreviewParts();
   }
 
-  // Place + pivot the static preview side-torso + arm sprites at their joints (tilt 0). The
-  // preview faces "up" (turret rotation 0); passing angle = -π/2 gives rot = 0 (matching the
-  // turret) and the right dx/dy. Called on build and after a chassis switch (which changes
-  // mechLayout → part placement).
+  // Place + pivot the static preview side-torso + arm sprites at their joints. Poses through the
+  // arena's own joint math (art/mechView.js `poseMechParts`) with an EMPTY tilt map — the lab shows
+  // the mech at REST, where the arena's live weapon-convergence tilts are 0 too, so this is the
+  // same pose, not a different one. The preview faces "up" (turret rotation 0): passing
+  // angle = -π/2 gives rot = 0 (matching the turret) and the right dx/dy. Called on build and after
+  // a chassis switch (which changes mechLayout → part placement).
   _positionPreviewParts() {
-    const parts = [
-      [this.previewTorL, 'leftTorso'], [this.previewTorR, 'rightTorso'],
-      [this.previewArmL, 'leftArm'], [this.previewArmR, 'rightArm'],
-    ];
-    for (const [sprite, loc] of parts) {
-      const t = partSpriteTransform(this.mech, loc, -Math.PI / 2, this._previewScale);
-      sprite.setOrigin(t.ox, t.oy);
-      sprite.setPosition(this._previewCx + t.dx, this._previewCy + t.dy);
-      sprite.rotation = t.rot;
-      // #433: the muzzle-glow overlay shares its part's exact transform (same canvas + origin).
-      const g = this.previewGlow?.[loc];
-      if (g) {
-        g.setOrigin(t.ox, t.oy);
-        g.setPosition(this._previewCx + t.dx, this._previewCy + t.dy);
-        g.rotation = t.rot;
-      }
-    }
+    if (!this._preview) return;
+    poseMechParts(this._preview, this.mech, -Math.PI / 2, this._previewScale,
+      this._previewCx, this._previewCy, {});
   }
 
   // The shared skill-tile row, along the bottom of the LEFT region.

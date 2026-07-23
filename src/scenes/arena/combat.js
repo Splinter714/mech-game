@@ -2,6 +2,7 @@
 // point to the nearest body part) and the hit feedback (impact bursts, floating text).
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
+import { playerMechArt } from '../../art/playerMechLook.js';
 import { Audio } from '../../audio/index.js';
 import {
   ARENA_MECH_SCALE, DAMAGEABLE, DEATH_SCALE_MAX, DEPTH, deathScaleFor, explosionCategoryFor,
@@ -15,7 +16,6 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
-import { playerAccent } from '../../data/players.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -237,7 +237,7 @@ export const CombatMixin = {
     const statusSpot = statusSpotColorsFor(this, player);
     player._statusSpotKey = statusSpot.join(',');
     reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
-      { theme: 'player', accent: playerAccent(player.id ?? 0), statusSpot });
+      playerMechArt(player.id ?? 0, { statusSpot }));
   },
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific

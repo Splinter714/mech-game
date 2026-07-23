@@ -9,12 +9,13 @@
 //   data/players.js  — the collection, nearest-player targeting, the identifying colours
 //
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
-import { buildMechTextures, PLAYER_HULL_FRAMES } from '../../art/index.js';
+import { buildMechTextures } from '../../art/index.js';
+import { playerMechArt } from '../../art/playerMechLook.js';
 import { Mech } from '../../data/Mech.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
 import { initialDashState } from '../../data/dash.js';
-import { MAX_PLAYERS, makePlayer, playerAccent, showsPlayerColor } from '../../data/players.js';
+import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
@@ -77,8 +78,9 @@ export const CoopMixin = {
     // tint over every segment and the head is simply what a player mech looks like.
     // #435: a PLAYER mech bakes the fine-grained walk cycle (PLAYER_HULL_FRAMES) — it's the only
     // mech that actually cycles its hull frames, so it's the only one that pays for them.
-    buildMechTextures(this, textureKey, mech,
-      { theme: 'player', accent: playerAccent(index), hullFrames: PLAYER_HULL_FRAMES });
+    // #404: the whole player look — accent, powerup status spot, walk-frame count — comes from
+    // the one shared definition (art/playerMechLook.js), the same one the garage preview uses.
+    buildMechTextures(this, textureKey, mech, playerMechArt(index));
     player.view = this._makeMechView(textureKey, x, y, player.angle, true);
     // Created hidden: `_updatePlayerMarkers` owns visibility every frame, and starting hidden
     // means a solo player never sees a one-frame flash of a ring before that rule first runs.
@@ -386,7 +388,7 @@ export const CoopMixin = {
     const statusSpot = statusSpotColorsFor(this, player);
     player._statusSpotKey = statusSpot.join(',');
     buildMechTextures(this, player.textureKey ?? 'playerMech', player.mech,
-      { theme: 'player', accent: playerAccent(player.id), statusSpot, hullFrames: PLAYER_HULL_FRAMES });
+      playerMechArt(player.id, { statusSpot }));
   },
 
   // The world-space distance from the camera focus at which a player is hard-stopped, published
