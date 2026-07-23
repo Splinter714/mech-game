@@ -43,6 +43,9 @@ const MARKER_RADIUS = 30;
 // a powerup-style ring (HudScene `_updateBuffHud`) — Jackson asked for both, not either.
 const RESPAWN_CHEVRON = 7;      // half-width of the chevron sliding down the beacon column
 const RESPAWN_PHASE_MS = 900;   // one slide/breath cycle
+// #421 (biome legibility): the dark backing every stroke of the drop-zone marker is drawn over.
+const MARKER_EDGE = 0x0b0e14;
+const MARKER_EDGE_W = 1.6;
 
 export const CoopMixin = {
   // #348: the two shared "can a player be HERE?" primitives behind both co-op placements
@@ -318,35 +321,49 @@ export const CoopMixin = {
 
       // The four closing corner brackets. They are the countdown: wide at the moment of death,
       // tight around the landing spot as the clock runs out.
-      g.lineStyle(3, color, 0.95 * breathe);
+      // #421: every stroke of this marker is drawn TWICE — a wider near-black pass first, then
+      // the player's colour on top. The identifying colour is what makes the cue readable at a
+      // glance, and on snow/sand a saturated line over bright ground is exactly what washes out;
+      // the dark backing gives it an edge on any biome without changing the colour itself.
+      const backed = (width, alpha, path) => {
+        g.lineStyle(width + MARKER_EDGE_W * 2, MARKER_EDGE, alpha * 0.65);
+        path();
+        g.lineStyle(width, color, alpha);
+        path();
+      };
       for (const corner of L.corners) {
         for (const arm of corner.arms) {
-          g.beginPath();
-          g.moveTo(cx + arm.x1, cy + arm.y1);
-          g.lineTo(cx + arm.x2, cy + arm.y2);
-          g.strokePath();
+          backed(3, 0.95 * breathe, () => {
+            g.beginPath();
+            g.moveTo(cx + arm.x1, cy + arm.y1);
+            g.lineTo(cx + arm.x2, cy + arm.y2);
+            g.strokePath();
+          });
         }
       }
       // The beacon column standing out of the wreck, with a chevron sliding down it — the piece
       // that gets the cue OFF the ground plane, which is what made the old ring read as a decal.
-      g.lineStyle(2, color, 0.45 * breathe);
-      g.beginPath();
-      g.moveTo(cx + L.beam.x, cy + L.beam.y1);
-      g.lineTo(cx + L.beam.x, cy + L.beam.y2);
-      g.strokePath();
+      backed(2, 0.45 * breathe, () => {
+        g.beginPath();
+        g.moveTo(cx + L.beam.x, cy + L.beam.y1);
+        g.lineTo(cx + L.beam.x, cy + L.beam.y2);
+        g.strokePath();
+      });
       const w = RESPAWN_CHEVRON;
-      g.lineStyle(3, color, 0.95 * breathe);
-      g.beginPath();
-      g.moveTo(cx - w, cy + L.chevronY - w);
-      g.lineTo(cx, cy + L.chevronY);
-      g.lineTo(cx + w, cy + L.chevronY - w);
-      g.strokePath();
+      backed(3, 0.95 * breathe, () => {
+        g.beginPath();
+        g.moveTo(cx - w, cy + L.chevronY - w);
+        g.lineTo(cx, cy + L.chevronY);
+        g.lineTo(cx + w, cy + L.chevronY - w);
+        g.strokePath();
+      });
 
       // The number, above the bracket square rather than inside a ring: whole seconds while
       // counting, HOLD while gated.
       let t = texts[slot];
       if (!t) {
         t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold' })
+          .setStroke('#0b0e14', 4)   // #421: same dark backing as the brackets, for light biomes
           .setOrigin(0.5, 1).setDepth(DEPTH.WORLD_UI);
         texts[slot] = t;
       }

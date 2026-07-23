@@ -12,6 +12,8 @@
 // Design coords match mechPrims (origin = centre, −y = forward), so builders can reuse
 // rectC/roundC/ellipseC/poly.
 
+import { poly, rectC, roundC, ellipseC } from '../mechPrims.js';
+
 export const VEHICLE = {
   outline: 0x2b3441,      // dark blue-grey edge — carries the silhouette on snow + volcanic
   // #129: an extra near-white ring drawn OUTSIDE `outline` on every exterior silhouette shape.
@@ -30,6 +32,41 @@ export const VEHICLE = {
   treadHi: 0x8b97a6,      // track lug / barrel highlight
   glass: 0x51616f,        // cockpit glass (cool tint, darker so the canopy reads)
 };
+
+// #421: the halo above is a bright ring, which does nothing on a bright biome — on snow/sand a
+// pale vehicle wrapped in a white ring reads as a blob with a hairline dark `outline` buried
+// inside it. Every halo shape is now drawn as a PAIR: a near-black edge ring first, the bright
+// halo on top of it. Whatever the ground tone, one of the two is always in strong contrast.
+// The helpers below are the ONLY way vehicle art should draw a halo shape, so the pairing can't
+// drift apart per call site. `EDGE_W` is the dark ring's thickness in design units — deliberately
+// thin (≈1.4 display px at arena scale); this is a contrast edge, not a cartoon outline.
+export const EDGE_W = 1.0;
+export const VEHICLE_EDGE = 0x121821;   // matches mechPrims HALO_EDGE
+
+// Rounded rect / ellipse / rect halo shapes: the same box grown by EDGE_W on every side.
+export function haloRound(sg, cx, cy, w, h, r) {
+  roundC(sg, cx, cy, w + EDGE_W * 2, h + EDGE_W * 2, VEHICLE_EDGE, r + EDGE_W);
+  roundC(sg, cx, cy, w, h, VEHICLE.halo, r);
+}
+export function haloEllipse(sg, cx, cy, w, h) {
+  ellipseC(sg, cx, cy, w + EDGE_W * 2, h + EDGE_W * 2, VEHICLE_EDGE);
+  ellipseC(sg, cx, cy, w, h, VEHICLE.halo);
+}
+export function haloRect(sg, cx, cy, w, h) {
+  rectC(sg, cx, cy, w + EDGE_W * 2, h + EDGE_W * 2, VEHICLE_EDGE);
+  rectC(sg, cx, cy, w, h, VEHICLE.halo);
+}
+// Polygon halo shape. The dark copy pushes each vertex OUTWARD by EDGE_W on each axis (sign of
+// its offset from the shape's mean point), which grows a convex hull/quad by a constant margin
+// laterally AND lengthwise — unlike scaling, which would grow a long thin boom mostly along its
+// length and leave the sides unchanged.
+export function haloPoly(sg, pts) {
+  const n = pts.length;
+  const mx = pts.reduce((s, p) => s + p[0], 0) / n;
+  const my = pts.reduce((s, p) => s + p[1], 0) / n;
+  poly(sg, pts.map(([x, y]) => [x + Math.sign(x - mx) * EDGE_W, y + Math.sign(y - my) * EDGE_W]), VEHICLE_EDGE);
+  poly(sg, pts, VEHICLE.halo);
+}
 
 // A warm-accent glow ramp derived from a kind's accent colour, for the "hot" bits.
 export function accentGlow(accent) {

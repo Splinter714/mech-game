@@ -4,7 +4,7 @@
 // side, a boxy sloped glacis at the front, a rounded turret with a big gun.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, poly, armorShell } from '../mechPrims.js';
-import { VEHICLE as V, accentGlow } from './palette.js';
+import { VEHICLE as V, accentGlow, haloRound, haloPoly, haloRect } from './palette.js';
 
 // Hull + two tracks, drawn pointing "up" (−y = forward). The front is a sloped glacis (tough
 // frontal facing); the tracks are dark ribbed bands down each side.
@@ -25,7 +25,7 @@ export function drawTankHull(sg, accent, armored = false) {
 
   // Tracks (left + right dark ribbed bands running fore-aft).
   for (const sx of [-10, 10]) {
-    roundC(sg, sx, 2, 9, 44, V.halo, 3.8);   // #129: legibility halo (outer ring)
+    haloRound(sg, sx, 2, 9, 44, 3.8);   // #129: legibility halo (outer ring)
     roundC(sg, sx, 2, 7.6, 42.4, V.outline, 3);
     roundC(sg, sx, 2, 5.4, 40, V.tread, 2.5);
     // Track lugs (rungs) — a stack of light ticks so it reads as a moving belt.
@@ -35,7 +35,7 @@ export function drawTankHull(sg, accent, armored = false) {
   }
 
   // Central hull tub between the tracks.
-  poly(sg, [[-8.6, -18], [8.6, -18], [9.6, 20], [-9.6, 20]], V.halo);   // #129
+  haloPoly(sg, [[-8.6, -18], [8.6, -18], [9.6, 20], [-9.6, 20]]);   // #129
   poly(sg, [[-7.4, -16], [7.4, -16], [8.2, 17], [-8.2, 17]], V.outline);
   poly(sg, [[-6.6, -15], [6.6, -15], [7.2, 16], [-7.2, 16]], V.bodyDk);
   // Sloped glacis plate at the FRONT (tough frontal facing) — a lighter trapezoid up top.
@@ -57,7 +57,7 @@ export function drawTankHull(sg, accent, armored = false) {
 function drawTurret(sg, accent, armored = false) {
   const A = accentGlow(accent);
   // Turret body.
-  roundC(sg, 0, 0, 21.6, 18.6, V.halo, 6.8);   // #129: legibility halo (outer ring)
+  haloRound(sg, 0, 0, 21.6, 18.6, 6.8);   // #129: legibility halo (outer ring)
   roundC(sg, 0, 0, 20, 17, V.outline, 6);
   roundC(sg, 0, 0, 17, 14, V.body, 5);
   roundC(sg, 0, -1, 13, 9, V.bodyHi, 4);
@@ -69,14 +69,14 @@ function drawTurret(sg, accent, armored = false) {
   ellipseC(sg, -4, -2, 1.8, 1.6, A.core, 0.95);
   // Mantlet + long gun (forward, −y). The gun juts well past the turret body's own halo ring,
   // out into open ground, so it needs its own halo pass too.
-  rectC(sg, 0, -10, 9.6, 7.6, V.halo);   // #129
+  haloRect(sg, 0, -10, 9.6, 7.6);   // #129
   rectC(sg, 0, -10, 8, 6, V.outline);
-  rectC(sg, 0, -20, 6.6, 23.6, V.halo);   // #129
+  haloRect(sg, 0, -20, 6.6, 23.6);   // #129
   rectC(sg, 0, -20, 5, 22, V.outline);
   rectC(sg, 0, -20, 3, 22, V.tread);
   rectC(sg, -0.9, -20, 0.8, 20, V.treadHi, 0.7);
   // Muzzle brake + hot tip.
-  rectC(sg, 0, -30, 6.6, 5.1, V.halo);   // #129
+  haloRect(sg, 0, -30, 6.6, 5.1);   // #129
   rectC(sg, 0, -30, 5, 3.5, V.bodyDk);
   ellipseC(sg, 0, -31, 2.6, 2, A.hot, 0.85);
   ellipseC(sg, 0, -31, 4, 3, A.halo, 0.3);

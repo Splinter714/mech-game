@@ -26,7 +26,7 @@
 // as LONG — the barrel is the tell that this thing out-ranges you.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, armorShell } from '../mechPrims.js';
-import { VEHICLE as V, accentGlow } from './palette.js';
+import { VEHICLE as V, accentGlow, haloEllipse, haloRect } from './palette.js';
 
 // The collar mount (the HULL — never rotates, and after #429 never needs to). Deliberately NO
 // ground shadow ellipse: this thing is not on the ground. A circular armoured collar bedded into
@@ -38,7 +38,7 @@ import { VEHICLE as V, accentGlow } from './palette.js';
 // read as flush no matter which bearing its span runs at (see the header note).
 function drawMount(sg, accent, armored = false) {
   // Halo pass first, oversized, behind the outline shapes (#129 legibility convention).
-  ellipseC(sg, 0, 0, 33.2, 33.2, V.halo);
+  haloEllipse(sg, 0, 0, 33.2, 33.2);
   // r = 15: the collar's outer edge lands on the wall's own half-thickness, so it sits flush
   // inside the span's band instead of overhanging either face.
   ellipseC(sg, 0, 0, 30, 30, V.outline);
@@ -65,7 +65,7 @@ function drawMount(sg, accent, armored = false) {
 function drawRail(sg, accent, armored = false) {
   const A = accentGlow(accent);
   // Pivot ring — kept small, so the BARREL is still the dominant shape.
-  ellipseC(sg, 0, 0, 15.6, 15.6, V.halo);
+  haloEllipse(sg, 0, 0, 15.6, 15.6);
   ellipseC(sg, 0, 0, 14, 14, V.outline);
   ellipseC(sg, 0, 0, 12.4, 12.4, V.rim, 0.55);
   ellipseC(sg, 0, 0, 10.6, 10.6, V.bodyHi);
@@ -74,7 +74,7 @@ function drawRail(sg, accent, armored = false) {
   ellipseC(sg, 0, -0.5, 2.2, 2, A.core, 0.95);
   // The twin rails, running well forward (−y). Long and thin — the range tell. Halo pass first,
   // since they jut far past the pivot block's own halo out into open ground.
-  rectC(sg, 0, -17, 9.4, 29.6, V.halo);
+  haloRect(sg, 0, -17, 9.4, 29.6);
   for (const x of [-3, 3]) {
     rectC(sg, x, -17, 3.4, 28, V.outline);
     rectC(sg, x, -17, 2, 27, V.tread);

@@ -23,7 +23,7 @@ import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
 import {
-  DESIGN, themeFor, REACTOR, HALO, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar,
+  DESIGN, themeFor, REACTOR, HALO, HALO_EDGE, poly, rectC, roundC, ellipseC, chamfer, plate, glowBar,
   exposedInternals, statusSpotBar,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
@@ -395,6 +395,15 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
       [dx * a.bodyWid * (skirtOuterBot + g), a.bodyLen * (0.17 + g)],   // outer-bottom (tucked in)
       [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (0.17 + g)],   // inner-bottom
     ];
+    // #421: the dark contrast edge goes OUTSIDE the bright halo (see mechPrims HALO_EDGE) — the
+    // skirt expands by a FRACTION of the body box, so the extra ring is one more step of `g`. The
+    // inner (pelvis-side) edge is clamped at the centre line rather than expanding past it: the
+    // halo already sits exactly on SKIRT_INNER, that edge is buried under the torso where no
+    // contrast ring can be seen anyway, and letting it cross would put right-hand geometry on the
+    // left plate.
+    if (T.legibilityHalo) {
+      poly(sg, skirt(0.034).map(([x, y]) => [dx * Math.max(0, x * dx), y]), HALO_EDGE);
+    }
     if (T.legibilityHalo) poly(sg, skirt(0.02), HALO);
     poly(sg, skirt(0.01), T.outline);
     poly(sg, skirt(0), T.faceMid);

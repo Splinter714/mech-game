@@ -442,8 +442,13 @@ export const CombatMixin = {
     }
   },
 
+  // #421: these float in WORLD space, straight over the terrain, in colours picked to identify a
+  // powerup rather than to survive a bright biome (ARMOR PATCH's 0x9fa8b2 grey over snow was the
+  // worst case). A dark stroke round the glyphs is the cheapest thing that reads on every ground
+  // tone — it costs no layout and leaves the identifying colour exactly as it was.
   _floatText(x, y, s, color) {
     const t = this.add.text(x, y, s, { fontFamily: 'monospace', fontSize: '14px', color })
+      .setStroke('#0b0e14', 4)
       .setOrigin(0.5).setDepth(DEPTH.IMPACT_FX);   // #99: reads over units/FX, not add-order luck
     this.tweens.add({ targets: t, y: y - 26, alpha: 0, duration: 700, onComplete: () => t.destroy() });
   },

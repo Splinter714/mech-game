@@ -67,6 +67,19 @@ export const REACTOR = { halo: 0x7a2ed6, core: 0xb15cff, hot: 0xecd6ff, edge: 0x
 // enemy's identifying body/accent colour.
 export const HALO = 0xfbfdff;
 
+// #421: the halo above solves DARK terrain and only dark terrain. On LIGHT terrain (snow
+// 0xd9e6ef, sand 0xbf9c5e) the enemy faction is a near-white machine (face 0xe7ecf1) whose only
+// separation from the ground was the ~0.6-design-unit `outline` ring — sub-pixel-thin once the
+// arena displays the sprite at ARENA_MECH_SCALE — and OUTSIDE that sat the bright halo, which on
+// snow is simply more white. So the unit read as a pale blob with a hairline edge.
+// `HALO_EDGE` closes that: one more ring, drawn OUTSIDE the halo in a near-black tone, so the
+// silhouette now runs ground → dark edge → bright halo → dark outline → body. Whatever the
+// terrain's tone, one of the two outer rings is always in strong contrast with it, and the
+// enemy's identifying colours are still untouched. Deliberately thin (`HALO_EDGE_W` design
+// units ≈ 1.4 display px at arena scale): the point is legibility, not a black rim on everything.
+export const HALO_EDGE = 0x121821;
+export const HALO_EDGE_W = 1.0;
+
 // Per weapon-category glow ramps {halo, core, hot, edge}. Cores mirror CATEGORIES.color.
 export const NEON = {
   energy:    { halo: 0x1390c8, core: 0x38d9ff, hot: 0xe6fbff, edge: 0x7fe6ff },
@@ -136,13 +149,21 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
     // a panel with broken corners, not a lozenge. The rim/AO/seam furniture below is shared with
     // the angular path, so both factions now get the same flat panel language.
     const r = Math.min(w, h) * (T.cornerR ?? ROUNDED_CORNER_R);
-    if (T.legibilityHalo) roundC(sg, cx, cy, w + 2.6, h + 2.6, HALO, r + 0.8);
+    if (T.legibilityHalo) {
+      const e = HALO_EDGE_W;
+      roundC(sg, cx, cy, w + 2.6 + e * 2, h + 2.6 + e * 2, HALO_EDGE, r + 0.8 + e);   // #421
+      roundC(sg, cx, cy, w + 2.6, h + 2.6, HALO, r + 0.8);
+    }
     roundC(sg, cx, cy, w + 1.2, h + 1.2, T.outline, r + 0.4);
     roundC(sg, cx, cy, w, h, fill, r);
     inset = Math.min(w, h) * 0.1;
   } else {
     const c = opts.chamfer ?? Math.min(w, h) * 0.22;
-    if (T.legibilityHalo) poly(sg, chamfer(cx, cy, w + 2.6, h + 2.6, c + 0.8), HALO);
+    if (T.legibilityHalo) {
+      const e = HALO_EDGE_W;
+      poly(sg, chamfer(cx, cy, w + 2.6 + e * 2, h + 2.6 + e * 2, c + 0.8 + e), HALO_EDGE);   // #421
+      poly(sg, chamfer(cx, cy, w + 2.6, h + 2.6, c + 0.8), HALO);
+    }
     poly(sg, chamfer(cx, cy, w + 1.2, h + 1.2, c + 0.4), T.outline);
     poly(sg, chamfer(cx, cy, w, h, c), fill);
     inset = c;
@@ -301,11 +322,19 @@ export function exposedInternals(sg, T, cx, cy, w, h) {
 export function stump(sg, T, cx, cy, w, h) {
   const m = Math.min(w, h);
   if (T.rounded) {
-    if (T.legibilityHalo) roundC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO, m * 0.18 + 0.5);
+    if (T.legibilityHalo) {
+      const e = HALO_EDGE_W;
+      roundC(sg, cx, cy, w * 0.62 + 1.4 + e * 2, h * 0.5 + 1.4 + e * 2, HALO_EDGE, m * 0.18 + 0.5 + e);   // #421
+      roundC(sg, cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, HALO, m * 0.18 + 0.5);
+    }
     roundC(sg, cx, cy, w * 0.62, h * 0.5, T.outline, m * 0.18);
     roundC(sg, cx, cy, w * 0.56, h * 0.44, T.char, m * 0.16);
   } else {
-    if (T.legibilityHalo) poly(sg, chamfer(cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, m * 0.14 + 0.4), HALO);
+    if (T.legibilityHalo) {
+      const e = HALO_EDGE_W;
+      poly(sg, chamfer(cx, cy, w * 0.62 + 1.4 + e * 2, h * 0.5 + 1.4 + e * 2, m * 0.14 + 0.4 + e), HALO_EDGE);   // #421
+      poly(sg, chamfer(cx, cy, w * 0.62 + 1.4, h * 0.5 + 1.4, m * 0.14 + 0.4), HALO);
+    }
     poly(sg, chamfer(cx, cy, w * 0.62, h * 0.5, m * 0.14), T.outline);
     poly(sg, chamfer(cx, cy, w * 0.56, h * 0.44, m * 0.14), T.char);
   }

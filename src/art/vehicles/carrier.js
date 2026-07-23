@@ -20,7 +20,7 @@
 // the old Broodwalker used for its walk cycle. No new machinery — same seam, other sprite.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, roundC, ellipseC, armorShell } from '../mechPrims.js';
-import { VEHICLE as V, accentGlow } from './palette.js';
+import { VEHICLE as V, accentGlow, haloRound } from './palette.js';
 import { drawTankHull } from './tank.js';
 
 // How many bay-door frames this art builds: [0] shut, [1] open. Exported so enemyKinds.js's
@@ -36,7 +36,7 @@ function drawBay(sg, accent, open, armored = false) {
   const A = accentGlow(accent);
   // Coaming (the raised rim around the opening) — halo/outline/body layering, same language as
   // every other vehicle mass in this folder.
-  roundC(sg, 0, 1, 15.6, 21.6, V.halo, 4.4);      // #129 legibility halo
+  haloRound(sg, 0, 1, 15.6, 21.6, 4.4);      // #129 legibility halo
   roundC(sg, 0, 1, 14, 20, V.outline, 4);
   roundC(sg, 0, 1, 12, 18, V.bodyDk, 3.4);
   // The bay THROAT — a BLACK recess (Jackson #396: "shouldn't be purple inside, it should be

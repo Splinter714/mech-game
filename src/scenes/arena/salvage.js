@@ -65,8 +65,13 @@ export const SalvageMixin = {
   _makeSalvageView(x, y) {
     const glow = this.add.ellipse(0, 6, 20, 8, SALVAGE_COLOR, 0.14);
     const ring = this.add.circle(0, 0, 7, SALVAGE_COLOR, 0.1).setStrokeStyle(2, SALVAGE_COLOR, 0.6);
+    // #421: gold (0xf5c542) on DESERT sand (0xbf9c5e) is the single worst colour pairing in the
+    // game — same hue family, near-identical value, so a scrap drop all but vanished on that
+    // biome. A dark diamond behind the gem is what separates it from the ground; the gem's own
+    // colour (which is how you know it's scrap and not a powerup) is untouched.
+    const gemEdge = this.add.rectangle(0, 0, 10, 10, 0x0b0e14, 0.7).setAngle(45);
     const gem = this.add.rectangle(0, 0, 6, 6, SALVAGE_COLOR, 1).setAngle(45).setStrokeStyle(1, 0xffffff, 0.7);
-    const c = this.add.container(x, y, [glow, ring, gem]);
+    const c = this.add.container(x, y, [glow, ring, gemEdge, gem]);
     // #99: same WORLD_UI tier as the objective/powerup beacons — a pickup should always read
     // clearly, not get buried under whichever unit happens to walk near it.
     c.setDepth(DEPTH.WORLD_UI);

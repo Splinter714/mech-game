@@ -185,16 +185,23 @@ export const PowerupsMixin = {
     const beam = this.add.triangle(0, 0, -7, 4, 7, 4, 0, -46, p.color, 0.22);
     // Big soft halo that pulses — the main "there's something here" signal.
     const halo = this.add.circle(0, 0, 22, p.color, 0.28);
+    // #421 (biome legibility): a dark backing under the two SOLID pieces — the spinning ring and
+    // the core diamond. Every layer above is the type colour or white, which is what makes a
+    // powerup identifiable but also what washes out on snow/sand; a wider near-black shape behind
+    // each gives the beacon an edge on bright ground while the colours themselves stay put.
+    const ringEdge = this.add.circle(0, 0, 13).setStrokeStyle(6, 0x0b0e14, 0.5);
+    const coreEdge = this.add.rectangle(0, 0, 17, 17, 0x0b0e14, 0.7).setAngle(45);
     // Bright spinning ring outline.
     const ring = this.add.circle(0, 0, 13).setStrokeStyle(3, p.color, 1);
     // Hot core — near-white centre so it punches against dark ground, edged in the type colour.
     const core = this.add.rectangle(0, 0, 12, 12, p.color, 1).setAngle(45).setStrokeStyle(2, 0xffffff, 0.9);
     const spark = this.add.rectangle(0, 0, 5, 5, 0xffffff, 0.95).setAngle(45);
-    const c = this.add.container(x, y, [glowOuter, glowInner, beam, halo, ring, core, spark]);
+    const c = this.add.container(x, y, [glowOuter, glowInner, beam, halo, ringEdge, ring, coreEdge, core, spark]);
     // #99: same WORLD_UI tier as the objective marker/salvage beacon — a timed-buff pickup is
     // meant to be an eye-catching beacon, so it should never get lost under a passing unit.
     c.setDepth(DEPTH.WORLD_UI);
     c._halo = halo; c._core = core; c._ring = ring; c._beam = beam;
+    c._ringEdge = ringEdge; c._coreEdge = coreEdge;   // #421: kept in step with their bright twins
     c._glow = [glowOuter, glowInner]; c._spark = spark;
     return c;
   },
@@ -227,8 +234,14 @@ export const PowerupsMixin = {
       // "breathes" against the dark ground; the core pumps a touch out of phase for life.
       const pulse = 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * Math.PI * 4));  // 0..1 on the beat
       v._halo.setScale(0.85 + 0.5 * pulse).setAlpha(0.18 + 0.34 * pulse);
-      v._core.setScale(0.92 + 0.12 * Math.sin(t * Math.PI * 4 + 1));
-      v._ring.setScale(0.95 + 0.18 * pulse);
+      const coreS = 0.92 + 0.12 * Math.sin(t * Math.PI * 4 + 1);
+      const ringS = 0.95 + 0.18 * pulse;
+      v._core.setScale(coreS);
+      v._ring.setScale(ringS);
+      // #421: the dark backings ride the exact same breath, so the bright shape can never pulse
+      // out past its own contrast edge.
+      v._coreEdge?.setScale(coreS);
+      v._ringEdge?.setScale(ringS);
       v._ring.rotation += delta * 0.003;           // slow spin on the ring
       v._spark.rotation -= delta * 0.006;
       v._beam.setScale(1, 0.9 + 0.25 * pulse).setAlpha(0.14 + 0.18 * pulse);

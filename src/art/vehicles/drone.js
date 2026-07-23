@@ -5,7 +5,7 @@
 // rotors are turning." Flyers draw a drop shadow in the scene (they're elevated).
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
 import { DESIGN, rectC, ellipseC, poly } from '../mechPrims.js';
-import { VEHICLE as V, accentGlow } from './palette.js';
+import { VEHICLE as V, accentGlow, haloEllipse, haloPoly, EDGE_W, VEHICLE_EDGE } from './palette.js';
 
 const ARMS = [[-8, -8], [8, -8], [-8, 8], [8, 8]];   // the four rotor-boom tips (design coords)
 
@@ -24,6 +24,11 @@ function drawFrame(sg, accent) {
   for (const [x, y] of ARMS) {
     // #129: legibility halo — a wider white stroke UNDER the dark outline stroke, so the boom
     // still has a visible edge on dark terrain (where the dark outline alone would vanish).
+    // #421: and a wider DARK stroke under THAT, so the boom equally holds an edge on light
+    // terrain (snow/sand), where the white halo is the thing that vanishes. Same pairing the
+    // haloRound/haloPoly helpers apply to every other vehicle silhouette shape.
+    sg.raw.lineStyle((5.4 + EDGE_W * 2) * ART_SCALE, VEHICLE_EDGE, 1);
+    sg.raw.lineBetween((DESIGN / 2) * ART_SCALE, (DESIGN / 2) * ART_SCALE, (DESIGN / 2 + x) * ART_SCALE, (DESIGN / 2 + y) * ART_SCALE);
     sg.raw.lineStyle(5.4 * ART_SCALE, V.halo, 1);
     sg.raw.lineBetween((DESIGN / 2) * ART_SCALE, (DESIGN / 2) * ART_SCALE, (DESIGN / 2 + x) * ART_SCALE, (DESIGN / 2 + y) * ART_SCALE);
     sg.raw.lineStyle(3.6 * ART_SCALE, V.outline, 1);
@@ -31,7 +36,7 @@ function drawFrame(sg, accent) {
     sg.raw.lineStyle(1.8 * ART_SCALE, V.rim, 0.9);
     sg.raw.lineBetween((DESIGN / 2) * ART_SCALE, (DESIGN / 2) * ART_SCALE, (DESIGN / 2 + x) * ART_SCALE, (DESIGN / 2 + y) * ART_SCALE);
     // Rotor hub at each tip.
-    ellipseC(sg, x, y, 3.9, 3.9, V.halo);   // #129
+    haloEllipse(sg, x, y, 3.9, 3.9);   // #129
     ellipseC(sg, x, y, 3, 3, V.tread);
     ellipseC(sg, x, y, 1.6, 1.6, A.core, 0.8);
   }
@@ -50,7 +55,7 @@ function drawFrame(sg, accent) {
   // face. The two OUTER polys (halo + outline) keep their exact coordinates, so the pod's
   // footprint and the shield rim tracing it are unchanged; only the INNER lit face is pulled in,
   // which widens that dark band from ~0.6 to ~0.9 design units without the body growing at all.
-  poly(sg, [[-3.5, -2.3], [3.5, -2.3], [4.0, 2.3], [-4.0, 2.3]], V.halo);   // #129
+  haloPoly(sg, [[-3.5, -2.3], [3.5, -2.3], [4.0, 2.3], [-4.0, 2.3]]);   // #129
   poly(sg, [[-2.6, -1.7], [2.6, -1.7], [3.1, 1.7], [-3.1, 1.7]], V.outline);
   poly(sg, [[-1.7, -0.95], [1.7, -0.95], [2.2, 0.95], [-2.2, 0.95]], V.bodyHi);
   // Forward sensor eye (accent glow), pointing −y — pulled in to sit on the smaller pod's nose.
