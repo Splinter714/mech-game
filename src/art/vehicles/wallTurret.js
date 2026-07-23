@@ -4,45 +4,64 @@
 // ON THE GROUND: it has a ground shadow, a wide octagonal footing, sandbag mass. Reused as-is on a
 // wall it would look like a turret that happened to be standing in front of the wall — which is
 // exactly the wrong read, because the whole mechanic is that this gun belongs to the span and dies
-// with it. So the hull here is not a base plate at all, it is a PINTLE MOUNT: a narrow bracket
-// that reads as bolted THROUGH the parapet, with no ground shadow and no footprint wider than the
-// wall line it sits on (wallArt.js draws the matching plinth on the span itself, so the two halves
-// meet). Narrow and tall rather than wide and squat — the opposite of a squat sentry silhouette.
+// with it. So the hull here is not a ground base plate: it is a RING COLLAR bedded into the
+// parapet, with no ground shadow and no footprint wider than the wall line it sits on.
+//
+// #429 (owner: "the base doesn't sit right against the wall" — flush): the hull used to be a
+// directional trapezoid bracket, drawn wider at the bottom as if gripping a parapet BELOW it. That
+// can never sit flush, for two reasons that are both about how the gun is actually placed:
+//   - The mount is seated ON the span's centreline (`TURRET_MOUNT_OFFSET_PX = 0`, wallEdges.js) and
+//     deliberately straddles it so the gun can fire inboard OR outboard. A shape with a "bottom"
+//     is claiming one side of the wall is the ground side; neither side is.
+//   - The hull NEVER rotates to match its span. A wall gun spawns at a fixed `angle` and has
+//     `turnRate: 0` (enemyKinds.js), while the ring's spans run at every hex bearing — so a
+//     directional bracket lands at an arbitrary angle to the wall line it is meant to be bolted to.
+// So the fix is a ROTATIONALLY SYMMETRIC hull rather than a re-aimed one: a full circular collar,
+// concentric with the gun's pivot, sized so its outer edge (r = 15 design units ≈ 6.9 world px at
+// this kind's display scale) lands on the wall's own 7px half-thickness. It reads flush on every
+// span bearing, from every angle the gun is trained at, with no placement-side change at all.
 //
 // The gun is a long thin RAIL: twin parallel rails with a charge glow running between them, rather
 // than a heavy solid autocannon barrel. It should read as an energy weapon at a glance, and read
 // as LONG — the barrel is the tell that this thing out-ranges you.
 import { gen, scaledGraphics, ART_SCALE } from '../_frames.js';
-import { DESIGN, rectC, roundC, ellipseC, poly, armorShell } from '../mechPrims.js';
+import { DESIGN, rectC, roundC, ellipseC, armorShell } from '../mechPrims.js';
 import { VEHICLE as V, accentGlow } from './palette.js';
 
-// The pintle mount (the HULL — never rotates). Deliberately NO ground shadow ellipse: this thing
-// is not on the ground. A narrow trapezoid bracket, wider at the bottom where it grips the
-// parapet, with the two mounting bolts that pin it through the wall plate.
+// The collar mount (the HULL — never rotates, and after #429 never needs to). Deliberately NO
+// ground shadow ellipse: this thing is not on the ground. A circular armoured collar bedded into
+// the wall band, ringed by the bolts that pin it through the wall plate and by the accent-lit
+// capacitor band that ties mount and gun into one weapon system.
+//
+// Every element here is rotationally symmetric ON PURPOSE — the four bolts sit on the diagonals,
+// the capacitor is a full band rather than a bar across one face. That is what makes the mount
+// read as flush no matter which bearing its span runs at (see the header note).
 function drawMount(sg, accent, armored = false) {
   // Halo pass first, oversized, behind the outline shapes (#129 legibility convention).
-  poly(sg, [[-9.6, -3.6], [9.6, -3.6], [12.6, 11.6], [-12.6, 11.6]], V.halo);
-  poly(sg, [[-8, -3], [8, -3], [11, 11], [-11, 11]], V.outline);
-  poly(sg, [[-6.4, -1.6], [6.4, -1.6], [9, 9.4], [-9, 9.4]], V.bodyDk);
-  poly(sg, [[-5, -1], [5, -1], [7, 8], [-7, 8]], V.body);
-  // The two heavy bolts pinning the bracket through the parapet plate — the "this is fastened to
-  // the wall, not standing on it" detail.
-  for (const [x, y] of [[-6.4, 7], [6.4, 7]]) {
-    ellipseC(sg, x, y, 2.6, 2.6, V.outline);
-    ellipseC(sg, x, y, 1.6, 1.6, V.rim);
+  ellipseC(sg, 0, 0, 33.2, 33.2, V.halo);
+  // r = 15: the collar's outer edge lands on the wall's own half-thickness, so it sits flush
+  // inside the span's band instead of overhanging either face.
+  ellipseC(sg, 0, 0, 30, 30, V.outline);
+  ellipseC(sg, 0, 0, 26.8, 26.8, V.bodyDk);
+  // The accent-lit capacitor band — where the lance's charge is stored. A full ring, so it reads
+  // the same whichever way the gun is trained.
+  ellipseC(sg, 0, 0, 24.4, 24.4, accent, 0.7);
+  ellipseC(sg, 0, 0, 22.6, 22.6, V.tread);
+  ellipseC(sg, 0, 0, 21.2, 21.2, V.body);
+  // Four heavy bolts pinning the collar through the parapet plate — the "this is fastened to the
+  // wall, not standing on it" detail, now on the diagonals so the ring stays symmetric.
+  for (const [x, y] of [[-8.7, -8.7], [8.7, -8.7], [-8.7, 8.7], [8.7, 8.7]]) {
+    ellipseC(sg, x, y, 3.6, 3.6, V.outline);
+    ellipseC(sg, x, y, 2.2, 2.2, V.rim);
   }
-  // A thin capacitor bank across the bracket's face, accent-lit — where the lance's charge is
-  // stored. Small, but it's the cue that ties mount and gun into one weapon system.
-  rectC(sg, 0, 3.4, 9, 2.6, V.tread);
-  rectC(sg, 0, 3.4, 7.4, 1.3, accent, 0.75);
-  if (armored) armorShell(sg, 0, 4, 18, 13);
+  if (armored) armorShell(sg, 0, 0, 28, 28);
 }
 
 // The rotating rail gun: a full-circle turret ring and a long twin-rail barrel with a charge
-// line. #429: the pivot base used to be a rounded RECTANGLE, which against the wall read as a
-// lopsided semicircle rather than a clean rotating mount. It's now a true circle — a
-// rotating-turret ring sitting on top of the parapet — with a lit rim band so the ring reads as
-// a distinct collar, not just a flat disc.
+// line. #429: the pivot used to be a rounded RECTANGLE, which against the wall read as a lopsided
+// semicircle rather than a clean rotating mount. It's a true circle now — deliberately kept
+// SMALLER than the hull's collar, so the fixed collar shows as a ring of parapet all the way
+// around it and the gun reads as swivelling INSIDE its mount rather than capping it.
 function drawRail(sg, accent, armored = false) {
   const A = accentGlow(accent);
   // Pivot ring — kept small, so the BARREL is still the dominant shape.
