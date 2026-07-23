@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import { Slider } from './slider.js';
-import { isAudible, isStageAudible, applyPreviewMuting } from './previewMuting.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUNDS_ENABLED } from '../audio/sfxParams.js';
 import {
@@ -31,7 +30,6 @@ const EXPLOSION_ID_PREFIX = 'deathExplosion';
 // same "copy settings" convention), scoped to one weapon at a time instead of one global mix.
 const UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', btn: 0x1a212b, btnHover: 0x232c38, edge: 0x2a333f,
-  mute: 0xe08a5e, muteText: '#1a0f08', solo: 0x7bd17b, soloText: '#0b1a0b',
 };
 const ROW_H = 18;
 // #177: the weapon domain's own stage list — now just the DEFAULT `stages` passed to
@@ -43,7 +41,7 @@ export { WEAPON_STAGES };
 const PREVIEW_THROTTLE = 140;   // ms between live-preview replays while dragging a slider
 
 // #131: short per-component labels for the top mixer strip ("fire·1", "traj·2", "impact·1") —
-// abbreviated enough to fit next to a compact slider + Mute/Solo buttons.
+// abbreviated enough to fit next to a compact gain slider.
 const STAGE_ABBR = { fire: 'fire', trajectory: 'traj', impact: 'impact' };
 const MIX_ROW_H = 22;
 
@@ -141,10 +139,9 @@ export class WeaponSfxPanel {
     this.weaponId = null;
     this.stages = WEAPON_STAGES;   // #177: overridden per-target by setTarget()/setWeapon()
     this._lastPreviewAt = {};
-    // #131: transient (never persisted) DAW-style mute/solo for the live-preview only — keyed
-    // by `${stage}:${li}`. Reset whenever the selected weapon/category changes (see setWeapon).
-    this._mutedSet = new Set();
-    this._soloedSet = new Set();
+    // #171 (2026-07-22): the transient DAW-style mute/solo toggles (#131) are GONE. They never
+    // reliably did anything audible in play across two fix attempts, so the owner's call was to
+    // drop the buttons rather than chase the behaviour again. The gain sliders below are the mix.
     this._components = [];   // flat [{stage, li, layer}] for the current weapon, rebuilt in _build()
     this._gainSliders = {};  // key -> top-mixer-strip gain Slider ref (#139: the only gain slider now)
 
@@ -256,8 +253,6 @@ export class WeaponSfxPanel {
     this.weaponLabel = label;
     this.stages = stages;
     this._scrollY = 0;
-    this._mutedSet.clear();
-    this._soloedSet.clear();
     this._build();
   }
 
@@ -293,10 +288,10 @@ export class WeaponSfxPanel {
     return { rect, text };
   }
 
-  // A small two-state toggle button (Mute/Solo in the mixer strip) — filled with `onColor`
-  // when active, the normal button chrome otherwise. Unlike `_typeRow`'s in-place repaint,
-  // this just triggers a full `_build()` on click (mute/solo toggles are infrequent, so the
-  // rebuild cost is a non-issue, and it keeps this path simple).
+  // A small two-state toggle button (the Auto-preview toggle) — filled with `onColor` when
+  // active, the normal button chrome otherwise. Unlike `_typeRow`'s in-place repaint, this just
+  // triggers a full `_build()` on click (it's toggled infrequently, so the rebuild cost is a
+  // non-issue, and it keeps this path simple).
   _toggleBtn(x, y, w, h, label, active, onColor, onTextColor, onClick) {
     const fill = active ? onColor : UI.btn;
     const rect = this.scene.add.rectangle(x, y, w, h, fill).setOrigin(0, 0)
@@ -312,7 +307,7 @@ export class WeaponSfxPanel {
   }
 
   // #150: grey out + disable a control once its stage has a real-file override active — the
-  // gain/mute/solo sliders and type-row buttons don't affect anything real any more (nothing
+  // gain sliders and type-row buttons don't affect anything real any more (nothing
   // procedural is playing for that stage). `objs` is a flat list of Phaser game objects with
   // `setAlpha`; interactive ones (rectangles) also get their input disabled.
   _greyOut(objs) {
@@ -760,60 +755,20 @@ export class WeaponSfxPanel {
     return y;
   }
 
-  // #171: toggling mute/solo must be *immediately audible*, or it reads as "the button does
-  // nothing" — the whole point is a live A/B against the mix. Unlike the gain sliders (whose
-  // onChange auto-previews via _previewThrottled), the old toggles only rebuilt the strip and
-  // played nothing, so the change wasn't heard until the next manual test-fire. Replay the
-  // toggled component's own stage right after the rebuild, with the NEW mute/solo state applied
-  // (via _playStage → _applyPreviewMuting), so you hear the layer drop in/out on click. `key`
-  // is `${stage}:${li}`; preview just that stage. (Overridden stages disable these buttons, so
-  // a toggle here never lands on a file-buffer stage — see _buildMixerStrip's _greyOut.)
-  _toggleMute(key) {
-    this._mutedSet.has(key) ? this._mutedSet.delete(key) : this._mutedSet.add(key);
-    this._build();
-    this._playStage(key.split(':')[0]);
-  }
-
-  _toggleSolo(key) {
-    this._soloedSet.has(key) ? this._soloedSet.delete(key) : this._soloedSet.add(key);
-    this._build();
-    this._playStage(key.split(':')[0]);
-  }
-
-  // Whether a component should actually sound in the live preview right now (soloing anything
-  // silences every non-soloed component; otherwise it's just "not muted"). Pure logic lives in
-  // previewMuting.js so it's unit-testable without a scene; this is the bound convenience.
-  _isAudible(key) {
-    return isAudible(key, this._mutedSet, this._soloedSet);
-  }
-
-  // Transiently zero the inaudible components' real `gain` around a single preview cue, returning
-  // the restore closure — see previewMuting.applyPreviewMuting for the timing/invariant contract
-  // (mutates the same live layer objects the cue reads; stored params never see the muted 0).
-  _applyPreviewMuting(stages) {
-    return applyPreviewMuting(this._components, stages, this._mutedSet, this._soloedSet);
-  }
-
-  // #171 (re-fix): whether `stage` should play at all right now — see previewMuting.isStageAudible.
-  // Needed because gain-zeroing (_applyPreviewMuting) only ever affects PROCEDURAL layers, but a
-  // stage with a live override or a shipped bake bypasses those layers entirely (sfx.js's
-  // playOverride, and — for a held weapon's native loop — resolveBufferSource/startOverrideLoop).
-  // Muting/soloing that stage out has to skip the Audio.* call outright to have any audible
-  // effect at all.
-  _isStageAudible(stage) {
-    return isStageAudible(stage, this._components, this._mutedSet, this._soloedSet);
-  }
+  // #171 (2026-07-22): `_toggleMute`/`_toggleSolo`, the `_isAudible`/`_isStageAudible`/
+  // `_applyPreviewMuting` audibility helpers and the whole previewMuting.js module were removed
+  // with the buttons — with nothing able to mute or solo a component any more, every one of them
+  // was a constant "yes, audible". A preview cue now just plays.
 
   // The compact DAW-mixer strip at the top of the panel (#131) — one row per component
   // (stage + layer) with a compact gain slider (the ONLY gain slider — #139 removed the
-  // redundant per-section one further down), plus Mute/Solo. Built from `this._components`,
-  // computed by `_build()`.
+  // redundant per-section one further down). #171 dropped the Mute/Solo buttons that used to sit
+  // beside it. Built from `this._components`, computed by `_build()`.
   _buildMixerStrip(ox, y, w) {
     if (!this._components.length) return y;
-    this.scroller.add(this.scene.add.text(ox, y, 'MIXER (gain / mute / solo)', { fontFamily: 'monospace', fontSize: '10px', color: UI.dim }));
+    this.scroller.add(this.scene.add.text(ox, y, 'MIXER (gain)', { fontFamily: 'monospace', fontSize: '10px', color: UI.dim }));
     y += 16;
-    const gap = 4, muteW = 28, soloW = 28;
-    const sliderW = w - muteW - soloW - gap * 2;
+    const sliderW = w;
     for (const { stage, li, layer } of this._components) {
       const key = `${stage}:${li}`;
       const label = `${STAGE_ABBR[stage] ?? stage.slice(0, 5)}·${li + 1}`;
@@ -829,15 +784,9 @@ export class WeaponSfxPanel {
       this.sliders.push(slider);
       this._gainSliders[key] = slider;
 
-      const mx = ox + sliderW + gap;
-      const mute = this._toggleBtn(mx, y - 3, muteW, MIX_ROW_H - 4, 'M', this._mutedSet.has(key), UI.mute, UI.muteText, () => this._toggleMute(key));
-      const solo = this._toggleBtn(mx + muteW + gap, y - 3, soloW, MIX_ROW_H - 4, 'S', this._soloedSet.has(key), UI.solo, UI.soloText, () => this._toggleSolo(key));
-      // #150/#171: this component's stage has a real-file override playing instead of its
-      // procedural layer — the GAIN slider is dead weight (Audio.setSfxParam only ever touches
-      // the procedural layer, which nothing reads while an override is active), so it stays
-      // greyed out. Mute/Solo are different: _playStage now skips the Audio.* call outright for
-      // a fully-inaudible stage (see isStageAudible), so they genuinely silence an overridden
-      // stage's preview too — leave them fully interactive.
+      // #150: this component's stage has a real-file override playing instead of its procedural
+      // layer — the GAIN slider is dead weight (Audio.setSfxParam only ever touches the
+      // procedural layer, which nothing reads while an override is active), so it's greyed out.
       if (hasOverride(this.weaponId, stage)) {
         this._greyOut([slider.container, slider.hit]);
       }
@@ -878,7 +827,7 @@ export class WeaponSfxPanel {
 
   // #197: the "Auto-preview" toggle — always shown at the top of the panel (even with no
   // weapon selected yet) since it's a panel-wide session setting, not a per-weapon one. Reuses
-  // the same compact toggle-button look as the mixer strip's Mute/Solo (_toggleBtn).
+  // the same compact toggle-button look the mixer strip's removed Mute/Solo used (_toggleBtn).
   _buildAutoPreviewToggle(ox, y, w) {
     const label = this.autoPreviewEnabled
       ? 'auto-preview: ON (edits play sound)'
@@ -988,33 +937,25 @@ export class WeaponSfxPanel {
     this._setScroll(this._scrollY);
   }
 
-  // Play ONE stage's live preview with the current mute/solo state applied. The mute window is
-  // opened and closed synchronously around the single Audio call: _applyPreviewMuting zeros the
-  // inaudible layers' `gain` in place, the cue reads those gains at schedule time (playLayers →
-  // tone/noise bake gain then), and the restore closure puts the real values back immediately —
-  // so the STORED params are never left mutated (copy/reset/persist always see the true gains).
+  // Play ONE stage's live preview. The cue reads each layer's stored `gain` at schedule time
+  // (playLayers → tone/noise bake gain then), so a slider drag is heard on the very next replay.
+  // (#171 removed the mute/solo window that used to bracket this call.)
   // The three weapon-domain stage names have a dedicated Audio.* playback entry point
   // (Audio.fire/trajectory/impact are weapon-shaped calls, not generic-by-id); any other
   // stage (e.g. a non-weapon domain's 'play') routes through #178's generic Audio.ui(id,
   // stage) instead, which resolves the SAME override/bake-then-procedural precedence keyed
   // by whatever id/stage this panel is currently targeting (see src/audio/sfxDomains.js).
   _playStage(stage) {
-    // #171 (re-fix): a stage muted-out entirely (or silenced by a solo elsewhere) must not play
-    // AT ALL — gain-zeroing below only reaches procedural layers, which a live override or baked
-    // sound for this stage bypasses completely (see isStageAudible's doc comment).
-    if (!this._isStageAudible(stage)) return;
-    const restore = this._applyPreviewMuting([stage]);
     if (stage === 'fire') Audio.fire({ id: this.weaponId });
     else if (stage === 'trajectory') Audio.trajectory(this.weaponId);
     else if (stage === 'impact') Audio.impact(this.weaponId);
     else Audio.ui(this.weaponId, stage);
-    restore();
   }
 
   // #197: gated by the Auto-preview toggle — every per-edit call site (sliders, waveform/filter
   // pickers, etc.) routes through here rather than _playStage directly, so this single no-op
   // check is enough to silence ALL of them at once when the toggle is off. The explicit ▶ test
-  // fire button (_testFire) and mute/solo toggles call _playStage directly and are unaffected.
+  // fire button (_testFire) calls _playStage directly and is unaffected.
   _previewThrottled(stage) {
     if (!this.autoPreviewEnabled) return;
     const t = this.scene.time.now;
@@ -1028,10 +969,7 @@ export class WeaponSfxPanel {
   // only stage is `play`), just plays each of its own stages once. #191: the plan is built from
   // THIS target's own `this.stages` (via testFirePlan) rather than a hardcoded weapon triple —
   // see weaponSfxStages.js's testFirePlan doc comment for why the old hardcoding silently played
-  // an unrelated procedural WEAPON sound when previewing a UI-domain target. Each stage's mute
-  // override is applied/restored right around its own (possibly delayed) call — not all up
-  // front — since a stage's mute/solo state could only change via a full _build() rebuild
-  // anyway, but this keeps the override window as tight as possible per stage.
+  // an unrelated procedural WEAPON sound when previewing a UI-domain target.
   _testFire() {
     for (const { stage, delay } of testFirePlan(this.stages, TRAJECTORY_DELAY)) {
       if (delay > 0) this.scene.time.delayedCall(delay, () => this._playStage(stage));

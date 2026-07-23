@@ -10,9 +10,9 @@
 // test (_previewThrottled/_playStage/_testFire) to run, matching the panel's actual code paths
 // rather than re-implementing the gating logic separately. `weaponId` is set directly (bypassing
 // the heavy _build() render path that needs Slider/Audio.getSfxParams etc.) since none of that
-// is relevant to whether a preview call happens — see previewMuting.js: with `_components`
-// empty (never populated without a full _build), isStageAudible/applyPreviewMuting are no-ops,
-// so _playStage's own gating is exercised for real, just without any procedural layers wired up.
+// is relevant to whether a preview call happens: _playStage's own gating is exercised for real,
+// just without any procedural layers wired up. (#171 later removed the mute/solo layer that
+// _playStage used to consult before playing at all.)
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('phaser', () => ({
