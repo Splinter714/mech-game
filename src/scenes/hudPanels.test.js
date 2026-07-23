@@ -53,7 +53,7 @@ function stub(extra = {}) {
     fillRoundedRect() { return o; },
     strokeRoundedRect() { return o; },
     fillCircle() { return o; },
-    // #448: the orb readout's globes and the paper doll's draining outlines.
+    // #448: the paper doll's draining outlines.
     strokeCircle() { return o; },
     fillPoints(pts) { o.filledPoints = pts; return o; },
     strokePoints(pts) { o.strokedPoints = pts; return o; },
@@ -71,10 +71,13 @@ function stub(extra = {}) {
   return o;
 }
 
-function fakeScene(hudPlayers) {
+// #448 playtest: the DEFAULT readout is NONE (no integrity block, no header), so a test about the
+// bar block has to say so — `readout: 'bars'` is that opt-in, not a special case.
+function fakeScene(hudPlayers, { readout } = {}) {
   const created = [];
   const registry = new Map();
   registry.set('hudPlayers', hudPlayers);
+  if (readout) registry.set('hudReadout', readout);
   const scene = Object.assign(Object.create(HudScene.prototype), {
     W: 1280,
     H: 800,
@@ -111,7 +114,7 @@ describe('HudScene panels — solo', () => {
   // CENTRED console band that is only as wide as they are, which is exactly what Jackson asked
   // for ("centered and only as wide as it needs to be"), so that is what is pinned.
   it('builds exactly one panel, in a console band centred on the screen', () => {
-    const { scene } = fakeScene([snap(0)]);
+    const { scene } = fakeScene([snap(0)], { readout: 'bars' });
     scene._syncPanels();
     expect(scene.panels).toHaveLength(1);
     expect(scene.panels[0].header.text).toBe('INTEGRITY');
@@ -143,7 +146,7 @@ describe('HudScene panels — solo', () => {
   });
 
   it('rebuilds nothing on subsequent frames', () => {
-    const { scene } = fakeScene([snap(0)]);
+    const { scene } = fakeScene([snap(0)], { readout: 'bars' });
     scene._syncPanels();
     const panel = scene.panels[0];
     for (let i = 0; i < 10; i++) scene._syncPanels();
@@ -182,7 +185,7 @@ describe('HudScene panels — the mid-sortie join (START on gamepad 2)', () => {
   });
 
   it('gives each panel that player\'s identifying colour and numbered label', () => {
-    const { scene } = fakeScene([snap(0), snap(1)]);
+    const { scene } = fakeScene([snap(0), snap(1)], { readout: 'bars' });
     scene._syncPanels();
     expect(scene.panels[0].color).toBe(PLAYER_COLORS[0]);
     expect(scene.panels[1].color).toBe(PLAYER_COLORS[1]);
@@ -191,7 +194,7 @@ describe('HudScene panels — the mid-sortie join (START on gamepad 2)', () => {
   });
 
   it('destroys the old panel objects on rebuild rather than leaking them on screen', () => {
-    const { scene, registry } = fakeScene([snap(0)]);
+    const { scene, registry } = fakeScene([snap(0)], { readout: 'bars' });
     scene._syncPanels();
     const soloHeader = scene.panels[0].header;
     registry.set('hudPlayers', [snap(0), snap(1)]);
@@ -200,7 +203,7 @@ describe('HudScene panels — the mid-sortie join (START on gamepad 2)', () => {
   });
 
   it('collapses back to one panel if the joiner leaves', () => {
-    const { scene, registry } = fakeScene([snap(0), snap(1)]);
+    const { scene, registry } = fakeScene([snap(0), snap(1)], { readout: 'bars' });
     scene._syncPanels();
     registry.set('hudPlayers', [snap(0)]);
     scene._syncPanels();
@@ -223,7 +226,7 @@ describe('HudScene panels — per player readouts', () => {
   it('reads each panel off its OWN mech, not player 1\'s', () => {
     const a = snap(0), b = snap(1);
     b.mech.applyDamage('rightArm', 40);
-    const { scene } = fakeScene([a, b]);
+    const { scene } = fakeScene([a, b], { readout: 'bars' });
     scene._syncPanels();
     const fillsOf = (panel, s) => {
       const seen = [];
@@ -235,7 +238,7 @@ describe('HudScene panels — per player readouts', () => {
   });
 
   it('draws no numbers anywhere in the integrity block', () => {
-    const { scene } = fakeScene([snap(0)]);
+    const { scene } = fakeScene([snap(0)], { readout: 'bars' });
     scene._syncPanels();
     const panel = scene.panels[0];
     scene._updatePanel(panel, snap(0));
@@ -393,9 +396,9 @@ describe('HudScene lock chevron — co-op', () => {
 
 // ── #448: the switchable health readout ──────────────────────────────────────────────────────
 //
-// Three readouts (bars / orbs / paper doll) exist to be compared IN PLAY, so what matters here is
+// Three modes (none / bars / paper doll) exist to be compared IN PLAY, so what matters here is
 // the wiring: H cycles the mode, the mode is shared by every panel, switching actually rebuilds
-// the panels at the new geometry, and all three paint against a real Mech without throwing.
+// the panels at the new geometry, and each one paints against a real Mech without throwing.
 // #451 — the ammo line on a skill tile counts PROJECTILES, not trigger pulls. The conversion is
 // pinned in data/weaponStats.test.js; what is pinned here is that the HUD actually uses it.
 describe('HudScene ammo readout (#451)', () => {
@@ -439,31 +442,45 @@ describe('HudScene health readout modes (#448)', () => {
     return built;
   };
 
-  it('starts on the SHIPPED bars readout', () => {
+  // #448 playtest: a fresh run has NO integrity readout — the mech's own art carries it.
+  it('starts on NONE, with the console already collapsed', () => {
     const { scene } = modeScene();
-    expect(scene._readoutMode()).toBe('bars');
-    expect(scene.panels[0].mode).toBe('bars');
-    expect(scene.panels[0].bars.segments.map((s) => s.loc)).toHaveLength(4);
+    expect(scene._readoutMode()).toBe('none');
+    expect(scene.panels[0].mode).toBe('none');
+    expect(scene.panels[0].bars.w).toBe(0);
+    expect(scene.panels[0].header).toBeNull();
+    expect(scene._band.groups[0].blockW).toBe(0);
   });
 
-  it('H cycles bars → orbs → paper doll → none → bars, rebuilding the panel each time', () => {
+  it('H cycles none → bars → paper doll → none, rebuilding the panel each time', () => {
     const { scene } = modeScene();
-    const first = scene.panels[0].header;
-    scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('orbs');
-    expect(first.destroyed).toBe(true);       // rebuilt, not left stacked on screen
-    scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('paperdoll');
-    scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('none');
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('bars');
+    expect(scene.panels[0].bars.segments.map((s) => s.loc)).toHaveLength(4);
+    const barsHeader = scene.panels[0].header;
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('paperdoll');
+    expect(barsHeader.destroyed).toBe(true);   // rebuilt, not left stacked on screen
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('none');
   });
 
   it('keeps the mode in the registry so it survives a redeploy', () => {
     const { scene, registry } = modeScene();
     scene._cycleReadout();
-    expect(registry.get('hudReadout')).toBe('orbs');
+    expect(registry.get('hudReadout')).toBe('bars');
+  });
+
+  // The ORB readout was deleted; a registry left on it from an earlier session must not strand the
+  // HUD on a mode with no layout and no paint path.
+  it('falls back to the default when the registry holds the deleted ORBS mode', () => {
+    const { scene, registry } = modeScene();
+    registry.set('hudReadout', 'orbs');
+    scene._syncPanels();
+    expect(scene._readoutMode()).toBe('none');
+    expect(scene.panels[0].mode).toBe('none');
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('bars');
   });
 
   // #452 (style pass): the on-screen `READOUT: … [H] to switch` prompt was removed at Jackson's
@@ -473,7 +490,7 @@ describe('HudScene health readout modes (#448)', () => {
     const { scene } = modeScene();
     expect(scene.readoutHint).toBeUndefined();
     scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('orbs');
+    expect(scene.panels[0].mode).toBe('bars');
     // Nothing anywhere in the HUD names the key.
     const { created } = modeScene();
     expect(created.filter((o) => typeof o.text === 'string' && /READOUT|\[H\]/.test(o.text))).toEqual([]);
@@ -486,12 +503,13 @@ describe('HudScene health readout modes (#448)', () => {
     scene._cycleReadout();
     registry.set('hudPlayers', [snap(0), snap(1)]);
     scene._syncPanels();
-    expect(scene.panels.map((p) => p.mode)).toEqual(['orbs', 'orbs']);
+    expect(scene.panels.map((p) => p.mode)).toEqual(['bars', 'bars']);
   });
 
-  it('every mode still hands the console shell a header line and a block to frame', () => {
+  it('every DRAWN mode still hands the console shell a header line and a block to frame', () => {
     const { scene } = modeScene();
-    for (const mode of ['bars', 'orbs', 'paperdoll']) {
+    scene._cycleReadout();
+    for (const mode of ['bars', 'paperdoll']) {
       expect(scene.panels[0].mode).toBe(mode);
       const b = scene.panels[0].bars;
       expect(b.headerY).toBeLessThan(b.top);
@@ -501,20 +519,11 @@ describe('HudScene health readout modes (#448)', () => {
     }
   });
 
-  it('the orb readout captions its globes and keeps the shield caption', () => {
-    const { scene } = modeScene();
-    scene._cycleReadout();
-    const p = scene.panels[0];
-    expect(p.bars.orbs.map((o) => o.key)).toEqual(['hp', 'armor', 'shield']);
-    expect(Object.keys(p.partLabels)).toHaveLength(0);   // aggregate: no per-location segments
-    expect(p.extras.map((t) => t.text)).toEqual(['HP', 'AR']);
-    expect(p.shieldLabel).not.toBeNull();
-  });
-
   it('the paper doll keeps per-location captions and needs no shield caption', () => {
     const { scene } = modeScene();
     scene._cycleReadout();
     scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('paperdoll');
     const p = scene.panels[0];
     expect(Object.keys(p.partLabels)).toHaveLength(4);
     expect(p.shieldLabel).toBeNull();          // the shield IS the outline around everything
@@ -525,7 +534,7 @@ describe('HudScene health readout modes (#448)', () => {
     const { scene } = modeScene();
     const mech = new Mech({ chassisId: 'medium' });
     mech.applyDamage('leftArm', 9999);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       expect(() => scene._updateIntegrity(scene.panels[0], mech)).not.toThrow();
       scene._cycleReadout();
     }
@@ -535,9 +544,9 @@ describe('HudScene health readout modes (#448)', () => {
   // Jackson: "maybe we don't need an integrity readout if the on-mech display is good enough" —
   // so NONE has to hide it ENTIRELY and the console shell has to collapse rather than leave a hole.
   describe('the NONE readout', () => {
+    // NONE is now the DEFAULT, so this is the state a fresh HUD is already in — no cycling needed.
     const noneScene = () => {
       const built = modeScene();
-      for (let i = 0; i < 3; i++) built.scene._cycleReadout();
       expect(built.scene.panels[0].mode).toBe('none');
       return built;
     };
@@ -548,7 +557,6 @@ describe('HudScene health readout modes (#448)', () => {
       expect(p.bars.w).toBe(0);
       expect(p.bars.segments).toEqual([]);
       expect(Object.keys(p.partLabels)).toHaveLength(0);
-      expect(p.extras).toEqual([]);
       expect(p.shieldLabel).toBeNull();
       expect(p.header).toBeNull();
     });

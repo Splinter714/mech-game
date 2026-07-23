@@ -1,32 +1,39 @@
 import { describe, it, expect } from 'vitest';
 import {
   READOUT_MODES, normalizeReadoutMode, nextReadoutMode, readoutLabel,
-  orbLayout, orbFillPolygon, ORBS,
   paperDollLayout, perimeterRun, PAPER_DOLL,
   mechPools, noneLayout,
 } from './healthReadout.js';
 import { consoleBand, CONSOLE } from './hudLayout.js';
-import { INTEGRITY_BARS, INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
+import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
 
 const LOCS = INTEGRITY_ORDER;
 
 describe('#448 readout modes', () => {
-  it('starts on the SHIPPED bars readout', () => {
-    expect(READOUT_MODES[0]).toBe('bars');
-    expect(normalizeReadoutMode(undefined)).toBe('bars');
-    expect(normalizeReadoutMode('nonsense')).toBe('bars');
+  // #448 playtest: NONE is the DEFAULT — a fresh run starts with no integrity display at all.
+  it('starts on NONE', () => {
+    expect(READOUT_MODES[0]).toBe('none');
+    expect(normalizeReadoutMode(undefined)).toBe('none');
+    expect(normalizeReadoutMode('nonsense')).toBe('none');
   });
 
-  // #448 follow-up: NONE joined the cycle as a fourth entry, AFTER the three real readouts.
-  it('cycles bars → orbs → paperdoll → none → bars', () => {
-    expect(nextReadoutMode('bars')).toBe('orbs');
-    expect(nextReadoutMode('orbs')).toBe('paperdoll');
-    expect(nextReadoutMode('paperdoll')).toBe('none');
+  it('cycles none → bars → paperdoll → none', () => {
     expect(nextReadoutMode('none')).toBe('bars');
+    expect(nextReadoutMode('bars')).toBe('paperdoll');
+    expect(nextReadoutMode('paperdoll')).toBe('none');
   });
 
-  it('has NONE last, so the three real readouts keep their old order', () => {
-    expect(READOUT_MODES).toEqual(['bars', 'orbs', 'paperdoll', 'none']);
+  // The ORB readout was deleted. A registry left on it from an earlier session must not strand the
+  // HUD on a mode with no layout and no paint path — it reads, and cycles, as the default.
+  it('treats a stale stored ORBS setting as the default', () => {
+    expect(READOUT_MODES).not.toContain('orbs');
+    expect(normalizeReadoutMode('orbs')).toBe('none');
+    expect(nextReadoutMode('orbs')).toBe('none');
+    expect(readoutLabel('orbs')).toBe('NONE');
+  });
+
+  it('is exactly the surviving three modes, NONE first', () => {
+    expect(READOUT_MODES).toEqual(['none', 'bars', 'paperdoll']);
     expect(readoutLabel('none')).toBe('NONE');
   });
 
@@ -36,7 +43,7 @@ describe('#448 readout modes', () => {
 
   it('labels every mode', () => {
     for (const m of READOUT_MODES) expect(readoutLabel(m)).toMatch(/\S/);
-    expect(readoutLabel('junk')).toBe(readoutLabel('bars'));
+    expect(readoutLabel('junk')).toBe(readoutLabel('none'));
   });
 });
 
@@ -47,7 +54,7 @@ describe('#448 the NONE readout', () => {
 
   it('returns the same SHAPE every other mode does, so the shell stays mode-agnostic', () => {
     const L = noneLayout(box);
-    for (const key of ['mode', 'x', 'w', 'top', 'bottom', 'labelY', 'headerY', 'segments', 'shieldLabel', 'extraLabels']) {
+    for (const key of ['mode', 'x', 'w', 'top', 'bottom', 'labelY', 'headerY', 'segments', 'shieldLabel']) {
       expect(L).toHaveProperty(key);
     }
     expect(L.mode).toBe('none');
@@ -57,7 +64,6 @@ describe('#448 the NONE readout', () => {
     const L = noneLayout(box);
     expect(L.w).toBe(0);
     expect(L.segments).toEqual([]);
-    expect(L.extraLabels).toEqual([]);
     expect(L.shieldLabel).toBeNull();
   });
 
@@ -72,95 +78,6 @@ describe('#448 the NONE readout', () => {
     const b = consoleBand(1280, [{ blockW: L.w, tilesW: 404 }]);
     expect(b.w).toBe(404 + CONSOLE.padX * 2);
     expect(b.groups[0].tilesX).toBe(b.x + CONSOLE.padX);
-  });
-});
-
-describe('#448 orb layout', () => {
-  const base = { anchorX: 20, bottomY: 600, availW: 0, side: 'left' };
-
-  it('lays three globes out left→right: hp, armor, then the whole-mech shield', () => {
-    const L = orbLayout(base);
-    expect(L.orbs.map((o) => o.key)).toEqual(['hp', 'armor', 'shield']);
-    for (let i = 1; i < L.orbs.length; i++) expect(L.orbs[i].cx).toBeGreaterThan(L.orbs[i - 1].cx);
-  });
-
-  it('shares the bar block\'s baseline and label line exactly', () => {
-    const bars = integrityLayout(LOCS, base);
-    const L = orbLayout(base);
-    expect(L.bottom).toBe(bars.bottom);
-    expect(L.labelY).toBe(bars.labelY);
-  });
-
-  it('reserves the shield globe even on a build with no shield (nothing shifts)', () => {
-    // The layout takes no shield flag at all — the slot is unconditional, which is the point.
-    expect(orbLayout(base).orbs).toHaveLength(3);
-  });
-
-  it('hangs off the anchor on the correct side', () => {
-    const left = orbLayout({ ...base, side: 'left', anchorX: 100 });
-    const right = orbLayout({ ...base, side: 'right', anchorX: 100 });
-    expect(left.x).toBe(100);
-    expect(right.x + right.w).toBeCloseTo(100, 6);
-    expect(left.w).toBeCloseTo(right.w, 6);
-  });
-
-  it('squeezes into a cramped half but never below the minimum radius', () => {
-    const wide = orbLayout({ ...base, availW: 0 });
-    const tight = orbLayout({ ...base, availW: 40 });
-    expect(tight.r).toBeLessThan(wide.r);
-    expect(tight.r).toBeGreaterThanOrEqual(ORBS.minR - 1e-9);
-  });
-
-  it('never grows past full size when there is room to spare', () => {
-    const roomy = orbLayout({ ...base, availW: 5000 });
-    expect(roomy.r).toBeCloseTo(Math.min(ORBS.maxR, INTEGRITY_BARS.barH / 2), 6);
-  });
-
-  it('leaves the header line clear above the globes', () => {
-    const L = orbLayout(base);
-    expect(L.headerY).toBeLessThan(L.top);
-    expect(L.top).toBeLessThan(L.bottom);
-  });
-});
-
-describe('#448 orb fill polygon', () => {
-  it('is empty at zero', () => {
-    expect(orbFillPolygon(0, 0, 20, 0)).toEqual([]);
-    expect(orbFillPolygon(0, 0, 20, -1)).toEqual([]);
-  });
-
-  it('drains from the TOP down — every point stays inside the disc', () => {
-    for (const frac of [0.1, 0.4, 0.75, 1]) {
-      for (const p of orbFillPolygon(50, 50, 20, frac)) {
-        expect(Math.hypot(p.x - 50, p.y - 50)).toBeLessThanOrEqual(20 + 1e-6);
-      }
-    }
-  });
-
-  it('half full reaches the centre line and no higher', () => {
-    const pts = orbFillPolygon(50, 50, 20, 0.5);
-    const top = Math.min(...pts.map((p) => p.y));
-    expect(top).toBeCloseTo(50, 6);
-  });
-
-  it('full covers the whole disc top to bottom', () => {
-    const pts = orbFillPolygon(50, 50, 20, 1);
-    expect(Math.min(...pts.map((p) => p.y))).toBeCloseTo(30, 6);
-    expect(Math.max(...pts.map((p) => p.y))).toBeCloseTo(70, 6);
-  });
-
-  it('a fuller globe is never shorter than an emptier one', () => {
-    const heights = [0.2, 0.5, 0.9].map((f) => {
-      const pts = orbFillPolygon(0, 0, 10, f);
-      return Math.max(...pts.map((p) => p.y)) - Math.min(...pts.map((p) => p.y));
-    });
-    expect(heights[1]).toBeGreaterThan(heights[0]);
-    expect(heights[2]).toBeGreaterThan(heights[1]);
-  });
-
-  it('clamps above full rather than overflowing the disc', () => {
-    const pts = orbFillPolygon(0, 0, 10, 4);
-    expect(Math.min(...pts.map((p) => p.y))).toBeCloseTo(-10, 6);
   });
 });
 
@@ -266,7 +183,7 @@ describe('#448 perimeter run (an outline that can show a fraction)', () => {
   });
 });
 
-describe('#448 aggregate pools for the orb readout', () => {
+describe('#448 whole-mech aggregate pools', () => {
   const mech = (parts, shield = null) => ({
     parts,
     shield,

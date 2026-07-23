@@ -19,7 +19,7 @@ import {
 } from '../data/hudLayout.js';
 import {
   normalizeReadoutMode, nextReadoutMode,
-  orbLayout, orbFillPolygon, paperDollLayout, perimeterRun, mechPools, noneLayout,
+  paperDollLayout, perimeterRun, mechPools, noneLayout,
 } from '../data/healthReadout.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
@@ -385,11 +385,11 @@ export default class HudScene extends Phaser.Scene {
     this.textures.on(TEXTURE_REMOVE_EVENT, this._onTextureRemoved, this);
     this.events.once('shutdown', () => this.textures.off(TEXTURE_REMOVE_EVENT, this._onTextureRemoved, this));
 
-    // #448: the READOUT SWITCH. Three health readouts exist (the shipped bars, ARPG orbs, a paper
-    // doll — data/healthReadout.js) and the point of building all three was to judge them in play,
+    // #448: the READOUT SWITCH. Three readouts exist (NONE — the default — the bars, and a paper
+    // doll; data/healthReadout.js) and the point of building alternates was to judge them in play,
     // so the switch has to be reachable mid-run: H cycles it. The mode lives in the REGISTRY, which
-    // is game-wide, so it survives redeploying to the garage and back rather than resetting to the
-    // shipped readout every sortie.
+    // is game-wide, so it survives redeploying to the garage and back rather than resetting every
+    // sortie.
     // #452 (style pass): the on-screen `READOUT: BARS   [H] to switch` prompt is GONE (Jackson
     // doesn't want the control prompt on the HUD, and the top-left corner it sat in is the target
     // disc's now). The KEY still cycles — only the instruction text was chrome.
@@ -624,12 +624,13 @@ export default class HudScene extends Phaser.Scene {
     this._placeDevReadouts();
   }
 
-  // ── #448: which of the three health readouts is on ───────────────────────────────────────────
+  // ── #448: which health readout is on ────────────────────────────────────────────────────────
   //
   // The mode is a single registry value read here and NOWHERE else, so every panel (both co-op
-  // players) is always on the same readout and nothing can end up half-switched. Cycling rebuilds
-  // the panels outright — the three readouts have completely different geometry, and a rebuild is
-  // exactly the path a mid-sortie co-op join already takes, so it is a proven one.
+  // players) is always on the same readout and nothing can end up half-switched.
+  // `normalizeReadoutMode` is what makes a STALE stored value safe: a registry left on the deleted
+  // 'orbs' mode reads as the default NONE. Cycling rebuilds the panels outright — the readouts have
+  // completely different geometry, and a rebuild is exactly the path a mid-sortie co-op join takes.
   _readoutMode() { return normalizeReadoutMode(this.registry.get('hudReadout')); }
 
   _cycleReadout() {
@@ -637,8 +638,8 @@ export default class HudScene extends Phaser.Scene {
     this._buildPanels(Math.max(1, this._panelCount), this._playerSnapshots());
   }
 
-  // One panel's integrity geometry, in whichever readout is currently on. All three return the same
-  // shape (x/w/top/bottom/headerY/labelY/segments/shieldLabel/extraLabels), which is what lets the
+  // One panel's integrity geometry, in whichever readout is currently on. All of them return the
+  // same shape (x/w/top/bottom/headerY/labelY/segments/shieldLabel), which is what lets the
   // console shell, the labels and the downed line stay mode-agnostic — and what lets `_buildPanels`
   // MEASURE the block (`availW: 0` = unsqueezed) before the band decides where to put it.
   // #452 (style pass): every block now hangs off its own LEFT edge, because the band packs them
@@ -649,14 +650,12 @@ export default class HudScene extends Phaser.Scene {
     // #448: NONE is a zero-width block on the tile row's baseline — the band then drops the
     // block gap with it (data/hudLayout.js `consoleBand`) so the shell collapses to its tiles.
     if (mode === 'none') return noneLayout(box);
-    if (mode === 'orbs') return orbLayout(box);
     if (mode === 'paperdoll') return paperDollLayout(INTEGRITY_ORDER, box);
     const bars = integrityLayout(INTEGRITY_ORDER, box);
     return {
       mode: 'bars',
       ...bars,
       shieldLabel: { x: bars.shield.x + bars.shield.w / 2, y: bars.labelY },
-      extraLabels: [],
     };
   }
 
@@ -696,7 +695,7 @@ export default class HudScene extends Phaser.Scene {
     const identify = showsPlayerColor(count);
     const panel = {
       index: spec.index, spec, columnX: group.blockX, color,
-      partLabels: {}, skillRefs: {}, extras: [],
+      partLabels: {}, skillRefs: {},
     };
 
     // #452 (style pass): both pieces are placed by the centred BAND — the integrity block first,
@@ -726,13 +725,6 @@ export default class HudScene extends Phaser.Scene {
       panel.partLabels[seg.loc] = this.add.text(seg.cx, bars.labelY, LOCATION_INFO[seg.loc].short, {
         fontFamily: 'monospace', fontSize: '10px', color: C.dim,
       }).setOrigin(0.5, 0);
-    }
-    // #448: captions the SEGMENT loop above can't produce — the orb readout has no per-location
-    // segments at all, so its HP/armor globe captions ride this channel instead.
-    for (const l of bars.extraLabels ?? []) {
-      panel.extras.push(this.add.text(l.x, l.y, l.text, {
-        fontFamily: 'monospace', fontSize: '10px', color: C.dim,
-      }).setOrigin(0.5, 0));
     }
     // ...and one for the whole mech's SHIELD, which is a pool rather than a segment. The paper doll
     // draws the shield as the outline around the entire doll, so it asks for no caption at all
@@ -817,7 +809,7 @@ export default class HudScene extends Phaser.Scene {
     const objs = [
       panel.header, panel.partBarsGfx, panel.shieldLabel, panel.statusText, panel.skillBar,
       panel.podGfx, panel.podRings, panel.podArt, panel.podMask, panel.podName,
-      ...Object.values(panel.partLabels), ...panel.extras,
+      ...Object.values(panel.partLabels),
     ];
     for (const o of objs) o?.destroy();
   }
@@ -1406,62 +1398,16 @@ export default class HudScene extends Phaser.Scene {
     }
   }
 
-  // #448: paint whichever health readout is switched on (H cycles them). All three read the SAME
-  // live mech and draw the SAME three layers — armor, structure, shield — with no numerals
+  // #448: paint whichever health readout is switched on (H cycles them). Both real readouts read
+  // the SAME live mech and draw the SAME three layers — armor, structure, shield — with no numerals
   // anywhere; they differ only in how those three quantities are shaped. Geometry is decided in
   // data/healthReadout.js; this is the paint.
   _updateIntegrity(panel, mech) {
     // #448: NONE draws nothing at all — the mech's own display has to carry it.
     if (panel.mode === 'none') return panel.partBarsGfx.clear();
-    if (panel.mode === 'orbs') return this._paintOrbReadout(panel, mech);
     if (panel.mode === 'paperdoll') return this._paintDollReadout(panel, mech);
     this._updatePartBars(panel, mech);
     this._updateShieldBar(panel, mech);
-  }
-
-  // ORBS: three ARPG-style globes that drain from the top down, aggregate over the whole mech
-  // (structure, armor, shield). The fill is a circular SEGMENT, not a rect, so the liquid narrows
-  // as it empties — that narrowing is what makes a globe read as a globe rather than a round bar.
-  _paintOrbReadout(panel, mech) {
-    const g = panel.partBarsGfx;
-    const L = panel.bars;
-    g.clear();
-    const p = mechPools(mech, INTEGRITY_ORDER);
-    const layers = {
-      hp: { frac: p.hp, color: HP_COLOR, cap: HP_CAP, on: true },
-      armor: { frac: p.armor, color: ARMOR_PLATE, cap: ARMOR_RIM, on: p.hasArmor },
-      shield: { frac: p.shield, color: SHIELD_BAR_COLOR, cap: SHIELD_CAP, on: p.hasShield },
-    };
-    for (const orb of L.orbs) {
-      const layer = layers[orb.key];
-      // The empty vessel is always drawn — the same rule the bars follow, for the same reason: the
-      // empty space IS half the readout.
-      g.fillStyle(BAR_TRACK, 1);
-      g.fillCircle(orb.cx, orb.cy, orb.r);
-      if (layer.on && layer.frac > 0) {
-        const pts = orbFillPolygon(orb.cx, orb.cy, orb.r, layer.frac);
-        if (orb.key === 'shield') {
-          // Same stand-in-for-a-blur trick the shield bar uses: oversized, fainter copies behind.
-          for (const { pad, a } of SHIELD_GLOW) {
-            g.fillStyle(SHIELD_BAR_COLOR, a);
-            g.fillCircle(orb.cx, orb.cy, orb.r + pad);
-          }
-        }
-        g.fillStyle(layer.color, 1);
-        g.fillPoints(pts, true);
-        // The water line, brightened, so the actual reading is crisp against the dark vessel.
-        if (pts.length > 1) {
-          g.lineStyle(1.5, layer.cap, 0.95);
-          g.beginPath();
-          g.moveTo(pts[0].x, pts[0].y);
-          g.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-          g.strokePath();
-        }
-      }
-      g.lineStyle(1.5, BAR_EDGE, 0.9);
-      g.strokeCircle(orb.cx, orb.cy, orb.r);
-    }
-    panel.shieldLabel?.setVisible(p.hasShield);
   }
 
   // PAPER DOLL: one rounded rect per damage-tracked location, arranged as a mech silhouette.

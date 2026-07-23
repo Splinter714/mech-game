@@ -1,50 +1,47 @@
-// #448: THREE health readouts, switchable live.
+// #448: the switchable health readout.
 //
-// The shipped readout (the bottom-left block of vertical bars, `integrityLayout` in hudLayout.js)
+// The bar readout (the bottom-left block of vertical bars, `integrityLayout` in hudLayout.js)
 // answered the first half of the issue by deleting every numeral from the HUD — the bar fill alone
-// carries armor / structure / shield. The second half asked for two ALTERNATE readouts to compare
-// against it in play rather than in a mockup, so this module adds them as pure geometry:
+// carries armor / structure / shield. The second half asked for ALTERNATE readouts to compare
+// against it in play rather than in a mockup, so this module holds them as pure geometry:
 //
-//   'bars'      — the shipped block (laid out by hudLayout.js `integrityLayout`; named here only
+//   'none'      — no integrity readout at all: the mech's own art (shield opacity, destroyed-part
+//                 stumps) carries it. The DEFAULT since the 2026-07-23 playtest.
+//   'bars'      — the bar block (laid out by hudLayout.js `integrityLayout`; named here only
 //                 so the mode cycle has something to return to).
-//   'orbs'      — Diablo/PoE-style globes: three circles that drain from the top down. Deliberately
-//                 AGGREGATE (one HP globe, one armor globe, one shield globe) — a globe per body
-//                 location would be six of them and read as a bubble chart, and the ARPG readout
-//                 being compared against is one-pool-per-globe by nature.
 //   'paperdoll' — one rounded rect per damage-tracked location, arranged as a mech silhouette
 //                 (arm, torso, torso, arm). Per-segment FILL = that part's HP, per-segment OUTLINE
 //                 = that part's armor (drawn as a perimeter that drains around the frame, so an
 //                 outline can show a FRACTION at all), and ONE outline around the whole doll = the
 //                 mech's shield, exactly as the issue describes it.
 //
-// Everything here is pure: positions, radii and polylines. HudScene only paints to these numbers,
-// the same contract `integrityLayout` already had, so all three modes share one console frame and
+// A fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and DELETED after
+// it (Jackson: "remove the circle option") — layout, fill polygon, paint path and tests, so no dead
+// art path is left behind.
+//
+// Everything here is pure: positions and polylines. HudScene only paints to these numbers,
+// the same contract `integrityLayout` already had, so every mode shares one console frame and
 // one baseline. Every layout returns the SAME shape — `{ x, w, top, bottom, headerY, labelY,
-// segments, shieldLabel, extraLabels }` — because the console shell (#452) frames whatever the
-// panel laid out, and a mode swap must not need the shell to know which mode it is framing.
+// segments, shieldLabel }` — because the console shell (#452) frames whatever the panel laid out,
+// and a mode swap must not need the shell to know which mode it is framing.
 
 import { INTEGRITY_BARS } from './hudLayout.js';
 
-// The cycle order. 'bars' is first because it is the SHIPPED readout — a fresh run always starts
-// on it, and cycling always comes back to it.
-//
-// #448 follow-up (Jackson: "maybe we don't need an integrity readout if the on-mech display is
-// good enough") added 'none' as a FOURTH entry rather than a separate toggle: it is the same
-// question the other three answer — which readout is on — and the point is to flip to it in play
-// and judge whether the mech's own display (shield opacity, destroyed-part stumps) carries the
-// information alone. It is last in the cycle so H still walks the three real readouts in their
-// old order before offering the empty one.
-export const READOUT_MODES = ['bars', 'orbs', 'paperdoll', 'none'];
+// The cycle order. 'none' is FIRST because it is the default — a fresh run starts with no integrity
+// display at all, which is the experiment: whether the mech's own art carries it. H then walks the
+// two surviving readouts and comes back.
+export const READOUT_MODES = ['none', 'bars', 'paperdoll'];
 
 export const READOUT_LABELS = {
-  bars: 'BARS',
-  orbs: 'ORBS',
-  paperdoll: 'PAPER DOLL',
   none: 'NONE',
+  bars: 'BARS',
+  paperdoll: 'PAPER DOLL',
 };
 
-// Anything unrecognised (an old saved value, an empty registry on the first frame) reads as the
-// shipped readout rather than throwing or blanking the HUD.
+// Anything unrecognised reads as the DEFAULT rather than throwing or blanking the HUD. That covers
+// an empty registry on the first frame and, specifically, a stored 'orbs' from a session before the
+// orb readout was deleted: it falls back to NONE instead of leaving the HUD on a mode that no longer
+// has a layout or a paint path.
 export function normalizeReadoutMode(mode) {
   return READOUT_MODES.includes(mode) ? mode : READOUT_MODES[0];
 }
@@ -60,7 +57,8 @@ export function readoutLabel(mode) {
 
 // ── NONE ─────────────────────────────────────────────────────────────────────────────────────
 //
-// No integrity readout at all. It still has to return the SAME shape as the other three, because
+// No integrity readout at all — the DEFAULT mode, so this collapsed console is the COMMON case
+// rather than the exception. It still has to return the SAME shape as the other modes, because
 // the console shell (#452) frames whatever a panel laid out and must not learn which mode it is
 // framing — so this is a ZERO-WIDTH block on the tile row's own baseline. `consoleBand` drops the
 // block-to-tiles gap for a zero-width block (see hudLayout.js), so the console collapses to
@@ -78,79 +76,7 @@ export function noneLayout({ anchorX = 0, bottomY = 0 } = {}) {
     headerY: bottomY,
     segments: [],
     shieldLabel: null,
-    extraLabels: [],
   };
-}
-
-// ── ORBS ─────────────────────────────────────────────────────────────────────────────────────
-//
-// Three globes on the same baseline the bars sit on, in the same left-to-right reading order the
-// bar block uses (HP, armor, then the whole-mech shield last). The shield's slot is reserved even
-// on a build with no shield, for the same reason the bar block reserves its shield bar: a
-// shieldless build must not shift everything else sideways.
-export const ORBS = {
-  gap: 12,       // between globes
-  maxR: 33,      // biggest a globe gets (its diameter is capped by the bar block's height too)
-  minR: 13,      // ...and the smallest, in a cramped co-op half
-  order: ['hp', 'armor', 'shield'],
-};
-
-// Same contract as `integrityLayout`: `anchorX` is the block's OUTER edge on its own side of the
-// screen, `bottomY` the baseline it shares with the skill tiles, `availW` the room between them
-// (0/absent = unmeasured ⇒ full size).
-export function orbLayout({ anchorX, bottomY, availW = 0, side = 'left' }) {
-  const S = INTEGRITY_BARS;
-  const n = ORBS.order.length;
-  const fullR = Math.min(ORBS.maxR, S.barH / 2);
-  const nominal = n * 2 * fullR + (n - 1) * ORBS.gap;
-  const scale = Math.max(
-    ORBS.minR / fullR,
-    Math.min(1, (availW > 0 ? availW : nominal) / nominal),
-  );
-  const r = fullR * scale;
-  const gap = ORBS.gap * scale;
-  const w = n * 2 * r + (n - 1) * gap;
-  const x = side === 'right' ? anchorX - w : anchorX;
-  const bottom = bottomY - S.labelH;
-  const cy = bottom - r;
-  const top = cy - r;
-  const labelY = bottom + 2;
-  const orbs = ORBS.order.map((key, i) => ({ key, cx: x + r + i * (2 * r + gap), cy, r }));
-  return {
-    mode: 'orbs',
-    x, w, top, bottom, r, orbs,
-    labelY,
-    headerY: top - S.headerH,
-    // No per-LOCATION segments in this mode by design (see the module note) — so the generic
-    // per-part label loop in HudScene simply does nothing, and the three globe captions ride the
-    // `extraLabels`/`shieldLabel` channels every mode shares.
-    segments: [],
-    shieldLabel: { x: orbs[2].cx, y: labelY },
-    extraLabels: [
-      { text: 'HP', x: orbs[0].cx, y: labelY },
-      { text: 'AR', x: orbs[1].cx, y: labelY },
-    ],
-  };
-}
-
-// The filled part of a globe, as a polygon. A globe drains from the TOP down (an ARPG orb is a
-// vessel of liquid), so the fill is the circular segment BELOW the water line — which is why this
-// has to be a polygon rather than a rect: the fill's width narrows as it empties, and that
-// narrowing is most of what makes an orb read as an orb.
-//
-// Returns [] when empty, and the whole disc (as a polygon) when full. Screen coords: +y is down.
-export function orbFillPolygon(cx, cy, r, frac, steps = 28) {
-  const f = Math.max(0, Math.min(1, frac));
-  if (f <= 0 || r <= 0) return [];
-  const yLine = cy + r - 2 * r * f;
-  const s = Math.max(-1, Math.min(1, (yLine - cy) / r));
-  const theta = Math.asin(s);          // angle (from +x, +y down) where the water line cuts the disc
-  const pts = [];
-  for (let i = 0; i <= steps; i++) {
-    const t = theta + (Math.PI - 2 * theta) * (i / steps);
-    pts.push({ x: cx + Math.cos(t) * r, y: cy + Math.sin(t) * r });
-  }
-  return pts;
 }
 
 // ── PAPER DOLL ───────────────────────────────────────────────────────────────────────────────
@@ -214,7 +140,6 @@ export function paperDollLayout(locs, { anchorX, bottomY, availW = 0, side = 'le
     outline: { x, y: top - pad, w, h: (bottom - top) + pad * 2 },
     // The shield IS that outline, so it needs no caption of its own down on the label line.
     shieldLabel: null,
-    extraLabels: [],
   };
 }
 
@@ -256,9 +181,10 @@ export function perimeterRun(rect, frac) {
   return pts;
 }
 
-// The three layers a mech shows in the AGGREGATE readouts (orbs), summed over its damage-tracked
-// parts. `locs` scopes the sum to exactly the locations the readout draws, so the globes and the
-// bar block can never disagree about what "your armor" means. Pure; mirrors hudLayout.js
+// The three layers a mech shows as WHOLE-MECH pools, summed over its damage-tracked parts — the
+// paper doll's shield outline reads its `shield`/`hasShield`. `locs` scopes the sum to exactly the
+// locations the readout draws, so the pools and the bar block can never disagree about what "your
+// armor" means. Pure; mirrors hudLayout.js
 // `bodyPools` (which reads a TARGET's body, including flat-hp vehicles) for the player's own mech.
 export function mechPools(mech, locs) {
   let hp = 0, maxHp = 0, armor = 0, maxArmor = 0;
@@ -275,8 +201,8 @@ export function mechPools(mech, locs) {
     hp: maxHp > 0 ? Math.min(1, hp / maxHp) : 0,
     armor: maxArmor > 0 ? Math.min(1, armor / maxArmor) : 0,
     hasArmor: maxArmor > 0,
-    // The temp pool (#381) can push the shield past its base max; the globe/outline clamps rather
-    // than growing, because unlike the bar there is no room above it to grow INTO.
+    // The temp pool (#381) can push the shield past its base max; the outline clamps rather than
+    // growing, because unlike the bar there is no room above it to grow INTO.
     shield: hasShield && shieldMax > 0 ? Math.min(1, shieldHp / shieldMax) : 0,
     hasShield,
   };
